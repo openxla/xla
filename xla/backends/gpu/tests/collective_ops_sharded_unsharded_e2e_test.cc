@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -38,7 +40,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tests/test_utils.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
 
@@ -61,12 +62,12 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
                    << " devices (" << device_count() << " available)";
     }
 
-    TF_ASSERT_OK_AND_ASSIGN(ExecutionResult ref_execution_result,
-                            ExecuteUnsharded(hlo_text));
+    ASSERT_OK_AND_ASSIGN(ExecutionResult ref_execution_result,
+                         ExecuteUnsharded(hlo_text));
     const std::vector<Literal>& ref_results = ref_execution_result.results;
     ASSERT_EQ(ref_results.size(), 1);
 
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         ExecutionResult execution_result,
         ExecuteSharded(hlo_text, num_partitions, enable_enzyme_comms_opt));
     const std::vector<Literal>& results = execution_result.results;
@@ -191,8 +192,8 @@ class CollectiveOpsTestE2EShardedUnsharded : public CollectiveOpsE2ETestBase {
         /*replica_count=*/1, /*num_partitions=*/num_partitions);
     config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(false);
 
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                            ParseAndReturnVerifiedModule(hlo_text, config));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text, config));
     auto dimensions =
         module->entry_computation()->root_instruction()->shape().dimensions();
     std::vector<int64_t> root_dims(dimensions.begin(), dimensions.end());

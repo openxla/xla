@@ -52,8 +52,6 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -105,10 +103,10 @@ class BuffersDebugFloatCheckThunkTest : public ::testing::Test {
   void SetUp() override {
     std::string name = absl::AsciiStrToUpper(
         xla::PlatformUtil::CanonicalPlatformName("gpu").value());
-    TF_ASSERT_OK_AND_ASSIGN(platform_,
-                            se::PlatformManager::PlatformWithName(name));
-    TF_ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
-    TF_ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream(std::nullopt));
+    ASSERT_OK_AND_ASSIGN(platform_,
+                         se::PlatformManager::PlatformWithName(name));
+    ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
+    ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream(std::nullopt));
     allocator_ =
         std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
             stream_->parent());
@@ -164,7 +162,7 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest, CalculatesNanCounts) {
   se::DeviceAddressBase log_mem = allocations.GetDeviceAddress(log_slice);
   se::DeviceAddressBase input_mem = allocations.GetDeviceAddress(input);
   // Initialize the log in device memory
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto device_log,
       BufferDebugLog<BufferDebugFloatCheckEntry>::CreateOnDevice(
           *this->stream_, se::DeviceAddress<uint8_t>(log_mem)));
@@ -174,7 +172,7 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest, CalculatesNanCounts) {
     data[123] = std::numeric_limits<TypeParam>::infinity();
     data[456] = std::numeric_limits<TypeParam>::quiet_NaN();
     data[789] = std::numeric_limits<TypeParam>::quiet_NaN();
-    TF_ASSERT_OK(
+    ASSERT_OK(
         this->stream_->Memcpy(&input_mem, data.data(), kInputSizeInBytes));
   }
 
@@ -206,12 +204,12 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest, CalculatesNanCounts) {
   checked_thunk_info.thunk_id = ThunkId(123);
   BuffersDebugFloatCheckThunk thunk(
       Thunk::ThunkInfo(), checked_thunk_info, log_slice, tmp_slice,
-      {{/*buffer_idx=*/0, input}}, metadata_store);
-  TF_ASSERT_OK(thunk.Initialize(init_params));
-  TF_ASSERT_OK(thunk.Prepare(prepare_params));
-  TF_ASSERT_OK(thunk.ExecuteOnStream(execute_params));
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
-                          device_log.ReadFromDevice(*this->stream_));
+      {{/*buffer_idx=*/0, input}}, metadata_store, /*devices_per_host=*/1);
+  ASSERT_OK(thunk.Initialize(init_params));
+  ASSERT_OK(thunk.Prepare(prepare_params));
+  ASSERT_OK(thunk.ExecuteOnStream(execute_params));
+  ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
+                       device_log.ReadFromDevice(*this->stream_));
 
   EXPECT_THAT(entries,
               UnorderedElementsAre(AllOf(
@@ -254,7 +252,7 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
   se::DeviceAddressBase log_mem = allocations.GetDeviceAddress(log_slice);
   se::DeviceAddressBase input_mem = allocations.GetDeviceAddress(input);
   // Initialize the log in device memory
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto device_log,
       BufferDebugLog<BufferDebugFloatCheckEntry>::CreateOnDevice(
           *this->stream_, se::DeviceAddress<uint8_t>(log_mem)));
@@ -263,14 +261,14 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
     data[123] = std::numeric_limits<TypeParam>::infinity();
     data[234] = std::numeric_limits<TypeParam>::quiet_NaN();
     data[345] = std::numeric_limits<TypeParam>::quiet_NaN();
-    TF_ASSERT_OK(
+    ASSERT_OK(
         this->stream_->Memcpy(&input_mem, data.data(), kInputSizeInBytes));
   }
 
   // Fill temp buffer with some garbage to make sure it's not used.
   std::vector<uint32_t> data(kTmpSizeElems, 0xDEADBEEF);
   se::DeviceAddressBase tmp_mem = allocations.GetDeviceAddress(tmp_slice);
-  TF_ASSERT_OK(this->stream_->Memcpy(&tmp_mem, data.data(), kTmpSizeBytes));
+  ASSERT_OK(this->stream_->Memcpy(&tmp_mem, data.data(), kTmpSizeBytes));
 
   // Setup parameters for Initialize/Prepare/ExecuteOnStream
   Thunk::InitializeParams init_params;
@@ -300,12 +298,12 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
   checked_thunk_info.thunk_id = ThunkId(123);
   BuffersDebugFloatCheckThunk thunk(
       Thunk::ThunkInfo(), checked_thunk_info, log_slice, tmp_slice,
-      {{/*buffer_idx=*/0, input}}, metadata_store);
-  TF_ASSERT_OK(thunk.Initialize(init_params));
-  TF_ASSERT_OK(thunk.Prepare(prepare_params));
-  TF_ASSERT_OK(thunk.ExecuteOnStream(execute_params));
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
-                          device_log.ReadFromDevice(*this->stream_));
+      {{/*buffer_idx=*/0, input}}, metadata_store, /*devices_per_host=*/1);
+  ASSERT_OK(thunk.Initialize(init_params));
+  ASSERT_OK(thunk.Prepare(prepare_params));
+  ASSERT_OK(thunk.ExecuteOnStream(execute_params));
+  ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
+                       device_log.ReadFromDevice(*this->stream_));
 
   // BuffersDebugFloatCheckThunk launches a kernel for each input buffer, they
   // may complete in any order.
@@ -359,7 +357,7 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
   se::DeviceAddressBase log_mem = allocations.GetDeviceAddress(log_slice);
   se::DeviceAddressBase input_mem = allocations.GetDeviceAddress(input);
   // Initialize the log in device memory
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto device_log,
       BufferDebugLog<BufferDebugFloatCheckEntry>::CreateOnDevice(
           *this->stream_, se::DeviceAddress<uint8_t>(log_mem)));
@@ -375,7 +373,7 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
     // this is not supposed to be counted.
     std::fill(data.begin() + 512, data.end(),
               std::numeric_limits<TypeParam>::quiet_NaN());
-    TF_ASSERT_OK(
+    ASSERT_OK(
         this->stream_->Memcpy(&input_mem, data.data(), kInputSizeInBytes));
     input =
         BufferAllocation::Slice(&alloc, input.offset(), 512 * sizeof(TypeParam),
@@ -410,12 +408,12 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
   checked_thunk_info.thunk_id = ThunkId(123);
   BuffersDebugFloatCheckThunk thunk(
       Thunk::ThunkInfo(), checked_thunk_info, log_slice, tmp_slice,
-      {{/*buffer_idx=*/0, input}}, metadata_store);
-  TF_ASSERT_OK(thunk.Initialize(init_params));
-  TF_ASSERT_OK(thunk.Prepare(prepare_params));
-  TF_ASSERT_OK(thunk.ExecuteOnStream(execute_params));
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
-                          device_log.ReadFromDevice(*this->stream_));
+      {{/*buffer_idx=*/0, input}}, metadata_store, /*devices_per_host=*/1);
+  ASSERT_OK(thunk.Initialize(init_params));
+  ASSERT_OK(thunk.Prepare(prepare_params));
+  ASSERT_OK(thunk.ExecuteOnStream(execute_params));
+  ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
+                       device_log.ReadFromDevice(*this->stream_));
 
   // BuffersDebugFloatCheckThunk launches a kernel for each input buffer, they
   // may complete in any order.
@@ -457,7 +455,7 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
       this->executor_->device_ordinal(), this->allocator_.get());
   se::DeviceAddressBase log_mem = allocations.GetDeviceAddress(log_slice);
   // Initialize the log in device memory
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto device_log,
       BufferDebugLog<BufferDebugFloatCheckEntry>::CreateOnDevice(
           *this->stream_, se::DeviceAddress<uint8_t>(log_mem)));
@@ -490,14 +488,14 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
   checked_thunk_info.thunk_id = ThunkId(123);
   BuffersDebugFloatCheckThunk thunk(
       Thunk::ThunkInfo(), checked_thunk_info, log_slice, tmp_slice,
-      {{/*buffer_idx=*/0, input}}, metadata_store);
-  TF_ASSERT_OK(thunk.Initialize(init_params));
-  TF_ASSERT_OK(thunk.Prepare(prepare_params));
+      {{/*buffer_idx=*/0, input}}, metadata_store, /*devices_per_host=*/1);
+  ASSERT_OK(thunk.Initialize(init_params));
+  ASSERT_OK(thunk.Prepare(prepare_params));
   // If the kernel is launched with BlockDim(0), then this will fail with
   // INVALID_ARGUMENT.
-  TF_ASSERT_OK(thunk.ExecuteOnStream(execute_params));
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
-                          device_log.ReadFromDevice(*this->stream_));
+  ASSERT_OK(thunk.ExecuteOnStream(execute_params));
+  ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
+                       device_log.ReadFromDevice(*this->stream_));
 
   // The zero-sized buffers should be skipped, so no entries should be written.
   EXPECT_THAT(entries, IsEmpty());
@@ -552,7 +550,7 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
   se::DeviceAddressBase log_mem = allocations.GetDeviceAddress(log_slice);
   se::DeviceAddressBase input_mem = allocations.GetDeviceAddress(input);
   // Initialize the log in device memory
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto device_log,
       BufferDebugLog<BufferDebugFloatCheckEntry>::CreateOnDevice(
           *this->stream_, se::DeviceAddress<uint8_t>(log_mem)));
@@ -567,8 +565,8 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
     // this is not supposed to be counted.
     std::fill(data.begin() + kInputElems, data.end(),
               std::numeric_limits<TypeParam>::quiet_NaN());
-    TF_ASSERT_OK(this->stream_->Memcpy(&input_mem, data.data(),
-                                       kPaddedInputSizeInBytes));
+    ASSERT_OK(this->stream_->Memcpy(&input_mem, data.data(),
+                                    kPaddedInputSizeInBytes));
     input = BufferAllocation::Slice(&alloc, input.offset(),
                                     kInputElems * sizeof(TypeParam),
                                     kPrimitiveTypeOf<TypeParam>);
@@ -602,12 +600,12 @@ TYPED_TEST(BuffersDebugFloatCheckThunkTypedTest,
   checked_thunk_info.thunk_id = ThunkId(123);
   BuffersDebugFloatCheckThunk thunk(
       Thunk::ThunkInfo(), checked_thunk_info, log_slice, tmp_slice,
-      {{/*buffer_idx=*/0, input}}, metadata_store);
-  TF_ASSERT_OK(thunk.Initialize(init_params));
-  TF_ASSERT_OK(thunk.Prepare(prepare_params));
-  TF_ASSERT_OK(thunk.ExecuteOnStream(execute_params));
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
-                          device_log.ReadFromDevice(*this->stream_));
+      {{/*buffer_idx=*/0, input}}, metadata_store, /*devices_per_host=*/1);
+  ASSERT_OK(thunk.Initialize(init_params));
+  ASSERT_OK(thunk.Prepare(prepare_params));
+  ASSERT_OK(thunk.ExecuteOnStream(execute_params));
+  ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
+                       device_log.ReadFromDevice(*this->stream_));
 
   // BuffersDebugFloatCheckThunk launches a kernel for each input buffer, they
   // may complete in any order.
@@ -661,7 +659,7 @@ TEST_F(BuffersDebugFloatCheckThunkTest, HandlesInputsWithDifferentTypes) {
   se::DeviceAddressBase inputs0_mem = allocations.GetDeviceAddress(inputs[0]);
   se::DeviceAddressBase inputs1_mem = allocations.GetDeviceAddress(inputs[1]);
   // Initialize the log in device memory
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto device_log,
       BufferDebugLog<BufferDebugFloatCheckEntry>::CreateOnDevice(
           *stream_, se::DeviceAddress<uint8_t>(log_mem)));
@@ -669,15 +667,13 @@ TEST_F(BuffersDebugFloatCheckThunkTest, HandlesInputsWithDifferentTypes) {
   {
     std::vector<Eigen::bfloat16> data(kInputElems, Eigen::bfloat16(0));
     data[123] = std::numeric_limits<Eigen::bfloat16>::quiet_NaN();
-    TF_ASSERT_OK(
-        stream_->Memcpy(&inputs0_mem, data.data(), kInputSizeBf16Bytes));
+    ASSERT_OK(stream_->Memcpy(&inputs0_mem, data.data(), kInputSizeBf16Bytes));
   }
   {
     std::vector<float> data(kInputElems, 0);
     data[456] = std::numeric_limits<float>::quiet_NaN();
     data[789] = std::numeric_limits<float>::quiet_NaN();
-    TF_ASSERT_OK(
-        stream_->Memcpy(&inputs1_mem, data.data(), kInputSizeF32Bytes));
+    ASSERT_OK(stream_->Memcpy(&inputs1_mem, data.data(), kInputSizeF32Bytes));
   }
 
   // Setup parameters for Initialize/Prepare/ExecuteOnStream
@@ -709,12 +705,12 @@ TEST_F(BuffersDebugFloatCheckThunkTest, HandlesInputsWithDifferentTypes) {
   BuffersDebugFloatCheckThunk thunk(
       Thunk::ThunkInfo(), checked_thunk_info, log_slice, tmp_slice,
       {{/*buffer_idx=*/0, inputs[0]}, {/*buffer_idx=*/1, inputs[1]}},
-      metadata_store);
-  TF_ASSERT_OK(thunk.Initialize(init_params));
-  TF_ASSERT_OK(thunk.Prepare(prepare_params));
-  TF_ASSERT_OK(thunk.ExecuteOnStream(execute_params));
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
-                          device_log.ReadFromDevice(*stream_));
+      metadata_store, /*devices_per_host=*/1);
+  ASSERT_OK(thunk.Initialize(init_params));
+  ASSERT_OK(thunk.Prepare(prepare_params));
+  ASSERT_OK(thunk.ExecuteOnStream(execute_params));
+  ASSERT_OK_AND_ASSIGN(std::vector<BufferDebugFloatCheckEntry> entries,
+                       device_log.ReadFromDevice(*stream_));
 
   // BuffersDebugFloatCheckThunk launches a kernel for each input buffer, they
   // may complete in any order.
@@ -781,8 +777,8 @@ TEST_F(BuffersDebugFloatCheckThunkTest,
                       std::move(allocator), std::move(allocations)};
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(TestDevice device0, setup_device(0));
-  TF_ASSERT_OK_AND_ASSIGN(TestDevice device1, setup_device(1));
+  ASSERT_OK_AND_ASSIGN(TestDevice device0, setup_device(0));
+  ASSERT_OK_AND_ASSIGN(TestDevice device1, setup_device(1));
 
   BufferAllocation allocation(/*index=*/0, kTotalDeviceMemory, /*color=*/0);
   BufferAllocation::Slice log_slice(&allocation, kLogOffset, kLogSizeBytes);
@@ -796,29 +792,30 @@ TEST_F(BuffersDebugFloatCheckThunkTest,
   BuffersDebugFloatCheckThunk thunk(
       Thunk::ThunkInfo(), checked_thunk_info, log_slice, tmp_slice,
       {{/*buffer_idx=*/0, f32_slice}, {/*buffer_idx=*/1, bf16_slice}},
-      std::make_shared<BufferDebugLogEntryMetadataStore>());
+      std::make_shared<BufferDebugLogEntryMetadataStore>(),
+      /*devices_per_host=*/2);
 
   // Initialize the Thunk on both devices and run the kernel. An attempt to run
   // a kernel on the wrong device will fail with CUDA_ERROR_INVALID_HANDLE. The
   // error may be reported from the next operation on the stream, so assert on
   // BlockHostUntilDone as well.
-  TF_ASSERT_OK(
+  ASSERT_OK(
       thunk.Initialize(Thunk::InitializeParams{/*executor=*/device0.executor}));
-  TF_ASSERT_OK(thunk.ExecuteOnStream(Thunk::ExecuteParams::Create(
+  ASSERT_OK(thunk.ExecuteOnStream(Thunk::ExecuteParams::Create(
       ServiceExecutableRunOptions(), device0.allocations, device0.stream.get(),
       /*command_buffer_trace_stream=*/device0.stream.get(),
       /*collective_params=*/nullptr,
       /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr)));
-  TF_ASSERT_OK(device0.stream->BlockHostUntilDone());
+  ASSERT_OK(device0.stream->BlockHostUntilDone());
 
-  TF_ASSERT_OK(
+  ASSERT_OK(
       thunk.Initialize(Thunk::InitializeParams{/*executor=*/device1.executor}));
-  TF_ASSERT_OK(thunk.ExecuteOnStream(Thunk::ExecuteParams::Create(
+  ASSERT_OK(thunk.ExecuteOnStream(Thunk::ExecuteParams::Create(
       ServiceExecutableRunOptions(), device1.allocations, device1.stream.get(),
       /*command_buffer_trace_stream=*/device1.stream.get(),
       /*collective_params=*/nullptr,
       /*collective_cliques=*/nullptr, /*collective_memory=*/nullptr)));
-  TF_ASSERT_OK(device1.stream->BlockHostUntilDone());
+  ASSERT_OK(device1.stream->BlockHostUntilDone());
 }
 
 }  // namespace

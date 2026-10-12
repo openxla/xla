@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/cublaslt.h"
 #include "xla/backends/gpu/autotuner/cudnn.h"
 #include "xla/backends/gpu/autotuner/triton.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_cache.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
@@ -699,19 +701,37 @@ TEST_F(AutotunerFlagsTest, GetEnabledBackendsRespectsDeterminism) {
   GpuAliasInfo alias_info(stream_executor_->GetDeviceDescription());
   mlir::MLIRContext mlir_context;
   RegisterSymbolicExprStorage(&mlir_context);
+  MlirContextPool mlir_context_pool(CreateMlirContext);
+
+  auto get_enabled_backends = [&]() {
+    return ConfigAssignerPass::GetEnabledBackends(
+        stream_executor_, allocator_.get(), &target_config, &alias_info,
+        debug_options, &mlir_context,
+        /*shape_size_fn=*/[](const Shape&) { return 0; }, &compiler_,
+        stream_executor_->GetPlatform()->id(),
+        /*thread_pool=*/nullptr, &mlir_context_pool);
+  };
 
   ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<CodegenBackend>> backends,
-                       ConfigAssignerPass::GetEnabledBackends(
-                           stream_executor_, allocator_.get(), &target_config,
-                           &alias_info, debug_options, &mlir_context,
-                           /*shape_size_fn=*/[](const Shape&) { return 0; },
-                           &compiler_, stream_executor_->GetPlatform()->id()));
-
+                       get_enabled_backends());
   for (const auto& backend : backends) {
     EXPECT_NE(backend->backend(), autotuner::Backend::TRITON);
     EXPECT_NE(backend->backend(), autotuner::Backend::NATIVE_EMITTER);
     EXPECT_NE(backend->backend(), autotuner::Backend::BLOCK_LEVEL_EMITTER);
   }
+
+  debug_options.set_xla_gpu_experimental_deterministic_ops_triton(
+      DebugOptions::DETERMINISTIC_OPS_TRITON_MODE_UNCHECKED);
+  ASSERT_OK_AND_ASSIGN(backends, get_enabled_backends());
+  bool has_triton = false;
+  for (const auto& backend : backends) {
+    if (backend->backend() == autotuner::Backend::TRITON) {
+      has_triton = true;
+    }
+    EXPECT_NE(backend->backend(), autotuner::Backend::NATIVE_EMITTER);
+    EXPECT_NE(backend->backend(), autotuner::Backend::BLOCK_LEVEL_EMITTER);
+  }
+  EXPECT_TRUE(has_triton);
 }
 
 TEST_F(ConfigAssignerPassTest, CublasLtSelectFirstConfig) {
@@ -817,10 +837,11 @@ TEST_F(ConfigAssignerPassTest, TritonSelectFirstConfig) {
   GpuAliasInfo alias_info(stream_executor_->GetDeviceDescription());
   mlir::MLIRContext mlir_context;
   RegisterSymbolicExprStorage(&mlir_context);
+  MlirContextPool mlir_context_pool(CreateMlirContext);
 
   auto triton_backend = std::make_unique<TritonBackend>(
       &module->config().debug_options(), &compiler_, &target_config,
-      &alias_info, &mlir_context);
+      &alias_info, &mlir_context_pool);
 
   auto fusion = module->entry_computation()->GetInstructionWithName("fusion");
   ASSERT_OK_AND_ASSIGN(auto supported_configs,

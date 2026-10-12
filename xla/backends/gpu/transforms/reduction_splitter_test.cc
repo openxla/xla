@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/reduction_splitter.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -57,7 +57,7 @@ class ReductionSplitterTest : public HloHardwareIndependentTestBase {
 
  private:
   void SetUp() override {
-    TF_ASSERT_OK_AND_ASSIGN(device_description_, MakeDeviceDescription());
+    ASSERT_OK_AND_ASSIGN(device_description_, MakeDeviceDescription());
   }
 
   stream_executor::DeviceDescription device_description_;

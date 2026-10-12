@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "tsl/platform/platform.h"
 #include "xla/future.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -681,16 +682,16 @@ std::string PjRtArray::DebugString() const {
 
 absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> PjRtArray::pjrt_layout()
     const {
-#ifndef NDEBUG
-  for (int i = 1; i < pjrt_buffers_.size(); ++i) {
-    std::shared_ptr<const xla::PjRtLayout> layout_i =
-        pjrt_buffers_[i]->layout();
-    DCHECK(*pjrt_buffers_[0]->layout() == *layout_i)
-        << "PjRtArray has mismatched layouts across shards! "
-        << "shard 0: " << pjrt_buffers_[0]->layout()->ToString() << ", shard "
-        << i << ": " << layout_i->ToString();
+  if constexpr (tsl::kIsDebugBuild) {
+    for (int i = 1; i < pjrt_buffers_.size(); ++i) {
+      std::shared_ptr<const xla::PjRtLayout> layout_i =
+          pjrt_buffers_[i]->layout();
+      DCHECK(*pjrt_buffers_[0]->layout() == *layout_i)
+          << "PjRtArray has mismatched layouts across shards! "
+          << "shard 0: " << pjrt_buffers_[0]->layout()->ToString() << ", shard "
+          << i << ": " << layout_i->ToString();
+    }
   }
-#endif
   if (layout_ == nullptr) {
     return nullptr;
   }

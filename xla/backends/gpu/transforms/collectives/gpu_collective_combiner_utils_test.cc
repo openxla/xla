@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
@@ -96,7 +95,7 @@ TEST_F(CollectiveCombinerUtilsTest,
   }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   // This config is taken from the gpu_compiler.cc configuration of the forward
   // pipeliner.
   CollectivePipeliner::Config config{
@@ -116,7 +115,7 @@ TEST_F(CollectiveCombinerUtilsTest,
   HloPassPipeline pipeline("collective-pipeliner");
   pipeline.AddPass<CollectivePipeliner>(config);
   pipeline.AddPass<HloDCE>(/*remove_cross_partition_collective_ops=*/true);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
   EXPECT_TRUE(changed);
 
   hlo_query::ForEachInstructionWithOpcode(
@@ -184,7 +183,7 @@ TEST_F(CollectiveCombinerUtilsTest,
   }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   // This config is taken from the gpu_compiler.cc configuration of the forward
   // pipeliner.
   CollectivePipeliner::Config config{
@@ -205,7 +204,7 @@ TEST_F(CollectiveCombinerUtilsTest,
   pipeline.AddPass<CollectivePipeliner>(config);
   pipeline.AddPass<HloPassFix<HloDCE>>(
       /*remove_cross_partition_collective_ops=*/true);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
   EXPECT_TRUE(changed);
 
   hlo_query::ForEachInstructionWithOpcode(
@@ -267,7 +266,7 @@ TEST_F(CollectiveCombinerUtilsTest,
   }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   // This config is taken from the gpu_compiler.cc configuration of the backward
   // pipeliner.
   CollectivePipeliner::Config config{
@@ -294,7 +293,7 @@ TEST_F(CollectiveCombinerUtilsTest,
   HloPassPipeline pipeline("collective-pipeliner");
   pipeline.AddPass<CollectivePipeliner>(config);
   pipeline.AddPass<HloDCE>(/*remove_cross_partition_collective_ops=*/true);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
   EXPECT_TRUE(changed);
 
   hlo_query::ForEachInstructionWithOpcode(
@@ -363,7 +362,7 @@ TEST_F(CollectiveCombinerUtilsTest,
   }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   // This config is taken from the gpu_compiler.cc configuration of the backward
   // pipeliner.
   CollectivePipeliner::Config config{
@@ -391,7 +390,7 @@ TEST_F(CollectiveCombinerUtilsTest,
   pipeline.AddPass<CollectivePipeliner>(config);
   pipeline.AddPass<HloPassFix<HloDCE>>(
       /*remove_cross_partition_collective_ops=*/true);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, pipeline.Run(module.get()));
   EXPECT_TRUE(changed);
 
   hlo_query::ForEachInstructionWithPred(
@@ -434,7 +433,7 @@ TEST_F(CollectiveCombinerUtilsTest,
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   EXPECT_TRUE(ContainsPipelinedInstruction(*module));
 }
 
@@ -462,7 +461,7 @@ TEST_F(CollectiveCombinerUtilsTest,
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   EXPECT_FALSE(ContainsPipelinedInstruction(*module));
 }
 
@@ -613,7 +612,7 @@ TEST_F(CollectiveCombinerUtilsTest, MergeFrontendAttributesDeduplicates) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   std::vector<HloInstruction*> instructions;
   for (HloInstruction* instr :
        module->entry_computation()->MakeInstructionPostOrder()) {
@@ -649,7 +648,7 @@ TEST_F(CollectiveCombinerUtilsTest, MergeFrontendAttributesConflictingValues) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   std::vector<HloInstruction*> instructions;
   for (HloInstruction* instr :
        module->entry_computation()->MakeInstructionPostOrder()) {
@@ -681,7 +680,7 @@ TEST_F(CollectiveCombinerUtilsTest, MergeMetadataExtendsSourceLines) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   std::vector<HloInstruction*> instructions;
   for (HloInstruction* instr :
        module->entry_computation()->MakeInstructionPostOrder()) {
@@ -736,7 +735,7 @@ TEST_F(CollectiveCombinerUtilsTest,
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   std::vector<HloInstruction*> instructions;
   for (HloInstruction* instr :
        module->entry_computation()->MakeInstructionPostOrder()) {
@@ -778,7 +777,7 @@ TEST_F(CollectiveCombinerUtilsTest,
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   std::vector<HloInstruction*> instructions;
   for (HloInstruction* instr :
        module->entry_computation()->MakeInstructionPostOrder()) {
@@ -815,7 +814,7 @@ TEST_F(CollectiveCombinerUtilsTest,
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   std::vector<HloInstruction*> instructions;
   for (HloInstruction* instr :
        module->entry_computation()->MakeInstructionPostOrder()) {
@@ -851,7 +850,7 @@ TEST_F(CollectiveCombinerUtilsTest,
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   std::vector<HloInstruction*> instructions;
   for (HloInstruction* instr :
        module->entry_computation()->MakeInstructionPostOrder()) {

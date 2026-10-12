@@ -65,9 +65,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/status.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
 
@@ -105,7 +103,7 @@ TEST(CuDnnThunkTest, TestSerializationDeserialization) {
   BufferAllocation alloc0(/*index=*/0, /*size=*/2048, /*color=*/0);
   std::array buffer_allocations = {alloc0};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CuDnnThunk> thunk,
       CuDnnThunk::FromProto(thunk_info, cudnn_thunk_proto, buffer_allocations));
 
@@ -122,10 +120,11 @@ TEST(CuDnnThunkTest, TestSerializationDeserialization) {
 //                      se::gpu::CudnnGraph built with
 //                      require_command_buffer=true.
 //   * implicit path  — DnnGraph falls back to RecordTracedCommand; exercised
-//                      with a test-only FakeDnnGraph that forces
-//                      SupportsExplicitCommandBufferConstruction() -> false and
-//                      whose Execute() emits a verifiable device op on the
-//                      trace stream.
+//                      with a test-only FakeDnnGraph (installed via a
+//                      CuDnnThunk subclass overriding CreateGraph()) that
+//                      forces SupportsExplicitCommandBufferConstruction() ->
+//                      false and whose Execute() emits a verifiable device op
+//                      on the trace stream.
 //
 // Each path is tested in both RecordCreate and RecordUpdate modes.
 //===----------------------------------------------------------------------===//
@@ -148,6 +147,12 @@ bool SupportsCudaGraphTracing(const se::StreamExecutor* executor) {
   return std::min(desc.driver_version(), desc.compile_time_toolkit_version()) >=
          stream_executor::SemanticVersion(12, 3, 0);
 }
+
+// Fingerprint under which the tests publish their graph in
+// `ExecutableSource::dnn_compiled_graphs`.
+constexpr char kFingerprint[] = "fingerprint";
+// Value FakeDnnGraph::Execute() writes to the output buffer.
+constexpr uint32_t kFakeSentinel = 0x12345678u;
 
 // DnnGraph that forces Record() into the traced (implicit) path.
 //
@@ -194,6 +199,32 @@ class FakeDnnGraph : public se::dnn::DnnGraph {
   uint32_t sentinel_;
 };
 
+// CuDnnThunk whose graph is a FakeDnnGraph instead of one deserialized from
+// `dnn_compiled_graphs`.
+class FakeGraphCuDnnThunk : public CuDnnThunk {
+ public:
+  using CuDnnThunk::CuDnnThunk;
+
+ private:
+  absl::StatusOr<std::unique_ptr<se::dnn::DnnGraph>> CreateGraph(
+      const InitializeParams&) override {
+    return std::make_unique<FakeDnnGraph>(kFakeSentinel);
+  }
+};
+
+absl::StatusOr<Thunk::ExecutableSource> ExecutableSourceWithGraph(
+    const se::gpu::CudnnGraph& graph) {
+  std::vector<uint8_t> bytes;
+  cudnn_frontend::error_t error = graph.Graph().serialize(bytes);
+  if (error.is_bad()) {
+    return absl::InternalError(error.get_message());
+  }
+  Thunk::ExecutableSource source;
+  source.dnn_compiled_graphs.emplace(kFingerprint,
+                                     std::string(bytes.begin(), bytes.end()));
+  return source;
+}
+
 // Fixture shared by all Record() tests.
 //
 // Matmul layout mirrors CuDnnThunkTest.CommandBuffer: A(1×32×32) INT8 * itself
@@ -205,10 +236,9 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
   static constexpr int kDimSize = 32;
   static constexpr int kTotalElements = kDimSize * kDimSize;
   static constexpr uint32_t kInitialOutput = 0xdeadbeefu;
-  static constexpr uint32_t kFakeSentinel = 0x12345678u;
 
   void SetUp() override {
-    TF_ASSERT_OK_AND_ASSIGN(executor_, GpuExecutor());
+    ASSERT_OK_AND_ASSIGN(executor_, GpuExecutor());
     if (!SupportsCudaGraphTracing(executor_)) {
       GTEST_SKIP() << "CUDA graph tracing is not supported";
     }
@@ -216,15 +246,15 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
       GTEST_SKIP() << "DNN support is not available on this platform";
     }
 
-    TF_ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream());
-    TF_ASSERT_OK_AND_ASSIGN(trace_stream_, executor_->CreateStream());
+    ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream());
+    ASSERT_OK_AND_ASSIGN(trace_stream_, executor_->CreateStream());
 
     input_buf_ = executor_->AllocateArray<int8_t>(kTotalElements);
     output_buf_ = executor_->AllocateArray<int32_t>(kTotalElements);
-    TF_ASSERT_OK(stream_->MemZero(&input_buf_, input_buf_.size()));
-    TF_ASSERT_OK(
+    ASSERT_OK(stream_->MemZero(&input_buf_, input_buf_.size()));
+    ASSERT_OK(
         stream_->Memset32(&output_buf_, kInitialOutput, output_buf_.size()));
-    TF_ASSERT_OK(stream_->BlockHostUntilDone());
+    ASSERT_OK(stream_->BlockHostUntilDone());
 
     // ShapedSlice args: {input, input, output} — matmul(A, A) → D.
     Shape int8_shape = ShapeUtil::MakeShape(S8, {kTotalElements});
@@ -238,7 +268,7 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
                      int32_shape});
 
     run_options_.mutable_run_options()->set_stream(stream_.get());
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         CollectiveParams cp,
         CollectiveParams::Create(run_options_, /*async_streams=*/{},
                                  LocalDeviceId(executor_->device_ordinal())));
@@ -286,13 +316,13 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
           .set_uid(3);
       return g;
     }());
-    TF_ASSERT_OK(
+    ASSERT_OK(
         graph.Prepare(&dnn_support, executor_->GetDeviceDescription(),
                       se::EngineOptions{/*require_determinism=*/false,
                                         /*allow_tf32=*/true,
                                         /*require_command_buffer=*/true}));
-    TF_ASSERT_OK(graph.Build(&dnn_support, executor_->GetDeviceDescription(),
-                             /*plan_id=*/std::nullopt));
+    ASSERT_OK(graph.Build(&dnn_support, executor_->GetDeviceDescription(),
+                          /*plan_id=*/std::nullopt));
     ASSERT_THAT(graph.SupportsExplicitCommandBufferConstruction(),
                 absl_testing::IsOkAndHolds(true));
 
@@ -304,32 +334,27 @@ class CuDnnThunkCmdBufTest : public ::testing::Test {
 
     std::vector<bool> output_args(args_.size(), false);
     output_args.back() = true;
-    thunk_ = std::make_unique<CuDnnThunk>(
-        /*fingerprint=*/"", Thunk::ThunkInfo(), args_, std::move(output_args));
-    se::dnn::LazyDnnGraph prebuilt(
-        std::make_unique<se::gpu::CudnnGraph>(std::move(graph)));
-    thunk_->graph()->swap(prebuilt);
+    thunk_ = std::make_unique<CuDnnThunk>(kFingerprint, Thunk::ThunkInfo(),
+                                          args_, std::move(output_args));
 
-    InitializeThunk();
+    ASSERT_OK_AND_ASSIGN(Thunk::ExecutableSource source,
+                         ExecutableSourceWithGraph(graph));
+    InitializeThunk(source);
   }
 
   // Builds a CuDnnThunk backed by the FakeDnnGraph (forces the traced path).
   void BuildFakeGraphThunk() {
     std::vector<bool> output_args(args_.size(), false);
     output_args.back() = true;
-    thunk_ = std::make_unique<CuDnnThunk>(
+    thunk_ = std::make_unique<FakeGraphCuDnnThunk>(
         /*fingerprint=*/"", Thunk::ThunkInfo(), args_, std::move(output_args));
-    se::dnn::LazyDnnGraph prebuilt(
-        std::make_unique<FakeDnnGraph>(kFakeSentinel));
-    thunk_->graph()->swap(prebuilt);
 
     InitializeThunk();
   }
 
-  void InitializeThunk() {
-    Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-    TF_ASSERT_OK(thunk_->Initialize({executor_, source, allocations_.get(),
-                                     stream_.get(), trace_stream_.get()}));
+  void InitializeThunk(const Thunk::ExecutableSource& source = {}) {
+    ASSERT_OK(thunk_->Initialize({executor_, source, allocations_.get(),
+                                  stream_.get(), trace_stream_.get()}));
   }
 
   std::vector<int32_t> ReadOutput(const se::DeviceAddress<int32_t>& buf) {
@@ -375,17 +400,17 @@ TEST_F(CuDnnThunkCmdBufTest, RecordCreateExplicit) {
   CommandStateManager state;
   Command::RecordParams record_params = {state};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor_->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* cmd,
       thunk_->Record(*params_, record_params,
                      Command::RecordCreate{/*dependencies=*/{}},
                      command_buffer.get()));
   ASSERT_NE(cmd, nullptr);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream_.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream_.get()));
 
   // Input is all zeros → matmul(A, A) is all zeros.
   EXPECT_EQ(ReadOutput(output_buf_), std::vector<int32_t>(kTotalElements, 0));
@@ -401,17 +426,17 @@ TEST_F(CuDnnThunkCmdBufTest, RecordUpdateExplicit) {
   Command::RecordParams record_params = {state};
 
   // Create.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor_->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* cmd,
       thunk_->Record(*params_, record_params,
                      Command::RecordCreate{/*dependencies=*/{}},
                      command_buffer.get()));
   ASSERT_NE(cmd, nullptr);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream_.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream_.get()));
   EXPECT_EQ(ReadOutput(output_buf_), std::vector<int32_t>(kTotalElements, 0));
 
   // Rebind the output to a freshly-allocated buffer and update. Using a new
@@ -420,7 +445,7 @@ TEST_F(CuDnnThunkCmdBufTest, RecordUpdateExplicit) {
   // a non-zero sentinel so the post-submit zero fill is observable.
   se::DeviceAddress<int32_t> output1 =
       executor_->AllocateArray<int32_t>(kTotalElements);
-  TF_ASSERT_OK(stream_->Memset32(&output1, kInitialOutput, output1.size()));
+  ASSERT_OK(stream_->Memset32(&output1, kInitialOutput, output1.size()));
   BufferAllocations updated_allocations(
       std::vector<se::DeviceAddressBase>{input_buf_, output1}, 0,
       allocator_.get());
@@ -429,16 +454,16 @@ TEST_F(CuDnnThunkCmdBufTest, RecordUpdateExplicit) {
       &*collective_params_, /*collective_cliques=*/nullptr,
       /*collective_memory=*/nullptr);
 
-  TF_ASSERT_OK(command_buffer->Update());
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK(command_buffer->Update());
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* updated_cmd,
       thunk_->Record(updated_params, record_params, Command::RecordUpdate{cmd},
                      command_buffer.get()));
   // UpdateDnnGraphCommand updates the same command node in place regardless of
   // operand addresses, so the returned pointer is the original cmd.
   EXPECT_EQ(updated_cmd, cmd);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream_.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream_.get()));
   EXPECT_EQ(ReadOutput(output1), std::vector<int32_t>(kTotalElements, 0));
 }
 
@@ -451,17 +476,17 @@ TEST_F(CuDnnThunkCmdBufTest, RecordCreateImplicit) {
   CommandStateManager state;
   Command::RecordParams record_params = {state};
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor_->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* cmd,
       thunk_->Record(*params_, record_params,
                      Command::RecordCreate{/*dependencies=*/{}},
                      command_buffer.get()));
   ASSERT_NE(cmd, nullptr);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream_.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream_.get()));
 
   EXPECT_EQ(ReadOutput(output_buf_),
             std::vector<int32_t>(kTotalElements,
@@ -478,17 +503,17 @@ TEST_F(CuDnnThunkCmdBufTest, RecordUpdateImplicit) {
   Command::RecordParams record_params = {state};
 
   // Create.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto command_buffer,
       executor_->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* cmd,
       thunk_->Record(*params_, record_params,
                      Command::RecordCreate{/*dependencies=*/{}},
                      command_buffer.get()));
   ASSERT_NE(cmd, nullptr);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream_.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream_.get()));
   EXPECT_EQ(ReadOutput(output_buf_),
             std::vector<int32_t>(kTotalElements,
                                  static_cast<int32_t>(kFakeSentinel)));
@@ -501,7 +526,7 @@ TEST_F(CuDnnThunkCmdBufTest, RecordUpdateImplicit) {
   // and that the side effect re-occurs on the new buffer.
   se::DeviceAddress<int32_t> output1 =
       executor_->AllocateArray<int32_t>(kTotalElements);
-  TF_ASSERT_OK(stream_->Memset32(&output1, kInitialOutput, output1.size()));
+  ASSERT_OK(stream_->Memset32(&output1, kInitialOutput, output1.size()));
   BufferAllocations updated_allocations(
       std::vector<se::DeviceAddressBase>{input_buf_, output1}, 0,
       allocator_.get());
@@ -510,14 +535,14 @@ TEST_F(CuDnnThunkCmdBufTest, RecordUpdateImplicit) {
       &*collective_params_, /*collective_cliques=*/nullptr,
       /*collective_memory=*/nullptr);
 
-  TF_ASSERT_OK(command_buffer->Update());
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK(command_buffer->Update());
+  ASSERT_OK_AND_ASSIGN(
       const se::CommandBuffer::Command* updated_cmd,
       thunk_->Record(updated_params, record_params, Command::RecordUpdate{cmd},
                      command_buffer.get()));
   ASSERT_NE(updated_cmd, nullptr);
-  TF_ASSERT_OK(command_buffer->Finalize());
-  TF_ASSERT_OK(command_buffer->Submit(stream_.get()));
+  ASSERT_OK(command_buffer->Finalize());
+  ASSERT_OK(command_buffer->Submit(stream_.get()));
   EXPECT_EQ(ReadOutput(output1),
             std::vector<int32_t>(kTotalElements,
                                  static_cast<int32_t>(kFakeSentinel)));
@@ -594,17 +619,13 @@ TEST(CuDnnThunkTest, CommandBuffer) {
         {slice_workspace, ShapeUtil::MakeShape(U8, {workspace_size})});
   }
 
-  // Build a CuDnnThunk that owns the prebuilt graph. CuDnnThunk is both a
-  // Thunk and a Command (via TracedCommand), so it can be borrowed directly
-  // into the CommandSequence. Its Initialize() short-circuits when the graph
-  // is already populated, so the fingerprint deserialization path is skipped.
+  // Build a CuDnnThunk for the graph. CuDnnThunk is both a Thunk and a Command
+  // (via TracedCommand), so it can be borrowed directly into the
+  // CommandSequence.
   std::vector<bool> output_args(args.size(), false);
   output_args.back() = true;
   auto cudnn_thunk = std::make_unique<CuDnnThunk>(
-      /*fingerprint=*/"", Thunk::ThunkInfo(), args, std::move(output_args));
-  auto dnn_graph = std::make_unique<se::gpu::CudnnGraph>(std::move(graph));
-  se::dnn::LazyDnnGraph prebuilt(std::move(dnn_graph));
-  cudnn_thunk->graph()->swap(prebuilt);
+      kFingerprint, Thunk::ThunkInfo(), args, std::move(output_args));
 
   CommandSequence commands;
   commands.Append(cudnn_thunk.get());
@@ -620,6 +641,7 @@ TEST(CuDnnThunkTest, CommandBuffer) {
   auto sequential_thunk = std::make_unique<SequentialThunk>(
       Thunk::ThunkInfo(), std::move(thunk_sequence));
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo(),
+                           /*devices_in_process=*/1,
                            std::move(sequential_thunk));
 
   std::vector<se::DeviceAddressBase> operands;
@@ -652,7 +674,8 @@ TEST(CuDnnThunkTest, CommandBuffer) {
       /*execution_scoped_state=*/nullptr,
       /*persistent_alloc_indices=*/absl::Span<const BufferAllocation::Index>());
 
-  Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
+  ASSERT_OK_AND_ASSIGN(Thunk::ExecutableSource source,
+                       ExecutableSourceWithGraph(graph));
   Thunk::InitializeParams initialize_params;
   initialize_params.executor = stream_executor;
   initialize_params.src = source;

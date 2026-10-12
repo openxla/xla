@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/transforms/fusion_wrapper.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <optional>
@@ -23,7 +24,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -40,7 +40,7 @@ absl::StatusOr<stream_executor::DeviceDescription> MakeDeviceDescription() {
 class FusionWrapperTest : public HloHardwareIndependentTestBase {
  public:
   void SetUp() override {
-    TF_ASSERT_OK_AND_ASSIGN(device_description_, MakeDeviceDescription());
+    ASSERT_OK_AND_ASSIGN(device_description_, MakeDeviceDescription());
   }
 
   const stream_executor::DeviceDescription& device_description() const {

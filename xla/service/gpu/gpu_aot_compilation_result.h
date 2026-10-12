@@ -26,7 +26,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "google/protobuf/arena.h"
 #include "riegeli/bytes/reader.h"
-#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/service/compiled_module.h"
@@ -101,18 +100,13 @@ class GpuAotCompilationResult : public CompiledModule {
       std::variant<internal::ArenaAllocatedGpuExecutableProto,
                    GpuExecutableProto>
           gpu_executable_proto,
-      std::shared_ptr<HloModule> hlo_module, tsl::Fprint128 hlo_fingerprint,
-      tsl::Fprint128 executable_fingerprint)
+      std::shared_ptr<HloModule> hlo_module)
       : gpu_executable_proto_(std::move(gpu_executable_proto)),
-        hlo_module_(std::move(hlo_module)),
-        hlo_fingerprint_(hlo_fingerprint),
-        executable_fingerprint_(executable_fingerprint) {}
+        hlo_module_(std::move(hlo_module)) {}
 
   std::variant<internal::ArenaAllocatedGpuExecutableProto, GpuExecutableProto>
       gpu_executable_proto_;
   std::shared_ptr<HloModule> hlo_module_;
-  tsl::Fprint128 hlo_fingerprint_;
-  tsl::Fprint128 executable_fingerprint_;
 };
 
 }  // namespace xla::gpu

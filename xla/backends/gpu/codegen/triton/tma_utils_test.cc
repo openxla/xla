@@ -27,7 +27,6 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
@@ -48,7 +47,7 @@ TEST(CreateTmaDescriptorTest, Valid2DInputReturnCorrectDescriptor) {
   llvm::SmallVector<int64_t, 2> layout = {1, 0};
   int element_byte_size = 4;
   SwizzleMode swizzle_mode = SwizzleMode::k128b;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       TmaDescriptor tma_desc,
       CreateTmaDescriptor(global_shape, tile_shape, tile_strides, layout,
                           element_byte_size, swizzle_mode));
@@ -73,7 +72,7 @@ TEST(CreateTmaDescriptorTest, Valid1DInputReturnCorrectDescriptor) {
   llvm::SmallVector<int64_t, 2> layout = {0};
   int element_byte_size = 4;
   SwizzleMode swizzle_mode = SwizzleMode::kNone;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       TmaDescriptor tma_desc,
       CreateTmaDescriptor(global_shape, tile_shape, tile_strides, layout,
                           element_byte_size, swizzle_mode));
@@ -98,7 +97,7 @@ TEST(CreateTmaDescriptorTest, Valid5DInputReturnCorrectDescriptor) {
   llvm::SmallVector<int64_t, 5> layout = {4, 3, 2, 1, 0};
   int element_byte_size = 2;
   SwizzleMode swizzle_mode = SwizzleMode::kNone;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       TmaDescriptor tma_desc,
       CreateTmaDescriptor(global_shape, tile_shape, tile_strides, layout,
                           element_byte_size, swizzle_mode));
@@ -173,7 +172,7 @@ TEST(CreateTmaDescriptorTest, NonUnitTileStridesAreCorrectlyHandled) {
   llvm::SmallVector<int64_t, 2> layout = {1, 0};
   int element_byte_size = 4;
   SwizzleMode swizzle_mode = SwizzleMode::k128b;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       TmaDescriptor tma_desc,
       CreateTmaDescriptor(global_shape, tile_shape, tile_strides, layout,
                           element_byte_size, swizzle_mode));
@@ -195,7 +194,7 @@ TEST(CreateTmaDescriptorTest, BoxDimsAreAdjustedForSwizzleMode) {
 
   // 128B swizzle mode.
   SwizzleMode swizzle_mode = SwizzleMode::k128b;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       TmaDescriptor tma_desc,
       CreateTmaDescriptor(global_shape, tile_shape, tile_strides, layout,
                           element_byte_size, swizzle_mode));
@@ -203,14 +202,14 @@ TEST(CreateTmaDescriptorTest, BoxDimsAreAdjustedForSwizzleMode) {
 
   // 64B swizzle mode.
   swizzle_mode = SwizzleMode::k64b;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       tma_desc, CreateTmaDescriptor(global_shape, tile_shape, tile_strides,
                                     layout, element_byte_size, swizzle_mode));
   EXPECT_EQ(tma_desc.box_dims()[0], 16);
 
   // 32B swizzle mode.
   swizzle_mode = SwizzleMode::k32b;
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       tma_desc, CreateTmaDescriptor(global_shape, tile_shape, tile_strides,
                                     layout, element_byte_size, swizzle_mode));
   EXPECT_EQ(tma_desc.box_dims()[0], 8);

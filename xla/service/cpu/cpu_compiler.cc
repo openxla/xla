@@ -100,11 +100,12 @@ limitations under the License.
 #include "xla/backends/cpu/constant_allocation.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
-#include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/cpu/transforms/collectives/all_reduce_combiner.h"
+#include "xla/backends/cpu/transforms/embedded_while_loop_unroller.h"
 #include "xla/backends/cpu/transforms/library_rewriter.h"
 #include "xla/backends/cpu/ynn_support.h"
+#include "xla/comparison_util.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
@@ -216,6 +217,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_profile_printer_data.pb.h"
 #include "xla/service/hlo_verifier.h"
+#include "xla/service/instruction_fusion.h"
 #include "xla/service/layout_assignment.h"
 #include "xla/service/llvm_compiler.h"
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
@@ -765,7 +767,27 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   // ComparisonExpander, as this rewrite requires a simple less-than comparator.
   pipeline.AddPass<PermutationSortExpander>();
 
-  pipeline.AddPass<ComparisonExpander>();
+  pipeline.AddPass<ComparisonExpander>(
+      /*expand_via_upcast=*/
+      absl::Span<const std::pair<PrimitiveType, PrimitiveType>>{},
+      [](const HloInstruction* instr) {
+        if (instr->comparison_order() != ComparisonOrder::kWeak) {
+          return true;
+        }
+        const HloComputation* comp = instr->parent();
+        if (comp->root_instruction() != instr ||
+            comp->caller_instructions().empty()) {
+          return true;
+        }
+        // Skip expanding if all callers use SortThunk's fast sort path.
+        return !absl::c_all_of(comp->caller_instructions(),
+                               [](const HloInstruction* caller) {
+                                 return caller->opcode() == HloOpcode::kSort &&
+                                        ThunkEmitter::MatchSortDirection(
+                                            Cast<HloSortInstruction>(caller))
+                                            .has_value();
+                               });
+      });
   pipeline.AddPass<CholeskyExpander>();
   pipeline.AddPass<QrExpander>();
   pipeline.AddPass<EighExpander>();
@@ -945,8 +967,24 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
   pipeline.AddPass<SelectAndScatterExpander>();
   pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateSimpleScatters);
   pipeline.AddPass<ScatterSimplifier>();
-  if (!kFusionEmitterScatterEnabled) {
+  // The nested IR emitter cannot emit while loops (e.g. the ones the scatter
+  // expansion produces) inside embedded computations, so unroll them.
+  if (kFusionEmitterScatterEnabled) {
+    // Fusions are never formed inside embedded computations (e.g. sort
+    // comparators), so scatters there cannot use the fusion emitter. Unrolling
+    // a loop can move a scatter from its body into an embedded computation, so
+    // expand and unroll to a fixed point.
+    auto& embedded_pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
+        "embedded_scatter_expansion");
+    embedded_pipeline.AddPass<ScatterExpander>(
+        ScatterExpander::kEliminateAllScatters,
+        [](const HloInstruction* instr) {
+          return InstructionFusion::IsEmbeddedComputation(instr->parent());
+        });
+    embedded_pipeline.AddPass<EmbeddedWhileLoopUnroller>();
+  } else {
     pipeline.AddPass<ScatterExpander>(ScatterExpander::kEliminateAllScatters);
+    pipeline.AddPass<EmbeddedWhileLoopUnroller>();
   }
 
   pipeline.AddPass(CreateSimplificationPipeline(
@@ -977,10 +1015,8 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     pipeline.AddPass<FlattenCallGraph>();
   }
 
-  ChannelLayoutConstraints layout_constraints;
   pipeline.AddPass<CpuLayoutAssignment>(
-      module->mutable_entry_computation_layout(), target_machine_features,
-      &layout_constraints);
+      module->mutable_entry_computation_layout(), target_machine_features);
   // Run SubByteNormalization because CpuLayoutAssignment may modify a
   // Layout's element_size_in_bits field.
   pipeline.AddPass<SubByteNormalization>(
@@ -1089,11 +1125,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
       &alias_info,
       /*may_duplicate=*/!use_multi_output_fusion);
 
-  bool use_experimental_loop_fusion =
-      options::UseExperimentalLoopFusion(module->config());
-  bool use_tiled_emitter = options::EnableTiledEmitter(module->config());
-  pipeline.AddPass<FusionWrapper>(use_experimental_loop_fusion,
-                                  use_tiled_emitter, target_machine_features);
+  pipeline.AddPass<FusionWrapper>(target_machine_features);
 
   if (use_multi_output_fusion) {
     pipeline.AddPass<CpuMultiOutputFusion>(&alias_info);
@@ -1139,8 +1171,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
 
   // Safeguard for late elemental instructions created during post-layout
   // simplification.
-  pipeline.AddPass<FusionWrapper>(use_experimental_loop_fusion,
-                                  use_tiled_emitter, target_machine_features);
+  pipeline.AddPass<FusionWrapper>(target_machine_features);
 
   // Outline ops in the entry computation into calls to subcomputations.
   if (!is_aot_compile) {
@@ -1338,7 +1369,9 @@ absl::StatusOr<std::unique_ptr<HloModule>> CpuCompiler::RunHloPasses(
   if (MultiModuleDriver::ShouldProcess(*module)) {
     VLOG(1) << "Triggering HLO module splitting for module: " << module->name();
     {
-      HloComputationDeduplicator deduplicator;
+      HloComputationDeduplicator deduplicator(
+          /*mark_fusion_duplications=*/false,
+          /*deduplicate_large_computations=*/true);
       ABSL_RETURN_IF_ERROR(deduplicator.Run(module.get()).status());
     }
     MultiModuleDriver driver(
@@ -1815,6 +1848,13 @@ CpuCompiler::CompileCpuExecutable(
         llvm_module.get(), std::move(ir_compiler));
   }
 
+  TargetMachineFeatures target_machine_features(target_machine.get());
+
+  // ThunkEmitter needs elemental ops in fusions. Always run the idempotent
+  // wrapper: run_hlo_passes=false or --xla_disable_hlo_passes may skip it.
+  FusionWrapper fusion_wrapper(&target_machine_features);
+  ABSL_RETURN_IF_ERROR(fusion_wrapper.Run(module.get()).status());
+
   absl::flat_hash_map<const HloInstruction*, int64_t>
       instruction_to_profile_idx;
   absl::flat_hash_map<const HloComputation*, int64_t>
@@ -1862,8 +1902,6 @@ CpuCompiler::CompileCpuExecutable(
     }
     return cpu_executable;
   };
-
-  TargetMachineFeatures target_machine_features(target_machine.get());
 
   // TODO(ezhulenev): Once we fully migrate to Thunks current IrEmitter should
   // be renamed to NestedIrEmitter and be used only for emitting nested (aka

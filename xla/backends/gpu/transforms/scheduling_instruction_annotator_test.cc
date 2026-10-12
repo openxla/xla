@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/scheduling_instruction_annotator.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -25,7 +26,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
@@ -44,11 +44,11 @@ TEST_F(SchedulingInstructionAnnotatorTest,
       ROOT exp0 = f32[1] exponential(add0)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   SchedulingInstructionAnnotator pass;
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
 
   ASSERT_TRUE(changed);
   for (const auto* comp : module->computations()) {
@@ -66,7 +66,7 @@ TEST_F(SchedulingInstructionAnnotatorTest,
 // CHECK: ROOT  %[[EXP0:.+]] = {{.*}} exponential(%[[ADD0]])
 // CHECK-SAME:  scheduling_name="[[EXP0]]"
   )";
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool filecheck_matches,
       RunFileCheck(
           module->ToString(HloPrintOptions().set_print_operand_shape(false)),
@@ -84,11 +84,11 @@ TEST_F(SchedulingInstructionAnnotatorTest, SkipsAnnotatingConstants) {
       ROOT add0 = f32[1] add(p0, c1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   SchedulingInstructionAnnotator pass;
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
 
   ASSERT_TRUE(changed);
   constexpr absl::string_view kExpected = R"(
@@ -100,7 +100,7 @@ TEST_F(SchedulingInstructionAnnotatorTest, SkipsAnnotatingConstants) {
 // CHECK:       %[[ADD0:.+]] = {{.*}} add(%[[P0]], %[[C1]])
 // CHECK-SAME:  scheduling_name="[[ADD0]]"
   )";
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool filecheck_matches,
       RunFileCheck(
           module->ToString(HloPrintOptions().set_print_operand_shape(false)),
@@ -120,11 +120,11 @@ TEST_F(SchedulingInstructionAnnotatorTest,
       ROOT exp0 = f32[1] exponential(add0), metadata={scheduling_name="exp0"}
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloString));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
 
   SchedulingInstructionAnnotator pass;
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
 
   EXPECT_FALSE(changed);
 }

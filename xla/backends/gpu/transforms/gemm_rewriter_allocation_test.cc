@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -25,7 +26,6 @@ limitations under the License.
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
@@ -35,14 +35,14 @@ class GemmRewriteAllocationTest : public HloLegacyGpuTestBase {
  public:
   void CheckNumberOfAllocations(const std::string& hlo,
                                 int expected_number_of_allocations) {
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
-                            GetOptimizedModule(hlo));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                         GetOptimizedModule(hlo));
     if (allocator_ == nullptr) {
       allocator_ =
           std::make_unique<stream_executor::StreamExecutorAddressAllocator>(
               backend().default_stream_executor());
     }
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Executable> executable,
         compiler()->RunBackend(std::move(optimized_module),
                                backend().default_stream_executor(),

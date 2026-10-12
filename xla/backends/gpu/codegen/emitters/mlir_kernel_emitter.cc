@@ -82,6 +82,7 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 #include "stablehlo/transforms/Passes.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
@@ -107,6 +108,7 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -233,6 +235,12 @@ std::unique_ptr<mlir::MLIRContext> CreateMlirContext() {
   // compiling XLA executables concurrently (e.g. during auto-tuning).
   auto mlir_context = std::make_unique<mlir::MLIRContext>(
       mlir::MLIRContext::Threading::DISABLED);
+  // Constructing MLIRContext with Threading::DISABLED does not disable
+  // threading on affineUniquer (which is default-constructed with threading
+  // enabled). Explicitly calling disableMultithreading() disables locking on
+  // affineUniquer as well.
+  mlir_context->disableMultithreading();
+  RegisterSymbolicExprStorage(mlir_context.get());
   mlir_context->getDiagEngine().registerHandler(DiagnosticHandler);
   return mlir_context;
 }
@@ -276,7 +284,9 @@ MlirKernelEmitter::MaybeSplitGridDimensionX(uint64_t num_threads_x,
     dimx = (num_blocks_x + dimy - 1) >> nzeros;
     if (dimx <= limit.x) {
       // We have an extra requirement on ROCM to check
-      if (!is_rocm || dimx * num_threads_x <= rocm_limit) break;
+      if (!is_rocm || dimx * num_threads_x <= rocm_limit) {
+        break;
+      }
     }
   }
   VLOG(1) << num_blocks_x << " splitting as: " << dimx << "x" << dimy
@@ -409,7 +419,10 @@ AsyncThunkSequence MlirKernelFusion::Emit(
   bool kernel_cached = cached;
   return future_entry.Map(
       [&fusion, thunk_info = std::move(thunk_info), args = std::move(args),
-       kernel_cached](const KernelReuseCache::Entry& entry) mutable
+       kernel_cached,
+       devices_in_process =
+           ir_emitter_context.gpu_topology().num_devices_per_process()](
+          const KernelReuseCache::Entry& entry) mutable
           -> absl::StatusOr<ThunkSequence> {
         if (kernel_cached) {
           VLOG(3) << "Reuse: " << fusion.name() << " -> " << entry.kernel_name;
@@ -423,7 +436,8 @@ AsyncThunkSequence MlirKernelFusion::Emit(
                 entry.shmem_bytes));
 
         return ThunkSequence::Of<CustomKernelThunk>(
-            thunk_info, std::move(custom_kernel), args, entry.use_pdl);
+            thunk_info, std::move(custom_kernel), args, devices_in_process,
+            entry.use_pdl);
       });
 }
 
@@ -671,9 +685,9 @@ absl::StatusOr<LlvmKernelSource> CompileMlirToLlvm(
   bool should_verify =
       (hlo_module.config().debug_options().xla_gpu_llvm_verification_level() >=
        1);
-#ifndef NDEBUG
-  should_verify = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    should_verify = true;
+  }
   pm.enableVerifier(should_verify);
 
   emitters::RegisterOptimizationPasses(pm);
