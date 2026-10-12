@@ -29,9 +29,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/service/compiler.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
@@ -43,6 +47,7 @@ limitations under the License.
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
+#include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -193,6 +198,135 @@ const HloInstruction* GetScaledDotFromFusion(const HloInstruction& instr) {
       *instr.fused_instructions_computation(), HloOpcode::kScaledDot);
 }
 
+// Returns whether `gemm` is an FP8-output __cublas$lt$matmul$f8, without amax
+// or auxiliary output, that can run as a GEMM with a wider output followed by
+// the D scale, the saturation and the conversion to FP8.
+bool CanUnfuseFp8Output(const HloInstruction& gemm) {
+  if (!IsCublasLtMatmulF8(gemm) || !gemm.shape().IsTuple() ||
+      gemm.shape().tuple_shapes().size() != 2) {
+    return false;
+  }
+  PrimitiveType d_type = gemm.shape().tuple_shapes(0).element_type();
+  if (d_type != F8E4M3FN && d_type != F8E5M2 && d_type != F8E4M3FNUZ &&
+      d_type != F8E5M2FNUZ) {
+    return false;
+  }
+  absl::StatusOr<GpuBackendConfig> gpu_config =
+      gemm.backend_config<GpuBackendConfig>();
+  if (!gpu_config.ok()) {
+    return false;
+  }
+  const GemmBackendConfig& config = gpu_config->gemm_backend_config();
+  absl::StatusOr<bool> has_vector_bias =
+      gpublas_lt::EpilogueAddsVectorBias(config.epilogue());
+  if (config.beta() != 0 || !has_vector_bias.ok() ||
+      gemm.operand_count() !=
+          4 + int{*has_vector_bias} + int{config.has_d_scale()}) {
+    return false;
+  }
+  // The vector bias follows the A and B scales.
+  return !*has_vector_bias || gemm.operand(4)->shape().element_type() == F16 ||
+         gemm.operand(4)->shape().element_type() == BF16;
+}
+
+// Adds a copy of `gemm` without the D scale whose output is F32, or has the
+// type of the vector bias, since hipBLASLt reads the bias with the output type
+// for FP8 inputs.
+absl::StatusOr<HloInstruction*> AddWideOutputGemm(HloInstruction* gemm) {
+  ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                        gemm->backend_config<GpuBackendConfig>());
+  GemmBackendConfig& config = *gpu_config.mutable_gemm_backend_config();
+  std::vector<HloInstruction*> operands(gemm->operands().begin(),
+                                        gemm->operands().end());
+  if (config.has_d_scale()) {
+    operands.pop_back();
+    // Cleared, not set to false, to print like a GEMM without a D scale.
+    config.clear_has_d_scale();
+  }
+  ABSL_ASSIGN_OR_RETURN(bool has_vector_bias,
+                        gpublas_lt::EpilogueAddsVectorBias(config.epilogue()));
+  Shape shape = gemm->shape();
+  *shape.mutable_tuple_shapes(0) = ShapeUtil::ChangeElementType(
+      shape.tuple_shapes(0),
+      has_vector_bias ? operands[4]->shape().element_type() : F32);
+  HloInstruction* wide = gemm->parent()->AddInstruction(
+      gemm->CloneWithNewOperands(shape, operands));
+  ABSL_RETURN_IF_ERROR(wide->set_backend_config(gpu_config));
+  return wide;
+}
+
+// Replaces `gemm` with `wide`, made by AddWideOutputGemm, followed by a loop
+// fusion that applies the D scale, saturates like hipBLASLt and converts the
+// result to the FP8 output type of `gemm`.
+absl::Status ReplaceWithWideOutputGemm(HloInstruction* gemm,
+                                       HloInstruction* wide) {
+  HloComputation* computation = gemm->parent();
+  const Shape& d_shape = gemm->shape().tuple_shapes(0);
+  Shape f32_shape = ShapeUtil::ChangeElementType(d_shape, F32);
+  ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                        gemm->backend_config<GpuBackendConfig>());
+
+  // The instructions to fuse, in topological order.
+  std::vector<HloInstruction*> fused;
+  auto add = [&](std::unique_ptr<HloInstruction> instr) {
+    fused.push_back(computation->AddInstruction(std::move(instr)));
+    return fused.back();
+  };
+  auto add_broadcast_constant = [&](float value) {
+    HloInstruction* constant =
+        add(HloInstruction::CreateConstant(LiteralUtil::CreateR0(value)));
+    return add(HloInstruction::CreateBroadcast(f32_shape, constant, {}));
+  };
+  HloInstruction* result = computation->AddInstruction(
+      HloInstruction::CreateGetTupleElement(wide, 0));
+  if (result->shape().element_type() != F32) {
+    result = add(HloInstruction::CreateConvert(f32_shape, result));
+  }
+  if (gpu_config.gemm_backend_config().has_d_scale()) {
+    HloInstruction* d_scale = add(HloInstruction::CreateBroadcast(
+        f32_shape, gemm->operands().back(), {}));
+    result = add(HloInstruction::CreateBinary(f32_shape, HloOpcode::kMultiply,
+                                              result, d_scale));
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      Literal max,
+      LiteralUtil::MaxFiniteValue(d_shape.element_type()).Convert(F32));
+  HloInstruction* lower = add_broadcast_constant(-max.GetFirstElement<float>());
+  HloInstruction* upper = add_broadcast_constant(max.GetFirstElement<float>());
+  result = add(HloInstruction::CreateTernary(f32_shape, HloOpcode::kClamp,
+                                             lower, result, upper));
+  add(HloInstruction::CreateConvert(d_shape, result));
+  absl::c_reverse(fused);
+  HloInstruction* fusion = computation->CreateFusionInstruction(
+      fused, HloInstruction::FusionKind::kLoop);
+  fusion->fused_instructions_computation()->SetExecutionThread(
+      computation->execution_thread());
+
+  ABSL_RETURN_IF_ERROR(gemm->CopyAllControlDepsTo(wide, fusion));
+  ABSL_RETURN_IF_ERROR(gemm->DropAllControlDeps());
+  HloInstruction* workspace = computation->AddInstruction(
+      HloInstruction::CreateGetTupleElement(wide, 1));
+  for (HloInstruction* user : std::vector<HloInstruction*>(gemm->users())) {
+    TF_RET_CHECK(user->opcode() == HloOpcode::kGetTupleElement)
+        << user->ToString();
+    ABSL_RETURN_IF_ERROR(computation
+                             ->ReplaceInstructionWithDifferentShape(
+                                 user,
+                                 user->tuple_index() == 0 ? fusion : workspace,
+                                 /*preserve_sharding=*/false,
+                                 /*relay_control_dependency=*/true,
+                                 /*remove_unused_operands=*/false)
+                             .status());
+  }
+  if (computation->root_instruction() == gemm) {
+    computation->set_root_instruction(computation->AddInstruction(
+        HloInstruction::CreateTuple({fusion, workspace})));
+  }
+  ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(gemm));
+  return workspace->IsDead() ? computation->RemoveInstruction(workspace)
+                             : absl::OkStatus();
+}
+
 }  // namespace
 
 bool HipblasLtBackend::IsSupported(const HloInstruction& instr) {
@@ -265,6 +399,23 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
       gemm_key->set_algorithm(i);
       gemm_key->set_autotune_workspace_size(workspace_size);
       configs.push_back(std::move(config));
+    }
+    if (configs.empty() && CanUnfuseFp8Output(instr)) {
+      // Query the wider GEMM in a scratch module, leaving `instr` unchanged.
+      std::unique_ptr<HloModule> module =
+          ExtractInstructionIntoNewModule(instr);
+      ABSL_ASSIGN_OR_RETURN(
+          HloInstruction * wide,
+          AddWideOutputGemm(module->entry_computation()->root_instruction()));
+      ABSL_ASSIGN_OR_RETURN(configs, GetSupportedConfigs(*wide));
+      for (std::unique_ptr<BackendConfig>& config : configs) {
+        config->mutable_gemm()->set_unfuse_fp8_output(true);
+      }
+      if (!configs.empty()) {
+        LOG(WARNING) << "hipBLASLt: no algorithms found for the FP8 output of "
+                     << instr.name()
+                     << "; using a wider output and a separate FP8 conversion.";
+      }
     }
     return configs;
   }
@@ -419,6 +570,19 @@ absl::Status HipblasLtBackend::ApplyConfig(HloInstruction& instr,
         "Expected GemmKey config for HipblasLtBackend.");
   }
   const AutotuneResult::GemmKey& gemm_key = config.gemm();
+
+  if (gemm_key.unfuse_fp8_output()) {
+    if (!CanUnfuseFp8Output(instr)) {
+      return absl::InvalidArgumentError(
+          "unfuse_fp8_output is set for an instruction that is not an "
+          "FP8-output GEMM that can be unfused.");
+    }
+    BackendConfig gemm_config = config;
+    gemm_config.mutable_gemm()->clear_unfuse_fp8_output();
+    ABSL_RETURN_IF_ERROR(ApplyConfig(instr, gemm_config));
+    ABSL_ASSIGN_OR_RETURN(HloInstruction * wide, AddWideOutputGemm(&instr));
+    return ReplaceWithWideOutputGemm(&instr, wide);
+  }
 
   if (IsCublasLtMatmul(instr) || IsCublasLtMatmulF8(instr)) {
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
