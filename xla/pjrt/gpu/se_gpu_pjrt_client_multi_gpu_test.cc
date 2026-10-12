@@ -1056,6 +1056,55 @@ TEST(StreamExecutorGpuClientTest, MultipleDeviceShareDmaMapping) {
   EXPECT_OK(client->DmaUnmap(host_dma_ptr));
 }
 
+#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+TEST(StreamExecutorGpuClientTest,
+     VmmPinnedHostBufferOnEachDeviceIsHostAccessible) {
+  GpuClientOptions options = GetTestGpuClientOptions(2);
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kVmm;
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+  ASSERT_GE(client->addressable_devices().size(), 2);
+#if GOOGLE_CUDA
+  // As for VmmTest in se_gpu_pjrt_client_test.cc.
+  ASSERT_OK_AND_ASSIGN(
+      se::CudaComputeCapability cc,
+      se::CudaComputeCapability::FromString(std::get<std::string>(
+          client->addressable_devices().front()->description().Attributes().at(
+              "compute_capability"))));
+  if (!cc.IsAtLeastHopper()) {
+    GTEST_SKIP() << "This test requires at least a Hopper GPU (SM 9.0).";
+  }
+#endif  // GOOGLE_CUDA
+
+  // All buffers stay alive until the end, so the host allocations of every
+  // device are live at once and each is released through its own device.
+  std::vector<std::unique_ptr<PjRtBuffer>> buffers;
+  Shape shape = ShapeUtil::MakeShapeWithType<float>({4});
+  for (int i = 0; i < client->addressable_devices().size(); ++i) {
+    PjRtDevice* device = client->addressable_devices()[i];
+    ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * pinned_memory_space,
+                         device->memory_space_by_kind("pinned_host"));
+    std::vector<float> data(4, 10.0f * (i + 1));
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtBuffer> buffer,
+        client->BufferFromHostBuffer(
+            data.data(), shape.element_type(), shape.dimensions(),
+            /*byte_strides=*/std::nullopt,
+            PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+            /*on_done_with_host_buffer=*/nullptr, pinned_memory_space,
+            /*device_layout=*/nullptr));
+    ASSERT_OK(buffer->GetReadyFuture().Await());
+    ASSERT_TRUE(buffer->IsOnCpu());
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer::ExternalReference> ref,
+                         buffer->AcquireExternalReference());
+    const float* host_ptr =
+        reinterpret_cast<const float*>(ref->OpaqueDeviceMemoryDataPointer());
+    EXPECT_EQ(host_ptr[0], data[0]);
+    EXPECT_EQ(host_ptr[3], data[3]);
+    buffers.push_back(std::move(buffer));
+  }
+}
+#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+
 TEST(StreamExecutorGpuClientTest, FailedCrossHostSendArgsSizeMismatch) {
   // Create the client.
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
