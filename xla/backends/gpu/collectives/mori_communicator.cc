@@ -138,15 +138,14 @@ absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
         "current device");
   }
 
-  const int facade_num_pes = comm->facade_->NumPes(),
-            facade_my_pe = comm->facade_->MyPe();
-  if (num_ranks != facade_num_pes || rank != facade_my_pe) {
+  const int num_pes = comm->facade_->NumPes(), my_pe = comm->facade_->MyPe();
+  if (num_ranks != num_pes || rank != my_pe) {
     return absl::InvalidArgumentError(absl::StrFormat(
         "Clique size (%d) disagrees with the MORI world size (%d) or "
         "rank (%d) disagrees with the MORI PE id (%d). The MORI backend only "
         "supports collectives over the full global clique with an identity "
         "rank->PE mapping.",
-        num_ranks, facade_num_pes, rank, facade_my_pe));
+        num_ranks, num_pes, rank, my_pe));
   }
   for (int i = 0; i < num_ranks; ++i) {
     if (rank_to_pe[i] != i) {
