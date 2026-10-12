@@ -196,7 +196,7 @@ TEST(AnnotationTest, ModuleAnnotationsWithStackFrames) {
       a = f32[4] parameter(0)
       b = f32[4] parameter(1)
       ROOT fusion = f32[4] fusion(a, b), kind=kLoop, calls=fused_computation,
-          metadata={op_type="fusion", op_name="jit(forward)/layer/fusion", stack_frame_id=2}
+          metadata={op_type="fusion", op_name="jit(forward)/layer/fusion", stack_frame_id=2, scheduler_cost_us=12.5, scheduler_cost_source="PGLE"}
     }
   )"));
 
@@ -209,6 +209,10 @@ TEST(AnnotationTest, ModuleAnnotationsWithStackFrames) {
   EXPECT_FALSE(basic_fusion.has_detailed_annotations());
   EXPECT_EQ(basic_fusion.nvtx_name(), basic_fusion.xprof_name());
   EXPECT_THAT(basic_fusion.xprof_name(), HasSubstr("hlo_op=fusion"));
+  // The scheduler's cost estimate is shown at every level.
+  EXPECT_THAT(basic_fusion.xprof_name(), HasSubstr("scheduler_cost_us=12.5"));
+  EXPECT_THAT(basic_fusion.xprof_name(),
+              HasSubstr("scheduler_cost_source=PGLE"));
 
   ModuleAnnotations detailed_annotations(*module,
                                          TraceAnnotationLevel::kDetailed);
@@ -225,6 +229,13 @@ TEST(AnnotationTest, ModuleAnnotationsWithStackFrames) {
   EXPECT_THAT(detailed_fusion.xprof_name(), HasSubstr("source_file=model.py"));
   EXPECT_THAT(detailed_fusion.xprof_name(), HasSubstr("source_line=42"));
   EXPECT_THAT(detailed_fusion.xprof_name(), HasSubstr("shape=f32[4]"));
+  EXPECT_THAT(detailed_fusion.xprof_name(),
+              HasSubstr("scheduler_cost_us=12.5"));
+  EXPECT_THAT(detailed_fusion.xprof_name(),
+              HasSubstr("scheduler_cost_source=PGLE"));
+  // Ops without an estimate have no such fields.
+  EXPECT_THAT(detailed_annotations.instructions.at("a").xprof_name(),
+              Not(HasSubstr("scheduler_cost")));
 }
 
 }  // namespace

@@ -4283,6 +4283,8 @@ void HloInstruction::PrintWithCanonicalNameMap(
         !metadata_->source_file().empty() ||
         !metadata_->scheduling_name().empty() ||
         metadata_->stack_frame_id() != 0 ||
+        metadata_->scheduler_cost_us() != 0 ||
+        !metadata_->scheduler_cost_source().empty() ||
         metadata_->has_metadata_payload()))) {
     printer->Append(", metadata={");
     if (options.print_inline_stack_frames() &&

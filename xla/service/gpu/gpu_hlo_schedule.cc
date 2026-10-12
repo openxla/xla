@@ -39,10 +39,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
@@ -85,6 +81,11 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -470,18 +471,104 @@ absl::Status RunP2PSchedulePreparation(HloModule* module) {
   return prepare_pipeline.Run(module).status();
 }
 
+// Which estimator of the latency estimator chain produced each of the cost
+// estimates that the scheduler used, for recording their provenance
+// (OpMetadata.scheduler_cost_source) alongside them. Only collected when
+// xla_gpu_collect_cost_model_stats is set; see SchedulerCostSourceRecorder.
+struct SchedulerCostSources {
+  // The kName of an estimator class.
+  using Source = absl::string_view;
+  // The outermost estimator of the chain: the source of every estimate that
+  // it did not delegate to a wrapped estimator.
+  Source outermost;
+  // The innermost estimator that was consulted about an instruction's cost,
+  // or about the latency between a pair of instructions.
+  absl::flat_hash_map<const HloInstruction*, Source> node_costs;
+  absl::flat_hash_map<std::pair<const HloInstruction*, const HloInstruction*>,
+                      Source>
+      latencies;
+
+  Source NodeCostSource(const HloInstruction* instr) const {
+    auto it = node_costs.find(instr);
+    return it == node_costs.end() ? outermost : it->second;
+  }
+  Source LatencySource(const HloInstruction* from,
+                       const HloInstruction* to) const {
+    auto it = latencies.find({from, to});
+    return it == latencies.end() ? outermost : it->second;
+  }
+};
+
+// Wraps an estimator that another estimator delegates to, and notes which
+// instructions and pairs of instructions it is consulted about. The GPU
+// estimators only consult the estimator they wrap when they have no estimate
+// of their own, so the innermost estimator consulted about an estimate is the
+// one that produced it: a wrapper overwrites the record of the wrappers
+// outside it, because they record before delegating.
+class SchedulerCostSourceRecorder : public LatencyEstimator {
+ public:
+  SchedulerCostSourceRecorder(std::unique_ptr<LatencyEstimator> estimator,
+                              absl::string_view source,
+                              std::shared_ptr<SchedulerCostSources> sources)
+      : estimator_(std::move(estimator)),
+        source_(source),
+        sources_(std::move(sources)) {}
+
+  TimeCost GetLatencyBetween(const HloGraphNode& from,
+                             const HloGraphNode& target) const override {
+    sources_->latencies.insert_or_assign({&from.GetInstr(), &target.GetInstr()},
+                                         source_);
+    return estimator_->GetLatencyBetween(from, target);
+  }
+  TimeCost NodeCost(const HloInstruction* instr) const override {
+    sources_->node_costs.insert_or_assign(instr, source_);
+    return estimator_->NodeCost(instr);
+  }
+  int CyclesPerMicrosecond() const override {
+    return estimator_->CyclesPerMicrosecond();
+  }
+
+ private:
+  std::unique_ptr<LatencyEstimator> estimator_;
+  absl::string_view source_;
+  std::shared_ptr<SchedulerCostSources> sources_;
+};
+
 // Returns latency estimator, key abstraction used by LHS which returns how much
 // each instruction takes. If we return a PGO based estimator then we will
 // additionally add fail-fast/warn checks to the pipeline which act in the
 // absence of instruction in the profile. See `PGLEAccuracyChecker` for details.
+// If `cost_sources` is set, the estimators of the chain are wrapped so that
+// the provenance of their estimates is recorded in it.
 std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
     const HloModule& module, int pointer_size,
     const se::DeviceDescription& gpu_device_info, absl::string_view fingerprint,
-    const SchedulerConfig& config, mlir::MLIRContext* mlir_context) {
+    const SchedulerConfig& config, mlir::MLIRContext* mlir_context,
+    std::shared_ptr<SchedulerCostSources> cost_sources) {
   const DebugOptions& options = module.config().debug_options();
 
-  auto gpu_latency_estimator =
-      std::make_unique<GpuLatencyEstimator>(pointer_size);
+  // Wraps an estimator that another one is about to delegate to.
+  auto wrapped =
+      [&](std::unique_ptr<LatencyEstimator> estimator,
+          absl::string_view source) -> std::unique_ptr<LatencyEstimator> {
+    if (cost_sources == nullptr) {
+      return estimator;
+    }
+    return std::make_unique<SchedulerCostSourceRecorder>(std::move(estimator),
+                                                         source, cost_sources);
+  };
+  // Notes the estimator that is returned, i.e. the outermost of the chain.
+  auto outermost = [&](std::unique_ptr<LatencyEstimator> estimator,
+                       absl::string_view source) {
+    if (cost_sources != nullptr) {
+      cost_sources->outermost = source;
+    }
+    return estimator;
+  };
+  auto approximate = [&]() {
+    return wrapped(std::make_unique<GpuLatencyEstimator>(pointer_size),
+                   ApproximateLatencyEstimator::kName);
+  };
 
   std::optional<tensorflow::profiler::ProfiledInstructionsProto> profile =
       ReadPGLEProfile(module.config(), fingerprint);
@@ -500,21 +587,21 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
               module.entry_computation()->Accept(cost_analysis.get());
           status.ok()) {
         auto sol = SolLatencyEstimator::Create(
-            config, std::move(gpu_latency_estimator), gpu_device_info,
+            config, approximate(), gpu_device_info,
             ShapeSizeBytesFunction(pointer_size), module.entry_computation(),
             std::move(cost_analysis));
         if (sol.ok()) {
-          base_estimator = std::move(*sol);
+          base_estimator = wrapped(std::move(*sol), SolLatencyEstimator::kName);
           VLOG(1) << "PGLE fallback: using SolLatencyEstimator";
         } else {
-          base_estimator = std::make_unique<GpuLatencyEstimator>(pointer_size);
+          base_estimator = approximate();
           VLOG(1) << "PGLE fallback: using GpuLatencyEstimator (T-shirt sizes),"
                   << " SolLatencyEstimator creation failed: " << sol.status();
         }
       }
     }
     if (base_estimator == nullptr) {
-      base_estimator = std::move(gpu_latency_estimator);
+      base_estimator = approximate();
       VLOG(1) << "PGLE fallback: using GpuLatencyEstimator (T-shirt sizes)";
     }
     auto aggregator = std::make_unique<GPUProfileStatisticsAggregator>();
@@ -524,14 +611,17 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
     LOG(INFO) << "Found profile for module " << module.name()
               << ", using profile guided latency estimator";
     VLOG(1) << "Profile:\n" << profile->DebugString();
-    return pg_latency_estimator;
+    return outermost(std::move(pg_latency_estimator),
+                     ProfileGuidedLatencyEstimator::kName);
   }
 
   if (options.xla_gpu_enable_analytical_latency_estimator()) {
     VLOG(1) << "Using analytical latency estimator";
-    return std::make_unique<AnalyticalLatencyEstimator>(
-        config, std::move(gpu_latency_estimator), gpu_device_info,
-        ShapeSizeBytesFunction(pointer_size), module.entry_computation());
+    return outermost(
+        std::make_unique<AnalyticalLatencyEstimator>(
+            config, approximate(), gpu_device_info,
+            ShapeSizeBytesFunction(pointer_size), module.entry_computation()),
+        AnalyticalLatencyEstimator::kName);
   }
 
   if (SolLatencyEstimator::IsSupportedForModule(module, gpu_device_info)) {
@@ -549,21 +639,73 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
       VLOG(1) << "Cannot construct unified latency estimator, falling back "
                  "to T-shirt sizes. Reason: "
               << status;
-      return std::make_unique<GpuLatencyEstimator>(pointer_size);
+      return outermost(std::make_unique<GpuLatencyEstimator>(pointer_size),
+                       ApproximateLatencyEstimator::kName);
     }
     auto sol_latency_estimator = SolLatencyEstimator::Create(
-        config, std::move(gpu_latency_estimator), gpu_device_info,
+        config, approximate(), gpu_device_info,
         ShapeSizeBytesFunction(pointer_size), module.entry_computation(),
         std::move(cost_analysis));
     if (sol_latency_estimator.ok()) {
-      return std::move(*sol_latency_estimator);
+      return outermost(std::move(*sol_latency_estimator),
+                       SolLatencyEstimator::kName);
     }
     VLOG(1) << "Cannot construct unified latency estimator, falling back "
                "to T-shirt sizes. Reason: "
             << sol_latency_estimator.status();
-    return std::make_unique<GpuLatencyEstimator>(pointer_size);
+    return outermost(std::make_unique<GpuLatencyEstimator>(pointer_size),
+                     ApproximateLatencyEstimator::kName);
   }
-  return gpu_latency_estimator;
+  return outermost(std::make_unique<GpuLatencyEstimator>(pointer_size),
+                   ApproximateLatencyEstimator::kName);
+}
+
+// Post-processing function recording, in the metadata of every instruction
+// the latency hiding scheduler just scheduled, the cost estimate it used and
+// the estimator that produced it.
+void RecordSchedulerCostEstimates(
+    DefaultSchedulerCore::SchedulingState& sched_state,
+    const SchedulerCostSources& sources) {
+  const HloScheduleGraph& graph = *sched_state.sched_graph;
+  const double cycles_per_us =
+      sched_state.latency_estimator->CyclesPerMicrosecond();
+  auto record = [&](HloInstruction* instr, double cost,
+                    absl::string_view source) {
+    OpMetadata metadata = instr->metadata();
+    metadata.set_scheduler_cost_us(static_cast<float>(cost / cycles_per_us));
+    metadata.set_scheduler_cost_source(source);
+    instr->set_metadata(metadata);
+  };
+  // A start's node cost is overwritten by the latency of its pair
+  // when the done is reached.
+  for (HloInstruction* instr : sched_state.new_sequence_reversed) {
+    if (IsNopInstruction(instr->opcode(), *instr)) {
+      continue;  // Not costed by the scheduler.
+    }
+    const HloGraphNode& node = graph.GetNode(instr);
+    record(instr, node.GetCost(), sources.NodeCostSource(instr));
+    // As in the scheduler, FindStart() is only trusted for a start the async
+    // tracker supports: for a collective pipelined through a while loop it
+    // returns the get-tuple-element feeding the done instead.
+    HloInstruction* start = FindStart(instr);
+    if (start == nullptr ||
+        !sched_state.async_tracker->IsSupportedAsyncStart(*start)) {
+      continue;
+    }
+    for (const HloEdge& edge : node.GetPredecessors()) {
+      if (&edge.Target().GetInstr() != start) {
+        continue;
+      }
+      const absl::string_view source = sources.LatencySource(start, instr);
+      record(instr, edge.OriginalLatency(), source);
+      record(start, edge.OriginalLatency(), source);
+      if (start->opcode() == HloOpcode::kAsyncStart) {
+        record(start->async_wrapped_instruction(), edge.OriginalLatency(),
+               source);
+      }
+      break;
+    }
+  }
 }
 
 // Accuracy checker is only applied to PGO based latency estimators with
@@ -690,9 +832,13 @@ absl::Status RunLatencyHidingSchedulerPasses(
 
   auto shape_size_in_bytes = ShapeSizeBytesFunction(pointer_size);
 
+  std::shared_ptr<SchedulerCostSources> cost_sources;
+  if (options.xla_gpu_collect_cost_model_stats()) {
+    cost_sources = std::make_shared<SchedulerCostSources>();
+  }
   std::unique_ptr<LatencyEstimator> estimator =
       GetLatencyEstimator(*module, pointer_size, gpu_device_info, fingerprint,
-                          config, mlir_context);
+                          config, mlir_context, cost_sources);
 
   if (NeedAccuracyChecker(options, *estimator)) {
     pipeline.AddPass<PGLEAccuracyChecker>(
@@ -794,11 +940,21 @@ absl::Status RunLatencyHidingSchedulerPasses(
         };
   }
 
+  DefaultSchedulerCore::PostProcessingFn post_processing_fn = nullptr;
+  if (cost_sources != nullptr) {
+    // Runs after the pre-LHS fingerprint has been taken, so the recorded
+    // metadata cannot affect the PGLE profile lookup.
+    post_processing_fn =
+        [cost_sources = std::move(cost_sources)](
+            DefaultSchedulerCore::SchedulingState& sched_state) {
+          RecordSchedulerCostEstimates(sched_state, *cost_sources);
+        };
+  }
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
       scheduling_context, config,
       /*target_scheduling_rule=*/nullptr,
       /*early_target_scheduling_rule=*/gpu_early_scheduling_rule,
-      /*post_processing_fn=*/nullptr,
+      std::move(post_processing_fn),
       /*scheduling_instruction_crosses_overlap_limit=*/
       std::move(overlap_limit_rule));
 
