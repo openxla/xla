@@ -151,9 +151,8 @@ absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
     if (rank_to_pe[i] != i) {
       return absl::InvalidArgumentError(absl::StrFormat(
           "Rank_to_pe[%d]=%d is not the identity mapping. The MORI backend "
-          "only "
-          "supports collectives over the full global clique with an identity "
-          "rank->PE mapping.",
+          "only supports collectives over the full global clique with an "
+          "identity rank->PE mapping.",
           i, rank_to_pe[i]));
     }
   }
