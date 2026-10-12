@@ -2585,6 +2585,24 @@ absl::Status SetFusionLayouts(HloInstruction* fusion) {
   return absl::OkStatus();
 }
 
+// Copies current operand layouts to outputs that forward those operands.
+// TODO(asrao): Support other ops that forward inputs->outputs.
+absl::Status SetForwardedOperandResultLayouts(HloInstruction* instruction) {
+  switch (instruction->opcode()) {
+    case HloOpcode::kAsyncStart:
+      for (int64_t i = 0; i < instruction->operand_count(); ++i) {
+        ABSL_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
+            instruction->operand(i)->shape(),
+            ShapeUtil::GetMutableSubshape(instruction->mutable_shape(),
+                                          {0, i})));
+      }
+      break;
+    default:
+      break;
+  }
+  return absl::OkStatus();
+}
+
 }  // namespace
 
 absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
@@ -2630,6 +2648,31 @@ absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
       }
     }
 
+    // Create a copy of an operand if the operand instruction's layout does not
+    // match the use constraint (OperandLayoutConstraint). Do this before
+    // assigning output layouts via aliases because inserted copies might
+    // change the layouts we want to set on aliased outputs.
+    for (int64_t operand_no = 0; operand_no < instruction->operand_count();
+         ++operand_no) {
+      const ShapeLayout* operand_layout =
+          constraints.OperandLayout(instruction, operand_no);
+      if (operand_layout != nullptr) {
+        ABSL_RETURN_IF_ERROR(CopyOperandIfLayoutsDiffer(
+            *operand_layout, instruction, operand_no));
+      } else {
+        VLOG(2) << "operand " << operand_no << " has no constraint";
+      }
+    }
+    VLOG(3) << "Instruction after copies on operands:"
+            << instruction->ToString() << "\n";
+
+    // Copy operand layouts to forwarded outputs of async-start. Read layouts
+    // from current operands because the dataflow analysis predates the copies
+    // inserted above.
+    ABSL_RETURN_IF_ERROR(SetForwardedOperandResultLayouts(instruction));
+    VLOG(3) << "Instruction layout after forwarding:"
+            << instruction->ToString();
+
     // Any remaining layouts in the output of the instruction must be
     // inferrable using points-to analysis.
     ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachMutableSubshapeWithStatus(
@@ -2645,19 +2688,7 @@ absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
           return absl::OkStatus();
         }));
     VLOG(3) << "Instruction layout:" << instruction->ToString();
-    // Create a copy of an operand if the operand instruction's layout does not
-    // match the use constraint (OperandLayoutConstraint).
-    for (int64_t operand_no = 0; operand_no < instruction->operand_count();
-         ++operand_no) {
-      const ShapeLayout* operand_layout =
-          constraints.OperandLayout(instruction, operand_no);
-      if (operand_layout != nullptr) {
-        ABSL_RETURN_IF_ERROR(CopyOperandIfLayoutsDiffer(
-            *operand_layout, instruction, operand_no));
-      } else {
-        VLOG(2) << "operand " << operand_no << " has no constraint";
-      }
-    }
+
     if (instruction->opcode() == HloOpcode::kFusion) {
       ABSL_RETURN_IF_ERROR(SetFusionLayouts(instruction));
     }
