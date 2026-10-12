@@ -418,7 +418,6 @@ cc_library(
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:CodeGen",
         "@llvm-project//llvm:SPIRVUtilsAndDesc",
@@ -427,10 +426,7 @@ cc_library(
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//llvm:ir_headers",
-        "@tsl//tsl/platform:errors",
-    ] + if_oss([
-        "@llvm-project//llvm:SPIRVCodeGen",
-    ]),
+    ],
 )
 
 xla_cc_test(
