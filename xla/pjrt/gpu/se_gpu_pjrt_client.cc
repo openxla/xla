@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -87,6 +88,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/topology_util.h"
+#include "xla/pjrt/gpu/cross_host_transfer_clique_key.h"
 #include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_cross_host_transfer.pb.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_runtime_abi_version.h"
@@ -448,18 +450,6 @@ absl::StatusOr<AcquiredCliqueAndCommunicator> AcquireCliqueAndCommunicator(
       absl::down_cast<gpu::GpuCommunicator*>(*maybe_communicator)};
 }
 
-// Clique key for one cross-host buffer transfer. Devices stay in source, then
-// destination order. An empty incarnation span matches the historical key.
-gpu::GpuCliqueKey CrossHostTransferCliqueKey(
-    GlobalDeviceId src, GlobalDeviceId dst,
-    absl::Span<const IncarnationId> incarnations) {
-  return gpu::GpuCliqueKey(
-      /*devices=*/{src, dst},
-      /*num_local_participants=*/1,
-      /*communication_id=*/gpu::CommunicationId(0),
-      std::vector<IncarnationId>(incarnations.begin(), incarnations.end()));
-}
-
 // Create a `PreparedTransfer` object bundling together state needed to perform
 // a transfer.
 absl::StatusOr<PreparedTransfer> PrepareTransfer(
@@ -468,7 +458,7 @@ absl::StatusOr<PreparedTransfer> PrepareTransfer(
     GlobalDeviceId dst_global_device_id, PjRtRawBufferRef raw_buffer,
     gpu::AcquiredCliquesMap& acquired_cliques_map,
     tsl::AsyncValueRef<BufferSequencingEvent> transfer_event, bool is_sender,
-    absl::Span<const IncarnationId> incarnations) {
+    const std::optional<std::array<IncarnationId, 2>>& incarnations) {
   GlobalDeviceId src_device(src_global_device_id.value());
   GlobalDeviceId dst_device(dst_global_device_id.value());
 

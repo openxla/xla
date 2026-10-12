@@ -15,7 +15,8 @@ limitations under the License.
 
 #include "xla/pjrt/common_pjrt_client.h"
 
-#include <vector>
+#include <array>
+#include <optional>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -30,54 +31,57 @@ namespace {
 
 using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
-using ::testing::IsEmpty;
 
-TEST(SortedTransferIncarnationsTest, EmptySnapshotReturnsNoIncarnations) {
+TEST(TransferIncarnationsTest, EmptySnapshotReturnsNullopt) {
   ASSERT_OK_AND_ASSIGN(
-      std::vector<IncarnationId> transfer_incarnations,
-      SortedTransferIncarnations(/*src_process_index=*/1,
-                                 /*dst_process_index=*/2, {}));
-  EXPECT_THAT(transfer_incarnations, IsEmpty());
+      std::optional<std::array<IncarnationId, 2>> transfer_incarnations,
+      TransferIncarnations(/*src_process_index=*/1, /*dst_process_index=*/2,
+                           {}));
+  EXPECT_FALSE(transfer_incarnations.has_value());
 }
 
-TEST(SortedTransferIncarnationsTest, SnapshotReturnsSortedIncarnations) {
+TEST(TransferIncarnationsTest, SnapshotKeepsSourceThenDestination) {
   absl::flat_hash_map<TaskId, IncarnationId> incarnations = {
       {TaskId(2), IncarnationId(20)},
       {TaskId(1), IncarnationId(10)},
   };
 
   ASSERT_OK_AND_ASSIGN(
-      std::vector<IncarnationId> forward,
-      SortedTransferIncarnations(/*src_process_index=*/2,
-                                 /*dst_process_index=*/1, incarnations));
-  EXPECT_THAT(forward, ElementsAre(IncarnationId(10), IncarnationId(20)));
+      std::optional<std::array<IncarnationId, 2>> forward,
+      TransferIncarnations(/*src_process_index=*/2, /*dst_process_index=*/1,
+                           incarnations));
+  ASSERT_TRUE(forward.has_value());
+  EXPECT_THAT(*forward, ElementsAre(IncarnationId(20), IncarnationId(10)));
 
   ASSERT_OK_AND_ASSIGN(
-      std::vector<IncarnationId> swapped,
-      SortedTransferIncarnations(/*src_process_index=*/1,
-                                 /*dst_process_index=*/2, incarnations));
-  EXPECT_THAT(swapped, ElementsAre(IncarnationId(10), IncarnationId(20)));
+      std::optional<std::array<IncarnationId, 2>> swapped,
+      TransferIncarnations(/*src_process_index=*/1, /*dst_process_index=*/2,
+                           incarnations));
+  ASSERT_TRUE(swapped.has_value());
+  EXPECT_THAT(*swapped, ElementsAre(IncarnationId(10), IncarnationId(20)));
 }
 
-TEST(SortedTransferIncarnationsTest, SameTaskUsesOneIncarnation) {
+TEST(TransferIncarnationsTest, SameTaskKeepsBothIncarnations) {
   absl::flat_hash_map<TaskId, IncarnationId> incarnations = {
       {TaskId(3), IncarnationId(7)},
   };
 
   ASSERT_OK_AND_ASSIGN(
-      std::vector<IncarnationId> transfer_incarnations,
-      SortedTransferIncarnations(/*src_process_index=*/3,
-                                 /*dst_process_index=*/3, incarnations));
-  EXPECT_THAT(transfer_incarnations, ElementsAre(IncarnationId(7)));
+      std::optional<std::array<IncarnationId, 2>> transfer_incarnations,
+      TransferIncarnations(/*src_process_index=*/3, /*dst_process_index=*/3,
+                           incarnations));
+  ASSERT_TRUE(transfer_incarnations.has_value());
+  EXPECT_THAT(*transfer_incarnations,
+              ElementsAre(IncarnationId(7), IncarnationId(7)));
 }
 
-TEST(SortedTransferIncarnationsTest, MissingTaskFails) {
+TEST(TransferIncarnationsTest, MissingTaskFails) {
   absl::flat_hash_map<TaskId, IncarnationId> incarnations = {
       {TaskId(1), IncarnationId(10)},
   };
 
-  EXPECT_THAT(SortedTransferIncarnations(/*src_process_index=*/1,
-                                         /*dst_process_index=*/2, incarnations),
+  EXPECT_THAT(TransferIncarnations(/*src_process_index=*/1,
+                                   /*dst_process_index=*/2, incarnations),
               StatusIs(absl::StatusCode::kFailedPrecondition));
 }
 

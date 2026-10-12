@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_RAW_PJRT_CLIENT_H_
 #define XLA_PJRT_RAW_PJRT_CLIENT_H_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -336,9 +337,9 @@ class PjRtRawClient {
     GlobalDeviceId src_global_device_id;
     GlobalDeviceId dst_global_device_id;
     PjRtRawBufferRef raw_buffer;
-    // Sorted unique incarnations of the source and destination tasks. Empty
-    // when the caller has no GetAliveTasks snapshot.
-    std::vector<IncarnationId> incarnations;
+    // Source and destination task incarnations, in that order. nullopt when
+    // the caller has no GetAliveTasks snapshot.
+    std::optional<std::array<IncarnationId, 2>> incarnations;
   };
 
   virtual absl::StatusOr<PjRtDeviceEventRefVector> CrossHostTransferBuffers(

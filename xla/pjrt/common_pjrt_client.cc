@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/common_pjrt_client.h"
 
+#include <array>
 #include <atomic>
 #include <cinttypes>
 #include <cstddef>
@@ -2122,25 +2123,25 @@ CommonPjRtClient::MakeCrossHostReceiveBuffers(
   return buffers;
 }
 
-absl::StatusOr<std::vector<IncarnationId>> SortedTransferIncarnations(
+absl::StatusOr<std::optional<std::array<IncarnationId, 2>>>
+TransferIncarnations(
     int src_process_index, int dst_process_index,
     const absl::flat_hash_map<TaskId, IncarnationId>& incarnations) {
   if (incarnations.empty()) {
-    return std::vector<IncarnationId>{};
+    return std::optional<std::array<IncarnationId, 2>>();
   }
-  absl::flat_hash_set<IncarnationId> unique_incarnations;
-  for (int process_index : {src_process_index, dst_process_index}) {
-    const auto it = incarnations.find(TaskId(process_index));
-    if (it == incarnations.end()) {
-      return FailedPrecondition("Incarnation for task %d not found.",
-                                process_index);
-    }
-    unique_incarnations.insert(it->second);
+  const auto src_it = incarnations.find(TaskId(src_process_index));
+  if (src_it == incarnations.end()) {
+    return FailedPrecondition("Incarnation for task %d not found.",
+                              src_process_index);
   }
-  std::vector<IncarnationId> sorted(unique_incarnations.begin(),
-                                    unique_incarnations.end());
-  absl::c_sort(sorted);
-  return sorted;
+  const auto dst_it = incarnations.find(TaskId(dst_process_index));
+  if (dst_it == incarnations.end()) {
+    return FailedPrecondition("Incarnation for task %d not found.",
+                              dst_process_index);
+  }
+  return std::optional<std::array<IncarnationId, 2>>(
+      std::array<IncarnationId, 2>{src_it->second, dst_it->second});
 }
 
 // Send functionality for second cross-host transfers API; wraps
@@ -2253,9 +2254,9 @@ absl::StatusOr<std::vector<Future<>>> CommonPjRtClient::CrossHostSendBuffers(
     ABSL_ASSIGN_OR_RETURN(PjRtDevice * dst_device,
                           LookupDevice(dst_global_device_ids[i]));
     ABSL_ASSIGN_OR_RETURN(
-        std::vector<IncarnationId> transfer_incarnations,
-        SortedTransferIncarnations(src_device->process_index(),
-                                   dst_device->process_index(), incarnations));
+        std::optional<std::array<IncarnationId, 2>> transfer_incarnations,
+        TransferIncarnations(src_device->process_index(),
+                             dst_device->process_index(), incarnations));
     transfer_specs.push_back(CrossHostTransferSpec{
         /*src_global_device_id=*/src_device->global_device_id(),
         dst_global_device_ids[i], std::move(raw_buffers[i]),
@@ -2380,9 +2381,9 @@ CommonPjRtClient::CrossHostReceiveBuffers(
     ABSL_ASSIGN_OR_RETURN(PjRtDevice * src_device,
                           LookupDevice(src_global_device_ids[i]));
     ABSL_ASSIGN_OR_RETURN(
-        std::vector<IncarnationId> transfer_incarnations,
-        SortedTransferIncarnations(src_device->process_index(),
-                                   device->process_index(), incarnations));
+        std::optional<std::array<IncarnationId, 2>> transfer_incarnations,
+        TransferIncarnations(src_device->process_index(),
+                             device->process_index(), incarnations));
     transfer_specs.push_back(CrossHostTransferSpec{
         src_global_device_ids[i], device->global_device_id(),
         std::move(raw_buffer), std::move(transfer_incarnations)});

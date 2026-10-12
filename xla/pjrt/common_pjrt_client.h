@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_COMMON_PJRT_CLIENT_H_
 #define XLA_PJRT_COMMON_PJRT_CLIENT_H_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -62,10 +63,11 @@ limitations under the License.
 
 namespace xla {
 
-// Sorted unique incarnations of the source and destination tasks. An empty
-// snapshot returns an empty vector. A non-empty snapshot that is missing a
-// participating task returns FailedPrecondition.
-absl::StatusOr<std::vector<IncarnationId>> SortedTransferIncarnations(
+// Source and destination task incarnations, in that order. An empty snapshot
+// returns nullopt. A non-empty snapshot that is missing a participating task
+// returns FailedPrecondition.
+absl::StatusOr<std::optional<std::array<IncarnationId, 2>>>
+TransferIncarnations(
     int src_process_index, int dst_process_index,
     const absl::flat_hash_map<TaskId, IncarnationId>& incarnations);
 
