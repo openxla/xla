@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -30,6 +31,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/numeric/bits.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -474,8 +476,8 @@ class ReversePostOrderFusionQueue : public FusionQueue {
     //                C' = op(A', B') }
     //
     // We prevent this duplication by considering the operands in the order
-    // they appear int the queue. In the example, this ensures that B will be
-    // considered before A.
+    // they appear in the reverse post order queue. In the example, this ensures
+    // that B will be considered before A.
     //
     // We store the original indices of the operands to pass to ShouldFuse.
     std::vector<int64_t> sorted_operand_numbers;
@@ -524,12 +526,250 @@ class ReversePostOrderFusionQueue : public FusionQueue {
   std::vector<bool> fusion_config_;
 };
 
+// Topological levels of the instructions in a computation, used to bound the
+// DFS traversal in MultiOutputFusionCreatesCycle.
+//
+// Invariant (restored after each update to the topological levels):
+// - Every instruction has a level > 0.
+// - For every data or control edge u -> v: Level(u) < Level(v).
+// - Hence, if u can reach v, then Level(u) < Level(v).
+//
+// Cycle search pruning:
+// When searching forward from a 'producer' P to see if it can reach any
+// operand O of 'consumer' C, the search can safely prune any instruction W with
+// Level(W) >= Level(C), because all nodes reachable from W will have
+// levels strictly greater than Level(C) and thus cannot reach any
+// operand of C.
+//
+// Initial levels & spacing:
+// The topological level of each instruction is computed once using a single
+// post-order traversal. Level numbers are spaced 2^k apart so that subsequent
+// fusions and insertions can increase levels in the gaps without having to
+// renumber the entire graph.
+//
+// Incremental maintenance of the topological levels:
+// - UpdateLevelsAfterFusion(): After a producer P is fused into a consumer C,
+//   the new fusion node's level is set to
+//   max(Level(C), Level(P), 1 + max(predecessors)).
+//   This accommodates:
+//   - Multi-Output Fusion (MOF): Sibling instructions S1 and S2 can be fused
+//     together into a single multi-output fusion that produces a tuple (even
+//     when neither is an ancestor of the other). Level(S1) and Level(S2) may be
+//     different, so the new fusion node's level is set to the max of the two.
+//   - TPU Fusion Overrides: Subclasses like TpuInstructionFusion support fusing
+//     in reverse (e.g. FuseConsumerIntoSingleOutputProducer), where a producer
+//     absorbs multiple consumers.
+//   - External Users of Producer: In MOF, a producer P can still have external
+//     users (which get rewired to get-tuple-element(fusion)). Ensuring that
+//     Level(fusion) >= Level(P) guarantees that when get-tuple-element is
+//     placed at Level(fusion) + 1, it stays strictly above Level(P) without
+//     violating the order of the producer's former users.
+//   It also assigns levels to any instructions added since the last update
+//   (e.g. get-tuple-elements created by MOF or instructions added by a fusion
+//   hook), and propagates any level increases downstream.
+// - PropagateIncreases(): Cascades level increases downstream to affected
+//   successors using a min-heap ordered by each node's level before the
+//   increase, ensuring nodes are processed in topological order.
+//
+// Thread-safety: Thread-compatible. An instance operates on a single
+// computation and is not accessed concurrently.
+class TopologicalLevels {
+ public:
+  explicit TopologicalLevels(HloComputation* computation)
+      : computation_(computation) {}
+
+  // Computes the levels the first time a check needs them; fusions before
+  // that need no maintenance.
+  void EnsureLevelsInitialized() {
+    if (computed_) {
+      return;
+    }
+    VLOG(2) << "Computing the instruction levels of " << computation_->name()
+            << " for the multi output fusion cycle check";
+    // Ensure (instruction_count * spacing) < 2^62 so initial levels never
+    // overflow kLevelLimit.
+    const uint64_t count =
+        std::max<int64_t>(computation_->instruction_count(), 1);
+    const int64_t spacing = int64_t{1} << (62 - absl::bit_width(count));
+    levels_.assign(computation_->next_unique_instruction_internal_id(), 0);
+    in_worklist_.assign(levels_.size(), false);
+    // Compute and store initial levels for all instructions in post-order
+    // (visiting inputs before users). Because predecessors are always visited
+    // first, every predecessor already has an assigned level, allowing a direct
+    // linear O(N + E) assignment without needing heap propagation.
+    for (const HloInstruction* instruction :
+         computation_->MakeInstructionPostOrder()) {
+      SetInstructionLevel(instruction,
+                          ComputeLevelFromPredecessors(instruction, spacing));
+    }
+    next_unseen_id_ = computation_->next_unique_instruction_internal_id();
+    computed_ = true;
+  }
+
+  // The level of instruction, or 0 when it has none.
+  int64_t Level(const HloInstruction* instruction) const {
+    const int32_t id = instruction->local_id();
+    return id >= 0 && static_cast<size_t>(id) < levels_.size() ? levels_[id]
+                                                               : 0;
+  }
+
+  // Restores the invariant after producer was fused into a consumer, giving
+  // fusion; the levels are the two instructions' before the fusion. Also gives
+  // a level to each instruction added since the last update that has none,
+  // such as one a fusion hook added away from the fusion.
+  void UpdateLevelsAfterFusion(const HloInstruction* fusion,
+                               int64_t consumer_level, int64_t producer_level) {
+    if (!computed_) {
+      return;
+    }
+    // Use key = -1 so the fusion instruction is processed first from the
+    // min-heap.
+    PushToWorklist(fusion, /*key=*/-1,
+                   std::max({consumer_level, producer_level,
+                             ComputeLevelFromPredecessors(fusion)}));
+    const int32_t end = computation_->next_unique_instruction_internal_id();
+    for (int32_t id = next_unseen_id_; id < end; ++id) {
+      const HloInstruction* instruction =
+          computation_->GetInstructionWithLocalId(id);
+      if (instruction != nullptr && Level(instruction) == 0) {
+        PushToWorklist(instruction, /*key=*/0,
+                       ComputeLevelFromPredecessors(instruction));
+      }
+    }
+    next_unseen_id_ = end;
+    PropagateIncreases();
+  }
+
+ private:
+  // Calls fn on each operand, then on each control predecessor.
+  template <typename Fn>
+  static void ForEachPredecessor(const HloInstruction* instruction, Fn&& fn) {
+    absl::c_for_each(instruction->operands(), fn);
+    absl::c_for_each(instruction->control_predecessors(), fn);
+  }
+
+  // Calls fn on each user, then on each control successor.
+  template <typename Fn>
+  static void ForEachSuccessor(const HloInstruction* instruction, Fn&& fn) {
+    absl::c_for_each(instruction->users(), fn);
+    absl::c_for_each(instruction->control_successors(), fn);
+  }
+
+  // No level exceeds this: the initial ones stay at least a spacing less than
+  // it, and a propagation that reaches it starts the levels over.
+  static constexpr int64_t kLevelLimit = int64_t{1} << 62;
+
+  // Increases the levels of the instructions in the heap and everything they
+  // reach whose level is not greater than theirs. The levels before the
+  // increases order the affected instructions topologically, so increasing
+  // them in that order (a min heap of the level before the increase and the
+  // local id) finishes each one after all of its predecessors; a new
+  // instruction, keyed 0, that finishes before a predecessor's level is
+  // increased goes back in the heap when that predecessor finishes. An
+  // instruction waiting in the heap has in_worklist_ set to true: a further
+  // predecessor increases its level in place rather than pushing it again.
+  void PropagateIncreases() {
+    while (!worklist_.empty()) {
+      absl::c_pop_heap(worklist_, std::greater<>());
+      const int32_t id = worklist_.back().second;
+      worklist_.pop_back();
+      in_worklist_[id] = false;
+      const HloInstruction* instruction =
+          computation_->GetInstructionWithLocalId(id);
+      const int64_t bound = levels_[id];
+      if (bound >= kLevelLimit) {
+        // Takes 2^k increases of one instruction, out of reach in practice:
+        // rather than overflow, start over from a post order of the fused
+        // computation.
+        worklist_.clear();
+        computed_ = false;
+        EnsureLevelsInitialized();
+        return;
+      }
+      auto increase_level = [&](const HloInstruction* successor) {
+        const int32_t succ_id = successor->local_id();
+        if (succ_id >= 0 &&
+            static_cast<size_t>(succ_id) < in_worklist_.size() &&
+            in_worklist_[succ_id]) {
+          levels_[succ_id] = std::max(levels_[succ_id], bound + 1);
+        } else {
+          const int64_t current = Level(successor);
+          if (current <= bound) {
+            PushToWorklist(successor, /*key=*/current,
+                           current == 0
+                               ? ComputeLevelFromPredecessors(successor)
+                               : bound + 1);
+          }
+        }
+      };
+      ForEachSuccessor(instruction, increase_level);
+    }
+  }
+
+  // The largest level of the operands and control predecessors plus step, or
+  // if no predecessors, then just 0 + step. A predecessor without a level is
+  // given one and then pushed onto the heap to propagate increases to its
+  // users.
+  int64_t ComputeLevelFromPredecessors(const HloInstruction* instruction,
+                                       int64_t step = 1) {
+    int64_t level = 0;
+    ForEachPredecessor(instruction, [&](const HloInstruction* predecessor) {
+      int64_t other = Level(predecessor);
+      if (other == 0) {
+        other = ComputeLevelFromPredecessors(predecessor);
+        PushToWorklist(predecessor, /*key=*/0, other);
+      }
+      level = std::max(level, other);
+    });
+    return level + step;
+  }
+
+  void SetInstructionLevel(const HloInstruction* instruction, int64_t level,
+                           bool in_worklist = false) {
+    const int32_t id = instruction->local_id();
+    CHECK_GE(id, 0);
+    if (static_cast<size_t>(id) >= levels_.size()) {
+      levels_.resize(id + 1, 0);
+      in_worklist_.resize(id + 1, false);
+    }
+    levels_[id] = level;
+    in_worklist_[id] = in_worklist;
+  }
+
+  // Gives instruction the level, marking it as in the worklist while it waits
+  // in the heap under key, its level before the increase.
+  void PushToWorklist(const HloInstruction* instruction, int64_t key,
+                      int64_t level) {
+    SetInstructionLevel(instruction, level, /*in_worklist=*/true);
+    worklist_.emplace_back(key, instruction->local_id());
+    absl::c_push_heap(worklist_, std::greater<>());
+  }
+
+  HloComputation* computation_;
+  // Indexed by HloInstruction::local_id; InstructionFusion::RunImpl never
+  // calls HloComputation::Cleanup, so local ids are not compacted during the
+  // pass.
+  std::vector<int64_t> levels_;
+  std::vector<bool> in_worklist_;
+  // The propagation's min heap, kept across fusions to avoid an allocation
+  // per fusion. Empty between updates.
+  std::vector<std::pair<int64_t, int32_t>> worklist_;
+  // The first local id not yet assigned at the end of the last update.
+  // Instructions added since then have local ids >= next_unseen_id_.
+  int32_t next_unseen_id_ = 0;
+  bool computed_ = false;
+};
+
 bool MultiOutputFusionCreatesCycle(HloInstruction* producer,
                                    HloInstruction* consumer,
-                                   const HloReachabilityMap& reachability) {
+                                   const HloReachabilityMap& reachability,
+                                   TopologicalLevels& levels) {
   absl::flat_hash_set<int64_t> operands;
   auto insert = [&](const HloInstruction* operand) {
-    if (operand == producer) {
+    // The search cannot reach an instruction without operands or control
+    // predecessors, so it need not look for one.
+    if (operand == producer || (operand->operand_count() == 0 &&
+                                operand->control_predecessors().empty())) {
       return false;
     }
 
@@ -542,39 +782,43 @@ bool MultiOutputFusionCreatesCycle(HloInstruction* producer,
         reachability.IsReachable(producer, operand)) {
       return true;
     }
+
     operands.insert(operand->unique_id());
     return false;
   };
 
-  for (const HloInstruction* operand : consumer->operands()) {
-    if (insert(operand)) {
-      return true;
-    }
+  if (absl::c_any_of(consumer->operands(), insert) ||
+      absl::c_any_of(consumer->control_predecessors(), insert)) {
+    return true;
   }
-  for (const HloInstruction* predecessor : consumer->control_predecessors()) {
-    if (insert(predecessor)) {
-      return true;
-    }
+  if (operands.empty()) {
+    return false;
   }
 
   // Do a DFS on the producer to see if any of the other consumer operands are
-  // reachable in the current state of the graph.
+  // reachable in the current state of the graph. An instruction whose level is
+  // greater than or equal to the consumer's cannot reach them (they and
+  // everything that reaches them have levels less than the consumer's), so the
+  // search does not expand it.
+  levels.EnsureLevelsInitialized();
+  const int64_t bound = levels.Level(consumer);
+
   std::vector<HloInstruction*> worklist = producer->users();
-  worklist.insert(worklist.end(), producer->control_successors().begin(),
-                  producer->control_successors().end());
+  absl::c_copy(producer->control_successors(), std::back_inserter(worklist));
   absl::flat_hash_set<int64_t> visits;
+
   while (!worklist.empty()) {
     const HloInstruction* user = worklist.back();
     worklist.pop_back();
-    if (operands.count(user->unique_id()) != 0) {
+    if (operands.contains(user->unique_id())) {
       return true;
     }
-    if (visits.count(user->unique_id()) == 0) {
-      visits.insert(user->unique_id());
-      worklist.insert(worklist.end(), user->users().begin(),
-                      user->users().end());
-      worklist.insert(worklist.end(), user->control_successors().begin(),
-                      user->control_successors().end());
+    if (levels.Level(user) >= bound) {
+      continue;
+    }
+    if (visits.insert(user->unique_id()).second) {
+      absl::c_copy(user->users(), std::back_inserter(worklist));
+      absl::c_copy(user->control_successors(), std::back_inserter(worklist));
     }
   }
   return false;
@@ -628,6 +872,7 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
           computation->MakeInstructionPostOrder(), *reachability);
     }
     auto fusion_queue = GetFusionQueue(computation);
+    TopologicalLevels levels(computation);
 
     // Instruction fusion effectively fuses edges in the computation graph
     // (producer instruction -> consumer instruction) so we iterate over all
@@ -673,6 +918,21 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
         };
 
         HloInstruction* fusion_instruction = nullptr;
+        // Fuses operand into instruction, as a multi output fusion if is_mof.
+        auto do_fuse = [&](bool is_mof) {
+          if (dump_fusion) {
+            DumpPreFusionState(computation, /*consumer=*/instruction,
+                               /*producer=*/operand, is_mof);
+          }
+          fusion_queue->PreFusion(operand, instruction);
+          const int64_t consumer_level = levels.Level(instruction);
+          const int64_t producer_level = levels.Level(operand);
+          fusion_instruction =
+              is_mof ? FuseIntoMultiOutput(operand, instruction, computation)
+                     : Fuse(operand, instruction, computation);
+          levels.UpdateLevelsAfterFusion(fusion_instruction, consumer_level,
+                                         producer_level);
+        };
 
         // Try "regular" fusion if the operand does not need to be duplicated,
         // or if it may be duplicated. Otherwise, perform multi-output fusion,
@@ -687,13 +947,7 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
         }
 
         if (use_regular_fusion && consume_fuel()) {
-          if (dump_fusion) {
-            DumpPreFusionState(computation, /*consumer=*/instruction,
-                               /*producer=*/operand);
-          }
-
-          fusion_queue->PreFusion(operand, instruction);
-          fusion_instruction = Fuse(operand, instruction, computation);
+          do_fuse(/*is_mof=*/false);
         } else {
           VLOG(3) << "not fusing operand " << operand->ToString() << " because "
                   << use_regular_fusion.Explain();
@@ -710,18 +964,11 @@ absl::StatusOr<bool> InstructionFusion::RunImpl(
           if (use_mof) {
             use_mof = use_mof.And(
                 FusionDecision{!MultiOutputFusionCreatesCycle(
-                                   operand, instruction, *reachability),
+                                   operand, instruction, *reachability, levels),
                                "multi-output fusion creates a cycle"});
           }
           if (use_mof && consume_fuel()) {
-            if (dump_fusion) {
-              DumpPreFusionState(computation, /*consumer=*/instruction,
-                                 /*producer=*/operand, /*is_mof=*/true);
-            }
-
-            fusion_queue->PreFusion(operand, instruction);
-            fusion_instruction =
-                FuseIntoMultiOutput(operand, instruction, computation);
+            do_fuse(/*is_mof=*/true);
           }
         }
 

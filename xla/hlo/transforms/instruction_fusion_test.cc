@@ -18,9 +18,11 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 
+#include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -1362,6 +1364,133 @@ TEST_F(InstructionFusionTest, ShouldFuseInPlaceOpPeelsBitcasts) {
               op::Fusion(op::Bitcast(op::Parameter()), op::Parameter()));
   ASSERT_OK(CopyInsertion(&alias_info_).Run(sh.get()));
   EXPECT_EQ(Count(*sh, HloOpcode::kCopy), 0) << sh->ToString();
+}
+
+// Fuses only kCos consumers regularly (running an optional hook afterwards)
+// and offers multi output fusion for shared producers other than
+// get-tuple-element into consumers other than tuple. RunHloPass runs
+// HloVerifier afterwards, which fails if any cycle is formed.
+class MultiOutputCycleFusion : public InstructionFusion {
+ public:
+  using FusionHook = void (*)(HloComputation*, HloInstruction*);
+
+  explicit MultiOutputCycleFusion(const AliasInfo* alias_info,
+                                  FusionHook after_fuse = nullptr)
+      : InstructionFusion(InstructionFusion::IsExpensive, alias_info),
+        after_fuse_(after_fuse) {}
+
+ protected:
+  HloInstruction* Fuse(HloInstruction* producer, HloInstruction* consumer,
+                       HloComputation* computation) override {
+    HloInstruction* fusion =
+        InstructionFusion::Fuse(producer, consumer, computation);
+    if (after_fuse_ != nullptr) {
+      after_fuse_(computation, fusion);
+    }
+    return fusion;
+  }
+
+  FusionDecision ShouldFuse(HloInstruction* consumer,
+                            int64_t operand_index) override {
+    return FusionDecision(consumer->opcode() == HloOpcode::kCos,
+                          "not a regular fusion candidate");
+  }
+
+  FusionDecision IsConsumerSuitableForMultiOutputFusion(
+      const HloInstruction* consumer) const override {
+    return FusionDecision(consumer->opcode() != HloOpcode::kTuple,
+                          "tuple root");
+  }
+
+  FusionDecision ShouldFuseOperandIntoMultiOutputFusion(
+      HloInstruction* consumer, int64_t operand_index) override {
+    const HloInstruction* producer = consumer->operand(operand_index);
+    return FusionDecision(producer->user_count() > 1 &&
+                              producer->opcode() != HloOpcode::kGetTupleElement,
+                          "not a multi output fusion candidate");
+  }
+
+ private:
+  FusionHook after_fuse_;
+};
+
+// A multi output fusion into an instruction whose level was raised by an
+// earlier fusion: fusing p1 into c gives x1 a level greater than c's, and
+// fusing u into x1's fusion must give n1, n2, and z levels greater than that,
+// or the check for w into z prunes the fusion and misses the cycle through
+// w1, the fusion, n1, and n2.
+TEST_F(InstructionFusionTest, MultiOutputCycleCheckAfterNestedMove) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+    ENTRY entry_computation {
+      p = f32[4] parameter(0)
+      p1 = f32[4] abs(p)
+      u = f32[4] exponential(p)
+      w = f32[4] floor(p)
+      w1 = f32[4] negate(w)
+      x1 = f32[4] clamp(p1, u, w1)
+      n1 = f32[4] negate(u)
+      n2 = f32[4] tanh(n1)
+      z = f32[4] add(n2, w)
+      d1 = f32[4] tanh(p)
+      d2 = f32[4] tanh(d1)
+      d3 = f32[4] tanh(d2)
+      c = f32[4] multiply(p1, d3)
+      ROOT r = (f32[4], f32[4], f32[4]) tuple(z, x1, c)
+    })"));
+  MultiOutputCycleFusion fusion(&alias_info_);
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&fusion, module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(module->entry_computation()->GetInstructionWithName("c"), nullptr);
+  EXPECT_EQ(module->entry_computation()->GetInstructionWithName("x1"), nullptr);
+  EXPECT_NE(module->entry_computation()->GetInstructionWithName("z"), nullptr);
+}
+
+// After m0 fuses into m (initializing levels), b's fusion hook adds two
+// instructions disconnected from the fusion in reverse topological order: n2
+// is created before n1, reads n1 = negate(k3), and x comes to read n1. Both
+// scanning new local_ids and pushing unlevelled predecessors found during
+// ComputeLevelFromPredecessors(n2) are needed to give x and z levels greater
+// than k3's so that the check for q into z does not prune k1 and miss the
+// cycle through k3, n1, and x.
+TEST_F(InstructionFusionTest, MultiOutputCycleCheckAfterFusionHook) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+    ENTRY entry_computation {
+      p = f32[4] parameter(0)
+      t = f32[4] parameter(1)
+      m0 = f32[4] negate(p)
+      m1 = f32[4] abs(p)
+      m2 = f32[4] tanh(m0)
+      m = f32[4] add(m0, m1)
+      q = f32[4] exponential(t)
+      k1 = f32[4] tanh(q)
+      k2 = f32[4] tanh(k1)
+      k3 = f32[4] tanh(k2)
+      a = f32[4] negate(p)
+      b = f32[4] cosine(a)
+      x = f32[4] abs(p)
+      z = f32[4] add(x, q)
+      ROOT r = (f32[4], f32[4], f32[4], f32[4], f32[4]) tuple(k3, z, b, m2, m)
+    })"));
+  MultiOutputCycleFusion fusion(
+      &alias_info_, [](HloComputation* computation, HloInstruction*) {
+        HloInstruction* k3 = computation->GetInstructionWithName("k3");
+        HloInstruction* x = computation->GetInstructionWithName("x");
+        HloInstruction* n2 = computation->AddInstruction(
+            HloInstruction::CreateBinary(k3->shape(), HloOpcode::kAdd, k3, k3));
+        HloInstruction* n1 = computation->AddInstruction(
+            HloInstruction::CreateUnary(k3->shape(), HloOpcode::kNegate, k3));
+        CHECK_OK(n2->ReplaceOperandWith(1, n1));
+        CHECK_OK(x->ReplaceOperandWith(0, n1));
+      });
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&fusion, module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(module->entry_computation()->GetInstructionWithName("m"), nullptr);
+  EXPECT_EQ(module->entry_computation()->GetInstructionWithName("b"), nullptr);
+  EXPECT_NE(module->entry_computation()->GetInstructionWithName("z"), nullptr);
 }
 
 }  // namespace
