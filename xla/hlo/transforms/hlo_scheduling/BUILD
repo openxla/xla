@@ -41,6 +41,7 @@ cc_library(
         ":hlo_schedule_graph",
         ":latency_estimator",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 

@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_HLO_TRANSFORMS_HLO_SCHEDULING_APPROXIMATE_LATENCY_ESTIMATOR_H_
 #define XLA_HLO_TRANSFORMS_HLO_SCHEDULING_APPROXIMATE_LATENCY_ESTIMATOR_H_
 
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/transforms/hlo_scheduling/latency_estimator.h"
 
@@ -24,6 +25,9 @@ namespace xla {
 // Implementation of LatencyEstimator using an approximate cost model.
 class ApproximateLatencyEstimator : public LatencyEstimator {
  public:
+  // Name of this estimator, e.g. in OpMetadata.scheduler_cost_source.
+  static constexpr absl::string_view kName = "APPROXIMATE";
+
   explicit ApproximateLatencyEstimator(
       GetCanonicalAsyncOpFunc func = DefaultGetCanonicalAsyncOp)
       : LatencyEstimator(func) {}
