@@ -251,6 +251,7 @@ cc_library(
         "//xla:util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/transforms/simplifiers:flatten_call_graph",
         "//xla/hlo/utils:hlo_query",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
