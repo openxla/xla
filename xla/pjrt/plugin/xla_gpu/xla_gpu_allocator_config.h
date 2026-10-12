@@ -16,7 +16,8 @@ limitations under the License.
 #ifndef XLA_PJRT_PLUGIN_XLA_GPU_XLA_GPU_ALLOCATOR_CONFIG_H_
 #define XLA_PJRT_PLUGIN_XLA_GPU_XLA_GPU_ALLOCATOR_CONFIG_H_
 
-// Compatibility header. New users should include allocator_config.h directly.
+// Public compatibility header for downstream users. Internal callers with
+// access to //xla/pjrt/gpu:allocator_config may include its header directly.
 #include "xla/pjrt/gpu/allocator_config.h"  // IWYU pragma: export
 
 #endif  // XLA_PJRT_PLUGIN_XLA_GPU_XLA_GPU_ALLOCATOR_CONFIG_H_

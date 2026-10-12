@@ -41,7 +41,11 @@ cc_library(
     name = "allocator_config",
     srcs = ["allocator_config.cc"],
     hdrs = ["allocator_config.h"],
-    visibility = ["//visibility:public"],
+    visibility = [
+        ":__subpackages__",
+        "//xla/pjrt/c:__pkg__",
+        "//xla/pjrt/plugin/xla_gpu:__pkg__",
+    ],
     deps = [
         "//xla/tsl/framework:allocator",
         "@com_google_absl//absl/status",
