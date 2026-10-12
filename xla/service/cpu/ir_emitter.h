@@ -427,6 +427,10 @@ class IrEmitter : public DfsHloVisitorWithDefault,
   // to explicitly pass parameters or return results.
   void EmitGlobalCall(const HloComputation& callee, absl::string_view name);
 
+  // Returns an error if `callee` is not a global computation, i.e. if it is
+  // called from an embedded computation such as a sort comparator.
+  absl::Status CheckGlobalCallee(const HloComputation& callee);
+
   // Returns the buffer to which a global call to `callee` would have written
   // its result.
   llvm::Value* GetBufferForGlobalCallReturnValue(const HloComputation& callee);
