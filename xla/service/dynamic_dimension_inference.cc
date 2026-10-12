@@ -2273,21 +2273,24 @@ DynamicDimensionInferenceVisitor::CanonicalizeNonTupleWhile(
     HloCloneContext context(module);
     HloComputation* clone = module->AddEmbeddedComputation(
         computation->Clone("non_tuple", &context));
-    absl::flat_hash_map<HloInstruction*, HloInstruction*> instruction_map;
-    instruction_map.reserve(context.cloned_instructions().size());
-    for (const auto& [old_inst, new_inst] : context.cloned_instructions()) {
-      instruction_map[const_cast<HloInstruction*>(old_inst)] = new_inst;
-    }
-    for (const auto& [old_inst, new_inst] : instruction_map) {
-      parent_->CopyMapping(old_inst, new_inst, &instruction_map);
-    }
-
-    HloInstruction* old_param = clone->parameter_instruction(0);
+    HloInstruction* old_param = computation->parameter_instruction(0);
     HloInstruction* new_param = clone->ReplaceParameter(
         0, HloInstruction::CreateParameter(0, tuple_shape, old_param->name()));
     HloInstruction* element = clone->AddInstruction(
         HloInstruction::CreateGetTupleElement(element_shape, new_param, 0));
     ABSL_RETURN_IF_ERROR(new_param->ReplaceAllUsesWithDifferentShape(element));
+
+    // Copy the dynamic size mappings onto the clone. ReplaceParameter deleted
+    // the cloned parameter, whose role `element` now plays.
+    absl::flat_hash_map<HloInstruction*, HloInstruction*> instruction_map;
+    instruction_map.reserve(context.cloned_instructions().size());
+    for (const auto& [old_inst, new_inst] : context.cloned_instructions()) {
+      instruction_map[const_cast<HloInstruction*>(old_inst)] = new_inst;
+    }
+    instruction_map[old_param] = element;
+    for (const auto& [old_inst, new_inst] : instruction_map) {
+      parent_->CopyMapping(old_inst, new_inst, &instruction_map);
+    }
     if (is_body) {
       HloInstruction* old_root = clone->root_instruction();
       HloInstruction* new_root =
@@ -2339,7 +2342,6 @@ absl::Status DynamicDimensionInferenceVisitor::HandleWhile(
       parent_->HasDynamicDimension(hlo->mutable_operand(0))) {
     ABSL_ASSIGN_OR_RETURN(array_state_replacement,
                           CanonicalizeNonTupleWhile(hlo));
-    hlo = array_state_replacement->mutable_operand(0);
   }
   // If the output of the kWhile contains dynamic dimension, we send
   // dynamic dimension size into the while body by adding additional root/body
@@ -2383,7 +2385,9 @@ absl::Status DynamicDimensionInferenceVisitor::HandleWhile(
   }
 
   HloInstruction* old_tuple_operand = hlo->mutable_operand(0);
-  HloInstruction* old_body_root = hlo->while_body()->root_instruction();
+  HloComputation* old_condition = hlo->while_condition();
+  HloComputation* old_body = hlo->while_body();
+  HloInstruction* old_body_root = old_body->root_instruction();
   // HloInstruction* old_body_parameter =
   //     hlo->while_body()->parameter_instruction(0);
   // HloInstruction* old_condition_parameter =
@@ -2419,6 +2423,13 @@ absl::Status DynamicDimensionInferenceVisitor::HandleWhile(
         /*from=*/old_inst,
         /*to=*/new_inst,
         /*dynamic_size_map=*/&result.while_condition_instruction_map);
+  }
+  if (array_state_replacement != nullptr) {
+    // MakeInstructionsLiveIn inlined the canonicalized condition and body into
+    // the new computations, so the clones are dead now; drop them.
+    ABSL_RETURN_IF_ERROR(
+        hlo->GetModule()->RemoveEmbeddedComputation(old_condition));
+    ABSL_RETURN_IF_ERROR(hlo->GetModule()->RemoveEmbeddedComputation(old_body));
   }
 
   // Rerun inference on the body and condition now that we have added dynamic
