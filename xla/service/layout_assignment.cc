@@ -941,24 +941,23 @@ absl::Status LayoutAssignment::AddAsyncStartConstraints(
       instruction->shape().tuple_shapes().size() > 1 &&
       ShapeUtil::Compatible(instruction->shape().tuple_shapes(1),
                             async_layout.result_layout().shape())) {
-    Shape result_tuple_shape = instruction->shape();
+    // Build result_tuple_constraint_shape, which we will use to add buffer
+    // constraints to the async-start op's outputs.
+    Shape result_tuple_constraint_shape = instruction->shape();
+
     // Element {0} of the kAsyncStart output tuple holds the operands passed to
     // the async computation, and HloDataflowAnalysis aliases each {0, i}
-    // subshape to operand i.
-    for (int64_t i = 0; i < instruction->operand_count(); ++i) {
-      if (async_layout.parameter_layout(i).MinorToMajorInLayoutIsSet() &&
-          ShapeUtil::IndexIsValid(result_tuple_shape, {0, i}) &&
-          ShapeUtil::Compatible(
-              ShapeUtil::GetSubshape(result_tuple_shape, {0, i}),
-              async_layout.parameter_layout(i).shape())) {
-        *ShapeUtil::GetMutableSubshape(&result_tuple_shape, {0, i}) =
-            async_layout.parameter_layout(i).shape();
-      }
-    }
-    *ShapeUtil::GetMutableSubshape(&result_tuple_shape, {1}) =
+    // subshape to operand i. Mandatory OperandConstraints were already added
+    // for these values above; we clear result_tuple_constraint_shape[0] to
+    // avoid incorrectly constraining the operand's own buffer.
+    LayoutUtil::ClearLayout(
+        ShapeUtil::GetMutableSubshape(&result_tuple_constraint_shape, {0}));
+
+    *ShapeUtil::GetMutableSubshape(&result_tuple_constraint_shape, {1}) =
         async_layout.result_layout().shape();
+
     ABSL_RETURN_IF_ERROR(SetInstructionLayout(
-        result_tuple_shape, instruction,
+        result_tuple_constraint_shape, instruction,
         /*mandatory=*/
         async_constraint->computation_constraint().result_layout_is_set(),
         /*dfs=*/true,
