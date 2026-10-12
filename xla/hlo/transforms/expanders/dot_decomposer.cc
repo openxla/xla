@@ -254,7 +254,9 @@ absl::StatusOr<bool> DotDecomposer::RunOnComputation(
   std::vector<HloDotInstruction*> non_canonical_dots;
   for (auto* instruction : computation->instructions()) {
     auto* dot = DynCast<HloDotInstruction>(instruction);
-    if (dot == nullptr) {
+    // Canonicalization rebuilds the dot from lhs and rhs only, so skip dots
+    // with extra scaling/sparsity operands.
+    if (dot == nullptr || dot->operand_count() > 2) {
       continue;
     }
     const DotDimensionNumbers& dnums = dot->dot_dimension_numbers();
