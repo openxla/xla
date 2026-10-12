@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/service/profile_guided_latency_estimator.h"
 #include "xla/shape.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -155,6 +156,9 @@ class GpuLatencyEstimator : public ApproximateLatencyEstimator {
   // Returns a latency estimation between nodes `from` and `to`.
   TimeCost GetLatencyBetween(const HloGraphNode& from,
                              const HloGraphNode& to) const override;
+  OpMetadata::SchedulerCostSource Source() const override {
+    return OpMetadata::SCHEDULER_COST_SOURCE_GPU_APPROXIMATE;
+  }
 
  private:
   int64_t pointer_size_;

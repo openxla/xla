@@ -40,10 +40,6 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
@@ -86,6 +82,11 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -579,6 +580,52 @@ std::unique_ptr<LatencyEstimator> GetLatencyEstimator(
   return gpu_latency_estimator;
 }
 
+// Post-processing function recording, in the metadata of every instruction
+// the latency hiding scheduler just scheduled, the cost estimate it used and
+// the estimator that produced it.
+void RecordSchedulerCostEstimates(
+    DefaultSchedulerCore::SchedulingState& sched_state) {
+  const HloScheduleGraph& graph = *sched_state.sched_graph;
+  const double cycles_per_us =
+      sched_state.latency_estimator->CyclesPerMicrosecond();
+  auto record = [&](HloInstruction* instr, double cost,
+                    OpMetadata::SchedulerCostSource source) {
+    OpMetadata metadata = instr->metadata();
+    metadata.set_scheduler_cost_us(static_cast<float>(cost / cycles_per_us));
+    metadata.set_scheduler_cost_source(source);
+    instr->set_metadata(metadata);
+  };
+  // A start's node cost is overwritten by the latency of its pair
+  // when the done is reached.
+  for (HloInstruction* instr : sched_state.new_sequence_reversed) {
+    if (IsNopInstruction(instr->opcode(), *instr)) {
+      continue;  // Not costed by the scheduler.
+    }
+    const HloGraphNode& node = graph.GetNode(instr);
+    record(instr, node.GetCost(), node.GetCostSource());
+    // As in the scheduler, FindStart() is only trusted for a start the async
+    // tracker supports: for a collective pipelined through a while loop it
+    // returns the get-tuple-element feeding the done instead.
+    HloInstruction* start = FindStart(instr);
+    if (start == nullptr ||
+        !sched_state.async_tracker->IsSupportedAsyncStart(*start)) {
+      continue;
+    }
+    for (const HloEdge& edge : node.GetPredecessors()) {
+      if (&edge.Target().GetInstr() != start) {
+        continue;
+      }
+      record(instr, edge.OriginalLatency(), edge.OriginalLatencySource());
+      record(start, edge.OriginalLatency(), edge.OriginalLatencySource());
+      if (start->opcode() == HloOpcode::kAsyncStart) {
+        record(start->async_wrapped_instruction(), edge.OriginalLatency(),
+               edge.OriginalLatencySource());
+      }
+      break;
+    }
+  }
+}
+
 // Accuracy checker is only applied to PGO based latency estimators with
 // strictness level set to WARN or ERROR.
 bool NeedAccuracyChecker(const DebugOptions& options,
@@ -807,11 +854,17 @@ absl::Status RunLatencyHidingSchedulerPasses(
         };
   }
 
+  DefaultSchedulerCore::PostProcessingFn post_processing_fn = nullptr;
+  if (options.xla_record_cost_estimates()) {
+    // Runs after the pre-LHS fingerprint has been taken, so the recorded
+    // metadata cannot affect the PGLE profile lookup.
+    post_processing_fn = RecordSchedulerCostEstimates;
+  }
   auto scheduler_core = std::make_unique<DefaultSchedulerCore>(
       scheduling_context, config,
       /*target_scheduling_rule=*/nullptr,
       /*early_target_scheduling_rule=*/gpu_early_scheduling_rule,
-      /*post_processing_fn=*/nullptr,
+      std::move(post_processing_fn),
       /*scheduling_instruction_crosses_overlap_limit=*/
       std::move(overlap_limit_rule));
 
