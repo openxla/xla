@@ -176,11 +176,15 @@ TEST_F(AllGatherBroadcastReorderTest,
 // CHECK: ROOT %[[BC:.*]] = f32[5,4,8,256]{{.*}} broadcast(%[[AG]]), dimensions={3,0}
 // CHECK: }
 // CHECK: %foo (
-// CHECK: ROOT %[[CALL_BAR:.*]] = f32[5,4,8,256]{{.*}} call(%x_foo), to_apply=%bar
+// CHECK: ROOT %[[CALL_BAR:.*]] = f32[5,4,8,256]{{.*}} call(%x_foo), to_apply=%bar{{$}}
+// CHECK: }
+// CHECK: %bar.clone (
+// CHECK: %[[AG_CLONE:.*]] = f32[256,5]{{.*}} all-gather(%x_bar.1), {{.*}}dimensions={0}
+// CHECK: ROOT %[[BC_CLONE:.*]] = f32[5,4,8,256]{{.*}} broadcast(%[[AG_CLONE]]), dimensions={3,0}
 // CHECK: }
 // CHECK: ENTRY %main (
-// CHECK: %[[CALL_FOO:.*]] = f32[5,4,8,256]{{.*}} call(%x_main), to_apply=%foo
-// CHECK: %[[CALL_BAR2:.*]] = f32[5,4,8,256]{{.*}} call(%x_main), to_apply=%bar
+// CHECK: %[[CALL_FOO:.*]] = f32[5,4,8,256]{{.*}} call(%x_main), to_apply=%foo{{$}}
+// CHECK: %[[CALL_BAR2:.*]] = f32[5,4,8,256]{{.*}} call(%x_main), to_apply=%bar.clone{{$}}
 // CHECK: ROOT %[[ADD:.*]] = f32[5,4,8,256]{{.*}} add(%[[CALL_FOO]], %[[CALL_BAR2]])
 HloModule m
 
@@ -200,6 +204,54 @@ ENTRY main {
   call_foo = f32[5, 4, 8, 256] call(x_main), to_apply=foo
   call_bar = f32[5, 4, 8, 256] call(x_main), to_apply=bar
   ROOT add = f32[5, 4, 8, 256] add(call_foo, call_bar)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  EXPECT_THAT(AllGatherBroadcastReorder().Run(module.get()),
+              IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(module->ToString(), hlo_string), IsOkAndHolds(true));
+}
+
+TEST_F(AllGatherBroadcastReorderTest,
+       SelectivePreFlatteningClonesOnlyMatchingSubtrees) {
+  absl::string_view hlo_string = R"(
+HloModule m
+
+// CHECK-NOT: %baz.clone
+// CHECK: %bar.clone (
+// CHECK: %[[AG_CLONE:.*]] = f32[256,5]{{.*}} all-gather(%x_bar.1), {{.*}}dimensions={0}
+// CHECK: ROOT %[[BC_CLONE:.*]] = f32[5,4,8,256]{{.*}} broadcast(%[[AG_CLONE]]), dimensions={3,0}
+// CHECK: }
+bar {
+  x_bar = f32[128, 5] parameter(0)
+  bc = f32[5, 4, 8, 128] broadcast(x_bar), dimensions={3, 0}
+  ROOT ag = f32[5, 4, 8, 256] all-gather(bc), dimensions={3}, replica_groups={{0, 1}}
+}
+
+baz {
+  x_baz = f32[5, 4, 8, 256] parameter(0)
+  ROOT neg = f32[5, 4, 8, 256] negate(x_baz)
+}
+
+// CHECK: %foo.clone (
+// CHECK: %[[CALL_BAR_CLONE:.*]] = f32[5,4,8,256]{{.*}} call(%x_foo.1), to_apply=%bar.clone{{$}}
+// CHECK: ROOT %[[CALL_BAZ_CLONE:.*]] = f32[5,4,8,256]{{.*}} call(%[[CALL_BAR_CLONE]]), to_apply=%baz{{$}}
+// CHECK: }
+foo {
+  x_foo = f32[128, 5] parameter(0)
+  call_bar = f32[5, 4, 8, 256] call(x_foo), to_apply=bar
+  ROOT call_baz = f32[5, 4, 8, 256] call(call_bar), to_apply=baz
+}
+
+// CHECK: ENTRY %main (
+// CHECK: %[[CALL_FOO0:.*]] = f32[5,4,8,256]{{.*}} call(%x_main), to_apply=%foo{{$}}
+// CHECK: %[[CALL_FOO1:.*]] = f32[5,4,8,256]{{.*}} call(%x_main), to_apply=%foo.clone{{$}}
+// CHECK: ROOT %[[ADD:.*]] = f32[5,4,8,256]{{.*}} add(%[[CALL_FOO0]], %[[CALL_FOO1]])
+ENTRY main {
+  x_main = f32[128, 5] parameter(0)
+  call_foo0 = f32[5, 4, 8, 256] call(x_main), to_apply=foo
+  call_foo1 = f32[5, 4, 8, 256] call(x_main), to_apply=foo
+  ROOT add = f32[5, 4, 8, 256] add(call_foo0, call_foo1)
 }
 )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
