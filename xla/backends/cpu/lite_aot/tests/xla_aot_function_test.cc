@@ -18,6 +18,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -95,6 +97,41 @@ TEST(XlaAotFunctionTest, TestManualModelLoading) {
   for (int i = 0; i < 15; ++i) {
     EXPECT_EQ(static_cast<float*>(aot_function->result_data(0))[i], 4.0f);
   }
+}
+
+// Runs the `dot_aot` model (3x4 times 4x5 matrix of ones) loaded from `proto`.
+void RunDotModel(xla::cpu::CompilationResultProto proto) {
+  ASSERT_OK_AND_ASSIGN(auto aot_function,
+                       xla::cpu::XlaAotFunction::Create(std::move(proto)));
+
+  alignas(xla::cpu::Align()) float a[12];
+  alignas(xla::cpu::Align()) float b[20];
+  std::fill(std::begin(a), std::end(a), 1.0f);
+  std::fill(std::begin(b), std::end(b), 1.0f);
+  aot_function->set_arg_data(0, &a);
+  aot_function->set_arg_data(1, &b);
+
+  ASSERT_OK(aot_function->Execute());
+  for (int i = 0; i < 15; ++i) {
+    EXPECT_EQ(static_cast<float*>(aot_function->result_data(0))[i], 4.0f);
+  }
+}
+
+TEST(XlaAotFunctionTest, TestLoadsPreRelocatedImageWithoutObjectFiles) {
+  xla::cpu::CompilationResultProto proto;
+  ASSERT_OK(tsl::ReadBinaryProto(
+      tsl::Env::Default(), tsl::io::JoinPath(GetRootDir(), "dot_aot"), &proto));
+  ASSERT_TRUE(proto.has_pre_relocated_image());
+  proto.clear_object_files();
+  RunDotModel(std::move(proto));
+}
+
+TEST(XlaAotFunctionTest, TestLoadsLegacyObjectFiles) {
+  xla::cpu::CompilationResultProto proto;
+  ASSERT_OK(tsl::ReadBinaryProto(
+      tsl::Env::Default(), tsl::io::JoinPath(GetRootDir(), "dot_aot"), &proto));
+  proto.clear_pre_relocated_image();
+  RunDotModel(std::move(proto));
 }
 
 TEST(XlaAotFunctionTest, TestErrorPropagation) {

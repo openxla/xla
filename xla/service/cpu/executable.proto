@@ -42,6 +42,58 @@ message TargetMachineOptionsProto {
   string features = 3;
 }
 
+// A position-independent executable image produced at AOT compile time from
+// the object files, with section layout, PLT stubs, and all PC-relative
+// relocations already resolved. Loading it only requires copying the segments
+// into memory and patching 64-bit pointer slots, so the runtime doesn't need an
+// ELF linker.
+//
+// The image is laid out contiguously starting at offset 0:
+//
+//   [0, rx_size)                        : code (read + execute)
+//   [rx_size, rx_size + ro_size)        : read-only data (incl. GOT slots)
+//   [rx_size + ro_size, + rw_mem_size)  : read-write data (incl. .bss)
+//
+// rx_size and ro_size are multiples of 64 KiB, so segment boundaries are valid
+// mprotect boundaries on all page sizes, and AArch64 ADRP page deltas are
+// invariant as long as the image base is 64 KiB aligned.
+message PreRelocatedImageProto {
+  // Segment contents. Bytes past the end of each field (up to the segment size)
+  // are zero-initialized.
+  bytes rx_bytes = 1;
+  bytes ro_bytes = 2;
+  bytes rw_bytes = 3;
+
+  // Segment sizes in memory.
+  uint64 rx_size = 4;
+  uint64 ro_size = 5;
+  uint64 rw_mem_size = 6;
+
+  // Writes `resolve(symbol_name) + addend` into the 8-byte slot at
+  // `image_offset`.
+  message ExternalFixup {
+    uint64 image_offset = 1;
+    string symbol_name = 2;
+    int64 addend = 3;
+  }
+
+  // Writes `image_base + target_image_offset` into the 8-byte slot at
+  // `image_offset`.
+  message RelativeFixup {
+    uint64 image_offset = 1;
+    uint64 target_image_offset = 2;
+  }
+
+  message ExportedSymbol {
+    string name = 1;
+    uint64 image_offset = 2;
+  }
+
+  repeated ExternalFixup external_fixups = 7;
+  repeated RelativeFixup relative_fixups = 8;
+  repeated ExportedSymbol exported_symbols = 9;
+}
+
 message CompilationResultProto {
   enum ObjFileKind {
     UNKNOWN = 0;
@@ -66,4 +118,6 @@ message CompilationResultProto {
   repeated ObjFileProto object_files = 8;
   TargetMachineOptionsProto target_machine_options = 9;
   string data_layout = 10;
+  // If set, loaders should prefer it over `object_files`.
+  PreRelocatedImageProto pre_relocated_image = 11;
 }

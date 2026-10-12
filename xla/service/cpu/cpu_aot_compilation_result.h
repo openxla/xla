@@ -136,6 +136,10 @@ class CpuAotCompilationResult : public CompiledModule {
 
   const CompilationResultProto& proto() const { return proto_; }
 
+  void set_pre_relocated_image(PreRelocatedImageProto image) {
+    *proto_.mutable_pre_relocated_image() = std::move(image);
+  }
+
   std::vector<absl::string_view> obj_files() const {
     std::vector<absl::string_view> obj_files;
     for (const auto& obj_file : proto_.object_files()) {

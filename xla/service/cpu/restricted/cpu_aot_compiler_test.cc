@@ -103,6 +103,13 @@ ENTRY e {
         std::vector<std::unique_ptr<CompiledModule>> aot_results,
         compiler->CompileAheadOfTime(std::move(module), *aot_options));
 
+    const CompilationResultProto& proto =
+        absl::down_cast<CpuAotCompilationResult*>(aot_results[0].get())
+            ->proto();
+    ASSERT_TRUE(proto.has_pre_relocated_image());
+    EXPECT_EQ(proto.pre_relocated_image().exported_symbols_size(),
+              proto.compiled_symbols_size());
+
     ASSERT_OK_AND_ASSIGN(std::string serialized_aot_result,
                          aot_results[0]->SerializeAsString());
     ASSERT_OK_AND_ASSIGN(
@@ -293,6 +300,50 @@ ENTRY main {
   ASSERT_NE(cpu_aot_result, nullptr);
 
   EXPECT_FALSE(cpu_aot_result->proto().data_layout().empty());
+}
+
+TEST_F(CpuAotCompilerTest, ExportedExecutableHasPreRelocatedImage) {
+  // The JIT compiles AArch64 kernels with the large code model, which uses
+  // MOVZ/MOVK address materialization that can't be pre-relocated.
+  if (llvm::Triple(kTargetTripleForHost).getArch() != llvm::Triple::x86_64) {
+    GTEST_SKIP() << "Only x86-64 JIT objects can be pre-relocated.";
+  }
+
+  absl::string_view module_string = R"(
+HloModule module
+
+ENTRY main {
+  a = f32[4] parameter(0)
+  b = f32[4] parameter(1)
+  ROOT result = f32[4] add(a, b)
+})";
+
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       se::PlatformManager::PlatformWithName("host"));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * stream_exec,
+                       platform->ExecutorForDevice(0));
+
+  Compiler* compiler = backend().compiler();
+  ASSERT_NE(compiler, nullptr);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(module_string));
+
+  xla::Compiler::CompileOptions compile_options;
+  ASSERT_OK_AND_ASSIGN(
+      hlo_module, compiler->RunHloPasses(std::move(hlo_module), stream_exec,
+                                         compile_options));
+  ASSERT_OK_AND_ASSIGN(auto executable,
+                       compiler->RunBackend(std::move(hlo_module), stream_exec,
+                                            compile_options));
+  ASSERT_OK_AND_ASSIGN(auto aot_result, compiler->Export(executable.get()));
+
+  const CompilationResultProto& proto =
+      absl::down_cast<CpuAotCompilationResult*>(aot_result.get())->proto();
+  ASSERT_TRUE(proto.has_pre_relocated_image());
+  EXPECT_FALSE(proto.object_files().empty());
+  EXPECT_EQ(proto.pre_relocated_image().exported_symbols_size(),
+            proto.compiled_symbols_size());
 }
 
 }  // namespace
