@@ -3187,6 +3187,25 @@ LogicalResult AllReduceOp::verify() {
   auto out_ty = getOutput().getType();
   auto kind = getKind();
 
+  const int64_t rank = in_ty.getRank();
+  SmallVector<bool> is_reduced(rank, false);
+  for (int64_t dim : getDimensions()) {
+    if (dim < 0 || dim >= rank) {
+      return emitOpError("Reduced dimension ")
+             << dim << " is out of bounds [0, " << rank << ")";
+    }
+    if (is_reduced[dim]) {
+      return emitOpError("Reduced dimension ")
+             << dim << " is present more than once";
+    }
+    is_reduced[dim] = true;
+  }
+
+  if (getDimensions().size() != rank && in_ty.getShape() != out_ty.getShape()) {
+    return emitOpError(
+        "Input and output shapes must match unless all dimensions are reduced");
+  }
+
   if (in_bitwidth == 1) {
     // For mask vectors, the single (semantically scalar) result is broadcast
     // into a vector of ints of whatever shape the target supports (not
@@ -3207,10 +3226,10 @@ LogicalResult AllReduceOp::verify() {
 
   switch (kind) {
     case ReductionKind::kSum:
-      if (in_ty != out_ty) {
+      if (in_ty.getElementType() != out_ty.getElementType()) {
         return emitOpError(
             "Sum, max, and min reductions must have the same "
-            "input and output type");
+            "input and output element type");
       }
       break;
     case ReductionKind::kMaxF:
@@ -3219,10 +3238,10 @@ LogicalResult AllReduceOp::verify() {
         return emitOpError(
             "maxf and minf reductions require float element type");
       }
-      if (in_ty != out_ty) {
+      if (in_ty.getElementType() != out_ty.getElementType()) {
         return emitOpError(
             "Sum, max, and min reductions must have the same "
-            "input and output type");
+            "input and output element type");
       }
       break;
     case ReductionKind::kMaxSI:
@@ -3234,10 +3253,10 @@ LogicalResult AllReduceOp::verify() {
             "maxsi, minsi, maxui and minui reductions require integer element "
             "type");
       }
-      if (in_ty != out_ty) {
+      if (in_ty.getElementType() != out_ty.getElementType()) {
         return emitOpError(
             "Sum, max, and min reductions must have the same "
-            "input and output type");
+            "input and output element type");
       }
       break;
     case ReductionKind::kMax_DEPRECATED:
@@ -3247,12 +3266,7 @@ LogicalResult AllReduceOp::verify() {
           "reductions are supported via maxf, minf, maxsi, minsi, maxui, or "
           "minui instead");
     case ReductionKind::kArgMax:
-    case ReductionKind::kArgMin:
-      if (in_ty.getShape() != out_ty.getShape()) {
-        return emitOpError(
-            "Arg_max and arg_min "
-            "must have the same input and output shape");
-      }
+    case ReductionKind::kArgMin: {
       if (!in_ty.getElementType().isF32() && !in_ty.getElementType().isBF16()) {
         return emitOpError(
             "Not Implemented: Only f32 and bf16 input is supported for arg_max "
@@ -3262,14 +3276,18 @@ LogicalResult AllReduceOp::verify() {
         return emitOpError(absl::StrFormat(
             "Arg_max and arg_min must have i%d output", in_bitwidth));
       }
-      if (in_ty.getShape()[getDim()] > (1LL << in_bitwidth)) {
+      int64_t reduction_size = 1;
+      for (int64_t dim : getDimensions()) {
+        reduction_size *= in_ty.getShape()[dim];
+      }
+      if (reduction_size > (1LL << in_bitwidth)) {
         return emitOpError(absl::StrFormat(
             "Reduction dimension size (%d) exceeds 2^%d (%d), which "
             "overflows %d-bit indices for arg_max/arg_min",
-            in_ty.getShape()[getDim()], in_bitwidth, 1LL << in_bitwidth,
-            in_bitwidth));
+            reduction_size, in_bitwidth, 1LL << in_bitwidth, in_bitwidth));
       }
       break;
+    }
     case ReductionKind::kFindFirstSet:
       return emitOpError("Only i1 input is supported for find_first_set");
   }
