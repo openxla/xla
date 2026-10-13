@@ -18,8 +18,13 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
+#include "absl/log/check.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -35,6 +40,11 @@ namespace xla {
 namespace hlo_diff {
 namespace {
 
+using ::testing::Contains;
+using ::testing::ElementsAre;
+using ::testing::IsEmpty;
+using ::testing::IsSupersetOf;
+using ::testing::Not;
 using ::testing::Pair;
 using ::testing::Pointee;
 using ::testing::Property;
@@ -506,6 +516,55 @@ ENTRY entry {
             1);
 }
 
+TEST_F(HloDiffTest, MovedInstructionsToAndFromProtoWork) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_l,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine = f32[] sine(x)
+  cosine = f32[] cosine(x)
+  ROOT subtract = f32[] subtract(sine, cosine)
+}
+)"));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::VerifiedHloModule> module_r,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine = f32[] sine(x)
+  cosine = f32[] cosine(x)
+  ROOT subtract = f32[] subtract(cosine, sine)
+}
+)"));
+  HloComputation* left = module_l->entry_computation();
+  HloComputation* right = module_r->entry_computation();
+  DiffResult diff_result;
+  diff_result.AddMovedInstruction(left->GetInstructionWithName("sine"),
+                                  right->GetInstructionWithName("sine"));
+
+  EXPECT_EQ(
+      diff_result.left_diff_codes.at(left->GetInstructionWithName("sine")),
+      DiffType::kMoved);
+  EXPECT_EQ(
+      diff_result.right_diff_codes.at(right->GetInstructionWithName("sine")),
+      DiffType::kMoved);
+
+  DiffResultProto proto = diff_result.ToProto();
+  ASSERT_EQ(proto.moved_instructions_size(), 1);
+  EXPECT_EQ(proto.moved_instructions(0).left(), "sine");
+  EXPECT_EQ(proto.moved_instructions(0).right(), "sine");
+
+  DiffResult diff_result_from_proto =
+      DiffResult::FromProto(proto, *module_l, *module_r);
+  EXPECT_THAT(diff_result_from_proto.moved_instructions,
+              UnorderedElementsAre(
+                  Pair(Pointee(Property(&HloInstruction::name, "sine")),
+                       Pointee(Property(&HloInstruction::name, "sine")))));
+}
+
 TEST_F(HloDiffTest, DebugInfoIsAttached) {
   // Create left module with entry computation containing the following
   // structure:
@@ -583,6 +642,247 @@ ENTRY entry {
           Pair(Pair(Pointee(Property(&HloInstruction::name, "parameter.1")),
                     Pointee(Property(&HloInstruction::name, "parameter.1"))),
                "debug_info_param1")));
+}
+
+// Names of the left instructions reported as changed and moved.
+struct MovedTestResult {
+  std::vector<std::string> changed;
+  std::vector<std::string> moved;
+};
+
+// Diffs `left_hlo` against `right_hlo`. The `cross_pairs` are matched with
+// `cross_matcher_type`, all other instructions are matched by name.
+MovedTestResult DiffMatchedByName(
+    absl::string_view left_hlo, absl::string_view right_hlo,
+    absl::Span<const std::pair<absl::string_view, absl::string_view>>
+        cross_pairs = {},
+    MatcherType cross_matcher_type = MatcherType::kManual) {
+  absl::StatusOr<std::unique_ptr<HloModule>> module_l =
+      ParseAndReturnUnverifiedModule(left_hlo);
+  absl::StatusOr<std::unique_ptr<HloModule>> module_r =
+      ParseAndReturnUnverifiedModule(right_hlo);
+  CHECK_OK(module_l);
+  CHECK_OK(module_r);
+  absl::StatusOr<std::unique_ptr<const HloGumgraph>> graph_l =
+      HloGumgraph::Create(module_l->get());
+  absl::StatusOr<std::unique_ptr<const HloGumgraph>> graph_r =
+      HloGumgraph::Create(module_r->get());
+  CHECK_OK(graph_l);
+  CHECK_OK(graph_r);
+  const HloGumgraph& left_graph = **graph_l;
+  const HloGumgraph& right_graph = **graph_r;
+  HloGumgraphMappings mappings;
+  for (const auto& [left, right] : cross_pairs) {
+    mappings.MapInstructionsIfAbsent(GetNodeByName(left_graph, left),
+                                     GetNodeByName(right_graph, right),
+                                     cross_matcher_type);
+  }
+  MatchAllNodesByName(left_graph, right_graph, mappings);
+  std::unique_ptr<const DiffResult> diff_result =
+      ConstructDiffResult(left_graph, right_graph, mappings);
+  return {GetSortedLeftInstructionNames(diff_result->changed_instructions),
+          GetSortedLeftInstructionNames(diff_result->moved_instructions)};
+}
+
+TEST_F(HloDiffTest, SwappedOperandsAreMoved) {
+  MovedTestResult result = DiffMatchedByName(R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine = f32[] sine(x)
+  cosine = f32[] cosine(x)
+  ROOT subtract = f32[] subtract(sine, cosine)
+}
+)",
+                                             R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine = f32[] sine(x)
+  cosine = f32[] cosine(x)
+  ROOT subtract = f32[] subtract(cosine, sine)
+}
+)");
+  EXPECT_THAT(result.changed, IsEmpty());
+  EXPECT_THAT(result.moved, ElementsAre("cosine", "sine"));
+}
+
+TEST_F(HloDiffTest, SwappedCommutativeOperandsAreNotMoved) {
+  MovedTestResult result = DiffMatchedByName(R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine = f32[] sine(x)
+  cosine = f32[] cosine(x)
+  ROOT add = f32[] add(sine, cosine)
+}
+)",
+                                             R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine = f32[] sine(x)
+  cosine = f32[] cosine(x)
+  ROOT add = f32[] add(cosine, sine)
+}
+)");
+  EXPECT_THAT(result.changed, IsEmpty());
+  EXPECT_THAT(result.moved, IsEmpty());
+}
+
+TEST_F(HloDiffTest, OperandsUsedByOtherUsersAreMoved) {
+  MovedTestResult result = DiffMatchedByName(R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine = f32[] sine(x)
+  negate = f32[] negate(sine)
+  abs = f32[] abs(x)
+  ROOT tuple = (f32[], f32[]) tuple(negate, abs)
+}
+)",
+                                             R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine = f32[] sine(x)
+  negate = f32[] negate(x)
+  abs = f32[] abs(sine)
+  ROOT tuple = (f32[], f32[]) tuple(negate, abs)
+}
+)");
+  EXPECT_THAT(result.changed, IsEmpty());
+  EXPECT_THAT(result.moved, ElementsAre("sine", "x"));
+}
+
+TEST_F(HloDiffTest, CrossMatchedIdenticalOperandsAreNotMoved) {
+  constexpr absl::string_view kHlo = R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine.0 = f32[] sine(x)
+  sine.1 = f32[] sine(x)
+  ROOT subtract = f32[] subtract(sine.0, sine.1)
+}
+)";
+  MovedTestResult result = DiffMatchedByName(
+      kHlo, kHlo, {{"sine.0", "sine.1"}, {"sine.1", "sine.0"}});
+  EXPECT_THAT(result.changed, IsEmpty());
+  EXPECT_THAT(result.moved, IsEmpty());
+}
+
+TEST_F(HloDiffTest, OperandReplacedByUnmatchedInstructionIsNotMoved) {
+  MovedTestResult result = DiffMatchedByName(R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine = f32[] sine(x)
+  cosine = f32[] cosine(x)
+  subtract = f32[] subtract(sine, cosine)
+  ROOT tuple = (f32[], f32[]) tuple(subtract, cosine)
+}
+)",
+                                             R"(
+HloModule module
+
+ENTRY entry {
+  x = f32[] parameter(0)
+  sine = f32[] sine(x)
+  cosine = f32[] cosine(x)
+  tanh = f32[] tanh(x)
+  subtract = f32[] subtract(sine, tanh)
+  ROOT tuple = (f32[], f32[]) tuple(subtract, cosine)
+}
+)");
+  // The new operand `tanh` is already reported as unmatched.
+  EXPECT_THAT(result.changed, IsEmpty());
+  EXPECT_THAT(result.moved, IsEmpty());
+}
+
+constexpr absl::string_view kLookAlikeLeftHlo = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[] parameter(0)
+  cosine = f32[] cosine(p0)
+  sine.0 = f32[] sine(p0)
+  sine.1 = f32[] sine(cosine)
+  negate.0 = f32[] negate(sine.0)
+  negate.1 = f32[] negate(sine.1)
+  ROOT tuple = (f32[], f32[]) tuple(negate.0, negate.1)
+}
+)";
+
+constexpr absl::string_view kLookAlikeRightHlo = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[] parameter(0)
+  cosine = f32[] cosine(p0)
+  exponential = f32[] exponential(p0)
+  sine.0 = f32[] sine(exponential)
+  sine.1 = f32[] sine(cosine)
+  negate.0 = f32[] negate(sine.0)
+  negate.1 = f32[] negate(sine.1)
+  ROOT tuple = (f32[], f32[]) tuple(negate.0, negate.1)
+}
+)";
+
+TEST_F(HloDiffTest, HeuristicallyCrossMatchedLookAlikesAreNotMoved) {
+  MovedTestResult result =
+      DiffMatchedByName(kLookAlikeLeftHlo, kLookAlikeRightHlo,
+                        {{"sine.0", "sine.1"}, {"sine.1", "sine.0"}},
+                        MatcherType::kGreedyLimitedCandidatesBottomUpMatcher);
+  // The bottom-up matcher likely picked the wrong one of the two look-alike
+  // sines, so they are not reported as moved.
+  EXPECT_THAT(result.moved, Not(Contains("sine.0")));
+  EXPECT_THAT(result.moved, Not(Contains("sine.1")));
+}
+
+TEST_F(HloDiffTest, ExactlyCrossMatchedLookAlikesAreMoved) {
+  MovedTestResult result =
+      DiffMatchedByName(kLookAlikeLeftHlo, kLookAlikeRightHlo,
+                        {{"sine.0", "sine.1"}, {"sine.1", "sine.0"}});
+  EXPECT_THAT(result.moved, IsSupersetOf({"sine.0", "sine.1"}));
+}
+
+TEST_F(HloDiffTest, HeuristicallyMatchedSwappedLookAlikesAreMoved) {
+  MovedTestResult result = DiffMatchedByName(
+      R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[] parameter(0)
+  cosine = f32[] cosine(p0)
+  sine.0 = f32[] sine(p0)
+  sine.1 = f32[] sine(cosine)
+  ROOT subtract = f32[] subtract(sine.0, sine.1)
+}
+)",
+      R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[] parameter(0)
+  cosine = f32[] cosine(p0)
+  sine.0 = f32[] sine(p0)
+  sine.1 = f32[] sine(cosine)
+  ROOT subtract = f32[] subtract(sine.1, sine.0)
+}
+)",
+      {{"sine.0", "sine.0"}, {"sine.1", "sine.1"}},
+      MatcherType::kGreedyLimitedCandidatesBottomUpMatcher);
+  // The operands are permuted within the subtract, so the move is trusted even
+  // though the sines look alike and were matched heuristically.
+  EXPECT_THAT(result.moved, ElementsAre("sine.0", "sine.1"));
 }
 
 }  // namespace

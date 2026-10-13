@@ -14,16 +14,21 @@
 
 #include "xla/hlo/tools/hlo_diff/hlo_diff_result.h"
 
+#include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph_node.h"
 #include "xla/hlo/tools/hlo_diff/graph/utils/hlo_gumgraph_bfs.h"
@@ -38,6 +43,210 @@ bool IsChangedInstruction(const HloInstructionNode* left_node,
                           const HloInstructionNode* right_node) {
   return left_node->props.canonical_fingerprint !=
          right_node->props.canonical_fingerprint;
+}
+
+// Hashes the subgraph rooted at a node by canonical fingerprints. Parameters
+// that are leaves (e.g. entry parameters) are identified by their parameter
+// number; inlined parameters are identified by their child, the call site
+// operand. Two nodes with equal hashes compute the same value.
+class CanonicalSubgraphHasher {
+ public:
+  uint64_t Hash(const HloInstructionNode* node) {
+    if (auto it = hashes_.find(node); it != hashes_.end()) {
+      return it->second;
+    }
+    // Iterative post-order DFS, since gumgraphs can be very deep. Nodes hashed
+    // by earlier queries are not revisited.
+    std::vector<std::pair<const HloInstructionNode*, bool>> stack = {
+        {node, false}};
+    while (!stack.empty()) {
+      auto [current, children_done] = stack.back();
+      stack.pop_back();
+      if (hashes_.contains(current)) {
+        continue;
+      }
+      if (!children_done) {
+        stack.push_back({current, true});
+        for (const HloInstructionNode* child : current->children) {
+          if (!hashes_.contains(child)) {
+            stack.push_back({child, false});
+          }
+        }
+        continue;
+      }
+      uint64_t hash = current->props.canonical_fingerprint;
+      if (current->children.empty() && current->instruction != nullptr &&
+          current->instruction->opcode() == HloOpcode::kParameter) {
+        hash = tsl::FingerprintCat64(hash,
+                                     current->instruction->parameter_number());
+      }
+      for (const HloInstructionNode* child : current->children) {
+        hash = tsl::FingerprintCat64(hash, hashes_.at(child));
+      }
+      hashes_[current] = hash;
+    }
+    return hashes_.at(node);
+  }
+
+ private:
+  absl::flat_hash_map<const HloInstructionNode*, uint64_t> hashes_;
+};
+
+struct MoveContext {
+  const HloGumgraphMappings& mappings;
+  CanonicalSubgraphHasher left_hasher;
+  CanonicalSubgraphHasher right_hasher;
+};
+
+// Returns true if the order of the operands of `node` doesn't matter, e.g. for
+// add(a, b) vs. add(b, a).
+bool IsOperandOrderInsensitive(const HloInstructionNode* node) {
+  if (node->is_root || node->instruction == nullptr) {
+    return false;
+  }
+  return node->children.size() == 2 &&
+         HloOpcodeIsBinaryCommutative(node->instruction->opcode());
+}
+
+// Returns true if the mapping was made by a similarity-based matcher, which can
+// pick the wrong one of several look-alike candidates.
+bool IsHeuristicMapping(
+    const std::optional<HloInstructionNodeMappingProps>& props) {
+  if (!props.has_value()) {
+    return false;
+  }
+  switch (props->matcher_type) {
+    case MatcherType::kGreedyLimitedCandidatesBottomUpMatcher:
+    case MatcherType::kStrictGreedyTopDownMatcher:
+    case MatcherType::kGreedyTopDownMatcher:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// An operand slot of a node: a user and the operand index of the node in it,
+// or -1 if the user's operand order doesn't matter.
+using OperandSlot = std::pair<const HloInstructionNode*, int>;
+
+// Returns the operand slots of `node`. Users are expressed as nodes of the
+// right graph: left users are translated through the mapping. Unmatched users
+// are skipped, as they are already reported as unmatched.
+std::vector<OperandSlot> GetOperandSlots(const HloInstructionNode* node,
+                                         bool is_left,
+                                         const HloGumgraphMappings& mappings) {
+  std::vector<OperandSlot> slots;
+  for (const HloInstructionNode* user : node->parents) {
+    const HloInstructionNode* right_user = user;
+    if (is_left) {
+      std::optional<const HloInstructionNode*> mapped =
+          mappings.left_to_right_instruction_map.GetRight(user);
+      if (!mapped.has_value()) {
+        continue;
+      }
+      right_user = *mapped;
+    } else if (!mappings.InstructionMapContainsRight(user)) {
+      continue;
+    }
+    const bool order_insensitive = IsOperandOrderInsensitive(user);
+    for (int i = 0; i < user->children.size(); ++i) {
+      if (user->children[i] == node) {
+        slots.push_back({right_user, order_insensitive ? -1 : i});
+      }
+    }
+  }
+  absl::c_sort(slots);
+  return slots;
+}
+
+// Returns true if `other`, the node at an operand slot that `node` occupies on
+// one side only, explains the difference: it is unmatched (already reported),
+// it computes the same value as `node`, or it looks like `node` and one of the
+// mappings is heuristic (the matcher likely picked the wrong one of two
+// look-alikes). `node` and `other` are on different sides.
+bool IsSlotDifferenceExplained(const HloInstructionNode* node,
+                               const HloInstructionNode* other,
+                               bool node_is_left, bool is_permutation,
+                               MoveContext& context) {
+  const HloGumgraphMappings& mappings = context.mappings;
+  const bool other_matched = node_is_left
+                                 ? mappings.InstructionMapContainsRight(other)
+                                 : mappings.InstructionMapContainsLeft(other);
+  if (!other_matched) {
+    return true;
+  }
+  const uint64_t node_hash = node_is_left ? context.left_hasher.Hash(node)
+                                          : context.right_hasher.Hash(node);
+  const uint64_t other_hash = node_is_left ? context.right_hasher.Hash(other)
+                                           : context.left_hasher.Hash(other);
+  if (node_hash == other_hash) {
+    return true;
+  }
+  if (is_permutation ||
+      node->props.canonical_fingerprint != other->props.canonical_fingerprint) {
+    return false;
+  }
+  const auto& map = mappings.left_to_right_instruction_map;
+  return node_is_left ? IsHeuristicMapping(map.GetPropsByLeft(node)) ||
+                            IsHeuristicMapping(map.GetPropsByRight(other))
+                      : IsHeuristicMapping(map.GetPropsByRight(node)) ||
+                            IsHeuristicMapping(map.GetPropsByLeft(other));
+}
+
+// Returns true if `user` (a node of the other side than `node`) has `node`'s
+// counterpart among its operands, i.e. the slot difference is a permutation of
+// the user's operands.
+bool HasOperand(const HloInstructionNode* user,
+                const HloInstructionNode* operand) {
+  return absl::c_linear_search(user->children, operand);
+}
+
+// Returns true if the matched nodes `left_node` and `right_node` are used
+// differently: they are operands of users that don't correspond, or at
+// different operand positions of corresponding users, e.g. sine and cosine in
+// sine(x) - cosine(x) vs. cosine(x) - sine(x).
+bool IsMovedInstruction(const HloInstructionNode* left_node,
+                        const HloInstructionNode* right_node,
+                        MoveContext& context) {
+  const HloGumgraphMappings& mappings = context.mappings;
+  std::vector<OperandSlot> left_slots =
+      GetOperandSlots(left_node, /*is_left=*/true, mappings);
+  std::vector<OperandSlot> right_slots =
+      GetOperandSlots(right_node, /*is_left=*/false, mappings);
+  if (left_slots == right_slots) {
+    return false;
+  }
+  std::vector<OperandSlot> left_only, right_only;
+  absl::c_set_difference(left_slots, right_slots,
+                         std::back_inserter(left_only));
+  absl::c_set_difference(right_slots, left_slots,
+                         std::back_inserter(right_only));
+  // Left node is at a slot of a right user where the right node isn't.
+  for (const auto& [right_user, index] : left_only) {
+    if (index < 0 || index >= right_user->children.size()) {
+      return true;
+    }
+    if (!IsSlotDifferenceExplained(
+            left_node, right_user->children[index], /*node_is_left=*/true,
+            /*is_permutation=*/HasOperand(right_user, right_node), context)) {
+      return true;
+    }
+  }
+  // Right node is at a slot of a right user where the left node isn't.
+  for (const auto& [right_user, index] : right_only) {
+    std::optional<const HloInstructionNode*> left_user =
+        mappings.left_to_right_instruction_map.GetLeft(right_user);
+    if (index < 0 || !left_user.has_value() ||
+        index >= (*left_user)->children.size()) {
+      return true;
+    }
+    if (!IsSlotDifferenceExplained(
+            right_node, (*left_user)->children[index], /*node_is_left=*/false,
+            /*is_permutation=*/HasOperand(*left_user, left_node), context)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -59,8 +268,8 @@ void DiffResult::AddChangedInstruction(const HloInstruction* left,
 void DiffResult::AddMovedInstruction(const HloInstruction* left,
                                      const HloInstruction* right) {
   moved_instructions[left] = right;
-  left_diff_codes[left] = DiffType::kUnchanged;
-  right_diff_codes[right] = DiffType::kUnchanged;
+  left_diff_codes[left] = DiffType::kMoved;
+  right_diff_codes[right] = DiffType::kMoved;
 }
 
 void DiffResult::AddUnmatchedInstruction(const HloInstruction* left,
@@ -87,6 +296,7 @@ std::unique_ptr<const DiffResult> ConstructDiffResult(
                             BfsTraversalDirection::kForward,
                             right_graph.GetNodeCount());
   auto diff_result = std::make_unique<DiffResult>();
+  MoveContext move_context = {mappings, {}, {}};
   for (const HloInstructionNode* left_node : left_all_nodes) {
     if (left_node->is_root) {
       continue;
@@ -120,13 +330,11 @@ std::unique_ptr<const DiffResult> ConstructDiffResult(
                                          right_node->instruction);
       continue;
     }
-    // If node position is unchanged, add to unchanged instructions.
-    if (mapping_props->unchanged) {
-      diff_result->AddUnchangedInstruction(left_node->instruction,
-                                           right_node->instruction);
+    if (IsMovedInstruction(left_node, right_node, move_context)) {
+      diff_result->AddMovedInstruction(left_node->instruction,
+                                       right_node->instruction);
       continue;
     }
-    // TODO(b/369851244): Add moved instructions to diff result.
     diff_result->AddUnchangedInstruction(left_node->instruction,
                                          right_node->instruction);
   }
@@ -147,6 +355,8 @@ std::unique_ptr<const DiffResult> ConstructDiffResult(
 
 DiffResultProto DiffResult::ToProto() const {
   DiffResultProto proto;
+  // The order of the instructions in the proto is unspecified.
+  // NOLINTBEGIN(*-custom-deterministic-iteration-order)
   for (const auto& [left_instruction, right_instruction] :
        unchanged_instructions) {
     MatchedInstructionPairProto* pair = proto.add_unchanged_instructions();
@@ -159,6 +369,11 @@ DiffResultProto DiffResult::ToProto() const {
     pair->set_left(left_instruction->name());
     pair->set_right(right_instruction->name());
   }
+  for (const auto& [left_instruction, right_instruction] : moved_instructions) {
+    MatchedInstructionPairProto* pair = proto.add_moved_instructions();
+    pair->set_left(left_instruction->name());
+    pair->set_right(right_instruction->name());
+  }
   for (const HloInstruction* instruction : left_module_unmatched_instructions) {
     proto.add_left_unmatched_instructions(std::string(instruction->name()));
   }
@@ -166,6 +381,7 @@ DiffResultProto DiffResult::ToProto() const {
        right_module_unmatched_instructions) {
     proto.add_right_unmatched_instructions(std::string(instruction->name()));
   }
+  // NOLINTEND(*-custom-deterministic-iteration-order)
   return proto;
 }
 
@@ -199,6 +415,10 @@ DiffResult DiffResult::FromProto(const DiffResultProto& proto,
     diff_result.AddChangedInstruction(left_instructions_by_name[pair.left()],
                                       right_instructions_by_name[pair.right()]);
   }
+  for (const MatchedInstructionPairProto& pair : proto.moved_instructions()) {
+    diff_result.AddMovedInstruction(left_instructions_by_name[pair.left()],
+                                    right_instructions_by_name[pair.right()]);
+  }
   for (const std::string& name : proto.left_unmatched_instructions()) {
     diff_result.AddUnmatchedInstruction(left_instructions_by_name[name],
                                         nullptr);
@@ -218,6 +438,7 @@ void LogDiffResult(const DiffResult& diff_result) {
             << diff_result.right_module_unmatched_instructions.size();
   LOG(INFO) << "Changed instructions: "
             << diff_result.changed_instructions.size();
+  LOG(INFO) << "Moved instructions: " << diff_result.moved_instructions.size();
   LOG(INFO) << "Unchanged instructions: "
             << diff_result.unchanged_instructions.size();
 }
