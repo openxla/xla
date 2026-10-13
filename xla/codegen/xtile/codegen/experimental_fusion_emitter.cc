@@ -1569,7 +1569,7 @@ absl::StatusOr<TensorValue> EmitRaggedDotBatch(
   // K sequential accumulation loop (same structure as EmitDot).
   auto k_for = mlir::scf::ForOp::create(
       b, MakeIndex(b, 0), MakeIndex(b, K_tiles), MakeIndex(b, 1), accumulator);
-  {
+  {  // Loop body.
     mlir::OpBuilder::InsertionGuard g(b);
     b.setInsertionPointToStart(k_for.getBody());
     Value k_iv = k_for.getInductionVar();
@@ -1586,27 +1586,21 @@ absl::StatusOr<TensorValue> EmitRaggedDotBatch(
         TensorValue rhs_tensor,
         EmitRegionInstructionWithDependencies(emitter_ctx, region, rhs_tiled));
 
-    // K-boundary masking.
-    {
-      ABSL_ASSIGN_OR_RETURN(
-          Type lhs_k_elem_ty,
-          PrimitiveTypeToMlirType(b, lhs_tiled->hlo()->shape().element_type()));
-      Value lhs_k_zero = CreateConst(b, lhs_k_elem_ty, 0.0f);
-      ABSL_ASSIGN_OR_RETURN(
-          lhs_tensor,
-          MaskOperand(b, *lhs_tiled, lhs_tensor, k_iv_i32,
-                      dot_dims.lhs_contracting_dimensions(0), lhs_k_zero));
-    }
-    {
-      ABSL_ASSIGN_OR_RETURN(
-          Type rhs_k_elem_ty,
-          PrimitiveTypeToMlirType(b, rhs_tiled->hlo()->shape().element_type()));
-      Value rhs_k_zero = CreateConst(b, rhs_k_elem_ty, 0.0f);
-      ABSL_ASSIGN_OR_RETURN(
-          rhs_tensor,
-          MaskOperand(b, *rhs_tiled, rhs_tensor, k_iv_i32,
-                      dot_dims.rhs_contracting_dimensions(0), rhs_k_zero));
-    }
+    // K-boundary masking of LHS and RHS.
+    ABSL_ASSIGN_OR_RETURN(
+        Type lhs_k_elem_ty,
+        PrimitiveTypeToMlirType(b, lhs_tiled->hlo()->shape().element_type()));
+    ABSL_ASSIGN_OR_RETURN(lhs_tensor,
+                          MaskOperand(b, *lhs_tiled, lhs_tensor, k_iv_i32,
+                                      dot_dims.lhs_contracting_dimensions(0),
+                                      CreateConst(b, lhs_k_elem_ty, 0.0f)));
+    ABSL_ASSIGN_OR_RETURN(
+        Type rhs_k_elem_ty,
+        PrimitiveTypeToMlirType(b, rhs_tiled->hlo()->shape().element_type()));
+    ABSL_ASSIGN_OR_RETURN(rhs_tensor,
+                          MaskOperand(b, *rhs_tiled, rhs_tensor, k_iv_i32,
+                                      dot_dims.rhs_contracting_dimensions(0),
+                                      CreateConst(b, rhs_k_elem_ty, 0.0f)));
 
     // Batch-squeeze → partial dot → batch-unsqueeze. kRaggedBatch does not
     // squeeze a group dimension, so the RHS contracting dim is unchanged.
