@@ -486,7 +486,9 @@ ThunkEmitter::RegisterAsyncExecution(const HloInstruction* async_start) {
   // while the nested-emission future is still pending.
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       async_start, ir_emitter_context_->GetNextThunkId());
-  auto execution = std::make_shared<AsyncExecution>(std::move(info));
+  auto execution = std::make_shared<AsyncExecution>(
+      std::move(info),
+      ir_emitter_context_->gpu_topology().num_devices_per_host());
   auto [_, inserted] = hlo_async_executions_.emplace(async_start, execution);
   if (!inserted) {
     return Internal("Async execution already exists for instruction %s",
@@ -539,7 +541,8 @@ ThunkEmitter::ThunkEmitter(
     llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
         llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
-      send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
+      send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>(
+          ir_emitter_context_->gpu_topology().num_devices_per_host())),
       call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())),
       constants_module_context_(std::make_unique<llvm::LLVMContext>()),
       constants_module_(ir_emitter_context_->CreateLLVMModule(
@@ -596,10 +599,13 @@ Future<ThunkSequence> ThunkEmitter::EmitConditional(
       instr, ir_emitter_context_->GetNextThunkId());
   ShapedSlice shaped_slice{slice, instr->operand(0)->shape()};
   return tsl::JoinFutures(absl::MakeSpan(branch_thunks))
-      .Map([info = std::move(info), shaped_slice = std::move(shaped_slice)](
+      .Map([info = std::move(info), shaped_slice = std::move(shaped_slice),
+            devices_per_host =
+                ir_emitter_context_->gpu_topology().num_devices_per_host()](
                std::vector<ThunkSequence> branch_thunks) mutable {
         return ThunkSequence::Of<ConditionalThunk>(
-            std::move(info), std::move(shaped_slice), std::move(branch_thunks));
+            std::move(info), std::move(shaped_slice), std::move(branch_thunks),
+            devices_per_host);
       });
 }
 
@@ -692,12 +698,14 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolution(
                                   instr->window(),
                                   instr->convolution_dimension_numbers(),
                                   instr->feature_group_count()};
-  ABSL_ASSIGN_OR_RETURN(auto thunk,
-                        ConvolutionThunk::Create(
-                            Thunk::ThunkInfo::WithProfileAnnotation(
-                                instr, ir_emitter_context_->GetNextThunkId()),
-                            std::move(descriptor), std::move(operand_slices),
-                            std::move(result_slices), scratch_slice));
+  ABSL_ASSIGN_OR_RETURN(
+      auto thunk,
+      ConvolutionThunk::Create(
+          Thunk::ThunkInfo::WithProfileAnnotation(
+              instr, ir_emitter_context_->GetNextThunkId()),
+          std::move(descriptor), std::move(operand_slices),
+          std::move(result_slices), scratch_slice,
+          ir_emitter_context_->gpu_topology().num_devices_per_host()));
   return ThunkSequence::Of(std::move(thunk));
 }
 
@@ -1115,12 +1123,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitNorm(
 
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<NormThunk> thunk,
-      NormThunk::Create(Thunk::ThunkInfo::WithProfileAnnotation(
-                            instr, ir_emitter_context_->GetNextThunkId()),
-                        std::move(descriptor), x_slice, scale_slice,
-                        y_or_dx_slice, bias_slice, expectation_slice,
-                        norm_factor_slice, dy_slice, dscale_slice, dbias_slice,
-                        scratch_slice.slice));
+      NormThunk::Create(
+          Thunk::ThunkInfo::WithProfileAnnotation(
+              instr, ir_emitter_context_->GetNextThunkId()),
+          std::move(descriptor), x_slice, scale_slice, y_or_dx_slice,
+          bias_slice, expectation_slice, norm_factor_slice, dy_slice,
+          dscale_slice, dbias_slice, scratch_slice.slice,
+          ir_emitter_context_->gpu_topology().num_devices_per_host()));
   return ThunkSequence::Of(std::move(thunk));
 }
 
@@ -1431,7 +1440,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitFft(
       /*input_buffer=*/arg_slice,
       /*output_buffer=*/dest_slice,
       /*input_shape=*/instr->operand(0)->shape(),
-      /*output_shape=*/instr->shape());
+      /*output_shape=*/instr->shape(),
+      ir_emitter_context_->gpu_topology().num_devices_per_host());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTriangularSolveCustomCall(
@@ -1566,10 +1576,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTopKCustomCall(
 
   TF_RET_CHECK(k <= 16) << "CustomCall TopK requires k <= 16";
   // Load TopK custom kernel.
-  ABSL_ASSIGN_OR_RETURN(
-      CustomKernel kernel,
-      kernel::topk::GetTopKKernel("topk", dtype, n, k, batch_size,
-                                  platform_name(), wavefront_size));
+  ABSL_ASSIGN_OR_RETURN(CustomKernel kernel,
+                        kernel::topk::GetTopKKernel(
+                            "topk", dtype, n, k, batch_size, platform_name(),
+                            wavefront_size, kernel::topk::Order::kTotal));
 
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
@@ -1795,10 +1805,12 @@ Future<ThunkSequence> ThunkEmitter::EmitFusion(
     return EmitStaticSliceCopyFusion(instr, *static_copy);
   }
 
-  ABSL_ASSIGN_OR_RETURN(std::optional<DynamicSliceCopyFusion> dynamic_copy,
-                        AnalyzeDynamicSliceCopyFusion(instr));
-  if (dynamic_copy.has_value()) {
-    return EmitDynamicSliceCopyFusion(instr, std::move(*dynamic_copy));
+  if (SupportsDynamicSliceCopyThunks(ir_emitter_context_->gpu_device_info())) {
+    ABSL_ASSIGN_OR_RETURN(std::optional<DynamicSliceCopyFusion> dynamic_copy,
+                          AnalyzeDynamicSliceCopyFusion(instr));
+    if (dynamic_copy.has_value()) {
+      return EmitDynamicSliceCopyFusion(instr, std::move(*dynamic_copy));
+    }
   }
 
   analysis_garbage_collector_.push_back(
@@ -2282,14 +2294,9 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
     // trailing root-rank buffer specially at run time.
     thunks = ThunkSequence::Of<CollectiveThunkType>(
         info, inst, /*buffers=*/std::move(buffers),
+        ir_emitter_context_->gpu_topology().num_devices_per_host(),
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
         has_dynamic_root);
-  } else if constexpr (std::is_same_v<CollectiveThunkType,
-                                      RaggedAllToAllThunk>) {
-    thunks = ThunkSequence::Of<CollectiveThunkType>(
-        info, inst, /*buffers=*/std::move(buffers),
-        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
-        ir_emitter_context_->gpu_topology().num_devices_per_host());
   } else if constexpr (std::is_constructible_v<
                            CollectiveThunkType, Thunk::ThunkInfo,
                            decltype(inst),
@@ -2299,7 +2306,8 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
   } else {
     thunks = ThunkSequence::Of<CollectiveThunkType>(
         info, inst, /*buffers=*/std::move(buffers),
-        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
+        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
+        ir_emitter_context_->gpu_topology().num_devices_per_host());
   }
   return thunks;
 }
@@ -2479,7 +2487,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCopyStart(
   auto start_thunk = std::make_unique<AsyncStartThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(
           copy_start_instr, ir_emitter_context_->GetNextThunkId()),
-      *execution_stream_id, std::move(nested_thunks));
+      *execution_stream_id, std::move(nested_thunks),
+      ir_emitter_context_->gpu_topology().num_devices_per_host());
 
   auto [it, inserted] = hlo_async_executions_.emplace(
       copy_start_instr, start_thunk->async_execution());
@@ -2690,11 +2699,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHostExecuteStart(
       HostOffloadingExecutableProto::EXECUTABLE_TYPE_NANORT);
 
   ABSL_ASSIGN_OR_RETURN(
-      auto thunk, HostExecuteStartThunk::Create(
-                      Thunk::ThunkInfo::WithProfileAnnotation(
-                          async_start, ir_emitter_context_->GetNextThunkId()),
-                      std::move(host_offloading_executable_proto),
-                      std::move(operand_slices), std::move(result_slices)));
+      auto thunk,
+      HostExecuteStartThunk::Create(
+          Thunk::ThunkInfo::WithProfileAnnotation(
+              async_start, ir_emitter_context_->GetNextThunkId()),
+          std::move(host_offloading_executable_proto),
+          std::move(operand_slices), std::move(result_slices),
+          ir_emitter_context_->gpu_topology().num_devices_per_host()));
 
   auto [it, inserted] = GetInstructionToHostExecuteAsyncEvents().emplace(
       host_execute, thunk->async_events());
@@ -2782,7 +2793,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitAsyncSendRecvStart(
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       async_start, ir_emitter_context_->GetNextThunkId());
   auto [it, inserted] = hlo_async_executions_.emplace(
-      owner, std::make_shared<AsyncExecution>(info));
+      owner,
+      std::make_shared<AsyncExecution>(
+          info, ir_emitter_context_->gpu_topology().num_devices_per_host()));
   if (!inserted) {
     return Internal("Async execution already exists for instruction %s",
                     owner->ToString());

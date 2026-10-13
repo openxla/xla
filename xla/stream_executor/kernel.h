@@ -158,6 +158,14 @@ class Kernel {
                               Stream* stream, const KernelArgs& args,
                               Event* launch_completion_event = nullptr) = 0;
 
+  struct PlatformSpecificHandle {
+    void* kernel = nullptr;
+  };
+
+  virtual PlatformSpecificHandle platform_specific_handle() const {
+    return PlatformSpecificHandle{};
+  }
+
   void set_use_pdl(bool use_pdl) { use_pdl_ = use_pdl; }
   bool use_pdl() const { return use_pdl_; }
 

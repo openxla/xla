@@ -1,1419 +1,826 @@
+diff --git a/shardy/dialect/sdy/ir/canonicalization.cc b/shardy/dialect/sdy/ir/canonicalization.cc
+index 55f7ebcf..9af43e32 100644
+--- a/shardy/dialect/sdy/ir/canonicalization.cc
++++ b/shardy/dialect/sdy/ir/canonicalization.cc
+@@ -25,6 +25,7 @@ limitations under the License.
+ #include "llvm/ADT/SmallVector.h"
+ #include "llvm/Support/MathExtras.h"
+ #include "mlir/IR/BuiltinAttributes.h"
++#include "mlir/IR/BuiltinTypes.h"
+ #include "mlir/IR/Diagnostics.h"
+ #include "mlir/IR/MLIRContext.h"
+ #include "mlir/IR/OperationSupport.h"
+@@ -203,6 +204,42 @@ std::optional<ReduceScatterFusionInfo> matchAndComputeReduceScatterFusionAxes(
+   SmallVector<DimensionShardingAttr> reduceScatterOutDimShardings;
+   reduceScatterOutDimShardings.reserve(rank);
+ 
++  // TODO(b/553078138): This is a conservative workaround. The proper fix is to
++  // make a reduce-scatter with unreduced axes exportable for the non-divisible
++  // case (in `convertReduceScatter`); once that lands, this bail-out (which
++  // falls back to the less efficient `all_reduce` + `all_slice` form) can be
++  // removed so these cases fuse as well.
++  // Bail out of the fusion if it would create an `sdy.reduce_scatter` that
++  // scatters a dimension by a group size that does not evenly divide the local
++  // (already-sharded) dimension size. Exporting a reduce-scatter with unreduced
++  // axes (see `convertReduceScatter` in export_manual_reduction_collectives)
++  // requires the scattered dimension to be divisible by the group size, and
++  // would otherwise fail. Keeping the `all_reduce` + `all_slice` form preserves
++  // correct behavior for these non-divisible cases.
++  if (auto operandType =
++          dyn_cast<RankedTensorType>(allReduceOp.getTensor().getType())) {
++    // Local (per-device) shape of the all-reduce operand under its existing
++    // sharding. `allowNonDivisible=true` handles the case where the existing
++    // sharding does not evenly divide a dimension: the local size is rounded up
++    // (ceil), matching how Shardy pads such dimensions.
++    RankedTensorType localType = allReduceInSharding.getLocalTensorType(
++        operandType, mesh, /*allowNonDivisible=*/true);
++    for (int64_t dim = 0; dim < rank; ++dim) {
++      int64_t groupSize =
++          getTotalAxesSize(reduceScatterAxes[dim].getValue(), mesh);
++      if (groupSize <= 1) {
++        continue;
++      }
++      int64_t localDimSize = localType.getDimSize(dim);
++      if (ShapedType::isDynamic(localDimSize)) {
++        continue;
++      }
++      if (localDimSize % groupSize != 0) {
++        return std::nullopt;
++      }
++    }
++  }
++
+   for (auto [operandDimSharding, reduceScatterAxesPerDim] : llvm::zip_equal(
+            allReduceInSharding.getDimShardings(), reduceScatterAxes)) {
+     SmallVector<AxisRefAttr> expectedDimShardingAxes =
+diff --git a/shardy/dialect/sdy/ir/extensions/stablehlo_extensions.cc b/shardy/dialect/sdy/ir/extensions/stablehlo_extensions.cc
+index d4825b2e..75aac4e0 100644
+--- a/shardy/dialect/sdy/ir/extensions/stablehlo_extensions.cc
++++ b/shardy/dialect/sdy/ir/extensions/stablehlo_extensions.cc
+@@ -70,20 +70,20 @@ struct WhileShardableDataFlowOpInterface
+   }
+ };
+ 
+-template <typename OpTy>
+-struct RegionBranchShardableDataFlowOpInterface
++struct CaseShardableDataFlowOpInterface
+     : public ShardableDataFlowOpInterface::ExternalModel<
+-          RegionBranchShardableDataFlowOpInterface<OpTy>, OpTy> {
++          CaseShardableDataFlowOpInterface, stablehlo::CaseOp> {
+   ResultRange getOpResultEdgeOwners(Operation *op) const {
+     return op->getResults();
+   }
+ 
+   SmallVector<OpOperand *> getEdgeSources(Operation *op, Value owner) const {
++    auto caseOp = cast<stablehlo::CaseOp>(op);
+     auto opResult = dyn_cast<OpResult>(owner);
+     assert(opResult && opResult.getOwner() == op);
+     SmallVector<OpOperand *> sources;
+-    sources.reserve(op->getNumRegions());
+-    for (Region& branch : op->getRegions()) {
++    sources.reserve(caseOp.getBranches().size());
++    for (Region &branch : caseOp.getBranches()) {
+       sources.push_back(&branch.front().getTerminator()->getOpOperand(
+           opResult.getResultNumber()));
+     }
+@@ -132,10 +132,7 @@ void registerStablehloExtensions(MLIRContext *ctx) {
+   // Ensure dialect is loaded before attaching interfaces.
+   ctx->loadDialect<stablehlo::StablehloDialect>();
+   stablehlo::WhileOp::attachInterface<WhileShardableDataFlowOpInterface>(*ctx);
+-  stablehlo::CaseOp::attachInterface<
+-      RegionBranchShardableDataFlowOpInterface<stablehlo::CaseOp>>(*ctx);
+-  stablehlo::IfOp::attachInterface<
+-      RegionBranchShardableDataFlowOpInterface<stablehlo::IfOp>>(*ctx);
++  stablehlo::CaseOp::attachInterface<CaseShardableDataFlowOpInterface>(*ctx);
+   stablehlo::OptimizationBarrierOp::attachInterface<
+       OptBarrierShardableDataFlowOpInterface>(*ctx);
+ }
+diff --git a/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir b/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir
+index de616ede..14b0acf3 100644
+--- a/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir
++++ b/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir
+@@ -115,15 +115,33 @@ func.func @reduce_scatter_fusion4(%arg0 : tensor<64x8xf32> {sdy.sharding=#sdy.sh
+   return %1 : tensor<64x8xf32>
+ }
+ 
++// The local size of dim 0 is 2 / size("x"=2) = 1, which is not divisible by the
++// reduce-scatter group size (size("y"=2)). The fusion must be skipped and the
++// original `all_reduce` + `all_slice` preserved, otherwise the resulting
++// `reduce_scatter` cannot be exported (see `convertReduceScatter` in
++// export_manual_reduction_collectives).
+ // CHECK-LABEL: func @reduce_scatter_fusion_non_divisible
+ func.func @reduce_scatter_fusion_non_divisible(%arg0 : tensor<2x4xf32> {sdy.sharding=#sdy.sharding<@mesh, [{"x"}, {}]>}) -> tensor<2x4xf32> {
+-  // CHECK-NEXT: %0 = sdy.reduce_scatter [{"y"}, {}] %arg0 out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<2x4xf32>
+-  // CHECK-NEXT: return %0 : tensor<2x4xf32>
++  // CHECK-NEXT: %[[ALL_REDUCE:.*]] = sdy.all_reduce {"y"} %arg0 out_sharding=<@mesh, [{"x"}, {}]> : tensor<2x4xf32>
++  // CHECK-NEXT: %[[ALL_SLICE:.*]] = sdy.all_slice [{"y"}, {}] %[[ALL_REDUCE]] out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<2x4xf32>
++  // CHECK-NEXT: return %[[ALL_SLICE]] : tensor<2x4xf32>
+   %0 = sdy.all_reduce {"y"} %arg0 out_sharding=<@mesh, [{"x"}, {}]> : tensor<2x4xf32>
+   %1 = sdy.all_slice [{"y"}, {}] %0 out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<2x4xf32>
+   return %1 : tensor<2x4xf32>
+ }
+ 
++// The `all_reduce` operand is sharded indivisibly: dim 0 size 7 with
++// size("x"=2), so its local size is ceil(7 / 2) = 4, which is divisible by
++// the reduce-scatter group size (size("y"=2)). Therefore, fusion happens.
++// CHECK-LABEL: func @reduce_scatter_fusion_non_divisible_all_reduce
++func.func @reduce_scatter_fusion_non_divisible_all_reduce(%arg0 : tensor<7x4xf32> {sdy.sharding=#sdy.sharding<@mesh, [{"x"}, {}]>}) -> tensor<7x4xf32> {
++  // CHECK-NEXT: %0 = sdy.reduce_scatter [{"y"}, {}] %arg0 out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<7x4xf32>
++  // CHECK-NEXT: return %0 : tensor<7x4xf32>
++  %0 = sdy.all_reduce {"y"} %arg0 out_sharding=<@mesh, [{"x"}, {}]> : tensor<7x4xf32>
++  %1 = sdy.all_slice [{"y"}, {}] %0 out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<7x4xf32>
++  return %1 : tensor<7x4xf32>
++}
++
+ // CHECK-LABEL: func @reduce_scatter_fusion_missing_in_sharding
+ func.func @reduce_scatter_fusion_missing_in_sharding(%arg0 : tensor<16x8xf32>) -> tensor<16x8xf32> {
+   // CHECK-NEXT: %0 = sdy.reduce_scatter [{"x"}, {"y"}] %arg0 out_sharding=<@mesh2, [{"x"}, {"y"}]> : tensor<16x8xf32>
+diff --git a/shardy/dialect/sdy/ir/utils.cc b/shardy/dialect/sdy/ir/utils.cc
+index 590f7149..f6623986 100644
+--- a/shardy/dialect/sdy/ir/utils.cc
++++ b/shardy/dialect/sdy/ir/utils.cc
+@@ -247,13 +247,10 @@ TensorShardingPerValueAttr inlineMesh(
+                                          inlinedShardings);
+ }
+ 
+-namespace {
+-
+-template <typename SymbolTableOrOp>
+-std::pair<Attribute, MeshAttr> getCommonMeshAndRef(
+-    ArrayRef<TensorShardingAttr> operandShardings,
+-    ArrayRef<TensorShardingAttr> resultsShardings,
+-    SymbolTableOrOp symbolTableOrOp, const bool ignoreDeviceIds) {
++Attribute getCommonMeshOrRef(ArrayRef<TensorShardingAttr> operandShardings,
++                             ArrayRef<TensorShardingAttr> resultsShardings,
++                             const SymbolTable& symbolTable,
++                             const bool ignoreDeviceIds) {
+   Attribute meshOrRef;
+   MeshAttr mesh;
+   for (TensorShardingAttr sharding : llvm::concat<const TensorShardingAttr>(
+@@ -261,7 +258,7 @@ std::pair<Attribute, MeshAttr> getCommonMeshAndRef(
+     if (!sharding || sharding.getMeshOrRef() == meshOrRef) {
+       continue;
+     }
+-    MeshAttr otherMesh = sharding.getMesh(symbolTableOrOp);
++    MeshAttr otherMesh = sharding.getMesh(symbolTable);
+     if (!mesh || mesh.empty()) {
+       mesh = otherMesh;
+       meshOrRef = sharding.getMeshOrRef();
+@@ -272,7 +269,7 @@ std::pair<Attribute, MeshAttr> getCommonMeshAndRef(
+     }
+     if (!otherMesh.equals(mesh, ignoreDeviceIds)) {
+       // Found more than one mesh name.
+-      return {nullptr, nullptr};
++      return nullptr;
+     }
+     // Prefer iota device id over non-iota.
+     if (ignoreDeviceIds && otherMesh.getDeviceIds().empty()) {
+@@ -281,18 +278,7 @@ std::pair<Attribute, MeshAttr> getCommonMeshAndRef(
+     }
+   }
+ 
+-  return {meshOrRef, mesh};
+-}
+-
+-}  // namespace
+-
+-Attribute getCommonMeshOrRef(ArrayRef<TensorShardingAttr> operandShardings,
+-                             ArrayRef<TensorShardingAttr> resultsShardings,
+-                             const SymbolTable& symbolTable,
+-                             const bool ignoreDeviceIds) {
+-  return getCommonMeshAndRef(operandShardings, resultsShardings, symbolTable,
+-                             ignoreDeviceIds)
+-      .first;
++  return meshOrRef;
+ }
+ 
+ MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> shardings,
+@@ -300,24 +286,21 @@ MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> shardings,
+   return getCommonMesh(shardings, {}, symbolTable);
+ }
+ 
+-MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> shardings, Operation* op) {
+-  return getCommonMesh(shardings, {}, op);
+-}
+-
+ MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> operandShardings,
+                        ArrayRef<TensorShardingAttr> resultsShardings,
+                        const SymbolTable& symbolTable) {
+-  return getCommonMeshAndRef(operandShardings, resultsShardings, symbolTable,
+-                             /*ignoreDeviceIds=*/false)
+-      .second;
++  if (Attribute meshOrRef =
++          getCommonMeshOrRef(operandShardings, resultsShardings, symbolTable)) {
++    return getMeshOrLookup(symbolTable, meshOrRef);
++  }
++  return nullptr;
+ }
+ 
+ MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> operandShardings,
+                        ArrayRef<TensorShardingAttr> resultsShardings,
+                        Operation* op) {
+-  return getCommonMeshAndRef(operandShardings, resultsShardings, op,
+-                             /*ignoreDeviceIds=*/false)
+-      .second;
++  return getCommonMesh(operandShardings, resultsShardings,
++                       SymbolTable(op->getParentOfType<ModuleOp>()));
+ }
+ 
+ std::optional<StringRef> getCommonMeshName(
+diff --git a/shardy/dialect/sdy/ir/utils.h b/shardy/dialect/sdy/ir/utils.h
+index 3b56a553..22e4d9cc 100644
+--- a/shardy/dialect/sdy/ir/utils.h
++++ b/shardy/dialect/sdy/ir/utils.h
+@@ -195,12 +195,6 @@ Attribute getCommonMeshOrRef(ArrayRef<TensorShardingAttr> operandShardings,
+ MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> shardings,
+                        const SymbolTable& symbolTable);
+ 
+-// Returns the common `MeshAttr` bound by all the `TensorShardingAttr`s or
+-// nullptr if there is none.
+-//
+-// Ignores empty meshes unless all meshes are empty.
+-MeshAttr getCommonMesh(ArrayRef<TensorShardingAttr> shardings, Operation* op);
+-
+ // Returns the common `MeshAttr` bound by all the `TensorShardingAttr`s or
+ // nullptr if there is none.
+ //
+diff --git a/shardy/dialect/sdy/ir/utils_test.cc b/shardy/dialect/sdy/ir/utils_test.cc
+index f76d2b16..8dbaf619 100644
+--- a/shardy/dialect/sdy/ir/utils_test.cc
++++ b/shardy/dialect/sdy/ir/utils_test.cc
+@@ -81,27 +81,11 @@ class UtilsTest : public ShardyTestBase {
+     return symbolTableCollection.getSymbolTable(moduleOp.get());
+   }
+ 
+-  Operation* getModuleOp() { return moduleOp.get(); }
+-  Operation* getNestedOp() {
+-    return moduleOp->lookupSymbol<func::FuncOp>("main");
+-  }
+-
+  private:
+   OwningOpRef<ModuleOp> moduleOp;
+   mlir::SymbolTableCollection symbolTableCollection;
+ };
+ 
+-TEST_F(UtilsTest, GetCommonMesh_SingleListWithOperation) {
+-  EXPECT_NE(getCommonMesh({createTensorSharding("mesh_ab_23")}, getModuleOp()),
+-            nullptr);
+-  EXPECT_EQ(
+-      getCommonMesh({createTensorSharding("mesh_ab_23")}, getModuleOp()),
+-      getCommonMesh({createTensorSharding("mesh_ab_23")}, getSymbolTable()));
+-  EXPECT_EQ(
+-      getCommonMesh({createTensorSharding("mesh_ab_23")}, getNestedOp()),
+-      getCommonMesh({createTensorSharding("mesh_ab_23")}, getSymbolTable()));
+-}
+-
+ TEST_F(UtilsTest, GetCommonMeshName_AllSame) {
+   EXPECT_EQ(getCommonMeshName({createTensorSharding("mesh_ab_23")},
+                               {createTensorSharding("mesh_ab_23")},
+diff --git a/shardy/dialect/sdy/ir/verifiers.cc b/shardy/dialect/sdy/ir/verifiers.cc
+index 09f70f28..65c6212b 100644
+--- a/shardy/dialect/sdy/ir/verifiers.cc
++++ b/shardy/dialect/sdy/ir/verifiers.cc
+@@ -1186,7 +1186,8 @@ LogicalResult verifyPropagationEdgesShardingAttr(
+         "expected propagation edges attr to reference a sharding.");
+   }
+ 
+-  MeshAttr mesh = getCommonMesh(shardings, op);
++  MeshAttr mesh =
++      getCommonMesh(shardings, SymbolTable(op->getParentOfType<ModuleOp>()));
+   if (!mesh) {
+     return op->emitOpError(
+         "expected a common mesh for propagation edges attr.");
+@@ -1195,7 +1196,12 @@ LogicalResult verifyPropagationEdgesShardingAttr(
+   for (PropagationOneStepAttr propagationEdge : propagationEdges) {
+     for (AxisToPropagationDetailsAttr axisEntry :
+          propagationEdge.getAxisEntries()) {
+-      if (!mesh.hasAxis(axisEntry.getAxisName().getName())) {
++      bool meshContainsAxis = false;
++      if (mesh.hasAxis(axisEntry.getAxisName().getName())) {
++        meshContainsAxis = true;
++      }
++
++      if (!meshContainsAxis) {
+         return op->emitOpError("expected axis ref to be in one of the meshes");
+       }
+ 
+@@ -1284,8 +1290,8 @@ LogicalResult NamedComputationOp::verifySymbolUses(
+ 
+   // TODO(pxy): remove this once the `ShardableDataFlowOpInterface` is verified.
+   // Verify the in/out shardings.
+-  const SymbolTable& symbolTable = symbolTableCollection.getSymbolTable(
+-      getOperation()->getParentOfType<ModuleOp>());
++  const SymbolTable& symbolTable =
++      SymbolTable(getOperation()->getParentOfType<ModuleOp>());
+   if (inShardings && failed(verifyTensorShardingPerValueAttr(
+                          *inShardings, getOperandTypes(), *this, symbolTable,
+                          [this](StringRef msg) {
+diff --git a/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/data_flow_ops.mlir b/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/data_flow_ops.mlir
+index f287d6de..f2891d04 100644
+--- a/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/data_flow_ops.mlir
++++ b/shardy/dialect/sdy/transforms/export/test/insert_explicit_reshards/data_flow_ops.mlir
+@@ -48,25 +48,6 @@ func.func @case_argument_used_outside_block(%arg0: tensor<210xf32> {sdy.sharding
+   return %3 : tensor<210xf32>
+ }
+ 
+-// CHECK-LABEL: func @if
+-func.func @if(%arg0: tensor<210xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"x":(1)2}]>}, %arg1: tensor<i1>) -> (tensor<210xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"y"}]>}) {
+-  %0 = "stablehlo.if"(%arg1) ({
+-    // CHECK: %[[RESHARD:.*]] = sdy.reshard %arg0 <@mesh, [{"x"}]> : tensor<210xf32>
+-    // CHECK-NEXT: stablehlo.abs %[[RESHARD]]
+-    %2 = stablehlo.abs %arg0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"x"}]>]>} : tensor<210xf32>
+-    // CHECK: %[[RESHARD:.*]] = sdy.reshard %{{.*}} <@mesh, [{"y"}]> : tensor<210xf32>
+-    // CHECK-NEXT: stablehlo.return %[[RESHARD]] : tensor<210xf32>
+-    stablehlo.return %2 : tensor<210xf32>
+-  }, {
+-    %2 = stablehlo.abs %arg0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"x":(1)2}]>]>} : tensor<210xf32>
+-    // CHECK: %[[RESHARD:.*]] = sdy.reshard %{{.*}} <@mesh, [{"y"}]> : tensor<210xf32>
+-    // CHECK-NEXT: stablehlo.return %[[RESHARD]] : tensor<210xf32>
+-    stablehlo.return %2 : tensor<210xf32>
+-  }) {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"y"}]>]>} : (tensor<i1>) -> tensor<210xf32>
+-  %1 = stablehlo.negate %0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"y"}]>]>} : tensor<210xf32>
+-  return %1 : tensor<210xf32>
+-}
+-
+ // CHECK-LABEL: func @while
+ func.func @while(%arg0: tensor<210xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"x"}]>}) -> (tensor<210xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"y"}]>}) {
+   %c = stablehlo.constant dense<0> : tensor<i32>
+diff --git a/shardy/dialect/sdy/transforms/import/test/add_data_flow_edges.mlir b/shardy/dialect/sdy/transforms/import/test/add_data_flow_edges.mlir
+index 6b080b16..bd472047 100644
+--- a/shardy/dialect/sdy/transforms/import/test/add_data_flow_edges.mlir
++++ b/shardy/dialect/sdy/transforms/import/test/add_data_flow_edges.mlir
+@@ -55,24 +55,6 @@ func.func @case_token_result_skipped(
+   return %0#0, %0#1 : !stablehlo.token, tensor<4xi64>
+ }
+ 
+-// CHECK-LABEL: func @if
+-func.func @if(%arg0: tensor<i1>, %arg1: tensor<8xi64>, %arg2: tensor<8xi64>,
+-              %arg3: tensor<8xi64>, %arg4: tensor<8xi64>)
+-    -> (tensor<8xi64>, tensor<8xi64>) {
+-  // CHECK-NEXT: %[[IF:.*]]:2 = "stablehlo.if"(%arg0)
+-  // CHECK:      %[[EDGE_1:.*]] = sdy.data_flow_edge %[[IF]]#0 : tensor<8xi64>
+-  // CHECK-NEXT: %[[EDGE_2:.*]] = sdy.data_flow_edge %[[IF]]#1 : tensor<8xi64>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[EDGE_2]], %[[EDGE_2]]
+-  // CHECK-NEXT: return %[[EDGE_1]], %[[ADD]]
+-  %0:2 = "stablehlo.if"(%arg0) ({
+-    stablehlo.return %arg1, %arg2 : tensor<8xi64>, tensor<8xi64>
+-  }, {
+-    stablehlo.return %arg3, %arg4 : tensor<8xi64>, tensor<8xi64>
+-  }) : (tensor<i1>) -> (tensor<8xi64>, tensor<8xi64>)
+-  %1 = stablehlo.add %0#1, %0#1 : tensor<8xi64>
+-  return %0#0, %1 : tensor<8xi64>, tensor<8xi64>
+-}
+-
+ // CHECK-LABEL: func @optimization_barrier
+ func.func @optimization_barrier(%arg0: tensor<32x96xf32>, %arg1: tensor<32x96xf32>)
+     -> (tensor<32x96xf32>, tensor<32x96xf32>) {
+diff --git a/shardy/dialect/sdy/transforms/import/test/apply_sharding_constraints.mlir b/shardy/dialect/sdy/transforms/import/test/apply_sharding_constraints.mlir
+index 445f25fd..11d064d5 100644
+--- a/shardy/dialect/sdy/transforms/import/test/apply_sharding_constraints.mlir
++++ b/shardy/dialect/sdy/transforms/import/test/apply_sharding_constraints.mlir
+@@ -652,275 +652,6 @@ func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+ 
+ // -----
+ 
+-// A flat call graph (@main -> @foo) without func data flow edges, applying a
+-// single sharding constraint to the argument and call result. Without func data
+-// flow edges, closed shardings are attached directly to the function argument
+-// and call result and other uses are not replaced with the sharding constraint.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @foo(
+-// CHECK-SAME:    %arg0: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a"}, {}]>}) -> tensor<8x8xf32> {
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %arg0, %arg0 : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %arg0 <@mesh, [{"a"}, {}]> {sdy.sharding_rule = #sdy.op_sharding_rule<([i, j])->([i, j]) {i=8, j=8}>} : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = stablehlo.add %arg0, %arg0 : tensor<8x8xf32>
+-  %1 = sdy.sharding_constraint %arg0 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  return %0 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL:.*]] = call @foo(%arg0) {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}, {"b"}]>]>} : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[CALL]], %[[CALL]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[CALL]] <@mesh, [{}, {"b"}]> {sdy.sharding_rule = #sdy.op_sharding_rule<([i, j])->([i, j]) {i=8, j=8}>} : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %0 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+-// A flat call graph (@main -> @foo) applying a single sharding constraint to
+-// the func data flow edges. The func data flow edges is left unsharded, the
+-// constraint is moved right after the edge, and other uses are replaced with
+-// the constraint.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @foo
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE:.*]] = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  // CHECK-NOT: sdy.sharding
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[FUNC_DATA_FLOW_EDGE]] <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[WSC]], %[[WSC]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %0 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL:.*]] = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE:.*]] = sdy.func_data_flow_edge %[[CALL]] : tensor<8x8xf32>
+-  // CHECK-NOT: sdy.sharding
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[FUNC_DATA_FLOW_EDGE]] <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[WSC]], %[[WSC]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = sdy.func_data_flow_edge %0 : tensor<8x8xf32>
+-  %2 = stablehlo.add %1, %1 : tensor<8x8xf32>
+-  %3 = sdy.sharding_constraint %1 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %2 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+-// A non-flat call graph (@main -> @foo -> @bar and @main -> @bar) without
+-// func data flow edges, applying a single sharding constraint to the argument
+-// and the call results. Without func data flow edges, closed shardings are
+-// attached directly to the argument and both results, and other uses are not
+-// replaced with the sharding constraint.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @bar(
+-// CHECK-SAME:    %arg0: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a"}, {}]>}) -> tensor<8x8xf32> {
+-func.func @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %arg0, %arg0 : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %arg0 <@mesh, [{"a"}, {}]> {sdy.sharding_rule = #sdy.op_sharding_rule<([i, j])->([i, j]) {i=8, j=8}>} : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = stablehlo.add %arg0, %arg0 : tensor<8x8xf32>
+-  %1 = sdy.sharding_constraint %arg0 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  return %0 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @foo
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL:.*]] = call @bar(%arg0) {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}, {"b"}]>]>} : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[CALL]], %[[CALL]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[CALL]] <@mesh, [{}, {"b"}]> {sdy.sharding_rule = #sdy.op_sharding_rule<([i, j])->([i, j]) {i=8, j=8}>} : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = call @bar(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %0 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL_0:.*]] = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL_1:.*]] = call @bar(%[[CALL_0]]) {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {"b"}]>]>} : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[CALL_1]], %[[CALL_1]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[CALL_1]] <@mesh, [{"a"}, {"b"}]> {sdy.sharding_rule = #sdy.op_sharding_rule<([i, j])->([i, j]) {i=8, j=8}>} : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = call @bar(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %2 = stablehlo.add %1, %1 : tensor<8x8xf32>
+-  %3 = sdy.sharding_constraint %1 <@mesh, [{"a"}, {"b"}]> : tensor<8x8xf32>
+-  return %2 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+-// A non-flat call graph (@main -> @foo -> @bar and @main -> @bar) applying a
+-// single sharding constraint to the func data flow edges on @bar's argument
+-// and the call results in @foo and @main. Each func data flow edges is left
+-// unsharded, the constraint is moved right after the edge, and other uses are
+-// replaced with the constraint.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @bar
+-func.func @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE:.*]] = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  // CHECK-NOT: sdy.sharding
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[FUNC_DATA_FLOW_EDGE]] <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[WSC]], %[[WSC]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %0 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @foo
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_0:.*]] = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL:.*]] = call @bar(%[[FUNC_DATA_FLOW_EDGE_0]])
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_1:.*]] = sdy.func_data_flow_edge %[[CALL]] : tensor<8x8xf32>
+-  // CHECK-NOT: sdy.sharding
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[FUNC_DATA_FLOW_EDGE_1]] <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[WSC]], %[[WSC]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  %1 = call @bar(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %2 = sdy.func_data_flow_edge %1 : tensor<8x8xf32>
+-  %3 = stablehlo.add %2, %2 : tensor<8x8xf32>
+-  %4 = sdy.sharding_constraint %2 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %3 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL_0:.*]] = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_0:.*]] = sdy.func_data_flow_edge %[[CALL_0]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL_1:.*]] = call @bar(%[[FUNC_DATA_FLOW_EDGE_0]]) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_1:.*]] = sdy.func_data_flow_edge %[[CALL_1]] : tensor<8x8xf32>
+-  // CHECK-NOT: sdy.sharding
+-  // CHECK-NEXT: %[[WSC:.*]] = sdy.sharding_constraint %[[FUNC_DATA_FLOW_EDGE_1]] <@mesh, [{"a"}, {"b"}]> : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[WSC]], %[[WSC]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[ADD]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = sdy.func_data_flow_edge %0 : tensor<8x8xf32>
+-  %2 = call @bar(%1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %3 = sdy.func_data_flow_edge %2 : tensor<8x8xf32>
+-  %4 = stablehlo.add %3, %3 : tensor<8x8xf32>
+-  %5 = sdy.sharding_constraint %3 <@mesh, [{"a"}, {"b"}]> : tensor<8x8xf32>
+-  return %4 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+-// Non-flat call graph (@main -> @foo -> @bar and @main -> @bar) without
+-// func data flow edges, applying a chain of two sharding constraints
+-// to stablehlo.add in @bar and @foo. Verifies that the head constraint's
+-// sharding is attached to `stablehlo.add` and uses after the chain (including
+-// the func returns in @bar and @foo) are replaced with the tail of the chain.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @bar
+-func.func @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %arg0, %arg0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {}]>]>}
+-  // CHECK-NEXT: %[[WSC_0:.*]] = sdy.sharding_constraint %[[ADD]] <@mesh, [{"a"}, {}]>
+-  // CHECK-NEXT: %[[WSC_1:.*]] = sdy.sharding_constraint %[[WSC_0]] <@mesh, [{}, {"b"}]>
+-  // CHECK-NEXT: return %[[WSC_1]] : tensor<8x8xf32>
+-  %0 = stablehlo.add %arg0, %arg0 : tensor<8x8xf32>
+-  %1 = sdy.sharding_constraint %0 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %1 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %0 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @foo
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL:.*]] = call @bar(%arg0)
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[CALL]], %[[CALL]] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {}]>]>}
+-  // CHECK-NEXT: %[[WSC_0:.*]] = sdy.sharding_constraint %[[ADD]] <@mesh, [{"a"}, {}]>
+-  // CHECK-NEXT: %[[WSC_1:.*]] = sdy.sharding_constraint %[[WSC_0]] <@mesh, [{}, {"b"}]>
+-  // CHECK-NEXT: return %[[WSC_1]] : tensor<8x8xf32>
+-  %0 = call @bar(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %1 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  %3 = sdy.sharding_constraint %2 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL_0:.*]] = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL_1:.*]] = call @bar(%[[CALL_0]]) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[CALL_1]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = call @bar(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+-// A non-flat call graph (@main -> @foo -> @bar and @main -> @bar) with func
+-// data flow edges on function arguments and call results, applying a chain of
+-// two sharding constraints to stablehlo.add in @bar and @foo.
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @bar
+-func.func @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE:.*]] = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[FUNC_DATA_FLOW_EDGE]], %[[FUNC_DATA_FLOW_EDGE]] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {}]>]>}
+-  // CHECK-NEXT: %[[WSC_0:.*]] = sdy.sharding_constraint %[[ADD]] <@mesh, [{"a"}, {}]>
+-  // CHECK-NEXT: %[[WSC_1:.*]] = sdy.sharding_constraint %[[WSC_0]] <@mesh, [{}, {"b"}]>
+-  // CHECK-NEXT: return %[[WSC_1]] : tensor<8x8xf32>
+-  %0 = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  %1 = stablehlo.add %0, %0 : tensor<8x8xf32>
+-  %2 = sdy.sharding_constraint %1 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  %3 = sdy.sharding_constraint %2 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %1 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @foo
+-func.func @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_0:.*]] = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL:.*]] = call @bar(%[[FUNC_DATA_FLOW_EDGE_0]])
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_1:.*]] = sdy.func_data_flow_edge %[[CALL]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[ADD:.*]] = stablehlo.add %[[FUNC_DATA_FLOW_EDGE_1]], %[[FUNC_DATA_FLOW_EDGE_1]] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {}]>]>}
+-  // CHECK-NEXT: %[[WSC_0:.*]] = sdy.sharding_constraint %[[ADD]] <@mesh, [{"a"}, {}]>
+-  // CHECK-NEXT: %[[WSC_1:.*]] = sdy.sharding_constraint %[[WSC_0]] <@mesh, [{}, {"b"}]>
+-  // CHECK-NEXT: return %[[WSC_1]] : tensor<8x8xf32>
+-  %0 = sdy.func_data_flow_edge %arg0 : tensor<8x8xf32>
+-  %1 = call @bar(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %2 = sdy.func_data_flow_edge %1 : tensor<8x8xf32>
+-  %3 = stablehlo.add %2, %2 : tensor<8x8xf32>
+-  %4 = sdy.sharding_constraint %3 <@mesh, [{"a"}, {}]> : tensor<8x8xf32>
+-  %5 = sdy.sharding_constraint %4 <@mesh, [{}, {"b"}]> : tensor<8x8xf32>
+-  return %3 : tensor<8x8xf32>
+-}
+-
+-// CHECK-LABEL: func @main
+-func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+-  // CHECK-NEXT: %[[CALL_0:.*]] = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_0:.*]] = sdy.func_data_flow_edge %[[CALL_0]] : tensor<8x8xf32>
+-  // CHECK-NEXT: %[[CALL_1:.*]] = call @bar(%[[FUNC_DATA_FLOW_EDGE_0]]) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  // CHECK-NEXT: %[[FUNC_DATA_FLOW_EDGE_1:.*]] = sdy.func_data_flow_edge %[[CALL_1]] : tensor<8x8xf32>
+-  // CHECK-NEXT: return %[[FUNC_DATA_FLOW_EDGE_1]] : tensor<8x8xf32>
+-  %0 = call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %1 = sdy.func_data_flow_edge %0 : tensor<8x8xf32>
+-  %2 = call @bar(%1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
+-  %3 = sdy.func_data_flow_edge %2 : tensor<8x8xf32>
+-  return %3 : tensor<8x8xf32>
+-}
+-
+-// -----
+-
+ sdy.mesh @mesh = <["a"=2, "b"=2]>
+ 
+ // CHECK-LABEL: func @main
+diff --git a/shardy/dialect/sdy/transforms/propagation/op_sharding_rule_registry.cc b/shardy/dialect/sdy/transforms/propagation/op_sharding_rule_registry.cc
+index dc069471..e88aa109 100644
+--- a/shardy/dialect/sdy/transforms/propagation/op_sharding_rule_registry.cc
++++ b/shardy/dialect/sdy/transforms/propagation/op_sharding_rule_registry.cc
+@@ -1321,7 +1321,7 @@ OpShardingRuleAttr createOpShardingRule(Operation* op,
+             PropagationBarrierOp, ShardableDataFlowOpInterface, ShardingGroupOp,
+             ReshardOp, stablehlo::AfterAllOp, stablehlo::CaseOp,
+             stablehlo::ConstantOp, stablehlo::CreateTokenOp,
+-            stablehlo::GetTupleElementOp, stablehlo::IfOp, stablehlo::InfeedOp,
++            stablehlo::GetTupleElementOp, stablehlo::InfeedOp,
+             stablehlo::IotaOp, stablehlo::OutfeedOp,
+             stablehlo::OptimizationBarrierOp, stablehlo::PartitionIdOp,
+             stablehlo::RecvOp, stablehlo::SendOp, stablehlo::WhileOp>(
+diff --git a/shardy/dialect/sdy/transforms/propagation/sharding_group_map.cc b/shardy/dialect/sdy/transforms/propagation/sharding_group_map.cc
+index f61c0dd3..2035990f 100644
+--- a/shardy/dialect/sdy/transforms/propagation/sharding_group_map.cc
++++ b/shardy/dialect/sdy/transforms/propagation/sharding_group_map.cc
+@@ -15,10 +15,12 @@ limitations under the License.
+ 
+ #include "shardy/dialect/sdy/transforms/propagation/sharding_group_map.h"
+ 
++#include <algorithm>
++#include <cassert>
+ #include <cstdint>
+ 
+ #include "llvm/ADT/DenseMap.h"
+-#include "llvm/ADT/MapVector.h"
++#include "llvm/ADT/STLExtras.h"
+ #include "llvm/Support/ErrorHandling.h"
+ #include "mlir/IR/BuiltinOps.h"
+ #include "mlir/IR/Diagnostics.h"
+@@ -34,19 +36,21 @@ namespace sdy {
+ 
+ ShardingGroupMap::ShardingGroupMap(ModuleOp moduleOp) {
+   moduleOp.walk([&](ShardingGroupOp op) {
+-    int64_t groupId = op.getGroupId();
++    // After canonicalization all group ids will take distinct values in the
++    // range 0,1,...,N. Because of this we can directly index these group ids
++    // into the shardingGroupToValues vector (resizing when necessary).
++    shardingGroupToValues.resize(
++        std::max(op.getGroupId() + 1,
++                 static_cast<uint64_t>(shardingGroupToValues.size())));
+     // Each value can only map to one sharding group id after
+     // canonicalization.
+     auto [it, inserted] =
+-        valueToShardingGroup.try_emplace(op.getInput(), groupId);
+-    if (!inserted) {
+-      if (it->getSecond() != groupId) {
+-        llvm::report_fatal_error(
+-            "Value can only map to one sharding group id after import.");
+-      }
+-      return;
++        valueToShardingGroup.try_emplace(op.getInput(), op.getGroupId());
++    if (!inserted && it->getSecond() != op.getGroupId()) {
++      llvm::report_fatal_error(
++          "Value can only map to one sharding group id after import.");
+     }
+-    shardingGroupToValues[groupId].push_back(op.getInput());
++    shardingGroupToValues[op.getGroupId()].push_back(op.getInput());
+   });
+ }
+ 
+@@ -96,7 +100,7 @@ CommonSharding findCommonSharding(int64_t groupId, ValueRange groupMembers) {
+ }  // namespace
+ 
+ void ShardingGroupMap::syncGroupMemberShardings(ModuleOp module) {
+-  for (auto& [groupId, groupMembers] : shardingGroupToValues) {
++  for (auto [groupId, groupMembers] : llvm::enumerate(shardingGroupToValues)) {
+     auto [sharding, hasConflict] = findCommonSharding(groupId, groupMembers);
+     if (!sharding) {
+       continue;
+@@ -130,7 +134,8 @@ void ShardingGroupMap::syncGroupMemberShardings(ModuleOp module) {
+ ValueRange ShardingGroupMap::getGroupMembers(const Value& value) const {
+   if (auto it = valueToShardingGroup.find(value);
+       it != valueToShardingGroup.end()) {
+-    return shardingGroupToValues.find(it->getSecond())->second;
++    int64_t shardingGroupId = it->getSecond();
++    return shardingGroupToValues[shardingGroupId];
+   }
+   return {};
+ }
+diff --git a/shardy/dialect/sdy/transforms/propagation/sharding_group_map.h b/shardy/dialect/sdy/transforms/propagation/sharding_group_map.h
+index b924ca1a..90b38bd4 100644
+--- a/shardy/dialect/sdy/transforms/propagation/sharding_group_map.h
++++ b/shardy/dialect/sdy/transforms/propagation/sharding_group_map.h
+@@ -19,7 +19,6 @@ limitations under the License.
+ #include <cstdint>
+ 
+ #include "llvm/ADT/DenseMap.h"
+-#include "llvm/ADT/MapVector.h"
+ #include "mlir/IR/BuiltinOps.h"
+ #include "mlir/IR/Value.h"
+ #include "mlir/IR/ValueRange.h"
+@@ -46,7 +45,7 @@ class ShardingGroupMap {
+   ValueRange getGroupMembers(const Value& value) const;
+ 
+  private:
+-  llvm::MapVector<int64_t, SmallVector<Value>> shardingGroupToValues;
++  SmallVector<SmallVector<Value>> shardingGroupToValues;
+   llvm::SmallDenseMap<Value, int64_t> valueToShardingGroup;
+ };
+ 
+diff --git a/shardy/dialect/sdy/transforms/propagation/test/sharding_group_propagation.mlir b/shardy/dialect/sdy/transforms/propagation/test/sharding_group_propagation.mlir
+index 36ae5341..b9edf866 100644
+--- a/shardy/dialect/sdy/transforms/propagation/test/sharding_group_propagation.mlir
++++ b/shardy/dialect/sdy/transforms/propagation/test/sharding_group_propagation.mlir
+@@ -131,31 +131,6 @@ func.func @different_group_ids_greater_group_id_first(
+   return %arg0, %arg1, %arg2, %arg3 : tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>
+ }
+ 
+-// -----
+-sdy.mesh @mesh = <["a"=2, "b"=2]>
+-
+-// CHECK-LABEL: func @undensified_negative_and_large_group_ids
+-// CHECK-SAME:    %arg0: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a", ?}, {?}]>},
+-// CHECK-SAME:    %arg1: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a", ?}, {?}]>},
+-// CHECK-SAME:    %arg2: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{?}, {"b", ?}]>},
+-// CHECK-SAME:    %arg3: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{?}, {"b", ?}]>})
+-// CHECK-SAME:    -> (tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a", ?}, {?}]>},
+-// CHECK-SAME:        tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a", ?}, {?}]>},
+-// CHECK-SAME:        tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{?}, {"b", ?}]>},
+-// CHECK-SAME:        tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{?}, {"b", ?}]>})
+-func.func @undensified_negative_and_large_group_ids(
+-  %arg0: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{"a", ?}, {?}]>},
+-  %arg1: tensor<8x8xf32>,
+-  %arg2: tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh, [{?}, {"b", ?}]>},
+-  %arg3: tensor<8x8xf32>)
+-   -> (tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>) {
+-  sdy.sharding_group %arg0 group_id=-1 : tensor<8x8xf32>
+-  sdy.sharding_group %arg1 group_id=-1 : tensor<8x8xf32>
+-  sdy.sharding_group %arg2 group_id=100000000000 : tensor<8x8xf32>
+-  sdy.sharding_group %arg3 group_id=100000000000 : tensor<8x8xf32>
+-  return %arg0, %arg1, %arg2, %arg3 : tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>, tensor<8x8xf32>
+-}
+-
+ // -----
+ 
+ // Tests for initial member sharding sync
 diff --git a/third_party/llvm/generated.patch b/third_party/llvm/generated.patch
-index 875e6c8a..e2237d49 100644
+index e9c206ce..509398da 100644
 --- a/third_party/llvm/generated.patch
 +++ b/third_party/llvm/generated.patch
-@@ -1,19 +1,459 @@
+@@ -1,12 +1 @@
  Auto generated patch. Do not edit or delete it, even if empty.
--diff -ruN --strip-trailing-cr a/llvm/docs/WritingAnLLVMPass.md b/llvm/docs/WritingAnLLVMPass.md
----- a/llvm/docs/WritingAnLLVMPass.md
--+++ b/llvm/docs/WritingAnLLVMPass.md
--@@ -794,14 +794,6 @@
-- 
-- ```console
-- $ gdb opt
---GNU gdb 5.0
---Copyright 2000 Free Software Foundation, Inc.
---GDB is free software, covered by the GNU General Public License, and you are
---welcome to change it and/or distribute copies of it under certain conditions.
---Type "show copying" to see the conditions.
---There is absolutely no warranty for GDB.  Type "show warranty" for details.
---This GDB was configured as "sparc-sun-solaris2.6"...
---(gdb)
-- ```
-- 
-- Note that {program}`opt` has a lot of debugging information in it, so it takes
-+diff -ruN --strip-trailing-cr a/llvm/include/llvm/IR/Metadata.h b/llvm/include/llvm/IR/Metadata.h
-+--- a/llvm/include/llvm/IR/Metadata.h
-++++ b/llvm/include/llvm/IR/Metadata.h
-+@@ -397,18 +397,8 @@
-+   using OwnerTy = MetadataTracking::OwnerTy;
-+ 
-+ private:
-+-  struct UseEntry {
-+-    void *Ref = nullptr;
-+-    OwnerTy Owner = nullptr;
-+-  };
-+-
-+-  static constexpr unsigned IndexThreshold = 32;
-+-  // Tracked uses of this. Dropping one moves the last entry into its slot, so
-+-  // the order is deterministic but not the order they were added in.
-+-  SmallVector<UseEntry, 4> UseMap;
-+-  // Lazily allocated map from Ref to its index in UseMap for large use lists.
-+-  using IndexMapTy = DenseMap<void *, unsigned>;
-+-  std::unique_ptr<IndexMapTy> IndexMap;
-++  uint64_t NextIndex = 0;
-++  SmallDenseMap<void *, std::pair<OwnerTy, uint64_t>, 4> UseMap;
-+ 
-+ protected:
-+   ~ReplaceableUses() {
-+@@ -439,7 +429,6 @@
-+   unsigned getNumUses() const { return UseMap.size(); }
-+ 
-+ private:
-+-  UseEntry *findRef(void *Ref);
-+   void addRef(void *Ref, OwnerTy Owner);
-+   void dropRef(void *Ref);
-+   void moveRef(void *Ref, void *New, const Metadata &MD);
-+diff -ruN --strip-trailing-cr a/llvm/lib/IR/Metadata.cpp b/llvm/lib/IR/Metadata.cpp
-+--- a/llvm/lib/IR/Metadata.cpp
-++++ b/llvm/lib/IR/Metadata.cpp
-+@@ -258,96 +258,82 @@
-+ }
-+ 
-+ SmallVector<Metadata *> ReplaceableUses::getAllArgListUsers() {
-+-  SmallVector<Metadata *> MDUsers;
-+-  for (const auto &[Ref, Owner] : UseMap) {
-++  SmallVector<std::pair<OwnerTy, uint64_t> *> MDUsersWithID;
-++  for (auto Pair : UseMap) {
-++    OwnerTy Owner = Pair.second.first;
-+     if (Owner.isNull())
-+       continue;
-+     if (!isa<Metadata *>(Owner))
-+       continue;
-+     Metadata *OwnerMD = cast<Metadata *>(Owner);
-+     if (OwnerMD->getMetadataID() == Metadata::DIArgListKind)
-+-      MDUsers.push_back(OwnerMD);
-++      MDUsersWithID.push_back(&UseMap[Pair.first]);
-+   }
-++  llvm::sort(MDUsersWithID, [](auto UserA, auto UserB) {
-++    return UserA->second < UserB->second;
-++  });
-++  SmallVector<Metadata *> MDUsers;
-++  for (auto *UserWithID : MDUsersWithID)
-++    MDUsers.push_back(cast<Metadata *>(UserWithID->first));
-+   return MDUsers;
-+ }
-+ 
-+ SmallVector<DbgVariableRecord *>
-+ ReplaceableUses::getAllDbgVariableRecordUsers() {
-++  SmallVector<std::pair<OwnerTy, uint64_t> *> DVRUsersWithID;
-++  for (auto Pair : UseMap) {
-++    OwnerTy Owner = Pair.second.first;
-++    if (Owner.isNull())
-++      continue;
-++    if (!isa<DebugValueUser *>(Owner))
-++      continue;
-++    DVRUsersWithID.push_back(&UseMap[Pair.first]);
-++  }
-+   // Order DbgVariableRecord users in reverse-creation order. Normal dbg.value
-+   // users of MetadataAsValues are ordered by their UseList, i.e. reverse order
-+   // of when they were added: we need to replicate that here. The structure of
-+   // debug-info output depends on the ordering of intrinsics, thus we need
-+   // to keep them consistent for comparisons sake.
-++  llvm::sort(DVRUsersWithID, [](auto UserA, auto UserB) {
-++    return UserA->second > UserB->second;
-++  });
-+   SmallVector<DbgVariableRecord *> DVRUsers;
-+-  for (const auto &[Ref, Owner] : reverse(UseMap)) {
-+-    if (Owner.isNull())
-+-      continue;
-+-    if (!isa<DebugValueUser *>(Owner))
-+-      continue;
-+-    DVRUsers.push_back(cast<DebugValueUser *>(Owner)->getUser());
-+-  }
-++  for (auto UserWithID : DVRUsersWithID)
-++    DVRUsers.push_back(cast<DebugValueUser *>(UserWithID->first)->getUser());
-+   return DVRUsers;
-+ }
-+ 
-+-ReplaceableUses::UseEntry *ReplaceableUses::findRef(void *Ref) {
-+-  if (!IndexMap) {
-+-    // Search backward for temporal locality; recently added references are
-+-    // often dropped or moved first.
-+-    for (UseEntry &U : reverse(UseMap))
-+-      if (U.Ref == Ref)
-+-        return &U;
-+-    return nullptr;
-+-  }
-+-
-+-  auto It = IndexMap->find(Ref);
-+-  return It == IndexMap->end() ? nullptr : &UseMap[It->second];
-+-}
-+-
-+ void ReplaceableUses::addRef(void *Ref, OwnerTy Owner) {
-+-  assert(Ref && "Expected live reference");
-+-  assert(!findRef(Ref) && "Reference already tracked");
-+-  unsigned NewIdx = UseMap.size();
-+-  UseMap.push_back({Ref, Owner});
-+-  if (IndexMap) {
-+-    (*IndexMap)[Ref] = NewIdx;
-+-  } else if (UseMap.size() > IndexThreshold) {
-+-    // Build the index map once UseMap grows past the threshold.
-+-    IndexMap = std::make_unique<IndexMapTy>();
-+-    for (unsigned I = 0, E = UseMap.size(); I != E; ++I)
-+-      (*IndexMap)[UseMap[I].Ref] = I;
-+-  }
-++  bool WasInserted =
-++      UseMap.insert(std::make_pair(Ref, std::make_pair(Owner, NextIndex)))
-++          .second;
-++  (void)WasInserted;
-++  assert(WasInserted && "Expected to add a reference");
-++
-++  ++NextIndex;
-++  assert(NextIndex != 0 && "Unexpected overflow");
-+ }
-+ 
-+ void ReplaceableUses::dropRef(void *Ref) {
-+-  UseEntry *Entry = findRef(Ref);
-+-  assert(Entry && "Expected to find Ref");
-+-  if (IndexMap)
-+-    IndexMap->erase(Ref);
-+-  if (Entry != &UseMap.back()) {
-+-    *Entry = UseMap.back();
-+-    if (IndexMap)
-+-      (*IndexMap)[Entry->Ref] = Entry - UseMap.begin();
-+-  }
-+-  UseMap.pop_back();
-+-  if (IndexMap && UseMap.size() <= IndexThreshold / 2)
-+-    IndexMap.reset();
-++  bool WasErased = UseMap.erase(Ref);
-++  (void)WasErased;
-++  assert(WasErased && "Expected to drop a reference");
-+ }
-+ 
-+ void ReplaceableUses::moveRef(void *Ref, void *New, const Metadata &MD) {
-+-  assert(!findRef(New) && "Cannot move to an existing reference");
-+-  UseEntry *Entry = findRef(Ref);
-+-  assert(Entry && "Expected to move a reference");
-+-  if (IndexMap) {
-+-    IndexMap->erase(Ref);
-+-    (*IndexMap)[New] = Entry - UseMap.begin();
-+-  }
-+-  Entry->Ref = New;
-++  auto I = UseMap.find(Ref);
-++  assert(I != UseMap.end() && "Expected to move a reference");
-++  auto OwnerAndIndex = I->second;
-++  UseMap.erase(I);
-++  bool WasInserted = UseMap.insert(std::make_pair(New, OwnerAndIndex)).second;
-++  (void)WasInserted;
-++  assert(WasInserted && "Expected to add a reference");
-+ 
-+   // Check that the references are direct if there's no owner.
-+   (void)MD;
-+-  assert((Entry->Owner || *static_cast<Metadata **>(Ref) == &MD) &&
-++  assert((OwnerAndIndex.first || *static_cast<Metadata **>(Ref) == &MD) &&
-+          "Reference without owner must be direct");
-+-  assert((Entry->Owner || *static_cast<Metadata **>(New) == &MD) &&
-++  assert((OwnerAndIndex.first || *static_cast<Metadata **>(New) == &MD) &&
-+          "Reference without owner must be direct");
-+ }
-+ 
-+@@ -360,11 +346,14 @@
-+   auto &Store = Context.pImpl->ValuesAsMetadata;
-+   auto I = Store.find(&C);
-+   ValueAsMetadata *MD = I->second;
-++  using UseTy =
-++      std::pair<void *, std::pair<MetadataTracking::OwnerTy, uint64_t>>;
-+   // Copy out uses and update value of Constant used by debug info metadata with
-+-  // poison below.
-+-  SmallVector<UseEntry, 4> Uses = MD->UseMap;
-++  // poison below
-++  SmallVector<UseTy, 8> Uses(MD->UseMap.begin(), MD->UseMap.end());
-+ 
-+-  for (const auto &[Ref, Owner] : Uses) {
-++  for (const auto &Pair : Uses) {
-++    MetadataTracking::OwnerTy Owner = Pair.second.first;
-+     if (!Owner)
-+       continue;
-+     // Check for MetadataAsValue.
-+@@ -380,7 +369,7 @@
-+       continue;
-+     if (isa<DINode>(OwnerMD)) {
-+       OwnerMD->handleChangedOperand(
-+-          Ref, ValueAsMetadata::get(PoisonValue::get(C.getType())));
-++          Pair.first, ValueAsMetadata::get(PoisonValue::get(C.getType())));
-+     }
-+   }
-+ }
-+@@ -390,21 +379,25 @@
-+     return;
-+ 
-+   // Copy out uses since UseMap will get touched below.
-+-  SmallVector<UseEntry, 4> Uses = UseMap;
-+-
-+-  for (const auto &[Ref, Owner] : Uses) {
-++  using UseTy = std::pair<void *, std::pair<OwnerTy, uint64_t>>;
-++  SmallVector<UseTy, 8> Uses(UseMap.begin(), UseMap.end());
-++  llvm::sort(Uses, [](const UseTy &L, const UseTy &R) {
-++    return L.second.second < R.second.second;
-++  });
-++  for (const auto &Pair : Uses) {
-+     // Check that this Ref hasn't disappeared after RAUW (when updating a
-+     // previous Ref).
-+-    if (!findRef(Ref))
-++    if (!UseMap.count(Pair.first))
-+       continue;
-+ 
-++    OwnerTy Owner = Pair.second.first;
-+     if (!Owner) {
-+       // Update unowned tracking references directly.
-+-      Metadata *&DirectRef = *static_cast<Metadata **>(Ref);
-+-      dropRef(Ref);
-+-      DirectRef = MD;
-++      Metadata *&Ref = *static_cast<Metadata **>(Pair.first);
-++      Ref = MD;
-+       if (MD)
-+-        MetadataTracking::track(DirectRef);
-++        MetadataTracking::track(Ref);
-++      UseMap.erase(Pair.first);
-+       continue;
-+     }
-+ 
-+@@ -415,7 +408,7 @@
-+     }
-+ 
-+     if (auto *DVU = dyn_cast<DebugValueUser *>(Owner)) {
-+-      DVU->handleChangedValue(Ref, MD);
-++      DVU->handleChangedValue(Pair.first, MD);
-+       continue;
-+     }
-+ 
-+@@ -424,7 +417,7 @@
-+     switch (OwnerMD->getMetadataID()) {
-+ #define HANDLE_METADATA_LEAF(CLASS)                                            \
-+   case Metadata::CLASS##Kind:                                                  \
-+-    cast<CLASS>(OwnerMD)->handleChangedOperand(Ref, MD);                       \
-++    cast<CLASS>(OwnerMD)->handleChangedOperand(Pair.first, MD);                \
-+     continue;
-+ #include "llvm/IR/Metadata.def"
-+     default:
-+@@ -440,16 +433,18 @@
-+ 
-+   if (!ResolveUsers) {
-+     UseMap.clear();
-+-    IndexMap.reset();
-+     return;
-+   }
-+ 
-+-  // Move uses out since UseMap could get touched below.
-+-  SmallVector<UseEntry, 4> Uses = std::move(UseMap);
-++  // Copy out uses since UseMap could get touched below.
-++  using UseTy = std::pair<void *, std::pair<OwnerTy, uint64_t>>;
-++  SmallVector<UseTy, 8> Uses(UseMap.begin(), UseMap.end());
-++  llvm::sort(Uses, [](const UseTy &L, const UseTy &R) {
-++    return L.second.second < R.second.second;
-++  });
-+   UseMap.clear();
-+-  IndexMap.reset();
-+-  for (const auto &U : Uses) {
-+-    auto Owner = U.Owner;
-++  for (const auto &Pair : Uses) {
-++    auto Owner = Pair.second.first;
-+     if (!Owner)
-+       continue;
-+     if (!isa<Metadata *>(Owner))
-+diff -ruN --strip-trailing-cr a/llvm/lib/ObjCopy/ELF/ELFObject.cpp b/llvm/lib/ObjCopy/ELF/ELFObject.cpp
-+--- a/llvm/lib/ObjCopy/ELF/ELFObject.cpp
-++++ b/llvm/lib/ObjCopy/ELF/ELFObject.cpp
-+@@ -1709,11 +1709,7 @@
-+   case SHT_REL:
-+   case SHT_RELA:
-+   case SHT_CREL:
-+-    // SHF_ALLOC relocations of an executable or shared object are copied
-+-    // verbatim. Relocatable files relocations are usually non-ALLOC, but Linux
-+-    // livepatch modules set SHF_ALLOC on .klp.rela.* to keep these static
-+-    // relocations in memory.
-+-    if ((Shdr.sh_flags & SHF_ALLOC) && ElfFile.getHeader().e_type != ET_REL) {
-++    if (Shdr.sh_flags & SHF_ALLOC) {
-+       if (Expected<ArrayRef<uint8_t>> Data = ElfFile.getSectionContents(Shdr))
-+         return Obj.addSection<DynamicRelocationSection>(*Data);
-+       else
-+diff -ruN --strip-trailing-cr a/llvm/lib/ObjCopy/ELF/ELFObject.h b/llvm/lib/ObjCopy/ELF/ELFObject.h
-+--- a/llvm/lib/ObjCopy/ELF/ELFObject.h
-++++ b/llvm/lib/ObjCopy/ELF/ELFObject.h
-+@@ -38,7 +38,6 @@
-+ class SymbolTableSection;
-+ class RelocationSection;
-+ class DynamicRelocationSection;
-+-class DynamicSymbolTableSection;
-+ class GnuDebugLinkSection;
-+ class GroupSection;
-+ class SectionIndexSection;
-+@@ -876,15 +875,10 @@
-+ // and another which handles the symbol table type. The symbol table type is
-+ // taken as a type parameter to the class (see RelocSectionWithSymtabBase).
-+ class RelocationSectionBase : public SectionBase {
-+-  const bool Dynamic;
-+-
-+ protected:
-+   SectionBase *SecToApplyRel = nullptr;
-+ 
-+-  explicit RelocationSectionBase(bool Dynamic) : Dynamic(Dynamic) {}
-+-
-+ public:
-+-  bool isDynamic() const { return Dynamic; }
-+   const SectionBase *getSection() const { return SecToApplyRel; }
-+   void setSection(SectionBase *Sec) { SecToApplyRel = Sec; }
-+ 
-+@@ -903,9 +897,7 @@
-+   void setSymTab(SymTabType *SymTab) { Symbols = SymTab; }
-+ 
-+ protected:
-+-  RelocSectionWithSymtabBase()
-+-      : RelocationSectionBase(
-+-            std::is_same_v<SymTabType, DynamicSymbolTableSection>) {}
-++  RelocSectionWithSymtabBase() = default;
-+ 
-+   SymTabType *Symbols = nullptr;
-+ 
-+@@ -936,8 +928,9 @@
-+   const Object &getObject() const { return Obj; }
-+ 
-+   static bool classof(const SectionBase *S) {
-+-    return RelocationSectionBase::classof(S) &&
-+-           !static_cast<const RelocationSectionBase *>(S)->isDynamic();
-++    if (S->OriginalFlags & ELF::SHF_ALLOC)
-++      return false;
-++    return RelocationSectionBase::classof(S);
-+   }
-+ };
-+ 
-+@@ -1022,8 +1015,9 @@
-+       function_ref<bool(const SectionBase *)> ToRemove) override;
-+ 
-+   static bool classof(const SectionBase *S) {
-+-    return RelocationSectionBase::classof(S) &&
-+-           static_cast<const RelocationSectionBase *>(S)->isDynamic();
-++    if (!(S->OriginalFlags & ELF::SHF_ALLOC))
-++      return false;
-++    return S->OriginalType == ELF::SHT_REL || S->OriginalType == ELF::SHT_RELA;
-+   }
-+ };
-+ 
-+diff -ruN --strip-trailing-cr a/llvm/test/tools/llvm-objcopy/ELF/reloc-alloc-symtab.test b/llvm/test/tools/llvm-objcopy/ELF/reloc-alloc-symtab.test
-+--- a/llvm/test/tools/llvm-objcopy/ELF/reloc-alloc-symtab.test
-++++ b/llvm/test/tools/llvm-objcopy/ELF/reloc-alloc-symtab.test
-+@@ -1,42 +0,0 @@
-+-## In a relocatable file, an SHF_ALLOC relocation section (e.g. .klp.rela.* in
-+-## Linux livepatch modules) is a static relocation section: its symbol indexes
-+-## are updated and the symbols it references are kept.
-+-
-+-# RUN: yaml2obj %s -o %t
-+-# RUN: llvm-strip --strip-unneeded %t -o %t1
-+-# RUN: llvm-readelf -Sr -s %t1 | FileCheck %s
-+-# RUN: yaml2obj -DTYPE=SHT_CREL %s -o %t.crel
-+-# RUN: llvm-strip --strip-unneeded %t.crel -o %t1.crel
-+-# RUN: llvm-readelf -Sr -s %t1.crel | FileCheck %s
-+-
-+-# CHECK:      [ 2] .klp.rela.vmlinux.text {{RELA|CREL}} {{.*}} AI  3   1
-+-# CHECK-NEXT: [ 3] .symtab
-+-# CHECK:      R_X86_64_PC32 {{.*}} referenced + 0
-+-# CHECK:      Symbol table '.symtab' contains 2 entries:
-+-# CHECK:      1: {{.*}} UND referenced
-+-
-+-!ELF
-+-FileHeader:
-+-  Class:   ELFCLASS64
-+-  Data:    ELFDATA2LSB
-+-  Type:    ET_REL
-+-  Machine: EM_X86_64
-+-Sections:
-+-  - Name:    .text
-+-    Type:    SHT_PROGBITS
-+-    Flags:   [ SHF_ALLOC, SHF_EXECINSTR ]
-+-    Content: "e800000000"
-+-  - Name:    .klp.rela.vmlinux.text
-+-    Type:    [[TYPE=SHT_RELA]]
-+-    Flags:   [ SHF_ALLOC, SHF_INFO_LINK ]
-+-    Link:    .symtab
-+-    Info:    .text
-+-    Relocations:
-+-      - Offset: 1
-+-        Symbol: referenced
-+-        Type:   R_X86_64_PC32
-+-Symbols:
-+-  - Name:    unreferenced
-+-    Section: .text
-+-  - Name:    referenced
-+-    Binding: STB_GLOBAL
-+diff -ruN --strip-trailing-cr a/llvm/test/tools/llvm-objcopy/ELF/reloc-no-symtab.test b/llvm/test/tools/llvm-objcopy/ELF/reloc-no-symtab.test
-+--- a/llvm/test/tools/llvm-objcopy/ELF/reloc-no-symtab.test
-++++ b/llvm/test/tools/llvm-objcopy/ELF/reloc-no-symtab.test
-+@@ -10,16 +10,11 @@
-+ # RUN: llvm-readobj --sections %t.original | FileCheck %s
-+ # RUN: llvm-readobj --sections %t.stripped | FileCheck %s
-+ 
-+-## In a relocatable file, .rela.plt is a static relocation section.
-+-# RUN: yaml2obj -DTYPE=ET_REL %s -o %t.rel
-+-# RUN: llvm-strip %t.rel -o %t.rel.stripped
-+-# RUN: llvm-readobj --sections %t.rel.stripped | FileCheck %s
-+-
-+ !ELF
-+ FileHeader:
-+   Class:           ELFCLASS64
-+   Data:            ELFDATA2LSB
-+-  Type:            [[TYPE=ET_EXEC]]
-++  Type:            ET_REL
-+   Machine:         EM_X86_64
-+ Sections:
-+   - Name:          .text
-+diff -ruN --strip-trailing-cr a/llvm/unittests/IR/MetadataTest.cpp b/llvm/unittests/IR/MetadataTest.cpp
-+--- a/llvm/unittests/IR/MetadataTest.cpp
-++++ b/llvm/unittests/IR/MetadataTest.cpp
-+@@ -5355,29 +5355,6 @@
-+   EXPECT_TRUE(!MD);
-+ }
-+ 
-+-// Once the use list is indexed, look each changed reference up again right
-+-// away: a later swap in dropRef would repair a stale index entry.
-+-TEST_F(TrackingMDRefTest, LargeUseList) {
-+-  auto Temp = MDTuple::getTemporary(Context, {});
-+-  TrackingMDRef Refs[41];
-+-  for (unsigned I = 0; I != 40; ++I)
-+-    Refs[I].reset(Temp.get());
-+-  Refs[0].reset();
-+-  Refs[0].reset(Temp.get());
-+-  Refs[0].reset();
-+-  Refs[40] = std::move(Refs[1]);
-+-  Refs[1].reset(Temp.get());
-+-  Refs[40].reset();
-+-  Refs[39].reset();
-+-  EXPECT_EQ(38u, Temp->getNumTemporaryUses());
-+-
-+-  auto *N = MDTuple::getDistinct(Context, {});
-+-  Temp->replaceAllUsesWith(N);
-+-  EXPECT_EQ(0u, Temp->getNumTemporaryUses());
-+-  for (unsigned I = 1; I != 39; ++I)
-+-    EXPECT_EQ(N, Refs[I].get()) << I;
-+-}
-+-
-+ TEST(NamedMDNodeTest, Search) {
-+   LLVMContext Context;
-+   ConstantAsMetadata *C =
+-diff -ruN --strip-trailing-cr a/llvm/test/CodeGen/Hexagon/autohvx/xqf-postra-conv-double2.ll b/llvm/test/CodeGen/Hexagon/autohvx/xqf-postra-conv-double2.ll
+---- a/llvm/test/CodeGen/Hexagon/autohvx/xqf-postra-conv-double2.ll
+-+++ b/llvm/test/CodeGen/Hexagon/autohvx/xqf-postra-conv-double2.ll
+-@@ -1,5 +1,7 @@
+- ; Checks if conversion is only inserted for the spilled register
+- ; instead of 2 conversions for the W register
+-+
+-+; REQUIRES: asserts
+- ; RUN: llc -O2 -march=hexagon -mcpu=hexagonv81 -enable-xqf-gen=true \
+- ; RUN: -hexagon-qfloat-mode=ieee -mattr=+hvxv81,+hvx-length128B \
+- ; RUN: -enable-postra-xqf-check -debug-only=handle-qfp 2>&1 < %s -o /dev/null | FileCheck %s
 diff --git a/third_party/llvm/workspace.bzl b/third_party/llvm/workspace.bzl
-index 79e40910..9de7c05a 100644
+index 68a14533..e42d7dbd 100644
 --- a/third_party/llvm/workspace.bzl
 +++ b/third_party/llvm/workspace.bzl
 @@ -19,8 +19,8 @@ load("//third_party:repo.bzl", "tf_http_archive")
  
  def repo(name):
      """Imports LLVM."""
--    LLVM_COMMIT = "018a9e4a74ba5d383351bda907a8b116bc5d8c47"
--    LLVM_SHA256 = "67463f6d054b8880cbde059a8d02ca6ca4649312f60cfe98a30401ac17fe0b39"
-+    LLVM_COMMIT = "62e30e3326d9b4e3948d242ccfee7aa4fc030ef3"
-+    LLVM_SHA256 = "478ae34c463f28708582082098aaf0e79f431c2719f5d297bd546051dbeae0dd"
+-    LLVM_COMMIT = "b08e005995ed29a2f89aa9a3f599a9d45db65523"
+-    LLVM_SHA256 = "3f4f1765816e22a21ac41dbf71d91d519b0b371b05d7e33ef2a0a862c838420c"
++    LLVM_COMMIT = "2e0d9e12b36e853d9b108c4da09509cd54d1f3f9"
++    LLVM_SHA256 = "8e4a851780af109d623fa6d6db9b1e62d7126272d17268fed1b149f0e737c1d7"
  
      tf_http_archive(
          name = name,
-diff --git a/third_party/stablehlo/temporary.patch b/third_party/stablehlo/temporary.patch
-index 49cfe5b6..c38c5147 100644
---- a/third_party/stablehlo/temporary.patch
-+++ b/third_party/stablehlo/temporary.patch
-@@ -835,6 +835,863 @@ diff --ruN a/stablehlo/build_tools/lit_test_suite.bzl b/stablehlo/build_tools/li
-              tags = tags,
-              size = size_per_test,
-          )
-+diff --ruN a/stablehlo/docs/spec.md b/stablehlo/docs/spec.md
-+--- stablehlo/docs/spec.md
-++++ stablehlo/docs/spec.md
-+@@ -2380,6 +2380,7 @@
-+ in order to be able to express windows of `lhs`:
-+ 
-+ <!-- markdownlint-disable line-length -->
-++
-+ * `lhs_window_dimensions = lhs_shape(dim(lhs, input_batch_dimension), dim(rhs, kernel_spatial_dimensions), dim(lhs, input_feature_dimension))`.
-+ * `lhs_window_strides = lhs_shape(1, window_strides, 1)`.
-+ * `lhs_padding = lhs_shape([0, 0], padding, [0, 0])`.
-+@@ -2476,6 +2477,7 @@
-+ #### Constraints
-+ 
-+ <!-- markdownlint-disable line-length -->
-++
-+ * (C1) `N = rank(lhs) = rank(rhs)`.
-+ * (C2) `size(window_strides) = N - 2`.
-+ * (C3) `0 < window_strides`.
-+@@ -2808,6 +2810,7 @@
-+ More formally, `result[result_index] = dot_product`, where:
-+ 
-+ <!-- markdownlint-disable line-length -->
-++
-+ * `lhs_result_dimensions = [d for d in axes(lhs) and d not in lhs_batching_dimensions and d not in lhs_contracting_dimensions]`.
-+ * `rhs_result_dimensions = [d for d in axes(rhs) and d not in rhs_batching_dimensions and d not in rhs_contracting_dimensions]`.
-+ * `result_batching_index + result_lhs_index + result_rhs_index = result_index`
-+@@ -3148,6 +3151,7 @@
-+ #### Constraints
-+ 
-+ <!-- markdownlint-disable line-length -->
-++
-+ * (C1) `N = rank(lhs) = rank(rhs)`.
-+ * (C2) `size(window_strides) = N - 2`.
-+ * (C3) `0 < window_strides`.
-+@@ -3626,6 +3630,49 @@
-+ 
-+ &nbsp;[More Examples](https://github.com/openxla/stablehlo/tree/main/stablehlo/tests/interpret/dynamic_update_slice.mlir)
-+ 
-++### exp2
-++
-++#### Semantics
-++
-++Performs element-wise base-2 exponential operation on `operand` tensor and
-++produces a `result` tensor. Depending on the element type, does the following:
-++
-++*   For floats: `exp2` from IEEE-754.
-++*   For complex numbers: complex base-2 exponential.
-++*   For quantized types: `dequantize_op_quantize(exp2, operand, type(result))`.
-++
-++#### Inputs
-++
-++| Label | Name              | Type                 | Constraints |
-++| ----- | ----------------- | -------------------- | ----------- |
-++| (I1)  | `operand`         | tensor of            | (C1)        |
-++:       :                   : floating-point or    :             :
-++:       :                   : complex type or      :             :
-++:       :                   : per-tensor quantized :             :
-++:       :                   : tensor               :             :
-++| (I2)  | `result_accuracy` | optional             |             |
-++:       :                   : `ResultAccuracyAttr` :             :
-++:       :                   : (default `DEFAULT`)  :             :
-++
-++#### Outputs
-++
-++| Name     | Type                                        | Constraints |
-++| -------- | ------------------------------------------- | ----------- |
-++| `result` | tensor of floating-point or complex type or | (C1)        |
-++:          : per-tensor quantized tensor                 :             :
-++
-++#### Constraints
-++
-++*   (C1) `baseline_type(operand) = baseline_type(result)`.
-++
-++#### Examples
-++
-++```mlir
-++// %operand: [[0.0, 1.0], [2.0, 3.0]]
-++%result = "stablehlo.exp2"(%operand) : (tensor<2x2xf64>) -> tensor<2x2xf64>
-++// %result: [[1.0, 2.0], [4.0, 8.0]]
-++```
-++
-+ ### exponential
-+ 
-+ #### Semantics
-+@@ -3798,6 +3845,7 @@
-+ * (C3) `1 <= size(fft_length) <= 3`.
-+ * (C4) If among `operand` and `result`, there is a tensor `real` of a
-+ floating-point type, then `shape(real)[-size(fft_length):] = fft_length`.
-++
-+ * (C5) `shape(result) = shape(operand)` except for:
-+   * If `fft_type = RFFT`,
-+     `dim(result, -1) = dim(operand, -1) = 0 ? 0 : dim(operand, -1) / 2 + 1`.
-+@@ -3866,6 +3914,7 @@
-+ More formally, `result[result_index] = operand[operand_index]` where:
-+ 
-+ <!-- markdownlint-disable line-length -->
-++
-+ * `batch_dims = [d for d in axes(result) and d not in offset_dims]`.
-+ * `batch_index = result_index[batch_dims...]`.
-+ * `start_index` is defined as:
-+@@ -4355,6 +4404,49 @@
-+ 
-+ &nbsp;[More Examples](https://github.com/openxla/stablehlo/tree/main/stablehlo/tests/interpret/log.mlir)
-+ 
-++### log2
-++
-++#### Semantics
-++
-++Performs element-wise base-2 logarithm operation on `operand` tensor and
-++produces a `result` tensor. Depending on the element type, does the following:
-++
-++*   For floats: `log2` from IEEE-754.
-++*   For complex numbers: complex base-2 logarithm.
-++*   For quantized types: `dequantize_op_quantize(log2, operand, type(result))`.
-++
-++#### Inputs
-++
-++| Label | Name              | Type                 | Constraints |
-++| ----- | ----------------- | -------------------- | ----------- |
-++| (I1)  | `operand`         | tensor of            | (C1)        |
-++:       :                   : floating-point or    :             :
-++:       :                   : complex type or      :             :
-++:       :                   : per-tensor quantized :             :
-++:       :                   : tensor               :             :
-++| (I2)  | `result_accuracy` | optional             |             |
-++:       :                   : `ResultAccuracyAttr` :             :
-++:       :                   : (default `DEFAULT`)  :             :
-++
-++#### Outputs
-++
-++| Name     | Type                                        | Constraints |
-++| -------- | ------------------------------------------- | ----------- |
-++| `result` | tensor of floating-point or complex type or | (C1)        |
-++:          : per-tensor quantized tensor                 :             :
-++
-++#### Constraints
-++
-++*   (C1) `baseline_type(operand) = baseline_type(result)`.
-++
-++#### Examples
-++
-++```mlir
-++// %operand: [[1.0, 2.0], [4.0, 8.0]]
-++%result = "stablehlo.log2"(%operand) : (tensor<2x2xf64>) -> tensor<2x2xf64>
-++// %result: [[0.0, 1.0], [2.0, 3.0]]
-++```
-++
-+ ### log_plus_one
-+ 
-+ #### Semantics
-+@@ -5358,6 +5450,7 @@
-+ #### Constraints
-+ 
-+ <!-- markdownlint-disable line-length -->
-++
-+ * (C1) `0 < size(inputs) = size(init_values) = size(results) = N`.
-+ * (C2) `same(shape(inputs...))`.
-+ * (C3) `element_type(inputs...) = element_type(init_values...)`.
-+@@ -5897,6 +5990,7 @@
-+ #### Constraints
-+ 
-+ <!-- markdownlint-disable line-length -->
-++
-+ * (C1) `same(shape(inputs...))`.
-+ * (C2) `rank(inputs[0]) = size(update_window_dims) + size(inserted_window_dims) + size(input_batching_dims)`.
-+ * (C3) `same(shape(updates...))`.
-+@@ -6081,6 +6175,7 @@
-+    ([#731](https://github.com/openxla/stablehlo/issues/731)).
-+ * `result[result_index] = reduce([source_values], [init_value], [0], scatter)`
-+  where:
-++
-+   * `source_values = [source[source_index] for source_index in
-+    source_indices]`.
-+   * `selected_index(source_index) = operand_index` if
-+@@ -6111,6 +6206,7 @@
-+ #### Constraints
-+ 
-+ <!-- markdownlint-disable line-length -->
-++
-+ * (C1) `element_type(operand) = element_type(source)`.
-+ * (C2) `shape(source) = num_windows` where:
-+   * `padded_operand_shape = padding[:, 0] + shape(operand) + padding[:, 1]`.
-+@@ -7501,6 +7597,7 @@
-+ syntax ([ISO/IEC 14977:1996](https://www.iso.org/standard/26153.html),
-+ [Wikipedia](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form)),
-+ with two modifications: 1) rules are defined using `::=` rather than `=`,
-++
-+ 2) concatenation is expressed using juxtaposition rather than `,`.
-+ 
-+ For describing semantics (i.e. within "Types", "Constants" and "Ops" sections),
-+@@ -7571,6 +7668,7 @@
-+ ### Names
-+ 
-+ In formulas, lexical scope includes: 1) global functions, 2) member definitions,
-++
-+ 3) local definitions. The list of global functions is provided below. The list
-+ of element definitions depends on the program element that the notation is
-+ applied to:
-+diff --ruN a/stablehlo/rfcs/20260821-low-precision-complex.md b/stablehlo/rfcs/20260821-low-precision-complex.md
-+--- stablehlo/rfcs/20260821-low-precision-complex.md
-++++ stablehlo/rfcs/20260821-low-precision-complex.md
-+@@ -0,0 +1,599 @@
-++# [RFC] Support f16- and bf16-based complex types in StableHLO
-++
-++Status: In Review<br/>
-++Initial version: 08/21/2026<br/>
-++Last updated: 09/28/2026<br/>
-++Discussion thread: [openxla/stablehlo#2993](https://github.com/openxla/stablehlo/pull/2993)
-++
-++## Overview
-++
-++This RFC proposes extending the set of complex types supported by StableHLO
-++from:
-++
-++```text
-++complex<f32>
-++complex<f64>
-++```
-++
-++to:
-++
-++```text
-++complex<f16>
-++complex<bf16>
-++complex<f32>
-++complex<f64>
-++```
-++
-++The proposal uses the existing MLIR builtin `ComplexType`; it does not add a
-++new StableHLO type. It extends the set of floating-point component types that
-++StableHLO accepts inside `complex<T>`.
-++
-++This RFC defines the StableHLO and VHLO type and serialization contract for
-++low-precision complex types. It does not implement XLA/HLO, the
-++StableHLO-to-XLA bridge, runtime ABI exposure, or backend kernels. The feature
-++is intended to land as part of a coordinated implementation sequence with the
-++XLA proposal in [openxla/xla#6136](https://github.com/openxla/xla/issues/6136).
-++Approval of this RFC does not imply that every StableHLO consumer can execute
-++`complex<f16>` or `complex<bf16>`; consumers without support must reject these
-++types with a clear diagnostic before code generation.
-++
-++### Scope and current implementation status
-++
-++This RFC specifies the StableHLO/VHLO side of a cross-repository feature. The
-++current status of the related layers is:
-++
-++| Layer | Current status | Boundary of this RFC |
-++| --- | --- | --- |
-++| StableHLO type specification | Only `complex<f32>` and `complex<f64>` are currently specified | Adds `complex<f16>` and `complex<bf16>` |
-++| VHLO compatibility | `ComplexV1` is the only complex representation, and its current shallow verifier does not constrain the component type | Adds a target-version-aware component-type constraint on `ComplexV1` |
-++| XLA/HLO core types | `C32`/`BC32` are proposed in [openxla/xla#6136](https://github.com/openxla/xla/issues/6136), but are not yet implemented | Coordinated prerequisite; not implemented here |
-++| StableHLO-to-XLA bridge | No `C32`/`BC32` type or constant mapping is available | Follow-up implementation |
-++| Runtime and backend support | [cuFFT](https://docs.nvidia.com/cuda/cufft/index.html) exposes 16-bit complex formats, but XLA does not yet expose a corresponding path | Separate runtime and backend work |
-++
-++The StableHLO specification may define a valid type domain before every
-++consumer implements it. This RFC therefore defines the observable rejection
-++behavior for consumers that have not yet added execution support; it does not
-++claim end-to-end execution support from StableHLO serialization alone.
-++
-++## Motivation
-++
-++[openxla/stablehlo#1794](https://github.com/openxla/stablehlo/issues/1794)
-++requests support for 16-bit FFT input and output types. Today, the StableHLO
-++verifier prevents such programs even though MLIR can represent both
-++`complex<f16>` and `complex<bf16>`.
-++
-++There are two independent concerns:
-++
-++1. Whether StableHLO can represent and specify a low-precision complex value.
-++2. Whether a particular consumer or backend can execute that value efficiently.
-++
-++StableHLO should decide the first concern based on the coherence of its type
-++system and semantics rather than on the current implementation status of one
-++consumer. The related XLA proposal currently remains at the design stage; it
-++proposes adding `C32 = complex<f16>` and `BC32 = complex<bf16>` as a shared
-++core-type change before bridge and backend work. Consumers that do not support
-++the new types may reject them with a diagnostic until they add a lowering,
-++legalization, or native implementation. Such rejection is part of the staged
-++rollout, not an implicit promotion to `complex<f32>`.
-++
-++The body of #1794 suggests allowing any floating-point component type. This
-++RFC intentionally narrows that suggestion to f16 and bf16, the two widely used
-++16-bit floating-point formats, in addition to the existing f32 and f64 types.
-++Supporting only `bf16` would not address the issue's original `f16` request,
-++while allowing every member of StableHLO's broader floating-point type set
-++would also introduce complex types with FP4, FP6, FP8, and other specialized
-++component formats. Those formats have distinct representability and
-++compatibility questions and should not be included implicitly in this
-++proposal.
-++
-++## Current behavior
-++
-++The current StableHLO specification lists only `complex<f32>` and
-++`complex<f64>` as supported complex types.
-++
-++The implementation reflects this restriction in multiple places:
-++
-++- `HLO_Complex` is defined as `Complex<HLO_Float32Or64>`.
-++- The operands of `stablehlo.complex` are restricted to f32/f64 tensors.
-++- RFFT type inference has a hand-written check that requires f32 or f64 input.
-++- The StableHLO test suite contains a negative test requiring f16 RFFT input to
-++  be rejected.
-++
-++Changing only the RFFT check would be incomplete: RFFT could infer a type that
-++the common StableHLO complex constraint and `stablehlo.complex` still reject.
-++
-++VHLO currently represents MLIR builtin complex types with `ComplexV1`, whose
-++verifier only checks that the component is a VHLO type. This is a shallow
-++structural check: the representation can therefore spell component
-++combinations that were never in the historical StableHLO complex type domain.
-++Historically valid `ComplexV1` values are limited to f32 and f64 components.
-++
-++The current VHLO version-conversion pass has no type-to-type version
-++conversions because no VHLO type has previously required one. It recursively
-++checks whether nested types are legal for the target version, and that check
-++is already target-version-aware, but complex-type legality today does not
-++depend on the component type. Version-dependent constraint checks already
-++exist at the operation level: `validateConstraint` gates the reduce-family
-++operations and `custom_call_v1` on the target version, for example allowing
-++mismatched operand and result element types in reduce operations only from
-++0.17.0. This RFC extends that existing constraint pattern to the complex
-++component type rather than introducing new type-conversion infrastructure.
-++
-++## Proposal
-++
-++### Supported complex component types
-++
-++StableHLO will define an explicit complex component type set:
-++
-++```text
-++ComplexComponent ::= f16 | bf16 | f32 | f64
-++ComplexType      ::= complex<ComplexComponent>
-++```
-++
-++The implementation should use a dedicated ODS constraint for this set rather
-++than define `HLO_Complex` in terms of the full `HLO_Float` constraint. This
-++keeps future additions to `HLO_Float` from automatically changing the
-++StableHLO complex type system without review.
-++
-++No mixed-component complex type is introduced. A complex value continues to
-++have real and imaginary components with the same element type.
-++
-++### Effect on existing operations
-++
-++This proposal does not add an operation and does not add complex semantics to
-++an operation that currently excludes complex types.
-++
-++For every existing operation whose specified input or result type domain
-++already includes a complex type, `complex<f16>` and `complex<bf16>` become
-++additional valid instantiations of that existing type domain. This RFC
-++proposes no operation-specific exception. If review identifies an operation
-++whose semantics cannot support either new instantiation, that exception must
-++be specified in a revision of this RFC rather than chosen during
-++implementation.
-++
-++This consequence is intentional. Restricting the new types to FFT alone would
-++allow a low-precision complex value to be produced but prevent it from flowing
-++through the same basic construction, extraction, arithmetic, conversion, and
-++structural operations as other StableHLO complex values.
-++
-++The observable result type of an operation remains the type written in the
-++StableHLO program. This RFC does not insert implicit promotion to f32 and does
-++not change `complex<f16>` or `complex<bf16>` into another IR type. A consumer
-++may use wider intermediate precision where permitted by the existing operation
-++semantics and accuracy rules, but the declared input and result types remain
-++unchanged.
-++
-++The normative affected surface is grouped as follows:
-++
-++- Direct construction and extraction operations, including `complex`, `real`,
-++  and `imag`, accept the two new instantiations.
-++- Existing parametric complex arithmetic and transcendental operations accept
-++  them under their existing semantics and accuracy contracts. This includes
-++  the direct complex-domain uses in `abs`, `atan2`, `cbrt`, `cosine`, `divide`,
-++  `exponential`, `exponential_minus_one`, `log`, `log_plus_one`, `logistic`,
-++  `negate`, `power`, `remainder`, `rsqrt`, `sign`, `sine`, `sqrt`, `subtract`,
-++  `tan`, and `tanh`, as well as operations such as `add` and `multiply` whose
-++  generic tensor domains already include complex element types.
-++- Existing complex linear-algebra operations, including `cholesky` and
-++  `triangular_solve`, accept the two new instantiations.
-++- FFT, IFFT, RFFT, and IRFFT accept the relationships specified below.
-++- Constants, `iota`, conversion, data-movement, shape-preserving, control-flow,
-++  and structural operations continue to accept complex values wherever their
-++  current type domains already do so.
-++- A supported complex type may occur wherever an existing StableHLO container
-++  admits a complex element or nested value, including tensors, buffers,
-++  tuples, futures, function signatures, region arguments, and custom calls.
-++
-++Because `HLO_Complex` is used transitively, the implementation audit must cover
-++the complete ODS constraint graph rather than only literal `HLO_Complex`
-++occurrences. In particular, derived constraints such as `HLO_Tensor`,
-++`HLO_NonQuantizedTensor`, `HLO_Buffer`, `HLO_Tuple`, `HLO_CustomCallValue`, and
-++their static-shape or unranked variants expand with the common complex
-++component set. Every custom verifier and inference path reached through these
-++constraints must be checked against the specification above.
-++
-++This shared-constraint change also reaches the CHLO dialect: CHLO operations
-++such as `broadcast_complex` and the inverse-trigonometric and hyperbolic
-++complex math operations use the same complex tensor predicates. The
-++implementation must either include those operations and their
-++legalization/decomposition paths in the affected-surface audit and tests, or
-++deliberately separate their constraints so that this RFC does not expand CHLO
-++acceptance accidentally.
-++
-++This expansion does not create separate kinds of complex type. It also does
-++not define the physical layout or ABI of a buffer containing a low-precision
-++complex element; StableHLO buffer acceptance remains an abstract type-system
-++property under the existing buffer contract.
-++
-++### `complex`, `real`, and `imag`
-++
-++For every supported complex component type `T`:
-++
-++```text
-++stablehlo.complex : (tensor<...xT>, tensor<...xT>)
-++                 -> tensor<...xcomplex<T>>
-++
-++stablehlo.real    : tensor<...xcomplex<T>> -> tensor<...xT>
-++stablehlo.imag    : tensor<...xcomplex<T>> -> tensor<...xT>
-++```
-++
-++The existing shape and same-element-type constraints continue to apply.
-++
-++In particular, the following remain invalid:
-++
-++- constructing a complex value from one f16 tensor and one bf16 tensor;
-++- declaring a `complex<f32>` result for f16 components;
-++- declaring a real or imaginary result whose component type differs from the
-++  input complex component type.
-++
-++### FFT type relationships
-++
-++For `T` in `{f16, bf16, f32, f64}`, the FFT type relationships are:
-++
-++```text
-++FFT:   complex<T> -> complex<T>
-++IFFT:  complex<T> -> complex<T>
-++RFFT:          T  -> complex<T>
-++IRFFT: complex<T> -> T
-++```
-++
-++The existing FFT rank, shape, and `fft_length` constraints are unchanged.
-++
-++The hand-written RFFT type check should use the same supported complex
-++component predicate as the common complex type constraint, avoiding a second
-++component-type list that can drift from the specification.
-++
-++### Constants and conversion
-++
-++Complex constants with f16 or bf16 components follow the existing StableHLO
-++complex constant definition: the real and imaginary literals are interpreted
-++using the floating-point semantics of the component type.
-++
-++`stablehlo.convert` continues to use its existing specified conversion
-++semantics. This RFC makes the new complex types valid source or result types in
-++cases where the existing `convert` type domain includes complex types; it does
-++not introduce an implicit conversion or a new fallback rule.
-++
-++## Compatibility and VHLO
-++
-++Low-precision complex support is a new StableHLO feature and therefore requires
-++a StableHLO minor version bump. The implementation must use the next available
-++minor version at the time it lands. If implemented immediately after StableHLO
-++1.20.0, the feature version would be 1.21.0.
-++
-++The required observable compatibility behavior is:
-++
-++- serialization targeting the feature version or a later version succeeds;
-++- serialization of a program using `complex<f16>` or `complex<bf16>` to an
-++  earlier target version fails with a diagnostic;
-++- no compatibility path may silently promote the value to `complex<f32>` or
-++  decompose it into unrelated tensor types;
-++- programs using only `complex<f32>` and `complex<f64>` retain their existing
-++  ability to target older supported StableHLO versions;
-++- current consumers remain able to deserialize portable artifacts containing
-++  historical f32/f64 complex programs.
-++
-++StableHLO version compatibility and consumer execution capability are separate
-++contracts. Serialization to the feature version or a later version only
-++establishes that the artifact is representable by that StableHLO version. It
-++does not prove that an XLA, PJRT, or other consumer can lower every operation
-++containing the new type. A consumer that understands the StableHLO version but
-++lacks `C32` or `BC32` support must reject the module before code generation
-++with a diagnostic that identifies the unsupported type and operation.
-++
-++### Proposed VHLO representation
-++
-++VHLO retains `ComplexV1` as the only VHLO representation of complex types.
-++`ComplexV1` is structurally unchanged: one element-type parameter with the
-++existing shallow verifier, and an unchanged version range. The
-++version-dependent validity of component types is expressed as a
-++target-version-aware type constraint, following the pattern VHLO already uses
-++for operation constraints (`validateConstraint` on the reduce-family
-++operations and `custom_call_v1`).
-++
-++The constraint is normative:
-++
-++- For a target version at or after the feature version, `ComplexV1` accepts
-++  exactly f16-, bf16-, f32-, and f64-based components. FP8, integer, and all
-++  other component types are rejected.
-++- For a target version before the feature version, `ComplexV1` accepts only
-++  f32- and f64-based components. A `ComplexV1<f16>` or `ComplexV1<bf16>` value
-++  makes serialization to that target fail with a diagnostic, in the same way
-++  that a reduce operation with mismatched operand and result element types
-++  fails when the target version is older than 0.17.0.
-++- No new VHLO type or attribute is introduced, and no type-to-type conversion
-++  or type rewriting occurs during version conversion. Serialization of
-++  programs that use only f32/f64 complex types is therefore unaffected.
-++
-++The implementation must add a `VHLO_VersionedTypeConstraintInterface` as the
-++type-level analogue of `VHLO_VersionedOpConstraintInterface`. It provides a
-++`validateConstraint(Type, Version)` hook. `ComplexV1` must implement the hook,
-++and the recursive `isLegalType` check must invoke it. A local helper may
-++provide the hook's implementation, but the target-aware check must have a
-++type-level entry point; operation-only validation is insufficient because
-++complex types can be nested in signatures, containers, and type-bearing
-++attributes. This interface is an implementation hook and does not change the
-++serialized VHLO type identity or its version range.
-++
-++This models a component-domain relaxation as a versioned constraint rather
-++than as a new type version. VHLO is a serialization dialect: it is produced by
-++conversion from StableHLO and consumed by version conversion, not authored by
-++hand, and the dialect does not guarantee rejection of hand-authored payloads
-++that could never be produced through those flows. Every artifact is tagged
-++with the version it targets, and a consumer must be at least that version, so
-++a payload cannot be presented to an older consumer than it was serialized for.
-++
-++Officially produced bytecode is validated against the requested target version
-++before emission. Consequently, no official pre-feature artifact can contain a
-++low-precision complex value. Hand-authored VHLO payloads that violate this
-++producer contract are outside this RFC's portable-artifact guarantees; a
-++consumer may reject them during parsing or conversion, and accepting one must
-++not establish that the pre-feature target historically supported the type.
-++
-++### Recursive legality requirements
-++
-++The component-type constraint must be evaluated by the recursive type
-++legality check with access to the requested target version. The current check
-++already recurses through several nested VHLO types and attributes, but the
-++implementation for this feature must also add explicit coverage for every
-++type-bearing location listed below. Checking only an operation's immediate
-++result types would leave invalid values hidden in containers or signatures.
-++The constraint must therefore be enforced at every location, including:
-++
-++- `RankedTensorV1`, `UnrankedTensorV1`, and `RankedBufferV1` element types;
-++- `TupleV1` elements, nested tuples, and `FutureV1` element types;
-++- `FunctionV1` inputs and results;
-++- operation operands and results, function signatures, and region block
-++  arguments;
-++- `TypeV1Attr`, `TensorV1Attr`, `FloatV1Attr`, `IntegerV1Attr`, and every other
-++  attribute that carries a type;
-++- ranked-tensor encodings and nested array or dictionary attributes; and
-++- the storage and expressed types of `UniformQuantizedV1` and
-++  `UniformQuantizedPerAxisV1`, which must be traversed even when the
-++  quantized-type semantics reject a complex inhabitant.
-++
-++If any nested occurrence fails the component-type constraint for the requested
-++target, the entire version conversion must fail before bytecode is written.
-++The diagnostic must identify the target version and the unsupported complex
-++component type. No path may partially convert the module or emit an artifact
-++containing a complex value whose component type is invalid for the target
-++version.
-++
-++### Conversion behavior and invariants
-++
-++Because no VHLO type changes, version conversion requires no type rewriting.
-++The observable behavior is:
-++
-++1. Validate the target version as today.
-++2. Preserve the existing operation-version rewrites; complex types are never
-++   rewritten.
-++3. Extend the recursive type legality check to evaluate the component-type
-++   constraint against the requested target version over every type-bearing
-++   location listed above.
-++4. If any check fails, fail the pass before bytecode emission with a
-++   diagnostic naming the target version and the unsupported component type.
-++
-++The transformation remains all-or-nothing from the serializer's perspective,
-++and serialization must not emit bytecode from a module whose complex component
-++types are invalid for the requested target version.
-++
-++## Consumer behavior
-++
-++StableHLO verifier acceptance is not a claim that every consumer can execute
-++the new types.
-++
-++StableHLO serialization validates only StableHLO/VHLO representability. A
-++StableHLO-to-XLA bridge must reject `complex<f16>` or `complex<bf16>` before
-++constructing the XLA/HLO module when the corresponding XLA primitive type is
-++unavailable. The diagnostic must identify the unsupported type, operation, and
-++target. Other consumers must provide an equivalent pre-code-generation
-++capability check or a separately specified legalization path.
-++
-++A consumer that lacks support may:
-++
-++- reject a module containing the new types with a clear unsupported-type
-++  diagnostic;
-++- apply a separately specified legalization;
-++- implement the types natively.
-++
-++This RFC does not prescribe which option a consumer must choose. It does
-++require that unsupported consumers fail explicitly before code generation. In
-++particular, a consumer must not reinterpret a four-byte value as `C64`, fall
-++through an existing `C64`/`C128` path, or silently promote the declared value to
-++`complex<f32>`. XLA support is not a prerequisite for StableHLO type validity,
-++but the StableHLO implementation and the XLA/HLO work must be coordinated
-++before the feature is presented as end-to-end executable.
-++
-++## Verification and testing
-++
-++The implementation must include positive tests for:
-++
-++- StableHLO verifier acceptance and exact type inference for the complete
-++  specified domain, independently of whether a particular consumer executes
-++  every operation;
-++- parsing and printing `complex<f16>` and `complex<bf16>` in StableHLO
-++  programs;
-++- `stablehlo.complex`, `stablehlo.real`, and `stablehlo.imag` type relations;
-++- an acceptance case for every existing operation with a direct complex-domain
-++  numeric, generator, or linear-algebra constraint, including `iota`, plus
-++  representative cases for every transitive structural and container
-++  constraint family listed above;
-++- FFT, IFFT, RFFT, and IRFFT for both f16 and bf16 component types;
-++- exact return-type inference, including dynamic-shape cases;
-++- StableHLO-to-current-VHLO-to-StableHLO round trips for both `complex<f16>`
-++  and `complex<bf16>`;
-++- serialization and deserialization at the new version for both
-++  `complex<f16>` and `complex<bf16>`;
-++- deserialization of historical f32/f64 complex artifacts, which requires no
-++  type rewriting under this proposal;
-++- serialization of `complex<f16>` and `complex<bf16>` values, including values
-++  nested in every semantically valid type-bearing container and attribute
-++  listed above, to the feature version and later targets; and
-++- continued old-version serialization of f32/f64 complex programs.
-++
-++The implementation must include negative tests for:
-++
-++- consumer-side rejection before code generation when `C32` or `BC32` support
-++  is absent, including a diagnostic that names the unsupported type, operation,
-++  and target;
-++- complex values with integer component types;
-++- at least one floating-point component type outside this RFC, such as an FP8
-++  type;
-++- rejection of serialization to any target version before the feature version
-++  when a `ComplexV1<f16>` or `ComplexV1<bf16>` value is present, both directly
-++  and when nested in every semantically valid supported type-bearing container
-++  or attribute listed above, enforced by the version-conversion constraint
-++  rather than by tightening the shallow V1 parser or verifier;
-++- rejection of complex types placed in quantized-type storage or expressed
-++  type parameters by the semantic constraint owned by the corresponding
-++  StableHLO or consumer layer, while those locations are still traversed for
-++  VHLO version legality;
-++- a complex value with an FP8, integer, or other unsupported component, for
-++  any target version;
-++- mismatched f16/bf16 inputs to `stablehlo.complex`;
-++- mismatched real/complex component types in FFT input and result types;
-++- attempting to serialize a program containing `complex<f16>` or
-++  `complex<bf16>` to the version immediately before the feature version; and
-++- failure before bytecode emission, with a diagnostic that names both the
-++  requested target version and the unsupported nested type.
-++
-++The VHLO compatibility suite must cover the feature version following the
-++existing VHLO checklist, including fixtures that exercise the component-type
-++constraint against old and new target versions.
-++
-++Reference-interpreter numerical tests may be delivered in a separate
-++StableHLO-only follow-up if the required tensor storage and constant
-++materialization changes would obscure review of the type-system and
-++compatibility change. If maintainers require reference execution as an opset
-++acceptance criterion, that follow-up can be stacked or folded into the
-++implementation change without adding XLA or backend work.
-++
-++## Non-goals
-++
-++This RFC does not propose:
-++
-++- the implementation of an XLA primitive type or StableHLO-to-XLA bridge;
-++  those pieces are coordinated with [openxla/xla#6136](https://github.com/openxla/xla/issues/6136)
-++  and are required before claiming end-to-end execution;
-++- JAX dtype, promotion, tracing, or lowering changes;
-++- portable decomposition into real and imaginary tensor planes;
-++- CPU, GPU, TPU, or accelerator kernels;
-++- FFT library integration;
-++- a memory layout, storage ABI, or claim that a value occupies four bytes in a
-++  particular runtime;
-++- mandated accumulation precision or a new numerical-accuracy contract;
-++- automatic fallback or promotion to `complex<f32>`;
-++- support for complex values whose components use FP4, FP6, FP8, E8M0, or any
-++  future floating-point type not listed by this RFC;
-++- performance claims.
-++
-++These concerns are separate implementation stages, but they are not an
-++indefinite dependency: the enabling StableHLO implementation must have an
-++agreed XLA/HLO core-type plan and an explicit unsupported-consumer path before
-++it lands. The bridge, runtime, and backend changes may remain separate pull
-++requests.
-++
-++## Alternatives considered
-++
-++### Support only `complex<bf16>`
-++
-++This is the smallest change for bf16-specific use cases, but it does not address
-++the f16 request in #1794 and introduces an asymmetric exception between the two
-++widely used 16-bit floating-point formats. The additional StableHLO and VHLO
-++work required to support f16 and bf16 together is substantially shared, so this
-++RFC does not recommend a bf16-only type domain.
-++
-++### Support `Complex<HLO_Float>`
-++
-++This is mechanically concise but would include every floating-point type in
-++`HLO_Float`, including specialized FP4, FP6, FP8, and E8M0 formats. It would
-++also cause future additions to `HLO_Float` to expand the StableHLO complex type
-++domain without a separate compatibility decision. This RFC instead proposes a
-++closed component set.
-++
-++### Support low-precision complex types only on FFT
-++
-++This narrows the immediate verifier change but produces a fragmented type
-++system in which FFT can create a complex value that basic complex construction,
-++extraction, arithmetic, conversion, or structural operations may reject. If a
-++strictly FFT-only feature is desired, it should be proposed as an explicit
-++operation-specific type extension rather than as general StableHLO support for
-++low-precision complex types.
-++
-++### Reuse `ComplexV1` with target-aware validation (chosen)
-++
-++VHLO keeps `ComplexV1` as the only complex representation and expresses the
-++version-dependent validity of component types as a target-version-aware type
-++constraint, the same pattern the dialect already uses for operation
-++constraints. Review of this RFC directed this approach over a new type
-++version: VHLO is a serialization dialect produced by conversion and consumed
-++by version conversion rather than authored by hand, every artifact is tagged
-++with its target version, and a downgrade containing values invalid for the
-++target already fails today. Modeling a component-domain relaxation with the
-++constraint mechanism keeps the category of change consistent with existing
-++practice and requires far less code.
-++
-++### Add `ComplexV2` at the feature version (declined)
-++
-++A new `ComplexV2` with a closed component set keeps the meaning of a complex
-++type intrinsic to the type version and makes the compatibility boundary
-++inspectable without target context. It would, however, require the dialect's
-++first type version split together with new type-to-type conversion
-++infrastructure: recursive rewriting of enclosing types, function signatures,
-++and type-bearing attributes for a change that does not alter the structure of
-++the type. Given VHLO's serialization-dialect stance, that cost is not
-++justified for this category of change.
-++
-++The alternatives are:
-++
-++| Design | Benefit | Cost |
-++| --- | --- | --- |
-++| Target-aware validation on `ComplexV1` | Consistent with the existing versioned-constraint pattern; no type rewriting; far less code | Complex-type validity depends on the target version rather than the type alone |
-++| `ComplexV2` with V1/V2 conversion | Type-intrinsic meaning and an inspectable boundary without target context | First VHLO type version split plus recursive type-conversion infrastructure |
-++
-++Reusing `ComplexV1` with no version check at all would allow new programs to
-++appear serializable to StableHLO versions that never specified these
-++component combinations, and remains rejected.
-++
-++## Rollout and pull request boundaries
-++
-++The proposed upstream sequence is deliberately split by capability:
-++
-++1. Keep this RFC as a design-only PR and confirm the cross-repository contract
-++   with [openxla/xla#6136](https://github.com/openxla/xla/issues/6136). RFC
-++   approval does not itself enable serialization or execution.
-++2. Obtain agreement on the XLA/HLO core representation (`C32` and `BC32`),
-++   host storage, `LiteralProto`, parser/printer behavior, and explicit
-++   unsupported-execution diagnostics. The current XLA proposal places this
-++   core-type change before bridge and backend work.
-++3. After the RFC is approved, submit the compatibility-atomic StableHLO
-++   implementation, including:
-++
-++   - specification, ODS, verifier, and type-inference changes;
-++   - the target-version-aware `ComplexV1` component-type constraint and its
-++     recursive legality coverage;
-++   - positive, negative, round-trip, and serialization tests;
-++   - tests that reject unsupported target versions before bytecode emission.
-++
-++   The affected-surface audit must include CHLO operations that inherit the
-++   shared complex predicates, or record an explicit constraint boundary that
-++   excludes them.
-++
-++   The implementation may be developed in parallel with the XLA core change,
-++   but it must not be presented as end-to-end execution support. No released
-++   state may emit the new StableHLO types without the corresponding VHLO
-++   boundary.
-++4. Implement the StableHLO-to-XLA bridge, Shape mapping, constant materialization,
-++   and bit-exact round trips in a separate follow-up. A bridge that has not yet
-++   added `C32`/`BC32` must reject those types before code generation.
-++5. Add explicit legalization policies, keeping pair decomposition and
-++   promotion to `C64` as separate choices. The core type change must not choose
-++   either policy implicitly.
-++6. Add runtime ABI exposure and backend implementations, beginning with a
-++   concrete backend path such as the cuFFT 16-bit complex formats and then
-++   extending support as maintainers approve.
-++
-++The RFC PR must not close #1794 by itself because design approval does not
-++implement the requested functionality. The implementation PR can close the
-++issue only after the agreed StableHLO support and the required consumer path
-++are present.
-+diff --ruN a/stablehlo/rfcs/20260907-exp2-log2.md b/stablehlo/rfcs/20260907-exp2-log2.md
-+--- stablehlo/rfcs/20260907-exp2-log2.md
-++++ stablehlo/rfcs/20260907-exp2-log2.md
-+@@ -0,0 +1,51 @@
-++# [RFC] Add Exp2Op and Log2Op to the StableHLO specification
-++
-++Status: Review<br/>
-++Initial version: 09/07/2026<br/>
-++Last updated: 10/02/2026<br/>
-++Discussion thread: [GitHub](https://github.com/openxla/stablehlo/pulls)
-++
-++## Motivation
-++
-++IEEE-754 (`exp2`, `log2`), C99 `<math.h>`, and LLVM intrinsics (`llvm.exp2`,
-++`llvm.log2`) include base-2 exponential (`exp2`) and base-2 logarithm (`log2`)
-++as standard elementary math functions, and hardware accelerators (such as GPU
-++special function units and TPU EUP instructions) support them directly.
-++
-++Currently, StableHLO lacks native `exp2` and `log2` operations:
-++
-++*   Frameworks expose `exp2` and `log2` directly: JAX provides
-++    [`jnp.exp2`][jax1] / `lax.exp2` and [`jnp.log2`][jax2] / `lax.log2`, and
-++    PyTorch provides [`torch.exp2`][torch1] and [`torch.log2`][torch2].
-++*   Without first-class ops in StableHLO, frameworks must decompose `exp2(x)`
-++    into `exponential(x * ln(2))` and `log2(x)` into `log(x) / ln(2)`.
-++*   Decomposing `exp2` and `log2` into natural `exponential` and `log` scaled by
-++    `ln(2)` degrades numerical accuracy (introducing rounding error on integer
-++    powers of two where `exp2(n)` and `log2(2^n)` should evaluate exactly) and
-++    prevents backends from emitting single-instruction base-2 hardware
-++    operations without fragile algebraic pattern-matching.
-++
-++Following the precedent of `TanOp` ([20240312-tanop.md](20240312-tanop.md)) and
-++the transcendental accuracy specification
-++([20241015-result-accuracy.md](20241015-result-accuracy.md)), this RFC adds
-++`exp2` (`Exp2Op`) and `log2` (`Log2Op`) to StableHLO with optional
-++`result_accuracy` attributes.
-++
-++## Proposed Specification Changes
-++
-++Please refer to [`docs/spec.md`](../docs/spec.md) for the specification of
-++[`exp2`](../docs/spec.md#exp2) and [`log2`](../docs/spec.md#log2).
-++
-++## Exp2Op, Log2Op, and Compatibility
-++
-++*   **VHLO Serialization**: StableHLO version `1.21.0` introduces
-++    `VHLO_Exp2OpV1` (`exp2_v1`) and `VHLO_Log2OpV1` (`log2_v1`).
-++*   **Forward Compatibility & Decomposition**: For runtimes targeting StableHLO
-++    versions prior to `1.21.0`, compatibility expansion lowers `exp2(x)` to
-++    `exponential(multiply(x, constant(ln(2))))` and `log2(x)` to `divide(log(x),
-++    constant(ln(2)))`.
-++
-++[jax1]: https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.exp2.html
-++[jax2]: https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.log2.html
-++[torch1]: https://pytorch.org/docs/stable/generated/torch.exp2.html
-++[torch2]: https://pytorch.org/docs/stable/generated/torch.log2.html
- diff --ruN a/stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.h b/stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.h
- --- stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.h
- +++ stablehlo/stablehlo/conversions/linalg/transforms/LegalizeToLinalgUtils.h
-@@ -2892,6 +3749,24 @@ diff --ruN a/stablehlo/stablehlo/reference/InterpreterOps.cpp b/stablehlo/stable
-    // TODO(#1725): Figure out how to test the outfeed queue.
-    return results;
-  }
-+diff --ruN a/stablehlo/stablehlo/reference/Ops.cpp b/stablehlo/stablehlo/reference/Ops.cpp
-+--- stablehlo/stablehlo/reference/Ops.cpp
-++++ stablehlo/stablehlo/reference/Ops.cpp
-+@@ -1777,12 +1777,8 @@
-+         dotGeneralOp(reversedLhsWindow, rhs, lhsContractingDimensions,
-+                      rhsContractingDimensions, resultType.getElementType());
-+ 
-+-    Sizes resultNonSpatialDims;
-+-    for (auto i = 0; i < result.getRank(); ++i)
-+-      if (llvm::find(outputSpatialDimensions, i) ==
-+-          outputSpatialDimensions.end())
-+-        resultNonSpatialDims.push_back(result.getShape()[i]);
-+-
-++    Sizes resultNonSpatialDims{result.getShape()[outputBatchDimension],
-++                               result.getShape()[outputFeatureDimension]};
-+     Axes resultPermutation;
-+     resultPermutation.push_back(outputBatchDimension);
-+     resultPermutation.append(outputSpatialDimensions.begin(),
- diff --ruN a/stablehlo/stablehlo/reference/Process.cpp b/stablehlo/stablehlo/reference/Process.cpp
- --- stablehlo/stablehlo/reference/Process.cpp
- +++ stablehlo/stablehlo/reference/Process.cpp
-@@ -3381,6 +4256,28 @@ diff --ruN a/stablehlo/stablehlo/tests/chlo/chlo_legalize_to_stablehlo.mlir b/st
-  // CHECK-LABEL:   func.func @mulhi_i32(
-  // CHECK-SAME:      %[[ARG0:.*]]: tensor<4xi32>,
-  // CHECK-SAME:      %[[ARG1:.*]]: tensor<4xi32>) -> tensor<4xi32> {
-+diff --ruN a/stablehlo/stablehlo/tests/interpret/convolution.mlir b/stablehlo/stablehlo/tests/interpret/convolution.mlir
-+--- stablehlo/stablehlo/tests/interpret/convolution.mlir
-++++ stablehlo/stablehlo/tests/interpret/convolution.mlir
-+@@ -134,3 +134,18 @@
-+                                          [[21, 21, 29, 29]]]]> : tensor<1x2x1x4xi64>
-+   func.return
-+ }
-++
-++// -----
-++
-++func.func @convolution_op_test_feature_before_batch() {
-++  %lhs = stablehlo.constant dense<[[[1.0]], [[2.0]]]> : tensor<2x1x1xf32>
-++  %rhs = stablehlo.constant dense<[[[3.0, 4.0]]]> : tensor<1x1x2xf32>
-++  %result = stablehlo.convolution(%lhs, %rhs)
-++    dim_numbers = [0, f, b]x[0, i, o]->[0, f, b],
-++    window = {stride = [1], pad = [[0, 0]], rhs_dilate = [1]}
-++    {batch_group_count = 1 : i64, feature_group_count = 1 : i64}
-++    : (tensor<2x1x1xf32>, tensor<1x1x2xf32>) -> tensor<2x2x1xf32>
-++  check.expect_almost_eq_const %result,
-++    dense<[[[3.0], [4.0]], [[6.0], [8.0]]]> : tensor<2x2x1xf32>
-++  func.return
-++}
- diff --ruN a/stablehlo/stablehlo/tests/ops_chlo.mlir b/stablehlo/stablehlo/tests/ops_chlo.mlir
- --- stablehlo/stablehlo/tests/ops_chlo.mlir
- +++ stablehlo/stablehlo/tests/ops_chlo.mlir
