@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -21,8 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -236,8 +237,9 @@ TEST_F(ClientServerTest, ConnectAndEnumerateDevices) {
     TF_RET_CHECK(Matches(EqualsProto(expected_topology))(topology))
         << topology.DebugString();
     ABSL_RETURN_IF_ERROR(client->KeyValueSet("key1", "value1"));
-    ABSL_ASSIGN_OR_RETURN(std::string value, client->BlockingKeyValueGet(
-                                            "key2", absl::InfiniteDuration()));
+    ABSL_ASSIGN_OR_RETURN(
+        std::string value,
+        client->BlockingKeyValueGet("key2", absl::InfiniteDuration()));
     TF_RET_CHECK(value == "value2");
     return absl::OkStatus();
   };
@@ -259,8 +261,9 @@ TEST_F(ClientServerTest, ConnectAndEnumerateDevices) {
         locals[1], &topology, /*assign_global_device_ids=*/true));
     TF_RET_CHECK(Matches(EqualsProto(expected_topology))(topology))
         << topology.DebugString();
-    ABSL_ASSIGN_OR_RETURN(std::string value, client->BlockingKeyValueGet(
-                                            "key1", absl::InfiniteDuration()));
+    ABSL_ASSIGN_OR_RETURN(
+        std::string value,
+        client->BlockingKeyValueGet("key1", absl::InfiniteDuration()));
     TF_RET_CHECK(value == "value1");
     ABSL_RETURN_IF_ERROR(client->KeyValueSet("key2", "value2"));
     return absl::OkStatus();
@@ -917,8 +920,8 @@ TEST_F(ClientServerTest, WaitAtBarrierSubset_Succeeds) {
     ABSL_RETURN_IF_ERROR(client->Connect());
 
     if (node_id != 2) {
-      ABSL_RETURN_IF_ERROR(client->WaitAtBarrier("barrier_1", kBarrierTimeout,
-                                            absl::Span<const int32_t>{0, 1}));
+      ABSL_RETURN_IF_ERROR(client->WaitAtBarrier(
+          "barrier_1", kBarrierTimeout, absl::Span<const int32_t>{0, 1}));
     }
 
     ABSL_RETURN_IF_ERROR(client->Shutdown());

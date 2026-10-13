@@ -24,6 +24,8 @@ limitations under the License.
 
 #include "absl/base/attributes.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/test.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
 #include "xla/array4d.h"
@@ -34,8 +36,6 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 

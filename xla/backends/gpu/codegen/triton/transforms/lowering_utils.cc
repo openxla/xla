@@ -35,8 +35,8 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "stablehlo/dialect/StablehloOps.h"
-#include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "xla/codegen/xtile/codegen/emitter_helpers.h"
 
 namespace mlir::triton::xla {
 
@@ -89,7 +89,7 @@ absl::StatusOr<TensorValue> CanonicalizeDotOperand(
   }
   if (shape.size() != shape_without_unit_dims.size()) {
     ABSL_ASSIGN_OR_RETURN(operand, ::xla::xtile::EmitTiledReshape(
-                                  b, shape_without_unit_dims, operand));
+                                       b, shape_without_unit_dims, operand));
   }
   int expected_contracting_dim_position = side == DotOperandSide::kLhs ? 1 : 0;
   bool is_transposed =

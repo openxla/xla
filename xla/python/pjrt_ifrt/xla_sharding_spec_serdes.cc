@@ -14,7 +14,6 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
-#include <string>
 #include <utility>
 
 #include "absl/status/status.h"
@@ -79,7 +78,7 @@ class HloShardingSpecSerDes
                        " for HloShardingSpec deserialization"));
     }
     ABSL_ASSIGN_OR_RETURN(auto xla_hlo_sharding,
-                     xla::HloSharding::FromProto(proto.xla_op_sharding()));
+                          xla::HloSharding::FromProto(proto.xla_op_sharding()));
 
     return HloShardingSpec::Create(proto.num_shards(),
                                    std::move(xla_hlo_sharding));

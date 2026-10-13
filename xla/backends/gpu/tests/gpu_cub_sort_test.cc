@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -57,7 +58,7 @@ class CubSortTestBase
 
   absl::StatusOr<bool> IsRewrittenToUseCubSort(absl::string_view hlo_text) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized_module,
-                     GetOptimizedModule(hlo_text));
+                          GetOptimizedModule(hlo_text));
 
     for (const auto& pass_metadata :
          optimized_module->metadata()->proto().pass_metadata()) {
@@ -191,7 +192,7 @@ numpy_order_comparator {
   rhs_is_zero = pred[] compare(rhs, c_zero), direction=EQ
   rhs_no_neg_zero = bf16[] select(rhs_is_zero, c_zero, rhs)
   rhs_no_neg_zero_or_nan = bf16[] select(rhs_is_nan, c_nan, rhs_no_neg_zero)
-  ROOT compare.20017 = pred[] compare(lhs_no_neg_zero_or_nan, rhs_no_neg_zero_or_nan), direction=GT, type=TOTALORDER
+  ROOT compare.20017 = pred[] compare(lhs_no_neg_zero_or_nan, rhs_no_neg_zero_or_nan), direction=GT, order=TOTAL
 }
 
 ENTRY main {
@@ -223,7 +224,7 @@ TEST_P(CubSortKeysSpecialOrderingTest, CompareToReferenceTotalOrderLt) {
 compare {
   lhs = f32[] parameter(0)
   rhs = f32[] parameter(1)
-  ROOT comp = pred[] compare(lhs, rhs), direction=LT, type=TOTALORDER
+  ROOT comp = pred[] compare(lhs, rhs), direction=LT, order=TOTAL
 }
 
 ENTRY main {

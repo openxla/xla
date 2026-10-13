@@ -42,7 +42,6 @@ limitations under the License.
 namespace xla {
 namespace {
 
-
 // Extracts the original computation name from the frontend attributes.
 std::string GetMarkedComputationName(const HloInstruction* instruction) {
   if (instruction->has_frontend_attributes()) {
@@ -269,7 +268,7 @@ absl::StatusOr<HloInstruction*> CallOutliner::OutlineAndReplaceBlock(
 
   std::vector<HloInstruction*> call_operands;
   ABSL_ASSIGN_OR_RETURN(HloComputation * outlined_computation,
-                   BuildOutlinedComputation(module, block, call_operands));
+                        BuildOutlinedComputation(module, block, call_operands));
   std::string original_computation_name = GetMarkedComputationName(block.after);
   if (!original_computation_name.empty()) {
     outlined_computation->SetAndSanitizeName(original_computation_name);
@@ -304,7 +303,8 @@ absl::StatusOr<HloInstruction*> CallOutliner::OutlineAndReplaceBlock(
   }
 
   if (!innermost_before->IsDead()) {
-    ABSL_RETURN_IF_ERROR(ReplaceMarkerWithOperands(computation, innermost_before));
+    ABSL_RETURN_IF_ERROR(
+        ReplaceMarkerWithOperands(computation, innermost_before));
   }
 
   // Verify that markers are dead before removal.
@@ -312,14 +312,27 @@ absl::StatusOr<HloInstruction*> CallOutliner::OutlineAndReplaceBlock(
   TF_RET_CHECK(innermost_before->IsDead())
       << "innermost_before still has users";
 
-  // Cleanup markers.
-  if (innermost_after->parent()) {
-    ABSL_RETURN_IF_ERROR(
-        computation->RemoveInstructionAndUnusedOperands(innermost_after));
+  // Cleanup after marker.
+  if (innermost_after->parent() != nullptr) {
+    ABSL_RETURN_IF_ERROR(innermost_after->SafelyDropAllControlDependencies());
+    ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(innermost_after));
   }
-  if (innermost_before->parent()) {
-    ABSL_RETURN_IF_ERROR(
-        computation->RemoveInstructionAndUnusedOperands(innermost_before));
+
+  // Explicitly remove all instructions belonging to block.body from the caller
+  // computation in reverse post-order after cloning into the outlined callee.
+  for (auto it = block.body.rbegin(); it != block.body.rend(); ++it) {
+    HloInstruction* inst = *it;
+    if (inst->parent() != nullptr && inst->IsDead()) {
+      ABSL_RETURN_IF_ERROR(inst->SafelyDropAllControlDependencies());
+      ABSL_RETURN_IF_ERROR(
+          computation->RemoveInstructionAndUnusedOperands(inst));
+    }
+  }
+
+  // Cleanup before marker.
+  if (innermost_before->parent() != nullptr) {
+    ABSL_RETURN_IF_ERROR(innermost_before->SafelyDropAllControlDependencies());
+    ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(innermost_before));
   }
 
   return call_instruction;
@@ -374,7 +387,7 @@ absl::StatusOr<bool> CallOutliner::HandleAfterMarker(
 
   // Outline the block.
   ABSL_ASSIGN_OR_RETURN(HloInstruction * call_instruction,
-                   OutlineAndReplaceBlock(module, computation, block));
+                        OutlineAndReplaceBlock(module, computation, block));
 
   // The new call instruction is added to the parent block's body if any.
   if (!stack_.empty()) {
@@ -431,8 +444,8 @@ absl::StatusOr<bool> CallOutliner::OutlineComputation(
     if (IsBeforeMarker(instruction)) {
       HandleBeforeMarker(instruction);
     } else if (IsAfterMarker(instruction)) {
-      ABSL_ASSIGN_OR_RETURN(bool outlined,
-                       HandleAfterMarker(module, computation, instruction));
+      ABSL_ASSIGN_OR_RETURN(
+          bool outlined, HandleAfterMarker(module, computation, instruction));
       mutated |= outlined;
     } else {
       HandleOtherInstruction(instruction);

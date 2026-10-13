@@ -21,7 +21,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "ynnpack/include/ynnpack.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -42,6 +41,7 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla_data.pb.h"
+#include "ynnpack/include/ynnpack.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"
@@ -53,11 +53,11 @@ static absl::StatusOr<YnnSubgraph> BuildBinaryAddSubgraph(
     absl::Span<const YnnFusionThunk::Argument> arguments,
     absl::Span<const YnnFusionThunk::Result> results) {
   ABSL_ASSIGN_OR_RETURN(YnnSubgraph subgraph,
-                   CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
-                     return ynn_create_subgraph(
-                         /*external_value_ids=*/3,
-                         /*flags=*/0, subgraph);
-                   }));
+                        CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
+                          return ynn_create_subgraph(
+                              /*external_value_ids=*/3,
+                              /*flags=*/0, subgraph);
+                        }));
 
   auto dims = [](absl::Span<const int64_t> dims) -> std::vector<size_t> {
     return {dims.begin(), dims.end()};
@@ -93,11 +93,11 @@ static absl::StatusOr<YnnSubgraph> BuildIotaSubgraph(
     absl::Span<const YnnFusionThunk::Argument> arguments,
     absl::Span<const YnnFusionThunk::Result> results) {
   ABSL_ASSIGN_OR_RETURN(YnnSubgraph subgraph,
-                   CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
-                     return ynn_create_subgraph(
-                         /*external_value_ids=*/1,
-                         /*flags=*/0, subgraph);
-                   }));
+                        CreateYnnSubgraph([&](ynn_subgraph_t* subgraph) {
+                          return ynn_create_subgraph(
+                              /*external_value_ids=*/1,
+                              /*flags=*/0, subgraph);
+                        }));
 
   uint32_t out_id = 0;
   auto out_shape = results[0].shape;

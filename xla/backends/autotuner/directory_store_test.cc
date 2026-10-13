@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/autotuner/directory_store.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <fstream>
 #include <ios>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/autotune_cache.pb.h"

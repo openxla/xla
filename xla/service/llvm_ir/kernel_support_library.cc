@@ -48,7 +48,8 @@ absl::Status KernelSupportLibrary::ForWithStatus(
     llvm::Value* step,
     const std::function<absl::Status(llvm::Value*, bool)>& for_body_generator) {
   return IfWithStatus(b_->CreateICmpSLT(start, end), [&]() -> absl::Status {
-    ABSL_RETURN_IF_ERROR(for_body_generator(start, /*is_first_iteration=*/true));
+    ABSL_RETURN_IF_ERROR(
+        for_body_generator(start, /*is_first_iteration=*/true));
     return ForWithStatus(
         name, b_->CreateAdd(start, step), end, step,
         [&](llvm::Value* iv) { return for_body_generator(iv, false); });

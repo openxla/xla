@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/service/scan_loop_accumulator_input_unification.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/service/copy_insertion.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -115,9 +116,8 @@ TEST_F(ScanLoopAccumulatorInputUnificationTest, UnifyAccumulatorInput) {
   auto module = ParseAndReturnVerifiedModule(kModule).value();
   auto module_clone = module->Clone();
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool simplified_loop,
-      ScanLoopAccumulatorInputUnification().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                       ScanLoopAccumulatorInputUnification().Run(module.get()));
   EXPECT_TRUE(simplified_loop);
 
   // Index 2 and 3 of the while are replaced with the input arrays.
@@ -217,9 +217,8 @@ TEST_F(ScanLoopAccumulatorInputUnificationTest, UnifyAccumulatorInput2) {
   auto module = ParseAndReturnVerifiedModule(kModule).value();
   auto module_clone = module->Clone();
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool simplified_loop,
-      ScanLoopAccumulatorInputUnification().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                       ScanLoopAccumulatorInputUnification().Run(module.get()));
   EXPECT_TRUE(simplified_loop);
 
   // Index 2 and 3 of the while are replaced with the input arrays.
@@ -304,9 +303,8 @@ TEST_F(ScanLoopAccumulatorInputUnificationTest, AccumulatorAllocateOutside) {
   )";
 
   auto module = ParseAndReturnVerifiedModule(kModule).value();
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool simplified_loop,
-      ScanLoopAccumulatorInputUnification().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                       ScanLoopAccumulatorInputUnification().Run(module.get()));
   // Buffer is not replaced with input since it is allocated outside the outer
   // loop.
   EXPECT_FALSE(simplified_loop);
@@ -362,9 +360,8 @@ TEST_F(ScanLoopAccumulatorInputUnificationTest, InputDifferentShape) {
   )";
 
   auto module = ParseAndReturnVerifiedModule(kModule).value();
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool simplified_loop,
-      ScanLoopAccumulatorInputUnification().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                       ScanLoopAccumulatorInputUnification().Run(module.get()));
   EXPECT_FALSE(simplified_loop);
 }
 
@@ -459,9 +456,8 @@ TEST_F(ScanLoopAccumulatorInputUnificationTest, MultipleUsersInput) {
   auto module = ParseAndReturnVerifiedModule(kModule).value();
   auto module_clone = module->Clone();
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool simplified_loop,
-      ScanLoopAccumulatorInputUnification().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                       ScanLoopAccumulatorInputUnification().Run(module.get()));
   EXPECT_TRUE(simplified_loop);
 
   // Only index 2 is replaced with the array.
@@ -554,8 +550,8 @@ TEST_F(ScanLoopAccumulatorInputUnificationTest,
   // Check the inserted copies before applying the copy insertion pass.
   auto module_clone = module->Clone();
   AliasInfo alias_info;
-  TF_ASSERT_OK_AND_ASSIGN(bool clone_copy_inserted,
-                          CopyInsertion(&alias_info).Run(module_clone.get()));
+  ASSERT_OK_AND_ASSIGN(bool clone_copy_inserted,
+                       CopyInsertion(&alias_info).Run(module_clone.get()));
   EXPECT_TRUE(clone_copy_inserted);
   HloInstruction* while_instruction =
       GetTopLevelWhileInstruction(module_clone.get());
@@ -563,15 +559,14 @@ TEST_F(ScanLoopAccumulatorInputUnificationTest,
       while_instruction->while_body()->root_instruction()->operand(2)->opcode(),
       HloOpcode::kCopy);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool simplified_loop,
-      ScanLoopAccumulatorInputUnification().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool simplified_loop,
+                       ScanLoopAccumulatorInputUnification().Run(module.get()));
   EXPECT_TRUE(simplified_loop);
 
   // Check the inserted copies after applying the copy insertion pass and
   // removing double buffers.
-  TF_ASSERT_OK_AND_ASSIGN(bool copy_inserted,
-                          CopyInsertion(&alias_info).Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(bool copy_inserted,
+                       CopyInsertion(&alias_info).Run(module.get()));
   EXPECT_TRUE(copy_inserted);
   VLOG(3) << "After copy_insertion:\n" << module->ToString();
   while_instruction = GetTopLevelWhileInstruction(module.get());
@@ -671,9 +666,9 @@ TEST_F(ScanLoopAccumulatorInputUnificationTest, SharedLoopBody) {
   }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModule));
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed, ScanLoopAccumulatorInputUnification().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModule));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       ScanLoopAccumulatorInputUnification().Run(module.get()));
   EXPECT_FALSE(changed);
 }
 

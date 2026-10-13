@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef XLA_TSL_UTIL_PROTO_PROTO_UTILS_H_
 #define XLA_TSL_UTIL_PROTO_PROTO_UTILS_H_
 
-#include "google/protobuf/duration.pb.h"
 #include "absl/time/time.h"
+#include "google/protobuf/duration.pb.h"
 
 namespace tsl {
 namespace proto_utils {

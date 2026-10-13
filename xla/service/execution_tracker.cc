@@ -19,9 +19,9 @@ limitations under the License.
 #include <utility>
 
 #include "absl/status/status_macros.h"
+#include "tsl/platform/logging.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 

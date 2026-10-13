@@ -186,12 +186,11 @@ std::vector<HloInstruction*> AsyncCollectiveCreator::MatchCollectives(
     const HloOpcode op = instruction->opcode();
 
     // We only care about collective ops and collective fusions here.
-    if (HloPredicateIsNotOp<HloOpcode::kAllReduce, HloOpcode::kAllGather,
-                            HloOpcode::kCollectiveBroadcast,
-                            HloOpcode::kCollectivePermute, HloOpcode::kAllToAll,
-                            HloOpcode::kReduceScatter,
-                            HloOpcode::kRaggedAllToAll, HloOpcode::kFusion>(
-            instruction)) {
+    if (HloPredicateIsNotOp<
+            HloOpcode::kAllReduce, HloOpcode::kAllGather, HloOpcode::kAllToAll,
+            HloOpcode::kCollectiveBroadcast, HloOpcode::kCollectivePermute,
+            HloOpcode::kCollectiveReduce, HloOpcode::kReduceScatter,
+            HloOpcode::kRaggedAllToAll, HloOpcode::kFusion>(instruction)) {
       continue;
     }
 
@@ -218,6 +217,10 @@ std::vector<HloInstruction*> AsyncCollectiveCreator::MatchCollectives(
     } else if (op == HloOpcode::kCollectiveBroadcast) {
       bool convert = config_.convert_collective_broadcast(instruction);
       VLOG(2) << "kCollectiveBroadcast: convert=" << convert;
+      matched = convert;
+    } else if (op == HloOpcode::kCollectiveReduce) {
+      bool convert = config_.convert_collective_reduce(instruction);
+      VLOG(2) << "kCollectiveReduce: convert=" << convert;
       matched = convert;
     } else if (op == HloOpcode::kCollectivePermute) {
       bool convert = config_.convert_collective_permute(instruction);
@@ -285,7 +288,7 @@ absl::StatusOr<bool> AsyncCollectiveCreator::ReplaceCollectives(
   };
   for (HloInstruction* instruction : supported_collectives) {
     ABSL_ASSIGN_OR_RETURN(auto maybe_async_pair,
-                     handle_legacy_async_conversion(instruction));
+                          handle_legacy_async_conversion(instruction));
     ReplacedAsync async_pair;
     if (maybe_async_pair.has_value()) {
       async_pair = *maybe_async_pair;
@@ -356,8 +359,9 @@ absl::StatusOr<bool> AsyncCollectiveCreator::RunImpl(
     if (supported_collectives.empty()) {
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(bool comp_changed,
-                     ReplaceCollectives(computation, supported_collectives));
+    ABSL_ASSIGN_OR_RETURN(
+        bool comp_changed,
+        ReplaceCollectives(computation, supported_collectives));
     collectives_replaced += supported_collectives.size();
     changed |= comp_changed;
   }

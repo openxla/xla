@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/numa.h"
 #include "xla/backends/gpu/collectives/allocator_memory_registration.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
@@ -70,27 +71,8 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/numa.h"
 
 namespace xla {
-
-class StreamExecutorGpuDevice : public PjRtStreamExecutorDevice {
- public:
-  StreamExecutorGpuDevice(int id, LocalDeviceState* local_device_state,
-                          std::string device_kind, std::string device_vendor,
-                          std::string compute_capability, int core_count,
-                          int64_t device_memory_bytes_limit,
-                          int64_t shared_memory_per_block_optin,
-                          int local_device_id, int process_index,
-                          int process_index_in_partition, int partition_index,
-                          int numa_node, std::string fabric_uuid);
-
-  absl::StatusOr<tsl::AllocatorStats> GetAllocatorStats() const override;
-
-  absl::StatusOr<PjRtMemorySpace*> default_memory_space() const override;
-
-  absl::Status ClearMemoryStats() override;
-};
 
 class StreamExecutorGpuHbmMemorySpace : public PjRtStreamExecutorMemorySpace {
  public:
@@ -109,6 +91,7 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
       LocalClient* client,
       std::unique_ptr<HostMemoryAllocator> host_memory_allocator,
       bool should_stage_host_to_device_transfers,
+      bool confidential_computing_enabled,
       std::unique_ptr<AsyncWorkRunner> async_work_runner,
       se::StreamExecutor* executor = nullptr,
       std::shared_ptr<KeyValueStoreInterface> kv_store = nullptr,
@@ -121,7 +104,8 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
             std::move(local_device_states), std::move(allocator), client,
             std::move(host_memory_allocator),
             should_stage_host_to_device_transfers, std::move(async_work_runner),
-            executor, std::move(gpu_run_options)),
+            executor, std::move(gpu_run_options),
+            confidential_computing_enabled),
         platform_id_(platform_id),
         kv_store_(std::move(kv_store)),
         cache_fabric_handles_(cache_fabric_handles),
@@ -136,7 +120,7 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
     return kv_store_;
   }
 
-  void ScheduleRemoteSend(PjRtMemorySpace* memory_space,
+  void ScheduleRemoteSend(LocalDeviceId local_device_id, int memory_kind_id,
                           PjRtRawBufferRef raw_buffer,
                           PjRtDeviceEventRefVector definition_events,
                           PjRtDeviceEventPromiseRef usage_event_promise,
@@ -203,12 +187,6 @@ class StreamExecutorGpuRawClient : public PjRtStreamExecutorRawClient {
       imported_fabric_handles_ ABSL_GUARDED_BY(mu_);
 
   std::shared_ptr<gpu::AllocatorMemoryRegistration> memory_registration_;
-};
-
-// A custom PjRtClient that overrides the device assignment method.
-class StreamExecutorGpuClient : public xla::PjRtStreamExecutorClient {
- public:
-  using PjRtStreamExecutorClient::PjRtStreamExecutorClient;
 };
 
 absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(

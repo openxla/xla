@@ -16,10 +16,10 @@ limitations under the License.
 #include "xla/tsl/lib/io/record_writer.h"
 
 #include "absl/status/status_macros.h"
+#include "tsl/platform/coding.h"
 #include "xla/tsl/lib/hash/crc32c.h"
 #include "xla/tsl/lib/io/compression.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/platform/coding.h"
 
 namespace tsl {
 namespace io {
@@ -110,7 +110,8 @@ absl::Status RecordWriter::WriteRecord(absl::string_view data) {
   char footer[kFooterSize];
   PopulateHeader(header, data.data(), data.size());
   PopulateFooter(footer, data.data(), data.size());
-  ABSL_RETURN_IF_ERROR(dest_->Append(absl::string_view(header, sizeof(header))));
+  ABSL_RETURN_IF_ERROR(
+      dest_->Append(absl::string_view(header, sizeof(header))));
   ABSL_RETURN_IF_ERROR(dest_->Append(data));
   return dest_->Append(absl::string_view(footer, sizeof(footer)));
 }
@@ -130,7 +131,8 @@ absl::Status RecordWriter::WriteRecord(const absl::Cord& data) {
   char footer[kFooterSize];
   PopulateHeader(header, data);
   PopulateFooter(footer, data);
-  ABSL_RETURN_IF_ERROR(dest_->Append(absl::string_view(header, sizeof(header))));
+  ABSL_RETURN_IF_ERROR(
+      dest_->Append(absl::string_view(header, sizeof(header))));
   ABSL_RETURN_IF_ERROR(dest_->Append(data));
   return dest_->Append(absl::string_view(footer, sizeof(footer)));
 }

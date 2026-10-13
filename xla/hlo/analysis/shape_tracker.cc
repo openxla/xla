@@ -466,9 +466,10 @@ absl::StatusOr<ShapeTracker> ShapeTracker::FromSiblings(
                      " and ", destination->name()));
   }
 
-  ABSL_ASSIGN_OR_RETURN(ShapeTracker tracker1, FromProducerConsumer(lca, source));
+  ABSL_ASSIGN_OR_RETURN(ShapeTracker tracker1,
+                        FromProducerConsumer(lca, source));
   ABSL_ASSIGN_OR_RETURN(ShapeTracker tracker2,
-                   FromProducerConsumer(lca, destination));
+                        FromProducerConsumer(lca, destination));
   ABSL_RETURN_IF_ERROR(tracker1.Invert());
   ABSL_RETURN_IF_ERROR(tracker1.ConcatenateFrom(tracker2));
   return tracker1;
@@ -571,7 +572,7 @@ absl::Status ShapeTracker::AppendBitcast(const xla::Shape& src_shape,
   }
 
   ABSL_ASSIGN_OR_RETURN(std::vector<PhysicalDimension> dims,
-                   BuildPhysicalDimensions(src_shape, dst_shape));
+                        BuildPhysicalDimensions(src_shape, dst_shape));
   absl::c_stable_sort(
       dims, [](const PhysicalDimension& a, const PhysicalDimension& b) {
         return a.src_logical_idx < b.src_logical_idx;
@@ -1115,8 +1116,8 @@ absl::StatusOr<SlicePropagationResult> SliceProjectionChain(
     sliced_projections.back().Pack();
 
     ABSL_ASSIGN_OR_RETURN(current_slice,
-                     ShapeTracker::BufferView::FromStridesAndExtents(
-                         next_slice_strides, next_slice_extents));
+                          ShapeTracker::BufferView::FromStridesAndExtents(
+                              next_slice_strides, next_slice_extents));
   }
 
   return SlicePropagationResult{std::move(sliced_projections),
@@ -1179,11 +1180,11 @@ absl::StatusOr<ShapeTracker> ShapeTracker::Narrow(
     keep_extents.push_back(input_view.extents()[dim]);
   }
   ABSL_ASSIGN_OR_RETURN(BufferView keep_view, BufferView::FromStridesAndExtents(
-                                             keep_strides, keep_extents));
+                                                  keep_strides, keep_extents));
 
   // Slice the projections, and pack them.
   ABSL_ASSIGN_OR_RETURN(SlicePropagationResult propagation_result,
-                   SliceProjectionChain(projections_, keep_view));
+                        SliceProjectionChain(projections_, keep_view));
 
   // Append rather than assign, for the case the tracker has an initial
   // transpose.

@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -20,8 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/collectives/nccl_symmetric_memory.h"
@@ -110,7 +111,7 @@ absl::StatusOr<std::vector<std::unique_ptr<MemoryAllocation>>> AllocateBuffers(
   buffers.reserve(num_devices);
   for (int i = 0; i < num_devices; ++i) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<MemoryAllocation> buffer,
-                     allocators[i]->Allocate(buffer_size));
+                          allocators[i]->Allocate(buffer_size));
     buffers.push_back(std::move(buffer));
   }
   return buffers;
@@ -135,7 +136,8 @@ CreateSymmetricMemory(
 
   std::vector<std::unique_ptr<xla::SymmetricMemory>> symmetric_memory;
   for (int i = 0; i < num_devices; ++i) {
-    ABSL_ASSIGN_OR_RETURN(auto mem, std::move(symmetric_memory_futures[i]).Await());
+    ABSL_ASSIGN_OR_RETURN(auto mem,
+                          std::move(symmetric_memory_futures[i]).Await());
     symmetric_memory.push_back(std::move(mem));
   }
   return symmetric_memory;
@@ -147,7 +149,7 @@ absl::StatusOr<std::vector<T>> CopyToHost(Stream* stream,
                                           int64_t num_elements) {
   std::vector<T> host_buffer(num_elements);
   ABSL_RETURN_IF_ERROR(stream->Memcpy(host_buffer.data(), device_address,
-                                 num_elements * sizeof(T)));
+                                      num_elements * sizeof(T)));
   ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   return host_buffer;
 }

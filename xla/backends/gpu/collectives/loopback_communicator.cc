@@ -207,7 +207,8 @@ absl::Status LoopbackCommunicator::LaunchAllToAll(
     PrimitiveType dtype, size_t count, const Executor& executor) {
   size_t size = ByteSize(dtype, count);
   for (size_t i = 0; i < send_buffers.size(); ++i) {
-    ABSL_RETURN_IF_ERROR(Memcpy(executor, recv_buffers[i], send_buffers[i], size));
+    ABSL_RETURN_IF_ERROR(
+        Memcpy(executor, recv_buffers[i], send_buffers[i], size));
   }
   return absl::OkStatus();
 }

@@ -61,8 +61,9 @@ class GpuKernelRegistry {
   template <typename KernelTrait>
   absl::StatusOr<typename KernelTrait::KernelType> LoadKernel(
       StreamExecutor* executor) {
-    ABSL_ASSIGN_OR_RETURN(const KernelLoaderSpec& spec,
-                     FindKernel<KernelTrait>(executor->GetPlatform()->id()));
+    ABSL_ASSIGN_OR_RETURN(
+        const KernelLoaderSpec& spec,
+        FindKernel<KernelTrait>(executor->GetPlatform()->id()));
 
     return KernelTrait::KernelType::FactoryType::Create(executor, spec);
   }

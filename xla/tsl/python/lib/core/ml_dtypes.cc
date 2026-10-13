@@ -21,9 +21,9 @@ limitations under the License.
 // clang-format off
 #include "xla/tsl/python/lib/core/numpy.h"  // IWYU pragma: keep
 // clang-format on
-#include "numpy/ndarraytypes.h"
 #include "absl/base/attributes.h"
 #include "absl/base/call_once.h"
+#include "numpy/ndarraytypes.h"
 #include "pybind11/gil.h"
 #include "pybind11/numpy.h"
 #include "pybind11/pybind11.h"

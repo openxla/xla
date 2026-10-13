@@ -14,11 +14,12 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/hlo/transforms/simplifiers/hlo_rematerialization_test_utils.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 

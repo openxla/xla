@@ -20,6 +20,8 @@ limitations under the License.
 
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/ml_dtypes.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/primitive_util.h"
 #include "xla/shape.h"
@@ -27,8 +29,6 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 

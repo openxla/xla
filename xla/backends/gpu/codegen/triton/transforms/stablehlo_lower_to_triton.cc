@@ -58,6 +58,8 @@ limitations under the License.
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/backends/gpu/codegen/triton/collective_emitter.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"  // IWYU pragma: keep
 #include "xla/backends/gpu/codegen/triton/transforms/lowering_utils.h"
@@ -68,8 +70,6 @@ limitations under the License.
 #include "xla/service/algorithm_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/tensor_float_32_utils.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace mlir::triton::xla {
 
@@ -1030,6 +1030,18 @@ class LowerDotGeneral : public mlir::OpRewritePattern<stablehlo::DotGeneralOp> {
   bool warp_specialization_allowed_;
 };
 
+class LowerAllGather : public mlir::OpRewritePattern<stablehlo::AllGatherOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+ private:
+  mlir::LogicalResult matchAndRewrite(
+      stablehlo::AllGatherOp op,
+      mlir::PatternRewriter& rewriter) const override {
+    return ::xla::gpu::RewriteAllGather(op, rewriter);
+  }
+};
+
 class LowerAllReduce : public mlir::OpRewritePattern<stablehlo::AllReduceOp> {
  public:
   using OpRewritePattern::OpRewritePattern;
@@ -1039,6 +1051,19 @@ class LowerAllReduce : public mlir::OpRewritePattern<stablehlo::AllReduceOp> {
       stablehlo::AllReduceOp op,
       mlir::PatternRewriter& rewriter) const override {
     return ::xla::gpu::RewriteAllReduce(op, rewriter);
+  }
+};
+
+class LowerReduceScatter
+    : public mlir::OpRewritePattern<stablehlo::ReduceScatterOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+ private:
+  mlir::LogicalResult matchAndRewrite(
+      stablehlo::ReduceScatterOp op,
+      mlir::PatternRewriter& rewriter) const override {
+    return ::xla::gpu::RewriteReduceScatter(op, rewriter);
   }
 };
 
@@ -1054,7 +1079,8 @@ class StableHLOLowerToTritonPass
     {
       mlir::RewritePatternSet patterns(mlir_context);
       patterns.add<LowerTranspose, LowerIotaToMakeRange, LowerBroadcastInDim,
-                   LowerReduce, LowerReshape, LowerAllReduce>(mlir_context);
+                   LowerReduce, LowerReshape, LowerAllGather, LowerAllReduce,
+                   LowerReduceScatter>(mlir_context);
       patterns.add<CanonicalizeDotGeneral>(mlir_context);
       patterns.add<LowerDotGeneral>(mlir_context, warp_specialization_allowed_);
       if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),

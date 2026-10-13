@@ -11,6 +11,9 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/codegen/intrinsic/rsqrt.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/no_destructor.h"
 #include "absl/log/log.h"
 #include "llvm/ADT/StringMap.h"

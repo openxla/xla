@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/synchronization/mutex.h"
 #include "json/json.h"
+#include "tsl/platform/retrying_file_system.h"
 #include "xla/tsl/platform/cloud/auth_provider.h"
 #include "xla/tsl/platform/cloud/compute_engine_metadata_client.h"
 #include "xla/tsl/platform/cloud/compute_engine_zone_provider.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/retrying_file_system.h"
 
 namespace tsl {
 

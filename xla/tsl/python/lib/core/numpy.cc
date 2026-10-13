@@ -21,8 +21,6 @@ limitations under the License.
 
 namespace tsl {
 
-void ImportNumpy() {
-  import_array1();
-}
+void ImportNumpy() { import_array1(); }
 
 }  // namespace tsl

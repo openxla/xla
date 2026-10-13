@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -145,7 +146,7 @@ absl::Status GpuPjRtCodegenTest::CompileAndVerifyIr(
     bool match_optimized_ir, bool run_optimization_passes,
     bool match_ir_from_hlo_passes) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   ParseAndReturnVerifiedModule(hlo_text));
+                        ParseAndReturnVerifiedModule(hlo_text));
   return CompileAndVerifyIr(std::move(hlo_module), expected_llvm_ir,
                             match_optimized_ir, run_optimization_passes,
                             match_ir_from_hlo_passes);

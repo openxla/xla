@@ -80,6 +80,9 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/backends/gpu/codegen/triton/collective_emitter.h"
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
@@ -132,8 +135,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
 namespace xla::gpu {
 namespace {
@@ -227,6 +228,17 @@ absl::Status ValidateComplexUseInTritonFusion(
   }
   return absl::OkStatus();
 }
+
+bool IsCollectiveFusion(const HloFusionInstruction& fusion) {
+  const HloComputation* computation = fusion.fused_instructions_computation();
+  if (computation == nullptr) {
+    return false;
+  }
+  return absl::c_any_of(
+      computation->instructions(),
+      HloPredicateIsOp<HloOpcode::kAllGather, HloOpcode::kReduceScatter>);
+}
+
 }  // namespace
 
 namespace ttir = ::mlir::triton;
@@ -300,13 +312,13 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
     bool use_experimental_tiling, bool enable_same_shape_multi_output_fusion) {
   const HloComputation* computation = fusion.fused_instructions_computation();
 
-  if (use_experimental_tiling) {
+  if (use_experimental_tiling || IsCollectiveFusion(fusion)) {
     using experimental::TiledHloComputation;
     using experimental::TilingSpace;
 
     auto fusion_adaptor = HloFusionAdaptor::ForInstruction(&fusion);
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<TilingSpace> tiling_space,
-                     TilingSpace::Create(*fusion_adaptor, &mlir_context));
+                          TilingSpace::Create(*fusion_adaptor, &mlir_context));
 
     VLOG(3) << "fusion instruction: " << fusion.ToString() << "\n";
     VLOG(3) << "tiling space: " << tiling_space->ToString();
@@ -357,8 +369,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> TileAndEmitXTileModule(
       std::get<SymbolicTileAnalysis>(symbolic_tile_analysis_or);
 
   ABSL_ASSIGN_OR_RETURN(Tiling tiling,
-                   TilingFromAnnotatedFusion(symbolic_tile_analysis,
-                                             block_level_parameters));
+                        TilingFromAnnotatedFusion(symbolic_tile_analysis,
+                                                  block_level_parameters));
 
   return xtile::EmitXTileModule(
       fn_name, fusion, symbolic_tile_analysis, tiling, mlir_context,
@@ -371,12 +383,14 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
     const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_level_parameters,
     MLIRContext& mlir_context) {
-  ABSL_RETURN_IF_ERROR(CheckAtLeastAmpere(device_info.gpu_compute_capability()));
+  ABSL_RETURN_IF_ERROR(
+      CheckAtLeastAmpere(device_info.gpu_compute_capability()));
 
   const DebugOptions& debug_options =
       fusion.GetModule()->config().debug_options();
   bool use_experimental_tiling =
-      debug_options.xla_gpu_experimental_enable_tiling_propagation();
+      debug_options.xla_gpu_experimental_enable_tiling_propagation() ||
+      IsCollectiveFusion(fusion);
   bool enable_same_shape_multi_output_fusion =
       debug_options
           .xla_gpu_experimental_enable_same_shape_multi_output_fusion();
@@ -481,9 +495,10 @@ absl::StatusOr<TritonWrapperResult> TritonWrapper(
     const BlockLevelParameters& block_level_parameters,
     const llvm::Triple& target_triple, const std::string& data_layout,
     MLIRContext& mlir_context) {
-  ABSL_ASSIGN_OR_RETURN(TritonKernelSource kernel_source,
-                   CreateTritonModule(fn_name, fusion, device_info,
-                                      block_level_parameters, mlir_context));
+  ABSL_ASSIGN_OR_RETURN(
+      TritonKernelSource kernel_source,
+      CreateTritonModule(fn_name, fusion, device_info, block_level_parameters,
+                         mlir_context));
 
   // Forward PDL launch annotation from HLO to MLIR.
   if (DoesPdlLaunch(fusion)) {
@@ -514,9 +529,9 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
 
   bool should_verify =
       (hlo_config.debug_options().xla_gpu_llvm_verification_level() >= 1);
-#ifndef NDEBUG
-  should_verify = true;
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    should_verify = true;
+  }
 
   mlir_context.printOpOnDiagnostic(should_verify || VLOG_IS_ON(5));
   std::optional<mlir::ScopedDiagnosticHandler> diag_handler;
@@ -652,10 +667,11 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
       << "Expected a single LLVMFuncOp in the module for the entry function.";
   mlir::LLVM::LLVMFuncOp func_op = func_ops[0];
 
-  ABSL_ASSIGN_OR_RETURN(se::ThreadDim thread_dims,
-                   xgt::ExtractThreadDims(triton_source.module(), func_op));
+  ABSL_ASSIGN_OR_RETURN(
+      se::ThreadDim thread_dims,
+      xgt::ExtractThreadDims(triton_source.module(), func_op));
   ABSL_ASSIGN_OR_RETURN(stream_executor::gpu::TmaMetadata tma_metadata,
-                   xgt::ExtractTmaMetadata(func_op));
+                        xgt::ExtractTmaMetadata(func_op));
 
   // Propagate the following extracted information from the Triton module:
   // - TMA metadata.

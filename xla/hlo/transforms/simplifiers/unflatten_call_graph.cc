@@ -133,18 +133,19 @@ absl::Status UnflattenCallGraph::ValidateComputationHashes(
     const std::vector<ComputationHashResult>& hash_results,
     const absl::flat_hash_map<uint64_t, const ComputationHashResult*>&
         hash_to_canonical) {
-  auto validate_against_canonical = [&](const ComputationHashResult& result) {
+  auto validate_against_canonical =
+      [&](const ComputationHashResult& result) -> absl::Status {
     uint64_t candidate_hash = result.hash;
     const std::string& candidate_fingerprint = result.fingerprint;
     const std::string& canonical_fingerprint =
         hash_to_canonical.at(candidate_hash)->fingerprint;
 
     if (candidate_fingerprint != canonical_fingerprint) {
-      return absl::InternalError(
-          absl::StrCat("Hash collision detected. Hash: ", candidate_hash, "\n",
-                       "Hashes are equal but fingerprints are different.\n",
-                       "Computation 1:\n", candidate_fingerprint, "\n",
-                       "Computation 2:\n", canonical_fingerprint, "\n"));
+      return InternalStrCat(
+          "Hash collision detected. Hash: ", candidate_hash, "\n",
+          "Hashes are equal but fingerprints are different.\n",
+          "Computation 1:\n", candidate_fingerprint, "\n", "Computation 2:\n",
+          canonical_fingerprint, "\n");
     }
     return absl::OkStatus();
   };
@@ -171,7 +172,7 @@ absl::StatusOr<bool> UnflattenCallGraph::RunImpl(
     return false;
   }
   ABSL_ASSIGN_OR_RETURN(const std::vector<ComputationHashResult> hash_results,
-                   HashComputations(calls.targets));
+                        HashComputations(calls.targets));
 
   // Map computations to their hashes.
   // The HloComputation* keys are owned by the HloModule and are guaranteed to

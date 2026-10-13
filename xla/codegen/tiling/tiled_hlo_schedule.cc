@@ -198,9 +198,9 @@ TransposedDotTiledHloSchedule::Create(
   // Using the local parameter index, we can compute the global parameter index
   // (i.e. the parameter index within the sequence of all tiling parameters).
   ABSL_ASSIGN_OR_RETURN(int64_t m_dim_id, tiling_specification.ParameterIndex(
-                                         dot, m_local_parameter_index));
+                                              dot, m_local_parameter_index));
   ABSL_ASSIGN_OR_RETURN(int64_t n_dim_id, tiling_specification.ParameterIndex(
-                                         dot, n_local_parameter_index));
+                                              dot, n_local_parameter_index));
 
   return std::unique_ptr<TransposedDotTiledHloSchedule>(
       new TransposedDotTiledHloSchedule(m_dim_id, n_dim_id));

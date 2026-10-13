@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/codegen/emitters/ir/xla_ops.h"
 
+#include <gmock/gmock.h>
+
 #include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -163,8 +164,8 @@ TEST_F(XLAOpsTest, BackendKindGetAndSet) {
       return %arg0 : f32
     }
   })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseMlirModuleString(kHloModule, &mlir_context_));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseMlirModuleString(kHloModule, &mlir_context_));
   auto func = module->lookupSymbol<mlir::func::FuncOp>("main");
   ASSERT_TRUE(func);
   EXPECT_EQ(GetBackendKind(func), xla::BackendKind::kCpu);
@@ -182,8 +183,8 @@ TEST_F(XLAOpsTest, BackendKindGetAndSet) {
     CHECK:     {xla.backend_kind = #xla.backend_kind<gpu>}
     CHECK-NOT: {xla.backend_kind = #xla.backend_kind<cpu>}
   )";
-  TF_ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
-                          RunFileCheck(mlir_dump, kExpected));
+  ASSERT_OK_AND_ASSIGN(bool filecheck_matched,
+                       RunFileCheck(mlir_dump, kExpected));
   EXPECT_TRUE(filecheck_matched);
 }
 
@@ -195,8 +196,8 @@ TEST_F(XLAOpsTest, BackendKindCannotGetWrongAttributeName) {
       return %arg0 : f32
     }
   })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseMlirModuleString(kHloModule, &mlir_context_));
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseMlirModuleString(kHloModule, &mlir_context_));
   auto func = module->lookupSymbol<mlir::func::FuncOp>("main");
   ASSERT_TRUE(func);
   EXPECT_FALSE(GetBackendKind(func).has_value());

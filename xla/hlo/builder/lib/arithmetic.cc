@@ -109,7 +109,7 @@ XlaOp Any(XlaOp predicates) {
     auto f = ConstantR0<bool>(builder, false);
     XlaComputation logical_or = CreateScalarOrComputation(PRED, builder);
     ABSL_ASSIGN_OR_RETURN(const Shape& predicates_shape,
-                     builder->GetShape(predicates));
+                          builder->GetShape(predicates));
     std::vector<int64_t> all_dimensions(predicates_shape.dimensions().size());
     absl::c_iota(all_dimensions, 0);
     return Reduce(predicates, f, logical_or, all_dimensions);

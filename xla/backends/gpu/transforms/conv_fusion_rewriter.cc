@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -80,6 +81,15 @@ bool IsConvFusionOutputsValid(const std::vector<HloInstruction*>& outputs) {
   if (outputs.size() == 2 && (outputs[0]->opcode() == HloOpcode::kReduce) ==
                                  (outputs[1]->opcode() == HloOpcode::kReduce)) {
     return false;
+  }
+  // Disallow upcast converts at fusion outputs. S32->F32 is allowed as cuDNN
+  // INT8 convs require it for epilogue fusions.
+  for (const HloInstruction* output : outputs) {
+    if (output->opcode() == HloOpcode::kConvert &&
+        output->shape().element_type() == F32 &&
+        output->operand(0)->shape().element_type() != S32) {
+      return false;
+    }
   }
   return true;
 }
@@ -345,7 +355,8 @@ absl::StatusOr<bool> ConvFusionRewriter::RunImpl(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation, device_info_));
+    ABSL_ASSIGN_OR_RETURN(bool result,
+                          RunOnComputation(computation, device_info_));
     changed |= result;
   }
   XLA_VLOG_LINES(2, "ConvFusionRewriter::Run(), after:\n" + module->ToString());

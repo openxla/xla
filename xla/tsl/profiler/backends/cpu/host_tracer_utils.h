@@ -15,9 +15,9 @@ limitations under the License.
 #ifndef XLA_TSL_PROFILER_BACKENDS_CPU_HOST_TRACER_UTILS_H_
 #define XLA_TSL_PROFILER_BACKENDS_CPU_HOST_TRACER_UTILS_H_
 
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/backends/cpu/traceme_recorder.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

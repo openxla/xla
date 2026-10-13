@@ -46,6 +46,12 @@ absl::StatusOr<bool> SwapConvolutionOperandsIfBeneficial(
     return false;
   }
 
+  // Do not swap operands for convolutions with block scaling.
+  if (convolution->block_scaling_config().has_lhs() ||
+      convolution->block_scaling_config().has_rhs()) {
+    return false;
+  }
+
   const auto& dnums = convolution->convolution_dimension_numbers();
   const auto& window_dims = convolution->window().dimensions();
   Window swapped_window;
@@ -150,7 +156,8 @@ absl::StatusOr<bool> SwapConvolutionOperandsIfBeneficial(
           /*batch_group_count=*/1, swapped_window, swapped_dnums,
           precision_config,
           /*preferred_element_type=*/convolution->shape().element_type(),
-          /*sparsity_config=*/convolution->sparsity_config()));
+          /*sparsity_config=*/convolution->sparsity_config(),
+          /*block_scaling_config=*/convolution->block_scaling_config()));
 
   if (conv_is_lowerable_callback &&
       !conv_is_lowerable_callback(new_convolution)) {
@@ -173,8 +180,8 @@ absl::StatusOr<bool> ConvOperandSwapper::RunImpl(
     for (HloInstruction* hlo : comp->MakeInstructionPostOrder()) {
       if (auto* convolution = DynCast<HloConvolutionInstruction>(hlo)) {
         ABSL_ASSIGN_OR_RETURN(bool convolution_changed,
-                         SwapConvolutionOperandsIfBeneficial(
-                             convolution, conv_is_lowerable_callback_));
+                              SwapConvolutionOperandsIfBeneficial(
+                                  convolution, conv_is_lowerable_callback_));
         changed |= convolution_changed;
       }
     }

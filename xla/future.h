@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef XLA_FUTURE_H_
 #define XLA_FUTURE_H_
 
-#include "xla/tsl/concurrency/future.h"  // IWYU pragma: export
+#include "xla/tsl/concurrency/future.h"   // IWYU pragma: export
 #include "xla/tsl/concurrency/interop.h"  // IWYU pragma: export
 
 namespace xla {

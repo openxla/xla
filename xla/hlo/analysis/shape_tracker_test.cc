@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/analysis/shape_tracker.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"

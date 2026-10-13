@@ -15,24 +15,25 @@ limitations under the License.
 
 #include "xla/tsl/profiler/rpc/client/capture_profile.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "riegeli/bytes/fd_reader.h"
 #include "riegeli/records/record_reader.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status_matchers.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/profiler/rpc/client/save_profile.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/host_info.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -109,7 +110,9 @@ TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesSuccess) {
 
   std::vector<XSpace> xspaces = {space1, space2};
   ASSERT_OK(ExportToTensorBoard(temp_dir, run, xspaces));
-  EXPECT_TRUE(xspaces.empty());
+  EXPECT_EQ(xspaces.size(), 2);
+  EXPECT_EQ(xspaces[0].hostnames(0), "host1");
+  EXPECT_EQ(xspaces[1].hostnames(0), "host2");
 
   std::string file_path =
       io::JoinPath(GetTensorBoardProfilePluginDir(temp_dir), run,
@@ -138,7 +141,7 @@ TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesSuccess) {
                                        )pb"))));
 }
 
-TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesSuccessAndClear) {
+TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesPreservesInput) {
   std::string temp_dir = testing::TmpDir();
   std::string run = "test_run_pointer";
 
@@ -149,7 +152,8 @@ TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesSuccessAndClear) {
   std::vector<XSpace> xspaces = {space};
 
   ASSERT_OK(ExportToTensorBoard(temp_dir, run, xspaces));
-  EXPECT_TRUE(xspaces.empty());
+  EXPECT_EQ(xspaces.size(), 1);
+  EXPECT_EQ(xspaces[0].hostnames(0), "host1");
 
   std::string file_path =
       io::JoinPath(GetTensorBoardProfilePluginDir(temp_dir), run,
@@ -158,7 +162,7 @@ TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesSuccessAndClear) {
 }
 
 TEST(CaptureProfileTest,
-     ExportToTensorBoardVectorXSpacesDefaultRunSuccessAndClear) {
+     ExportToTensorBoardVectorXSpacesDefaultRunPreservesInput) {
   std::string temp_dir = testing::TmpDir();
 
   XSpace space = ParseTextProtoOrDie<XSpace>(R"pb(
@@ -168,7 +172,8 @@ TEST(CaptureProfileTest,
   std::vector<XSpace> xspaces = {space};
 
   ASSERT_OK(ExportToTensorBoard(temp_dir, xspaces));
-  EXPECT_TRUE(xspaces.empty());
+  EXPECT_EQ(xspaces.size(), 1);
+  EXPECT_EQ(xspaces[0].hostnames(0), "host1");
 }
 
 TEST(CaptureProfileTest, ExportToTensorBoardSingleXSpaceFailurePropagation) {

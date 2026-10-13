@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/gpu/model/collective_interpolator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -1083,8 +1084,7 @@ INSTANTIATE_TEST_SUITE_P(
     });
 
 TEST(DefaultCollectivePerfTableTest, EstimatesGfx942DefaultProfile) {
-  se::DeviceDescription device_info = TestGpuDeviceInfo::RTXA6000DeviceInfo();
-  device_info.set_rocm_compute_capability("gfx942");
+  se::DeviceDescription device_info = TestGpuDeviceInfo::AMDMI300DeviceInfo();
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CollectiveInterpolator> interpolator,
       CollectiveInterpolator::Create(kNumGpusPerHost, device_info));
@@ -1133,8 +1133,7 @@ TEST(DefaultCollectivePerfTableTest, EstimatesGfx942DefaultProfile) {
 }
 
 TEST(DefaultCollectivePerfTableTest, EstimatesGfx950DefaultProfile) {
-  se::DeviceDescription device_info = TestGpuDeviceInfo::RTXA6000DeviceInfo();
-  device_info.set_rocm_compute_capability("gfx950");
+  se::DeviceDescription device_info = TestGpuDeviceInfo::AMDMI350DeviceInfo();
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CollectiveInterpolator> interpolator,
       CollectiveInterpolator::Create(kNumGpusPerHost, device_info));

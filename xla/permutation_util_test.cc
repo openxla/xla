@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/permutation_util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/types/span.h"
 #include "xla/hlo/testlib/test.h"

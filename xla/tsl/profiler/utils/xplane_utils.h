@@ -25,11 +25,11 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/profiler/utils/timespan.h"
 #include "xla/tsl/profiler/utils/trace_utils.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -320,7 +320,8 @@ Timespan GetDeviceEventTimespan(const XEventVisitor& event);
 // lines, and events out of `from` to avoid memory duplication. It dynamically
 // maps and builds new metadata IDs to prevent collisions on duplicate names.
 // After the merge, `from` will be left as an empty shell and safely
-// deallocated.
+// deallocated. Events of merged lines are kept sorted (see `SortXLine`) as long
+// as the input lines are sorted.
 void MergeXSpace(std::unique_ptr<XSpace> from, XSpace* to);
 
 }  // namespace profiler

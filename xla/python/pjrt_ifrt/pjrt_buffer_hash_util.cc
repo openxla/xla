@@ -128,34 +128,34 @@ tsl::Future<std::vector<uint64_t>> HashPjRtBuffers(
     xla::Shape descending_shape = xla::ShapeUtil::MakeShapeWithDescendingLayout(
         device_shape.element_type(), device_shape.dimensions());
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<xla::Literal> literal,
-                     xla::Literal::MakeUnique(descending_shape));
+                          xla::Literal::MakeUnique(descending_shape));
 
     xla::Literal* literal_ptr = literal.get();
     futures.push_back(
         pjrt_buffers[i]
             ->ToLiteral(literal_ptr)
-            .Map(executor,
-                 [pjrt_buffer = pjrt_buffers[i],
-                  index_domain = index_domains[i], mode, element_byte_size,
-                  literal = std::move(literal),
-                  inflight_hashing = std::move(
-                      inflight_hashing)]() -> absl::StatusOr<uint64_t> {
-                   absl::Span<const char> literal_span(
-                       static_cast<const char*>(literal->untyped_data()),
-                       literal->size_bytes());
+            .Map(
+                executor,
+                [pjrt_buffer = pjrt_buffers[i], index_domain = index_domains[i],
+                 mode, element_byte_size, literal = std::move(literal),
+                 inflight_hashing = std::move(
+                     inflight_hashing)]() -> absl::StatusOr<uint64_t> {
+                  absl::Span<const char> literal_span(
+                      static_cast<const char*>(literal->untyped_data()),
+                      literal->size_bytes());
 
-                   std::shared_ptr<const PjRtLayout> pjrt_layout =
-                       pjrt_buffer->layout();
-                   const xla::Layout& xla_layout = pjrt_layout->xla_layout();
+                  std::shared_ptr<const PjRtLayout> pjrt_layout =
+                      pjrt_buffer->layout();
+                  const xla::Layout& xla_layout = pjrt_layout->xla_layout();
 
-                   switch (mode) {
-                     case Client::HashMode::kPhysical:
-                       return HashBufferPhysical(literal_span, xla_layout);
-                     case Client::HashMode::kLogical:
-                       return HashBufferLogical(literal_span, element_byte_size,
-                                                index_domain);
-                   }
-                 }));
+                  switch (mode) {
+                    case Client::HashMode::kPhysical:
+                      return HashBufferPhysical(literal_span, xla_layout);
+                    case Client::HashMode::kLogical:
+                      return HashBufferLogical(literal_span, element_byte_size,
+                                               index_domain);
+                  }
+                }));
   }
 
   return tsl::JoinFutures(absl::MakeSpan(futures));

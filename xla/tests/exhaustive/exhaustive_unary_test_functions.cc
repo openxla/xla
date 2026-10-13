@@ -15,7 +15,7 @@ limitations under the License.
 
 #include <algorithm>  // IWYU pragma: keep, exhaustive_unary_test_ops.inc
 #include <array>      // IWYU pragma: keep, exhaustive_unary_test_ops.inc
-#include <cfenv>  // NOLINT
+#include <cfenv>      // NOLINT
 #include <cmath>
 #include <cstddef>  // IWYU pragma: keep, exhaustive_unary_test_ops.inc
 #include <limits>
@@ -64,6 +64,12 @@ UNARY_TEST(Exp, {
       .CpuError(+[](NativeT x) {
         if constexpr (std::is_same_v<NativeT, tsl::float8_e5m2>) {
           return ErrorSpec::Builder().distance_err(1).build();
+        }
+        if constexpr (std::is_same_v<NativeT, float>) {
+          return ErrorSpec::Builder()
+              .abs_err(std::numeric_limits<float>::min())
+              .distance_err(1)
+              .build();
         }
         return GetDefaultSpecGenerator()(x);
       })

@@ -99,7 +99,7 @@ static absl::StatusOr<bool> DecomposeAllReduce(HloInstruction* hlo,
   }
 
   ABSL_ASSIGN_OR_RETURN(auto replica_group_count_and_size,
-                   GetReplicaGroupCountAndSize(all_reduce));
+                        GetReplicaGroupCountAndSize(all_reduce));
 
   if (!replica_group_count_and_size.has_value()) {
     // Could not determine the number of participating devices at compilation.
@@ -113,9 +113,9 @@ static absl::StatusOr<bool> DecomposeAllReduce(HloInstruction* hlo,
   HloInstruction* reshape = PrependSize1MajorDimension(input, computation);
 
   ABSL_ASSIGN_OR_RETURN(Shape all_gather_shape,
-                   ShapeInference::InferAllGatherShape(
-                       {&reshape->shape()}, /*all_gather_dimension=*/0,
-                       num_participating_devices));
+                        ShapeInference::InferAllGatherShape(
+                            {&reshape->shape()}, /*all_gather_dimension=*/0,
+                            num_participating_devices));
 
   HloInstruction* all_gather =
       computation->AddInstruction(HloInstruction::CreateAllGather(
@@ -133,7 +133,8 @@ static absl::StatusOr<bool> DecomposeAllReduce(HloInstruction* hlo,
           /*dimensions_to_reduce=*/{0}, all_reduce->to_apply()));
 
   ABSL_RETURN_IF_ERROR(all_reduce->ReplaceAllUsesWith(reduce));
-  ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(all_reduce));
+  ABSL_RETURN_IF_ERROR(
+      computation->RemoveInstructionAndUnusedOperands(all_reduce));
 
   return true;
 }
@@ -149,7 +150,7 @@ absl::StatusOr<bool> AllReduceDecomposer::RunImpl(
         continue;
       }
       ABSL_ASSIGN_OR_RETURN(bool decomposed,
-                       DecomposeAllReduce(hlo, computation, module));
+                            DecomposeAllReduce(hlo, computation, module));
       changed |= decomposed;
     }
   }

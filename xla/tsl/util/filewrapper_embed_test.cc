@@ -16,12 +16,12 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/file_toc.h"
 #include "xla/tsl/util/filewrapper_testdata.h"
-#include "tsl/platform/path.h"
 
 TEST(FilewrapperTest, CompareData) {
   constexpr absl::string_view filename = "filewrapper_testdata.txt";

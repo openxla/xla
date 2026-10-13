@@ -13,12 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/platform/statusor.h"
+#include "tsl/platform/test.h"
 #include "xla/stream_executor/cuda/cuda_memory_reservation.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/cuda/cuda_raw_memory_allocation.h"
@@ -26,8 +30,6 @@ limitations under the License.
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace stream_executor::gpu {
 namespace {
@@ -38,9 +40,9 @@ static constexpr uint64_t kTestSize = 1024 * 1024;
 class CudaMemoryReservationTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         platform_, PlatformManager::PlatformWithId(cuda::kCudaPlatformId));
-    TF_ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
+    ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
   }
 
   Platform* platform_ = nullptr;
@@ -57,13 +59,13 @@ TEST_F(CudaMemoryReservationTest, SetAccessGrantsPeerDeviceAccess) {
                  << platform_->VisibleDeviceCount();
   }
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto alloc, CudaRawMemoryAllocation::Create(executor_, kTestSize));
-  TF_ASSERT_OK_AND_ASSIGN(auto res,
-                          CudaMemoryReservation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto alloc,
+                       CudaRawMemoryAllocation::Create(executor_, kTestSize));
+  ASSERT_OK_AND_ASSIGN(auto res,
+                       CudaMemoryReservation::Create(executor_, kTestSize));
 
   const size_t alloc_size = alloc->address().size();
-  TF_ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(0, 0, alloc_size, *alloc));
+  ASSERT_OK_AND_ASSIGN(auto mapping, res->MapTo(0, 0, alloc_size, *alloc));
 
   CUdeviceptr base_ptr = reinterpret_cast<CUdeviceptr>(res->address().opaque());
   for (int32_t peer = 0; peer < platform_->VisibleDeviceCount(); ++peer) {

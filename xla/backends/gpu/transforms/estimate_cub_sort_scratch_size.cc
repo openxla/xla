@@ -54,9 +54,9 @@ static absl::StatusOr<int64_t> InvokeInstantiateHandlerAndGetScratchSize(
   ffi::ExecutionState state;
   ffi::InvokeContext context{};
   context.state_context = {&state, nullptr, nullptr};
-  ABSL_RETURN_IF_ERROR(ffi::Invoke(ffi::GetXlaFfiApi(),
-                              registration.bundle.instantiate, call_frame,
-                              context, XLA_FFI_ExecutionStage_INSTANTIATE));
+  ABSL_RETURN_IF_ERROR(
+      ffi::Invoke(ffi::GetXlaFfiApi(), registration.bundle.instantiate,
+                  call_frame, context, XLA_FFI_ExecutionStage_INSTANTIATE));
 
   // Read the scratch size from the execution state.
   ABSL_ASSIGN_OR_RETURN(int64_t* scratch_size_ptr, state.Get<int64_t>());
@@ -73,7 +73,7 @@ absl::Status EstimateCubSortScratchSize::RunOnSortInstruction(
 
   // Read sort direction from SortOptions backend config.
   ABSL_ASSIGN_OR_RETURN(SortOptions sort_options,
-                   custom_call->backend_config<SortOptions>());
+                        custom_call->backend_config<SortOptions>());
 
   // Determine FFI handler target name.
   absl::string_view ffi_target =
@@ -81,7 +81,7 @@ absl::Status EstimateCubSortScratchSize::RunOnSortInstruction(
 
   // Look up the registered FFI handler.
   ABSL_ASSIGN_OR_RETURN(ffi::HandlerRegistration registration,
-                   ffi::FindHandler(ffi_target, platform_name_));
+                        ffi::FindHandler(ffi_target, platform_name_));
 
   int64_t num_items = Product(key_shape.dimensions());
   int64_t batch_size = num_items / key_shape.dimensions().back();

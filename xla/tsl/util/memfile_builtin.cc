@@ -25,12 +25,12 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/tsl/platform/embedded_filesystem.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/util/file_toc.h"
-#include "tsl/platform/path.h"
 
 namespace tsl::memfile {
 

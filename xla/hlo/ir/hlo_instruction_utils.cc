@@ -29,9 +29,10 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "re2/re2.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -103,6 +104,32 @@ bool IsTopKStable(const HloCustomCallInstruction* inst) {
     return false;
   }
   return true;
+}
+
+void SetTopKStability(HloCustomCallInstruction* inst, bool is_stable) {
+  std::string replacement =
+      absl::StrCat("is_stable = ", is_stable ? "true" : "false");
+  std::string cfg = inst->raw_backend_config_string();
+  static const LazyRE2 kIsStableRegex = {R"((?i)is_stable\s*=\s*(true|false))"};
+  if (!RE2::Replace(&cfg, *kIsStableRegex, replacement)) {
+    static const LazyRE2 kNonEmptyDictEndRegex = {R"(([^\s\{])\s*\}\s*$)"};
+    if (!RE2::Replace(&cfg, *kNonEmptyDictEndRegex,
+                      absl::StrCat("\\1, ", replacement, "}"))) {
+      cfg = absl::StrCat("{", replacement, "}");
+    }
+  }
+  inst->set_raw_backend_config_string(cfg);
+}
+
+ComparisonOrder GetTopKOrder(const HloCustomCallInstruction* inst) {
+  static const LazyRE2 kOrderRegex = {R"(order\s*=\s*"?([A-Z]+))"};
+  absl::string_view order_str;
+  if (RE2::PartialMatch(inst->raw_backend_config_string(), *kOrderRegex,
+                        &order_str)) {
+    return ShortStringToComparisonOrder(order_str).value_or(
+        ComparisonOrder::kTotal);
+  }
+  return ComparisonOrder::kTotal;
 }
 
 namespace async {
@@ -204,12 +231,13 @@ absl::StatusOr<bool> AreOperandsAndOutputFullyBoundImpl(
     const HloInstruction* async_op, const Shape& expected_shape,
     const Shape& async_tuple_shape, const ShapeIndex& index) {
   if (index.empty()) {
-    ABSL_ASSIGN_OR_RETURN(bool operands_bound,
-                     AreOperandsAndOutputFullyBoundImpl(
-                         async_op, expected_shape, async_tuple_shape, {0}));
-    ABSL_ASSIGN_OR_RETURN(bool output_bound,
-                     AreOperandsAndOutputFullyBoundImpl(
-                         async_op, expected_shape, async_tuple_shape, {1}));
+    ABSL_ASSIGN_OR_RETURN(
+        bool operands_bound,
+        AreOperandsAndOutputFullyBoundImpl(async_op, expected_shape,
+                                           async_tuple_shape, {0}));
+    ABSL_ASSIGN_OR_RETURN(bool output_bound, AreOperandsAndOutputFullyBoundImpl(
+                                                 async_op, expected_shape,
+                                                 async_tuple_shape, {1}));
     return operands_bound && output_bound;
   }
 
@@ -385,7 +413,7 @@ absl::StatusOr<bool> IsFirstFullyBound(const HloInstruction* async_inst) {
     return false;
   }
   ABSL_ASSIGN_OR_RETURN(bool fully_bound,
-                   AreOperandsAndOutputFullyBound(async_inst));
+                        AreOperandsAndOutputFullyBound(async_inst));
   if (!fully_bound) {
     return false;
   }
@@ -400,7 +428,8 @@ absl::StatusOr<bool> IsFirstFullyBound(const HloInstruction* async_inst) {
   if (prev == nullptr) {
     return false;
   }
-  ABSL_ASSIGN_OR_RETURN(bool prev_fully_bound, AreOperandsAndOutputFullyBound(prev));
+  ABSL_ASSIGN_OR_RETURN(bool prev_fully_bound,
+                        AreOperandsAndOutputFullyBound(prev));
   return !prev_fully_bound;
 }
 
@@ -445,7 +474,8 @@ absl::StatusOr<HloInstruction*> PropagateDataflow(
         break;
       }
       case HloOpcode::kGetTupleElement: {
-        ABSL_RETURN_IF_ERROR(node->ReplaceOperandWithDifferentShape(0, current));
+        ABSL_RETURN_IF_ERROR(
+            node->ReplaceOperandWithDifferentShape(0, current));
         *node->mutable_shape() =
             current->shape().tuple_shapes(node->tuple_index());
         break;
@@ -457,18 +487,21 @@ absl::StatusOr<HloInstruction*> PropagateDataflow(
           *node->mutable_shape()->mutable_tuple_shapes(step.operand_index) =
               current->shape();
         } else {
-          ABSL_RETURN_IF_ERROR(node->ReplaceOperandWithDifferentShape(0, current));
+          ABSL_RETURN_IF_ERROR(
+              node->ReplaceOperandWithDifferentShape(0, current));
           *node->mutable_shape() = current->shape();
         }
         break;
       }
       case HloOpcode::kCopy: {
-        ABSL_RETURN_IF_ERROR(node->ReplaceOperandWithDifferentShape(0, current));
+        ABSL_RETURN_IF_ERROR(
+            node->ReplaceOperandWithDifferentShape(0, current));
         *node->mutable_shape() = current->shape();
         break;
       }
       case HloOpcode::kCustomCall: {
-        ABSL_RETURN_IF_ERROR(node->ReplaceOperandWithDifferentShape(0, current));
+        ABSL_RETURN_IF_ERROR(
+            node->ReplaceOperandWithDifferentShape(0, current));
         *node->mutable_shape() = current->shape();
         break;
       }

@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/parser/hlo_lexer.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <ostream>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"

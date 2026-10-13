@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/tools/hlo_decomposer.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -202,6 +203,75 @@ CHECK-THEN: %subtract.1 = f32[10,10]{1,0} subtract(%dot.1, %parameter.2)
 CHECK-THEN: ROOT %tuple.1 = (f32[10,10]{1,0}, f32[10,10]{1,0}) tuple(%add.1, %subtract.1)
   )"));
   EXPECT_TRUE(check_result);
+}
+
+TEST_F(HloDecomposerTest,
+       ExtractInstructionIntoNewModulePreservesExecutionThread) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module
+
+fused_computation {
+  p0 = f32[8] parameter(0)
+  ROOT neg = f32[8] negate(p0)
+}, execution_thread="parallel"
+
+parallel_comp {
+  p0 = f32[8] parameter(0)
+  ROOT loop_fusion = f32[8] fusion(p0), kind=kLoop, calls=fused_computation
+}, execution_thread="parallel"
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  call-start = ((f32[8]), f32[8]) call-start(p0), async_execution_thread="parallel", to_apply=parallel_comp
+  ROOT call-done = f32[8] call-done(call-start)
+})"));
+  HloComputation* parallel_comp =
+      module->GetComputationWithName("parallel_comp");
+  ASSERT_NE(parallel_comp, nullptr);
+  HloInstruction* loop_fusion =
+      parallel_comp->GetInstructionWithName("loop_fusion");
+  ASSERT_NE(loop_fusion, nullptr);
+
+  std::unique_ptr<HloModule> new_module =
+      ExtractInstructionIntoNewModule(*loop_fusion);
+
+  EXPECT_EQ(new_module->entry_computation()->execution_thread(), "parallel");
+}
+
+TEST_F(HloDecomposerTest,
+       ExtractProducerConsumersIntoNewModulePreservesExecutionThread) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule module
+
+fused_computation {
+  p0 = f32[8] parameter(0)
+  ROOT neg = f32[8] negate(p0)
+}, execution_thread="parallel"
+
+parallel_comp {
+  p0 = f32[8] parameter(0)
+  loop_fusion = f32[8] fusion(p0), kind=kLoop, calls=fused_computation
+  ROOT result = f32[8] add(loop_fusion, p0)
+}, execution_thread="parallel"
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  call-start = ((f32[8]), f32[8]) call-start(p0), async_execution_thread="parallel", to_apply=parallel_comp
+  ROOT call-done = f32[8] call-done(call-start)
+})"));
+  HloComputation* parallel_comp =
+      module->GetComputationWithName("parallel_comp");
+  ASSERT_NE(parallel_comp, nullptr);
+  HloInstruction* loop_fusion =
+      parallel_comp->GetInstructionWithName("loop_fusion");
+  ASSERT_NE(loop_fusion, nullptr);
+
+  std::unique_ptr<HloModule> new_module =
+      ExtractProducerConsumersIntoNewModule(*loop_fusion);
+
+  EXPECT_EQ(new_module->entry_computation()->execution_thread(), "parallel");
 }
 
 TEST_F(HloDecomposerTest, ExtractProducerConsumersIntoNewModuleSingleConsumer) {

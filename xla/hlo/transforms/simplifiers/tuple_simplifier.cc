@@ -57,8 +57,8 @@ absl::StatusOr<HloInstruction*> TupleSimplifier::RemoveWholeTuple(
     return nullptr;
   }
   ABSL_ASSIGN_OR_RETURN(bool changed,
-                   tuple->parent()->ReplaceInstruction(
-                       tuple, top_tuple, /*preserve_sharding=*/true));
+                        tuple->parent()->ReplaceInstruction(
+                            tuple, top_tuple, /*preserve_sharding=*/true));
   if (changed) {
     return top_tuple;
   }
@@ -77,7 +77,8 @@ absl::StatusOr<bool> TupleSimplifier::RunImpl(
     }
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
       if (instruction->opcode() == HloOpcode::kTuple) {
-        ABSL_ASSIGN_OR_RETURN(HloInstruction * instr, RemoveWholeTuple(instruction));
+        ABSL_ASSIGN_OR_RETURN(HloInstruction * instr,
+                              RemoveWholeTuple(instruction));
         if (instr != nullptr) {
           changed = true;
         }
@@ -116,10 +117,10 @@ absl::StatusOr<bool> TupleSimplifier::RunImpl(
 
         if (replacement) {
           ABSL_ASSIGN_OR_RETURN(bool replaced,
-                           computation->ReplaceInstruction(
-                               instruction, replacement,
-                               /*preserve_sharding=*/true,
-                               /*relay_control_dependency=*/true));
+                                computation->ReplaceInstruction(
+                                    instruction, replacement,
+                                    /*preserve_sharding=*/true,
+                                    /*relay_control_dependency=*/true));
           changed |= replaced;
         }
       }

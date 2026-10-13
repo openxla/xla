@@ -29,6 +29,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
@@ -42,8 +44,6 @@ limitations under the License.
 #include "xla/tools/multihost_hlo_runner/profiler_interface.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/profiler_session.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 // Interface that may optionally returns an XSpace proto after UploadSession()
@@ -307,7 +307,6 @@ struct RunningOptions {
   }
 };
 
-
 struct ReplicasAndPartitions {
   int replicas = 1;
   int partitions = 1;
@@ -322,6 +321,17 @@ absl::StatusOr<ExecutionOptions> LoadExecutionOptions(absl::string_view path);
 // CompileOptions::device_assignment has to be set manually.
 absl::StatusOr<CompileOptions> CreateCompileOptions(
     const PjRtClient& client,
+    const FunctionalHloRunner::RawCompileOptions& raw_options, int task_id = 0,
+    int num_nodes = 1,
+    std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr);
+
+// Same as above, but uses `topology` instead of a client, so that compile
+// options can be created for ahead-of-time compilation (see the `Compile`
+// overload that takes a `PjRtTopologyDescription`) on a machine without the
+// target devices. If no device assignment is provided, the default device
+// assignment of `topology` for process `task_id` is used.
+absl::StatusOr<CompileOptions> CreateCompileOptions(
+    const PjRtTopologyDescription& topology,
     const FunctionalHloRunner::RawCompileOptions& raw_options, int task_id = 0,
     int num_nodes = 1,
     std::shared_ptr<xla::KeyValueStoreInterface> kv_store = nullptr);

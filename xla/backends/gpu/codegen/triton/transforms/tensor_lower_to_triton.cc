@@ -25,8 +25,8 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+#include "xla/codegen/xtile/ir/xtile_ops.h"
 
 namespace mlir::triton::xla {
 

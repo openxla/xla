@@ -27,10 +27,10 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/autotune_cache.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/util/sorted_range.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -151,7 +151,7 @@ absl::Status InMemoryStore::LoadFromFile(absl::string_view file_path) {
   std::string autotune_results_str;
   tsl::Env* env = tsl::Env::Default();
   ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(env, std::string(file_path),
-                                        &autotune_results_str));
+                                             &autotune_results_str));
 
   autotuner::AutotuneCache cache;
   bool parsed = false;

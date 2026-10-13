@@ -45,11 +45,9 @@ namespace xla {
 // increased to a larger value.
 class TreeReductionRewriter : public HloModulePass {
  public:
-  explicit TreeReductionRewriter(
-      int64_t reduce_window_size = 32,
-      HloPredicate filter = nullptr)
-      : reduce_window_size_(reduce_window_size),
-        filter_(std::move(filter)) {}
+  explicit TreeReductionRewriter(int64_t reduce_window_size = 32,
+                                 HloPredicate filter = nullptr)
+      : reduce_window_size_(reduce_window_size), filter_(std::move(filter)) {}
   explicit TreeReductionRewriter(HloPredicate filter)
       : TreeReductionRewriter(32, std::move(filter)) {}
   ~TreeReductionRewriter() override = default;

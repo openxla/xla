@@ -15,9 +15,9 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/nvtx_with_cuda_kernels.h"
 
-#include <vector>
-
 #include <gtest/gtest.h>
+
+#include <vector>
 
 namespace xla {
 namespace profiler {

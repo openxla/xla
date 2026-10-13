@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/dot_decomposer.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"

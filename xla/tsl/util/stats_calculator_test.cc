@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/tsl/util/stats_calculator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/tsl/platform/test.h"
 
 namespace tsl {

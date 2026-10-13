@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/codegen/intrinsic/intrinsic.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
+#include "absl/strings/string_view.h"
 #include "xla/codegen/intrinsic/type.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/xla_data.pb.h"
@@ -50,8 +52,8 @@ TEST(IntrinsicTest, TypeVectorWidth) {
 }
 
 TEST(IntrinsicTest, VerifySameWidth) {
-  TF_EXPECT_OK(Type::VerifySameWidth(Type::S(F32), Type::S(F32)));
-  TF_EXPECT_OK(Type::VerifySameWidth(Type::V(F32, 4), Type::V(F32, 4)));
+  EXPECT_OK(Type::VerifySameWidth(Type::S(F32), Type::S(F32)));
+  EXPECT_OK(Type::VerifySameWidth(Type::V(F32, 4), Type::V(F32, 4)));
   EXPECT_THAT(
       Type::VerifySameWidth(Type::S(F32), Type::V(F32, 4)),
       absl_testing::StatusIs(_, HasSubstr("Expected types of the same kind")));
@@ -60,8 +62,8 @@ TEST(IntrinsicTest, VerifySameWidth) {
 }
 
 TEST(IntrinsicTest, VerifySameWidthAndElementType) {
-  TF_EXPECT_OK(Type::VerifySameWidthAndElementType(Type::S(F32), Type::S(F32)));
-  TF_EXPECT_OK(
+  EXPECT_OK(Type::VerifySameWidthAndElementType(Type::S(F32), Type::S(F32)));
+  EXPECT_OK(
       Type::VerifySameWidthAndElementType(Type::V(F32, 4), Type::V(F32, 4)));
   EXPECT_THAT(
       Type::VerifySameWidthAndElementType(Type::S(F32), Type::V(F32, 4)),

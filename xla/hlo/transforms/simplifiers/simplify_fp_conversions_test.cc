@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/simplify_fp_conversions.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"

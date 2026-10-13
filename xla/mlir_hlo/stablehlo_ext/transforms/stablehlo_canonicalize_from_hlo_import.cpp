@@ -229,7 +229,7 @@ LogicalResult expandTupledTensorInReturnOp(func::FuncOp func) {
 // Flatten Tuples in Custom Calls
 
 // Calculates the flatten types of a value.
-void flattenTupleType(Type type, llvm::SmallVectorImpl<Type> &flattenedTypes) {
+void flattenTupleType(Type type, llvm::SmallVectorImpl<Type>& flattenedTypes) {
   auto tupleType = mlir::dyn_cast<mlir::TupleType>(type);
   if (!tupleType) {
     flattenedTypes.push_back(type);
@@ -244,8 +244,8 @@ void flattenTupleType(Type type, llvm::SmallVectorImpl<Type> &flattenedTypes) {
 // FlattenTupleValue and CreateTupleValue is a pair of functions to create and
 // flatten tuples in the exact same order. CreateTupleValue returns the result
 // of the root TupleOp or given value if the type is not TupleType.
-Value createTupleValue(OpBuilder &builder, Location loc,
-                       ValueRange &flattenValues, Type type) {
+Value createTupleValue(OpBuilder& builder, Location loc,
+                       ValueRange& flattenValues, Type type) {
   auto tupleType = mlir::dyn_cast<mlir::TupleType>(type);
   if (!tupleType) {
     assert(!flattenValues.empty());
@@ -264,8 +264,8 @@ Value createTupleValue(OpBuilder &builder, Location loc,
       .getResult();
 }
 
-void flattenTupleValue(OpBuilder &builder, Location loc, Value value,
-                       llvm::SmallVectorImpl<Value> &flattenedValues) {
+void flattenTupleValue(OpBuilder& builder, Location loc, Value value,
+                       llvm::SmallVectorImpl<Value>& flattenedValues) {
   auto tupleType = mlir::dyn_cast<TupleType>(value.getType());
   if (!tupleType) {
     flattenedValues.push_back(value);
@@ -284,7 +284,7 @@ struct FlattenCustomCallOp : public OpRewritePattern<stablehlo::CustomCallOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(stablehlo::CustomCallOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     // We only flatten a single result tuple, as this is what we expect from
     // HLO, where an instruction can only have a single result.
     bool flattenResult = op->getNumResults() == 1 &&
@@ -434,7 +434,7 @@ struct StablehloCanonicalizeFromHloImportPass
     }
 
     // Flatten tuples in function body
-    MLIRContext *context = &getContext();
+    MLIRContext* context = &getContext();
     RewritePatternSet patterns(context);
     patterns.add<FlattenCustomCallOp>(context);
     patterns.add<WhileOpImplicitCapture>(context, /*benefit=*/2);

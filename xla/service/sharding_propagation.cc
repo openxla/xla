@@ -207,6 +207,7 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kOptimizationBarrier:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReverse:
+    case HloOpcode::kShuffle:
     case HloOpcode::kSlice:
     case HloOpcode::kShiftLeft:
     case HloOpcode::kShiftRightArithmetic:
@@ -248,12 +249,14 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kDivide:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
     case HloOpcode::kImag:
     case HloOpcode::kIsFinite:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
     case HloOpcode::kLogistic:
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
@@ -1272,8 +1275,7 @@ bool InferConvolutionShardingFromOperands(HloInstruction* instruction,
   if (IsConvolutionKernelSmall(instruction)) {
     // If the kernel is small compared to the input then we can generate an
     // output what is sharded the same way as the input.
-    const auto& tile_assignment = lhs->sharding().tile_assignment();
-    if (tile_assignment.dim(dnums.input_feature_dimension()) > 1) {
+    if (lhs->sharding().dimension(dnums.input_feature_dimension()) > 1) {
       return false;
     }
     return MaybeImproveInstructionSharding(get_tiled_sharding_based_on_lhs(),
@@ -1561,8 +1563,8 @@ absl::StatusOr<bool> ProcessShardingInstruction(
           auto copy = computation->AddInstruction(HloInstruction::CreateUnary(
               instruction->shape(), HloOpcode::kCopy,
               instruction->mutable_operand(0)));
-          ABSL_ASSIGN_OR_RETURN(std::ignore,
-                           computation->ReplaceInstruction(
+          ABSL_ASSIGN_OR_RETURN(
+              std::ignore, computation->ReplaceInstruction(
                                instruction, copy, /*preserve_sharding=*/false,
                                /*relay_control_dependency=*/false,
                                /*remove_unused_operands=*/false));
@@ -1582,8 +1584,8 @@ absl::StatusOr<bool> ProcessShardingInstruction(
               instruction->sharding());
         }
         if (shard_group_remove_instruction) {
-          ABSL_ASSIGN_OR_RETURN(std::ignore,
-                           computation->ReplaceInstruction(
+          ABSL_ASSIGN_OR_RETURN(
+              std::ignore, computation->ReplaceInstruction(
                                instruction, instruction->mutable_operand(0),
                                /*preserve_sharding=*/false,
                                /*relay_control_dependency=*/false,
@@ -1591,8 +1593,8 @@ absl::StatusOr<bool> ProcessShardingInstruction(
         }
       } else {
         ABSL_ASSIGN_OR_RETURN(std::ignore,
-                         process_shard_group_instruction(
-                             instruction, /*replaced_with_copy=*/false));
+                              process_shard_group_instruction(
+                                  instruction, /*replaced_with_copy=*/false));
       }
     }
   }
@@ -1634,7 +1636,7 @@ int64_t ComputeNonRootUsers(const HloInstruction* instr) {
     const DomainMetadata::Domain& domain, const DomainMetadata* metadata) {
   if (metadata != nullptr) {
     ABSL_ASSIGN_OR_RETURN(const auto& sharding_metadata,
-                     ShardingMetadata::ToShardingMetadata(metadata));
+                          ShardingMetadata::ToShardingMetadata(metadata));
     const auto& sharding = sharding_metadata->sharding();
     if (sharding != nullptr) {
       bool is_spatially_partitioned = !sharding->IsSingleDevice();
@@ -1693,8 +1695,7 @@ std::optional<HloSharding> ShardingPropagation::GetShardingFromUser(
       }
 
       const int64_t cdim = user.concatenate_dimension();
-      auto& tile_assignment = user.sharding().tile_assignment();
-      if (tile_assignment.dim(cdim) == 1) {
+      if (user.sharding().dimension(cdim) == 1) {
         // If we are concatenating along a non-sharded dimension then the
         // operands should have the same sharding as the result.
         return user.sharding();
@@ -1705,6 +1706,12 @@ std::optional<HloSharding> ShardingPropagation::GetShardingFromUser(
         // sharding.
         return user.sharding();
       }
+
+      HloSharding user_sharding =
+          user.sharding().UseNamedShardingLeaf()
+              ? HloSharding::V3ToV2Sharding(user.sharding().named_sharding())
+              : user.sharding();
+      const auto& tile_assignment = user_sharding.tile_assignment();
 
       // If we are concatenating along a sharded dimension then we want the
       // operands to be distributed among the devices their data is used.
@@ -2391,12 +2398,10 @@ bool ShardingPropagation::InferShardingFromOperands(
           if (!AggressiveConcatOperandShardingCanPassThrough(concat_operand)) {
             return false;
           }
-          const auto& tile_assignment =
-              concat_operand->sharding().tile_assignment();
           for (int64_t i = 0; i < instruction->shape().dimensions().size();
                ++i) {
             if (absl::c_linear_search(instruction->dimensions(), i) &&
-                tile_assignment.dim(i) > 1) {
+                concat_operand->sharding().dimension(i) > 1) {
               return false;
             }
           }
@@ -3528,11 +3533,11 @@ absl::StatusOr<bool> ShardingPropagation::RunImpl(
       if (instruction->IsCustomCall(spmd::kShardBarrierFrom) ||
           instruction->IsCustomCall(spmd::kShardBarrierTo)) {
         ABSL_ASSIGN_OR_RETURN(std::ignore,
-                         computation->ReplaceInstruction(
-                             instruction, instruction->mutable_operand(0),
-                             /*preserve_sharding=*/false,
-                             /*relay_control_dependency=*/false,
-                             /*remove_unused_operands=*/false));
+                              computation->ReplaceInstruction(
+                                  instruction, instruction->mutable_operand(0),
+                                  /*preserve_sharding=*/false,
+                                  /*relay_control_dependency=*/false,
+                                  /*remove_unused_operands=*/false));
       }
     }
   }
@@ -3615,9 +3620,10 @@ absl::StatusOr<bool> ShardingPropagation::RunImpl(
       module, allow_spmd_sharding_propagation_to_output_vector_,
       allow_spmd_sharding_propagation_to_parameters_vector_);
 
-  ABSL_RETURN_IF_ERROR(hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
-      module, allow_spmd_sharding_propagation_to_output_vector_,
-      allow_spmd_sharding_propagation_to_parameters_vector_));
+  ABSL_RETURN_IF_ERROR(
+      hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
+          module, allow_spmd_sharding_propagation_to_output_vector_,
+          allow_spmd_sharding_propagation_to_parameters_vector_));
 
   VLOG(1) << "Sharding propagation completed after " << iterations
           << " iterations";

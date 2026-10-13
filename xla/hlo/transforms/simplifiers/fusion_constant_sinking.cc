@@ -26,6 +26,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -33,8 +35,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/side_effect_util.h"
 #include "xla/util.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -82,6 +82,14 @@ bool CanSink(HloInstruction* fusion, const HloInstruction* operand) {
           user_fuse_info.second == fusion_fuse_info.second)) {
       return false;
     }
+  }
+
+  // A FUSE_LIMIT operand is a fusion boundary. Custom fusions only take
+  // must-fuse operands (see above), and must-fuse takes precedence over
+  // FUSE_LIMIT.
+  if (!fusion->IsCustomFusion() &&
+      operand->frontend_attributes().map().contains(kFuseLimitAttr)) {
+    return false;
   }
 
   if (fusion->operand_count() == 1) {

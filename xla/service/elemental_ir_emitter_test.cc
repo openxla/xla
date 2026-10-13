@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/elemental_ir_emitter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,11 +25,11 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -38,7 +41,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/types.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
@@ -51,8 +53,8 @@ class ElementalIrEmitterExecutionTest
   void RunTest(const std::string& hlo_text, absl::Span<Literal* const> args) {
     HloModuleConfig config;
     config.set_debug_options(GetDebugOptionsForTest());
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(hlo_text, config));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text, config));
     EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), args, nullopt));
   }
 
@@ -62,8 +64,8 @@ class ElementalIrEmitterExecutionTest
     debug_options.set_xla_cpu_fast_math_honor_nans(true);
     debug_options.set_xla_cpu_fast_math_honor_infs(true);
     config.set_debug_options(debug_options);
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(hlo_text, config));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text, config));
     EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{(0.)}));
   }
 };
@@ -203,8 +205,8 @@ ENTRY resampler_Resampler.49 {
   // in the fusion computation, but not recreate them.
   debug_options.add_xla_disable_hlo_passes("layout-assignment");
   config.set_debug_options(debug_options);
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text, config));
   EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{4e-3, 4e-3}));
 }
 
@@ -227,8 +229,8 @@ TEST_F(ElementalIrEmitterExecutionTest,
   debug_options.set_xla_cpu_fast_math_honor_nans(true);
   debug_options.set_xla_cpu_fast_math_honor_infs(true);
   config.set_debug_options(debug_options);
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text, config));
   EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{(0.)}));
 }
 
@@ -249,8 +251,8 @@ TEST_F(ElementalIrEmitterExecutionTest, DivideComplexNumbersWithFiniteNormRhs) {
   debug_options.set_xla_cpu_fast_math_honor_nans(true);
   debug_options.set_xla_cpu_fast_math_honor_infs(true);
   config.set_debug_options(debug_options);
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text, config));
   EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{(0.)}));
 }
 
@@ -272,8 +274,8 @@ TEST_F(ElementalIrEmitterExecutionTest, DivideComplexNumbersWithZeroNormRhs) {
   debug_options.set_xla_cpu_fast_math_honor_nans(true);
   debug_options.set_xla_cpu_fast_math_honor_infs(true);
   config.set_debug_options(debug_options);
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text, config));
   EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{(0.)}));
 }
 
@@ -618,6 +620,55 @@ ENTRY e {
 
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3,
                                                 /*arel=*/1e-3}));
+}
+
+TEST_F(ElementalIrEmitterExecutionTest, IntegerPowNegativeExponent) {
+  const std::string hlo_text = R"(
+HloModule IntegerPowNegativeExponent
+
+ENTRY main {
+  base = s32[8]{0} parameter(0)
+  exponent = s32[8]{0} parameter(1)
+  ROOT power = s32[8]{0} power(base, exponent)
+}
+)";
+
+  Literal base = LiteralUtil::CreateR1<int32_t>({-1, -1, -1, -1, 1, 2, -2, 3});
+  Literal exponent =
+      LiteralUtil::CreateR1<int32_t>({-1, -2, -3, -100, -5, -1, -1, -2});
+  RunTest(hlo_text, {&base, &exponent});
+}
+
+TEST_F(ElementalIrEmitterExecutionTest, UnsignedIntegerPowLargeExponent) {
+  const std::string hlo_text = R"(
+HloModule UnsignedIntegerPowLargeExponent
+ENTRY main {
+  base = u32[4]{0} parameter(0)
+  exponent = u32[4]{0} parameter(1)
+  ROOT power = u32[4]{0} power(base, exponent)
+}
+)";
+  // Exponents with MSB set (>= 2^31)
+  Literal base = LiteralUtil::CreateR1<uint32_t>({3, 5, 3, 5});
+  Literal exponent = LiteralUtil::CreateR1<uint32_t>(
+      {1u << 31, 1u << 31, (1u << 31) + 1, (1u << 31) + 1});
+  RunTest(hlo_text, {&base, &exponent});
+}
+
+TEST_F(ElementalIrEmitterExecutionTest, UnsignedInteger64PowLargeExponent) {
+  const std::string hlo_text = R"(
+HloModule UnsignedInteger64PowLargeExponent
+ENTRY main {
+  base = u64[4]{0} parameter(0)
+  exponent = u64[4]{0} parameter(1)
+  ROOT power = u64[4]{0} power(base, exponent)
+}
+)";
+  // Exponents with MSB set (>= 2^63)
+  Literal base = LiteralUtil::CreateR1<uint64_t>({3, 5, 3, 5});
+  Literal exponent = LiteralUtil::CreateR1<uint64_t>(
+      {1ull << 63, 1ull << 63, (1ull << 63) + 1, (1ull << 63) + 1});
+  RunTest(hlo_text, {&base, &exponent});
 }
 
 }  // namespace

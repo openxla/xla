@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/statusor.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -798,6 +798,11 @@ ENTRY RuntimeDonationDenialMustAliasFails() -> f32[2, 2] {
 }
 
 TEST(PjRtClientTest, GetDefaultLayout) {}
+
+TEST(PjRtClientTest, IsCApiTest) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());
+  EXPECT_FALSE(client->IsCApi());
+}
 
 TEST(PjRtClientTest, ClearPeakMemory) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetClient());

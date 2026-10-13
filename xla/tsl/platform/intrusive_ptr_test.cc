@@ -15,8 +15,8 @@ limitations under the License.
 
 #include "xla/tsl/platform/intrusive_ptr.h"
 
-#include "xla/tsl/platform/test.h"
 #include "tsl/platform/refcount.h"
+#include "xla/tsl/platform/test.h"
 
 namespace tsl {
 namespace core {

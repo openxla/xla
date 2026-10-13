@@ -39,8 +39,8 @@ absl::StatusOr<std::unique_ptr<const CpuTopology>> CpuTopology::FromProto(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto target_machine_options,
-                   cpu::TargetMachineOptions::FromProto(
-                       cpu_topology_proto.target_machine_options()));
+                        cpu::TargetMachineOptions::FromProto(
+                            cpu_topology_proto.target_machine_options()));
 
   return std::make_unique<CpuTopology>(std::move(devices),
                                        std::move(target_machine_options));

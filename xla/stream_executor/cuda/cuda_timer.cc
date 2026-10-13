@@ -37,7 +37,7 @@ limitations under the License.
 namespace stream_executor::gpu {
 
 namespace {
-absl::StatusOr<float> GetEventElapsedTime(StreamExecutor *executor,
+absl::StatusOr<float> GetEventElapsedTime(StreamExecutor* executor,
                                           CUevent start, CUevent stop) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
   // The stop event must have completed in order for cuEventElapsedTime to
@@ -54,8 +54,8 @@ absl::StatusOr<float> GetEventElapsedTime(StreamExecutor *executor,
 
 }  // namespace
 
-CudaTimer::CudaTimer(StreamExecutor *executor, CudaEvent start_event,
-                     CudaEvent stop_event, Stream *stream,
+CudaTimer::CudaTimer(StreamExecutor* executor, CudaEvent start_event,
+                     CudaEvent stop_event, Stream* stream,
                      GpuSemaphore semaphore)
     : semaphore_(std::move(semaphore)),
       executor_(executor),
@@ -95,14 +95,14 @@ absl::StatusOr<absl::Duration> CudaTimer::GetElapsedDuration() {
     }
   }
   ABSL_ASSIGN_OR_RETURN(float elapsed_milliseconds,
-                   GetEventElapsedTime(executor_, start_event_.GetHandle(),
-                                       stop_event_.GetHandle()));
+                        GetEventElapsedTime(executor_, start_event_.GetHandle(),
+                                            stop_event_.GetHandle()));
   is_stopped_ = true;
   return absl::Milliseconds(elapsed_milliseconds);
 }
 
-absl::StatusOr<CudaTimer> CudaTimer::Create(StreamExecutor *executor,
-                                            Stream *stream,
+absl::StatusOr<CudaTimer> CudaTimer::Create(StreamExecutor* executor,
+                                            Stream* stream,
                                             TimerType timer_type) {
   GpuSemaphore semaphore{};
 
@@ -111,9 +111,9 @@ absl::StatusOr<CudaTimer> CudaTimer::Create(StreamExecutor *executor,
   }
 
   ABSL_ASSIGN_OR_RETURN(CudaEvent start_event,
-                   CudaEvent::Create(executor, /*allow_timing=*/true));
+                        CudaEvent::Create(executor, /*allow_timing=*/true));
   ABSL_ASSIGN_OR_RETURN(CudaEvent stop_event,
-                   CudaEvent::Create(executor, /*allow_timing=*/true));
+                        CudaEvent::Create(executor, /*allow_timing=*/true));
 
   ABSL_RETURN_IF_ERROR(stream->RecordEvent(&start_event));
 

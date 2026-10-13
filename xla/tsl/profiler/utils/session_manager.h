@@ -20,8 +20,8 @@ limitations under the License.
 #include <variant>
 
 #include "absl/container/flat_hash_map.h"
-#include "xla/tsl/platform/status.h"
 #include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "xla/tsl/platform/status.h"
 
 namespace tsl {
 namespace profiler {

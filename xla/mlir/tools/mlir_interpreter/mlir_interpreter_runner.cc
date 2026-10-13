@@ -17,12 +17,12 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "mhlo/IR/register.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
+#include "mhlo/IR/register.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
@@ -48,8 +48,8 @@ struct Options {
       llvm::cl::init(false)};
 };
 
-static mlir::OwningOpRef<mlir::Operation *> ParseMlirInput(
-    llvm::StringRef input_filename, mlir::MLIRContext *context) {
+static mlir::OwningOpRef<mlir::Operation*> ParseMlirInput(
+    llvm::StringRef input_filename, mlir::MLIRContext* context) {
   std::string error_message;
   auto file = mlir::openInputFile(input_filename, &error_message);
   if (!file) {
@@ -81,7 +81,7 @@ static mlir::LogicalResult Run(mlir::ModuleOp module,
 
   if (!results->empty()) {
     llvm::outs() << "Results:\n";
-    for (const auto &result : *results) {
+    for (const auto& result : *results) {
       llvm::outs() << result.ToString() << "\n";
     }
   }
@@ -89,7 +89,7 @@ static mlir::LogicalResult Run(mlir::ModuleOp module,
   return mlir::success();
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
   // Flush llvm::outs before writing errors.
   llvm::errs().tie(&llvm::outs());
 
@@ -126,7 +126,7 @@ int main(int argc, char *argv[]) {
       return 1;
     }
   } else {
-    auto *main = module.lookupSymbol("main");
+    auto* main = module.lookupSymbol("main");
     if (!main) {
       llvm::errs() << "no main function found.\n";
       return 1;

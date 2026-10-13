@@ -56,7 +56,7 @@ TraceCommandBufferFactory::Create(
     return command_buffer_or.status();
   }
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<CommandBuffer> command_buffer,
-                   std::move(command_buffer_or));
+                        std::move(command_buffer_or));
 
   // Trace and finalize the command buffer.
   absl::Status trace_status =

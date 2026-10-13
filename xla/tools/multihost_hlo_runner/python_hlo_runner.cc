@@ -19,10 +19,10 @@ limitations under the License.
 #include <string>
 
 #include "absl/status/status_macros.h"
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"       // IWYU pragma: keep
 #include "xla/debug_options_flags.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/ffi.h"
@@ -147,13 +147,15 @@ RawCompileOptionsFromFlags(const PyHloRunnerConfig& opts) {
 
 absl::Status RunHloFiles(const std::vector<std::string>& hlo_files,
                          const PyHloRunnerConfig& opts) {
-  ABSL_ASSIGN_OR_RETURN(FunctionalHloRunner::PreprocessingOptions preproc_options,
-                   PreprocessingOptionsFromFlags(opts));
+  ABSL_ASSIGN_OR_RETURN(
+      FunctionalHloRunner::PreprocessingOptions preproc_options,
+      PreprocessingOptionsFromFlags(opts));
   preproc_options.annotate_while_loop_trip_count = true;
-  ABSL_ASSIGN_OR_RETURN(FunctionalHloRunner::RawCompileOptions raw_compile_options,
-                   RawCompileOptionsFromFlags(opts));
+  ABSL_ASSIGN_OR_RETURN(
+      FunctionalHloRunner::RawCompileOptions raw_compile_options,
+      RawCompileOptionsFromFlags(opts));
   ABSL_ASSIGN_OR_RETURN(FunctionalHloRunner::RunningOptions running_options,
-                   RunningOptionsFromFlags(opts));
+                        RunningOptionsFromFlags(opts));
 
   // tsl::Flags::Parse() leaves unknown flags in argv, we assume that those are
   // HLO files to run. Note that argv[0] is the binary name and is excluded.
@@ -192,8 +194,8 @@ absl::Status RunHloFiles(const std::vector<std::string>& hlo_files,
   CHECK(env.client != nullptr);
   if (!opts.xla_gpu_dump_xspace_to.empty()) {
     ABSL_ASSIGN_OR_RETURN(hlo_runner_profiler,
-                     HLORunnerProfiler::Create(opts.xla_gpu_dump_xspace_to,
-                                               /*keep_xspace=*/false));
+                          HLORunnerProfiler::Create(opts.xla_gpu_dump_xspace_to,
+                                                    /*keep_xspace=*/false));
     running_options.profiler = hlo_runner_profiler.get();
   }
 
@@ -208,10 +210,11 @@ absl::Status RunHloFiles(const std::vector<std::string>& hlo_files,
           hlo_file, opts.input_format, opts.dump_output_literal_to,
           opts.task_id));
     } else {
-      ABSL_RETURN_IF_ERROR(FunctionalHloRunner::LoadAndCompile(
-                          *env.client, preproc_options, raw_compile_options,
-                          hlo_file, opts.input_format, opts.task_id)
-                          .status());
+      ABSL_RETURN_IF_ERROR(
+          FunctionalHloRunner::LoadAndCompile(*env.client, preproc_options,
+                                              raw_compile_options, hlo_file,
+                                              opts.input_format, opts.task_id)
+              .status());
     }
     for (int i = 0; i < execution_profiles.size(); ++i) {
       LOG(INFO) << "## Execution time, file=" << hlo_file << " repeat=" << i
@@ -250,7 +253,7 @@ absl::Status RegisterCustomCallTarget(const std::string& fn_name, nb::object fn,
     // Register a single execute handler
     nb::capsule capsule;
     if (nb::try_cast<nb::capsule>(fn, capsule)) {
-      return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
+      return ffi::TakeError(ffi::Ffi::RegisterStaticHandler(
           ffi::GetXlaFfiApi(), fn_name, platform,
           reinterpret_cast<XLA_FFI_Handler*>(capsule.data())));
     }
@@ -278,7 +281,7 @@ absl::Status RegisterCustomCallTarget(const std::string& fn_name, nb::object fn,
       ABSL_ASSIGN_OR_RETURN(bundle.initialize, handler("initialize"));
       ABSL_ASSIGN_OR_RETURN(bundle.execute, handler("execute"));
 
-      return ffi::TakeStatus(ffi::Ffi::RegisterStaticHandler(
+      return ffi::TakeError(ffi::Ffi::RegisterStaticHandler(
           ffi::GetXlaFfiApi(), fn_name, platform, bundle, traits));
     }
 
@@ -335,7 +338,7 @@ absl::Status RegisterCustomTypeId(absl::string_view type_name,
   XLA_FFI_TypeId* type_id_ptr =
       reinterpret_cast<XLA_FFI_TypeId*>(static_cast<void*>(capsule.data()));
   XLA_FFI_TypeInfo* type_info_ptr = nullptr;
-  return ffi::TakeStatus(ffi::Ffi::RegisterTypeId(
+  return ffi::TakeError(ffi::Ffi::RegisterTypeId(
       xla::ffi::GetXlaFfiApi(), type_name, type_id_ptr, type_info_ptr));
 }
 

@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/numbers.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/core/host_offloading/host_offloading_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -34,7 +35,6 @@ limitations under the License.
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/bfc_allocator.h"
 #include "xla/util.h"
-#include "tsl/platform/numbers.h"
 
 namespace xla::gpu {
 namespace {

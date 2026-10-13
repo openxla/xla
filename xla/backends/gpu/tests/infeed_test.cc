@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
 #include <unistd.h>
 
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "xla/array3d.h"
 #include "xla/array4d.h"
 #include "xla/client/local_client.h"

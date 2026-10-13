@@ -43,8 +43,8 @@ limitations under the License.
 
 #include <algorithm>
 
-#include "xla/tsl/lib/io/table_builder.h"
 #include "tsl/platform/coding.h"
+#include "xla/tsl/lib/io/table_builder.h"
 
 namespace tsl {
 namespace table {

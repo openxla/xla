@@ -26,30 +26,30 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "xla/python/ifrt/ir/sharding_param.h"  // IWYU pragma: export
-#include "xla/python/ifrt/ir/version.h"  // IWYU pragma: export
+#include "xla/python/ifrt/ir/version.h"         // IWYU pragma: export
 
 namespace xla {
 namespace ifrt {
 
 class VifrtDialect : public mlir::Dialect {
  public:
-  explicit VifrtDialect(mlir::MLIRContext *context);
+  explicit VifrtDialect(mlir::MLIRContext* context);
 
   static mlir::StringRef getDialectNamespace() { return "vifrt"; }
 
   // Parses a type registered in the VIFRT dialect.
-  mlir::Type parseType(mlir::DialectAsmParser &parser) const override;
+  mlir::Type parseType(mlir::DialectAsmParser& parser) const override;
 
   // Prints a type registered in the VIFRT dialect.
-  void printType(mlir::Type type, mlir::DialectAsmPrinter &os) const override;
+  void printType(mlir::Type type, mlir::DialectAsmPrinter& os) const override;
 
   // Parses an attribute registered in the VIFRT dialect.
-  mlir::Attribute parseAttribute(mlir::DialectAsmParser &parser,
+  mlir::Attribute parseAttribute(mlir::DialectAsmParser& parser,
                                  mlir::Type type) const override;
 
   // Prints an attribute registered in the VIFRT dialect.
   void printAttribute(mlir::Attribute attr,
-                      mlir::DialectAsmPrinter &os) const override;
+                      mlir::DialectAsmPrinter& os) const override;
 };
 
 class VifrtTypeConverterBase : public mlir::TypeConverter {
@@ -74,10 +74,10 @@ class VifrtTypeConverterBuiltin : public VifrtTypeConverterBase {
 };
 
 // Auto-generated VIFRT type printers and parsers.
-mlir::LogicalResult printVifrtType(mlir::Type type, mlir::AsmPrinter &printer);
-mlir::OptionalParseResult parseVifrtType(mlir::AsmParser &parser,
-                                         llvm::StringRef *mnemonic,
-                                         mlir::Type &type);
+mlir::LogicalResult printVifrtType(mlir::Type type, mlir::AsmPrinter& printer);
+mlir::OptionalParseResult parseVifrtType(mlir::AsmParser& parser,
+                                         llvm::StringRef* mnemonic,
+                                         mlir::Type& type);
 
 }  // namespace ifrt
 }  // namespace xla

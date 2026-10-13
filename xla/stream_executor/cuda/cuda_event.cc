@@ -23,22 +23,22 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/event.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace stream_executor {
 namespace gpu {
 namespace {
-absl::Status WaitStreamOnEvent(StreamExecutor *executor, CUstream stream,
+absl::Status WaitStreamOnEvent(StreamExecutor* executor, CUstream stream,
                                CUevent event) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
   return cuda::ToStatus(cuStreamWaitEvent(stream, event, 0 /* = flags */));
 }
 
-void DestroyEvent(StreamExecutor *executor, CUevent event) {
+void DestroyEvent(StreamExecutor* executor, CUevent event) {
   if (event == nullptr) {
     return;
   }
@@ -52,7 +52,7 @@ void DestroyEvent(StreamExecutor *executor, CUevent event) {
 }
 
 enum class EventFlags { kDefault, kDisableTiming };
-absl::StatusOr<CUevent> InitEvent(StreamExecutor *executor, EventFlags flags) {
+absl::StatusOr<CUevent> InitEvent(StreamExecutor* executor, EventFlags flags) {
   int cuflags;
   switch (flags) {
     case EventFlags::kDefault:
@@ -94,7 +94,7 @@ absl::Status CudaEvent::Synchronize() {
   return cuda::ToStatus(cuEventSynchronize(handle_));
 }
 
-absl::StatusOr<CudaEvent> CudaEvent::Create(StreamExecutor *executor,
+absl::StatusOr<CudaEvent> CudaEvent::Create(StreamExecutor* executor,
                                             bool allow_timing) {
   ABSL_ASSIGN_OR_RETURN(
       CUevent event_handle,
@@ -121,7 +121,7 @@ CudaEvent& CudaEvent::operator=(CudaEvent&& other) {
   return *this;
 }
 
-CudaEvent::CudaEvent(CudaEvent &&other)
+CudaEvent::CudaEvent(CudaEvent&& other)
     : executor_(other.executor_), handle_(other.handle_) {
   other.executor_ = nullptr;
   other.handle_ = nullptr;

@@ -25,6 +25,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/path.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -36,8 +38,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/util.h"
-#include "tsl/platform/init_main.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 
@@ -93,7 +93,7 @@ static absl::Status RunHloExtractor(const HloExtractorConfig& opts, int argc,
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   LoadModuleFromData(module_str, format));
+                        LoadModuleFromData(module_str, format));
 
   // Instructions are printed with % prefix in the HLO text but it is not
   // present in proto.

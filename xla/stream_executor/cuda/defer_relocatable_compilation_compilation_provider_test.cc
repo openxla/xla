@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/defer_relocatable_compilation_compilation_provider.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
-#include "absl/status/status_matchers.h"
+#include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/cuda/compilation_options.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
@@ -79,10 +80,9 @@ TEST(DeferRelocatableCompilationCompilationProviderTest,
       .WillByDefault(Return(false));
   EXPECT_CALL(*mock_compilation_provider, CompileToRelocatableModule).Times(0);
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto compilation_provider,
-      DeferRelocatableCompilationCompilationProvider::Create(
-          std::move(mock_compilation_provider)));
+  ASSERT_OK_AND_ASSIGN(auto compilation_provider,
+                       DeferRelocatableCompilationCompilationProvider::Create(
+                           std::move(mock_compilation_provider)));
 
   EXPECT_THAT(compilation_provider->CompileToRelocatableModule(
                   kDefaultComputeCapability, kSomePtxString,
@@ -111,15 +111,14 @@ TEST(DeferRelocatableCompilationCompilationProviderTest,
           VariantWith<RelocatableModule>(some_actual_relocatable_module)))))
       .WillOnce(Return(Assembly{}));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto compilation_provider,
-      DeferRelocatableCompilationCompilationProvider::Create(
-          std::move(mock_compilation_provider)));
+  ASSERT_OK_AND_ASSIGN(auto compilation_provider,
+                       DeferRelocatableCompilationCompilationProvider::Create(
+                           std::move(mock_compilation_provider)));
 
-  TF_ASSERT_OK_AND_ASSIGN(RelocatableModule opaque_relocatable_module,
-                          compilation_provider->CompileToRelocatableModule(
-                              kDefaultComputeCapability, kSomePtxString,
-                              kDefaultCompilationOptions));
+  ASSERT_OK_AND_ASSIGN(RelocatableModule opaque_relocatable_module,
+                       compilation_provider->CompileToRelocatableModule(
+                           kDefaultComputeCapability, kSomePtxString,
+                           kDefaultCompilationOptions));
 
   // We pass in a RelocatableModule with deferred compilation (actually a PTX
   // string), a regular PTX string and an actual RelocatableModule. The latter
@@ -149,10 +148,9 @@ TEST(DeferRelocatableCompilationCompilationProviderTest,
   // compilation was deferred to the linking step.
   EXPECT_CALL(*mock_compilation_provider, Compile).WillOnce(Return(Assembly{}));
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto compilation_provider,
-      DeferRelocatableCompilationCompilationProvider::Create(
-          std::move(mock_compilation_provider)));
+  ASSERT_OK_AND_ASSIGN(auto compilation_provider,
+                       DeferRelocatableCompilationCompilationProvider::Create(
+                           std::move(mock_compilation_provider)));
 
   EXPECT_THAT(
       compilation_provider->Compile(kDefaultComputeCapability, kSomePtxString,

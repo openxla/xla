@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/cpu/testlib/llvm_ir_kernel_emitter.h"
 
-#include <utility>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <utility>
+
 #include "absl/strings/string_view.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/IR/Function.h"

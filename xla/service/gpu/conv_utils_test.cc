@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/conv_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -102,7 +103,8 @@ TEST_F(ConvUtilsTest, BackwardFilterConvolveWithPaddedActivations) {
       ShapeUtil::MakeShape(F32, {3, 3, 32, 32}), {activations, gradients},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       dnums_for_backward_filter_, DefaultPrecisionConfig(2),
-      /*sparsity_config=*/{}, CONVOLUTION_KIND_WGRAD));
+      /*sparsity_config=*/{}, /*block_scaling_config=*/{},
+      CONVOLUTION_KIND_WGRAD));
 
   auto module = CreateNewVerifiedModule();
   HloComputation* entry_computation =
@@ -168,7 +170,7 @@ TEST_F(ConvUtilsTest, BackwardInputConvolveEvenPadding) {
       /*feature_group_count=*/1,
       /*batch_group_count=*/1, conv_window, conv_dnums,
       DefaultPrecisionConfig(2), /*sparsity_config=*/{},
-      CONVOLUTION_KIND_WGRAD));
+      /*block_scaling_config=*/{}, CONVOLUTION_KIND_WGRAD));
   // Verify the convolution's shape is consistent with ShapeInference.
   CHECK(ShapeUtil::Compatible(
       conv->shape(), ShapeInference::InferConvolveShape(
@@ -224,7 +226,8 @@ TEST_F(ConvUtilsTest, BackwardInputConvolveUnevenPaddingOnGradients) {
       ShapeUtil::MakeShape(F32, {20, 10, 10, 192}), {output, reverse_kernel},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       dnums_for_backward_input_, DefaultPrecisionConfig(2),
-      /*sparsity_config=*/{}, CONVOLUTION_KIND_DGRAD));
+      /*sparsity_config=*/{}, /*block_scaling_config=*/{},
+      CONVOLUTION_KIND_DGRAD));
   // Verify the convolution's shape is consistent with ShapeInference.
   CHECK(ShapeUtil::Compatible(
       conv->shape(),
@@ -278,7 +281,8 @@ TEST_F(ConvUtilsTest, BackwardInputConvolveUnevenPaddingOnActivations) {
       ShapeUtil::MakeShape(F32, {1, 1, 14, 1}), {output, reverse_kernel},
       /*feature_group_count=*/1, /*batch_group_count=*/1, conv_window,
       dnums_for_backward_input_, DefaultPrecisionConfig(2),
-      /*sparsity_config=*/{}, CONVOLUTION_KIND_DGRAD));
+      /*sparsity_config=*/{}, /*block_scaling_config=*/{},
+      CONVOLUTION_KIND_DGRAD));
   // Verify the convolution's shape is consistent with ShapeInference.
   CHECK(ShapeUtil::Compatible(
       conv->shape(),

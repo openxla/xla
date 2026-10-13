@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/scan_rewriter_triton.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"

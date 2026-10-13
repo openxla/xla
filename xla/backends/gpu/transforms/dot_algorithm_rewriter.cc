@@ -330,6 +330,14 @@ void RewriteF32ToTF32X3(HloInstruction* instr) {
 absl::StatusOr<bool> DotAlgorithmRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  // Pre-Ampere architectures (e.g. Volta SM70, Turing SM75) do not have BF16
+  // Tensor Cores or TF32 hardware support. On pre-Ampere GPUs, BF16 matmuls are
+  // explicitly upcast to F32 for performance, so we do not rewrite them here.
+  const auto* cuda_cc = gpu_version_.cuda_compute_capability();
+  if (cuda_cc != nullptr && !cuda_cc->IsAtLeastAmpere()) {
+    return false;
+  }
+
   bool changed = false;
   bool default_to_bf16 = module->config()
                              .debug_options()
@@ -409,13 +417,13 @@ DotAlgorithmRewriter::MakeMultiplyForBF16BF16F32(HloInstruction* lhs,
   if (lhs->shape().element_type() == PrimitiveType::BF16 &&
       rhs->shape().element_type() == PrimitiveType::BF16) {
     ABSL_ASSIGN_OR_RETURN(auto result_bf16,
-                     MakeBinaryHlo(HloOpcode::kMultiply, lhs, rhs));
+                          MakeBinaryHlo(HloOpcode::kMultiply, lhs, rhs));
     return UpcastToF32(result_bf16);
   }
   auto lhs_bf16 = RoundToBF16(lhs);
   auto rhs_bf16 = RoundToBF16(rhs);
-  ABSL_ASSIGN_OR_RETURN(auto result_bf16,
-                   MakeBinaryHlo(HloOpcode::kMultiply, lhs_bf16, rhs_bf16));
+  ABSL_ASSIGN_OR_RETURN(auto result_bf16, MakeBinaryHlo(HloOpcode::kMultiply,
+                                                        lhs_bf16, rhs_bf16));
   return UpcastToF32(result_bf16);
 }
 

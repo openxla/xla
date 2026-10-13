@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "re2/re2.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/tools/comparison/comparison_options.pb.h"
 #include "xla/hlo/tools/comparison/comparison_service.pb.h"
 #include "xla/literal.h"
@@ -45,7 +46,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla::numerics::comparison {
 using ::xla::LogHloOutputMetadata;

@@ -18,11 +18,11 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 

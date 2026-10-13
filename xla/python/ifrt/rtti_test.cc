@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/python/ifrt/rtti.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/python/ifrt/ref_wrapper.h"
 #include "xla/tsl/concurrency/ref_count.h"
 

@@ -60,7 +60,7 @@ class Profiler {
   virtual absl::StatusOr<ProfileResult> Profile(
       std::unique_ptr<Executable> executable) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<InputBuffers> buffers,
-                     CreateInputBuffers(executable.get()));
+                          CreateInputBuffers(executable.get()));
     return Profile(executable.get(), *buffers);
   }
 

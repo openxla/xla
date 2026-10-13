@@ -32,6 +32,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -46,8 +48,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 
@@ -711,7 +711,8 @@ absl::Status RemoveCopiesFromRoot(HloComputation* body) {
   for (int64_t i = 0; i < root->operand_count(); ++i) {
     auto copy = root->mutable_operand(i);
     if (copy->opcode() == HloOpcode::kCopy) {
-      ABSL_RETURN_IF_ERROR(root->ReplaceOperandWith(i, copy->mutable_operand(0)));
+      ABSL_RETURN_IF_ERROR(
+          root->ReplaceOperandWith(i, copy->mutable_operand(0)));
     }
   }
   return absl::OkStatus();
@@ -791,7 +792,8 @@ absl::Status RewriteLoopWithConcatGroups(
   auto new_output_tuple = loop->parent()->AddInstruction(
       HloInstruction::CreateTuple(output_elements));
   for (auto user : original_loop_users) {
-    ABSL_RETURN_IF_ERROR(loop->ReplaceUseWithDifferentShape(user, new_output_tuple));
+    ABSL_RETURN_IF_ERROR(
+        loop->ReplaceUseWithDifferentShape(user, new_output_tuple));
   }
   if (loop_is_root) {
     loop->parent()->set_root_instruction(new_output_tuple,
@@ -868,7 +870,8 @@ absl::Status RewriteLoopWithConcatGroups(
                                      new_dims),
                 hlo->mutable_operand(i)));
             new_reshapes.insert(reshape);
-            ABSL_RETURN_IF_ERROR(hlo->ReplaceOperandWithDifferentShape(i, reshape));
+            ABSL_RETURN_IF_ERROR(
+                hlo->ReplaceOperandWithDifferentShape(i, reshape));
           }
           continue;
         }
@@ -912,7 +915,8 @@ absl::Status RewriteLoopWithConcatGroups(
           broadcast = body->AddInstruction(
               HloInstruction::CreateReshape(data_shape, broadcast));
         }
-        ABSL_RETURN_IF_ERROR(hlo->ReplaceOperandWithDifferentShape(i, broadcast));
+        ABSL_RETURN_IF_ERROR(
+            hlo->ReplaceOperandWithDifferentShape(i, broadcast));
       }
     }
     VLOG(2) << "Modifying HLO to full shape " << hlo->ToString();
@@ -1020,7 +1024,8 @@ absl::StatusOr<bool> RunOnLoop(HloInstruction* loop,
     // We have repalced the operands of the concat with slices of full data.
     auto new_slice = concat->mutable_operand(0);
     CHECK_EQ(new_slice->opcode(), HloOpcode::kSlice);
-    ABSL_RETURN_IF_ERROR(concat->ReplaceAllUsesWith(new_slice->mutable_operand(0)));
+    ABSL_RETURN_IF_ERROR(
+        concat->ReplaceAllUsesWith(new_slice->mutable_operand(0)));
     ABSL_RETURN_IF_ERROR(body->RemoveInstruction(concat));
   }
   ABSL_RETURN_IF_ERROR(RemoveCopiesFromRoot(body));
@@ -1046,7 +1051,7 @@ absl::StatusOr<bool> WhileLoopConcatCodeMotion::RunImpl(
     for (HloInstruction* hlo : comp->MakeInstructionPostOrder()) {
       if (hlo->opcode() == HloOpcode::kWhile) {
         ABSL_ASSIGN_OR_RETURN(bool loop_changed,
-                         RunOnLoop(hlo, min_operand_count_to_optimize_));
+                              RunOnLoop(hlo, min_operand_count_to_optimize_));
         changed |= loop_changed;
       }
     }

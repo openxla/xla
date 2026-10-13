@@ -104,8 +104,8 @@ class WeightedPicker {
   // We keep a binary tree with N leaves.  The "i"th leaf contains
   // the weight of the "i"th element.  An internal node contains
   // the sum of the weights of its children.
-  int N_;           // Number of elements
-  int num_levels_;  // Number of levels in tree (level-0 is root)
+  int N_;            // Number of elements
+  int num_levels_;   // Number of levels in tree (level-0 is root)
   int32_t** level_;  // Array that holds nodes per level
 
   // Size of each level

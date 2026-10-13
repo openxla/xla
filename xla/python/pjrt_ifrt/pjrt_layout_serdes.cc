@@ -14,7 +14,6 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
-#include <string>
 #include <utility>
 
 #include "absl/status/status.h"
@@ -78,7 +77,7 @@ class PjRtLayoutSerDes : public RTTIExtends<PjRtLayoutSerDes, SerDes> {
           "Unsupported ", version_number, " for PjRtLayout deserialization"));
     }
     ABSL_ASSIGN_OR_RETURN(auto xla_layout,
-                     xla::Layout::FromProto(proto.xla_layout()));
+                          xla::Layout::FromProto(proto.xla_layout()));
     return PjRtLayout::Create(
         std::make_unique<xla::PjRtLayout>(std::move(xla_layout)));
   }

@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/escaping.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -43,6 +42,8 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/regexp.h"
 #include "xla/codegen/ir_emission_utils.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -64,8 +65,6 @@ limitations under the License.
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/regexp.h"
 
 namespace xla {
 namespace gpu {
@@ -85,6 +84,13 @@ bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr) {
     }
   }
   return false;
+}
+
+bool IsRaggedDotWgrad(const RaggedDotDimensionNumbers& dnums) {
+  const auto& lhs_contracting_dims =
+      dnums.dot_dimension_numbers().lhs_contracting_dimensions();
+  return absl::c_linear_search(lhs_contracting_dims,
+                               dnums.lhs_ragged_dimensions(0));
 }
 
 bool IsTritonSupportedRaggedDot(
@@ -153,7 +159,7 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
   int num_matrix_operands = 0;
   for (int operand : {0, 1}) {
     ABSL_ASSIGN_OR_RETURN(DotOperandDims dims,
-                     DotOperandDims::FromDotOperand(&dot, operand));
+                          DotOperandDims::FromDotOperand(&dot, operand));
     // cuBLAS only supports single contracting dimension.
     if (dims.Rank(DotOperandDims::kContracting) != 1) {
       return false;
@@ -220,26 +226,10 @@ bool IsCustomCallToMosaicGpu(const HloInstruction& hlo) {
           hlo.custom_call_target() == "mosaic_gpu_v2");
 }
 
-bool IsMosaicWithSymmetricParameter(const HloInstruction& hlo) {
-  if (!IsCustomCallToMosaicGpu(hlo)) {
-    return false;
-  }
-
-  const std::string& backend_config = hlo.raw_backend_config_string();
-  // TODO(b/546817872): Remove multimem_parameters check once backward
-  // compatibility period is over.
-  return absl::StrContains(backend_config, "symmetric_memory_parameters") ||
-         absl::StrContains(backend_config, "multimem_parameters");
-}
-
 bool IsMosaicWithCollectiveMetadata(const HloInstruction& hlo) {
   return IsCustomCallToMosaicGpu(hlo) &&
          RE2::PartialMatch(hlo.raw_backend_config_string(),
                            "uses_xla_collective_metadata\\s*=\\s*[tT]rue");
-}
-
-bool IsCollectiveMosaicGpuInstruction(const HloInstruction& hlo) {
-  return IsMosaicWithSymmetricParameter(hlo);
 }
 
 static bool IsContiguousSlice(

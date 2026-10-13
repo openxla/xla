@@ -25,16 +25,16 @@ limitations under the License.
 
 #include "absl/base/nullability.h"
 #include "absl/base/optimization.h"
-#include "xla/tsl/concurrency/executor.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/logging.h"
-#include "xla/tsl/platform/threadpool_interface.h"
 #include "tsl/platform/blocking_counter.h"
 #include "tsl/platform/context.h"
 #include "tsl/platform/denormal.h"
 #include "tsl/platform/numa.h"
 #include "tsl/platform/setround.h"
 #include "tsl/platform/tracing.h"
+#include "xla/tsl/concurrency/executor.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/threadpool_interface.h"
 
 #ifdef DNNL_AARCH64_USE_ACL
 #include "tsl/platform/cpu_info.h"

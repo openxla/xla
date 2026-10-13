@@ -40,12 +40,15 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/backends/gpu/transforms/pgle_accuracy_checker.h"
 #include "xla/backends/gpu/transforms/scheduling_instruction_annotator.h"
-#include "xla/backends/gpu/transforms/stream_attribute_async_wrapper.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
@@ -83,10 +86,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -103,7 +102,7 @@ absl::StatusOr<bool> UsesMultipleCollectiveDomains(const HloModule& module) {
         continue;
       }
       ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain domain,
-                       GetCollectiveCommunicationDomain(*instruction));
+                            GetCollectiveCommunicationDomain(*instruction));
       if (first_domain.has_value() && *first_domain != domain) {
         return true;
       }
@@ -685,7 +684,7 @@ absl::Status RunLatencyHidingSchedulerPasses(
   HloPassPipeline pipeline("latency-hiding-scheduler");
   const DebugOptions& options = module->config().debug_options();
   ABSL_ASSIGN_OR_RETURN(bool uses_multiple_collective_domains,
-                   UsesMultipleCollectiveDomains(*module));
+                        UsesMultipleCollectiveDomains(*module));
 
   pipeline.AddPass<LegalizeSchedulingAnnotations>(
       SchedulingAnnotationsConfig());
@@ -854,7 +853,7 @@ absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
                                                PostProcessSchedule),
                         /*execution_threads=*/
                         {HloInstruction::kMainExecutionThread,
-                         StreamAttributeAsyncWrapper::kParallelExecutionThread},
+                         HloInstruction::kParallelExecutionThread},
                         peak_memory_bytes);
 }
 
@@ -898,6 +897,12 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
   config.convert_all_reduce = HloPredicateTrue;
   config.convert_all_to_all = HloPredicateTrue;
   config.convert_collective_broadcast = HloPredicateTrue;
+  config.convert_collective_reduce =
+      module->config()
+              .debug_options()
+              .xla_gpu_experimental_emit_collective_reduce()
+          ? HloPredicateTrue
+          : HloPredicateFalse;
   config.convert_collective_permute = HloPredicateTrue;
   config.convert_ragged_all_to_all = HloPredicateTrue;
   config.convert_reduce_scatter = HloPredicateTrue;
@@ -944,6 +949,8 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
           case HloOpcode::kCollectiveBroadcast:
             return !disabled_async_ops.contains(
                 DebugOptions::COLLECTIVEBROADCAST);
+          case HloOpcode::kCollectiveReduce:
+            return !disabled_async_ops.contains(DebugOptions::ALLREDUCE);
           case HloOpcode::kReduceScatter:
             return !disabled_async_ops.contains(DebugOptions::REDUCESCATTER);
           case HloOpcode::kAllToAll:
@@ -993,9 +1000,10 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   // See `xla::LatencyHidingScheduler::Run`.
   ABSL_RETURN_IF_ERROR(RunP2PSchedulePreparation(module));
   int64_t peak_memory_bytes;
-  ABSL_ASSIGN_OR_RETURN(HloSchedule schedule,
-                   ScheduleGpuModuleWithMemoryScheduler(
-                       module, alias_info, pointer_size, &peak_memory_bytes));
+  ABSL_ASSIGN_OR_RETURN(
+      HloSchedule schedule,
+      ScheduleGpuModuleWithMemoryScheduler(module, alias_info, pointer_size,
+                                           &peak_memory_bytes));
   ABSL_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
 
   bool enable_latency_hiding_scheduler =

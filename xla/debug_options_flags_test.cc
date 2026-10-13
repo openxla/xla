@@ -15,20 +15,23 @@ limitations under the License.
 
 #include "xla/debug_options_flags.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "google/protobuf/descriptor.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
@@ -262,6 +265,25 @@ TEST(DebugOptions, CollectiveKernelsFlagShortEnumNameUppercase) {
               ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_REDUCE));
 }
 
+TEST(DebugOptions, CollectiveKernelsFlagAllCollectives) {
+  DebugOptions opts = ParseCollectiveKernelsFlag("ALL_COLLECTIVES");
+  EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_COLLECTIVES));
+}
+
+TEST(DebugOptions, CollectiveKernelsFlagLowercaseAllCollectives) {
+  DebugOptions opts = ParseCollectiveKernelsFlag("all_collectives");
+  EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_COLLECTIVES));
+}
+
+TEST(DebugOptions, CollectiveKernelsFlagFullEnumNameAllCollectives) {
+  DebugOptions opts =
+      ParseCollectiveKernelsFlag("COLLECTIVE_KERNEL_ALL_COLLECTIVES");
+  EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_COLLECTIVES));
+}
+
 TEST(DebugOptions, CollectiveKernelsFlagEmptyDisablesAll) {
   DebugOptions opts = ParseCollectiveKernelsFlag("");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(), IsEmpty());
@@ -460,6 +482,47 @@ TEST(DebugOptions, DisableHloPassesRejectsMalformedEntries) {
   EXPECT_FALSE(ParseDisableHloPassesFlag("@notanumber").first);
   EXPECT_FALSE(ParseDisableHloPassesFlag("algsimp:notanumber").first);
   EXPECT_FALSE(ParseEnableHloPassesOnlyFlag("@").first);
+}
+
+TEST(DebugOptions, DeduplicateBackendConfigsMinSizeDefaultIsMaxInt) {
+  DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_EQ(opts.xla_deduplicate_backend_configs_min_size(),
+            std::numeric_limits<int64_t>::max());
+}
+
+TEST(DebugOptions, DeduplicateBackendConfigsMinSizeFlagsParsing) {
+  DebugOptions opts;
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &opts);
+  std::vector<std::string> flag_args = {
+      "--xla_deduplicate_backend_configs_min_size=128"};
+  EXPECT_TRUE(tsl::Flags::Parse(flag_args, flags));
+  EXPECT_EQ(opts.xla_deduplicate_backend_configs_min_size(), 128);
+}
+
+TEST(DebugOptions, DeterministicOpsTriton) {
+  DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_EQ(opts.xla_gpu_experimental_deterministic_ops_triton(),
+            DebugOptions::DETERMINISTIC_OPS_TRITON_MODE_OFF);
+
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &opts);
+  auto parse = [&](std::string value) {
+    std::vector<std::string> args = {
+        "--xla_gpu_experimental_deterministic_ops_triton=" + value};
+    return tsl::Flags::Parse(args, flags);
+  };
+
+  EXPECT_TRUE(parse("unchecked"));
+  EXPECT_EQ(opts.xla_gpu_experimental_deterministic_ops_triton(),
+            DebugOptions::DETERMINISTIC_OPS_TRITON_MODE_UNCHECKED);
+
+  EXPECT_TRUE(parse("off"));
+  EXPECT_EQ(opts.xla_gpu_experimental_deterministic_ops_triton(),
+            DebugOptions::DETERMINISTIC_OPS_TRITON_MODE_OFF);
+
+  EXPECT_FALSE(parse("unset"));
+  EXPECT_FALSE(parse("invalid"));
 }
 
 }  // namespace

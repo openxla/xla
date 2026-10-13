@@ -42,7 +42,6 @@ class HoistFusedBitcasts : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads);
 };
 
-
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_TRANSFORMS_HOIST_FUSED_BITCASTS_H_

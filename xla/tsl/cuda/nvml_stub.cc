@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include "third_party/gpus/cuda/nvml/include/nvml.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/dso_loader.h"
 #include "tsl/platform/load_library.h"
+#include "xla/tsl/platform/logging.h"
 
 // Implements the NVML API by forwarding to NVML loaded from the DSO.
 

@@ -24,12 +24,13 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/strings/string_view.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/metrics.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -47,7 +48,7 @@ HloModuleMetadata::GetCurrentHloPassMetadata() {
 absl::Status HloModuleMetadata::MutateCurrentHloPassMetadata(
     absl::FunctionRef<void(HloPassMetadata*)> mutator) {
   ABSL_ASSIGN_OR_RETURN(HloPassMetadata * pass_metadata,
-                   GetCurrentHloPassMetadata());
+                        GetCurrentHloPassMetadata());
   mutator(pass_metadata);
   return absl::OkStatus();
 }
@@ -61,7 +62,7 @@ void HloModuleMetadata::RecordPassStart() {
 
 absl::Status HloModuleMetadata::RecordPassEnd() {
   ABSL_ASSIGN_OR_RETURN(HloPassMetadata * pass_metadata,
-                   GetCurrentHloPassMetadata());
+                        GetCurrentHloPassMetadata());
   pass_metadata->set_end_timestamp_usec(env_->NowMicros());
   running_passes_.pop_back();
   return absl::OkStatus();
@@ -98,7 +99,7 @@ void HloModuleMetadata::set_prepartitioning_metadata(
 absl::Status HloModuleMetadata::set_custom_metadata(
     const ::tsl::protobuf::Message& message) {
   ABSL_ASSIGN_OR_RETURN(HloPassMetadata * pass_metadata,
-                   GetCurrentHloPassMetadata());
+                        GetCurrentHloPassMetadata());
   if (!pass_metadata->mutable_custom_metadata()->PackFrom(message)) {
     LOG(WARNING) << "failed to pack custom metadata for "
                  << pass_metadata->pass_id();
@@ -107,10 +108,10 @@ absl::Status HloModuleMetadata::set_custom_metadata(
   return absl::OkStatus();
 }
 
-absl::Status HloModuleMetadata::set_key_value_metric(const std::string& key,
+absl::Status HloModuleMetadata::set_key_value_metric(absl::string_view key,
                                                      int64_t value) {
   ABSL_ASSIGN_OR_RETURN(HloPassMetadata * pass_metadata,
-                   GetCurrentHloPassMetadata());
+                        GetCurrentHloPassMetadata());
   auto* kv_metrics = pass_metadata->mutable_kv_metrics();
   // Iterating here since we expect only a few kv_metrics per pass ..
   for (auto& kv_metric : *kv_metrics) {

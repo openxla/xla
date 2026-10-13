@@ -23,12 +23,12 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/synchronization/blocking_counter.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/cpu_info.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"

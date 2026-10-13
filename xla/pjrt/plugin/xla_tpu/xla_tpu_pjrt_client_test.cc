@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/pjrt/plugin/xla_tpu/xla_tpu_pjrt_client.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/tsl/platform/statusor.h"

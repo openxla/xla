@@ -34,8 +34,8 @@ absl::Status VisitInstAndCalledButNotOperands(Visitor& visitor,
   for (const HloComputation* called : inst.called_computations()) {
     const HloInstruction* const root = called->root_instruction();
     ABSL_RETURN_IF_ERROR(root->Accept(&visitor, /*call_finish_visit=*/false,
-                                 /*ignore_control_predecessors=*/true,
-                                 /*cross_computation=*/true));
+                                      /*ignore_control_predecessors=*/true,
+                                      /*cross_computation=*/true));
   }
   return absl::OkStatus();
 }

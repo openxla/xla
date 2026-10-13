@@ -274,7 +274,8 @@ absl::Status CuptiPmSamplerDevice::CreateConfigImage() {
   p.pHostObject = host_obj_;
   p.pConfigImage = config_image_.data();
   p.configImageSize = config_image_.size();
-  ABSL_RETURN_IF_ERROR(ToStatus(cupti_interface_->ProfilerHostGetConfigImage(&p)));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(cupti_interface_->ProfilerHostGetConfigImage(&p)));
 
   return absl::OkStatus();
 }
@@ -285,7 +286,8 @@ absl::Status CuptiPmSamplerDevice::NumPasses(size_t* passes) {
   p.pConfigImage = config_image_.data();
   p.configImageSize = config_image_.size();
 
-  ABSL_RETURN_IF_ERROR(ToStatus(cupti_interface_->ProfilerHostGetNumOfPasses(&p)));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(cupti_interface_->ProfilerHostGetNumOfPasses(&p)));
 
   *passes = p.numOfPasses;
 
@@ -320,7 +322,8 @@ absl::Status CuptiPmSamplerDevice::CreateCounterDataImage() {
   p.numMetrics = c_metrics_.size();
   p.pMetricNames = c_metrics_.data();
   p.maxSamples = max_samples_;
-  ABSL_RETURN_IF_ERROR(ToStatus(cupti_interface_->PmSamplingGetCounterDataSize(&p)));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(cupti_interface_->PmSamplingGetCounterDataSize(&p)));
 
   counter_data_image_.resize(p.counterDataSize);
 
@@ -423,7 +426,8 @@ absl::Status CuptiPmSamplerDevice::GetSampleCounts(
   DEF_SIZED_PRIV_STRUCT(CUpti_PmSampling_GetCounterDataInfo_Params, p);
   p.pCounterDataImage = counter_data_image_.data();
   p.counterDataImageSize = counter_data_image_.size();
-  ABSL_RETURN_IF_ERROR(ToStatus(cupti_interface_->PmSamplingGetCounterDataInfo(&p)));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(cupti_interface_->PmSamplingGetCounterDataInfo(&p)));
 
   decode_info.num_samples = p.numTotalSamples;
   decode_info.num_populated = p.numPopulatedSamples;

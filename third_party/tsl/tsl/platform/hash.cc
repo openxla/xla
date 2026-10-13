@@ -19,9 +19,9 @@ limitations under the License.
 
 #include <cstdint>
 
+#include "tsl/platform/raw_coding.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/raw_coding.h"
 
 namespace tsl {
 

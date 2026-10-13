@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/sub_byte_collective_normalization.h"
 
 #include <gtest/gtest.h>
+
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 

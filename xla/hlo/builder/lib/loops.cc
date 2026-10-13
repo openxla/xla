@@ -25,6 +25,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/literal_util.h"
@@ -32,8 +34,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -117,7 +117,7 @@ absl::StatusOr<std::vector<XlaOp>> ForEachIndex(
 
     values.remove_prefix(1);
     ABSL_ASSIGN_OR_RETURN(std::vector<XlaOp> body_outputs,
-                     body_function(iteration, values, body_builder));
+                          body_function(iteration, values, body_builder));
     updated_values.insert(updated_values.end(), body_outputs.begin(),
                           body_outputs.end());
     return updated_values;
@@ -129,8 +129,8 @@ absl::StatusOr<std::vector<XlaOp>> ForEachIndex(
       ConstantLiteral(builder, LiteralUtil::Zero(num_iterations_type)));
   values.insert(values.end(), initial_values.begin(), initial_values.end());
 
-  ABSL_ASSIGN_OR_RETURN(values, WhileLoopHelper(while_cond_fn, while_body_fn, values,
-                                           name, builder));
+  ABSL_ASSIGN_OR_RETURN(values, WhileLoopHelper(while_cond_fn, while_body_fn,
+                                                values, name, builder));
   values.erase(values.begin(), values.begin() + 1);
   return values;
 }

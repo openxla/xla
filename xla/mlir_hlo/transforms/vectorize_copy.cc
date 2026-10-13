@@ -40,12 +40,12 @@ namespace {
 /// Transforms a big non-contiguous `memref.copy` into a loop over smaller
 /// copies that are either contiguous or can be vectorized.
 struct TileCopyPattern : public OpRewritePattern<memref::CopyOp> {
-  TileCopyPattern(MLIRContext *context, int64_t tileSize,
+  TileCopyPattern(MLIRContext* context, int64_t tileSize,
                   mlir::PatternBenefit benefit = 1)
       : OpRewritePattern<memref::CopyOp>(context, benefit),
         tileSize(tileSize) {}
   LogicalResult matchAndRewrite(memref::CopyOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     auto srcType = dyn_cast<MemRefType>(op.getSource().getType());
     auto targetType = dyn_cast<MemRefType>(op.getTarget().getType());
 
@@ -80,11 +80,11 @@ struct TileCopyPattern : public OpRewritePattern<memref::CopyOp> {
   }
 
  private:
-  void createLoopsNest(PatternRewriter &rewriter, Location loc, int64_t dim,
+  void createLoopsNest(PatternRewriter& rewriter, Location loc, int64_t dim,
                        Value src, Value target, ArrayRef<int64_t> shape,
-                       SmallVector<OpFoldResult> &offsets,
-                       SmallVector<OpFoldResult> &sizes,
-                       SmallVector<OpFoldResult> &strides) const {
+                       SmallVector<OpFoldResult>& offsets,
+                       SmallVector<OpFoldResult>& sizes,
+                       SmallVector<OpFoldResult>& strides) const {
     auto srcType = dyn_cast<MemRefType>(src.getType());
     auto targetType = dyn_cast<MemRefType>(target.getType());
 
@@ -150,11 +150,11 @@ struct TileCopyPattern : public OpRewritePattern<memref::CopyOp> {
     }
   }
 
-  memref::SubViewOp getSubView(PatternRewriter &rewriter, Location loc,
+  memref::SubViewOp getSubView(PatternRewriter& rewriter, Location loc,
                                Value val, ArrayRef<int64_t> shape,
-                               SmallVector<OpFoldResult> &offsets,
-                               SmallVector<OpFoldResult> &sizes,
-                               SmallVector<OpFoldResult> &strides) const {
+                               SmallVector<OpFoldResult>& offsets,
+                               SmallVector<OpFoldResult>& sizes,
+                               SmallVector<OpFoldResult>& strides) const {
     auto valType = cast<MemRefType>(val.getType());
 
     auto valSubviewType =
@@ -170,13 +170,13 @@ struct TileCopyPattern : public OpRewritePattern<memref::CopyOp> {
 
 /// Custom vectorization pattern for small and non-contiguous memref::CopyOp.
 struct CopyVectorizationPattern : public OpRewritePattern<memref::CopyOp> {
-  CopyVectorizationPattern(MLIRContext *context, int64_t numElementsThreshold,
+  CopyVectorizationPattern(MLIRContext* context, int64_t numElementsThreshold,
                            mlir::PatternBenefit benefit = 1)
       : OpRewritePattern<memref::CopyOp>(context, benefit),
         numElementsThreshold(numElementsThreshold) {}
 
   LogicalResult matchAndRewrite(memref::CopyOp op,
-                                PatternRewriter &rewriter) const override {
+                                PatternRewriter& rewriter) const override {
     auto srcType = dyn_cast<MemRefType>(op.getSource().getType());
     auto targetType = dyn_cast<MemRefType>(op.getTarget().getType());
 
@@ -217,7 +217,7 @@ struct VectorizeCopyPass
 
   void runOnOperation() override {
     auto func = getOperation();
-    auto *ctx = func.getContext();
+    auto* ctx = func.getContext();
 
     RewritePatternSet patterns(ctx);
     patterns.add<TileCopyPattern, CopyVectorizationPattern>(

@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/backends/cpu/runtime/thunk_proto_serdes.h"
@@ -49,7 +50,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 namespace {
@@ -114,8 +114,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> YnnFusionThunkFromProto(
   std::vector<YnnFusionThunk::Argument> arguments;
   for (auto& argument_shape_proto : ynn_fusion_proto.arguments_shapes()) {
     ABSL_ASSIGN_OR_RETURN(auto argument_shape,
-                     DeserializeSliceShapeFromProto(argument_shape_proto,
-                                                    buffer_allocations));
+                          DeserializeSliceShapeFromProto(argument_shape_proto,
+                                                         buffer_allocations));
     arguments.push_back(
         YnnFusionThunk::Argument{argument_shape.first, argument_shape.second});
   }
@@ -145,8 +145,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> YnnFusionThunkFromProto(
   }
 
   // Construct YNNPACK subgraph builder from the fusion computation.
-  ABSL_ASSIGN_OR_RETURN(builder,
-                   EmitYnnFusionBuilder(computation, captured_arguments_ids));
+  ABSL_ASSIGN_OR_RETURN(
+      builder, EmitYnnFusionBuilder(computation, captured_arguments_ids));
 
   return YnnFusionThunk::Create(
       std::move(options), std::move(info), hlo, std::move(arguments),

@@ -66,8 +66,8 @@ namespace {
 // required shape or value information for the operands and then derive the
 // resulting symbolic expression.
 struct ShapeVisitor {
-  ShapeVisitor(SymbolicExprsMap *symbolicExprsMap,
-               SymbolicShapeConstraintsMap *symbolicShapeConstraintsMap)
+  ShapeVisitor(SymbolicExprsMap* symbolicExprsMap,
+               SymbolicShapeConstraintsMap* symbolicShapeConstraintsMap)
       : symbolicExprsMap(symbolicExprsMap),
         symbolicShapeConstraintsMap(symbolicShapeConstraintsMap) {}
 
@@ -263,7 +263,7 @@ struct ShapeVisitor {
   void forwardAssumingShape(Value op) {
     auto assumingOp = op.getDefiningOp<shape::AssumingOp>();
     auto number = mlir::cast<OpResult>(op).getResultNumber();
-    auto &dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
     dims = lookup(ShapeOrValueInfo::getShapeInfoOf(
         cast<shape::AssumingYieldOp>(
             assumingOp.getDoRegion().back().getTerminator())
@@ -275,7 +275,7 @@ struct ShapeVisitor {
       backwardsWorklist.push_back(ShapeOrValueInfo::getValueInfoOf(s));
   }
   void forwardBroadcast(shape::BroadcastOp op) {
-    auto *ctx = op.getContext();
+    auto* ctx = op.getContext();
 
     // Get operands' info.
     SmallVector<ArrayRef<SymbolicExpr>> argsInfo =
@@ -285,17 +285,17 @@ struct ShapeVisitor {
 
     // Determine broadcasted rank.
     size_t rank = 0;
-    for (auto &info : argsInfo) rank = std::max(rank, info.size());
+    for (auto& info : argsInfo) rank = std::max(rank, info.size());
 
     // Evaluate broadcast per result dimension.
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     for (size_t i = 0; i < rank; ++i) {
       // Init with neural element.
       SymbolicExpr bcastedExpr;
       bcastedExpr.expr = getAffineConstantExpr(1, ctx);
 
       // Consider all the operands.
-      for (auto &info : argsInfo) {
+      for (auto& info : argsInfo) {
         // Find corresponding symbolic expression for the ith result dimension,
         // if the operand contributes.
         size_t argRank = info.size();
@@ -339,7 +339,7 @@ struct ShapeVisitor {
   }
   void forwardDynamicBroadcastInDimShape(
       stablehlo::DynamicBroadcastInDimOp op) {
-    auto &dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
     dims = lookup(ShapeOrValueInfo::getValueInfoOf(op.getOutputDimensions()));
   }
   void backwardDynamicReshapeShape(stablehlo::DynamicReshapeOp op) {
@@ -351,7 +351,7 @@ struct ShapeVisitor {
     auto rankedTy = mlir::cast<RankedTensorType>(op.getResult().getType());
     auto shapeDims =
         lookup(ShapeOrValueInfo::getValueInfoOf(op.getOutputShape()));
-    auto &dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
     dimsFromStaticShape(rankedTy, shapeDims, &dims);
   }
   void backwardReduceShape(Value op) {
@@ -365,8 +365,8 @@ struct ShapeVisitor {
   void forwardReduceShape(Value op) {
     auto reduceOp = op.getDefiningOp<stablehlo::ReduceOp>();
     if (reduceOp.getInputs().size() != 1) return forwardUnknownShape(op);
-    auto &dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
-    for (const auto &dim : llvm::enumerate(lookup(
+    auto& dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
+    for (const auto& dim : llvm::enumerate(lookup(
              ShapeOrValueInfo::getShapeInfoOf(reduceOp.getInputs().back())))) {
       if (!llvm::is_contained(reduceOp.getDimensions(), dim.index()))
         dims.push_back(dim.value());
@@ -378,9 +378,9 @@ struct ShapeVisitor {
         ShapeOrValueInfo::getShapeInfoOf(op.getOperand()));
   }
   void forwardTransposeShape(stablehlo::TransposeOp op) {
-    auto &dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
     auto in = lookup(ShapeOrValueInfo::getShapeInfoOf(op.getOperand()));
-    for (const auto &val : op.getPermutation()) dims.push_back(in[val]);
+    for (const auto& val : op.getPermutation()) dims.push_back(in[val]);
   }
   void backwardSelectShape(stablehlo::SelectOp op) {
     forwardsWorklist.push_back(ShapeOrValueInfo::getShapeInfoOf(op));
@@ -388,7 +388,7 @@ struct ShapeVisitor {
         ShapeOrValueInfo::getShapeInfoOf(op.getOnTrue()));
   }
   void forwardSelectShape(stablehlo::SelectOp op) {
-    auto &dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getShapeInfoOf(op));
     // Forward the `on_true` operand, it has the same shape as the output.
     dims = lookup(ShapeOrValueInfo::getShapeInfoOf(op.getOnTrue()));
   }
@@ -398,7 +398,7 @@ struct ShapeVisitor {
         ShapeOrValueInfo::getShapeInfoOf(v.getDefiningOp()->getOperand(0)));
   }
   void forwardSameOperandsShape(Value v) {
-    auto &dims = insert(ShapeOrValueInfo::getShapeInfoOf(v));
+    auto& dims = insert(ShapeOrValueInfo::getShapeInfoOf(v));
     dims = lookup(
         ShapeOrValueInfo::getShapeInfoOf(v.getDefiningOp()->getOperand(0)));
   }
@@ -423,11 +423,11 @@ struct ShapeVisitor {
             argument.getOwner()->getParentOp())) {
       if (auto shape = func.getArgAttrOfType<DenseIntElementsAttr>(
               argument.getArgNumber(), "rt.symbolic_shape")) {
-        auto &dims = insert(ShapeOrValueInfo::getShapeInfoOf(argument));
+        auto& dims = insert(ShapeOrValueInfo::getShapeInfoOf(argument));
         auto id = getAffineSymbolExpr(0, argument.getContext());
-        for (const auto &symbol : llvm::enumerate(shape.getValues<ssize_t>())) {
+        for (const auto& symbol : llvm::enumerate(shape.getValues<ssize_t>())) {
           dims.emplace_back();
-          auto &dim = dims.back();
+          auto& dim = dims.back();
           if (symbol.value() >= 0) {
             dim.expr =
                 getAffineConstantExpr(symbol.value(), argument.getContext());
@@ -452,7 +452,7 @@ struct ShapeVisitor {
     auto rankedTy = mlir::dyn_cast<RankedTensorType>(v.getType());
     if (!rankedTy) return;
     auto id = getAffineSymbolExpr(0, v.getContext());
-    auto &dims = insert(ShapeOrValueInfo::getShapeInfoOf(v));
+    auto& dims = insert(ShapeOrValueInfo::getShapeInfoOf(v));
     return dimsFromStaticShape(
         rankedTy,
         [&](size_t i) {
@@ -476,7 +476,7 @@ struct ShapeVisitor {
   void forwardShapeOf(shape::ShapeOfOp op) {
     auto rankedTy = mlir::cast<RankedTensorType>(op.getArg().getType());
     auto arg = lookup(ShapeOrValueInfo::getShapeInfoOf(op.getArg()));
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     return dimsFromStaticShape(rankedTy, arg, &dims);
   }
   void backwardNumElements(shape::NumElementsOp op) {
@@ -490,7 +490,7 @@ struct ShapeVisitor {
     // Accumulate product symbolically and concrete where possible.
     int64_t concreteProduct = 1;
     SymbolicExpr dim;
-    for (auto &it : in) {
+    for (auto& it : in) {
       // For constant expressions, we can accumulate a concrete product.
       if (auto cexpr = dyn_cast<AffineConstantExpr>(it.expr)) {
         assert(cexpr.getValue() > 0 && "shape value must be positive");
@@ -519,7 +519,7 @@ struct ShapeVisitor {
         dim.expr = cexpr;
     }
 
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     dims.push_back(dim);
   }
   void backwardDim(tensor::DimOp op) {
@@ -528,7 +528,7 @@ struct ShapeVisitor {
         ShapeOrValueInfo::getShapeInfoOf(op.getSource()));
   }
   void forwardDim(tensor::DimOp op) {
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     if (auto index = op.getIndex().getDefiningOp<arith::ConstantOp>()) {
       int64_t i = mlir::cast<IntegerAttr>(index.getValue()).getInt();
       auto in = lookup(ShapeOrValueInfo::getShapeInfoOf(op.getSource()));
@@ -548,14 +548,14 @@ struct ShapeVisitor {
          ShapeOrValueInfo::getValueInfoOf(op.getOperand(1))});
   }
   template <typename Op, typename Combiner>
-  void forwardBinOp(Op op, Combiner &&combiner) {
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+  void forwardBinOp(Op op, Combiner&& combiner) {
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     // TODO(jpienaar): Switch to named accessors when MHLO uses prefixed form.
     auto lhs = lookup(ShapeOrValueInfo::getValueInfoOf(op.getOperand(0)));
     auto rhs = lookup(ShapeOrValueInfo::getValueInfoOf(op.getOperand(1)));
     for (int64_t i = 0, e = dim0size(op.getType()); i != e; ++i) {
       dims.emplace_back();
-      auto &dim = dims.back();
+      auto& dim = dims.back();
       dim.symbols.append(lhs[i].symbols);
       dim.symbols.append(rhs[i].symbols);
       dim.expr = combiner(lhs[i].expr,
@@ -568,7 +568,7 @@ struct ShapeVisitor {
     backwardsWorklist.push_back(ShapeOrValueInfo::getValueInfoOf(op.getIn()));
   }
   void forwardIndexCast(arith::IndexCastOp op) {
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     auto in = lookup(ShapeOrValueInfo::getValueInfoOf(op.getIn()));
     for (int64_t i = 0, e = dim0size(op.getType()); i != e; ++i) {
       // This is intentionally not modelling the truncation/zero extension of
@@ -583,7 +583,7 @@ struct ShapeVisitor {
       backwardsWorklist.push_back(ShapeOrValueInfo::getValueInfoOf(operand));
   }
   void forwardTensorFromElements(tensor::FromElementsOp op) {
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     for (auto operand : op.getOperands()) {
       auto in = lookup(ShapeOrValueInfo::getValueInfoOf(operand));
       assert(in.size() == 1);
@@ -596,7 +596,7 @@ struct ShapeVisitor {
         ShapeOrValueInfo::getValueInfoOf(op.getTensor()));
   }
   void forwardTensorExtract(tensor::ExtractOp op) {
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     assert(op.getIndices().size() == 1);
     if (auto index =
             op.getIndices().front().getDefiningOp<arith::ConstantOp>()) {
@@ -615,17 +615,17 @@ struct ShapeVisitor {
     IntegerAttr intAttr;
     DenseIntElementsAttr denseAttr;
     if (matchPattern(v, m_Constant(&denseAttr))) {
-      auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(v));
+      auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(v));
       for (uint64_t i = 0, e = dim0size(v.getType()); i != e; ++i) {
         dims.emplace_back();
-        auto &dim = dims.back();
+        auto& dim = dims.back();
         dim.expr = getAffineConstantExpr(
             denseAttr.getValues<APInt>()[i].getSExtValue(), v.getContext());
       }
     } else if (matchPattern(v, m_Constant(&intAttr))) {
-      auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(v));
+      auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(v));
       dims.emplace_back();
-      auto &dim = dims.back();
+      auto& dim = dims.back();
       dim.expr = getAffineConstantExpr(intAttr.getInt(), v.getContext());
     } else {
       forwardUnknown(v);
@@ -641,7 +641,7 @@ struct ShapeVisitor {
       auto in = lookup(ShapeOrValueInfo::getValueInfoOf(operand));
       if (in.size() != 1) return forwardUnknown(op);
     }
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     for (auto operand : op.getOperands()) {
       auto in = lookup(ShapeOrValueInfo::getValueInfoOf(operand));
       dims.push_back({in[0].symbols, in[0].expr});
@@ -655,7 +655,7 @@ struct ShapeVisitor {
   void forwardReshape(stablehlo::ReshapeOp op) {
     auto in = lookup(ShapeOrValueInfo::getValueInfoOf(op.getOperand()));
     if (in.size() != 1) return forwardUnknown(op);
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     dims.push_back({in[0].symbols, in[0].expr});
   }
   void backwardSlice(stablehlo::SliceOp op) {
@@ -668,7 +668,7 @@ struct ShapeVisitor {
     if (!op.getType().hasStaticShape({1})) {
       return forwardUnknown(op);
     }
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(op));
     auto in = lookup(ShapeOrValueInfo::getValueInfoOf(op.getOperand()));
     auto first = op.getStartIndices().front();
     if (first >= in.size()) {  // Bounds check.
@@ -680,11 +680,11 @@ struct ShapeVisitor {
     forwardsWorklist.push_back(ShapeOrValueInfo::getValueInfoOf(v));
   }
   void forwardUnknown(Value v) {
-    auto &dims = insert(ShapeOrValueInfo::getValueInfoOf(v));
+    auto& dims = insert(ShapeOrValueInfo::getValueInfoOf(v));
     auto id = getAffineSymbolExpr(0, v.getContext());
     for (size_t i = 0, e = dim0size(v.getType()); i != e; ++i) {
       dims.emplace_back();
-      auto &dim = dims.back();
+      auto& dim = dims.back();
       dim.symbols.push_back({ShapeOrValueInfo::getValueInfoOf(v), i});
       dim.expr = id;
     }
@@ -697,14 +697,14 @@ struct ShapeVisitor {
   static void dimsFromStaticShape(
       RankedTensorType rankedTy,
       llvm::function_ref<SymbolicExpr(int64_t)> fallback,
-      std::vector<SymbolicExpr> *mergedDims) {
-    auto *ctx = rankedTy.getContext();
+      std::vector<SymbolicExpr>* mergedDims) {
+    auto* ctx = rankedTy.getContext();
     for (int64_t i = 0, e = rankedTy.getRank(); i != e; ++i) {
       if (rankedTy.isDynamicDim(i)) {
         mergedDims->push_back(fallback(i));
       } else {
         mergedDims->emplace_back();
-        auto &d = mergedDims->back();
+        auto& d = mergedDims->back();
         d.expr = getAffineConstantExpr(rankedTy.getDimSize(i), ctx);
       }
     }
@@ -712,7 +712,7 @@ struct ShapeVisitor {
 
   static void dimsFromStaticShape(RankedTensorType rankedTy,
                                   ArrayRef<SymbolicExpr> fallback,
-                                  std::vector<SymbolicExpr> *mergedDims) {
+                                  std::vector<SymbolicExpr>* mergedDims) {
     return dimsFromStaticShape(
         rankedTy, [&](int64_t i) { return fallback[i]; }, mergedDims);
   }
@@ -733,14 +733,14 @@ struct ShapeVisitor {
 
   // Inserts a new entry into the cache and returns a reference to its result
   // components.
-  std::vector<SymbolicExpr> &insert(ShapeOrValueInfo requestedInfo) {
+  std::vector<SymbolicExpr>& insert(ShapeOrValueInfo requestedInfo) {
     auto i = symbolicExprsMap->try_emplace(requestedInfo);
     assert(i.second && "op already processed?");
     return i.first->second;
   }
 
-  SymbolicExprsMap *symbolicExprsMap;
-  SymbolicShapeConstraintsMap *symbolicShapeConstraintsMap;
+  SymbolicExprsMap* symbolicExprsMap;
+  SymbolicShapeConstraintsMap* symbolicShapeConstraintsMap;
 
   // Worklists for the forward and backward passes.
   SmallVector<ShapeOrValueInfo> backwardsWorklist;
@@ -785,9 +785,9 @@ bool SymbolicExpr::isKnownNotNegativeOne() const {
   // If the symbol is coming from a shape it can't be a -1. Also allow results
   // of shape_of, compute_reshape_shape, and num_elements. This is correct, not
   // complete.
-  auto isGoodSymbol = [](const Symbol &symbol) {
+  auto isGoodSymbol = [](const Symbol& symbol) {
     if (symbol.source.isShapeInfo()) return true;
-    Operation *op = symbol.source.value().getDefiningOp();
+    Operation* op = symbol.source.value().getDefiningOp();
     if (op == nullptr) return false;
     return llvm::isa<shape::ShapeOfOp, shape::NumElementsOp>(op);
   };
@@ -832,12 +832,12 @@ std::optional<Symbol> SymbolicExpr::singleton() const {
   return std::nullopt;
 }
 
-void SymbolicExpr::dump(llvm::raw_ostream &os) const {
+void SymbolicExpr::dump(llvm::raw_ostream& os) const {
   expr.print(os);
   if (!symbols.empty()) os << " with";
   os << "\n";
   if (symbols.empty()) return;
-  for (const auto &sym : llvm::enumerate(symbols)) {
+  for (const auto& sym : llvm::enumerate(symbols)) {
     os.indent(4);
     os << 's' << sym.index() << " = ";
     if (!sym.value().source.isValueInfo()) os << "shapeof(";

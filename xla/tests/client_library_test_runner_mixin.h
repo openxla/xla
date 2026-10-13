@@ -117,8 +117,8 @@ class ClientLibraryTestRunnerMixin : public T {
       argument_shapes.push_back(&argument->shape());
     }
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                     BuildAndVerifyHloModule(computation, argument_shapes,
-                                             &execution_options));
+                          BuildAndVerifyHloModule(computation, argument_shapes,
+                                                  &execution_options));
     const int64_t num_devices = std::max(execution_options.num_replicas(), 1) *
                                 std::max(execution_options.num_partitions(), 1);
     std::optional<DeviceAssignment> device_assignment;
@@ -133,9 +133,10 @@ class ClientLibraryTestRunnerMixin : public T {
     options.arguments = {arguments.begin(), arguments.end()};
     options.run_hlo_passes = true;
     options.seed = execution_options.seed();
-    ABSL_ASSIGN_OR_RETURN(std::vector<Literal> results,
-                     this->test_runner().ExecuteReplicated(
-                         std::move(module), options, device_assignment_ptr));
+    ABSL_ASSIGN_OR_RETURN(
+        std::vector<Literal> results,
+        this->test_runner().ExecuteReplicated(std::move(module), options,
+                                              device_assignment_ptr));
     return std::move(results.front());
   }
 
@@ -420,7 +421,7 @@ class ClientLibraryTestRunnerMixin : public T {
       execution_options = &execution_options_;
     }
     ABSL_ASSIGN_OR_RETURN(const ProgramShape program_shape,
-                     computation.GetProgramShape());
+                          computation.GetProgramShape());
     ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<HloModuleConfig> module_config,
         CreateModuleConfig(program_shape, argument_shapes, execution_options,

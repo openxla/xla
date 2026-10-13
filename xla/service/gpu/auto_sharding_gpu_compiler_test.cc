@@ -13,26 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
+#include "tsl/platform/logging.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/testlib/pattern_matcher_gmock.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/pattern_matcher.h"
 #include "xla/tests/restricted/hlo_test_base_legacy.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace gpu {
 namespace {
-
-namespace m = ::xla::match;
 
 class AutoShardingTest : public HloTestBaseLegacy {
  protected:
@@ -68,7 +65,10 @@ TEST_F(AutoShardingTest, MatMulWithoutAutosharding) {
   auto* instruction =
       compiled_module->entry_computation()->parameter_instruction(0);
   VLOG(2) << instruction->ToString();
-  EXPECT_THAT(instruction, GmockMatch(m::Op().WithSharding("{replicated}")));
+  EXPECT_FALSE(instruction->has_sharding());
+  ASSERT_TRUE(compiled_module->has_spmd_parameters_shardings());
+  EXPECT_EQ(compiled_module->spmd_parameters_shardings()[0],
+            HloSharding::Replicate());
 }
 
 }  // namespace

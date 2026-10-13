@@ -16,10 +16,11 @@ limitations under the License.
 #ifndef XLA_SERVICE_MOCK_COMPILED_MODULE_H_
 #define XLA_SERVICE_MOCK_COMPILED_MODULE_H_
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
 #include "absl/status/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/compiled_memory_stats.h"

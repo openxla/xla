@@ -17,9 +17,10 @@ limitations under the License.
 
 #include "xla/tsl/util/fixed_option_set_flag.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 
 namespace xla {

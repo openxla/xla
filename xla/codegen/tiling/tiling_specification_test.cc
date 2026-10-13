@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/codegen/tiling/tiling_specification.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <utility>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/tiling/symbolic_tile_analysis.h"
@@ -78,8 +79,8 @@ class TilingSpecificationTest : public HloHardwareIndependentTestBase {
 };
 
 TEST_F(TilingSpecificationTest, TilingSpecificationDerivesOutputParameters) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
 computation {
   ROOT p0 = f32[137,115] parameter(0)
 }
@@ -99,8 +100,8 @@ ENTRY main {
 }
 
 TEST_F(TilingSpecificationTest, TilingSpecificationDerivesHiddenDotParameters) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
 computation {
   p0 = f32[137,115] parameter(0)
   p1 = f32[115,137] parameter(1)
@@ -129,8 +130,8 @@ ENTRY main {
 
 TEST_F(TilingSpecificationTest,
        TilingSpecificationDerivesOutputAndHiddenParametersOnTheSameOperation) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
 computation {
   p0 = f32[137,115] parameter(0)
   p1 = f32[115,137] parameter(1)
@@ -156,8 +157,8 @@ ENTRY main {
 
 TEST_F(TilingSpecificationTest,
        TilingSpecificationDerivesHiddenParametersForDots) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
 computation {
   p0 = f32[137,115] parameter(0)
   p1 = f32[115,137] parameter(1)
@@ -192,8 +193,8 @@ ENTRY main {
 
 TEST_F(TilingSpecificationTest,
        TilingWithIncorrectSetOfNestedTileSizesDoesNotConformToSpecification) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
 computation {
   p0 = f32[137,115] parameter(0)
   p1 = f32[115,137] parameter(1)
@@ -225,8 +226,8 @@ ENTRY main {
 
 TEST_F(TilingSpecificationTest,
        TilingWithIncorrectSetOfOutputTileSizesDoesNotConformToSpecification) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
 computation {
   p0 = f32[137,115] parameter(0)
   p1 = f32[115,137] parameter(1)
@@ -261,8 +262,8 @@ ENTRY main {
 
 TEST_F(TilingSpecificationTest,
        TilingWithIncorrectSetOfTiledInstructionsDoesNotConformToSpecification) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
 computation {
   p0 = f32[137,115] parameter(0)
   p1 = f32[115,137] parameter(1)
@@ -301,8 +302,8 @@ ENTRY main {
 
 TEST_F(TilingSpecificationTest,
        TilingWithExactlyConformantSetOfParametersConformsToSpecification) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
 computation {
   p0 = f32[137,115] parameter(0)
   p1 = f32[115,137] parameter(1)

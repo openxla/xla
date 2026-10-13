@@ -15,30 +15,32 @@ limitations under the License.
 
 #include "xla/tsl/profiler/rpc/client/save_profile.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
+#include "absl/cleanup/cleanup.h"
 #include "absl/status/status_matchers.h"
-#include "absl/strings/string_view.h"
 #include "riegeli/bytes/fd_reader.h"
+#include "riegeli/bytes/string_reader.h"
 #include "riegeli/records/record_reader.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status_matchers.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/protobuf/profiler_service.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
 namespace {
 
 using ::absl_testing::IsOk;
-using ::tensorflow::profiler::XPlane;
 using ::tensorflow::profiler::XSpace;
 using ::testing::ElementsAre;
 using ::testing::Not;
@@ -63,7 +65,9 @@ TEST(SaveProfileTest, SaveXSpaceChunksVectorSuccessAndPadding) {
 
   std::vector<XSpace> spaces = {space1, space2};
   ASSERT_OK(SaveXSpaceChunks(temp_dir, run, host, spaces));
-  EXPECT_TRUE(spaces.empty());
+  EXPECT_EQ(spaces.size(), 2);
+  EXPECT_EQ(spaces[0].hostnames(0), "host1");
+  EXPECT_EQ(spaces[1].hostnames(0), "host2");
 
   std::string file_path =
       io::JoinPath(temp_dir, run, "test_host_batch_vector.xplane.riegeli");
@@ -82,7 +86,68 @@ TEST(SaveProfileTest, SaveXSpaceChunksVectorSuccessAndPadding) {
     read_space.Clear();
   }
   ASSERT_OK(reader.status());
-  reader.Close();
+  EXPECT_TRUE(reader.Close());
+
+  EXPECT_THAT(read_spaces, ElementsAre(Partially(EqualsProto(R"pb(
+                                         hostnames: "host1"
+                                         planes { name: "plane1" }
+                                       )pb")),
+                                       Partially(EqualsProto(R"pb(
+                                         hostnames: "host2"
+                                         planes { name: "plane2" }
+                                       )pb"))));
+}
+
+TEST(SaveProfileTest, SaveXSpaceChunksRemoteFileSystemCopySuccess) {
+  std::string repo_root = "ram://test_remote_repo";
+  absl::Cleanup cleanup = [&repo_root] {
+    int64_t undeleted_files = 0;
+    int64_t undeleted_dirs = 0;
+    Env::Default()
+        ->DeleteRecursively(repo_root, &undeleted_files, &undeleted_dirs)
+        .IgnoreError();
+  };
+  std::string run = "test_run_remote";
+  std::string host = "test_host_remote";
+
+  XSpace space1 = ParseTextProtoOrDie<XSpace>(R"pb(
+    hostnames: "host1"
+    planes { name: "plane1" }
+  )pb");
+
+  XSpace space2 = ParseTextProtoOrDie<XSpace>(R"pb(
+    hostnames: "host2"
+    planes { name: "plane2" }
+  )pb");
+
+  std::vector<XSpace> spaces = {space1, space2};
+
+  ASSERT_OK(SaveXSpaceChunks(repo_root, run, host, spaces));
+  EXPECT_EQ(spaces.size(), 2);
+  EXPECT_EQ(spaces[0].hostnames(0), "host1");
+  EXPECT_EQ(spaces[1].hostnames(0), "host2");
+
+  std::string file_path =
+      io::JoinPath(repo_root, run, "test_host_remote.xplane.riegeli");
+  EXPECT_OK(Env::Default()->FileExists(file_path));
+
+  uint64_t file_size = 0;
+  ASSERT_OK(Env::Default()->GetFileSize(file_path, &file_size));
+  EXPECT_GT(file_size, 0);
+  EXPECT_EQ(file_size % (64 * 1024), 0);
+
+  std::string contents;
+  ASSERT_OK(tsl::ReadFileToString(Env::Default(), file_path, &contents));
+  riegeli::RecordReader<riegeli::StringReader<>> reader{
+      riegeli::StringReader<>(std::move(contents))};
+  std::vector<XSpace> read_spaces;
+  XSpace read_space;
+  while (reader.ReadRecord(read_space)) {
+    read_spaces.push_back(std::move(read_space));
+    read_space.Clear();
+  }
+  ASSERT_OK(reader.status());
+  EXPECT_TRUE(reader.Close());
 
   EXPECT_THAT(read_spaces, ElementsAre(Partially(EqualsProto(R"pb(
                                          hostnames: "host1"

@@ -96,8 +96,8 @@ absl::StatusOr<std::unique_ptr<SendThunk>> SendThunk::FromProto(
     ThunkInfo thunk_info, const SendThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ABSL_ASSIGN_OR_RETURN(CollectiveThunk::Buffer buffer,
-                   CollectiveThunk::Buffer::FromProto(thunk_proto.buffer(),
-                                                      buffer_allocations));
+                        CollectiveThunk::Buffer::FromProto(thunk_proto.buffer(),
+                                                           buffer_allocations));
 
   CollectiveConfig config =
       CollectiveConfig::FromProto(thunk_proto.collective_config());
@@ -166,8 +166,9 @@ absl::Status SendThunk::RunCollective(const ExecuteParams& params,
       send_buffer.source_memory_space,
       send_buffer.destination_memory_space};
 
-  ABSL_ASSIGN_OR_RETURN(const int64_t current_id,
-                   GetCollectiveCurrentId(params.collective_params, config_));
+  ABSL_ASSIGN_OR_RETURN(
+      const int64_t current_id,
+      GetCollectiveCurrentId(params.collective_params, config_));
   std::string device_string = GetDeviceString(*params.collective_params);
 
   const P2PConfig::SourceTargetMapEntry source_target =

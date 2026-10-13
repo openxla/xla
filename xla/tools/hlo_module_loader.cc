@@ -31,12 +31,18 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/text_format.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
-#include "google/protobuf/text_format.h"
 #include "re2/re2.h"
 #include "riegeli/bytes/string_reader.h"
+#include "tsl/platform/env.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/statusor.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -50,12 +56,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -182,8 +182,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> LoadModuleFromData(
           format);
     }
     ABSL_ASSIGN_OR_RETURN(HloModuleConfig config,
-                     HloModule::CreateModuleConfigFromProto(
-                         proto.hlo().hlo_module(), debug_options));
+                          HloModule::CreateModuleConfigFromProto(
+                              proto.hlo().hlo_module(), debug_options));
     ABSL_RETURN_IF_ERROR(OverrideConfig(ovr_config, &config));
     if (config_modifier_hook) {
       config_modifier_hook(&config);

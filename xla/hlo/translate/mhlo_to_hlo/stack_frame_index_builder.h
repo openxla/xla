@@ -41,10 +41,10 @@ class StackFrameIndexBuilder {
   };
 
   AddStackFrameResult AddCallStackAndGetFirstFrameId(
-      const mlir::Location &root_loc);
+      const mlir::Location& root_loc);
 
  private:
-  int AddStackFrameLocation(const mlir::NameLoc &name_location,
+  int AddStackFrameLocation(const mlir::NameLoc& name_location,
                             int parent_frame_id);
 
   xla::StackFrameIndexProto indexes_;

@@ -24,10 +24,10 @@ limitations under the License.
 #include "absl/hash/hash.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/context_types.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/profiler/lib/context_types.h"
 
 namespace tsl {
 namespace profiler {
@@ -410,11 +410,15 @@ enum StatType {
   kUsesIci,
   kDimensions,
   kType,
+  kDevCapPeakSpmemRdBwGigabytesPerSecond,
+  kDevCapPeakSpmemWrBwGigabytesPerSecond,
+  kDevCapPeakScTeraflopsPerSecond,
+  kDevCapNumSparseCoreTiles,
   // LINT.ThenChange(:last_stat_type)
 
   // LINT.IfChange(last_stat_type)
   // Change this to point to the last stat type when adding a new one.
-  kLastStatType = kType,
+  kLastStatType = kDevCapNumSparseCoreTiles,
   // LINT.ThenChange(:stat_type_enum)
 };
 

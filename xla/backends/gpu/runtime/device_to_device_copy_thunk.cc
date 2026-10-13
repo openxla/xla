@@ -109,9 +109,9 @@ absl::StatusOr<ThunkProto> DeviceToDeviceCopyThunk::ToProto() const {
       proto.mutable_device_to_device_copy_thunk();
   CopyThunkProto* copy_thunk_proto = d2d_copy_thunk_proto->mutable_copy_thunk();
   ABSL_ASSIGN_OR_RETURN(*copy_thunk_proto->mutable_source_buffer(),
-                   source_buffer_.ToProto());
+                        source_buffer_.ToProto());
   ABSL_ASSIGN_OR_RETURN(*copy_thunk_proto->mutable_destination_buffer(),
-                   destination_buffer_.ToProto());
+                        destination_buffer_.ToProto());
   copy_thunk_proto->set_mem_size(size_bytes());
   return proto;
 }

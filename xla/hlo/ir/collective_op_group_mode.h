@@ -24,7 +24,6 @@ limitations under the License.
 
 namespace xla {
 
-
 absl::string_view CollectiveOpGroupModeToString(
     CollectiveOpGroupMode group_mode);
 

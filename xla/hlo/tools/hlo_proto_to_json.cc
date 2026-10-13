@@ -30,11 +30,11 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/init_main.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/util.h"
-#include "tsl/platform/init_main.h"
 
 using std::string;
 

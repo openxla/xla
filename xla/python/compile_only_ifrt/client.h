@@ -355,6 +355,12 @@ class CompileOnlyIfRtClient final
 
   ifrt::Compiler* GetDefaultCompiler() override { return &default_compiler_; }
 
+  absl::StatusOr<std::vector<tsl::Future<ifrt::LoadedExecutableRef>>> Load(
+      absl::Span<const ifrt::ExecutableRef> executables,
+      absl::Span<std::unique_ptr<ifrt::LoadOptions>> options) override {
+    return Unimplemented("Load not available with compile-only client.");
+  }
+
   static char ID;  // NOLINT
 
   const ifrt::PjRtTopology& topology() const { return *topology_; }
@@ -373,14 +379,14 @@ class CompileOnlyIfRtClient final
     }
     ABSL_ASSIGN_OR_RETURN(PrimitiveType element_type, ToPrimitiveType(dtype));
     ABSL_ASSIGN_OR_RETURN(xla::Layout layout,
-                     topology_->GetDefaultLayout(element_type, dims));
+                          topology_->GetDefaultLayout(element_type, dims));
     return std::make_shared<PjRtLayout>(std::move(layout));
   }
   absl::StatusOr<ifrt::CustomLayoutRef> GetDefaultLayout(
       ifrt::DType dtype, const ifrt::Shape& shape,
       const ifrt::ShardingRef& sharding) const override {
     ABSL_ASSIGN_OR_RETURN(const ifrt::Shape shard_shape,
-                     sharding->GetShardShape(shape));
+                          sharding->GetShardShape(shape));
     ABSL_ASSIGN_OR_RETURN(
         std::shared_ptr<const xla::PjRtLayout> layout,
         GetDefaultPjRtLayout(dtype, shard_shape.dims(),

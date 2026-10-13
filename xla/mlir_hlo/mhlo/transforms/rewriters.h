@@ -28,84 +28,84 @@ namespace mhlo {
 struct ChloLegalizeToHighLevelMhloPassOptions;
 
 // Collection of rewrite patterns for lowering a general dot product.
-void populateGeneralDotOpLoweringPatterns(RewritePatternSet *patterns,
-                                          MLIRContext *ctx);
+void populateGeneralDotOpLoweringPatterns(RewritePatternSet* patterns,
+                                          MLIRContext* ctx);
 
 // Collection of rewrite patterns for lowering complex operations to equivalent
 // float operations.
-void populateComplexLoweringPatterns(MLIRContext *context,
-                                     RewritePatternSet *patterns);
+void populateComplexLoweringPatterns(MLIRContext* context,
+                                     RewritePatternSet* patterns);
 
-void populateOptimizeMhloPatterns(MLIRContext *context,
-                                  RewritePatternSet *patterns);
+void populateOptimizeMhloPatterns(MLIRContext* context,
+                                  RewritePatternSet* patterns);
 
 // Rewrite patterns for dot to equivalent dot_general legalization.
-void populateDotToDotGeneralPatterns(mlir::MLIRContext *context,
-                                     RewritePatternSet *patterns);
+void populateDotToDotGeneralPatterns(mlir::MLIRContext* context,
+                                     RewritePatternSet* patterns);
 
 // Rewrite patterns for einsum to equivalent dot_general legalization.
-void populateEinsumToDotGeneralPatterns(mlir::MLIRContext *context,
-                                        RewritePatternSet *patterns);
+void populateEinsumToDotGeneralPatterns(mlir::MLIRContext* context,
+                                        RewritePatternSet* patterns);
 
 // Rewrite patterns for torch index select to equivalent gather legalization.
-void populateTorchIndexSelectToGatherPatterns(mlir::MLIRContext *context,
-                                              RewritePatternSet *patterns);
+void populateTorchIndexSelectToGatherPatterns(mlir::MLIRContext* context,
+                                              RewritePatternSet* patterns);
 
 // Collection of rewrite patterns for lowering of HLO to arithmetic dialect.
-void populateHloToArithmeticConversionPatterns(RewritePatternSet *patterns);
+void populateHloToArithmeticConversionPatterns(RewritePatternSet* patterns);
 
 // Collection of rewrite patterns for lowering pointwise HLO ops with scalar
 // arguments to arithmetic dialect.
 void populateScalarHloToArithmeticConversionPatterns(
-    MLIRContext *context, TypeConverter &typeConverter,
-    RewritePatternSet *patterns,
-    llvm::function_ref<bool(Operation *)> filterFn = nullptr);
+    MLIRContext* context, TypeConverter& typeConverter,
+    RewritePatternSet* patterns,
+    llvm::function_ref<bool(Operation*)> filterFn = nullptr);
 
 // Collection of rewrite patterns for lowering of HLO to Linalg dialect.
-void populateHloToLinalgConversionPattern(MLIRContext *context,
-                                          TypeConverter &typeConverter,
-                                          RewritePatternSet *patterns,
+void populateHloToLinalgConversionPattern(MLIRContext* context,
+                                          TypeConverter& typeConverter,
+                                          RewritePatternSet* patterns,
                                           bool enablePrimitiveOps = false);
 
 // Converter to signless intergers to be used with linalg conversion patterns.
 std::unique_ptr<TypeConverter> createHloToLinalgTypeConverter();
 
 // Sets up legality definitions for materializing broadcasts.
-void setupMaterializeBroadcastsLegality(MLIRContext *context,
-                                        ConversionTarget *conversionTarget);
+void setupMaterializeBroadcastsLegality(MLIRContext* context,
+                                        ConversionTarget* conversionTarget);
 
 // Populates a collection of rewrite patterns for materializing broadcast
 // attributes to equivalent sequences of ops.
-void populateMaterializeBroadcastsPatterns(MLIRContext *context,
-                                           RewritePatternSet *patterns);
+void populateMaterializeBroadcastsPatterns(MLIRContext* context,
+                                           RewritePatternSet* patterns);
 
 // Populate a collection of conversion patterns for un-fusing
 // batch_norm_inference into constituent HLO ops.
-void populateUnfuseBatchNormInferencePattern(MLIRContext *context,
-                                             RewritePatternSet *patterns);
+void populateUnfuseBatchNormInferencePattern(MLIRContext* context,
+                                             RewritePatternSet* patterns);
 
 // Populate a collection of conversion patterns for un-fusing
 // batch_norm_training into constituent HLO ops.
-void populateUnfuseBatchNormTrainingPattern(MLIRContext *context,
-                                            RewritePatternSet *patterns);
+void populateUnfuseBatchNormTrainingPattern(MLIRContext* context,
+                                            RewritePatternSet* patterns);
 
 // Populate a collection of conversion patterns for un-fusing
 // // batch_norm_inference and batch_norm_training into constituent HLO ops.
-inline void populateUnfuseBatchNormPatterns(MLIRContext *context,
-                                            RewritePatternSet *patterns) {
+inline void populateUnfuseBatchNormPatterns(MLIRContext* context,
+                                            RewritePatternSet* patterns) {
   populateUnfuseBatchNormInferencePattern(context, patterns);
   populateUnfuseBatchNormTrainingPattern(context, patterns);
 }
 
 // Populates patterns that translate the trigonometric operations from the
 // standard dialect to approximations that do not use intrinsics.
-void populateTrigonometricToApproximationPatterns(MLIRContext *context,
-                                                  RewritePatternSet *patterns);
+void populateTrigonometricToApproximationPatterns(MLIRContext* context,
+                                                  RewritePatternSet* patterns);
 
 // Populate patterns to group reduction and parallel dimensions of reduction
 // operations and realize them through equivalent 1D or 2D reductions.
-void populateGroupReductionDimensionsPatterns(MLIRContext *context,
-                                              RewritePatternSet *patterns,
+void populateGroupReductionDimensionsPatterns(MLIRContext* context,
+                                              RewritePatternSet* patterns,
                                               bool preferColumnsReductions);
 
 }  // namespace mhlo
@@ -147,13 +147,13 @@ void populateHloToStablehloPatterns(RewritePatternSet* patterns,
 // Also see `stablehlo::registerFuncOpsForTypeConversion` for helper patterns
 // which make sure `func.func`, `func.call` and `func.return` which involve
 // illegal types also get converted.
-void populateStablehloToHloPatterns(RewritePatternSet *patterns,
-                                    TypeConverter *converter,
-                                    MLIRContext *context);
+void populateStablehloToHloPatterns(RewritePatternSet* patterns,
+                                    TypeConverter* converter,
+                                    MLIRContext* context);
 
 // Sets up legality definitions for StableHLO ops and non-StableHLO ops that
 // may have StableHLO operands.
-void setupStablehloToHloConversionTarget(ConversionTarget &target);
+void setupStablehloToHloConversionTarget(ConversionTarget& target);
 
 }  // namespace stablehlo
 

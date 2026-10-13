@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <cuda_runtime.h>
+#include <gmock/gmock.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -27,15 +28,14 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/gpu/libraries/cub/scratch_space_lookup_table.pb.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/platform/path.h"
 
 namespace xla::gpu {
 namespace {
@@ -203,10 +203,12 @@ absl::StatusOr<CubScratchSizeEntry> GenerateDataForKeyValueSegemented(
   for (int64_t n : num_items_list) {
     int64_t size;
     if (is_segmented) {
-      ABSL_ASSIGN_OR_RETURN(size, (GetScratchSizeKeyValueSegmentedSort<KeyT, ValueT>(
-                                 n, /*num_segments=*/2)));
+      ABSL_ASSIGN_OR_RETURN(size,
+                            (GetScratchSizeKeyValueSegmentedSort<KeyT, ValueT>(
+                                n, /*num_segments=*/2)));
     } else {
-      ABSL_ASSIGN_OR_RETURN(size, (GetScratchSizeKeyValueSort<KeyT, ValueT>(n)));
+      ABSL_ASSIGN_OR_RETURN(size,
+                            (GetScratchSizeKeyValueSort<KeyT, ValueT>(n)));
     }
     sizes.push_back(size);
   }
@@ -223,13 +225,15 @@ absl::Status GenerateDataForKeyValueSort(
   std::vector<int64_t> num_items_list =
       CreateNumItemsList(GetMaxNumOfItems(prop, sizeof(KeyT) + sizeof(ValueT)));
 
-  ABSL_ASSIGN_OR_RETURN(*lookup_table.add_entries(),
-                   (GenerateDataForKeyValueSegemented<KeyT, ValueT>(
-                       device_name, num_items_list, /*is_segmented=*/false)));
+  ABSL_ASSIGN_OR_RETURN(
+      *lookup_table.add_entries(),
+      (GenerateDataForKeyValueSegemented<KeyT, ValueT>(
+          device_name, num_items_list, /*is_segmented=*/false)));
 
-  ABSL_ASSIGN_OR_RETURN(*lookup_table.add_entries(),
-                   (GenerateDataForKeyValueSegemented<KeyT, ValueT>(
-                       device_name, num_items_list, /*is_segmented=*/true)));
+  ABSL_ASSIGN_OR_RETURN(
+      *lookup_table.add_entries(),
+      (GenerateDataForKeyValueSegemented<KeyT, ValueT>(
+          device_name, num_items_list, /*is_segmented=*/true)));
 
   return absl::OkStatus();
 }

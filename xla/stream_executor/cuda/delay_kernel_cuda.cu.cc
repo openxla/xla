@@ -58,8 +58,8 @@ absl::StatusOr<GpuSemaphore> LaunchDelayKernel(Stream* stream) {
   // Allocate a semaphore value that will be used to signal to the delay
   // kernel that it may exit. Pinned host memory is readable and writable by
   // both host and device here.
-  ABSL_ASSIGN_OR_RETURN(auto allocation,
-                   executor->HostMemoryAllocate(sizeof(GpuSemaphoreState)));
+  ABSL_ASSIGN_OR_RETURN(
+      auto allocation, executor->HostMemoryAllocate(sizeof(GpuSemaphoreState)));
   GpuSemaphore semaphore = GpuSemaphore::Create(std::move(allocation));
   *semaphore = GpuSemaphoreState::kHold;
   // In principle the kernel could be loaded lazily and shared across
@@ -73,9 +73,9 @@ absl::StatusOr<GpuSemaphore> LaunchDelayKernel(Stream* stream) {
   // Launch a delay kernel into this stream, which will spin until
   // GetElapsedDuration() is called, the timer is destroyed, or the timeout
   // in the kernel is reached.
-  ABSL_RETURN_IF_ERROR(kernel.Launch(ThreadDim(1, 1, 1), BlockDim(1, 1, 1), stream,
-                                semaphore.device(),
-                                GpuSemaphoreState::kRelease));
+  ABSL_RETURN_IF_ERROR(kernel.Launch(ThreadDim(1, 1, 1), BlockDim(1, 1, 1),
+                                     stream, semaphore.device(),
+                                     GpuSemaphoreState::kRelease));
 
   return semaphore;
 }

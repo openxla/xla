@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/symbol_name_util.h"
 
 #include <gtest/gtest.h>
+
 #include "xla/tsl/platform/statusor.h"
 
 namespace {

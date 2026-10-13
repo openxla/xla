@@ -26,11 +26,11 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/platform/errors.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "tsl/platform/errors.h"
 
 namespace stream_executor {
 

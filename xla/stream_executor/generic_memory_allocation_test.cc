@@ -15,10 +15,10 @@ limitations under the License.
 
 #include "xla/stream_executor/generic_memory_allocation.h"
 
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
-
-#include <gtest/gtest.h>
 
 namespace stream_executor {
 namespace {
@@ -26,7 +26,7 @@ namespace {
 TEST(GenericMemoryAllocationTest, DeleterIsCalledWithCorrectArguments) {
   std::array<char, 64> array;
   bool deleter_called = false;
-  auto deleter = [&array, &deleter_called](void *ptr, uint64_t size) {
+  auto deleter = [&array, &deleter_called](void* ptr, uint64_t size) {
     EXPECT_FALSE(deleter_called);
     EXPECT_EQ(ptr, array.data());
     EXPECT_EQ(size, array.size());

@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/permutation_util.h"
 #include "xla/service/hlo_creation_utils.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -296,7 +296,7 @@ absl::StatusOr<bool> ReshapeMover::SinkRearrangeOperands(
     VLOG(3) << "Updating operand #" << i << ": "
             << operands[i]->ToString(print_no_metadata);
     ABSL_ASSIGN_OR_RETURN(operands[i],
-                     ApplyInverseRearrange(rearrange, operands[i]));
+                          ApplyInverseRearrange(rearrange, operands[i]));
     VLOG(3) << "Updated operand #" << i
             << " to: " << operands[i]->ToString(print_no_metadata);
   }
@@ -407,7 +407,8 @@ absl::StatusOr<bool> ReshapeMover::RunImpl(
         candidates.insert(instruction);
       }
     }
-    ABSL_ASSIGN_OR_RETURN(bool did_change, TryReshapeMoveOnCandidates(&candidates));
+    ABSL_ASSIGN_OR_RETURN(bool did_change,
+                          TryReshapeMoveOnCandidates(&candidates));
     changed |= did_change;
   }
   return changed;

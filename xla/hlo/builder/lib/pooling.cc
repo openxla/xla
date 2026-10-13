@@ -26,6 +26,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/builder/lib/arithmetic.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/lib/conv_grad_size_util.h"
@@ -35,8 +37,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -225,7 +225,8 @@ XlaOp AvgPoolGrad(XlaOp out_backprop, absl::Span<const int64_t> gradients_size,
           absl::StrCat("gradients must be ", num_dims, "-dimensional"));
     }
 
-    ABSL_ASSIGN_OR_RETURN(Shape out_backprop_xla_shape, b->GetShape(out_backprop));
+    ABSL_ASSIGN_OR_RETURN(Shape out_backprop_xla_shape,
+                          b->GetShape(out_backprop));
     const int backprop_xla_num_dims =
         out_backprop_xla_shape.dimensions().size();
     if (backprop_xla_num_dims != num_dims) {

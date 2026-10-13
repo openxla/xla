@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/error/error_codes.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/status/status.h"
 #include "tsl/platform/platform.h"
 

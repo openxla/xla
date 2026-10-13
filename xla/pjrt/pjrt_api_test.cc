@@ -14,10 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/pjrt/pjrt_api.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/status/status_matchers.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"

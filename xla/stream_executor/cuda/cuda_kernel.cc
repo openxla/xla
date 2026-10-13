@@ -29,14 +29,14 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/kernel_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
@@ -82,7 +82,7 @@ absl::StatusOr<KernelMetadata> CudaKernel::GetKernelMetadata() {
   kernel_metadata.set_registers_per_thread(value);
 
   ABSL_RETURN_IF_ERROR(GetCudaAttribute(CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES,
-                                   gpu_function_, &value));
+                                        gpu_function_, &value));
   kernel_metadata.set_shared_memory_bytes(value);
   return kernel_metadata;
 }

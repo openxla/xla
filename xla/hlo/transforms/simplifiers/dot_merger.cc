@@ -166,13 +166,13 @@ absl::StatusOr<std::pair<HloInstruction*, DotOperandDims>>
 GetOperandSourceWithCategories(HloInstruction* dot, int operand_number) {
   HloInstruction* operand = dot->mutable_operand(operand_number);
   ABSL_ASSIGN_OR_RETURN(DotOperandDims dims,
-                   DotOperandDims::FromDotOperand(dot, operand_number));
+                        DotOperandDims::FromDotOperand(dot, operand_number));
   HloInstruction* current = operand;
   while (current->opcode() == HloOpcode::kTranspose ||
          current->opcode() == HloOpcode::kReshape ||
          current->opcode() == HloOpcode::kBitcast) {
     ABSL_ASSIGN_OR_RETURN(std::optional<DotOperandDims> mapped,
-                     dims.MapBackward(current));
+                          dims.MapBackward(current));
     if (!mapped.has_value()) {
       break;  // Stop here, as moving further would mix categories.
     }
@@ -285,10 +285,10 @@ absl::StatusOr<DotOperandDims> DetermineTargetSharedDims(
       dot_to_merge.dot->operand(dot_to_merge.shared_operand_idx);
 
   ABSL_ASSIGN_OR_RETURN(ShapeTracker tracker,
-                   ShapeTracker::FromSiblings(dot_op, source));
+                        ShapeTracker::FromSiblings(dot_op, source));
   ABSL_ASSIGN_OR_RETURN(DotOperandDims dot_dims,
-                   DotOperandDims::FromDotOperand(
-                       dot_to_merge.dot, dot_to_merge.shared_operand_idx));
+                        DotOperandDims::FromDotOperand(
+                            dot_to_merge.dot, dot_to_merge.shared_operand_idx));
 
   // Map batch and contracting dimensions.
   auto map_dims = [&](absl::Span<const int64_t> dims)
@@ -301,9 +301,10 @@ absl::StatusOr<DotOperandDims> DetermineTargetSharedDims(
     return *mapped;
   };
   ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> final_batch_dims,
-                   map_dims(dot_dims.Indices(DotOperandDims::kBatch)));
-  ABSL_ASSIGN_OR_RETURN(std::vector<int64_t> final_contracting_dims,
-                   map_dims(dot_dims.Indices(DotOperandDims::kContracting)));
+                        map_dims(dot_dims.Indices(DotOperandDims::kBatch)));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<int64_t> final_contracting_dims,
+      map_dims(dot_dims.Indices(DotOperandDims::kContracting)));
 
   // Remaining dimensions are non-contracting.
   int64_t source_rank = source->shape().dimensions().size();
@@ -339,7 +340,7 @@ absl::StatusOr<ShapeTracker> BuildIndicesTracker(
   // 1. Narrow. Narrow() internally handles unsorted indices by prepending
   // a sorting transpose, so we can pass before_indices directly.
   ABSL_ASSIGN_OR_RETURN(ShapeTracker indices_tracker,
-                   tracker.Narrow(before_indices));
+                        tracker.Narrow(before_indices));
 
   // 2. Reshape the output. The narrowed output may not automatically have the
   // correct dimensions because it cannot guess whether degenerate dimensions
@@ -466,8 +467,8 @@ absl::StatusOr<std::vector<ConcatTargetInfo>> ComputeTargetConcatDims(
 
   for (const auto& usage : dots_to_merge) {
     ABSL_ASSIGN_OR_RETURN(DotOperandDims concat_dims_at_dot,
-                     DotOperandDims::FromDotOperand(
-                         usage.dot, 1 - usage.shared_operand_idx));
+                          DotOperandDims::FromDotOperand(
+                              usage.dot, 1 - usage.shared_operand_idx));
     ABSL_ASSIGN_OR_RETURN(
         DotOperandDims shared_dims_at_dot,
         DotOperandDims::FromDotOperand(usage.dot, usage.shared_operand_idx));
@@ -496,8 +497,8 @@ absl::StatusOr<std::vector<ConcatTargetInfo>> ComputeTargetConcatDims(
     HloInstruction* old_concat =
         usage.dot->mutable_operand(1 - usage.shared_operand_idx);
     ABSL_ASSIGN_OR_RETURN(ShapeTracker concat_source_to_dot,
-                     ShapeTracker::FromProducerConsumer(
-                         usage.concat_operand_source, old_concat));
+                          ShapeTracker::FromProducerConsumer(
+                              usage.concat_operand_source, old_concat));
     ABSL_RETURN_IF_ERROR(concat_source_to_dot.ConcatenateFrom(info.tracker));
     info.tracker = std::move(concat_source_to_dot);
     target_concat_infos.push_back(info);
@@ -533,7 +534,7 @@ absl::StatusOr<HloInstruction*> CreateConcatenatedOperand(
   }
 
   ABSL_ASSIGN_OR_RETURN(Shape concat_shape, ShapeInference::InferConcatOpShape(
-                                           operand_shapes, concat_dim));
+                                                operand_shapes, concat_dim));
 
   return new_shared_op->AddInstruction(HloInstruction::CreateConcatenate(
       concat_shape, concat_operands, concat_dim));
@@ -551,10 +552,10 @@ absl::StatusOr<HloInstruction*> CreateNewDot(
           target_is_lhs ? target_concat_dims : target_shared_dims));
 
   ABSL_ASSIGN_OR_RETURN(Shape new_dot_shape,
-                   ShapeInference::InferDotOpShape(
-                       dot_lhs->shape(), dot_rhs->shape(), dnums,
-                       /*preferred_element_type=*/
-                       dots_to_merge[0].dot->shape().element_type()));
+                        ShapeInference::InferDotOpShape(
+                            dot_lhs->shape(), dot_rhs->shape(), dnums,
+                            /*preferred_element_type=*/
+                            dots_to_merge[0].dot->shape().element_type()));
 
   HloInstruction* new_dot = dot_lhs->AddInstruction(
       HloInstruction::CreateDot(new_dot_shape, dot_lhs, dot_rhs, dnums,
@@ -596,18 +597,20 @@ absl::StatusOr<ShapeTracker> BuildOutputShapeTracker(
   }
 
   // Undo the non-contracting dimension changes.
-  ABSL_ASSIGN_OR_RETURN(ShapeTracker shared_nc,
-                   BuildIndicesTracker(
-                       shared_after.Indices(DotOperandDims::kNonContracting),
-                       shared_before.shape(),
-                       shared_before.Indices(DotOperandDims::kNonContracting),
-                       shared_tracker_inv, output_type));
-  ABSL_ASSIGN_OR_RETURN(ShapeTracker concat_nc,
-                   BuildIndicesTracker(
-                       concat_after.Indices(DotOperandDims::kNonContracting),
-                       concat_before.shape(),
-                       concat_before.Indices(DotOperandDims::kNonContracting),
-                       concat_tracker_inv, output_type));
+  ABSL_ASSIGN_OR_RETURN(
+      ShapeTracker shared_nc,
+      BuildIndicesTracker(
+          shared_after.Indices(DotOperandDims::kNonContracting),
+          shared_before.shape(),
+          shared_before.Indices(DotOperandDims::kNonContracting),
+          shared_tracker_inv, output_type));
+  ABSL_ASSIGN_OR_RETURN(
+      ShapeTracker concat_nc,
+      BuildIndicesTracker(
+          concat_after.Indices(DotOperandDims::kNonContracting),
+          concat_before.shape(),
+          concat_before.Indices(DotOperandDims::kNonContracting),
+          concat_tracker_inv, output_type));
 
   ABSL_ASSIGN_OR_RETURN(
       ShapeTracker tracker,
@@ -672,26 +675,27 @@ absl::Status SliceAndReplaceOutput(
       ShapeTracker::FromSiblings(new_shared_op, original_dot->mutable_operand(
                                                     usage.shared_operand_idx)));
   ABSL_ASSIGN_OR_RETURN(ShapeTracker concat_tracker_inv,
-                   ShapeTracker::FromSiblings(
-                       pre_concat_op, original_dot->mutable_operand(
-                                          1 - usage.shared_operand_idx)));
+                        ShapeTracker::FromSiblings(
+                            pre_concat_op, original_dot->mutable_operand(
+                                               1 - usage.shared_operand_idx)));
   ABSL_ASSIGN_OR_RETURN(
       DotOperandDims old_shared_dims,
       DotOperandDims::FromDotOperand(original_dot, usage.shared_operand_idx));
   ABSL_ASSIGN_OR_RETURN(DotOperandDims old_concat_dims,
-                   DotOperandDims::FromDotOperand(
-                       original_dot, 1 - usage.shared_operand_idx));
-  ABSL_ASSIGN_OR_RETURN(ShapeTracker output_tracker,
-                   BuildOutputShapeTracker(
-                       old_shared_dims, target_shared_dims, shared_tracker_inv,
-                       old_concat_dims, target_concat_dims, concat_tracker_inv,
-                       shared_is_lhs,
-                       /*orig_shared_is_lhs=*/(usage.shared_operand_idx == 0),
-                       original_dot->shape().element_type()));
+                        DotOperandDims::FromDotOperand(
+                            original_dot, 1 - usage.shared_operand_idx));
+  ABSL_ASSIGN_OR_RETURN(
+      ShapeTracker output_tracker,
+      BuildOutputShapeTracker(
+          old_shared_dims, target_shared_dims, shared_tracker_inv,
+          old_concat_dims, target_concat_dims, concat_tracker_inv,
+          shared_is_lhs,
+          /*orig_shared_is_lhs=*/(usage.shared_operand_idx == 0),
+          original_dot->shape().element_type()));
 
   // 3. Materialize the tracker chain and update the replacements map.
   ABSL_ASSIGN_OR_RETURN(HloInstruction * result,
-                   output_tracker.ToInstructionChain(slice));
+                        output_tracker.ToInstructionChain(slice));
   replacements[original_dot] = result;
 
   slice_start += slice_size;
@@ -869,18 +873,19 @@ absl::StatusOr<HloInstruction*> MergeCluster(
   // within categories (they are the same for all dots anyway as we only care
   // about categories and not the actual element order).
   ABSL_ASSIGN_OR_RETURN(DotOperandDims target_shared_dims,
-                   DetermineTargetSharedDims(dots_to_merge[0]));
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * new_shared_op,
-                   CreateSharedOperand(dots_to_merge[0].shared_operand_source,
-                                       target_shared_dims));
+                        DetermineTargetSharedDims(dots_to_merge[0]));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * new_shared_op,
+      CreateSharedOperand(dots_to_merge[0].shared_operand_source,
+                          target_shared_dims));
 
   // Get compatible pre-concat shapes for the non-shared operands. They must
   // have exactly same shapes/categories, except for one non-contracting
   // dimension which we'll concatenate over. This function brings them to a
   // common canonical layout with exactly one Non-Contracting dimension.
   ABSL_ASSIGN_OR_RETURN(std::vector<ConcatTargetInfo> target_concat_infos,
-                   ComputeTargetConcatDims(dots_to_merge, new_shared_op,
-                                           target_shared_dims));
+                        ComputeTargetConcatDims(dots_to_merge, new_shared_op,
+                                                target_shared_dims));
   TF_RET_CHECK(!target_concat_infos.empty());
 
   // Materialize the source->new trackers into the chains of instructions, which
@@ -896,8 +901,8 @@ absl::StatusOr<HloInstruction*> MergeCluster(
 
   // Concatenated operand for the new dot.
   ABSL_ASSIGN_OR_RETURN(HloInstruction * concatenated_concat_op,
-                   CreateConcatenatedOperand(
-                       new_shared_op, transformed_concat_ops, concat_dim));
+                        CreateConcatenatedOperand(
+                            new_shared_op, transformed_concat_ops, concat_dim));
 
   // Make the new dot.
   HloInstruction* dot_lhs =
@@ -976,7 +981,7 @@ absl::Status SimplifyConsumerChain(HloInstruction* chain_start) {
 
   // Spawn a new chain of instructions.
   ABSL_ASSIGN_OR_RETURN(HloInstruction * new_chain_root,
-                   tracker.ToInstructionChain(producer));
+                        tracker.ToInstructionChain(producer));
 
   // Replace the last instruction in the chain with the new chain root.
   HloInstruction* last_inst = chain.back();
@@ -1005,7 +1010,7 @@ absl::StatusOr<bool> MergeDots(
   // it's merged with a dot from one equivalence class, it won't also be merged
   // in another class.
   ABSL_ASSIGN_OR_RETURN(auto equivalence_classes,
-                   BuildEquivalenceClasses(comp, queue_id));
+                        BuildEquivalenceClasses(comp, queue_id));
 
   // Remove "uninteresting" equivalence classes where there's just one
   // instruction (nothing to merge!).
@@ -1074,8 +1079,8 @@ absl::StatusOr<bool> MergeDots(
     // cluster may have dependencies on each other so cannot be merged together.
     while (true) {
       ABSL_ASSIGN_OR_RETURN(HloInstruction * new_dot,
-                       MergeCluster(key, values, graph, graph_id, replacements,
-                                    max_size_to_merge));
+                            MergeCluster(key, values, graph, graph_id,
+                                         replacements, max_size_to_merge));
       if (!new_dot) {
         if (VLOG_IS_ON(3)) {
           std::vector<DotOperandUsage> unmerged =
@@ -1136,7 +1141,7 @@ absl::StatusOr<bool> DotMerger::RunImpl(
   for (HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
     ABSL_ASSIGN_OR_RETURN(bool changed_computation,
-                     MergeDots(comp, max_size_to_merge_, queue_id_));
+                          MergeDots(comp, max_size_to_merge_, queue_id_));
     changed |= changed_computation;
   }
   return changed;

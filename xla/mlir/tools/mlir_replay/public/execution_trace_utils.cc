@@ -303,7 +303,8 @@ absl::StatusOr<InterpreterValue> LiteralToValue(const xla::Literal& literal) {
 
 absl::StatusOr<InterpreterValue> LiteralToValue(
     const xla::LiteralProto& literal) {
-  ABSL_ASSIGN_OR_RETURN(auto deserialized, xla::Literal::CreateFromProto(literal));
+  ABSL_ASSIGN_OR_RETURN(auto deserialized,
+                        xla::Literal::CreateFromProto(literal));
   return LiteralToValue(deserialized);
 }
 

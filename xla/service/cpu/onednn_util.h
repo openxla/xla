@@ -22,16 +22,17 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "absl/status/statusor.h"
-#include "unsupported/Eigen/CXX11/Tensor"
 #include "oneapi/dnnl/dnnl.hpp"
 #include "oneapi/dnnl/dnnl_common.hpp"
 #include "oneapi/dnnl/dnnl_threadpool_iface.hpp"
+#include "tsl/platform/cpu_info.h"
+#include "unsupported/Eigen/CXX11/Tensor"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace xla {
 namespace cpu {
@@ -51,6 +52,19 @@ inline bool IsSupportedType(xla::PrimitiveType dtype) {
               (TestCPUFeature(CPUFeature::AVX512_FP16) ||
                TestCPUFeature(CPUFeature::AMX_FP16))) ||
              TestCPUFeature(CPUFeature::AVX_NE_CONVERT);
+    case F8E5M2:
+    case F8E4M3FN:
+    case F8E4M3:
+      if (TestCPUFeature(CPUFeature::AMX_FP8)) {
+        return true;
+      }
+      if (TestCPUFeature(CPUFeature::AVX512BW) &&
+          TestCPUFeature(CPUFeature::AMX_FP16)) {
+        LOG_FIRST_N(INFO, 1) << "XLA:CPU FP8 dispatched via oneDNN AMX-FP16 "
+                                "emulation path (no native AMX-FP8 on host).";
+        return true;
+      }
+      return false;
     default:
       return false;
   }

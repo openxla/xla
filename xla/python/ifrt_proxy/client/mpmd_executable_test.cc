@@ -15,19 +15,21 @@ limitations under the License.
 
 #include "xla/python/ifrt_proxy/client/mpmd_executable.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/substitute.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/mock.h"
@@ -42,7 +44,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/protobuf.h"
 
 using ::testing::_;
 using ::testing::ElementsAre;
@@ -161,7 +162,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdAddressableDevicesSuccess) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/2, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/devices_map,
       /*fingerprint=*/"fingerprint",
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
@@ -177,7 +178,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdAddressableDevicesError) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/2, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{},
       /*mpmd_addressable_devices=*/absl::InternalError("injected error"),
       /*fingerprint=*/"fingerprint",
@@ -195,7 +196,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdAddressableDevicesVersionCheck) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/2, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{},
       /*mpmd_addressable_devices=*/absl::InternalError("injected error"),
       /*fingerprint=*/"fingerprint",
@@ -224,7 +225,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCompiledMemoryStatsSuccess) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -247,7 +248,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCompiledMemoryStatsRpcError) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -272,7 +273,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCompiledMemoryStatsVersionCheck) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -288,7 +289,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdHloModules) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -327,7 +328,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCostAnalysisSuccess) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -354,7 +355,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCostAnalysisRpcError) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -378,7 +379,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCostAnalysisVersionCheck) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",

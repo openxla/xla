@@ -33,12 +33,14 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
@@ -62,7 +64,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace gpu {
@@ -272,7 +273,7 @@ absl::StatusOr<bool> FuseConvertTypeIntoConv(HloComputation* comp,
         comp->AddInstruction(conv->CloneWithNewShape(new_shape));
     comp->parent()->SetAndUniquifyInstrName(new_conv, conv->name());
     ABSL_ASSIGN_OR_RETURN(HloInstruction * new_gte,
-                     MakeGetTupleElementHlo(new_conv, 0));
+                          MakeGetTupleElementHlo(new_conv, 0));
     ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(instr, new_gte));
 
     changed = true;
@@ -300,7 +301,7 @@ absl::StatusOr<bool> FuseRemoveConvertInConv(HloComputation* comp) {
   }};
   for (auto [conv_type, cvt_type] : types) {
     ABSL_ASSIGN_OR_RETURN(bool curr_change,
-                     FuseConvertTypeIntoConv(comp, conv_type, cvt_type));
+                          FuseConvertTypeIntoConv(comp, conv_type, cvt_type));
     changed |= curr_change;
   }
   return changed;
@@ -335,7 +336,8 @@ absl::StatusOr<bool> FuseConvAlpha(HloComputation* comp,
       continue;
     }
 
-    ABSL_ASSIGN_OR_RETURN(auto gpu_config, conv->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                          conv->backend_config<GpuBackendConfig>());
     CudnnConvBackendConfig& config =
         *gpu_config.mutable_cudnn_conv_backend_config();
 
@@ -814,7 +816,7 @@ CaptureConvGraph(HloInstruction* instr, HloInstruction* convolution,
         w_mult_scale ? HloOpcode::kMultiply : HloOpcode::kDivide,
         input_scale ? input_scaled_conv : instr, bcast_filter_scale));
     ABSL_RETURN_IF_ERROR((input_scale ? input_scaled_conv : instr)
-                        ->ReplaceAllUsesWith(filter_scaled_conv));
+                             ->ReplaceAllUsesWith(filter_scaled_conv));
   }
 
   std::vector<HloInstruction*> operands, aux_outputs;
@@ -915,7 +917,7 @@ absl::StatusOr<bool> F8GraphConv(HloComputation* comp,
                   ? HloPredicateIsOp<HloOpcode::kMultiply>(filter_scale_op)
                   : false));
       ABSL_ASSIGN_OR_RETURN(auto gpu_config,
-                       convolution->backend_config<GpuBackendConfig>());
+                            convolution->backend_config<GpuBackendConfig>());
       CudnnConvBackendConfig& config =
           *gpu_config.mutable_cudnn_conv_backend_config();
 
@@ -940,12 +942,12 @@ absl::StatusOr<bool> F8GraphConv(HloComputation* comp,
       new_convolution->set_custom_call_target(kCudnnConvForwardGraphCallTarget);
       ABSL_RETURN_IF_ERROR(new_convolution->set_backend_config(gpu_config));
       ABSL_ASSIGN_OR_RETURN(HloInstruction * new_gte,
-                       MakeGetTupleElementHlo(new_convolution, 0));
+                            MakeGetTupleElementHlo(new_convolution, 0));
       ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(final_instr, new_gte));
 
       for (int i = 0; i < aux_outputs.size(); ++i) {
         ABSL_ASSIGN_OR_RETURN(HloInstruction * new_gte,
-                         MakeGetTupleElementHlo(new_convolution, i + 1));
+                              MakeGetTupleElementHlo(new_convolution, i + 1));
         ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(aux_outputs[i], new_gte));
       }
 
@@ -984,7 +986,8 @@ absl::StatusOr<bool> FuseBiasOrSideInput(HloComputation* comp,
     // Can't fuse bias or side-input if the conv already has a relu (or other
     // activation), because bias and side-input are added before the activation
     // is applied.
-    ABSL_ASSIGN_OR_RETURN(auto gpu_config, conv->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                          conv->backend_config<GpuBackendConfig>());
     CudnnConvBackendConfig& config =
         *gpu_config.mutable_cudnn_conv_backend_config();
     if (config.activation_mode() != se::dnn::kNone) {
@@ -1051,7 +1054,7 @@ absl::StatusOr<bool> FuseBiasOrSideInput(HloComputation* comp,
     comp->parent()->SetAndUniquifyInstrName(new_conv, conv->name());
     ABSL_RETURN_IF_ERROR(new_conv->set_backend_config(gpu_config));
     ABSL_ASSIGN_OR_RETURN(HloInstruction * new_instr,
-                     MakeGetTupleElementHlo(new_conv, 0));
+                          MakeGetTupleElementHlo(new_conv, 0));
     ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(instr, new_instr));
     changed = true;
   }
@@ -1083,7 +1086,8 @@ absl::StatusOr<bool> FuseSideInputAlpha(HloComputation* comp,
     if (!Match(instr, pattern)) {
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(auto gpu_config, conv->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(auto gpu_config,
+                          conv->backend_config<GpuBackendConfig>());
     CudnnConvBackendConfig& config =
         *gpu_config.mutable_cudnn_conv_backend_config();
     if (config.side_input_scale() != 1) {
@@ -1221,7 +1225,7 @@ absl::StatusOr<bool> FuseElu(HloComputation* comp,
     }
 
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                     conv->backend_config<GpuBackendConfig>());
+                          conv->backend_config<GpuBackendConfig>());
     CudnnConvBackendConfig& config =
         *gpu_config.mutable_cudnn_conv_backend_config();
     if (config.activation_mode() != se::dnn::kNone) {
@@ -1258,7 +1262,7 @@ absl::StatusOr<bool> FuseRelu(HloComputation* comp) {
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                     conv->backend_config<GpuBackendConfig>());
+                          conv->backend_config<GpuBackendConfig>());
     CudnnConvBackendConfig& config =
         *gpu_config.mutable_cudnn_conv_backend_config();
     if (config.activation_mode() != se::dnn::kNone) {
@@ -1303,7 +1307,7 @@ absl::StatusOr<bool> FuseRelu6(HloComputation* comp,
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                     conv->backend_config<GpuBackendConfig>());
+                          conv->backend_config<GpuBackendConfig>());
     CudnnConvBackendConfig& config =
         *gpu_config.mutable_cudnn_conv_backend_config();
     if (config.activation_mode() != se::dnn::kNone) {
@@ -1362,7 +1366,7 @@ absl::StatusOr<bool> FuseLeakyRelu(HloComputation* comp,
     }
 
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                     conv->backend_config<GpuBackendConfig>());
+                          conv->backend_config<GpuBackendConfig>());
     CudnnConvBackendConfig& config =
         *gpu_config.mutable_cudnn_conv_backend_config();
     if (config.activation_mode() != se::dnn::kNone) {
@@ -1442,7 +1446,7 @@ absl::StatusOr<bool> FuseConvertToF16(HloComputation* comp) {
         conv->CloneWithNewOperands(new_shape, new_operands));
     comp->parent()->SetAndUniquifyInstrName(new_conv, conv->name());
     ABSL_ASSIGN_OR_RETURN(HloInstruction * new_instr,
-                     MakeGetTupleElementHlo(new_conv, 0));
+                          MakeGetTupleElementHlo(new_conv, 0));
     ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(instr, new_instr));
     changed = true;
   }
@@ -1541,7 +1545,7 @@ absl::StatusOr<bool> FuseConvertToS8(HloComputation* comp,
         conv->CloneWithNewOperands(new_shape, new_operands));
     comp->parent()->SetAndUniquifyInstrName(new_conv, conv->name());
     ABSL_ASSIGN_OR_RETURN(HloInstruction * new_instr,
-                     MakeGetTupleElementHlo(new_conv, 0));
+                          MakeGetTupleElementHlo(new_conv, 0));
     ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(instr, new_instr));
     changed = true;
   }
@@ -1695,11 +1699,9 @@ absl::StatusOr<bool> CudnnFusedConvRewriter::RunImpl(
     // ForwardGraph Custom Call.
     if (!compute_capability_.IsRocm() && !compute_capability_.IsOneAPI()) {
       auto* cc = compute_capability_.cuda_compute_capability();
-      ABSL_ASSIGN_OR_RETURN(changed,
-                       F8GraphConv(comp, *cc, dnn_version_, toolkit_version_));
-      if (changed) {
-        return changed;
-      }
+      ABSL_ASSIGN_OR_RETURN(
+          changed, F8GraphConv(comp, *cc, dnn_version_, toolkit_version_));
+      any_changed |= changed;
     }
     // Fuse "inside out" starting with the operations closest to the conv.
     ABSL_ASSIGN_OR_RETURN(changed, FuseRemoveConvertInConv(comp));
@@ -1712,11 +1714,14 @@ absl::StatusOr<bool> CudnnFusedConvRewriter::RunImpl(
     //
     // Run FuseBiasOrSideInput twice, so we get both the bias and the side
     // input, if both are present.
-    ABSL_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp, compute_capability_));
+    ABSL_ASSIGN_OR_RETURN(changed,
+                          FuseBiasOrSideInput(comp, compute_capability_));
     any_changed |= changed;
-    ABSL_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp, compute_capability_));
+    ABSL_ASSIGN_OR_RETURN(changed,
+                          FuseBiasOrSideInput(comp, compute_capability_));
     any_changed |= changed;
-    ABSL_ASSIGN_OR_RETURN(changed, FuseSideInputAlpha(comp, compute_capability_));
+    ABSL_ASSIGN_OR_RETURN(changed,
+                          FuseSideInputAlpha(comp, compute_capability_));
     any_changed |= changed;
 
     // Relu might appear before or after convert-to-f16/s8, so we check in both
@@ -1737,11 +1742,14 @@ absl::StatusOr<bool> CudnnFusedConvRewriter::RunImpl(
     any_changed |= changed;
 
     // f16 convs' bias+side-input can appear before or after conversion to f16.
-    ABSL_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp, compute_capability_));
+    ABSL_ASSIGN_OR_RETURN(changed,
+                          FuseBiasOrSideInput(comp, compute_capability_));
     any_changed |= changed;
-    ABSL_ASSIGN_OR_RETURN(changed, FuseBiasOrSideInput(comp, compute_capability_));
+    ABSL_ASSIGN_OR_RETURN(changed,
+                          FuseBiasOrSideInput(comp, compute_capability_));
     any_changed |= changed;
-    ABSL_ASSIGN_OR_RETURN(changed, FuseSideInputAlpha(comp, compute_capability_));
+    ABSL_ASSIGN_OR_RETURN(changed,
+                          FuseSideInputAlpha(comp, compute_capability_));
     any_changed |= changed;
 
     ABSL_ASSIGN_OR_RETURN(changed, FuseRelu(comp));

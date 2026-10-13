@@ -25,6 +25,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "json/json.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/retrying_utils.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/cloud/compute_engine_metadata_client.h"
 #include "xla/tsl/platform/cloud/http_request.h"
@@ -32,8 +34,6 @@ limitations under the License.
 #include "xla/tsl/platform/cloud/oauth_client.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/retrying_utils.h"
 
 namespace tsl {
 

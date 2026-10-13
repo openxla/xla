@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/layout.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <sstream>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/hlo/testlib/test.h"
 #include "xla/layout_util.h"
 #include "xla/shape_util.h"
