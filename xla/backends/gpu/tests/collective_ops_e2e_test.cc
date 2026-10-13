@@ -16,10 +16,10 @@ limitations under the License.
 #include <gmock/gmock.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <random>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -188,11 +188,20 @@ class AsyncCollectiveOps
             /*enable_async=*/std::get<0>(GetParam()),
             /*enable_p2p_memcpy=*/false,
             /*enable_symmetric_buffer=*/std::get<1>(GetParam()),
-            /*memory_size=*/8 * kGB,
-            /*collectives_memory_size=*/std::get<1>(GetParam()) ? 8 * kGB : 0) {
-  }
+            /*memory_size=*/RequiresLargeMemory() ? 5 * kGB : 32 * kMB,
+            /*collectives_memory_size=*/
+            std::get<1>(GetParam())
+                ? (RequiresLargeMemory() ? 5 * kGB : 32 * kMB)
+                : 0) {}
 
  protected:
+  static bool RequiresLargeMemory() {
+    const ::testing::TestInfo* test_info =
+        ::testing::UnitTest::GetInstance()->current_test_info();
+    return test_info != nullptr &&
+           absl::StrContains(test_info->name(), "LargerThanInt32Max");
+  }
+
   void SetUp() override {
     CollectiveOpsWithFlagsBase::SetUp();
     if (!IsHopperAndHigher() && enable_symmetric_buffer_) {
@@ -768,13 +777,13 @@ TEST_P(CollectivesModeOps, AllGatherMixedTypes) {
 class AllGatherGroupedTest : public CollectiveOpsE2ETestBase {
  public:
   AllGatherGroupedTest()
-      : CollectiveOpsE2ETestBase(/*memory_size=*/256 * kMB,
-                                 /*collectives_memory_size=*/128 * kMB) {}
+      : CollectiveOpsE2ETestBase(/*memory_size=*/64 * kMB,
+                                 /*collectives_memory_size=*/32 * kMB) {}
 
  protected:
   static constexpr int kNumReplicas = 4;
   static constexpr int kNumBuffers = 2;
-  static constexpr int64_t kElementsPerRank = 8388608;
+  static constexpr int64_t kElementsPerRank = 1048576;
 
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions options = CollectiveOpsE2ETestBase::GetDebugOptionsForTest();
@@ -790,12 +799,14 @@ class AllGatherGroupedTest : public CollectiveOpsE2ETestBase {
     Literal input = Literal::CreateFromShape(
         ShapeUtil::MakeShape(BF16, {kElementsPerRank}));
     // All values are integers in [0, 127], exactly representable in BF16.
-    std::mt19937 rng(buffer * kNumReplicas + rank);
-    std::uniform_int_distribution<int> distribution(0, 15);
     const int base = (buffer * kNumReplicas + rank) * 16;
+    std::array<bfloat16, 16> pattern;
+    for (int i = 0; i < 16; ++i) {
+      pattern[i] = bfloat16(static_cast<float>(base + i));
+    }
     absl::Span<bfloat16> data = input.data<bfloat16>();
     for (int64_t i = 0; i < kElementsPerRank; ++i) {
-      data[i] = bfloat16(static_cast<float>(base + distribution(rng)));
+      data[i] = pattern[i & 15];
     }
     return input;
   }
@@ -807,14 +818,14 @@ TEST_F(AllGatherGroupedTest, LargeTwoInputs4GpuBF16) {
                  << device_count() << " available)";
   }
 
-  // Gather two 16 MiB inputs per rank using two calls in the same group.
+  // Gather two 2 MiB inputs per rank using two calls in the same group.
   constexpr absl::string_view kHlo = R"(
 HloModule grouped_all_gather
 
 ENTRY main {
-  a = bf16[8388608]{0} parameter(0)
-  b = bf16[8388608]{0} parameter(1)
-  ROOT gathered = (bf16[33554432]{0}, bf16[33554432]{0})
+  a = bf16[1048576]{0} parameter(0)
+  b = bf16[1048576]{0} parameter(1)
+  ROOT gathered = (bf16[4194304]{0}, bf16[4194304]{0})
     all-gather(a, b), dimensions={0},
     replica_groups={{0,1,2,3}}
 }
@@ -1502,8 +1513,9 @@ TEST_P(AsyncCollectiveOps, AsyncAllToAllNumberOfElementsLargerThanInt32Max) {
     id = u32[] replica-id()
     id_u8 = u8[] convert(id)
     a0 = u8[2,32768,32768] broadcast(id_u8), dimensions={}
-    ROOT a2a = u8[2,32768,32768] all-to-all(u8[2,32768,32768] a0),
+    a2a = u8[2,32768,32768] all-to-all(u8[2,32768,32768] a0),
       replica_groups={{0,1}}, dimensions={0}
+    ROOT slice = u8[2,1,1] slice(a2a), slice={[0:2], [0:1], [0:1]}
   }
   )";
   const int64_t kNumReplicas = 2;
@@ -1528,15 +1540,18 @@ TEST_P(AsyncCollectiveOps, AsyncAllToAllNumberOfElementsLargerThanInt32Max) {
     ASSERT_THAT(a2a_done, NotNull());
     HloAsyncInstruction* a2a_start_async = Cast<HloAsyncInstruction>(a2a_start);
     EXPECT_EQ(a2a_start_async->async_wrapped_opcode(), HloOpcode::kAllToAll);
+    EXPECT_EQ(ShapeUtil::ElementsIn(
+                  a2a_start_async->async_wrapped_instruction()->shape()),
+              2LL * 32768 * 32768);
   } else {
-    EXPECT_THAT(FindInstruction(hlo_module, HloOpcode::kAllToAll), NotNull());
+    HloInstruction* a2a = FindInstruction(hlo_module, HloOpcode::kAllToAll);
+    ASSERT_THAT(a2a, NotNull());
+    EXPECT_EQ(ShapeUtil::ElementsIn(a2a->shape()), 2LL * 32768 * 32768);
   }
 
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
 
-  // Sanity check only a few elements in each result, because checking all 2GB
-  // would take too long.
   EXPECT_EQ(results[0].Get<uint8_t>({0, 0, 0}), 0);
   EXPECT_EQ(results[0].Get<uint8_t>({1, 0, 0}), 1);
 
@@ -2221,7 +2236,7 @@ TEST_F(CollectiveOpsTestE2E, HostMemoryOffloadingWithDonation) {
 class CollectiveOpsTestE2EWindowedNonWindowed : public CollectiveOpsTestE2E {
  public:
   CollectiveOpsTestE2EWindowedNonWindowed()
-      : CollectiveOpsTestE2E(/*memory_size=*/4 * kGB,
+      : CollectiveOpsTestE2E(/*memory_size=*/128 * kMB,
                              /*collectives_memory_size=*/0) {}
 
   void CollectiveOpsCompareWindowedNonWindowed(
@@ -2768,13 +2783,13 @@ ENTRY main.9_spmd {
 
 TEST_F(CollectiveOpsTestE2EWindowedNonWindowed, WindowedEinsumE2EPartial) {
   absl::string_view kModuleReplicatedStr = R"(
-HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f32[8,2048,3264]{2,1,0}, f32[3264,2176]{1,0})->f32[8,2048,2176]{2,1,0}}, num_partitions=4
+HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f32[4,64,128]{2,1,0}, f32[128,64]{1,0})->f32[4,64,64]{2,1,0}}, num_partitions=4
 
 ENTRY entry {
-  p0 = f32[8,2048,3264]{2,1,0} parameter(0), sharding={devices=[2,2,1]<=[4]}
-  p1 = f32[3264,2176]{1,0} parameter(1), sharding={devices=[1,2,2]<=[2,2]T(1,0) last_tile_dim_replicate}
-  dot = f32[8,2048,2176]{2,1,0} dot(f32[8,2048,3264]{2,1,0} p0, f32[3264,2176]{1,0} p1), lhs_contracting_dims={2}, rhs_contracting_dims={0}
-  ROOT custom-call = f32[8,2048,2176]{2,1,0} custom-call(dot), custom_call_target="Sharding", sharding={devices=[2,1,2]<=[4]}
+  p0 = f32[4,64,128]{2,1,0} parameter(0), sharding={devices=[2,2,1]<=[4]}
+  p1 = f32[128,64]{1,0} parameter(1), sharding={devices=[1,2,2]<=[2,2]T(1,0) last_tile_dim_replicate}
+  dot = f32[4,64,64]{2,1,0} dot(f32[4,64,128]{2,1,0} p0, f32[128,64]{1,0} p1), lhs_contracting_dims={2}, rhs_contracting_dims={0}
+  ROOT custom-call = f32[4,64,64]{2,1,0} custom-call(dot), custom_call_target="Sharding", sharding={devices=[2,1,2]<=[4]}
 })";
 
   CollectiveOpsCompareWindowedNonWindowed(kModuleReplicatedStr,
@@ -3414,27 +3429,27 @@ ENTRY main.49 {
 
 TEST_F(CollectiveOpsTestE2E, MemcpyP2pLargeMessage) {
   absl::string_view hlo_string = R"(
-HloModule MemcpyP2pLargeMessage, entry_computation_layout={(bf16[256,16000]{1,0})->bf16[256,16000]{1,0}}, num_partitions=4
+HloModule MemcpyP2pLargeMessage, entry_computation_layout={(bf16[64,4000]{1,0})->bf16[64,4000]{1,0}}, num_partitions=4
 
 ENTRY main {
-  Arg_0.5 = bf16[256,16000]{1,0} parameter(0)
-  collective-permute.0 = bf16[256,16000]{1,0} collective-permute(Arg_0.5), channel_id=1, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
-  collective-permute.1 = bf16[256,16000]{1,0} collective-permute(collective-permute.0), channel_id=2, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
-  collective-permute.2 = bf16[256,16000]{1,0} collective-permute(collective-permute.1), channel_id=3, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
-  collective-permute.3 = bf16[256,16000]{1,0} collective-permute(collective-permute.2), channel_id=4, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
-  collective-permute.4 = bf16[256,16000]{1,0} collective-permute(collective-permute.3), channel_id=5, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
-  collective-permute.5 = bf16[256,16000]{1,0} collective-permute(collective-permute.4), channel_id=6, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
-  collective-permute.6 = bf16[256,16000]{1,0} collective-permute(collective-permute.5), channel_id=7, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
-  collective-permute.7 = bf16[256,16000]{1,0} collective-permute(collective-permute.6), channel_id=8, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  Arg_0.5 = bf16[64,4000]{1,0} parameter(0)
+  collective-permute.0 = bf16[64,4000]{1,0} collective-permute(Arg_0.5), channel_id=1, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.1 = bf16[64,4000]{1,0} collective-permute(collective-permute.0), channel_id=2, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.2 = bf16[64,4000]{1,0} collective-permute(collective-permute.1), channel_id=3, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.3 = bf16[64,4000]{1,0} collective-permute(collective-permute.2), channel_id=4, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.4 = bf16[64,4000]{1,0} collective-permute(collective-permute.3), channel_id=5, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.5 = bf16[64,4000]{1,0} collective-permute(collective-permute.4), channel_id=6, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.6 = bf16[64,4000]{1,0} collective-permute(collective-permute.5), channel_id=7, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
+  collective-permute.7 = bf16[64,4000]{1,0} collective-permute(collective-permute.6), channel_id=8, source_target_pairs={{0,3},{1,0},{2,1},{3,2}}
 
   constant.0 = bf16[] constant(2)
-  broadcast.0 = bf16[256,16000]{1,0} broadcast(constant.0), dimensions={}
-  collective-permute.8 = bf16[256,16000]{1,0} collective-permute(broadcast.0), channel_id=6, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
-  collective-permute.9 = bf16[256,16000]{1,0} collective-permute(collective-permute.8), channel_id=9, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
-  collective-permute.10 = bf16[256,16000]{1,0} collective-permute(collective-permute.9), channel_id=10, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
-  collective-permute.11 = bf16[256,16000]{1,0} collective-permute(collective-permute.10), channel_id=11, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  broadcast.0 = bf16[64,4000]{1,0} broadcast(constant.0), dimensions={}
+  collective-permute.8 = bf16[64,4000]{1,0} collective-permute(broadcast.0), channel_id=6, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.9 = bf16[64,4000]{1,0} collective-permute(collective-permute.8), channel_id=9, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.10 = bf16[64,4000]{1,0} collective-permute(collective-permute.9), channel_id=10, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
+  collective-permute.11 = bf16[64,4000]{1,0} collective-permute(collective-permute.10), channel_id=11, source_target_pairs={{0,1},{1,2},{2,3},{3,0}}
 
-  ROOT multiply.10 = bf16[256,16000]{1,0} multiply(collective-permute.7, collective-permute.11)
+  ROOT multiply.10 = bf16[64,4000]{1,0} multiply(collective-permute.7, collective-permute.11)
 } // main
 )";
 

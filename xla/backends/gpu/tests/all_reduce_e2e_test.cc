@@ -149,11 +149,13 @@ struct AllReduceTestParams {
 
   // Returns the range of supported element sizes for the given element type and
   // strategy.
-  std::pair<int64_t, int64_t> RangeElements(PrimitiveType element_type) const {
+  std::pair<int64_t, int64_t> RangeElements(PrimitiveType element_type,
+                                            int64_t world_size = 2) const {
     const bool is_two_shot = strategy == AllReduceStrategy::kTwoShot;
     int64_t min_supported_size = is_two_shot
                                      ? gpu::GetMaxSupportedAllReduceSizeBytes(
-                                           AllReduceStrategy::kOneShot)
+                                           AllReduceStrategy::kOneShot) /
+                                           world_size
                                      : 0;
     int64_t element_size = ShapeUtil::ByteSizeOfPrimitiveType(element_type);
     const int64_t max_world_size = 8;
@@ -167,19 +169,22 @@ struct AllReduceTestParams {
   // The size of each dimension is determined by the range of supported element
   // sizes for the given element type and all-reduce strategy.
   // The returned shape is of the given rank.
-  std::vector<int64_t> GetShape(PrimitiveType element_type,
-                                int32_t rank = 1) const {
-    auto [min_elements, max_elements] = RangeElements(element_type);
-    // Arbitrary choice of midpoint elements.
-    int64_t total = max_elements - (max_elements - min_elements) / 2;
+  std::vector<int64_t> GetShape(PrimitiveType element_type, int32_t rank = 1,
+                                int64_t world_size = 2) const {
+    auto [min_elements, max_elements] = RangeElements(element_type, world_size);
+    // Use a small margin above min_elements instead of the midpoint so we
+    // exercise the target strategy without transferring and reducing multi-MB
+    // buffers on every test case.
+    int64_t total = min_elements + 576;
     if (rank <= 1) {
       return {total};
     }
     std::vector<int64_t> dims;
     for (int32_t i = 0; i < rank - 1; ++i) {
       dims.push_back(rank);
-      total /= rank;
+      total = (total + rank - 1) / rank;
     }
+    total = ((total + 63) / 64) * 64;
     dims.push_back(total);
     return dims;
   }
@@ -319,20 +324,34 @@ struct InputsOutputs {
   }
 };
 
+constexpr int64_t kRandomBlockSize = 1021;
+
 template <typename T>
-static void FillRandom(Array<T>& array, int64_t seed) {
+static void FillRandom(absl::Span<T> dst, int64_t seed) {
   constexpr PrimitiveType primitive_type =
       primitive_util::NativeToPrimitiveType<T>();
+  // Generate a prime-sized block of random values and tile it across the buffer
+  // to avoid expensive per-element RNG overhead on multi-megabyte test buffers
+  // while keeping values non-periodic across power-of-two warp/block/rank
+  // strides.
+  const int64_t num_elements = dst.size();
+  const int64_t block_size = std::min(num_elements, kRandomBlockSize);
+  Array<T> block({std::max<int64_t>(1, block_size)});
   if constexpr (IsFloatingPoint(primitive_type)) {
-    array.FillRandom(T{1.0}, T{10.0}, seed);
+    block.FillRandom(T{1.0}, T{10.0}, seed);
   } else if constexpr (IsPredicate(primitive_type)) {
-    array.FillRandomBool(seed);
+    block.FillRandomBool(seed);
   } else if constexpr (IsIntegral(primitive_type)) {
-    array.FillRandomUniform(0, 100, seed);
+    block.FillRandomUniform(0, 100, seed);
   } else {
     GTEST_FAIL() << "Unsupported element type: "
                  << absl::StrFormat("%v",
                                     primitive_util::NativeToPrimitiveType<T>());
+  }
+  const T* src = block.data();
+  for (int64_t offset = 0; offset < num_elements; offset += block_size) {
+    const int64_t count = std::min(block_size, num_elements - offset);
+    std::copy_n(src, count, dst.data() + offset);
   }
 }
 
@@ -342,8 +361,8 @@ static absl::StatusOr<InputsOutputs> BuildTestInputsOutputs(
     int64_t num_iterations) {
   using ElementType = primitive_util::NativeTypeOf<kElementType>;
 
-  std::vector<Array<ElementType>> inputs;
   std::vector<Literal> input_literals;
+  input_literals.reserve(num_replicas);
   const HloInstruction* const hlo_instr =
       HloHardwareIndependentTestBase::FindInstruction(&module,
                                                       HloOpcode::kAllReduce);
@@ -355,62 +374,67 @@ static absl::StatusOr<InputsOutputs> BuildTestInputsOutputs(
       Cast<HloAllReduceInstruction>(hlo_instr);
   const Shape& shape = module.entry_computation()->root_instruction()->shape();
   for (int i = 0; i < num_replicas; ++i) {
-    auto& input = inputs.emplace_back(Array<ElementType>(shape.dimensions()));
-    FillRandom<ElementType>(input, i);
-    input_literals.push_back(
-        LiteralUtil::CreateFromArrayWithLayout(input, shape.layout()));
+    Literal& input_literal = input_literals.emplace_back(shape);
+    FillRandom<ElementType>(input_literal.data<ElementType>(), i);
   }
-  std::vector<Literal> expected_output_literals;
+  std::vector<Literal> expected_output_literals(num_replicas);
 
   const std::vector<ReplicaGroup>& replica_groups =
       instr->device_list()->replica_groups();
-  // Map each device to set of replica groups it belongs to.
-  std::vector<std::vector<int64_t>> device_to_groups(num_replicas);
-  for (const auto& replica_group : replica_groups) {
-    const auto& replica_ids = replica_group.replica_ids();
-    for (int64_t replica : replica_ids) {
-      CHECK_EQ(device_to_groups[replica].size(), 0);
-      device_to_groups[replica].assign(replica_ids.begin(), replica_ids.end());
-    }
-  }
   const ReductionKind reduction_kind =
       OpcodeToReductionKind(hlo_opcode, kElementType).value();
   const ElementType identity =
       GetReductionIdentity(reduction_kind, kElementType)
           .value()
           .Get<ElementType>({});
-  std::vector<Array<ElementType>> expected_outputs(
-      num_replicas, Array<ElementType>(shape.dimensions(), identity));
+  constexpr PrimitiveType primitive_type =
+      primitive_util::NativeToPrimitiveType<ElementType>();
+  const int64_t num_elements = ShapeUtil::ElementsIn(shape);
+  const int64_t block_size = std::min(num_elements, kRandomBlockSize);
 
-  for (int i = 0; i < num_replicas; ++i) {
-    expected_outputs[i].Each(
-        [&](absl::Span<const int64_t> indices, ElementType* val) {
-          constexpr PrimitiveType primitive_type =
-              primitive_util::NativeToPrimitiveType<ElementType>();
-          for (const int64_t replica : device_to_groups[i]) {
-            auto result = Evaluate(*val, inputs[replica](indices), hlo_opcode);
-            if (!result.has_value()) {
-              GTEST_FAIL() << "Unsupported reduction kind for element type: "
-                           << absl::StrFormat("%v : %v", primitive_type,
-                                              hlo_opcode);
-            }
-            *val = result.value();
-          }
-          if constexpr (IsNumeric(primitive_type)) {
-            if (hlo_opcode == HloOpcode::kAdd) {
-              // Each iteration after the first,the output is doubled.
-              *val *= static_cast<ElementType>(
-                  std::pow(device_to_groups[i].size(), num_iterations - 1));
-            } else if (num_iterations > 1) {
-              GTEST_FAIL()
-                  << "Iterations > 1 not supported for non-add reductions.";
-            }
-          }
-        });
-  }
-  for (auto& expected_output : expected_outputs) {
-    expected_output_literals.push_back(LiteralUtil::CreateFromArrayWithLayout(
-        expected_output, shape.layout()));
+  for (const auto& replica_group : replica_groups) {
+    const auto& replica_ids = replica_group.replica_ids();
+    Array<ElementType> group_block({std::max<int64_t>(1, block_size)},
+                                   identity);
+    ElementType* block_data = group_block.data();
+    for (const int64_t replica : replica_ids) {
+      absl::Span<const ElementType> in_data =
+          input_literals[replica].data<ElementType>();
+      for (int64_t idx = 0; idx < block_size; ++idx) {
+        auto result = Evaluate(block_data[idx], in_data[idx], hlo_opcode);
+        if (!result.has_value()) {
+          return absl::InvalidArgumentError(absl::StrFormat(
+              "Unsupported reduction kind for element type: %v : %v",
+              primitive_type, hlo_opcode));
+        }
+        block_data[idx] = result.value();
+      }
+    }
+    if constexpr (IsNumeric(primitive_type)) {
+      if (hlo_opcode == HloOpcode::kAdd && num_iterations > 1) {
+        const ElementType scale = static_cast<ElementType>(
+            std::pow(replica_ids.size(), num_iterations - 1));
+        for (int64_t idx = 0; idx < block_size; ++idx) {
+          block_data[idx] *= scale;
+        }
+      } else if (num_iterations > 1) {
+        return absl::InvalidArgumentError(
+            "Iterations > 1 not supported for non-add reductions.");
+      }
+    }
+    Literal group_literal(shape);
+    ElementType* out_data = group_literal.data<ElementType>().data();
+    for (int64_t offset = 0; offset < num_elements; offset += block_size) {
+      const int64_t count = std::min(block_size, num_elements - offset);
+      std::copy_n(block_data, count, out_data + offset);
+    }
+    for (int i = 0; i + 1 < replica_ids.size(); ++i) {
+      expected_output_literals[replica_ids[i]] = group_literal.Clone();
+    }
+    if (!replica_ids.empty()) {
+      expected_output_literals[replica_ids[replica_ids.size() - 1]] =
+          std::move(group_literal);
+    }
   }
   return InputsOutputs{std::move(input_literals),
                        std::move(expected_output_literals)};
@@ -627,7 +651,8 @@ TEST_P(AllReduceTypesTest, SupportedTypes2GPUs) {
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
   for (int i = 0; i < kNumReplicas; ++i) {
-    ASSERT_TRUE(LiteralTestUtil::Equal(test_io.expected_outputs[i], results[i]))
+    ASSERT_TRUE(test_io.expected_outputs[i] == results[i] ||
+                LiteralTestUtil::Equal(test_io.expected_outputs[i], results[i]))
         << "ExpectedOutput != Result at rank " << i;
   }
 }
@@ -670,7 +695,8 @@ TEST_P(AllReduceLayoutAwareTest, AllReduceLayoutAwareTest) {
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
   for (int i = 0; i < kNumReplicas; ++i) {
-    ASSERT_TRUE(LiteralTestUtil::Equal(test_io.expected_outputs[i], results[i]))
+    ASSERT_TRUE(test_io.expected_outputs[i] == results[i] ||
+                LiteralTestUtil::Equal(test_io.expected_outputs[i], results[i]))
         << "ExpectedOutput != Result at rank " << i;
   }
 }
@@ -697,7 +723,8 @@ TEST_P(AllReduceTest, F32_8GPUs_AllReplicasOneGroup) {
     return;
   }
 
-  const std::vector<int64_t> shape = GetParam().GetShape(PrimitiveType::F32);
+  const std::vector<int64_t> shape =
+      GetParam().GetShape(PrimitiveType::F32, /*rank=*/1, kNumReplicas);
   ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(
                        absl::StrFormat(kModuleStr, absl::StrJoin(shape, ",")),
@@ -782,7 +809,8 @@ TEST_P(AllReduceTest, F32_8GPUs_2ReplicasPerGroup) {
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
   for (int i = 0; i < kNumReplicas; ++i) {
-    ASSERT_TRUE(LiteralTestUtil::Equal(test_io.expected_outputs[i], results[i]))
+    ASSERT_TRUE(test_io.expected_outputs[i] == results[i] ||
+                LiteralTestUtil::Equal(test_io.expected_outputs[i], results[i]))
         << "ExpectedOutput != Result at index " << i;
   }
 }
@@ -810,7 +838,7 @@ TEST_P(AllReduceTest, F32TwoD4GPUs) {
   }
 
   const std::vector<int64_t> shape =
-      GetParam().GetShape(PrimitiveType::F32, /*rank=*/2);
+      GetParam().GetShape(PrimitiveType::F32, /*rank=*/2, kNumReplicas);
 
   ASSERT_OK_AND_ASSIGN(
       auto module, ParseAndReturnVerifiedModule(
@@ -1097,7 +1125,8 @@ TEST_F(AllReduceTestNoParams, TestGlobalDeviceIdMappingWithAsyncAllReduce) {
   const std::vector<Literal>& results = execution_result.results;
   ASSERT_EQ(results.size(), kNumReplicas);
   for (int i = 0; i < kNumReplicas; ++i) {
-    ASSERT_TRUE(LiteralTestUtil::Equal(test_io.expected_outputs[i], results[i]))
+    ASSERT_TRUE(test_io.expected_outputs[i] == results[i] ||
+                LiteralTestUtil::Equal(test_io.expected_outputs[i], results[i]))
         << "ExpectedOutput != Result at rank " << i;
   }
 }

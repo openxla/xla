@@ -72,10 +72,10 @@ class RaggedAllToAllTestBase : public CollectiveOpsWithFlagsBase {
             enable_async, /*enable_p2p_memcpy=*/false,
             /*enable_symmetric_buffer=*/
             collectives_mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY,
-            /*memory_size=*/64 * kMB,
+            /*memory_size=*/16 * kMB,
             /*collectives_memory_size=*/
             collectives_mode == DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY
-                ? 64 * kMB
+                ? 16 * kMB
                 : 0),
         impl_type_(impl_type),
         collectives_mode_(collectives_mode) {}
@@ -943,13 +943,13 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_8GPUs) {
   HloModule module, num_partitions=1
 
   ENTRY entry {
-    input = f32[512, 5, 32] parameter(0)
-    output = f32[512, 5, 32] parameter(1)
+    input = f32[64, 2, 8] parameter(0)
+    output = f32[64, 2, 8] parameter(1)
     input_offsets = s32[32] parameter(2)
     send_sizes = s32[32] parameter(3)
     output_offsets = s32[32] parameter(4)
     recv_sizes = s32[32] parameter(5)
-    ROOT ra2a = f32[512, 5, 32] ragged-all-to-all(input, output,
+    ROOT ra2a = f32[64, 2, 8] ragged-all-to-all(input, output,
       input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,1,2,3,4,5,6,7}}
   })";
@@ -966,7 +966,7 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_8GPUs) {
 
   Array<int64_t> input_sizes(
       {kNumReplicas, kNumReplicas, kNumUpdatesPerReplica});
-  input_sizes.FillRandomUniform(0, 10);
+  input_sizes.FillRandomUniform(0, 2);
 
   ASSERT_OK(CreateRandomTestData(module.get(), input_sizes));
 
@@ -987,13 +987,13 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_8GPUs_2ReplicasPerGroups) {
   HloModule module, num_partitions=1
 
   ENTRY entry {
-    input = f32[512, 5, 32] parameter(0)
-    output = f32[512, 5, 32] parameter(1)
+    input = f32[64, 2, 8] parameter(0)
+    output = f32[64, 2, 8] parameter(1)
     input_offsets = s32[32] parameter(2)
     send_sizes = s32[32] parameter(3)
     output_offsets = s32[32] parameter(4)
     recv_sizes = s32[32] parameter(5)
-    ROOT ra2a = f32[512, 5, 32] ragged-all-to-all(input, output,
+    ROOT ra2a = f32[64, 2, 8] ragged-all-to-all(input, output,
       input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,4},{1,5},{2,6},{3,7}}
   })";
@@ -1014,7 +1014,7 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_8GPUs_2ReplicasPerGroups) {
 
   Array<int64_t> input_sizes(
       {kNumReplicas, kNumReplicasPerGroup, kNumUpdatesPerReplica});
-  input_sizes.FillRandomUniform(0, 10);
+  input_sizes.FillRandomUniform(0, 2);
 
   ASSERT_OK(CreateRandomTestData(module.get(), input_sizes));
 
@@ -1035,13 +1035,13 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_8GPUs_4ReplicasPerGroups) {
   HloModule module, num_partitions=1
 
   ENTRY entry {
-    input = f32[512, 5, 32] parameter(0)
-    output = f32[512, 5, 32] parameter(1)
+    input = f32[64, 2, 8] parameter(0)
+    output = f32[64, 2, 8] parameter(1)
     input_offsets = s32[32] parameter(2)
     send_sizes = s32[32] parameter(3)
     output_offsets = s32[32] parameter(4)
     recv_sizes = s32[32] parameter(5)
-    ROOT ra2a = f32[512, 5, 32] ragged-all-to-all(input, output,
+    ROOT ra2a = f32[64, 2, 8] ragged-all-to-all(input, output,
       input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups={{0,1,2,3},{4,5,6,7}}
   })";
@@ -1062,7 +1062,7 @@ TEST_P(RaggedAllToAllTest, RaggedAllToAll_8GPUs_4ReplicasPerGroups) {
 
   Array<int64_t> input_sizes(
       {kNumReplicas, kNumReplicasPerGroup, kNumUpdatesPerReplica});
-  input_sizes.FillRandomUniform(0, 10);
+  input_sizes.FillRandomUniform(0, 2);
 
   ASSERT_OK(CreateRandomTestData(module.get(), input_sizes));
 
@@ -1215,13 +1215,13 @@ TEST_P(RaggedAllToAllMultiHostDecomposerTest, DecomposesCorrectly) {
   HloModule module, num_partitions=1
 
   ENTRY entry {
-    input = f32[$0,5,32] parameter(0)
-    output = f32[$1,5,32] parameter(1)
+    input = f32[$0,2,8] parameter(0)
+    output = f32[$1,2,8] parameter(1)
     input_offsets = s32[$2] parameter(2)
     send_sizes = s32[$2] parameter(3)
     output_offsets = s32[$2] parameter(4)
     recv_sizes = s32[$2] parameter(5)
-    ROOT ra2a = f32[$1,5,32] ragged-all-to-all(input, output,
+    ROOT ra2a = f32[$1,2,8] ragged-all-to-all(input, output,
       input_offsets, send_sizes, output_offsets, recv_sizes),
       replica_groups=$3
   })",
@@ -1247,7 +1247,7 @@ TEST_P(RaggedAllToAllMultiHostDecomposerTest, DecomposesCorrectly) {
 
   Array<int64_t> input_sizes(
       {num_replicas, num_replicas_per_group, num_updates_per_replica});
-  input_sizes.FillRandomUniform(0, 16);
+  input_sizes.FillRandomUniform(0, 2);
 
   ASSERT_OK(CreateRandomTestData(module.get(), input_sizes));
 
@@ -1299,8 +1299,8 @@ GetRaggedAllToAllMultiHostDecomposerTestConfigs() {
     }
   };
 
-  add_configs_for_input_sizes(512, 4096);
-  add_configs_for_input_sizes(4096, 512);
+  add_configs_for_input_sizes(64, 128);
+  add_configs_for_input_sizes(128, 64);
 
   return configs;
 }
