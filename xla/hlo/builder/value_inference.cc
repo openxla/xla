@@ -720,19 +720,6 @@ absl::StatusOr<PostorderDFSNode> PostorderDFSVisitor::AnalyzeUpperBound(
                 HloOpcode::kMaximum, lower_bound_abs, upper_bound_abs);
           });
     }
-    case HloOpcode::kMaximum: {
-      // upper-bound(max(lhs, rhs)) = max(upper-bound(lhs), upper-bound(rhs))
-      return PostorderDFSNode()
-          .AddDependency(root->operand_ids(0),
-                         PostorderDFSNodeType::kConstantUpperBound, context)
-          .AddDependency(root->operand_ids(1),
-                         PostorderDFSNodeType::kConstantUpperBound, context)
-          .AddVisit([this](Literal lhs_bound,
-                           Literal rhs_bound) -> absl::StatusOr<Literal> {
-            return evaluator.EvaluateElementwiseBinaryOp(
-                HloOpcode::kMaximum, lhs_bound, rhs_bound);
-          });
-    }
     case HloOpcode::kMinimum: {
       // upper-bound(min(lhs, rhs)) can use either operand's upper bound.
       return PostorderDFSNode()
@@ -943,19 +930,6 @@ absl::StatusOr<PostorderDFSNode> PostorderDFSVisitor::AnalyzeLowerBound(
                 operands[2], operands[3]);
           });
     }
-    case HloOpcode::kMinimum: {
-      // lower-bound(min(lhs, rhs)) = min(lower-bound(lhs), lower-bound(rhs))
-      return PostorderDFSNode()
-          .AddDependency(root->operand_ids(0),
-                         PostorderDFSNodeType::kConstantLowerBound, context)
-          .AddDependency(root->operand_ids(1),
-                         PostorderDFSNodeType::kConstantLowerBound, context)
-          .AddVisit([this](Literal lhs_bound,
-                           Literal rhs_bound) -> absl::StatusOr<Literal> {
-            return evaluator.EvaluateElementwiseBinaryOp(
-                HloOpcode::kMinimum, lhs_bound, rhs_bound);
-          });
-    }
     case HloOpcode::kNegate: {
       // lower-bound(negate(operand)) = negate(upper-bound(operand))
       return PostorderDFSNode()
@@ -1124,10 +1098,20 @@ absl::StatusOr<PostorderDFSNode> PostorderDFSVisitor::AnalyzeIsDynamic(
                    handle_to_instruction(handle));
   ABSL_ASSIGN_OR_RETURN(HloOpcode opcode, StringToHloOpcode(root->opcode()));
   PostorderDFSNode result;
-  for (auto operand_id : root->operand_ids()) {
+  for (int64_t i = 0; i < root->operand_ids_size(); ++i) {
     InferenceContext dep_context = context;
     dep_context.shape_index = {};
-    result.AddDependency(operand_id, type, dep_context);
+    PostorderDFSNodeType operand_type = type;
+    // Match the opposite-bound dependencies used by the bound evaluators.
+    if (IsBoundDynamism(type) &&
+        (opcode == HloOpcode::kNegate ||
+         ((opcode == HloOpcode::kSubtract || opcode == HloOpcode::kDivide) &&
+          i == 1))) {
+      operand_type = type == PostorderDFSNodeType::kUpperBoundIsDynamic
+                         ? PostorderDFSNodeType::kLowerBoundIsDynamic
+                         : PostorderDFSNodeType::kUpperBoundIsDynamic;
+    }
+    result.AddDependency(root->operand_ids(i), operand_type, dep_context);
   }
   switch (opcode) {
     case HloOpcode::kGetDimensionSize: {
@@ -1219,7 +1203,26 @@ absl::StatusOr<PostorderDFSNode> PostorderDFSVisitor::AnalyzeIsDynamic(
             return CreatePredLiteral(any_dynamic_operand, root_shape);
           });
     }
-    case HloOpcode::kAbs:
+    case HloOpcode::kAbs: {
+      if (!IsBoundDynamism(type)) {
+        return result.AddVisit([](Literal operand) { return operand; });
+      }
+      // Both abs bound evaluators use both endpoints of the operand.
+      InferenceContext dep_context = context;
+      dep_context.shape_index = {};
+      return PostorderDFSNode()
+          .AddDependency(root->operand_ids(0),
+                         PostorderDFSNodeType::kLowerBoundIsDynamic,
+                         dep_context)
+          .AddDependency(root->operand_ids(0),
+                         PostorderDFSNodeType::kUpperBoundIsDynamic,
+                         dep_context)
+          .AddVisit([this](Literal lower_dynamic,
+                           Literal upper_dynamic) -> absl::StatusOr<Literal> {
+            return evaluator.EvaluateElementwiseBinaryOp(
+                HloOpcode::kOr, lower_dynamic, upper_dynamic);
+          });
+    }
     case HloOpcode::kRoundNearestAfz:
     case HloOpcode::kRoundNearestEven:
     case HloOpcode::kBitcast:
