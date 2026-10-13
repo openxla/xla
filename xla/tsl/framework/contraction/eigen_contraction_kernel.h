@@ -462,38 +462,35 @@ struct DirectColMajorAccess {
 
 #define SIMPLE_TENSOR const Tensor<Scalar, 2, Eigen::ColMajor, StorageIndex>
 
-#define TENSOR_MAP_ROWMAJOR(ALIGNMENT)                                    \
+#define TENSOR_MAP_ROWMAJOR                                               \
   const TensorMap<Tensor<const Scalar, 2, Eigen::RowMajor, StorageIndex>, \
-                  ALIGNMENT>
+                  Eigen::Aligned>
 
-#define TENSOR_MAP_COLMAJOR(ALIGNMENT)                                    \
+#define TENSOR_MAP_COLMAJOR                                               \
   const TensorMap<Tensor<const Scalar, 2, Eigen::ColMajor, StorageIndex>, \
-                  ALIGNMENT>
+                  Eigen::Aligned>
 
-#define TENSOR_MAP_CONST_ROWMAJOR(ALIGNMENT) \
-  const TensorMap<Tensor<Scalar, 2, Eigen::RowMajor, StorageIndex>, ALIGNMENT>
+#define TENSOR_MAP_CONST_ROWMAJOR                                   \
+  const TensorMap<Tensor<Scalar, 2, Eigen::RowMajor, StorageIndex>, \
+                  Eigen::Aligned>
 
-#define TENSOR_MAP_CONST_COLMAJOR(ALIGNMENT) \
-  const TensorMap<Tensor<Scalar, 2, Eigen::ColMajor, StorageIndex>, ALIGNMENT>
+#define TENSOR_MAP_CONST_COLMAJOR                                   \
+  const TensorMap<Tensor<Scalar, 2, Eigen::ColMajor, StorageIndex>, \
+                  Eigen::Aligned>
 
 // This is reshaped convolution filter from `eigen_spatial_convolutions.h`.
-#define TENSOR_RESHAPE(ALIGNMENT)                                             \
+#define TENSOR_RESHAPE                                                        \
   const TensorReshapingOp<                                                    \
       const Eigen::DSizes<StorageIndex, 2>,                                   \
       const TensorMap<Tensor<const Scalar, 4, Eigen::RowMajor, StorageIndex>, \
-                      ALIGNMENT>>
+                      Eigen::Aligned>>
 
 REGISTER_DIRECT_COL_MAJOR_ACCESS(SIMPLE_TENSOR);
-REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_ROWMAJOR(Eigen::Aligned));
-REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_COLMAJOR(Eigen::Aligned));
-REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_CONST_ROWMAJOR(Eigen::Aligned));
-REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_CONST_COLMAJOR(Eigen::Aligned));
-REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_RESHAPE(Eigen::Aligned));
-REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_ROWMAJOR(Eigen::Unaligned));
-REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_COLMAJOR(Eigen::Unaligned));
-REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_CONST_ROWMAJOR(Eigen::Unaligned));
-REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_CONST_COLMAJOR(Eigen::Unaligned));
-REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_RESHAPE(Eigen::Unaligned));
+REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_ROWMAJOR);
+REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_COLMAJOR);
+REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_CONST_ROWMAJOR);
+REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_MAP_CONST_COLMAJOR);
+REGISTER_DIRECT_COL_MAJOR_ACCESS(TENSOR_RESHAPE);
 
 #undef SIMPLE_TENSOR
 #undef TENSOR_MAP_ROWMAJOR
