@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_PJRT_SE_LOCAL_DEVICE_STATE_H_
 #define XLA_PJRT_SE_LOCAL_DEVICE_STATE_H_
 
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -37,9 +40,12 @@ limitations under the License.
 #include "xla/pjrt/se/buffer_sequencing_event.h"
 #include "xla/pjrt/se/event_pool.h"
 #include "xla/pjrt/semaphore.h"
-#include "xla/pjrt/worker_thread.h"
+#include "xla/runtime/chip_id.h"
+#include "xla/runtime/device_id.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/concurrency/executor.h"
 
 namespace xla {
 
@@ -161,7 +167,7 @@ class LocalDeviceState {
   // returned by GetExternalReadyEventStream.
   // TODO(skyewm): this function could map other raw streams if needed. It's
   // currently only used with external ready event streams.
-  absl::StatusOr<se::Stream*> GetStreamFromExternalStream(std::intptr_t stream);
+  absl::StatusOr<se::Stream*> GetStreamFromExternalStream(intptr_t stream);
 
   // Returns a vector of device to device streams.
   std::vector<se::Stream*> GetDeviceToDeviceStreams();
@@ -178,13 +184,16 @@ class LocalDeviceState {
       se::Stream* transfer_stream, se::Stream* dst_stream,
       se::DeviceAddressBase src_buffer, se::DeviceAddressBase dst_buffer);
 
-  WorkerThread* execute_thread() const { return execute_thread_.get(); }
+  tsl::Executor* execution_runner() const { return execution_runner_.get(); }
 
-  WorkerThread* async_dispatch_thread() const {
-    return async_dispatch_thread_.get();
+  tsl::Executor* async_dispatch_runner() const {
+    return async_dispatch_runner_.get();
   }
 
-  WorkerThread* cleanup_thread() const { return cleanup_thread_.get(); }
+  // Stops accepting launch work and waits for all queued launch work to finish.
+  // This operation is idempotent and must run before dependencies used by
+  // launch tasks are shut down.
+  void QuiesceExecutionRunners();
 
   // Enqueues a host callback on 'stream'. `stream` may, but need not, wait for
   // `callback` to complete. It is safe to call runtime methods from the
@@ -281,22 +290,17 @@ class LocalDeviceState {
   std::optional<absl::flat_hash_map<se::Stream*, std::unique_ptr<se::Stream>>>
       callback_stream_map_;
 
-  // A worker thread, used for replicated computation launches.
-  std::unique_ptr<WorkerThread> execute_thread_;
+  // A single-threaded executor used for replicated computation launches.
+  std::unique_ptr<tsl::Executor> execution_runner_;
 
-  // A worker thread, used for launching executables async
+  // A single-threaded executor used for launching executables asynchronously.
   // Only if schedule_async=true is passed in the constructor.
-  std::unique_ptr<WorkerThread> async_dispatch_thread_;
+  std::unique_ptr<tsl::Executor> async_dispatch_runner_;
 
-  // A worker thread, used for callbacks. It is necessary that this be a
-  // different thread to the execute thread because we acquire the compute
-  // semaphore during calls to Execute but release it from a callback and if
-  // they are the same thread we might deadlock.
-  std::unique_ptr<WorkerThread> callback_thread_;
-
-  // One thread dedicated to cleaning up buffers. Scheduled work on this thread
-  // may wait for other threads to schedule writes to buffers.
-  std::unique_ptr<WorkerThread> cleanup_thread_;
+  // A single-threaded executor used for callbacks. It must be different from
+  // the execution runner because we acquire the compute semaphore during calls
+  // to Execute but release it from a callback; sharing one could deadlock.
+  std::unique_ptr<tsl::Executor> callback_runner_;
 
   bool allow_delete_before_fulfill_ = true;
 

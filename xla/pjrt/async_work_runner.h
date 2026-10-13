@@ -27,12 +27,11 @@ limitations under the License.
 
 namespace xla {
 
-// Async work runner abstracts away the implementation of the underlying thread
-// pool (or concurrent work queue).
+// A tsl::Executor with convenience APIs for running tasks after AsyncValue
+// dependencies become ready.
 class AsyncWorkRunner : public tsl::Executor {
  public:
   AsyncWorkRunner() = default;
-  virtual ~AsyncWorkRunner() = default;
 
   // Executes `task` when all dependencies become ready.
   void ExecuteWhenReady(
