@@ -23,6 +23,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -117,6 +118,65 @@ TEST_F(MultiOutputFusionTest, MultiOutputFusionSiblingReduceAndReduceFusion) {
   ASSERT_TRUE(fusion->IsMultiOutputFusion());
   EXPECT_THAT(fusion->fused_expression_root(),
               GmockMatch(m::Tuple(m::Reduce(), m::Reduce())));
+}
+
+TEST_F(MultiOutputFusionTest, NoSiblingFusionOfColumnReductionAndElementwise) {
+  // The column reduction gets a grid sized for its 768 outputs, and
+  // merging would run the sqrt on those few blocks, about 2x slower.
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
+    fused_reduce {
+      p0.1 = f32[4096,768]{1,0} parameter(0)
+      const.1 = f32[] constant(0)
+      ROOT reduce = f32[768]{0} reduce(p0.1, const.1), dimensions={0}, to_apply=scalar_add_computation
+    }
+
+    fused_elementwise {
+      p0.2 = f32[4096,768]{1,0} parameter(0)
+      ROOT sqrt = f32[4096,768]{1,0} sqrt(p0.2)
+    }
+
+    ENTRY entry {
+      p0 = f32[4096,768]{1,0} parameter(0)
+      reduce_fusion = f32[768]{0} fusion(p0), kind=kInput, calls=fused_reduce
+      elementwise_fusion = f32[4096,768]{1,0} fusion(p0), kind=kLoop, calls=fused_elementwise
+      ROOT root = (f32[768]{0}, f32[4096,768]{1,0}) tuple(reduce_fusion, elementwise_fusion)
+    })")));
+  EXPECT_THAT(mof_.Run(module.get()), absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(MultiOutputFusionTest,
+       SiblingFusionOfBatchedColumnReductionAndElementwise) {
+  // The column reduction gets 128 x 12 blocks, enough to fill every core, so
+  // the sqrt is still merged into it.
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
+    fused_reduce {
+      p0.1 = f32[128,256,768]{2,1,0} parameter(0)
+      const.1 = f32[] constant(0)
+      ROOT reduce = f32[128,768]{1,0} reduce(p0.1, const.1), dimensions={1}, to_apply=scalar_add_computation
+    }
+
+    fused_elementwise {
+      p0.2 = f32[128,256,768]{2,1,0} parameter(0)
+      ROOT sqrt = f32[128,256,768]{2,1,0} sqrt(p0.2)
+    }
+
+    ENTRY entry {
+      p0 = f32[128,256,768]{2,1,0} parameter(0)
+      reduce_fusion = f32[128,768]{1,0} fusion(p0), kind=kInput, calls=fused_reduce
+      elementwise_fusion = f32[128,256,768]{2,1,0} fusion(p0), kind=kLoop, calls=fused_elementwise
+      ROOT root = (f32[128,768]{1,0}, f32[128,256,768]{2,1,0}) tuple(reduce_fusion, elementwise_fusion)
+    })")));
+  ASSERT_THAT(mof_.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  SCOPED_TRACE(module->ToString());
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction()->operand(0)->operand(0);
+  ASSERT_TRUE(fusion->IsMultiOutputFusion());
+  EXPECT_THAT(fusion->fused_expression_root(),
+              GmockMatch(m::Tuple(m::Reduce(), m::Sqrt())));
 }
 
 TEST_F(MultiOutputFusionTest, MultiOutputFusionDifferentReduceInputShapes) {
