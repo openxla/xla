@@ -1208,7 +1208,8 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     ABSL_ASSIGN_OR_RETURN(
         int64_t byte_threshold,
         xla::cpu::options::SmallWhileLoopByteThreshold(module->config()));
-    pipeline.AddPass<SmallWhileLoopHoistingPass>(byte_threshold);
+    pipeline.AddPass<SmallWhileLoopHoistingPass>(byte_threshold,
+                                                 target_machine_features);
   }
 
   pipeline.AddPass<PropagateCallMetadata>();
