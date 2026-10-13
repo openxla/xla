@@ -2199,6 +2199,54 @@ TEST_F(TpuOpsVerificationTest, ReduceOpDuplicateDims) {
       StatusIs(_, HasSubstr("Reduced dimension 0 is present more than once")));
 }
 
+TEST_F(TpuOpsVerificationTest, AllReduceOpInvalidDim) {
+  Value input = ConstantF32Vector(/*shape=*/{8, 128}, /*values=*/{1.0f});
+  auto all_reduce = Create<AllReduceOp>(
+      /*output=*/VectorType::get({8, 128}, builder().getF32Type()),
+      /*input=*/input,
+      /*dimensions=*/builder().getDenseI64ArrayAttr({2}),
+      /*kind=*/
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kSum));
+  ASSERT_THAT(
+      VerifyOp(all_reduce),
+      StatusIs(_, HasSubstr("Reduced dimension 2 is out of bounds [0, 2)")));
+}
+
+TEST_F(TpuOpsVerificationTest, AllReduceOpDuplicateDims) {
+  Value input = ConstantF32Vector(/*shape=*/{8, 128}, /*values=*/{1.0f});
+  auto all_reduce = Create<AllReduceOp>(
+      /*output=*/VectorType::get({8, 128}, builder().getF32Type()),
+      /*input=*/input,
+      /*dimensions=*/builder().getDenseI64ArrayAttr({0, 0}),
+      /*kind=*/
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kSum));
+  ASSERT_THAT(
+      VerifyOp(all_reduce),
+      StatusIs(_, HasSubstr("Reduced dimension 0 is present more than once")));
+}
+
+TEST_F(TpuOpsVerificationTest, AllReduceOpShapeMismatchUnlessAllDimsReduced) {
+  Value input = ConstantF32Vector(/*shape=*/{8, 128}, /*values=*/{1.0f});
+  auto invalid = Create<AllReduceOp>(
+      /*output=*/VectorType::get({8}, builder().getF32Type()),
+      /*input=*/input,
+      /*dimensions=*/builder().getDenseI64ArrayAttr({0}),
+      /*kind=*/
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kSum));
+  ASSERT_THAT(
+      VerifyOp(invalid),
+      StatusIs(_, HasSubstr("Input and output shapes must match unless all "
+                            "dimensions are reduced")));
+
+  auto valid = Create<AllReduceOp>(
+      /*output=*/VectorType::get({8}, builder().getF32Type()),
+      /*input=*/input,
+      /*dimensions=*/builder().getDenseI64ArrayAttr({0, 1}),
+      /*kind=*/
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kSum));
+  ASSERT_OK(VerifyOp(valid));
+}
+
 TEST_F(TpuOpsVerificationTest, ReduceOpReductionKindElementType) {
   Value f32_input = ConstantF32Vector(/*shape=*/{100, 200}, /*values=*/{1.0f});
   Value i32_input = ConstantI32Vector(/*shape=*/{100, 200}, /*values=*/{1});
