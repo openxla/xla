@@ -42,16 +42,17 @@ void RunEigenMatMul(int m, int k, int n) {
   Eigen::Tensor<LhsType, 2> lhs(m, k);
   Eigen::Tensor<RhsType, 2> rhs(k, n);
   Eigen::Tensor<OutType, 2> out(m, n);
+  Eigen::Tensor<OutType, 2> expected(m, n);
 
   lhs.setRandom();
   rhs.setRandom();
   out.setZero();
+  expected.setZero();
 
   using DimPair = typename Eigen::Tensor<LhsType, 2>::DimensionPair;
   std::array<DimPair, 1> dims({DimPair(1, 0)});
   out = lhs.contract(rhs, dims);
-
-  Eigen::Tensor<OutType, 2> expected =
+  expected =
       lhs.template cast<OutType>().contract(rhs.template cast<OutType>(), dims);
 
   ExpectClose<OutType>(out, expected);
@@ -62,10 +63,12 @@ void RunEigenTensorMapMatMul(int m, int k, int n) {
   Eigen::Tensor<LhsType, 2> lhs_storage(m, k);
   Eigen::Tensor<RhsType, 2> rhs_storage(k, n);
   Eigen::Tensor<OutType, 2> out_storage(m, n);
+  Eigen::Tensor<OutType, 2> expected(m, n);
 
   lhs_storage.setRandom();
   rhs_storage.setRandom();
   out_storage.setZero();
+  expected.setZero();
 
   const Eigen::TensorMap<Eigen::Tensor<const LhsType, 2>, Alignment> lhs(
       lhs_storage.data(), m, k);
@@ -82,9 +85,8 @@ void RunEigenTensorMapMatMul(int m, int k, int n) {
       lhs_aligned(lhs_storage.data(), m, k);
   const Eigen::TensorMap<Eigen::Tensor<const RhsType, 2>, Eigen::Aligned>
       rhs_aligned(rhs_storage.data(), k, n);
-  Eigen::Tensor<OutType, 2> expected =
-      lhs_aligned.template cast<OutType>().contract(
-          rhs_aligned.template cast<OutType>(), dims);
+  expected = lhs_aligned.template cast<OutType>().contract(
+      rhs_aligned.template cast<OutType>(), dims);
 
   ExpectClose<OutType>(out_storage, expected);
 }
