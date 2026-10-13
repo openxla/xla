@@ -32,8 +32,6 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/collectives/in_process_collectives.h"
-#include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
-#include "xla/backends/cpu/runtime/ynnpack/ynn_threadpool.h"
 #include "xla/executable_run_options.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/cpu/cpu_executable_run_options.h"
@@ -163,14 +161,8 @@ Thunk::CustomCallExecuteParams::CustomCallExecuteParams(
 
 absl::StatusOr<Thunk::YnnParams> Thunk::YnnParams::Create(
     const ExecutableRunOptions* run_options) {
-  ABSL_ASSIGN_OR_RETURN(
-      YnnThreadpool threadpool,
-      CreateYnnThreadpool(run_options->intra_op_thread_pool()));
-  return YnnParams(std::move(threadpool));
+  return YnnParams();
 }
-
-Thunk::YnnParams::YnnParams(YnnThreadpool threadpool)
-    : threadpool(std::move(threadpool)) {}
 
 Thunk::ExecuteSession::ExecuteSession(int64_t max_workers,
                                       int64_t split_threshold)

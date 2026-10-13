@@ -40,7 +40,6 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk_proto_cc",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_impl",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_utils",
-        "//xla/hlo/ir:hlo",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
         "//xla/tsl/platform:errors",
@@ -65,7 +64,6 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk_proto_cc",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_impl",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_utils",
-        "//xla/hlo/ir:hlo",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
         "//xla/tsl/platform:errors",
@@ -90,7 +88,6 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk_proto_cc",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_impl",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_utils",
-        "//xla/hlo/ir:hlo",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
         "//xla/tsl/platform:errors",
@@ -155,7 +152,6 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk_proto_serdes_impl",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_utils",
         "//xla/core/collectives:reduction_kind",
-        "//xla/hlo/ir:hlo",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
         "//xla/tsl/platform:errors",
@@ -182,7 +178,6 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk_proto_cc",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_impl",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_utils",
-        "//xla/hlo/ir:hlo",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
         "//xla/tsl/platform:errors",
@@ -207,7 +202,6 @@ cc_library(
         "//xla/backends/cpu/runtime:thunk_proto_cc",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_impl",
         "//xla/backends/cpu/runtime:thunk_proto_serdes_utils",
-        "//xla/hlo/ir:hlo",
         "//xla/runtime:resource_use",
         "//xla/service:buffer_assignment",
         "//xla/tsl/platform:errors",
@@ -222,9 +216,10 @@ cc_library(
     alwayslink = 1,
 )
 
-# Utility target to link all thunk serdes implementations.
+# Utility target to link all non-YNNPACK thunk serdes implementations that do
+# not require an HloModule at deserialization time.
 cc_library(
-    name = "all_thunk_serdes",
+    name = "aot_thunk_serdes",
     deps = [
         ":collective_thunk_serdes",
         ":convolution_thunk_serdes",
@@ -232,6 +227,15 @@ cc_library(
         ":custom_call_thunk_serdes",
         ":dot_thunk_serdes",
         ":fft_thunk_serdes",
+    ],
+    alwayslink = 1,
+)
+
+# Utility target to link all thunk serdes implementations.
+cc_library(
+    name = "all_thunk_serdes",
+    deps = [
+        ":aot_thunk_serdes",
         ":ynn_fusion_thunk_serdes",
     ],
     alwayslink = 1,

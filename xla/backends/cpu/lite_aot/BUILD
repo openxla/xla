@@ -26,11 +26,12 @@ cc_library(
     srcs = ["xla_aot_function.cc"],
     hdrs = ["xla_aot_function.h"],
     deps = [
-        "//xla:literal",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/backends/cpu:alignment",
         "//xla/backends/cpu/nanort:nanort_executable",
-        "//xla/service:executable",
+        "//xla/service:hlo_proto_cc",
         "//xla/service/cpu:executable_proto_cc",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/platform:statusor",
@@ -44,6 +45,5 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
-        "@tsl//tsl/platform:path",
     ],
 )

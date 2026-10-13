@@ -30,6 +30,13 @@ limitations under the License.
 
 namespace xla::cpu {
 
+absl::StatusOr<xla::buffer_assignment::BufferAllocationSliceProto> SliceToProto(
+    const BufferAllocation::Slice& slice);
+
+absl::StatusOr<BufferAllocation::Slice> SliceFromProto(
+    const xla::buffer_assignment::BufferAllocationSliceProto& proto,
+    const std::vector<BufferAllocation>& buffer_allocations);
+
 absl::Status SerializeSliceShapeIntoProto(
     const BufferAllocation::Slice& slice, const Shape& shape,
     ShapeBufferAllocationSliceProto* proto);

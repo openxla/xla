@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -49,6 +50,8 @@ limitations under the License.
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
+#include "xla/backends/cpu/codegen/aot_compiled_function_library.h"
+#include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/codegen/ir_compiler.h"
 #include "xla/backends/cpu/codegen/jit_compiler.h"
@@ -87,6 +90,29 @@ static absl::StatusOr<llvm::orc::ThreadSafeModule> ParseModule(
 static absl::StatusOr<std::unique_ptr<FunctionLibrary>> Compile(
     JitCompiler compiler, absl::Span<const FunctionLibrary::Symbol> symbols) {
   return std::move(compiler).Compile(symbols);
+};
+
+class ExternalDefinitionGenerator : public llvm::orc::DefinitionGenerator {
+ public:
+  static void AddInplace(float* value) { *value += *value; }
+
+  llvm::Error tryToGenerate(llvm::orc::LookupState&, llvm::orc::LookupKind,
+                            llvm::orc::JITDylib& jit_dylib,
+                            llvm::orc::JITDylibLookupFlags,
+                            const llvm::orc::SymbolLookupSet& names) final {
+    llvm::orc::SymbolMap new_defs;
+    for (auto& [name, flags] : names) {
+      std::string to_print((*name).begin(), (*name).end());
+      if ((*name).contains("external_fn")) {
+        new_defs[name] = llvm::orc::ExecutorSymbolDef{
+            llvm::orc::ExecutorAddr(reinterpret_cast<uint64_t>(&AddInplace)),
+            llvm::JITSymbolFlags::None};
+      }
+    }
+
+    cantFail(jit_dylib.define(llvm::orc::absoluteSymbols(std::move(new_defs))));
+    return llvm::Error::success();
+  }
 };
 
 struct ObjectLoaderTestParams {
@@ -184,30 +210,27 @@ TEST_P(ObjectLoaderTest, Load) {
   float loaded_function_input = 1.0f;
   loaded_add_in_place(&loaded_function_input);
   EXPECT_EQ(loaded_function_input, compiled_function_input);
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto aot_loaded_library,
+      AotObjectLoader::LoadFunctionLibrary(
+          symbols, object_files, [](absl::string_view sym) -> void* {
+            if (absl::StrContains(sym, "external_fn")) {
+              return reinterpret_cast<void*>(
+                  &ExternalDefinitionGenerator::AddInplace);
+            }
+            return nullptr;
+          }));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      ScalarFn * aot_loaded_add_in_place,
+      aot_loaded_library->ResolveFunction<ScalarFn>("AddInplace"));
+  EXPECT_NE(aot_loaded_add_in_place, nullptr);
+
+  float aot_loaded_input = 1.0f;
+  aot_loaded_add_in_place(&aot_loaded_input);
+  EXPECT_EQ(aot_loaded_input, compiled_function_input);
 }
-
-class ExternalDefinitionGenerator : public llvm::orc::DefinitionGenerator {
- public:
-  static void AddInplace(float* value) { *value += *value; }
-
-  llvm::Error tryToGenerate(llvm::orc::LookupState&, llvm::orc::LookupKind,
-                            llvm::orc::JITDylib& jit_dylib,
-                            llvm::orc::JITDylibLookupFlags,
-                            const llvm::orc::SymbolLookupSet& names) final {
-    llvm::orc::SymbolMap new_defs;
-    for (auto& [name, flags] : names) {
-      std::string to_print((*name).begin(), (*name).end());
-      if ((*name).contains("external_fn")) {
-        new_defs[name] = llvm::orc::ExecutorSymbolDef{
-            llvm::orc::ExecutorAddr(reinterpret_cast<uint64_t>(&AddInplace)),
-            llvm::JITSymbolFlags::None};
-      }
-    }
-
-    cantFail(jit_dylib.define(llvm::orc::absoluteSymbols(std::move(new_defs))));
-    return llvm::Error::success();
-  }
-};
 
 INSTANTIATE_TEST_SUITE_P(
     ObjectLoaderTestSuite, ObjectLoaderTest,
@@ -221,6 +244,23 @@ INSTANTIATE_TEST_SUITE_P(
             ret void
           })",
             nullptr},
+        ObjectLoaderTestParams{
+            R"(
+          @kZero = internal constant float 0.0
+          declare float @__powisf2(float, i32)
+
+          define void @AddInplace(ptr %arg) {
+            %v0 = load float, ptr %arg
+            %z = load float, ptr @kZero
+            %v1 = fadd float %v0, %v0
+            %p = call float @__powisf2(float %v1, i32 1)
+            %res = fadd float %p, %z
+            store float %res, ptr %arg
+            ret void
+          })",
+            [](const llvm::DataLayout& data_layout) {
+              return std::make_unique<BuiltinDefinitionGenerator>(data_layout);
+            }},
         ObjectLoaderTestParams{
             R"(
           declare void @__external_fn(ptr %arg)

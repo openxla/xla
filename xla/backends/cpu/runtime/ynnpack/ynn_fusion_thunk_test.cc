@@ -160,16 +160,9 @@ TEST_P(YnnFusionThunkTest, ElementwiseAdd) {
                       reinterpret_cast<HloInstruction*>(0xDEADBEEF),
                       {lhs_arg, rhs_arg}, {out_res}, &BuildBinaryAddSubgraph));
 
-  YnnThreadpool threadpool;
-  if (use_threadpool()) {
-    TF_ASSERT_OK_AND_ASSIGN(threadpool, CreateYnnThreadpool(&device));
-  }
-  Thunk::YnnParams ynn_params(std::move(threadpool));
-
   Thunk::ExecuteParams params;
   params.buffer_allocations = &allocations;
   params.intra_op_threadpool = use_threadpool() ? &device : nullptr;
-  params.ynn_params = &ynn_params;
 
   auto execute_event = thunk->Execute(params);
   tsl::BlockUntilReady(execute_event);
@@ -200,16 +193,9 @@ TEST_P(YnnFusionThunkTest, Iota) {
                       reinterpret_cast<HloInstruction*>(0xDEADBEEF), {},
                       {out_res}, &BuildIotaSubgraph));
 
-  YnnThreadpool threadpool;
-  if (use_threadpool()) {
-    TF_ASSERT_OK_AND_ASSIGN(threadpool, CreateYnnThreadpool(&device));
-  }
-  Thunk::YnnParams ynn_params(std::move(threadpool));
-
   Thunk::ExecuteParams params;
   params.buffer_allocations = &allocations;
   params.intra_op_threadpool = use_threadpool() ? &device : nullptr;
-  params.ynn_params = &ynn_params;
 
   auto execute_event = thunk->Execute(params);
   tsl::BlockUntilReady(execute_event);

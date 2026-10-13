@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/service/hlo_value.h"
 #include "xla/service/maybe_owning_device_address.h"
 #include "xla/service/service_executable_run_options.h"
+#include "xla/shape_tree.h"
 #include "xla/stream_executor/device_address_allocator.h"
 
 namespace xla {
@@ -60,6 +61,17 @@ class CpuExecutable : public Executable {
   static absl::StatusOr<std::unique_ptr<CpuExecutable>> Create(
       std::unique_ptr<FunctionLibrary> function_library,
       std::unique_ptr<BufferAssignment> assignment,
+      std::unique_ptr<HloModule> hlo_module, ThunkSequence thunks,
+      std::vector<ConstantAllocation> constants,
+      TargetMachineOptions target_machine_options, std::string data_layout);
+
+  // Creates a CpuExecutable from AOT-deserialized allocations and result
+  // indices without reconstructing a compile-time BufferAssignment.
+  static absl::StatusOr<std::unique_ptr<CpuExecutable>> Create(
+      std::unique_ptr<FunctionLibrary> function_library,
+      std::vector<BufferAllocation> allocations,
+      ShapeTree<BufferAllocation::Index> result_allocation_indices,
+      BufferAssignmentProto buffer_assignment_proto,
       std::unique_ptr<HloModule> hlo_module, ThunkSequence thunks,
       std::vector<ConstantAllocation> constants,
       TargetMachineOptions target_machine_options, std::string data_layout);
@@ -131,7 +143,7 @@ class CpuExecutable : public Executable {
   bool has_xnn_fusions() const { return has_xnn_fusions_; }
   bool has_ynn_fusions() const { return has_ynn_fusions_; }
 
-  const BufferAssignment& buffer_assignment() const { return *assignment_; }
+  const BufferAssignment& buffer_assignment() const;
   absl::Span<const ConstantAllocation> constants() const { return constants_; }
 
   int64_t SizeOfGeneratedCodeInBytes() const override;
@@ -208,7 +220,10 @@ class CpuExecutable : public Executable {
       symbol_type_id_to_function_type_id_;
 
   // Buffer assignment for the buffers we need to allocate.
-  std::shared_ptr<BufferAssignment> assignment_;
+  mutable std::shared_ptr<BufferAssignment> assignment_;
+  std::vector<BufferAllocation> owned_allocations_;
+  std::optional<ShapeTree<BufferAllocation::Index>> result_allocation_indices_;
+  std::optional<BufferAssignmentProto> buffer_assignment_proto_;
   std::vector<const BufferAllocation*> alloc_ptrs_;
 
   // The LLVM IR, in string format, of the unoptimized module generated for this
@@ -249,6 +264,12 @@ class CpuExecutable : public Executable {
 
   CpuExecutable(std::unique_ptr<HloModule> hlo_module,
                 std::unique_ptr<BufferAssignment> assignment,
+                TargetMachineOptions target_machine_options,
+                std::string data_layout);
+  CpuExecutable(std::unique_ptr<HloModule> hlo_module,
+                std::vector<BufferAllocation> allocations,
+                ShapeTree<BufferAllocation::Index> result_allocation_indices,
+                BufferAssignmentProto buffer_assignment_proto,
                 TargetMachineOptions target_machine_options,
                 std::string data_layout);
   CpuExecutable(const CpuExecutable&) = delete;

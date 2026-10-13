@@ -16,11 +16,17 @@ limitations under the License.
 #ifndef XLA_BACKENDS_CPU_CODEGEN_AOT_COMPILED_FUNCTION_LIBRARY_H_
 #define XLA_BACKENDS_CPU_CODEGEN_AOT_COMPILED_FUNCTION_LIBRARY_H_
 
+#include <cstddef>
+#include <functional>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 
 namespace xla::cpu {
@@ -32,11 +38,25 @@ class AotCompiledFunctionLibrary : public FunctionLibrary {
  public:
   using FunctionPtr = void*;
 
+  struct MappedMemory {
+    void* base = nullptr;
+    size_t size = 0;
+
+    MappedMemory() = default;
+    MappedMemory(void* base, size_t size) : base(base), size(size) {}
+    MappedMemory(MappedMemory&& other) noexcept;
+    MappedMemory& operator=(MappedMemory&& other) noexcept;
+    MappedMemory(const MappedMemory&) = delete;
+    MappedMemory& operator=(const MappedMemory&) = delete;
+    ~MappedMemory();
+  };
+
   // Constructs a new AotCompiledFunctionLibrary.
   //
   // `symbols_map` is a map from symbol names to resolved symbols.
   explicit AotCompiledFunctionLibrary(
-      absl::flat_hash_map<std::string, FunctionPtr> symbols_map);
+      absl::flat_hash_map<std::string, FunctionPtr> symbols_map,
+      std::vector<MappedMemory> mapped_memories = {});
 
   // Resolves the function with the given name and type ID.
   absl::StatusOr<void*> ResolveFunction(TypeId type_id,
@@ -46,7 +66,43 @@ class AotCompiledFunctionLibrary : public FunctionLibrary {
   // Caches the resolved symbols so we don't have to look them up every time a
   // function is resolved.
   absl::flat_hash_map<std::string, FunctionPtr> symbols_map_;
+  std::vector<MappedMemory> mapped_memories_;
 };
+
+// A lightweight, zero-LLVM-dependency ELF object loader for AOT compiled
+// XLA:CPU executables.
+class AotObjectLoader {
+ public:
+  using Symbol = FunctionLibrary::Symbol;
+  using SymbolResolver = std::function<void*(absl::string_view)>;
+
+  explicit AotObjectLoader(SymbolResolver external_symbol_resolver = nullptr);
+
+  AotObjectLoader(AotObjectLoader&& other) = default;
+  AotObjectLoader& operator=(AotObjectLoader&& other) = default;
+
+  absl::Status AddObjFile(absl::string_view obj_file,
+                          absl::string_view memory_buffer_name = "",
+                          size_t dylib_index = 0);
+
+  absl::StatusOr<std::unique_ptr<FunctionLibrary>> Load(
+      absl::Span<const Symbol> symbols) &&;
+
+  static absl::StatusOr<std::unique_ptr<FunctionLibrary>> LoadFunctionLibrary(
+      absl::Span<const Symbol> symbols, absl::Span<const std::string> obj_files,
+      SymbolResolver external_symbol_resolver = nullptr);
+
+ private:
+  struct ObjFileEntry {
+    std::string contents;
+    std::string name;
+  };
+
+  std::vector<ObjFileEntry> obj_files_;
+  SymbolResolver external_symbol_resolver_;
+};
+
+using LiteObjectLoader = AotObjectLoader;
 
 }  // namespace xla::cpu
 

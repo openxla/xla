@@ -31,11 +31,43 @@ limitations under the License.
 
 namespace xla::cpu {
 
+absl::StatusOr<xla::buffer_assignment::BufferAllocationSliceProto> SliceToProto(
+    const BufferAllocation::Slice& slice) {
+  xla::buffer_assignment::BufferAllocationSliceProto proto;
+  proto.set_offset(slice.offset());
+  proto.set_size(slice.size());
+  proto.set_buffer_allocation_index(
+      slice.allocation() == nullptr ? -1 : slice.index());
+  proto.set_element_type(slice.element_type());
+  return proto;
+}
+
+absl::StatusOr<BufferAllocation::Slice> SliceFromProto(
+    const xla::buffer_assignment::BufferAllocationSliceProto& proto,
+    const std::vector<BufferAllocation>& buffer_allocations) {
+  if (proto.buffer_allocation_index() < 0 ||
+      proto.buffer_allocation_index() >= buffer_allocations.size()) {
+    return absl::OutOfRangeError("Buffer allocation index is out of range.");
+  }
+  const BufferAllocation& allocation =
+      buffer_allocations[proto.buffer_allocation_index()];
+  if (proto.offset() < 0 || proto.size() < 0) {
+    return absl::OutOfRangeError("Buffer slice has negative offset/size.");
+  }
+  if (proto.size() > allocation.size() ||
+      proto.offset() > allocation.size() - proto.size()) {
+    return absl::OutOfRangeError(
+        "Buffer slice is out of range for allocation.");
+  }
+  return BufferAllocation::Slice(&allocation, proto.offset(), proto.size(),
+                                 proto.element_type());
+}
+
 absl::Status SerializeSliceShapeIntoProto(
     const BufferAllocation::Slice& slice, const Shape& shape,
     ShapeBufferAllocationSliceProto* proto) {
   *proto->mutable_shape() = shape.ToProto();
-  ABSL_ASSIGN_OR_RETURN(*proto->mutable_slice(), slice.ToProto());
+  ABSL_ASSIGN_OR_RETURN(*proto->mutable_slice(), SliceToProto(slice));
   return absl::OkStatus();
 }
 
@@ -43,9 +75,8 @@ absl::StatusOr<std::pair<BufferAllocation::Slice, Shape>>
 DeserializeSliceShapeFromProto(
     const ShapeBufferAllocationSliceProto& proto,
     const std::vector<BufferAllocation>& buffer_allocations) {
-  ABSL_ASSIGN_OR_RETURN(
-      BufferAllocation::Slice slice,
-      BufferAllocation::Slice::FromProto(proto.slice(), buffer_allocations));
+  ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
+                        SliceFromProto(proto.slice(), buffer_allocations));
   ABSL_ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(proto.shape()));
   return std::make_pair(slice, shape);
 }

@@ -97,6 +97,7 @@ cc_library(
     hdrs = ["ynn_fusion_thunk.h"],
     deps = [
         ":ynn_interop",
+        ":ynn_threadpool",
         "//xla:shape_util",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/hlo/ir:hlo",

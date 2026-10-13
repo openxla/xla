@@ -27,9 +27,12 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/serdes_base.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
-#include "xla/hlo/ir/hlo_module.h"
 #include "xla/runtime/resource_use.h"
 #include "xla/service/buffer_assignment.h"
+
+namespace xla {
+class HloModule;
+}  // namespace xla
 
 namespace xla::cpu {
 

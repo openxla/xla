@@ -18,7 +18,6 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
@@ -34,14 +33,16 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
-#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
 namespace xla::cpu {
+namespace {
 
 using ::tsl::profiler::TraceMe;
 using ::tsl::profiler::TraceMeEncode;
+
+}  // namespace
 
 absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtClient::Compile(
     const XlaComputation& computation,

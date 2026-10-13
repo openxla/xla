@@ -26,24 +26,32 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/dynamic_annotations.h"
-#include "absl/container/fixed_array.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "tsl/platform/mem.h"
 #include "xla/backends/cpu/alignment.h"
-#include "xla/backends/cpu/runtime/thread_pool_task_runner.h"
-#include "xla/ffi/execution_context.h"
-#include "xla/runtime/device_id.h"
 #include "xla/service/cpu/executable.pb.h"
-#include "xla/service/device_assignment.h"
-#include "xla/service/executable.h"
 #include "xla/shape.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
+#include "xla/tsl/lib/gtl/int_type.h"
 
 #define EIGEN_USE_THREADS
 
 #include "unsupported/Eigen/CXX11/Tensor"
+
+namespace xla {
+struct GlobalDeviceId_tag_;
+using GlobalDeviceId = ::tsl::gtl::IntType<GlobalDeviceId_tag_, int32_t>;
+struct LocalDeviceId_tag_;
+using LocalDeviceId = ::tsl::gtl::IntType<LocalDeviceId_tag_, int32_t>;
+class DeviceAssignment;
+class Executable;
+class HloModuleConfig;
+namespace ffi {
+class ExecutionContext;
+}  // namespace ffi
+}  // namespace xla
 
 namespace xla::cpu {
 
@@ -69,14 +77,12 @@ class NanoRtExecutable {
 
   class ExecuteOptions {
    public:
-    ExecuteOptions()
-        : intra_op_thread_pool_(nullptr),
-          task_runner_(nullptr),
-          local_device_id_(0),
-          global_device_id_(0),
-          device_assignment_(nullptr),
-          launch_id_(0),
-          ffi_context_(nullptr) {}
+    ExecuteOptions();
+    ~ExecuteOptions();
+
+    ExecuteOptions(ExecuteOptions&&) noexcept;
+    ExecuteOptions& operator=(ExecuteOptions&&) noexcept;
+
     // Sets the thread pool device on which to run Eigen subcomputations.
     //
     // This field must be set for XLA:CPU models that call Eigen routines, but
@@ -98,7 +104,6 @@ class NanoRtExecutable {
     ExecuteOptions& set_device_assignment(DeviceAssignment* device_assignment);
 
     const Eigen::ThreadPoolDevice* intra_op_thread_pool() const;
-    ThreadPoolTaskRunner* task_runner() const;
 
     LocalDeviceId local_device_id() const { return local_device_id_; }
     GlobalDeviceId global_device_id() const { return global_device_id_; }
@@ -108,7 +113,6 @@ class NanoRtExecutable {
 
    private:
     const Eigen::ThreadPoolDevice* intra_op_thread_pool_;
-    std::unique_ptr<ThreadPoolTaskRunner> task_runner_;
 
     LocalDeviceId local_device_id_;
     GlobalDeviceId global_device_id_;
@@ -162,36 +166,77 @@ class NanoRtExecutable {
 
   // An owning writable byte buffer that can be used as a temporary buffer.
   template <size_t n>
-  class ManagedTemp {
+  class alignas(Align()) ManagedTemp {
    public:
-    explicit ManagedTemp(size_t size) : data_(size) {
-      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(data_.data(), data_.memsize());
+    explicit ManagedTemp(size_t size) : size_(size) {
+      if (size_ > n) {
+        heap_data_ = static_cast<std::byte*>(
+            ::operator new(size_, std::align_val_t{Align()}));
+      }
+      ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(data().data(), data().size());
+    }
+    ~ManagedTemp() {
+      if (heap_data_ != nullptr) {
+        ::operator delete(heap_data_, std::align_val_t{Align()});
+      }
     }
 
     ManagedTemp(const ManagedTemp&) = delete;
     ManagedTemp& operator=(const ManagedTemp&) = delete;
 
-    PreallocatedTemp data() { return absl::MakeSpan(data_); }
+    PreallocatedTemp data() {
+      return absl::MakeSpan(heap_data_ ? heap_data_ : inline_data_, size_);
+    }
 
    private:
     friend class NanoRtExecutable;
-    using Allocator =
-        tsl::port::AlignedAllocator<std::byte,
-                                    static_cast<std::align_val_t>(Align())>;
-    alignas(Align()) absl::FixedArray<std::byte, n, Allocator> data_;
+    alignas(Align()) std::byte inline_data_[n > 0 ? n : 1];
+    size_t size_ = 0;
+    std::byte* heap_data_ = nullptr;
   };
 
-  tsl::AsyncValueRef<ExecuteEvent> Execute(absl::Span<const Argument> arguments,
-                                           absl::Span<const Result> results,
-                                           PreallocatedTemp temp = {},
-                                           const ExecuteOptions& options = {});
+  class ExecutableRunner {
+   public:
+    virtual ~ExecutableRunner() = default;
+    virtual Executable* executable() const { return nullptr; }
+    virtual const HloModuleConfig& module_config() const;
+    virtual tsl::AsyncValueRef<ExecuteEvent> Execute(
+        std::vector<stream_executor::DeviceAddressBase> buffers,
+        const ExecuteOptions& options) = 0;
+  };
+
+  class ExecutablePtr {
+   public:
+    ExecutablePtr(Executable* executable, const ExecutableRunner* runner)
+        : executable_(executable), runner_(runner) {}
+    Executable* get() const { return executable_; }
+    operator Executable*() const { return executable_; }  // NOLINT
+    const ExecutableRunner* operator->() const { return runner_; }
+
+   private:
+    Executable* executable_;
+    const ExecutableRunner* runner_;
+  };
+
+  using AotCompilationResultImporter =
+      absl::StatusOr<std::unique_ptr<NanoRtExecutable>> (*)(
+          CompilationResultProto aot_compilation_result,
+          std::optional<ProgramShape> program_shape);
+
+  static void RegisterAotImporter(AotCompilationResultImporter aot_importer);
+
+  ~NanoRtExecutable();
+
+  tsl::AsyncValueRef<ExecuteEvent> Execute(
+      absl::Span<const Argument> arguments, absl::Span<const Result> results,
+      PreallocatedTemp temp = {},
+      const ExecuteOptions& options = ExecuteOptions());
 
   template <size_t n>
-  tsl::AsyncValueRef<ExecuteEvent> Execute(absl::Span<const Argument> arguments,
-                                           absl::Span<const Result> results,
-                                           ManagedTemp<n>& temp,
-                                           const ExecuteOptions& options = {}) {
-    return Execute(arguments, results, temp.data(), std::move(options));
+  tsl::AsyncValueRef<ExecuteEvent> Execute(
+      absl::Span<const Argument> arguments, absl::Span<const Result> results,
+      ManagedTemp<n>& temp, const ExecuteOptions& options = ExecuteOptions()) {
+    return Execute(arguments, results, temp.data(), options);
   }
 
   // Returns the size of the temp buffer required to run the executable.
@@ -199,17 +244,20 @@ class NanoRtExecutable {
 
   std::optional<ProgramShape> program_shape() const { return program_shape_; }
 
-  Executable* executable() const { return executable_.get(); }
+  ExecutablePtr executable() const {
+    return ExecutablePtr(runner_ ? runner_->executable() : nullptr,
+                         runner_.get());
+  }
 
- private:
-  NanoRtExecutable(std::unique_ptr<Executable> executable,
+  NanoRtExecutable(std::unique_ptr<ExecutableRunner> runner,
                    std::vector<size_t> allocation_sizes,
                    std::vector<size_t> argument_to_allocation_index,
                    std::vector<size_t> result_to_allocation_index,
                    std::optional<size_t> temp_allocation_index,
                    std::optional<ProgramShape> program_shape);
 
-  std::unique_ptr<Executable> executable_;
+ private:
+  std::unique_ptr<ExecutableRunner> runner_;
   std::vector<size_t> allocation_sizes_;
 
   // A mapping from the argument/result index to the index of the corresponding

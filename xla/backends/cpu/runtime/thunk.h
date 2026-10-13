@@ -37,8 +37,6 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/xfeed_manager.h"
-#include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
-#include "xla/backends/cpu/runtime/ynnpack/ynn_threadpool.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/runtime/buffer_use.h"
@@ -264,9 +262,7 @@ class Thunk {
     static absl::StatusOr<YnnParams> Create(
         const ExecutableRunOptions* run_options);
 
-    YnnThreadpool threadpool = nullptr;
-
-    explicit YnnParams(YnnThreadpool threadpool);
+    YnnParams() = default;
   };
 
   //===--------------------------------------------------------------------===//

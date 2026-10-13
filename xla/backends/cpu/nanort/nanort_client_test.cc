@@ -379,7 +379,7 @@ TEST_P(NanoRtClientTest, YnnFusionUsesIntraOpThreadPool) {
   // Make sure the dot was actually offloaded to YNNPACK, otherwise this test
   // doesn't test anything.
   auto* cpu_executable =
-      absl::down_cast<CpuExecutable*>(executable->executable());
+      absl::down_cast<CpuExecutable*>(executable->executable().get());
   ASSERT_TRUE(cpu_executable->has_ynn_fusions());
 
   Array2D<float> lhs(256, 512, 1.0f);
