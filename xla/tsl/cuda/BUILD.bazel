@@ -31,6 +31,7 @@ load(
     "if_cuda_libs",
 )
 load("//xla/tsl/cuda:stub.bzl", "cuda_stub")
+load("//xla/tsl/platform:build_config.bzl", "tsl_cc_test")
 
 package(
     licenses = ["notice"],
@@ -291,6 +292,21 @@ cc_library(
         "@tsl//tsl/platform:dso_loader",
         "@tsl//tsl/platform:load_library",
     ]),
+)
+
+tsl_cc_test(
+    name = "cupti_stub_test",
+    size = "small",
+    srcs = ["cupti_stub_test.cc"],
+    tags = ["cuda-only"],
+    target_compatible_with = select({
+        "@xla//xla/tsl:is_cuda_enabled_and_oss": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cupti_stub",  # Link the generated stubs, not the CUPTI DSO alias.
+        "@com_google_googletest//:gtest_main",
+    ],
 )
 
 alias(
