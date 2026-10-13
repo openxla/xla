@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/all_gather.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
+#include "xla/backends/gpu/runtime/all_to_all.h"
 #include "xla/backends/gpu/runtime/collective_info_utils.h"
 #include "xla/backends/gpu/runtime/reduce_scatter.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
@@ -71,6 +72,13 @@ CollectiveBackendConfig::CollectiveKernelStrategy ToProtoStrategy(
           },
           [](const AllGatherInfo&) {
             return CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT;
+          },
+          [](const AllToAllInfo& all_to_all_info) {
+            return all_to_all_info.is_one_shot
+                       ? CollectiveBackendConfig::
+                             KERNEL_STRATEGY_TRITON_ONE_SHOT
+                       : CollectiveBackendConfig::
+                             KERNEL_STRATEGY_TRITON_TWO_SHOT;
           },
           [](const ReduceScatterInfo&) {
             return CollectiveBackendConfig::KERNEL_STRATEGY_TRITON_ONE_SHOT;
