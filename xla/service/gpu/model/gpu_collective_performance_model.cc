@@ -248,6 +248,20 @@ float GetMaxLowLatencyBandwidth(const BandwidthSettings& bandwidth_settings) {
   return *it;
 }
 
+template <typename BandwidthSettings>
+double GetRingBusBandwidth(const BandwidthSettings& bandwidth_settings,
+                           int64_t num_channels, float bw_intra_node) {
+  double bus_bandwidth = bw_intra_node * num_channels;
+
+  // Get per channel LL128 ring bandwidth
+  double per_channel_ring_ll128_Bw =
+      GetMaxPerChannelRingLL128Bandwidth(bandwidth_settings);
+
+  return std::min(
+      bus_bandwidth * bandwidth_settings.kRingAlgorithmDiscountFactor,
+      num_channels * per_channel_ring_ll128_Bw);
+}
+
 static constexpr absl::Duration kNcclKernelLaunchOverhead =
     absl::Microseconds(5);
 
@@ -312,6 +326,19 @@ absl::Duration ComputeCollectiveTimeImpl(
 
   int64_t min_nchannels = std::max(num_devices, GetMinNumberOfChannels());
   int64_t num_channels = std::max(min_nchannels, GetNcclMaxNumChannels());
+  const int64_t active_links =
+      gpu_device_info.device_interconnect_info().active_links;
+  int64_t graph_channels = num_channels;
+  float nvlink_bandwidth = 0;
+  if (active_links) {
+    VLOG(8) << "Nvlink supports p2p communication, setting intra node "
+               "bandwidth to nvlink bw.";
+    nvlink_bandwidth = bandwidth_settings.GetNvlinkBw();
+    graph_channels = std::min(num_channels, active_links);
+  } else {
+    VLOG(8) << "Nvlink doesn't support p2p communication. Model will "
+               "continue using default system bandwidth.";
+  }
   int64_t pcie_bandwidth_gbps =
       gpu_device_info.pcie_bandwidth() / 1024 / 1024 / 1024;
   int default_threads = (bw_intra_node * num_channels <= pcie_bandwidth_gbps)
@@ -331,28 +358,10 @@ absl::Duration ComputeCollectiveTimeImpl(
           /*num_blocks=*/num_channels, /*num_threads_per_block=*/num_threads);
   total_time += compute_time_per_channel;
 
-  if (gpu_device_info.device_interconnect_info().active_links) {
-    VLOG(8) << "Nvlink supports p2p communication, setting intra node "
-               "bandwidth to nvlink bw.";
-    bw_intra_node = bandwidth_settings.GetNvlinkBw();
-    num_channels =
-        std::min(static_cast<int64_t>(
-                     gpu_device_info.device_interconnect_info().active_links),
-                 num_channels);
-  } else {
-    VLOG(8) << "Nvlink doesn't support p2p communication. Model will "
-               "continue using default system bandwidth.";
-  }
-
-  double bus_bandwidth = bw_intra_node * num_channels;
-
-  // Get per channel LL128 ring bandwidth
-  double per_channel_ring_ll128_Bw =
-      GetMaxPerChannelRingLL128Bandwidth(bandwidth_settings);
-
-  bus_bandwidth =
-      std::min(bus_bandwidth * bandwidth_settings.kRingAlgorithmDiscountFactor,
-               num_channels * per_channel_ring_ll128_Bw);
+  const float communication_bandwidth =
+      active_links ? nvlink_bandwidth : bw_intra_node;
+  const double bus_bandwidth = GetRingBusBandwidth(
+      bandwidth_settings, graph_channels, communication_bandwidth);
   double actual_bandwidth = bus_bandwidth * cost_analysis->ScalingRatio(instr);
 
   absl::Duration communication_time = absl::Milliseconds(
