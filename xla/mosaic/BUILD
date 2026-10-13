@@ -30,11 +30,13 @@ package(
 cc_library(
     name = "tpu_dialect",
     srcs = [
+        "dialect/tpu/tiled_layout_util.cc",
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.cc",
     ],
     hdrs = [
+        "dialect/tpu/tiled_layout_util.h",
         "dialect/tpu/tpu_dialect.h",
         "dialect/tpu/util.h",
     ],
