@@ -1888,58 +1888,117 @@ void ConvertBetweenNativeTypes(absl::Span<const NativeSrcT> src_data,
   }
 }
 
-template <PrimitiveType kSrcType>
-absl::Status ConvertIfDestTypeMatches(const LiteralBase& src_literal,
-                                      MutableLiteralBase& dst_literal) {
-  DCHECK(dst_literal.shape().IsArray());
-  using NativeSrcT = NativeTypeOf<kSrcType>;
-  // Pass raw data Span/pointers to called template methods to avoid duplicating
-  // the Literal method calls to many time which hurts code size.
-  auto src_data = src_literal.data<NativeSrcT>();
-  void* dst_base = dst_literal.untyped_data();
-  DCHECK_EQ(src_data.size(), dst_literal.element_count());
-  return primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> absl::Status {
-        if constexpr (primitive_util::IsComplexType(kSrcType) &&
-                      !primitive_util::IsComplexType(primitive_type_constant)) {
-          return Unimplemented("%s from type %s to type %s is not implemented.",
-                               "Converting", PrimitiveType_Name(kSrcType),
-                               PrimitiveType_Name(primitive_type_constant()));
-        } else if constexpr (kSrcType != primitive_type_constant) {
-          using NativeDestT = NativeTypeOf<primitive_type_constant>;
-          ConvertBetweenNativeTypes<NativeSrcT, NativeDestT>(src_data,
-                                                             dst_base);
+constexpr bool IsNarrowFloat(PrimitiveType t) {
+  return primitive_util::IsFloatingPointType(t) &&
+         primitive_util::BitWidth(t) <= 16;
+}
+
+constexpr bool IsSubByteInt(PrimitiveType t) {
+  return primitive_util::IsIntegralType(t) && primitive_util::BitWidth(t) < 8;
+}
+
+// Software-emulated narrow floats (<= 16-bit) are exact subsets of F32, and
+// sub-byte integers (< 8-bit) are exact subsets of S8. Routing conversions
+// between non-core types through F32 or S8 avoids instantiating the full 32x31
+// cartesian product of software conversion loops.
+constexpr bool IsDirectConversion(PrimitiveType src, PrimitiveType dst) {
+  if (src == dst || (primitive_util::IsComplexType(src) &&
+                     !primitive_util::IsComplexType(dst))) {
+    return false;
+  }
+  if (IsNarrowFloat(src)) {
+    return dst == F32;
+  }
+  if (IsNarrowFloat(dst)) {
+    return src == F32 || src == F64;
+  }
+  if (IsSubByteInt(src)) {
+    return dst == S8 || dst == F32;
+  }
+  if (IsSubByteInt(dst)) {
+    return src == S8 || src == F32 || src == F64;
+  }
+  return true;
+}
+
+void ConvertDirect(PrimitiveType src_type, const void* src_base,
+                   PrimitiveType dst_type, void* dst_base, int64_t count) {
+  primitive_util::ArrayTypeSwitch(
+      [&](auto src_type_constant) {
+        constexpr PrimitiveType kSrcType = src_type_constant;
+        using NativeSrcT = NativeTypeOf<kSrcType>;
+        absl::Span<const NativeSrcT> src_data(
+            static_cast<const NativeSrcT*>(src_base), count);
+        if constexpr (IsNarrowFloat(kSrcType)) {
+          ConvertBetweenNativeTypes<NativeSrcT, float>(src_data, dst_base);
+        } else if constexpr (IsSubByteInt(kSrcType)) {
+          if (dst_type == S8) {
+            ConvertBetweenNativeTypes<NativeSrcT, int8_t>(src_data, dst_base);
+          } else {
+            ConvertBetweenNativeTypes<NativeSrcT, float>(src_data, dst_base);
+          }
+        } else {
+          primitive_util::ArrayTypeSwitch(
+              [&](auto dst_type_constant) {
+                constexpr PrimitiveType kDstType = dst_type_constant;
+                if constexpr (IsDirectConversion(kSrcType, kDstType)) {
+                  using NativeDestT = NativeTypeOf<kDstType>;
+                  ConvertBetweenNativeTypes<NativeSrcT, NativeDestT>(src_data,
+                                                                     dst_base);
+                }
+              },
+              dst_type);
         }
-        return absl::OkStatus();
       },
-      dst_literal.shape().element_type());
+      src_type);
 }
 
 absl::StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
                                       PrimitiveType primitive_dest_type) {
   TF_RET_CHECK(literal.shape().IsArray());
-  if (literal.shape().element_type() == primitive_dest_type) {
+  const PrimitiveType src_type = literal.shape().element_type();
+  if (src_type == primitive_dest_type) {
     return literal.Clone();
   }
   // Source Array type requirement is ensured before.
   if (!primitive_util::IsArrayType(primitive_dest_type) ||
-      !primitive_util::IsArrayType(literal.shape().element_type())) {
+      !primitive_util::IsArrayType(src_type) ||
+      (primitive_util::IsComplexType(src_type) &&
+       !primitive_util::IsComplexType(primitive_dest_type))) {
     return Unimplemented("%s from type %s to type %s is not implemented.",
-                         "Converting",
-                         PrimitiveType_Name(literal.shape().element_type()),
+                         "Converting", PrimitiveType_Name(src_type),
                          PrimitiveType_Name(primitive_dest_type));
   }
   // At this point, we know both src & dst are array types, while src is not
-  // complex type, so we can allocate the result literal here to avoid
-  // duplicating it N^2 times in the conversion implementation.
+  // complex type (unless dst is also complex), so we can allocate the result
+  // literal here to avoid duplicating it N^2 times in the conversion
+  // implementation.
   Literal result(
       ShapeUtil::ChangeElementType(literal.shape(), primitive_dest_type));
-  ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> absl::Status {
-        return ConvertIfDestTypeMatches<primitive_type_constant>(literal,
-                                                                 result);
-      },
-      literal.shape().element_type()));
+  const void* src_base = literal.untyped_data();
+  void* dst_base = result.untyped_data();
+  const int64_t count = literal.element_count();
+  if (IsDirectConversion(src_type, primitive_dest_type)) {
+    ConvertDirect(src_type, src_base, primitive_dest_type, dst_base, count);
+    return result;
+  }
+
+  const PrimitiveType mid_type =
+      (IsNarrowFloat(src_type) || IsNarrowFloat(primitive_dest_type)) ? F32
+                                                                      : S8;
+  const int64_t src_elem_bytes = primitive_util::ByteWidth(src_type);
+  const int64_t dst_elem_bytes = primitive_util::ByteWidth(primitive_dest_type);
+  constexpr int64_t kChunkElements = 1024;
+  alignas(float) std::byte chunk_buf[kChunkElements * sizeof(float)];
+  for (int64_t offset = 0; offset < count; offset += kChunkElements) {
+    const int64_t chunk = std::min(kChunkElements, count - offset);
+    ConvertDirect(src_type,
+                  static_cast<const char*>(src_base) + offset * src_elem_bytes,
+                  mid_type, chunk_buf, chunk);
+    ConvertDirect(mid_type, chunk_buf, primitive_dest_type,
+                  static_cast<char*>(dst_base) + offset * dst_elem_bytes,
+                  chunk);
+  }
   return result;
 }
 
