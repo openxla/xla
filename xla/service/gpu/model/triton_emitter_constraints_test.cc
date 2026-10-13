@@ -59,10 +59,6 @@ using ::testing::HasSubstr;
 class TritonEmitterConstraintsTest : public HloHardwareIndependentTestBase {
  public:
   TritonEmitterConstraintsTest() = default;
-
-  void SetUp() override {
-    GTEST_SKIP() << "Legacy symbolic tile analysis is disallowed.";
-  }
   std::optional<SymbolicTileAnalysis> TryAnalyzeModule(
       HloModule* module, bool with_triton_emitter_specific_constraints = true) {
     EmitterSpecificConstraintsBuilder constraints_builder = nullptr;
