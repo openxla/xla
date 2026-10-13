@@ -61,6 +61,13 @@ struct CudaBandwidthSettings {
     static const absl::NoDestructor<std::vector<double>> kIntraNodeSpeedsSm100(
         {18.0, 19.0, 20.0, 24.0, 30.0, 40.0, 45.0, 50.0, 60.0, 70.0, 80.0,
          90.0});
+    // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/graph/search.cc#L1212
+    static const absl::NoDestructor<std::vector<double>> kIntraNodeSpeedsSm107(
+        {17.55, 23.4, 35.1, 46.8, 70.2, 93.6, 140.4, 187.2, 280.8});
+    if (compute_capability.WithoutAnyFeatureExtension() ==
+        se::CudaComputeCapability::Rubin()) {
+      return *kIntraNodeSpeedsSm107;
+    }
     if (compute_capability.major >= se::CudaComputeCapability::kBlackwell) {
       return *kIntraNodeSpeedsSm100;
     }
@@ -88,7 +95,12 @@ struct CudaBandwidthSettings {
   float GetNvlinkBw() const {
     switch (compute_capability.major) {
       case se::CudaComputeCapability::kBlackwell:
-        return kSm100NvlinkBandwidth;
+        switch (compute_capability.minor) {
+          case se::CudaComputeCapability::Rubin().minor:
+            return kSm107NvlinkBandwidth;
+          default:
+            return kSm100NvlinkBandwidth;
+        }
       case se::CudaComputeCapability::kHopper:
         return kSm90NvlinkBandwidth;
       case se::CudaComputeCapability::kAmpere:
@@ -121,6 +133,9 @@ struct CudaBandwidthSettings {
   // NCCL 2.25.1's Blackwell topology-model bandwidth per NVLink, in GB/s.
   // https://github.com/NVIDIA/nccl/blob/80f6bda4378b99d99e82b4d76a633791cc45fef0/src/graph/topo.h#L19
   static constexpr double kSm100NvlinkBandwidth = 40.0;
+  // NCCL's Rubin topology-model bandwidth per NVLink, in GB/s.
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/graph/topo.h#L27
+  static constexpr double kSm107NvlinkBandwidth = 31.2;
 
   // Ring LL128 bandwidth discount.
   // https://github.com/NVIDIA/nccl/blob/ea38312273e5b9a19a224c9ff4c10b7fcf441eaf/src/graph/tuning.cc#L179
