@@ -25,29 +25,20 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
-template <PlatformType PlatformT>
+template <PlatformType PlatformT, int64_t MaxPeers>
 __device__ __forceinline__ void SyncRemoteBlocksAndUpdateCounter(
     int64_t rank, int64_t num_ranks,
-    const std::array<uint32_t* __restrict__, MultiGpuBarrierKernel::kMaxPeers>&
-        signal_buffers,
+    const std::array<uint32_t* __restrict__, MaxPeers>& signal_buffers,
     uint32_t* sync_counter) {
-  // Pre-increment allows to initialize the counter to 0. We sync on 1.
-  // The plain load is race-free because we launch a single CTA and the
-  // __syncthreads() after SyncRemoteBlocks ensures all threads complete the
-  // load before thread 0 writes the updated value.
   uint32_t signal_value = *sync_counter + 1;
 
-  // 3. Barrier
-  SyncRemoteBlocks<PlatformT, MultiGpuBarrierKernel::kMaxPeers>(
-      signal_buffers, rank, num_ranks, signal_value);
+  SyncRemoteBlocks<PlatformT, MaxPeers>(signal_buffers, rank, num_ranks,
+                                        signal_value);
 
-  // Explicit synchronization.
-  // Adding __syncthreads() ensures that all threads have finished accessing
-  // global memory/peers before we update the state for the next iteration.
+  // CTA-wide barrier: all threads must finish their remote puts/waits before
+  // thread 0 updates sync_counter.
   __syncthreads();
 
-  // 4. Update State
-  // Only the first thread needs to update the counter for the NEXT execution.
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     *sync_counter = signal_value;
   }
@@ -67,8 +58,8 @@ __global__ void MultiGpuBarrierKernelImpl(
   }
   __syncthreads();
 
-  SyncRemoteBlocksAndUpdateCounter<PlatformT>(rank, num_ranks, signal_buffers,
-                                              sync_counter);
+  SyncRemoteBlocksAndUpdateCounter<PlatformT, MultiGpuBarrierKernel::kMaxPeers>(
+      rank, num_ranks, signal_buffers, sync_counter);
 }
 
 }  // namespace stream_executor::gpu

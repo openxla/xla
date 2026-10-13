@@ -43,7 +43,8 @@ __global__ void MultiGpuBarrierWithNcclKernelImpl(
   }
   __syncthreads();
 
-  SyncRemoteBlocksAndUpdateCounter<PlatformType::kCuda>(
+  SyncRemoteBlocksAndUpdateCounter<PlatformType::kCuda,
+                                   MultiGpuBarrierWithNcclKernel::kMaxPeers>(
       rank, num_ranks, signal_buffers, sync_counter);
 }
 

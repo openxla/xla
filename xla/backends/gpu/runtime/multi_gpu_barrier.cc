@@ -196,7 +196,7 @@ absl::StatusOr<const XLA_FFI_Command*> RecordMultiGpuBarrierWithNccl(
 }
 
 size_t GetMultiGpuBarrierSignalBufferSize() {
-  return stream_executor::gpu::MultiGpuBarrierKernel::kMaxPeers *
+  return stream_executor::gpu::MultiGpuBarrierWithNcclKernel::kMaxPeers *
          sizeof(uint32_t);
 }
 
