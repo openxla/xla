@@ -367,6 +367,9 @@ class PjRtRawClient {
     PjRtRawBufferRef raw_buffer;
     // Source and destination task incarnations, in that order. nullopt when
     // the caller has no GetAliveTasks snapshot.
+    // TODO: Revisit making this non-optional once older jaxlib versions
+    // are no longer supported and the missing-snapshot fallback in
+    // CopyArraysForCrossHost is no longer needed.
     std::optional<std::array<IncarnationId, 2>> incarnations;
   };
 
