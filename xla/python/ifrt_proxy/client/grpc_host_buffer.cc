@@ -44,6 +44,12 @@
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/protobuf/status.pb.h"
 
+// <windows.h> defines `DeleteFile` as a macro, which would otherwise rename the
+// `tsl::Env::DeleteFile()` call below.
+#ifdef DeleteFile
+#undef DeleteFile
+#endif
+
 namespace xla {
 namespace ifrt {
 namespace proxy {
@@ -68,6 +74,15 @@ ScopedAcquireSemaphore(std::optional<xla::Semaphore>& semaphore) {
   auto reservation = semaphore->ScopedAcquire(1);
   return std::make_shared<xla::Semaphore::ScopedReservation>(
       std::move(reservation));
+}
+
+// Deletes a file written by `StoreToDisk()`. The server also tries to delete
+// the file when it releases the host buffer, so the file may already be gone.
+static void DeleteLargeTransferFile(const std::string& file_path) {
+  absl::Status status = tsl::Env::Default()->DeleteFile(file_path);
+  if (!status.ok() && !absl::IsNotFound(status)) {
+    LOG(WARNING) << "Failed to delete file " << file_path << ": " << status;
+  }
 }
 
 GrpcClientHostBufferStore::GrpcClientHostBufferStore(
@@ -121,14 +136,24 @@ tsl::Future<> GrpcClientHostBufferStore::StoreToDisk(uint64_t handle,
     if (auto s = tsl::WriteStringToFile(tsl::Env::Default(), *file_path, data);
         !s.ok()) {
       LOG(WARNING) << "Failed to write to file " << *file_path << ": " << s;
+      DeleteLargeTransferFile(*file_path);
       promise->Set(std::move(s));
       return;
     }
 
     ::grpc::ClientContext context;
     GrpcHostBufferReadFromDiskResponse response;
-    promise->Set(xla::FromGrpcStatus(
-        stub_->HostBufferReadFromDisk(&context, request, &response)));
+    absl::Status status = xla::FromGrpcStatus(
+        stub_->HostBufferReadFromDisk(&context, request, &response));
+    // The server no longer needs the file once it has responded: it has mapped
+    // or read the file, and on a local file system a mapping survives unlink.
+    // Delete the file here whether or not the RPC succeeded, since the server
+    // may be unable to (e.g., in a sticky directory such as a memory-backed
+    // Kubernetes `emptyDir`, with the client and the server running as
+    // different users). Delete it before setting the promise so that the file
+    // is gone by the time the future becomes ready.
+    DeleteLargeTransferFile(*file_path);
+    promise->Set(std::move(status));
     VLOG(3) << "GrpcClientHostBufferStore::StoreToDisk done "
             << request.ShortDebugString();
   });

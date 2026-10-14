@@ -18,14 +18,18 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 
+#include "absl/base/log_severity.h"
+#include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "xla/python/ifrt_proxy/common/transfer_util.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/env.h"
 
@@ -34,6 +38,8 @@ namespace ifrt {
 namespace proxy {
 namespace {
 
+using ::testing::_;
+using ::testing::HasSubstr;
 using ::testing::Not;
 using ::testing::Pointee;
 
@@ -109,6 +115,45 @@ TEST(HostBufferStoreTest, LookupAfterShutdown) {
   store.Shutdown("test");
   EXPECT_THAT(store.Lookup(kHandle, /*timeout=*/absl::InfiniteDuration()),
               absl_testing::StatusIs(Not(absl::StatusCode::kOk)));
+}
+
+TEST(HostBufferStoreTest, ReadFromDiskToleratesDeletedFile) {
+  HostBufferStore store;
+  const uint64_t kHandle = 1;
+  const std::optional<std::string> file_path = LargeTransferFilePath(kHandle);
+  ASSERT_TRUE(file_path.has_value());
+  ASSERT_THAT(tsl::WriteStringToFile(tsl::Env::Default(), *file_path, "foo"),
+              absl_testing::IsOk());
+
+  ASSERT_THAT(store.ReadFromDisk(kHandle), absl_testing::IsOk());
+  // Clients delete the file as soon as `ReadFromDisk()` returns.
+  ASSERT_THAT(tsl::Env::Default()->DeleteFile(*file_path),
+              absl_testing::IsOk());
+  EXPECT_THAT(store.Lookup(kHandle),
+              absl_testing::IsOkAndHolds(Pointee(std::string("foo"))));
+
+  // Releasing the buffer should not warn about the file being gone.
+  absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(log, Log(absl::LogSeverity::kWarning, _,
+                       HasSubstr("Failed to delete file")))
+      .Times(0);
+  log.StartCapturingLogs();
+  EXPECT_THAT(store.Delete(kHandle), absl_testing::IsOk());
+}
+
+TEST(HostBufferStoreTest, ReadFromDiskDeletesFileOnRelease) {
+  HostBufferStore store;
+  const uint64_t kHandle = 2;
+  const std::optional<std::string> file_path = LargeTransferFilePath(kHandle);
+  ASSERT_TRUE(file_path.has_value());
+  ASSERT_THAT(tsl::WriteStringToFile(tsl::Env::Default(), *file_path, "foo"),
+              absl_testing::IsOk());
+
+  // Older clients rely on the server to delete the file.
+  ASSERT_THAT(store.ReadFromDisk(kHandle), absl_testing::IsOk());
+  ASSERT_THAT(store.Delete(kHandle), absl_testing::IsOk());
+  EXPECT_THAT(tsl::Env::Default()->FileExists(*file_path),
+              absl_testing::StatusIs(absl::StatusCode::kNotFound));
 }
 
 TEST(HostBufferStoreTest, UnknownHandle) {
