@@ -107,6 +107,7 @@ struct CommandRecordCounts {
   int initializes = 0;
   int creates = 0;
   int updates = 0;
+  Thunk::SetUpScope set_up_scope = Thunk::SetUpScope::kExecution;
 };
 
 struct FakeSeCommand : public se::CommandBuffer::Command {};
@@ -125,6 +126,8 @@ class RecordingCommand : public Command {
     ++counts_->initializes;
     return absl::OkStatus();
   }
+
+  SetUpScope set_up_scope() const override { return counts_->set_up_scope; }
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction action,
@@ -328,6 +331,64 @@ TEST(WhileThunkTest, PreparePropagatesToCommandBufferExecutors) {
 
   EXPECT_EQ(cond_counts.prepares, 1);
   EXPECT_EQ(body_counts.prepares, 1);
+}
+
+TEST(WhileThunkTest, SetUpScopeOfCommandBufferExecutors) {
+  BufferAllocation pred_alloc(/*index=*/0, /*size=*/sizeof(bool), /*color=*/0);
+  BufferAllocation::Slice pred_slice(&pred_alloc, /*offset=*/0,
+                                     /*size=*/sizeof(bool));
+  WhileThunk thunk(Thunk::ThunkInfo(), pred_slice,
+                   /*condition_thunks=*/ThunkSequence(),
+                   /*body_thunks=*/ThunkSequence(),
+                   /*trip_count=*/std::nullopt, /*devices_per_host=*/1);
+
+  CommandRecordCounts cond_counts;
+  cond_counts.set_up_scope = Thunk::SetUpScope::kDevice;
+  CommandRecordCounts body_counts;
+  body_counts.set_up_scope = Thunk::SetUpScope::kCollectiveTopology;
+  ASSERT_OK_AND_ASSIGN(CommandExecutor cond_executor,
+                       MakeCommandExecutor(&cond_counts));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor body_executor,
+                       MakeCommandExecutor(&body_counts));
+  ASSERT_OK(thunk.SetOrUpdateCommandBufferExecutors(
+      std::move(cond_executor), std::move(body_executor),
+      /*enable_loop_unroll=*/false));
+
+  EXPECT_EQ(thunk.set_up_scope(), Thunk::SetUpScope::kCollectiveTopology);
+  body_counts.set_up_scope = Thunk::SetUpScope::kDevice;
+  EXPECT_EQ(thunk.set_up_scope(), Thunk::SetUpScope::kDevice);
+  cond_counts.set_up_scope = Thunk::SetUpScope::kExecution;
+  EXPECT_EQ(thunk.set_up_scope(), Thunk::SetUpScope::kExecution);
+}
+
+TEST(WhileThunkTest, SetUpScopeOfThunkBodies) {
+  BufferAllocation pred_alloc(/*index=*/0, /*size=*/sizeof(bool), /*color=*/0);
+  BufferAllocation::Slice pred_slice(&pred_alloc, /*offset=*/0,
+                                     /*size=*/sizeof(bool));
+  CommandRecordCounts cond_counts;
+  cond_counts.set_up_scope = Thunk::SetUpScope::kDevice;
+  CommandRecordCounts body_counts;
+  body_counts.set_up_scope = Thunk::SetUpScope::kCollectiveTopology;
+  ThunkSequence condition_thunks;
+  condition_thunks.push_back(std::make_unique<RecordingCommand>(&cond_counts));
+  ThunkSequence body_thunks;
+  body_thunks.push_back(std::make_unique<RecordingCommand>(&body_counts));
+  WhileThunk thunk(Thunk::ThunkInfo(), pred_slice, std::move(condition_thunks),
+                   std::move(body_thunks),
+                   /*trip_count=*/std::nullopt, /*devices_per_host=*/1);
+
+  // Prepare and Initialize visit the thunk bodies rather than the command
+  // executors.
+  CommandRecordCounts command_counts;
+  ASSERT_OK_AND_ASSIGN(CommandExecutor cond_executor,
+                       MakeCommandExecutor(&command_counts));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor body_executor,
+                       MakeCommandExecutor(&command_counts));
+  ASSERT_OK(thunk.SetOrUpdateCommandBufferExecutors(
+      std::move(cond_executor), std::move(body_executor),
+      /*enable_loop_unroll=*/false));
+
+  EXPECT_EQ(thunk.set_up_scope(), Thunk::SetUpScope::kCollectiveTopology);
 }
 
 TEST(WhileThunkTest, PrepareAndInitializeDoNotDuplicateSharedCommands) {

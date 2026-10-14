@@ -107,6 +107,9 @@ class CommandExecutor {
   // Initializes all commands added to a sequence.
   absl::Status Initialize(const Thunk::InitializeParams& params);
 
+  // Returns the narrowest set-up scope of the commands.
+  Thunk::SetUpScope set_up_scope() const;
+
   // Records commands into the command buffer.
   //
   // This method automatically switches between `RecordCreate` or `RecordUpdate`

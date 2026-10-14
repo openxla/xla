@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/command_executor.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -240,6 +241,14 @@ absl::Status CommandExecutor::Initialize(
     ABSL_RETURN_IF_ERROR(command->Initialize(params));
   }
   return absl::OkStatus();
+}
+
+Thunk::SetUpScope CommandExecutor::set_up_scope() const {
+  Thunk::SetUpScope set_up_scope = Thunk::SetUpScope::kDevice;
+  for (const Command* command : commands_) {
+    set_up_scope = std::max(set_up_scope, command->set_up_scope());
+  }
+  return set_up_scope;
 }
 
 // A helper function that logs the details of a given command sequence for

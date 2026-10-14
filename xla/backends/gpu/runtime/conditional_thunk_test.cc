@@ -98,6 +98,7 @@ struct BranchRecordCounts {
   int prepares = 0;
   int creates = 0;
   int updates = 0;
+  Thunk::SetUpScope set_up_scope = Thunk::SetUpScope::kExecution;
 };
 
 struct FakeSeCommand : public se::CommandBuffer::Command {};
@@ -111,6 +112,8 @@ class BranchRecordingCommand : public Command {
     ++counts_->prepares;
     return absl::OkStatus();
   }
+
+  SetUpScope set_up_scope() const override { return counts_->set_up_scope; }
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams&, const RecordParams&, RecordAction action,
@@ -255,6 +258,37 @@ TEST(ConditionalThunkTest, PreparePropagatesToCommandBufferBranchExecutors) {
 
   EXPECT_EQ(branch0_counts.prepares, 1);
   EXPECT_EQ(branch1_counts.prepares, 1);
+}
+
+TEST(ConditionalThunkTest, SetUpScopeOfCommandBufferBranchExecutors) {
+  BufferAllocation branch_index_alloc(/*index=*/0, /*size=*/sizeof(int32_t),
+                                      /*color=*/0);
+  BufferAllocation::Slice branch_index_slice(&branch_index_alloc, /*offset=*/0,
+                                             /*size=*/sizeof(int32_t));
+
+  std::vector<ThunkSequence> branch_thunks(2);
+  ConditionalThunk thunk(
+      Thunk::ThunkInfo(),
+      ShapedSlice{branch_index_slice, ShapeUtil::MakeShape(S32, {})},
+      std::move(branch_thunks), /*devices_per_host=*/1);
+
+  BranchRecordCounts branch0_counts;
+  branch0_counts.set_up_scope = Thunk::SetUpScope::kDevice;
+  BranchRecordCounts branch1_counts;
+  branch1_counts.set_up_scope = Thunk::SetUpScope::kCollectiveTopology;
+  std::vector<CommandExecutor> branch_executors;
+  ASSERT_OK_AND_ASSIGN(CommandExecutor branch0_executor,
+                       MakeBranchExecutor(&branch0_counts));
+  ASSERT_OK_AND_ASSIGN(CommandExecutor branch1_executor,
+                       MakeBranchExecutor(&branch1_counts));
+  branch_executors.push_back(std::move(branch0_executor));
+  branch_executors.push_back(std::move(branch1_executor));
+  ASSERT_OK(thunk.SetOrUpdateCommandBufferBranchExecutors(
+      std::move(branch_executors)));
+
+  EXPECT_EQ(thunk.set_up_scope(), Thunk::SetUpScope::kCollectiveTopology);
+  branch0_counts.set_up_scope = Thunk::SetUpScope::kExecution;
+  EXPECT_EQ(thunk.set_up_scope(), Thunk::SetUpScope::kExecution);
 }
 
 TEST(ConditionalThunkTest, RecordCreatesAndUpdatesCommandBufferCase) {

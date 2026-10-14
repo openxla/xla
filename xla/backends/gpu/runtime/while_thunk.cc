@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/while_thunk.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -145,6 +146,24 @@ absl::Status WhileThunk::Initialize(const InitializeParams& params) {
             HostMemoryPool::Create(params.executor, PrimitiveType::PRED));
         return absl::OkStatus();
       });
+}
+
+// The set-up scope of the executor that `Prepare` and `Initialize` visit.
+static Thunk::SetUpScope ExecutorSetUpScope(
+    const ThunkExecutor& executor,
+    const std::optional<CommandExecutor>& command_executor) {
+  if (!executor.thunks().empty()) {
+    return executor.set_up_scope();
+  }
+  return command_executor.has_value() ? command_executor->set_up_scope()
+                                      : Thunk::SetUpScope::kDevice;
+}
+
+Thunk::SetUpScope WhileThunk::set_up_scope() const {
+  // The host memory pool is created once per executor.
+  return std::max(
+      ExecutorSetUpScope(condition_executor_, command_condition_executor_),
+      ExecutorSetUpScope(body_executor_, command_body_executor_));
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*> WhileThunk::Record(

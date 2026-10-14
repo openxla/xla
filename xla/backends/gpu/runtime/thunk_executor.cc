@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -82,6 +83,14 @@ absl::Status ThunkExecutor::Initialize(const Thunk::InitializeParams& params) {
     ABSL_RETURN_IF_ERROR(thunk->Initialize(params));
   }
   return absl::OkStatus();
+}
+
+Thunk::SetUpScope ThunkExecutor::set_up_scope() const {
+  Thunk::SetUpScope set_up_scope = Thunk::SetUpScope::kDevice;
+  for (const std::unique_ptr<Thunk>& thunk : thunks_) {
+    set_up_scope = std::max(set_up_scope, thunk->set_up_scope());
+  }
+  return set_up_scope;
 }
 
 absl::Status ThunkExecutor::ExecuteOnStream(

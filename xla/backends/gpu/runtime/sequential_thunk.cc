@@ -48,6 +48,10 @@ absl::Status SequentialThunk::Initialize(const InitializeParams& params) {
   return executor_.Initialize(params);
 }
 
+Thunk::SetUpScope SequentialThunk::set_up_scope() const {
+  return executor_.set_up_scope();
+}
+
 absl::Status SequentialThunk::ExecuteOnStream(const ExecuteParams& params) {
   std::optional<tsl::profiler::ScopedAnnotation> seq_annotation =
       GetKernelAnnotation(profile_annotation());

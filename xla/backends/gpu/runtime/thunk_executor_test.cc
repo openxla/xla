@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -33,6 +34,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/while_loop.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/service/buffer_assignment.h"
@@ -64,6 +66,55 @@ static Thunk::ThunkInfo ThunkInfo(absl::string_view name) {
   info.profile_annotation = name;
   return info;
 };
+
+// A thunk with a given set-up scope.
+class SetUpScopeThunk : public Thunk {
+ public:
+  explicit SetUpScopeThunk(std::optional<SetUpScope> set_up_scope)
+      : Thunk(Kind::kKernel, ThunkInfo()), set_up_scope_(set_up_scope) {}
+
+  absl::Status ExecuteOnStream(const ExecuteParams&) override {
+    return absl::OkStatus();
+  }
+  BufferUses buffer_uses() const override { return {}; }
+  absl::StatusOr<ThunkProto> ToProto() const override {
+    return absl::UnimplementedError("SetUpScopeThunk");
+  }
+  SetUpScope set_up_scope() const override {
+    return set_up_scope_.value_or(Thunk::set_up_scope());
+  }
+
+ private:
+  std::optional<SetUpScope> set_up_scope_;
+};
+
+TEST(ThunkExecutorTest, SetUpScopeIsTheNarrowestOfTheThunks) {
+  using SetUpScope = Thunk::SetUpScope;
+  EXPECT_EQ(ThunkExecutor(ThunkSequence()).set_up_scope(), SetUpScope::kDevice);
+
+  ThunkSequence thunks;
+  thunks.push_back(std::make_unique<SetUpScopeThunk>(SetUpScope::kDevice));
+  thunks.push_back(
+      std::make_unique<SetUpScopeThunk>(SetUpScope::kCollectiveTopology));
+  thunks.push_back(std::make_unique<SetUpScopeThunk>(SetUpScope::kDevice));
+  ThunkExecutor executor(std::move(thunks));
+  EXPECT_EQ(executor.set_up_scope(), SetUpScope::kCollectiveTopology);
+
+  // The set-up of thunks is valid for one execution unless they say otherwise.
+  executor.thunks().push_back(
+      std::make_unique<SetUpScopeThunk>(/*set_up_scope=*/std::nullopt));
+  EXPECT_EQ(executor.set_up_scope(), SetUpScope::kExecution);
+}
+
+TEST(SequentialThunkTest, SetUpScopeOfNestedThunks) {
+  using SetUpScope = Thunk::SetUpScope;
+  ThunkSequence thunks;
+  thunks.push_back(std::make_unique<SetUpScopeThunk>(SetUpScope::kDevice));
+  thunks.push_back(
+      std::make_unique<SetUpScopeThunk>(SetUpScope::kCollectiveTopology));
+  SequentialThunk thunk(Thunk::ThunkInfo(), std::move(thunks));
+  EXPECT_EQ(thunk.set_up_scope(), SetUpScope::kCollectiveTopology);
+}
 
 TEST(ThunkExecutorDefinitionTrackerTest, InvokesCallbackAfterLastUse) {
   ASSERT_OK_AND_ASSIGN(se::StreamExecutor * stream_executor, GpuExecutor());

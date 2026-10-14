@@ -85,6 +85,9 @@ class ThunkExecutor {
   absl::Status Initialize(const Thunk::InitializeParams& params);
   absl::Status ExecuteOnStream(const Thunk::ExecuteParams& params);
 
+  // Returns the narrowest set-up scope of the thunks.
+  Thunk::SetUpScope set_up_scope() const;
+
   const ThunkSequence& thunks() const { return thunks_; }
   ThunkSequence& thunks() { return thunks_; }
 

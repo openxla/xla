@@ -430,6 +430,31 @@ class Thunk {
     return absl::OkStatus();
   }
 
+  // The scope in which the set-up of a thunk, i.e. what `Prepare` requests and
+  // what `Initialize` creates, stays valid on an executor. Ordered from the
+  // widest to the narrowest, so that the set-up scope of thunks run in
+  // sequence is the maximum of their set-up scopes.
+  enum class SetUpScope {
+    // The device: the set-up depends only on the executor, e.g. loading
+    // kernels or creating library handles. Later executions can execute or
+    // record the thunk without calling `Prepare` and `Initialize`.
+    kDevice,
+    // The collective topology (see `CollectiveTopology`): `Prepare` also
+    // requests cliques and collective memory, which are the same for the same
+    // topology. Later executions with the same topology can execute or record
+    // the thunk without calling `Prepare` and `Initialize` if they make these
+    // requests instead.
+    kCollectiveTopology,
+    // One execution: the set-up can depend on anything else, e.g. buffer
+    // addresses or other ranks.
+    kExecution,
+  };
+
+  // Returns the scope in which the set-up of the thunk stays valid. Thunks that
+  // override it must answer for everything their `Prepare` and `Initialize`
+  // do, including for nested thunks.
+  virtual SetUpScope set_up_scope() const { return SetUpScope::kExecution; }
+
   // Executes thunk on the given stream. This method must be called after
   // Initialize and can be called multiple times over Thunk's lifetime.
   //

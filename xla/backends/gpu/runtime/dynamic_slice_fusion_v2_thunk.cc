@@ -225,6 +225,14 @@ absl::Status DynamicSliceFusionV2Thunk::Initialize(
   return command_executor_->Initialize(embedded_params);
 }
 
+Thunk::SetUpScope DynamicSliceFusionV2Thunk::set_up_scope() const {
+  // Embedded allocations are built for each call and not kept.
+  if (!executor_.thunks().empty() || !command_executor_.has_value()) {
+    return executor_.set_up_scope();
+  }
+  return command_executor_->set_up_scope();
+}
+
 absl::Status DynamicSliceFusionV2Thunk::VerifyBufferAssignment(
     absl::Span<const DynamicSliceFusion::Result> results,
     absl::Span<const BufferAllocation::Slice> parameter_buffers,

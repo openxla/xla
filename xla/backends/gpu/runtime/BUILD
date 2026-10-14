@@ -3750,6 +3750,7 @@ xla_test(
         ":sequential_thunk",
         ":thunk",
         ":thunk_executor",
+        ":thunk_proto_cc",
         ":while_loop",
         ":while_thunk",
         "//xla:shape_util",

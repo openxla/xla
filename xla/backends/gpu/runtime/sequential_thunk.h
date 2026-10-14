@@ -43,6 +43,7 @@ class SequentialThunk : public Thunk {
 
   absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
+  SetUpScope set_up_scope() const override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   BufferUses buffer_uses() const override { return {}; }
