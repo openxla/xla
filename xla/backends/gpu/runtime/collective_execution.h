@@ -16,18 +16,25 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_EXECUTION_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_EXECUTION_H_
 
+#include <optional>
+
 #include "absl/base/attributes.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/runtime/device_id.h"
+#include "xla/service/device_assignment.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 
 // Returns a clique key for a collective operation executed for a given set of
 // replica groups, group mode and stream kind, based on the `params` argument
-// that identifies device that participates in the collective operation.
+// that identifies device that participates in the collective operation. The
+// key depends only on the parts of `params` that `CollectiveTopology` holds.
 absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
     const CollectiveParams& params,
     absl::Span<const ReplicaGroup> replica_groups,
@@ -42,6 +49,28 @@ inline absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
   return GetGpuCliqueKey(params, replica_groups, group_mode,
                          CommunicationId(is_p2p ? 1 : 0));
 }
+
+// The parts of `CollectiveParams` that clique keys (`GetGpuCliqueKey`) and the
+// device groups of clique requests depend on, i.e. the topology of collective
+// operations. Executions with the same topology request the same cliques.
+//
+// Holds copies of the values that `CollectiveParams` points to, since they can
+// change between executions while their addresses stay the same.
+class CollectiveTopology {
+ public:
+  explicit CollectiveTopology(const CollectiveParams& params);
+
+  // Returns true if `params` has this topology.
+  bool Matches(const CollectiveParams& params) const;
+
+ private:
+  GpuCollectives* collectives_;
+  GlobalDeviceId global_device_id_;
+  std::optional<DeviceAssignment> device_assn_;
+  std::optional<CollectiveParams::GlobalDeviceIdMap> global_device_id_map_;
+  std::optional<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
+      incarnations_;
+};
 
 }  // namespace xla::gpu
 
