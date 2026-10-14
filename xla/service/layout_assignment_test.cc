@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/layout_assignment.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -3691,7 +3692,7 @@ ENTRY %main (x: f32[256,3,1], y: f32[256,3,1,3]) -> f32[256,3,1,4] {
 
 TEST_F(LayoutAssignmentTest, LegalizesInputCopiesInAsyncComputation) {
   const char* hlo = R"(
-HloModule test, entry_computation_layout={(f32[2,3]{1,0})->f32[2,3]{1,0}}
+HloModule LegalizesInputCopiesInAsyncComputation, entry_computation_layout={(f32[2,3]{1,0})->f32[2,3]{1,0}}
 body {
   p = f32[2,3]{1,0} parameter(0)
   ROOT op = f32[2,3]{0,1} custom-call(p), custom_call_target="test",
@@ -3730,7 +3731,7 @@ ENTRY main {
 
 TEST_F(LayoutAssignmentTest, LegalizesResultCopiesInAsyncComputation) {
   const char* hlo = R"(
-HloModule test, entry_computation_layout={(f32[2,3]{1,0})->f32[2,3]{1,0}}
+HloModule LegalizesResultCopiesInAsyncComputation, entry_computation_layout={(f32[2,3]{1,0})->f32[2,3]{1,0}}
 body {
   p = f32[2,3]{1,0} parameter(0)
   ROOT op = f32[2,3]{0,1} custom-call(p), custom_call_target="test",
