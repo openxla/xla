@@ -137,6 +137,12 @@ class CustomCallThunk : public TracedCommand {
 
   absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
+
+  // Without prepare and initialize stages, Prepare and Initialize do nothing.
+  SetUpScope set_up_scope() const override {
+    return HasPrepareStage() || HasInitializeStage() ? SetUpScope::kExecution
+                                                     : SetUpScope::kDevice;
+  }
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
@@ -205,6 +211,10 @@ class CustomCallThunk : public TracedCommand {
   };
 
  private:
+  // Returns true if the handler bundle has a prepare or initialize stage.
+  bool HasPrepareStage() const;
+  bool HasInitializeStage() const;
+
   // Per-device call frame reused across executions. `busy` is set while a
   // `CallFrameLease` refers to `frame`; concurrent executions on the same
   // device fall back to a private copy of the reference call frame.

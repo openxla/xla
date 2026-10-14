@@ -506,13 +506,26 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
   return Invoke(ffi::GetXlaFfiApi(), handler, *call_frame, context, stage);
 }
 
-absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
+bool CustomCallThunk::HasPrepareStage() const {
   const auto* c_bundle = std::get_if<XLA_FFI_Handler_Bundle>(&bundle_);
   const auto* owned_bundle = std::get_if<OwnedHandlerBundle>(&bundle_);
-  if ((c_bundle == nullptr || c_bundle->prepare == nullptr) &&
-      (owned_bundle == nullptr || owned_bundle->prepare == nullptr)) {
+  return (c_bundle != nullptr && c_bundle->prepare != nullptr) ||
+         (owned_bundle != nullptr && owned_bundle->prepare != nullptr);
+}
+
+bool CustomCallThunk::HasInitializeStage() const {
+  const auto* c_bundle = std::get_if<XLA_FFI_Handler_Bundle>(&bundle_);
+  const auto* owned_bundle = std::get_if<OwnedHandlerBundle>(&bundle_);
+  return (c_bundle != nullptr && c_bundle->initialize != nullptr) ||
+         (owned_bundle != nullptr && owned_bundle->initialize != nullptr);
+}
+
+absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
+  if (!HasPrepareStage()) {
     return absl::OkStatus();
   }
+  const auto* c_bundle = std::get_if<XLA_FFI_Handler_Bundle>(&bundle_);
+  const auto* owned_bundle = std::get_if<OwnedHandlerBundle>(&bundle_);
 
   // Run the prepare stage at most once per execution.
   if (params.execution_scoped_state != nullptr) {
@@ -561,12 +574,11 @@ absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
 }
 
 absl::Status CustomCallThunk::Initialize(const InitializeParams& params) {
-  const auto* c_bundle = std::get_if<XLA_FFI_Handler_Bundle>(&bundle_);
-  const auto* owned_bundle = std::get_if<OwnedHandlerBundle>(&bundle_);
-  if ((c_bundle == nullptr || c_bundle->initialize == nullptr) &&
-      (owned_bundle == nullptr || owned_bundle->initialize == nullptr)) {
+  if (!HasInitializeStage()) {
     return absl::OkStatus();
   }
+  const auto* c_bundle = std::get_if<XLA_FFI_Handler_Bundle>(&bundle_);
+  const auto* owned_bundle = std::get_if<OwnedHandlerBundle>(&bundle_);
 
   // Run the initialize stage at most once per execution.
   if (params.execution_scoped_state != nullptr) {
