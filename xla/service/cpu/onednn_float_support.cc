@@ -15,12 +15,37 @@ limitations under the License.
 
 #include "xla/service/cpu/onednn_float_support.h"
 
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/cpu/onednn_contraction_rewriter.h"
+#include "xla/service/float_support.h"
 
 namespace xla {
 namespace cpu {
+namespace {
+
+// Returns true if every reduce / reduce-window / map applying `hlo`'s
+// computation also runs in low precision. A low precision computation applied
+// by an upcast caller would leave converts in the caller's innermost loop.
+// Other applying callers (e.g. scatter, sort) always support low precision.
+bool IsAppliedInLowPrecision(const HloInstruction& hlo,
+                             const FloatSupport& float_support) {
+  if (hlo.parent() == nullptr) {
+    return true;
+  }
+  for (const HloInstruction* caller : hlo.parent()->caller_instructions()) {
+    if ((caller->opcode() == HloOpcode::kReduce ||
+         caller->opcode() == HloOpcode::kReduceWindow ||
+         caller->opcode() == HloOpcode::kMap) &&
+        !float_support.SupportsLowPrecisionOutput(*caller)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+}  // namespace
 
 bool OneDnnFloatSupport::IsSupported(const HloInstruction& hlo) const {
   switch (hlo.opcode()) {
@@ -55,6 +80,9 @@ bool OneDnnFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kSelectAndScatter:
     case HloOpcode::kSlice:
     case HloOpcode::kTranspose:
+    // Other special ops.
+    case HloOpcode::kBitcast:
+      return true;
     // Elementwise ops without precision loss.
     case HloOpcode::kAbs:
     case HloOpcode::kNegate:
@@ -62,9 +90,7 @@ bool OneDnnFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
     case HloOpcode::kClamp:
-    // Other special ops.
-    case HloOpcode::kBitcast:
-      return true;
+      return IsAppliedInLowPrecision(hlo, *this);
     case HloOpcode::kSort:
       return LowPrecisionType() == BF16;
     default:
