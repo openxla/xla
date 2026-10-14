@@ -445,6 +445,13 @@ class Thunk {
     // the thunk without calling `Prepare` and `Initialize` if they make these
     // requests instead.
     kCollectiveTopology,
+    // The communicators of the acquired cliques (see `CollectiveCliques`):
+    // `Initialize` also creates state for them, and a clique can get new
+    // communicators without a change of topology, e.g. when it is split again
+    // from another clique. Later executions with the same topology and
+    // communicators can execute or record the thunk without calling `Prepare`
+    // and `Initialize` if they make the requests of `Prepare` instead.
+    kCommunicator,
     // One execution: the set-up can depend on anything else, e.g. buffer
     // addresses or other ranks.
     kExecution,

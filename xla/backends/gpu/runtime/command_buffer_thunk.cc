@@ -35,6 +35,7 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -52,6 +53,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/util/tied_ref.h"
 #include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
 
@@ -175,7 +177,7 @@ absl::Status CommandBufferThunk::Prepare(const PrepareParams& params) {
     cmd_buffer = FindCommandBuffer(params.executor);
   }
 
-  std::shared_ptr<const CachedCollectiveRequests> cached_collective_requests;
+  std::shared_ptr<CachedCollectiveRequests> cached_collective_requests;
   bool recorded = false;
   if (cmd_buffer != nullptr) {
     absl::MutexLock lock(cmd_buffer->mutex);
@@ -203,9 +205,9 @@ absl::Status CommandBufferThunk::Prepare(const PrepareParams& params) {
     ABSL_RETURN_IF_ERROR(params.collective_memory_requests->Merge(
         cached_collective_requests->memory));
     auto [_, inserted] = params.execution_scoped_state->try_emplace(
-        thunk_info().thunk_id,
-        std::in_place_type<std::shared_ptr<ExecutorCommandBuffer>>,
-        std::move(cmd_buffer));
+        thunk_info().thunk_id, std::in_place_type<ReusedSetUp>,
+        ReusedSetUp{std::move(cmd_buffer),
+                    std::move(cached_collective_requests)});
     TF_RET_CHECK(inserted) << "Another thunk has execution scoped state under "
                            << "thunk id " << thunk_info().thunk_id;
     return absl::OkStatus();
@@ -222,6 +224,42 @@ absl::Status CommandBufferThunk::PrepareAll(const PrepareParams& params) {
   // `commands_` borrows pointers to the same Thunk objects owned by `thunks_`,
   // so preparing `thunks_` (when present) already prepares all commands.
   return thunks_ ? thunks_->Prepare(params) : commands_.Prepare(params);
+}
+
+absl::Status CommandBufferThunk::InitializeAll(const InitializeParams& params) {
+  // `commands_` borrows pointers to the same Thunk objects owned by `thunks_`,
+  // so initializing `thunks_` (when present) already initializes all commands.
+  return thunks_ ? thunks_->Initialize(params) : commands_.Initialize(params);
+}
+
+absl::Status CommandBufferThunk::InitializeAllIfCommunicatorsChanged(
+    const InitializeParams& params, CachedCollectiveRequests& requests) {
+  // Cliques get new communicators while they are acquired, so before
+  // `Initialize`.
+  absl::MutexLock lock(requests.mutex);
+  if (requests.communicator_sentinels.has_value() &&
+      absl::c_none_of(*requests.communicator_sentinels,
+                      [](const tsl::TiedRef<CommunicatorSentinel>& sentinel) {
+                        return sentinel.Expired();
+                      })) {
+    return absl::OkStatus();
+  }
+
+  VLOG(3) << "Initialize commands for new communicators on device #"
+          << params.executor->device_ordinal();
+  ABSL_RETURN_IF_ERROR(InitializeAll(params));
+  std::vector<tsl::TiedRef<CommunicatorSentinel>> sentinels;
+  for (const CollectiveCliqueRequests::CliqueRequest& request :
+       requests.cliques.OrderedRequestedCliques()) {
+    TF_RET_CHECK(params.collective_cliques != nullptr);
+    ABSL_ASSIGN_OR_RETURN(
+        tsl::TiedRef<CommunicatorSentinel> sentinel,
+        params.collective_cliques->Tie(
+            request.key, std::make_unique<CommunicatorSentinel>()));
+    sentinels.push_back(std::move(sentinel));
+  }
+  requests.communicator_sentinels = std::move(sentinels);
+  return absl::OkStatus();
 }
 
 absl::StatusOr<std::shared_ptr<CommandBufferThunk::CachedCollectiveRequests>>
@@ -252,22 +290,21 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
     return absl::OkStatus();
   }
 
+  ReusedSetUp reused = FindReusedSetUp(params.execution_scoped_state);
   std::shared_ptr<ExecutorCommandBuffer> cmd_buffer =
-      FindReusedCommandBuffer(params.execution_scoped_state);
+      std::move(reused.cmd_buffer);
   if (cmd_buffer != nullptr) {
     // The command buffer was recorded, so with persistent allocation indices,
     // which stay present once they are.
     TF_RET_CHECK(params.persistent_alloc_indices.has_value());
+    if (commands_set_up_scope_ == SetUpScope::kCommunicator) {
+      ABSL_RETURN_IF_ERROR(
+          InitializeAllIfCommunicatorsChanged(params, *reused.requests));
+    }
   } else {
     // Always initialize fallback thunks (or commands when there are no
-    // fallback thunks). `commands_` borrows pointers to the same Thunk objects
-    // owned by `thunks_`, so initializing `thunks_` (when present) already
-    // initializes all commands.
-    if (thunks_) {
-      ABSL_RETURN_IF_ERROR(thunks_->Initialize(params));
-    } else {
-      ABSL_RETURN_IF_ERROR(commands_.Initialize(params));
-    }
+    // fallback thunks).
+    ABSL_RETURN_IF_ERROR(InitializeAll(params));
 
     if (IsProfilingWithoutCommandBuffers()) {
       VLOG(1) << "Initialize command buffer thunk as a regular thunk sequence "
@@ -375,7 +412,7 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 
   se::StreamExecutor* executor = params.stream->parent();
   std::shared_ptr<ExecutorCommandBuffer> cmd_buffer =
-      FindReusedCommandBuffer(params.execution_scoped_state);
+      FindReusedSetUp(params.execution_scoped_state).cmd_buffer;
   if (cmd_buffer == nullptr) {
     // As a work around for CUPTI bugs, run everything in op-by-op mode.
     if (IsProfilingWithoutCommandBuffers()) {
@@ -507,17 +544,16 @@ CommandBufferThunk::FindCommandBuffer(se::StreamExecutor* executor) const {
   return device_state->command_buffer;
 }
 
-std::shared_ptr<CommandBufferThunk::ExecutorCommandBuffer>
-CommandBufferThunk::FindReusedCommandBuffer(
+CommandBufferThunk::ReusedSetUp CommandBufferThunk::FindReusedSetUp(
     const ExecutionScopedState* state) const {
   if (state == nullptr) {
-    return nullptr;
+    return {};
   }
   auto it = state->find(thunk_info().thunk_id);
   if (it == state->end()) {
-    return nullptr;
+    return {};
   }
-  return tsl::any_cast<std::shared_ptr<ExecutorCommandBuffer>>(it->second);
+  return tsl::any_cast<ReusedSetUp>(it->second);
 }
 
 bool CommandBufferThunk::IsProfilingWithoutCommandBuffers() const {

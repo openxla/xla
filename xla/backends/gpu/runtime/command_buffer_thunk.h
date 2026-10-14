@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/util/tied_ref.h"
 
 namespace xla::gpu {
 
@@ -92,6 +93,10 @@ class CommandBufferThunk : public Thunk {
   }
 
  private:
+  // An object tied to a clique to detect when the clique gets new
+  // communicators.
+  struct CommunicatorSentinel {};
+
   // The clique and collective memory requests of all commands, collected on an
   // executor where all commands were prepared and initialized before. Later
   // executions with the same collective topology make them instead of
@@ -105,6 +110,13 @@ class CommandBufferThunk : public Thunk {
     std::optional<CollectiveTopology> topology;
     CollectiveCliqueRequests cliques;
     CollectiveMemoryRequests memory;
+
+    // Sentinels tied to the acquired cliques of `cliques` by the last execution
+    // that reused the set-up and initialized all commands, unset before. A
+    // sentinel expires when its clique gets new communicators.
+    absl::Mutex mutex;
+    std::optional<std::vector<tsl::TiedRef<CommunicatorSentinel>>>
+        communicator_sentinels ABSL_GUARDED_BY(mutex);
   };
 
   // Command buffer instantiated on a `se::StreamExecutor` instance, and
@@ -165,8 +177,17 @@ class CommandBufferThunk : public Thunk {
 
     // The requests collected after `command_buffer` was recorded, null before.
     // Later executions that make them launch `command_buffer`.
-    std::shared_ptr<const CachedCollectiveRequests> cached_collective_requests
+    std::shared_ptr<CachedCollectiveRequests> cached_collective_requests
         ABSL_GUARDED_BY(mutex);
+  };
+
+  // The command buffer and the cached requests that `Prepare` decided to
+  // reuse, i.e. to make the requests and launch the command buffer without
+  // preparing and initializing commands. Executions keep it in their execution
+  // scoped state under the id of this thunk.
+  struct ReusedSetUp {
+    std::shared_ptr<ExecutorCommandBuffer> cmd_buffer;
+    std::shared_ptr<CachedCollectiveRequests> requests;
   };
 
   struct DeviceState {
@@ -194,15 +215,22 @@ class CommandBufferThunk : public Thunk {
   // Prepares `thunks_` (when present) or `commands_`.
   absl::Status PrepareAll(const PrepareParams& params);
 
+  // Initializes `thunks_` (when present) or `commands_`.
+  absl::Status InitializeAll(const InitializeParams& params);
+
+  // Initializes all commands if a clique of `requests` got new communicators
+  // since the last call, or on the first call, and ties sentinels to the
+  // cliques to detect the next change.
+  absl::Status InitializeAllIfCommunicatorsChanged(
+      const InitializeParams& params, CachedCollectiveRequests& requests);
+
   // Prepares all commands and returns their requests to cache.
   absl::StatusOr<std::shared_ptr<CachedCollectiveRequests>>
   PrepareAndCollectRequests(const PrepareParams& params);
 
-  // Returns the command buffer that `Prepare` decided to reuse, i.e. to launch
-  // without preparing and initializing commands, in the execution with
-  // `state`, or null. Executions keep it in `state` under the id of this thunk.
-  std::shared_ptr<ExecutorCommandBuffer> FindReusedCommandBuffer(
-      const ExecutionScopedState* state) const;
+  // Returns the set-up that `Prepare` decided to reuse in the execution with
+  // `state`, or one with null members.
+  ReusedSetUp FindReusedSetUp(const ExecutionScopedState* state) const;
 
   // Returns true if commands execute as a regular thunk sequence because a
   // profiler session is active.

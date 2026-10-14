@@ -29,6 +29,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/btree_map.h"
 #include "absl/container/btree_set.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
@@ -40,8 +41,12 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
+#include "xla/backends/gpu/collectives/cancellation_token.h"
+#include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command.h"
@@ -57,6 +62,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
+#include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
@@ -1835,13 +1842,14 @@ void ExpectSameRequests(const ExecutionRequests& a,
 // Prepares, initializes and executes `thunks` like an executable does in one
 // execution, after a thunk that requests `EarlierClique()` and symmetric
 // memory on it, and returns the requests. Calls `after_prepare` after preparing
-// the thunks.
+// the thunks, and initializes them with `collective_cliques`.
 absl::StatusOr<ExecutionRequests> RunExecution(
     absl::Span<CommandBufferThunk* const> thunks, se::Stream* stream,
     const BufferAllocations& allocations,
     absl::Span<const BufferAllocation::Index> persistent_alloc_indices,
     CollectiveParams* collective_params = nullptr,
-    absl::FunctionRef<void()> after_prepare = [] {}) {
+    absl::FunctionRef<void()> after_prepare = [] {},
+    CollectiveCliques* collective_cliques = nullptr) {
   Thunk::ExecutionScopedState execution_scoped_state;
   CollectiveCliqueRequests clique_requests;
   ABSL_RETURN_IF_ERROR(clique_requests.RequestClique(
@@ -1866,6 +1874,7 @@ absl::StatusOr<ExecutionRequests> RunExecution(
   initialize_params.stream = stream;
   initialize_params.command_buffer_trace_stream = stream;
   initialize_params.collective_params = collective_params;
+  initialize_params.collective_cliques = collective_cliques;
   initialize_params.execution_scoped_state = &execution_scoped_state;
   initialize_params.persistent_alloc_indices = persistent_alloc_indices;
   for (CommandBufferThunk* thunk : thunks) {
@@ -1898,8 +1907,9 @@ absl::StatusOr<ExecutionRequests> RunExecution(
 struct ReuseSetUpThunkOptions {
   // Gives the thunk fallback thunks that own its commands, like in production.
   bool fallback_thunks = false;
-  // Makes the set-up scope of the second command `kExecution`.
-  bool execution_scoped_command = false;
+  // The set-up scope of the second command.
+  Thunk::SetUpScope second_command_set_up_scope =
+      Thunk::SetUpScope::kCollectiveTopology;
   bool requires_warmup = false;
   bool requires_update_on_initialize = false;
   // Index of the first of the four buffers that the thunk writes.
@@ -1930,17 +1940,16 @@ class ReuseSetUpTest : public ::testing::Test {
   }
 
   // Creates a thunk with four memset commands that write `i + 1` into buffer
-  // `i`. Their set-up scopes are kCollectiveTopology, kCollectiveTopology,
-  // kDevice and kCollectiveTopology. They request two cliques of the same size
-  // and a larger one, and symmetric memory on the two cliques of the same size.
+  // `i`. Their set-up scopes are kCollectiveTopology,
+  // `second_command_set_up_scope`, kDevice and kCollectiveTopology. They
+  // request two cliques of the same size and a larger one, and symmetric memory
+  // on the two cliques of the same size.
   std::unique_ptr<CommandBufferThunk> CreateThunk(
       ReuseSetUpThunkOptions options = {}) {
     std::vector<SetUpCountingMemsetOptions> commands_options = {
         {SetUpScope::kCollectiveTopology, cliques_[0],
          /*symmetric_memory=*/true},
-        {options.execution_scoped_command ? SetUpScope::kExecution
-                                          : SetUpScope::kCollectiveTopology,
-         cliques_[1]},
+        {options.second_command_set_up_scope, cliques_[1]},
         {SetUpScope::kDevice, std::nullopt},
         {SetUpScope::kCollectiveTopology, cliques_[2],
          /*symmetric_memory=*/true}};
@@ -2002,6 +2011,25 @@ class ReuseSetUpTest : public ::testing::Test {
     return total;
   }
 
+  // Replaces the clique for `cliques_[i]` with a new one, i.e. with new
+  // communicators, and acquires all cliques in `collective_cliques_`.
+  void ReplaceClique(int i) {
+    collective_cliques_ = CollectiveCliques();
+    lockable_cliques_[i] = std::make_shared<LockableGpuClique>(
+        cliques_[i], std::nullopt,
+        absl::btree_map<RankId, std::unique_ptr<Communicator>>(),
+        /*peer_access_enabled=*/false, std::make_shared<CancellationToken>());
+    AcquiredCliquesMap cliques_map;
+    for (int j = 0; j < 3; ++j) {
+      if (lockable_cliques_[j] != nullptr) {
+        cliques_map.emplace(cliques_[j],
+                            std::make_shared<LockableGpuClique::Lock>(
+                                lockable_cliques_[j]->Acquire()));
+      }
+    }
+    collective_cliques_ = CollectiveCliques(std::move(cliques_map));
+  }
+
   // Expects that buffers `first_buffer` to `first_buffer + 3` of `allocations`
   // were written, and clears them.
   void ExpectWritten(const BufferAllocations& allocations,
@@ -2029,6 +2057,8 @@ class ReuseSetUpTest : public ::testing::Test {
                     GlobalDeviceId(3)},
                    4),
       GpuCliqueKey({GlobalDeviceId(2), GlobalDeviceId(3)}, 2)};
+  std::shared_ptr<LockableGpuClique> lockable_cliques_[3];
+  CollectiveCliques collective_cliques_;
   SetUpCounts counts_[kNumBuffers];
 };
 
@@ -2062,7 +2092,7 @@ TEST_F(ReuseSetUpTest, ReusesSetUpOfCommands) {
 
 TEST_F(ReuseSetUpTest, SetsUpAllCommandsIfOneIsExecutionScoped) {
   std::unique_ptr<CommandBufferThunk> thunk =
-      CreateThunk({.execution_scoped_command = true});
+      CreateThunk({.second_command_set_up_scope = SetUpScope::kExecution});
   BufferAllocations allocations = Allocations(buffers_);
   for (int i = 0; i < 4; ++i) {
     ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
@@ -2070,6 +2100,87 @@ TEST_F(ReuseSetUpTest, SetsUpAllCommandsIfOneIsExecutionScoped) {
     ExpectWritten(allocations);
   }
   EXPECT_THAT(SetUps(), Each(Pair(4, 4)));
+}
+
+TEST_F(ReuseSetUpTest, InitializesAllCommandsForNewCommunicators) {
+  std::unique_ptr<CommandBufferThunk> thunk =
+      CreateThunk({.second_command_set_up_scope = SetUpScope::kCommunicator});
+  BufferAllocations allocations = Allocations(buffers_);
+  for (int i = 0; i < 3; ++i) {
+    ReplaceClique(i);
+  }
+  auto run_execution = [&] {
+    return RunExecution(
+        {thunk.get()}, stream_.get(), allocations, persistent_alloc_indices_,
+        /*collective_params=*/nullptr, [] {}, &collective_cliques_);
+  };
+
+  // The first execution records the command buffer and the second one
+  // collects the requests. The third one reuses the set-up for the first
+  // time, so it initializes all commands to tie sentinels to the cliques.
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_OK(run_execution());
+    ExpectWritten(allocations);
+  }
+  EXPECT_THAT(SetUps(), Each(Pair(2, 3)));
+
+  // A clique that gets new communicators, e.g. when it is split again from
+  // another clique, makes the next execution initialize all commands again.
+  ReplaceClique(1);
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_OK(run_execution());
+    ExpectWritten(allocations);
+  }
+  EXPECT_THAT(SetUps(), Each(Pair(2, 4)));
+  EXPECT_EQ(Count(&SetUpCounts::records), 4);
+}
+
+TEST_F(ReuseSetUpTest, ChecksCommunicatorsOfTheRequestsItReuses) {
+  std::unique_ptr<CommandBufferThunk> thunk =
+      CreateThunk({.second_command_set_up_scope = SetUpScope::kCommunicator});
+  BufferAllocations allocations = Allocations(buffers_);
+  for (int i = 0; i < 3; ++i) {
+    ReplaceClique(i);
+  }
+
+  DeviceAssignment device_assignment(/*replica_count=*/2,
+                                     /*computation_count=*/1);
+  device_assignment(0, 0) = 0;
+  device_assignment(1, 0) = 1;
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream_.get());
+  run_options.mutable_run_options()->set_device_assignment(&device_assignment);
+  ASSERT_OK_AND_ASSIGN(
+      CollectiveParams collective_params,
+      CollectiveParams::Create(run_options, /*async_streams=*/{},
+                               LocalDeviceId(executor_->device_ordinal())));
+
+  // The third execution without collective parameters reuses the set-up for
+  // the first time, so it initializes all commands to tie sentinels to the
+  // cliques.
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_OK(RunExecution(
+        {thunk.get()}, stream_.get(), allocations, persistent_alloc_indices_,
+        /*collective_params=*/nullptr, [] {}, &collective_cliques_));
+  }
+  EXPECT_THAT(SetUps(), Each(Pair(2, 3)));
+
+  // An execution with another topology replaces the cached requests after the
+  // next execution reused them. The next execution checks the sentinels of the
+  // requests it reused, whose cliques kept their communicators, so it does not
+  // initialize commands.
+  ASSERT_OK(RunExecution(
+      {thunk.get()}, stream_.get(), allocations, persistent_alloc_indices_,
+      /*collective_params=*/nullptr,
+      [&] {
+        ASSERT_OK(RunExecution(
+            {thunk.get()}, stream_.get(), allocations,
+            persistent_alloc_indices_, &collective_params, [] {},
+            &collective_cliques_));
+      },
+      &collective_cliques_));
+  ExpectWritten(allocations);
+  EXPECT_THAT(SetUps(), Each(Pair(3, 4)));
 }
 
 TEST_F(ReuseSetUpTest, ReusesSetUpOfEachThunkInAnExecution) {

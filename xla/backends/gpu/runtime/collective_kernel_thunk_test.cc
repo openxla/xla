@@ -530,7 +530,7 @@ TEST(CollectiveKernelThunkTest, SetUpScopeDependsOnSymmetricMemory) {
                 /*scratch_memory_type=*/
                 SymmetricMemoryType::kLoadStoreAccessible)
                 .thunk->set_up_scope(),
-            Thunk::SetUpScope::kExecution);
+            Thunk::SetUpScope::kCommunicator);
 }
 
 bool IsAtLeastCuda12900(const se::StreamExecutor* executor) {

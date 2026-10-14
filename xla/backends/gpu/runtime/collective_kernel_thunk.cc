@@ -346,8 +346,9 @@ bool CollectiveKernelThunk::UsesSymmetricScratchMemory() const {
 }
 
 Thunk::SetUpScope CollectiveKernelThunk::set_up_scope() const {
-  // Otherwise `Initialize` creates all state once per executor.
-  return UsesSymmetricScratchMemory() ? SetUpScope::kExecution
+  // `Initialize` creates symmetric scratch memory again for new communicators,
+  // and otherwise all state once per executor.
+  return UsesSymmetricScratchMemory() ? SetUpScope::kCommunicator
                                       : SetUpScope::kCollectiveTopology;
 }
 
