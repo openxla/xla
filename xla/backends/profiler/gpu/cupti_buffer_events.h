@@ -349,6 +349,8 @@ class CuptiActivityBufferManager {
 
   size_t GetBufferSizeInBytes() { return buffer_pool_.GetBufferSizeInBytes(); }
 
+  bool UsesV2Records() const { return use_v2_records_; }
+
   uint8_t* GetOrCreateBuffer() { return buffer_pool_.GetOrCreateBuffer(); }
 
   void ReclaimBuffer(uint8_t* p) { buffer_pool_.ReclaimBuffer(p); }
