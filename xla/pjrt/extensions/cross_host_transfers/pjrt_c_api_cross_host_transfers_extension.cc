@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/extensions/cross_host_transfers/pjrt_c_api_cross_host_transfers_extension.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/runtime/device_id.h"
 #include "xla/shape.h"
 
 namespace pjrt {
@@ -178,9 +180,9 @@ PJRT_Error* PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers(
   if (args->struct_size >=
       PJRT_STRUCT_SIZE(PJRT_Transfers_PJRT_Client_CrossHostReceiveBuffers_Args,
                        incarnation_ids)) {
-    PJRT_ASSIGN_OR_RETURN(
-        incarnations, IncarnationsFromC(args->num_tasks, args->task_ids,
-                                        args->incarnation_ids));
+    PJRT_ASSIGN_OR_RETURN(incarnations,
+                          IncarnationsFromC(args->num_tasks, args->task_ids,
+                                            args->incarnation_ids));
   }
 
   std::vector<xla::Shape> shapes;
@@ -238,9 +240,9 @@ PJRT_Error* PJRT_Transfers_PJRT_Client_CrossHostSendBuffers(
   if (args->struct_size >=
       PJRT_STRUCT_SIZE(PJRT_Transfers_PJRT_Client_CrossHostSendBuffers_Args,
                        incarnation_ids)) {
-    PJRT_ASSIGN_OR_RETURN(
-        incarnations, IncarnationsFromC(args->num_tasks, args->task_ids,
-                                        args->incarnation_ids));
+    PJRT_ASSIGN_OR_RETURN(incarnations,
+                          IncarnationsFromC(args->num_tasks, args->task_ids,
+                                            args->incarnation_ids));
   }
 
   PJRT_ASSIGN_OR_RETURN(std::vector<tsl::Future<>> send_futures,

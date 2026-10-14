@@ -20,6 +20,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "xla/pjrt/pjrt_client.h"
 #include "xla/runtime/device_id.h"
 
 namespace xla {
@@ -29,10 +30,9 @@ using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
 
 TEST(TransferIncarnationsTest, EmptySnapshotReturnsNullopt) {
-  ASSERT_OK_AND_ASSIGN(
-      auto transfer_incarnations,
-      TransferIncarnations(/*src_process_index=*/1, /*dst_process_index=*/2,
-                           {}));
+  ASSERT_OK_AND_ASSIGN(auto transfer_incarnations,
+                       TransferIncarnations(/*src_process_index=*/1,
+                                            /*dst_process_index=*/2, {}));
   EXPECT_FALSE(transfer_incarnations.has_value());
 }
 
