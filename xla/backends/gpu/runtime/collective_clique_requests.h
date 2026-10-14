@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -158,6 +159,11 @@ class CollectiveCliqueRequests {
       absl::Span<const std::vector<GlobalDeviceId>> device_groups,
       const CliqueRequirements& requirements = CliqueRequirements());
 
+  // Requests all cliques of `other` in the order they were requested there,
+  // with the same device groups and requirements. Merging requests collected
+  // separately assigns the same ids as making them here directly.
+  absl::Status Merge(const CollectiveCliqueRequests& other);
+
   // Returns all requested cliques in undefined order.
   std::vector<GpuCliqueKey> RequestedCliques() const;
 
@@ -168,6 +174,12 @@ class CollectiveCliqueRequests {
   size_t size() const { return cliques_.size(); }
 
  private:
+  // Returns the request for `clique_key`, adding one with the next id if the
+  // clique was not requested yet.
+  absl::StatusOr<CliqueRequest*> FindOrAddRequest(
+      const GpuCliqueKey& clique_key,
+      absl::Span<const std::vector<GlobalDeviceId>> device_groups);
+
   absl::flat_hash_map<GpuCliqueKey, CliqueRequest> cliques_;
 };
 

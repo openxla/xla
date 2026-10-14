@@ -17,6 +17,8 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 
+#include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -146,6 +148,102 @@ TEST(CollectiveCliqueRequestsTest, DeviceGroupsLexicographicSort) {
   EXPECT_EQ(groups[0], (std::vector{d0, d1}));
   EXPECT_EQ(groups[1], (std::vector{d2, d3}));
   EXPECT_EQ(groups[2], (std::vector{d4, d5}));
+}
+
+void ExpectSameRequests(const CollectiveCliqueRequests& a,
+                        const CollectiveCliqueRequests& b) {
+  std::vector<CollectiveCliqueRequests::CliqueRequest> a_requests =
+      a.OrderedRequestedCliques();
+  std::vector<CollectiveCliqueRequests::CliqueRequest> b_requests =
+      b.OrderedRequestedCliques();
+  ASSERT_EQ(a_requests.size(), b_requests.size());
+  for (size_t i = 0; i < a_requests.size(); ++i) {
+    EXPECT_EQ(a_requests[i].id, b_requests[i].id);
+    EXPECT_EQ(a_requests[i].key, b_requests[i].key);
+    EXPECT_EQ(a_requests[i].device_groups, b_requests[i].device_groups);
+    EXPECT_EQ(a_requests[i].dev_comms, b_requests[i].dev_comms);
+    EXPECT_EQ(a_requests[i].use_cross_device_barrier_requested,
+              b_requests[i].use_cross_device_barrier_requested);
+    EXPECT_EQ(a_requests[i].use_gxl_requested, b_requests[i].use_gxl_requested);
+  }
+}
+
+TEST(CollectiveCliqueRequestsTest, MergeKeepsRequestOrderAndRequirements) {
+  GlobalDeviceId d0(0), d1(1), d2(2), d3(3);
+  GpuCliqueKey k0({d2, d3}, 2);
+  GpuCliqueKey k1({d0, d1}, 2);
+  GpuCliqueKey k2({d0, d1, d2, d3}, 4);
+  GpuDeviceCommunicator::Requirements dev_comm{8};
+
+  CollectiveCliqueRequests other;
+  ASSERT_OK(other.RequestClique(k0, {{d2, d3}}));
+  ASSERT_OK(other.RequestClique(
+      k1, {{d0, d1}},
+      {dev_comm, CollectiveCliqueRequests::BarrierRequirements{true},
+       /*use_gxl=*/true}));
+
+  CollectiveCliqueRequests requests;
+  ASSERT_OK(requests.RequestClique(k2, {{d0, d1, d2, d3}}));
+  ASSERT_OK(requests.Merge(other));
+
+  std::vector<CollectiveCliqueRequests::CliqueRequest> ordered =
+      requests.OrderedRequestedCliques();
+  ASSERT_EQ(ordered.size(), 3);
+  EXPECT_EQ(ordered[0].key, k2);
+  EXPECT_EQ(ordered[1].key, k0);
+  EXPECT_EQ(ordered[1].id, 1);
+  EXPECT_EQ(ordered[2].key, k1);
+  EXPECT_EQ(ordered[2].id, 2);
+  EXPECT_THAT(ordered[2].dev_comms, testing::ElementsAre(dev_comm));
+  EXPECT_TRUE(ordered[2].use_cross_device_barrier_requested);
+  EXPECT_TRUE(ordered[2].use_gxl_requested);
+}
+
+TEST(CollectiveCliqueRequestsTest, MergeEqualsRequestingDirectly) {
+  GlobalDeviceId d0(0), d1(1), d2(2), d3(3);
+  GpuCliqueKey k0({d0, d1}, 2);
+  GpuCliqueKey k1({d2, d3}, 2);
+  GpuCliqueKey k2({d1, d2}, 2);
+  GpuDeviceCommunicator::Requirements dev_comm{16};
+
+  // Requests made both directly and through `Merge`, after `k1` was requested.
+  auto request = [&](CollectiveCliqueRequests& requests) {
+    ASSERT_OK(requests.RequestClique(k0, {{d0, d1}, {d2, d3}}));
+    ASSERT_OK(requests.RequestClique(k1, {{d2, d3}}, {dev_comm}));
+    ASSERT_OK(requests.RequestClique(
+        k2, {{d1, d2}}, {std::nullopt, std::nullopt, /*use_gxl=*/true}));
+  };
+
+  CollectiveCliqueRequests direct;
+  ASSERT_OK(direct.RequestClique(k1, {{d2, d3}}));
+  request(direct);
+
+  CollectiveCliqueRequests merged;
+  ASSERT_OK(merged.RequestClique(k1, {{d2, d3}}));
+  CollectiveCliqueRequests separate;
+  request(separate);
+  ASSERT_OK(merged.Merge(separate));
+
+  ExpectSameRequests(merged, direct);
+
+  // Merging the same requests again changes nothing.
+  ASSERT_OK(merged.Merge(separate));
+  ExpectSameRequests(merged, direct);
+}
+
+TEST(CollectiveCliqueRequestsTest, MergeDeviceGroupsMismatch) {
+  GlobalDeviceId d0(0), d1(1), d2(2), d3(3);
+  GpuCliqueKey k0({d0, d1}, 2);
+
+  CollectiveCliqueRequests other;
+  ASSERT_OK(other.RequestClique(k0, {{d0, d1}, {d2, d3}}));
+
+  CollectiveCliqueRequests requests;
+  ASSERT_OK(requests.RequestClique(k0, {{d0, d1}}));
+  EXPECT_THAT(
+      requests.Merge(other),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             testing::HasSubstr("different device groups")));
 }
 
 }  // namespace
