@@ -22,7 +22,6 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
-#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "xla/service/platform_util.h"
@@ -32,6 +31,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/protobuf/dnn.pb.h"
 
 namespace stream_executor::gpu {
 namespace {
@@ -66,16 +66,20 @@ absl::StatusOr<int64_t> PackedBackwardWorkspaceSize(StreamExecutor* executor,
   const std::vector<int64_t> bhsd_layout = {3, 1, 2, 0};
 
   dnn::MatmulTensorDescriptor q = dnn::MatmulTensorDescriptor::For(
-      kType, bshd, bshd_layout, /*batch_dims=*/{0, 2}, /*contracting=*/{1});
+      kType, bshd, bshd_layout, /*batch_dims=*/{0, 2},
+      /*contracting_dims=*/{1});
   dnn::MatmulTensorDescriptor k = dnn::MatmulTensorDescriptor::For(
-      kType, bshd, bshd_layout, /*batch_dims=*/{0, 2}, /*contracting=*/{1});
+      kType, bshd, bshd_layout, /*batch_dims=*/{0, 2},
+      /*contracting_dims=*/{1});
   dnn::MatmulTensorDescriptor p = dnn::MatmulTensorDescriptor::For(
       kType, {kBatch, kNumHeads, kSeqLen, kSeqLen}, bshd_layout,
-      /*batch_dims=*/{0, 1}, /*contracting=*/{2});
+      /*batch_dims=*/{0, 1}, /*contracting_dims=*/{2});
   dnn::MatmulTensorDescriptor v = dnn::MatmulTensorDescriptor::For(
-      kType, bshd, bshd_layout, /*batch_dims=*/{0, 2}, /*contracting=*/{3});
+      kType, bshd, bshd_layout, /*batch_dims=*/{0, 2},
+      /*contracting_dims=*/{3});
   dnn::MatmulTensorDescriptor d_output = dnn::MatmulTensorDescriptor::For(
-      kType, bshd, bshd_layout, /*batch_dims=*/{0, 2}, /*contracting=*/{1});
+      kType, bshd, bshd_layout, /*batch_dims=*/{0, 2},
+      /*contracting_dims=*/{1});
   dnn::TensorDescriptor dq =
       dnn::TensorDescriptor::For(kType, bhsd, bhsd_layout);
   dnn::TensorDescriptor dk =
