@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/command_executor.h"
 
-#include <gmock/gmock.h>
-
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -25,6 +23,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -42,8 +42,6 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/mock_command_buffer.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
 
