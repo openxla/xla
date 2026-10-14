@@ -45,6 +45,7 @@ cc_library(
     hdrs = ["builtin_definition_generator.h"],
     copts = tsl_copts(),
     deps = [
+        ":builtin_atan2",
         ":builtin_fp16",
         ":builtin_pow",
         "@com_google_absl//absl/base:no_destructor",
@@ -54,6 +55,28 @@ cc_library(
         "@llvm-project//llvm:OrcShared",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:mlir_c_runner_utils",
+    ],
+)
+
+cc_library(
+    name = "builtin_atan2",
+    srcs = ["builtin_atan2.cc"],
+    hdrs = ["builtin_atan2.h"],
+    deps = [
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@tsl//tsl/platform:denormal",
+    ],
+)
+
+xla_cc_test(
+    name = "builtin_atan2_test",
+    srcs = ["builtin_atan2_test.cc"],
+    deps = [
+        ":builtin_atan2",
+        "@com_google_absl//absl/base",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:denormal",
     ],
 )
 
