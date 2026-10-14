@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <vector>
@@ -41,11 +42,13 @@ namespace gpu {
 namespace {
 
 struct CudaBandwidthSettings {
-  // Single-node aggregate LL caps in GB/s. The fallback uses the Blackwell cap.
-  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/tuning/cost_model.cc#L192-L197
-  static constexpr std::array<double, 5> kLowLatencyMaxBandwidths = {
-      39.0 /* Volta */,          87.7 /* Ampere */,        141.0 /* Hopper */,
-      2 * 141.2 /* Blackwell */, 2 * 141.2 /* fallback */,
+  // Single-node LL caps in GB/s: aggregate except for Rubin, which is per CTA.
+  // NCCL single-node values:
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/tuning/cost_model.cc#L192-L199
+  // The fallback uses the Blackwell cap.
+  static constexpr std::array<double, 6> kLowLatencyMaxBandwidths = {
+      39.0 /* Volta */,          87.7 /* Ampere */, 141.0 /* Hopper */,
+      2 * 141.2 /* Blackwell */, 2.0 /* Rubin */,   2 * 141.2 /* fallback */,
   };
 
   const std::vector<double>& GetIntraNodeBandwidths() const {
@@ -76,6 +79,8 @@ struct CudaBandwidthSettings {
                : *kIntraNodeSpeeds;
   }
 
+  // Per-CTA entries require active-link information for conversion. Otherwise
+  // Rubin uses the aggregate/per-channel caps selected by its major version.
   float GetMaxSysBwFromGpu(const double* bandwidths_table) const {
     switch (compute_capability.major) {
       case se::CudaComputeCapability::kVolta:
@@ -85,9 +90,14 @@ struct CudaBandwidthSettings {
       case se::CudaComputeCapability::kHopper:
         return bandwidths_table[2];
       case se::CudaComputeCapability::kBlackwell:
-        return bandwidths_table[3];
+        switch (compute_capability.minor) {
+          case se::CudaComputeCapability::Rubin().minor:
+            return bandwidths_table[active_links > 0 ? 4 : 3];
+          default:
+            return bandwidths_table[3];
+        }
       default:
-        return bandwidths_table[4];
+        return bandwidths_table[5];
     }
   }
 
@@ -116,12 +126,12 @@ struct CudaBandwidthSettings {
     }
   }
 
-  // Single-node Ring LL128 caps in GB/s per graph channel.
-  // The fallback uses the Blackwell cap.
-  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/tuning/cost_model.cc#L201-L206
-  static constexpr std::array<double, 5> kPerChannelMaxRingLL128Bandwidths = {
-      20.0 /* Volta */,     20.0 /* Ampere */,   36.7 /* Hopper */,
-      40.0 /* Blackwell */, 40.0 /* fallback */,
+  // Single-node Ring LL128 caps in GB/s: per graph channel except for Rubin,
+  // which is per CTA. The fallback uses the Blackwell cap.
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/tuning/cost_model.cc#L201-L208
+  static constexpr std::array<double, 6> kPerChannelMaxRingLL128Bandwidths = {
+      20.0 /* Volta */,     20.0 /* Ampere */, 36.7 /* Hopper */,
+      40.0 /* Blackwell */, 21.6 /* Rubin */,  40.0 /* fallback */,
   };
 
   // Nvlink unidirectional bandwidth for different compute cap. Note this is per
@@ -153,6 +163,7 @@ struct CudaBandwidthSettings {
   static constexpr int64_t kLL128NumThreads = 640;
 
   stream_executor::CudaComputeCapability compute_capability;
+  int active_links;
 };
 
 struct RocmBandwidthSettings {
@@ -244,18 +255,74 @@ struct RocmBandwidthSettings {
   stream_executor::RocmComputeCapability compute_capability;
 };
 
+bool IsRubinNvlinkDevice(const se::DeviceDescription& gpu_device_info) {
+  const auto* cuda_cc =
+      gpu_device_info.gpu_compute_capability().cuda_compute_capability();
+  return cuda_cc != nullptr &&
+         cuda_cc->WithoutAnyFeatureExtension() ==
+             se::CudaComputeCapability::Rubin() &&
+         gpu_device_info.device_interconnect_info().active_links > 0;
+}
+
+// XLA's communication-channel estimate approximates NCCL's graph-channel count.
+// Per-link NVLink bandwidth approximates NCCL's per-graph-channel bandwidth.
 template <typename BandwidthSettings>
-float GetMaxPerChannelRingLL128Bandwidth(
-    const BandwidthSettings& bandwidth_settings) {
-  return bandwidth_settings.GetMaxSysBwFromGpu(
-      bandwidth_settings.kPerChannelMaxRingLL128Bandwidths.data());
+int64_t GetRingCtasPerChannel(const BandwidthSettings& bandwidth_settings,
+                              const se::DeviceDescription& gpu_device_info,
+                              int64_t graph_channels) {
+  if (!IsRubinNvlinkDevice(gpu_device_info)) {
+    // These paths do not need CTA-count scaling; use a scale of 1.
+    return 1;
+  }
+  // NCCL provisions CTAs from graph channels times per-graph-channel bandwidth.
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/graph/connect.cc#L500-L511
+  const double total_bandwidth =
+      graph_channels * bandwidth_settings.GetNvlinkBw();
+  // Raw bandwidth target per CTA, in GB/s, for compute-channel provisioning.
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/graph/connect.cc#L393
+  constexpr int64_t kBandwidthTargetPerCta = 24;
+  // Compute channels are duplicated and expanded to meet the bandwidth target.
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/graph/connect.cc#L479
+  int64_t compute_channels =
+      std::min(graph_channels * 2, CudaBandwidthSettings::kMaxComputeChannels);
+  const int64_t min_compute_channels = CeilOfRatio(
+      static_cast<int64_t>(std::ceil(total_bandwidth)), kBandwidthTargetPerCta);
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/graph/connect.cc#L500
+  while (compute_channels < min_compute_channels &&
+         compute_channels < CudaBandwidthSettings::kMaxComputeChannels) {
+    compute_channels = std::min(compute_channels * 2,
+                                CudaBandwidthSettings::kMaxComputeChannels);
+  }
+  return CeilOfRatio(compute_channels, graph_channels);
 }
 
 template <typename BandwidthSettings>
-float GetMaxLowLatencyBandwidth(const BandwidthSettings& bandwidth_settings) {
+double GetMaxPerChannelRingLL128Bandwidth(
+    const BandwidthSettings& bandwidth_settings,
+    const se::DeviceDescription& gpu_device_info, int64_t ctas_per_channel) {
+  double bandwidth = bandwidth_settings.GetMaxSysBwFromGpu(
+      bandwidth_settings.kPerChannelMaxRingLL128Bandwidths.data());
+  if (IsRubinNvlinkDevice(gpu_device_info)) {
+    // Convert the per-CTA cap to the graph-channel cap expected by the caller.
+    bandwidth *= ctas_per_channel;
+  }
+  return bandwidth;
+}
+
+template <typename BandwidthSettings>
+float GetMaxLowLatencyBandwidth(const BandwidthSettings& bandwidth_settings,
+                                const se::DeviceDescription& gpu_device_info,
+                                int64_t graph_channels,
+                                int64_t ctas_per_channel) {
   auto speeds = bandwidth_settings.GetIntraNodeBandwidths();
   auto max_sys_bw = bandwidth_settings.GetMaxSysBwFromGpu(
       bandwidth_settings.kLowLatencyMaxBandwidths.data());
+  if (IsRubinNvlinkDevice(gpu_device_info)) {
+    // NCCL aggregates the per-CTA cap over graph channels and CTAs per channel.
+    // XLA uses this aggregate cap as the input to tier selection.
+    // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/tuning/pipeline_model/ring.cc#L15-L22
+    max_sys_bw *= graph_channels * ctas_per_channel;
+  }
   auto it = std::lower_bound(std::begin(speeds), std::end(speeds), max_sys_bw);
   if (it == speeds.end()) {
     return speeds.back();
@@ -265,12 +332,13 @@ float GetMaxLowLatencyBandwidth(const BandwidthSettings& bandwidth_settings) {
 
 template <typename BandwidthSettings>
 double GetRingBusBandwidth(const BandwidthSettings& bandwidth_settings,
-                           int64_t num_channels, float bw_intra_node) {
+                           const se::DeviceDescription& gpu_device_info,
+                           int64_t num_channels, float bw_intra_node,
+                           int64_t ctas_per_channel) {
   double bus_bandwidth = bw_intra_node * num_channels;
 
-  // Get per channel LL128 ring bandwidth
-  double per_channel_ring_ll128_Bw =
-      GetMaxPerChannelRingLL128Bandwidth(bandwidth_settings);
+  double per_channel_ring_ll128_Bw = GetMaxPerChannelRingLL128Bandwidth(
+      bandwidth_settings, gpu_device_info, ctas_per_channel);
 
   return std::min(
       bus_bandwidth * bandwidth_settings.kRingAlgorithmDiscountFactor,
@@ -336,7 +404,6 @@ absl::Duration ComputeCollectiveTimeImpl(
   // only occurs once.
   absl::Duration total_time = kNcclKernelLaunchOverhead;
 
-  float bw_intra_node = GetMaxLowLatencyBandwidth(bandwidth_settings);
   int64_t num_devices = cost_analysis->NumOfDevices(instr);
 
   int64_t min_nchannels = std::max(num_devices, GetMinNumberOfChannels());
@@ -354,6 +421,10 @@ absl::Duration ComputeCollectiveTimeImpl(
     VLOG(8) << "Nvlink doesn't support p2p communication. Model will "
                "continue using default system bandwidth.";
   }
+  const int64_t ctas_per_channel = GetRingCtasPerChannel(
+      bandwidth_settings, gpu_device_info, graph_channels);
+  float bw_intra_node = GetMaxLowLatencyBandwidth(
+      bandwidth_settings, gpu_device_info, graph_channels, ctas_per_channel);
   int64_t pcie_bandwidth_gbps =
       gpu_device_info.pcie_bandwidth() / 1024 / 1024 / 1024;
   int default_threads = (bw_intra_node * num_channels <= pcie_bandwidth_gbps)
@@ -375,8 +446,9 @@ absl::Duration ComputeCollectiveTimeImpl(
 
   const float communication_bandwidth =
       active_links ? nvlink_bandwidth : bw_intra_node;
-  const double bus_bandwidth = GetRingBusBandwidth(
-      bandwidth_settings, graph_channels, communication_bandwidth);
+  const double bus_bandwidth =
+      GetRingBusBandwidth(bandwidth_settings, gpu_device_info, graph_channels,
+                          communication_bandwidth, ctas_per_channel);
   double actual_bandwidth = bus_bandwidth * cost_analysis->ScalingRatio(instr);
 
   absl::Duration communication_time = absl::Milliseconds(
@@ -386,8 +458,8 @@ absl::Duration ComputeCollectiveTimeImpl(
 }
 
 CudaBandwidthSettings CreateSettings(
-    const stream_executor::CudaComputeCapability& cc) {
-  return CudaBandwidthSettings{cc};
+    const stream_executor::CudaComputeCapability& cc, int active_links) {
+  return CudaBandwidthSettings{cc, active_links};
 }
 
 RocmBandwidthSettings CreateSettings(
@@ -405,8 +477,10 @@ GpuPerformanceWithCollectiveModel::ComputeCollectiveTimeForRing(
   // only occurs once.
   if (auto ptr =
           gpu_device_info.gpu_compute_capability().cuda_compute_capability()) {
-    return ComputeCollectiveTimeImpl(instr, cost_analysis, gpu_device_info,
-                                     CreateSettings(*ptr));
+    return ComputeCollectiveTimeImpl(
+        instr, cost_analysis, gpu_device_info,
+        CreateSettings(
+            *ptr, gpu_device_info.device_interconnect_info().active_links));
   }
   return ComputeCollectiveTimeImpl(
       instr, cost_analysis, gpu_device_info,
@@ -463,7 +537,10 @@ GpuPerformanceWithCollectiveModel::GetIciBandwidthPerLaneGbps(
     const se::DeviceDescription& gpu_device_info) {
   if (const auto* cuda_cc =
           gpu_device_info.gpu_compute_capability().cuda_compute_capability()) {
-    return CreateSettings(*cuda_cc).GetNvlinkBw();
+    return CreateSettings(
+               *cuda_cc,
+               gpu_device_info.device_interconnect_info().active_links)
+        .GetNvlinkBw();
   }
   if (const auto* rocm_cc =
           gpu_device_info.gpu_compute_capability().rocm_compute_capability()) {
