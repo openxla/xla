@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -72,13 +73,13 @@ bool HasIndexWiseVariadic(const HloFusionAdaptor& fusion) {
                         });
 }
 
-// Returns the position of the first dimension of result `result_index` in the
-// ordered list of dimensions of `hlo`. For an index-wise variadic instruction
-// the dimensions of all results are laid out back to back: result k starts at
-// the sum of the ranks of results 0..k-1. For every other instruction the
-// results share the dimensions of the first one and the offset is 0.
+}  // namespace
+
 int64_t GetResultDimensionOffset(const HloInstruction& hlo,
                                  int64_t result_index) {
+  if (!hlo.shape().IsTuple()) {
+    return result_index * hlo.shape().dimensions().size();
+  }
   if (!IsIndexWiseVariadic(hlo)) {
     return 0;
   }
@@ -89,23 +90,29 @@ int64_t GetResultDimensionOffset(const HloInstruction& hlo,
   return offset;
 }
 
-}  // namespace
-
 bool IsIndexWiseVariadic(const HloInstruction& hlo) {
-  return hlo.opcode() == HloOpcode::kAllGather && hlo.operand_count() > 1;
+  return HloPredicateIsOp<HloOpcode::kAllGather, HloOpcode::kReduceScatter>(
+             &hlo) &&
+         hlo.operand_count() > 1;
 }
 
 llvm::DenseMap<SymbolicExpr, SymbolicExpr> GetTileSizeReplacementMap(
-    const TilingSpace& tiling_space, absl::Span<const int64_t> tile_sizes) {
-  CHECK_EQ(tile_sizes.size(), tiling_space.dimensions().size());
+    const TilingSpace& tiling_space) {
   mlir::MLIRContext* ctx = tiling_space.mlir_context();
+  llvm::SmallVector<TilingSpace::DimensionInfo, 4> dims =
+      tiling_space.dimensions();
   llvm::DenseMap<SymbolicExpr, SymbolicExpr> replacement_map;
-  for (const auto& [index, dim] : llvm::enumerate(tiling_space.dimensions())) {
-    replacement_map[CreateSymbolExpr(dim.id.value(), tile_sizes.size(), ctx)] =
-        CreateSymbolicConstant(tile_sizes[index], ctx);
+  for (const TilingSpace::DimensionInfo& dim : dims) {
+    const int64_t tile_size = *dim.tile_size;
+    replacement_map[CreateSymbolExpr(dim.id.value(), dims.size(), ctx)] =
+        CreateSymbolicConstant(tile_size, ctx);
+    int64_t scale = 1;
+    if (dim.replica_dim.has_value()) {
+      scale = dims[dim.replica_dim->value()].dimension_size;
+    }
     // If the tile size is greater than or equal to the dimension size, then
     // the dimension is trivial and can be replaced with 0.
-    if (dim.dimension_size <= tile_sizes[index]) {
+    if (dim.dimension_size <= tile_size * scale) {
       replacement_map[CreateDimExpr(dim.id.value(), ctx)] =
           CreateSymbolicConstant(0, ctx);
     }
@@ -115,9 +122,13 @@ llvm::DenseMap<SymbolicExpr, SymbolicExpr> GetTileSizeReplacementMap(
 
 std::string TilingSpace::DimensionInfo::ToString() const {
   std::stringstream ss;
-  ss << id << " type: "
-     << (type == DimensionSemantics::kParallel ? "parallel" : "sequential")
-     << " size: " << dimension_size;
+  absl::string_view type_str = "sequential";
+  if (type == DimensionSemantics::kParallel) {
+    type_str = "parallel";
+  } else if (type == DimensionSemantics::kReplica) {
+    type_str = "replica";
+  }
+  ss << id << " type: " << type_str << " size: " << dimension_size;
   if (tile_size.has_value()) {
     ss << " tile size: " << *tile_size;
   }
@@ -152,6 +163,9 @@ void TilingSpace::ProcessInstruction(const HloInstruction& hlo) {
       break;
     case HloOpcode::kReduce:
       ProcessReduce(hlo);
+      break;
+    case HloOpcode::kReduceScatter:
+      ProcessReduceScatter(hlo);
       break;
     case HloOpcode::kScan:
       ProcessScan(hlo);
@@ -207,6 +221,31 @@ void TilingSpace::ProcessReduce(const HloInstruction& hlo) {
     AppendDimension(&hlo, output_rank + index,
                     input_shape.dimensions(reduction_dim_id),
                     DimensionSemantics::kSequential);
+  }
+}
+
+// Adds a `kReplica` dimension for each `reduce-scatter` output and links it to
+// the output's scatter dimension.
+void TilingSpace::ProcessReduceScatter(const HloInstruction& hlo) {
+  const auto* reduce_scatter = Cast<HloReduceScatterInstruction>(&hlo);
+  const int64_t scatter_dim = reduce_scatter->scatter_dimension();
+  const int64_t num_replicas =
+      reduce_scatter->device_list()->num_devices_per_group();
+  if (num_replicas <= 1) {
+    return;
+  }
+  const int64_t num_results = reduce_scatter->operand_count();
+  const int64_t total_result_dims = GetResultDimensionOffset(hlo, num_results);
+  for (int64_t result_index = 0; result_index < num_results; ++result_index) {
+    auto it = hlo_to_dimension_.find(std::make_pair(
+        &hlo, GetResultDimensionOffset(hlo, result_index) + scatter_dim));
+    if (it == hlo_to_dimension_.end()) {
+      continue;
+    }
+    const TiledDimId scatter_dim_id = it->second->id;
+    AppendDimension(&hlo, total_result_dims + result_index, num_replicas,
+                    DimensionSemantics::kReplica);
+    dimensions_[scatter_dim_id.value()].replica_dim = dimensions_.back().id;
   }
 }
 
@@ -437,15 +476,21 @@ absl::Status TilingSpace::AssignTileSizes(
     return absl::InternalError(
         "Tile sizes have already been assigned to this tiling space.");
   }
-  CHECK_EQ(tile_sizes.size(), dimensions_.size());
   is_symbolic_ = false;
 
-  for (const auto& [index, size] : llvm::enumerate(tile_sizes)) {
-    dimensions_[index].tile_size = size;
+  int64_t tile_size_index = 0;
+  for (DimensionInfo& dim : dimensions_) {
+    if (dim.type == DimensionSemantics::kReplica) {
+      dim.tile_size = 1;
+    } else {
+      CHECK_LT(tile_size_index, tile_sizes.size());
+      dim.tile_size = tile_sizes[tile_size_index++];
+    }
   }
+  CHECK_EQ(tile_size_index, tile_sizes.size());
 
   llvm::DenseMap<SymbolicExpr, SymbolicExpr> replacement_map =
-      GetTileSizeReplacementMap(*this, tile_sizes);
+      GetTileSizeReplacementMap(*this);
 
   if (!constraint_.IsSatisfiedBy(tile_sizes)) {
     return absl::InvalidArgumentError(absl::StrFormat(
@@ -594,8 +639,7 @@ absl::StatusOr<std::unique_ptr<TilingSpace>> TilingSpace::Create(
     for (auto [index, dim] : llvm::enumerate(dims)) {
       const DimensionInfo& dim_info =
           tiling_space->GetDimensionInfo(root.instruction(), index);
-      dim_tiles.push_back(
-          tiling_space->GetDefaultRootDimTile(dim_info.id, dim));
+      dim_tiles.push_back(tiling_space->GetDefaultRootDimTile(dim_info, dim));
     }
     Tile root_tile{*tiling_space, std::move(dim_tiles)};
     const Shape& root_shape = root.shape();
@@ -664,7 +708,7 @@ std::unique_ptr<TilingSpace> TilingSpace::Clone(
     dim_tiles.reserve(root_tile.dim_tiles().size());
     for (const DimTile& dim_tile : root_tile.dim_tiles()) {
       dim_tiles.push_back(cloned->GetDefaultRootDimTile(
-          TiledDimId(dim_tile.size.GetValue() - num_dimensions()),
+          cloned->dimensions_[dim_tile.size.GetValue() - num_dimensions()],
           dim_tile.upper_bound.GetValue()));
     }
     cloned->tiled_roots_.push_back(Tile{*cloned, std::move(dim_tiles)});
@@ -677,11 +721,33 @@ std::unique_ptr<TilingSpace> TilingSpace::Clone(
   return cloned;
 }
 
-DimTile TilingSpace::GetDefaultRootDimTile(TiledDimId id,
+DimTile TilingSpace::GetDefaultRootDimTile(const DimensionInfo& dim_info,
                                            int64_t dim_size) const {
-  return GetDefaultDimTile(
-      id, CreateSymbolExpr(id.value(), num_dimensions(), mlir_context_),
-      dim_size);
+  SymbolicExpr tile_size =
+      CreateSymbolExpr(dim_info.id.value(), num_dimensions(), mlir_context_);
+  if (!dim_info.replica_dim.has_value()) {
+    return GetDefaultDimTile(dim_info.id, tile_size, dim_size);
+  }
+  const int64_t num_replicas =
+      dimensions_[dim_info.replica_dim->value()].dimension_size;
+  SymbolicExpr tile_id = CreateDimExpr(dim_info.id.value(), mlir_context_);
+  SymbolicExpr replica_id =
+      CreateDimExpr(dim_info.replica_dim->value(), mlir_context_);
+  return DimTile{(tile_id * (tile_size * num_replicas) + replica_id * tile_size)
+                     .Canonicalize(),
+                 tile_size, CreateSymbolicConstant(1, mlir_context_),
+                 CreateSymbolicConstant(dim_size, mlir_context_)};
+}
+
+int64_t TilingSpace::GetNumTiles(const DimensionInfo& dim) const {
+  CHECK(!is_symbolic_);
+  CHECK(dim.tile_size.has_value());
+  const int64_t step =
+      *dim.tile_size *
+      (dim.replica_dim.has_value()
+           ? dimensions_[dim.replica_dim->value()].dimension_size
+           : 1);
+  return llvm::divideCeil(dim.dimension_size, step);
 }
 
 int64_t TilingSpace::num_parallel_dimensions() const {
@@ -703,7 +769,7 @@ void TilingSpace::InitSimplificationIndexing() {
   for (const DimensionInfo& dim_info : dimensions_) {
     int64_t tile_size = dim_info.tile_size.value();
     CHECK_GT(tile_size, 0);
-    int64_t upper_bound = llvm::divideCeil(dim_info.dimension_size, tile_size);
+    int64_t upper_bound = GetNumTiles(dim_info);
     dim_vars_indexing_.push_back(IndexingMap::Variable{0, upper_bound - 1});
     // Even though ts_X must already be replaced with constants right now, we
     // initialize their bounds to [tile_size, tile_size] for completeness.
@@ -769,6 +835,9 @@ TilingSpace::GetValidTilings() {
   // limitation of `GetFlatTilingsForInputSpace`, we set the tile size to 1 here
   // and later replace with the actual dimension size.
   for (const auto& dim : dimensions_) {
+    if (dim.type == DimensionSemantics::kReplica) {
+      continue;
+    }
     if (dim.type == DimensionSemantics::kSequential &&
         dim.hlo->opcode() == HloOpcode::kReduce) {
       input_space.push_back(1);
@@ -781,11 +850,16 @@ TilingSpace::GetValidTilings() {
                         GetFlatTilingsForInputSpace(input_space));
 
   for (auto& flat_tiling : flat_tilings) {
-    for (const auto& [idx, dim] : llvm::enumerate(dimensions_)) {
+    int64_t idx = 0;
+    for (const auto& dim : dimensions_) {
+      if (dim.type == DimensionSemantics::kReplica) {
+        continue;
+      }
       if (dim.type == DimensionSemantics::kSequential &&
           dim.hlo->opcode() == HloOpcode::kReduce) {
         flat_tiling[idx] = dim.dimension_size;
       }
+      ++idx;
     }
   }
 

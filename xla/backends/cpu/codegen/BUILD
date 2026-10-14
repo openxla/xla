@@ -18,7 +18,6 @@ load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
 load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
-    "if_llvm_aarch32_available",
     "if_llvm_aarch64_available",
     "if_llvm_powerpc_available",
     "if_llvm_riscv_available",
@@ -118,7 +117,14 @@ cc_library(
     name = "ir_compiler",
     srcs = ["ir_compiler.cc"],
     hdrs = ["ir_compiler.h"],
-    defines = if_llvm_aarch32_available(["XLA_LLVM_AARCH32_AVAILABLE=1"]) + if_llvm_aarch64_available([
+    # TODO(xla-cpu): Have users who need a specific target architecture include
+    # and initialize that LLVM backend directly.
+    defines = select({
+        "//xla/tsl:aarch32_or_cross": [
+            "XLA_LLVM_AARCH32_AVAILABLE=1",
+        ],
+        "//conditions:default": [],
+    }) + if_llvm_aarch64_available([
         "XLA_LLVM_AARCH64_AVAILABLE=1",
     ]) + if_llvm_powerpc_available([
         "XLA_LLVM_POWERPC_AVAILABLE=1",
@@ -241,6 +247,7 @@ cc_library(
         "@com_google_absl//absl/base:config",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",

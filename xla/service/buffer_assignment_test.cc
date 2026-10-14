@@ -866,6 +866,89 @@ TEST_F(BufferAssignmentTest, OOMFallbackIgnoresThreadLocalAllocations) {
   EXPECT_EQ(other_bytes_fallback, 288);
 }
 
+TEST_F(BufferAssignmentTest, OOMFallbackOnlyForExceededColor) {
+  auto builder = HloComputation::Builder(TestName());
+  auto param = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "p1"));
+
+  auto with_space = [](Shape s, int64_t space) {
+    s.mutable_layout()->set_memory_space(space);
+    return s;
+  };
+  Shape s10 = ShapeUtil::MakeShape(F32, {10});  // 40 bytes
+  Shape s20 = ShapeUtil::MakeShape(F32, {20});  // 80 bytes
+  Shape s30 = ShapeUtil::MakeShape(F32, {30});  // 120 bytes
+  Shape s40 = ShapeUtil::MakeShape(F32, {40});  // 160 bytes
+  Shape s1 = ShapeUtil::MakeShape(F32, {1});    // 4 bytes
+
+  // Chain in memory space 0 (exceeds limit -> falls back to DEFAULT: 288B).
+  auto a0 = builder.AddInstruction(
+      HloInstruction::CreateCustomCall(with_space(s10, 0), {param}, "dummy"));
+  auto b0 = builder.AddInstruction(
+      HloInstruction::CreateCustomCall(with_space(s20, 0), {a0}, "dummy"));
+  auto c0 = builder.AddInstruction(
+      HloInstruction::CreateCustomCall(with_space(s30, 0), {b0}, "dummy"));
+  auto d0 = builder.AddInstruction(
+      HloInstruction::CreateCustomCall(with_space(s40, 0), {c0}, "dummy"));
+
+  // Identical chain in memory space 2 (within limit -> stays FAST_MERGE: 404B).
+  auto a2 = builder.AddInstruction(
+      HloInstruction::CreateCustomCall(with_space(s10, 2), {param}, "dummy"));
+  auto b2 = builder.AddInstruction(
+      HloInstruction::CreateCustomCall(with_space(s20, 2), {a2}, "dummy"));
+  auto c2 = builder.AddInstruction(
+      HloInstruction::CreateCustomCall(with_space(s30, 2), {b2}, "dummy"));
+  auto d2 = builder.AddInstruction(
+      HloInstruction::CreateCustomCall(with_space(s40, 2), {c2}, "dummy"));
+
+  auto root = builder.AddInstruction(
+      HloInstruction::CreateCustomCall(with_space(s1, 0), {d0, d2}, "dummy"));
+
+  auto module = CreateNewVerifiedModule();
+  module->AddEntryComputation(builder.Build());
+
+  HloSchedule schedule(module.get());
+  schedule.set_sequence(module->entry_computation(),
+                        {param, a0, b0, c0, d0, a2, b2, c2, d2, root});
+  CHECK_OK(module->set_schedule(schedule));
+
+  BufferAssigner::Options opts;
+  opts.assignment_algorithm_for_computations_without_ordering =
+      buffer_assignment::
+          AssignmentAlgorithmForComputationsWithoutOrderingProto::FAST_MERGE;
+  opts.buffer_assignment_algorithm = buffer_assignment::
+      BufferAssignmentAlgorithmProto::FAST_MERGE_WITH_FALLBACK;
+  opts.fallback_algorithm =
+      buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
+
+  constexpr int64_t kSafetyMargin = int64_t{5} << 29;
+  opts.color_memory_limit = [&](LogicalBuffer::Color color) {
+    // Color 0 exceeds limit (tight limit); Color 2 fits comfortably.
+    return color == 0 ? (kSafetyMargin + 10) : (kSafetyMargin + 10000000);
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(), std::make_unique<SequentialHloOrdering>(schedule),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  int64_t color0_bytes = 0;
+  int64_t color2_bytes = 0;
+  for (const BufferAllocation& alloc : assignment->Allocations()) {
+    if (alloc.color() == 0) {
+      color0_bytes += alloc.size();
+    } else if (alloc.color() == 2) {
+      color2_bytes += alloc.size();
+    }
+  }
+  // Color 0 fell back to DEFAULT (288 bytes), while Color 2 kept FAST_MERGE
+  // (400 bytes of temps without param/root).
+  EXPECT_EQ(color0_bytes, 288);
+  EXPECT_EQ(color2_bytes, 400);
+}
+
 MATCHER(IdEq, "") {
   auto* actual = std::get<0>(arg);
   auto* expected = std::get<1>(arg);
@@ -5782,6 +5865,128 @@ void BM_FastMergeManagerStress(::testing::benchmark::State& state) {
 
 BENCHMARK(BM_FastMergeManagerStress)->Range(1'000, 10'000'000);
 
+void BM_MaybeAssignBufferStress(::testing::benchmark::State& state) {
+  const int64_t num_buffers = state.range(0);
+  HloModuleConfig config;
+  config.set_debug_options(GetDebugOptionsFromFlags());
+  HloModule module("BM_MaybeAssignBufferStress", config);
+  auto builder = HloComputation::Builder("entry");
+
+  Shape shape = ShapeUtil::MakeShape(F32, {16});
+  auto param0 =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p"));
+  std::vector<HloInstruction*> insts;
+  insts.reserve(num_buffers);
+  insts.push_back(param0);
+
+  std::vector<HloInstruction*> root_elements;
+  for (int64_t i = 1; i < num_buffers; ++i) {
+    HloOpcode opcode = (i % 4 == 0) ? HloOpcode::kCopy : HloOpcode::kNegate;
+    HloInstruction* inst = builder.AddInstruction(
+        HloInstruction::CreateUnary(shape, opcode, insts.back()));
+    insts.push_back(inst);
+    if (i % 64 == 0) {
+      root_elements.push_back(inst);
+    }
+  }
+  if (root_elements.empty()) {
+    root_elements.push_back(insts.back());
+  }
+  HloInstruction* root =
+      builder.AddInstruction(HloInstruction::CreateTuple(root_elements));
+  insts.push_back(root);
+  HloComputation* entry = module.AddEntryComputation(builder.Build());
+
+  HloSchedule schedule(&module);
+  schedule.set_sequence(entry, insts);
+  CHECK_OK(module.set_schedule(schedule));
+
+  AliasInfo alias_info;
+  BufferAssigner::Options opts;
+  opts.assignment_algorithm_for_computations_without_ordering =
+      buffer_assignment::
+          AssignmentAlgorithmForComputationsWithoutOrderingProto::FAST_MERGE;
+  opts.buffer_assignment_algorithm =
+      buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE;
+  opts.color_memory_limit = [](LogicalBuffer::Color) -> int64_t {
+    return int64_t{1} << 40;
+  };
+  opts.must_not_live_out = [](const HloAliasAnalysis&,
+                              const HloInstruction* instr, const ShapeIndex&) {
+    return instr->opcode() == HloOpcode::kNegate &&
+           (instr->unique_id() % 5 == 0);
+  };
+  BufferAssigner assigner(&alias_info, std::move(opts));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto base_assignment,
+      assigner.CreateAssignment(
+          &module, std::make_unique<SequentialHloOrdering>(schedule),
+          &BufferSizeBytes, [](LogicalBuffer::Color) { return 1; }));
+
+  std::vector<const HloBuffer*> buffers;
+  buffers.reserve(num_buffers);
+  for (int64_t i = 0; i < num_buffers; ++i) {
+    buffers.push_back(
+        &base_assignment->alias_analysis().GetBufferContainingValue(
+            base_assignment->dataflow_analysis().GetUniqueValueAt(insts[i],
+                                                                  {})));
+  }
+
+  constexpr int kWindowSize = 8;
+  constexpr int kMaxAssignedPerAlloc = 32;
+
+  for (auto s : state) {
+    base_assignment->ClearAllocations();
+    std::vector<BufferAllocation::Index> active_allocs;
+    active_allocs.reserve(kWindowSize);
+    for (int k = 0; k < kWindowSize; ++k) {
+      BufferAllocation* alloc = base_assignment->NewEmptyAllocation(
+          (k % 2 == 0) ? 64 : 128, LogicalBuffer::Color(0));
+      if (k < kWindowSize / 2) {
+        alloc->set_maybe_live_out(true);
+      }
+      active_allocs.push_back(alloc->index());
+    }
+
+    int replace_idx = 0;
+    for (int64_t i = 0; i < num_buffers; ++i) {
+      const HloBuffer* buffer = buffers[i];
+      bool assigned = false;
+      for (int k = 0; k < kWindowSize; ++k) {
+        BufferAllocation::Index idx = active_allocs[(i + k) % kWindowSize];
+        BufferAllocation* alloc = base_assignment->GetMutableAllocation(idx);
+        auto status_or =
+            assigner.MaybeAssignBuffer(alloc, *buffer, base_assignment.get());
+        if (status_or.ok() && status_or.value()) {
+          assigned = true;
+          if (alloc->assigned_buffers().size() >= kMaxAssignedPerAlloc) {
+            BufferAllocation* new_alloc = base_assignment->NewEmptyAllocation(
+                ((i + k) % 2 == 0) ? 64 : 128, LogicalBuffer::Color(0));
+            if (((i + k) % kWindowSize) < kWindowSize / 2) {
+              new_alloc->set_maybe_live_out(true);
+            }
+            active_allocs[(i + k) % kWindowSize] = new_alloc->index();
+          }
+          break;
+        }
+      }
+      if (!assigned) {
+        BufferAllocation* new_alloc =
+            base_assignment->NewEmptyAllocation(64, LogicalBuffer::Color(0));
+        active_allocs[replace_idx] = new_alloc->index();
+        replace_idx = (replace_idx + 1) % kWindowSize;
+        CHECK_OK(
+            assigner
+                .MaybeAssignBuffer(new_alloc, *buffer, base_assignment.get())
+                .status());
+      }
+    }
+  }
+}
+
+BENCHMARK(BM_MaybeAssignBufferStress)->Range(1'000, 1'000'000);
+
 // Tests that BufferAssignment::FromProto rejects a malformed proto containing
 // an assigned buffer with a negative offset or size.
 //
@@ -5971,15 +6176,17 @@ ENTRY main {
   EXPECT_EQ(buffer0_slice.offset(), slice0.offset());
 }
 
-TEST_F(BufferAssignmentTest, CustomInterferenceForcesInterference) {
+TEST_F(BufferAssignmentTest,
+       CustomInterferenceIgnoredWhenLiveRangesDoNotOverlap) {
   constexpr absl::string_view kHlo = R"hlo(
 HloModule main, is_scheduled=true
 
 ENTRY main {
   buffer.0 = s32[4096]{0} custom-call(), custom_call_target="AllocateBuffer"
-  copy.0 = s32[4096]{0} copy(buffer.0)
+  use.0 = (s32[4096]{0}) tuple(buffer.0)
   buffer.1 = s32[4096]{0} custom-call(), custom_call_target="AllocateBuffer"
-  ROOT copy.1 = s32[4096]{0} copy(buffer.1)
+  use.1 = (s32[4096]{0}) tuple(buffer.1)
+  ROOT root = tuple()
 }
 )hlo";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -6022,7 +6229,9 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice buffer1_slice,
                        buffers->GetUniqueTopLevelSlice(buffer1));
 
-  EXPECT_NE(buffer0_slice.index(), buffer1_slice.index());
+  // buffer.0 and buffer.1 have non-overlapping HLO live ranges, so custom
+  // interference returning true is ignored and they still share an allocation.
+  EXPECT_EQ(buffer0_slice, buffer1_slice);
 }
 
 TEST_F(BufferAssignmentTest, HasLiveRangeInterferenceOptionFastMerge) {
@@ -6103,5 +6312,349 @@ ENTRY main {
   EXPECT_EQ(buffer0_slice.offset(), slice0.offset());
 }
 
+TEST_F(BufferAssignmentTest, FixedOffsetOption) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  buffer.0 = s32[4096]{0} custom-call(), custom_call_target="AllocateBuffer"
+  call-start.0 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.0 = () call-done(call-start.0)
+  ROOT copy.0 = s32[4096]{0} copy(buffer.0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.must_not_live_out = [](const HloAliasAnalysis& alias_analysis,
+                              const HloInstruction* instruction,
+                              const ShapeIndex& index) -> bool {
+    return absl::StartsWith(instruction->name(), "call-start");
+  };
+  opts.fixed_offset = [](const HloAliasAnalysis& alias_analysis,
+                         const HloInstruction* instruction,
+                         const ShapeIndex& index) -> std::optional<int64_t> {
+    if (absl::StartsWith(instruction->name(), "call-start") &&
+        index == ShapeIndex{2, 0}) {
+      return 0;
+    }
+    return std::nullopt;
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  const HloInstruction* call_start0 =
+      module->entry_computation()->GetInstructionWithName("call-start.0");
+  const HloInstruction* buffer0 =
+      module->entry_computation()->GetInstructionWithName("buffer.0");
+
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice call_start_slice,
+                       buffers->GetUniqueSlice(call_start0, ShapeIndex{2, 0}));
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice buffer0_slice,
+                       buffers->GetUniqueTopLevelSlice(buffer0));
+
+  EXPECT_EQ(call_start_slice.offset(), 0);
+  EXPECT_NE(buffer0_slice.offset(), 0);
+  EXPECT_EQ(call_start_slice.index(), buffer0_slice.index());
+}
+
+TEST_F(BufferAssignmentTest, FixedNonZeroOffset) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  buffer.0 = s32[4096]{0} custom-call(), custom_call_target="AllocateBuffer"
+  call-start.0 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.0 = () call-done(call-start.0)
+  ROOT copy.0 = s32[4096]{0} copy(buffer.0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  constexpr int64_t kFixedOffset = 1024;
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.must_not_live_out = [](const HloAliasAnalysis& alias_analysis,
+                              const HloInstruction* instruction,
+                              const ShapeIndex& index) -> bool {
+    return absl::StartsWith(instruction->name(), "call-start");
+  };
+  opts.fixed_offset = [kFixedOffset](
+                          const HloAliasAnalysis& alias_analysis,
+                          const HloInstruction* instruction,
+                          const ShapeIndex& index) -> std::optional<int64_t> {
+    if (absl::StartsWith(instruction->name(), "call-start") &&
+        index == ShapeIndex{2, 0}) {
+      return kFixedOffset;
+    }
+    return std::nullopt;
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  const HloInstruction* call_start0 =
+      module->entry_computation()->GetInstructionWithName("call-start.0");
+  const HloInstruction* buffer0 =
+      module->entry_computation()->GetInstructionWithName("buffer.0");
+
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice call_start_slice,
+                       buffers->GetUniqueSlice(call_start0, ShapeIndex{2, 0}));
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice buffer0_slice,
+                       buffers->GetUniqueTopLevelSlice(buffer0));
+
+  EXPECT_EQ(call_start_slice.offset(), kFixedOffset);
+  EXPECT_NE(buffer0_slice.offset(), kFixedOffset);
+  const BufferAllocation& call_start_alloc =
+      buffers->GetAllocation(call_start_slice.index());
+  EXPECT_GE(call_start_alloc.size(), kFixedOffset + call_start_slice.size());
+}
+
+TEST_F(BufferAssignmentTest,
+       FixedZeroOffsetInterferingBuffersGetDistinctAllocations) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  call-start.0 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-start.1 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.0 = () call-done(call-start.0)
+  call-done.1 = () call-done(call-start.1)
+  buffer.0 = s32[4096]{0} custom-call(), custom_call_target="AllocateBuffer"
+  ROOT copy.0 = s32[4096]{0} copy(buffer.0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.must_not_live_out = [](const HloAliasAnalysis& alias_analysis,
+                              const HloInstruction* instruction,
+                              const ShapeIndex& index) -> bool {
+    return absl::StartsWith(instruction->name(), "call-start");
+  };
+  opts.fixed_offset = [](const HloAliasAnalysis& alias_analysis,
+                         const HloInstruction* instruction,
+                         const ShapeIndex& index) -> std::optional<int64_t> {
+    if (absl::StartsWith(instruction->name(), "call-start") &&
+        index == ShapeIndex{2, 0}) {
+      return 0;
+    }
+    return std::nullopt;
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  const HloInstruction* call_start0 =
+      module->entry_computation()->GetInstructionWithName("call-start.0");
+  const HloInstruction* call_start1 =
+      module->entry_computation()->GetInstructionWithName("call-start.1");
+
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice slice0,
+                       buffers->GetUniqueSlice(call_start0, ShapeIndex{2, 0}));
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice slice1,
+                       buffers->GetUniqueSlice(call_start1, ShapeIndex{2, 0}));
+
+  EXPECT_EQ(slice0.offset(), 0);
+  EXPECT_EQ(slice1.offset(), 0);
+  EXPECT_NE(slice0.index(), slice1.index());
+}
+
+TEST_F(BufferAssignmentTest,
+       FixedZeroOffsetNonOverlappingBuffersReuseAllocation) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  call-start.0 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.0 = () call-done(call-start.0)
+  call-start.1 = ((), (), (s32[8192]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.1 = () call-done(call-start.1)
+  buffer.0 = s32[4096]{0} custom-call(), custom_call_target="AllocateBuffer"
+  ROOT copy.0 = s32[4096]{0} copy(buffer.0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.assignment_algorithm_for_computations_without_ordering =
+      buffer_assignment::
+          AssignmentAlgorithmForComputationsWithoutOrderingProto::FAST_MERGE;
+  opts.color_memory_limit = [](LogicalBuffer::Color) { return 1024 * 1024; };
+  opts.must_not_live_out = [](const HloAliasAnalysis& alias_analysis,
+                              const HloInstruction* instruction,
+                              const ShapeIndex& index) -> bool {
+    return absl::StartsWith(instruction->name(), "call-start");
+  };
+  opts.fixed_offset = [](const HloAliasAnalysis& alias_analysis,
+                         const HloInstruction* instruction,
+                         const ShapeIndex& index) -> std::optional<int64_t> {
+    if (absl::StartsWith(instruction->name(), "call-start") &&
+        index == ShapeIndex{2, 0}) {
+      return 0;
+    }
+    return std::nullopt;
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  const HloInstruction* call_start0 =
+      module->entry_computation()->GetInstructionWithName("call-start.0");
+  const HloInstruction* call_start1 =
+      module->entry_computation()->GetInstructionWithName("call-start.1");
+  const HloInstruction* buffer0 =
+      module->entry_computation()->GetInstructionWithName("buffer.0");
+
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice slice0,
+                       buffers->GetUniqueSlice(call_start0, ShapeIndex{2, 0}));
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice slice1,
+                       buffers->GetUniqueSlice(call_start1, ShapeIndex{2, 0}));
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice buffer0_slice,
+                       buffers->GetUniqueTopLevelSlice(buffer0));
+
+  EXPECT_EQ(slice0.offset(), 0);
+  EXPECT_EQ(slice1.offset(), 0);
+  EXPECT_EQ(slice0.index(), slice1.index());
+  EXPECT_EQ(buffer0_slice.index(), slice0.index());
+  EXPECT_NE(buffer0_slice.offset(), 0);
+}
+
+TEST_F(BufferAssignmentTest, ConflictingFixedOffsetsReturnsError) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  buffer.0 = s32[4096]{0} custom-call(), custom_call_target="AllocateBuffer"
+  alias.0 = s32[4096]{0} custom-call(buffer.0),
+    custom_call_target="InPlaceOp",
+    output_to_operand_aliasing={{}: (0, {})}
+  ROOT copy.0 = s32[4096]{0} copy(alias.0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.fixed_offset = [](const HloAliasAnalysis& alias_analysis,
+                         const HloInstruction* instruction,
+                         const ShapeIndex& index) -> std::optional<int64_t> {
+    if (instruction->name() == "buffer.0") {
+      return 0;
+    }
+    if (instruction->name() == "alias.0") {
+      return 1024;
+    }
+    return std::nullopt;
+  };
+
+  EXPECT_THAT(BufferAssigner::Run(
+                  module.get(),
+                  std::make_unique<SequentialHloOrdering>(module->schedule()),
+                  &BufferSizeBytes, &alias_info_,
+                  [](LogicalBuffer::Color) { return 1; }, std::move(opts)),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInternal,
+                  HasSubstr("Conflicting fixed offset requirements")));
+}
+
+TEST_F(BufferAssignmentTest,
+       FixedZeroOffsetDoesNotReuseNonFixedOffsetAllocation) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  buffer.0 = s32[8192]{0} custom-call(), custom_call_target="AllocateBuffer"
+  use.0 = () custom-call(buffer.0), custom_call_target="UseBuffer"
+  call-start.0 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.0 = () call-done(call-start.0)
+  ROOT root_tuple = () tuple()
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.must_not_live_out = [](const HloAliasAnalysis& alias_analysis,
+                              const HloInstruction* instruction,
+                              const ShapeIndex& index) -> bool {
+    return absl::StartsWith(instruction->name(), "call-start");
+  };
+  opts.fixed_offset = [](const HloAliasAnalysis& alias_analysis,
+                         const HloInstruction* instruction,
+                         const ShapeIndex& index) -> std::optional<int64_t> {
+    if (absl::StartsWith(instruction->name(), "call-start") &&
+        index == ShapeIndex{2, 0}) {
+      return 0;
+    }
+    return std::nullopt;
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  const HloInstruction* call_start0 =
+      module->entry_computation()->GetInstructionWithName("call-start.0");
+  const HloInstruction* buffer0 =
+      module->entry_computation()->GetInstructionWithName("buffer.0");
+
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice slice0,
+                       buffers->GetUniqueSlice(call_start0, ShapeIndex{2, 0}));
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice buffer0_slice,
+                       buffers->GetUniqueTopLevelSlice(buffer0));
+
+  EXPECT_EQ(slice0.index(), buffer0_slice.index());
+  EXPECT_EQ(slice0.offset(), 0);
+  EXPECT_GE(buffer0_slice.offset(), slice0.size());
+}
 }  // namespace
 }  // namespace xla

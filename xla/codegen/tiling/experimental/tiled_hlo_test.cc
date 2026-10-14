@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_traversal.h"
@@ -52,6 +53,7 @@ limitations under the License.
 namespace xla::gpu::experimental {
 namespace {
 
+using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
 using ::mlir::MLIRContext;
 using ::testing::Contains;
@@ -922,17 +924,18 @@ TEST_P(TileAnalysisTest, CollectiveDotReduceScatter) {
     Dimensions:
       0 type: parallel size: 64 tile size: 8 dim ID:0 hlo: %rs = f32[64,512]{1,0} reduce-scatter(%dot), replica_groups={{0,1}}, dimensions={0}, to_apply=%add
       1 type: parallel size: 512 tile size: 32 dim ID:1 hlo: %rs = f32[64,512]{1,0} reduce-scatter(%dot), replica_groups={{0,1}}, dimensions={0}, to_apply=%add
-      2 type: sequential size: 256 tile size: 32 dim ID:2 hlo: %dot = f32[128,512]{1,0} dot(%p0, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      2 type: replica size: 2 tile size: 1 dim ID:2 hlo: %rs = f32[64,512]{1,0} reduce-scatter(%dot), replica_groups={{0,1}}, dimensions={0}, to_apply=%add
+      3 type: sequential size: 256 tile size: 32 dim ID:2 hlo: %dot = f32[128,512]{1,0} dot(%p0, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     Root tiles:
-      0 root tile:  offsets [tid_0 * 8, tid_1 * 32] sizes [8, 32] strides [1, 1] upper bounds [64, 512]
+      0 root tile:  offsets [tid_0 * 16 + tid_2 * 8, tid_1 * 32] sizes [8, 32] strides [1, 1] upper bounds [64, 512]
 
     Tiled HLO:
-      dot.tile_0 = dot(p0.1.tile_0, p1.1.tile_0)  offsets [tid_0 * 16, tid_1 * 32] sizes [16, 32] strides [1, 1] upper bounds [128, 512]
+      dot.tile_0 = dot(p0.1.tile_0, p1.1.tile_0)  offsets [tid_0 * 16 + tid_2 * 64, tid_1 * 32] sizes [16, 32] strides [1, 1] upper bounds [128, 512]
       region #0 {
-        p0.1.tile_0 = parameter(0)  offsets [tid_0 * 16, tid_2 * 32] sizes [16, 32] strides [1, 1] upper bounds [128, 256]
-        p1.1.tile_0 = parameter(1)  offsets [tid_2 * 32, tid_1 * 32] sizes [32, 32] strides [1, 1] upper bounds [256, 512]
+        p0.1.tile_0 = parameter(0)  offsets [tid_0 * 16 + tid_2 * 64, tid_3 * 32] sizes [16, 32] strides [1, 1] upper bounds [128, 256]
+        p1.1.tile_0 = parameter(1)  offsets [tid_3 * 32, tid_1 * 32] sizes [32, 32] strides [1, 1] upper bounds [256, 512]
       }
-      rs.tile_0 = reduce-scatter(dot.tile_0)  offsets [tid_0 * 8, tid_1 * 32] sizes [8, 32] strides [1, 1] upper bounds [64, 512]
+      rs.tile_0 = reduce-scatter(dot.tile_0)  offsets [tid_0 * 16 + tid_2 * 8, tid_1 * 32] sizes [8, 32] strides [1, 1] upper bounds [64, 512]
   )"));
 }
 
@@ -1187,6 +1190,469 @@ TEST_P(TileAnalysisTest, ScanWithLoop) {
     }
     get-tuple-element.tile_0 = get-tuple-element(scan.tile_0)  offsets [tid_0 * 8, tid_1 * 32] sizes [8, 32] strides [1, 1] upper bounds [16, 97]
   )"));
+}
+
+// Tests for index-wise variadic instructions (currently: multi-operand
+// all-gather). Such an instruction is consumed through one `get-tuple-element`
+// per output, and is tiled as a single `TiledHloInstruction` holding one tile
+// per output.
+class IndexWiseVariadicTileAnalysisTest : public TileAnalysisTestBase {
+ protected:
+  static std::vector<const TiledHloInstruction*> FindAll(
+      const TiledHloComputation& tiled_computation, HloOpcode opcode) {
+    std::vector<const TiledHloInstruction*> result;
+    for (const TiledHloInstruction* instruction :
+         tiled_computation.instructions()) {
+      if (instruction->hlo()->opcode() == opcode) {
+        result.push_back(instruction);
+      }
+    }
+    return result;
+  }
+
+  static int64_t IndexOf(const TiledHloComputation& tiled_computation,
+                         const TiledHloInstruction* instruction) {
+    absl::Span<const TiledHloInstruction* const> instructions =
+        tiled_computation.instructions();
+    return absl::c_find(instructions, instruction) - instructions.begin();
+  }
+};
+
+TEST_F(IndexWiseVariadicTileAnalysisTest,
+       VariadicAllGatherIsTiledAsOneNodeWithPerOutputTiles) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
+    f {
+      p0 = f32[1,2,8,16] parameter(0)
+      p1 = s32[1,2] parameter(1)
+      ag = (f32[4,2,8,16], s32[4,2]) all-gather(p0, p1),
+        replica_groups={{0,1,2,3}}, dimensions={0}
+      gte0 = f32[4,2,8,16] get-tuple-element(ag), index=0
+      gte1 = s32[4,2] get-tuple-element(ag), index=1
+      ROOT t = (f32[4,2,8,16], s32[4,2]) tuple(gte0, gte1)
+    }
+
+    ENTRY e {
+      arg0 = f32[1,2,8,16] parameter(0)
+      arg1 = s32[1,2] parameter(1)
+      ROOT fusion = (f32[4,2,8,16], s32[4,2]) fusion(arg0, arg1),
+        kind=kCustom, calls=f
+    })hlo",
+                                    {1, 1, 4, 16, 1, 1}));
+
+  // The dimensions of the outputs are laid out back to back in the ordered
+  // dimension list of the all-gather: output 0 at positions 0-3, output 1 at
+  // 4-5.
+  EXPECT_THAT(tiled_computation, MatchString(R"(
+    Dimensions:
+      0 type: parallel size: 4 tile size: 1 dim ID:0 hlo: %gte0 = f32[4,2,8,16]{3,2,1,0} get-tuple-element(%ag), index=0
+      1 type: parallel size: 2 tile size: 1 dim ID:1 hlo: %gte0 = f32[4,2,8,16]{3,2,1,0} get-tuple-element(%ag), index=0
+      2 type: parallel size: 8 tile size: 4 dim ID:2 hlo: %gte0 = f32[4,2,8,16]{3,2,1,0} get-tuple-element(%ag), index=0
+      3 type: parallel size: 16 tile size: 16 dim ID:3 hlo: %gte0 = f32[4,2,8,16]{3,2,1,0} get-tuple-element(%ag), index=0
+      4 type: parallel size: 4 tile size: 1 dim ID:0 hlo: %gte1 = s32[4,2]{1,0} get-tuple-element(%ag), index=1
+      5 type: parallel size: 2 tile size: 1 dim ID:1 hlo: %gte1 = s32[4,2]{1,0} get-tuple-element(%ag), index=1
+    Root tiles:
+      0 root tile:  offsets [tid_0, tid_1, tid_2 * 4, 0] sizes [1, 1, 4, 16] strides [1, 1, 1, 1] upper bounds [4, 2, 8, 16]
+      1 root tile:  offsets [tid_4, tid_5] sizes [1, 1] strides [1, 1] upper bounds [4, 2]
+
+    Tiled HLO:
+      arg0.tile_0 = parameter(0)  offsets [0, tid_1, tid_2 * 4, 0] sizes [1, 1, 4, 16] strides [1, 1, 1, 1] upper bounds [1, 2, 8, 16]
+                                replica ids { offsets [tid_0] sizes [1] strides [1] upper bounds [4] }
+      arg1.tile_0 = parameter(1)  offsets [0, tid_5] sizes [1, 1] strides [1, 1] upper bounds [1, 2]
+                                replica ids { offsets [tid_4] sizes [1] strides [1] upper bounds [4] }
+      ag.tile_0 = all-gather(arg0.tile_0, arg1.tile_0)
+        #0  offsets [tid_0, tid_1, tid_2 * 4, 0] sizes [1, 1, 4, 16] strides [1, 1, 1, 1] upper bounds [4, 2, 8, 16]
+        #1  offsets [tid_4, tid_5] sizes [1, 1] strides [1, 1] upper bounds [4, 2]
+      gte0.tile_0 = get-tuple-element(ag.tile_0)  offsets [tid_0, tid_1, tid_2 * 4, 0] sizes [1, 1, 4, 16] strides [1, 1, 1, 1] upper bounds [4, 2, 8, 16]
+      gte1.tile_0 = get-tuple-element(ag.tile_0)  offsets [tid_4, tid_5] sizes [1, 1] strides [1, 1] upper bounds [4, 2]
+  )"));
+
+  std::vector<const TiledHloInstruction*> all_gathers =
+      FindAll(tiled_computation, HloOpcode::kAllGather);
+  ASSERT_EQ(all_gathers.size(), 1);
+  const TiledHloInstruction* ag = all_gathers[0];
+  EXPECT_THAT(ag,
+              IsHloWithOperands(HloOpcode::kAllGather,
+                                std::vector<HloOpcode>{HloOpcode::kParameter,
+                                                       HloOpcode::kParameter}));
+  ASSERT_EQ(ag->operands().size(), 2);
+  ASSERT_EQ(ag->tiles().size(), 2);
+  EXPECT_EQ(ag->operand(0)->hlo()->name(), "arg0");
+  EXPECT_EQ(ag->operand(1)->hlo()->name(), "arg1");
+  // Each operand carries one replica id, derived from its own output's tile
+  // id. The scheduler is responsible for mapping both to the same peer.
+  EXPECT_EQ(ag->operand(0)->tile().num_replica_ids(), 1);
+  EXPECT_EQ(ag->operand(1)->tile().num_replica_ids(), 1);
+
+  // Ordering: both operands precede the all-gather, which precedes both GTEs.
+  const int64_t ag_index = IndexOf(tiled_computation, ag);
+  EXPECT_LT(IndexOf(tiled_computation, ag->operand(0)), ag_index);
+  EXPECT_LT(IndexOf(tiled_computation, ag->operand(1)), ag_index);
+  EXPECT_GT(IndexOf(tiled_computation, tiled_computation.roots()[0]), ag_index);
+  EXPECT_GT(IndexOf(tiled_computation, tiled_computation.roots()[1]), ag_index);
+
+  // One GTE root per output, both consuming the same tiled all-gather.
+  ASSERT_EQ(tiled_computation.roots().size(), 2);
+  EXPECT_EQ(tiled_computation.roots()[0]->operand(0), ag);
+  EXPECT_EQ(tiled_computation.roots()[1]->operand(0), ag);
+  EXPECT_EQ(tiled_computation.roots()[0]->tile(), ag->tile(0));
+  EXPECT_EQ(tiled_computation.roots()[1]->tile(), ag->tile(1));
+}
+
+TEST_F(IndexWiseVariadicTileAnalysisTest,
+       VariadicAllGatherConsumedByGetTupleElementAndConvert) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
+    f {
+      p0 = f32[2,16] parameter(0)
+      p1 = s32[4] parameter(1)
+      ag = (f32[8,16], s32[16]) all-gather(p0, p1),
+        replica_groups={{0,1,2,3}}, dimensions={0}
+      gte0 = f32[8,16] get-tuple-element(ag), index=0
+      gte1 = s32[16] get-tuple-element(ag), index=1
+      c0 = bf16[8,16] convert(gte0)
+      c1 = f32[16] convert(gte1)
+      ROOT t = (bf16[8,16], f32[16]) tuple(c0, c1)
+    }
+
+    ENTRY e {
+      arg0 = f32[2,16] parameter(0)
+      arg1 = s32[4] parameter(1)
+      ROOT fusion = (bf16[8,16], f32[16]) fusion(arg0, arg1),
+        kind=kCustom, calls=f
+    })hlo",
+                                    {2, 8, 2}));
+
+  std::vector<const TiledHloInstruction*> all_gathers =
+      FindAll(tiled_computation, HloOpcode::kAllGather);
+  ASSERT_EQ(all_gathers.size(), 1);
+  const TiledHloInstruction* ag = all_gathers[0];
+  ASSERT_EQ(ag->operands().size(), 2);
+  ASSERT_EQ(ag->tiles().size(), 2);
+  EXPECT_EQ(ag->operand(0)->tile().num_replica_ids(), 1);
+  EXPECT_EQ(ag->operand(1)->tile().num_replica_ids(), 1);
+
+  std::vector<const TiledHloInstruction*> gtes =
+      FindAll(tiled_computation, HloOpcode::kGetTupleElement);
+  ASSERT_EQ(gtes.size(), 2);
+  for (const TiledHloInstruction* gte : gtes) {
+    ASSERT_EQ(gte->operands().size(), 1);
+    EXPECT_EQ(gte->operand(0), ag);
+  }
+}
+
+TEST_F(IndexWiseVariadicTileAnalysisTest,
+       VariadicAllGatherWithIdenticalOperandShapes) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
+    f {
+      p0 = s32[1,2] parameter(0)
+      p1 = s32[1,2] parameter(1)
+      p2 = s32[1,2] parameter(2)
+      ag = (s32[4,2], s32[4,2], s32[4,2]) all-gather(p0, p1, p2),
+        replica_groups={{0,1,2,3}}, dimensions={0}
+      gte0 = s32[4,2] get-tuple-element(ag), index=0
+      gte1 = s32[4,2] get-tuple-element(ag), index=1
+      gte2 = s32[4,2] get-tuple-element(ag), index=2
+      ROOT t = (s32[4,2], s32[4,2], s32[4,2]) tuple(gte0, gte1, gte2)
+    }
+
+    ENTRY e {
+      arg0 = s32[1,2] parameter(0)
+      arg1 = s32[1,2] parameter(1)
+      arg2 = s32[1,2] parameter(2)
+      ROOT fusion = (s32[4,2], s32[4,2], s32[4,2]) fusion(arg0, arg1, arg2),
+        kind=kCustom, calls=f
+    })hlo",
+                                    {1, 1, 1, 1, 1, 1}));
+
+  std::vector<const TiledHloInstruction*> all_gathers =
+      FindAll(tiled_computation, HloOpcode::kAllGather);
+  ASSERT_EQ(all_gathers.size(), 1);
+  const TiledHloInstruction* ag = all_gathers[0];
+  ASSERT_EQ(ag->operands().size(), 3);
+  ASSERT_EQ(ag->tiles().size(), 3);
+  ASSERT_EQ(tiled_computation.roots().size(), 3);
+  for (int64_t k = 0; k < 3; ++k) {
+    EXPECT_EQ(ag->operand(k)->hlo()->parameter_number(), k);
+    EXPECT_EQ(tiled_computation.roots()[k]->operand(0), ag);
+    EXPECT_EQ(tiled_computation.roots()[k]->hlo()->tuple_index(), k);
+    EXPECT_EQ(ag->tile(k), tiled_computation.roots()[k]->tile());
+  }
+  EXPECT_EQ(FindAll(tiled_computation, HloOpcode::kParameter).size(), 3);
+}
+
+TEST_F(IndexWiseVariadicTileAnalysisTest,
+       VariadicAllGatherWithGeneralOperandExtentAndDotProducers) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
+    f {
+      lhs0 = f32[2,8] parameter(0)
+      rhs0 = f32[8,16] parameter(1)
+      lhs1 = f32[4,8] parameter(2)
+      rhs1 = f32[8,32] parameter(3)
+      dot0 = f32[2,16] dot(lhs0, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      dot1 = f32[4,32] dot(lhs1, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ag = (f32[8,16], f32[16,32]) all-gather(dot0, dot1),
+        replica_groups={{0,1,2,3}}, dimensions={0}
+      gte0 = f32[8,16] get-tuple-element(ag), index=0
+      gte1 = f32[16,32] get-tuple-element(ag), index=1
+      ROOT t = (f32[8,16], f32[16,32]) tuple(gte0, gte1)
+    }
+
+    ENTRY e {
+      lhs0 = f32[2,8] parameter(0)
+      rhs0 = f32[8,16] parameter(1)
+      lhs1 = f32[4,8] parameter(2)
+      rhs1 = f32[8,32] parameter(3)
+      ROOT fusion = (f32[8,16], f32[16,32]) fusion(lhs0, rhs0, lhs1, rhs1),
+        kind=kCustom, calls=f
+    })hlo",
+                                    {2, 8, 2, 16, 8, 8}));
+
+  std::vector<const TiledHloInstruction*> all_gathers =
+      FindAll(tiled_computation, HloOpcode::kAllGather);
+  ASSERT_EQ(all_gathers.size(), 1);
+  EXPECT_EQ(FindAll(tiled_computation, HloOpcode::kDot).size(), 2);
+}
+
+TEST_F(IndexWiseVariadicTileAnalysisTest,
+       VariadicAllGatherWithUnconsumedOutputIsRejected) {
+  EXPECT_THAT(
+      ParseAndTile(R"hlo(
+    f {
+      p0 = f32[1,8] parameter(0)
+      p1 = s32[1,2] parameter(1)
+      ag = (f32[4,8], s32[4,2]) all-gather(p0, p1),
+        replica_groups={{0,1,2,3}}, dimensions={0}
+      ROOT gte0 = f32[4,8] get-tuple-element(ag), index=0
+    }
+
+    ENTRY e {
+      arg0 = f32[1,8] parameter(0)
+      arg1 = s32[1,2] parameter(1)
+      ROOT fusion = f32[4,8] fusion(arg0, arg1), kind=kCustom, calls=f
+    })hlo",
+                   {1, 4}),
+      StatusIs(absl::StatusCode::kUnimplemented,
+               HasSubstr("Output 1 of ag is not consumed in the fusion.")));
+}
+
+TEST_F(IndexWiseVariadicTileAnalysisTest,
+       VariadicReduceScatterIsTiledAsOneNodeWithPerOutputTiles) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
+    add {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+
+    f {
+      p0 = f32[4,64] parameter(0)
+      p1 = f32[4,1] parameter(1)
+      rs = (f32[2,64], f32[2,1]) reduce-scatter(p0, p1),
+        replica_groups={{0,1}}, dimensions={0}, to_apply=add
+      gte0 = f32[2,64] get-tuple-element(rs), index=0
+      gte1 = f32[2,1] get-tuple-element(rs), index=1
+      ROOT t = (f32[2,64], f32[2,1]) tuple(gte0, gte1)
+    }
+
+    ENTRY e {
+      arg0 = f32[4,64] parameter(0)
+      arg1 = f32[4,1] parameter(1)
+      ROOT fusion = (f32[2,64], f32[2,1]) fusion(arg0, arg1),
+        kind=kCustom, calls=f
+    })hlo",
+                                    {1, 64, 1, 1}));
+
+  EXPECT_THAT(RunFileCheck(tiled_computation.ToString(), R"(
+    CHECK: Dimensions:
+    CHECK:   4 type: replica size: 2 tile size: 1 dim ID:4
+    CHECK:   5 type: replica size: 2 tile size: 1 dim ID:5
+    CHECK: Root tiles:
+    CHECK:   0 root tile:  offsets [tid_4, 0] sizes [1, 64] strides [1, 1] upper bounds [2, 64]
+    CHECK:   1 root tile:  offsets [tid_5, 0] sizes [1, 1] strides [1, 1] upper bounds [2, 1]
+    CHECK: Tiled HLO:
+    CHECK:   arg0.tile_0 = parameter(0)  offsets [tid_4 * 2, 0] sizes [2, 64] strides [1, 1] upper bounds [4, 64]
+    CHECK:   arg1.tile_0 = parameter(1)  offsets [tid_5 * 2, 0] sizes [2, 1] strides [1, 1] upper bounds [4, 1]
+    CHECK:   rs.tile_0 = reduce-scatter(arg0.tile_0, arg1.tile_0)
+    CHECK:     #0  offsets [tid_4, 0] sizes [1, 64] strides [1, 1] upper bounds [2, 64]
+    CHECK:     #1  offsets [tid_5, 0] sizes [1, 1] strides [1, 1] upper bounds [2, 1]
+    CHECK:   gte0.tile_0 = get-tuple-element(rs.tile_0)  offsets [tid_4, 0] sizes [1, 64]
+    CHECK:   gte1.tile_0 = get-tuple-element(rs.tile_0)  offsets [tid_5, 0] sizes [1, 1]
+  )"),
+              IsOkAndHolds(true));
+
+  std::vector<const TiledHloInstruction*> reduce_scatters =
+      FindAll(tiled_computation, HloOpcode::kReduceScatter);
+  ASSERT_EQ(reduce_scatters.size(), 1);
+  const TiledHloInstruction* rs = reduce_scatters[0];
+  ASSERT_EQ(rs->operands().size(), 2);
+  ASSERT_EQ(rs->tiles().size(), 2);
+  EXPECT_EQ(rs->operand(0)->hlo()->name(), "arg0");
+  EXPECT_EQ(rs->operand(1)->hlo()->name(), "arg1");
+  EXPECT_EQ(rs->operand(0)->tile().num_replica_ids(), 0);
+  EXPECT_EQ(rs->operand(1)->tile().num_replica_ids(), 0);
+
+  // One GTE root per output, all backed by the same tiled reduce-scatter.
+  ASSERT_EQ(tiled_computation.roots().size(), 2);
+  EXPECT_EQ(tiled_computation.roots()[0]->operand(0), rs);
+  EXPECT_EQ(tiled_computation.roots()[1]->operand(0), rs);
+  EXPECT_EQ(rs->tile(0), tiled_computation.roots()[0]->tile());
+  EXPECT_EQ(rs->tile(1), tiled_computation.roots()[1]->tile());
+}
+
+TEST_F(IndexWiseVariadicTileAnalysisTest,
+       VariadicReduceScatterConsumedByGetTupleElementAndConvert) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
+    add {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+
+    f {
+      p0 = f32[16,16] parameter(0)
+      p1 = f32[16] parameter(1)
+      rs = (f32[4,16], f32[4]) reduce-scatter(p0, p1),
+        replica_groups={{0,1,2,3}}, dimensions={0}, to_apply=add
+      gte0 = f32[4,16] get-tuple-element(rs), index=0
+      gte1 = f32[4] get-tuple-element(rs), index=1
+      c0 = bf16[4,16] convert(gte0)
+      c1 = s32[4] convert(gte1)
+      ROOT t = (bf16[4,16], s32[4]) tuple(c0, c1)
+    }
+
+    ENTRY e {
+      arg0 = f32[16,16] parameter(0)
+      arg1 = f32[16] parameter(1)
+      ROOT fusion = (bf16[4,16], s32[4]) fusion(arg0, arg1),
+        kind=kCustom, calls=f
+    })hlo",
+                                    {1, 8, 1}));
+
+  std::vector<const TiledHloInstruction*> reduce_scatters =
+      FindAll(tiled_computation, HloOpcode::kReduceScatter);
+  ASSERT_EQ(reduce_scatters.size(), 1);
+  const TiledHloInstruction* rs = reduce_scatters[0];
+  ASSERT_EQ(rs->operands().size(), 2);
+  ASSERT_EQ(rs->tiles().size(), 2);
+
+  std::vector<const TiledHloInstruction*> gtes =
+      FindAll(tiled_computation, HloOpcode::kGetTupleElement);
+  ASSERT_EQ(gtes.size(), 2);
+  for (const TiledHloInstruction* gte : gtes) {
+    ASSERT_EQ(gte->operands().size(), 1);
+    EXPECT_EQ(gte->operand(0), rs);
+  }
+}
+
+TEST_F(IndexWiseVariadicTileAnalysisTest,
+       VariadicReduceScatterWithDotProducers) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
+    add {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+
+    f {
+      lhs0 = f32[16,8] parameter(0)
+      rhs0 = f32[8,16] parameter(1)
+      lhs1 = f32[32,8] parameter(2)
+      rhs1 = f32[8,32] parameter(3)
+      dot0 = f32[16,16] dot(lhs0, rhs0),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      dot1 = f32[32,32] dot(lhs1, rhs1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      rs = (f32[4,16], f32[8,32]) reduce-scatter(dot0, dot1),
+        replica_groups={{0,1,2,3}}, dimensions={0}, to_apply=add
+      gte0 = f32[4,16] get-tuple-element(rs), index=0
+      gte1 = f32[8,32] get-tuple-element(rs), index=1
+      ROOT t = (f32[4,16], f32[8,32]) tuple(gte0, gte1)
+    }
+
+    ENTRY e {
+      lhs0 = f32[16,8] parameter(0)
+      rhs0 = f32[8,16] parameter(1)
+      lhs1 = f32[32,8] parameter(2)
+      rhs1 = f32[8,32] parameter(3)
+      ROOT fusion = (f32[4,16], f32[8,32]) fusion(lhs0, rhs0, lhs1, rhs1),
+        kind=kCustom, calls=f
+    })hlo",
+                                    {1, 8, 2, 16, 8, 8}));
+
+  EXPECT_THAT(RunFileCheck(tiled_computation.ToString(), R"(
+    CHECK: Tiled HLO:
+    CHECK:   dot0.tile_0 = dot(lhs0.1.tile_0, rhs0.1.tile_0)  offsets [tid_4 * 4, tid_1 * 8] sizes [4, 8]
+    CHECK:   region #0 {
+    CHECK:     lhs0.1.tile_0 = parameter(0)  offsets [tid_4 * 4, 0] sizes [4, 8]
+    CHECK:     rhs0.1.tile_0 = parameter(1)  offsets [0, tid_1 * 8] sizes [8, 8]
+    CHECK:   }
+    CHECK:   dot1.tile_0 = dot(lhs1.1.tile_0, rhs1.1.tile_0)  offsets [tid_5 * 8, tid_3 * 16] sizes [8, 16]
+    CHECK:   region #0 {
+    CHECK:     lhs1.1.tile_0 = parameter(2)  offsets [tid_5 * 8, 0] sizes [8, 8]
+    CHECK:     rhs1.1.tile_0 = parameter(3)  offsets [0, tid_3 * 16] sizes [8, 16]
+    CHECK:   }
+    CHECK:   rs.tile_0 = reduce-scatter(dot0.tile_0, dot1.tile_0)
+    CHECK:     #0  offsets [tid_4, tid_1 * 8] sizes [1, 8]
+    CHECK:     #1  offsets [tid_5 * 2, tid_3 * 16] sizes [2, 16]
+    CHECK:   gte0.tile_0 = get-tuple-element(rs.tile_0)  offsets [tid_4, tid_1 * 8] sizes [1, 8]
+    CHECK:   gte1.tile_0 = get-tuple-element(rs.tile_0)  offsets [tid_5 * 2, tid_3 * 16] sizes [2, 16]
+  )"),
+              IsOkAndHolds(true));
+}
+
+TEST_F(SameShapeMultiOutputFusionTileAnalysisTest,
+       VariadicReduceIsTiledAsOneNode) {
+  // A variadic reduce is not index-wise: every output depends on every input.
+  // Its GTE roots share one tile and must resolve to a single tiled node.
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
+    add_pair {
+      a = f32[] parameter(0)
+      b = s32[] parameter(1)
+      c = f32[] parameter(2)
+      d = s32[] parameter(3)
+      add_f = f32[] add(a, c)
+      add_s = s32[] add(b, d)
+      ROOT t = (f32[], s32[]) tuple(add_f, add_s)
+    }
+
+    f {
+      p0 = f32[4,8] parameter(0)
+      p1 = s32[4,8] parameter(1)
+      c0 = f32[] constant(0)
+      c1 = s32[] constant(0)
+      reduce = (f32[4], s32[4]) reduce(p0, p1, c0, c1), dimensions={1},
+        to_apply=add_pair
+      gte0 = f32[4] get-tuple-element(reduce), index=0
+      gte1 = s32[4] get-tuple-element(reduce), index=1
+      ROOT t = (f32[4], s32[4]) tuple(gte0, gte1)
+    }
+
+    ENTRY e {
+      arg0 = f32[4,8] parameter(0)
+      arg1 = s32[4,8] parameter(1)
+      ROOT fusion = (f32[4], s32[4]) fusion(arg0, arg1), kind=kLoop, calls=f
+    })hlo",
+                                    {2, 8}));
+
+  std::vector<const TiledHloInstruction*> reduces;
+  for (const TiledHloInstruction* instruction :
+       tiled_computation.instructions()) {
+    if (instruction->hlo()->opcode() == HloOpcode::kReduce) {
+      reduces.push_back(instruction);
+    }
+  }
+  ASSERT_EQ(reduces.size(), 1);
+  EXPECT_EQ(reduces[0]->tiles().size(), 1);
+  EXPECT_EQ(reduces[0]->operands().size(), 4);
 }
 
 // TODO(b/422676780): Port the remaining tests.
