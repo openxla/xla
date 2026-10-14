@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <utility>
 
 #include "absl/status/status.h"
@@ -28,6 +29,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_driver_cbid.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/platform/mem.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cuda_test.h"
@@ -544,6 +546,134 @@ TEST_F(CuptiTracerTest, GraphNodeApiExitWithoutNodeCreatedCallback) {
     }
   }
   EXPECT_EQ(num_graph_node_events, 1);
+}
+
+// Without cuptiFinalize(), CUPTI's activity thread can still request and
+// return buffers after Disable(), so the buffer manager must stay alive.
+TEST_F(CuptiTracerTest, SkippedFinalizeKeepsActivityBuffersAfterDisable) {
+  auto* const subscriber =
+      reinterpret_cast<CUpti_SubscriberHandle>(uintptr_t{1});
+  EXPECT_CALL(*mock_, SubscribeV2(_, _, _))
+      .WillOnce(Return(CUPTI_ERROR_NOT_SUPPORTED));
+  EXPECT_CALL(*mock_, Subscribe(_, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(subscriber), Return(CUPTI_SUCCESS)));
+  ExpectSuccessfulV1KernelTrace(subscriber);
+  // StrictMock: Finalize() must not be called.
+
+  CuptiTracerOptions options = KernelTraceOptions();
+  options.cupti_finalize = false;
+  EnableProfiling(options);
+  DisableProfiling();
+
+  uint8_t* buffer = nullptr;
+  size_t size = 0;
+  cupti_tracer_->RequestActivityBuffer(&buffer, &size);
+  ASSERT_NE(buffer, nullptr);
+  EXPECT_GT(size, 0);
+  EXPECT_OK(cupti_tracer_->ProcessActivityBuffer(/*context=*/nullptr,
+                                                 /*stream_id=*/0, buffer,
+                                                 size));
+  EXPECT_FALSE(CuptiDisabled());
+}
+
+// A buffer manager kept by a session that skipped cuptiFinalize() is reused by
+// the next session, and buffers CUPTI handed out in between stay valid.
+TEST_F(CuptiTracerTest, SkippedFinalizeReusesActivityBuffersAcrossSessions) {
+  CuptiTracerOptions options = KernelTraceOptions();
+  options.cupti_finalize = false;
+  uint8_t* in_flight = nullptr;
+  uint8_t* reclaimed = nullptr;
+  size_t size = 0;
+  for (uintptr_t session = 1; session <= 2; ++session) {
+    auto* const subscriber = reinterpret_cast<CUpti_SubscriberHandle>(session);
+    EXPECT_CALL(*mock_, SubscribeV2(_, _, _))
+        .WillOnce(Return(CUPTI_ERROR_NOT_SUPPORTED));
+    EXPECT_CALL(*mock_, Subscribe(_, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(subscriber), Return(CUPTI_SUCCESS)));
+    ExpectSuccessfulV1KernelTrace(subscriber);
+
+    EnableProfiling(options);
+    if (session == 2) {
+      // The kept pool hands back the buffer reclaimed between the sessions.
+      uint8_t* reused = nullptr;
+      cupti_tracer_->RequestActivityBuffer(&reused, &size);
+      EXPECT_EQ(reused, reclaimed);
+      // Return it and the buffer CUPTI held across the session boundary.
+      EXPECT_OK(cupti_tracer_->ProcessActivityBuffer(/*context=*/nullptr,
+                                                     /*stream_id=*/0, reused,
+                                                     /*size=*/0));
+      EXPECT_OK(cupti_tracer_->ProcessActivityBuffer(/*context=*/nullptr,
+                                                     /*stream_id=*/0, in_flight,
+                                                     /*size=*/0));
+    }
+    DisableProfiling();
+    if (session == 1) {
+      cupti_tracer_->RequestActivityBuffer(&in_flight, &size);
+      ASSERT_NE(in_flight, nullptr);
+      cupti_tracer_->RequestActivityBuffer(&reclaimed, &size);
+      ASSERT_NE(reclaimed, nullptr);
+      EXPECT_OK(cupti_tracer_->ProcessActivityBuffer(/*context=*/nullptr,
+                                                     /*stream_id=*/0, reclaimed,
+                                                     /*size=*/0));
+    }
+  }
+  EXPECT_FALSE(CuptiDisabled());
+}
+
+// If cuptiFinalize() fails, CUPTI may still be attached, so the buffer manager
+// must also stay alive.
+TEST_F(CuptiTracerTest, FailedFinalizeKeepsActivityBuffers) {
+  auto* const subscriber =
+      reinterpret_cast<CUpti_SubscriberHandle>(uintptr_t{1});
+  EXPECT_CALL(*mock_, SubscribeV2(_, _, _))
+      .WillOnce(Return(CUPTI_ERROR_NOT_SUPPORTED));
+  EXPECT_CALL(*mock_, Subscribe(_, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(subscriber), Return(CUPTI_SUCCESS)));
+  ExpectSuccessfulV1KernelTrace(subscriber);
+  EXPECT_CALL(*mock_, Finalize()).WillOnce(Return(CUPTI_ERROR_UNKNOWN));
+  EXPECT_CALL(*mock_, GetResultString(CUPTI_ERROR_UNKNOWN, _))
+      .WillOnce(Invoke(cupti_wrapper_.get(), &CuptiWrapper::GetResultString));
+
+  CuptiTracerOptions options = KernelTraceOptions();
+  options.cupti_finalize = true;
+  EnableProfiling(options);
+  DisableProfiling();
+
+  uint8_t* buffer = nullptr;
+  size_t size = 0;
+  cupti_tracer_->RequestActivityBuffer(&buffer, &size);
+  ASSERT_NE(buffer, nullptr);
+  EXPECT_OK(cupti_tracer_->ProcessActivityBuffer(/*context=*/nullptr,
+                                                 /*stream_id=*/0, buffer,
+                                                 size));
+}
+
+TEST_F(CuptiTracerTest, FinalizeReleasesActivityBuffers) {
+  auto* const subscriber =
+      reinterpret_cast<CUpti_SubscriberHandle>(uintptr_t{1});
+  EXPECT_CALL(*mock_, SubscribeV2(_, _, _))
+      .WillOnce(Return(CUPTI_ERROR_NOT_SUPPORTED));
+  EXPECT_CALL(*mock_, Subscribe(_, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(subscriber), Return(CUPTI_SUCCESS)));
+  ExpectSuccessfulV1KernelTrace(subscriber);
+  EXPECT_CALL(*mock_, Finalize()).WillOnce(Return(CUPTI_SUCCESS));
+
+  CuptiTracerOptions options = KernelTraceOptions();
+  options.cupti_finalize = true;
+  EnableProfiling(options);
+  DisableProfiling();
+
+  uint8_t* buffer = nullptr;
+  size_t size = 0;
+  cupti_tracer_->RequestActivityBuffer(&buffer, &size);
+  EXPECT_EQ(buffer, nullptr);
+  EXPECT_EQ(size, 0);
+
+  // A buffer returned after its manager is gone is freed, not dereferenced.
+  auto* stray =
+      static_cast<uint8_t*>(tsl::port::AlignedMalloc(64, std::align_val_t{8}));
+  EXPECT_OK(cupti_tracer_->ProcessActivityBuffer(/*context=*/nullptr,
+                                                 /*stream_id=*/0, stray, 64));
 }
 
 }  // namespace
