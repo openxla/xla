@@ -221,7 +221,8 @@ std::optional<HloInstructionAdaptor> FindCollectiveHero(
   for (HloInstructionAdaptor instr : fusion.MakeInstructionPostOrder()) {
     if (instr.opcode() == HloOpcode::kAllGather ||
         instr.opcode() == HloOpcode::kAllReduce ||
-        instr.opcode() == HloOpcode::kReduceScatter) {
+        instr.opcode() == HloOpcode::kReduceScatter ||
+        instr.opcode() == HloOpcode::kAllToAll) {
       collective_hero = instr;
       break;
     }

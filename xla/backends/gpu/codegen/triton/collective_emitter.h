@@ -105,6 +105,10 @@ mlir::LogicalResult RewriteAllReduce(mlir::stablehlo::AllReduceOp op,
 mlir::LogicalResult RewriteAllGather(mlir::stablehlo::AllGatherOp op,
                                      mlir::PatternRewriter& rewriter);
 
+// Rewrites stablehlo all-to-all op to a triton implementation.
+mlir::LogicalResult RewriteAllToAll(mlir::stablehlo::AllToAllOp op,
+                                    mlir::PatternRewriter& rewriter);
+
 // Rewrites stablehlo reduce-scatter op to a triton implementation.
 mlir::LogicalResult RewriteReduceScatter(mlir::stablehlo::ReduceScatterOp op,
                                          mlir::PatternRewriter& rewriter);
