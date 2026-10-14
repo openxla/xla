@@ -14,6 +14,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -42,21 +43,20 @@ absl::StatusOr<std::vector<SmiDataCache>> QuerySmiDataCaches(
 
 int NumL2Instances(int xcc_count) { return std::max(1, xcc_count); }
 
-// KFD lists every L1 instance but the L2 and L3 only once per GPU, so their
-// counts come from the topology: one L2 per XCD, one L3.
+// KFD lists every L1 instance but the L2 only once per GPU, so the L2 count
+// comes from the topology: one per XCD.
 int NumInstances(const SmiDataCache& cache, int core_count, int xcc_count) {
+  const int num_instances = std::max(1, static_cast<int>(cache.num_instances));
   switch (cache.level) {
-    case 1: {
+    case 1:
+      // Before MI300 the vector L1 and the scalar cache are both 16 KB, so
       // amd-smi may count orphaned scalar caches as vector L1s.
-      const int num_instances =
-          std::max(1, static_cast<int>(cache.num_instances));
       return core_count > 0 ? std::min(num_instances, core_count)
                             : num_instances;
-    }
     case 2:
       return NumL2Instances(xcc_count);
     default:
-      return 1;
+      return num_instances;
   }
 }
 
@@ -130,11 +130,11 @@ std::vector<DataCacheInfo> GetRocmDataCaches(absl::string_view pci_bus_id,
                    << " over SMI (" << caches.status().message()
                    << "), reporting only the L2 from HIP.";
     }
-    caches.emplace();
   }
 
   std::vector<DataCacheInfo> hierarchy = BuildDataCacheHierarchy(
-      *caches, core_count, xcc_count, hip_l2_cache_size);
+      std::move(caches).value_or(std::vector<SmiDataCache>{}), core_count,
+      xcc_count, hip_l2_cache_size);
   for (const DataCacheInfo& cache : hierarchy) {
     VLOG(1) << "L" << cache.level << " data cache of " << pci_bus_id << ": "
             << cache.num_instances << " x " << cache.size_bytes << " bytes.";

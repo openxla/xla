@@ -81,7 +81,8 @@ TEST(BuildDataCacheHierarchyTest, DropsHarvestedScalarGroups) {
       UnorderedElementsAre(DataCacheInfo{1, 32 * kKiB, 304}));
 }
 
-TEST(BuildDataCacheHierarchyTest, Gfx9CapsFoldedScalarCaches) {
+TEST(BuildDataCacheHierarchyTest, Mi250CapsFoldedScalarCaches) {
+  // MI250 GCD as amd-smi reports it: 8 orphaned scalar caches fold into the L1.
   const SmiDataCache caches[] = {
       {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/112},
       {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/48},
