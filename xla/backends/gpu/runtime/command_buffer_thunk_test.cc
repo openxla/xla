@@ -25,17 +25,25 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <thread>  // NOLINT
+#include <tuple>
 #include <utility>
 #include <vector>
 
+#include "absl/container/btree_set.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
@@ -46,10 +54,13 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -78,7 +89,9 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
+using ::testing::Each;
 using ::testing::HasSubstr;
+using ::testing::Pair;
 
 using MemoryAccess = BufferUse::MemoryAccess;
 using KernelArgsPacking = se::KernelLoaderSpec::KernelArgsPacking;
@@ -1713,5 +1726,550 @@ TEST(CommandBufferThunkTest, EvictsAndReRecordsCommandBuffer) {
   ASSERT_OK(stream->Memcpy(result.data(), b, kByteLength));
   EXPECT_EQ(result, std::vector<int32_t>(kLength, 42));
 }
+
+//===----------------------------------------------------------------------===//
+// Reusing the set-up of commands in later executions
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+struct SetUpCounts {
+  int prepares = 0;
+  int initializes = 0;
+  int records = 0;
+  int executes = 0;
+};
+
+struct SetUpCountingMemsetOptions {
+  Thunk::SetUpScope set_up_scope = Thunk::SetUpScope::kExecution;
+  std::optional<GpuCliqueKey> clique;
+  bool symmetric_memory = false;
+  bool requires_warmup = false;
+  bool requires_update_on_initialize = false;
+};
+
+// A memset command that requests a clique (if any) in `Prepare`, and symmetric
+// memory for its destination on it if asked to. It counts how often it is
+// prepared, initialized, recorded and executed.
+class SetUpCountingMemsetThunk : public Memset32BitValueThunk {
+ public:
+  SetUpCountingMemsetThunk(uint32_t value,
+                           const BufferAllocation::Slice& destination,
+                           SetUpCountingMemsetOptions options,
+                           SetUpCounts* counts)
+      : Memset32BitValueThunk(Thunk::ThunkInfo(), value, destination),
+        destination_(destination),
+        options_(std::move(options)),
+        counts_(counts) {}
+
+  absl::Status Prepare(const PrepareParams& params) override {
+    ++counts_->prepares;
+    if (!options_.clique.has_value()) {
+      return absl::OkStatus();
+    }
+    std::vector<GlobalDeviceId> group(options_.clique->devices().begin(),
+                                      options_.clique->devices().end());
+    ABSL_RETURN_IF_ERROR(params.collective_clique_requests->RequestClique(
+        *options_.clique, {group}));
+    if (!options_.symmetric_memory) {
+      return absl::OkStatus();
+    }
+    return params.collective_memory_requests->RequestSymmetricAllocation(
+        *options_.clique, destination_.index());
+  }
+
+  absl::Status Initialize(const InitializeParams& params) override {
+    ++counts_->initializes;
+    return Memset32BitValueThunk::Initialize(params);
+  }
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    ++counts_->executes;
+    return Memset32BitValueThunk::ExecuteOnStream(params);
+  }
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const Thunk::ExecuteParams& execute_params,
+      const RecordParams& record_params, RecordAction record_action,
+      se::CommandBuffer* command_buffer) override {
+    ++counts_->records;
+    return Memset32BitValueThunk::Record(execute_params, record_params,
+                                         std::move(record_action),
+                                         command_buffer);
+  }
+
+  SetUpScope set_up_scope() const override { return options_.set_up_scope; }
+  bool requires_warmup() const override { return options_.requires_warmup; }
+  bool requires_update_on_initialize() const override {
+    return options_.requires_update_on_initialize;
+  }
+
+ private:
+  BufferAllocation::Slice destination_;
+  SetUpCountingMemsetOptions options_;
+  SetUpCounts* counts_;
+};
+
+// A clique that thunks executed before command buffer thunks request.
+const GpuCliqueKey& EarlierClique() {
+  static const GpuCliqueKey* clique =
+      new GpuCliqueKey({GlobalDeviceId(4), GlobalDeviceId(5)}, 2);
+  return *clique;
+}
+
+// The clique and symmetric memory requests of an execution, in the order in
+// which it acquires cliques and symmetric memory.
+struct ExecutionRequests {
+  std::vector<std::pair<size_t, GpuCliqueKey>> cliques;
+  std::vector<std::tuple<size_t, GpuCliqueKey,
+                         absl::btree_set<BufferAllocation::Index>>>
+      symmetric_memories;
+};
+
+void ExpectSameRequests(const ExecutionRequests& a,
+                        const ExecutionRequests& b) {
+  EXPECT_EQ(a.cliques, b.cliques);
+  EXPECT_EQ(a.symmetric_memories, b.symmetric_memories);
+}
+
+// Prepares, initializes and executes `thunks` like an executable does in one
+// execution, after a thunk that requests `EarlierClique()` and symmetric
+// memory on it, and returns the requests. Calls `after_prepare` after preparing
+// the thunks.
+absl::StatusOr<ExecutionRequests> RunExecution(
+    absl::Span<CommandBufferThunk* const> thunks, se::Stream* stream,
+    const BufferAllocations& allocations,
+    absl::Span<const BufferAllocation::Index> persistent_alloc_indices,
+    CollectiveParams* collective_params = nullptr,
+    absl::FunctionRef<void()> after_prepare = [] {}) {
+  Thunk::ExecutionScopedState execution_scoped_state;
+  CollectiveCliqueRequests clique_requests;
+  ABSL_RETURN_IF_ERROR(clique_requests.RequestClique(
+      EarlierClique(), {{GlobalDeviceId(4), GlobalDeviceId(5)}}));
+  CollectiveMemoryRequests memory_requests(allocations);
+  ABSL_RETURN_IF_ERROR(memory_requests.RequestSymmetricAllocation(
+      EarlierClique(), /*allocation=*/0));
+  Thunk::PrepareParams prepare_params{collective_params,
+                                      &clique_requests,
+                                      &memory_requests,
+                                      stream->parent(),
+                                      &allocations,
+                                      &execution_scoped_state};
+  for (CommandBufferThunk* thunk : thunks) {
+    ABSL_RETURN_IF_ERROR(thunk->Prepare(prepare_params));
+  }
+  after_prepare();
+
+  Thunk::InitializeParams initialize_params;
+  initialize_params.executor = stream->parent();
+  initialize_params.buffer_allocations = &allocations;
+  initialize_params.stream = stream;
+  initialize_params.command_buffer_trace_stream = stream;
+  initialize_params.collective_params = collective_params;
+  initialize_params.execution_scoped_state = &execution_scoped_state;
+  initialize_params.persistent_alloc_indices = persistent_alloc_indices;
+  for (CommandBufferThunk* thunk : thunks) {
+    ABSL_RETURN_IF_ERROR(thunk->Initialize(initialize_params));
+  }
+
+  ServiceExecutableRunOptions run_options;
+  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
+      run_options, allocations, stream, stream, nullptr, nullptr, nullptr,
+      /*additional_compute_streams=*/{}, &execution_scoped_state,
+      persistent_alloc_indices);
+  for (CommandBufferThunk* thunk : thunks) {
+    ABSL_RETURN_IF_ERROR(thunk->ExecuteOnStream(execute_params));
+  }
+  ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+
+  ExecutionRequests requests;
+  for (const CollectiveCliqueRequests::CliqueRequest& request :
+       clique_requests.OrderedRequestedCliques()) {
+    requests.cliques.emplace_back(request.id, request.key);
+  }
+  for (const CollectiveMemoryRequests::CollectiveAllocations& allocations :
+       memory_requests.OrderedSymmetricAllocations()) {
+    requests.symmetric_memories.emplace_back(allocations.id, allocations.clique,
+                                             allocations.allocations);
+  }
+  return requests;
+}
+
+struct ReuseSetUpThunkOptions {
+  // Gives the thunk fallback thunks that own its commands, like in production.
+  bool fallback_thunks = false;
+  // Makes the set-up scope of the second command `kExecution`.
+  bool execution_scoped_command = false;
+  bool requires_warmup = false;
+  bool requires_update_on_initialize = false;
+  // Index of the first of the four buffers that the thunk writes.
+  int first_buffer = 0;
+};
+
+class ReuseSetUpTest : public ::testing::Test {
+ protected:
+  static constexpr int kNumBuffers = 8;
+  static constexpr int64_t kLength = 4;
+  static constexpr int64_t kByteLength = sizeof(int32_t) * kLength;
+  using SetUpScope = Thunk::SetUpScope;
+
+  void SetUp() override {
+    executor_ = GpuExecutor();
+    ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream());
+    for (int i = 0; i < kNumBuffers; ++i) {
+      buffers_.push_back(executor_->AllocateArray<int32_t>(kLength, 0));
+      allocations_.emplace_back(/*index=*/i, kByteLength, /*color=*/0);
+      persistent_alloc_indices_.push_back(i);
+    }
+  }
+
+  void TearDown() override {
+    for (se::DeviceAddress<int32_t>& buffer : buffers_) {
+      executor_->Deallocate(&buffer);
+    }
+  }
+
+  // Creates a thunk with four memset commands that write `i + 1` into buffer
+  // `i`. Their set-up scopes are kCollectiveTopology, kCollectiveTopology,
+  // kDevice and kCollectiveTopology. They request two cliques of the same size
+  // and a larger one, and symmetric memory on the two cliques of the same size.
+  std::unique_ptr<CommandBufferThunk> CreateThunk(
+      ReuseSetUpThunkOptions options = {}) {
+    std::vector<SetUpCountingMemsetOptions> commands_options = {
+        {SetUpScope::kCollectiveTopology, cliques_[0],
+         /*symmetric_memory=*/true},
+        {options.execution_scoped_command ? SetUpScope::kExecution
+                                          : SetUpScope::kCollectiveTopology,
+         cliques_[1]},
+        {SetUpScope::kDevice, std::nullopt},
+        {SetUpScope::kCollectiveTopology, cliques_[2],
+         /*symmetric_memory=*/true}};
+    ThunkSequence thunks;
+    for (int i = 0; i < commands_options.size(); ++i) {
+      int buffer = options.first_buffer + i;
+      commands_options[i].requires_warmup = options.requires_warmup;
+      commands_options[i].requires_update_on_initialize =
+          options.requires_update_on_initialize;
+      thunks.push_back(std::make_unique<SetUpCountingMemsetThunk>(
+          buffer + 1,
+          BufferAllocation::Slice(&allocations_[buffer], 0, kByteLength),
+          commands_options[i], &counts_[buffer]));
+    }
+
+    CommandSequence commands;
+    for (std::unique_ptr<Thunk>& thunk : thunks) {
+      auto* command = static_cast<SetUpCountingMemsetThunk*>(thunk.get());
+      if (options.fallback_thunks) {
+        commands.Append(command);
+      } else {
+        commands.Append(std::unique_ptr<Command>(command));
+        thunk.release();
+      }
+    }
+    CommandExecutor executor =
+        CommandExecutor::Create(std::move(commands), serialize).value();
+    Thunk::ThunkInfo thunk_info;
+    thunk_info.thunk_id = thunk_ids_.GetNextThunkId();
+    return std::make_unique<CommandBufferThunk>(
+        std::move(executor), thunk_info, /*devices_in_process=*/1,
+        options.fallback_thunks ? std::make_unique<SequentialThunk>(
+                                      Thunk::ThunkInfo(), std::move(thunks))
+                                : nullptr);
+  }
+
+  BufferAllocations Allocations(
+      absl::Span<const se::DeviceAddress<int32_t>> buffers) {
+    std::vector<se::DeviceAddressBase> addresses(buffers.begin(),
+                                                 buffers.end());
+    return BufferAllocations(addresses, /*device_ordinal=*/0, &allocator_);
+  }
+
+  // Returns the number of prepares and initializes of the commands that write
+  // buffers `first_buffer` to `first_buffer + 3`.
+  std::vector<std::pair<int, int>> SetUps(int first_buffer = 0) const {
+    std::vector<std::pair<int, int>> set_ups;
+    for (int i = first_buffer; i < first_buffer + 4; ++i) {
+      set_ups.emplace_back(counts_[i].prepares, counts_[i].initializes);
+    }
+    return set_ups;
+  }
+
+  int Count(int SetUpCounts::* count, int first_buffer = 0) const {
+    int total = 0;
+    for (int i = first_buffer; i < first_buffer + 4; ++i) {
+      total += counts_[i].*count;
+    }
+    return total;
+  }
+
+  // Expects that buffers `first_buffer` to `first_buffer + 3` of `allocations`
+  // were written, and clears them.
+  void ExpectWritten(const BufferAllocations& allocations,
+                     int first_buffer = 0) {
+    for (int i = first_buffer; i < first_buffer + 4; ++i) {
+      se::DeviceAddress<int32_t> buffer(allocations.GetDeviceAddress(i));
+      std::vector<int32_t> values(kLength, 0);
+      ASSERT_OK(stream_->Memcpy(values.data(), buffer, kByteLength));
+      ASSERT_OK(stream_->BlockHostUntilDone());
+      EXPECT_EQ(values, std::vector<int32_t>(kLength, i + 1)) << "buffer " << i;
+      ASSERT_OK(stream_->MemZero(&buffer, kByteLength));
+    }
+  }
+
+  se::StreamExecutor* executor_;
+  std::unique_ptr<se::Stream> stream_;
+  stream_executor::StreamExecutorAddressAllocator allocator_{GpuExecutor()};
+  std::vector<se::DeviceAddress<int32_t>> buffers_;
+  std::vector<BufferAllocation> allocations_;
+  std::vector<BufferAllocation::Index> persistent_alloc_indices_;
+  ThunkIdGenerator thunk_ids_;
+  GpuCliqueKey cliques_[3] = {
+      GpuCliqueKey({GlobalDeviceId(0), GlobalDeviceId(1)}, 2),
+      GpuCliqueKey({GlobalDeviceId(0), GlobalDeviceId(1), GlobalDeviceId(2),
+                    GlobalDeviceId(3)},
+                   4),
+      GpuCliqueKey({GlobalDeviceId(2), GlobalDeviceId(3)}, 2)};
+  SetUpCounts counts_[kNumBuffers];
+};
+
+TEST_F(ReuseSetUpTest, ReusesSetUpOfCommands) {
+  for (bool fallback_thunks : {false, true}) {
+    SCOPED_TRACE(absl::StrCat("fallback_thunks=", fallback_thunks));
+    std::fill(std::begin(counts_), std::end(counts_), SetUpCounts{});
+    std::unique_ptr<CommandBufferThunk> thunk =
+        CreateThunk({.fallback_thunks = fallback_thunks});
+    BufferAllocations allocations = Allocations(buffers_);
+
+    // The first execution records the command buffer and the second one
+    // collects the requests of commands, which later executions make instead
+    // of preparing and initializing commands.
+    ASSERT_OK_AND_ASSIGN(ExecutionRequests first,
+                         RunExecution({thunk.get()}, stream_.get(), allocations,
+                                      persistent_alloc_indices_));
+    ExpectWritten(allocations);
+    for (int i = 0; i < 3; ++i) {
+      ASSERT_OK_AND_ASSIGN(
+          ExecutionRequests later,
+          RunExecution({thunk.get()}, stream_.get(), allocations,
+                       persistent_alloc_indices_));
+      ExpectWritten(allocations);
+      ExpectSameRequests(later, first);
+    }
+    EXPECT_THAT(SetUps(), Each(Pair(2, 2)));
+    EXPECT_EQ(Count(&SetUpCounts::records), 4);
+  }
+}
+
+TEST_F(ReuseSetUpTest, SetsUpAllCommandsIfOneIsExecutionScoped) {
+  std::unique_ptr<CommandBufferThunk> thunk =
+      CreateThunk({.execution_scoped_command = true});
+  BufferAllocations allocations = Allocations(buffers_);
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                           persistent_alloc_indices_));
+    ExpectWritten(allocations);
+  }
+  EXPECT_THAT(SetUps(), Each(Pair(4, 4)));
+}
+
+TEST_F(ReuseSetUpTest, ReusesSetUpOfEachThunkInAnExecution) {
+  std::unique_ptr<CommandBufferThunk> thunk0 = CreateThunk();
+  std::unique_ptr<CommandBufferThunk> thunk1 =
+      CreateThunk({.first_buffer = 4});
+  BufferAllocations allocations = Allocations(buffers_);
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_OK(RunExecution({thunk0.get(), thunk1.get()}, stream_.get(),
+                           allocations, persistent_alloc_indices_));
+    ExpectWritten(allocations, /*first_buffer=*/0);
+    ExpectWritten(allocations, /*first_buffer=*/4);
+  }
+  for (int first_buffer : {0, 4}) {
+    EXPECT_THAT(SetUps(first_buffer), Each(Pair(2, 2)));
+    EXPECT_EQ(Count(&SetUpCounts::records, first_buffer), 4);
+  }
+}
+
+TEST_F(ReuseSetUpTest, ReusesSetUpOnceTheCommandBufferIsRecorded) {
+  std::unique_ptr<CommandBufferThunk> thunk =
+      CreateThunk({.fallback_thunks = true, .requires_warmup = true});
+  BufferAllocations allocations = Allocations(buffers_);
+
+  // The first execution warms up by executing the fallback thunks, the second
+  // one records the command buffer and the third one collects the requests.
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                           persistent_alloc_indices_));
+    ExpectWritten(allocations);
+  }
+  EXPECT_THAT(SetUps(), Each(Pair(3, 3)));
+  EXPECT_EQ(Count(&SetUpCounts::records), 4);
+}
+
+TEST_F(ReuseSetUpTest, UpdatesCommandBufferWithoutSettingUpCommands) {
+  std::unique_ptr<CommandBufferThunk> thunk = CreateThunk();
+  std::vector<BufferAllocation::Index> all_dynamic;
+  BufferAllocations allocations = Allocations(buffers_);
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_OK(
+        RunExecution({thunk.get()}, stream_.get(), allocations, all_dynamic));
+  }
+
+  // Move the destination of the first memset.
+  std::vector<se::DeviceAddress<int32_t>> moved_buffers = buffers_;
+  moved_buffers[0] = buffers_[kNumBuffers - 1];
+  BufferAllocations moved_allocations = Allocations(moved_buffers);
+  ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), moved_allocations,
+                         all_dynamic));
+  ExpectWritten(moved_allocations);
+  EXPECT_THAT(SetUps(), Each(Pair(2, 2)));
+  EXPECT_EQ(counts_[0].records, 2);
+  EXPECT_EQ(Count(&SetUpCounts::records), 5);
+}
+
+TEST_F(ReuseSetUpTest, UpdatesCommandBufferAtInitializationWithoutSettingUp) {
+  std::unique_ptr<CommandBufferThunk> thunk =
+      CreateThunk({.requires_update_on_initialize = true});
+  std::vector<BufferAllocation::Index> all_dynamic;
+  BufferAllocations allocations = Allocations(buffers_);
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_OK(
+        RunExecution({thunk.get()}, stream_.get(), allocations, all_dynamic));
+    ExpectWritten(allocations);
+  }
+  // Commands that require an update at initialization are recorded again in
+  // every execution, also when it reuses their set-up.
+  EXPECT_THAT(SetUps(), Each(Pair(2, 2)));
+  EXPECT_EQ(Count(&SetUpCounts::records), 16);
+}
+
+TEST_F(ReuseSetUpTest, LaunchesReusedCommandBufferAfterEviction) {
+  std::unique_ptr<CommandBufferThunk> thunk = CreateThunk();
+  BufferAllocations allocations = Allocations(buffers_);
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                           persistent_alloc_indices_));
+  }
+
+  // Constructing a command buffer thunk evicts the command buffers of other
+  // thunks. The execution that already decided to reuse the command buffer
+  // still launches it.
+  ASSERT_OK(RunExecution(
+      {thunk.get()}, stream_.get(), allocations, persistent_alloc_indices_,
+      /*collective_params=*/nullptr, [] {
+        CommandBufferThunk evicting(CommandExecutor{}, Thunk::ThunkInfo(),
+                                    /*devices_in_process=*/1);
+      }));
+  ExpectWritten(allocations);
+  EXPECT_THAT(SetUps(), Each(Pair(2, 2)));
+  EXPECT_EQ(Count(&SetUpCounts::records), 4);
+
+  // The next execution records a new command buffer.
+  ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                         persistent_alloc_indices_));
+  ExpectWritten(allocations);
+  EXPECT_THAT(SetUps(), Each(Pair(3, 3)));
+  EXPECT_EQ(Count(&SetUpCounts::records), 8);
+}
+
+TEST_F(ReuseSetUpTest, SetsUpAllCommandsWhileProfiling) {
+  std::unique_ptr<CommandBufferThunk> thunk =
+      CreateThunk({.fallback_thunks = true});
+  BufferAllocations allocations = Allocations(buffers_);
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                           persistent_alloc_indices_));
+  }
+
+  {
+    // Profiled executions execute the fallback thunks, which they set up.
+    ASSERT_OK_AND_ASSIGN(auto profiler_lock,
+                         tsl::profiler::ProfilerLock::Acquire());
+    ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                           persistent_alloc_indices_));
+    ExpectWritten(allocations);
+    EXPECT_THAT(SetUps(), Each(Pair(3, 3)));
+    EXPECT_EQ(Count(&SetUpCounts::executes), 4);
+  }
+
+  ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                         persistent_alloc_indices_));
+  ExpectWritten(allocations);
+  EXPECT_THAT(SetUps(), Each(Pair(3, 3)));
+  EXPECT_EQ(Count(&SetUpCounts::records), 4);
+}
+
+TEST_F(ReuseSetUpTest, LaunchesReusedCommandBufferIfProfilingStartsLater) {
+  std::unique_ptr<CommandBufferThunk> thunk =
+      CreateThunk({.fallback_thunks = true});
+  BufferAllocations allocations = Allocations(buffers_);
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                           persistent_alloc_indices_));
+  }
+
+  // The fallback thunks were not set up in this execution.
+  std::optional<tsl::profiler::ProfilerLock> profiler_lock;
+  ASSERT_OK(RunExecution(
+      {thunk.get()}, stream_.get(), allocations, persistent_alloc_indices_,
+      /*collective_params=*/nullptr, [&] {
+        profiler_lock.emplace(tsl::profiler::ProfilerLock::Acquire().value());
+      }));
+  profiler_lock.reset();
+  ExpectWritten(allocations);
+  EXPECT_THAT(SetUps(), Each(Pair(2, 2)));
+  EXPECT_EQ(Count(&SetUpCounts::executes), 0);
+}
+
+TEST_F(ReuseSetUpTest, SetsUpCommandsAgainForAnotherTopology) {
+  std::unique_ptr<CommandBufferThunk> thunk = CreateThunk();
+  BufferAllocations allocations = Allocations(buffers_);
+
+  DeviceAssignment device_assignment(/*replica_count=*/2,
+                                     /*computation_count=*/1);
+  device_assignment(0, 0) = 0;
+  device_assignment(1, 0) = 1;
+  ServiceExecutableRunOptions run_options;
+  run_options.mutable_run_options()->set_stream(stream_.get());
+  run_options.mutable_run_options()->set_device_assignment(&device_assignment);
+  ASSERT_OK_AND_ASSIGN(
+      CollectiveParams collective_params,
+      CollectiveParams::Create(run_options, /*async_streams=*/{},
+                               LocalDeviceId(executor_->device_ordinal())));
+
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                           persistent_alloc_indices_, &collective_params));
+  }
+  EXPECT_THAT(SetUps(), Each(Pair(2, 2)));
+
+  // Changing the device assignment in place changes the topology.
+  device_assignment(0, 0) = 1;
+  device_assignment(1, 0) = 0;
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                           persistent_alloc_indices_, &collective_params));
+  }
+  EXPECT_THAT(SetUps(), Each(Pair(3, 3)));
+}
+
+TEST_F(ReuseSetUpTest, SetsUpAllCommandsWithoutExecutionScopedState) {
+  std::unique_ptr<CommandBufferThunk> thunk = CreateThunk();
+  BufferAllocations allocations = Allocations(buffers_);
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_OK(RunExecution({thunk.get()}, stream_.get(), allocations,
+                           persistent_alloc_indices_));
+  }
+  for (int i = 0; i < 2; ++i) {
+    CollectiveCliqueRequests clique_requests;
+    CollectiveMemoryRequests memory_requests(allocations);
+    Thunk::PrepareParams prepare_params{/*collective_params=*/nullptr,
+                                        &clique_requests, &memory_requests,
+                                        executor_, &allocations};
+    ASSERT_OK(thunk->Prepare(prepare_params));
+  }
+  EXPECT_THAT(SetUps(), Each(Pair(4, 2)));
+}
+
+}  // namespace
 
 }  // namespace xla::gpu
