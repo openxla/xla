@@ -166,6 +166,20 @@ static NoOpAllGatherThunk MakeNoOpThunk(const BufferAllocation& alloc_src,
 }
 
 // Records AllGatherThunk into a primary command buffer (create phase) and
+TEST(AllGatherThunkTest, SetUpScopeIsCollectiveTopology) {
+  BufferAllocation alloc_src(/*index=*/0, /*size=*/16, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, /*size=*/16, /*color=*/0);
+  NoOpAllGatherThunk thunk = MakeNoOpThunk(alloc_src, alloc_dst, /*length=*/4);
+  EXPECT_EQ(thunk.set_up_scope(), Thunk::SetUpScope::kCollectiveTopology);
+
+  CollectiveConfig config;
+  config.operand_element_type = {F32};
+  AllGatherThunk symmetric_thunk(Thunk::ThunkInfo(), config, thunk.buffers(),
+                                 DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY);
+  EXPECT_EQ(symmetric_thunk.set_up_scope(),
+            Thunk::SetUpScope::kCollectiveTopology);
+}
+
 // verifies that a non-null command node is returned.
 TEST(AllGatherThunkTest, RecordCommandBufferCreate) {
   se::StreamExecutor* executor = GpuExecutor();

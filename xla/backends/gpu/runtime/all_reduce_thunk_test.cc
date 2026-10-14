@@ -350,6 +350,20 @@ TEST(ReduceScatterThunkTest, SupportsSymmetricBuffers) {
   EXPECT_TRUE(thunk.CanUseSymmetricBuffer());
 }
 
+TEST(AllReduceThunkTest, SetUpScopeIsCollectiveTopology) {
+  BufferAllocation alloc_src(/*index=*/0, /*size=*/16, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, /*size=*/16, /*color=*/0);
+  EXPECT_EQ(MakeNoOpThunk(alloc_src, alloc_dst, /*length=*/4).set_up_scope(),
+            Thunk::SetUpScope::kCollectiveTopology);
+
+  AllReduceConfig config = MakeSumConfig();
+  config.config.use_symmetric_buffer = true;
+  NoOpAllReduceThunk thunk(
+      Thunk::ThunkInfo(), config,
+      {MakeNoOpBuffer(alloc_src, alloc_dst, /*length=*/4)});
+  EXPECT_EQ(thunk.set_up_scope(), Thunk::SetUpScope::kCollectiveTopology);
+}
+
 // Records AllReduceThunk into a primary command buffer (create phase) and
 // verifies that a non-null command node is returned.
 TEST(AllReduceThunkTest, RecordCommandBufferCreate) {

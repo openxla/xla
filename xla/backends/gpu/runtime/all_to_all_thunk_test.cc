@@ -324,6 +324,19 @@ static absl::StatusOr<std::vector<float>> ReadDeviceBuffer(
 
 // Records AllToAllThunk into a primary command buffer (create phase) and
 // verifies that a non-null command node is returned.
+TEST(AllToAllThunkTest, SetUpScopeDependsOnP2pMemcpy) {
+  BufferAllocation alloc_src(/*index=*/0, /*size=*/16, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, /*size=*/16, /*color=*/0);
+  MemzeroAllToAllThunk thunk = MakeThunk(alloc_src, alloc_dst, /*length=*/4);
+  EXPECT_EQ(thunk.set_up_scope(), Thunk::SetUpScope::kCollectiveTopology);
+
+  AllToAllConfig config;
+  config.config.operand_element_type = {F32};
+  AllToAllThunk p2p_thunk(Thunk::ThunkInfo(), config, thunk.buffers(),
+                          /*p2p_memcpy_enabled=*/true, /*devices_per_host=*/1);
+  EXPECT_EQ(p2p_thunk.set_up_scope(), Thunk::SetUpScope::kExecution);
+}
+
 TEST(AllToAllThunkTest, RecordCommandBufferCreate) {
   se::StreamExecutor* executor = GpuExecutor();
   if (!IsAtLeastCuda12900(executor)) {

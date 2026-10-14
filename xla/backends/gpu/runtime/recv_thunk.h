@@ -59,6 +59,10 @@ class RecvThunk : public CollectiveThunk {
 
   const P2PConfig& p2p_config() const { return config_; }
 
+  SetUpScope set_up_scope() const override {
+    return SetUpScope::kCollectiveTopology;
+  }
+
  protected:
   bool RequiresRendezvous() const override { return false; }
 

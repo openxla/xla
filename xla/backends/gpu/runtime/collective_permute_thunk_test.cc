@@ -390,6 +390,26 @@ static NoOpCollectivePermuteThunk MakeNoOpThunk(
   return NoOpCollectivePermuteThunk(Thunk::ThunkInfo(), config, {buffer});
 }
 
+TEST(CollectivePermuteThunkTest, SetUpScopeIsCollectiveTopology) {
+  BufferAllocation alloc_src(/*index=*/0, /*size=*/16, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, /*size=*/16, /*color=*/0);
+  NoOpCollectivePermuteThunk thunk =
+      MakeNoOpThunk(alloc_src, alloc_dst, /*length=*/4);
+  EXPECT_EQ(thunk.set_up_scope(), Thunk::SetUpScope::kCollectiveTopology);
+
+  P2PConfig config;
+  config.config.operand_element_type = {F32};
+  for (DebugOptions::CollectivesMode mode :
+       {DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY,
+        DebugOptions::COLLECTIVES_PEER_MEMORY}) {
+    CollectivePermuteThunk memory_thunk(Thunk::ThunkInfo(), config,
+                                        thunk.buffers(), mode,
+                                        /*connected_components_enabled=*/false);
+    EXPECT_EQ(memory_thunk.set_up_scope(),
+              Thunk::SetUpScope::kCollectiveTopology);
+  }
+}
+
 // Records CollectivePermuteThunk into a primary command buffer (create phase)
 // and verifies that a non-null command node is returned.
 TEST(CollectivePermuteThunkTest, RecordCommandBufferCreate) {

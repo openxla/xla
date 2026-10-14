@@ -75,6 +75,10 @@ class CollectiveBroadcastThunk : public CollectiveThunk {
 
   absl::StatusOr<ThunkProto> ToProto() const override;
 
+  SetUpScope set_up_scope() const override {
+    return SetUpScope::kCollectiveTopology;
+  }
+
  protected:
   bool RequiresRendezvous() const override { return true; }
 
