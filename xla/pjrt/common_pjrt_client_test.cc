@@ -15,14 +15,10 @@ limitations under the License.
 
 #include "xla/pjrt/common_pjrt_client.h"
 
-#include <array>
-#include <optional>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
-#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "xla/runtime/device_id.h"
 
@@ -34,7 +30,7 @@ using ::testing::ElementsAre;
 
 TEST(TransferIncarnationsTest, EmptySnapshotReturnsNullopt) {
   ASSERT_OK_AND_ASSIGN(
-      (std::optional<std::array<IncarnationId, 2>> transfer_incarnations),
+      auto transfer_incarnations,
       TransferIncarnations(/*src_process_index=*/1, /*dst_process_index=*/2,
                            {}));
   EXPECT_FALSE(transfer_incarnations.has_value());
@@ -47,14 +43,14 @@ TEST(TransferIncarnationsTest, SnapshotKeepsSourceThenDestination) {
   };
 
   ASSERT_OK_AND_ASSIGN(
-      (std::optional<std::array<IncarnationId, 2>> forward),
+      auto forward,
       TransferIncarnations(/*src_process_index=*/2, /*dst_process_index=*/1,
                            incarnations));
   ASSERT_TRUE(forward.has_value());
   EXPECT_THAT(*forward, ElementsAre(IncarnationId(20), IncarnationId(10)));
 
   ASSERT_OK_AND_ASSIGN(
-      (std::optional<std::array<IncarnationId, 2>> swapped),
+      auto swapped,
       TransferIncarnations(/*src_process_index=*/1, /*dst_process_index=*/2,
                            incarnations));
   ASSERT_TRUE(swapped.has_value());
@@ -67,7 +63,7 @@ TEST(TransferIncarnationsTest, SameTaskKeepsBothIncarnations) {
   };
 
   ASSERT_OK_AND_ASSIGN(
-      (std::optional<std::array<IncarnationId, 2>> transfer_incarnations),
+      auto transfer_incarnations,
       TransferIncarnations(/*src_process_index=*/3, /*dst_process_index=*/3,
                            incarnations));
   ASSERT_TRUE(transfer_incarnations.has_value());
