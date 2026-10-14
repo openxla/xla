@@ -44,6 +44,8 @@ class InfeedThunk : public Thunk {
   InfeedThunk& operator=(const InfeedThunk&) = delete;
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Infeeds need no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   BufferUses buffer_uses() const override {
     BufferUses res;

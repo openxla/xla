@@ -46,6 +46,8 @@ class MemzeroThunk : public Command {
       : Command(Kind::kMemzero, std::move(thunk_info)), dest_(dest) {}
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Memsets need no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,
@@ -82,6 +84,8 @@ class Memset32BitValueThunk : public Command {
         dest_(dest) {}
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Memsets need no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,

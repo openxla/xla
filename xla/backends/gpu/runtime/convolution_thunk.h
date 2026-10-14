@@ -56,6 +56,8 @@ class ConvolutionThunk : public TracedCommand {
   ConvolutionThunk& operator=(const ConvolutionThunk&) = delete;
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Convolution runners are created once per executor when executing.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   BufferUses buffer_uses() const override;
 

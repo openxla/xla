@@ -46,6 +46,8 @@ class BuffersDebugFloatCheckThunk : public Thunk {
 
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Initialize loads the kernels once per executor.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   std::string ToString(int indent) const override;
 

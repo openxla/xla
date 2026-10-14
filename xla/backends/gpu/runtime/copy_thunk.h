@@ -38,6 +38,8 @@ class CopyThunk : public Thunk {
             const ShapedSlice& destination_buffer, int64_t mem_size);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Copies between host and device need no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   const ShapedSlice& source() const { return source_buffer_; }
   const ShapedSlice& destination() const { return destination_buffer_; }

@@ -63,6 +63,8 @@ class CustomKernelThunk : public Command {
   std::string ToString(int indent) const override;
 
   absl::Status Initialize(const InitializeParams& params) override;
+  // Initialize loads the kernel once per executor.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(

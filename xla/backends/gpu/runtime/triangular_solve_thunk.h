@@ -53,6 +53,8 @@ class TriangularSolveThunk : public Thunk {
   TriangularSolveThunk& operator=(const TriangularSolveThunk&) = delete;
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Triangular solves need no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   BufferUses buffer_uses() const override {
     return {

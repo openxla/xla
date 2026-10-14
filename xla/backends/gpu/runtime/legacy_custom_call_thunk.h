@@ -74,6 +74,8 @@ class LegacyCustomCallThunk : public TracedCommand {
       std::vector<NullableShapedSlice> results, std::string opaque);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Legacy custom calls have no prepare and initialize stages.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   const std::string& target_name() const { return target_name_; }
   CustomCallTarget call_target() const { return call_target_; }

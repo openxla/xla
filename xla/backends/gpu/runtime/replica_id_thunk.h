@@ -38,6 +38,8 @@ namespace gpu {
 class ReplicaOrPartitionIdThunk : public Command {
  public:
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Replica and partition ids need no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,
