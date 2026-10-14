@@ -1147,6 +1147,7 @@ constexpr char const* kTargetConfigString = R"(gpu_device_info {
 }
 platform_name: "CUDA"
 device_description_str: "Tesla V100-SXM2-32GB"
+runtime_version { major: 13 minor: 4 patch: 0 }
 )";
 
 constexpr char const* kHostTargetMachineOptionsString =
@@ -1161,8 +1162,8 @@ TEST(PJRTGpuDeviceTopologyTest, CreateExplicitGpuTopologyAndTargetConfig) {
       {"host_target_machine_options",
        static_cast<std::string>(kHostTargetMachineOptionsString)},
   };
-  TF_ASSERT_OK_AND_ASSIGN(std::vector<PJRT_NamedValue> c_options,
-                          ::pjrt::ConvertToPjRtNamedValueList(options));
+  ASSERT_OK_AND_ASSIGN(std::vector<PJRT_NamedValue> c_options,
+                       ::pjrt::ConvertToPjRtNamedValueList(options));
 
   PJRT_TopologyDescription_Create_Args args;
   args.struct_size = PJRT_TopologyDescription_Create_Args_STRUCT_SIZE;
@@ -1185,6 +1186,7 @@ TEST(PJRTGpuDeviceTopologyTest, CreateExplicitGpuTopologyAndTargetConfig) {
               (pjrt_topology->topology->platform_id() == xla::OneapiId() &&
                pjrt_topology->topology->platform_name() == xla::OneapiName()));
 
+  EXPECT_EQ(pjrt_topology->topology->platform_version(), "cuda 13040");
   EXPECT_EQ(pjrt_topology->topology->ProcessCount().value(), 16 * 2);
   EXPECT_EQ(pjrt_topology->topology->DeviceDescriptions().size(), 16 * 2 * 4);
   EXPECT_EQ(pjrt_topology->topology->DeviceDescriptions()[0]->device_kind(),
