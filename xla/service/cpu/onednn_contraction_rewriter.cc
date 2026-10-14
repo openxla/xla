@@ -124,6 +124,20 @@ inline auto BitcastWithReshapeSemantics(HloInstruction** bitcast,
   return m::Bitcast(bitcast, pattern).WithPredicate(is_reshape);
 }
 
+// Matches a no-op bf16 -> f32 -> bf16 convert round trip, as left behind by
+// float normalization of ops that run in f32.
+template <typename Pattern>
+auto Bf16RoundTripConvert(Pattern pattern) {
+  auto from_bf16 = [](const HloInstruction* convert) {
+    return convert->operand(0)->shape().element_type() == BF16;
+  };
+  return m::Convert(m::Convert(pattern)
+                        .WithElementType(F32)
+                        .WithPredicate(from_bf16)
+                        .WithOneUser())
+      .WithElementType(BF16);
+}
+
 template <typename Pattern>
 auto ElementwiseSafeIntermediates(HloInstruction** instr,
                                   HloInstruction** optional_bitcast,
@@ -134,6 +148,7 @@ auto ElementwiseSafeIntermediates(HloInstruction** instr,
       m::Bitcast(instr, pattern.WithOneUser()),
       m::Reshape(instr, pattern.WithOneUser()),
       pu::SupportedConvert(instr, pattern.WithOneUser()),
+      Bf16RoundTripConvert(pattern.WithOneUser()),
       pu::SupportedConvert(instr, BitcastWithReshapeSemantics(
                                       optional_bitcast, pattern.WithOneUser())),
       pattern);
@@ -1058,7 +1073,7 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                                      &intermediate_instr, &optional_bitcast,
                                      OneDnnFusibleInstr(&contraction))
                                      .WithOneUser(),
-                                 BcastConstScalar(0)))) {
+                                 BcastConvertConstScalar(0)))) {
       return FuseActivation(OneDnnFusionConfig::RELU, instr, contraction,
                             intermediate_instr, optional_bitcast);
     }
@@ -1118,12 +1133,12 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     HloInstruction* optional_bitcast = nullptr;
     // Attempt to elide RELU6 and fuse RELU6 activation into GEMM / Conv,
     // including when slicing or bitcasting is applied to the result.
-    if (Match(instr, m::Clamp(BcastConstScalar(0),
+    if (Match(instr, m::Clamp(BcastConvertConstScalar(0),
                               ElementwiseSafeIntermediates(
                                   &intermediate_instr, &optional_bitcast,
                                   OneDnnFusibleInstr(&contraction))
                                   .WithOneUser(),
-                              BcastConstScalar(6)))) {
+                              BcastConvertConstScalar(6)))) {
       return FuseActivation(OneDnnFusionConfig::RELU6, instr, contraction,
                             intermediate_instr, optional_bitcast);
     }
@@ -1131,10 +1146,15 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
   }
 
   auto SigmoidActivation(HloInstruction* instr, HloInstruction** src) {
-    return Match(instr,
-                 m::Divide(BcastConstScalar(1.0),
-                           m::AddAnyOrder(BcastConstScalar(1.0),
-                                          m::Exp(m::Negate(m::Op(src))))));
+    // The negate and exp may run in f32 between converts.
+    auto src_pattern =
+        m::Op(src).WithElementType(instr->shape().element_type());
+    return Match(
+        instr,
+        m::Divide(BcastConvertConstScalar(1.0),
+                  m::AddAnyOrder(BcastConvertConstScalar(1.0),
+                                 m::Exp(pu::OptionalConvert(m::Negate(
+                                     pu::OptionalConvert(src_pattern)))))));
   }
 
   absl::Status HandleMultiply(HloInstruction* instr) override {
