@@ -2573,7 +2573,7 @@ absl::StatusOr<std::vector<Future<>>> CommonPjRtClient::CrossHostSendBuffers(
     ABSL_ASSIGN_OR_RETURN(PjRtDevice * dst_device,
                           LookupDevice(dst_global_device_ids[i]));
     ABSL_ASSIGN_OR_RETURN(
-        std::optional<std::array<IncarnationId, 2>> transfer_incarnations,
+        (std::optional<std::array<IncarnationId, 2>> transfer_incarnations),
         TransferIncarnations(src_device->process_index(),
                              dst_device->process_index(), incarnations));
     transfer_specs.push_back(CrossHostTransferSpec{
@@ -2700,7 +2700,7 @@ CommonPjRtClient::CrossHostReceiveBuffers(
     ABSL_ASSIGN_OR_RETURN(PjRtDevice * src_device,
                           LookupDevice(src_global_device_ids[i]));
     ABSL_ASSIGN_OR_RETURN(
-        std::optional<std::array<IncarnationId, 2>> transfer_incarnations,
+        (std::optional<std::array<IncarnationId, 2>> transfer_incarnations),
         TransferIncarnations(src_device->process_index(),
                              device->process_index(), incarnations));
     transfer_specs.push_back(CrossHostTransferSpec{
