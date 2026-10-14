@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <queue>
 #include <utility>
@@ -46,7 +47,9 @@ HloReachabilityMap::HloReachabilityMap(
     : words_per_bitset_((instructions.size() + BitSet::kBits - 1) /
                         BitSet::kBits),
       total_words_((instructions.size() + 1 /*for tmp_bit_set_*/) *
-                   words_per_bitset_) {
+                   words_per_bitset_),
+      max_rows_per_eager_merge_(instructions.size() / kMapRowsPerEagerMergeRow),
+      num_rows_(instructions.size()) {
   if (!instructions.empty()) {
     CHECK(instructions[0]->parent() != nullptr)
         << "Instruction must be in a computation.";
@@ -98,7 +101,7 @@ bool HloReachabilityMap::SetReachabilityToUnion(
     absl::Span<const HloInstruction* const> inputs,
     const HloInstruction* instruction) {
   Index index = GetIndex(instruction);
-  BitSet bit_set = BitSetFromIndex(index);
+  BitSet bit_set = CurrentBitSet(index);
   tmp_bit_set_.CopyBitSet(bit_set);
   SetReachabilityToUnionHelper(inputs, index);
   return bit_set != tmp_bit_set_;
@@ -127,7 +130,7 @@ void HloReachabilityMap::SetReachabilityToUnionHelper(
 
 void HloReachabilityMap::SetReachabilityToUnionHelper(
     absl::Span<const Index> input_indices, Index index) {
-  BitSet bit_set = BitSetFromIndex(index);
+  BitSet bit_set = CurrentBitSet(index);
   // If instruction is part of inputs, keep the bit-set and union the others
   // in. Otherwise the first input row replaces it, so the row is written once
   // instead of cleared and then unioned.
@@ -137,9 +140,9 @@ void HloReachabilityMap::SetReachabilityToUnionHelper(
       continue;
     }
     if (copied) {
-      bit_set |= BitSetFromIndex(input_index);
+      bit_set |= CurrentBitSet(input_index);
     } else {
-      bit_set.CopyBitSet(BitSetFromIndex(input_index));
+      bit_set.CopyBitSet(CurrentBitSet(input_index));
       copied = true;
     }
   }
@@ -275,26 +278,37 @@ static_assert(alignof(HloInstruction) >= 2,
               "HloInstruction must be aligned to at least 2 bytes");
 void HloReachabilityMap::UpdateReachabilityForMerge(
     const HloInstruction* left, const HloInstruction* right) {
+  UpdateRowsForMerge(left, right, std::numeric_limits<size_t>::max(),
+                     /*current_rows=*/true);
+}
+
+bool HloReachabilityMap::UpdateRowsForMerge(const HloInstruction* left,
+                                            const HloInstruction* right,
+                                            size_t max_rows,
+                                            bool current_rows) {
   DCHECK(tmp_worklist_.empty());
   DCHECK(tmp_indices_to_update_.empty());
   DCHECK(IsKeyPresent(GetKey(left)));
   DCHECK(IsKeyPresent(GetKey(right)));
 
   if (left == right) {
-    return;
+    return true;
   }
 
   Index left_index = GetIndex(left);
   Index right_index = GetIndex(right);
-  BitSet left_bit_set = BitSetFromIndex(left_index);
-  BitSet right_bit_set = BitSetFromIndex(right_index);
+  BitSet left_bit_set = CurrentBitSet(left_index);
+  BitSet right_bit_set = CurrentBitSet(right_index);
+  auto row = [&](Index index) {
+    return current_rows ? CurrentBitSet(index) : BitSetFromIndex(index);
+  };
 
   absl::flat_hash_set<const HloInstruction*> visited;
   auto add_to_worklist = [&](const HloInstruction* instr,
                              bool from_left) -> void {
     if (visited.insert(instr).second) {
       if (IsKeyPresent(GetKey(instr))) {
-        BitSet bit_set = BitSetFromIndex(GetIndex(instr));
+        BitSet bit_set = row(GetIndex(instr));
         // If the node is already reachable from both sides, we can skip it.
         if ((from_left && bit_set.Get(right_index)) ||
             (!from_left && bit_set.Get(left_index))) {
@@ -311,12 +325,12 @@ void HloReachabilityMap::UpdateReachabilityForMerge(
   const bool left_added = !tmp_worklist_.empty();
   add_to_worklist(right, /*from_left=*/false);
   if (tmp_worklist_.empty()) {
-    return;
+    return true;
   }
   left_bit_set.GetDifferingWordUnions(right_bit_set, tmp_changed_words_);
   if (tmp_changed_words_.empty()) {
     tmp_worklist_.clear();
-    return;
+    return true;
   }
   while (!tmp_worklist_.empty()) {
     const uintptr_t item_and_from_left = tmp_worklist_.back();
@@ -328,6 +342,12 @@ void HloReachabilityMap::UpdateReachabilityForMerge(
         reinterpret_cast<const HloInstruction*>(item_and_from_left & PTR_MASK);
 
     if (IsKeyPresent(GetKey(item))) {
+      if (tmp_indices_to_update_.size() == max_rows) {
+        tmp_worklist_.clear();
+        tmp_indices_to_update_.clear();
+        tmp_changed_words_.clear();
+        return false;
+      }
       tmp_indices_to_update_.push_back(GetIndex(item));
     }
     for (const HloInstruction* user : item->users()) {
@@ -347,17 +367,73 @@ void HloReachabilityMap::UpdateReachabilityForMerge(
     BitSet info = left_added ? left_bit_set : right_bit_set;
     info.OrUpdatePartial(tmp_changed_words_);
     for (Index index : tmp_indices_to_update_) {
-      BitSet bit_set = BitSetFromIndex(index);
+      BitSet bit_set = row(index);
       bit_set |= info;
     }
   } else {
     for (Index index : tmp_indices_to_update_) {
-      BitSet bit_set = BitSetFromIndex(index);
+      BitSet bit_set = row(index);
       bit_set.OrUpdatePartial(tmp_changed_words_);
     }
   }
   tmp_changed_words_.clear();
   tmp_indices_to_update_.clear();
+  return true;
+}
+
+void HloReachabilityMap::DeferReachabilityUpdateForMerge(
+    const HloInstruction* left, const HloInstruction* right) {
+  // A merge that changes few rows is applied at once: deferring it would cost
+  // a test in each row accessed later. The walk reads and writes the stored
+  // rows, so that it applies no deferred merge to rows that may never be
+  // accessed. That is sound while the map is exact. A stored bit is a
+  // dependency, so an instruction pruned for it, and everything that depends on
+  // it, depends on both instructions already. And a pending merge that a row
+  // matches only through a bit the walk added is a dependency of left or right,
+  // whose words the row gets anyway.
+  if (UpdateRowsForMerge(left, right, max_rows_per_eager_merge_,
+                         /*current_rows=*/false)) {
+    return;
+  }
+  DCHECK(tmp_changed_words_.empty());
+  const Index left_index = GetIndex(left);
+  const Index right_index = GetIndex(right);
+  BitSet left_bit_set = CurrentBitSet(left_index);
+  BitSet right_bit_set = CurrentBitSet(right_index);
+  left_bit_set.GetDifferingWordUnions(right_bit_set, tmp_changed_words_);
+  if (tmp_changed_words_.empty()) {
+    return;
+  }
+  // The two rows take the union now, the other rows when they are accessed.
+  left_bit_set.OrUpdatePartial(tmp_changed_words_);
+  right_bit_set.OrUpdatePartial(tmp_changed_words_);
+  if (merges_applied_.empty()) {
+    merges_applied_.resize(num_rows_, 0);
+  }
+  const size_t words_begin = deferred_words_.size();
+  deferred_words_.insert(deferred_words_.end(), tmp_changed_words_.begin(),
+                         tmp_changed_words_.end());
+  tmp_changed_words_.clear();
+  deferred_merges_.push_back(
+      {left_index, right_index, words_begin, deferred_words_.size()});
+  merges_applied_[left_index] = deferred_merges_.size();
+  merges_applied_[right_index] = deferred_merges_.size();
+}
+
+void HloReachabilityMap::ApplyDeferredMerges(Index i) const {
+  BitSet bit_set = BitSetFromIndex(i);
+  const absl::Span<const std::pair<size_t, BitSet::Word>> words(
+      deferred_words_);
+  for (size_t m = merges_applied_[i]; m < deferred_merges_.size(); ++m) {
+    const DeferredMerge& merge = deferred_merges_[m];
+    // A row with either bit depends on the merged instruction, so it depends
+    // on everything that one of the two depended on.
+    if (bit_set.Get(merge.left) || bit_set.Get(merge.right)) {
+      bit_set.OrUpdatePartial(words.subspan(
+          merge.words_begin, merge.words_end - merge.words_begin));
+    }
+  }
+  merges_applied_[i] = deferred_merges_.size();
 }
 
 void HloReachabilityMap::UpdateMultipleInstructions(
@@ -368,11 +444,11 @@ void HloReachabilityMap::UpdateMultipleInstructions(
     auto it = to_update.begin();
     const HloInstruction* instruction = it->first;
 
-    BitSet bit_set = BitSetFromIndex(GetIndex(instruction));
+    BitSet bit_set = CurrentBitSet(GetIndex(instruction));
     bool changed = false;
     // NOLINTNEXTLINE the loop aggregation is order independent.
     for (const HloInstruction* operand : it->second) {
-      BitSet operand_bit_set = BitSetFromIndex(GetIndex(operand));
+      BitSet operand_bit_set = CurrentBitSet(GetIndex(operand));
       changed |= bit_set.OrUpdate(operand_bit_set);
     }
     to_update.erase(it);

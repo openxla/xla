@@ -189,6 +189,30 @@ MultiOutputFusion::GetNewFusibles(HloInstruction* instr1,
   return new_fusibles;
 }
 
+namespace {
+
+// Whether fusing the two instructions changes the dependencies between live
+// instructions exactly as merging them does. It may not when control
+// dependencies are involved: an absorbed non-fusion keeps its own, and the
+// control predecessors of a get-tuple-element come to precede the whole fusion.
+bool FuseKeepsReachabilityExact(const HloInstruction* instr1,
+                                const HloInstruction* instr2) {
+  for (const HloInstruction* instr : {instr1, instr2}) {
+    if (instr->HasControlDependencies()) {
+      return false;
+    }
+    for (const HloInstruction* user : instr->users()) {
+      if (user->opcode() == HloOpcode::kGetTupleElement &&
+          user->HasControlDependencies()) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
 void MultiOutputFusion::UpdateBeforeFuse(HloInstruction* fusion,
                                          HloInstruction* fused) {
   // Insert the newly created instruction (if any), to candidates_.
@@ -197,7 +221,12 @@ void MultiOutputFusion::UpdateBeforeFuse(HloInstruction* fusion,
       candidates_.emplace_back(use);
     }
   }
-  reachability_->UpdateReachabilityForMerge(fused, fusion);
+  if (reachability_is_exact_) {
+    reachability_->DeferReachabilityUpdateForMerge(fused, fusion);
+    reachability_is_exact_ = FuseKeepsReachabilityExact(fusion, fused);
+  } else {
+    reachability_->UpdateReachabilityForMerge(fused, fusion);
+  }
 }
 
 void MultiOutputFusion::UpdateAfterFuse(
@@ -304,6 +333,7 @@ void MultiOutputFusion::RecomputeReachability() {
   // Free the memory used for the reachability map before computing a new one.
   reachability_.reset();
   reachability_ = HloReachabilityMap::Build(computation_);
+  reachability_is_exact_ = true;
 }
 
 void MultiOutputFusion::UpdateReachability(
@@ -311,6 +341,8 @@ void MultiOutputFusion::UpdateReachability(
     absl::Span<const std::pair<HloInstruction*, HloReachabilityMap::Index>>
         instrs_to_update,
     std::optional<absl::FunctionRef<bool(HloInstruction*)>> skip) {
+  // The rows of the planned fusions get ahead of the computation.
+  reachability_is_exact_ = false;
   auto instr1_i = reachability_->GetIndex(instr1);
   auto instr2_i = reachability_->GetIndex(instr2);
   for (auto& instr_and_index : instrs_to_update) {

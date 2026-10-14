@@ -237,6 +237,13 @@ class MultiOutputFusion : public HloModulePass {
   // The reachability map of current computation.
   std::unique_ptr<HloReachabilityMap> reachability_;
 
+  // Whether reachability_ holds exactly the dependencies between the live
+  // instructions of computation_, so that UpdateBeforeFuse can defer merges.
+  // RecomputeReachability establishes it, and a fusion announced by
+  // UpdateBeforeFuse keeps it unless control dependencies are involved. Fusing
+  // without UpdateBeforeFuse leaves the map stale until RecomputeReachability.
+  bool reachability_is_exact_ = false;
+
   // The set of all candidate instructions considered for multi-output fusion.
   // Used for fast O(1) lookups during reachability updates.
   absl::flat_hash_set<const HloInstruction*> all_fusion_candidates_;

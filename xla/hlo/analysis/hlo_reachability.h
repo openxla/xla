@@ -109,7 +109,7 @@ class HloReachabilityMap {
   void SetReachable(const HloInstruction* a, const HloInstruction* b) {
     SetReachable(GetIndex(a), GetIndex(b));
   }
-  void SetReachable(Index a, Index b) { BitSetFromIndex(b).Set(a); }
+  void SetReachable(Index a, Index b) { CurrentBitSet(b).Set(a); }
 
   // Updates the given reachability map after the immediate predecessor set
   // (operands and control predecessors) of 'instruction' has changed.
@@ -129,6 +129,24 @@ class HloReachabilityMap {
   void UpdateReachabilityForMerge(const HloInstruction* left,
                                   const HloInstruction* right);
 
+  // Same rows as UpdateReachabilityForMerge for live instructions (those with
+  // users, and the root). A merge that changes many rows is deferred instead:
+  // each row applies it when the row is next accessed, at the cost of two bit
+  // tests, so that rows never accessed again cost nothing.
+  //
+  // Requires that left and right are live instructions in the map and that
+  // IsReachable(a, b) holds exactly when b depends on a, for all live a and b
+  // in the map. Build establishes that. Merging the two instructions in the
+  // computation keeps it if the merged instruction takes over all operands,
+  // users and control dependencies of both. The rows of dead instructions, such
+  // as one that a fusion leaves behind, may differ from what
+  // UpdateReachabilityForMerge gives.
+  //
+  // While merges are pending, queries update the rows they read, so the map
+  // must not be accessed from several threads.
+  void DeferReachabilityUpdateForMerge(const HloInstruction* left,
+                                       const HloInstruction* right);
+
   // Returns true if "b" is reachable from "a"
   //
   // Note that this function only correctly answers queries about reachability
@@ -143,7 +161,7 @@ class HloReachabilityMap {
     if (a == b) {
       return true;
     }
-    return BitSetFromIndex(b).Get(a);
+    return CurrentBitSet(b).Get(a);
   }
 
   // Returns true if "b" is reachable from "a" or "a" is reachable from "b"
@@ -244,7 +262,7 @@ class HloReachabilityMap {
     }
 
     // Same as operator|=, but only updates the words in the given diff.
-    void OrUpdatePartial(const std::vector<std::pair<size_t, Word>>& diff) {
+    void OrUpdatePartial(absl::Span<const std::pair<size_t, Word>> diff) {
       for (const auto& [index, value] : diff) {
         ptr_[index] |= value;
       }
@@ -316,6 +334,28 @@ class HloReachabilityMap {
         words_per_bitset_);
   }
 
+  // Returns row `i` with all deferred merges applied. Every access to a row
+  // after construction goes through here.
+  BitSet CurrentBitSet(Index i) const {
+    if (!deferred_merges_.empty() &&
+        merges_applied_[i] != deferred_merges_.size()) {
+      ApplyDeferredMerges(i);
+    }
+    return BitSetFromIndex(i);
+  }
+
+  // Applies to row `i` the deferred merges recorded since it was last current.
+  void ApplyDeferredMerges(Index i) const;
+
+  // Does what UpdateReachabilityForMerge does, on the rows with their deferred
+  // merges applied if `current_rows`, else on the stored rows. Returns false
+  // without changing any row if that would change more than `max_rows` rows.
+  bool UpdateRowsForMerge(const HloInstruction* left,
+                          const HloInstruction* right, size_t max_rows,
+                          bool current_rows);
+
+  friend class HloReachabilityMapTestPeer;
+
   friend class HloReachabilityMapBitSetBenchmark;
 
   using Key = HloInstruction::LocalId;
@@ -374,6 +414,27 @@ class HloReachabilityMap {
   std::vector<std::pair<size_t, BitSet::Word>> tmp_changed_words_;
   std::vector<uintptr_t> tmp_worklist_;
   std::vector<Index> tmp_indices_to_update_;
+
+  // A merge recorded by DeferReachabilityUpdateForMerge. A row that has the bit
+  // of `left` or `right` depends on the merged instruction, so it takes the
+  // words [words_begin, words_end) of deferred_words_: the words in which the
+  // rows of the two instructions differed, holding their union.
+  struct DeferredMerge {
+    Index left;
+    Index right;
+    size_t words_begin;
+    size_t words_end;
+  };
+  std::vector<DeferredMerge> deferred_merges_;
+  std::vector<std::pair<size_t, BitSet::Word>> deferred_words_;
+  // Number of deferred merges applied to each row; sized on the first merge.
+  mutable std::vector<size_t> merges_applied_;
+  // DeferReachabilityUpdateForMerge applies a merge at once if that changes at
+  // most one row per kMapRowsPerEagerMergeRow rows of the map. Such a walk
+  // costs less than the tests a deferred merge is likely to cost later.
+  static constexpr size_t kMapRowsPerEagerMergeRow = 1024;
+  size_t max_rows_per_eager_merge_;
+  size_t num_rows_;
 };
 
 }  // namespace xla
