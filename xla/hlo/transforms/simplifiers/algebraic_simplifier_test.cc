@@ -15108,11 +15108,9 @@ TEST_F(AlgebraicSimplifierTest, RealWithNonComplexInput) {
       ROOT real = real(input)
     })";
 
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
-
-  AlgebraicSimplifier simplifier(default_options_);
-  ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&simplifier, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      RunAndCheckHloRewrite(kModuleStr, AlgebraicSimplifier(default_options_)));
 
   auto root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, GmockMatch(m::Parameter(0)));
@@ -15126,11 +15124,9 @@ TEST_F(AlgebraicSimplifierTest, ImagWithNonComplexInput) {
       ROOT imag = imag(input)
     })";
 
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
-
-  AlgebraicSimplifier simplifier(default_options_);
-  ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&simplifier, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      RunAndCheckHloRewrite(kModuleStr, AlgebraicSimplifier(default_options_)));
 
   auto root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, GmockMatch(m::Broadcast()));
@@ -15164,11 +15160,9 @@ TEST_F(AlgebraicSimplifierTest, MultipleImagWithNonComplexInput) {
       ROOT imag2 = imag(imag1)
     })";
 
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
-
-  AlgebraicSimplifier simplifier(default_options_);
-  ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&simplifier, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      RunAndCheckHloRewrite(kModuleStr, AlgebraicSimplifier(default_options_)));
 
   auto root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, GmockMatch(m::Broadcast()));

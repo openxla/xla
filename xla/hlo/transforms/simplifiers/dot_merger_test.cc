@@ -23,6 +23,7 @@ limitations under the License.
 #include <limits>
 #include <memory>
 
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
@@ -45,6 +46,8 @@ namespace {
 
 namespace m = ::xla::match;
 
+constexpr int64_t kNoMaxSizeToMerge = std::numeric_limits<int64_t>::max();
+
 class DotMergerTest : public HloHardwareIndependentTestBase {
  public:
   DotMergerTest()
@@ -65,11 +68,9 @@ TEST_F(DotMergerTest, MergeRHS) {
     dot1 = f32[200, 50] dot(lhs, rhs1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[200,10], f32[200,50], f32[200,100]) tuple(dot0, dot1, lhs)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   const HloInstruction* lhs = nullptr;
@@ -102,11 +103,9 @@ TEST_F(DotMergerTest, MergeRHSSortedByPowerOfTwo) {
     dot3 = f32[200, 24] dot(lhs, rhs3), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[200,10], f32[200,50], f32[200,64], f32[200,24]) tuple(dot0, dot1, dot2, dot3)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   const HloInstruction* dot2 = nullptr;
@@ -138,11 +137,9 @@ ENTRY main {
   dot1 = bf16[4,8] dot(common_t, rhs1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
   ROOT tuple = (bf16[2,4], bf16[4,8]) tuple(dot0, dot1)
 })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(
@@ -165,11 +162,9 @@ TEST_F(DotMergerTest, MergeRHSWithLayouts) {
     dot1 = f32[200, 50] dot(lhs, rhs1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[200,10], f32[200,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(
@@ -198,11 +193,9 @@ TEST_F(DotMergerTest, MergeDifferentLayoutRHS) {
     dot1 = f32[200, 50] dot(lhs, rhs1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[200,10], f32[200,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(
@@ -223,11 +216,9 @@ TEST_F(DotMergerTest, MergeLHS) {
     dot1 = f32[300, 50] dot(lhs1, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[100,50], f32[300,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Tuple(m::Slice(), m::Slice())));
 }
@@ -290,11 +281,9 @@ ENTRY main {
   dot1 = bf16[2,4] dot(lhs1, common_t), lhs_contracting_dims={1}, rhs_contracting_dims={0}
   ROOT tuple = (bf16[4,8], bf16[2,4]) tuple(dot0, dot1)
 })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(
@@ -318,11 +307,9 @@ TEST_F(DotMergerTest, MergeLHSDotsWithNonDefaultLayout) {
     dot1 = f32[300, 50]{0,1} dot(lhs1, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[100,50]{0,1}, f32[300,50]{0,1}) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   Shape expected_dot_shape =
       ShapeUtil::MakeShapeWithDenseLayout(F32, {400, 50}, {0, 1});
   const HloInstruction* dot0 = nullptr;
@@ -345,11 +332,9 @@ TEST_F(DotMergerTest, MergeDifferentLayoutLHS) {
     dot1 = f32[300, 50] dot(lhs1, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[100,50], f32[300,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(module->entry_computation()->root_instruction(),
@@ -370,11 +355,9 @@ TEST_F(DotMergerTest, MergeDifferentDotLayout) {
     dot1 = f32[300, 50]{1,0} dot(lhs1, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[100,50]{0,1}, f32[300,50]{1,0}) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(module->entry_computation()->root_instruction(),
@@ -397,11 +380,9 @@ TEST_F(DotMergerTest, MergeThree) {
     dot2 = f32[500, 50] dot(lhs2, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[100,50], f32[300,50], f32[500,50]) tuple(dot0, dot1, dot2)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
 
   // Clean up some redundant slice-of-slices so it's easier to pattern-match.
   AlgebraicSimplifier algsimp{AlgebraicSimplifierOptions{}};
@@ -440,11 +421,9 @@ TEST_F(DotMergerTest, NoMergeThreeDueToCycle) {
     dot2 = f32[500, 50] dot(lhs2, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[100,50], f32[300,50], f32[500,50]) tuple(dot0, dot1, dot2)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
 
   AlgebraicSimplifier algsimp{AlgebraicSimplifierOptions{}};
   ASSERT_OK(this->RunHloPass(&algsimp, module.get()).status());
@@ -497,11 +476,9 @@ TEST_F(DotMergerTest, MergeSameContractingDimsOnBothSides) {
     dot1 = f32[300, 50] dot(lhs1, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={1}
     ROOT tuple = (f32[100,50], f32[300,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Tuple(m::Slice(), m::Slice())));
 }
@@ -520,11 +497,9 @@ TEST_F(DotMergerTest, MergeWithBatchDims) {
                                             lhs_contracting_dims={3}, rhs_contracting_dims={2}
     ROOT tuple = (f32[2,4,100,50], f32[2,4,300,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Tuple(m::Slice(), m::Slice())));
 }
@@ -542,11 +517,9 @@ ENTRY main {
       rhs_contracting_dims={1}, lhs_batch_dims={0}, rhs_batch_dims={0}
   ROOT tuple = (bf16[16,4,8], bf16[16,2,4]) tuple(dot0, dot1)
 })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(
@@ -572,11 +545,9 @@ TEST_F(DotMergerTest, MergeWithBatchDimsAndMultipleContractingDims) {
                                       lhs_contracting_dims={1,3}, rhs_contracting_dims={2,4}
     ROOT tuple = (f32[2,4,6], f32[2,4,7]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Tuple(m::Slice(), m::Slice())));
@@ -596,11 +567,9 @@ TEST_F(DotMergerTest, MergeWithUnsortedBatchDims) {
                                             lhs_contracting_dims={3}, rhs_contracting_dims={2}
     ROOT tuple = (f32[4,2,100,50], f32[4,2,300,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Tuple(m::Transpose(m::Slice()), m::Transpose(m::Slice()))));
@@ -758,11 +727,9 @@ TEST_F(DotMergerTest, MergeDifferentLhsBatchDims) {
     dot1 = f32[10,10,10,10] dot(lhs1, rhs), lhs_batch_dims={0,2}, rhs_batch_dims={0,1}, lhs_contracting_dims={1}, rhs_contracting_dims={2}
     ROOT tuple = (f32[10,10,10,10], f32[10,10,10,10]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(
@@ -804,11 +771,9 @@ TEST_F(DotMergerTest, MergeMultipleContractingDims) {
     dot1 = f32[10,10] dot(lhs1, rhs), lhs_contracting_dims={0,1}, rhs_contracting_dims={0,1}
     ROOT tuple = (f32[10,10], f32[10,10]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
 
   const HloInstruction* s0 = nullptr;
   const HloInstruction* s1 = nullptr;
@@ -832,11 +797,9 @@ TEST_F(DotMergerTest, MergeMultipleNonContractingDimsInRhsSharedOperand) {
     dot1 = f32[11,12,13] dot(lhs1, rhs), lhs_contracting_dims={0,1}, rhs_contracting_dims={0,1}
     ROOT tuple = (f32[10,12,13], f32[11,12,13]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
 
   const HloInstruction* s0 = nullptr;
@@ -863,11 +826,9 @@ TEST_F(DotMergerTest, MergeKeepsConcatOperandMinorDimMinor) {
     dot1 = f32[64,4,2880] dot(lhs, rhs1), lhs_contracting_dims={1}, rhs_contracting_dims={1}
     ROOT tuple = (f32[64,4,2880], f32[64,4,2880]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
   SCOPED_TRACE(module->ToString());
 
@@ -896,11 +857,9 @@ TEST_F(DotMergerTest, MergeMultipleOuterDims) {
     dot1 = f32[10,10,10,10] dot(lhs1, rhs), lhs_contracting_dims={0}, rhs_contracting_dims={0}
     ROOT tuple = (f32[10,10,10,10], f32[10,10,10,10]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   ASSERT_THAT(
@@ -924,11 +883,9 @@ TEST_F(DotMergerTest, MergeDifferentLhsContractingDims) {
     dot1 = f32[10,10] dot(lhs1, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[10,10], f32[10,10]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(
@@ -1066,13 +1023,10 @@ TEST_F(DotMergerTest, MergeWithTypeUpgrade) {
     dot1 = f32[10,10] dot(lhs1, rhs), lhs_contracting_dims={0}, rhs_contracting_dims={0}
     ROOT tuple = (f32[10,10], f32[10,10]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   SCOPED_TRACE(module->ToString());
-
-  EXPECT_TRUE(changed);
   const HloInstruction* d0 = nullptr;
   const HloInstruction* d1 = nullptr;
   ASSERT_THAT(
@@ -1099,11 +1053,9 @@ TEST_F(DotMergerTest, MergeMultipleContractingDimsWithMismatchedConcatLayout) {
 
     ROOT tuple = (f32[100,5], f32[100,5,6]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -1123,11 +1075,9 @@ TEST_F(DotMergerTest, MergeMultipleBatchDimsWithMismatchedConcatLayout) {
 
     ROOT tuple = (f32[2,3,100,5], f32[2,3,100,5,6]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -1207,11 +1157,9 @@ TEST_F(DotMergerTest, MergeRHSWithIdenticalCustomLayout) {
     dot1 = f32[200, 50] dot(lhs, rhs1), lhs_contracting_dims={1}, rhs_contracting_dims={1}
     ROOT tuple = (f32[200,10], f32[200,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(
@@ -1260,11 +1208,9 @@ TEST_F(DotMergerTest, MatchedSharedMismatchedConcat) {
       lhs_contracting_dims={0}, rhs_contracting_dims={2}
     ROOT tuple = (f32[100,200,5,6], f32[100,50,200]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -1284,11 +1230,9 @@ TEST_F(DotMergerTest, MatchedSharedMismatchedConcatLayout) {
        lhs_contracting_dims={2}, rhs_contracting_dims={2}
      ROOT tuple = (f32[100,200,30], f32[100,200,50]) tuple(dot0, dot1)
    })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
 }
 TEST_F(DotMergerTest, MergeMultiRound) {
@@ -1307,11 +1251,9 @@ TEST_F(DotMergerTest, MergeMultiRound) {
     dot3 = f32[200, 20] dot(lhs, rhs3), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[200,10], f32[200,20], f32[200,10], f32[200,20]) tuple(dot0, dot1, dot2, dot3)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
 
   int dot_count = 0;
@@ -1343,11 +1285,9 @@ TEST_F(DotMergerTest, MergeWithDependency) {
 
     ROOT tuple = (f32[10, 5], f32[10, 5], f32[10, 2], f32[10, 2]) tuple(dot0, dot1, dot2, dot3)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
 }
 
@@ -1364,11 +1304,9 @@ TEST_F(DotMergerTest, MergeLHSBatchDimsMissingOnAllDots) {
     dot1 = f32[2,10,40] dot(lhs, rhs1), lhs_contracting_dims={2}, rhs_contracting_dims={0}
     ROOT tuple = (f32[2,10,30], f32[2,10,40]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
 
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
@@ -1392,11 +1330,9 @@ TEST_F(DotMergerTest, MergeNoContractingDimsPreserveLayout) {
     dot1 = f32[100, 50] dot(lhs, rhs1), lhs_contracting_dims={}, rhs_contracting_dims={}
     ROOT tuple = (f32[100,10], f32[100,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   EXPECT_THAT(
@@ -1417,12 +1353,10 @@ TEST_F(DotMergerTest, MergeNoContractingDimsNormalizeToBNC) {
     dot1 = f32[10, 20, 50] dot(lhs, rhs1), lhs_contracting_dims={}, rhs_contracting_dims={}
     ROOT tuple = (f32[10,20,30], f32[10,20,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   SCOPED_TRACE(module->ToString());
-  EXPECT_TRUE(changed);
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   ASSERT_THAT(
@@ -1449,11 +1383,9 @@ TEST_F(DotMergerTest, MergeNoNonContractingDimsAtSharedSide) {
                       lhs_contracting_dims={1}, rhs_contracting_dims={1}
     ROOT tuple = (f32[2,10], f32[2,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
   ASSERT_THAT(
@@ -1474,12 +1406,10 @@ TEST_F(DotMergerTest, MergeMismatchedContractingDimsOrder) {
     dot1 = f32[6] dot(lhs, rhs1), lhs_contracting_dims={0,1}, rhs_contracting_dims={1,0}
     ROOT tuple = (f32[5], f32[6]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   SCOPED_TRACE(module->ToString());
-  EXPECT_TRUE(changed);
 
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
@@ -1505,12 +1435,10 @@ TEST_F(DotMergerTest, MergeMismatchedBatchDimsOrder) {
                                       lhs_contracting_dims={2}, rhs_contracting_dims={2}
     ROOT tuple = (f32[3,4,5], f32[3,4,6]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   SCOPED_TRACE(module->ToString());
-  EXPECT_TRUE(changed);
 
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
@@ -1538,11 +1466,9 @@ TEST_F(DotMergerTest, MergeOneConcatOperandMissingNonContractingDim) {
                       lhs_contracting_dims={1}, rhs_contracting_dims={1}
     ROOT tuple = (f32[2, 10, 20], f32[2, 10]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
 
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
@@ -1572,11 +1498,9 @@ TEST_F(DotMergerTest, MergeWithConsumerNormalization) {
     dot0_t_inv = f32[200, 10] transpose(dot0_t), dimensions={1,0}
     ROOT tuple = (f32[200,10], f32[200,50]) tuple(dot0_t_inv, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   SCOPED_TRACE(module->ToString());
 
   const HloInstruction* dot0 = nullptr;
@@ -1604,11 +1528,9 @@ TEST_F(DotMergerTest, MergeWithRedundantReshapes) {
     dot0_r2 = f32[200, 10] reshape(dot0_r1)
     ROOT tuple = (f32[200,10], f32[200,50]) tuple(dot0_r2, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   SCOPED_TRACE(module->ToString());
 
   const HloInstruction* dot0 = nullptr;
@@ -1639,11 +1561,9 @@ TEST_F(DotMergerTest, MergeWithMultipleConsumerChains) {
     dot0_r2 = f32[200, 10] reshape(dot0_r1)
     ROOT tuple = (f32[200,10], f32[200,10], f32[200,50]) tuple(dot0_t_inv, dot0_r2, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   SCOPED_TRACE(module->ToString());
 
   const HloInstruction* dot0 = nullptr;
@@ -1892,11 +1812,9 @@ TEST_F(DotMergerTest, MergeWithSharedReshapedLhs) {
     ROOT tuple = (f32[4], f32[8]) tuple(dot0, dot1)
   })";
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
 
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
@@ -1946,11 +1864,9 @@ TEST_F(DotMergerTest, UserExampleMerge) {
     ROOT tuple = (f32[1, 10, 30], f32[10, 40]) tuple(dot1, dot2)
   })";
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
 
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
@@ -1974,11 +1890,9 @@ TEST_F(DotMergerTest, MergeWithDegenerateNonContractingDimsInSharedOperand) {
     dot1 = f32[1, 50] dot(lhs, rhs1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
     ROOT tuple = (f32[1,10], f32[1,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
 
   const HloInstruction* dot0 = nullptr;
   const HloInstruction* dot1 = nullptr;
@@ -2007,11 +1921,9 @@ TEST_F(DotMergerTest, MergeWithConsecutiveContractingDims) {
     dot1 = f32[100,50] dot(lhs, rhs1), lhs_contracting_dims={0,1}, rhs_contracting_dims={0,1}
     ROOT tuple = (f32[100,10], f32[100,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
 
   const HloInstruction* dot0 = nullptr;
@@ -2040,11 +1952,9 @@ TEST_F(DotMergerTest, MergeWithConsecutiveContractingDimsAndDegenerate) {
     dot1 = f32[1,100,50] dot(lhs, rhs1), lhs_contracting_dims={0,2}, rhs_contracting_dims={0,2}, lhs_batch_dims={1}, rhs_batch_dims={1}
     ROOT tuple = (f32[1,100,10], f32[1,100,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
   ASSERT_OK(verifier().Run(module.get()).status());
 
   const HloInstruction* dot0 = nullptr;
@@ -2073,11 +1983,9 @@ TEST_F(DotMergerTest, MergeRHSPreservesMetadata) {
     dot1 = f32[200, 50] dot(lhs, rhs1), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="op2"}
     ROOT tuple = (f32[200,10], f32[200,50]) tuple(dot0, dot1)
   })";
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(module_string));
-  DotMerger pass(/*max_size_to_merge=*/std::numeric_limits<int64_t>::max());
-  ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-  EXPECT_TRUE(changed);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      RunAndCheckHloRewrite(module_string, DotMerger(kNoMaxSizeToMerge)));
 
   HloInstruction* merged_dot = nullptr;
   for (HloInstruction* inst : module->entry_computation()->instructions()) {
@@ -2141,11 +2049,8 @@ TEST_F(DotMergerTest, MergeRespectsMaxSizeThreshold) {
   // With max_size_to_merge = 20,000 bytes, peak increase (12,000) <= threshold
   // -> merged.
   {
-    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                         ParseAndReturnVerifiedModule(module_string));
-    DotMerger pass(/*max_size_to_merge=*/20000);
-    ASSERT_OK_AND_ASSIGN(bool changed, this->RunHloPass(&pass, module.get()));
-    EXPECT_TRUE(changed);
+    ASSERT_OK(RunAndCheckHloRewrite(module_string,
+                                    DotMerger(/*max_size_to_merge=*/20000)));
   }
 }
 
