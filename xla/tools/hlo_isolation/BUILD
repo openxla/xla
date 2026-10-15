@@ -30,7 +30,6 @@ xla_py_proto_library(
 
 cc_library(
     name = "hlo_inf_nan_intent_analyzer",
-    testonly = True,
     srcs = ["hlo_inf_nan_intent_analyzer.cc"],
     hdrs = ["hlo_inf_nan_intent_analyzer.h"],
     deps = [
@@ -38,6 +37,7 @@ cc_library(
         "//xla:literal",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/types:span",
     ],
@@ -73,6 +73,7 @@ cc_library(
         "//xla/tools/hlo_dump:hlo_dump_utils",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",

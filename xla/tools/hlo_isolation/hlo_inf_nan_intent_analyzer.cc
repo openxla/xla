@@ -20,6 +20,7 @@ limitations under the License.
 #include <limits>
 #include <queue>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -404,6 +405,57 @@ bool IsIntentionalInfNan(const HloModule& module,
   }
 
   return false;
+}
+
+bool IsBitPreservingOp(const HloInstruction& instr) {
+  switch (instr.opcode()) {
+    case HloOpcode::kAllGather:
+    case HloOpcode::kAllGatherDone:
+    case HloOpcode::kAllGatherStart:
+    case HloOpcode::kAllToAll:
+    case HloOpcode::kBitcast:
+    case HloOpcode::kBitcastConvert:
+    case HloOpcode::kBroadcast:
+    case HloOpcode::kCollectiveBroadcast:
+    case HloOpcode::kCollectivePermute:
+    case HloOpcode::kCollectivePermuteDone:
+    case HloOpcode::kCollectivePermuteStart:
+    case HloOpcode::kConcatenate:
+    case HloOpcode::kConstant:
+    case HloOpcode::kCopy:
+    case HloOpcode::kCopyDone:
+    case HloOpcode::kCopyStart:
+    case HloOpcode::kDomain:
+    case HloOpcode::kDynamicSlice:
+    case HloOpcode::kDynamicUpdateSlice:
+    case HloOpcode::kGather:
+    case HloOpcode::kGetTupleElement:
+    case HloOpcode::kIota:
+    case HloOpcode::kOptimizationBarrier:
+    case HloOpcode::kPad:
+    case HloOpcode::kParameter:
+    case HloOpcode::kPartitionId:
+    case HloOpcode::kRecv:
+    case HloOpcode::kRecvDone:
+    case HloOpcode::kReplicaId:
+    case HloOpcode::kReshape:
+    case HloOpcode::kReverse:
+    case HloOpcode::kSelect:
+    case HloOpcode::kSend:
+    case HloOpcode::kSendDone:
+    case HloOpcode::kSlice:
+    case HloOpcode::kTranspose:
+    case HloOpcode::kTuple:
+      return true;
+    case HloOpcode::kFusion:
+      return absl::c_all_of(
+          instr.fused_instructions_computation()->instructions(),
+          [](const HloInstruction* fused) {
+            return IsBitPreservingOp(*fused);
+          });
+    default:
+      return false;
+  }
 }
 
 }  // namespace hlo_isolation
