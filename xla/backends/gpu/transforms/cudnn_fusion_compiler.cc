@@ -1334,6 +1334,9 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
             "moe_grouped_matmul_bwd requires cuDNN frontend 1.22.1+.");
 #endif  // CUDNN_FRONTEND_VERSION >= 12201
       } else {
+        // moe_grouped_matmul needs cuDNN 9.15+ headers; older ones compile
+        // the frontend node to a GRAPH_NOT_SUPPORTED stub.
+#if CUDNN_VERSION >= 91500
         auto moe_grouped_matmul_attr =
             graph::Moe_grouped_matmul_attributes()
                 .set_mode(fe::MoeGroupedMatmulMode_t::NONE)
@@ -1342,6 +1345,10 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
         hlo_to_cudnn[hlo] =
             graph.moe_grouped_matmul(operand(0), operand(1), operand(2),
                                      nullptr, nullptr, moe_grouped_matmul_attr);
+#else
+        return absl::UnimplementedError(
+            "moe_grouped_matmul requires cuDNN 9.15+.");
+#endif  // CUDNN_VERSION >= 91500
       }
     } else if (HloPredicateIsOp<HloOpcode::kReduce>(hlo)) {
       if (!IsCudnnAmaxReduce(*hlo)) {

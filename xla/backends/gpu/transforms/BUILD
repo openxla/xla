@@ -2916,6 +2916,27 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "ragged_dot_cudnn_support",
+    srcs = ["ragged_dot_cudnn_support.cc"],
+    hdrs = ["ragged_dot_cudnn_support.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        ":cudnn_fusion_compiler",
+        ":ragged_dot_fusion_rewriter",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor/cuda:cudnn_plugin",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
 xla_test(
     name = "ragged_dot_fusion_rewriter_test",
     srcs = ["ragged_dot_fusion_rewriter_test.cc"],

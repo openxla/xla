@@ -454,7 +454,9 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
       if (instruction->opcode() == HloOpcode::kRaggedDot) {
         if (ragged_dot_fusion_enabled &&
             CanBeHandledByCuDNNFusion(instruction, gpu_compute_capability_,
-                                      cudnn_version_, toolkit_version_)) {
+                                      cudnn_version_, toolkit_version_) &&
+            (is_supported_by_cudnn_fusion_ == nullptr ||
+             is_supported_by_cudnn_fusion_(instruction))) {
           continue;
         }
         if (has_grouped_gemm && CanBeHandledByGpublasltGroupGemm(

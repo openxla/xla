@@ -60,6 +60,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/cudnn_norm_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_pad_for_convolutions.h"
 #include "xla/backends/gpu/transforms/cudnn_simplify_padding.h"
+#include "xla/backends/gpu/transforms/ragged_dot_cudnn_support.h"
 #include "xla/backends/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -271,6 +272,13 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
           .status());
 
   return absl::OkStatus();
+}
+
+bool NVPTXCompiler::IsRaggedDotSupportedByCuDnn(
+    const HloInstruction* instr, const GpuTargetConfig& gpu_target_config,
+    se::StreamExecutor* absl_nullable stream_exec) const {
+  return gpu::IsRaggedDotSupportedByCuDnn(
+      *instr, gpu_target_config.device_description, stream_exec);
 }
 
 absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(

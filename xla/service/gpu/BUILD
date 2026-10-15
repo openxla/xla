@@ -2507,6 +2507,7 @@ cc_library(
         "//xla/backends/gpu/transforms:cudnn_norm_rewriter",
         "//xla/backends/gpu/transforms:cudnn_pad_for_convolutions",
         "//xla/backends/gpu/transforms:cudnn_simplify_padding",
+        "//xla/backends/gpu/transforms:ragged_dot_cudnn_support",
         "//xla/backends/gpu/transforms:triangular_solve_rewriter",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/ir:hlo",
