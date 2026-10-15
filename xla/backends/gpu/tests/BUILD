@@ -1361,6 +1361,10 @@ cuda_library(
 xla_test(
     name = "collective_ops_ffi_kernels_test",
     srcs = ["collective_ops_ffi_kernels_test.cc"],
+    backend_args = if_google(
+        {"gb200": ["--heap_check="]},
+        {},
+    ),
     backend_tags = {
         "gpu": [
             "multi_gpu",
