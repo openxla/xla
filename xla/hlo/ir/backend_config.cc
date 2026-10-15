@@ -21,7 +21,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/no_destructor.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -64,6 +67,60 @@ absl::StatusOr<std::string> BackendConfigToRawString(
   return tsl::ProtoToHumanReadableJson(proto, /*ignore_accuracy_loss=*/true);
 }
 
+namespace {
+
+// True when some message type reachable from descriptor has a map field, is
+// google.protobuf.Any or has an extension range. The JSON of such a message
+// depends on more than its serialized bytes: map entries print in the field's
+// iteration order, Any hides its type behind a URL, extensions admit both.
+bool ReachesUncacheableField(
+    const tsl::protobuf::Descriptor* descriptor,
+    absl::flat_hash_set<const tsl::protobuf::Descriptor*>& visited) {
+  if (!visited.insert(descriptor).second) {
+    return false;  // Walked already, or an ancestor still being walked.
+  }
+  if (descriptor->well_known_type() ==
+          tsl::protobuf::Descriptor::WELLKNOWNTYPE_ANY ||
+      descriptor->extension_range_count() > 0) {
+    return true;
+  }
+  for (int i = 0; i < descriptor->field_count(); ++i) {
+    const tsl::protobuf::FieldDescriptor* field = descriptor->field(i);
+    if (field->is_map() ||
+        (field->message_type() != nullptr &&
+         ReachesUncacheableField(field->message_type(), visited))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether the JSON of a message of this type is a function of its serialized
+// bytes. Memoized per root type for the process: descriptors are immutable
+// and outlive the compiles, which run on many threads.
+bool IsCacheable(const tsl::protobuf::Descriptor* descriptor) {
+  struct Memo {
+    absl::Mutex mutex;
+    absl::flat_hash_map<const tsl::protobuf::Descriptor*, bool> cacheable
+        ABSL_GUARDED_BY(mutex);
+  };
+  static absl::NoDestructor<Memo> memo;
+  {
+    absl::ReaderMutexLock lock(&memo->mutex);
+    auto it = memo->cacheable.find(descriptor);
+    if (it != memo->cacheable.end()) {
+      return it->second;
+    }
+  }
+  absl::flat_hash_set<const tsl::protobuf::Descriptor*> visited;
+  const bool cacheable = !ReachesUncacheableField(descriptor, visited);
+  absl::WriterMutexLock lock(&memo->mutex);
+  memo->cacheable.emplace(descriptor, cacheable);
+  return cacheable;
+}
+
+}  // namespace
+
 BackendConfigWrapper::BackendConfigWrapper(std::string raw_string)
     : raw_string_(RemoveWaitOnOperationQueues(std::move(raw_string))) {}
 
@@ -74,6 +131,28 @@ const std::string& BackendConfigWrapper::GetRawStringWithoutMutex() const {
   }
   static const std::string* const kEmptyString = new std::string();
   return raw_string_.empty() ? *kEmptyString : raw_string_;
+}
+
+const std::string& BackendConfigWrapper::GetRawString(
+    BackendConfigRawStringCache* cache) const {
+  absl::WriterMutexLock lock{mutex_};
+  if (cache != nullptr && proto_ != nullptr && raw_string_.empty() &&
+      IsCacheable(proto_->GetDescriptor())) {
+    // Equal protos of one type serialize to the same bytes, so the first one
+    // pays for the JSON printer. A failed encoding leaves the entry empty and
+    // GetRawStringWithoutMutex fails on it below, as without a cache.
+    std::string& shared = (*cache)[std::make_pair(
+        proto_->GetDescriptor(), proto_->SerializePartialAsString())];
+    if (shared.empty()) {
+      absl::StatusOr<std::string> raw_string =
+          BackendConfigToRawString(*proto_);
+      if (raw_string.ok()) {
+        shared = *std::move(raw_string);
+      }
+    }
+    raw_string_ = shared;
+  }
+  return GetRawStringWithoutMutex();
 }
 
 absl::Status BackendConfigWrapper::GetProto(
