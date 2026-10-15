@@ -110,8 +110,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/cudnn_custom_call_converter.h"
 #include "xla/backends/gpu/transforms/deviceless_estimate_cub_sort_scratch_size.h"
 #include "xla/backends/gpu/transforms/dot_algorithm_rewriter.h"
-#include "xla/backends/gpu/transforms/dot_dimension_sorter.h"
-#include "xla/backends/gpu/transforms/dot_normalizer.h"
 #include "xla/backends/gpu/transforms/dot_operand_converter.h"
 #include "xla/backends/gpu/transforms/dot_strength_reduction.h"
 #include "xla/backends/gpu/transforms/double_buffer_loop_unrolling.h"
@@ -130,6 +128,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/gemm_fusion_swap_operands.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 #include "xla/backends/gpu/transforms/gpu_copy_async_wrapper.h"
+#include "xla/backends/gpu/transforms/gpu_transpose_folding.h"
 #include "xla/backends/gpu/transforms/group_collectives_by_key.h"
 #include "xla/backends/gpu/transforms/hoist_fused_bitcasts.h"
 #include "xla/backends/gpu/transforms/layout_assignment.h"
@@ -195,7 +194,6 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/comparison_expander.h"
 #include "xla/hlo/transforms/expanders/convolution_4d_expander.h"
 #include "xla/hlo/transforms/expanders/convolution_pred_expander.h"
-#include "xla/hlo/transforms/expanders/dot_decomposer.h"
 #include "xla/hlo/transforms/expanders/dynamic_index_splitter.h"
 #include "xla/hlo/transforms/expanders/eigh_expander.h"
 #include "xla/hlo/transforms/expanders/elementary_function_expander.h"
@@ -228,7 +226,6 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
 #include "xla/hlo/transforms/simplifiers/float_normalization.h"
 #include "xla/hlo/transforms/simplifiers/gather_simplifier.h"
-#include "xla/hlo/transforms/simplifiers/gemv_rewriter.h"
 #include "xla/hlo/transforms/simplifiers/hlo_computation_deduplicator.h"
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
@@ -330,7 +327,6 @@ limitations under the License.
 #include "xla/service/spmd/schedule_aware_collective_ops_cse.h"
 #include "xla/service/spmd/shardy/shardy_xla_pass.h"
 #include "xla/service/topk_rewriter.h"
-#include "xla/service/transpose_folding.h"
 #include "xla/service/while_loop_constant_sinking.h"
 #include "xla/service/while_loop_simplifier.h"
 #include "xla/service/xla_transform.h"
@@ -823,9 +819,6 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<TopkSpecializer>(gpu_version);
   pipeline.AddPass<TopkDecomposer>();
 
-  pipeline.AddPass<DotDimensionSorter>();
-  pipeline.AddPass<DotDecomposer>();
-
   HloPredicate upcaster_filter = [&](const HloInstruction* instr) {
     const auto* cuda_cc =
         gpu_target_config.device_description.gpu_compute_capability()
@@ -1021,12 +1014,7 @@ absl::Status RunOptimizationPasses(
     pipeline.AddPass<ReshapeMover>(reshape_mover_options);
     pipeline.AddPass<HloConstantFolding>();
     pipeline.AddPass<ConditionalSimplifier>();
-    // Do not fold transpose operands into dots yet. This can undo the normal
-    // form established by DotDecomposer, which the DotMerger pass requires.
-    pipeline.AddPass<TransposeFolding>(
-        /*dot_can_fold_transpose_operand=*/
-        [&](const HloInstruction& dot,
-            int64_t operand) -> absl::StatusOr<bool> { return false; });
+    pipeline.AddPass<GpuTransposeFolding>(gpu_version);
     pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/false);
     pipeline.AddPass<HloDCE>();
   }();
@@ -1045,9 +1033,7 @@ absl::Status RunOptimizationPasses(
   // gpu_version) once Triton emitter supports multiple non-contracting
   // dimensions.
   pipeline.AddPass<DotDimensionNormalizer>(true);
-  // Folding transpose operands into dots can undo the normal form established
-  // by DotDecomposer. Subsequent passes must not rely on it from this point on.
-  pipeline.AddPass<TransposeFolding>(CanFoldTransposeOperandIntoDot);
+  pipeline.AddPass<GpuTransposeFolding>(gpu_version);
 
   // ConvertMover and ReshapeMover fight with each other: ConvertMover wants
   // to move some converts down the graph, but ReshapeMover wants to move them
@@ -2149,8 +2135,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // GemmRewriter assumes that all transposes are folded into gemms, but,
     // since commit 7d529df, this is not always true at this point.
     // Therefore, rerun transpose folding.
-    pipeline.AddPass<TransposeFolding>(CanFoldTransposeOperandIntoDot,
-                                       TransposeFolding::NeverFoldTranspose);
+    pipeline.AddPass<GpuTransposeFolding>(gpu_version);
 
     pipeline.AddPass<ReshapeDecomposer>();
     pipeline.AddPass<ReduceDecomposer>([&](const HloInstruction* r) {
@@ -2163,16 +2148,10 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
         gpu_target_config.device_description.gpu_compute_capability();
     pipeline.AddPass<AlgorithmChecker>(gpu_version);
 
-    // Make sure that dots have at least 1 contracting dimension in the
-    // operands. Needs to happen shortly before the dot rewrite, as otherwise
-    // AlgebraicSimplifier will simplify it away again.
-    // TODO(b/375566188): Figure out whether we can get rid of this pass.
-    pipeline.AddPass<DotNormalizer>();
     if (IsTritonGemmEnabled(debug_options, gpu_version)) {
       pipeline.AddPass<DotDimensionNormalizer>(
           /*normalize_noncontracting_dimensions=*/!debug_options
               .xla_gpu_experimental_gemm_fusion_v2());
-      pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<SplitkRewriter>(gpu_target_config.device_description);
       pipeline.AddPass<GemmFusion>(gpu_target_config.device_description);
       pipeline.AddPass<HoistFusedBitcasts>();
@@ -2180,7 +2159,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     }
 
     // Rewrite GEMMs into custom calls.
-    AddPaddingForGpublasGemms(pipeline, debug_options, gpu_version);
     AddGemmRewriterPasses(
         pipeline, debug_options, gpu_version,
         gpu_target_config.device_description.runtime_version());
