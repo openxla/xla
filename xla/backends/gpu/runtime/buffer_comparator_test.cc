@@ -503,13 +503,13 @@ TEST_F(BufferComparatorTest, ErrorReportOnMultidimensionalMismatch) {
   EXPECT_THAT(error_report, ::testing::HasSubstr("Max absolute difference:"));
 }
 
-// The mismatch counter used by DeviceCompare is a persistent per-StreamExecutor
-// resource that is reused across comparisons. This test runs many comparisons
-// back-to-back on the same
-// executor, alternating between equal and mismatching buffers, to pin that the
-// counter is correctly re-zeroed between calls and that a prior mismatch never
-// leaks into a subsequent equal comparison (or vice versa).
-TEST_F(BufferComparatorTest, ReusedCounterIsRezeroedAcrossComparisons) {
+// The mismatch counter used by DeviceCompare is allocated in host memory
+// (via StreamExecutor::HostMemoryAllocate) and MemZero'd before each kernel
+// launch. This test runs many comparisons back-to-back on the same executor,
+// alternating between equal and mismatching buffers, to pin that the counter
+// is correctly re-zeroed between calls and that a prior mismatch never leaks
+// into a subsequent equal comparison (or vice versa).
+TEST_F(BufferComparatorTest, CounterIsRezeroedAcrossComparisons) {
   const std::vector<float> equal_a = {1.0f, 2.0f, 3.0f, 4.0f};
   const std::vector<float> equal_b = {1.0f, 2.0f, 3.0f, 4.0f};
   const std::vector<float> mismatch_b = {1.0f, 99.0f, 3.0f, 4.0f};
