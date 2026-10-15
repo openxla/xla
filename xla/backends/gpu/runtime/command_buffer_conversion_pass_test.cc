@@ -162,12 +162,13 @@ std::unique_ptr<AllGatherThunk> CreateAllGatherThunk(
 }
 
 std::unique_ptr<DeviceToDeviceCopyThunk> CreateCopyThunk(
-    const BufferAllocation& alloc0) {
+    const BufferAllocation& alloc0, ThunkId thunk_id = ThunkId(0)) {
   BufferAllocation::Slice slice0(&alloc0, 0, 1024);
   Shape shape = ShapeUtil::MakeShape(S32, {256});
+  Thunk::ThunkInfo thunk_info;
+  thunk_info.thunk_id = thunk_id;
   return std::make_unique<DeviceToDeviceCopyThunk>(
-      Thunk::ThunkInfo(), ShapedSlice{slice0, shape},
-      ShapedSlice{slice0, shape}, 1024);
+      thunk_info, ShapedSlice{slice0, shape}, ShapedSlice{slice0, shape}, 1024);
 }
 
 DynamicSliceConfig CreateDsfConfig(std::optional<int64_t> loop_index,
@@ -685,6 +686,55 @@ TEST(CommandBufferConversionPassTest, PartiallyConvertsToCommandBufferThunk) {
   const auto& thunks_in_command_buffer1 =
       command_buffer_thunk1->thunks()->thunks();
   EXPECT_THAT(thunks_in_command_buffer1, ThunkKindsAre(Thunk::kCopy));
+}
+
+TEST(CommandBufferConversionPassTest,
+     GivesCommandBufferThunksIdsAfterThoseOfAllThunks) {
+  CommandBufferConversionPass pass("test", /*devices_in_process=*/1);
+
+  // Create a {Copy, CublasLtMatmul, While({Copy}, {CublasLtMatmul, Copy})},
+  // where the largest ID is nested in the body of the while thunk.
+  BufferAllocation alloc0(0, 1024, 0);
+  BufferAllocation alloc1(1, 16 * 4, 0);
+  ThunkSequence condition_thunks;
+  condition_thunks.push_back(CreateCopyThunk(alloc0, ThunkId(2)));
+  ThunkSequence body_thunks;
+  body_thunks.push_back(CreateCublasLtMatmulThunk(alloc1));
+  body_thunks.push_back(CreateCopyThunk(alloc0, ThunkId(7)));
+  ThunkSequence thunks;
+  thunks.push_back(CreateCopyThunk(alloc0, ThunkId(1)));
+  thunks.push_back(CreateCublasLtMatmulThunk(alloc1));
+  thunks.push_back(CreateWhileThunk(std::move(condition_thunks),
+                                    std::move(body_thunks), alloc0));
+
+  // Enable only FUSION, which means that only copy thunks are converted.
+  DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
+  debug_options.set_xla_gpu_graph_min_graph_size(1);
+  debug_options.clear_xla_gpu_enable_command_buffer();
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
+  se::DeviceDescription device_info =
+      CudaDeviceInfoWithVersion(se::SemanticVersion{12, 3, 0});
+  FakeErrorAllocator allocator;
+
+  ASSERT_THAT(pass.Run(&thunks, debug_options, /*hlo_module=*/nullptr,
+                       device_info, allocator),
+              IsOkAndHolds(true));
+
+  // Expected transformation: (Copy, CublasLtMatmul, While({Copy},
+  // {CublasLtMatmul, Copy})) -> (CommandBuffer(Copy), CublasLtMatmul,
+  // While({Copy}, {CublasLtMatmul, CommandBuffer(Copy)}))
+  ASSERT_THAT(thunks, ThunkKindsAre(Thunk::kCommandBuffer,
+                                    Thunk::kCublasLtMatmul, Thunk::kWhile));
+  const ThunkSequence& converted_body_thunks =
+      static_cast<const WhileThunk*>(thunks[2].get())->body_executor().thunks();
+  ASSERT_THAT(converted_body_thunks,
+              ThunkKindsAre(Thunk::kCublasLtMatmul, Thunk::kCommandBuffer));
+
+  ThunkId id0 = thunks[0]->thunk_info().thunk_id;
+  ThunkId id1 = converted_body_thunks[1]->thunk_info().thunk_id;
+  EXPECT_GT(id0, ThunkId(7));
+  EXPECT_GT(id1, ThunkId(7));
+  EXPECT_NE(id0, id1);
 }
 
 TEST(CommandBufferConversionPassTest, ConvertConvolutionAndGemmThunks) {

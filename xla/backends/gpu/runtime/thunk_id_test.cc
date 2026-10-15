@@ -34,5 +34,16 @@ TEST(ThunkIdTest, GeneratesUniqueIds) {
   EXPECT_NE(id2, id3);
 }
 
+TEST(ThunkIdTest, GeneratesIdsFromTheGivenOneOn) {
+  ThunkIdGenerator generator(ThunkId(42));
+
+  ThunkId id1 = generator.GetNextThunkId();
+  ThunkId id2 = generator.GetNextThunkId();
+
+  EXPECT_GE(id1, ThunkId(42));
+  EXPECT_GE(id2, ThunkId(42));
+  EXPECT_NE(id1, id2);
+}
+
 }  // namespace
 }  // namespace xla::gpu

@@ -4935,6 +4935,7 @@ cc_library(
         ":ragged_all_to_all_thunk",
         ":sequential_thunk",
         ":thunk",
+        ":thunk_id",
         ":thunk_pass_pipeline",
         ":while_thunk",
         "//xla:util",
