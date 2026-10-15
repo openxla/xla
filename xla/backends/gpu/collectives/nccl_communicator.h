@@ -119,6 +119,7 @@ class NcclCommunicator : public GpuCommunicator {
 
   bool SupportsDeviceComm() const final;
   bool SupportsGin() const final;
+  bool SupportsLaunchCompletion() const final;
   std::optional<int> LsaSize() const final;
 
   GxlCommunicator* gxl_communicator() const final {

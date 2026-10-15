@@ -53,6 +53,9 @@ class CollectiveCliques {
       const GpuCliqueKey& clique_key, GlobalDeviceId global_device_id,
       const GpuDeviceCommunicator::Requirements& reqs) const;
 
+  // True iff every communicator this device holds records launch completion.
+  bool SupportsLaunchCompletion(GlobalDeviceId global_device_id) const;
+
   // Returns whether peer device memory access is possible between all devices
   // in the clique.
   absl::StatusOr<bool> peer_access_enabled(

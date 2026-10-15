@@ -34,10 +34,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/types/span.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/event_pool.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_loop.h"
 #include "xla/runtime/buffer_use.h"
@@ -46,6 +45,8 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -119,6 +120,18 @@ absl::Status ThunkExecutor::ExecuteOnStream(
     XLA_VLOG_DEVICE(1, device_ordinal) << absl::StreamFormat(
         "[thunk=%d/%d] Start ThunkExecutor::ExecuteOnStream: %s (%v)%v", i,
         thunks_.size(), thunk->profile_annotation(), thunk->kind(), loop_nest);
+
+    if (LaunchOrdering* ordering = params.launch_ordering) {
+      ABSL_ASSIGN_OR_RETURN(
+          int waits, ordering->WaitForProducers(params.stream,
+                                                thunk->profile_annotation()));
+      if (waits > 0) {
+        tsl::profiler::TraceMe::InstantActivity([&] {
+          return absl::StrFormat("LaunchOrdering: %s waits on %d launch(es)",
+                                 thunk->profile_annotation(), waits);
+        });
+      }
+    }
 
     // Execute thunk and launch "work" on the GPU stream.
     ABSL_RETURN_IF_ERROR(thunk->ExecuteOnStream(params));

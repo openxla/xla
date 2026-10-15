@@ -44,8 +44,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "riegeli/bytes/string_writer.h"
 #include "riegeli/bytes/writer.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/annotation.h"
@@ -57,7 +55,9 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
+#include "xla/backends/gpu/runtime/event_pool.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -126,6 +126,8 @@ limitations under the License.
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 namespace {
@@ -487,6 +489,8 @@ GpuExecutable::GpuExecutable(
       gpu_version_(device_description.gpu_compute_capability()),
       thunk_executor_(std::move(executable)),
       definition_plan_(ThunkExecutor::BuildDefinitionPlan(*thunk_executor_)),
+      explicit_launch_ordering_(
+          debug_options.xla_gpu_explicit_launch_ordering()),
       num_additional_streams_(
           GetNumAdditionalStreams(*thunk_executor_, debug_options)),
       module_name_(std::move(module_name)),
@@ -530,6 +534,13 @@ GpuExecutable::GpuExecutable(
                                                buffer_assignment_proto_);
   }
   set_module_stats(std::move(module_stats));
+
+  if (debug_options.xla_gpu_explicit_launch_ordering() &&
+      absl::c_linear_search(debug_options.xla_gpu_enable_command_buffer(),
+                            DebugOptions::COLLECTIVES)) {
+    LOG(WARNING) << "xla_gpu_explicit_launch_ordering does not order "
+                    "collectives inside command buffers";
+  }
 
   const DebugOptions* allocation_debug_options =
       has_module() ? &module_config().debug_options() : nullptr;
@@ -613,7 +624,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         persistent_alloc_indices,
     GpuExecutable::NumAdditionalStreams num_additional_streams,
     CollectiveMemoryCache& collective_memory_cache,
-    bool collective_use_minimal_resource) {
+    bool collective_use_minimal_resource, bool explicit_launch_ordering) {
   const GpuExecutableRunOptions* gpu_run_options =
       run_options->run_options().gpu_executable_run_options();
 
@@ -877,12 +888,28 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         RendezvousAfterInitialization(*run_options, debug_options));
   }
 
+  // A backend that records no launch event has nothing to order.
+  std::optional<LaunchOrdering> launch_ordering;
+  if (explicit_launch_ordering) {
+    if (collective_cliques.SupportsLaunchCompletion(
+            collective_params.global_device_id)) {
+      se::StreamExecutor* device = main_stream->parent();
+      launch_ordering.emplace(
+          device->GetOrConstructResource<LaunchEventPool>(device));
+    } else {
+      tsl::profiler::TraceMe::InstantActivity([] {
+        return "LaunchOrderingDisabled: backend records no launch event";
+      });
+    }
+  }
+
   // Prepare parameters for thunks execution.
   Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
       *run_options, buffer_allocations, main_stream,
       command_buffer_trace_stream, &collective_params, &collective_cliques,
       &collective_memory, std::move(compute_streams.streams),
-      &execution_scoped_state, persistent_alloc_indices);
+      &execution_scoped_state, persistent_alloc_indices,
+      launch_ordering.has_value() ? &*launch_ordering : nullptr);
 
   // device_to_host_stream/host_to_device_stream above come from run_options,
   // which are only populated when running through PJRT. Fall back to a
@@ -1393,7 +1420,7 @@ absl::Status GpuExecutable::ExecuteThunks(
       unique_id, *thunk_executor_, executable_source, run_options,
       buffer_allocations, block_host_until_done, persistent_alloc_indices,
       num_additional_streams_, collective_memory_cache_,
-      collective_use_minimal_resource_);
+      collective_use_minimal_resource_, explicit_launch_ordering_);
 }
 
 int64_t GpuExecutable::SizeOfGeneratedCodeInBytes() const {

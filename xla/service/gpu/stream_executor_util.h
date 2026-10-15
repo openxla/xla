@@ -106,7 +106,8 @@ absl::StatusOr<std::unique_ptr<se::Kernel>> CreateKernel(
 absl::Status ExecuteKernelOnStream(
     se::Kernel& kernel, absl::Span<const se::KernelArg> args,
     const LaunchDimensions& dims,
-    const std::optional<se::ClusterDim>& cluster_dim, se::Stream* stream);
+    const std::optional<se::ClusterDim>& cluster_dim, se::Stream* stream,
+    se::Event* launch_completion_event = nullptr);
 
 // Initializes `buffer` with random data on `stream`.
 // `rng_state` is an inout parameter for the pseudorandom generator state.

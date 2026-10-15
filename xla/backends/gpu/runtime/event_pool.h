@@ -42,6 +42,12 @@ class EventPool : public stream_executor::StreamExecutor::Resource,
   stream_executor::StreamExecutor* executor_;
 };
 
+// Launch-ordering events, kept apart from every other user of EventPool.
+class LaunchEventPool : public EventPool {
+ public:
+  using EventPool::EventPool;
+};
+
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_EVENT_POOL_H_

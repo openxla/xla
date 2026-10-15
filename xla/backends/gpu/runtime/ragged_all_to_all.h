@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/ragged_all_to_all_kernel.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/types.h"  // IWYU pragma: keep
@@ -63,7 +64,7 @@ absl::Status RunRaggedAllToAllKernel(
     se::DeviceAddressBase send_sizes_buffer,
     se::DeviceAddressBase output_offsets_buffer, int64_t num_outputs,
     int64_t num_updates_per_output, int64_t num_input_rows,
-    int64_t num_row_elements);
+    int64_t num_row_elements, se::Event* launch_completion_event = nullptr);
 
 absl::Status RunRaggedAllToAllWithSymmetricMemoryKernel(
     se::Stream* stream, PrimitiveType element_type,
@@ -73,7 +74,7 @@ absl::Status RunRaggedAllToAllWithSymmetricMemoryKernel(
     se::DeviceAddressBase send_sizes_buffer,
     se::DeviceAddressBase output_offsets_buffer, int64_t num_outputs,
     int64_t num_updates_per_output, int64_t num_input_rows,
-    int64_t num_row_elements);
+    int64_t num_row_elements, se::Event* launch_completion_event = nullptr);
 
 absl::Status RunDeviceRaggedAllToAllKernel(
     se::Stream* stream, PrimitiveType element_type,
@@ -83,7 +84,8 @@ absl::Status RunDeviceRaggedAllToAllKernel(
     se::DeviceAddressBase output_offsets_buffer, int64_t num_ranks,
     int64_t num_updates_per_replica, int64_t num_row_elements,
     int64_t cta_count, int64_t input_buffer_offset_bytes,
-    int64_t output_buffer_offset_bytes);
+    int64_t output_buffer_offset_bytes,
+    se::Event* launch_completion_event = nullptr);
 
 }  // namespace xla::gpu
 

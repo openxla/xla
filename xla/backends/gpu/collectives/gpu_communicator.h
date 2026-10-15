@@ -182,6 +182,11 @@ class GpuCommunicator : public Communicator {
   // network transfers to remote (non-LSA) peers.
   virtual bool SupportsGin() const { return false; }
 
+  // Returns true if the communicator records the launch-completion event it
+  // is handed. A backend that ignores the event must answer false, or callers
+  // will order work against a record that never happens.
+  virtual bool SupportsLaunchCompletion() const { return false; }
+
   // Returns the size of the load/store accessible communication domain (LSA).
   // If LSA is not supported, returns std::nullopt.
   virtual std::optional<int> LsaSize() const { return std::nullopt; }
