@@ -2618,6 +2618,7 @@ xla_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
     ],
 )
@@ -2724,6 +2725,7 @@ xla_test(
     backends = ["gb200"],
     deps = [
         ":gpu_executable_proto_cc",
+        "//xla:autotune_cache_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/autotuner:in_memory_store",
         "//xla/backends/gpu/target_config",
@@ -3031,6 +3033,7 @@ xla_cc_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:errors",
         "@tsl//tsl/platform:statusor",
     ],
@@ -3778,6 +3781,7 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/log:check",
+        "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
     ],
 )

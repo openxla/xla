@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_spmd_pipeline.h"
 
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 #include <cstdint>
 #include <memory>
