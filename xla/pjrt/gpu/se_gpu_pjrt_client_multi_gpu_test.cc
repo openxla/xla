@@ -30,10 +30,13 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
+#include "absl/base/log_severity.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
+#include "absl/log/globals.h"
 #include "absl/log/log.h"
+#include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -62,6 +65,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/distributed.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/distributed/service.h"
+#include "xla/pjrt/gpu/allocator_config.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -87,6 +91,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -118,6 +123,103 @@ using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
 using ::testing::Not;
 using ::testing::TestWithParam;
+
+#if GOOGLE_CUDA
+TEST(StreamExecutorGpuClientTest,
+     CommandBufferSkipProfiledStagesCollectiveOutputs) {
+  ASSERT_OK_AND_ASSIGN(auto* platform, PlatformUtil::GetPlatform("CUDA"));
+  ASSERT_OK_AND_ASSIGN(auto* executor, platform->ExecutorForDevice(0));
+  if (!executor->GetDeviceDescription()
+           .cuda_compute_capability()
+           .IsAtLeastHopper()) {
+    GTEST_SKIP() << "This test requires at least a Hopper GPU (SM 9.0).";
+  }
+  static constexpr char kHlo[] = R"(
+    HloModule staged_collective_output_test, replica_count=2
+    sum {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT result = f32[] add(lhs, rhs)
+    }
+    ENTRY main {
+      input = f32[1024]{0} parameter(0)
+      ROOT output = f32[1024]{0} all-reduce(input),
+        replica_groups={{0,1}}, to_apply=sum
+    })";
+  GpuClientOptions client_options = GetTestGpuClientOptions(2);
+  client_options.allocator_config.kind = GpuAllocatorConfig::Kind::kVmm;
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(std::move(client_options)));
+  ASSERT_GE(client->addressable_devices().size(), 2);
+  CompileOptions options;
+  options.executable_build_options.set_num_replicas(2);
+  auto* debug_options =
+      options.executable_build_options.mutable_debug_options();
+  debug_options->set_xla_gpu_command_buffer_update_mode(
+      DebugOptions::SKIP_PROFILED);
+  debug_options->set_xla_gpu_graph_min_graph_size(1);
+  debug_options->clear_xla_gpu_experimental_use_collective_kernels();
+  debug_options->add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
+  debug_options->set_xla_gpu_command_buffer_staging_size_limit_bytes(
+      256 * 1024 * 1024);
+  debug_options->set_xla_gpu_command_buffer_staging_memory_limit_bytes(
+      256 * 1024 * 1024);
+  ASSERT_OK_AND_ASSIGN(auto executable,
+                       CompileExecutable(kHlo, *client, std::move(options)));
+  std::vector<std::unique_ptr<PjRtBuffer>> inputs;
+  for (int rank = 0; rank < 2; ++rank) {
+    ASSERT_OK_AND_ASSIGN(
+        auto* memory_space,
+        client->addressable_devices()[rank]->default_memory_space());
+    Literal input_literal =
+        LiteralUtil::CreateR1<float>(std::vector<float>(1024, rank + 1));
+    ASSERT_OK_AND_ASSIGN(
+        auto input, client->BufferFromHostLiteral(input_literal, memory_space));
+    // BufferFromHostLiteral borrows the literal until its transfer completes.
+    ASSERT_OK(input->GetReadyFuture().Await());
+    inputs.push_back(std::move(input));
+  }
+  int old_allocator_vlog =
+      absl::SetVLogLevel("gpu_executable_va_remap_allocator", 3);
+  int old_command_buffer_vlog = absl::SetVLogLevel("command_buffer_thunk", 3);
+  absl::Cleanup restore_vlog = [old_allocator_vlog, old_command_buffer_vlog] {
+    absl::SetVLogLevel("gpu_executable_va_remap_allocator", old_allocator_vlog);
+    absl::SetVLogLevel("command_buffer_thunk", old_command_buffer_vlog);
+  };
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(
+      mock_log,
+      Log(absl::LogSeverity::kInfo, ::testing::_,
+          ::testing::HasSubstr("staging 1 unstable output allocation(s)")))
+      .Times(2);
+  EXPECT_CALL(mock_log,
+              Log(absl::LogSeverity::kInfo, ::testing::_,
+                  ::testing::HasSubstr("Initialized command buffer on device")))
+      .Times(2);
+  EXPECT_CALL(mock_log, Log(absl::LogSeverity::kInfo, ::testing::_,
+                            ::testing::HasSubstr("Updated command buffer in")))
+      .Times(0);
+  mock_log.StartCapturingLogs();
+  std::vector<std::unique_ptr<PjRtBuffer>> retained_outputs;
+  for (int run = 0; run < 6; ++run) {
+    ASSERT_OK_AND_ASSIGN(
+        auto outputs,
+        executable->Execute({{inputs[0].get()}, {inputs[1].get()}}, {}));
+    ASSERT_EQ(outputs.size(), 2);
+    for (auto& rank_outputs : outputs) {
+      ASSERT_EQ(rank_outputs.size(), 1);
+      retained_outputs.push_back(std::move(rank_outputs[0]));
+    }
+  }
+  Literal expected =
+      LiteralUtil::CreateR1<float>(std::vector<float>(1024, 3.0f));
+  for (auto& output : retained_outputs) {
+    ASSERT_OK_AND_ASSIGN(auto literal, output->ToLiteral().Await());
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected, *literal));
+  }
+  mock_log.StopCapturingLogs();
+}
+#endif  // GOOGLE_CUDA
 
 TEST(StreamExecutorGpuClientTest, AsyncCopyToDevice) {
   ASSERT_OK_AND_ASSIGN(auto client,

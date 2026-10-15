@@ -520,6 +520,7 @@ xla_test(
     ],
     use_legacy_runtime = True,
     deps = [
+        ":allocator_config",
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_client_test_lib",
         ":se_gpu_topology_description",
@@ -567,6 +568,7 @@ xla_test(
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_description",
         "//xla/stream_executor:memory_space",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
