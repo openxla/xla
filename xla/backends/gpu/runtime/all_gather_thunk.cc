@@ -250,11 +250,12 @@ absl::Status RunAllGather(std::vector<DeviceBufferPair>& buffers,
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
   Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
     for (DeviceBufferPair& buffer : buffers) {
+      // NCCL takes one launch event per group, the last call carries it.
+      bool is_last = &buffer == &buffers.back();
       ABSL_RETURN_IF_ERROR(gpu_comm->LaunchAllGather(
           buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
           buffer.element_count,
-          GpuCollectives::OnGroupMember(stream, launch_event,
-                                        &buffer == &buffers.back())));
+          GpuCollectives::On(stream, is_last ? launch_event : nullptr)));
     }
     return absl::OkStatus();
   });

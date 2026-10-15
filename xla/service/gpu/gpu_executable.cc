@@ -900,8 +900,10 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   // A backend that records no launch event has nothing to order.
   std::optional<LaunchOrdering> launch_ordering;
   if (explicit_launch_ordering) {
-    if (collective_cliques.SupportsLaunchCompletion(
-            collective_params.global_device_id)) {
+    ABSL_ASSIGN_OR_RETURN(bool records_launch_completion,
+                          collective_cliques.SupportsLaunchCompletion(
+                              collective_params.global_device_id));
+    if (records_launch_completion) {
       se::StreamExecutor* device = main_stream->parent();
       launch_ordering.emplace(
           device->GetOrConstructResource<LaunchEventPool>(device));

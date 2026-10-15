@@ -95,11 +95,12 @@ absl::Status RunAllReduce(ReductionKind reduction_kind,
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
   Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
     for (DeviceBufferPair& buffer : buffers) {
+      // NCCL takes one launch event per group, the last call carries it.
+      bool is_last = &buffer == &buffers.back();
       ABSL_RETURN_IF_ERROR(gpu_comm->LaunchAllReduce(
           buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
           buffer.element_count, reduction_kind,
-          GpuCollectives::OnGroupMember(stream, launch_event,
-                                        &buffer == &buffers.back())));
+          GpuCollectives::On(stream, is_last ? launch_event : nullptr)));
     }
     return absl::OkStatus();
   });
@@ -295,11 +296,12 @@ absl::Status RunReduceScatter(ReductionKind reduction_kind,
           << "Source buffer was not an exact multiple of the number of "
              "participants.";
 
+      // NCCL takes one launch event per group, the last call carries it.
+      bool is_last = &buffer == &buffers.back();
       ABSL_RETURN_IF_ERROR(gpu_comm->LaunchReduceScatter(
           buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
           buffer.element_count / num_ranks, reduction_kind,
-          GpuCollectives::OnGroupMember(stream, launch_event,
-                                        &buffer == &buffers.back())));
+          GpuCollectives::On(stream, is_last ? launch_event : nullptr)));
     }
     return absl::OkStatus();
   });

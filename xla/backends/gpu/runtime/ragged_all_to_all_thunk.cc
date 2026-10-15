@@ -922,7 +922,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllThunk::Record(
 
   ABSL_ASSIGN_OR_RETURN(
       bool peer_access_enabled,
-      execute_params.collective_cliques->peer_access_enabled(clique_key));
+      execute_params.collective_cliques->PeerAccessEnabled(clique_key));
   TF_RET_CHECK(peer_access_enabled)
       << "RaggedAllToAllThunk: Peer access must be enabled.";
 
@@ -1122,7 +1122,7 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
 
   ABSL_ASSIGN_OR_RETURN(
       bool peer_access_enabled,
-      params.collective_cliques->peer_access_enabled(clique_key));
+      params.collective_cliques->PeerAccessEnabled(clique_key));
 
   RaggedAllToAllStreamState* state =
       per_device_states_.Find(stream.parent()->device_ordinal());

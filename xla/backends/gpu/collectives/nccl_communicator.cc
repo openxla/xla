@@ -91,7 +91,6 @@ se::Stream* ToStream(const Communicator::Executor& executor) {
 
 #if NCCL_VERSION_CODE >= 23200
 struct CollConfig {
-  ncclCollConfig_t value = NCCL_COLLCONFIG_INITIALIZER;
   explicit CollConfig(const Communicator::Executor& executor) {
     se::Event* event =
         absl::down_cast<const GpuCollectives::Executor&>(executor)
@@ -102,6 +101,8 @@ struct CollConfig {
     }
   }
   operator const ncclCollConfig_t*() const { return &value; }  // NOLINT
+
+  ncclCollConfig_t value = NCCL_COLLCONFIG_INITIALIZER;
 };
 #define XLA_NCCL_COLL(coll, executor, ...)               \
   (SupportsLaunchCompletion()                            \

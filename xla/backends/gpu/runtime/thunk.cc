@@ -435,7 +435,9 @@ Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
 
 absl::StatusOr<se::Event*> Thunk::ExecuteParams::TakeLaunchEvent(
     const Thunk* thunk, se::Stream* stream) const {
-  if (launch_ordering == nullptr) return nullptr;
+  if (launch_ordering == nullptr) {
+    return nullptr;
+  }
   return launch_ordering->TakeLaunchEvent(stream, thunk->profile_annotation());
 }
 
