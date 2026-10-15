@@ -172,6 +172,10 @@ bool ModuleContainsLargeKeyValueSort(const HloModule& module);
 bool ModuleTestsFloatsForEquality(const HloModule& module);
 bool ComputationHasRng(const HloComputation* computation);
 
+// Returns whether a main thread computation of `module` starts an async chain
+// on the `sparsecore` thread, that is, whether it offloads to SparseCore.
+bool IsSparseCoreModule(const HloModule& module);
+
 }  // namespace hlo_isolation
 }  // namespace xla
 
