@@ -41,21 +41,29 @@ namespace gpu {
 namespace {
 
 struct CudaBandwidthSettings {
-  // Table for max system bandwidths GB/s for using NCCL's low latency
-  // algorithm. This is used for intra-node estimate.
+  // Single-node aggregate LL caps in GB/s. The fallback uses the Blackwell cap.
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/tuning/cost_model.cc#L192-L197
   static constexpr std::array<double, 5> kLowLatencyMaxBandwidths = {
-      39.0 /* Volta */,      87.7 /* Ampere */,    141.0 /* Hopper */,
-      141.0 /* Blackwell */, 141.0 /* next-gen */,
+      39.0 /* Volta */,          87.7 /* Ampere */,        141.0 /* Hopper */,
+      2 * 141.2 /* Blackwell */, 2 * 141.2 /* fallback */,
   };
 
   const std::vector<double>& GetIntraNodeBandwidths() const {
-    // Different tiers for intra-node bandwidth.
+    // NCCL topology-search bandwidths in GB/s, ascending for lower_bound.
+    // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/graph/search.cc#L1193
     static const absl::NoDestructor<std::vector<double>> kIntraNodeSpeeds(
         {3.0, 4.0, 5.0, 6.0, 7.0, 9.0, 10.0, 12.0, 15.0, 18.0, 20.0, 30.0,
          40.0});
-    // SM90 has different bandwidths.
+    // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/graph/search.cc#L1199
     static const absl::NoDestructor<std::vector<double>> kIntraNodeSpeedsSm90(
-        {3.0, 6.0, 12.0, 15.0, 20.0, 24.0, 30.0, 40.0, 60.0});
+        {3.0, 6.0, 11.0, 12.0, 15.0, 20.0, 24.0, 30.0, 40.0, 50.0, 60.0});
+    // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/graph/search.cc#L1205
+    static const absl::NoDestructor<std::vector<double>> kIntraNodeSpeedsSm100(
+        {18.0, 19.0, 20.0, 24.0, 30.0, 40.0, 45.0, 50.0, 60.0, 70.0, 80.0,
+         90.0});
+    if (compute_capability.major >= se::CudaComputeCapability::kBlackwell) {
+      return *kIntraNodeSpeedsSm100;
+    }
     return compute_capability.major >= se::CudaComputeCapability::kHopper
                ? *kIntraNodeSpeedsSm90
                : *kIntraNodeSpeeds;
@@ -96,11 +104,12 @@ struct CudaBandwidthSettings {
     }
   }
 
-  // Max bandwidth in GB/s for ring low latency 128 algorithm per channel on a
-  // single-node
+  // Single-node Ring LL128 caps in GB/s per graph channel.
+  // The fallback uses the Blackwell cap.
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/tuning/cost_model.cc#L201-L206
   static constexpr std::array<double, 5> kPerChannelMaxRingLL128Bandwidths = {
       20.0 /* Volta */,     20.0 /* Ampere */,   36.7 /* Hopper */,
-      36.7 /* Blackwell */, 36.7 /* next-gen */,
+      40.0 /* Blackwell */, 40.0 /* fallback */,
   };
 
   // Nvlink unidirectional bandwidth for different compute cap. Note this is per
@@ -109,13 +118,20 @@ struct CudaBandwidthSettings {
   static constexpr double kSm70NvlinkBandwidth = 20.0;
   static constexpr double kSm80NvlinkBandwidth = 20.0;
   static constexpr double kSm90NvlinkBandwidth = 20.0;
+  // NCCL 2.25.1's Blackwell topology-model bandwidth per NVLink, in GB/s.
+  // https://github.com/NVIDIA/nccl/blob/80f6bda4378b99d99e82b4d76a633791cc45fef0/src/graph/topo.h#L19
   static constexpr double kSm100NvlinkBandwidth = 40.0;
 
-  // Discount factor for ring algorithm
+  // Ring LL128 bandwidth discount.
+  // https://github.com/NVIDIA/nccl/blob/ea38312273e5b9a19a224c9ff4c10b7fcf441eaf/src/graph/tuning.cc#L179
   static constexpr double kRingAlgorithmDiscountFactor = 0.92;
 
-  // Maximum number of channels allowed by NCCL
-  static constexpr int64_t kMaxNumChannelsRing = 32;
+  // NCCL's compute-channel ceiling (MAXCHANNELS).
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/include/device.h#L80
+  static constexpr int64_t kMaxComputeChannels = 64;
+  // NCCL's Ring topology graph-search channel ceiling is MAXCHANNELS / 2.
+  // https://github.com/NVIDIA/nccl/blob/72a2f960a04e6a3e3ef1849a2563a2383f7baf46/src/init.cc#L1471
+  static constexpr int64_t kMaxNumChannelsRing = kMaxComputeChannels / 2;
 
   // ll128 is by default enabled for Volta, Ampere and Hopper, ll128 by default
   // launches 640 threads.
