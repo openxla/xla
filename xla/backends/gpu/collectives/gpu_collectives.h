@@ -105,19 +105,12 @@ class GpuCollectives : public Collectives {
 
    private:
     stream_executor::Stream* stream_;
-    stream_executor::Event* launch_event_ = nullptr;
+    stream_executor::Event* launch_event_;
   };
 
   static Executor On(se::Stream& stream,
                      stream_executor::Event* launch_event = nullptr) {
     return Executor(&stream, launch_event);
-  }
-
-  // NCCL takes one launch event per group, so only the last call carries it.
-  static Executor OnGroupMember(se::Stream& stream,
-                                stream_executor::Event* launch_event,
-                                bool is_last) {
-    return Executor(&stream, is_last ? launch_event : nullptr);
   }
 
   // GPU communicator configuration.

@@ -801,7 +801,7 @@ absl::Status RaggedAllToAllThunk::Initialize(const InitializeParams& params) {
 
         ABSL_ASSIGN_OR_RETURN(
             bool peer_access_enabled,
-            params.collective_cliques->peer_access_enabled(state->clique_key));
+            params.collective_cliques->PeerAccessEnabled(state->clique_key));
         state->kernel_strategy = SelectKernelStrategy(
             *state, params.local_device_count, peer_access_enabled);
 
