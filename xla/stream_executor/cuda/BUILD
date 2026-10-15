@@ -3514,18 +3514,14 @@ xla_cc_test(
     ],
 )
 
-xla_cc_test(
+xla_test(
     name = "bfc_allocator_multigpu_test",
     timeout = "moderate",
     srcs = ["bfc_allocator_multigpu_test.cc"],
-    tags = [
-        "cuda-only",
-        "gpu",
-        "multi_gpu",
-        "requires-gpu-nvidia",
-    ],
+    backend_tags = {"gpu": ["multi_gpu"]},
+    backends = ["gpu"],
+    tags = ["cuda-only"],
     deps = [
-        ":cuda_platform",
         ":cuda_platform_id",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:platform",
@@ -3534,6 +3530,24 @@ xla_cc_test(
         "//xla/stream_executor/gpu:gpu_executor_header",
         "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/tsl/cuda:nccl",
+        "//xla/tsl/framework:bfc_allocator",
+        "//xla/tsl/framework:device_id",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cuda_headers",
+    ] + if_google(["//xla/tsl/framework:allocator"]),
+)
+
+xla_test(
+    name = "bfc_allocator_test",
+    srcs = ["bfc_allocator_test.cc"],
+    backends = ["gpu"],
+    tags = ["cuda-only"],
+    deps = [
+        ":cuda_platform_id",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/integrations:device_mem_allocator",
         "//xla/tsl/framework:bfc_allocator",
         "//xla/tsl/framework:device_id",
         "@com_google_googletest//:gtest_main",

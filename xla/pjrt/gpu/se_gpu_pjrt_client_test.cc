@@ -15,10 +15,8 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -32,6 +30,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/log_severity.h"
@@ -55,9 +55,9 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "google/protobuf/text_format.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
 #include "xla/backends/gpu/ffi.h"
@@ -3047,11 +3047,21 @@ TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
 }
 
 // Parses `flags` as XLA_FLAGS for the lifetime of the object and restores the
-// default flag values on destruction. nullptr parses with XLA_FLAGS unset.
+// original flag values on destruction. nullptr parses with XLA_FLAGS unset.
 class ScopedXlaFlags {
  public:
-  explicit ScopedXlaFlags(const char* flags) { Apply(flags); }
-  ~ScopedXlaFlags() { Apply(nullptr); }
+  explicit ScopedXlaFlags(const char* flags) {
+    if (const char* original = std::getenv("XLA_FLAGS")) {
+      original_flags_ = original;
+    }
+    Apply(flags);
+  }
+  ~ScopedXlaFlags() {
+    Apply(original_flags_ ? original_flags_->c_str() : nullptr);
+  }
+
+  ScopedXlaFlags(const ScopedXlaFlags&) = delete;
+  ScopedXlaFlags& operator=(const ScopedXlaFlags&) = delete;
 
  private:
   static void Apply(const char* flags) {
@@ -3066,7 +3076,54 @@ class ScopedXlaFlags {
     ResetFlagValues();
     ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
   }
+
+  std::optional<std::string> original_flags_;
 };
+
+TEST(ScopedXlaFlagsTest, RestoresNestedFlags) {
+  ScopedXlaFlags outer("--xla_gpu_memory_fraction_policy=0.85");
+  {
+    ScopedXlaFlags inner("--xla_gpu_memory_fraction_policy=0.5+");
+    EXPECT_EQ(GetDebugOptionsFromFlags().xla_gpu_memory_fraction_policy(),
+              "0.5+");
+  }
+  EXPECT_STREQ(std::getenv("XLA_FLAGS"),
+               "--xla_gpu_memory_fraction_policy=0.85");
+  EXPECT_EQ(GetDebugOptionsFromFlags().xla_gpu_memory_fraction_policy(),
+            "0.85");
+}
+
+TEST(ScopedXlaFlagsTest, RestoresUnsetAndEmptyFlags) {
+  for (const char* original : {static_cast<const char*>(nullptr), ""}) {
+    ScopedXlaFlags outer(original);
+    {
+      ScopedXlaFlags inner("--xla_gpu_memory_fraction_policy=0.5+");
+      EXPECT_EQ(GetDebugOptionsFromFlags().xla_gpu_memory_fraction_policy(),
+                "0.5+");
+    }
+    EXPECT_STREQ(std::getenv("XLA_FLAGS"), original);
+    EXPECT_TRUE(
+        GetDebugOptionsFromFlags().xla_gpu_memory_fraction_policy().empty());
+  }
+}
+
+// Choose a representable fraction whose byte conversion does not undershoot
+// the requested cap. This avoids losing a granule to division/multiplication
+// round-off while leaving the allocator's strict downward rounding unchanged.
+double MemoryFractionForBytes(int64_t bytes, int64_t total_memory) {
+  double fraction = static_cast<double>(bytes) / total_memory;
+  while (static_cast<int64_t>(total_memory * fraction) < bytes) {
+    fraction = std::nextafter(fraction, 1.0);
+  }
+  return fraction;
+}
+
+TEST(MemoryFractionForBytesTest, PreservesAlignedCapAtRoundOffBoundary) {
+  constexpr int64_t kTotal = int64_t{66199} << 20;
+  constexpr int64_t kCap = 16 << 20;
+  const double fraction = MemoryFractionForBytes(kCap, kTotal);
+  EXPECT_EQ(static_cast<int64_t>(kTotal * fraction), kCap);
+}
 
 bool SharedSpatialPoolIsDefault(const DebugOptions& debug_options) {
   return debug_options.xla_gpu_enable_allocator_spatial_partitioning() &&
@@ -3091,9 +3148,7 @@ TEST(StreamExecutorGpuClientTest, CrossMappingReceiveNotifiesFailure) {
   GpuClientOptions options = GetTestGpuClientOptions(1);
   options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
   options.allocator_config.gpu_system_memory_size = initial_bytes;
-  // The byte of slack avoids rounding below the cap in the fraction's
-  // floating-point conversion. The allocator rounds down to a whole granule.
-  const double cap = static_cast<double>(cap_bytes + 1) / total_memory;
+  const double cap = MemoryFractionForBytes(cap_bytes, total_memory);
   options.allocator_config.memory_fraction_policy =
       FlexMemFraction{cap / 2, cap};
   ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
@@ -3129,6 +3184,57 @@ TEST(StreamExecutorGpuClientTest, CrossMappingReceiveNotifiesFailure) {
   }
 }
 #endif  // GOOGLE_CUDA
+
+TEST(StreamExecutorGpuClientTest,
+     MemoryFractionOverrideSizesSeparateCollectivePool) {
+  ASSERT_OK_AND_ASSIGN(auto* platform, PlatformUtil::GetDefaultPlatform());
+  ASSERT_OK_AND_ASSIGN(auto* executor, platform->ExecutorForDevice(0));
+  int64_t free_memory = 0;
+  int64_t total_memory = 0;
+  ASSERT_TRUE(executor->DeviceMemoryUsage(&free_memory, &total_memory));
+  // Leave a small collective budget so testing its boundary needs little GPU
+  // memory, even if the override is accidentally ignored.
+  constexpr double kFraction = 0.9999;
+  constexpr int64_t kGranularity = 2 << 20;
+  const int64_t collective_limit = RoundUpTo<int64_t>(
+      static_cast<int64_t>(total_memory * (1.0 - kFraction)), kGranularity);
+  constexpr int kCollective =
+      static_cast<int>(gpu::MemorySpaceColor::kCollective);
+  // Both configurations create separate pools: no preallocation, or no
+  // spatial partitioning. Explicit collective sizes must still take priority.
+  for (bool preallocate : {false, true}) {
+    ScopedXlaFlags flags(
+        preallocate ? "--xla_gpu_memory_fraction_policy=0.9999 "
+                      "--xla_gpu_enable_allocator_spatial_partitioning=false "
+                      "--xla_gpu_command_buffer_update_mode=ALWAYS_UPDATE"
+                    : "--xla_gpu_memory_fraction_policy=0.9999 "
+                      "--xla_gpu_enable_allocator_spatial_partitioning=true "
+                      "--xla_gpu_command_buffer_update_mode=ALWAYS_UPDATE");
+    for (bool explicit_collective_size : {false, true}) {
+      SCOPED_TRACE(preallocate);
+      SCOPED_TRACE(explicit_collective_size);
+      GpuClientOptions options = GetTestGpuClientOptions(1);
+      options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
+      options.allocator_config.preallocate = preallocate;
+      options.allocator_config.memory_fraction_policy = FixedMemFraction{0.75};
+      // Keep the default pool small; only the collective limit is under test.
+      options.allocator_config.gpu_system_memory_size = 8 << 20;
+      if (explicit_collective_size) {
+        options.allocator_config.collective_memory_size =
+            collective_limit + (8 << 20);
+      }
+      ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+      auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+          absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+      auto* allocator = raw_client->allocator();
+      auto over_fraction_limit =
+          allocator->Allocate(0, collective_limit + kGranularity,
+                              /*retry_on_failure=*/false, kCollective);
+      EXPECT_EQ(over_fraction_limit.ok(), explicit_collective_size)
+          << over_fraction_limit.status();
+    }
+  }
+}
 
 TEST(StreamExecutorGpuClientTest, SharedPoolGrowthRequiresOptIn) {
   const DebugOptions debug_options = GetDebugOptionsFromFlags();
@@ -3236,7 +3342,7 @@ TEST(StreamExecutorGpuClientTest, SharedPoolGrowthCapLimitsExtension) {
   GpuClientOptions options;
   options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
   options.allocator_config.gpu_system_memory_size = kInitialBytes;
-  const double cap = static_cast<double>(kCapBytes) / total_memory;
+  const double cap = MemoryFractionForBytes(kCapBytes, total_memory);
   options.allocator_config.memory_fraction_policy =
       FlexMemFraction{cap / 2, cap};
   options.allowed_devices = {0};
