@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/c/pjrt_c_api_xla_transform_extension.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/xla_transform.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/errors.h"
@@ -74,6 +75,9 @@ class CApiXlaTransformAdapter : public HloXlaTransform {
     args.header.has_error = false;
     args.hlo_module.data = serialized_proto.data();
     args.hlo_module.size = serialized_proto.size();
+    absl::string_view fdo_profile = module->config().fdo_profile();
+    args.fdo_profile.data = fdo_profile.data();
+    args.fdo_profile.size = fdo_profile.size();
 
     if (callbacks_->transform_hlo_module == nullptr) {
       return absl::InternalError("transform_hlo_module callback is null");
