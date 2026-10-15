@@ -921,6 +921,23 @@ message HloModuleMetadataProto {
 
   // Metadata for the HLO passes that are run on the module.
   repeated HloPassMetadata pass_metadata = 5;
+
+  // Decisions recorded by passes, in the order they were added.
+  repeated HloPassDecisionRecord decision_records = 6;
+}
+
+// A decision made by one run of an HLO pass, kept for tools that read it after
+// compilation, e.g. to collect training data for learned heuristics. Unlike
+// `HloPassMetadata.custom_metadata`, which holds one statistics message per
+// pass run, a pass may add any number of records and they may be large.
+message HloPassDecisionRecord {
+  // Identify the pass run that added the record, as in HloPassMetadata.
+  int64 pass_id = 1;
+  string pass_name = 2;
+  string pipeline_name = 3;
+
+  // Pass specific description of the decision.
+  google.protobuf.Any payload = 4;
 }
 
 // Metadata for one run of an HLO pass on a module. Provides more information
