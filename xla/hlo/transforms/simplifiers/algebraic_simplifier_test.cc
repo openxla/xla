@@ -2755,8 +2755,13 @@ TEST_F(AlgebraicSimplifierTest, LhsDivOfDiv) {
               GmockMatch(m::Divide(m::Divide(m::Parameter(0), m::Parameter(1)),
                                    m::Parameter(2))));
 
-  AlgebraicSimplifier simplifier(default_options_);
-  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_fast_math(true);
+  ASSERT_THAT(AlgebraicSimplifier(options).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
 
   EXPECT_THAT(
       computation->root_instruction(),
@@ -2787,8 +2792,13 @@ TEST_F(AlgebraicSimplifierTest, RhsDivOfDiv) {
       GmockMatch(m::Divide(m::Parameter(0),
                            m::Divide(m::Parameter(1), m::Parameter(2)))));
 
-  AlgebraicSimplifier simplifier(default_options_);
-  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_fast_math(true);
+  ASSERT_THAT(AlgebraicSimplifier(options).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
 
   EXPECT_THAT(
       computation->root_instruction(),
@@ -2823,8 +2833,13 @@ TEST_F(AlgebraicSimplifierTest, DivOfDivAndDiv) {
       GmockMatch(m::Divide(m::Divide(m::Parameter(0), m::Parameter(1)),
                            m::Divide(m::Parameter(2), m::Parameter(3)))));
 
-  AlgebraicSimplifier simplifier(default_options_);
-  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_fast_math(true);
+  ASSERT_THAT(AlgebraicSimplifier(options).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
 
   EXPECT_THAT(
       computation->root_instruction(),
