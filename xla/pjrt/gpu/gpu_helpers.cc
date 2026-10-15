@@ -35,7 +35,6 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/numbers.h"
 #include "xla/client/client_library.h"
 #include "xla/client/local_client.h"
 #include "xla/pjrt/gpu/allocator_config.h"
@@ -52,6 +51,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
+#include "tsl/platform/numbers.h"
 
 namespace xla {
 
