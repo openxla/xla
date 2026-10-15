@@ -26,10 +26,9 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/collectives/collective_combiner_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/gpu_collective_combiner_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/transforms/collectives/reduce_scatter_combiner.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_domain_map.h"
-#include "xla/service/reduce_scatter_combiner.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
@@ -104,8 +103,8 @@ absl::StatusOr<bool> GpuReduceScatterCombiner::RunImpl(
   if (auto suggested_threshold = SuggestedCombinerThreshold(*module)) {
     combine_threshold_in_bytes_ = *suggested_threshold;
     ABSL_ASSIGN_OR_RETURN(bool combined,
-                     RunWithKeyCombiner(module, execution_threads,
-                                        CustomCombinerKey, post_combine));
+                          RunWithKeyCombiner(module, execution_threads,
+                                             CustomCombinerKey, post_combine));
     changed |= combined;
   }
 
@@ -113,8 +112,8 @@ absl::StatusOr<bool> GpuReduceScatterCombiner::RunImpl(
   // synchronous collectives.
   combine_threshold_in_bytes_ = default_combine_threshold_in_bytes_;
   ABSL_ASSIGN_OR_RETURN(bool combined,
-                   RunWithKeyCombiner(module, execution_threads,
-                                      DefaultCombinerKey, post_combine));
+                        RunWithKeyCombiner(module, execution_threads,
+                                           DefaultCombinerKey, post_combine));
   changed |= combined;
   return changed;
 }

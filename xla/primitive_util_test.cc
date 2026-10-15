@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/primitive_util.h"
 
+#include <gtest/gtest.h>
+
 #include <initializer_list>
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/test.h"
@@ -198,6 +199,27 @@ TEST(PrimitiveUtilTest, CastPreservesValues) {
           << primitive_util::LowercasePrimitiveTypeName(from_type) << " -> "
           << primitive_util::LowercasePrimitiveTypeName(to_type);
     }
+  }
+}
+
+TEST(PrimitiveUtilTest, ByteWidthTypeSwitch) {
+  for (int type_int = PrimitiveType_MIN; type_int < PrimitiveType_ARRAYSIZE;
+       ++type_int) {
+    auto type = static_cast<PrimitiveType>(type_int);
+    if (!primitive_util::IsArrayType(type)) {
+      continue;
+    }
+    int byte_width = primitive_util::ByteWidthTypeSwitch(
+        [](auto primitive_type_constant) -> int {
+          using NativeT = primitive_util::NativeTypeOf<primitive_type_constant>;
+          static_assert(primitive_util::IsArrayType(primitive_type_constant));
+          static_assert(sizeof(NativeT) ==
+                        primitive_util::ByteWidth(primitive_type_constant));
+          return sizeof(NativeT);
+        },
+        type);
+    EXPECT_EQ(byte_width, primitive_util::ByteWidth(type))
+        << primitive_util::LowercasePrimitiveTypeName(type);
   }
 }
 

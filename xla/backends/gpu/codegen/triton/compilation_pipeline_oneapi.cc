@@ -16,11 +16,6 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/str_cat.h"
-#include "third_party/intel/include/Dialect/Triton/Transforms/Passes.h"
-#include "third_party/intel/include/Dialect/TritonIntelGPU/Transforms/Passes.h"
-#include "third_party/intel/include/TritonAnnotateModule/Passes.h"
-#include "third_party/intel/include/TritonGENToLLVM/Passes.h"
-#include "third_party/intel/include/TritonIntelGPUToLLVM/Passes.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/IndexToLLVM/IndexToLLVM.h"
@@ -28,11 +23,16 @@ limitations under the License.
 #include "mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
-#include "xla/stream_executor/device_description.h"
+#include "third_party/intel/include/Dialect/Triton/Transforms/Passes.h"
+#include "third_party/intel/include/Dialect/TritonIntelGPU/Transforms/Passes.h"
+#include "third_party/intel/include/TritonAnnotateModule/Passes.h"
+#include "third_party/intel/include/TritonGENToLLVM/Passes.h"
+#include "third_party/intel/include/TritonIntelGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonToTritonGPU/Passes.h"
 #include "triton/Dialect/Triton/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
+#include "xla/stream_executor/device_description.h"
 
 namespace xla {
 namespace gpu {

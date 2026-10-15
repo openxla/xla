@@ -347,8 +347,7 @@ struct Log1p {
         /* 285 */ { { 1.1082383e+13f, inf }, { inf, pi_2 }, 1.e+00f },
         /* 286 */ { { 6.1409603e+25f, inf }, { inf, pi_2 }, 1.e+00f },
         /* 287 */ { { max, inf }, { inf, pi_2 }, 1.e+00f },
-        /* 288 */ { { inf, inf }, { inf, pi_4 }, 1.e+00f }
-          // clang-format on
+        /* 288 */ { { inf, inf }, { inf, pi_4 }, 1.e+00f }  // clang-format on
       };
       return table;
     } else if constexpr (std::is_same_v<T, double>) {
@@ -657,8 +656,7 @@ struct Log1p {
         /* 285 */ { { 8.9589789687104559e+102, inf }, { inf, pi_2 }, 1.e+00 },
         /* 286 */ { { 4.0131652080900752e+205, inf }, { inf, pi_2 }, 1.e+00 },
         /* 287 */ { { max, inf }, { inf, pi_2 }, 1.e+00 },
-        /* 288 */ { { inf, inf }, { inf, pi_4 }, 1.e+00 }
-          // clang-format on
+        /* 288 */ { { inf, inf }, { inf, pi_4 }, 1.e+00 }  // clang-format on
       };
       return table;
     } else {
@@ -978,8 +976,7 @@ struct Tan {
         /* 285 */ { { 1.1082383e+13f, inf }, { zero, 1.e+00f }, 5.e-01f },
         /* 286 */ { { 6.1409603e+25f, inf }, { zero, 1.e+00f }, 5.e-01f },
         /* 287 */ { { max, inf }, { zero, 1.e+00f }, 5.e-01f },
-        /* 288 */ { { inf, inf }, { zero, 1.e+00f }, 5.e-01f }
-          // clang-format on
+        /* 288 */ { { inf, inf }, { zero, 1.e+00f }, 5.e-01f }  // clang-format on
       };
       return table;
     } else if constexpr (std::is_same_v<T, double>) {
@@ -1606,8 +1603,7 @@ struct Asin {
         /* 285 */ { { 1.1082383e+13f, inf }, { zero, inf }, 1.e+00f },
         /* 286 */ { { 6.1409603e+25f, inf }, { zero, inf }, 1.e+00f },
         /* 287 */ { { max, inf }, { zero, inf }, 1.e+00f },
-        /* 288 */ { { inf, inf }, { pi_4, inf }, 1.e+00f }
-          // clang-format on
+        /* 288 */ { { inf, inf }, { pi_4, inf }, 1.e+00f }  // clang-format on
       };
       return table;
     } else if constexpr (std::is_same_v<T, double>) {
@@ -1914,8 +1910,7 @@ struct Asin {
         /* 285 */ { { 8.9589789687104559e+102, inf }, { zero, inf }, 1.e+00 },
         /* 286 */ { { 4.0131652080900752e+205, inf }, { zero, inf }, 1.e+00 },
         /* 287 */ { { max, inf }, { zero, inf }, 1.e+00 },
-        /* 288 */ { { inf, inf }, { pi_4, inf }, 1.e+00 }
-          // clang-format on
+        /* 288 */ { { inf, inf }, { pi_4, inf }, 1.e+00 }  // clang-format on
       };
       return table;
     } else {
@@ -2236,8 +2231,7 @@ struct Asinh {
         /* 285 */ { { 1.1082383e+13f, inf }, { inf, pi_2 }, 1.e+00f },
         /* 286 */ { { 6.1409603e+25f, inf }, { inf, pi_2 }, 1.e+00f },
         /* 287 */ { { max, inf }, { inf, pi_2 }, 1.e+00f },
-        /* 288 */ { { inf, inf }, { inf, pi_4 }, 1.e+00f }
-          // clang-format on
+        /* 288 */ { { inf, inf }, { inf, pi_4 }, 1.e+00f }  // clang-format on
       };
       return table;
     } else if constexpr (std::is_same_v<T, double>) {
@@ -2544,8 +2538,7 @@ struct Asinh {
         /* 285 */ { { 8.9589789687104559e+102, inf }, { inf, pi_2 }, 1.e+00 },
         /* 286 */ { { 4.0131652080900752e+205, inf }, { inf, pi_2 }, 1.e+00 },
         /* 287 */ { { max, inf }, { inf, pi_2 }, 1.e+00 },
-        /* 288 */ { { inf, inf }, { inf, pi_4 }, 1.e+00 }
-          // clang-format on
+        /* 288 */ { { inf, inf }, { inf, pi_4 }, 1.e+00 }  // clang-format on
       };
       return table;
     } else {

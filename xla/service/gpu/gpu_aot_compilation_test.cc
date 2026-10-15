@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -150,7 +151,7 @@ std::string CreateTritonCustomCallBackendConfig() {
   // Create the backend_config for the triton custom call.
   const std::string kMLIRText = R"mlir(
     module {
-      tt.func public @add_one(%arg0: !tt.ptr<f32, 1> {tt.divisibility = 32 : i32}, %arg1: !tt.ptr<f32, 1> {tt.divisibility = 32 : i32}, %arg2: !tt.ptr<f32, 1> {tt.divisibility = 32 : i32}, %arg3: !tt.ptr<f32, 1> {tt.divisibility = 32 : i32}) {
+      tt.func public @add_one(%arg0: !tt.ptr<f32> {tt.divisibility = 32 : i32}, %arg1: !tt.ptr<f32> {tt.divisibility = 32 : i32}, %arg2: !tt.ptr<f32> {tt.divisibility = 32 : i32}, %arg3: !tt.ptr<f32> {tt.divisibility = 32 : i32}) {
         %0 = tt.get_program_id x : i32
         %1 = tt.load %arg0 {cache = 1 : i32, evict = 1 : i32, isVolatile = false} : !tt.ptr<f32>
         %2 = tt.load %arg1 {cache = 1 : i32, evict = 1 : i32, isVolatile = false} : !tt.ptr<f32>

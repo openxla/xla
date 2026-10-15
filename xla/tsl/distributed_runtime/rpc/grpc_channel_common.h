@@ -21,9 +21,9 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/distributed_runtime/rpc/grpc_util.h"
 #include "xla/tsl/platform/logging.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 

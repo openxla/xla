@@ -32,6 +32,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/builder/lib/arithmetic.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/lib/loops.h"
@@ -44,8 +46,6 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -795,7 +795,8 @@ XlaOp IgammaSeries(XlaOp ax, XlaOp x, XlaOp a, XlaOp enabled,
         FullLike(a, 0),
     };
 
-    ABSL_ASSIGN_OR_RETURN(vals, WhileLoopHelper(cond, body, vals, "igamma", &b));
+    ABSL_ASSIGN_OR_RETURN(vals,
+                          WhileLoopHelper(cond, body, vals, "igamma", &b));
     XlaOp ans = vals[3];
     XlaOp dans_da = vals[6];
     if (mode == VALUE) {
@@ -928,7 +929,8 @@ XlaOp IgammacContinuedFraction(XlaOp ax, XlaOp x, XlaOp a, XlaOp enabled,
                                c,        pkm1,     qkm1,     pkm2,     qkm2,
                                dpkm2_da, dqkm2_da, dpkm1_da, dqkm1_da, dans_da};
 
-    ABSL_ASSIGN_OR_RETURN(vals, WhileLoopHelper(cond, body, vals, "igammac", &b));
+    ABSL_ASSIGN_OR_RETURN(vals,
+                          WhileLoopHelper(cond, body, vals, "igammac", &b));
     ans = vals[1];
     if (mode == VALUE) {
       return ans * ax;
@@ -1109,22 +1111,28 @@ XlaOp RandomGammaGrad(XlaOp a, XlaOp x) {
 XlaOp Igammac(XlaOp a, XlaOp x) {
   auto& b = *a.builder();
   auto doit = [&b](XlaOp a, XlaOp x, PrimitiveType type) -> XlaOp {
-    XlaOp out_of_range = Or(Le(x, ScalarLike(x, 0)), Le(a, ScalarLike(a, 0)));
+    XlaOp is_nan = Or(IsNan(a), IsNan(x));
+    XlaOp x_is_zero = Eq(x, ScalarLike(x, 0));
+    XlaOp x_is_infinity =
+        Eq(x, ScalarLike(x, std::numeric_limits<float>::infinity()));
+    // Same domain as Igamma: x < 0 or a <= 0 is a domain error (NaN), while
+    // x == 0 is a valid boundary where igammac(a, 0) = 1.
+    XlaOp domain_error = Or(Lt(x, ScalarLike(x, 0)), Le(a, ScalarLike(a, 0)));
     XlaOp use_igamma = Or(Lt(x, ScalarLike(x, 1)), Lt(x, a));
     XlaOp ax = a * Log(x) - x - Lgamma(a);
     XlaOp underflow = Lt(ax, -Log(MaxFiniteValue(&b, type)));
-    XlaOp enabled = Not(Or(out_of_range, underflow));
+    XlaOp enabled = Not(Or(Or(Or(x_is_zero, domain_error), underflow), is_nan));
     ax = Exp(ax);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
     XlaOp result =
         Select(use_igamma,
                ScalarLike(a, 1) - IgammaSeries<VALUE>(
                                       ax, x, a, And(enabled, use_igamma), type),
                IgammacContinuedFraction<VALUE>(
                    ax, x, a, And(enabled, Not(use_igamma)), type));
-    XlaOp x_is_infinity =
-        Eq(x, ScalarLike(x, std::numeric_limits<float>::infinity()));
+    result = Select(x_is_zero, FullLike(result, 1), result);
     result = Select(x_is_infinity, ZerosLike(result), result);
-    return Select(out_of_range, FullLike(a, 1), result);
+    return Select(Or(domain_error, is_nan), FullLike(a, nan), result);
   };
   return b.ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     ABSL_ASSIGN_OR_RETURN(auto a_shape, b.GetShape(a));
@@ -1199,7 +1207,7 @@ XlaOp Acos(XlaOp x, const std::optional<ResultAccuracy>& result_accuracy,
   });
 }
 
-// asin(x) = 2 * atan(x / (1 + sqrt(1 - x^2)))
+// asin(x) = atan2(x, sqrt((1 - x) * (1 + x)))
 XlaOp Asin(XlaOp x, const std::optional<ResultAccuracy>& result_accuracy,
            bool expand) {
   if (!expand) {
@@ -1834,7 +1842,7 @@ static XlaOp LentzThompsonBarnettAlgorithm(
     };
 
     ABSL_ASSIGN_OR_RETURN(std::vector<XlaOp> partial_denominator,
-                     nth_partial_denominator(Zero(&b, U32), inputs, &b));
+                          nth_partial_denominator(Zero(&b, U32), inputs, &b));
     TF_RET_CHECK(partial_denominator.size() == 1);
     auto h = partial_denominator[0];
     auto small_constant = FullLike(h, small);
@@ -1848,7 +1856,7 @@ static XlaOp LentzThompsonBarnettAlgorithm(
     values[kHIdx] = h;
     std::copy(inputs.begin(), inputs.end(), values.begin() + kFirstInputIdx);
     ABSL_ASSIGN_OR_RETURN(values, WhileLoopHelper(while_cond_fn, while_body_fn,
-                                             values, name, &b));
+                                                  values, name, &b));
     return values[kHIdx];
   });
 }

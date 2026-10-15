@@ -15,12 +15,12 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
 
-#include "ynnpack/include/ynnpack.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/statusor.h"
 #include "xla/primitive_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "ynnpack/include/ynnpack.h"
 
 namespace xla::cpu {
 
@@ -42,7 +42,7 @@ absl::StatusOr<YnnThreadpool> CreateYnnThreadpool(
     absl::FunctionRef<ynn_status(ynn_threadpool_t*)> builder) {
   ynn_threadpool_t threadpool = nullptr;
   YNN_RETURN_IF_ERROR(builder(&threadpool));
-  return YnnThreadpool(threadpool);
+  return YnnThreadpool(threadpool, ynn_delete_threadpool);
 }
 
 absl::StatusOr<ynn_type> YnnType(const PrimitiveType& type) {

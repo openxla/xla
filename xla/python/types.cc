@@ -32,9 +32,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/ndarray.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/ndarray.h"          // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "xla/layout.h"
 #include "xla/literal.h"
@@ -537,34 +537,31 @@ absl::StatusOr<nb::object> LiteralToPython(
   xla::Literal& m = *literal;
   if (m.shape().IsTuple()) {
     std::vector<Literal> elems = m.DecomposeTuple();
-    std::vector<nb::object> arrays(elems.size());
+    nb::tuple_builder result(elems.size());
     for (int i = 0; i < elems.size(); ++i) {
       ABSL_ASSIGN_OR_RETURN(
-          arrays[i],
+          nb::object array,
           LiteralToPython(std::make_unique<Literal>(std::move(elems[i]))));
+      result.put(std::move(array));
     }
-    nb::tuple result = nb::steal<nb::tuple>(PyTuple_New(elems.size()));
-    for (int i = 0; i < elems.size(); ++i) {
-      PyTuple_SET_ITEM(result.ptr(), i, arrays[i].release().ptr());
-    }
-    return result;
+    return result.commit();
   }
   TF_RET_CHECK(m.shape().IsArray());
 
   nb::object literal_object = nb::cast(literal);
   ABSL_ASSIGN_OR_RETURN(nb_dtype dtype,
-                   PrimitiveTypeToNbDtype(m.shape().element_type()));
+                        PrimitiveTypeToNbDtype(m.shape().element_type()));
   return nb_numpy_ndarray(dtype, m.shape().dimensions(),
                           ByteStridesForShape(m.shape()), m.untyped_data(),
                           literal_object);
 }
 
 nb::tuple MutableSpanToNbTuple(absl::Span<nb::object> xs) {
-  nb::tuple out = nb::steal<nb::tuple>(PyTuple_New(xs.size()));
-  for (int i = 0; i < xs.size(); ++i) {
-    PyTuple_SET_ITEM(out.ptr(), i, xs[i].release().ptr());
+  nb::tuple_builder out(xs.size());
+  for (nb::object& x : xs) {
+    out.put(std::move(x));
   }
-  return out;
+  return out.commit();
 }
 
 std::optional<CastToArrayResult> CastToArray(nb::handle h) {

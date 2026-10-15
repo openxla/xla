@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 
-#include <utility>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <utility>
+
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/stream_executor/dnn.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
@@ -371,8 +371,8 @@ ENTRY main {
   ROOT %result = f16[128,128] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
       lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_TRUE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
       test_module->entry_computation()->root_instruction())));
 }
@@ -387,8 +387,8 @@ ENTRY main {
   ROOT %result = f16[128,128] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
       lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_FALSE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
       test_module->entry_computation()->root_instruction())));
 }
@@ -403,8 +403,8 @@ ENTRY main {
   ROOT %result = f16[128,128] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
       lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_FALSE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
       test_module->entry_computation()->root_instruction())));
 }
@@ -421,8 +421,8 @@ ENTRY main {
   ROOT %result = f16[16,32]{1,0} scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
       lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_FALSE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
       test_module->entry_computation()->root_instruction())));
 }
@@ -438,8 +438,8 @@ ENTRY main {
   ROOT %result = f16[128,128] scaled-dot(%lhs_bc, %rhs, %lhs_scale, %rhs_scale),
       lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_FALSE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
       test_module->entry_computation()->root_instruction())));
 }
@@ -465,8 +465,8 @@ ENTRY main {
       kind=kCustom, calls=fusion,
       backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   ASSERT_IS_OK(CudnnScaledDotHelper::AddScaleSwizzle(Cast<HloFusionInstruction>(
       test_module->entry_computation()->root_instruction())));
 
@@ -511,8 +511,8 @@ ENTRY main {
       kind=kCustom, calls=fusion,
       backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   ASSERT_IS_OK(CudnnScaledDotHelper::AddScaleSwizzle(Cast<HloFusionInstruction>(
       test_module->entry_computation()->root_instruction())));
 
@@ -559,8 +559,8 @@ ENTRY main {
       kind=kCustom, calls=fusion,
       backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   ASSERT_IS_OK(CudnnScaledDotHelper::AddScaleSwizzle(Cast<HloFusionInstruction>(
       test_module->entry_computation()->root_instruction())));
 

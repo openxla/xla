@@ -22,6 +22,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/str_cat.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/stringpiece.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/cloud/curl_http_request.h"
 #include "xla/tsl/platform/errors.h"
@@ -29,8 +31,6 @@ limitations under the License.
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/stringpiece.h"
 
 namespace tsl {
 

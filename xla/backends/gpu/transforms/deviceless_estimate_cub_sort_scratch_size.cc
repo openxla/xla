@@ -47,7 +47,7 @@ DevicelessEstimateCubSortScratchSize::CalculateDevicelessScratchSize(
     HloCustomCallInstruction* custom_call, const Shape& key_shape,
     bool is_pairs, int64_t num_items, int64_t batch_size) {
   ABSL_ASSIGN_OR_RETURN(const CubScratchSizeDevicelessLookup& registry,
-                   CubScratchSizeDevicelessLookup::GetInstance());
+                        CubScratchSizeDevicelessLookup::GetInstance());
 
   int32_t key_type_size =
       ShapeUtil::ByteSizeOfPrimitiveType(key_shape.element_type());
@@ -79,14 +79,15 @@ absl::Status DevicelessEstimateCubSortScratchSize::RunOnSortInstruction(
   bool is_pairs = custom_call->operand_count() == 2;
   int64_t num_items = Product(key_shape.dimensions());
   int64_t batch_size = num_items / key_shape.dimensions().back();
-  ABSL_ASSIGN_OR_RETURN(int64_t scratch_size, CalculateDevicelessScratchSize(
-                                             custom_call, key_shape, is_pairs,
-                                             num_items, batch_size));
+  ABSL_ASSIGN_OR_RETURN(
+      int64_t scratch_size,
+      CalculateDevicelessScratchSize(custom_call, key_shape, is_pairs,
+                                     num_items, batch_size));
 
   absl::string_view ffi_target =
       is_pairs ? kCubDeviceRadixSortPairsTarget : kCubDeviceRadixSortKeysTarget;
   ABSL_ASSIGN_OR_RETURN(SortOptions sort_options,
-                   custom_call->backend_config<SortOptions>());
+                        custom_call->backend_config<SortOptions>());
   return CreateCubSortCustomCall(custom_call, scratch_size, ffi_target,
                                  sort_options.descending(), batch_size);
 }

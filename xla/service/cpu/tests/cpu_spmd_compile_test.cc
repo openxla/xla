@@ -23,7 +23,6 @@ limitations under the License.
 #include "xla/service/cpu/test_target_triple_helper.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/test.h"
 
 namespace xla {
@@ -34,7 +33,7 @@ class CpuSpmdCompileTest : public HloTestBase {};
 
 TEST_F(CpuSpmdCompileTest, SinglePartition) {
   // Module with "Sharding" custom call and use_spmd_partitioning enabled.
-  const char *const hlo_string = R"(
+  const char* const hlo_string = R"(
 HloModule module
 
 ENTRY entry {
@@ -47,13 +46,13 @@ ENTRY entry {
   HloModuleConfig config;
   config.set_use_spmd_partitioning(true);
   auto hlo_module = ParseAndReturnVerifiedModule(hlo_string, config);
-  TF_ASSERT_OK(hlo_module.status());
+  ASSERT_OK(hlo_module.status());
 
   // Verify that compilation succeeded.
   absl::StatusOr<std::unique_ptr<OpaqueExecutable>> executable =
       CreateExecutable(std::move(hlo_module.value()),
                        /*run_hlo_passes=*/true);
-  TF_EXPECT_OK(executable.status());
+  EXPECT_OK(executable.status());
 }
 
 }  // namespace

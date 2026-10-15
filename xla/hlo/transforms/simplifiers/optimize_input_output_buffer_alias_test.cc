@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/optimize_input_output_buffer_alias.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"

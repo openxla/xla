@@ -143,7 +143,8 @@ XlaOp SolveWithInvertedDiagonalBlocks(XlaOp a, XlaOp b, XlaOp inv_diag_blocks,
                                       PrecisionConfig::Precision precision) {
   XlaBuilder* builder = a.builder();
   return builder->ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
-    ABSL_ASSIGN_OR_RETURN(Shape blocks_shape, builder->GetShape(inv_diag_blocks));
+    ABSL_ASSIGN_OR_RETURN(Shape blocks_shape,
+                          builder->GetShape(inv_diag_blocks));
     ABSL_ASSIGN_OR_RETURN(Shape b_shape, builder->GetShape(b));
     int64_t block_size = ShapeUtil::GetDimension(blocks_shape, -1);
 
@@ -602,8 +603,8 @@ absl::StatusOr<HloInstruction*> TriangularSolveExpander::ExpandInstruction(
                          /*block_size=*/block_size_,
                          /*precision=*/PrecisionConfig::HIGHEST);
     ABSL_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build());
-    ABSL_ASSIGN_OR_RETURN(computation,
-                     XlaComputationToHloComputation(xla_computation, module));
+    ABSL_ASSIGN_OR_RETURN(
+        computation, XlaComputationToHloComputation(xla_computation, module));
   }
 
   return instruction->parent()->AddInstruction(HloInstruction::CreateCall(

@@ -23,12 +23,12 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/spmd/shard_barrier_partitioner.h"
 #include "xla/service/spmd/shardy/constants.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -86,7 +86,8 @@ absl::StatusOr<bool> ShardingRemover::RunImpl(
         auto copy = computation->AddInstruction(
             HloInstruction::CreateUnary(instruction->shape(), HloOpcode::kCopy,
                                         instruction->mutable_operand(0)));
-        ABSL_RETURN_IF_ERROR(computation->ReplaceInstruction(instruction, copy));
+        ABSL_RETURN_IF_ERROR(
+            computation->ReplaceInstruction(instruction, copy));
         instruction = copy;
       }
     }

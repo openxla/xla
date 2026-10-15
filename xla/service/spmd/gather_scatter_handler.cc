@@ -385,8 +385,10 @@ absl::StatusOr<HloInstruction*> PartitionGatherIndexPassthroughDimensions(
   if (passthrough_sharding.IsReplicatedOrSingleDevice()) {
     return nullptr;
   }
-  hlo_sharding_util::MergeShardingIfCompatible(output_sharding,
-                                               &passthrough_sharding);
+  hlo_sharding_util::MergeShardingIfCompatible(
+      hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
+          output_sharding, index_passthrough_dims.output_dims),
+      &passthrough_sharding);
   // Group shardings on index pass-through dimensions.
   const GroupedSharding output_grouped = hlo_sharding_util::GroupShardingOnDims(
       passthrough_sharding, index_passthrough_dims.output_dims);
@@ -409,10 +411,11 @@ absl::StatusOr<HloInstruction*> PartitionGatherIndexPassthroughDimensions(
   PartitionedHlo per_group_indices =
       PerGroupPartitionedHlo(indices, indices_grouped, b, clean_ups);
   const Shape pshape = GetPerGroupBaseShape(output_grouped, output_shape);
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * pgather,
-                   PartitionGather(gather, per_group_operand, per_group_indices,
-                                   pshape, output_grouped.sharding, batch_dims,
-                                   slice_sizes, visitor, allow_recursive));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * pgather,
+      PartitionGather(gather, per_group_operand, per_group_indices, pshape,
+                      output_grouped.sharding, batch_dims, slice_sizes, visitor,
+                      allow_recursive));
   pgather->set_sharding(passthrough_sharding);
   if (allow_recursive) {
     VLOG(5) << "[Gather partitioning]: Partitioned as index only";
@@ -464,10 +467,12 @@ absl::StatusOr<HloInstruction*> PartitionGatherOperandPassthroughDimensions(
         pslice_sizes[i] = operand.hlo()->shape().dimensions(i);
       }
     }
-    // Merge the sharding from the instruction with the sharding suggested from
-    // the operand sharding.
-    hlo_sharding_util::MergeShardingIfCompatible(output_sharding,
-                                                 &*maybe_passthrough);
+    // Merge non-grouping dimension shardings from output_sharding into the
+    // suggested passthrough sharding.
+    hlo_sharding_util::MergeShardingIfCompatible(
+        hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
+            output_sharding, output_grouping_dims),
+        &*maybe_passthrough);
     // Group shardings on operand pass-through dimensions.
     const GroupedSharding output_grouped =
         hlo_sharding_util::GroupShardingOnDims(*maybe_passthrough,
@@ -967,10 +972,11 @@ absl::StatusOr<HloInstruction*> PartitionGather(
     for (auto partition_method : GatherPartitionMethodsOrderedByCost(
              gather, operand, indices, output_shape, output_sharding,
              batch_dims, slice_sizes, visitor)) {
-      ABSL_ASSIGN_OR_RETURN(partitioned_gather,
-                       partition_method(gather, operand, indices, output_shape,
-                                        output_sharding, batch_dims,
-                                        slice_sizes, visitor, allow_recursive));
+      ABSL_ASSIGN_OR_RETURN(
+          partitioned_gather,
+          partition_method(gather, operand, indices, output_shape,
+                           output_sharding, batch_dims, slice_sizes, visitor,
+                           allow_recursive));
       if (partitioned_gather) {
         return partitioned_gather;
       }
@@ -1489,10 +1495,12 @@ absl::StatusOr<HloInstruction*> PartitionScatterOperandPassthroughDimensions(
         pslice_sizes[i] = operands[0].hlo()->shape().dimensions(i);
       }
     }
-    // Merge the sharding from update with the sharding suggested from the
-    // operand sharding.
-    hlo_sharding_util::MergeShardingIfCompatible(updates[0].sharding(),
-                                                 &*maybe_passthrough);
+    // Merge non-grouping dimension shardings from update_sharding into the
+    // suggested passthrough sharding.
+    hlo_sharding_util::MergeShardingIfCompatible(
+        hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
+            updates[0].sharding(), update_grouping_dims),
+        &*maybe_passthrough);
     // Group shardings on operand pass-through dimensions.
     const GroupedSharding update_grouped =
         hlo_sharding_util::GroupShardingOnDims(*maybe_passthrough,
@@ -1538,7 +1546,8 @@ absl::StatusOr<HloInstruction*> PartitionScatterOperandPassthroughDimensions(
 
 HloInstruction* SelectOperandForScatterIndexPassthroughDimensions(
     const HloScatterInstruction* scatter, const PartitionedHlo& indices,
-    const PartitionedHlo& per_group_operand, SpmdBuilder* b) {
+    const PartitionedHlo& per_group_operand,
+    absl::Span<const int64_t> index_passthrough_indices_dims, SpmdBuilder* b) {
   std::optional<ReductionKind> reduction_kind =
       MatchReductionComputation(scatter->to_apply());
   if (!reduction_kind) {
@@ -1553,17 +1562,26 @@ HloInstruction* SelectOperandForScatterIndexPassthroughDimensions(
   }
   HloInstruction* identity = CreateConstant(per_group_operand.hlo()->shape(),
                                             std::move(*identity_literal), b);
-  // Update partition_id for partial replicate.
+  // Update partition_id for partial replicate or non-passthrough sharded dims.
   auto partition_id = indices.state().partition_id;
-  if (indices.sharding().HasPartialReplication()) {
+  if (!indices.sharding().IsReplicatedOrSingleDevice()) {
     HloSharding tiled_sharding =
         indices.sharding().UseNamedShardingLeaf()
             ? HloSharding::V3ToV2Sharding(indices.sharding().named_sharding())
             : indices.sharding();
-    auto sharding_grouped = hlo_sharding_util::GroupShardingOnDims(
-        tiled_sharding, {tiled_sharding.SubgroupReplicationDim()});
-    partition_id =
-        GetInGroupPartitionId(partition_id, sharding_grouped.device_groups, b);
+    std::vector<int64_t> group_dims;
+    for (int64_t i = 0; i < tiled_sharding.num_dimensions(); ++i) {
+      if (tiled_sharding.dimension(i) > 1 &&
+          !absl::c_linear_search(index_passthrough_indices_dims, i)) {
+        group_dims.push_back(i);
+      }
+    }
+    if (!group_dims.empty()) {
+      auto sharding_grouped =
+          hlo_sharding_util::GroupShardingOnDims(tiled_sharding, group_dims);
+      partition_id = GetInGroupPartitionId(partition_id,
+                                           sharding_grouped.device_groups, b);
+    }
   }
   // To avoid accumulating the initial operand multiple times during all-reduce,
   // we use identity operands for all non-zero partitions.
@@ -1704,8 +1722,10 @@ absl::StatusOr<HloInstruction*> PartitionScatterIndexPassthroughDimensions(
   if (passthrough_sharding.IsReplicatedOrSingleDevice()) {
     return nullptr;
   }
-  hlo_sharding_util::MergeShardingIfCompatible(updates[0].sharding(),
-                                               &passthrough_sharding);
+  hlo_sharding_util::MergeShardingIfCompatible(
+      hlo_sharding_util::PartiallyReplicateTiledShardingOnDims(
+          updates[0].sharding(), index_passthrough_dims.output_dims),
+      &passthrough_sharding);
   const GroupedSharding update_grouped = hlo_sharding_util::GroupShardingOnDims(
       passthrough_sharding, index_passthrough_dims.output_dims);
   // See if we can group partially replicated dimensions from the operand
@@ -1728,8 +1748,9 @@ absl::StatusOr<HloInstruction*> PartitionScatterIndexPassthroughDimensions(
       PerGroupPartitionedHlo(operands[0], operand_grouped, b, clean_ups);
 
   HloInstruction* select_operand =
-      SelectOperandForScatterIndexPassthroughDimensions(scatter, indices,
-                                                        per_group_operand, b);
+      SelectOperandForScatterIndexPassthroughDimensions(
+          scatter, indices, per_group_operand,
+          index_passthrough_dims.indices_dims, b);
   if (select_operand == nullptr) {
     return nullptr;
   }
@@ -1995,10 +2016,11 @@ absl::StatusOr<HloInstruction*> PartitionScatter(
     for (auto partition_method : ScatterPartitionMethodsOrderedByCost(
              scatter, operands, indices, updates, output_shape, output_sharding,
              slice_sizes, visitor)) {
-      ABSL_ASSIGN_OR_RETURN(partitioned_scatter,
-                       partition_method(scatter, operands, indices, updates,
-                                        output_shape, output_sharding,
-                                        slice_sizes, visitor, allow_recursive));
+      ABSL_ASSIGN_OR_RETURN(
+          partitioned_scatter,
+          partition_method(scatter, operands, indices, updates, output_shape,
+                           output_sharding, slice_sizes, visitor,
+                           allow_recursive));
       if (partitioned_scatter) {
         return partitioned_scatter;
       }
@@ -2108,7 +2130,7 @@ absl::Status SpmdPartitioningVisitor::HandleScatterWithoutConflicts(
   if (indices.sharding().NumTiles(index_passthrough_dims.indices_dims) != 1 ||
       updates[0].sharding().NumTiles(index_passthrough_dims.output_dims) != 1) {
     select_operand = SelectOperandForScatterIndexPassthroughDimensions(
-        scatter, indices, operands[0], b);
+        scatter, indices, operands[0], index_passthrough_dims.indices_dims, b);
     if (!select_operand) {
       return absl::InternalError(
           "Failed to find a reduction identity for sharded scatter implicit "

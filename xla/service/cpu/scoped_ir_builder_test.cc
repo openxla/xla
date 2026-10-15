@@ -13,13 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "tsl/platform/test.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/service/cpu/ir_emitter.h"
 #include "xla/service/cpu/target_machine_features_stub.h"
 #include "xla/service/logical_buffer.h"
-#include "tsl/platform/test.h"
 
 namespace xla::cpu {
 namespace {

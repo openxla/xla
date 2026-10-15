@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/tsl/profiler/rpc/client/capture_profile.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <memory>
@@ -26,11 +27,16 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_join.h"
-#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/strip.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/profiler/protobuf/profiler_analysis.pb.h"
+#include "tsl/profiler/protobuf/profiler_options.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/profiler/convert/trace_events_to_json.h"
@@ -39,10 +45,6 @@ limitations under the License.
 #include "xla/tsl/profiler/rpc/client/remote_profiler_session_manager.h"
 #include "xla/tsl/profiler/rpc/client/save_profile.h"
 #include "xla/tsl/profiler/utils/session_manager.h"
-#include "tsl/platform/host_info.h"
-#include "tsl/profiler/protobuf/profiler_analysis.pb.h"
-#include "tsl/profiler/protobuf/profiler_options.pb.h"
-#include "tsl/profiler/protobuf/profiler_service.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -104,15 +106,31 @@ NewProfileSessionRequest PopulateNewProfileSessionRequest(
     absl::string_view repository_root, absl::string_view session_id,
     const RemoteProfilerSessionManagerOptions& opts) {
   NewProfileSessionRequest request;
-  std::vector<absl::string_view> parts =
-      absl::StrSplit(opts.service_addresses(0), ':');
-  DCHECK(!parts.empty());
+  absl::string_view host_port = opts.service_addresses(0);
+  absl::string_view host = host_port;
+  const size_t colon_pos = host_port.rfind(':');
+  const size_t close_bracket_pos = host_port.rfind(']');
+  const bool has_unbracketed_port =
+      close_bracket_pos == absl::string_view::npos &&
+      host_port.find(':') == colon_pos;
+  const bool has_bracketed_port =
+      close_bracket_pos != absl::string_view::npos &&
+      colon_pos > close_bracket_pos;
+  if (colon_pos != absl::string_view::npos &&
+      (has_unbracketed_port || has_bracketed_port)) {
+    host = host_port.substr(0, colon_pos);
+  }
+  if (absl::StartsWith(host, "[") && absl::EndsWith(host, "]")) {
+    host = absl::StripPrefix(host, "[");
+    host = absl::StripSuffix(host, "]");
+  }
+  DCHECK(!host.empty());
 
   *request.mutable_request() =
-      PopulateProfileRequest(repository_root, session_id, parts[0], opts);
+      PopulateProfileRequest(repository_root, session_id, host, opts);
   request.set_repository_root(repository_root.data(), repository_root.size());
   request.set_session_id(session_id.data(), session_id.size());
-  for (const auto& hostname : opts.service_addresses()) {
+  for (const std::string& hostname : opts.service_addresses()) {
     request.add_hosts(hostname);
   }
   return request;
@@ -156,8 +174,8 @@ absl::Status Profile(const std::string& repository_root,
       // repository. This improves backward compatibility by reducing assumption
       // of what server side does.
       ABSL_RETURN_IF_ERROR(SaveProfile(repository_root, session_id,
-                                  client_response.service_address, response,
-                                  &std::cout));
+                                       client_response.service_address,
+                                       response, &std::cout));
     }
     if (!client_response.status.ok()) {
       LOG(WARNING) << client_response.service_address << " returned "
@@ -206,7 +224,8 @@ absl::Status StartContinuousProfiling(
       /*repository_root=*/"", session_id,
       /*host_name=*/service_addr, opts);
   tensorflow::ContinuousProfilingResponse response;
-  ABSL_RETURN_IF_ERROR(ContinuousProfilingGrpc(service_addr, request, &response));
+  ABSL_RETURN_IF_ERROR(
+      ContinuousProfilingGrpc(service_addr, request, &response));
   return absl::OkStatus();
 }
 
@@ -230,10 +249,10 @@ absl::Status GetSnapshot(const char* service_addr, const char* logdir) {
   std::string repository_root = GetTensorBoardProfilePluginDir(logdir);
   std::string snapshot_session_id = GetCurrentTimeStampAsString();
   ABSL_RETURN_IF_ERROR(SaveProfile(repository_root, snapshot_session_id,
-                              service_addr, response, &std::cout));
+                                   service_addr, response, &std::cout));
   if (response.has_xspace()) {
     ABSL_RETURN_IF_ERROR(SaveXSpace(repository_root, snapshot_session_id,
-                               service_addr, response.xspace()));
+                                    service_addr, response.xspace()));
   }
 
   return absl::OkStatus();
@@ -329,7 +348,7 @@ absl::Status ExportToTensorBoard(const XSpace& xspace,
 
 absl::Status ExportToTensorBoard(absl::string_view logdir,
                                  absl::string_view run,
-                                 std::vector<XSpace>& xspaces) {
+                                 const std::vector<XSpace>& xspaces) {
   if (xspaces.empty()) {
     return absl::OkStatus();
   }
@@ -341,7 +360,7 @@ absl::Status ExportToTensorBoard(absl::string_view logdir,
 }
 
 absl::Status ExportToTensorBoard(absl::string_view logdir,
-                                 std::vector<XSpace>& xspaces) {
+                                 const std::vector<XSpace>& xspaces) {
   return ExportToTensorBoard(logdir, GetCurrentTimeStampAsString(), xspaces);
 }
 
@@ -360,7 +379,7 @@ absl::Status CaptureRemoteTrace(
 
   {
     ABSL_RETURN_IF_ERROR(CaptureRemoteTrace(logdir, num_tracing_attempts, opts,
-                                       is_cloud_tpu_session));
+                                            is_cloud_tpu_session));
   }
   return absl::OkStatus();
 }

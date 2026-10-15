@@ -18,8 +18,8 @@
 #include "absl/status/status.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
-#include "xla/tsl/platform/env.h"
 #include "tsl/platform/init_main.h"
+#include "xla/tsl/platform/env.h"
 
 int main(int argc, char** argv) {
   tsl::port::InitMain(argv[0], &argc, &argv);

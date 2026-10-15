@@ -13,7 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <cstdint>
+#include <gtest/gtest.h>
+
 #include <cstdlib>
 #include <memory>
 #include <optional>
@@ -21,7 +22,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "tsl/platform/path.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -64,7 +65,6 @@ limitations under the License.
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -89,9 +89,10 @@ absl::StatusOr<MultiProcessGpuClientSetup> SetUpMultiProcessGpuClient(
               << coordinator_address;
     xla::CoordinationServiceImpl::Options service_options;
     service_options.num_nodes = num_nodes;
-    ABSL_ASSIGN_OR_RETURN(prepared_test.service,
-                     xla::GetDistributedRuntimeService(
-                         absl::StrFormat("[::]:%d", port), service_options));
+    ABSL_ASSIGN_OR_RETURN(
+        prepared_test.service,
+        xla::GetDistributedRuntimeService(absl::StrFormat("[::]:%d", port),
+                                          service_options));
     LOG(INFO) << log_prefix << ": created coordination service";
   }
 
@@ -128,9 +129,10 @@ absl::StatusOr<MultiProcessGpuClientSetup> SetUpMultiProcessGpuClient(
 
 absl::Status AllGatherMultiProcessTestBody(int node_id, int port) {
   std::string log_prefix = absl::StrFormat("rank_%d", node_id);
-  ABSL_ASSIGN_OR_RETURN(se::Platform * platform, PlatformUtil::GetPlatform("gpu"));
+  ABSL_ASSIGN_OR_RETURN(se::Platform * platform,
+                        PlatformUtil::GetPlatform("gpu"));
   ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * executor,
-                   platform->ExecutorForDevice(node_id));
+                        platform->ExecutorForDevice(node_id));
   const auto& desc = executor->GetDeviceDescription();
   if (desc.gpu_compute_capability().IsCuda() && !desc.gpu_compute_capability()
                                                      .cuda_compute_capability()
@@ -161,8 +163,8 @@ absl::Status AllGatherMultiProcessTestBody(int node_id, int port) {
     }
   )";
 
-  ABSL_ASSIGN_OR_RETURN(auto hlo_module,
-                   ParseAndReturnUnverifiedModule(kModuleStr, /*config=*/{}));
+  ABSL_ASSIGN_OR_RETURN(auto hlo_module, ParseAndReturnUnverifiedModule(
+                                             kModuleStr, /*config=*/{}));
   xla::XlaComputation computation(hlo_module->ToProto());
 
   xla::CompileOptions compile_options;
@@ -188,7 +190,6 @@ absl::Status AllGatherMultiProcessTestBody(int node_id, int port) {
   debug_options.set_xla_gpu_autotune_level(0);
   debug_options.add_xla_gpu_experimental_use_collective_kernels(
       DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER);
-  debug_options.set_xla_gpu_experimental_enable_tiling_propagation(true);
   debug_options.add_xla_gpu_unsupported_use_cross_host_one_shot_kernel(
       DebugOptions::ALLGATHER);
   *compile_options.executable_build_options.mutable_debug_options() =
@@ -196,12 +197,12 @@ absl::Status AllGatherMultiProcessTestBody(int node_id, int port) {
 
   LOG(INFO) << log_prefix << ": compiling HLO module with one-shot all-gather";
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtLoadedExecutable> executable,
-                   client->CompileAndLoad(computation, compile_options));
+                        client->CompileAndLoad(computation, compile_options));
   LOG(INFO) << log_prefix << ": compilation succeeded";
 
   // Inspect the collective kernel strategy selected in the optimized HLO.
   ABSL_ASSIGN_OR_RETURN(auto hlo_modules,
-                   executable->GetExecutable()->GetHloModules());
+                        executable->GetExecutable()->GetHloModules());
   TF_RET_CHECK(!hlo_modules.empty());
   const HloModule* optimized_module = hlo_modules.front().get();
   bool found_all_gather = false;
@@ -237,15 +238,16 @@ absl::Status AllGatherMultiProcessTestBody(int node_id, int port) {
   Literal input_literal =
       LiteralUtil::CreateR1<float>(std::vector<float>(128, input_val));
 
-  ABSL_ASSIGN_OR_RETURN(auto* memory_space,
-                   client->addressable_devices()[0]->default_memory_space());
-  ABSL_ASSIGN_OR_RETURN(auto input_buffer,
-                   client->BufferFromHostLiteral(input_literal, memory_space));
+  ABSL_ASSIGN_OR_RETURN(
+      auto* memory_space,
+      client->addressable_devices()[0]->default_memory_space());
+  ABSL_ASSIGN_OR_RETURN(auto input_buffer, client->BufferFromHostLiteral(
+                                               input_literal, memory_space));
 
   std::vector<std::vector<PjRtBuffer*>> input_ptrs = {{input_buffer.get()}};
   LOG(INFO) << log_prefix << ": executing one-shot all-gather";
   ABSL_ASSIGN_OR_RETURN(auto results,
-                   executable->Execute(input_ptrs, ExecuteOptions()));
+                        executable->Execute(input_ptrs, ExecuteOptions()));
   LOG(INFO) << log_prefix << ": execution finished";
 
   TF_RET_CHECK(results.size() == 1 && results[0].size() == 1);

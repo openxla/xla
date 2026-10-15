@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/layout.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <sstream>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/hlo/testlib/test.h"
 #include "xla/layout_util.h"
 #include "xla/shape_util.h"
@@ -49,6 +50,12 @@ TEST(Layout, ToStringForTileWithCombinedDimensions) {
                                         Tile::kCombineDimension, 42, 123})})
                 .ToString(),
             "{3,2,1,0:T(*,*,42,123)}");
+}
+
+TEST(Layout, ToStringForTileWithMatchedDimensions) {
+  EXPECT_EQ(
+      Layout({3, 2, 1, 0}, {Tile({Tile::kMatchDimension, 128})}).ToString(),
+      "{3,2,1,0:T(d,128)}");
 }
 
 TEST(Layout, ToStringForTailPaddingAlignment) {

@@ -289,14 +289,14 @@ absl::StatusOr<SVDResult> HouseHolderBidiagonalization(
     auto eps = values[4];
 
     ABSL_ASSIGN_OR_RETURN(HouseHolderResult house_col,
-                     HouseCol(a, i, i, eps, precision));
+                          HouseCol(a, i, i, eps, precision));
     u = Sub(u,
             Mul(house_col.beta, BatchDot(BatchDot(u, house_col.v, precision),
                                          false, house_col.v, true, precision)));
     a = house_col.a;
 
     ABSL_ASSIGN_OR_RETURN(HouseHolderResult house_row,
-                     HouseRow(a, i, i + one, eps, precision));
+                          HouseRow(a, i, i + one, eps, precision));
     v = Sub(v, Mul(house_row.beta,
                    BatchDot(BatchDot(v, false, house_row.v, true, precision),
                             house_row.v, precision)));
@@ -320,15 +320,15 @@ absl::StatusOr<SVDResult> HouseHolderBidiagonalization(
   values[3] = a;
   values[4] = eps;
 
-  ABSL_ASSIGN_OR_RETURN(values,
-                   WhileLoopHelper(while_cond_fn, while_body_fn, values,
-                                   "HouseHolderBidiagonalization", builder));
+  ABSL_ASSIGN_OR_RETURN(
+      values, WhileLoopHelper(while_cond_fn, while_body_fn, values,
+                              "HouseHolderBidiagonalization", builder));
 
   for (int k = 2; k > 0; --k) {
     if (n - k >= 0) {
       XlaOp index = ScalarLike(values[0], n - k);
       ABSL_ASSIGN_OR_RETURN(HouseHolderResult house_col,
-                       HouseCol(values[3], index, index, eps, precision));
+                            HouseCol(values[3], index, index, eps, precision));
       values[1] = Sub(values[1],
                       Mul(house_col.beta,
                           BatchDot(BatchDot(values[1], house_col.v, precision),
@@ -447,7 +447,8 @@ absl::StatusOr<OneSidedJacobiRotation> GetOneSidedJacobiRotation(XlaOp a,
   XlaOp a_qq_new = rot.s * a_pq + rot.c * a_qq;
 
   OneSidedJacobiRotation rots;
-  ABSL_ASSIGN_OR_RETURN(rots.rot_r, MakeJacobi(a_pp_new, a_qq_new, a_pq_new, eps));
+  ABSL_ASSIGN_OR_RETURN(rots.rot_r,
+                        MakeJacobi(a_pp_new, a_qq_new, a_pq_new, eps));
 
   rots.rot_l.c = rot.c * rots.rot_r.c - rot.s * rots.rot_r.s;
   rots.rot_l.s = rot.s * rots.rot_r.c + rot.c * rots.rot_r.s;
@@ -473,7 +474,7 @@ absl::StatusOr<SVDResult> OneSidedJacobiUpdate(SVDResult svd_result, XlaOp p,
   const int64_t n = ShapeUtil::GetDimension(d_shape, -1);
 
   ABSL_ASSIGN_OR_RETURN(OneSidedJacobiRotation onesided_jacobi,
-                   GetOneSidedJacobiRotation(d, p, q, eps));
+                        GetOneSidedJacobiRotation(d, p, q, eps));
 
   auto zero = ScalarLike(p, 0);
 
@@ -620,7 +621,7 @@ absl::StatusOr<std::vector<XlaOp>> WhileLoopFn(
     auto sweep_update_cond = Gt(max_sweeps, k);
 
     ABSL_ASSIGN_OR_RETURN(auto tolerance_comparison,
-                     ComputeToleranceComparison(values[3], values[4]));
+                          ComputeToleranceComparison(values[3], values[4]));
     auto tolerance_cond = ReduceAll(
         tolerance_comparison, xla::ConstantR0<bool>(cond_builder, false),
         CreateScalarOrComputation(PRED, cond_builder));
@@ -730,7 +731,7 @@ absl::StatusOr<std::vector<XlaOp>> WhileLoopFn(
   };
   std::vector<XlaOp> values;
   ABSL_ASSIGN_OR_RETURN(values, WhileLoopHelper(while_cond_fn, while_body_fn,
-                                           initial_values, name, builder));
+                                                initial_values, name, builder));
 
   return values;
 }

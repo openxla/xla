@@ -20,11 +20,11 @@ limitations under the License.
 
 #include "absl/hash/hash.h"
 #include "google/protobuf/message.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace protobuf_util {

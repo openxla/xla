@@ -49,7 +49,8 @@ absl::Status CheckRuntimeVersion(const DeviceDescription& device_description) {
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMovedChildNodeImpl(
     absl::Span<const GraphNodeHandle> dependencies,
     stream_executor::CommandBuffer* nested) {
-  ABSL_RETURN_IF_ERROR(CheckRuntimeVersion(stream_exec_->GetDeviceDescription()));
+  ABSL_RETURN_IF_ERROR(
+      CheckRuntimeVersion(stream_exec_->GetDeviceDescription()));
   auto* child_command_buffer = absl::down_cast<CudaCommandBuffer*>(nested);
   CHECK_EQ(child_command_buffer->parent_, nullptr)
       << "Nested command buffer's parent is not null";
@@ -74,6 +75,9 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMovedChildNodeImpl(
 
   child_command_buffer->parent_ = this;
   child_command_buffer->is_owned_graph_ = false;
+  if (child_command_buffer->has_node_priority_) {
+    SetHasNodePriority();
+  }
 
   return FromCudaGraphHandle(node_handle);
 }

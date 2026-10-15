@@ -19,8 +19,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/strcat.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace tsl {
 namespace io {

@@ -203,15 +203,6 @@ absl::Status FloatNormalizationVisitor::ChangeOutputTypeThenInsertConvertBack(
                                     .debug_options()
                                     .xla_allow_excess_precision();
 
-  // If we are rewriting the root instruction of the entry computation, we need
-  // to save and restore original input output alias config.
-  std::optional<HloInputOutputAliasConfig> alias_config;
-  HloModule* module = computation->parent();
-  if (is_root && module->has_entry_computation() &&
-      module->entry_computation() == computation) {
-    alias_config = module->input_output_alias_config();
-  }
-
   ShapeUtil::ForEachMutableSubshape(
       hlo->mutable_shape(), [&](Shape* subshape, const xla::ShapeIndex& index) {
         if (subshape->element_type() == from) {
@@ -271,9 +262,6 @@ absl::Status FloatNormalizationVisitor::ChangeOutputTypeThenInsertConvertBack(
   }
   if (is_root) {
     computation->set_root_instruction(new_hlo, /*accept_different_shape=*/true);
-    if (alias_config.has_value()) {
-      module->set_input_output_alias_config(*alias_config);
-    }
   }
   changed_ = true;
   return absl::OkStatus();
@@ -284,7 +272,7 @@ absl::Status FloatNormalizationVisitor::InsertConvertBeforeOperand(
     PrimitiveType to, HloComputation* computation) {
   auto operand = hlo->mutable_operand(operand_idx);
   ABSL_ASSIGN_OR_RETURN(auto new_operand,
-                   ConvertType(operand, from, to, computation));
+                        ConvertType(operand, from, to, computation));
   if (new_operand == operand) {
     return absl::OkStatus();
   }
@@ -313,8 +301,8 @@ absl::Status FloatNormalizationVisitor::ConvertCalledComputations(
   for (auto& comp_pair : cloned_computations) {
     auto comp = comp_pair.second;
     ABSL_RETURN_IF_ERROR(InsertConvertAfterOutput(comp->root_instruction(),
-                                             LowPrecisionType(),
-                                             HighPrecisionType(), comp));
+                                                  LowPrecisionType(),
+                                                  HighPrecisionType(), comp));
     for (auto* param : comp->parameter_instructions()) {
       // This changes the parameter to high-precision then inserts a convert
       // after it.
@@ -549,19 +537,10 @@ absl::Status FloatNormalizationVisitor::HandleInstruction(HloInstruction* hlo) {
           ShapeLeafCount(hlo->shape())) {
     bool can_use_low_prec = true;
     for (int i = 0; i < hlo->operand_count(); ++i) {
-      if (CountSubshapesWithMatchingType(hlo->operand(i)->shape(),
-                                         LowPrecisionType()) ==
-          ShapeLeafCount(hlo->operand(i)->shape())) {
-        continue;
+      if (!float_support_->CanConvertOperandToLowPrecision(*hlo, i)) {
+        can_use_low_prec = false;
+        break;
       }
-      if ((float_support_->EffectiveOperandPrecisionIsLowPrecision(*hlo, i) ||
-           float_support_->EffectiveOperandPrecisionIsOutputPrecision(*hlo,
-                                                                      i)) &&
-          float_support_->SupportsLowPrecisionOperand(*hlo, i)) {
-        continue;
-      }
-      can_use_low_prec = false;
-      break;
     }
     if (can_use_low_prec) {
       for (int i = 0; i < hlo->operand_count(); ++i) {

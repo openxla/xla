@@ -27,6 +27,8 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/init_main.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -47,8 +49,6 @@
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/init_main.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -114,15 +114,16 @@ absl::Status RealMain(const std::string& input, const std::string& output,
       return absl::InvalidArgumentError(
           "Failed to parse input as HloSnapshot proto.");
     }
-    ABSL_ASSIGN_OR_RETURN(module,
-                     HloModule::CreateFromProto(snapshot.hlo().hlo_module(),
-                                                HloModuleConfig{}));
+    ABSL_ASSIGN_OR_RETURN(
+        module, HloModule::CreateFromProto(snapshot.hlo().hlo_module(),
+                                           HloModuleConfig{}));
   } else {
     std::string load_format = input_format;
     if (load_format == "module.pbtxt") {
       load_format = "pbtxt";
     }
-    ABSL_ASSIGN_OR_RETURN(module, LoadModuleFromData(input_contents, load_format));
+    ABSL_ASSIGN_OR_RETURN(module,
+                          LoadModuleFromData(input_contents, load_format));
   }
 
   std::string instr_name = instruction_name;

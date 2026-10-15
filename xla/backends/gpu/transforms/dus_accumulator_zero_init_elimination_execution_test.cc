@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <gtest/gtest.h>
+
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
 #include "xla/service/hlo_module_config.h"

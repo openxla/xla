@@ -22,7 +22,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "ynnpack/include/ynnpack.h"
 #include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
 #include "absl/container/inlined_vector.h"
@@ -37,6 +36,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
+#include "xla/backends/cpu/runtime/ynnpack/ynn_threadpool.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/stream_executor/device_address.h"
@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
+#include "ynnpack/include/ynnpack.h"
 
 namespace xla::cpu {
 
@@ -192,8 +193,9 @@ absl::Status YnnFusionThunk::UpdateYnnExecutable(
   // Keep track of the updated arguments captured by value.
   executable.captured_arguments = std::move(capture_arguments);
 
-  ABSL_ASSIGN_OR_RETURN(executable.subgraph,
-                   capturing_builder_(arguments_, results_, arguments_buffers));
+  ABSL_ASSIGN_OR_RETURN(
+      executable.subgraph,
+      capturing_builder_(arguments_, results_, arguments_buffers));
 
   ABSL_ASSIGN_OR_RETURN(
       executable.runtime, CreateYnnRuntime([&](ynn_runtime_t* runtime) {
@@ -284,8 +286,12 @@ YnnFusionThunk::BufferUses YnnFusionThunk::buffer_uses() const {
 }
 
 const YnnThreadpool& GetYnnThreadpool(const Thunk::ExecuteParams& params) {
-  static absl::NoDestructor<YnnThreadpool> no_threadpool(nullptr);
-  return params.ynn_params ? params.ynn_params->threadpool : *no_threadpool;
+  static absl::NoDestructor<YnnThreadpool> no_threadpool(nullptr, nullptr);
+  if (params.intra_op_threadpool == nullptr) {
+    return *no_threadpool;
+  }
+  return params.ynn_params.GetOrCreateThreadpool(
+      [&] { return CreateYnnThreadpool(params.intra_op_threadpool); });
 }
 
 tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent> YnnFusionThunk::Execute(
@@ -347,8 +353,8 @@ tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent> YnnFusionThunk::Execute(
 
   // Borrow YnnExecutable from the pool.
   ABSL_ASSIGN_OR_RETURN(auto executable,
-                   ynn_executable_pool_.GetOrCreate(GetYnnThreadpool(params),
-                                                    arguments_buffers));
+                        ynn_executable_pool_.GetOrCreate(
+                            GetYnnThreadpool(params), arguments_buffers));
 
   int concurrency = concurrency_.load(std::memory_order_acquire);
   if (concurrency == 0) {
@@ -374,8 +380,8 @@ tsl::AsyncValueRef<YnnFusionThunk::ExecuteEvent> YnnFusionThunk::Execute(
   }
 
   // Otherwise reset YnnExecutable to capture new arguments buffers.
-  ABSL_RETURN_IF_ERROR(UpdateYnnExecutable(GetYnnThreadpool(params), *executable,
-                                      arguments_buffers));
+  ABSL_RETURN_IF_ERROR(UpdateYnnExecutable(GetYnnThreadpool(params),
+                                           *executable, arguments_buffers));
   return invoke(std::move(executable));
 }
 

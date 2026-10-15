@@ -19,14 +19,14 @@ limitations under the License.
 #include <new>
 
 #include "absl/log/log.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/env_time.h"
-#include "xla/tsl/platform/test.h"
-#include "xla/tsl/platform/threadpool.h"
 #include "tsl/platform/cpu_info.h"
 #include "tsl/platform/host_info.h"
 #include "tsl/platform/mem.h"
 #include "tsl/platform/mutex.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/env_time.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/platform/threadpool.h"
 
 namespace tsl {
 namespace port {

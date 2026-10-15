@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/utils/hlo_original_value_analyzer.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"

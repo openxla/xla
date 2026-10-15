@@ -18,22 +18,22 @@ limitations under the License.
 #include <string>
 
 #include "absl/strings/str_cat.h"
-#include "third_party/amd/include/TritonAMDGPUToLLVM/Passes.h"
-#include "third_party/amd/include/TritonAMDGPUTransforms/Passes.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/IndexToLLVM/IndexToLLVM.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
-#include "xla/backends/gpu/codegen/triton/extern_function_helper.h"
-#include "xla/backends/gpu/codegen/triton/transforms/passes.h"
-#include "xla/stream_executor/rocm/rocm_compute_capability.h"
+#include "third_party/amd/include/TritonAMDGPUToLLVM/Passes.h"
+#include "third_party/amd/include/TritonAMDGPUTransforms/Passes.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonToTritonGPU/Passes.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
+#include "xla/backends/gpu/codegen/triton/extern_function_helper.h"
+#include "xla/backends/gpu/codegen/triton/transforms/passes.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 
 namespace xla {
 namespace gpu {
@@ -160,7 +160,7 @@ static void MakeLLIR(mlir::OpPassManager* pm,
   pm->addPass(mlir::createInlinerPass());
   pm->addPass(mlir::createConvertIndexToLLVMPass());
   pm->addPass(mt::createAllocateAMDGPUSharedMemoryPass(rocm_cc.gfx_version()));
-  pm->addPass(mt::gpu::createTritonGPUGlobalScratchAllocationPass());
+  pm->addPass(mt::createTritonAMDGPUMembar({rocm_cc.gfx_version()}));
   pm->addPass(mt::gpu::createTritonGPUGlobalScratchAllocationPass());
   pm->addPass(
       mt::createConvertTritonAMDGPUToLLVMPass(rocm_cc.gfx_version(), true));

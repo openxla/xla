@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/text_literal_writer.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal_util.h"

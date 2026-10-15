@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/hash/hash_testing.h"
 #include "absl/strings/str_cat.h"
 #include "xla/debug_options_flags.h"

@@ -20,11 +20,11 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "third_party/nccl/nccl.h"
+#include "third_party/nccl/nccl_device.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/kernel_spec.h"
-#include "third_party/nccl/nccl_device.h"
 
 namespace xla::gpu {
 

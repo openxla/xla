@@ -466,9 +466,10 @@ absl::StatusOr<ShapeTracker> ShapeTracker::FromSiblings(
                      " and ", destination->name()));
   }
 
-  ABSL_ASSIGN_OR_RETURN(ShapeTracker tracker1, FromProducerConsumer(lca, source));
+  ABSL_ASSIGN_OR_RETURN(ShapeTracker tracker1,
+                        FromProducerConsumer(lca, source));
   ABSL_ASSIGN_OR_RETURN(ShapeTracker tracker2,
-                   FromProducerConsumer(lca, destination));
+                        FromProducerConsumer(lca, destination));
   ABSL_RETURN_IF_ERROR(tracker1.Invert());
   ABSL_RETURN_IF_ERROR(tracker1.ConcatenateFrom(tracker2));
   return tracker1;
@@ -571,7 +572,7 @@ absl::Status ShapeTracker::AppendBitcast(const xla::Shape& src_shape,
   }
 
   ABSL_ASSIGN_OR_RETURN(std::vector<PhysicalDimension> dims,
-                   BuildPhysicalDimensions(src_shape, dst_shape));
+                        BuildPhysicalDimensions(src_shape, dst_shape));
   absl::c_stable_sort(
       dims, [](const PhysicalDimension& a, const PhysicalDimension& b) {
         return a.src_logical_idx < b.src_logical_idx;
@@ -783,7 +784,8 @@ absl::Status ShapeTracker::PrependBitcast(const xla::Shape& src_shape,
   return absl::OkStatus();
 }
 
-std::vector<ShapeTracker::Step> ShapeTracker::GetSteps() const {
+std::vector<ShapeTracker::Step> ShapeTracker::GetSteps(
+    bool avoid_combining_reshapes) const {
   if (ShapeUtil::ElementsIn(input_shape_) == 1) {
     if (input_shape_.dimensions() == output_shape_.dimensions()) {
       return {};
@@ -837,6 +839,9 @@ std::vector<ShapeTracker::Step> ShapeTracker::GetSteps() const {
                                           output_shape_.dimensions().end())});
   }
 
+  if (avoid_combining_reshapes) {
+    return OptimizeSteps(steps, input_shape_, output_shape_);
+  }
   return steps;
 }
 
@@ -981,12 +986,7 @@ absl::StatusOr<HloInstruction*> ShapeTracker::ToInstructionChain(
   HloComputation* computation = inst->parent();
   HloInstruction* current_inst = inst;
 
-  std::vector<Step> steps = GetSteps();
-  if (avoid_combining_reshapes) {
-    steps = OptimizeSteps(steps, input_shape_, output_shape_);
-  }
-
-  for (const auto& step : steps) {
+  for (const auto& step : GetSteps(avoid_combining_reshapes)) {
     switch (step.type) {
       case Step::Type::kReshape: {
         Shape new_shape = ShapeUtil::MakeShape(
@@ -1015,12 +1015,7 @@ std::string ShapeTracker::DebugString(bool avoid_combining_reshapes) const {
   std::vector<int64_t> current_dims(input_shape_.dimensions().begin(),
                                     input_shape_.dimensions().end());
 
-  std::vector<Step> steps = GetSteps();
-  if (avoid_combining_reshapes) {
-    steps = OptimizeSteps(steps, input_shape_, output_shape_);
-  }
-
-  for (const auto& step : steps) {
+  for (const auto& step : GetSteps(avoid_combining_reshapes)) {
     switch (step.type) {
       case Step::Type::kReshape: {
         absl::StrAppend(&result, " -> R[", absl::StrJoin(step.dimensions, ","),
@@ -1115,8 +1110,8 @@ absl::StatusOr<SlicePropagationResult> SliceProjectionChain(
     sliced_projections.back().Pack();
 
     ABSL_ASSIGN_OR_RETURN(current_slice,
-                     ShapeTracker::BufferView::FromStridesAndExtents(
-                         next_slice_strides, next_slice_extents));
+                          ShapeTracker::BufferView::FromStridesAndExtents(
+                              next_slice_strides, next_slice_extents));
   }
 
   return SlicePropagationResult{std::move(sliced_projections),
@@ -1179,11 +1174,11 @@ absl::StatusOr<ShapeTracker> ShapeTracker::Narrow(
     keep_extents.push_back(input_view.extents()[dim]);
   }
   ABSL_ASSIGN_OR_RETURN(BufferView keep_view, BufferView::FromStridesAndExtents(
-                                             keep_strides, keep_extents));
+                                                  keep_strides, keep_extents));
 
   // Slice the projections, and pack them.
   ABSL_ASSIGN_OR_RETURN(SlicePropagationResult propagation_result,
-                   SliceProjectionChain(projections_, keep_view));
+                        SliceProjectionChain(projections_, keep_view));
 
   // Append rather than assign, for the case the tracker has an initial
   // transpose.

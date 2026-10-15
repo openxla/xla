@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/algorithm/container.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -41,6 +40,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
@@ -48,11 +48,11 @@ limitations under the License.
 namespace xla {
 
 class SelfAdjointEigTest : public ClientLibraryTestRunnerMixin<
-                               HloPjRtInterpreterReferenceMixin<HloTestBase>> {
+                               HloInterpreterReferenceMixin<HloTestBase>> {
  protected:
   void SetUp() override {
     ClientLibraryTestRunnerMixin<
-        HloPjRtInterpreterReferenceMixin<HloTestBase>>::SetUp();
+        HloInterpreterReferenceMixin<HloTestBase>>::SetUp();
     batch_3d_4x4_ = Array3D<float>{
         {
             {4, 6, 8, 10},
@@ -397,7 +397,7 @@ Array2D<float> GenerateRandomSymmetricMatrix(int size) {
 
 using EighTestCase = int64_t;
 class RandomEighTest : public ClientLibraryTestRunnerMixin<
-                           HloPjRtInterpreterReferenceMixin<HloTestBase>>,
+                           HloInterpreterReferenceMixin<HloTestBase>>,
                        public ::testing::WithParamInterface<EighTestCase> {};
 
 TEST_P(RandomEighTest, Random) {

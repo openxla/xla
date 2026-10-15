@@ -36,6 +36,7 @@ limitations under the License.
 #include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
 #include "stablehlo/transforms/Passes.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -47,7 +48,6 @@ limitations under the License.
 #include "xla/service/hlo_proto_util.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/protobuf.h"
 
 namespace {
 

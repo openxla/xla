@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/pjrt/c/pjrt_c_api_gpu.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -28,8 +31,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/mem.h"
 #include "xla/client/client_library.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
@@ -60,7 +62,6 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_status_utils.h"
 #include "xla/pjrt/c/pjrt_c_api_test.h"
 #include "xla/pjrt/c/pjrt_c_api_test_base.h"
-#include "xla/pjrt/c/pjrt_c_api_triton_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_wrapper_impl.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
@@ -75,7 +76,6 @@ limitations under the License.
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/mem.h"
 
 namespace pjrt {
 namespace {
@@ -713,6 +713,9 @@ TEST(PjrtCApiGpuAllocatorTest, ValidOptionsParsing) {
     if (allocator_option == "bfc" || allocator_option == "cuda_async") {
       options["memory_fraction"] = 0.5f;
     }
+    if (allocator_option == "bfc") {
+      options["memory_fraction_policy"] = static_cast<std::string>("0.5-0.9");
+    }
     if (allocator_option == "cuda_async") {
       options["preallocate"] = true;
     }
@@ -778,6 +781,66 @@ TEST(PjrtCApiGpuAllocatorTest, InvalidAllocatorOptionsParsing) {
                   "Allocator invalid_allocator not supported for PJRT GPU "
                   "plugin. Supported allocator options are: 'default', "
                   "'platform', 'bfc', 'cuda_async', 'vmm' and 'address'."));
+
+  PJRT_Error_Destroy_Args error_destroy_args;
+  error_destroy_args.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
+  error_destroy_args.extension_start = nullptr;
+  error_destroy_args.error = error;
+
+  api->PJRT_Error_Destroy(&error_destroy_args);
+}
+
+TEST(PjrtCApiGpuAllocatorTest, MemoryFractionPolicies) {
+  const PJRT_Api* api = GetPjrtApi();
+  for (const char* policy : {"0.01", "0.01+", "0.01-0.02", "0.01-0.01"}) {
+    SCOPED_TRACE(policy);
+    absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
+        {"allocator", std::string("bfc")},
+        {"visible_devices", std::vector<int64_t>{0}},
+        {"memory_fraction_policy", std::string(policy)},
+    };
+    ASSERT_OK_AND_ASSIGN(std::vector<PJRT_NamedValue> c_options,
+                         ConvertToPjRtNamedValueList(options));
+    PJRT_Client_Create_Args create_args = {};
+    create_args.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
+    create_args.create_options = c_options.data();
+    create_args.num_options = c_options.size();
+    std::unique_ptr<PJRT_Error, PJRT_ErrorDeleter> error(
+        api->PJRT_Client_Create(&create_args), MakeErrorDeleter(api));
+    std::unique_ptr<PJRT_Client, PJRT_ClientDeleter> client(
+        create_args.client, MakeClientDeleter(api));
+    ASSERT_EQ(error, nullptr) << GetErrorMessage(error.get(), api);
+    ASSERT_NE(client, nullptr);
+  }
+}
+
+TEST(PjrtCApiGpuAllocatorTest, InvalidMemoryFractionPolicyRejected) {
+  auto api = GetPjrtApi();
+  absl::flat_hash_map<std::string, xla::PjRtValueType> options = {
+      {"allocator", static_cast<std::string>("bfc")},
+      {"memory_fraction_policy", static_cast<std::string>("0.9-0.5")},
+  };
+  ASSERT_OK_AND_ASSIGN(std::vector<PJRT_NamedValue> c_options,
+                       ::pjrt::ConvertToPjRtNamedValueList(options));
+  PJRT_Client_Create_Args create_arg;
+  create_arg.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
+  create_arg.extension_start = nullptr;
+  create_arg.client = nullptr;
+  create_arg.create_options = c_options.data();
+  create_arg.num_options = c_options.size();
+  create_arg.kv_get_callback = nullptr;
+  create_arg.kv_get_user_arg = nullptr;
+  create_arg.kv_try_get_callback = nullptr;
+  create_arg.kv_try_get_user_arg = nullptr;
+  create_arg.kv_put_callback = nullptr;
+  create_arg.kv_put_user_arg = nullptr;
+  PJRT_Error* error = api->PJRT_Client_Create(&create_arg);
+  EXPECT_NE(error, nullptr);
+  EXPECT_THAT(::pjrt::PjrtErrorToStatus(error, api),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInvalidArgument,
+                  HasSubstr("memory_fraction_policy: Invalid memory fraction "
+                            "\"0.9-0.5\"")));
 
   PJRT_Error_Destroy_Args error_destroy_args;
   error_destroy_args.struct_size = PJRT_Error_Destroy_Args_STRUCT_SIZE;
@@ -1454,87 +1517,6 @@ TEST(PjrtCApiGpuExtensionTest,
   error_destroy_args.extension_start = nullptr;
   error_destroy_args.error = duplicate_error;
   GetPjrtApi()->PJRT_Error_Destroy(&error_destroy_args);
-}
-
-constexpr absl::string_view kAddOneTTIR = R"(
-module {
-  tt.func public @add_one(%arg0: !tt.ptr<f32, 1> {tt.divisibility = 32 : i32}, %arg1: !tt.ptr<f32, 1> {tt.divisibility = 32 : i32}, %arg2: !tt.ptr<f32, 1> {tt.divisibility = 32 : i32}, %arg3: !tt.ptr<f32, 1> {tt.divisibility = 32 : i32}) {
-    %0 = tt.get_program_id x : i32
-    %1 = tt.load %arg0 {cache = 1 : i32, evict = 1 : i32, isVolatile = false} : !tt.ptr<f32>
-    %2 = tt.load %arg1 {cache = 1 : i32, evict = 1 : i32, isVolatile = false} : !tt.ptr<f32>
-    %cst = arith.constant 1.000000e+00 : f32
-    %3 = arith.addf %1, %cst : f32
-    %4 = tt.load %arg2 {cache = 1 : i32, evict = 1 : i32, isVolatile = false} : !tt.ptr<f32>
-    tt.store %arg2, %3 {cache = 1 : i32, evict = 1 : i32} : !tt.ptr<f32>
-    %5 = tt.load %arg3 {cache = 1 : i32, evict = 1 : i32, isVolatile = false} : !tt.ptr<f32>
-    tt.store %arg3, %2 {cache = 1 : i32, evict = 1 : i32} : !tt.ptr<f32>
-    tt.return
-  }
-}
-)";
-
-TEST(PjrtCAPIGpuExtensionTest, TritonCompile) {
-#ifdef TENSORFLOW_USE_SYCL
-  GTEST_SKIP() << "Triton compilation not supported on SYCL backend";
-#endif
-  auto api = GetPjrtApi();
-
-  PJRT_Client_Create_Args create_args;
-  create_args.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
-  create_args.extension_start = nullptr;
-  create_args.create_options = nullptr;
-  create_args.num_options = 0;
-  create_args.kv_get_callback = nullptr;
-  create_args.kv_get_user_arg = nullptr;
-  create_args.kv_put_callback = nullptr;
-  create_args.kv_put_user_arg = nullptr;
-  create_args.kv_try_get_callback = nullptr;
-  create_args.kv_try_get_user_arg = nullptr;
-  PJRT_Error* client_create_error = api->PJRT_Client_Create(&create_args);
-  EXPECT_EQ(client_create_error, nullptr)
-      << GetErrorMessage(client_create_error, api);
-
-  PJRT_Client_PlatformName_Args platform_name_args;
-  platform_name_args.struct_size = PJRT_Client_PlatformName_Args_STRUCT_SIZE;
-  platform_name_args.extension_start = nullptr;
-  platform_name_args.client = create_args.client;
-  PJRT_Error* platform_name_error =
-      api->PJRT_Client_PlatformName(&platform_name_args);
-  EXPECT_EQ(platform_name_error, nullptr)
-      << GetErrorMessage(platform_name_error, api);
-
-  bool is_rocm = absl::string_view(platform_name_args.platform_name) == "rocm";
-  absl::string_view arch_name = is_rocm ? "gfx942:sramecc+:xnack-" : "7.0";
-
-  PJRT_Client_Destroy_Args destroy_args;
-  destroy_args.struct_size = PJRT_Client_Destroy_Args_STRUCT_SIZE;
-  destroy_args.extension_start = nullptr;
-  destroy_args.client = create_args.client;
-
-  PJRT_Error* destroy_error = api->PJRT_Client_Destroy(&destroy_args);
-  CHECK_EQ(destroy_error, nullptr);
-
-  PJRT_Triton_Compile_Args args;
-  args.struct_size = PJRT_Triton_Compile_Args_STRUCT_SIZE;
-  args.module = kAddOneTTIR.data();
-  args.module_size = kAddOneTTIR.size();
-  args.arch_name = arch_name.data();
-  args.arch_name_size = arch_name.size();
-  args.num_stages = 1;
-  args.num_ctas = 1;
-  args.num_warps = 1;
-  const auto* triton_ext = pjrt::FindExtension<PJRT_Triton_Extension>(
-      api, PJRT_Extension_Type::PJRT_Extension_Type_Triton);
-  ASSERT_NE(triton_ext, nullptr);
-
-  PJRT_Error* error = triton_ext->compile(&args);
-  CHECK_EQ(error, nullptr) << GetErrorMessage(error, api);
-  if (args.out_asm) {
-    delete[] args.out_asm;
-  } else {
-    std::remove(args.out_path);
-    delete[] args.out_path;
-  }
 }
 
 }  // namespace

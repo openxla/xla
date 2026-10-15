@@ -26,8 +26,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "highwayhash/hh_types.h"
-#include "xla/tsl/platform/logging.h"
 #include "tsl/platform/fingerprint.h"
+#include "xla/tsl/platform/logging.h"
 
 namespace xla {
 

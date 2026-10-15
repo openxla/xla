@@ -146,9 +146,9 @@ absl::StatusOr<bool> InstrIsReplicated(
   }
 
   ABSL_ASSIGN_OR_RETURN(auto replication_analysis,
-                   HloReplicationAnalysis::RunWithPartialReplication(
-                       module,
-                       /*cross_partition_spmd=*/true));
+                        HloReplicationAnalysis::RunWithPartialReplication(
+                            module,
+                            /*cross_partition_spmd=*/true));
   return replication_analysis->HloInstructionIsReplicatedAt(instr, {},
                                                             replica_groups);
 }
@@ -322,7 +322,7 @@ absl::StatusOr<bool> MatchDequantization(HloInstruction* instr) {
     // kCrossPartition or kFlattenedID since the replication is verified aross
     // partitions, not replicas.
     ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                     GetCollectiveOpGroupMode(instr));
+                          GetCollectiveOpGroupMode(instr));
     if (group_mode !=
             CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_PARTITION &&
         group_mode !=
@@ -393,7 +393,7 @@ absl::StatusOr<bool> MatchQuantization(HloInstruction* instr) {
     // kCrossPartition or kFlattenedID since the replication is verified aross
     // partitions, not replicas.
     ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                     GetCollectiveOpGroupMode(instr));
+                          GetCollectiveOpGroupMode(instr));
     if (group_mode !=
             CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_PARTITION &&
         group_mode !=

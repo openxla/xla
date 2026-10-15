@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <limits>
-#include <map>
 #include <memory>
 #include <optional>
 #include <random>
@@ -30,8 +29,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "Eigen/Core"
 #include "absl/algorithm/container.h"
-#include "absl/base/const_init.h"
+#include "absl/base/no_destructor.h"
+#include "absl/base/optimization.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -41,8 +42,11 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "Eigen/Core"
+#include "tsl/platform/ml_dtypes.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/gpu/runtime/per_device_state.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -69,9 +73,6 @@ limitations under the License.
 #include "xla/tsl/util/proto/proto_utils.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
@@ -79,7 +80,6 @@ using tsl::profiler::TraceMeLevel;
 
 namespace xla {
 namespace gpu {
-
 
 namespace {
 
@@ -143,14 +143,16 @@ absl::StatusOr<std::tuple<Layout, Layout, Layout>>
 StreamExecutorConvLayoutsToXlaLayouts(const ConvolutionDimensionNumbers& dnums,
                                       DataLayout input, FilterLayout filter,
                                       DataLayout output) {
-  ABSL_ASSIGN_OR_RETURN(Layout input_layout,
-                   DataLayoutToXlaLayout(input, dnums.input_batch_dimension(),
-                                         dnums.input_feature_dimension(),
-                                         dnums.input_spatial_dimensions()));
-  ABSL_ASSIGN_OR_RETURN(Layout output_layout,
-                   DataLayoutToXlaLayout(input, dnums.output_batch_dimension(),
-                                         dnums.output_feature_dimension(),
-                                         dnums.output_spatial_dimensions()));
+  ABSL_ASSIGN_OR_RETURN(
+      Layout input_layout,
+      DataLayoutToXlaLayout(input, dnums.input_batch_dimension(),
+                            dnums.input_feature_dimension(),
+                            dnums.input_spatial_dimensions()));
+  ABSL_ASSIGN_OR_RETURN(
+      Layout output_layout,
+      DataLayoutToXlaLayout(input, dnums.output_batch_dimension(),
+                            dnums.output_feature_dimension(),
+                            dnums.output_spatial_dimensions()));
 
   std::vector<int64_t> filter_layout;
   switch (filter) {
@@ -343,21 +345,19 @@ FindVectorizedFeatureDims(const ConvolutionDimensionNumbers& dnums,
 
 // Returns a mutex that can be used to lock the given stream executor.
 absl::Mutex& GetGpuMutex(const se::StreamExecutor* stream_exec) {
-  static absl::Mutex mu(absl::kConstInit);
-  // se::Platform*s are global singletons guaranteed to live forever.
-  static auto* mutexes =
-      new std::map<std::pair<const se::Platform*, /*device_ordinal*/ int64_t>,
-                   absl::Mutex>();
-
-  absl::MutexLock global_lock(mu);
-  auto it = mutexes
-                ->emplace(std::piecewise_construct,
-                          std::make_tuple(stream_exec->GetPlatform(),
-                                          stream_exec->device_ordinal()),
-                          std::make_tuple())
-                .first;
-
-  return it->second;
+  // Pre-allocate 16 slots to cover standard multi-GPU host topologies
+  // (typically 8 or 16 GPUs per host) with O(1) flat vector indexing. Ordinals
+  // >= 16 fall back to PerDeviceState's dynamic copy-on-write storage.
+  static absl::NoDestructor<PerDeviceState<absl::Mutex>> mutexes(
+      /*num_devices=*/16);
+  int device_ordinal = stream_exec->device_ordinal();
+  if (ABSL_PREDICT_FALSE(device_ordinal < 0)) {
+    static absl::NoDestructor<absl::Mutex> fallback_mu;
+    return *fallback_mu;
+  }
+  absl::StatusOr<absl::Mutex*> mu = mutexes->GetOrCreate(device_ordinal);
+  CHECK_OK(mu.status());
+  return **mu;
 }
 
 absl::StatusOr<std::unique_ptr<se::Kernel>> CreateKernel(
@@ -368,7 +368,7 @@ absl::StatusOr<std::unique_ptr<se::Kernel>> CreateKernel(
           ptx, std::move(kernel_name), num_args);
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
-                   stream_exec->LoadKernel(loader_spec));
+                        stream_exec->LoadKernel(loader_spec));
 
   se::KernelMetadata m;
   m.set_shared_memory_bytes(shared_mem_bytes);
@@ -386,7 +386,7 @@ absl::StatusOr<std::unique_ptr<se::Kernel>> CreateKernel(
           cubin_data, std::move(kernel_name), num_args);
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<se::Kernel> kernel,
-                   stream_exec->LoadKernel(loader_spec));
+                        stream_exec->LoadKernel(loader_spec));
 
   se::KernelMetadata m;
   m.set_shared_memory_bytes(shared_mem_bytes);
@@ -409,7 +409,8 @@ absl::Status ExecuteKernelOnStream(
           return TraceMeEncode("ExecuteKernelOnStream/PackKernelArgs", {});
         },
         /*level=*/TraceMeLevel::kVerbose);
-    ABSL_ASSIGN_OR_RETURN(kernel_args, se::PackKernelArgs(args, kernel.metadata()));
+    ABSL_ASSIGN_OR_RETURN(kernel_args,
+                          se::PackKernelArgs(args, kernel.metadata()));
   }
 
   return kernel.Launch(dims.thread_counts_per_block(), dims.block_counts(),

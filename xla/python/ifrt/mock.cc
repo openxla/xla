@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/python/ifrt/mock.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -271,6 +272,11 @@ MockClient::MockClient(std::unique_ptr<xla::ifrt::Client> delegated)
   ON_CALL(*this, GetDefaultCompiler).WillByDefault([this]() {
     return delegated_->GetDefaultCompiler();
   });
+  ON_CALL(*this, Load)
+      .WillByDefault([this](absl::Span<const ExecutableRef> executables,
+                            absl::Span<std::unique_ptr<LoadOptions>> options) {
+        return delegated_->Load(executables, options);
+      });
   ON_CALL(*this, GetTopologyForDevices)
       .WillByDefault([this](const DeviceListRef& devices) {
         return delegated_->GetTopologyForDevices(devices);

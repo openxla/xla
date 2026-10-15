@@ -52,9 +52,10 @@ StreamExecutorPjRtExecutableAbiVersion::FromProto(
     return absl::InternalError(
         "Failed to parse ExecutableAbiVersionProto from string.");
   }
-  ABSL_ASSIGN_OR_RETURN(stream_executor::ExecutableAbiVersion executable_abi_version,
-                   stream_executor::ExecutableAbiVersion::FromProto(
-                       executable_abi_version_proto));
+  ABSL_ASSIGN_OR_RETURN(
+      stream_executor::ExecutableAbiVersion executable_abi_version,
+      stream_executor::ExecutableAbiVersion::FromProto(
+          executable_abi_version_proto));
   return std::make_unique<StreamExecutorPjRtExecutableAbiVersion>(
       pjrt_platform_id, std::move(executable_abi_version));
 }

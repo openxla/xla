@@ -22,6 +22,8 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/profiler/lib/context_types.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/utils/preprocess_xplane.h"
@@ -33,8 +35,6 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_test_utils.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
-#include "tsl/profiler/lib/context_types.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

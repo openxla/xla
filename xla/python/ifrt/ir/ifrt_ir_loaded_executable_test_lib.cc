@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -81,7 +82,7 @@ class IfrtIrLoadedExecutableTest
   absl::StatusOr<bool> IsUsingTpuV4() {
     ABSL_ASSIGN_OR_RETURN(DeviceListRef devices, PickDevices(1));
     ABSL_ASSIGN_OR_RETURN(std::shared_ptr<Topology> topology,
-                     client_->GetTopologyForDevices(devices));
+                          client_->GetTopologyForDevices(devices));
     return topology->DeviceDescriptions().front()->device_kind() == "TPU v4";
   }
 
@@ -123,7 +124,7 @@ class IfrtIrLoadedExecutableTest
 };
 
 TEST_F(IfrtIrLoadedExecutableTest, CallXla) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                      [0,1]>
 module {
@@ -139,7 +140,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -161,7 +163,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, ControlDepXla) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                      [0,1]>
 module {
@@ -179,7 +181,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -202,7 +205,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, AliasingOutputs) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                      [0,1]>
 module {
@@ -210,7 +213,8 @@ module {
     return %arg0, %arg0 : !array, !array
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -241,7 +245,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, DonatedInputsAreDeleted) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1>, [1]>
 module {
@@ -253,7 +257,8 @@ module {
     return %arg0, %arg1 : !array0, !array1
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -295,7 +300,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, ResultReturnedTwiceIsNotAliased) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 module {
@@ -305,7 +310,8 @@ module {
     return %0, %0 : !array, !array
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -328,7 +334,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, CopyArrays) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1>, [1]>
 module {
@@ -337,7 +343,8 @@ module {
     return %0 : !array1
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -362,7 +369,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, Reshard) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<2x2xi32>,
                       #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<2x2xi32>,
@@ -377,7 +384,8 @@ module {
     return %0, %1 : !array1, !array2
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -405,7 +413,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, ZeroInput) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 module {
@@ -419,7 +427,8 @@ module {
     return %0 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -434,7 +443,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, ZeroOutput) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 module {
@@ -449,7 +458,8 @@ module {
     return
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -468,14 +478,14 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, BufferDonation) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 module {
   func.func @main(%arg0: !array {ifrt.donated}) -> !array
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.Call @add_one(%arg0) on devices [0,1]
-        {io_aliases=[array<i32: 0, 0>]} : (!array) -> !array
+        <io_aliases=[array<i32: 0, 0>]> : (!array) -> !array
     return %0 : !array
   }
 
@@ -485,7 +495,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -514,14 +525,14 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, CallLoadedExecutableOpDonationOverride) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 module {
   func.func @main(%arg0: !array {ifrt.donated}) -> !array
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.Call @add_one(%arg0) on devices [0,1]
-        {io_aliases=[array<i32: 0, 0>]} : (!array) -> !array
+        <io_aliases=[array<i32: 0, 0>]> : (!array) -> !array
     return %0 : !array
   }
 
@@ -531,7 +542,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -560,16 +572,17 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, AliasingCopyArrays) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1>, [0]>
 module {
   func.func @main(%arg0: !array0) -> !array0
       attributes {ifrt.function} {
-    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) {reuse=true} : (!array0) -> !array0
+    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) <reuse=true> : (!array0) -> !array0
     return %0 : !array0
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(1));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -590,17 +603,18 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, CrashOnProgramExecWithDonatedAliasedInput) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1>, [0]>
 module {
   func.func @main(%arg0: !array {ifrt.donated}, %arg1: !array)
       -> (!array, !array) attributes {ifrt.function} {
-    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) {donated=true} : (!array) -> !array
+    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) <donated=true> : (!array) -> !array
     %1, %ctrl_1 = ifrt.CopyArrays(%arg1) : (!array) -> !array
     return %0, %1 : !array, !array
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(1));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -620,17 +634,18 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, CopyArraysOpDonationOverride) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 module {
   func.func @main(%arg0: !array {ifrt.donated}) -> !array
       attributes {ifrt.function} {
-    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) {donated=true} : (!array) -> !array
+    %0, %ctrl_0 = ifrt.CopyArrays(%arg0) <donated=true> : (!array) -> !array
     return %0 : !array
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -659,7 +674,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, RemapArraysOpDonationOverride) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                       #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 !array0 = !ifrt.array<tensor<1x2xi32>,
@@ -672,12 +687,13 @@ module {
     %0, %1, %ctrl_0 = ifrt.RemapArrays(%arg0)
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>,
                 #ifrt.array_mapping<0, 1, [#ifrt.mapping<[1:2:1] to [0:1:1]>]>]
-      {donated=true}
+      <donated=true>
       : (!array) -> (!array0, !array1)
     return %0, %1 : !array0, !array1
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -718,7 +734,7 @@ TEST_F(IfrtIrLoadedExecutableTest,
   // RemapArrays with multiple inputs requires arguments to be donated.
   // If inputs to the program are not donated at runtime, then a CopyArrays op
   // will be inserted for non-donated inputs.
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                       #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 !array0 = !ifrt.array<tensor<1x2xi32>,
@@ -731,12 +747,13 @@ module {
     %0, %ctrl_0 = ifrt.RemapArrays(%arg0, %arg1)
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>,
                 #ifrt.array_mapping<1, 0, [#ifrt.mapping<[0:1:1] to [1:2:1]>]>]
-      {donated=true}
+      <donated=true>
       : (!array0, !array1) -> (!array)
     return %0 : !array
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -776,7 +793,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, DonateOutputOfCall) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                      [0,1]>
 module {
@@ -784,7 +801,7 @@ module {
     %0, %ctrl_0 = ifrt.Call @add_one(%arg0) on devices [0,1]
         : (!array) -> !array
     %1, %ctrl_1 = ifrt.Call @add_one(%0) on devices [0,1]
-        {io_aliases=[array<i32: 0, 0>]} : (!array) -> !array
+        <io_aliases=[array<i32: 0, 0>]> : (!array) -> !array
     return %1 : !array
   }
 
@@ -794,7 +811,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -817,7 +835,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, RemapFromOneToTwoArrays) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                       #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 !array0 = !ifrt.array<tensor<1x2xi32>,
@@ -834,7 +852,8 @@ module {
     return %0, %1 : !array0, !array1
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -868,7 +887,7 @@ TEST_F(IfrtIrLoadedExecutableTest, RemapSliceArray) {
   if (GetNumDevices() < 2) {
     GTEST_SKIP() << "Insufficient devices to run this test.";
   }
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                       #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 !array0 = !ifrt.array<tensor<1x2xi32>,
@@ -882,7 +901,8 @@ module {
     return %0 : !array0
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -908,7 +928,7 @@ module {
 
 TEST_F(IfrtIrLoadedExecutableTest, LoadedExecBinding) {
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
-  std::string mhlo_source = R"(
+  std::string mhlo_source = R"mlir(
 module {
   func.func @main(
       %arg0: tensor<2x2xi32> {mhlo.sharding = "{devices=[2,1]<=[2]}"})
@@ -918,7 +938,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> mhlo_module,
                        LoadFromSource(mhlo_source));
   xla::CompileOptions xla_options;
@@ -941,7 +962,7 @@ module {
                                std::move(xla_options), devices))
           .Await());
 
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 module {
@@ -952,7 +973,7 @@ module {
 
   ifrt.LoadedExecutable @add_one on devices [0,1] : (!array) -> !array
 }
-  )";
+  )mlir";
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
                        LoadFromSource(source));
   auto options = std::make_unique<IfrtIRCompileOptions>(GetDeviceIds(devices));
@@ -981,7 +1002,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, ConcurrentCompilation) {
-  constexpr absl::string_view source = R"(
+  constexpr absl::string_view source = R"mlir(
 !input = !ifrt.array<tensor<1x1xi32>,
                      #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
 !array0 = !ifrt.array<tensor<1024x1024x512xi32>,
@@ -992,14 +1013,14 @@ module {
   func.func @main(%arg0: !input) -> (!array0) attributes {ifrt.function} {
     %out, %ctrl = ifrt.Call @generate_data(%arg0) on devices [0]
       : (!input) -> !array0
-    %out_0, %ctrl_1 = ifrt.CopyArrays(%out) {donated=true}
+    %out_0, %ctrl_1 = ifrt.CopyArrays(%out) <donated=true>
       : (!array0) -> !array1
     %out_2, %ctrl_3 = ifrt.Call @identity(%out_0) on devices [1]
-      {io_aliases = [array<i32: 0, 0>]} : (!array1) -> !array1
-    %out_4, %ctrl_5 = ifrt.CopyArrays(%out_2) {donated=true}
+      <io_aliases = [array<i32: 0, 0>]> : (!array1) -> !array1
+    %out_4, %ctrl_5 = ifrt.CopyArrays(%out_2) <donated=true>
       : (!array1) -> !array0
     %out_6, %ctrl_7 = ifrt.Call @identity(%out_4) on devices [0]
-      {io_aliases = [array<i32: 0, 0>]} : (!array0) -> !array0
+      <io_aliases = [array<i32: 0, 0>]> : (!array0) -> !array0
     return %out_6 : !array0
   }
 
@@ -1017,7 +1038,8 @@ module {
     return %arg0 : tensor<1024x1024x512xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
 
   std::vector<std::unique_ptr<tsl::Thread>> threads;
@@ -1034,7 +1056,7 @@ TEST_F(IfrtIrLoadedExecutableTest, RoundTripExecutableSerialization) {
   if (GetNumDevices() < 4) {
     GTEST_SKIP() << "Insufficient devices to run this test.";
   }
-  std::string source = R"(
+  std::string source = R"mlir(
 !array1 = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                       [0,1]>
 !array2 = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
@@ -1057,7 +1079,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(4));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -1083,7 +1106,7 @@ TEST_F(IfrtIrLoadedExecutableTest, RoundTripExecutableVersionSerialization) {
   if (GetNumDevices() < 4) {
     GTEST_SKIP() << "Insufficient devices to run this test.";
   }
-  std::string source = R"(
+  std::string source = R"mlir(
 !array1 = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                       [0,1]>
 !array2 = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
@@ -1106,7 +1129,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(4));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -1136,7 +1160,7 @@ TEST_F(IfrtIrLoadedExecutableTest, CallXlaWithDifferentDevices) {
   if (GetNumDevices() < 4) {
     GTEST_SKIP() << "Insufficient devices to run this test.";
   }
-  std::string source = R"(
+  std::string source = R"mlir(
 !array1 = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                       [0,1]>
 !array2 = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
@@ -1159,7 +1183,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(4));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -1202,7 +1227,7 @@ module {
 
 TEST_F(IfrtIrLoadedExecutableTest, CallStableHlo) {
   // Test that verifies that StableHLO atom programs are compiled ok.
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<4xf32>, #ifrt.sharding_param<1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<4xf32>, #ifrt.sharding_param<1 to [0] on 1>, [1]>
 module @mjit_f {
@@ -1225,7 +1250,8 @@ module @mjit_f {
     return %1 : tensor<4xf32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK(CompileProgramWithSerDe(source, devices).status());
 }
@@ -1235,7 +1261,7 @@ TEST_F(IfrtIrLoadedExecutableTest, CopyArraysDeviceToDevice) {
   // Note that this test passes the same argument twice to CopyArrays in order
   // to verify that the array is not removed incorrectly from the IFRT IR
   // program interpreter environment.
-  std::string source = R"(
+  std::string source = R"mlir(
 #tpu0 = #ifrt<devices[0]>
 #tpu1 = #ifrt<devices[1]>
 !array0 = !ifrt.array<tensor<2xi32>, #ifrt.sharding_param<1 to [0] on 1>, #tpu0>
@@ -1248,7 +1274,8 @@ module {
     return %0, %1 : !array1, !array1
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -1280,7 +1307,7 @@ TEST_F(IfrtIrLoadedExecutableTest, CopyArraysCpuToDevice) {
     GTEST_SKIP() << "Test requires at least one cpu device";
   }
 
-  std::string source = R"(
+  std::string source = R"mlir(
 #sharding = #ifrt.sharding_param<1x1 to [0] on 1>
 #tpu = #ifrt<devices[0]>
 #cpu = #ifrt<devices[1]>
@@ -1294,7 +1321,8 @@ module {
     return %0 : !ifrt.array<tensor<2x1xi32>, #sharding, #tpu>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef device, PickDevices(1));
   ASSERT_OK_AND_ASSIGN(DeviceListRef cpu_device, PickDevices(1, "cpu"));
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices,
@@ -1331,7 +1359,7 @@ module {
 
 TEST_F(IfrtIrLoadedExecutableTest, LoadedExecBindingWithDiffNumInputsErrors) {
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
-  std::string stablehlo_source = R"(
+  std::string stablehlo_source = R"mlir(
 module {
   func.func @main(
       %arg0: tensor<2x2xi32> {mhlo.sharding = "{devices=[2,1]<=[2]}"})
@@ -1341,7 +1369,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> stablehlo_module,
                        LoadFromSource(stablehlo_source));
   auto xla_options =
@@ -1366,7 +1395,7 @@ module {
                            std::move(xla_options))
           .Await());
 
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                      [0,1]>
 module {
@@ -1378,7 +1407,7 @@ module {
 
   ifrt.LoadedExecutable @add_args on devices [0,1] : (!array, !array) -> !array
 }
-  )";
+  )mlir";
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
                        LoadFromSource(source));
   auto program = std::make_unique<IfrtIRProgram>(*mlir_module);
@@ -1402,7 +1431,7 @@ module {
 
 TEST_F(IfrtIrLoadedExecutableTest, LoadedExecBindingWithDiffShardingErrors) {
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
-  std::string stablehlo_source = R"(
+  std::string stablehlo_source = R"mlir(
 module {
   func.func @main(
       %arg0: tensor<2x2xi32> {mhlo.sharding = "{devices=[2,1]<=[2]}"})
@@ -1412,7 +1441,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> stablehlo_module,
                        LoadFromSource(stablehlo_source));
   auto xla_options =
@@ -1437,7 +1467,7 @@ module {
                            std::move(xla_options))
           .Await());
 
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 !array_replicated = !ifrt.array<tensor<2x2xi32>,
@@ -1452,7 +1482,7 @@ module {
   ifrt.LoadedExecutable @add_one on devices [0,1]
       : (!array) -> !array_replicated
 }
-  )";
+  )mlir";
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
                        LoadFromSource(source));
   auto compile_options =
@@ -1477,7 +1507,7 @@ TEST_F(IfrtIrLoadedExecutableTest, UsingPartiallyDonatedArgThrowsError) {
   }
   // Verifies that an error is thrown if a shard of an array is first aliased
   // and then donated, followed by usage of the initial array is used.
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                       #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 !array0 = !ifrt.array<tensor<1x2xi32>,
@@ -1489,7 +1519,7 @@ module {
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>]
       : (!array) -> !array0
     %2, %ctrl_2 = ifrt.Call @add_two(%0) on devices [0]
-      {io_aliases = [array<i32: 0, 0>]} : (!array0) -> !array0
+      <io_aliases = [array<i32: 0, 0>]> : (!array0) -> !array0
     %3, %ctrl_3 = ifrt.Call @add_one(%arg0) on devices [0,1]
         : (!array) -> !array
     return %3 : !array
@@ -1507,7 +1537,8 @@ module {
     return %1 : tensor<1x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(auto ifrt_ir_executable,
                        CompileProgram(source, devices));
@@ -1542,7 +1573,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, DonatingTwiceAliasedBufferThrowsError) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                       #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 !array0 = !ifrt.array<tensor<1x2xi32>,
@@ -1557,7 +1588,7 @@ module {
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>]
       : (!array) -> !array0
     %2, %3, %ctrl_2 = ifrt.Call @callee(%0, %1) on devices [0]
-      {io_aliases = [array<i32: 0, 0>, array<i32: 1, 1>]}
+      <io_aliases = [array<i32: 0, 0>, array<i32: 1, 1>]>
       : (!array0, !array0) -> (!array0, !array0)
     return %2, %3 : !array0, !array0
   }
@@ -1569,7 +1600,8 @@ module {
     return %0, %1 : tensor<1x2xi32>, tensor<1x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(auto ifrt_ir_executable,
                        CompileProgram(source, devices));
@@ -1614,7 +1646,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, RemapFromTwoToOneArray) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<1x2xi32>,
                       #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<1x2xi32>,
@@ -1627,11 +1659,12 @@ module {
     %0, %ctrl_0 = ifrt.RemapArrays(%arg0, %arg1)
       mappings=[#ifrt.array_mapping<0, 0, [#ifrt.mapping<[0:1:1] to [0:1:1]>]>,
                 #ifrt.array_mapping<1, 0, [#ifrt.mapping<[0:1:1] to [1:2:1]>]>]
-      {donated=true} : (!array0, !array1) -> (!array2)
+      <donated=true> : (!array0, !array1) -> (!array2)
     return %0 : !array2
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -1668,7 +1701,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, BitcastArraysAddDimension) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<2xi32>,
                       #ifrt.sharding_param<2 to [0] on 2>, [0,1]>
 !array1 = !ifrt.array<tensor<1x2xi32>,
@@ -1677,11 +1710,12 @@ module {
   func.func @main(%arg0: !array0 {ifrt.donated}) -> !array1
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.BitcastArrays(%arg0)
-      {donated=true} : (!array0) -> !array1
+      <donated=true> : (!array0) -> !array1
     return %0 : !array1
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef executable,
                        CompileProgram(source, devices));
@@ -1703,7 +1737,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, BitcastArraysRemoveDimension) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<1x2xi32>,
                       #ifrt.sharding_param<1x2 to [0] on 2>, [0,1]>
 !array1 = !ifrt.array<tensor<2xi32>,
@@ -1712,11 +1746,12 @@ module {
   func.func @main(%arg0: !array0 {ifrt.donated}) -> !array1
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.BitcastArrays(%arg0)
-      {donated=true} : (!array0) -> !array1
+      <donated=true> : (!array0) -> !array1
     return %0 : !array1
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef executable,
                        CompileProgram(source, devices));
@@ -1741,7 +1776,7 @@ TEST_F(IfrtIrLoadedExecutableTest, NonDonatableBitcastArrays) {
   // The test passes two arrays on different device to BitcastArrays on purpose.
   // This is required to test that multiple CopyArrays (one per device list) are
   // inserted to make sure the donation semantics are correct.
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<1x2xi32>,
                       #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<1x2xi32>,
@@ -1754,11 +1789,12 @@ module {
   func.func @main(%arg0: !array0 {ifrt.donated}, %arg1: !array1 {ifrt.donated})
       -> (!array2, !array3) attributes {ifrt.function} {
     %0, %1, %ctrl_0 = ifrt.BitcastArrays(%arg0, %arg1)
-      {donated=true} : (!array0, !array1) -> (!array2, !array3)
+      <donated=true> : (!array0, !array1) -> (!array2, !array3)
     return %0, %1 : !array2, !array3
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef executable,
                        CompileProgram(source, devices));
@@ -1805,7 +1841,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, BitcastArraysCanBeUsedByCallOp) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<2x2xi32>,
                       #ifrt.sharding_param<2x1 to [0] on 2>, [0,1]>
 !array1 = !ifrt.array<tensor<1x2x2xi32>,
@@ -1814,9 +1850,9 @@ module {
   func.func @main(%arg0: !array0 {ifrt.donated}) -> !array0
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.BitcastArrays(%arg0)
-      {donated=true} : (!array0) -> !array1
+      <donated=true> : (!array0) -> !array1
     %1, %ctrl_1 = ifrt.Call @add_one(%0) on devices [0,1] : (!array1) -> !array1
-    %2, %ctrl_2 = ifrt.BitcastArrays(%1) {donated=true} : (!array1) -> !array0
+    %2, %ctrl_2 = ifrt.BitcastArrays(%1) <donated=true> : (!array1) -> !array0
     return %2 : !array0
   }
 
@@ -1826,7 +1862,8 @@ module {
     return %1 : tensor<1x2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef executable,
                        CompileProgram(source, devices));
@@ -1861,7 +1898,7 @@ TEST_F(IfrtIrLoadedExecutableTest, GetParameterAndOutputLayouts) {
 
   // TODO(b/382761415): Update test when layouts are populated in IFRT IR
   // array type.
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x2 to [0] on 4>, [0, 1, 2, 3]>
 module @auto_layout {
@@ -1873,7 +1910,7 @@ module @auto_layout {
       on devices [0, 1, 2, 3] : (!array) -> !array
     return %out_0, %out_0, %out_1, %arg1 : !array, !array, !array, !array
   }
-  module @transpose attributes {sym_visibility = "private"} {
+  module @transpose <sym_visibility = "private"> {
     func.func @main(%arg0: tensor<2x2xi32> {mhlo.layout_mode = "auto"})
         -> (tensor<2x2xi32> {mhlo.layout_mode = "auto"}) {
       %0 = stablehlo.transpose %arg0, dims = [1, 0]
@@ -1881,7 +1918,7 @@ module @auto_layout {
       return %0 : tensor<2x2xi32>
     }
   }
-  module @transpose_w_custom_layout attributes {sym_visibility = "private"} {
+  module @transpose_w_custom_layout <sym_visibility = "private"> {
     func.func public @main(%arg0: tensor<2x2xi32>
         {mhlo.sharding = "{devices=[2,1,2]<=[4] last_tile_dim_replicate}"})
         -> (tensor<2x2xi32> {mhlo.layout_mode = "auto"}) {
@@ -1900,7 +1937,8 @@ module @auto_layout {
     }
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(4));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -1932,7 +1970,7 @@ TEST_F(IfrtIrLoadedExecutableTest, CustomLayoutPreservedWithCopyArrays) {
   }
   // Verifies that when an argument is used by both a CallLoadedExecutableOp
   // with custom layout and a CopyArraysOp, the custom layout is preserved.
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x2 to [0] on 4>, [0, 1, 2, 3]>
 module @custom_layout_copy_arrays {
@@ -1943,7 +1981,7 @@ module @custom_layout_copy_arrays {
     %out_1, %ctrl_1 = ifrt.CopyArrays(%arg0) : (!array) -> !array
     return %out_0, %out_1 : !array, !array
   }
-  module @transpose_w_custom_layout attributes {sym_visibility = "private"} {
+  module @transpose_w_custom_layout <sym_visibility = "private"> {
     func.func public @main(%arg0: tensor<2x2xi32>
         {mhlo.sharding = "{devices=[2,1,2]<=[4] last_tile_dim_replicate}"})
         -> (tensor<2x2xi32> {mhlo.layout_mode = "auto"}) {
@@ -1962,7 +2000,8 @@ module @custom_layout_copy_arrays {
     }
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(4));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -2008,7 +2047,7 @@ TEST_F(IfrtIrLoadedExecutableTest, CustomOutputLayoutPreservedWithCopyArrays) {
   }
   // Verifies that when an atom program output with custom layout is passed to a
   // CopyArraysOp and returned, the custom output layout is preserved.
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x2 to [0] on 4>, [0, 1, 2, 3]>
 module @custom_output_layout_copy_arrays {
@@ -2019,7 +2058,7 @@ module @custom_output_layout_copy_arrays {
     %out_1, %ctrl_1 = ifrt.CopyArrays(%out_0) : (!array) -> !array
     return %out_0, %out_1 : !array, !array
   }
-  module @transpose_w_custom_layout attributes {sym_visibility = "private"} {
+  module @transpose_w_custom_layout <sym_visibility = "private"> {
     func.func public @main(%arg0: tensor<2x2xi32>
         {mhlo.sharding = "{devices=[2,1,2]<=[4] last_tile_dim_replicate}"})
         -> (tensor<2x2xi32> {mhlo.layout_mode = "auto"}) {
@@ -2038,7 +2077,8 @@ module @custom_output_layout_copy_arrays {
     }
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(4));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -2073,7 +2113,7 @@ module @custom_output_layout_copy_arrays {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, NonDonatablePinnedHostInput) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>,
                      #ifrt.sharding_param<2x1 to [0] on 2>, [0,1],
                      memory_kind = "pinned_host">
@@ -2081,7 +2121,7 @@ module {
   func.func @main(%arg0: !array {ifrt.donated}) -> !array
       attributes {ifrt.function} {
     %0, %ctrl_0 = ifrt.Call @add_one(%arg0) on devices [0,1]
-        {io_aliases=[array<i32: 0, 0>]} : (!array) -> !array
+        <io_aliases=[array<i32: 0, 0>]> : (!array) -> !array
     return %0 : !array
   }
 
@@ -2091,7 +2131,8 @@ module {
     return %1 : tensor<2x2xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -2132,7 +2173,7 @@ TEST_F(IfrtIrLoadedExecutableTest, VerifyDeletesDispatchedInOrder) {
   if (!IsUsingTpuV4().value_or(false)) {
     GTEST_SKIP() << "Test requires TPU v4.";
   }
-  std::string source = R"(
+  std::string source = R"mlir(
 !input = !ifrt.array<tensor<1x1xi32>,
                      #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
 !array0 = !ifrt.array<tensor<1024x1024x5120xi32>,
@@ -2143,14 +2184,14 @@ module {
   func.func @main(%arg0: !input) -> (!array0) attributes {ifrt.function} {
     %out, %ctrl = ifrt.Call @generate_data(%arg0) on devices [0]
       : (!input) -> !array0
-    %out_0, %ctrl_1 = ifrt.CopyArrays(%out) {donated=true}
+    %out_0, %ctrl_1 = ifrt.CopyArrays(%out) <donated=true>
       : (!array0) -> !array1
     %out_2, %ctrl_3 = ifrt.Call @identity(%out_0) on devices [1]
-      {io_aliases = [array<i32: 0, 0>]} : (!array1) -> !array1
-    %out_4, %ctrl_5 = ifrt.CopyArrays(%out_2) {donated=true}
+      <io_aliases = [array<i32: 0, 0>]> : (!array1) -> !array1
+    %out_4, %ctrl_5 = ifrt.CopyArrays(%out_2) <donated=true>
       : (!array1) -> !array0
     %out_6, %ctrl_7 = ifrt.Call @identity(%out_4) on devices [0]
-      {io_aliases = [array<i32: 0, 0>]} : (!array0) -> !array0
+      <io_aliases = [array<i32: 0, 0>]> : (!array0) -> !array0
     return %out_6 : !array0
   }
 
@@ -2168,7 +2209,8 @@ module {
     return %arg0 : tensor<1024x1024x5120xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -2206,7 +2248,7 @@ TEST_F(IfrtIrLoadedExecutableTest, VerifyUnusedArraysDeleteInOrder) {
     GTEST_SKIP() << "Test requires TPU v4.";
   }
 
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<1x1xi32>,
                       #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<1024x1024x5120xi32>,
@@ -2250,7 +2292,8 @@ module {
     return %7, %9 : tensor<1x1xi32>, tensor<1024x1024x5120xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(1));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -2282,7 +2325,7 @@ TEST_F(IfrtIrLoadedExecutableTest, VerifyRunaheadWithAliasingDoesntOOM) {
     GTEST_SKIP() << "Test requires TPU v4.";
   }
 
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<1x1xi32>,
                       #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<1024x1024x5120xi32>,
@@ -2293,13 +2336,13 @@ module {
     %0, %ctrl_0 = ifrt.Call @generate(%arg0) on devices [0]
         : (!array0) -> (!array1)
     %2, %3, %ctrl_1 = ifrt.Call @wait_4sec_and_add(%arg0, %0) on devices [0]
-        {io_aliases = [array<i32: 1, 1>]}
+        <io_aliases = [array<i32: 1, 1>]>
         : (!array0, !array1) -> (!array0, !array1)
     %4, %5, %ctrl_2 = ifrt.Call @wait_4sec_and_add(%2, %3) on devices [0]
-        {io_aliases = [array<i32: 1, 1>]}
+        <io_aliases = [array<i32: 1, 1>]>
         : (!array0, !array1) -> (!array0, !array1)
     %6, %7, %ctrl_3 = ifrt.Call @wait_4sec_and_add(%4, %5) on devices [0]
-        {io_aliases = [array<i32: 1, 1>]}
+        <io_aliases = [array<i32: 1, 1>]>
         : (!array0, !array1) -> (!array0, !array1)
     return %6, %7 : !array0, !array1
   }
@@ -2337,7 +2380,8 @@ module {
     return %7, %9 : tensor<1x1xi32>, tensor<1024x1024x5120xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(1));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -2370,7 +2414,7 @@ TEST_F(IfrtIrLoadedExecutableTest, VerifyRunaheadWithoutAliasingDoesntOOM) {
     GTEST_SKIP() << "Test requires TPU v4.";
   }
 
-  std::string source = R"(
+  std::string source = R"mlir(
 !array0 = !ifrt.array<tensor<1x1xi32>,
                       #ifrt.sharding_param<1x1 to [0] on 1>, [0]>
 !array1 = !ifrt.array<tensor<1024x1024x3328xi32>,
@@ -2424,7 +2468,8 @@ module {
     return %7, %9 : tensor<1x1xi32>, tensor<1024x1024x3328xi32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(1));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef ifrt_ir_executable,
                        CompileProgramWithSerDe(source, devices));
@@ -2443,7 +2488,7 @@ module {
 }
 
 TEST_F(IfrtIrLoadedExecutableTest, AtomCallsWithTokens) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x2xi32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                      [0,1]>
 !token = !ifrt.array<tensor<!ifrt.token>, #ifrt.sharding_param< to [0] on 2>,
@@ -2474,7 +2519,8 @@ module {
     return %1, %arg1 : tensor<2x2xi32>, !stablehlo.token
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
   ASSERT_OK_AND_ASSIGN(LoadedExecutableRef loaded_exec,
                        CompileProgram(source, devices));
@@ -2500,7 +2546,7 @@ module {
 
 TEST_F(IfrtIrLoadedExecutableTest,
        CompileAndExecuteBundleThreeInputsOutputsSplitBundle) {
-  std::string source = R"(
+  std::string source = R"mlir(
 !array = !ifrt.array<tensor<2x3xf32>, #ifrt.sharding_param<2x1 to [0] on 2>,
                      [0,1]>
 module {
@@ -2523,7 +2569,8 @@ module {
     return %out0, %out1, %out2 : tensor<2x3xf32>, tensor<2x3xf32>, tensor<2x3xf32>
   }
 }
-  )";
+  )mlir";
+
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> mlir_module,
                        LoadFromSource(source));
   ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));

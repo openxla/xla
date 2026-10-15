@@ -29,12 +29,12 @@ limitations under the License.
 #include "riegeli/bytes/reader.h"
 #include "riegeli/bytes/std_io.h"
 #include "riegeli/bytes/writer.h"
+#include "tsl/platform/init_main.h"
 #include "xla/service/riegeli_file_reader_factory.h"
 #include "xla/service/riegeli_file_writer_factory.h"
 #include "xla/tools/split_proto/split_proto_cli_lib.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/util/command_line_flags.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla::split_proto_cli {
 namespace {
@@ -177,7 +177,8 @@ absl::Status RunMain(int argc, char** argv) {
     status = Pack(std::move(reader), std::move(writer), options);
   } else if (subcommand == "unpack") {
     UnpackOptions options;
-    ABSL_RETURN_IF_ERROR(parse_format(output_format_str, &options.output_format));
+    ABSL_RETURN_IF_ERROR(
+        parse_format(output_format_str, &options.output_format));
 
     status = Unpack(std::move(reader), std::move(writer), options);
   } else if (subcommand == "pack-aot") {
@@ -187,7 +188,8 @@ absl::Status RunMain(int argc, char** argv) {
     status = PackAot(std::move(reader), std::move(writer), options);
   } else if (subcommand == "unpack-aot") {
     UnpackOptions options;
-    ABSL_RETURN_IF_ERROR(parse_format(output_format_str, &options.output_format));
+    ABSL_RETURN_IF_ERROR(
+        parse_format(output_format_str, &options.output_format));
 
     status = UnpackAot(std::move(reader), std::move(writer), options);
   } else if (subcommand == "aot-info") {

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/sycl_stream.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -61,7 +62,7 @@ class SyclStreamTest : public xla::gpu::HloPjRtGpuTestBase {
 
  private:
   void SetUp() override {
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         Platform * platform,
         stream_executor::PlatformManager::PlatformWithId(kSyclPlatformId));
     executor_.emplace(platform, kDefaultDeviceOrdinal);
@@ -83,10 +84,10 @@ TEST_F(SyclStreamTest, Memset32) {
   DeviceAddress<uint32_t> device_buffer =
       executor_->AllocateArray<uint32_t>(kBufferNumElements, 0);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/false,
-                                             /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/false,
+                                          /*priority=*/std::nullopt));
 
   constexpr uint64_t kBufferSizeBytes = kBufferNumElements * sizeof(uint32_t);
 
@@ -121,10 +122,10 @@ TEST_F(SyclStreamTest, MemZero) {
   DeviceAddress<uint32_t> device_buffer =
       executor_->AllocateArray<uint32_t>(kBufferNumElements, 0);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/false,
-                                             /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/false,
+                                          /*priority=*/std::nullopt));
 
   constexpr uint64_t kBufferSizeBytes = kBufferNumElements * sizeof(uint32_t);
 
@@ -158,10 +159,10 @@ TEST_F(SyclStreamTest, MemcpyHostToDeviceAndBack) {
   DeviceAddress<uint32_t> device_buffer =
       executor_->AllocateArray<uint32_t>(kBufferNumElements, 0);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/false,
-                                             /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/false,
+                                          /*priority=*/std::nullopt));
 
   constexpr uint64_t kBufferSizeBytes = kBufferNumElements * sizeof(uint32_t);
 
@@ -190,10 +191,10 @@ TEST_F(SyclStreamTest, MemcpyDeviceToDevice) {
   DeviceAddress<uint32_t> device_buffer2 =
       executor_->AllocateArray<uint32_t>(kBufferNumElements, 0);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/false,
-                                             /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/false,
+                                          /*priority=*/std::nullopt));
 
   constexpr uint64_t kBufferSizeBytes = kBufferNumElements * sizeof(uint32_t);
 
@@ -215,10 +216,10 @@ TEST_F(SyclStreamTest, MemcpyDeviceToDevice) {
 }
 
 TEST_F(SyclStreamTest, DoHostCallbackAndBlockHostUntilDone) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/false,
-                                             /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/false,
+                                          /*priority=*/std::nullopt));
 
   bool callback_called = false;
   EXPECT_THAT(
@@ -230,10 +231,10 @@ TEST_F(SyclStreamTest, DoHostCallbackAndBlockHostUntilDone) {
 }
 
 TEST_F(SyclStreamTest, LaunchKernel) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/false,
-                                             /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/false,
+                                          /*priority=*/std::nullopt));
 
   using AddKernel =
       TypedKernelFactory<DeviceAddress<int32_t>, DeviceAddress<int32_t>,
@@ -248,14 +249,14 @@ TEST_F(SyclStreamTest, LaunchKernel) {
 
   xla::HloModuleConfig config;
   config.set_debug_options(GetDebugOptionsForTest());
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> hlo_module,
-                          xla::ParseAndReturnUnverifiedModule(hlo_ir, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> hlo_module,
+                       xla::ParseAndReturnUnverifiedModule(hlo_ir, config));
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       hlo_module,
       compiler()->RunHloPasses(std::move(hlo_module), &executor_.value(),
                                /*device_allocator=*/nullptr));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<xla::Executable> exec,
       compiler()->RunBackend(std::move(hlo_module), &executor_.value(),
                              /*device_allocator=*/nullptr));
@@ -277,8 +278,8 @@ TEST_F(SyclStreamTest, LaunchKernel) {
   const KernelLoaderSpec& kernel_spec =
       kernel_thunk->custom_kernel().kernel_spec();
 
-  TF_ASSERT_OK_AND_ASSIGN(auto add,
-                          AddKernel::Create(&executor_.value(), kernel_spec));
+  ASSERT_OK_AND_ASSIGN(auto add,
+                       AddKernel::Create(&executor_.value(), kernel_spec));
 
   constexpr int64_t kLength = 4;
   constexpr int64_t kByteLength = sizeof(int32_t) * kLength;
@@ -306,10 +307,10 @@ TEST_F(SyclStreamTest, LaunchKernel) {
 }
 
 TEST_F(SyclStreamTest, SetName) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/false,
-                                             /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/false,
+                                          /*priority=*/std::nullopt));
 
   constexpr absl::string_view kStreamName = "Test stream";
   stream->SetName(std::string(kStreamName));
@@ -317,13 +318,12 @@ TEST_F(SyclStreamTest, SetName) {
 }
 
 TEST_F(SyclStreamTest, WaitForEvent) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/false,
-                                             /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/false,
+                                          /*priority=*/std::nullopt));
 
-  TF_ASSERT_OK_AND_ASSIGN(SyclEvent event,
-                          SyclEvent::Create(&executor_.value()));
+  ASSERT_OK_AND_ASSIGN(SyclEvent event, SyclEvent::Create(&executor_.value()));
 
   EXPECT_THAT(stream->WaitFor(&event), absl_testing::IsOk());
 
@@ -343,14 +343,14 @@ TEST_F(SyclStreamTest, WaitForEvent) {
 // is omitted for SYCL.
 
 TEST_F(SyclStreamTest, MultipleStreams) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream1,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/true,
-                                             /*priority=*/std::nullopt));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream2,
-                          SyclStream::Create(&executor_.value(),
-                                             /*enable_multiple_streams=*/true,
-                                             /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream1,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/true,
+                                          /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<SyclStream> stream2,
+                       SyclStream::Create(&executor_.value(),
+                                          /*enable_multiple_streams=*/true,
+                                          /*priority=*/std::nullopt));
 
   std::vector<int> host_buffer;
   EXPECT_THAT(

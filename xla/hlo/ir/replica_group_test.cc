@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/ir/replica_group.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/hlo/ir/hlo_print_options.h"

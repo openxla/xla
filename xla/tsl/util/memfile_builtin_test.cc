@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/tsl/util/memfile_builtin.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/util/file_toc.h"

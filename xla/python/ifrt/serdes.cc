@@ -109,7 +109,7 @@ absl::Status Serialize(const Serializable& serializable,
     serdes = it->second;
   }
   ABSL_ASSIGN_OR_RETURN(absl::Cord data,
-                   serdes->Serialize(serializable, std::move(options)));
+                        serdes->Serialize(serializable, std::move(options)));
 
   proto.Clear();
   proto.set_type_name(std::string(serdes->type_name()));

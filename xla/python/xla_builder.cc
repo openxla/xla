@@ -24,8 +24,8 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"    // IWYU pragma: keep
+#include "nanobind/stl/vector.h"    // IWYU pragma: keep
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/service/name_uniquer.h"

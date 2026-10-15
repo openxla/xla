@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/ascii.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/MLIRContext.h"
@@ -58,6 +59,7 @@ TEST(CompilationPipelineTest, ContainsUnswitchLoopsCompositePass) {
 
   std::vector<std::string> pass_names = GetPassNames(pm);
   ASSERT_THAT(pass_names, Contains("TritonXLAUnswitchLoopsComposite"));
+  EXPECT_THAT(pass_names, Contains("TritonXLACollapseContiguousMinorDimsPass"));
 
   std::string pipeline_str;
   llvm::raw_string_ostream os(pipeline_str);

@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/source_target_pairs.h"
 
-#include <vector>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <vector>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_format.h"

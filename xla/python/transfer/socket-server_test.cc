@@ -14,13 +14,14 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/python/transfer/socket-server.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/time/clock.h"

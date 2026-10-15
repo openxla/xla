@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/dnn.h"
 
+#include <gtest/gtest.h>
+
 #include <tuple>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 

@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tools/hlo_decomposer.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -252,8 +253,9 @@ absl::StatusOr<HloFusionInstruction*> MakeFusionForDiamond(
 
   normalization_fusion->GetModule()->SetAndUniquifyInstrName(
       normalization_fusion, "triton_softmax");
-  ABSL_ASSIGN_OR_RETURN(auto gpu_config,
-                   normalization_fusion->backend_config<GpuBackendConfig>());
+  ABSL_ASSIGN_OR_RETURN(
+      auto gpu_config,
+      normalization_fusion->backend_config<GpuBackendConfig>());
   FusionBackendConfig& backend_config =
       *gpu_config.mutable_fusion_backend_config();
   backend_config.set_kind(kTritonFusionKind);
@@ -311,8 +313,8 @@ EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
 
   // After this call, the `new_module` will have instruction fused without
   // SoftmaxRewriterTriton.
-  ABSL_RETURN_IF_ERROR(RunFusionPipeline(new_module.get(), device_info, shape_size,
-                                    alias_info, mlir_context));
+  ABSL_RETURN_IF_ERROR(RunFusionPipeline(new_module.get(), device_info,
+                                         shape_size, alias_info, mlir_context));
 
   VLOG(3) << "priority fusion module: " << new_module->ToString();
 
@@ -353,12 +355,17 @@ DecideIfShouldFuseAndMaybeSetBlockLevelParameters(
     const se::DeviceDescription& device_info,
     const HloCostAnalysis::ShapeSizeFunction& shape_size,
     const GpuAliasInfo* alias_info, MLIRContext* mlir_context,
-    bool use_cost_model_to_evaluate_fusions) {
+    bool use_cost_model_to_evaluate_fusions,
+    tsl::thread::ThreadPool* thread_pool = nullptr) {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(normalization_fusion);
 
   ABSL_ASSIGN_OR_RETURN(
       TiledRunTimeDataOrError tiled_runtime_data_or,
-      indexing_performance_model.TryFindBestTilingForFusion(*fusion_adaptor));
+      indexing_performance_model
+          .TryFindBestTilingForFusionAsync(
+              *fusion_adaptor,
+              thread_pool ? thread_pool->AsExecutor() : nullptr)
+          .Await());
 
   if (const auto* fusion_decision =
           std::get_if<FusionDecision>(&tiled_runtime_data_or)) {
@@ -370,10 +377,11 @@ DecideIfShouldFuseAndMaybeSetBlockLevelParameters(
       std::get<TiledRunTimeData>(std::move(tiled_runtime_data_or));
 
   if (use_cost_model_to_evaluate_fusions) {
-    ABSL_ASSIGN_OR_RETURN(absl::Duration run_time_without_softmax_rewriter,
-                     EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
-                         normalization_fusion, device_info, shape_size,
-                         alias_info, mlir_context));
+    ABSL_ASSIGN_OR_RETURN(
+        absl::Duration run_time_without_softmax_rewriter,
+        EstimateOptimizedHloRunTimeWithoutSoftMaxRewriterTriton(
+            normalization_fusion, device_info, shape_size, alias_info,
+            mlir_context));
 
     VLOG(2) << "run time estimate if normalization diamond fused together: "
             << tiled_runtime_data.runtime_data.exec_time;
@@ -389,12 +397,14 @@ DecideIfShouldFuseAndMaybeSetBlockLevelParameters(
     }
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto backend_config,
-                   normalization_fusion->backend_config<GpuBackendConfig>());
+  ABSL_ASSIGN_OR_RETURN(
+      auto backend_config,
+      normalization_fusion->backend_config<GpuBackendConfig>());
   *backend_config.mutable_fusion_backend_config()
        ->mutable_block_level_fusion_config() =
       tiled_runtime_data.block_level_parameters.ToBlockLevelFusionConfig();
-  ABSL_RETURN_IF_ERROR(normalization_fusion->set_backend_config(backend_config));
+  ABSL_RETURN_IF_ERROR(
+      normalization_fusion->set_backend_config(backend_config));
   VLOG(2) << "Fusing with backend config: " << backend_config.DebugString();
 
   return FusionDecision::Allow();
@@ -406,18 +416,19 @@ absl::StatusOr<bool> MaybeFuseDiamondImpl(
     const se::DeviceDescription& device_info,
     const HloCostAnalysis::ShapeSizeFunction& shape_size,
     const GpuAliasInfo* alias_info, MLIRContext* mlir_context,
-    bool use_cost_model_to_evaluate_fusions) {
+    bool use_cost_model_to_evaluate_fusions,
+    tsl::thread::ThreadPool* thread_pool = nullptr) {
   ABSL_ASSIGN_OR_RETURN(HloFusionInstruction * normalization_fusion,
-                   MakeFusionForDiamond(diamond));
+                        MakeFusionForDiamond(diamond));
   HloInstruction* root = diamond.root;
 
   VLOG(2) << "MaybeFuseDiamondImpl: " << normalization_fusion->ToString();
 
   ABSL_ASSIGN_OR_RETURN(FusionDecision fusion_decision,
-                   DecideIfShouldFuseAndMaybeSetBlockLevelParameters(
-                       normalization_fusion, indexing_performance_model,
-                       device_info, shape_size, alias_info, mlir_context,
-                       use_cost_model_to_evaluate_fusions));
+                        DecideIfShouldFuseAndMaybeSetBlockLevelParameters(
+                            normalization_fusion, indexing_performance_model,
+                            device_info, shape_size, alias_info, mlir_context,
+                            use_cost_model_to_evaluate_fusions, thread_pool));
 
   if (fusion_decision.IsForbidden()) {
     VLOG(2) << "Not fusing: " << fusion_decision.Explain();
@@ -429,7 +440,8 @@ absl::StatusOr<bool> MaybeFuseDiamondImpl(
 
   if (root->IsRoot()) {
     root->parent()->set_root_instruction(normalization_fusion);
-    ABSL_RETURN_IF_ERROR(root->parent()->RemoveInstructionAndUnusedOperands(root));
+    ABSL_RETURN_IF_ERROR(
+        root->parent()->RemoveInstructionAndUnusedOperands(root));
   } else {
     ABSL_RETURN_IF_ERROR(
         root->parent()->ReplaceInstruction(root, normalization_fusion));
@@ -443,7 +455,7 @@ absl::StatusOr<bool> CanSymbolicTileAnalysisTileDiamond(
     const DiamondDescriptor& diamond,
     const se::DeviceDescription& device_info) {
   ABSL_ASSIGN_OR_RETURN(HloFusionInstruction * normalization_fusion,
-                   MakeFusionForDiamond(diamond));
+                        MakeFusionForDiamond(diamond));
   mlir::MLIRContext mlir_context;
   bool use_experimental_tiling =
       normalization_fusion->GetModule()
@@ -458,7 +470,7 @@ absl::StatusOr<bool> CanSymbolicTileAnalysisTileDiamond(
     std::unique_ptr<HloFusionAdaptor> fusion_adaptor =
         HloFusionAdaptor::ForInstruction(normalization_fusion);
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<TilingSpace> tiling_space,
-                     TilingSpace::Create(*fusion_adaptor, &mlir_context));
+                          TilingSpace::Create(*fusion_adaptor, &mlir_context));
     absl::StatusOr<TiledHloComputation> tiled_computation_or =
         TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space));
     // We don't have concrete tile sizes here and don't validate Triton
@@ -674,11 +686,13 @@ absl::StatusOr<bool> SoftmaxRewriterTriton::MaybeFuseNormalizationDiamond(
       diamond.root->GetModule()
           ->config()
           .debug_options()
-          .xla_gpu_experimental_enable_same_shape_multi_output_fusion());
+          .xla_gpu_experimental_enable_same_shape_multi_output_fusion(),
+      mlir_context_pool_);
 
   return MaybeFuseDiamondImpl(diamond, indexing_performance_model, device_info_,
                               shape_size_, alias_info_, mlir_context_,
-                              use_cost_model_to_evaluate_fusions_);
+                              use_cost_model_to_evaluate_fusions_,
+                              thread_pool_);
 }
 
 absl::StatusOr<bool> SoftmaxRewriterTriton::RunImpl(

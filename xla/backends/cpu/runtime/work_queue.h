@@ -26,11 +26,11 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
+#include "Eigen/ThreadPool"
 #include "absl/base/attributes.h"
 #include "absl/base/optimization.h"
 #include "absl/container/fixed_array.h"
 #include "absl/status/status.h"
-#include "Eigen/ThreadPool"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/chain.h"
 #include "xla/tsl/platform/logging.h"

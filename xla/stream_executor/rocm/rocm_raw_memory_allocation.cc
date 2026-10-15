@@ -36,7 +36,8 @@ RocmRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
 
   hipDevice_t device;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipDeviceGet(&device, executor->device_ordinal())));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipDeviceGet(&device, executor->device_ordinal())));
 
   hipMemAllocationProp props = {};
   props.type = hipMemAllocationTypePinned;
@@ -51,7 +52,8 @@ RocmRawMemoryAllocation::Create(StreamExecutor* executor, uint64_t size) {
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, granularity);
 
   hipMemGenericAllocationHandle_t handle;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipMemCreate(&handle, padded_size, &props, 0ULL)));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipMemCreate(&handle, padded_size, &props, 0ULL)));
 
   return std::unique_ptr<RocmRawMemoryAllocation>(
       new RocmRawMemoryAllocation(executor, handle, padded_size));

@@ -14,9 +14,10 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/hlo/transforms/expanders/reduce_decomposer.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"

@@ -26,9 +26,9 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/init_main.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla {
 namespace tools {

@@ -63,17 +63,12 @@ RecvThunk::RecvThunk(ThunkInfo thunk_info, const P2PConfig& config,
       config_(config),
       hlo_name_(instr_name) {}
 
-absl::Status RecvThunk::Initialize(const InitializeParams& params) {
-  ABSL_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
-  return absl::OkStatus();
-}
-
 absl::StatusOr<std::unique_ptr<RecvThunk>> RecvThunk::FromProto(
     ThunkInfo thunk_info, const RecvThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ABSL_ASSIGN_OR_RETURN(CollectiveThunk::Buffer buffer,
-                   CollectiveThunk::Buffer::FromProto(thunk_proto.buffer(),
-                                                      buffer_allocations));
+                        CollectiveThunk::Buffer::FromProto(thunk_proto.buffer(),
+                                                           buffer_allocations));
 
   CollectiveConfig config =
       CollectiveConfig::FromProto(thunk_proto.collective_config());
@@ -156,9 +151,10 @@ absl::Status RecvThunk::RunCollective(const ExecuteParams& params,
 
   GlobalDeviceId global_device_id = params.collective_params->global_device_id;
 
-  ABSL_ASSIGN_OR_RETURN(const DeviceAssignment::LogicalID current_logical_id,
-                   params.collective_params->device_assn->LogicalIdForDevice(
-                       global_device_id));
+  ABSL_ASSIGN_OR_RETURN(
+      const DeviceAssignment::LogicalID current_logical_id,
+      params.collective_params->device_assn->LogicalIdForDevice(
+          global_device_id));
   const int64_t current_id =
       config_.config.group_mode ==
               CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA

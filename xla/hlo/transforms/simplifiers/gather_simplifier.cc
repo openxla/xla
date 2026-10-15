@@ -57,8 +57,9 @@ absl::StatusOr<HloInstruction*> GatherSimplifier::ExpandInstruction(
   }
 
   // Make the start_indices a two-dimensional tensor.
-  ABSL_ASSIGN_OR_RETURN(start_indices, TransformStartIndices(
-                                      start_indices, dims.index_vector_dim()));
+  ABSL_ASSIGN_OR_RETURN(
+      start_indices,
+      TransformStartIndices(start_indices, dims.index_vector_dim()));
 
   // Permute the slice sizes according to start_index_map and compute the new
   // output shape for the Gather op.
@@ -85,7 +86,8 @@ absl::StatusOr<HloInstruction*> GatherSimplifier::ExpandInstruction(
         dims.collapsed_slice_dims().size());
     absl::c_transform(dims.collapsed_slice_dims(), collapsed_slice_dims.begin(),
                       [](int64_t dim) { return dim + 1; });
-    ABSL_ASSIGN_OR_RETURN(result, ElideDegenerateDims(result, collapsed_slice_dims));
+    ABSL_ASSIGN_OR_RETURN(result,
+                          ElideDegenerateDims(result, collapsed_slice_dims));
   }
 
   // Expand the start index dimensions.
@@ -98,7 +100,7 @@ absl::StatusOr<HloInstruction*> GatherSimplifier::ExpandInstruction(
   }
   if (start_indices_dims.size() > 1) {
     ABSL_ASSIGN_OR_RETURN(result,
-                     ExpandFirstDimIntoNDims(result, start_indices_dims));
+                          ExpandFirstDimIntoNDims(result, start_indices_dims));
   } else if (start_indices_dims.empty()) {
     ABSL_ASSIGN_OR_RETURN(result, ElideDegenerateDims(result, {0}));
   }

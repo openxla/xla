@@ -51,9 +51,10 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "xla/codegen/intrinsic/cpp/intrinsic_declarations.h"
 #include "xla/codegen/intrinsic/fptrunc.h"
-#include "xla/codegen/intrinsic/intrinsic.h"
 #include "xla/codegen/intrinsic/log1p.h"
+#include "xla/codegen/intrinsic/type.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -902,8 +903,8 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
           cast_type = F32;
         }
         ABSL_ASSIGN_OR_RETURN(operand_value,
-                         EmitF8fnuzToFloating(from_type, operand_value,
-                                              cast_type, b_, module_));
+                              EmitF8fnuzToFloating(from_type, operand_value,
+                                                   cast_type, b_, module_));
         from_type = cast_type;
         if (from_type == to_type) {
           return operand_value;
@@ -1050,12 +1051,16 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatUnaryOp(
       return EmitErf(op->shape().element_type(), operand_value);
     case HloOpcode::kExp:
       return EmitExp(op->shape().element_type(), operand_value, "");
+    case HloOpcode::kExp2:
+      return EmitExp2(op->shape().element_type(), operand_value);
     case HloOpcode::kExpm1:
       return EmitExpm1(op->shape().element_type(), operand_value);
     case HloOpcode::kLog:
       return EmitLog(op->shape().element_type(), operand_value);
     case HloOpcode::kLog1p:
       return EmitLog1p(op->shape().element_type(), operand_value);
+    case HloOpcode::kLog2:
+      return EmitLog2(op->shape().element_type(), operand_value);
     case HloOpcode::kCos:
       return EmitCos(op->shape().element_type(), operand_value);
     case HloOpcode::kCosh:
@@ -1143,6 +1148,15 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexUnaryOp(
     case HloOpcode::kLog: {
       return EmitComplexLog(op, operand_value);
     }
+    case HloOpcode::kLog2: {
+      ABSL_ASSIGN_OR_RETURN(llvm::Value * log_z,
+                            EmitComplexLog(op, operand_value));
+      auto real = EmitExtractReal(log_z);
+      auto imag = EmitExtractImag(log_z);
+      auto inv_ln2 = llvm::ConstantFP::get(real->getType(), M_LOG2E);
+      return EmitComposeComplex(op, FMul(real, inv_ln2), FMul(imag, inv_ln2),
+                                module_, b_);
+    }
     case HloOpcode::kLog1p: {
       //  log1p(a+bi) = .5*log((a+1)^2+b^2) + i*atan2(b, a + 1)
       //  log((a+1)+bi) = .5*log(a*a + 2*a + 1 + b*b) + i*atan2(b, a+1)
@@ -1201,7 +1215,8 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexUnaryOp(
       auto real_part = Select(FCmpUNO(r, r), min_abs_of_a1_and_b,
                               r);  // handles nan and inf values correctly
 
-      ABSL_ASSIGN_OR_RETURN(auto imag_part, EmitAtan2(component_type, b, a1, ""));
+      ABSL_ASSIGN_OR_RETURN(auto imag_part,
+                            EmitAtan2(component_type, b, a1, ""));
       return EmitComposeComplex(op, real_part, imag_part, module_, b_);
     }
     case HloOpcode::kConvert: {
@@ -1235,7 +1250,8 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexUnaryOp(
 
       ABSL_ASSIGN_OR_RETURN(auto exp_a, EmitExp(component_type, a, ""));
       auto a_half = FMul(a, half);
-      ABSL_ASSIGN_OR_RETURN(auto exp_a_half, EmitExp(component_type, a_half, ""));
+      ABSL_ASSIGN_OR_RETURN(auto exp_a_half,
+                            EmitExp(component_type, a_half, ""));
       ABSL_ASSIGN_OR_RETURN(auto cos_b, EmitCos(component_type, b));
       ABSL_ASSIGN_OR_RETURN(auto sin_b, EmitSin(component_type, b));
 
@@ -1252,6 +1268,36 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexUnaryOp(
       auto imag_normal = FMul(exp_a, sin_b);
       auto imag_overflow = FMul(FMul(exp_a_half, sin_b), exp_a_half);
       auto imag_nonzero = Select(exp_a_is_inf, imag_overflow, imag_normal);
+      auto imag_result = Select(b_is_zero, zero, imag_nonzero);
+
+      return EmitComposeComplex(op, real_result, imag_result, module_, b_);
+    }
+    case HloOpcode::kExp2: {
+      auto a = EmitExtractReal(operand_value);
+      auto b = EmitExtractImag(operand_value);
+      auto type = a->getType();
+      auto ln2 = llvm::ConstantFP::get(type, M_LN2);
+      auto b_ln2 = FMul(b, ln2);
+      auto zero = llvm::ConstantFP::get(type, 0.0);
+      auto half = llvm::ConstantFP::get(type, 0.5);
+      auto pos_inf = llvm::ConstantFP::getInfinity(type);
+
+      ABSL_ASSIGN_OR_RETURN(auto exp2_a, EmitExp2(component_type, a));
+      auto a_half = FMul(a, half);
+      ABSL_ASSIGN_OR_RETURN(auto exp2_a_half, EmitExp2(component_type, a_half));
+      ABSL_ASSIGN_OR_RETURN(auto cos_b_ln2, EmitCos(component_type, b_ln2));
+      ABSL_ASSIGN_OR_RETURN(auto sin_b_ln2, EmitSin(component_type, b_ln2));
+
+      auto exp2_a_is_inf = FCmpOEQ(exp2_a, pos_inf);
+      auto b_is_zero = FCmpOEQ(b, zero);
+
+      auto real_normal = FMul(exp2_a, cos_b_ln2);
+      auto real_overflow = FMul(FMul(exp2_a_half, cos_b_ln2), exp2_a_half);
+      auto real_result = Select(exp2_a_is_inf, real_overflow, real_normal);
+
+      auto imag_normal = FMul(exp2_a, sin_b_ln2);
+      auto imag_overflow = FMul(FMul(exp2_a_half, sin_b_ln2), exp2_a_half);
+      auto imag_nonzero = Select(exp2_a_is_inf, imag_overflow, imag_normal);
       auto imag_result = Select(b_is_zero, zero, imag_nonzero);
 
       return EmitComposeComplex(op, real_result, imag_result, module_, b_);
@@ -1358,9 +1404,9 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexUnaryOp(
       // numerator as Exp(2a)-Exp(-2a) vs Expm1(2a)-Expm1(-2a) return virtually
       // identical results.
       ABSL_ASSIGN_OR_RETURN(llvm::Value * exp_2a_m1,
-                       EmitExpm1(component_type, two_a));
+                            EmitExpm1(component_type, two_a));
       ABSL_ASSIGN_OR_RETURN(llvm::Value * exp_neg_2a_m1,
-                       EmitExpm1(component_type, neg_2a));
+                            EmitExpm1(component_type, neg_2a));
       llvm::Value* real_numerator = FSub(exp_2a_m1, exp_neg_2a_m1);
 
       // We can use the identity cos(2b)+1 = cos(b)^2-sin(b)^2+cos(b)^2+sin(b)^2
@@ -1457,7 +1503,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexUnaryOp(
     }
     case HloOpcode::kSign: {  // Sign(c) = c / |c|
       ABSL_ASSIGN_OR_RETURN(auto cplx_abs,
-                       EmitComplexAbs(component_type, operand_value));
+                            EmitComplexAbs(component_type, operand_value));
       auto type = cplx_abs->getType();
       auto zero = llvm::ConstantFP::get(type, 0.0);
       auto oeq = FCmpOEQ(cplx_abs, zero);
@@ -1656,9 +1702,10 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitSqrtComplexAbs(
       std::tie(min, max, one_p_div_sq),
       EmitComplexAbsHelper(prim_type, real, imag, /*return_sqrt=*/false));
   ABSL_ASSIGN_OR_RETURN(llvm::Value * sqrt_max, EmitSqrt(prim_type, max));
-  ABSL_ASSIGN_OR_RETURN(llvm::Value * pow,
-                   EmitPow(prim_type, one_p_div_sq,
-                           llvm::ConstantFP::get(max->getType(), .25), ""));
+  ABSL_ASSIGN_OR_RETURN(
+      llvm::Value * pow,
+      EmitPow(prim_type, one_p_div_sq,
+              llvm::ConstantFP::get(max->getType(), .25), ""));
   llvm::Value* result = FMul(sqrt_max, pow);
   // When (min, max) are (0, 0), (inf, inf), or (NaN, ...), `result` is NaN.
   // In such cases, we return `min` instead of `result`.
@@ -1840,9 +1887,10 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexLog(
       primitive_util::ComplexComponentType(op->shape().element_type());
   auto a = EmitExtractReal(operand_value);
   auto b = EmitExtractImag(operand_value);
-  ABSL_ASSIGN_OR_RETURN(llvm::Value * angle, EmitAtan2(component_type, b, a, ""));
+  ABSL_ASSIGN_OR_RETURN(llvm::Value * angle,
+                        EmitAtan2(component_type, b, a, ""));
   ABSL_ASSIGN_OR_RETURN(llvm::Value * abs,
-                   EmitComplexAbs(component_type, operand_value));
+                        EmitComplexAbs(component_type, operand_value));
   ABSL_ASSIGN_OR_RETURN(llvm::Value * log_abs, EmitLog(component_type, abs));
   return EmitComposeComplex(op, log_abs, angle, module_, b_);
 }
@@ -1861,7 +1909,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexSqrt(
                          ->getElementType(0);
 
   ABSL_ASSIGN_OR_RETURN(llvm::Value * r,
-                   EmitSqrtComplexAbs(prim_type, operand_value));
+                        EmitSqrtComplexAbs(prim_type, operand_value));
 
   llvm::Value* a = EmitExtractReal(operand_value);
   llvm::Value* b = EmitExtractImag(operand_value);
@@ -1918,7 +1966,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexRsqrt(
                          ->getElementType(0);
 
   ABSL_ASSIGN_OR_RETURN(llvm::Value * r,
-                   EmitRsqrtComplexAbs(prim_type, operand_value));
+                        EmitRsqrtComplexAbs(prim_type, operand_value));
 
   llvm::Value* a = EmitExtractReal(operand_value);
   llvm::Value* b = EmitExtractImag(operand_value);
@@ -1992,7 +2040,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexPower(
   ABSL_ASSIGN_OR_RETURN(auto arg_lhs, EmitAtan2(component_type, b, a, ""));
   auto neg_d_arg_lhs = FMul(neg_d, arg_lhs);
   ABSL_ASSIGN_OR_RETURN(auto e_to_neg_d_arg_lhs,
-                   EmitExp(component_type, neg_d_arg_lhs, ""));
+                        EmitExp(component_type, neg_d_arg_lhs, ""));
   auto coeff = FMul(abs_to_c, e_to_neg_d_arg_lhs);
   ABSL_ASSIGN_OR_RETURN(auto ln_abs, EmitLog(component_type, abs));
   auto q = FAdd(FMul(c, arg_lhs), FMul(d, ln_abs));
@@ -2096,7 +2144,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexBinaryOp(
       ABSL_ASSIGN_OR_RETURN(auto x_squared, EmitComplexMultiply(op, x, x));
       ABSL_ASSIGN_OR_RETURN(auto y_squared, EmitComplexMultiply(op, y, y));
       ABSL_ASSIGN_OR_RETURN(auto x_squared_plus_y_squared,
-                       EmitComplexAdd(op, x_squared, y_squared));
+                            EmitComplexAdd(op, x_squared, y_squared));
       auto component_type =
           primitive_util::ComplexComponentType(op->shape().element_type());
       ABSL_ASSIGN_OR_RETURN(
@@ -2138,6 +2186,12 @@ llvm::Value* ElementalIrEmitter::EmitFloatMin(llvm::Value* lhs_value,
 absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitLog(
     PrimitiveType prim_type, llvm::Value* value) {
   return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::log, {value},
+                                      {value->getType()}, b_);
+}
+
+absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitLog2(
+    PrimitiveType prim_type, llvm::Value* value) {
+  return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::log2, {value},
                                       {value->getType()}, b_);
 }
 
@@ -2217,30 +2271,28 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitExp(
                                       {value->getType()}, b_, name);
 }
 
+absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitExp2(
+    PrimitiveType prim_type, llvm::Value* value) {
+  return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::exp2, {value},
+                                      {value->getType()}, b_);
+}
+
 absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitExpm1(
     PrimitiveType prim_type, llvm::Value* value) {
-  auto x = value;
-  auto type = llvm_ir::PrimitiveTypeToIrType(prim_type, module_->getContext());
-  auto one = llvm::ConstantFP::get(type, 1.0);
-  auto half = llvm::ConstantFP::get(type, 0.5);
-  auto zero = llvm::ConstantFP::get(type, 0.0);
-
-  // expm1(x) == tanh(x/2)*(exp(x)+1)
-  // x/2 can underflow, if it does we approximate expm1 with x.
-  auto x_over_two = FMul(x, half);
-  auto x_over_two_is_zero = FCmpOEQ(x_over_two, zero);
-  auto abs_x =
-      llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::fabs, {x}, {type}, b_);
-  // Use a naive exp(x)-1 calculation if |x| is > 0.5
-  auto x_magnitude_is_large = FCmpOGT(abs_x, half);
-  ABSL_ASSIGN_OR_RETURN(auto tanh_of_x_over_two, EmitTanh(prim_type, x_over_two));
-  ABSL_ASSIGN_OR_RETURN(auto exp_of_x, EmitExp(prim_type, x, ""));
-  auto exp_of_x_plus_one = FAdd(exp_of_x, one);
-  auto exp_of_x_minus_one = FSub(exp_of_x, one);
-  auto expm1_of_x = FMul(tanh_of_x_over_two, exp_of_x_plus_one);
-  expm1_of_x = Select(x_magnitude_is_large, exp_of_x_minus_one, expm1_of_x);
-  expm1_of_x = Select(x_over_two_is_zero, x, expm1_of_x);
-  return expm1_of_x;
+  if (prim_type == F32 || prim_type == F64) {
+    llvm::Function* expm1 = codegen::intrinsics::Expm1::GetOrInsertDeclaration(
+        module_, IntrinsicType::S(prim_type));
+    return b_->CreateCall(expm1, {value});
+  }
+  if (prim_type == F16 || prim_type == BF16) {
+    llvm::Type* f32_type = b_->getFloatTy();
+    llvm::Value* f32_value = b_->CreateFPExt(value, f32_type);
+    llvm::Function* expm1 = codegen::intrinsics::Expm1::GetOrInsertDeclaration(
+        module_, IntrinsicType::S(F32));
+    llvm::Value* f32_result = b_->CreateCall(expm1, {f32_value});
+    return b_->CreateFPTrunc(f32_result, value->getType());
+  }
+  return Unimplemented("expm1");
 }
 
 absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitPow(
@@ -2257,7 +2309,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitCbrt(
   auto abs_value =
       llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::fabs, {value}, {type}, b_);
   ABSL_ASSIGN_OR_RETURN(llvm::Value * abs_res,
-                   EmitPow(prim_type, abs_value, third, ""));
+                        EmitPow(prim_type, abs_value, third, ""));
   auto signed_res = llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::copysign,
                                                  {abs_res, value}, {type}, b_);
   return signed_res;
@@ -2464,6 +2516,14 @@ llvm::Value* ElementalIrEmitter::EmitIntegerPow(llvm::Value* lhs,
     base = b_->CreateMul(base, base);
     exponent = b_->CreateLShr(exponent, 1);
   }
+  accumulator = b_->CreateSelect(
+      b_->CreateAnd(
+          b_->CreateICmpNE(exponent, exp_zero),
+          b_->CreateICmpEQ(b_->CreateAnd(original_base, base_one), base_zero)),
+      base_zero, accumulator);
+  if (!is_signed) {
+    return accumulator;
+  }
 
   llvm::Value* neg_one_base_result = b_->CreateSelect(
       b_->CreateICmpEQ(b_->CreateAnd(original_exponent, exp_one), exp_one),
@@ -2648,11 +2708,11 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalSelect(
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& index) {
   ABSL_ASSIGN_OR_RETURN(llvm::Value * pred_value,
-                   operand_to_generator.at(hlo->operand(0))(index));
+                        operand_to_generator.at(hlo->operand(0))(index));
   ABSL_ASSIGN_OR_RETURN(llvm::Value * on_true_value,
-                   operand_to_generator.at(hlo->operand(1))(index));
+                        operand_to_generator.at(hlo->operand(1))(index));
   ABSL_ASSIGN_OR_RETURN(llvm::Value * on_false_value,
-                   operand_to_generator.at(hlo->operand(2))(index));
+                        operand_to_generator.at(hlo->operand(2))(index));
   return Select(Trunc(pred_value, b_->getInt1Ty()), on_true_value,
                 on_false_value);
 }
@@ -2662,11 +2722,11 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalClamp(
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
     const llvm_ir::IrArray::Index& index) {
   ABSL_ASSIGN_OR_RETURN(llvm::Value * min_value,
-                   operand_to_generator.at(hlo->operand(0))(index));
+                        operand_to_generator.at(hlo->operand(0))(index));
   ABSL_ASSIGN_OR_RETURN(llvm::Value * arg_value,
-                   operand_to_generator.at(hlo->operand(1))(index));
+                        operand_to_generator.at(hlo->operand(1))(index));
   ABSL_ASSIGN_OR_RETURN(llvm::Value * max_value,
-                   operand_to_generator.at(hlo->operand(2))(index));
+                        operand_to_generator.at(hlo->operand(2))(index));
   PrimitiveType prim_type = hlo->shape().element_type();
   if (primitive_util::IsFloatingPointType(prim_type)) {
     return EmitFloatMin(max_value, EmitFloatMax(min_value, arg_value, ""), "");
@@ -2775,7 +2835,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalConcatenate(
     }
 
     ABSL_ASSIGN_OR_RETURN(llvm::Value * value,
-                     operand_to_generator.at(operand)(operand_index));
+                          operand_to_generator.at(operand)(operand_index));
     output->addIncoming(value, b_->GetInsertBlock());
     b_->SetInsertPoint(init_block, saved_insert_point);
   }
@@ -2855,8 +2915,9 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalDynamicSlice(
       return llvm::ConstantInt::get(index_type, c);
     };
     llvm_ir::IrArray::Index zero_index(index_type);
-    ABSL_ASSIGN_OR_RETURN(llvm::Value * start_index_value,
-                     operand_to_generator.at(hlo->operand(1 + i))(zero_index));
+    ABSL_ASSIGN_OR_RETURN(
+        llvm::Value * start_index_value,
+        operand_to_generator.at(hlo->operand(1 + i))(zero_index));
 
     // Clamp the start index so that the sliced portion fits in the operand:
     // start_index = clamp(start_index, 0, operand_dim_size - output_dim_size)
@@ -2987,7 +3048,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalGather(
     IrArray::Index gather_index_index(gather_index_index_components,
                                       indices_shape, index_type);
     ABSL_ASSIGN_OR_RETURN(llvm::Value * gather_dim_component,
-                     indices_generator(gather_index_index));
+                          indices_generator(gather_index_index));
     add_to_operand_index(gather_dim_component, 0);
   } else {
     int64_t index_vector_size =
@@ -2998,7 +3059,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalGather(
       IrArray::Index gather_index_index(gather_index_index_components,
                                         indices_shape, index_type);
       ABSL_ASSIGN_OR_RETURN(llvm::Value * gather_dim_component,
-                       indices_generator(gather_index_index));
+                            indices_generator(gather_index_index));
       add_to_operand_index(gather_dim_component, i);
     }
   }
@@ -3029,8 +3090,9 @@ ElementalIrEmitter::EmitElementalDynamicUpdateSlice(
     };
 
     llvm_ir::IrArray::Index zero_index(index_type);
-    ABSL_ASSIGN_OR_RETURN(llvm::Value * start_index_value,
-                     operand_to_generator.at(hlo->operand(2 + i))(zero_index));
+    ABSL_ASSIGN_OR_RETURN(
+        llvm::Value * start_index_value,
+        operand_to_generator.at(hlo->operand(2 + i))(zero_index));
 
     // Clamp the start index so that the update region fits in the operand.
     // start_index = clamp(start_index, 0, input_dim_size - update_dim_size)
@@ -3081,13 +3143,13 @@ ElementalIrEmitter::EmitElementalDynamicUpdateSlice(
   llvm_ir::IrArray::Index update_index(update_multi_index, update_hlo->shape(),
                                        index.GetType());
   ABSL_ASSIGN_OR_RETURN(llvm::Value * true_value,
-                   operand_to_generator.at(update_hlo)(update_index));
+                        operand_to_generator.at(update_hlo)(update_index));
   Store(true_value, ret_value_addr);
 
   // Handle false BB (return data from 'input')
   SetToFirstInsertPoint(if_data.false_block, b_);
   ABSL_ASSIGN_OR_RETURN(llvm::Value * false_value,
-                   operand_to_generator.at(input_hlo)(index));
+                        operand_to_generator.at(input_hlo)(index));
   Store(false_value, ret_value_addr);
 
   SetToFirstInsertPoint(if_data.after_block, b_);
@@ -3139,13 +3201,13 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalPad(
   llvm_ir::IrArray::Index index(multi_index, hlo->operand(0)->shape(),
                                 padded_index.GetType());
   ABSL_ASSIGN_OR_RETURN(llvm::Value * operand_value,
-                   operand_to_generator.at(hlo->operand(0))(index));
+                        operand_to_generator.at(hlo->operand(0))(index));
   Store(operand_value, ret_value_addr);
 
   SetToFirstInsertPoint(if_data.false_block, b_);
   ABSL_ASSIGN_OR_RETURN(llvm::Value * padding_value,
-                   operand_to_generator.at(hlo->operand(1))(
-                       IrArray::Index(index.GetType())));
+                        operand_to_generator.at(hlo->operand(1))(
+                            IrArray::Index(index.GetType())));
   Store(padding_value, ret_value_addr);
 
   SetToFirstInsertPoint(if_data.after_block, b_);
@@ -3218,7 +3280,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalDot(
   SetToFirstInsertPoint(inner_loop->GetPreheaderBasicBlock(), b_);
   PrimitiveType output_type = hlo->shape().element_type();
   ABSL_ASSIGN_OR_RETURN(PrimitiveType accumulator_type,
-                   GetElementalDotAccumulatorType(hlo));
+                        GetElementalDotAccumulatorType(hlo));
   llvm::Type* accumulator_type_llvm =
       llvm_ir::PrimitiveTypeToIrType(accumulator_type, module_->getContext());
   llvm::AllocaInst* accumulator_alloca =
@@ -3339,12 +3401,14 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
     case HloOpcode::kCosh:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
     case HloOpcode::kImag:
     case HloOpcode::kIsFinite:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
     case HloOpcode::kNegate:
     case HloOpcode::kNot:
     case HloOpcode::kPopulationCount:
@@ -3360,7 +3424,7 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
       return [this, hlo, &operand_to_generator](
                  const IrArray::Index& index) -> absl::StatusOr<llvm::Value*> {
         ABSL_ASSIGN_OR_RETURN(llvm::Value * operand_value,
-                         operand_to_generator.at(hlo->operand(0))(index));
+                              operand_to_generator.at(hlo->operand(0))(index));
         return EmitUnaryOp(hlo, operand_value);
       };
     case HloOpcode::kAdd:
@@ -3386,9 +3450,9 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
         const HloInstruction* lhs = hlo->operand(0);
         const HloInstruction* rhs = hlo->operand(1);
         ABSL_ASSIGN_OR_RETURN(llvm::Value * lhs_value,
-                         operand_to_generator.at(lhs)(index));
+                              operand_to_generator.at(lhs)(index));
         ABSL_ASSIGN_OR_RETURN(llvm::Value * rhs_value,
-                         operand_to_generator.at(rhs)(index));
+                              operand_to_generator.at(rhs)(index));
         return EmitBinaryOp(hlo, lhs_value, rhs_value);
       };
     case HloOpcode::kSelect:
@@ -3405,7 +3469,7 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
       return [this, hlo, &operand_to_generator](
                  const IrArray::Index& index) -> absl::StatusOr<llvm::Value*> {
         ABSL_ASSIGN_OR_RETURN(llvm::Value * operand_value,
-                         operand_to_generator.at(hlo->operand(0))(index));
+                              operand_to_generator.at(hlo->operand(0))(index));
         return EmitReducePrecision(hlo, operand_value);
       };
     case HloOpcode::kConcatenate:
@@ -3523,8 +3587,9 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
                  const IrArray::Index& index) -> absl::StatusOr<llvm::Value*> {
         std::vector<llvm::Value*> operands;
         for (int i = 0; i < hlo->operand_count(); i++) {
-          ABSL_ASSIGN_OR_RETURN(llvm::Value * operand_value,
-                           operand_to_generator.at(hlo->operand(i))(index));
+          ABSL_ASSIGN_OR_RETURN(
+              llvm::Value * operand_value,
+              operand_to_generator.at(hlo->operand(i))(index));
           operands.push_back(operand_value);
         }
         return EmitElementalMap(Cast<HloMapInstruction>(hlo), operands);
@@ -3722,7 +3787,7 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalReduceWindow(
                              reduce_window->inputs()[0]->shape(), index_type);
   for (int64_t operand_idx = 0; operand_idx < input_count; ++operand_idx) {
     ABSL_ASSIGN_OR_RETURN(llvm::Value * input_value,
-                     input_generators[operand_idx](input_index));
+                          input_generators[operand_idx](input_index));
     input_values[input_count + operand_idx] = input_value;
     input_values[operand_idx] =
         Load(llvm::cast<llvm::AllocaInst>(accum_ptrs[operand_idx])
@@ -3730,9 +3795,9 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalReduceWindow(
              accum_ptrs[operand_idx]);
   }
   ABSL_ASSIGN_OR_RETURN(std::vector<llvm::Value*> accum_values,
-                   EmitThreadLocalCall(*reduce_window->to_apply(), input_values,
-                                       "reducer_function",
-                                       /*is_reducer=*/true));
+                        EmitThreadLocalCall(*reduce_window->to_apply(),
+                                            input_values, "reducer_function",
+                                            /*is_reducer=*/true));
 
   for (int64_t operand_idx = 0; operand_idx < accum_values.size();
        ++operand_idx) {
@@ -3818,13 +3883,14 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalReduce(
 
   for (int i = 0; i < accumulators_count; i++) {
     ABSL_ASSIGN_OR_RETURN(llvm::Value* const input_element,
-                     input_generators[i](input_index));
+                          input_generators[i](input_index));
     reduction_operands.push_back(input_element);
   }
 
-  ABSL_ASSIGN_OR_RETURN(std::vector<llvm::Value*> results,
-                   EmitThreadLocalCall(*reduce->to_apply(), reduction_operands,
-                                       "reduce_function", /*is_reducer=*/true));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<llvm::Value*> results,
+      EmitThreadLocalCall(*reduce->to_apply(), reduction_operands,
+                          "reduce_function", /*is_reducer=*/true));
 
   CHECK(results.size() == accumulators_count);
   for (int i = 0; i < accumulators_count; i++) {
@@ -3997,11 +4063,11 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitConvolution(
   llvm_ir::IrArray::Index input_index(input_multi_index, lhs->shape(),
                                       b_->getInt64Ty());
   ABSL_ASSIGN_OR_RETURN(llvm::Value* const input_value,
-                   input_generator(input_index));
+                        input_generator(input_index));
   llvm_ir::IrArray::Index kernel_index(kernel_multi_index, rhs->shape(),
                                        b_->getInt64Ty());
   ABSL_ASSIGN_OR_RETURN(llvm::Value* const kernel_value,
-                   kernel_generator(kernel_index));
+                        kernel_generator(kernel_index));
   llvm::Value* sum =
       EmitMulAdd(input_value, kernel_value,
                  Load(sum_address->getAllocatedType(), sum_address),

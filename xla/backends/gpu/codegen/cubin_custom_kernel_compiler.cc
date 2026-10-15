@@ -146,7 +146,7 @@ CubinCustomKernelCompiler::CompileToCubinImpl(LlvmKernelSource kernel_source) {
   }
 
   ABSL_ASSIGN_OR_RETURN(std::vector<uint8_t> cubin,
-                   compiler_(*llvm_module, device_info_, debug_options_));
+                        compiler_(*llvm_module, device_info_, debug_options_));
   return cubin;
 }
 
@@ -156,7 +156,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> CubinCustomKernelCompiler::CompileImpl(
     const emitters::KernelArguments& kernel_arguments,
     const LaunchDimensions& launch_dimensions) {
   ABSL_ASSIGN_OR_RETURN(std::vector<uint8_t> cubin,
-                   CompileToCubinImpl(std::move(kernel_source)));
+                        CompileToCubinImpl(std::move(kernel_source)));
 
   ABSL_ASSIGN_OR_RETURN(
       CustomKernel custom_kernel,
@@ -166,7 +166,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> CubinCustomKernelCompiler::CompileImpl(
           launch_dimensions.thread_counts_per_block(), 0));
 
   return std::make_unique<CustomKernelThunk>(
-      thunk_info, std::move(custom_kernel), kernel_arguments);
+      thunk_info, std::move(custom_kernel), kernel_arguments,
+      gpu_topology_.num_devices_per_process());
 }
 
 xla::Future<TritonWrapperResult> CubinCustomKernelCompiler::CompileTritonToLlvm(

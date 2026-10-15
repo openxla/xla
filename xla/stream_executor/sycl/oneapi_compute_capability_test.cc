@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/stream_executor/sycl/oneapi_compute_capability.h"
 
 #include <gtest/gtest.h>
+
 #include "xla/stream_executor/sycl/oneapi_compute_capability.pb.h"
 
 namespace stream_executor::sycl {

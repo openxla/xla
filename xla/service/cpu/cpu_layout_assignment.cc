@@ -138,8 +138,8 @@ absl::Status CpuLayoutAssignment::AddBackendConstraints(
   for (auto* instruction : computation->instructions()) {
     if (OperandsAndResultMustHaveRowMajorLayout(*instruction,
                                                 target_machine_features_)) {
-      ABSL_RETURN_IF_ERROR(SetInstructionLayout(RowMajorShape(instruction->shape()),
-                                           instruction));
+      ABSL_RETURN_IF_ERROR(SetInstructionLayout(
+          RowMajorShape(instruction->shape()), instruction));
       for (int i = 0; i < instruction->operand_count(); i++) {
         ABSL_RETURN_IF_ERROR(SetOperandLayout(
             RowMajorShape(instruction->operand(i)->shape()), instruction, i));

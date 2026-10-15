@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/python/ifrt/ir/transforms/debug.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -36,10 +37,10 @@ limitations under the License.
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Support/TypeID.h"
+#include "tsl/platform/path.h"
 #include "xla/python/ifrt/ir/support/module_parsing.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace ifrt {

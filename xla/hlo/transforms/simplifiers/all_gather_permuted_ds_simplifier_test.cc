@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/all_gather_permuted_ds_simplifier.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -52,13 +53,11 @@ class AllGatherPermutedDsSimplifierTest
         GetModuleConfigForTest(num_replicas, num_partitions);
     config.set_use_spmd_partitioning(num_partitions > 1);
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
-    absl::StatusOr<bool> changed =
-        AllGatherDynamicSlicePermutedOffsetSimplifier().Run(module.get(), {});
-    if (!changed.ok()) {
-      return changed.status();
-    }
-    EXPECT_EQ(*changed, expect_change);
+                          ParseAndReturnVerifiedModule(hlo_module, config));
+    ABSL_ASSIGN_OR_RETURN(
+        bool changed,
+        AllGatherDynamicSlicePermutedOffsetSimplifier().Run(module.get(), {}));
+    EXPECT_EQ(changed, expect_change);
     return module;
   }
 };

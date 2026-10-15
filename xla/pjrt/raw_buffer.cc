@@ -16,10 +16,12 @@ limitations under the License.
 #include "xla/pjrt/raw_buffer.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
 #include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -385,14 +387,14 @@ Future<> PjRtRawBufferInterface::CopyRawHostToDevice(const void* src,
                                                      int64_t offset,
                                                      int64_t transfer_size) {
   ABSL_ASSIGN_OR_RETURN(auto event, CopyRawHostToDeviceAndReturnEvent(
-                                   src, offset, transfer_size));
+                                        src, offset, transfer_size));
   return ConvertEventToFuture(std::move(event));
 }
 
 Future<> PjRtRawBufferInterface::CopyRawDeviceToHost(void* dst, int64_t offset,
                                                      int64_t transfer_size) {
   ABSL_ASSIGN_OR_RETURN(auto event, CopyRawDeviceToHostAndReturnEvent(
-                                   dst, offset, transfer_size));
+                                        dst, offset, transfer_size));
   return ConvertEventToFuture(std::move(event));
 }
 

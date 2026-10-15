@@ -30,6 +30,7 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -44,7 +45,6 @@
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 namespace hlo_diff {
@@ -66,7 +66,8 @@ HloPrintOptions CreateHloPrintOptions(
           .set_print_subcomputation_mode(
               HloPrintOptions::PrintSubcomputationMode::kOff)
           .set_print_parameter_number(false)
-          .set_print_only_essential_constants(false);
+          .set_print_only_essential_constants(false)
+          .set_print_large_constants(true);
   if (fingerprint_options.ignore_shape) {
     hlo_print_options.set_print_operand_shape(false);
     hlo_print_options.set_print_result_shape(false);
@@ -301,7 +302,7 @@ void HloGumgraph::PrecomputeSizeAndHeight() {
 absl::Status HloGumgraph::PrecomputeComputationFingerprint() {
   LOG(INFO) << "Precomputing computation fingerprint";
   ABSL_RETURN_IF_ERROR(call_graph_->VisitNodes([&](const CallGraphNode& node)
-                                              -> absl::Status {
+                                                   -> absl::Status {
     absl::flat_hash_map<const HloInstruction*, uint64_t> subgraph_fingerprint;
     const HloComputation* computation = node.computation();
     for (auto* instruction : computation->MakeInstructionPostOrder()) {
@@ -398,7 +399,7 @@ absl::StatusOr<std::unique_ptr<const HloGumgraph>> HloGumgraph::Create(
 
   ABSL_RETURN_IF_ERROR(graph->ConstructGraph(*hlo_module));
   ABSL_ASSIGN_OR_RETURN(std::vector<HloInstructionNode*> zero_indegree_nodes,
-                   graph->PrecomputeGenerations());
+                        graph->PrecomputeGenerations());
   for (auto* zero_indegree_node : zero_indegree_nodes) {
     AddEdge(&graph->root_, zero_indegree_node);
   }

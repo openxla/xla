@@ -13,13 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <iostream>
 #include <sstream>
 #include <streambuf>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -66,7 +67,8 @@ TEST(SplitProtoCliTest, PackAndUnpackGpuExecutableProtoRoundTrip) {
   )pb");
 
   std::string text_input;
-  ASSERT_TRUE(google::protobuf::TextFormat::PrintToString(initial_proto, &text_input));
+  ASSERT_TRUE(
+      google::protobuf::TextFormat::PrintToString(initial_proto, &text_input));
 
   // 1. Pack text input to split proto
   std::string split_bytes;
@@ -113,7 +115,8 @@ TEST(SplitProtoCliTest, PackAndUnpackHloProtoRoundTrip) {
   )pb");
 
   std::string text_input;
-  ASSERT_TRUE(google::protobuf::TextFormat::PrintToString(initial_proto, &text_input));
+  ASSERT_TRUE(
+      google::protobuf::TextFormat::PrintToString(initial_proto, &text_input));
 
   // 1. Pack text input to split proto
   std::string split_bytes;
@@ -151,7 +154,8 @@ TEST(SplitProtoCliTest, PackAndUnpackExecutableAndOptionsProtoRoundTrip) {
   )pb");
 
   std::string text_input;
-  ASSERT_TRUE(google::protobuf::TextFormat::PrintToString(initial_proto, &text_input));
+  ASSERT_TRUE(
+      google::protobuf::TextFormat::PrintToString(initial_proto, &text_input));
 
   // 1. Pack text input to split proto
   std::string split_bytes;
@@ -198,7 +202,8 @@ TEST(SplitProtoCliTest, PackAotSpecialized) {
   )pb");
 
   std::string text_input;
-  ASSERT_TRUE(google::protobuf::TextFormat::PrintToString(initial_proto, &text_input));
+  ASSERT_TRUE(
+      google::protobuf::TextFormat::PrintToString(initial_proto, &text_input));
 
   std::string split_bytes;
   PackOptions pack_opts;

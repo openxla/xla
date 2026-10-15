@@ -335,7 +335,7 @@ InterpreterLoadedExecutable::ExecuteSharded(
   }
 
   ABSL_ASSIGN_OR_RETURN(Literal result_literal,
-                   Evaluate(computation, literals, options));
+                        Evaluate(computation, literals, options));
   // Shrink the generated dynamic shape into static shape.
   result_literal = result_literal.ToStatic();
   if (fill_future) {
@@ -343,7 +343,7 @@ InterpreterLoadedExecutable::ExecuteSharded(
   }
 
   ABSL_ASSIGN_OR_RETURN(PjRtMemorySpace * memory_space,
-                   device->default_memory_space());
+                        device->default_memory_space());
 
   // Transform the result literal back into a one or more
   // InterpreterLiteralWrapperBuffer.
@@ -455,14 +455,14 @@ absl::StatusOr<Layout> InterpreterClient::GetDefaultLayout(
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> InterpreterClient::Compile(
     const XlaComputation& computation, CompileOptions options) {
   ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology,
-                   GetTopologyDescription());
+                        GetTopologyDescription());
   return PjRtCompile(options, computation, *topology, this);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> InterpreterClient::Compile(
     MaybeOwningMlirModule module, CompileOptions options) {
   ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology,
-                   GetTopologyDescription());
+                        GetTopologyDescription());
   return PjRtCompile(options, std::move(module), *topology, this);
 }
 
@@ -470,9 +470,9 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 InterpreterClient::CompileAndLoad(const XlaComputation& computation,
                                   CompileOptions options) {
   ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology,
-                   GetTopologyDescription());
+                        GetTopologyDescription());
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> executable,
-                   PjRtCompile(options, computation, *topology, this));
+                        PjRtCompile(options, computation, *topology, this));
   return Load(std::move(executable), LoadOptions());
 }
 
@@ -480,9 +480,10 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 InterpreterClient::CompileAndLoad(MaybeOwningMlirModule module,
                                   CompileOptions options) {
   ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology,
-                   GetTopologyDescription());
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> executable,
-                   PjRtCompile(options, std::move(module), *topology, this));
+                        GetTopologyDescription());
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<PjRtExecutable> executable,
+      PjRtCompile(options, std::move(module), *topology, this));
   return Load(std::move(executable), LoadOptions());
 }
 
@@ -556,7 +557,7 @@ InterpreterClient::LoadSerializedExecutable(
     absl::string_view serialized, std::optional<CompileOptions> options,
     const LoadOptions& load_options) {
   ABSL_ASSIGN_OR_RETURN(auto executable,
-                   DeserializeExecutable(serialized, std::move(options)));
+                        DeserializeExecutable(serialized, std::move(options)));
   return Load(std::move(executable), load_options);
 }
 

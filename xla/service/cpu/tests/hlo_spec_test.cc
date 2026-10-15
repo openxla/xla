@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/cpu/cpu_aot_compilation_result.h"
 #include "xla/service/cpu/tests/cpu_pjrt_codegen_test.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 
 namespace xla {
@@ -75,8 +75,8 @@ TEST_P(HloSpecTest, DoIt) {
   LLVMInitializeAArch64TargetInfo();
   LLVMInitializeAArch64TargetMC();
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(spec.hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(spec.hlo_text));
 
   std::string triple{spec.triple.data(), spec.triple.size()};
   std::string features{spec.features.data(), spec.features.size()};
@@ -133,7 +133,7 @@ HloTestSpec HloTestCases[] = {
         /*features=*/"+neon,+sve2",
         // Check if it still vectorizes
         /*check_lines=*/R"(
-CHECK: fmul <1 x float>
+CHECK: fmul contract <1 x float>
 )",
     },
     HloTestSpec{
@@ -144,7 +144,7 @@ CHECK: fmul <1 x float>
         /*features=*/"+avx2",
         // Check if it still vectorizes
         /*check_lines=*/R"(
-CHECK: fmul <8 x float>
+CHECK: fmul contract <8 x float>
 )",
     },
     // TODO(b/495870398): The compiler should be generating <4 x float> (or <8 x
@@ -156,7 +156,7 @@ CHECK: fmul <8 x float>
         /*triple=*/"aarch64-unknown-linux-gnu",
         /*features=*/"+neon,+sve2",
         /*check_lines=*/R"(
-CHECK: fmul <1 x float>
+CHECK: fmul contract <1 x float>
 )",
     },
 };

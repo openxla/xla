@@ -17,8 +17,8 @@ limitations under the License.
 #define XLA_TSL_PLATFORM_DEFAULT_POSIX_FILE_SYSTEM_H_
 
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/env.h"
 #include "tsl/platform/path.h"
+#include "xla/tsl/platform/env.h"
 
 namespace tsl {
 

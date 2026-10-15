@@ -70,6 +70,7 @@ class PjRtCompatibleExecutable
   // APIs that allow direct access to `xla::PjRtExecutable` for PjRt-only
   // operations.
   virtual xla::PjRtExecutable* pjrt_executable() = 0;
+  virtual std::shared_ptr<xla::PjRtExecutable> shared_ptr_pjrt_executable() = 0;
 
   static char ID;  // NOLINT
 };
@@ -101,13 +102,18 @@ class PjRtExecutable final
   static absl::StatusOr<ExecutableRef> Create(
       xla::MaybeOwningMlirModule module, xla::CompileOptions compile_options,
       const xla::PjRtTopologyDescription& topology,
-      xla::PjRtClient* compile_client = nullptr);
+      xla::PjRtClient* compile_client,
+      std::optional<std::vector<int>> outputs_bundle_slice_sizes);
 
   // PjRtCompatibleExecutable implementation.
 
   xla::PjRtExecutable* pjrt_executable() override {
     DCHECK(this);
     return pjrt_executable_.get();
+  }
+  std::shared_ptr<xla::PjRtExecutable> shared_ptr_pjrt_executable() override {
+    DCHECK(this);
+    return pjrt_executable_;
   }
 
   // Executable implementation.
@@ -216,6 +222,11 @@ class PjRtExecutable final
             xla_deserialize_executable_options);
   };
 
+  const CommonMetadata& common_metadata() const {
+    DCHECK(this);
+    return common_metadata_;
+  }
+
  protected:
   PjRtExecutable(std::shared_ptr<xla::PjRtExecutable> pjrt_executable,
                  CommonMetadata common_metadata);
@@ -313,7 +324,7 @@ class PjRtLoadedExecutable final
 
   absl::StatusOr<std::string> GetHumanReadableProgramText() const override {
     ABSL_ASSIGN_OR_RETURN(auto hlo_modules,
-                     pjrt_loaded_executable_->GetHloModules());
+                          pjrt_loaded_executable_->GetHloModules());
     return absl::StrJoin(
         hlo_modules, "\n\n", [](std::string* out, const auto& hlo_module) {
           HloPrintOptions print_options = HloPrintOptions::Default();
@@ -322,11 +333,6 @@ class PjRtLoadedExecutable final
         });
   }
 
-  int num_devices() const override {
-    DCHECK(this);
-    return pjrt_loaded_executable_->num_replicas() *
-           pjrt_loaded_executable_->num_partitions();
-  }
   int64_t SizeOfGeneratedCodeInBytes() const override {
     DCHECK(this);
     return pjrt_loaded_executable_->SizeOfGeneratedCodeInBytes();
@@ -360,20 +366,16 @@ class PjRtLoadedExecutable final
       absl::Span<BundleRef> args, const ExecuteOptions& options) override;
 
   std::optional<DeviceListRef> devices() const override {
-    if (pjrt_loaded_executable_->addressable_devices().empty()) {
-      // Portable executable.
+    DCHECK(this);
+    if (devices_ == nullptr) {
       return std::nullopt;
     }
     return devices_;
   }
 
-  absl::Span<Device* const> addressable_devices() const override {
-    DCHECK(this);
-    return addressable_devices_;
-  }
-
   absl::StatusOr<xla::ifrt::AttributeMap> GetCostAnalysis() const override {
-    ABSL_ASSIGN_OR_RETURN(auto result, pjrt_loaded_executable_->GetCostAnalysis());
+    ABSL_ASSIGN_OR_RETURN(auto result,
+                          pjrt_loaded_executable_->GetCostAnalysis());
     return xla::ifrt::FromPjRtAttributeMap(std::move(result));
   }
 
@@ -392,11 +394,11 @@ class PjRtLoadedExecutable final
 
   PjRtClient* client_;
   std::shared_ptr<xla::PjRtLoadedExecutable> pjrt_loaded_executable_;
-  // Devices that `pjrt_loaded_executable_` runs on. Empty if the executable is
-  // portable.
+  // Devices that `pjrt_loaded_executable_` runs on. `nullptr` if the
+  // executable is portable and not bound to a device at load time.
   DeviceListRef devices_;
   // Addressable devices. The underlying device list is owned by
-  // `devices_->AddressableDeviceList()`.
+  // `devices_->AddressableDeviceList()`. Empty if `devices_` is `nullptr`.
   absl::Span<Device* const> addressable_devices_;
   std::shared_ptr<std::vector<tsl::RCReference<LoadedHostCallback>>>
       all_loaded_host_callbacks_;
@@ -404,9 +406,8 @@ class PjRtLoadedExecutable final
   std::vector<PjRtHloOutputLoadedHostCallback*> host_hlo_output_callbacks_;
 
   PjRtExecutable::CommonMetadata common_metadata_;
-  // If the executable is portable, shardings in `output_shardings_` will use an
-  // arbitrary addressable device, and will be overridden by a
-  // `SingleDeviceSharding` generated on the fly at execution time.
+  // Output shardings. Empty if `devices_` is `nullptr`; unbound portable
+  // execution constructs `SingleDeviceSharding` on the fly at execution time.
   std::vector<ShardingRef> output_shardings_;
   // PjRt-style memory kinds. Used only for `GetOutputMemoryKinds()`.
   std::vector<std::vector<absl::string_view>> pjrt_output_memory_kinds_;

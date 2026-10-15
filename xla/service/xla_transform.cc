@@ -147,7 +147,8 @@ absl::StatusOr<bool> ApplyXlaTransforms::RunImpl(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(1) << "ApplyXlaTransforms ENTRY";
   XLA_VLOG_LINES(1, module->ToString());
-  ABSL_ASSIGN_OR_RETURN(bool changed, ApplyXlaTransformsToModule(stage_, module));
+  ABSL_ASSIGN_OR_RETURN(bool changed,
+                        ApplyXlaTransformsToModule(stage_, module));
   if (changed) {
     ABSL_RETURN_IF_ERROR(verifier_->Run(module, execution_threads).status());
   }
@@ -158,8 +159,9 @@ absl::StatusOr<bool> ApplyXlaTransforms::RunImpl(
 
 absl::Status UpdateHloModuleFromProto(HloModule* module,
                                       const HloModuleProto& transformed_proto) {
-  ABSL_ASSIGN_OR_RETURN(auto temp_module, HloModule::CreateFromProto(
-                                         transformed_proto, module->config()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto temp_module,
+      HloModule::CreateFromProto(transformed_proto, module->config()));
 
   // Capture schedule from temp_module if it has one.
   absl::flat_hash_map<HloComputation*, HloInstructionSequence> comp_to_sequence;
@@ -209,7 +211,7 @@ absl::StatusOr<xla::HloModuleMetadataProto> GetHloPassPipelineTrace(
       xla::HloModuleConfig config,
       xla::HloModule::CreateModuleConfigFromProto(proto, debug_options));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<xla::HloModule> module,
-                   xla::HloModule::CreateFromProto(proto, config));
+                        xla::HloModule::CreateFromProto(proto, config));
 
   stream_executor::Platform* platform = nullptr;
   auto default_platform_or = xla::PlatformUtil::GetDefaultPlatform();
@@ -230,7 +232,7 @@ absl::StatusOr<xla::HloModuleMetadataProto> GetHloPassPipelineTrace(
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<xla::Compiler> compiler,
-                   xla::Compiler::GetForPlatform(platform->id()));
+                        xla::Compiler::GetForPlatform(platform->id()));
 
   xla::Compiler::CompileOptions compile_options;
   // We pass nullptr as executor, as the TPU compiler's RunHloPasses

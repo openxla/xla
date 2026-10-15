@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/core/host_offloading/host_offloading_transforms.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"

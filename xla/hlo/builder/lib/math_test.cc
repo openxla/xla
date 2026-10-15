@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/hlo/builder/lib/math.h"
 
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -24,8 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
-#include <gtest/gtest.h>
 #include "xla/array3d.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/lib/constants.h"
@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
@@ -629,6 +630,27 @@ TEST_F(MathTest, Igammac) {
                               {2.56560373e-01, 5.32968026e-01, 6.60764593e-01,
                                2.14889688e-04, 5.39314824e-03}}};
   ComputeAndCompareR3<float>(&builder, expected, {}, kErrorSpec);
+}
+
+TEST_F(MathTest, IgammacSpecialValues) {
+  SetFastMathDisabled(true);
+  XlaBuilder builder(TestName());
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float inf = std::numeric_limits<float>::infinity();
+  auto a = ConstantR1<float>(
+      &builder,
+      {nan, nan, 0.53327996, nan, 0.6374078, -1.6019852, -0.24963307,
+       0.53327996, 0.0, -2.0, -2.0, 0.53327996, 0.53327996, 0.53327996});
+  auto x = ConstantR1<float>(
+      &builder, {nan, 8.97671773, nan, 0.0, 0.6374078, -1.6019852, -0.24963307,
+                 -1.0, 2.0, 0.0, inf, 0.0, -0.0, inf});
+
+  Igammac(a, x);
+  // Domain errors (x < 0, a <= 0) and NaN inputs give NaN as in Eigen and
+  // Igamma; igammac(a, 0) = 1 and igammac(a, inf) = 0 for a > 0.
+  std::vector<float> expected = {nan, nan, nan, nan, 0.33642888, nan, nan,
+                                 nan, nan, nan, nan, 1.0,        1.0, 0.0};
+  ComputeAndCompareR1<float>(&builder, expected, {}, kErrorSpec);
 }
 
 TEST_F(MathTest, IgammacF16) {

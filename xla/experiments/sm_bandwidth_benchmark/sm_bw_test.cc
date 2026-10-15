@@ -13,9 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "xla/experiments/sm_bandwidth_benchmark/sm_bw_kernels.h"
 #include "xla/experiments/sm_bandwidth_benchmark/sm_bw_utils.h"
 

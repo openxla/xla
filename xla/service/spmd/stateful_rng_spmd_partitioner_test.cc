@@ -15,13 +15,15 @@ limitations under the License.
 
 #include "xla/service/spmd/stateful_rng_spmd_partitioner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -31,12 +33,9 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/transforms/expanders/rng_expander.h"
-#include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/sharding_propagation.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -45,9 +44,9 @@ namespace xla {
 namespace spmd {
 namespace {
 
-int64_t CountInstructions(const HloComputation &computation, HloOpcode opcode) {
+int64_t CountInstructions(const HloComputation& computation, HloOpcode opcode) {
   int64_t count = 0;
-  for (const auto &instruction : computation.instructions()) {
+  for (const auto& instruction : computation.instructions()) {
     if (instruction->opcode() == opcode) {
       count++;
     }
@@ -60,7 +59,7 @@ class StatefulRngSpmdPartitionerTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<std::unique_ptr<HloModule>> PartitionComputation(
       absl::string_view hlo_module, int64_t num_partitions,
       DebugOptions debug_options,
-      std::function<void(HloPassPipeline &pipeline)> add_passes = nullptr,
+      std::function<void(HloPassPipeline& pipeline)> add_passes = nullptr,
       bool skip_checking_windowed_einsum_users = false,
       bool disable_ag_rewrite_for_multiple_consumers = false,
       bool enable_partial_windowed_einsums = false) {
@@ -68,7 +67,7 @@ class StatefulRngSpmdPartitionerTest : public HloHardwareIndependentTestBase {
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
     ABSL_ASSIGN_OR_RETURN(auto module,
-                     ParseAndReturnVerifiedModule(hlo_module, config));
+                          ParseAndReturnVerifiedModule(hlo_module, config));
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
                               /*allow_mixed_precision=*/false);
@@ -91,9 +90,9 @@ class StatefulRngSpmdPartitionerTest : public HloHardwareIndependentTestBase {
     return absl::StatusOr<std::unique_ptr<HloModule>>(std::move(module));
   }
 
-  void VerifyNoAllReduce(HloModule *module) {
-    for (HloComputation *computation : module->computations()) {
-      for (HloInstruction *hlo : computation->instructions()) {
+  void VerifyNoAllReduce(HloModule* module) {
+    for (HloComputation* computation : module->computations()) {
+      for (HloInstruction* hlo : computation->instructions()) {
         EXPECT_NE(hlo->opcode(), HloOpcode::kAllReduce);
       }
     }
@@ -120,13 +119,13 @@ ENTRY entry {
 }
 )";
 
-  auto add_passes = [](HloPassPipeline &pipeline) {
+  auto add_passes = [](HloPassPipeline& pipeline) {
     pipeline.AddPass<RngExpander>();
   };
 
   DebugOptions debug_options = GetDebugOptionsForTest();
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module, PartitionComputation(hlo_string, /*num_partitions=*/2,
                                         GetDefaultDebugOptions(), add_passes));
   XLA_VLOG_LINES(1, module->ToString());
@@ -146,11 +145,11 @@ ENTRY entry {
 }
 )";
 
-  auto add_passes = [](HloPassPipeline &pipeline) {
+  auto add_passes = [](HloPassPipeline& pipeline) {
     pipeline.AddPass<RngExpander>();
   };
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module, PartitionComputation(hlo_string, /*num_partitions=*/2,
                                         GetDefaultDebugOptions(), add_passes));
   XLA_VLOG_LINES(1, module->ToString());
@@ -179,7 +178,7 @@ ENTRY main {
   DebugOptions debug_options = GetDefaultDebugOptions();
   debug_options.set_xla_gpu_threshold_for_windowed_einsum_mib(0);
   debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       PartitionComputation(hlo_string, /*num_partitions=*/4, debug_options,
                            /*add_passes=*/nullptr,
@@ -265,8 +264,8 @@ ENTRY main {
     HloModuleConfig config = GetModuleConfigForTest(1, 4);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string, config));
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseAndReturnVerifiedModule(hlo_string, config));
 
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
@@ -310,8 +309,8 @@ ENTRY main {
     HloModuleConfig config = GetModuleConfigForTest(1, 4);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string, config));
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseAndReturnVerifiedModule(hlo_string, config));
 
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
@@ -350,7 +349,7 @@ ENTRY main {
     debug_options.set_xla_gpu_threshold_for_windowed_einsum_mib(0);
     debug_options.set_xla_gpu_multi_streamed_windowed_einsum(true);
 
-    TF_ASSERT_OK_AND_ASSIGN(
+    ASSERT_OK_AND_ASSIGN(
         auto module, PartitionComputation(
                          hlo_string_16, /*num_partitions=*/16, debug_options,
                          /*add_passes=*/nullptr,
@@ -396,8 +395,8 @@ ENTRY main {
     HloModuleConfig config = GetModuleConfigForTest(1, 64);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
-    TF_ASSERT_OK_AND_ASSIGN(
-        auto module, ParseAndReturnVerifiedModule(hlo_string_64, config));
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseAndReturnVerifiedModule(hlo_string_64, config));
 
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
@@ -451,8 +450,8 @@ ENTRY main {
     HloModuleConfig config = GetModuleConfigForTest(1, 8);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string, config));
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseAndReturnVerifiedModule(hlo_string, config));
 
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
@@ -488,8 +487,8 @@ ENTRY main {
     HloModuleConfig config = GetModuleConfigForTest(1, 8);
     config.set_use_spmd_partitioning(true);
     config.set_debug_options(debug_options);
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(hlo_string, config));
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseAndReturnVerifiedModule(hlo_string, config));
 
     HloPassPipeline pass("partitioning");
     pass.AddPass<HloVerifier>(/*layout_sensitive=*/false,
@@ -525,7 +524,7 @@ ENTRY main {
   int64_t oper_bytes_threshold = 1 << 20;
   debug_options.set_xla_gpu_operand_bytes_threshold_for_windowed_einsum(
       oper_bytes_threshold);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       PartitionComputation(hlo_string, /*num_partitions=*/4, debug_options,
                            /*add_passes=*/nullptr,
@@ -559,7 +558,7 @@ ENTRY main {
   int64_t oper_bytes_threshold = 1 << 8;
   debug_options.set_xla_gpu_operand_bytes_threshold_for_windowed_einsum(
       oper_bytes_threshold);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       auto module,
       PartitionComputation(hlo_string, /*num_partitions=*/4, debug_options,
                            /*add_passes=*/nullptr,

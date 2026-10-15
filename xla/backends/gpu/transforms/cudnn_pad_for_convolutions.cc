@@ -175,7 +175,7 @@ static absl::StatusOr<bool> ResolveAndPad(
   std::vector<Shape> new_input_shapes;
   Shape new_result_shape;
   ABSL_ASSIGN_OR_RETURN(bool result, resolve_pad_shapes(conv, &new_input_shapes,
-                                                   &new_result_shape));
+                                                        &new_result_shape));
   if (result) {
     ABSL_RETURN_IF_ERROR(PadConv(conv, new_input_shapes, new_result_shape));
     return true;
@@ -374,8 +374,8 @@ absl::StatusOr<bool> TryResolvePaddedShapesForIntegerConvolution(
 
   // Check that cudnn support our desired integer padding/vectorization.
   ABSL_ASSIGN_OR_RETURN(bool cudnn_supports,
-                   CudnnSupportsOptimizedIntegerConvolution(compute_capability,
-                                                            *conv, pad_to));
+                        CudnnSupportsOptimizedIntegerConvolution(
+                            compute_capability, *conv, pad_to));
   if (!cudnn_supports) {
     return false;
   }

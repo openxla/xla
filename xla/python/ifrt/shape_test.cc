@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/python/ifrt/shape.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <sstream>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/hash/hash_testing.h"
 #include "absl/status/status.h"

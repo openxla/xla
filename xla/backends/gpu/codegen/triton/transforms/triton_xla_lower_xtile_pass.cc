@@ -44,11 +44,11 @@ limitations under the License.
 #include "mlir/Transforms/Inliner.h"
 #include "mlir/Transforms/InliningUtils.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/Triton/IR/Types.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-#include "triton/Dialect/Triton/IR/Types.h"
 
 namespace mlir::triton::xla {
 
@@ -70,8 +70,7 @@ llvm::SmallVector<mlir::Type> GetTransformedArgTypes(
   arg_types.reserve(entry_op.getNumArguments() - 1U);
   for (const auto& arg : entry_op.getBufferArgs()) {
     mlir::MemRefType memref_type = mlir::cast<mlir::MemRefType>(arg.getType());
-    arg_types.push_back(
-        ttir::getPointerTypeToElement(memref_type.getElementType()));
+    arg_types.push_back(ttir::getPointerType(memref_type.getElementType()));
   }
   mlir::TypeRange opaque_args(entry_op.getOpaqueArgs());
   arg_types.append(opaque_args.begin(), opaque_args.end());
@@ -80,8 +79,7 @@ llvm::SmallVector<mlir::Type> GetTransformedArgTypes(
 
 MemrefToPtrOp CreateMemrefToPtr(mlir::OpBuilder& builder,
                                 mlir::TypedValue<mlir::MemRefType> memref) {
-  mlir::Type ptr_type =
-      ttir::getPointerTypeToElement(memref.getType().getElementType());
+  mlir::Type ptr_type = ttir::getPointerType(memref.getType().getElementType());
   return MemrefToPtrOp::create(builder, memref.getLoc(), ptr_type, memref);
 }
 
@@ -176,16 +174,11 @@ class XTileSelectBufferToTriton
     auto ptr_addr = mlir::triton::AddPtrOp::create(
         b, memref_to_ptr.getType(), memref_to_ptr, replica_id_i64);
     // Dereference the outer pointer.
-    auto addr_i64 =
-        mlir::triton::LoadOp::create(b, b.getI64Type(), ptr_addr.getResult(),
-                                     /*mask=*/mlir::Value(),
-                                     /*other=*/mlir::Value(),               //
-                                     mlir::triton::CacheModifier::NONE,     //
-                                     mlir::triton::EvictionPolicy::NORMAL,  //
-                                     /*isVolatile=*/false);
+    auto addr_i64 = mlir::triton::LoadOp::create(b, ptr_addr.getResult(),
+                                                 /*isVolatile=*/false);
     auto result_memref_type = mlir::cast<mlir::MemRefType>(op.getType());
     mlir::Type target_ptr_type =
-        ttir::getPointerTypeToElement(result_memref_type.getElementType());
+        ttir::getPointerType(result_memref_type.getElementType());
     mlir::NamedAttribute divisibility_attr = xtile::GetDivisibilityAttr(b);
     // The ptr ->i64 -> memref dance.
     mlir::Value final_ptr = mlir::triton::IntToPtrOp::create(
@@ -214,10 +207,9 @@ class XTileExtractToTriton
         CreateMemrefToPtr(rewriter, extract_op.getSource());
 
     if (result_type.getRank() == 0) {
-      mlir::Value scalar_value = ttir::LoadOp::create(
-          rewriter, extract_op->getLoc(), memref_to_ptr,
-          ttir::CacheModifier::NONE, ttir::EvictionPolicy::NORMAL,
-          /*isVolatile=*/false);
+      mlir::Value scalar_value =
+          ttir::LoadOp::create(rewriter, extract_op->getLoc(), memref_to_ptr,
+                               /*isVolatile=*/false);
 
       rewriter.replaceOpWithNewOp<mlir::tensor::FromElementsOp>(
           extract_op, result_type, scalar_value);

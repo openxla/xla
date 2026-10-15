@@ -39,11 +39,16 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/profiler/lib/nvtx_utils.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
+#include "xla/stream_executor/cuda/cuda_device_allocator.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/cuda/cuda_executor.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
+#include "xla/stream_executor/cuda/green_context.h"
 #include "xla/stream_executor/cuda/host_callback_registry.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/event.h"
@@ -52,9 +57,6 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_common.h"
 #include "xla/tsl/util/env_var.h"  // IWYU pragma: keep
-#include "tsl/profiler/lib/nvtx_utils.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
@@ -101,8 +103,9 @@ absl::StatusOr<bool> StreamIsCapturing(CUstream stream) {
   VLOG(2) << "Checking if stream " << stream << " is capturing";
 
   CUstreamCaptureStatus status;
-  ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuStreamIsCapturing(stream, &status),
-                                 "Failed to check stream capturing status"));
+  ABSL_RETURN_IF_ERROR(
+      cuda::ToStatus(cuStreamIsCapturing(stream, &status),
+                     "Failed to check stream capturing status"));
 
   return status == CU_STREAM_CAPTURE_STATUS_ACTIVE;
 }
@@ -202,6 +205,12 @@ CudaStream::CaptureHandle::BeginCapture(CudaStream* stream, CUgraph graph,
                                         const CUgraphEdgeData* dependency_data,
                                         size_t num_dependencies,
                                         CUstreamCaptureMode mode) {
+  if (stream->parent()->GetDeviceDescription().driver_version() <
+      SemanticVersion{12, 3, 0}) {
+    return absl::UnimplementedError(
+        "Stream capture to graph requires CUDA driver 12.3 or newer");
+  }
+
   if (stream->type_ == CudaStreamType::kCudaGraphCapture) {
     return absl::FailedPreconditionError(
         "Cannot begin capture on a capture stream.");
@@ -217,16 +226,20 @@ CudaStream::CaptureHandle::BeginCapture(CudaStream* stream, CUgraph graph,
   }
   CudaStream* capture_stream = stream->capture_stream_->get();
   ABSL_ASSIGN_OR_RETURN(bool is_capturing,
-                   StreamIsCapturing(capture_stream->stream_handle_));
+                        StreamIsCapturing(capture_stream->stream_handle_));
   if (is_capturing) {
     return absl::FailedPreconditionError("Capture stream is already capturing");
   }
+  auto* executor = static_cast<CudaExecutor*>(stream->parent());
+  executor->EnterStreamCapture();
+  absl::Cleanup exit_capture_on_error = [&] { executor->ExitStreamCapture(); };
   ABSL_RETURN_IF_ERROR(cuda::ToStatus(
       cuStreamBeginCaptureToGraph(capture_stream->stream_handle_, graph,
                                   /*dependencies=*/dependencies,
                                   /*dependencyData=*/dependency_data,
                                   /*numDependencies=*/num_dependencies, mode),
       "Failed to begin stream capture to graph"));
+  std::move(exit_capture_on_error).Cancel();
   return CudaStream::CaptureHandle(capture_stream, graph);
 }
 
@@ -239,6 +252,7 @@ CudaStream::CaptureHandle::CaptureHandle(CaptureHandle&& other)
 absl::Status CudaStream::CaptureHandle::EndCapture() {
   if (stream_ != nullptr && graph_ != nullptr) {
     absl::Cleanup cleanup = [this] {
+      static_cast<CudaExecutor*>(stream_->parent())->ExitStreamCapture();
       stream_ = nullptr;
       graph_ = nullptr;
     };
@@ -278,7 +292,7 @@ CudaStream::CudaStream(
 absl::StatusOr<std::unique_ptr<CudaStream>> CudaStream::Create(
     CudaExecutor* executor,
     std::optional<std::variant<StreamPriority, int>> priority,
-    CudaStreamType type) {
+    CudaStreamType type, const GreenContext* green_context) {
   int stream_priority = [&]() {
     if (priority.has_value() && std::holds_alternative<int>(priority.value())) {
       return std::get<int>(priority.value());
@@ -287,11 +301,22 @@ absl::StatusOr<std::unique_ptr<CudaStream>> CudaStream::Create(
     return executor->GetGpuStreamPriority(
         std::get<StreamPriority>(priority.value_or(StreamPriority::Default)));
   }();
-  ABSL_ASSIGN_OR_RETURN(auto stream_handle, CreateStream(executor, stream_priority));
+
+  CUstream stream_handle;
+  if (green_context != nullptr) {
+    // Green-context streams are created with the device's primary context
+    // current; the green context scopes launches to its SM partition.
+    std::unique_ptr<ActivateContext> activation = executor->Activate();
+    ABSL_ASSIGN_OR_RETURN(stream_handle,
+                          green_context->CreateStream(stream_priority));
+  } else {
+    ABSL_ASSIGN_OR_RETURN(stream_handle,
+                          CreateStream(executor, stream_priority));
+  }
 
   ABSL_ASSIGN_OR_RETURN(auto completed_event,
-                   CudaEvent::Create(executor,
-                                     /*allow_timing=*/false));
+                        CudaEvent::Create(executor,
+                                          /*allow_timing=*/false));
 
   return std::unique_ptr<CudaStream>(new CudaStream(
       executor, std::move(completed_event), priority, stream_handle, type));

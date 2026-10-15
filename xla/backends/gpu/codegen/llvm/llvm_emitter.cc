@@ -52,6 +52,7 @@ limitations under the License.
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/TargetParser/Triple.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/codegen/llvm/parallel_loop_emitter.h"
 #include "xla/backends/gpu/codegen/llvm/sort_util.h"
@@ -94,7 +95,6 @@ limitations under the License.
 #include "xla/tsl/concurrency/future.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla::gpu {
 namespace {
@@ -365,9 +365,9 @@ absl::Status CallNestedComputation(llvm::IRBuilderBase* builder,
   TF_RET_CHECK(computation.num_parameters() > 0);
 
   ABSL_ASSIGN_OR_RETURN(llvm::Function * emitted_function,
-                   IrEmitter(&ir_emitter_context, llvm_module,
-                             /*is_nested=*/true)
-                       .CodegenNestedComputation(computation));
+                        IrEmitter(&ir_emitter_context, llvm_module,
+                                  /*is_nested=*/true)
+                            .CodegenNestedComputation(computation));
 
   // Operands are in default address space for non-AMDGPU target.
   // However for AMDGPU target, addrspacecast alloca variables from
@@ -888,9 +888,9 @@ AsyncThunkSequence EmitBitonicSortLLVMIR(const HloSortInstruction* sort,
     std::string sanitized_kernel_name =
         ir_emitter_context->GetSanitizedUniqueName(op_name);
     ABSL_ASSIGN_OR_RETURN(auto kernel_arguments,
-                     emitters::KernelArguments::Create(
-                         ir_emitter_context->buffer_assignment(),
-                         GetDefaultBufferAlignment(), hlo_with_buffers));
+                          emitters::KernelArguments::Create(
+                              ir_emitter_context->buffer_assignment(),
+                              GetDefaultBufferAlignment(), hlo_with_buffers));
 
     ABSL_ASSIGN_OR_RETURN(
         LlvmKernelSource llvm_kernel_source,
@@ -960,11 +960,12 @@ absl::StatusOr<KernelDefinition<LlvmKernelSource>> EmitPadToStaticLLVMIR(
   std::string sanitized_kernel_name =
       ir_emitter_context->GetSanitizedUniqueName(op_name);
 
-  ABSL_ASSIGN_OR_RETURN(llvm::Function * kernel,
-                   BuildKernelPrototype(
-                       llvm_module.get(), ir_emitter_context->gpu_device_info(),
-                       op_name, sanitized_kernel_name, kernel_arguments,
-                       launch_dimensions, ir_emitter.builder()));
+  ABSL_ASSIGN_OR_RETURN(
+      llvm::Function * kernel,
+      BuildKernelPrototype(llvm_module.get(),
+                           ir_emitter_context->gpu_device_info(), op_name,
+                           sanitized_kernel_name, kernel_arguments,
+                           launch_dimensions, ir_emitter.builder()));
 
   std::vector<llvm_ir::IrArray> ir_arrays =
       IrArraysFor(kernel, kernel_arguments);
@@ -1084,9 +1085,9 @@ absl::StatusOr<KernelDefinition<LlvmKernelSource>> EmitPadToStaticLLVMIR(
 
   const Shape& data_shape = hlo->shape().tuple_shapes(0);
   ABSL_RETURN_IF_ERROR(ParallelLoopEmitter(body_generator, data_shape,
-                                      launch_dimensions, ir_emitter.builder(),
-                                      kUnrollFactor)
-                      .EmitLoop(op_name, index_ty));
+                                           launch_dimensions,
+                                           ir_emitter.builder(), kUnrollFactor)
+                           .EmitLoop(op_name, index_ty));
 
   ABSL_ASSIGN_OR_RETURN(
       KernelSpec kernel_spec,
@@ -1122,11 +1123,12 @@ absl::StatusOr<KernelDefinition<LlvmKernelSource>> EmitSliceToDynamicLLVMIR(
   std::string sanitized_kernel_name =
       ir_emitter_context->GetSanitizedUniqueName(op_name);
 
-  ABSL_ASSIGN_OR_RETURN(llvm::Function * kernel,
-                   BuildKernelPrototype(
-                       llvm_module.get(), ir_emitter_context->gpu_device_info(),
-                       op_name, sanitized_kernel_name, kernel_arguments,
-                       launch_dimensions, ir_emitter.builder()));
+  ABSL_ASSIGN_OR_RETURN(
+      llvm::Function * kernel,
+      BuildKernelPrototype(llvm_module.get(),
+                           ir_emitter_context->gpu_device_info(), op_name,
+                           sanitized_kernel_name, kernel_arguments,
+                           launch_dimensions, ir_emitter.builder()));
 
   const Shape& data_shape = ShapeUtil::MakeStaticShape(hlo->shape());
   TF_RET_CHECK(data_shape.IsArray());
@@ -1235,9 +1237,9 @@ absl::StatusOr<KernelDefinition<LlvmKernelSource>> EmitSliceToDynamicLLVMIR(
   };
 
   ABSL_RETURN_IF_ERROR(ParallelLoopEmitter(body_generator, data_shape,
-                                      launch_dimensions, ir_emitter.builder(),
-                                      kUnrollFactor)
-                      .EmitLoop(op_name, index_ty));
+                                           launch_dimensions,
+                                           ir_emitter.builder(), kUnrollFactor)
+                           .EmitLoop(op_name, index_ty));
 
   ABSL_ASSIGN_OR_RETURN(
       KernelSpec kernel_spec,
@@ -1270,11 +1272,12 @@ EmitRngGetAndUpdateStateLLVMIR(
   std::string sanitized_kernel_name =
       ir_emitter_context->GetSanitizedUniqueName(op_name);
 
-  ABSL_ASSIGN_OR_RETURN(llvm::Function * kernel,
-                   BuildKernelPrototype(
-                       llvm_module.get(), ir_emitter_context->gpu_device_info(),
-                       op_name, sanitized_kernel_name, kernel_arguments,
-                       launch_dimensions, ir_emitter.builder()));
+  ABSL_ASSIGN_OR_RETURN(
+      llvm::Function * kernel,
+      BuildKernelPrototype(llvm_module.get(),
+                           ir_emitter_context->gpu_device_info(), op_name,
+                           sanitized_kernel_name, kernel_arguments,
+                           launch_dimensions, ir_emitter.builder()));
 
   std::vector<llvm_ir::IrArray> ir_arrays =
       IrArraysFor(kernel, kernel_arguments);

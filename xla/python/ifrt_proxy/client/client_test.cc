@@ -14,19 +14,22 @@
 
 #include "xla/python/ifrt_proxy/client/client.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
@@ -54,7 +57,6 @@
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace ifrt {
@@ -297,6 +299,49 @@ TEST_P(ClientTest, CopyArraysDefaultLayoutSuccess) {
   TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<const xla::PjRtLayout> layout_2,
                           copied_arrays[1].get()->pjrt_layout());
   EXPECT_EQ(layout_2, nullptr);
+}
+
+TEST_P(ClientTest, CopyArraysMemoryKindCombinations) {
+  IfrtResponse response;
+  response.mutable_copy_arrays_response()->add_array_handles(1);
+  EXPECT_CALL(*session_,
+              Enqueue(IfrtRequestOfType(IfrtRequest::kCopyArraysRequest)))
+      .WillRepeatedly(MockClientSessionReturnResponse(response));
+  EXPECT_CALL(*session_,
+              Enqueue(IfrtRequestOfType(IfrtRequest::kDestructArrayRequest)))
+      .WillRepeatedly(MockClientSessionReturnResponse(IfrtResponse()));
+
+  struct Case {
+    std::optional<MemoryKind> kind;
+    absl::string_view expected;
+  };
+  const std::vector<Case> kCases = {
+      {std::nullopt, "device"},
+      {MemoryKind(), "device"},
+      {MemoryKind("device"), "device"},
+      {MemoryKind("pinned_host"), "pinned_host"},
+  };
+
+  for (const Case& src : kCases) {
+    for (const Case& dst : kCases) {
+      auto sharding = SingleDeviceSharding::Create(
+          device_, src.kind.value_or(MemoryKind()));
+      std::vector<ArrayRef> arrays = {tsl::MakeRef<Array>(
+          client_.get(), rpc_helper_, DType(DType::kF64), Shape({1, 2, 3}),
+          std::move(sharding), ArrayHandle{1234}, /*layout=*/nullptr)};
+      ASSERT_OK_AND_ASSIGN(DeviceListRef devices,
+                           client_->MakeDeviceList({device_}));
+
+      ASSERT_OK_AND_ASSIGN(
+          std::vector<ArrayRef> copied,
+          client_->CopyArrays(absl::MakeSpan(arrays), std::move(devices),
+                              dst.kind, ArrayCopySemantics::kAlwaysCopy));
+      ASSERT_THAT(copied, SizeIs(1));
+
+      EXPECT_EQ(copied[0]->sharding().memory_kind().value(),
+                dst.kind.has_value() ? dst.expected : src.expected);
+    }
+  }
 }
 
 TEST_P(ClientTest, CopyArraysCustomLayoutSuccess) {

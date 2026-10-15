@@ -22,14 +22,14 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/status.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/transforms/despecializer.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 

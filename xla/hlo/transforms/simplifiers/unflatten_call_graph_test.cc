@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/unflatten_call_graph.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"

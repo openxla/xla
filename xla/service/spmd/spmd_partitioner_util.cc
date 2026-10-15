@@ -3003,8 +3003,6 @@ HloInstruction* PadDataFromWindowReshard(
   return sharded_data;
 }
 
-
-
 // Returns partition groups in a list of lists (V1) format.
 CollectiveDeviceList GetListOfListsPartitionGroupsForReplication(
     const HloSharding& sharding, absl::Span<const int64_t> replication_dims) {

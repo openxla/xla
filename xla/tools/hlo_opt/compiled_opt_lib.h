@@ -51,7 +51,7 @@ class CompiledOptProvider : public OptProvider {
   virtual std::string GetPlatformName() = 0;
 
   // Returns a stream executor for the provider (could be nullptr).
-  virtual absl::StatusOr<se::StreamExecutor *> GetExecutor();
+  virtual absl::StatusOr<se::StreamExecutor*> GetExecutor();
 
   // Generates executable from a given input module.
   absl::StatusOr<std::unique_ptr<Executable>> GetExecutable(

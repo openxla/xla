@@ -36,6 +36,8 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
@@ -54,8 +56,6 @@ limitations under the License.
 #include "xla/tsl/util/safe_reinterpret_cast.h"
 #include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
-#include "tsl/platform/casts.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -262,21 +262,24 @@ AcquireSymmetricMemory(
     //
     // Currently it's very simple proof of concept.
 
-    ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm, cliques.GetComm(r.clique, *rank));
+    ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm,
+                          cliques.GetComm(r.clique, *rank));
     for (BufferAllocation::Index i : r.allocations) {
       se::DeviceAddressBase addr = buffers.GetDeviceAddress(i);
       CollectiveMemory::Key mem_key = std::make_pair(r.clique, i);
       // Check cache first to avoid redundant collective window registration.
-      if (auto cached = memory_cache.FindSymmetricMemory(r.clique, addr)) {
+      if (auto cached = memory_cache.FindSymmetricMemory(
+              params.executor->device_ordinal(), r.clique, addr)) {
         sym_memories[mem_key] = std::move(cached);
         continue;
       }
       ABSL_ASSIGN_OR_RETURN(std::unique_ptr<SymmetricMemory> symm,
-                       comm->CreateSymmetricMemory(addr));
+                            comm->CreateSymmetricMemory(addr));
       ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<SymmetricMemory> tied_symm,
-                       cliques.Tie(r.clique, std::move(symm)));
+                            cliques.Tie(r.clique, std::move(symm)));
       sym_memories[mem_key] =
-          memory_cache.AddSymmetricMemory(r.clique, addr, std::move(tied_symm));
+          memory_cache.AddSymmetricMemory(params.executor->device_ordinal(),
+                                          r.clique, addr, std::move(tied_symm));
     }
   }
 
@@ -416,8 +419,9 @@ absl::StatusOr<MulticastMemoryMap> AcquireMulticastMemory(
         se::DeviceAddressBase mcast_addr =
             params[0]->buffers.GetDeviceAddress(i);
         std::shared_ptr<se::gpu::MulticastMemory> cached =
-            memory_cache.AddMulticastMemory(r.clique, mcast_addr,
-                                            std::move(tied_multicast_memory));
+            memory_cache.AddMulticastMemory(
+                params[0]->executor->device_ordinal(), r.clique, mcast_addr,
+                std::move(tied_multicast_memory));
 
         clique_mcast_memories[std::make_pair(r.clique, i)] =
             MappedMulticastMemory{std::move(cached), std::move(mapped_ptrs)};
@@ -598,13 +602,15 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
                                          {"peer_allocs", peer_allocs.size()}});
   });
 
-  ABSL_ASSIGN_OR_RETURN(auto sym_memories,
-                   AcquireSymmetricMemory(params, cliques, requests.buffers(),
-                                          sym_allocs, memory_cache));
+  ABSL_ASSIGN_OR_RETURN(
+      auto sym_memories,
+      AcquireSymmetricMemory(params, cliques, requests.buffers(), sym_allocs,
+                             memory_cache));
 
-  ABSL_ASSIGN_OR_RETURN(MulticastMemoryMap mcast_memories,
-                   AcquireMulticastMemory(params, cliques, requests.buffers(),
-                                          mcast_allocs, memory_cache));
+  ABSL_ASSIGN_OR_RETURN(
+      MulticastMemoryMap mcast_memories,
+      AcquireMulticastMemory(params, cliques, requests.buffers(), mcast_allocs,
+                             memory_cache));
 
   ABSL_ASSIGN_OR_RETURN(
       auto peer_memories,

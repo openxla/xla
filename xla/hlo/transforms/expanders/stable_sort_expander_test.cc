@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/stable_sort_expander.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"

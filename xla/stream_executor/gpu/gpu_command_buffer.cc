@@ -133,7 +133,7 @@ absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateEmptyCmd(
     absl::Span<const Command* const> dependencies, StreamPriority priority) {
   ABSL_RETURN_IF_ERROR(CheckInState(State::kCreate));
   ABSL_ASSIGN_OR_RETURN(GraphNodeHandle handle,
-                   CreateEmptyNode(ToGraphNodeDependencies(dependencies)));
+                        CreateEmptyNode(ToGraphNodeDependencies(dependencies)));
   return AppendCommand(GpuCommand{handle});
 }
 
@@ -162,6 +162,31 @@ absl::Status GpuCommandBuffer::UpdateLaunchWithPackedArgs(
   auto* gpu_command = absl::down_cast<const GpuCommand*>(command);
   return UpdateKernelNode(gpu_command->handle, threads, blocks, cluster_dims,
                           kernel, packed_args);
+}
+
+absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateLaunch(
+    const ThreadDim& threads, const BlockDim& blocks,
+    const std::optional<ClusterDim>& cluster_dims, const NativeKernel& kernel,
+    const KernelArgsPackedArrayBase& args,
+    absl::Span<const Command* const> dependencies, StreamPriority priority) {
+  ABSL_RETURN_IF_ERROR(CheckInState(State::kCreate));
+
+  ABSL_ASSIGN_OR_RETURN(
+      GraphNodeHandle handle,
+      CreateKernelNode(ToGraphNodeDependencies(dependencies), priority, threads,
+                       blocks, cluster_dims, kernel, args));
+
+  return AppendCommand(GpuCommand{handle});
+}
+
+absl::Status GpuCommandBuffer::UpdateLaunch(
+    const Command* command, const ThreadDim& threads, const BlockDim& blocks,
+    const std::optional<ClusterDim>& cluster_dims, const NativeKernel& kernel,
+    const KernelArgsPackedArrayBase& args) {
+  ABSL_RETURN_IF_ERROR(CheckInState(State::kUpdate));
+  auto* gpu_command = absl::down_cast<const GpuCommand*>(command);
+  return UpdateKernelNode(gpu_command->handle, threads, blocks, cluster_dims,
+                          kernel, args);
 }
 
 absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateLaunch(
@@ -248,12 +273,13 @@ GpuCommandBuffer::CreateChildCommand(
     absl::Span<const Command* const> dependencies) {
   ABSL_RETURN_IF_ERROR(CheckInState(State::kCreate));
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<CommandBuffer> nested,
-                   executor_->CreateCommandBuffer(Mode::kNested));
+                        executor_->CreateCommandBuffer(Mode::kNested));
 
   ABSL_RETURN_IF_ERROR(record_fn(nested.get()));
-  ABSL_ASSIGN_OR_RETURN(GraphNodeHandle handle,
-                   CreateMovedChildNode(ToGraphNodeDependencies(dependencies),
-                                        nested.get()));
+  ABSL_ASSIGN_OR_RETURN(
+      GraphNodeHandle handle,
+      CreateMovedChildNode(ToGraphNodeDependencies(dependencies),
+                           nested.get()));
   ABSL_RETURN_IF_ERROR(nested->Finalize());
   return AppendCommand(GpuChildCommand{handle, std::move(nested)});
 }
@@ -276,9 +302,10 @@ absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateMemcpyD2D(
     absl::Span<const Command* const> dependencies) {
   ABSL_RETURN_IF_ERROR(CheckInState(State::kCreate));
 
-  ABSL_ASSIGN_OR_RETURN(GraphNodeHandle handle,
-                   CreateMemcpyD2DNode(ToGraphNodeDependencies(dependencies),
-                                       *dst, src, size));
+  ABSL_ASSIGN_OR_RETURN(
+      GraphNodeHandle handle,
+      CreateMemcpyD2DNode(ToGraphNodeDependencies(dependencies), *dst, src,
+                          size));
 
   return AppendCommand(GpuCommand{handle});
 }
@@ -297,9 +324,10 @@ absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateMemcpyD2H(
     absl::Span<const Command* const> dependencies) {
   ABSL_RETURN_IF_ERROR(CheckInState(State::kCreate));
 
-  ABSL_ASSIGN_OR_RETURN(GraphNodeHandle handle,
-                   CreateMemcpyD2HNode(ToGraphNodeDependencies(dependencies),
-                                       dst, src, size));
+  ABSL_ASSIGN_OR_RETURN(
+      GraphNodeHandle handle,
+      CreateMemcpyD2HNode(ToGraphNodeDependencies(dependencies), dst, src,
+                          size));
 
   return AppendCommand(GpuCommand{handle});
 }
@@ -318,9 +346,10 @@ absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateMemcpyH2D(
     absl::Span<const Command* const> dependencies) {
   ABSL_RETURN_IF_ERROR(CheckInState(State::kCreate));
 
-  ABSL_ASSIGN_OR_RETURN(GraphNodeHandle handle,
-                   CreateMemcpyH2DNode(ToGraphNodeDependencies(dependencies),
-                                       *dst, src, size));
+  ABSL_ASSIGN_OR_RETURN(
+      GraphNodeHandle handle,
+      CreateMemcpyH2DNode(ToGraphNodeDependencies(dependencies), *dst, src,
+                          size));
 
   return AppendCommand(GpuCommand{handle});
 }
@@ -339,8 +368,8 @@ absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateMemset(
   ABSL_RETURN_IF_ERROR(CheckInState(State::kCreate));
 
   ABSL_ASSIGN_OR_RETURN(GraphNodeHandle handle,
-                   CreateMemsetNode(ToGraphNodeDependencies(dependencies), *dst,
-                                    bit_pattern, num_elements));
+                        CreateMemsetNode(ToGraphNodeDependencies(dependencies),
+                                         *dst, bit_pattern, num_elements));
 
   return AppendCommand(GpuCommand{handle});
 }
@@ -366,9 +395,10 @@ GpuCommandBuffer::CreateDnnGraphCommand(
   ABSL_RETURN_IF_ERROR(CheckInState(State::kCreate));
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<CommandBuffer> nested,
-                   stream.parent()->CreateCommandBuffer(Mode::kNested));
+                        stream.parent()->CreateCommandBuffer(Mode::kNested));
   GpuCommandBuffer& nested_gpu = absl::down_cast<GpuCommandBuffer&>(*nested);
-  ABSL_RETURN_IF_ERROR(nested_gpu.PopulateDnnGraphNode(dnn_graph, stream, operands));
+  ABSL_RETURN_IF_ERROR(
+      nested_gpu.PopulateDnnGraphNode(dnn_graph, stream, operands));
 
   ABSL_ASSIGN_OR_RETURN(
       GraphNodeHandle handle,
@@ -431,12 +461,13 @@ absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateCase(
       enable_conditional_default = false;
     }
 
-    ABSL_ASSIGN_OR_RETURN(auto conditionals, CreateConditionalHandles(batch_size));
+    ABSL_ASSIGN_OR_RETURN(auto conditionals,
+                          CreateConditionalHandles(batch_size));
 
     ABSL_ASSIGN_OR_RETURN(auto set_condition_node,
-                     CreateSetCaseConditionNode(
-                         conditionals, index, index_is_bool, batch_offset,
-                         enable_conditional_default, node_dependencies));
+                          CreateSetCaseConditionNode(
+                              conditionals, index, index_is_bool, batch_offset,
+                              enable_conditional_default, node_dependencies));
 
     std::vector<GraphConditionalNodeHandle> conditional_nodes;
     for (int z = 0; z < batch_size; ++z) {
@@ -449,8 +480,8 @@ absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateCase(
       GpuCommandBuffer* case_command_buffer =
           conditional_nodes.back().command_buffer.get();
       ABSL_RETURN_IF_ERROR(create_branches[branch_offset](case_command_buffer,
-                                                     /*dependencies=*/{})
-                          .status());
+                                                          /*dependencies=*/{})
+                               .status());
       ABSL_RETURN_IF_ERROR(case_command_buffer->Finalize());
     }
 
@@ -569,7 +600,8 @@ absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateWhile(
                             command.conditional, ConditionType::kWhile));
 
   GpuCommandBuffer* body = command.conditional_node.command_buffer.get();
-  ABSL_ASSIGN_OR_RETURN(auto body_commands, create_body(body, /*dependencies=*/{}));
+  ABSL_ASSIGN_OR_RETURN(auto body_commands,
+                        create_body(body, /*dependencies=*/{}));
   ABSL_ASSIGN_OR_RETURN(auto update_cond, create_cond(body, body_commands));
   ABSL_ASSIGN_OR_RETURN(
       command.set_body_condition_node,
@@ -612,8 +644,8 @@ absl::StatusOr<const CommandBuffer::Command*> GpuCommandBuffer::CreateHost(
   ABSL_RETURN_IF_ERROR(CheckInState(State::kCreate));
 
   ABSL_ASSIGN_OR_RETURN(GraphNodeHandle handle,
-                   CreateHostNode(ToGraphNodeDependencies(dependencies),
-                                  std::move(callback)));
+                        CreateHostNode(ToGraphNodeDependencies(dependencies),
+                                       std::move(callback)));
 
   return AppendCommand(GpuCommand{handle});
 }

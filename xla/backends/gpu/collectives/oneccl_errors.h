@@ -18,10 +18,10 @@ limitations under the License.
 
 #include <atomic>
 
-#include "oneapi/ccl.h"
 #include "absl/status/status.h"
+#include "oneapi/ccl.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
-#include "xla/util.h"  // IWYU pragma: keep
+#include "xla/util.h"                  // IWYU pragma: keep
 
 #define XLA_ONECCL_STATUS(expr)                                 \
   [](onecclResult_t s, absl::string_view str) -> absl::Status { \

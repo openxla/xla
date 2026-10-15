@@ -12,16 +12,15 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/types/span.h"
 #include "xla/literal.h"
-#include "xla/service/cpu/fusion_wrapper.h"
-#include "xla/service/cpu/target_machine_features_stub.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -41,12 +40,6 @@ ENTRY entry {
 )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
-  TargetMachineFeaturesStub target_machine_features(
-      [](int64_t size) { return 16; });
-  FusionWrapper fusion_wrapper(/*using_new_fusion_emitter=*/true,
-                               /*use_tiled_emitter=*/true,
-                               &target_machine_features);
-  ASSERT_OK(fusion_wrapper.Run(module.get()));
   ASSERT_OK_AND_ASSIGN(const Literal result, Execute(std::move(module), {},
                                                      /*run_hlo_passes=*/false));
 
@@ -71,12 +64,6 @@ ENTRY entry {
 )hlo";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
-  TargetMachineFeaturesStub target_machine_features(
-      [](int64_t size) { return 16; });
-  FusionWrapper fusion_wrapper(/*using_new_fusion_emitter=*/true,
-                               /*use_tiled_emitter=*/true,
-                               &target_machine_features);
-  ASSERT_OK(fusion_wrapper.Run(module.get()));
   ASSERT_OK_AND_ASSIGN(const Literal result, Execute(std::move(module), {},
                                                      /*run_hlo_passes=*/false));
 

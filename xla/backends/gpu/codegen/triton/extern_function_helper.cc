@@ -34,9 +34,9 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/tsl/platform/statusor.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace mlir::triton::xla {
 
@@ -347,11 +347,12 @@ mlir::Value CreateAtomicSpinWaitOps(
 
   // Loop: atomic load + compare + conditional branch
   builder.setInsertionPointToStart(loop_block);
-  LLVM::LoadOp loaded = LLVM::LoadOp::create(
-      builder, params.loc, i32_type, addr, /*alignment=*/4,
-      /*isVolatile=*/false,
-      /*isNonTemporal=*/false, /*isInvariant=*/false,
-      /*isInvariantGroup=*/false, ordering, builder.getStringAttr(syncscope));
+  LLVM::LoadOp loaded =
+      LLVM::LoadOp::create(builder, params.loc, i32_type, addr, /*alignment=*/4,
+                           /*isVolatile=*/false,
+                           /*isNonTemporal=*/false, /*isInvariant=*/false,
+                           /*isInvariantGroup=*/false, /*isNoundef=*/false,
+                           ordering, builder.getStringAttr(syncscope));
   LLVM::ICmpPredicate predicate =
       ComparatorToICmpPredicate(instruction.comparator);
   LLVM::ICmpOp condition =

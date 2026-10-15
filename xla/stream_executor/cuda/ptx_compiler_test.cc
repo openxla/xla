@@ -15,17 +15,17 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/ptx_compiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <sys/types.h>
 
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
-#include "absl/status/status_matchers.h"
+#include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
@@ -187,9 +187,9 @@ absl::StatusOr<std::vector<uint8_t>> CompileHelper(
                                       /*preferred_cuda_dir=*/"", extra_flags);
 
   ABSL_ASSIGN_OR_RETURN(stream_executor::cuda::Assembly assembly,
-                   stream_executor::CompileGpuAsmUsingLibNvPtxCompiler(
-                       cc, ptx_input, options, cancel_if_reg_spill,
-                       /*dump_compilation_log=*/false));
+                        stream_executor::CompileGpuAsmUsingLibNvPtxCompiler(
+                            cc, ptx_input, options, cancel_if_reg_spill,
+                            /*dump_compilation_log=*/false));
   return assembly.cubin;
 }
 
@@ -232,7 +232,7 @@ TEST_F(PtxCompilerTest, CancelsOnRegSpill) {
 }
 
 TEST_F(PtxCompilerTest, RecordsRegisterSpillStats) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       stream_executor::cuda::Assembly assembly,
       CompileGpuAsmUsingLibNvPtxCompiler(
           kDefaultComputeCapability, kSpillingPtx,
@@ -285,7 +285,7 @@ class PtxCompilerTcgen05Test
       public ::testing::WithParamInterface<Tcgen05TestCase> {};
 
 TEST_P(PtxCompilerTcgen05Test, CompilesTcgen05OnlyForSupportedArchitectures) {
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       int ptx_isa_version,
       stream_executor::GetLatestPtxIsaVersionForNvptxCompiler());
 

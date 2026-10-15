@@ -31,13 +31,13 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/str_util.h"
 #include "xla/tsl/framework/device_id.h"
 #include "xla/tsl/framework/device_id_manager.h"
 #include "xla/tsl/framework/device_type.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/device_name_utils.h"
-#include "tsl/platform/str_util.h"
 
 namespace tsl {
 namespace {
@@ -137,9 +137,9 @@ absl::StatusOr<size_t> GetNumberTfDevicesAndConfigurePlatformDeviceId(
     return 0;
   }
   std::vector<PlatformDeviceId> visible_device_order;
-  ABSL_RETURN_IF_ERROR(ParseVisibleDeviceList(std::string(visible_device_list),
-                                         visible_device_count,
-                                         &visible_device_order, device_type));
+  ABSL_RETURN_IF_ERROR(ParseVisibleDeviceList(
+      std::string(visible_device_list), visible_device_count,
+      &visible_device_order, device_type));
   if (num_tf_devices > visible_device_order.size()) {
     num_tf_devices = visible_device_order.size();
   }

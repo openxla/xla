@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "xla/python/ifrt_proxy/integration_tests/scoped_pjrt_cpu_via_proxy.h"
@@ -32,11 +33,6 @@ int main(int argc, char** argv) {
       // legacy API calls that do not yet support custom layouts, and thus the
       // output arrays only can have default layouts.
       "ArrayImplTest.MakeArraysFromHostBufferShardsWithLayout",
-
-      // `ShardingParamSharding` does not support serialization yet.
-      // TODO(b/282757875): Enable the test once IFRT implements
-      // `ShardingParamShardingSerDes`.
-      "ArrayImplTest.AssembleAndDisassembleArray",
   };
 
   const std::string filter = absl::StrCat("-", absl::StrJoin(disabled, ":"));

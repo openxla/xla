@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_device_dimensions.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <sstream>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "xla/pjrt/proto/pjrt_device_dimensions.pb.h"
 #include "xla/tsl/platform/statusor.h"

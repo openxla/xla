@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
+#include "llvm/ADT/TypeSwitch.h"            // IWYU pragma: keep
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
-#include "mlir/IR/OpImplementation.h"  // IWYU pragma: keep
+#include "mlir/IR/OpImplementation.h"       // IWYU pragma: keep
 #include "mlir/Transforms/InliningUtils.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -30,7 +30,6 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 namespace {
-
 
 struct XlaGpuOpAsmDialectInterface : public mlir::OpAsmDialectInterface {
   using OpAsmDialectInterface::OpAsmDialectInterface;

@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/ptrvec.h"
@@ -110,7 +111,7 @@ absl::Status AttachAnnotation(
     bool dry_run = false) {
   for (HloInstruction* instr : instructions) {
     ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> instr_annotation,
-                     GetSchedulingAnnotation(instr));
+                          GetSchedulingAnnotation(instr));
     if (instr_annotation) {
       return absl::InternalError("Trying to propagate scheduling annotation " +
                                  annotation.ToString() + " to " +
@@ -129,7 +130,10 @@ absl::Status AttachAnnotation(
 
 bool ContainsOnlyFormattingOps(const HloInstruction* async_op) {
   if (async_op->opcode() == HloOpcode::kAsyncDone) {
-    return ContainsOnlyFormattingOps(async_op->operand(0));
+    const HloInstruction* start =
+        hlo_instruction_utils::async::FindAsyncStart(async_op);
+    CHECK_NE(start, nullptr);
+    return ContainsOnlyFormattingOps(start);
   }
 
   const HloComputation* computation = async_op->async_wrapped_computation();
@@ -203,14 +207,17 @@ absl::Status CheckStartDoneAnnotationConsistency(
         if (HloPredicateIsOp<
                 HloOpcode::kAllGatherDone, HloOpcode::kAllReduceDone,
                 HloOpcode::kCollectivePermuteDone, HloOpcode::kAsyncDone>(
-                instr) &&
-            (!instruction_to_annotation.contains(instr->operand(0)) ||
-             instruction_to_annotation.at(instr->mutable_operand(0)) !=
-                 annotation)) {
-          return absl::InternalError(absl::StrCat(
-              "Done instruction's operand is not annotated with the same id: ",
-              instr->operand(0)->name(),
-              ", annotation: ", annotation.ToString()));
+                instr)) {
+          const HloInstruction* start =
+              hlo_instruction_utils::async::FindAsyncStart(instr);
+          CHECK_NE(start, nullptr);
+          if (!instruction_to_annotation.contains(start) ||
+              instruction_to_annotation.at(start) != annotation) {
+            return absl::InternalError(absl::StrCat(
+                "Done instruction's start operand is not annotated with the "
+                "same id: ",
+                start->name(), ", annotation: ", annotation.ToString()));
+          }
         }
       }
     }
@@ -243,7 +250,7 @@ absl::StatusOr<bool> HaulAnnotationToFusionInstruction(
     std::optional<Annotation> seen_annotation;
     for (HloInstruction* instr : computation->instructions()) {
       ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
-                       GetSchedulingAnnotation(instr));
+                            GetSchedulingAnnotation(instr));
       if (!annotation) {
         continue;
       }
@@ -263,8 +270,8 @@ absl::StatusOr<bool> HaulAnnotationToFusionInstruction(
     if (!seen_annotation) {
       continue;
     }
-    ABSL_RETURN_IF_ERROR(SetSchedulingAnnotation(computation->FusionInstruction(),
-                                            seen_annotation->ToString()));
+    ABSL_RETURN_IF_ERROR(SetSchedulingAnnotation(
+        computation->FusionInstruction(), seen_annotation->ToString()));
   }
   return changed;
 }
@@ -274,7 +281,7 @@ absl::StatusOr<bool> RemoveLoopIterationAnnotation(HloModule* module) {
   for (HloComputation* computation : module->MakeNonfusionComputations()) {
     for (HloInstruction* instr : computation->instructions()) {
       ABSL_ASSIGN_OR_RETURN(bool removed,
-                       RemoveSchedulingAnnotationIterationId(instr));
+                            RemoveSchedulingAnnotationIterationId(instr));
       changed |= removed;
     }
   }
@@ -694,7 +701,7 @@ absl::StatusOr<bool> LegalizeSchedulingAnnotations::RunImpl(
          module->MakeNonfusionComputations(execution_threads)) {
       for (HloInstruction* instr : computation->instructions()) {
         ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
-                         GetSchedulingAnnotation(instr));
+                              GetSchedulingAnnotation(instr));
         if (!annotation) {
           continue;
         }
@@ -735,7 +742,7 @@ absl::StatusOr<bool> LegalizeSchedulingAnnotations::RunImpl(
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instr : computation->instructions()) {
       ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
-                       GetSchedulingAnnotation(instr));
+                            GetSchedulingAnnotation(instr));
       if (!annotation) {
         continue;
       }
@@ -813,14 +820,14 @@ absl::StatusOr<bool> CheckNoDataDependencyInSchedulingAnnotations::RunImpl(
     for (HloInstruction* instr : computation->instructions()) {
       if (HasSchedulingAnnotation(instr)) {
         ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
-                         GetSchedulingAnnotation(instr));
+                              GetSchedulingAnnotation(instr));
         if (!annotation) {
           continue;
         }
         for (HloInstruction* operand : instr->operands()) {
           if (HasSchedulingAnnotation(operand)) {
             ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> operand_annotation,
-                             GetSchedulingAnnotation(operand));
+                                  GetSchedulingAnnotation(operand));
             if (!operand_annotation) {
               continue;
             }

@@ -40,7 +40,8 @@ RocmMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
 
   hipDevice_t device;
-  ABSL_RETURN_IF_ERROR(ToStatus(hipDeviceGet(&device, executor->device_ordinal())));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipDeviceGet(&device, executor->device_ordinal())));
 
   hipMemAllocationProp props = {};
   props.type = hipMemAllocationTypePinned;
@@ -59,12 +60,13 @@ RocmMemoryReservation::Create(StreamExecutor* executor, uint64_t size) {
       hipMemAddressReserve(&ptr, padded_size, granularity, nullptr, 0ULL)));
 
   return std::unique_ptr<RocmMemoryReservation>(new RocmMemoryReservation(
-      executor, static_cast<char*>(ptr), padded_size));
+      executor, static_cast<char*>(ptr), padded_size, granularity));
 }
 
 RocmMemoryReservation::RocmMemoryReservation(StreamExecutor* executor,
-                                             char* ptr, uint64_t size)
-    : executor_(executor), ptr_(ptr), size_(size) {}
+                                             char* ptr, uint64_t size,
+                                             size_t granularity)
+    : executor_(executor), ptr_(ptr), size_(size), granularity_(granularity) {}
 
 DeviceAddressBase RocmMemoryReservation::address() const {
   return DeviceAddressBase(ptr_, size_);

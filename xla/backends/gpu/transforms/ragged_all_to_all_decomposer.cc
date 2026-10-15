@@ -347,7 +347,7 @@ absl::StatusOr<bool> DecomposeRaggedAllToAll(HloInstruction* hlo,
       Cast<HloRaggedAllToAllInstruction>(hlo);
 
   ABSL_ASSIGN_OR_RETURN(auto replica_group_count_and_size,
-                   GetReplicaGroupCountAndSize(all_to_all));
+                        GetReplicaGroupCountAndSize(all_to_all));
   if (!replica_group_count_and_size.has_value()) {
     return false;
   }
@@ -396,7 +396,8 @@ absl::StatusOr<bool> DecomposeRaggedAllToAll(HloInstruction* hlo,
                     recv_sizes, num_updates_per_replica, max_update_size);
 
   ABSL_RETURN_IF_ERROR(all_to_all->ReplaceAllUsesWith(ragged_output));
-  ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(all_to_all));
+  ABSL_RETURN_IF_ERROR(
+      computation->RemoveInstructionAndUnusedOperands(all_to_all));
 
   return true;
 }
@@ -419,7 +420,7 @@ absl::StatusOr<bool> RaggedAllToAllDecomposer::RunImpl(
       }
 
       ABSL_ASSIGN_OR_RETURN(bool result,
-                       DecomposeRaggedAllToAll(hlo, computation, module));
+                            DecomposeRaggedAllToAll(hlo, computation, module));
       changed |= result;
     }
   }

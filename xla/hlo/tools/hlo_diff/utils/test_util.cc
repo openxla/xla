@@ -14,9 +14,10 @@
 
 #include "xla/hlo/tools/hlo_diff/utils/test_util.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"

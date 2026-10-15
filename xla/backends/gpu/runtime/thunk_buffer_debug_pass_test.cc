@@ -15,15 +15,17 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/thunk_buffer_debug_pass.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/runtime/buffers_checksum_thunk.h"
@@ -191,7 +193,8 @@ TEST_F(ThunkBufferDebugPassTest, IsNoOpWhenHloModuleIsNull) {
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ThunkBufferDebugPass> pass,
-      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {}));
+      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {},
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(
       bool changed, pass->Run(&thunks, debug_options,
                               /*hlo_module=*/nullptr, device_info, allocator));
@@ -237,7 +240,8 @@ TEST_F(ThunkBufferDebugPassTest, InsertsBuffersDebugChecksumThunks) {
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ThunkBufferDebugPass> pass,
-      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {}));
+      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {},
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(bool changed,
                        pass->Run(&thunks, debug_options, fake_hlo_module_.get(),
                                  device_info, allocator));
@@ -314,7 +318,7 @@ TEST_F(ThunkBufferDebugPassTest, RecursivelyInsertsBuffersDebugChecksumThunks) {
 
   auto conditional_thunk = std::make_unique<ConditionalThunk>(
       Thunk::ThunkInfo(), ShapedSlice{condition_slice, condition_shape},
-      std::move(branch_thunks));
+      std::move(branch_thunks), /*devices_per_host=*/1);
   const Thunk* const conditional_thunk_ptr = conditional_thunk.get();
   ThunkSequence while_body_thunks;
   while_body_thunks.push_back(std::move(while_body_fake_thunk));
@@ -325,7 +329,8 @@ TEST_F(ThunkBufferDebugPassTest, RecursivelyInsertsBuffersDebugChecksumThunks) {
       Thunk::ThunkInfo(),
       /*condition_result_buffer_index=*/BufferAllocation::Slice(),
       /*condition_thunks=*/std::move(while_condition_thunks),
-      /*body_thunks=*/std::move(while_body_thunks));
+      /*body_thunks=*/std::move(while_body_thunks),
+      /*trip_count=*/std::nullopt, /*devices_per_host=*/1);
 
   ThunkSequence thunks;
   thunks.push_back(std::move(while_thunk));
@@ -349,7 +354,8 @@ TEST_F(ThunkBufferDebugPassTest, RecursivelyInsertsBuffersDebugChecksumThunks) {
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ThunkBufferDebugPass> pass,
-      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {}));
+      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {},
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(bool changed,
                        pass->Run(&thunks, debug_options, fake_hlo_module_.get(),
                                  device_info, allocator));
@@ -518,7 +524,8 @@ TEST_F(ThunkBufferDebugPassTest, InsertsBuffersDebugFloatCheckThunks) {
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<ThunkBufferDebugPass> pass,
                        ThunkBufferDebugPass::Create(
-                           ThunkBufferDebugPass::Mode::kFloatChecker, {}));
+                           ThunkBufferDebugPass::Mode::kFloatChecker, {},
+                           /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       pass->Run(&thunks, debug_options, &hlo_module, device_info, allocator));
@@ -586,7 +593,8 @@ TEST_F(ThunkBufferDebugPassTest,
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<ThunkBufferDebugPass> pass,
                        ThunkBufferDebugPass::Create(
-                           ThunkBufferDebugPass::Mode::kFloatChecker, {}));
+                           ThunkBufferDebugPass::Mode::kFloatChecker, {},
+                           /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       pass->Run(&thunks, debug_options, &hlo_module, device_info, allocator));
@@ -622,7 +630,8 @@ TEST_F(ThunkBufferDebugPassTest,
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<ThunkBufferDebugPass> pass,
                        ThunkBufferDebugPass::Create(
-                           ThunkBufferDebugPass::Mode::kFloatChecker, {}));
+                           ThunkBufferDebugPass::Mode::kFloatChecker, {},
+                           /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       pass->Run(&thunks, debug_options, &hlo_module, device_info, allocator));
@@ -659,7 +668,8 @@ TEST_F(ThunkBufferDebugPassTest,
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ThunkBufferDebugPass> pass,
-      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {}));
+      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {},
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       pass->Run(&thunks, debug_options, &hlo_module, device_info, allocator));
@@ -696,7 +706,8 @@ TEST_F(ThunkBufferDebugPassTest,
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ThunkBufferDebugPass> pass,
-      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {}));
+      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {},
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       pass->Run(&thunks, debug_options, &hlo_module, device_info, allocator));
@@ -731,9 +742,10 @@ TEST_F(ThunkBufferDebugPassTest,
   ThunkSequence thunks;
   thunks.push_back(std::move(fake_thunk));
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ThunkBufferDebugPass> pass,
-                       ThunkBufferDebugPass::Create(
-                           ThunkBufferDebugPass::Mode::kBufferSaver, {}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ThunkBufferDebugPass> pass,
+      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kBufferSaver, {},
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       pass->Run(&thunks, debug_options, &hlo_module, device_info, allocator));
@@ -768,9 +780,10 @@ TEST_F(ThunkBufferDebugPassTest,
   ThunkSequence thunks;
   thunks.push_back(std::move(fake_thunk));
 
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<ThunkBufferDebugPass> pass,
-                       ThunkBufferDebugPass::Create(
-                           ThunkBufferDebugPass::Mode::kBufferSaver, {}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ThunkBufferDebugPass> pass,
+      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kBufferSaver, {},
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       pass->Run(&thunks, debug_options, &hlo_module, device_info, allocator));
@@ -826,7 +839,8 @@ TEST_F(ThunkBufferDebugPassTest, InsertsOutputFloatCheckThunkWhenFlagEnabled) {
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ThunkBufferDebugPass> pass,
       ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kFloatChecker,
-                                   std::move(output_slices)));
+                                   std::move(output_slices),
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       pass->Run(&thunks, debug_options, &hlo_module, device_info, allocator));
@@ -906,7 +920,8 @@ TEST_F(ThunkBufferDebugPassTest,
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ThunkBufferDebugPass> pass,
       ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kFloatChecker,
-                                   std::move(output_slices)));
+                                   std::move(output_slices),
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       pass->Run(&thunks, debug_options, &hlo_module, device_info, allocator));
@@ -1013,7 +1028,8 @@ TEST_F(ThunkBufferDebugPassTest, FiltersThunksByIdRanges) {
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ThunkBufferDebugPass> pass,
-      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {}));
+      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {},
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(bool changed,
                        pass->Run(&thunks, debug_options, fake_hlo_module_.get(),
                                  device_info, allocator));
@@ -1085,7 +1101,8 @@ TEST_F(ThunkBufferDebugPassTest, FiltersThunksByProfileAnnotationRegexes) {
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ThunkBufferDebugPass> pass,
-      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {}));
+      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {},
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(bool changed,
                        pass->Run(&thunks, debug_options, fake_hlo_module_.get(),
                                  device_info, allocator));
@@ -1175,7 +1192,8 @@ TEST_F(ThunkBufferDebugPassTest,
 
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ThunkBufferDebugPass> pass,
-      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {}));
+      ThunkBufferDebugPass::Create(ThunkBufferDebugPass::Mode::kChecksum, {},
+                                   /*devices_per_host=*/1));
   ASSERT_OK_AND_ASSIGN(bool changed,
                        pass->Run(&thunks, debug_options, fake_hlo_module_.get(),
                                  device_info, allocator));

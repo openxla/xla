@@ -15,17 +15,17 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dot_operand_converter.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/primitive_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -50,10 +50,10 @@ class DotOperandConverterTest : public HloPjRtGpuTestBase {
         module_tmpl, primitive_util::LowercasePrimitiveTypeName(lhs_type),
         primitive_util::LowercasePrimitiveTypeName(rhs_type),
         primitive_util::LowercasePrimitiveTypeName(result_type));
-    TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                            ParseAndReturnVerifiedModule(module_string));
-    TF_ASSERT_OK_AND_ASSIGN(bool upcasted,
-                            DotOperandConverter().Run(module.get()));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(module_string));
+    ASSERT_OK_AND_ASSIGN(bool upcasted,
+                         DotOperandConverter().Run(module.get()));
     EXPECT_TRUE(upcasted);
     if (left_less_precise) {
       auto original_lhs = op::Parameter(0);
@@ -100,10 +100,9 @@ TEST_F(DotOperandConverterTest, NoConvertHappensWithSameTypes) {
     ROOT dot = bf16[2,2]{1,0} dot(p0, p1), lhs_contracting_dims={1},
                                          rhs_contracting_dims={0}
   })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_string));
-  TF_ASSERT_OK_AND_ASSIGN(bool upcasted,
-                          DotOperandConverter().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool upcasted, DotOperandConverter().Run(module.get()));
   EXPECT_FALSE(upcasted);
 }
 
@@ -117,10 +116,9 @@ TEST_F(DotOperandConverterTest, NoConvertFromF8toF8) {
     ROOT dot = bf16[2,2]{1,0} dot(p0, p1), lhs_contracting_dims={1},
                                          rhs_contracting_dims={0}
   })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_string));
-  TF_ASSERT_OK_AND_ASSIGN(bool upcasted,
-                          DotOperandConverter().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool upcasted, DotOperandConverter().Run(module.get()));
   EXPECT_FALSE(upcasted);
 }
 
@@ -134,10 +132,9 @@ TEST_F(DotOperandConverterTest, NoConvertFromF8FNUZtoF8FNUZ) {
     ROOT dot = bf16[2,2]{1,0} dot(p0, p1), lhs_contracting_dims={1},
                                            rhs_contracting_dims={0}
   })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_string));
-  TF_ASSERT_OK_AND_ASSIGN(bool upcasted,
-                          DotOperandConverter().Run(module.get()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool upcasted, DotOperandConverter().Run(module.get()));
   EXPECT_FALSE(upcasted);
 }
 
@@ -151,8 +148,8 @@ TEST_F(DotOperandConverterTest, CompilerOptimizesUsingDotOperandConverter) {
     ROOT dot = bf16[2,2]{1,0} dot(p0, p1), lhs_contracting_dims={1},
                                          rhs_contracting_dims={0}
   })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          GetOptimizedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       GetOptimizedModule(module_string));
 }
 
 }  // namespace

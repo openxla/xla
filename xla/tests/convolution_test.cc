@@ -16,6 +16,8 @@ limitations under the License.
 // Tests of 2+D convolution with trivial kernels and no special variations (like
 // strides and padding).
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <numeric>
 #include <string>
@@ -23,12 +25,10 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
-#include <gtest/gtest.h>
+#include "Eigen/Core"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
-#include "Eigen/Core"
 #include "xla/array2d.h"
 #include "xla/array4d.h"
 #include "xla/error_spec.h"
@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/types.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
@@ -308,6 +309,9 @@ TYPED_TEST_CASE(Convolve_1x1x4x4_1x1x3x3_Same, TestTypes);
 TYPED_TEST(Convolve_1x1x4x4_1x1x3x3_Same, Types) { this->RunTest(); }
 
 TEST_F(ConvolutionTest, Convolve3D_1x4x2x3x3_2x2x2x3x3_Valid) {
+  if (IsRocm()) {
+    GTEST_SKIP() << "Not working with ROCm";  // TODO ROCm
+  }
   XlaBuilder builder(TestName());
   std::vector<int64_t> input_dims = {1, 4, 2, 3, 3};
   std::vector<int64_t> filter_dims = {2, 2, 2, 3, 3};

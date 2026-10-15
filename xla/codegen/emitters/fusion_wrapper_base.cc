@@ -56,6 +56,8 @@ absl::StatusOr<bool> FusionWrapperBase::RunImpl(
         computation->AddInstruction(HloInstruction::CreateFusion(
             instruction->shape(), ChooseFusionKind(*instruction, *instruction),
             instruction));
+    fusion_instruction->fused_instructions_computation()->SetExecutionThread(
+        computation->execution_thread());
     const absl::string_view wrapped_opcode =
         HloOpcodeString(instruction->opcode());
     module->SetAndUniquifyInstrName(fusion_instruction,
@@ -67,7 +69,8 @@ absl::StatusOr<bool> FusionWrapperBase::RunImpl(
       module->schedule().replace_instruction(computation, instruction,
                                              fusion_instruction);
     }
-    ABSL_RETURN_IF_ERROR(fusion_instruction->CopyAllControlDepsFrom(instruction));
+    ABSL_RETURN_IF_ERROR(
+        fusion_instruction->CopyAllControlDepsFrom(instruction));
     ABSL_RETURN_IF_ERROR(instruction->DropAllControlDeps());
     ABSL_RETURN_IF_ERROR(instruction->ReplaceAllUsesWith(fusion_instruction));
     ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(instruction));

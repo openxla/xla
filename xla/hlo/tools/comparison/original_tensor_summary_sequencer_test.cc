@@ -28,13 +28,13 @@ limitations under the License.
 #include "riegeli/bytes/fd_writer.h"
 #include "riegeli/records/record_reader.h"
 #include "riegeli/records/record_writer.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/tools/comparison/comparison_result.pb.h"
 #include "xla/hlo/tools/comparison/original_tensor_summary_utils.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "tsl/platform/path.h"
 
 namespace xla::numerics::comparison {
 namespace {

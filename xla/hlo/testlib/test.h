@@ -40,8 +40,8 @@ limitations under the License.
 #include <gmock/gmock.h>  // IWYU pragma: export
 #else
 #include <gmock/gmock-actions.h>
-#include <gmock/gmock-matchers.h>            // IWYU pragma: export
-#include <gmock/gmock-more-matchers.h>       // IWYU pragma: export
+#include <gmock/gmock-matchers.h>       // IWYU pragma: export
+#include <gmock/gmock-more-matchers.h>  // IWYU pragma: export
 #endif
 
 #include "xla/tsl/platform/test.h"  // IWYU pragma: export

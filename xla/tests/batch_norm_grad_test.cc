@@ -15,11 +15,11 @@ limitations under the License.
 
 #include <utility>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/status/status.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/literal_util.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {

@@ -18,13 +18,13 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "google/protobuf/duration.pb.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "google/protobuf/duration.pb.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/backends.pb.h"

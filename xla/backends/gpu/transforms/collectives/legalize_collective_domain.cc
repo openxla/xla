@@ -44,13 +44,13 @@ absl::StatusOr<CollectiveCommunicationDomain> ReadLocalDomain(
   if (auto value = instruction.get_frontend_attribute(
           kCollectiveCommunicationDomainAttr)) {
     ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain attribute_domain,
-                     ParseCollectiveCommunicationDomain(*value));
+                          ParseCollectiveCommunicationDomain(*value));
     ABSL_ASSIGN_OR_RETURN(
         domain, JoinCollectiveCommunicationDomains(domain, attribute_domain));
   }
 
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig config,
-                   instruction.backend_config<GpuBackendConfig>());
+                        instruction.backend_config<GpuBackendConfig>());
   ABSL_ASSIGN_OR_RETURN(
       domain,
       JoinCollectiveCommunicationDomains(
@@ -78,7 +78,7 @@ absl::StatusOr<bool> SetLocalDomain(HloInstruction& instruction,
 
   bool changed = false;
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig config,
-                   instruction.backend_config<GpuBackendConfig>());
+                        instruction.backend_config<GpuBackendConfig>());
   if (config.collective_backend_config().communication_domain() != domain) {
     config.mutable_collective_backend_config()->set_communication_domain(
         domain);
@@ -108,9 +108,9 @@ absl::StatusOr<bool> LegalizeCollectiveDomain::RunImpl(
       }
       if (hlo_query::IsCollectiveCommunicationOp(instruction->opcode())) {
         ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain domain,
-                         ReadLocalDomain(*instruction));
+                              ReadLocalDomain(*instruction));
         ABSL_ASSIGN_OR_RETURN(bool instruction_changed,
-                         SetLocalDomain(*instruction, domain));
+                              SetLocalDomain(*instruction, domain));
         changed |= instruction_changed;
       }
     }

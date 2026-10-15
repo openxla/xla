@@ -243,7 +243,7 @@ absl::StatusOr<QrDecomposition> QrExpander::QrBlock(
     auto x = DynamicSliceInMinorDims(a, {j}, {1});
     XlaOp v, tau, beta;
     ABSL_RETURN_IF_ERROR(House(Collapse(x, {num_dims - 2, num_dims - 1}), j,
-                          batch_dims, m, &v, &tau, &beta));
+                               batch_dims, m, &v, &tau, &beta));
 
     const int64_t minor_dim = batch_dims.size();
     auto iota_mn = Iota(
@@ -305,8 +305,9 @@ absl::StatusOr<QrDecomposition> QrExpander::QrBlock(
       builder,
       ShapeUtil::MakeShape(type, ConcatVectors(batch_dims, {std::min(m, n)})));
 
-  ABSL_ASSIGN_OR_RETURN(auto values, ForEachIndex(std::min(m, n), S32, qr_body_fn,
-                                             {a, taus}, "qr", builder));
+  ABSL_ASSIGN_OR_RETURN(
+      auto values,
+      ForEachIndex(std::min(m, n), S32, qr_body_fn, {a, taus}, "qr", builder));
 
   QrDecomposition result;
   result.q_and_r = values[0];
@@ -369,7 +370,7 @@ absl::StatusOr<XlaOp> QrExpander::CompactWYRepresentation(
   vtv = (vtv + eye) * tau_scale;
 
   ABSL_ASSIGN_OR_RETURN(auto values,
-                   ForEachIndex(n, S32, body_fn, {t, vtv}, "wy", builder));
+                        ForEachIndex(n, S32, body_fn, {t, vtv}, "wy", builder));
   return values[0];
 }
 
@@ -430,9 +431,9 @@ absl::StatusOr<XlaOp> QrExpander::BuildQrDecomposition(
 
     // Compute the I + Y @ T @ Y^t block representation of a product of
     // Householder matrices.
-    ABSL_ASSIGN_OR_RETURN(auto t,
-                     CompactWYRepresentation(type, batch_dims, y, qr_block.taus,
-                                             m - i, k, precision));
+    ABSL_ASSIGN_OR_RETURN(
+        auto t, CompactWYRepresentation(type, batch_dims, y, qr_block.taus,
+                                        m - i, k, precision));
 
     // a[i:, i+k:] += (y @ np.conj(t.T)) @ (np.conj(y.T) @ a[i:, i+k:])
     auto yt = BatchDot(y, /*transpose_x=*/false, MaybeConjugate(t, true),
@@ -559,14 +560,16 @@ absl::StatusOr<HloInstruction*> QrExpander::ExpandInstruction(
       TF_RET_CHECK(instruction->operand_count() == 2);
       XlaOp taus =
           Parameter(&builder, 1, instruction->operand(1)->shape(), "taus");
-      ABSL_ASSIGN_OR_RETURN(result, ProductOfElementaryHouseholderReflectors(
-                                   a, taus, /*block_size=*/128,
-                                   /*precision=*/PrecisionConfig::HIGHEST));
+      ABSL_ASSIGN_OR_RETURN(result,
+                            ProductOfElementaryHouseholderReflectors(
+                                a, taus, /*block_size=*/128,
+                                /*precision=*/PrecisionConfig::HIGHEST));
     }
 
-    ABSL_ASSIGN_OR_RETURN(XlaComputation xla_computation, builder.Build(result));
-    ABSL_ASSIGN_OR_RETURN(computation,
-                     XlaComputationToHloComputation(xla_computation, module));
+    ABSL_ASSIGN_OR_RETURN(XlaComputation xla_computation,
+                          builder.Build(result));
+    ABSL_ASSIGN_OR_RETURN(
+        computation, XlaComputationToHloComputation(xla_computation, module));
   }
 
   return instruction->parent()->AddInstruction(HloInstruction::CreateCall(

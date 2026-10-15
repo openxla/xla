@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/analysis/symbolic_map_converter.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"

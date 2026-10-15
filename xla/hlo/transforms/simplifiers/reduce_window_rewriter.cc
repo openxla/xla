@@ -154,9 +154,8 @@ static absl::StatusOr<HloComputation*> ScalarizeComputation(
         break;
       default: {
         if (!inst->IsElementwise()) {
-          return absl::InvalidArgumentError(
-              absl::StrCat("Instruction is not elementwise: ",
-                           HloOpcodeString(inst->opcode())));
+          return InvalidArgumentStrCat("Instruction is not elementwise: ",
+                                       HloOpcodeString(inst->opcode()));
         }
         ABSL_ASSIGN_OR_RETURN(Shape shape, get_scalar_shape(inst->shape()));
         new_inst = builder.AddInstruction(
@@ -761,7 +760,8 @@ static absl::StatusOr<bool> TryOptimizeAssociativeScan(
     // does not modify the module when it fails.
     return false;
   }
-  ABSL_ASSIGN_OR_RETURN(HloComputation * scan_to_apply, std::move(scan_to_apply_or));
+  ABSL_ASSIGN_OR_RETURN(HloComputation * scan_to_apply,
+                        std::move(scan_to_apply_or));
 
   // Every gate has passed; from here on the module is modified. Materialize
   // the scalar init: the scalar instruction itself, or a scalar constant
@@ -830,15 +830,17 @@ absl::StatusOr<bool> ReduceWindowRewriter::RunImpl(
          computation->MakeInstructionPostOrder()) {
       if (auto* reduce_window =
               DynCast<HloReduceWindowInstruction>(instruction)) {
-        ABSL_ASSIGN_OR_RETURN(bool result, TryOptimizeCumSumOrProd(
-                                          this, base_length_, reduce_window));
+        ABSL_ASSIGN_OR_RETURN(
+            bool result,
+            TryOptimizeCumSumOrProd(this, base_length_, reduce_window));
         if (result) {
           changed = true;
           continue;
         }
         if (reduce_window->inputs().front()->shape().dimensions().size() == 1) {
-          ABSL_RETURN_IF_ERROR(reduce_window_util::Replace1DReduceWindowWithReshape(
-              reduce_window));
+          ABSL_RETURN_IF_ERROR(
+              reduce_window_util::Replace1DReduceWindowWithReshape(
+                  reduce_window));
           changed = true;
         }
       }
@@ -857,15 +859,13 @@ absl::StatusOr<bool> AssociativeScanRewriter::RunImpl(
   }
 
   bool changed = false;
-  for (const auto& computation : module->computations(execution_threads)) {
-    if (computation->IsFusionComputation()) {
-      continue;
-    }
+  for (const HloComputation* computation :
+       module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
       if (auto* scan = DynCast<HloScanInstruction>(instruction)) {
-        ABSL_ASSIGN_OR_RETURN(bool result,
-                         TryOptimizeAssociativeScan(this, base_length_, scan));
+        ABSL_ASSIGN_OR_RETURN(
+            bool result, TryOptimizeAssociativeScan(this, base_length_, scan));
         changed |= result;
       }
     }

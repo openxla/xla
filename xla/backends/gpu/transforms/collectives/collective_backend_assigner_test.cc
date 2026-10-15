@@ -14,11 +14,12 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/transforms/collectives/collective_backend_assigner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -27,7 +28,6 @@ limitations under the License.
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 
 namespace xla {
@@ -43,7 +43,7 @@ class CollectiveBackendAssignerTest : public HloHardwareIndependentTestBase {
   absl::StatusOr<DebugOptions::CollectivesMode> GetCollectivesMode(
       const HloInstruction* instr) {
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                     instr->backend_config<GpuBackendConfig>());
+                          instr->backend_config<GpuBackendConfig>());
     return gpu_config.collective_backend_config().collectives_mode();
   }
 };
@@ -60,7 +60,7 @@ TEST_F(CollectiveBackendAssignerTest,
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_collective_permute_mode(
@@ -88,7 +88,7 @@ TEST_F(CollectiveBackendAssignerTest,
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   // Default is COLLECTIVES_MODE_INVALID — collectives_mode should not be set.
 
   ASSERT_THAT(RunCollectiveBackendAssigner(module.get()), absl_testing::IsOk());
@@ -118,7 +118,7 @@ TEST_F(CollectiveBackendAssignerTest,
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_collective_permute_mode(
@@ -147,7 +147,7 @@ TEST_F(CollectiveBackendAssignerTest, AllGatherSymmetricMemorySetsMode) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
   module->mutable_config().mutable_debug_options().set_xla_gpu_all_gather_mode(
       DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY);
 
@@ -172,7 +172,7 @@ TEST_F(CollectiveBackendAssignerTest, AllGatherPrivateMemoryLeavesDefault) {
     }
   )";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
   ASSERT_THAT(RunCollectiveBackendAssigner(module.get()), absl_testing::IsOk());
 

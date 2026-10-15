@@ -83,16 +83,16 @@ void refineBlockArguments(OpTy regionOp, TypeRange refinedTypes) {
 // The global and local types differ for the known static dimension of the
 // operand, so we need to convert the global refinement to the local refinement
 // to figure out the more specific type.
-LogicalResult refineValues(
-    PatternRewriter& rewriter, sdy::ManualComputationOp manualComputation,
-    ArrayRef<BlockArgument> blockArguments, TypeRange types,
-    sdy::MeshAttr mesh) {
+LogicalResult refineValues(PatternRewriter& rewriter,
+                           sdy::ManualComputationOp manualComputation,
+                           ArrayRef<BlockArgument> blockArguments,
+                           TypeRange types, sdy::MeshAttr mesh) {
   if (blockArguments.size() != types.size()) {
     return rewriter.notifyMatchFailure(
         manualComputation, [&](Diagnostic& diag) {
-      diag << "refineValues failed for " << types << ": expected "
-           << blockArguments.size() << " types, got " << types.size();
-    });
+          diag << "refineValues failed for " << types << ": expected "
+               << blockArguments.size() << " types, got " << types.size();
+        });
   }
 
   // Check whether `types` contain any new information with respect to
@@ -111,25 +111,25 @@ LogicalResult refineValues(
     // block arg types differ for their known static dimensions due to the body
     // having the local types. So to figure out the more specific type,
     // transform the refinement of the operand to the local refinement.
-    sdy::TensorShardingAttr inSharding = eraseFreeAxes(
-        manualComputation.getInSharding(blockArg.getArgNumber()),
-        manualComputation.getManualAxes());
+    sdy::TensorShardingAttr inSharding =
+        eraseFreeAxes(manualComputation.getInSharding(blockArg.getArgNumber()),
+                      manualComputation.getManualAxes());
     auto refinedType = hlo::inferMostSpecificType(
-        /*location=*/{}, {blockArgType, inSharding.getLocalTensorType(
-          refinement, mesh)});
+        /*location=*/{},
+        {blockArgType, inSharding.getLocalTensorType(refinement, mesh)});
     if (failed(refinedType)) {
-      return rewriter.notifyMatchFailure(manualComputation,
-                                         [&](Diagnostic& diag) {
-        diag << "inferMostSpecificType failed for " << blockArgType << " and "
-             << refinement;
-      });
+      return rewriter.notifyMatchFailure(
+          manualComputation, [&](Diagnostic& diag) {
+            diag << "inferMostSpecificType failed for " << blockArgType
+                 << " and " << refinement;
+          });
     }
     refinedTypes.push_back(*refinedType);
     needsRefinement |= (blockArgType != *refinedType);
   }
   if (!needsRefinement)
-    return rewriter.notifyMatchFailure(
-        manualComputation, "doesn't need refinement");
+    return rewriter.notifyMatchFailure(manualComputation,
+                                       "doesn't need refinement");
 
   for (auto it : llvm::zip(blockArguments, refinedTypes)) {
     // Cannot use structured bindings to simplify this because capturing
@@ -159,9 +159,10 @@ LogicalResult refineValues(
       // StableHLO programs.
       return rewriter.notifyMatchFailure(
           manualComputation, [&](Diagnostic& diag) {
-        diag << "unsupported refinement: tried to refine " << value.getType()
-             << " to " << refinedType << " for user " << user;
-      });
+            diag << "unsupported refinement: tried to refine "
+                 << value.getType() << " to " << refinedType << " for user "
+                 << user;
+          });
     }
 
     // Happy path: simply call setType here because most of our users are
@@ -185,8 +186,7 @@ LogicalResult refineValues(
 }
 
 LogicalResult refineArguments(sdy::ManualComputationOp manualComputation,
-                              TypeRange refinedTypes,
-                              sdy::MeshAttr mesh,
+                              TypeRange refinedTypes, sdy::MeshAttr mesh,
                               PatternRewriter& rewriter) {
   // Verify that refinements are valid
   if (failed(stablehlo::validateRefinedTypes(
@@ -216,8 +216,8 @@ LogicalResult refineArguments(sdy::NamedComputationOp namedComputation,
     return failure();
 
   if (failed(stablehlo::refineValues(rewriter, namedComputation,
-                          namedComputation.getBody().getArguments(),
-                          namedComputation.getOperandTypes()))) {
+                                     namedComputation.getBody().getArguments(),
+                                     namedComputation.getOperandTypes()))) {
     return failure();
   }
 
@@ -226,7 +226,6 @@ LogicalResult refineArguments(sdy::NamedComputationOp namedComputation,
 
   return success();
 }
-
 
 LogicalResult refineManualComputationBody(
     sdy::ManualComputationOp manualComputation, PatternRewriter& rewriter);
@@ -314,8 +313,8 @@ LogicalResult refineManualComputationBody(
             .getLocalTensorType(cast<RankedTensorType>(globalType), mesh));
   }
 
-  if (failed(refineArguments(manualComputation, localBlockArgTypes,
-                             mesh, rewriter)))
+  if (failed(refineArguments(manualComputation, localBlockArgTypes, mesh,
+                             rewriter)))
     return failure();
 
   // Now iterate into the function body and apply refinement patterns.
@@ -364,10 +363,11 @@ LogicalResult refineNamedComputationOpPattern(
 
   // TODO(bartchr): Should be able to call `getBodyTerminatorOpOperandTypes`
   // but getting a refined template compilation error.
-  return stablehlo::refineReturnTypes(
-      rewriter, namedComputation,
-      llvm::to_vector(namedComputation.getBody().front().getTerminator()
-                      ->getOperandTypes()));
+  return stablehlo::refineReturnTypes(rewriter, namedComputation,
+                                      llvm::to_vector(namedComputation.getBody()
+                                                          .front()
+                                                          .getTerminator()
+                                                          ->getOperandTypes()));
 }
 
 struct RefineInferTypeOpInterfacePattern
@@ -379,8 +379,7 @@ struct RefineInferTypeOpInterfacePattern
     // Unlike in TensorFlow's type inference pass, here we work only with
     // allowlisted ops to focus our support on well-defined semantics of
     // StableHLO programs.
-    if (!isa<sdy::SdyDialect>(
-            op->getDialect()))
+    if (!isa<sdy::SdyDialect>(op->getDialect()))
       return rewriter.notifyMatchFailure(op, "unsupported dialect");
 
     // For the ops that implement InferTypeOpInterface, we reinfer their return

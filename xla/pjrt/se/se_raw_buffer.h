@@ -58,7 +58,6 @@ class PjRtStreamExecutorDeviceEventPromise : public PjRtDeviceEventPromise {
 
   void SetReady() override;
 
-
   tsl::RCReference<tsl::IndirectAsyncValue>& av() { return av_; }
 
  private:

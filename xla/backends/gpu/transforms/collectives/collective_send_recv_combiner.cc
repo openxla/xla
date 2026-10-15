@@ -71,7 +71,8 @@ static HloComputation* WrapMultipleSendRecvInstructions(
 static absl::Status UpdateControlDependencies(HloInstruction* old_instruction,
                                               HloInstruction* new_instruction) {
   for (HloInstruction* predecessor : old_instruction->control_predecessors()) {
-    ABSL_RETURN_IF_ERROR(predecessor->RemoveControlDependencyTo(old_instruction));
+    ABSL_RETURN_IF_ERROR(
+        predecessor->RemoveControlDependencyTo(old_instruction));
     ABSL_RETURN_IF_ERROR(predecessor->AddControlDependencyTo(new_instruction));
   }
   for (HloInstruction* successor : old_instruction->control_successors()) {
@@ -139,9 +140,10 @@ static absl::Status CreateAsyncStartAndAsyncDone(
     for (HloInstruction* instruction_user : instruction->users()) {
       if (HloPredicateIsOp<HloOpcode::kSendDone, HloOpcode::kRecvDone>(
               instruction_user)) {
-        ABSL_RETURN_IF_ERROR(UpdateControlDependencies(instruction, async_start));
+        ABSL_RETURN_IF_ERROR(
+            UpdateControlDependencies(instruction, async_start));
         ABSL_RETURN_IF_ERROR(UpdateControlDependencies(instruction_user,
-                                                  replacement_async_done));
+                                                       replacement_async_done));
         ABSL_RETURN_IF_ERROR(
             instruction_user->ReplaceAllUsesWith(replacement_async_done));
         ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(instruction_user));

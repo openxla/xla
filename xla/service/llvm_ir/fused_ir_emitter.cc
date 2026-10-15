@@ -133,23 +133,25 @@ absl::StatusOr<FusedIrEmitter::IndexedGenerator> FusedIrEmitter::HandleTuple(
   llvm::IRBuilderBase* b = elemental_emitter_.b();
   llvm::Type* type = llvm::StructType::get(b->getContext(), element_ir_types);
 
-  return absl::StatusOr<IndexedGenerator>([&, b,
-                                           type](const IrArray::Index& index)
-                                              -> absl::StatusOr<llvm::Value*> {
-    llvm::Value* ret = llvm::UndefValue::get(type);
-    for (size_t i = 0; i < tuple.operand_count(); ++i) {
-      IrArray::Index used_index = index;
-      if (i > 0 && !ShapeUtil::EqualIgnoringElementType(
-                       tuple.operand(i)->shape(), tuple.operand(0)->shape())) {
-        used_index = used_index.SourceIndexOfBitcast(
-            tuple.operand(0)->shape(), tuple.operand(i)->shape(), b);
-      }
-      ABSL_ASSIGN_OR_RETURN(llvm::Value * value,
-                       indexed_generators_.at(tuple.operand(i))(used_index));
-      ret = b->CreateInsertValue(ret, value, i);
-    }
-    return ret;
-  });
+  return absl::StatusOr<IndexedGenerator>(
+      [&, b,
+       type](const IrArray::Index& index) -> absl::StatusOr<llvm::Value*> {
+        llvm::Value* ret = llvm::UndefValue::get(type);
+        for (size_t i = 0; i < tuple.operand_count(); ++i) {
+          IrArray::Index used_index = index;
+          if (i > 0 &&
+              !ShapeUtil::EqualIgnoringElementType(tuple.operand(i)->shape(),
+                                                   tuple.operand(0)->shape())) {
+            used_index = used_index.SourceIndexOfBitcast(
+                tuple.operand(0)->shape(), tuple.operand(i)->shape(), b);
+          }
+          ABSL_ASSIGN_OR_RETURN(
+              llvm::Value * value,
+              indexed_generators_.at(tuple.operand(i))(used_index));
+          ret = b->CreateInsertValue(ret, value, i);
+        }
+        return ret;
+      });
 }
 
 absl::StatusOr<FusedIrEmitter::IndexedGenerator>

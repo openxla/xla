@@ -16,6 +16,9 @@ limitations under the License.
 #include "xla/service/conditional_to_select.h"
 
 #include "absl/status/status_macros.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/status.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -24,9 +27,6 @@ limitations under the License.
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/status_macros.h"
 #include "xla/types.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
 
 namespace xla {
 
@@ -121,7 +121,8 @@ absl::StatusOr<bool> ConditionalToSelect::RunImpl(
           if (callsite.instruction()->opcode() == HloOpcode::kConditional) {
             VLOG(1) << "Visiting conditional: " << callsite.ToString();
             HloInstruction* conditional = callsite.instruction();
-            ABSL_ASSIGN_OR_RETURN(bool result, DoConditionalToSelect(conditional));
+            ABSL_ASSIGN_OR_RETURN(bool result,
+                                  DoConditionalToSelect(conditional));
             did_mutate |= result;
           }
         }

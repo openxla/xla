@@ -27,10 +27,10 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 
@@ -94,7 +94,7 @@ class SubProcess {
   //    In the child process, chdir() to this directory before
   //    exec-ing.
   //    Returns false if this is not supported on the current platform.
-  ABSL_MUST_USE_RESULT virtual bool SetDirectory(const string& dir);
+  [[nodiscard]] virtual bool SetDirectory(const string& dir);
 
   // SetExitCallback()
   //    Set a callback to be run when the process exits.

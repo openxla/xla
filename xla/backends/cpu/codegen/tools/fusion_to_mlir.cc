@@ -20,6 +20,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/init_main.h"
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/fusion_emitter.h"
 #include "xla/codegen/kernel_definition.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla::cpu {
 

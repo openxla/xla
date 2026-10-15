@@ -15,15 +15,16 @@ limitations under the License.
 
 #include "xla/tsl/util/proto/proto_matchers.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <sstream>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/util/proto/proto_matchers_test_protos.pb.h"
 #include "tsl/platform/protobuf.h"
+#include "xla/tsl/util/proto/proto_matchers_test_protos.pb.h"
 
 namespace tsl {
 namespace proto_testing {

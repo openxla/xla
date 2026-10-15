@@ -15,11 +15,13 @@ limitations under the License.
 
 #include "xla/service/gpu/nvptx_compiler.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
@@ -75,9 +77,10 @@ class NVPTXCompilerTest : public HloPjRtGpuTestBase {
     NVPTXCompiler compiler;
     std::unique_ptr<GpuAliasInfo> alias_info =
         compiler.GetAliasInfo(gpu_device_info);
-    ABSL_RETURN_IF_ERROR(ScheduleGpuModule(module, pointer_size, gpu_device_info,
-                                      &mlir_context_, alias_info.get())
-                        .status());
+    ABSL_RETURN_IF_ERROR(ScheduleGpuModule(module, pointer_size,
+                                           gpu_device_info, &mlir_context_,
+                                           alias_info.get())
+                             .status());
 
     auto buffer_size_bytes_function =
         [](const BufferValue& buffer_value) -> int64_t {
@@ -121,10 +124,10 @@ ENTRY entry {
     replica_groups={}, to_apply=summit
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto buffer_assignment, AssignBuffers(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto buffer_assignment, AssignBuffers(module.get()));
 
   HloInstruction* all_reduce = module->entry_computation()->root_instruction();
   EXPECT_TRUE(buffer_assignment->SharesTopLevelSlice(all_reduce,
@@ -149,10 +152,10 @@ ENTRY entry {
     replica_groups={}, to_apply=summit
 }
 )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
 
-  TF_ASSERT_OK_AND_ASSIGN(auto buffer_assignment, AssignBuffers(module.get()));
+  ASSERT_OK_AND_ASSIGN(auto buffer_assignment, AssignBuffers(module.get()));
 
   HloInstruction* all_reduce = module->entry_computation()->root_instruction();
   EXPECT_TRUE(buffer_assignment->SharesSliceAtIndex(
@@ -246,7 +249,7 @@ ENTRY main {
       compiler.GetAliasInfo(device_description());
   GpuTopology gpu_topology =
       GpuTopology(/*platform_version=*/"", 1, 1, 1, gpu_target_config());
-  TF_EXPECT_OK(compiler.RunPostSchedulingPipelines(
+  EXPECT_OK(compiler.RunPostSchedulingPipelines(
       module.get(), 100000, gpu_topology, alias_info.get(), &mlir_context_));
   EXPECT_EQ(CountCopies(*module), 3);
   while_op = hlo_query::GetFirstInstructionWithOpcode(

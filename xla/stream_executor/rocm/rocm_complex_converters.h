@@ -46,15 +46,15 @@ struct ROCMComplexT<std::complex<double>> {
 // Converts pointers of std::complex<> to pointers of
 // hipComplex/hipDoubleComplex. No type conversion for non-complex types.
 template <typename T>
-inline const typename ROCMComplexT<T>::type *ROCMComplex(const T *p) {
-  auto *result = reinterpret_cast<const typename ROCMComplexT<T>::type *>(p);
+inline const typename ROCMComplexT<T>::type* ROCMComplex(const T* p) {
+  auto* result = reinterpret_cast<const typename ROCMComplexT<T>::type*>(p);
   CHECK_EQ(reinterpret_cast<uintptr_t>(p) % alignof(decltype(*result)), 0)
       << "Source pointer is not aligned by " << alignof(decltype(*result));
   return result;
 }
 template <typename T>
-inline typename ROCMComplexT<T>::type *ROCMComplex(T *p) {
-  auto *result = reinterpret_cast<typename ROCMComplexT<T>::type *>(p);
+inline typename ROCMComplexT<T>::type* ROCMComplex(T* p) {
+  auto* result = reinterpret_cast<typename ROCMComplexT<T>::type*>(p);
   CHECK_EQ(reinterpret_cast<uintptr_t>(p) % alignof(decltype(*result)), 0)
       << "Source pointer is not aligned by " << alignof(decltype(*result));
   return result;

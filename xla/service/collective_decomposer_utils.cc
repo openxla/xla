@@ -30,31 +30,31 @@ limitations under the License.
 namespace xla {
 
 // Create the start indices for decompositing the given collective.
-absl::StatusOr<std::vector<HloInstruction *>>
+absl::StatusOr<std::vector<HloInstruction*>>
 CreateStartIndicesForCollectiveDecomposition(
     CollectiveOpGroupMode group_mode,
-    absl::Span<const ReplicaGroup> replica_groups, const Shape &shard_shape,
-    int64_t shard_dimension, HloComputation *computation,
-    std::function<void(Shape &)> update_layout) {
-  HloInstruction *zero = computation->AddInstruction(
+    absl::Span<const ReplicaGroup> replica_groups, const Shape& shard_shape,
+    int64_t shard_dimension, HloComputation* computation,
+    std::function<void(Shape&)> update_layout) {
+  HloInstruction* zero = computation->AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::Zero(U32)));
   if (update_layout) {
     update_layout(*zero->mutable_shape());
   }
-  std::vector<HloInstruction *> start_indices(shard_shape.dimensions().size(),
-                                              zero);
-  const Shape &scalar_shape = zero->shape();
+  std::vector<HloInstruction*> start_indices(shard_shape.dimensions().size(),
+                                             zero);
+  const Shape& scalar_shape = zero->shape();
 
-  auto create_flattened_id = [&](HloInstruction *replica_index) {
+  auto create_flattened_id = [&](HloInstruction* replica_index) {
     if (replica_index == zero) {
       // special case for 0 * num_partitions + partition_id
       return computation->AddInstruction(HloInstruction::CreatePartitionId());
     }
-    const HloModuleConfig &config = computation->parent()->config();
-    HloInstruction *partition_count =
+    const HloModuleConfig& config = computation->parent()->config();
+    HloInstruction* partition_count =
         computation->AddInstruction(HloInstruction::CreateConstant(
             LiteralUtil::CreateR0<uint32_t>(config.num_partitions())));
-    HloInstruction *mul = computation->AddInstruction(
+    HloInstruction* mul = computation->AddInstruction(
         HloInstruction::CreateBinary(scalar_shape, HloOpcode::kMultiply,
                                      replica_index, partition_count));
     return computation->AddInstruction(HloInstruction::CreateBinary(
@@ -62,7 +62,7 @@ CreateStartIndicesForCollectiveDecomposition(
         computation->AddInstruction(HloInstruction::CreatePartitionId())));
   };
 
-  HloInstruction *participant_id;
+  HloInstruction* participant_id;
   switch (group_mode) {
     case CollectiveOpGroupMode::COLLECTIVE_OP_GROUP_MODE_CROSS_REPLICA:
       participant_id =
@@ -113,7 +113,7 @@ CreateStartIndicesForCollectiveDecomposition(
     return false;
   };
 
-  HloInstruction *index;
+  HloInstruction* index;
   if (is_trivial_group(replica_groups)) {
     if (replica_groups.size() == 1 &&
         replica_groups[0].replica_ids_size() == 1) {
@@ -129,7 +129,7 @@ CreateStartIndicesForCollectiveDecomposition(
         replica_groups.size() * replica_groups.front().replica_ids_size();
     std::vector<uint32_t> index_values(num_participants,
                                        std::numeric_limits<uint32_t>::max());
-    for (const ReplicaGroup &rg : replica_groups) {
+    for (const ReplicaGroup& rg : replica_groups) {
       for (uint64_t idx = 0; idx < rg.replica_ids_size(); ++idx) {
         int64_t id = rg.replica_ids(idx);
         TF_RET_CHECK(index_values[id] == std::numeric_limits<uint32_t>::max());
@@ -139,13 +139,13 @@ CreateStartIndicesForCollectiveDecomposition(
 
     // create a u32 constant table of index values and use dynamic-slice to
     // index into it.
-    HloInstruction *table =
+    HloInstruction* table =
         computation->AddInstruction(HloInstruction::CreateConstant(
             LiteralUtil::CreateR1<uint32_t>(index_values)));
     if (update_layout) {
       update_layout(*table->mutable_shape());
     }
-    HloInstruction *ds =
+    HloInstruction* ds =
         computation->AddInstruction(HloInstruction::CreateDynamicSlice(
             ShapeUtil::MakeShape(U32, {1}), table, {participant_id}, {1}));
     if (update_layout) {
@@ -163,7 +163,7 @@ CreateStartIndicesForCollectiveDecomposition(
   }
 
   // scale index by the shard size, which is the size of the shard_dimension.
-  HloInstruction *scale = computation->AddInstruction(
+  HloInstruction* scale = computation->AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::CreateR0<uint32_t>(
           shard_shape.dimensions(shard_dimension))));
   index = computation->AddInstruction(HloInstruction::CreateBinary(

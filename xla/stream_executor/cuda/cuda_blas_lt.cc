@@ -59,7 +59,7 @@ limitations under the License.
 #define GET_ATTR(getter, handle, attr, ValueT)                            \
   [&]() -> absl::StatusOr<ValueT> {                                       \
     ValueT value;                                                         \
-    ABSL_RETURN_IF_ERROR(ToStatus(                                             \
+    ABSL_RETURN_IF_ERROR(ToStatus(                                        \
         getter(handle, attr, &value, sizeof(ValueT), nullptr), #getter)); \
     return std::move(value);                                              \
   }()
@@ -173,7 +173,7 @@ absl::Status BlasLt::Init() {
                           ? CUBLASLT_ORDER_ROW
                           : CUBLASLT_ORDER_COL}));
   ABSL_RETURN_IF_ERROR(SetAttr(cu_layout, CUBLASLT_MATRIX_LAYOUT_BATCH_COUNT,
-                          static_cast<int32_t>(m.batch_size)));
+                               static_cast<int32_t>(m.batch_size)));
 
   VLOG(2) << "MatrixLayout::Create: num_rows: " << m.num_rows
           << " num_cols:" << (int)m.num_cols << ", order: " << (int)m.order
@@ -208,18 +208,18 @@ cudaDataType_t BlasLt::MatrixLayout::type() const {
   // Wrap cublas handle immediately, so it is cleaned up if an error occurs.
   BlasLt::MatmulDesc desc(cu_desc);
   ABSL_RETURN_IF_ERROR(SetAttr(cu_desc, CUBLASLT_MATMUL_DESC_POINTER_MODE,
-                          AsCublasLtPointerMode(pointer_mode)));
+                               AsCublasLtPointerMode(pointer_mode)));
   ABSL_RETURN_IF_ERROR(SetAttr(cu_desc, CUBLASLT_MATMUL_DESC_TRANSA,
-                          AsCublasOperation(trans_a)));
+                               AsCublasOperation(trans_a)));
   ABSL_RETURN_IF_ERROR(SetAttr(cu_desc, CUBLASLT_MATMUL_DESC_TRANSB,
-                          AsCublasOperation(trans_b)));
+                               AsCublasOperation(trans_b)));
   ABSL_ASSIGN_OR_RETURN(cublasLtEpilogue_t epi, AsCublasLtEpilogue(epilogue));
   ABSL_RETURN_IF_ERROR(SetAttr(cu_desc, CUBLASLT_MATMUL_DESC_EPILOGUE, epi));
   // The CUBLASLT_MATMUL_DESC_FAST_ACCUM flag only impacts FP8 gemms. It speeds
   // up gemms at the expense of accumulation precision. In practice, it is safe
   // to set on the forward pass but not the backward pass.
   ABSL_RETURN_IF_ERROR(SetAttr(cu_desc, CUBLASLT_MATMUL_DESC_FAST_ACCUM,
-                          static_cast<int8_t>(enable_fast_accum)));
+                               static_cast<int8_t>(enable_fast_accum)));
   return std::move(desc);
 }
 
@@ -256,9 +256,9 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
     Owned<cublasLtMatmulPreference_t> preference(
         cu_preference, cublasLtMatmulPreferenceDestroy);
 
-    ABSL_RETURN_IF_ERROR(SetAttr<uint64_t>(cu_preference,
-                                      CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
-                                      max_workspace_size));
+    ABSL_RETURN_IF_ERROR(SetAttr<uint64_t>(
+        cu_preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+        max_workspace_size));
 
 #if CUDA_VERSION >= 11080
     // Set dummy (non-null, aligned) scale pointers before querying heuristics
@@ -275,12 +275,12 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
       ABSL_RETURN_IF_ERROR(
           SetAttr(op_desc_.get(), CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, dummy));
       if (is_fp8(c_desc_.type())) {
-        ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                CUBLASLT_MATMUL_DESC_C_SCALE_POINTER, dummy));
+        ABSL_RETURN_IF_ERROR(SetAttr(
+            op_desc_.get(), CUBLASLT_MATMUL_DESC_C_SCALE_POINTER, dummy));
       }
       if (is_fp8(d_desc_.type())) {
-        ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                                CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, dummy));
+        ABSL_RETURN_IF_ERROR(SetAttr(
+            op_desc_.get(), CUBLASLT_MATMUL_DESC_D_SCALE_POINTER, dummy));
       }
     }
 #endif
@@ -336,7 +336,8 @@ absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
   bool must_swap_operands =
       MakeOutputColumnMajor(lhs_layout, rhs_layout, output_layout, &c_layout);
 
-  ABSL_ASSIGN_OR_RETURN(auto output_dtype, gpu::AsBlasDataType(output_layout.dtype));
+  ABSL_ASSIGN_OR_RETURN(auto output_dtype,
+                        gpu::AsBlasDataType(output_layout.dtype));
 
   auto compute_type = cfg.compute_type;
   if (!compute_type) {  // obtain compute_type unless provided by the user
@@ -470,15 +471,16 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
   std::unique_ptr<EventBasedTimer> timer;
   if (profile_result != nullptr) {
     ABSL_ASSIGN_OR_RETURN(timer, stream->CreateEventBasedTimer(
-                                profile_result->warmup_run_executed()));
+                                     profile_result->warmup_run_executed()));
   }
 
   void* workspace_addr = nullptr;
   uint64_t workspace_size = workspace_size_;
   if (workspace_size_ > 0) {
     if (args.scratch_allocator != nullptr) {
-      ABSL_ASSIGN_OR_RETURN(DeviceAddress<uint8_t> alloc,
-                       args.scratch_allocator->AllocateBytes(workspace_size_));
+      ABSL_ASSIGN_OR_RETURN(
+          DeviceAddress<uint8_t> alloc,
+          args.scratch_allocator->AllocateBytes(workspace_size_));
       workspace_addr = gpu::GpuMemoryMutable(&alloc);
     } else {
       workspace_addr = args.workspace.opaque();
@@ -494,26 +496,28 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
     // We must set the bias and aux pointers while holding the mutex, to avoid a
     // potential race condition from multiple threads sharing the same plan.
     if (args.bias != nullptr) {
-      ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(), CUBLASLT_MATMUL_DESC_BIAS_POINTER,
-                              args.bias.opaque()));
+      ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                                   CUBLASLT_MATMUL_DESC_BIAS_POINTER,
+                                   args.bias.opaque()));
     }
 #if CUDA_VERSION >= 11080
     // Always set scale pointers (null when not provided) to overwrite any
     // dummy values left by GetAlgorithms().
     ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                            CUBLASLT_MATMUL_DESC_A_SCALE_POINTER,
-                            a_scale.opaque()));
+                                 CUBLASLT_MATMUL_DESC_A_SCALE_POINTER,
+                                 a_scale.opaque()));
     ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                            CUBLASLT_MATMUL_DESC_B_SCALE_POINTER,
-                            b_scale.opaque()));
+                                 CUBLASLT_MATMUL_DESC_B_SCALE_POINTER,
+                                 b_scale.opaque()));
     ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                            CUBLASLT_MATMUL_DESC_C_SCALE_POINTER,
-                            args.c_scale.opaque()));
+                                 CUBLASLT_MATMUL_DESC_C_SCALE_POINTER,
+                                 args.c_scale.opaque()));
     ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                            CUBLASLT_MATMUL_DESC_D_SCALE_POINTER,
-                            args.d_scale.opaque()));
-    ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(), CUBLASLT_MATMUL_DESC_AMAX_D_POINTER,
-                            args.d_amax.opaque()));
+                                 CUBLASLT_MATMUL_DESC_D_SCALE_POINTER,
+                                 args.d_scale.opaque()));
+    ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
+                                 CUBLASLT_MATMUL_DESC_AMAX_D_POINTER,
+                                 args.d_amax.opaque()));
 #else
     if (!(a_scale == nullptr && b_scale == nullptr && args.c_scale == nullptr &&
           args.d_scale == nullptr && args.d_amax == nullptr)) {
@@ -525,8 +529,8 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
     if (args.aux != nullptr) {
 #if CUDA_VERSION >= 11040
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                              CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_POINTER,
-                              args.aux.opaque()));
+                                   CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_POINTER,
+                                   args.aux.opaque()));
 
       // Set leading dim and batch stride of auxiliary output to match output.
       // TODO(cjfj): Set this once at initialization.
@@ -535,17 +539,17 @@ absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
           GetAttr<int64_t>(d_desc_.get(), CUBLASLT_MATRIX_LAYOUT_LD));
 
       ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                              CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_LD,
-                              output_leading_dim));
+                                   CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_LD,
+                                   output_leading_dim));
 
       ABSL_ASSIGN_OR_RETURN(
           int64_t output_batch_stride,
           GetAttr<int64_t>(d_desc_.get(),
                            CUBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET));
 
-      ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
-                              CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_BATCH_STRIDE,
-                              output_batch_stride));
+      ABSL_RETURN_IF_ERROR(SetAttr(
+          op_desc_.get(), CUBLASLT_MATMUL_DESC_EPILOGUE_AUX_BATCH_STRIDE,
+          output_batch_stride));
 #else
       return absl::InternalError(
           "Auxiliary inputs / outputs require cublasLt >= 11.4");
