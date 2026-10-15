@@ -1831,8 +1831,14 @@ CpuCompiler::CompileCpuExecutable(
 
   std::unique_ptr<LlvmMultipleModuleCompiler> llvm_module_compiler;
 
-  // We don't want to JIT in AOT compilation mode.
-  if (!thunk_emitter_options.is_aot_compilation) {
+  // Emscripten links and loads emitted objects instead of using ORC.
+#ifdef __EMSCRIPTEN__
+  constexpr bool use_native_jit_compiler = false;
+#else
+  const bool use_native_jit_compiler =
+      !thunk_emitter_options.is_aot_compilation;
+#endif
+  if (use_native_jit_compiler) {
     // Options for orchestrating the JIT compilation process.
     JitCompiler::Options jit_compiler_options{
         /*num_dylibs=*/parallel_codegen_split_count,
@@ -2156,6 +2162,15 @@ CpuCompiler::CompileCpuExecutable(
 
   std::string data_layout =
       target_machine->createDataLayout().getStringRepresentation();
+
+#ifdef __EMSCRIPTEN__
+  if (!thunk_emitter_options.is_aot_compilation) {
+    ABSL_ASSIGN_OR_RETURN(
+        function_library,
+        LoadFunctionLibrary(compiled_symbols, obj_files, module.get(),
+                            target_machine_options, data_layout));
+  }
+#endif
 
   ABSL_ASSIGN_OR_RETURN(
       auto cpu_executable,

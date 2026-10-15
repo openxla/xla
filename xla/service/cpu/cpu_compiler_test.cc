@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -65,6 +66,19 @@ TEST_F(CpuCompilerTest, RecordsStreamzStackTrace) {
   // Since Streamz is recorded every call, we expect at least one point.
   // All other callers may increment the counter as well.
   EXPECT_GT(it->second->points.size(), 0);
+}
+
+TEST_F(CpuCompilerTest, ExecutesWithEmbeddedConstants) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      index = s32[] parameter(0)
+      values = s32[8] constant({2, 3, 5, 7, 11, 13, 17, 19})
+      slice = s32[1] dynamic-slice(values, index), dynamic_slice_sizes={1}
+      ROOT result = s32[] reshape(slice)
+    }
+  )";
+  EXPECT_TRUE(RunAndCompare(kHlo, std::nullopt));
 }
 
 TEST_F(CpuCompilerTest, CompilationWithLargeConstants) {
