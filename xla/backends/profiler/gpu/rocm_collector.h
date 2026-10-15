@@ -215,8 +215,15 @@ class RocmTraceCollectorImpl : public RocmTraceCollector {
   }
 
  private:
+  // Reports the events dropped at the configured limits, or "" if none were.
+  std::string DroppedEventsMessage() const;
+
   std::atomic<int> num_callback_events_;
   std::atomic<int> num_activity_events_;
+  // Events refused at max_callback_api_events or max_activity_api_events in
+  // this session. Export() reports them once.
+  std::atomic<uint64_t> num_dropped_callback_events_{0};
+  std::atomic<uint64_t> num_dropped_activity_events_{0};
   uint64_t start_walltime_ns_;
   uint64_t start_gputime_ns_;
   int num_gpus_;

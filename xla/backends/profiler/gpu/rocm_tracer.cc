@@ -163,10 +163,15 @@ absl::Status RocmTracer::Enable(const RocmTracerOptions& options,
   if (collector_ != nullptr) {
     return absl::AlreadyExistsError("ROCM tracer is already running");
   }
+  if (!options.max_annotation_strings.has_value()) {
+    return absl::InvalidArgumentError(
+        "RocmTracerOptions::max_annotation_strings is not set.");
+  }
 
-  // Clear per-session state while holding collector_mutex_ so no in-flight
-  // callback can race between the clear and the new session start.
-  annotation_map_.Clear();
+  // Must run before rocprofiler_start_context opens the gate for the new
+  // session. rocprofiler_stop_context does not join callbacks already past the
+  // gate; see AnnotationMap::Reset() for what that means for the map.
+  annotation_map_.Reset(*options.max_annotation_strings);
   // ROCTX frames live on thread_local stacks this thread cannot reach, so
   // isolate by generation instead of clearing: any frame pushed before this
   // point is now stale and will be dropped at pop rather than emitted into
