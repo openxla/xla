@@ -56,24 +56,26 @@ __device__ __inline__ auto Canonicalize(double elem) {
   return elem;
 }
 
-// Accumulates `block_mismatches` into the global `mismatch_count` using a
-// single atomic per block.
+// Records whether this block saw any mismatch into the global `mismatch_count`
+// using at most a single atomic per block.
 //
-// Each thread first reduces its own mismatches into a block-wide shared
-// counter, and only thread 0 performs one global atomicAdd for the whole block.
-__device__ __inline__ void AccumulateBlockMismatches(uint32_t thread_mismatches,
+// `mismatch_count` counts the number of *blocks* that observed a mismatch, not
+// the number of mismatching elements. DeviceCompare only checks whether the
+// counter is zero (any mismatch) or not, so counting blocks is sufficient and
+// avoids 32-bit overflow.
+__device__ __inline__ void AccumulateBlockMismatches(bool thread_has_mismatch,
                                                      int* mismatch_count) {
-  __shared__ uint32_t block_mismatches;
+  __shared__ int block_has_mismatch;
   if (threadIdx.x == 0) {
-    block_mismatches = 0;
+    block_has_mismatch = 0;
   }
   __syncthreads();
-  if (thread_mismatches != 0) {
-    atomicAdd(&block_mismatches, thread_mismatches);
+  if (thread_has_mismatch) {
+    block_has_mismatch = 1;
   }
   __syncthreads();
-  if (threadIdx.x == 0 && block_mismatches != 0) {
-    atomicAdd(mismatch_count, static_cast<int>(block_mismatches));
+  if (threadIdx.x == 0 && block_has_mismatch != 0) {
+    atomicAdd(mismatch_count, 1);
   }
 }
 
@@ -83,9 +85,9 @@ __global__ void xla_fp_comparison(T* buffer_a, T* buffer_b,
                                   uint64_t buffer_length, int* mismatch_count) {
   const uint64_t block_dim_x = static_cast<uint64_t>(blockDim.x),
                  stride = block_dim_x * gridDim.x;
-  // Per-thread mismatch count, kept in a register and flushed to the global
-  // counter once at the end of the kernel via AccumulateBlockMismatches.
-  uint32_t thread_mismatches = 0;
+  // Whether this thread saw any mismatch, kept in a register and flushed to the
+  // global counter once at the end of the kernel via AccumulateBlockMismatches.
+  bool thread_has_mismatch = false;
   for (uint64_t idx = threadIdx.x + blockIdx.x * block_dim_x;
        idx < buffer_length; idx += stride) {
     auto elem_a = Canonicalize(buffer_a[idx]);
@@ -107,10 +109,10 @@ __global__ void xla_fp_comparison(T* buffer_a, T* buffer_b,
                        1);
 
     if (rel_error > rel_error_threshold || Eigen::numext::isnan(rel_error)) {
-      ++thread_mismatches;
+      thread_has_mismatch = true;
     }
   }  // for
-  AccumulateBlockMismatches(thread_mismatches, mismatch_count);
+  AccumulateBlockMismatches(thread_has_mismatch, mismatch_count);
 }
 
 // TODO(b/191520348): The comparison below requires exact equality.
@@ -121,9 +123,9 @@ __global__ void xla_int_comparison(T* buffer_a, T* buffer_b,
                                    int* mismatch_count) {
   const uint64_t block_dim_x = static_cast<uint64_t>(blockDim.x),
                  stride = block_dim_x * gridDim.x;
-  // Per-thread mismatch count, kept in a register and flushed to the global
-  // counter once at the end of the kernel via AccumulateBlockMismatches.
-  uint32_t thread_mismatches = 0;
+  // Whether this thread saw any mismatch, kept in a register and flushed to the
+  // global counter once at the end of the kernel via AccumulateBlockMismatches.
+  bool thread_has_mismatch = false;
   for (uint64_t idx = threadIdx.x + blockIdx.x * block_dim_x;
        idx < buffer_length; idx += stride) {
     float elem_a;
@@ -138,10 +140,10 @@ __global__ void xla_int_comparison(T* buffer_a, T* buffer_b,
     float rel_error =
         fabs(elem_a - elem_b) / (fmax(fabs(elem_a), fabs(elem_b)) + 1);
     if (rel_error > rel_error_threshold || isnan(rel_error)) {
-      ++thread_mismatches;
+      thread_has_mismatch = true;
     }
   }  // for
-  AccumulateBlockMismatches(thread_mismatches, mismatch_count);
+  AccumulateBlockMismatches(thread_has_mismatch, mismatch_count);
 }
 
 template <typename NativeT>

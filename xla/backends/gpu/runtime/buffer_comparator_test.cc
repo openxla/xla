@@ -407,6 +407,21 @@ TEST_F(BufferComparatorTest, VeryLargeArray) {
   ASSERT_OK_AND_ASSIGN(bool equal2,
                        comparator.CompareEqual(stream.get(), lhs, rhs));
   EXPECT_FALSE(equal2);
+
+  // Make *every* element mismatch and verify the comparator still reports
+  // inequality. This is a regression test for a 32-bit overflow: the device
+  // kernel accumulates into an int32 counter, so if it summed the per-element
+  // mismatch count (~2^32 here) it would wrap modulo 2^32 and could land back
+  // on 0, making DeviceCompare spuriously report equality. The kernel instead
+  // counts mismatching *blocks* (bounded by the grid size), which cannot
+  // overflow. The byte pattern 0x00FF00FF alternates 0xFF/0x00 bytes, so
+  // buffer[i] != buffer[i + 1] for every i, i.e. lhs[i] != rhs[i] everywhere
+  // (rhs is lhs shifted by one element).
+  constexpr uint32_t alternating_pattern = 0x00FF00FF;
+  CHECK_OK(stream->Memset32(&lhs, alternating_pattern, buf_size));
+  ASSERT_OK_AND_ASSIGN(bool equal3,
+                       comparator.CompareEqual(stream.get(), lhs, rhs));
+  EXPECT_FALSE(equal3);
 }
 
 TEST_F(BufferComparatorTest, ErrorReportGeneratedOnMismatch) {
