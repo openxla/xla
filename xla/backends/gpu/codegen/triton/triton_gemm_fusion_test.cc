@@ -1532,7 +1532,7 @@ ENTRY e {
 })";
 
   MatchOptimizedHlo(kHloText, R"(
-; CHECK: gemm_fusion_dot
+; CHECK: gemm_fusion_d
 ; CHECK: dot(
 ; CHECK: bf16[] constant(0.123)
 ; CHECK: ROOT
@@ -1909,9 +1909,7 @@ ENTRY e {
                      .WithFusionKind(HloInstruction::FusionKind::kCustom)));
 }
 
-// TODO(b/393299275): This test name might be a bit misleading, since the dot is
-// given a non-contracting dimension by the time it gets passed down to the
-// Triton emitter. This should probably be a fusion test.
+// TODO(b/393299275): This should probably be a fusion test.
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
 TEST_P(TritonGemmTest, LowerDotWithLhsWithoutNonContractingDimThroughTriton) {
@@ -1932,9 +1930,7 @@ ENTRY e {
               .WithFusionKind(HloInstruction::FusionKind::kCustom)));
 }
 
-// TODO(b/393299275): This test name might be a bit misleading, since the dot is
-// given a non-contracting dimension by the time it gets passed down to the
-// Triton emitter. This should probably be a fusion test.
+// TODO(b/393299275): This should probably be a fusion test.
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
 TEST_P(TritonGemmTest, LowerDotWithRhsWithoutNonContractingDimThroughTriton) {
@@ -2005,6 +2001,54 @@ ENTRY e {
       std::move(ref_module), std::move(test_module_and_metadata.module),
       ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3},
       /*run_hlo_passes=*/false));
+}
+
+TEST_P(CompareTest, LhsWithoutNonContractingDimension) {
+  constexpr absl::string_view kHloText = R"(
+triton_dot {
+  p0 = f32[200] parameter(0)
+  p1 = f32[200,300] parameter(1)
+  ROOT dot = f32[300] dot(p0, p1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = f32[200] parameter(0)
+  p1 = f32[200,300] parameter(1)
+  ROOT _ = f32[300] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":16,"block_n":64,"block_k":32,
+                         "num_stages":1,"num_warps":4,"num_ctas":1}}}
+})";
+  ASSERT_OK_AND_ASSIGN(ModuleAndNestedFusionMetadata module_and_metadata,
+                       GetModuleAndNestedFusionMetadata(kHloText));
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(std::move(module_and_metadata.module),
+                               ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
+TEST_P(CompareTest, RhsWithoutNonContractingDimension) {
+  constexpr absl::string_view kHloText = R"(
+triton_dot {
+  p0 = f32[300,200] parameter(0)
+  p1 = f32[200] parameter(1)
+  ROOT dot = f32[300] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = f32[300,200] parameter(0)
+  p1 = f32[200] parameter(1)
+  ROOT _ = f32[300] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":64,"block_n":16,"block_k":32,
+                         "num_stages":1,"num_warps":4,"num_ctas":1}}}
+})";
+  ASSERT_OK_AND_ASSIGN(ModuleAndNestedFusionMetadata module_and_metadata,
+                       GetModuleAndNestedFusionMetadata(kHloText));
+  EXPECT_TRUE(
+      RunAndCompareNoHloPasses(std::move(module_and_metadata.module),
+                               ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 // TODO(b/353484968, b/393299275): the e2e test path was never really testing
