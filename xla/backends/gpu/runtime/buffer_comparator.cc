@@ -81,14 +81,25 @@ class MismatchCounterResource : public se::StreamExecutor::Resource {
 
   se::DeviceAddress<uint64_t> counter() const { return counter_; }
 
+  // Serializes the full MemZero -> kernel -> Memcpy -> BlockHostUntilDone
+  // sequence in DeviceCompare. The counter is a single shared per-executor
+  // scalar, so without this two concurrent comparisons on the same executor
+  // would interleave their resets/reads and corrupt each other's mismatch
+  // count.
+  absl::Mutex& mutex() { return mutex_; }
+
  private:
   se::StreamExecutor* executor_;
   se::DeviceAddress<uint64_t> counter_;
+  absl::Mutex mutex_;
 };
 
-// Returns the executor's persistent mismatch counter, allocating and attaching
-// it on first use. Returns an error if the one-time allocation fails.
-static absl::StatusOr<se::DeviceAddress<uint64_t>> GetMismatchCounter(
+// Returns the executor's persistent mismatch counter resource, allocating and
+// attaching it on first use. Returns an error if the one-time allocation fails.
+//
+// The resource (rather than just the DeviceAddress) is returned so callers can
+// hold its mutex across the entire comparison sequence.
+static absl::StatusOr<MismatchCounterResource*> GetMismatchCounterResource(
     se::StreamExecutor* executor) {
   MismatchCounterResource* resource =
       executor->GetOrCreateResource<MismatchCounterResource>([&] {
@@ -98,7 +109,7 @@ static absl::StatusOr<se::DeviceAddress<uint64_t>> GetMismatchCounter(
   if (resource->counter().is_null()) {
     return Internal("Failed to allocate device mismatch counter");
   }
-  return resource->counter();
+  return resource;
 }
 
 }  // namespace
@@ -132,8 +143,11 @@ static absl::StatusOr<bool> DeviceCompare(const ComparisonParams& params) {
   //
   // Reading it back stays correct because the `Memcpy` and `BlockHostUntilDone`
   // below are stream-ordered after the kernel.
-  ABSL_ASSIGN_OR_RETURN(se::DeviceAddress<uint64_t> out_device,
-                        GetMismatchCounter(executor));
+  ABSL_ASSIGN_OR_RETURN(MismatchCounterResource * counter_resource,
+                        GetMismatchCounterResource(executor));
+  absl::MutexLock counter_lock(counter_resource->mutex());
+
+  se::DeviceAddress<uint64_t> out_device = counter_resource->counter();
   se::DeviceAddressBase out_addr(out_device);
 
   ABSL_RETURN_IF_ERROR(params.stream->MemZero(&out_addr, sizeof(uint64_t)));
