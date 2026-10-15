@@ -2652,7 +2652,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
   }
 
   // (A / B) / (C / D)  =>  (A / B)*(D / C) => (A * D) / (B * C)
-  if (Match(divide, m::Divide(m::Divide(m::Op(&a), m::Op(&b)),
+  if (options_.enable_fast_math() &&
+      Match(divide, m::Divide(m::Divide(m::Op(&a), m::Op(&b)),
                               m::Divide(m::Op(&c), m::Op(&d))))) {
     ABSL_ASSIGN_OR_RETURN(auto a_times_d,
                           MakeBinaryHlo(HloOpcode::kMultiply, a, d));
@@ -2665,7 +2666,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
   }
 
   // (A / B) / C => A / (B * C)
-  if (Match(divide, m::Divide(m::Divide(m::Op(&a), m::Op(&b)), m::Op(&c)))) {
+  if (options_.enable_fast_math() &&
+      Match(divide, m::Divide(m::Divide(m::Op(&a), m::Op(&b)), m::Op(&c)))) {
     ABSL_ASSIGN_OR_RETURN(auto b_times_c,
                           MakeBinaryHlo(HloOpcode::kMultiply, b, c));
     ABSL_ASSIGN_OR_RETURN(auto new_divide,
@@ -2674,7 +2676,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
   }
 
   // A / (B / C) => (A*C) / B
-  if (Match(divide, m::Divide(m::Op(&a), m::Divide(m::Op(&b), m::Op(&c))))) {
+  if (options_.enable_fast_math() &&
+      Match(divide, m::Divide(m::Op(&a), m::Divide(m::Op(&b), m::Op(&c))))) {
     ABSL_ASSIGN_OR_RETURN(auto a_times_c,
                           MakeBinaryHlo(HloOpcode::kMultiply, a, c));
     ABSL_ASSIGN_OR_RETURN(auto new_divide,
