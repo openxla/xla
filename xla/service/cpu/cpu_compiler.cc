@@ -91,6 +91,7 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/alignment.h"
+#include "xla/backends/cpu/codegen/aot_image_builder.h"
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
@@ -2260,6 +2261,38 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   return std::unique_ptr<Executable>(std::move(cpu_executable));
 }
 
+// Attaches a pre-relocated image to `result`, so AOT runtimes can load the
+// compiled functions without an ELF linker. We keep the object files for
+// runtimes that don't support the image yet, and skip the image if some
+// relocations can't be resolved at compile time (e.g. AArch64 objects compiled
+// with the large code model), in which case runtimes use the object files.
+static absl::Status MaybeAddPreRelocatedImage(
+    absl::Span<const ObjFileProto> obj_files,
+    absl::Span<const SymbolProto> compiled_symbols,
+    CpuAotCompilationResult& result) {
+  if (obj_files.empty()) {
+    return absl::OkStatus();
+  }
+  std::vector<absl::string_view> contents;
+  for (const ObjFileProto& obj_file : obj_files) {
+    contents.push_back(obj_file.contents());
+  }
+  std::vector<std::string> exported_symbols;
+  for (const SymbolProto& symbol : compiled_symbols) {
+    exported_symbols.push_back(symbol.name());
+  }
+
+  absl::StatusOr<PreRelocatedImageProto> image =
+      BuildPreRelocatedImage(contents, exported_symbols);
+  if (absl::IsUnimplemented(image.status())) {
+    VLOG(1) << "Not emitting a pre-relocated image: " << image.status();
+    return absl::OkStatus();
+  }
+  ABSL_RETURN_IF_ERROR(image.status());
+  result.set_pre_relocated_image(*std::move(image));
+  return absl::OkStatus();
+}
+
 absl::StatusOr<std::vector<std::unique_ptr<CompiledModule>>>
 CpuCompiler::CompileAheadOfTime(std::unique_ptr<HloModule> hlo_module,
                                 const AotCompilationOptions& aot_options) {
@@ -2417,13 +2450,20 @@ CpuCompiler::CompileAheadOfTimeThunks(
     obj_files.push_back(obj_file);
   }
 
-  return CpuAotCompilationResult::Create(
-      &cpu_executable->module(), &cpu_executable->buffer_assignment(),
-      cpu_executable->module_name(), std::move(obj_files),
-      cpu_executable->get_compiled_symbols_proto(), thunk_sequence,
-      std::move(*cpu_executable).consume_function_library(),
-      cpu_executable->target_machine_options().ToProto(),
-      target_machine->createDataLayout().getStringRepresentation());
+  std::vector<SymbolProto> compiled_symbols =
+      cpu_executable->get_compiled_symbols_proto();
+
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<CpuAotCompilationResult> result,
+      CpuAotCompilationResult::Create(
+          &cpu_executable->module(), &cpu_executable->buffer_assignment(),
+          cpu_executable->module_name(), obj_files, compiled_symbols,
+          thunk_sequence, std::move(*cpu_executable).consume_function_library(),
+          cpu_executable->target_machine_options().ToProto(),
+          target_machine->createDataLayout().getStringRepresentation()));
+  ABSL_RETURN_IF_ERROR(
+      MaybeAddPreRelocatedImage(obj_files, compiled_symbols, *result));
+  return result;
 }
 
 se::Platform::Id CpuCompiler::PlatformId() const {
@@ -2466,13 +2506,17 @@ absl::StatusOr<std::unique_ptr<CompiledModule>> CpuCompiler::Export(
                           cpu_executable->target_machine_options(),
                           cpu_executable->data_layout()));
 
-  return CpuAotCompilationResult::Create(
-      &cpu_executable->module(), &cpu_executable->buffer_assignment(),
-      cpu_executable->module_name(), std::move(obj_files),
-      std::move(compiled_symbols_proto), *thunk_sequence,
-      std::move(function_library),
-      cpu_executable->target_machine_options().ToProto(),
-      cpu_executable->data_layout());
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<CpuAotCompilationResult> result,
+      CpuAotCompilationResult::Create(
+          &cpu_executable->module(), &cpu_executable->buffer_assignment(),
+          cpu_executable->module_name(), obj_files, compiled_symbols_proto,
+          *thunk_sequence, std::move(function_library),
+          cpu_executable->target_machine_options().ToProto(),
+          cpu_executable->data_layout()));
+  ABSL_RETURN_IF_ERROR(
+      MaybeAddPreRelocatedImage(obj_files, compiled_symbols_proto, *result));
+  return result;
 }
 
 absl::StatusOr<std::unique_ptr<CompiledModule>>

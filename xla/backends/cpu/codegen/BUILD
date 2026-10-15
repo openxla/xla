@@ -15,7 +15,7 @@
 
 load("@xla//third_party/rules_python/python:py_test.bzl", "py_test")
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
-load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
+load("//xla/tsl:tsl.bzl", "check_deps", "internal_visibility", "tsl_copts")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
     "if_llvm_aarch64_available",
@@ -45,15 +45,36 @@ cc_library(
     hdrs = ["builtin_definition_generator.h"],
     copts = tsl_copts(),
     deps = [
-        ":builtin_fp16",
-        ":builtin_pow",
-        "@com_google_absl//absl/base:no_destructor",
-        "@com_google_absl//absl/container:flat_hash_map",
+        ":builtin_symbols",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//llvm:OrcShared",
         "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
+    name = "builtin_symbols",
+    srcs = ["builtin_symbols.cc"],
+    hdrs = ["builtin_symbols.h"],
+    copts = tsl_copts(),
+    deps = [
+        ":builtin_fp16",
+        ":builtin_pow",
+        "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//mlir:mlir_c_runner_utils",
+    ],
+)
+
+xla_cc_test(
+    name = "builtin_symbols_test",
+    srcs = ["builtin_symbols_test.cc"],
+    deps = [
+        ":builtin_symbols",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -595,6 +616,104 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "aot_image_builder",
+    srcs = ["aot_image_builder.cc"],
+    hdrs = ["aot_image_builder.h"],
+    deps = [
+        ":pre_relocated_image_loader",
+        "//xla/service/cpu:executable_proto_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:BinaryFormat",
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
+    ],
+)
+
+xla_cc_test(
+    name = "aot_image_builder_test",
+    srcs = ["aot_image_builder_test.cc"],
+    deps = [
+        ":aot_image_builder",
+        ":builtin_symbols",
+        ":pre_relocated_image_loader",
+        "//xla/backends/cpu/runtime:function_library",
+        "//xla/service/cpu:executable_proto_cc",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
+        "@llvm-project//llvm:AsmParser",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:MC",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
+    ],
+)
+
+cc_library(
+    name = "pre_relocated_image_loader",
+    srcs = ["pre_relocated_image_loader.cc"],
+    hdrs = ["pre_relocated_image_loader.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":aot_compiled_function_library",
+        "//xla/backends/cpu/runtime:function_library",
+        "//xla/service/cpu:executable_proto_cc",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+# The pre-relocated image loader is linked into lightweight AOT runtimes, so it
+# must not pull in LLVM.
+check_deps(
+    name = "pre_relocated_image_loader_check_deps",
+    disallowed_deps = [
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:ExecutionEngine",
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:OrcJIT",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
+    ],
+    deps = [":pre_relocated_image_loader"],
+)
+
+xla_cc_test(
+    name = "pre_relocated_image_loader_test",
+    srcs = ["pre_relocated_image_loader_test.cc"],
+    data = [":pre_relocated_image_loader_check_deps"],
+    deps = [
+        ":pre_relocated_image_loader",
+        "//xla/backends/cpu/runtime:function_library",
+        "//xla/service/cpu:executable_proto_cc",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:TargetParser",
     ],
 )
 

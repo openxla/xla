@@ -33,8 +33,10 @@ limitations under the License.
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
+#include "xla/backends/cpu/codegen/builtin_symbols.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/codegen/object_loader.h"
+#include "xla/backends/cpu/codegen/pre_relocated_image_loader.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/service/compiled_module.h"
@@ -220,16 +222,25 @@ CpuAotLoader::LoadAotCompilationResult(
   ABSL_ASSIGN_OR_RETURN(auto compiled_symbols,
                         GetCompiledSymbolsFromProto(compiled_symbols_proto));
 
-  std::vector<ObjFileProto> obj_files;
-  for (const auto& obj_file : aot_result_proto.object_files()) {
-    obj_files.push_back(obj_file);
-  }
+  std::unique_ptr<FunctionLibrary> function_library;
+  if (aot_result_proto.has_pre_relocated_image()) {
+    ABSL_ASSIGN_OR_RETURN(
+        function_library,
+        LoadPreRelocatedImage(aot_result_proto.pre_relocated_image(),
+                              LookupBuiltinSymbol));
+  } else {
+    // Artifacts produced before we emitted pre-relocated images.
+    std::vector<ObjFileProto> obj_files;
+    for (const auto& obj_file : aot_result_proto.object_files()) {
+      obj_files.push_back(obj_file);
+    }
 
-  ABSL_ASSIGN_OR_RETURN(
-      auto function_library,
-      LoadFunctionLibrary(compiled_symbols, obj_files, hlo_module.get(),
-                          target_machine_options,
-                          aot_result_proto.data_layout()));
+    ABSL_ASSIGN_OR_RETURN(
+        function_library,
+        LoadFunctionLibrary(compiled_symbols, obj_files, hlo_module.get(),
+                            target_machine_options,
+                            aot_result_proto.data_layout()));
+  }
 
   return CpuAotCompilationResult::FromProto(aot_result_proto,
                                             std::move(function_library));
