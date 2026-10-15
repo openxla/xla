@@ -16,6 +16,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -115,6 +116,67 @@ TEST_F(DivisibilityCheckTest, DynamicMulIOpAddIsDivisible) {
   std::optional<bool> result = isDivisible(add, /*divisor=*/8);
   ASSERT_TRUE(result.has_value());
   EXPECT_TRUE(*result);
+}
+
+TEST_F(DivisibilityCheckTest, NegativeConstantGetRemainder) {
+  Location loc = builder_.getUnknownLoc();
+  auto neg = Create<arith::ConstantIndexOp>(loc, -1);
+  auto pos = Create<arith::ConstantIndexOp>(loc, 5);
+  auto add = Create<arith::AddIOp>(loc, neg, pos);
+
+  std::optional<int64_t> rem = getRemainder(neg, /*divisor=*/4);
+  ASSERT_TRUE(rem.has_value());
+  EXPECT_EQ(*rem, 3);
+
+  std::optional<bool> result = isDivisible(add, /*divisor=*/4);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_TRUE(*result);
+}
+
+TEST_F(DivisibilityCheckTest, MinMaxOpsAreDivisible) {
+  Location loc = builder_.getUnknownLoc();
+  Type index_type = builder_.getIndexType();
+  FunctionType func_type =
+      builder_.getFunctionType({index_type, index_type}, {});
+  auto func = Create<func::FuncOp>(loc, "test_minmax", func_type);
+  Block* entry = func.addEntryBlock();
+  Value x = entry->getArgument(0);
+  Value y = entry->getArgument(1);
+
+  builder_.setInsertionPointToStart(entry);
+  auto c8 = Create<arith::ConstantIndexOp>(loc, 8);
+  auto mul_x = Create<arith::MulIOp>(loc, x, c8);
+  auto mul_y = Create<arith::MulIOp>(loc, y, c8);
+
+  auto min_si = Create<arith::MinSIOp>(loc, mul_x, mul_y);
+  auto min_ui = Create<arith::MinUIOp>(loc, mul_x, mul_y);
+  auto max_si = Create<arith::MaxSIOp>(loc, mul_x, mul_y);
+  auto max_ui = Create<arith::MaxUIOp>(loc, mul_x, mul_y);
+
+  EXPECT_EQ(isDivisible(min_si, /*divisor=*/8), std::optional<bool>(true));
+  EXPECT_EQ(isDivisible(min_ui, /*divisor=*/8), std::optional<bool>(true));
+  EXPECT_EQ(isDivisible(max_si, /*divisor=*/8), std::optional<bool>(true));
+  EXPECT_EQ(isDivisible(max_ui, /*divisor=*/8), std::optional<bool>(true));
+}
+
+TEST_F(DivisibilityCheckTest, OverflowGuardsInMulAndDiv) {
+  Location loc = builder_.getUnknownLoc();
+  Type index_type = builder_.getIndexType();
+  FunctionType func_type = builder_.getFunctionType({index_type}, {});
+  auto func = Create<func::FuncOp>(loc, "test_overflow", func_type);
+  Block* entry = func.addEntryBlock();
+  Value x = entry->getArgument(0);
+
+  builder_.setInsertionPointToStart(entry);
+  auto int64_min =
+      Create<arith::ConstantIndexOp>(loc, std::numeric_limits<int64_t>::min());
+  auto mul_min = Create<arith::MulIOp>(loc, x, int64_min);
+  EXPECT_EQ(isDivisible(mul_min, /*divisor=*/8), std::optional<bool>(true));
+
+  auto large =
+      Create<arith::ConstantIndexOp>(loc, std::numeric_limits<int64_t>::max());
+  auto div_large = Create<arith::DivSIOp>(loc, x, large);
+  EXPECT_EQ(isDivisible(div_large, /*divisor=*/8), std::nullopt);
 }
 
 }  // namespace

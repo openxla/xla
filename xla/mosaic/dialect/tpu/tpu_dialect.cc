@@ -16,9 +16,11 @@ limitations under the License.
 #include "xla/mosaic/dialect/tpu/tpu_dialect.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -778,22 +780,25 @@ std::optional<bool> areAnyDivisible(Value lhs, Value rhs, int64_t divisor,
 // Returns the remainder of the value divided by the divisor, if known.
 std::optional<int64_t> getExplicitRemainder(Value value, int64_t divisor,
                                             int64_t fuel) {
-  if (fuel <= 0) {
-    return std::nullopt;
-  }
+  CHECK_GT(divisor, 0);
   if (divisor == 1) {
     return 0;
   }
+  if (fuel <= 0) {
+    return std::nullopt;
+  }
   if (auto cst_op = value.getDefiningOp<arith::ConstantOp>()) {
     if (auto int_attr = dyn_cast<IntegerAttr>(cst_op.getValue())) {
-      return int_attr.getInt() % divisor;
+      int64_t rem = int_attr.getInt() % divisor;
+      return rem < 0 ? rem + divisor : rem;
     }
   }
   if (auto add_op = value.getDefiningOp<arith::AddIOp>()) {
     if (auto lhs_rem = getRemainder(add_op.getLhs(), divisor, fuel / 2)) {
       if (auto rhs_rem =
               getRemainder(add_op.getRhs(), divisor, (fuel + 1) / 2)) {
-        return (*lhs_rem + *rhs_rem) % divisor;
+        return *lhs_rem >= divisor - *rhs_rem ? *lhs_rem - (divisor - *rhs_rem)
+                                              : *lhs_rem + *rhs_rem;
       }
     }
   }
@@ -804,11 +809,12 @@ std::optional<int64_t> getExplicitRemainder(Value value, int64_t divisor,
 // structural rules.
 std::optional<bool> isStructurallyDivisible(Value value, int64_t divisor,
                                             int64_t fuel) {
-  if (fuel <= 0) {
-    return std::nullopt;
-  }
+  CHECK_GT(divisor, 0);
   if (divisor == 1) {
     return true;
+  }
+  if (fuel <= 0) {
+    return std::nullopt;
   }
   if (auto block_arg = dyn_cast<BlockArgument>(value)) {
     if (auto for_op = dyn_cast_if_present<scf::ForOp>(
@@ -827,16 +833,17 @@ std::optional<bool> isStructurallyDivisible(Value value, int64_t divisor,
   }
   if (auto mul_op = value.getDefiningOp<arith::MulIOp>()) {
     // We check RHS first, because MLIR canonicalizes constants to the right.
-    if (auto rhs_cst = mlir::getConstantIntValue(mul_op.getRhs())) {
-      int64_t gcd = std::gcd(*rhs_cst, divisor);
-      if (gcd > 1) {
-        return isDivisible(mul_op.getLhs(), divisor / gcd, fuel - 1);
-      }
-    }
-    if (auto lhs_cst = mlir::getConstantIntValue(mul_op.getLhs())) {
-      int64_t gcd = std::gcd(*lhs_cst, divisor);
-      if (gcd > 1) {
-        return isDivisible(mul_op.getRhs(), divisor / gcd, fuel - 1);
+    for (auto [const_val, other_val] :
+         std::array{std::pair{mul_op.getRhs(), mul_op.getLhs()},
+                    std::pair{mul_op.getLhs(), mul_op.getRhs()}}) {
+      // Guard against INT64_MIN (e.g. ShapedType::kDynamic), since std::gcd
+      // cannot negate INT64_MIN without signed overflow.
+      if (auto cst = mlir::getConstantIntValue(const_val);
+          cst && *cst != std::numeric_limits<int64_t>::min()) {
+        int64_t gcd = std::gcd(*cst, divisor);
+        if (gcd > 1) {
+          return isDivisible(other_val, divisor / gcd, fuel - 1);
+        }
       }
     }
     return areAnyDivisible(mul_op.getRhs(), mul_op.getLhs(), divisor, fuel);
@@ -844,24 +851,20 @@ std::optional<bool> isStructurallyDivisible(Value value, int64_t divisor,
   if (auto cast_op = value.getDefiningOp<arith::IndexCastOp>()) {
     return isDivisible(cast_op.getOperand(), divisor, fuel - 1);
   }
-  if (auto div_op = value.getDefiningOp<arith::DivUIOp>()) {
-    if (auto rhs_cst = mlir::getConstantIntValue(div_op.getRhs())) {
-      return isDivisible(div_op.getLhs(), divisor * *rhs_cst, fuel - 1);
+  if (Operation* div_op = value.getDefiningOp();
+      isa_and_nonnull<arith::DivUIOp, arith::DivSIOp>(div_op)) {
+    // Guard against signed overflow in divisor * *rhs_cst.
+    if (auto rhs_cst = mlir::getConstantIntValue(div_op->getOperand(1));
+        rhs_cst && *rhs_cst > 0 &&
+        divisor <= std::numeric_limits<int64_t>::max() / *rhs_cst) {
+      return isDivisible(div_op->getOperand(0), divisor * *rhs_cst, fuel - 1);
     }
   }
-  if (auto div_op = value.getDefiningOp<arith::DivSIOp>()) {
-    if (auto rhs_cst = mlir::getConstantIntValue(div_op.getRhs())) {
-      return isDivisible(div_op.getLhs(), divisor * *rhs_cst, fuel - 1);
-    }
-  }
-  if (auto sub_op = value.getDefiningOp<arith::SubIOp>()) {
-    return areAllDivisible(sub_op.getLhs(), sub_op.getRhs(), divisor, fuel);
-  }
-  if (auto rem_op = value.getDefiningOp<arith::RemSIOp>()) {
-    return areAllDivisible(rem_op.getLhs(), rem_op.getRhs(), divisor, fuel);
-  }
-  if (auto min_op = value.getDefiningOp<arith::MinSIOp>()) {
-    return areAllDivisible(min_op.getLhs(), min_op.getRhs(), divisor, fuel);
+  if (Operation* bin_op = value.getDefiningOp();
+      isa_and_nonnull<arith::SubIOp, arith::RemSIOp, arith::MinSIOp,
+                      arith::MinUIOp, arith::MaxSIOp, arith::MaxUIOp>(bin_op)) {
+    return areAllDivisible(bin_op->getOperand(0), bin_op->getOperand(1),
+                           divisor, fuel);
   }
   if (auto select_op = value.getDefiningOp<arith::SelectOp>()) {
     auto true_val_divisible =
