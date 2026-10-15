@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/mosaic/dialect/tpu/util.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -35,44 +36,35 @@ limitations under the License.
 
 namespace mlir::tpu {
 
-FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
-    Operation* op, ArrayRef<int64_t> source_shape,
-    ArrayRef<int64_t> target_shape) {
-  SmallVector<int> squeezed;
-  int source_index = source_shape.size() - 1;
-  int target_index = target_shape.size() - 1;
+FailureOr<SmallVector<int64_t>> computeSqueezedDims(
+    const ArrayRef<int64_t> source_shape, const ArrayRef<int64_t> target_shape,
+    function_ref<InFlightDiagnostic()> emit_error) {
+  SmallVector<int64_t> squeezed;
+  squeezed.resize_for_overwrite(source_shape.size() - target_shape.size());
+  auto squeezed_it = squeezed.rbegin();
 
-  while (source_index >= 0 || target_index >= 0) {
-    int64_t target_dim = (target_index >= 0) ? target_shape[target_index] : -1;
-    if (source_index < 0) {
-      op->emitError() << llvm::formatv(
-          "Target shape is not valid. Source: {0}, Target: {1}.",
-          shapeToString(source_shape), shapeToString(target_shape));
-      return failure();
+  int64_t source_index = static_cast<int64_t>(source_shape.size()) - 1;
+  int64_t target_index = static_cast<int64_t>(target_shape.size()) - 1;
+  while (source_index != -1 || target_index != -1) {
+    if (source_index != -1 && target_index != -1 &&
+        source_shape[source_index] == target_shape[target_index]) {
+      --source_index;
+      --target_index;
+      continue;
     }
-    int64_t source_dim = source_shape[source_index];
-    if (source_dim == target_dim) {
-      source_index--;
-      target_index--;
-    } else {
-      if (source_dim != 1) {
-        op->emitError() << llvm::formatv(
-            "Target shape is not valid. Source: {0}, Target: {1}.",
-            shapeToString(source_shape), shapeToString(target_shape));
-        return failure();
-      }
-      squeezed.push_back(source_index);
-      source_index--;
+    if (source_index != -1 && source_shape[source_index] == 1) {
+      DCHECK(squeezed_it != squeezed.rend());
+      *squeezed_it++ = source_index;
+      --source_index;
+      continue;
     }
+    return emit_error() << "Cannot squeeze. Source shape: "
+                        << shapeToString(source_shape)
+                        << ", target shape: " << shapeToString(target_shape);
   }
-
-  if (source_index != -1 || target_index != -1) {
-    op->emitError() << "Shape mismatch after traversal. Source shape: "
-                    << shapeToString(source_shape)
-                    << ", target shape: " << shapeToString(target_shape);
-    return failure();
-  }
-  std::reverse(squeezed.begin(), squeezed.end());
+  DCHECK_EQ(source_index, -1);
+  DCHECK_EQ(target_index, -1);
+  DCHECK(squeezed_it == squeezed.rend());
   return squeezed;
 }
 
