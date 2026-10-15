@@ -422,3 +422,42 @@ xla_py_test(
         "@transformer_engine//:transformer_engine_jax",
     ],
 )
+
+tsl_pybind_extension(
+    name = "python_hlo_runner_ffi_test_lib",
+    testonly = True,
+    srcs = ["python_hlo_runner_ffi_test_lib.cc"],
+    deps = [
+        "//xla/ffi/api:ffi",
+        "//xla/ffi/api:record_ffi",
+        "@nanobind",
+    ],
+)
+
+_FFI_TEST_DEPS = [
+    ":py_hlo_multihost_runner",
+    ":python_hlo_runner_ffi_test_lib",
+    "@absl_py//absl/flags",
+    "@absl_py//absl/testing:absltest",
+    "@absl_py//absl/testing:parameterized",
+]
+
+xla_py_test(
+    name = "python_hlo_runner_ffi_test",
+    srcs = ["python_hlo_runner_ffi_test.py"],
+    tags = ["cpu"],
+    deps = _FFI_TEST_DEPS,
+)
+
+xla_py_test(
+    name = "python_hlo_runner_ffi_gpu_test",
+    srcs = ["python_hlo_runner_ffi_test.py"],
+    args = ["--device=gpu"],
+    env = {"XLA_FLAGS": "--xla_gpu_graph_min_graph_size=1 --xla_gpu_enable_command_buffer=CUSTOM_CALL"},
+    main = "python_hlo_runner_ffi_test.py",
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = _FFI_TEST_DEPS,
+)
