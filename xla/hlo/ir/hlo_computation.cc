@@ -695,7 +695,7 @@ absl::Status HloComputation::RemoveInstructionAndUnusedOperands(
       if (operand->opcode() == HloOpcode::kGetTupleElement) {
         source = operand->operand(0);
       }
-      if (source->HasSideEffect()) {
+      if (source->HasSideEffect() && operand->user_count() == 1) {
         return absl::OkStatus();
       }
     }
