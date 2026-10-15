@@ -238,11 +238,31 @@ std::optional<SlicedParameter> ResolveSlicedParameter(HloInstruction* operand,
   return std::nullopt;
 }
 
+// Returns the hero operand indices that participate in
+// `output_to_operand_aliasing`.
+absl::flat_hash_set<int64_t> GetAliasedOperands(const HloInstruction* hero) {
+  absl::flat_hash_set<int64_t> aliased_operands;
+  if (const auto* callable = DynCast<HloCallableInstruction>(hero)) {
+    for (const auto& [output_index, operand] :
+         callable->output_to_operand_aliasing()) {
+      aliased_operands.insert(operand.first);
+    }
+  }
+  return aliased_operands;
+}
+
 std::vector<SlicedParameter> ResolveSlicedParameters(
     HloInstruction* hero, OptLevel opt_level,
     const CaptureSlice& capture_slice) {
+  const absl::flat_hash_set<int64_t> aliased_operands =
+      GetAliasedOperands(hero);
   std::vector<SlicedParameter> result;
   for (int64_t i = 0; i < hero->operand_count(); ++i) {
+    // Operands aliased with outputs must be materialized in their own buffers
+    // for in-place mutation and cannot be sliced from their source buffer.
+    if (aliased_operands.contains(i)) {
+      continue;
+    }
     HloInstruction* operand = hero->mutable_operand(i);
     auto param = ResolveSlicedParameter(operand, opt_level);
     if (!param.has_value()) {
@@ -339,10 +359,25 @@ std::optional<SlicedResult> ResolveLeafDus(HloInstruction* gte) {
   return std::nullopt;
 }
 
+// Returns the hero output shape indices that participate in
+// `output_to_operand_aliasing`.
+absl::flat_hash_set<ShapeIndex> GetAliasedResults(const HloInstruction* hero) {
+  absl::flat_hash_set<ShapeIndex> aliased_results;
+  if (const auto* callable = DynCast<HloCallableInstruction>(hero)) {
+    for (const auto& [output_index, operand] :
+         callable->output_to_operand_aliasing()) {
+      aliased_results.insert(output_index);
+    }
+  }
+  return aliased_results;
+}
+
 // Resolves the sliced result for a non-tuple hero.
 std::vector<SlicedResult> ResolveNonTupleSlicedResult(
     HloInstruction* hero, const CaptureUpdateSlice& capture_update_slice) {
-  if (hero->user_count() != 1) {
+  // Outputs aliased with operands must share the materialized operand buffer
+  // rather than writing directly into a DUS destination slice.
+  if (hero->user_count() != 1 || GetAliasedResults(hero).contains({})) {
     return {};
   }
   for (HloInstruction* user : hero->users()) {
@@ -361,6 +396,8 @@ std::vector<SlicedResult> ResolveNonTupleSlicedResult(
 std::vector<SlicedResult> ResolveTupleSlicedResults(
     HloInstruction* hero, const CaptureUpdateSlice& capture_update_slice) {
   const int64_t tuple_size = hero->shape().tuple_shapes().size();
+  const absl::flat_hash_set<ShapeIndex> aliased_results =
+      GetAliasedResults(hero);
 
   struct LeafInfo {
     int64_t result_number;
@@ -373,7 +410,7 @@ std::vector<SlicedResult> ResolveTupleSlicedResults(
   for (int64_t i = 0; i < tuple_size; ++i) {
     HloInstruction* gte = FindGte(hero, i);
     std::optional<SlicedResult> sliced_update;
-    if (gte != nullptr) {
+    if (gte != nullptr && !aliased_results.contains({i})) {
       sliced_update = ResolveLeafDus(gte);
     }
     leaf_infos.push_back({i, gte, std::move(sliced_update)});
