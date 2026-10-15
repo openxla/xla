@@ -15,20 +15,21 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_executable_va_remap_allocator.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <set>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -67,6 +68,16 @@ constexpr uint64_t kGranularity = 256;
 
 uint64_t RoundUpTestSize(uint64_t size) {
   return ((size + kGranularity - 1) / kGranularity) * kGranularity;
+}
+
+DebugOptions OutputStagingOptions() {
+  DebugOptions options;
+  options.set_xla_gpu_command_buffer_update_mode(DebugOptions::SKIP_PROFILED);
+  options.set_xla_gpu_command_buffer_staging_size_limit_bytes(256 * 1024 *
+                                                              1024);
+  options.set_xla_gpu_command_buffer_staging_memory_limit_bytes(256 * 1024 *
+                                                                1024);
+  return options;
 }
 
 // Host-backed storage aligned to kGranularity.
@@ -1038,9 +1049,7 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   std::vector<const BufferAllocation*> allocations = {&param_alloc};
 
   ThunkExecutor thunk_executor{ThunkSequence{}};
-  DebugOptions debug_options;
-  debug_options.set_xla_gpu_command_buffer_update_mode(
-      DebugOptions::SKIP_PROFILED);
+  DebugOptions debug_options = OutputStagingOptions();
   GpuExecutableVaRemapAllocator allocator("test", allocations,
                                           ShapeUtil::MakeShape(F32, {256}),
                                           &debug_options, &thunk_executor);
@@ -1381,6 +1390,277 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   ASSERT_OK(vmm_allocator->SynchronizePendingOperations(/*device_ordinal=*/0));
   ASSERT_NE(va_reservation, nullptr);
   EXPECT_EQ(va_reservation->active_mapping_count(), 0);
+}
+
+TEST_F(GpuExecutableVaRemapAllocatorTest,
+       SkipProfiledStagesUnstableOutputsAndPreservesRetainedResults) {
+  ASSERT_OK_AND_ASSIGN(auto vmm_allocator, CreateAllocator());
+  constexpr int64_t kBufferSize =
+      1000;  // Deliberately not granularity aligned.
+  BufferAllocation output(/*index=*/0, kBufferSize, /*color=*/0);
+  output.set_maybe_live_out(true);
+  std::vector<const BufferAllocation*> allocations = {&output};
+  ThunkExecutor thunks{ThunkSequence{}};
+  DebugOptions options = OutputStagingOptions();
+  auto allocator = std::make_unique<GpuExecutableVaRemapAllocator>(
+      "staged_outputs", allocations, ShapeUtil::MakeShape(U8, {kBufferSize}),
+      &options, &thunks);
+  allocator->AddProfileCandidateAllocationForTesting(0);
+  auto no_parameters = [](const BufferAllocation&)
+      -> absl::StatusOr<GpuExecutableBufferAllocator::ParameterBuffer> {
+    return absl::InternalError("no parameters");
+  };
+  GpuExecutableBufferAllocator::BufferAllocToDeviceMemoryMap globals;
+  std::vector<se::ScopedDeviceAddress<uint8_t>> retained_outputs;
+  se::DeviceAddressBase staging;
+  se::MemoryAllocation* staging_backing = nullptr;
+  bool execution_enqueued = false;
+  EXPECT_CALL(stream_,
+              Memcpy(::testing::A<se::DeviceAddressBase*>(),
+                     ::testing::A<const se::DeviceAddressBase&>(), kBufferSize))
+      .Times(3)
+      .WillRepeatedly([&](se::DeviceAddressBase* dst,
+                          const se::DeviceAddressBase& src, uint64_t size) {
+        EXPECT_TRUE(execution_enqueued);
+        EXPECT_EQ(src.opaque(), staging.opaque());
+        std::memcpy(dst->opaque(), src.opaque(), size);
+        return absl::OkStatus();
+      });
+
+  for (int run = 0; run < 6; ++run) {
+    ASSERT_OK_AND_ASSIGN(
+        auto scope, allocator->CreateExecutionScope(&service_run_options_,
+                                                    vmm_allocator.get(), 0));
+    ASSERT_OK_AND_ASSIGN(
+        BufferAllocations buffers,
+        scope->GenerateBufferAllocations(&service_run_options_, no_parameters,
+                                         &globals, vmm_allocator.get(), 0));
+    const se::DeviceAddressBase owning = buffers.GetDeviceAddress(0);
+    retained_outputs.emplace_back(owning, 0, vmm_allocator.get());
+    execution_enqueued = false;
+    EXPECT_EQ(scope->IsStagedOutput(0), run >= 3);
+    ASSERT_OK(scope->ExecuteWithBufferAllocations(
+        buffers, 0,
+        [&](const BufferAllocations& execution_buffers,
+            std::optional<absl::Span<const BufferAllocation::Index>>
+                persistent) {
+          se::DeviceAddressBase address = execution_buffers.GetDeviceAddress(0);
+          EXPECT_EQ(address.size(), kBufferSize);
+          if (run < 3) {
+            EXPECT_FALSE(persistent.has_value());
+            EXPECT_EQ(address.opaque(), owning.opaque());
+          } else {
+            EXPECT_THAT(persistent, Optional(ElementsAre(0)));
+            EXPECT_NE(address.opaque(), owning.opaque());
+            if (staging.is_null()) {
+              staging = se::DeviceAddressBase(address.opaque(),
+                                              RoundUpTestSize(kBufferSize));
+              staging_backing = vmm_allocator->GetRawAllocation(0, staging);
+            }
+            EXPECT_EQ(address.opaque(), staging.opaque());
+            EXPECT_EQ(vmm_allocator->GetRawAllocation(0, staging),
+                      staging_backing);
+          }
+          std::memset(address.opaque(), run + 1, kBufferSize);
+          execution_enqueued = true;
+          return absl::OkStatus();
+        }));
+    EXPECT_EQ(buffers.GetDeviceAddress(0).opaque(), owning.opaque());
+    for (int previous = 0; previous <= run; ++previous) {
+      const uint8_t* data = static_cast<const uint8_t*>(
+          retained_outputs[previous].cref().opaque());
+      EXPECT_TRUE(
+          std::all_of(data, data + kBufferSize,
+                      [&](uint8_t value) { return value == previous + 1; }))
+          << "retained output " << previous << " after run " << run;
+    }
+    // Completed deferred work must not reclaim the staging backing.
+    ASSERT_OK(vmm_allocator->SynchronizePendingOperations(0));
+    if (run >= 3) {
+      EXPECT_EQ(vmm_allocator->GetRawAllocation(0, staging), staging_backing);
+    }
+  }
+  ASSERT_NE(staging_backing, nullptr);
+  allocator.reset();
+  EXPECT_EQ(vmm_allocator->GetRawAllocation(0, staging), nullptr);
+  EXPECT_EQ(vmm_allocator->FindReservationContaining(staging.opaque()),
+            nullptr);
+}
+
+TEST_F(GpuExecutableVaRemapAllocatorTest,
+       SkipProfiledOutputStagingRespectsLimitsAndAllocationKinds) {
+  struct Case {
+    int64_t size_limit;
+    int64_t memory_limit;
+    bool tuple;
+    int64_t color;
+    bool stage;
+  };
+  // A 257-byte output requires a 512-byte reservation in this test allocator.
+  const Case cases[] = {
+      {257, 512, false, 0, true},  {256, 512, false, 0, false},
+      {257, 511, false, 0, false}, {0, 512, false, 0, false},
+      {-1, 512, false, 0, false},  {257, 0, false, 0, false},
+      {257, -1, false, 0, false},  {257, 512, true, 0, false},
+      {257, 512, false, 1, false}};
+  for (const Case& test : cases) {
+    SCOPED_TRACE(::testing::Message()
+                 << "size_limit=" << test.size_limit
+                 << " memory_limit=" << test.memory_limit
+                 << " tuple=" << test.tuple << " color=" << test.color);
+    ASSERT_OK_AND_ASSIGN(auto vmm_allocator, CreateAllocator());
+    BufferAllocation output(0, 257, test.color);
+    output.set_maybe_live_out(true);
+    output.set_is_tuple(test.tuple);
+    std::vector<const BufferAllocation*> allocations = {&output};
+    ThunkExecutor thunks{ThunkSequence{}};
+    DebugOptions options = OutputStagingOptions();
+    options.set_xla_gpu_command_buffer_staging_size_limit_bytes(
+        test.size_limit);
+    options.set_xla_gpu_command_buffer_staging_memory_limit_bytes(
+        test.memory_limit);
+    GpuExecutableVaRemapAllocator allocator("staging_limits", allocations,
+                                            ShapeUtil::MakeShape(U8, {257}),
+                                            &options, &thunks);
+    allocator.AddProfileCandidateAllocationForTesting(0);
+    auto no_parameters = [](const BufferAllocation&)
+        -> absl::StatusOr<GpuExecutableBufferAllocator::ParameterBuffer> {
+      return absl::InternalError("no parameters");
+    };
+    std::vector<se::ScopedDeviceAddress<uint8_t>> retained_outputs;
+    for (int run = 0; run < 4; ++run) {
+      ASSERT_OK_AND_ASSIGN(
+          auto result,
+          RunExecution(allocator, vmm_allocator.get(), no_parameters));
+      retained_outputs.emplace_back(result.owning_address_after_execute, 0,
+                                    vmm_allocator.get());
+      if (run == 3) {
+        if (test.stage) {
+          EXPECT_THAT(result.persistent, Optional(ElementsAre(0)));
+          EXPECT_NE(result.address_during_execute.opaque(),
+                    result.owning_address_after_execute.opaque());
+        } else {
+          EXPECT_THAT(result.persistent, Optional(IsEmpty()));
+          EXPECT_EQ(result.address_during_execute.opaque(),
+                    result.owning_address_after_execute.opaque());
+        }
+      }
+    }
+  }
+}
+
+TEST_F(GpuExecutableVaRemapAllocatorTest,
+       SkipProfiledStagingBudgetDoesNotDependOnAddressObservations) {
+  for (bool first_output_is_unstable : {false, true}) {
+    SCOPED_TRACE(first_output_is_unstable);
+    ASSERT_OK_AND_ASSIGN(auto vmm_allocator, CreateAllocator());
+    BufferAllocation first(0, 256, 0);
+    BufferAllocation second(1, 512, 0);
+    first.set_maybe_live_out(true);
+    second.set_maybe_live_out(true);
+    std::vector<const BufferAllocation*> allocations = {&first, &second};
+    ThunkExecutor thunks{ThunkSequence{}};
+    DebugOptions options = OutputStagingOptions();
+    options.set_xla_gpu_command_buffer_staging_memory_limit_bytes(512);
+    GpuExecutableVaRemapAllocator allocator("staging_budget", allocations,
+                                            ShapeUtil::MakeShape(U8, {512}),
+                                            &options, &thunks);
+    allocator.AddProfileCandidateAllocationForTesting(0);
+    allocator.AddProfileCandidateAllocationForTesting(1);
+    auto no_parameters = [](const BufferAllocation&)
+        -> absl::StatusOr<GpuExecutableBufferAllocator::ParameterBuffer> {
+      return absl::InternalError("no parameters");
+    };
+    GpuExecutableBufferAllocator::BufferAllocToDeviceMemoryMap globals;
+    std::vector<se::ScopedDeviceAddress<uint8_t>> retained_outputs;
+    for (int run = 0; run < 4; ++run) {
+      ASSERT_OK_AND_ASSIGN(
+          auto scope, allocator.CreateExecutionScope(&service_run_options_,
+                                                     vmm_allocator.get(), 0));
+      ASSERT_OK_AND_ASSIGN(
+          BufferAllocations buffers,
+          scope->GenerateBufferAllocations(&service_run_options_, no_parameters,
+                                           &globals, vmm_allocator.get(), 0));
+      ASSERT_OK(scope->ExecuteWithBufferAllocations(
+          buffers, 0,
+          [&](const BufferAllocations&,
+              std::optional<absl::Span<const BufferAllocation::Index>>
+                  persistent) {
+            if (run == 3) {
+              // First fits; second exceeds the remaining budget on both ranks,
+              // even when first needs no staging on one of them.
+              EXPECT_THAT(persistent, Optional(ElementsAre(0)));
+              EXPECT_EQ(scope->IsStagedOutput(0), first_output_is_unstable);
+              EXPECT_FALSE(scope->IsStagedOutput(1));
+            }
+            return absl::OkStatus();
+          }));
+      if (first_output_is_unstable) {
+        retained_outputs.emplace_back(buffers.GetDeviceAddress(0), 0,
+                                      vmm_allocator.get());
+      } else {
+        ASSERT_OK(vmm_allocator->Deallocate(0, buffers.GetDeviceAddress(0)));
+      }
+      retained_outputs.emplace_back(buffers.GetDeviceAddress(1), 0,
+                                    vmm_allocator.get());
+    }
+  }
+}
+
+TEST_F(GpuExecutableVaRemapAllocatorTest,
+       SkipProfiledStagingPropagatesExecutionAndCopyErrors) {
+  for (bool fail_execution : {false, true}) {
+    SCOPED_TRACE(fail_execution);
+    ASSERT_OK_AND_ASSIGN(auto vmm_allocator, CreateAllocator());
+    BufferAllocation output(0, 256, 0);
+    output.set_maybe_live_out(true);
+    std::vector<const BufferAllocation*> allocations = {&output};
+    ThunkExecutor thunks{ThunkSequence{}};
+    DebugOptions options = OutputStagingOptions();
+    GpuExecutableVaRemapAllocator allocator("staging_error", allocations,
+                                            ShapeUtil::MakeShape(U8, {256}),
+                                            &options, &thunks);
+    allocator.AddProfileCandidateAllocationForTesting(0);
+    auto no_parameters = [](const BufferAllocation&)
+        -> absl::StatusOr<GpuExecutableBufferAllocator::ParameterBuffer> {
+      return absl::InternalError("no parameters");
+    };
+    std::vector<se::ScopedDeviceAddress<uint8_t>> retained_outputs;
+    for (int run = 0; run < 3; ++run) {
+      ASSERT_OK_AND_ASSIGN(
+          auto result,
+          RunExecution(allocator, vmm_allocator.get(), no_parameters));
+      retained_outputs.emplace_back(result.owning_address_after_execute, 0,
+                                    vmm_allocator.get());
+    }
+    EXPECT_CALL(stream_,
+                Memcpy(::testing::A<se::DeviceAddressBase*>(),
+                       ::testing::A<const se::DeviceAddressBase&>(), 256))
+        .Times(fail_execution ? 0 : 1)
+        .WillRepeatedly(Return(absl::InternalError("copy failed")));
+    ASSERT_OK_AND_ASSIGN(
+        auto scope, allocator.CreateExecutionScope(&service_run_options_,
+                                                   vmm_allocator.get(), 0));
+    GpuExecutableBufferAllocator::BufferAllocToDeviceMemoryMap globals;
+    ASSERT_OK_AND_ASSIGN(
+        BufferAllocations buffers,
+        scope->GenerateBufferAllocations(&service_run_options_, no_parameters,
+                                         &globals, vmm_allocator.get(), 0));
+    retained_outputs.emplace_back(buffers.GetDeviceAddress(0), 0,
+                                  vmm_allocator.get());
+    absl::Status status = scope->ExecuteWithBufferAllocations(
+        buffers, 0,
+        [&](const BufferAllocations&,
+            std::optional<absl::Span<const BufferAllocation::Index>>) {
+          return fail_execution ? absl::InternalError("execution failed")
+                                : absl::OkStatus();
+        });
+    EXPECT_EQ(status.message(),
+              fail_execution ? "execution failed" : "copy failed");
+    EXPECT_EQ(buffers.GetDeviceAddress(0).opaque(),
+              retained_outputs.back().cref().opaque());
+    ::testing::Mock::VerifyAndClearExpectations(&stream_);
+  }
 }
 
 }  // namespace

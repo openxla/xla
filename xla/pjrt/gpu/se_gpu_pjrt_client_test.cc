@@ -3646,6 +3646,80 @@ TEST_F(VmmTest, CommandBufferSkipProfiledTwoGemmChain) {
   mock_log.StopCapturingLogs();
 }
 
+TEST_F(VmmTest, CommandBufferSkipProfiledStagedOutputsRemainIndependent) {
+  static constexpr char kHlo[] = R"(
+    HloModule staged_output_test
+    ENTRY main {
+      input = s32[65536]{0} parameter(0)
+      negative = s32[65536]{0} negate(input)
+      doubled = s32[65536]{0} add(input, input)
+      ROOT result = (s32[65536]{0}, s32[65536]{0}) tuple(negative, doubled)
+    })";
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(VmmClientOptions()));
+  CompileOptions options = SkipProfiledCommandBufferOptions();
+  options.individually_defined_output_indices = {0, 1};
+  options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_command_buffer_staging_size_limit_bytes(256 * 1024 * 1024);
+  options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_command_buffer_staging_memory_limit_bytes(256 * 1024 *
+                                                              1024);
+  ASSERT_OK_AND_ASSIGN(auto executable,
+                       CompileExecutable(kHlo, *client, std::move(options)));
+  ASSERT_OK_AND_ASSIGN(
+      auto* memory_space,
+      client->addressable_devices()[0]->default_memory_space());
+
+  ScopedBufferAllocatorVLog vlog;
+  absl::ScopedMockLog mock_log(absl::MockLogDefault::kIgnoreUnexpected);
+  EXPECT_CALL(
+      mock_log,
+      Log(absl::LogSeverity::kInfo, ::testing::_,
+          ::testing::HasSubstr("staging 2 unstable output allocation(s)")))
+      .Times(1);
+  mock_log.StartCapturingLogs();
+
+  // Keep borrowed literals alive while the asynchronous transfers run.
+  std::vector<Literal> host_inputs;
+  host_inputs.reserve(8);
+  std::vector<std::unique_ptr<PjRtBuffer>> retained_inputs;
+  std::vector<std::unique_ptr<PjRtBuffer>> retained_outputs;
+  std::vector<Future<std::shared_ptr<Literal>>> host_results;
+  for (int run = 0; run < 8; ++run) {
+    host_inputs.push_back(
+        LiteralUtil::CreateR1<int32_t>(std::vector<int32_t>(65536, run + 1)));
+    ASSERT_OK_AND_ASSIGN(
+        auto input_buffer,
+        client->BufferFromHostLiteral(host_inputs.back(), memory_space));
+    ASSERT_OK_AND_ASSIGN(auto result,
+                         executable->Execute({{input_buffer.get()}}, {}));
+    ASSERT_EQ(result.size(), 1);
+    ASSERT_EQ(result[0].size(), 2);
+    retained_inputs.push_back(std::move(input_buffer));
+    for (auto& output : result[0]) {
+      // Start the host transfer immediately: its definition event must cover
+      // copy-out, even when the result has an individual readiness event.
+      host_results.push_back(output->ToLiteral());
+      retained_outputs.push_back(std::move(output));
+    }
+  }
+  for (int run = 0; run < 8; ++run) {
+    for (int output = 0; output < 2; ++output) {
+      Literal expected = LiteralUtil::CreateR1<int32_t>(
+          std::vector<int32_t>(65536, (output == 0 ? -1 : 2) * (run + 1)));
+      ASSERT_OK_AND_ASSIGN(auto transferred,
+                           host_results[2 * run + output].Await());
+      EXPECT_TRUE(LiteralTestUtil::Equal(expected, *transferred));
+      // Later executions must not overwrite results retained by the caller.
+      ASSERT_OK_AND_ASSIGN(
+          auto retained,
+          retained_outputs[2 * run + output]->ToLiteral().Await());
+      EXPECT_TRUE(LiteralTestUtil::Equal(expected, *retained));
+    }
+  }
+  mock_log.StopCapturingLogs();
+}
+
 TEST_F(VmmTest, CommandBufferSkipProfiledFallsBackWithoutVmmAllocator) {
   GpuClientOptions options;
   options.allowed_devices = {0};

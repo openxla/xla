@@ -2519,11 +2519,35 @@ static absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunGpuAsync(
     return absl::OkStatus();
   };
 
+  // A thunk finishes defining staging storage before the real output is
+  // populated. Keep those results pending until ExecuteWithBufferAllocations
+  // has enqueued copy-out; other outputs retain their early definition events.
+  std::vector<BufferAllocation::Index> staged_result_allocations;
+  for (const auto& [index, result_indices] : result_indices_by_allocation) {
+    if (allocation_scope->IsStagedOutput(index)) {
+      staged_result_allocations.push_back(index);
+    }
+  }
+  auto thunk_definition_callback =
+      [&](se::Stream* stream,
+          absl::Span<const BufferAllocation::Index> indices) -> absl::Status {
+    if (staged_result_allocations.empty()) {
+      return definition_callback(stream, indices);
+    }
+    std::vector<BufferAllocation::Index> direct_indices;
+    for (BufferAllocation::Index index : indices) {
+      if (!allocation_scope->IsStagedOutput(index)) {
+        direct_indices.push_back(index);
+      }
+    }
+    return definition_callback(stream, direct_indices);
+  };
+
   std::optional<gpu::ThunkExecutor::ScopedDefinitionTracker> definition_tracker;
   if (!result_indices_by_allocation.empty()) {
     ABSL_ASSIGN_OR_RETURN(definition_tracker, gpu::InstallDefinitionTracker(
                                                   gpu_exec->definition_plan(),
-                                                  definition_callback));
+                                                  thunk_definition_callback));
   }
 
   absl::Status execute_status = allocation_scope->ExecuteWithBufferAllocations(
@@ -2534,6 +2558,10 @@ static absl::StatusOr<PjRtStreamExecutorExecutionOutput> RunGpuAsync(
         return gpu_exec->ExecuteThunks(execution_buffers, run_options,
                                        persistent_alloc_indices);
       });
+  if (execute_status.ok() && !staged_result_allocations.empty()) {
+    execute_status =
+        definition_callback(run_options->stream(), staged_result_allocations);
+  }
   absl::Status teardown_status = buffer_allocations.TearDown(
       buffers_in_result, gpu_exec->GetAllocations());
 

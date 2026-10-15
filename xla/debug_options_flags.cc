@@ -627,6 +627,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_pdl(true);
   opts.set_xla_gpu_enable_pdl_launch(true);
   opts.set_xla_gpu_command_buffer_update_mode(DebugOptions::ALWAYS_UPDATE);
+  opts.set_xla_gpu_command_buffer_staging_size_limit_bytes(256 * 1024 * 1024);
+  opts.set_xla_gpu_command_buffer_staging_memory_limit_bytes(256 * 1024 * 1024);
 
   opts.set_xla_gpu_deviceless_cub_mode(
       DebugOptions::DEVICELESS_CUB_WITH_FALLBACK);
@@ -3991,6 +3993,22 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Controls the VA remapping allocation strategy for command buffer "
       "thunks. "
       "See CommandBufferUpdateMode for details."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_command_buffer_staging_size_limit_bytes",
+      int64_setter_for(
+          &DebugOptions::set_xla_gpu_command_buffer_staging_size_limit_bytes),
+      debug_options->xla_gpu_command_buffer_staging_size_limit_bytes(),
+      "Maximum logical size in bytes of an unstable non-parameter output "
+      "allocation to stage in SKIP_PROFILED mode. Default: 256 MiB. "
+      "Non-positive values disable output staging."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_command_buffer_staging_memory_limit_bytes",
+      int64_setter_for(
+          &DebugOptions::set_xla_gpu_command_buffer_staging_memory_limit_bytes),
+      debug_options->xla_gpu_command_buffer_staging_memory_limit_bytes(),
+      "Maximum staging reservation bytes per executable/device, including "
+      "VMM rounding. Candidates are budgeted independently of address "
+      "observations. Default: 256 MiB. Non-positive values disable staging."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_cost_model_gemm_tiling_options",
       setter_for_xla_gpu_experimental_cost_model_gemm_tiling_options, "",

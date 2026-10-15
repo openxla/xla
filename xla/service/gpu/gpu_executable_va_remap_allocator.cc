@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/layout.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
@@ -105,6 +106,10 @@ class GpuExecutableVaRemapAllocator::VaRemapExecutionScope
 
   bool va_remap_enabled() const override { return true; }
 
+  bool IsStagedOutput(BufferAllocation::Index index) const override {
+    return remapping_->staged_output_alloc_indices.contains(index);
+  }
+
   // In the SKIP_PROFILED profiling phase this observes allocation addresses
   // and passes std::nullopt as the persistent allocation indices. Otherwise it
   // builds an execution-only address table, maps selected input/output buffers
@@ -158,6 +163,9 @@ class GpuExecutableVaRemapAllocator::VaRemapExecutionScope
   // an execution-only address table that refers to them. The owning address
   // table remains unchanged.
   absl::StatusOr<BufferAllocations> GetRemappedBufferAllocations(
+      const BufferAllocations& owning_buffer_allocations, int device_ordinal);
+
+  absl::Status CopyStagedOutputs(
       const BufferAllocations& owning_buffer_allocations, int device_ordinal);
 
   const GpuExecutableVaRemapAllocator* owner_ = nullptr;
@@ -215,34 +223,48 @@ absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::Prepare(
         "previous=%u current=%u",
         owner_->module_name(), remapping_->granularity, granularity);
   }
-  if (remapping_->va_reservation != nullptr) {
-    return absl::OkStatus();
-  }
-
   // First execution on this executor creates the persistent reservation. Later
   // executions reuse the same reservation and deterministic layout.
-  remapping_->granularity = granularity;
-  remapping_->total_size = 0;
-  remapping_->allocation_to_reservation_offset.clear();
-  remapping_->allocation_to_mapping_size.clear();
-  for (BufferAllocation::Index idx : active_remap_set()) {
-    const BufferAllocation& allocation = *owner_->allocations()[idx];
-    uint64_t buffer_size = allocation.size();
-    uint64_t mapping_size =
-        RoundUpToGranularity(buffer_size, remapping_->granularity);
-    remapping_->allocation_to_reservation_offset[idx] = remapping_->total_size;
-    remapping_->allocation_to_mapping_size[idx] = mapping_size;
-    remapping_->total_size = remapping_->total_size + mapping_size;
+  if (remapping_->va_reservation == nullptr) {
+    remapping_->granularity = granularity;
+    remapping_->total_size = 0;
+    remapping_->allocation_to_reservation_offset.clear();
+    remapping_->allocation_to_mapping_size.clear();
+    for (BufferAllocation::Index idx : active_remap_set()) {
+      const BufferAllocation& allocation = *owner_->allocations()[idx];
+      uint64_t buffer_size = allocation.size();
+      uint64_t mapping_size =
+          RoundUpToGranularity(buffer_size, remapping_->granularity);
+      remapping_->allocation_to_reservation_offset[idx] =
+          remapping_->total_size;
+      remapping_->allocation_to_mapping_size[idx] = mapping_size;
+      remapping_->total_size = remapping_->total_size + mapping_size;
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        remapping_->va_reservation,
+        vmm_allocator_->CreateReservation(run_options->stream()->parent(),
+                                          remapping_->total_size));
+    XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
+        "VA remapping: reserved range for module %s VA=%p total_size=%u "
+        "granularity=%u",
+        owner_->module_name(), remapping_->va_reservation->address().opaque(),
+        remapping_->total_size, remapping_->granularity);
   }
-  ABSL_ASSIGN_OR_RETURN(
-      remapping_->va_reservation,
-      vmm_allocator_->CreateReservation(run_options->stream()->parent(),
-                                        remapping_->total_size));
-  XLA_VLOG_DEVICE(3, device_ordinal) << absl::StreamFormat(
-      "VA remapping: reserved range for module %s VA=%p total_size=%u "
-      "granularity=%u",
-      owner_->module_name(), remapping_->va_reservation->address().opaque(),
-      remapping_->total_size, remapping_->granularity);
+
+  // Keep both the VA and physical backing alive across executions. In
+  // particular, NCCL graph registrations must not outlive this backing.
+  // Retry only missing allocations if a previous Prepare failed partway.
+  for (BufferAllocation::Index index :
+       remapping_->staged_output_alloc_indices) {
+    if (remapping_->staging_buffers.contains(index)) {
+      continue;
+    }
+    const BufferAllocation& allocation = *owner_->allocations()[index];
+    ABSL_ASSIGN_OR_RETURN(
+        se::ScopedDeviceAddress<uint8_t> buffer,
+        AllocateBuffer(device_ordinal, allocation, allocation.size()));
+    remapping_->staging_buffers.emplace(index, std::move(buffer));
+  }
   return absl::OkStatus();
 }
 
@@ -331,6 +353,13 @@ absl::StatusOr<BufferAllocations> GpuExecutableVaRemapAllocator::
           "but its buffer is null for this execution",
           allocation.index());
     }
+    if (IsStagedOutput(index)) {
+      execution_allocations.GetMutableDeviceAddress(index) =
+          se::DeviceAddressBase(
+              remapping_->staging_buffers.at(index).cref().opaque(),
+              allocation.size());
+      continue;
+    }
     ABSL_ASSIGN_OR_RETURN(uint64_t va_offset,
                           remapping_->GetReservationOffset(allocation.index()));
     ABSL_ASSIGN_OR_RETURN(uint64_t mapping_size,
@@ -346,6 +375,26 @@ absl::StatusOr<BufferAllocations> GpuExecutableVaRemapAllocator::
         ReservationSlice(va_offset, mapping_size);
   }
   return execution_allocations;
+}
+
+absl::Status
+GpuExecutableVaRemapAllocator::VaRemapExecutionScope::CopyStagedOutputs(
+    const BufferAllocations& owning_buffer_allocations, int device_ordinal) {
+  if (remapping_->staged_output_alloc_indices.empty()) {
+    return absl::OkStatus();
+  }
+  ABSL_ASSIGN_OR_RETURN(se::Stream * stream,
+                        vmm_allocator_->GetStream(device_ordinal));
+  for (BufferAllocation::Index index :
+       remapping_->staged_output_alloc_indices) {
+    se::DeviceAddressBase destination =
+        owning_buffer_allocations.GetDeviceAddress(index);
+    // Copy logical bytes only: the owning output may not include VMM padding.
+    ABSL_RETURN_IF_ERROR(stream->MemcpyD2D(
+        &destination, remapping_->staging_buffers.at(index).cref(),
+        owner_->allocations()[index]->size()));
+  }
+  return absl::OkStatus();
 }
 
 absl::StatusOr<se::ScopedDeviceAddress<uint8_t>>
@@ -433,6 +482,10 @@ absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::
           : absl::MakeConstSpan(owner_->persistent_alloc_indices());
   absl::Status execute_status =
       execute(*execution_allocations, persistent_alloc_indices);
+  if (execute_status.ok()) {
+    execute_status =
+        CopyStagedOutputs(owning_buffer_allocations, device_ordinal);
+  }
   // Release per-execution aliases even when execution failed. The owning
   // address table was never modified, so result handling and TearDown continue
   // to see caller- or allocator-owned addresses.
@@ -513,8 +566,34 @@ void GpuExecutableVaRemapAllocator::AddProfileCandidateAllocationForTesting(
 
 void GpuExecutableVaRemapAllocator::TransitionProfiledRemapping(
     Remapping* remapping, se::DeviceAddressVmmAllocator* vmm_allocator,
-    int device_ordinal) {
+    int device_ordinal, uint64_t granularity) {
   AllocationIndexSet profiled_selected;
+  AllocationIndexSet staging_candidates;
+  const int64_t size_limit =
+      debug_options()->xla_gpu_command_buffer_staging_size_limit_bytes();
+  const int64_t memory_limit =
+      debug_options()->xla_gpu_command_buffer_staging_memory_limit_bytes();
+  uint64_t reserved_staging_bytes = 0;
+  // Budget in allocation-index order, independently of local address
+  // observations. A candidate that is stable on one rank and unstable on
+  // another will be persistent on both (via remapping or staging).
+  for (BufferAllocation::Index idx : profile_candidate_alloc_indices_) {
+    const BufferAllocation& allocation = *allocations()[idx];
+    if (size_limit <= 0 || memory_limit <= 0 || !allocation.maybe_live_out() ||
+        allocation.is_entry_computation_parameter() || allocation.is_tuple() ||
+        allocation.is_constant() || allocation.is_thread_local() ||
+        allocation.color() != Layout::kDefaultMemorySpace ||
+        allocation.size() <= 0 || allocation.size() > size_limit) {
+      continue;
+    }
+    const uint64_t mapping_size =
+        RoundUpToGranularity(allocation.size(), granularity);
+    if (mapping_size <=
+        static_cast<uint64_t>(memory_limit) - reserved_staging_bytes) {
+      staging_candidates.insert(idx);
+      reserved_staging_bytes += mapping_size;
+    }
+  }
   // Parameter buffers are owned by the caller and can only be remapped by
   // aliasing them with Map(), which requires the exact address to be an
   // active allocator address of `vmm_allocator` and allows at most one alias
@@ -523,11 +602,15 @@ void GpuExecutableVaRemapAllocator::TransitionProfiledRemapping(
   absl::flat_hash_map<const void*, int64_t> parameter_address_count;
 
   for (BufferAllocation::Index idx : profile_candidate_alloc_indices_) {
-    if (remapping->unstable_alloc_indices.contains(idx)) {
-      continue;
-    }
     auto it = remapping->last_observed_address.find(idx);
     if (it == remapping->last_observed_address.end() || it->second.is_null()) {
+      continue;
+    }
+    if (remapping->unstable_alloc_indices.contains(idx)) {
+      if (staging_candidates.contains(idx)) {
+        remapping->staged_output_alloc_indices.insert(idx);
+        profiled_selected.insert(idx);
+      }
       continue;
     }
     const BufferAllocation& allocation = *allocations()[idx];
@@ -593,10 +676,10 @@ void GpuExecutableVaRemapAllocator::TransitionProfiledRemapping(
       "VA remapping: module %s profile selected a remapping set with %d "
       "automatically included preallocated temp allocation(s) and %d of %d "
       "profiled command buffer allocation(s) after %d profiling "
-      "execution(s)",
+      "execution(s); staging %d unstable output allocation(s)",
       module_name(), va_remapped_alloc_indices_.size(),
       profiled_selected.size(), profile_candidate_alloc_indices_.size(),
-      remapping->profiled_steps);
+      remapping->profiled_steps, remapping->staged_output_alloc_indices.size());
 }
 
 GpuExecutableVaRemapAllocator::~GpuExecutableVaRemapAllocator() {
@@ -606,6 +689,9 @@ GpuExecutableVaRemapAllocator::~GpuExecutableVaRemapAllocator() {
     if (remapping.vmm_allocator == nullptr) {
       continue;
     }
+    // Deallocate staging on the allocator/execution stream, then drain it
+    // before destroying the caller-owned VA reservation.
+    remapping.staging_buffers.clear();
     absl::Status status = remapping.vmm_allocator->SynchronizePendingOperations(
         executor->device_ordinal());
     if (!status.ok()) {
@@ -674,7 +760,9 @@ GpuExecutableVaRemapAllocator::CreateExecutionScope(
     }
     if (remapping->phase == Remapping::ProfilePhase::kProfiling &&
         remapping->profiled_steps >= kProfileStepsLimit) {
-      TransitionProfiledRemapping(remapping, vmm_allocator, device_ordinal);
+      TransitionProfiledRemapping(
+          remapping, vmm_allocator, device_ordinal,
+          vmm_allocator->GetAllocationGranularity(executor));
     }
     if (remapping->phase == Remapping::ProfilePhase::kDisabled) {
       // Nothing to remap for this executor; behave like a scope without

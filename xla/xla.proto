@@ -477,6 +477,9 @@ message DebugOptions {
   //     execution. Temp buffers are allocated through the reservation;
   //     finalized input and output addresses are aliased into it immediately
   //     before execution.
+  //     Small unstable non-parameter output data buffers can instead use
+  //     persistent staging storage and a final copy to their owning addresses,
+  //     controlled by the command_buffer_staging_*_bytes limits below.
   //     Remapping enforces address stability, so a mispredicted profile costs
   //     an extra VMM remap instead of correctness. Requires the VMM allocator
   //     and assumes symmetric behavior across ranks.
@@ -726,6 +729,19 @@ message DebugOptions {
   // Controls the VA remapping allocation strategy for command buffer thunks.
   // See CommandBufferUpdateMode for details.
   optional CommandBufferUpdateMode xla_gpu_command_buffer_update_mode = 469;
+
+  // Maximum logical size of an unstable non-parameter output data allocation
+  // to stage at a persistent address in SKIP_PROFILED mode. Defaults to 256 MiB
+  // (268435456 bytes). Non-positive values disable output staging. Parameters,
+  // tuple tables, and non-default memory spaces are not staged.
+  optional int64 xla_gpu_command_buffer_staging_size_limit_bytes = 558;
+
+  // Maximum staging reservation size per executable/device, after VMM
+  // granularity rounding. Defaults to 256 MiB (268435456 bytes). Candidates are
+  // budgeted in allocation-index order independently of profile observations;
+  // only unstable candidates consume physical staging memory. Non-positive
+  // values disable output staging. This is not a process-wide memory budget.
+  optional int64 xla_gpu_command_buffer_staging_memory_limit_bytes = 559;
 
   optional bool xla_gpu_copy_insertion_use_region_analysis = 236;
 
@@ -1952,7 +1968,7 @@ message DebugOptions {
   // Requires sm_90+ and CUDA 13.3+ (tileiras) at runtime. Off by default.
   optional bool xla_gpu_experimental_enable_tensor_ir = 557;
 
-  // Next id: 558
+  // Next id: 560
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

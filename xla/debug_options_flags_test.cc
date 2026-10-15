@@ -96,6 +96,30 @@ TEST(DebugOptions, SchedulerMemoryFencingDefaultsToDisabled) {
       -1);
 }
 
+TEST(DebugOptions, CommandBufferOutputStagingLimitsDefaultTo256MiB) {
+  DebugOptions options = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_EQ(options.xla_gpu_command_buffer_staging_size_limit_bytes(),
+            256 * 1024 * 1024);
+  EXPECT_EQ(options.xla_gpu_command_buffer_staging_memory_limit_bytes(),
+            256 * 1024 * 1024);
+}
+
+TEST(DebugOptions, CommandBufferOutputStagingLimitsParseFromFlags) {
+  int* pargc;
+  std::vector<char*>* pargv;
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+  tsl::setenv("XLA_FLAGS",
+              "--xla_gpu_command_buffer_staging_size_limit_bytes=1024 "
+              "--xla_gpu_command_buffer_staging_memory_limit_bytes=4096",
+              1);
+  DebugOptions proto_options;
+  DebugOptions options = GetDebugOptionsFromProtoAndFlags(&proto_options);
+  EXPECT_EQ(options.xla_gpu_command_buffer_staging_size_limit_bytes(), 1024);
+  EXPECT_EQ(options.xla_gpu_command_buffer_staging_memory_limit_bytes(), 4096);
+  tsl::unsetenv("XLA_FLAGS");
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+}
+
 TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
   for (const auto& [name, expected] : std::vector<
            std::pair<const char*, DebugOptions::CommandBufferUpdateMode>>{
