@@ -111,6 +111,8 @@ class NVPTXCompiler : public GpuCompiler {
       se::StreamExecutor* absl_nullable stream_exec) override;
 
  private:
+  friend class NVPTXCompilerTestPeer;
+
   absl::StatusOr<std::vector<uint8_t>> LinkModules(
       const stream_executor::DeviceDescription& device_description,
       std::vector<std::vector<uint8_t>> modules,
