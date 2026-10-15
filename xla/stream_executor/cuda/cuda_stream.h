@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/cuda/cuda_executor.h"
@@ -70,6 +71,8 @@ class CudaStream : public StreamCommon {
                       uint64_t size) override;
   absl::Status Memcpy(DeviceAddressBase* gpu_dst,
                       const DeviceAddressBase& gpu_src, uint64_t size) override;
+  absl::Status MemcpyD2DBatch(
+      absl::Span<const MemcpyD2DOperation> copies) override;
   absl::Status DoHostCallbackWithStatus(
       absl::AnyInvocable<absl::Status() &&> callback) override;
   absl::Status DoHostCallbackWithStatus(

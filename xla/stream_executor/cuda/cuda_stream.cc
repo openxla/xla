@@ -18,6 +18,7 @@ limitations under the License.
 #include <stdalign.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -38,10 +39,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "tsl/profiler/lib/nvtx_utils.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
 #include "xla/stream_executor/cuda/cuda_device_allocator.h"
@@ -57,6 +56,9 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_common.h"
 #include "xla/tsl/util/env_var.h"  // IWYU pragma: keep
+#include "tsl/profiler/lib/nvtx_utils.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
@@ -457,6 +459,61 @@ absl::Status CudaStream::Memcpy(DeviceAddressBase* gpu_dst,
   return AsynchronousMemcpyD2D(
       executor_, absl::bit_cast<CUdeviceptr>(gpu_dst->opaque()),
       absl::bit_cast<CUdeviceptr>(gpu_src.opaque()), size, stream_handle_);
+}
+
+absl::Status CudaStream::MemcpyD2DBatch(
+    absl::Span<const MemcpyD2DOperation> copies) {
+  if (copies.empty()) return absl::OkStatus();
+#if CUDA_VERSION >= 13000
+  // CUDA 13 changed the batch-copy ABI. Resolve that exact version and retain
+  // the individual-copy path on older drivers, even with newer build headers.
+  using MemcpyBatchAsync = decltype(&cuMemcpyBatchAsync);
+  static const MemcpyBatchAsync memcpy_batch = []() -> MemcpyBatchAsync {
+    void* function = nullptr;
+    CUdriverProcAddressQueryResult query_result;
+    CUresult result =
+        cuGetProcAddress("cuMemcpyBatchAsync", &function, 13000,
+                         CU_GET_PROC_ADDRESS_DEFAULT, &query_result);
+    if (result != CUDA_SUCCESS || query_result != CU_GET_PROC_ADDRESS_SUCCESS) {
+      return nullptr;
+    }
+    return reinterpret_cast<MemcpyBatchAsync>(function);
+  }();
+  if (memcpy_batch != nullptr && copies.size() > 1) {
+    std::unique_ptr<ActivateContext> activation = executor_->Activate();
+    ABSL_ASSIGN_OR_RETURN(bool is_capturing, StreamIsCapturing(stream_handle_));
+    // The batch API has no graph-node representation. Capture the individual
+    // copies instead when this method is called on a capture stream.
+    if (!is_capturing && stream_handle_ != nullptr &&
+        stream_handle_ != CU_STREAM_LEGACY) {
+      absl::InlinedVector<CUdeviceptr, 8> destinations;
+      absl::InlinedVector<CUdeviceptr, 8> sources;
+      absl::InlinedVector<size_t, 8> sizes;
+      destinations.reserve(copies.size());
+      sources.reserve(copies.size());
+      sizes.reserve(copies.size());
+      for (const MemcpyD2DOperation& copy : copies) {
+        if (copy.size == 0) continue;
+        destinations.push_back(
+            absl::bit_cast<CUdeviceptr>(copy.destination.opaque()));
+        sources.push_back(absl::bit_cast<CUdeviceptr>(copy.source.opaque()));
+        sizes.push_back(copy.size);
+      }
+      if (sizes.empty()) return absl::OkStatus();
+      CUmemcpyAttributes attributes = {};
+      // Graph execution produces the staging buffers earlier on this stream.
+      attributes.srcAccessOrder = CU_MEMCPY_SRC_ACCESS_ORDER_STREAM;
+      size_t attributes_index = 0;
+      // Do not retry after submission: a failure may follow partial enqueueing.
+      return cuda::ToStatus(
+          memcpy_batch(destinations.data(), sources.data(), sizes.data(),
+                       sizes.size(), &attributes, &attributes_index, 1,
+                       stream_handle_),
+          "Failed to enqueue batched device-to-device copies");
+    }
+  }
+#endif
+  return Stream::MemcpyD2DBatch(copies);
 }
 
 absl::Status CudaStream::Memcpy(DeviceAddressBase* gpu_dst,

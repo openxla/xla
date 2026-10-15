@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/memory_reservation.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
 
@@ -133,6 +134,9 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
                         se::ScopedDeviceAddress<uint8_t>>
         staging_buffers;
     AllocationIndexSet staged_output_alloc_indices;
+    // Source addresses and logical sizes are persistent; destinations are
+    // refreshed from the owning address table for each execution.
+    std::vector<se::Stream::MemcpyD2DOperation> staged_output_copies;
 
     ProfilePhase phase = ProfilePhase::kInactive;
     // Number of completed profiling observations.

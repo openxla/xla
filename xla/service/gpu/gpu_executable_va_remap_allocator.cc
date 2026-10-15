@@ -265,6 +265,17 @@ absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::Prepare(
         AllocateBuffer(device_ordinal, allocation, allocation.size()));
     remapping_->staging_buffers.emplace(index, std::move(buffer));
   }
+  if (remapping_->staged_output_copies.empty()) {
+    remapping_->staged_output_copies.reserve(
+        remapping_->staged_output_alloc_indices.size());
+    for (BufferAllocation::Index index :
+         remapping_->staged_output_alloc_indices) {
+      remapping_->staged_output_copies.push_back(
+          {se::DeviceAddressBase(),
+           remapping_->staging_buffers.at(index).cref(),
+           static_cast<uint64_t>(owner_->allocations()[index]->size())});
+    }
+  }
   return absl::OkStatus();
 }
 
@@ -385,16 +396,15 @@ GpuExecutableVaRemapAllocator::VaRemapExecutionScope::CopyStagedOutputs(
   }
   ABSL_ASSIGN_OR_RETURN(se::Stream * stream,
                         vmm_allocator_->GetStream(device_ordinal));
+  auto copy = remapping_->staged_output_copies.begin();
   for (BufferAllocation::Index index :
        remapping_->staged_output_alloc_indices) {
-    se::DeviceAddressBase destination =
-        owning_buffer_allocations.GetDeviceAddress(index);
-    // Copy logical bytes only: the owning output may not include VMM padding.
-    ABSL_RETURN_IF_ERROR(stream->MemcpyD2D(
-        &destination, remapping_->staging_buffers.at(index).cref(),
-        owner_->allocations()[index]->size()));
+    copy->destination = owning_buffer_allocations.GetDeviceAddress(index);
+    ++copy;
   }
-  return absl::OkStatus();
+  // Each non-aliased output has independent owning and staging storage. Copy
+  // logical bytes only: the owning output may not include VMM padding.
+  return stream->MemcpyD2DBatch(remapping_->staged_output_copies);
 }
 
 absl::StatusOr<se::ScopedDeviceAddress<uint8_t>>

@@ -196,6 +196,22 @@ class Stream {
     return Memcpy(gpu_dst, gpu_src, size);
   }
 
+  struct MemcpyD2DOperation {
+    DeviceAddressBase destination;
+    DeviceAddressBase source;
+    uint64_t size;
+  };
+
+  // Enqueues independent device-to-device copies in stream order. The copies
+  // within a batch may execute in any order: destination ranges must not
+  // overlap each other or any source range. Both operands must belong to this
+  // executor. Zero-byte operations are ignored. The descriptors may be released
+  // when this method returns; the device buffers must remain alive until
+  // execution ends. Backends without batch support fall back to individual
+  // copies.
+  virtual absl::Status MemcpyD2DBatch(
+      absl::Span<const MemcpyD2DOperation> copies);
+
   // Entrain onto the stream: a memset of zero at a device location of size
   // bytes. The location must not be null.
   virtual absl::Status MemZero(DeviceAddressBase* location, uint64_t size) {

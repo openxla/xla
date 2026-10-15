@@ -24,9 +24,23 @@ limitations under the License.
 #include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
 #include "absl/functional/function_ref.h"
+#include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
+#include "xla/stream_executor/device_address.h"
 
 namespace stream_executor {
+
+absl::Status Stream::MemcpyD2DBatch(
+    absl::Span<const MemcpyD2DOperation> copies) {
+  for (const MemcpyD2DOperation& copy : copies) {
+    if (copy.size == 0) continue;
+    DeviceAddressBase destination = copy.destination;
+    ABSL_RETURN_IF_ERROR(MemcpyD2D(&destination, copy.source, copy.size));
+  }
+  return absl::OkStatus();
+}
 
 Stream::ResourceTypeId Stream::GetNextResourceTypeId() {
   static absl::NoDestructor<std::atomic<int64_t>> counter(1);

@@ -15,18 +15,18 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_stream.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
@@ -187,6 +188,92 @@ TEST_F(CudaStreamTest, MemcpyDeviceToDevice) {
 
   EXPECT_THAT(stream->BlockHostUntilDone(), IsOk());
   EXPECT_THAT(host_buffer, Each(0xDEADBEEF));
+}
+
+TEST_F(CudaStreamTest, MemcpyD2DBatchPreservesSizesAndStreamOrder) {
+  ASSERT_OK_AND_ASSIGN(auto stream,
+                       CudaStream::Create(executor_, std::nullopt));
+  auto source = executor_->AllocateArray<uint8_t>(4096, 0);
+  auto destination = executor_->AllocateArray<uint8_t>(4096, 0);
+  absl::Cleanup free_buffers = [&] {
+    executor_->Deallocate(&source);
+    executor_->Deallocate(&destination);
+  };
+  const std::array<Stream::MemcpyD2DOperation, 4> copies = {{
+      {destination.GetByteSlice(0, 4), source.GetByteSlice(0, 4), 4},
+      {destination.GetByteSlice(16, 12), source.GetByteSlice(16, 12), 12},
+      {destination.GetByteSlice(64, 1001), source.GetByteSlice(64, 1001), 1001},
+      {DeviceAddressBase(), DeviceAddressBase(), 0},
+  }};
+  for (bool use_fallback : {false, true}) {
+    SCOPED_TRACE(use_fallback);
+    // Do not synchronize before copying: the batch must observe the preceding
+    // writes, including on the native CUDA path.
+    ASSERT_OK(stream->Memset32(&source, 0x01010101, source.size()));
+    ASSERT_OK(stream->Memset32(&destination, 0xEEEEEEEE, destination.size()));
+    if (use_fallback) {
+      ASSERT_OK(stream->Stream::MemcpyD2DBatch(copies));
+    } else {
+      ASSERT_OK(stream->MemcpyD2DBatch(copies));
+    }
+    std::array<uint8_t, 4096> actual;
+    ASSERT_OK(stream->MemcpyD2H(destination, absl::MakeSpan(actual)));
+    ASSERT_OK(stream->BlockHostUntilDone());
+    for (size_t i = 0; i < actual.size(); ++i) {
+      bool copied = i < 4 || (i >= 16 && i < 28) || (i >= 64 && i < 1065);
+      EXPECT_EQ(actual[i], copied ? 0x01 : 0xEE) << "byte " << i;
+    }
+  }
+}
+
+TEST_F(CudaStreamTest, MemcpyD2DBatchEmptyAndZeroSize) {
+  ASSERT_OK_AND_ASSIGN(auto stream,
+                       CudaStream::Create(executor_, std::nullopt));
+  ASSERT_OK(stream->MemcpyD2DBatch({}));
+  const std::array<Stream::MemcpyD2DOperation, 2> copies = {{
+      {DeviceAddressBase(), DeviceAddressBase(), 0},
+      {DeviceAddressBase(), DeviceAddressBase(), 0},
+  }};
+  ASSERT_OK(stream->MemcpyD2DBatch(copies));
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
+TEST_F(CudaStreamTest, MemcpyD2DBatchFallsBackDuringCapture) {
+  ASSERT_OK_AND_ASSIGN(auto stream,
+                       CudaStream::Create(executor_, std::nullopt));
+  auto source = executor_->AllocateArray<uint32_t>(8, 0);
+  auto destination = executor_->AllocateArray<uint32_t>(8, 0);
+  absl::Cleanup free_buffers = [&] {
+    executor_->Deallocate(&source);
+    executor_->Deallocate(&destination);
+  };
+  ASSERT_OK(stream->Memset32(&source, 42, source.size()));
+  ASSERT_OK(stream->MemZero(&destination, destination.size()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  const std::array<Stream::MemcpyD2DOperation, 2> copies = {{
+      {destination.GetByteSlice(0, 16), source.GetByteSlice(0, 16), 16},
+      {destination.GetByteSlice(16, 16), source.GetByteSlice(16, 16), 16},
+  }};
+  auto context = executor_->Activate();
+  ASSERT_OK(cuda::ToStatus(cuStreamBeginCapture(
+      stream->stream_handle(), CU_STREAM_CAPTURE_MODE_THREAD_LOCAL)));
+  EXPECT_THAT(stream->MemcpyD2DBatch(copies), IsOk());
+  CUgraph graph = nullptr;
+  ASSERT_OK(
+      cuda::ToStatus(cuStreamEndCapture(stream->stream_handle(), &graph)));
+  absl::Cleanup free_graph = [&] {
+    EXPECT_EQ(cuGraphDestroy(graph), CUDA_SUCCESS);
+  };
+  CUgraphExec executable = nullptr;
+  ASSERT_OK(cuda::ToStatus(cuGraphInstantiateWithFlags(&executable, graph, 0)));
+  absl::Cleanup free_executable = [&] {
+    EXPECT_EQ(cuGraphExecDestroy(executable), CUDA_SUCCESS);
+  };
+  ASSERT_OK(cuda::ToStatus(cuGraphLaunch(executable, stream->stream_handle())));
+  std::array<uint32_t, 8> actual;
+  ASSERT_OK(stream->MemcpyD2H(destination, absl::MakeSpan(actual)));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_THAT(actual, Each(42));
 }
 
 TEST_F(CudaStreamTest, DoHostCallback) {
