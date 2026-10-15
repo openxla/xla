@@ -717,7 +717,6 @@ cc_library(
         ":buffer_allocations",
         ":gpu_constants",
         ":gpu_memory_space_assignment",
-        "//xla:layout",
         "//xla:shape_util",
         "//xla:util",
         "//xla:xla_proto_cc",
