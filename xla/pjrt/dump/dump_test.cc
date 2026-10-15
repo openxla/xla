@@ -118,6 +118,24 @@ TEST(DumpTest, GetDumpSubdirPath) {
   EXPECT_THAT(tsl::Env::Default()->IsDirectory(dump_subdir), IsOk());
 }
 
+TEST(DumpTest, GetDumpSubdirPathSanitizesModuleName) {
+  const std::string temp_dir = tsl::testing::TmpDir();
+  ASSERT_OK_AND_ASSIGN(
+      std::string dump_subdir,
+      pjrt::GetDumpSubdirPath(temp_dir, "/../../../../../tmp/evil", 0));
+  EXPECT_EQ(tsl::io::Dirname(dump_subdir), temp_dir);
+  EXPECT_THAT(dump_subdir, HasSubstr("_.._.._.._.._.._tmp_evil"));
+  EXPECT_THAT(tsl::Env::Default()->IsDirectory(dump_subdir), IsOk());
+
+  for (absl::string_view traversal_name :
+       {"../../etc/passwd", "..\\..\\evil", "..", "[evil module]/../target"}) {
+    ASSERT_OK_AND_ASSIGN(std::string subdir,
+                         pjrt::GetDumpSubdirPath(temp_dir, traversal_name, 1));
+    EXPECT_EQ(tsl::io::Dirname(subdir), temp_dir);
+    EXPECT_THAT(tsl::Env::Default()->IsDirectory(subdir), IsOk());
+  }
+}
+
 TEST(DumpTest, GetDumpSubdirPathEmptyPath) {
   TF_ASSERT_OK_AND_ASSIGN(std::string dump_subdir,
                           pjrt::GetDumpSubdirPath("", "my_module", 0));
