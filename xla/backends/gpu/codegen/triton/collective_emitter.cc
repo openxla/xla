@@ -250,7 +250,7 @@ absl::StatusOr<AllReduceEmitterContext> CreateAllReduceEmitterContext(
 // happens when the collective fusion is formed) and creates the
 // ReduceScatterEmitterContext.
 absl::StatusOr<ReduceScatterEmitterContext> CreateReduceScatterEmitterContext(
-    mlir::stablehlo::ReduceScatterOp op) {
+    xtile::ReduceScatterOp op) {
   ABSL_ASSIGN_OR_RETURN(
       ReduceScatterEmitterContext ctx,
       CreateReductionEmitterContext<ReduceScatterEmitterContext>(
@@ -297,7 +297,7 @@ absl::StatusOr<ReduceScatterEmitterContext> CreateReduceScatterEmitterContext(
   ctx.shard_size = shard_size;
   ctx.signal_stride = signal_stride;
   const llvm::ArrayRef<int64_t> output_tile_shape =
-      mlir::cast<mlir::RankedTensorType>(op.getType()).getShape();
+      mlir::cast<mlir::RankedTensorType>(op.getType(0)).getShape();
   ctx.output_tile_shape.assign(output_tile_shape.begin(),
                                output_tile_shape.end());
   return ctx;
@@ -1502,7 +1502,7 @@ mlir::LogicalResult RewriteAllReduce(mlir::stablehlo::AllReduceOp op,
   return AllReduceEmitter::Emit(*std::move(maybe_context), rewriter);
 }
 
-mlir::LogicalResult RewriteReduceScatter(mlir::stablehlo::ReduceScatterOp op,
+mlir::LogicalResult RewriteReduceScatter(xtile::ReduceScatterOp op,
                                          mlir::PatternRewriter& rewriter) {
   const mlir::Location loc = op->getLoc();
   absl::StatusOr<ReduceScatterEmitterContext> maybe_context =
