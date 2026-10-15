@@ -388,24 +388,25 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
     -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
   max_algorithm_count = std::min(max_algorithm_count, size_t{INT_MAX});
   std::vector<hipblasLtMatmulHeuristicResult_t> results(max_algorithm_count);
+
+  hipblasLtMatmulPreference_t hip_preference;
+  SE_HIPBLAS_RETURN_IF_ERROR(hipblasLtMatmulPreferenceCreate(&hip_preference));
+
+  // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
+  Owned<hipblasLtMatmulPreference_t> preference(
+      hip_preference, hipblasLtMatmulPreferenceDestroy);
+
+  ABSL_RETURN_IF_ERROR(SetAttr<uint64_t>(
+      hip_preference, HIPBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+      max_workspace_size));
+
+  std::unique_ptr<ActivateContext> activation = blas_lt_.executor_->Activate();
+
+  hipblasLtHandle_t handle;
   {
     absl::MutexLock lock(blas_lt_.mu_);
     TF_RET_CHECK(blas_lt_.handle_ != nullptr);
-
-    hipblasLtMatmulPreference_t hip_preference;
-    SE_HIPBLAS_RETURN_IF_ERROR(
-        hipblasLtMatmulPreferenceCreate(&hip_preference));
-
-    // Wrap hipblas handle immediately, so it is cleaned up if an error occurs.
-    Owned<hipblasLtMatmulPreference_t> preference(
-        hip_preference, hipblasLtMatmulPreferenceDestroy);
-
-    ABSL_RETURN_IF_ERROR(SetAttr<uint64_t>(
-        hip_preference, HIPBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
-        max_workspace_size));
-
-    std::unique_ptr<ActivateContext> activation =
-        blas_lt_.executor_->Activate();
+    handle = blas_lt_.handle_.get();
 
     // hipBlasLt requires setting the bias pointer (even a dummy one), otherwise
     // no algorithms can be found for "bias epilogues". This is to be removed
@@ -459,18 +460,21 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
                                    HIPBLASLT_MATMUL_DESC_D_SCALE_POINTER,
                                    &dummy_pointer));
     }
+  }
 
-    int found_algorithm_count = 0;
-    auto error = hipblasLtMatmulAlgoGetHeuristic(
-        blas_lt_.handle_.get(), op_desc_.get(), a_desc_.get(), b_desc_.get(),
-        c_desc_.get(), d_desc_.get(), preference.get(), max_algorithm_count,
-        results.data(), &found_algorithm_count);
-    if (error != 0) {
-      VLOG(0) << "hipblasLtMatmulAlgoGetHeuristic returned " << (int)error;
-      SE_HIPBLAS_RETURN_IF_ERROR(error);
-    }
-    results.resize(found_algorithm_count);
-  }  // end mutex block
+  // Not under mu_: the first query per problem type can take ~1 s. hipBLASLt
+  // (1.4.x, 1.5.0) only reads the handle, which it never modifies after
+  // creation, and locks its shared Tensile library state internally.
+  int found_algorithm_count = 0;
+  auto error = hipblasLtMatmulAlgoGetHeuristic(
+      handle, op_desc_.get(), a_desc_.get(), b_desc_.get(), c_desc_.get(),
+      d_desc_.get(), preference.get(), max_algorithm_count, results.data(),
+      &found_algorithm_count);
+  if (error != 0) {
+    VLOG(0) << "hipblasLtMatmulAlgoGetHeuristic returned " << (int)error;
+    SE_HIPBLAS_RETURN_IF_ERROR(error);
+  }
+  results.resize(found_algorithm_count);
 
   std::vector<MatmulAlgorithm> algorithms;
   algorithms.reserve(results.size());
@@ -962,19 +966,25 @@ absl::Status BlasLt::RegularMatmulPlan::ExecuteOnStream(
 auto BlasLt::GroupedMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
                                               size_t max_workspace_size) const
     -> absl::StatusOr<std::vector<MatmulAlgorithm>> {
-  absl::MutexLock lock(blas_lt_.mu_);
-
   std::unique_ptr<ActivateContext> activation = blas_lt_.executor_->Activate();
 
-  TF_RET_CHECK(grouped_gemm_ != nullptr) << "Grouped GEMM is not initialized";
-  grouped_gemm_->setMaxWorkspaceBytes(max_workspace_size);
+  hipblasLtHandle_t handle;
+  {
+    absl::MutexLock lock(blas_lt_.mu_);
+    TF_RET_CHECK(grouped_gemm_ != nullptr) << "Grouped GEMM is not initialized";
+    grouped_gemm_->setMaxWorkspaceBytes(max_workspace_size);
+    handle = blas_lt_.handle_.get();
+  }
 
+  // Not under mu_, as in RegularMatmulPlan::GetAlgorithms: the first
+  // GetAllAlgos call can take several seconds. The isAlgoSupported() loop
+  // below only touches this plan's grouped_gemm_ and also runs unlocked.
   const ProblemType& problem = problem_type_;
   hipblaslt_libstdcxx::Vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
   hipblasStatus_t status = hipblaslt_libstdcxx::GetAllAlgos(
-      blas_lt_.handle_.get(), hipblaslt_ext::GemmType::HIPBLASLT_GROUPED_GEMM,
-      problem.op_a, problem.op_b, problem.type_a, problem.type_b,
-      problem.type_c, problem.type_d, problem.compute_type, heuristicResult);
+      handle, hipblaslt_ext::GemmType::HIPBLASLT_GROUPED_GEMM, problem.op_a,
+      problem.op_b, problem.type_a, problem.type_b, problem.type_c,
+      problem.type_d, problem.compute_type, heuristicResult);
   SE_HIPBLAS_RETURN_IF_ERROR(status);
   VLOG(2) << "Total heuristics found: " << heuristicResult.size();
   std::vector<MatmulAlgorithm> algorithms;
