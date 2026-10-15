@@ -1344,7 +1344,7 @@ GetStreamExecutorGpuDeviceAllocator(
     se::Platform* platform, const GpuAllocatorConfig& allocator_config,
     const std::map<int, std::unique_ptr<LocalDeviceState>>& addressable_devices,
     bool preallocate_host_memory) {
-  const MemFraction memory_fraction = allocator_config.GetMemoryFraction();
+  MemFraction memory_fraction = allocator_config.GetMemoryFraction();
   std::vector<se::MultiDeviceAdapter::AllocatorInfo> allocators;
   const DebugOptions& debug_options = xla::GetDebugOptionsFromFlags();
   GpuAllocatorConfig::Kind effective_kind = allocator_config.kind;
@@ -1393,8 +1393,9 @@ GetStreamExecutorGpuDeviceAllocator(
       shared_collective_pool =
           allocator_config.preallocate &&
           debug_options.xla_gpu_enable_allocator_spatial_partitioning();
+      // The separate collective pool below must use the same resolved policy.
       ABSL_ASSIGN_OR_RETURN(
-          const MemFraction bfc_memory_fraction,
+          memory_fraction,
           ResolveBfcMemFraction(allocator_config, debug_options));
       // Without spatial partitioning the BFC allocator only serves the lower
       // end, so default memory must keep the default allocation end.
@@ -1405,7 +1406,7 @@ GetStreamExecutorGpuDeviceAllocator(
         ABSL_ASSIGN_OR_RETURN(
             auto bfc_allocator,
             CreateBFCAllocator(
-                ordinal_and_device.second->executor(), bfc_memory_fraction,
+                ordinal_and_device.second->executor(), memory_fraction,
                 allocator_config.preallocate,
                 allocator_config.gpu_system_memory_size,
                 allocator_config.sub_allocator_alloc_visitors,

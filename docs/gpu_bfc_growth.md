@@ -43,7 +43,11 @@ Where the string is accepted:
   `memory_fraction` field supplies the fixed cap when no policy is set.
 
 The initial allocation (the start fraction, or `gpu_system_memory_size` when
-set) must fit under the cap or client creation fails with `InvalidArgument`.
+set) is rounded up to the allocation granularity, while the cap is rounded
+down. The rounded initial size must fit under the rounded cap or client
+creation fails with `InvalidArgument`, even when the unrounded fractions satisfy
+`start < cap`. Choose a wider range if both fall within the same granule.
+Equal endpoints select a fixed policy, including policies constructed in C++.
 Once a pool reaches its cap, allocation reverts to the usual retry and OOM path.
 `--xla_gpu_enable_nccl_user_buffers_in_default_space` pins a growable policy to
 `FixedMemFraction{start}` with a warning, because automatic registration needs a
@@ -60,6 +64,8 @@ the configured preallocation size, rounded up to the mapping granularity.
 `MemoryReservation::MapTo` maps it at the reservation base with `cuMemMap`, then
 grants access to the local device and P2P-capable peers with `cuMemSetAccess`.
 The rest of the reservation stays unmapped and consumes no GPU physical memory.
+The reserved VA range may include alignment padding beyond the cap. That padding
+does not increase the physical-memory limit.
 
 An S(0) allocation first tries its owned holes and the central gap. On a miss,
 BFC calls its existing `Extend` path, using normal growth sizing and backpedaling.
