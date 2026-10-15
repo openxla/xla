@@ -920,6 +920,15 @@ absl::StatusOr<XlaComputationId> XlaBuilder::BuildSubComputation(
   ABSL_RETURN_IF_ERROR(
       BuildComputationProto(root_id, remove_dynamic_dimensions, proto));
   int64_t id = proto.id();
+  if (stack_frame_index_.stack_frames_size() > 0) {
+    const int32_t offset =
+        parent_builder_->MergeStackFrameIndex(stack_frame_index_);
+    OffsetStackFrameIds(offset, proto);
+    for (auto& entry : embedded_) {
+      OffsetStackFrameIds(offset, entry.second.computation);
+    }
+    stack_frame_index_.Clear();
+  }
   auto& c = parent_builder_->embedded_[id];
   c.computation = std::move(proto);
   c.input_output_aliases = std::move(input_output_aliases_);
@@ -963,6 +972,9 @@ absl::StatusOr<XlaComputation> XlaBuilder::Build(
         input_output_aliases_, buffer_donors_));
   }
   module->add_computations()->Swap(&entry);
+  if (stack_frame_index_.stack_frames_size() > 0) {
+    module->mutable_stack_frame_index()->Swap(&stack_frame_index_);
+  }
   embedded_.clear();
   return std::move(computation);
 }
@@ -986,6 +998,9 @@ absl::StatusOr<XlaComputation> XlaBuilder::Build(XlaComputationId entry_id) {
   }
   for (auto& e : embedded_) {
     module.add_computations()->Swap(&e.second.computation);
+  }
+  if (stack_frame_index_.stack_frames_size() > 0) {
+    module.mutable_stack_frame_index()->Swap(&stack_frame_index_);
   }
   embedded_.clear();
   return XlaComputation(std::move(module));
@@ -5584,11 +5599,67 @@ absl::StatusOr<XlaOp> XlaBuilder::AddOpWithShape(
   return AddInstruction(std::move(instr), opcode, operands);
 }
 
+int32_t XlaBuilder::MergeStackFrameIndex(const StackFrameIndexProto& index) {
+  // All ids in StackFrameIndexProto are 1-based positions into the flat
+  // arrays, so appending `index` to `stack_frame_index_` only requires
+  // shifting each id by the number of pre-existing entries in its array.
+  const int32_t file_name_offset = stack_frame_index_.file_names_size();
+  const int32_t function_name_offset = stack_frame_index_.function_names_size();
+  const int32_t file_location_offset = stack_frame_index_.file_locations_size();
+  const int32_t stack_frame_offset = stack_frame_index_.stack_frames_size();
+
+  for (const std::string& file_name : index.file_names()) {
+    stack_frame_index_.add_file_names(file_name);
+  }
+  for (const std::string& function_name : index.function_names()) {
+    stack_frame_index_.add_function_names(function_name);
+  }
+  for (const auto& location : index.file_locations()) {
+    auto* merged = stack_frame_index_.add_file_locations();
+    *merged = location;
+    merged->set_file_name_id(location.file_name_id() + file_name_offset);
+    merged->set_function_name_id(location.function_name_id() +
+                                 function_name_offset);
+  }
+  for (const auto& frame : index.stack_frames()) {
+    auto* merged = stack_frame_index_.add_stack_frames();
+    *merged = frame;
+    merged->set_file_location_id(frame.file_location_id() +
+                                 file_location_offset);
+    // A parent_frame_id of 0 denotes the root frame and must stay 0.
+    if (frame.parent_frame_id() > 0) {
+      merged->set_parent_frame_id(frame.parent_frame_id() + stack_frame_offset);
+    }
+  }
+  return stack_frame_offset;
+}
+
+/*static*/ void XlaBuilder::OffsetStackFrameIds(
+    int32_t offset, HloComputationProto& computation) {
+  if (offset == 0) {
+    return;
+  }
+  for (HloInstructionProto& instruction : *computation.mutable_instructions()) {
+    // A stack_frame_id of 0 denotes "unset" and must stay 0.
+    if (instruction.metadata().stack_frame_id() > 0) {
+      instruction.mutable_metadata()->set_stack_frame_id(
+          instruction.metadata().stack_frame_id() + offset);
+    }
+  }
+}
+
 XlaComputationId XlaBuilder::AddSubComputation(
     const XlaComputation& computation) {
   if (!GetCurrentStatus().ok()) {
     return XlaComputationId();
   }
+  // Carry over the source location table of the imported computation, so that
+  // the stack_frame_ids referenced by its instructions remain resolvable in
+  // the module built by this builder.
+  const int32_t stack_frame_offset =
+      computation.proto().stack_frame_index().stack_frames_size() > 0
+          ? MergeStackFrameIndex(computation.proto().stack_frame_index())
+          : 0;
   absl::flat_hash_map<int64_t, int64_t> remapped_ids;
   std::vector<HloComputationProto> imported_computations;
   imported_computations.reserve(computation.proto().computations_size());
@@ -5608,6 +5679,7 @@ XlaComputationId XlaBuilder::AddSubComputation(
       instruction.set_id(
           HloInstruction::CalculateUniqueId(computation_id, instruction.id()));
     }
+    OffsetStackFrameIds(stack_frame_offset, new_computation);
     new_computation.set_root_id(HloInstruction::CalculateUniqueId(
         computation_id, new_computation.root_id()));
 
