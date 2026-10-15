@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/service/rendezvous.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/stream_pool.h"
@@ -424,6 +425,12 @@ class GpuExecutable : public Executable {
   std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options_;
 
   CollectiveMemoryCache collective_memory_cache_;
+
+  // One-shot rendezvous flag synchronizing the start of the first execution
+  // across local participating devices so module loading and allocations do not
+  // overlap with in-flight stream capture or collectives from a prior
+  // executable.
+  RendezvousFlag first_execution_rendezvous_flag_;
 
   // Human readable summary of the buffer allocations. Tailored to debugging
   // OOMs, includes the Hlo op metadata for every buffer associated with each
