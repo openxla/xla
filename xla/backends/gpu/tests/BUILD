@@ -779,6 +779,12 @@ lit_test_suite_for_gpus(
             "vectorization.hlo",
             "pdl.hlo",
         ],
+        "mi450_strict": [
+            # TODO: re-enable once mi450 memory_bandwidth is finalized.
+            "memory_bandwidth_fusion.hlo",
+            "vectorization.hlo",
+            "pdl.hlo",
+        ],
     },
     gpus = [
         "a100_pcie_80",
@@ -789,6 +795,7 @@ lit_test_suite_for_gpus(
         "mi300",
         "mi350",
         "mi450",
+        "mi450_strict",
     ],
     tags = ["no-oneapi"],
     tools = [

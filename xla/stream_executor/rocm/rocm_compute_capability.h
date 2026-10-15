@@ -94,8 +94,9 @@ class RocmComputeCapability {
       "gfx1030",  // RX68xx / RX69xx
       "gfx1100",  // RX7900
       "gfx1101",  // RX7700 / RX7800
-      "gfx1103", "gfx1150", "gfx1151", "gfx1200", "gfx1201",
+      "gfx1103",        "gfx1150", "gfx1151", "gfx1200", "gfx1201",
       "gfx1250",  // MI450
+      "gfx1250-strict",
   };
 
   bool is_supported_gfx_version() const {
@@ -156,7 +157,8 @@ class RocmComputeCapability {
 
   bool gfx12_rx8900() const { return gfx12_discrete(); }
 
-  bool gfx1250() const { return gfx_version() == "gfx1250"; }
+  static constexpr absl::string_view kGfx1250[] = {"gfx1250", "gfx1250-strict"};
+  bool gfx1250() const { return IsThisGfxInAnyList(kGfx1250); }
 
   bool has_nhwc_layout_support() const { return gfx9_mi100_or_later(); }
 
@@ -191,8 +193,7 @@ class RocmComputeCapability {
 
   bool has_hipblaslt() const {
     return IsThisGfxInAnyList(kMI300Series, kMI200Series, kGfx12Discrete,
-                              kGfx11Discrete, kGfx11Apu) ||
-           gfx1250();
+                              kGfx11Discrete, kGfx11Apu, kGfx1250);
   }
 
   bool has_fp8_support() const {
