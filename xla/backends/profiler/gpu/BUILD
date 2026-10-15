@@ -633,6 +633,58 @@ xla_test(
     ],
 )
 
+cc_library(
+    name = "rocm_tracer_early_client",
+    testonly = True,
+    srcs = ["rocm_tracer_early_client.cc"],
+    hdrs = ["rocm_tracer_early_client.h"],
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@local_config_rocm//rocm:rocm_headers",  # buildcleaner: keep
+        "@local_config_rocm//rocm:rocprofiler_sdk",  # buildcleaner: keep
+    ],
+    alwayslink = True,
+)
+
+# An xla_cc_test rather than an xla_test: the GPU backend that xla_test links
+# brings libraries such as librocfft whose constructors start rocprofiler-sdk
+# initialization themselves, before :rocm_tracer_early_client's constructor.
+xla_cc_test(
+    name = "rocm_tracer_early_init_test",
+    size = "small",
+    srcs = ["rocm_tracer_early_init_test.cc"],
+    # The tracer and the early client must be separate shared libraries, so
+    # that rocprofiler-sdk's client discovery runs the tracer's constructor.
+    # This needs dynamic linking; the test cannot work in a build that links
+    # everything statically (--dynamic_mode=off).
+    linkstatic = False,
+    tags = [
+        "gpu",
+        "requires-gpu-amd",
+        "rocm-only",
+    ],
+    # :rocm_tracer_early_client must be linked after :rocm_tracer, so that the
+    # dynamic loader runs its constructor before the tracer library's.
+    deps = [
+        # do not sort
+        ":rocm_tracer",
+        ":rocm_tracer_early_client",
+    ] + [
+        ":rocm_collector",
+        ":rocm_tracer_utils",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_rocm//rocm:hip",  # buildcleaner: keep
+        "@local_config_rocm//rocm:rocm_headers",
+        "@local_config_rocm//rocm:rocprofiler_sdk",  # buildcleaner: keep
+        "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
+    ],
+)
+
 xla_cc_test(
     name = "rocm_collector_test",
     size = "small",

@@ -121,6 +121,10 @@ class RocmTracer {
   bool api_tracing_enabled_{false};
   bool activity_tracing_enabled_{false};
 
+  // Set by toolInit() once InitProfiling() succeeds. rocprofiler-sdk may never
+  // configure the tracer, or setup may fail, so Enable() checks it first.
+  std::atomic<bool> profiling_initialized_{false};
+
   AnnotationMap annotation_map_{/* default size, e.g. */ 1024 * 1024};
 
   // ROCTX range state lives in a thread_local stack in rocm_tracer.cc, not
