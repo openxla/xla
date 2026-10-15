@@ -19,6 +19,7 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/xla_data.pb.h"
@@ -29,6 +30,27 @@ namespace {
 bool IsTrueVal(absl::string_view val) {
   return absl::EqualsIgnoreCase(val, "true") || val == "1" ||
          absl::EqualsIgnoreCase(val, "yes");
+}
+
+// The keys that disable while loop DCE, as frontend attributes or as backend
+// options.
+constexpr absl::string_view kDisableWhileLoopDceKeys[] = {
+    kXlaDisableWhileLoopDce, "xla.disable_while_loop_dce",
+    kXlaPreserveTupleIndices, "xla.preserve_tuple_indices"};
+
+// Returns true if 'map' has a true value for any of 'keys'.
+template <typename Map>
+bool HasAnyTrueEntry(const Map& map, absl::Span<const absl::string_view> keys) {
+  if (map.empty()) {
+    return false;
+  }
+  for (absl::string_view key : keys) {
+    auto it = map.find(key);
+    if (it != map.end() && IsTrueVal(it->second)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -86,35 +108,21 @@ bool HasDisableWhileLoopCopiesAttr(const HloInstruction* instruction) {
 }
 
 bool HasDisableWhileLoopDceAttr(const HloInstruction* instruction) {
-  if (instruction == nullptr) {
-    return false;
-  }
-  if (instruction->has_frontend_attributes()) {
-    const auto& map = instruction->frontend_attributes().map();
-    for (absl::string_view key :
-         {kXlaDisableWhileLoopDce, "xla.disable_while_loop_dce",
-          kXlaPreserveTupleIndices, "xla.preserve_tuple_indices"}) {
-      auto it = map.find(key);
-      if (it != map.end() && IsTrueVal(it->second)) {
-        return true;
-      }
-    }
-  }
-  if (instruction->GetModule() != nullptr) {
-    const auto& extra_options = instruction->GetModule()
-                                    ->config()
-                                    .debug_options()
-                                    .xla_backend_extra_options();
-    for (const char* key :
-         {kXlaDisableWhileLoopDce, "xla.disable_while_loop_dce",
-          kXlaPreserveTupleIndices, "xla.preserve_tuple_indices"}) {
-      auto it = extra_options.find(key);
-      if (it != extra_options.end() && IsTrueVal(it->second)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return HasDisableWhileLoopDceFrontendAttr(instruction) ||
+         (instruction != nullptr && instruction->GetModule() != nullptr &&
+          HasDisableWhileLoopDceOption(*instruction->GetModule()));
+}
+
+bool HasDisableWhileLoopDceFrontendAttr(const HloInstruction* instruction) {
+  return instruction != nullptr && instruction->has_frontend_attributes() &&
+         HasAnyTrueEntry(instruction->frontend_attributes().map(),
+                         kDisableWhileLoopDceKeys);
+}
+
+bool HasDisableWhileLoopDceOption(const HloModule& module) {
+  return HasAnyTrueEntry(
+      module.config().debug_options().xla_backend_extra_options(),
+      kDisableWhileLoopDceKeys);
 }
 
 bool DoesPdlLaunch(const HloInstruction& instruction) {
