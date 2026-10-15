@@ -68,6 +68,8 @@ namespace sdy {
 
 namespace {
 
+using ::llvm::ArrayRef;
+using ::llvm::SmallVector;
 using ::mlir::Attribute;
 using ::mlir::DictionaryAttr;
 using ::mlir::IRRewriter;
@@ -580,21 +582,11 @@ bool isSlicing(TensorShardingAttr callerSharding,
 
 // Checks if any call site of funcOp passes a value that would cause a slicing
 // transition (replicated-to-partitioned) inside the callee.
-bool isSlicingAtCallSites(FuncOp funcOp, int argIdx,
-                          TensorShardingAttr calleeSharding,
-                          ModuleOp moduleOp) {
-  auto symbolUses = mlir::SymbolTable::getSymbolUses(funcOp, moduleOp);
-  if (!symbolUses) {
-    return false;
-  }
-  return llvm::any_of(
-      *symbolUses, [&](const mlir::SymbolTable::SymbolUse& use) {
-        if (auto callOp = mlir::dyn_cast<CallOp>(use.getUser())) {
-          return isSlicing(getSharding(callOp->getOperand(argIdx)),
-                           calleeSharding);
-        }
-        return false;
-      });
+bool isSlicingAtCallSites(ArrayRef<CallOp> callers, int argIdx,
+                          TensorShardingAttr calleeSharding) {
+  return llvm::any_of(callers, [&](CallOp callOp) {
+    return isSlicing(getSharding(callOp->getOperand(argIdx)), calleeSharding);
+  });
 }
 
 // Inserts propagation barriers with direction FORWARD on parameters of the
@@ -612,6 +604,17 @@ void insertPropagationBarriers(FuncOp funcOp, ModuleOp moduleOp,
                                IRRewriter& rewriter) {
   if (funcOp.isExternal()) {
     return;
+  }
+
+  // Pre-collect all CallOp callers of funcOp once to avoid repeated full-module
+  // symbol walks for every block argument.
+  SmallVector<CallOp> callers;
+  if (auto symbolUses = mlir::SymbolTable::getSymbolUses(funcOp, moduleOp)) {
+    for (const mlir::SymbolTable::SymbolUse& use : *symbolUses) {
+      if (auto callOp = mlir::dyn_cast<CallOp>(use.getUser())) {
+        callers.push_back(callOp);
+      }
+    }
   }
 
   mlir::Block& entryBlock = funcOp.getBody().front();
@@ -634,8 +637,7 @@ void insertPropagationBarriers(FuncOp funcOp, ModuleOp moduleOp,
                           .getResult(0));
       bool shouldInsertBarrier = true;
       if (calleeSharding) {
-        if (isSlicingAtCallSites(funcOp, arg.getArgNumber(), calleeSharding,
-                                 moduleOp)) {
+        if (isSlicingAtCallSites(callers, arg.getArgNumber(), calleeSharding)) {
           shouldInsertBarrier = false;
         }
       }
