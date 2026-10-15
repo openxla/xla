@@ -539,6 +539,10 @@ GpuExecutable::GpuExecutable(
 }
 
 GpuExecutable::~GpuExecutable() {
+  // Destroy captured graphs and their buffer registrations before releasing
+  // the allocator's persistent staging storage. Allocator cleanup waits for
+  // previously submitted work before releasing its backing and reservations.
+  thunk_executor_.reset();
   buffer_allocator_.reset();
   if (has_module() && enable_debug_info_manager_) {
     XlaDebugInfoManager::Get()->UnregisterModule(module().unique_id());

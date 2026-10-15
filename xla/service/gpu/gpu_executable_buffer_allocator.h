@@ -91,6 +91,13 @@ class GpuExecutableBufferAllocator {
     // True when command-buffer VA remapping is active for this execution.
     virtual bool va_remap_enabled() const { return false; }
 
+    // Whether this output is produced in private staging storage and copied
+    // to its owning address by ExecuteWithBufferAllocations. Callers must defer
+    // its definition event until that method has enqueued the copy.
+    virtual bool IsStagedOutput(BufferAllocation::Index index) const {
+      return false;
+    }
+
     // Builds the BufferAllocations for an execution. Entry-computation
     // parameter buffers are obtained from `get_parameter_buffer`; all other
     // allocations are resolved internally, including alignment checking and

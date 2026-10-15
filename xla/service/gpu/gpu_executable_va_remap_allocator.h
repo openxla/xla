@@ -60,7 +60,10 @@ class ThunkExecutor;
 //    preallocated temp buffers, profiles the address stability of the other
 //    non-constant, non-thread-local allocations over the first executions,
 //    and then remaps the union of the temp buffers and stable profile
-//    candidates.
+//    candidates. Small unstable non-parameter output data allocations use
+//    persistent staging storage, with a copy to their owning addresses after
+//    execution. Parameters, tuple tables, and non-default memory spaces are
+//    excluded from staging.
 //
 // When VA remapping is unavailable for an execution (no VMM allocator,
 // nothing to remap, or SKIP_PROFILED has neither automatically selected temp
@@ -123,6 +126,14 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
     std::unique_ptr<se::MemoryReservation> va_reservation;
     se::DeviceAddressVmmAllocator* vmm_allocator = nullptr;
 
+    // Owned physical allocations at reserved addresses, retained across runs
+    // so captured collective registrations keep referring to the same backing.
+    // Cleared and synchronized before va_reservation is destroyed.
+    absl::flat_hash_map<BufferAllocation::Index,
+                        se::ScopedDeviceAddress<uint8_t>>
+        staging_buffers;
+    AllocationIndexSet staged_output_alloc_indices;
+
     ProfilePhase phase = ProfilePhase::kInactive;
     // Number of completed profiling observations.
     int64_t profiled_steps = 0;
@@ -132,8 +143,8 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
     // Candidates disqualified from remapping because their address changed
     // between executions or was null.
     absl::flat_hash_set<BufferAllocation::Index> unstable_alloc_indices;
-    // Automatic temp buffers and profile candidates selected for VA remapping
-    // by the profile transition.
+    // Automatic temp buffers, stable profile candidates, and staged outputs
+    // selected for reserved addresses by the profile transition.
     AllocationIndexSet profiled_va_remapped_alloc_indices;
     // Sorted union of constant allocation indices and
     // profiled_va_remapped_alloc_indices, set by the profile transition.
@@ -149,12 +160,13 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
 
   // Runs the SKIP_PROFILED transition for one executor: combines automatic
   // temp buffers with profiled candidates whose addresses stayed stable,
-  // filters parameter allocations that cannot be Map()ed (not backed by
-  // `vmm_allocator` or sharing an address with another parameter), and moves
-  // the phase to kActive, or to kDisabled when nothing can be remapped.
+  // stages eligible unstable outputs, filters parameters that cannot be Map()ed
+  // (not backed by `vmm_allocator` or sharing an address with another
+  // parameter), and moves the phase to kActive, or to kDisabled when nothing
+  // can be remapped.
   void TransitionProfiledRemapping(Remapping* remapping,
                                    se::DeviceAddressVmmAllocator* vmm_allocator,
-                                   int device_ordinal);
+                                   int device_ordinal, uint64_t granularity);
 
   DebugOptions::CommandBufferUpdateMode update_mode_ = DebugOptions::SKIP_TEMP;
 
