@@ -632,10 +632,8 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
       use_explicit_nan_propagation;
   pm.addNestedPass<FuncOp>(
       emitters::createSimplifyArithPass(simplify_arith_options));
-  pm.addPass(emitters::createSimplifyAffinePass());
+  pm.addPass(emitters::createExpandApplyIndexingPass());
   pm.addPass(createConvertIndexTypePass());
-  // simplify-affine lowers most affine.apply ops, but if it can't prove a
-  // division or modulo is unsigned, affine.apply ops will remain.
   pm.addPass(mlir::createLowerAffinePass());
 
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
