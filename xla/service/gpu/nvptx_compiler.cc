@@ -55,7 +55,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/conv_kind_assignment.h"
 #include "xla/backends/gpu/transforms/conv_padding_legalization.h"
 #include "xla/backends/gpu/transforms/conv_rewriter.h"
-#include "xla/backends/gpu/transforms/cublas_pad_for_gemms.h"
 #include "xla/backends/gpu/transforms/cudnn_custom_call_compiler.h"
 #include "xla/backends/gpu/transforms/cudnn_fused_conv_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
@@ -73,7 +72,6 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/convert_mover.h"
-#include "xla/hlo/transforms/simplifiers/dot_dimension_merger.h"
 #include "xla/hlo/transforms/simplifiers/float_normalization.h"
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/hlo/transforms/simplifiers/reshape_mover.h"
@@ -85,7 +83,6 @@ limitations under the License.
 #include "xla/service/dump.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gpu/alias_info.h"
-#include "xla/service/gpu/cublas_padding_requirements.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/llvm_gpu_backend/nvptx_backend.h"
@@ -177,24 +174,6 @@ class MatmulBfloat16Support : public FloatSupport {
 };
 
 }  // namespace
-
-void NVPTXCompiler::AddPaddingForGpublasGemms(
-    HloPassPipeline& pipeline, const DebugOptions& debug_options,
-    const se::GpuComputeCapability& gpu_version) {
-  if (!debug_options.xla_gpu_experimental_disable_binary_libraries()) {
-    for (const CublasPaddingRequirement& requirement :
-         CublasPaddingRequirements) {
-      if (gpu_version.cuda_compute_capability()->SupportsAllFeaturesOf(
-              requirement.min_compute_capability)) {
-        pipeline.AddPass<CublasPadForGemms>(gpu_version, requirement.data_type,
-                                            requirement.multiple_of);
-      }
-    }
-    // Padding a gemm operand that's a constant results in pad(constant).  Run
-    // constant-folding to simplify this into a new constant.
-    pipeline.AddPass<HloConstantFolding>();
-  }
-}
 
 absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
     HloModule* hlo_module, const se::GpuComputeCapability& gpu_version,
@@ -339,7 +318,6 @@ absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
           ? se::dnn::VersionInfo(
                 gpu_target_config.device_description.dnn_version())
           : se::dnn::VersionInfo{});
-  pre_pipeline.AddPass<DotDimensionMerger>();
 
   ABSL_RETURN_IF_ERROR(
       pre_pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
