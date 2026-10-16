@@ -92,7 +92,10 @@ absl::Status Visit(const HloComputation& computation, Walk& walk) {
       ABSL_RETURN_IF_ERROR(AddSlices(operand, walk.assignment, walk.arguments));
     }
     // Parameters forward the buffers of their caller.
-    if (instruction->opcode() != HloOpcode::kParameter) {
+    if (instruction->opcode() == HloOpcode::kParameter) {
+      ABSL_RETURN_IF_ERROR(
+          AddSlices(instruction, walk.assignment, walk.arguments));
+    } else {
       ABSL_RETURN_IF_ERROR(
           AddSlices(instruction, walk.assignment, walk.results));
     }
