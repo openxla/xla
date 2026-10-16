@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -171,6 +172,86 @@ TEST_P(SortThunkTest, DescendingSortPlainArrayF16) {
 
   EXPECT_TRUE(std::is_sorted(data.data<half>().begin(), data.data<half>().end(),
                              std::greater<half>()));
+}
+
+TEST_P(SortThunkTest, DescendingSortPlainArrayS32) {
+  bool is_stable = GetParam();
+
+  auto data = LiteralUtil::CreateR1<int32_t>({2, -5, 4, 2, -1, 0, 4});
+
+  BufferAllocations allocations = CreateBufferAllocations(data);
+  BufferAllocation alloc = CreateBufferAllocation(0, data);
+  BufferAllocation::Slice slice = CreateBufferAllocationSlice(alloc);
+
+  auto fake_less_than = [](const void** data) { return false; };
+
+  ASSERT_OK_AND_ASSIGN(
+      auto thunk, SortThunk::Create({"sort"}, {{slice, data.shape()}},
+                                    /*dimension=*/0, is_stable, fake_less_than,
+                                    SortThunk::SortDirection::kDescending));
+
+  Thunk::ExecuteParams params;
+  params.buffer_allocations = &allocations;
+
+  auto execute_event = thunk->Execute(params);
+  tsl::BlockUntilReady(execute_event);
+  ASSERT_FALSE(execute_event.IsError());
+
+  EXPECT_EQ(data, LiteralUtil::CreateR1<int32_t>({4, 4, 2, 2, 0, -1, -5}));
+}
+
+TEST_P(SortThunkTest, SortPlainArraySpecialFloatValuesBF16) {
+  bool is_stable = GetParam();
+
+  const bfloat16 inf = std::numeric_limits<bfloat16>::infinity();
+  const bfloat16 neg_inf = -inf;
+  const bfloat16 nan = std::numeric_limits<bfloat16>::quiet_NaN();
+  auto data = LiteralUtil::CreateR1<bfloat16>(
+      {nan, bfloat16(1.0f), neg_inf, bfloat16(-1.0f), inf, bfloat16(0.0f)});
+
+  BufferAllocations allocations = CreateBufferAllocations(data);
+  BufferAllocation alloc = CreateBufferAllocation(0, data);
+  BufferAllocation::Slice slice = CreateBufferAllocationSlice(alloc);
+
+  auto fake_less_than = [](const void** data) { return false; };
+
+  ASSERT_OK_AND_ASSIGN(
+      auto asc_thunk,
+      SortThunk::Create({"sort"}, {{slice, data.shape()}},
+                        /*dimension=*/0, is_stable, fake_less_than,
+                        SortThunk::SortDirection::kAscending));
+
+  Thunk::ExecuteParams params;
+  params.buffer_allocations = &allocations;
+
+  auto asc_event = asc_thunk->Execute(params);
+  tsl::BlockUntilReady(asc_event);
+  ASSERT_FALSE(asc_event.IsError());
+
+  auto span = data.data<bfloat16>();
+  EXPECT_EQ(span[0], neg_inf);
+  EXPECT_EQ(span[1], bfloat16(-1.0f));
+  EXPECT_EQ(span[2], bfloat16(0.0f));
+  EXPECT_EQ(span[3], bfloat16(1.0f));
+  EXPECT_EQ(span[4], inf);
+  EXPECT_TRUE(Eigen::numext::isnan(span[5]));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto desc_thunk,
+      SortThunk::Create({"sort"}, {{slice, data.shape()}},
+                        /*dimension=*/0, is_stable, fake_less_than,
+                        SortThunk::SortDirection::kDescending));
+
+  auto desc_event = desc_thunk->Execute(params);
+  tsl::BlockUntilReady(desc_event);
+  ASSERT_FALSE(desc_event.IsError());
+
+  EXPECT_TRUE(Eigen::numext::isnan(span[0]));
+  EXPECT_EQ(span[1], inf);
+  EXPECT_EQ(span[2], bfloat16(1.0f));
+  EXPECT_EQ(span[3], bfloat16(0.0f));
+  EXPECT_EQ(span[4], bfloat16(-1.0f));
+  EXPECT_EQ(span[5], neg_inf);
 }
 
 TEST_P(SortThunkTest, Sort1D) {
