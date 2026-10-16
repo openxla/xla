@@ -140,9 +140,8 @@ class ExecutionGraph {
     static constexpr NodeEdge::Kind KindOf(Resource::Kind resource) {
       switch (resource) {
         case Resource::kToken:
-          return NodeEdge::Kind::kExecution;
         case Resource::kCollectiveCommunicator:
-          return NodeEdge::Kind::kScheduling;
+          return NodeEdge::Kind::kExecution;
       }
     }
 
