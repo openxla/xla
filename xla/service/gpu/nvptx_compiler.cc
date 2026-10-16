@@ -95,7 +95,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_verifier.h"
 #include "xla/service/llvm_ir/llvm_util.h"
-#include "xla/stream_executor/cuda/assemble_compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_options.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/compilation_provider_options.h"
@@ -577,16 +576,18 @@ NVPTXCompiler::GetCompilationProvider(const DebugOptions& debug_options,
   if (compilation_provider == nullptr) {
     ABSL_ASSIGN_OR_RETURN(
         compilation_provider,
-        se::cuda::AssembleCompilationProvider(
+        compilation_provider_factory_(
             se::cuda::CompilationProviderOptions::FromDebugOptions(
                 debug_options, stream_exec)));
   }
   return compilation_provider.get();
 }
 
-NVPTXCompiler::NVPTXCompiler()
+NVPTXCompiler::NVPTXCompiler(
+    CompilationProviderFactory compilation_provider_factory)
     : GpuCompiler(stream_executor::cuda::kCudaPlatformId, nvptx::TargetTriple(),
-                  nvptx::DataLayout()) {}
+                  nvptx::DataLayout()),
+      compilation_provider_factory_(std::move(compilation_provider_factory)) {}
 
 std::unique_ptr<GpuAliasInfo> NVPTXCompiler::GetAliasInfo(
     const se::DeviceDescription& device_description) const {
