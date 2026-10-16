@@ -30,7 +30,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/attributes.h"
 #include "absl/base/casts.h"
@@ -53,7 +52,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
-#include "tsl/platform/tensor_float_32_utils.h"
+#include "Eigen/Core"
 #include "xla/backends/gpu/target_config/cudnn_device_props.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/activate_context.h"
@@ -81,6 +80,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/util/env_var.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 
 // clang-format off
 #include "third_party/gpus/cuda/include/library_types.h"
