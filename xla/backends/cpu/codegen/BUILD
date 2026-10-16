@@ -18,7 +18,6 @@ load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
 load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load(
     "//xla/tsl/platform:build_config_root.bzl",
-    "if_llvm_aarch64_available",
     "if_llvm_powerpc_available",
     "if_llvm_riscv_available",
     "if_llvm_system_z_available",
@@ -124,9 +123,12 @@ cc_library(
             "XLA_LLVM_AARCH32_AVAILABLE=1",
         ],
         "//conditions:default": [],
-    }) + if_llvm_aarch64_available([
-        "XLA_LLVM_AARCH64_AVAILABLE=1",
-    ]) + if_llvm_powerpc_available([
+    }) + select({
+        "//xla/tsl:aarch64_or_cross": [
+            "XLA_LLVM_AARCH64_AVAILABLE=1",
+        ],
+        "//conditions:default": [],
+    }) + if_llvm_powerpc_available([
         "XLA_LLVM_POWERPC_AVAILABLE=1",
     ]) + if_llvm_system_z_available([
         "XLA_LLVM_S390X_AVAILABLE=1",
@@ -346,9 +348,12 @@ cc_library(
         "@tsl//tsl/platform:statusor",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
-    ] + if_llvm_aarch64_available([
-        "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
-    ]) + if_llvm_powerpc_available([
+    ] + select({
+        "//xla/tsl:aarch64_or_cross": [
+            "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
+        ],
+        "//conditions:default": [],
+    }) + if_llvm_powerpc_available([
         "@llvm-project//llvm:PowerPCCodeGen",  # fixdeps: keep
     ]) + if_llvm_riscv_available([
         "@llvm-project//llvm:RISCVCodeGen",  # fixdeps: keep
