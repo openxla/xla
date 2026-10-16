@@ -568,6 +568,31 @@ message OpMetadata {
   // HloModuleProto.payloads during module serialization.
   Payload metadata_payload = 20;
 
+  // The latency estimator that produced a scheduler cost estimate. Estimators
+  // that delegate to another one report the one that produced the value: with
+  // PGLE, the fallback estimator for values that the profile did not provide;
+  // with SOL or the analytical estimator, the GPU approximate estimator for
+  // costs they do not model themselves.
+  enum SchedulerCostSource {
+    SCHEDULER_COST_SOURCE_UNKNOWN = 0;
+    // ProfileGuidedLatencyEstimator: the value comes from the profile.
+    SCHEDULER_COST_SOURCE_PGLE = 1;
+    // SolLatencyEstimator (speed-of-light model of collectives).
+    SCHEDULER_COST_SOURCE_SOL = 2;
+    // AnalyticalLatencyEstimator.
+    SCHEDULER_COST_SOURCE_ANALYTICAL = 3;
+    // GpuLatencyEstimator: approximate ("T-shirt size") costs.
+    SCHEDULER_COST_SOURCE_GPU_APPROXIMATE = 4;
+    // ApproximateLatencyEstimator.
+    SCHEDULER_COST_SOURCE_APPROXIMATE = 5;
+  }
+
+  // Cost in microseconds that the latency hiding scheduler used for this
+  // instruction, and the estimator that produced it. Recorded when
+  // xla_record_cost_estimates is set.
+  float scheduler_cost_us = 21;
+  SchedulerCostSource scheduler_cost_source = 22;
+
   reserved 14;
 }
 

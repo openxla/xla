@@ -23,9 +23,10 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/latency_hiding_scheduler.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 
@@ -81,6 +82,14 @@ class ProfileGuidedLatencyEstimator : public LatencyEstimator {
   int CyclesPerMicrosecond() const override {
     return latency_estimator_->CyclesPerMicrosecond();
   }
+  OpMetadata::SchedulerCostSource Source() const override {
+    return OpMetadata::SCHEDULER_COST_SOURCE_PGLE;
+  }
+  // Values from the profile are attributed to this estimator, others to the
+  // fallback estimator that produced them.
+  Estimate EstimateNodeCost(const HloInstruction* instr) const override;
+  Estimate EstimateLatencyBetween(const HloGraphNode& from,
+                                  const HloGraphNode& target) const override;
 
   // Checks whether `module` has all the respective instructions present in the
   // profile grabbed by this object.
@@ -91,6 +100,13 @@ class ProfileGuidedLatencyEstimator : public LatencyEstimator {
   absl::Status CheckAccuracy(const HloModule& module);
 
  private:
+  // The profiled latency of `from` -> `target` in microseconds, if the profile
+  // has one: the latency between the two instructions (or the instructions
+  // they wrap), else the cost of `from` if the two form an async or send/recv
+  // pair.
+  std::optional<TimeCost> ProfiledLatency(const HloGraphNode& from,
+                                          const HloGraphNode& target) const;
+
   const SchedulerConfig config_;
   std::unique_ptr<LatencyEstimator> latency_estimator_;
 
