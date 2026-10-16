@@ -407,6 +407,47 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "log",
+    srcs = ["log.cc"],
+    hdrs = ["log.h"],
+    copts = [
+        "-Wno-psabi",
+    ],
+    deps = [
+        ":vector_ops",
+    ],
+)
+
+cc_ir_header(
+    name = "log_ll",
+    src = "log.cc",
+    deps = [
+        ":cpp_context_provider",
+        ":log",
+        ":vector_ops",
+    ],
+)
+
+xla_cc_test(
+    name = "log_test",
+    srcs = ["log_test.cc"],
+    copts = [
+        "-Wno-psabi",
+    ],
+    deps = [
+        ":_cpp_gen_intrinsics",
+        ":log",
+        ":log_ll",
+        ":vector_ops",
+        "//xla/codegen/intrinsic:test_matchers",
+        "@com_google_absl//absl/base",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
     name = "_cpp_gen_intrinsics",
     srcs = ["cpp_gen_intrinsics.cc"],
     hdrs = ["cpp_gen_intrinsics.h"],
@@ -417,6 +458,7 @@ cc_library(
         ":eigen_unary_64_ll",
         ":expm1_32_ll",
         ":expm1_64_ll",
+        ":log_ll",
         "//xla/codegen/intrinsic",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/log",

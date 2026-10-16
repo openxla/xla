@@ -187,6 +187,60 @@ class Sinh : public Intrinsic<Sinh> {
                              UnaryFunctionType(module, type));
   }
 };
+
+class Log : public Intrinsic<Log> {
+ public:
+  static constexpr absl::string_view kName = "log";
+
+  static std::vector<std::vector<Type>> SupportedVectorTypes(
+      absl::string_view features = "") {
+    if (!AreCppGenIntrinsicsAvailable()) {
+      return {};
+    }
+    std::vector<std::vector<Type>> types = {
+        {Type::S(xla::F64)},
+        {Type::V(xla::F64, 2)},
+        {Type::V(xla::F64, 4)},
+    };
+    if (absl::StrContains(features, "+avx512f")) {
+      types.push_back({Type::V(xla::F64, 8)});
+    }
+    return types;
+  }
+
+  static absl::StatusOr<llvm::Function*> CreateDefinition(
+      llvm::Module* module, const IntrinsicOptions& options, Type type) {
+    return GetCppGenFunction(module, Name(type),
+                             UnaryFunctionType(module, type));
+  }
+};
+
+class Log2 : public Intrinsic<Log2> {
+ public:
+  static constexpr absl::string_view kName = "log2";
+
+  static std::vector<std::vector<Type>> SupportedVectorTypes(
+      absl::string_view features = "") {
+    if (!AreCppGenIntrinsicsAvailable()) {
+      return {};
+    }
+    std::vector<std::vector<Type>> types = {
+        {Type::S(xla::F64)},
+        {Type::V(xla::F64, 2)},
+        {Type::V(xla::F64, 4)},
+    };
+    if (absl::StrContains(features, "+avx512f")) {
+      types.push_back({Type::V(xla::F64, 8)});
+    }
+    return types;
+  }
+
+  static absl::StatusOr<llvm::Function*> CreateDefinition(
+      llvm::Module* module, const IntrinsicOptions& options, Type type) {
+    return GetCppGenFunction(module, Name(type),
+                             UnaryFunctionType(module, type));
+  }
+};
 }  // namespace xla::codegen::intrinsics
 
 #endif  // XLA_CODEGEN_INTRINSIC_CPP_INTRINSIC_DECLARATIONS_H_

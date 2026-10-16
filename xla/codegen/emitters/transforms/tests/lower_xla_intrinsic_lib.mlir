@@ -494,3 +494,63 @@ func.func @sin_cos_of_neg(%arg0: f32) -> (f32, f32) {
 // CHECK-DAG: %[[NEG_SIN:.*]] = arith.negf %[[SIN]] : f32
 // CHECK-DAG: %[[COS:.*]] = call @xla.cos.f32(%arg0) : (f32) -> f32
 // CHECK: return %[[NEG_SIN]], %[[COS]]
+
+// -----
+
+module {
+  func.func @log_f64(%arg0: f64) -> f64 {
+    %ret = math.log %arg0 : f64
+    return %ret : f64
+  }
+}
+
+// CHECK-LABEL: @log_f64
+// CHECK-NOT: math.log
+// CHECK: %[[RESULT:.*]] = call @xla.log.f64(%arg0) : (f64) -> f64
+// CHECK: return %[[RESULT]] : f64
+
+// -----
+
+module {
+  func.func @log_f32(%arg0: f32) -> f32 {
+    %ret = math.log %arg0 : f32
+    return %ret : f32
+  }
+}
+
+// CHECK-LABEL: @log_f32
+// CHECK-NOT: @xla.log
+// CHECK: math.log %arg0 : f32
+// CHECK: return
+
+// -----
+
+module {
+  func.func @log2_f64_vector(%arg0: vector<4xf64>) -> vector<4xf64> {
+    %ret = math.log2 %arg0 : vector<4xf64>
+    return %ret : vector<4xf64>
+  }
+}
+
+// CHECK-LABEL: @log2_f64_vector
+// CHECK-NOT: math.log2
+// CHECK: %[[RESULT:.*]] = call @xla.log2.v4f64(%arg0) : (vector<4xf64>) -> vector<4xf64>
+// CHECK: return %[[RESULT]] : vector<4xf64>
+
+// -----
+
+func.func @log_f64_vector_8(%arg0: vector<8xf64>) -> vector<8xf64> {
+  %ret = math.log %arg0 : vector<8xf64>
+  return %ret : vector<8xf64>
+}
+
+// CHECK-LABEL: @log_f64_vector_8
+// CHECK: %[[S0:.*]] = vector.extract_strided_slice %arg0 offsets = [0], sizes = [4], strides = [1] : vector<8xf64> to vector<4xf64>
+// CHECK: %[[C0:.*]] = call @xla.log.v4f64(%[[S0]])
+// CHECK: %[[S1:.*]] = vector.extract_strided_slice %arg0 offsets = [4], sizes = [4], strides = [1] : vector<8xf64> to vector<4xf64>
+// CHECK: %[[C1:.*]] = call @xla.log.v4f64(%[[S1]])
+// CHECK: return
+
+// AVX512-LABEL: @log_f64_vector_8
+// AVX512: %[[CALL:.*]] = call @xla.log.v8f64(%arg0) : (vector<8xf64>) -> vector<8xf64>
+// AVX512: return %[[CALL]]

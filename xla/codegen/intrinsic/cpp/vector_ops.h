@@ -160,18 +160,31 @@ struct CorrespondingIntVector<double> {
   using scalar_type = uint64_t;
 };
 
-// This trait takes a float vector and provides its signed integer vector
+// This trait takes a float scalar or vector and provides its signed integer
 // partner.
 template <typename FloatVec>
 struct CorrespondingSignedIntVector {
  private:
-  using ScalarFloat = decltype(FloatVec{}[0]);
+  using ScalarFloat = ElementType<FloatVec>;
   static constexpr size_t kWidth = sizeof(FloatVec) / sizeof(ScalarFloat);
   using ScalarInt =
       std::conditional_t<sizeof(ScalarFloat) == 4, int32_t, int64_t>;
 
  public:
   using type = typename MakeSignedIntVec<ScalarInt, kWidth>::type;
+  using scalar_type = ScalarInt;
+};
+
+template <>
+struct CorrespondingSignedIntVector<float> {
+  using type = int32_t;
+  using scalar_type = int32_t;
+};
+
+template <>
+struct CorrespondingSignedIntVector<double> {
+  using type = int64_t;
+  using scalar_type = int64_t;
 };
 
 template <typename T, typename S, size_t... Is>
