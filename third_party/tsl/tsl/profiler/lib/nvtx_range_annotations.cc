@@ -12,7 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "tsl/profiler/lib/nvtx_utils.h"
+#include "tsl/profiler/lib/range_annotations.h"
 
 #ifdef __linux__
 #include <sys/syscall.h>
