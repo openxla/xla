@@ -545,6 +545,7 @@ cc_library(
         "//xla/python/ifrt:user_context",
         "//xla/python/ifrt/hlo:hlo_program",
         "//xla/runtime:device_id",
+        "//xla/service:computation_layout",
         "//xla/service:device_assignment",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/concurrency:executor",

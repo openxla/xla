@@ -383,6 +383,47 @@ TEST(PjRtExecutableImplTest, CompileAndLoadWithOutputsBundleSliceSizes) {
   }
 }
 
+TEST(PjRtExecutableImplTest, SerializedMetadataHasParameterDTypeAndShape) {
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Client> client, test_util::GetClient());
+  Compiler* compiler = client->GetDefaultCompiler();
+
+  mlir::MLIRContext context;
+  ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                       xla::ParseMlirModuleString(kModuleAddOne, context));
+
+  Device* device0 = client->addressable_devices().at(0);
+  ASSERT_OK_AND_ASSIGN(DeviceListRef device_list,
+                       client->MakeDeviceList({device0}));
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Topology> topology,
+                       client->GetTopologyForDevices(device_list));
+
+  xla::CompileOptions compile_options;
+  compile_options.compile_portable_executable = true;
+  auto xla_compile_options =
+      std::make_unique<XlaCompileOptions>(compile_options, device_list);
+  ASSERT_OK_AND_ASSIGN(ExecutableRef executable,
+                       compiler
+                           ->Compile(std::make_unique<HloProgram>(*module),
+                                     *topology, std::move(xla_compile_options))
+                           .Await());
+  ASSERT_OK_AND_ASSIGN(std::string serialized, executable->Serialize());
+
+  SerializedXlaExecutableMetadata metadata;
+  tsl::protobuf::io::ArrayInputStream input_stream(serialized.data(),
+                                                   serialized.size());
+  ASSERT_TRUE(tsl::protobuf::util::ParseDelimitedFromZeroCopyStream(
+      &metadata, &input_stream, nullptr));
+
+  ASSERT_EQ(metadata.parameter_specs_size(), 1);
+  const SerializedXlaExecutableMetadata::ParameterSpec& parameter_spec =
+      metadata.parameter_specs(0);
+  ASSERT_TRUE(parameter_spec.has_dtype());
+  ASSERT_TRUE(parameter_spec.has_shape());
+  EXPECT_EQ(static_cast<int32_t>(parameter_spec.dtype().kind()),
+            static_cast<int32_t>(DType::kF32));
+  EXPECT_THAT(parameter_spec.shape().dims(), ElementsAre(2, 3));
+}
+
 TEST(PjRtExecutableImplTest, LoadBatchWithDuplicateExecutables) {
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<Client> client, test_util::GetClient());
   ASSERT_GE(client->addressable_devices().size(), 2);
