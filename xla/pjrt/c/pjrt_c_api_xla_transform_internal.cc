@@ -75,9 +75,14 @@ class CApiXlaTransformAdapter : public HloXlaTransform {
     args.header.has_error = false;
     args.hlo_module.data = serialized_proto.data();
     args.hlo_module.size = serialized_proto.size();
-    absl::string_view fdo_profile = module->config().fdo_profile();
-    args.fdo_profile.data = fdo_profile.data();
-    args.fdo_profile.size = fdo_profile.size();
+    std::string serialized_config;
+    if (!tsl::SerializeToStringDeterministic(module->config().ToProto(),
+                                             &serialized_config)) {
+      return absl::InternalError(
+          "CApiXlaTransformAdapter: failed to serialize HLO module config");
+    }
+    args.hlo_module_config.data = serialized_config.data();
+    args.hlo_module_config.size = serialized_config.size();
 
     if (callbacks_->transform_hlo_module == nullptr) {
       return absl::InternalError("transform_hlo_module callback is null");

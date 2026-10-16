@@ -58,9 +58,10 @@ typedef struct PJRT_XlaTransform_version_and_error {
 // the client. The member 'header' must always be set to the version and error
 // struct by the client.
 // The member 'changed' indicates whether the HloModuleProto has been modified.
-// The member 'fdo_profile' is the FDO profile the module is being compiled
-// with (empty if none). It is only present if 'struct_size' covers it, so
-// callback implementations must check 'struct_size' before reading it.
+// The member 'hlo_module_config' is the HloModuleConfig the module is being
+// compiled with. It carries the FDO profile, debug options, static device
+// assignment, etc. It is only present if 'struct_size' covers it, so callback
+// implementations must check 'struct_size' before reading it.
 typedef struct PJRT_XlaTransform_Args {
   size_t struct_size;
   PJRT_XlaTransform_version_and_error header;
@@ -72,11 +73,10 @@ typedef struct PJRT_XlaTransform_Args {
   PJRT_XlaTransform_string transformed_hlo_module;
   bool changed;  // out
 
-  // In: FDO profile of the module's compilation (serialized
-  // ProfiledInstructionsProto for PGLE), or empty.
-  PJRT_XlaTransform_string fdo_profile;
+  // In: Serialized HloModuleConfigProto of the module's compilation.
+  PJRT_XlaTransform_string hlo_module_config;
 } PJRT_XlaTransform_Args;
-PJRT_DEFINE_STRUCT_TRAITS(PJRT_XlaTransform_Args, fdo_profile);
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_XlaTransform_Args, hlo_module_config);
 
 // List of callbacks that the caller (callback implementation)
 // should provide. All callbacks are optional, and may be set to NULL.

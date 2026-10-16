@@ -887,38 +887,40 @@ TEST_F(XlaTransformTest, ApplyTransformsCustomVerifierMetadata) {
   }
 }
 
-struct FdoProfileCapture {
+struct ModuleConfigCapture {
   int calls = 0;
-  bool struct_covers_fdo_profile = false;
-  std::string fdo_profile;
+  bool struct_covers_module_config = false;
+  bool parsed = false;
+  HloModuleConfigProto config;
 };
-FdoProfileCapture* fdo_profile_capture = nullptr;
+ModuleConfigCapture* module_config_capture = nullptr;
 
-void CaptureFdoProfileCallback(PJRT_XlaTransform_Callbacks* callbacks,
-                               PJRT_XlaTransform_Args* args) {
-  ++fdo_profile_capture->calls;
-  fdo_profile_capture->struct_covers_fdo_profile =
+void CaptureModuleConfigCallback(PJRT_XlaTransform_Callbacks* callbacks,
+                                 PJRT_XlaTransform_Args* args) {
+  ++module_config_capture->calls;
+  module_config_capture->struct_covers_module_config =
       args->struct_size >=
-      PJRT_STRUCT_SIZE(PJRT_XlaTransform_Args, fdo_profile);
-  if (fdo_profile_capture->struct_covers_fdo_profile) {
-    fdo_profile_capture->fdo_profile.assign(args->fdo_profile.data,
-                                            args->fdo_profile.size);
+      PJRT_STRUCT_SIZE(PJRT_XlaTransform_Args, hlo_module_config);
+  if (module_config_capture->struct_covers_module_config) {
+    module_config_capture->parsed =
+        module_config_capture->config.ParseFromString(absl::string_view(
+            args->hlo_module_config.data, args->hlo_module_config.size));
   }
   args->changed = false;
   args->header.has_error = false;
 }
 
-FdoProfileCapture ApplyCaptureFdoProfileTransform(HloModule* module) {
-  FdoProfileCapture capture;
-  fdo_profile_capture = &capture;
+ModuleConfigCapture ApplyCaptureModuleConfigTransform(HloModule* module) {
+  ModuleConfigCapture capture;
+  module_config_capture = &capture;
 
   PJRT_XlaTransform_Callbacks callbacks;
   callbacks.version = PJRT_API_XLA_TRANSFORM_EXTENSION_VERSION;
   callbacks.dtor = nullptr;
-  callbacks.transform_hlo_module = CaptureFdoProfileCallback;
+  callbacks.transform_hlo_module = CaptureModuleConfigCallback;
 
   PJRT_Xla_Transform_Extension extension = pjrt::CreateXlaTransformExtension();
-  constexpr absl::string_view kName = "capture_fdo_profile";
+  constexpr absl::string_view kName = "capture_module_config";
 
   PJRT_Register_Xla_Transform_Args reg_args;
   reg_args.struct_size = PJRT_Register_Xla_Transform_Args_STRUCT_SIZE;
@@ -943,11 +945,11 @@ FdoProfileCapture ApplyCaptureFdoProfileTransform(HloModule* module) {
   EXPECT_EQ(extension.clear_xla_transform(&clear_args), nullptr);
   EXPECT_TRUE(clear_args.cleared);
 
-  fdo_profile_capture = nullptr;
+  module_config_capture = nullptr;
   return capture;
 }
 
-TEST_F(XlaTransformTest, PjrtCApiExtensionPassesFdoProfile) {
+TEST_F(XlaTransformTest, PjrtCApiExtensionPassesModuleConfig) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
     HloModule test_module
     ENTRY test_computation {
@@ -957,15 +959,20 @@ TEST_F(XlaTransformTest, PjrtCApiExtensionPassesFdoProfile) {
   )"));
   const std::string fdo_profile("fdo\0profile", 11);
   module->mutable_config().set_fdo_profile(fdo_profile);
+  module->mutable_config().set_replica_count(4);
+  module->mutable_config().mutable_debug_options().set_xla_dump_to("/tmp/dump");
 
-  FdoProfileCapture capture = ApplyCaptureFdoProfileTransform(module.get());
+  ModuleConfigCapture capture = ApplyCaptureModuleConfigTransform(module.get());
 
   EXPECT_EQ(capture.calls, 1);
-  EXPECT_TRUE(capture.struct_covers_fdo_profile);
-  EXPECT_EQ(capture.fdo_profile, fdo_profile);
+  EXPECT_TRUE(capture.struct_covers_module_config);
+  ASSERT_TRUE(capture.parsed);
+  EXPECT_EQ(capture.config.fdo_profile(), fdo_profile);
+  EXPECT_EQ(capture.config.replica_count(), 4);
+  EXPECT_EQ(capture.config.debug_options().xla_dump_to(), "/tmp/dump");
 }
 
-TEST_F(XlaTransformTest, PjrtCApiExtensionEmptyFdoProfile) {
+TEST_F(XlaTransformTest, PjrtCApiExtensionEmptyFdoProfileInModuleConfig) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
     HloModule test_module
     ENTRY test_computation {
@@ -974,11 +981,12 @@ TEST_F(XlaTransformTest, PjrtCApiExtensionEmptyFdoProfile) {
     }
   )"));
 
-  FdoProfileCapture capture = ApplyCaptureFdoProfileTransform(module.get());
+  ModuleConfigCapture capture = ApplyCaptureModuleConfigTransform(module.get());
 
   EXPECT_EQ(capture.calls, 1);
-  EXPECT_TRUE(capture.struct_covers_fdo_profile);
-  EXPECT_TRUE(capture.fdo_profile.empty());
+  EXPECT_TRUE(capture.struct_covers_module_config);
+  ASSERT_TRUE(capture.parsed);
+  EXPECT_TRUE(capture.config.fdo_profile().empty());
 }
 
 }  // namespace
