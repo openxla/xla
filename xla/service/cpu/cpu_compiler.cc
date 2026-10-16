@@ -1558,6 +1558,22 @@ CpuCompiler::CompileCpuExecutable(
   size_t kernel_dylib_index = 0;
   auto add_compiled_module =
       [&](llvm::orc::ThreadSafeModule module) -> absl::Status {
+    if (pic_level != llvm::PICLevel::NotPIC ||
+        pie_level != llvm::PIELevel::Default) {
+      module.withModuleDo([&](llvm::Module& llvm_module) {
+        // `setPICLevel`/`setPIELevel` append via `addModuleFlag` rather than
+        // replacing, so skip if already set to avoid duplicate flag verifier
+        // errors.
+        if (pic_level != llvm::PICLevel::NotPIC &&
+            llvm_module.getModuleFlag("PIC Level") == nullptr) {
+          llvm_module.setPICLevel(pic_level);
+        }
+        if (pie_level != llvm::PIELevel::Default &&
+            llvm_module.getModuleFlag("PIE Level") == nullptr) {
+          llvm_module.setPIELevel(pie_level);
+        }
+      });
+    }
     size_t dylib_index =
         thunk_emitter_options.is_aot_compilation ? 0 : kernel_dylib_index;
     ABSL_RETURN_IF_ERROR(
@@ -1693,6 +1709,14 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
       /*disable_platform_dependent_math=*/
       options::DisablePlatformDependentMath(module->config()) || fast_compile,
   };
+  const bool emit_shared_object =
+      module->config().debug_options().xla_cpu_aot_emit_shared_object();
+  if (emit_shared_object) {
+    // Shared objects need position-independent code (no text relocations) and
+    // the small code model (PC-relative addressing within 2 GiB).
+    ir_compiler_options.reloc_model = llvm::Reloc::PIC_;
+    ir_compiler_options.code_model = llvm::CodeModel::Small;
+  }
 
   ThunkEmitter::Options thunk_emitter_options = {
       /*is_aot_compilation=*/options.is_aot_compile};
@@ -1700,12 +1724,14 @@ absl::StatusOr<std::unique_ptr<Executable>> CpuCompiler::RunBackend(
   auto ir_compiler = IrCompiler::Create(CompilerTargetOptions(module->config()),
                                         std::move(ir_compiler_options), {});
 
+  llvm::PICLevel::Level pic_level =
+      emit_shared_object ? llvm::PICLevel::SmallPIC : llvm::PICLevel::NotPIC;
   // Since we are JIT compiling, we don't need a triple or target machine
   // features as those will be inferred.s
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<CpuExecutable> cpu_executable,
       CompileCpuExecutable(std::move(module), thunk_emitter_options,
-                           std::move(ir_compiler)));
+                           std::move(ir_compiler), pic_level));
 
   VLOG(1) << "Compilation finished";
   cpu_executable->Finalize();

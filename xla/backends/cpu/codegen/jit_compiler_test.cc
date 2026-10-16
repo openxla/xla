@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/jit_compiler.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -29,6 +30,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/AsmParser/Parser.h"
@@ -250,6 +252,66 @@ TEST(JitCompilerTest, ExternalDefinitionGenerator) {
   float value = 1.0f;
   CallScalarFn(call_external_fn, &value);
   EXPECT_EQ(value, 2.0f);
+}
+
+TEST(JitCompilerTest, ExternalCallsFromManyPicSections) {
+  auto context = std::make_unique<llvm::LLVMContext>();
+  llvm::orc::ThreadSafeContext tsc(std::move(context));
+
+  JitCompiler::Options options;
+  options.definition_generator = [](const llvm::DataLayout& data_layout) {
+    return std::make_unique<ExternalDefinitionGenerator>();
+  };
+
+  // With function sections, ORC creates a stub and a GOT entry per section
+  // and external symbol (x86_64 PIC calls go through the PLT). 1000 functions
+  // need ~8KB of GOT, which is more than a page.
+  llvm::TargetOptions target_options;
+  target_options.FunctionSections = true;
+  IrCompiler::Options ir_compiler_options{
+      /*opt_level=*/llvm::CodeGenOptLevel::None,
+      /*optimize_for_size=*/false,
+      TargetMachineOptions(GetDebugOptionsFromFlags())};
+  ir_compiler_options.reloc_model = llvm::Reloc::PIC_;
+  ir_compiler_options.code_model = llvm::CodeModel::Small;
+  std::unique_ptr<IrCompiler> ir_compiler =
+      IrCompiler::Create(target_options, std::move(ir_compiler_options),
+                         IrCompiler::CompilationHooks());
+
+  ASSERT_OK_AND_ASSIGN(
+      auto compiler,
+      JitCompiler::Create(std::move(options), std::move(ir_compiler),
+                          /*task_runner=*/nullptr));
+
+  constexpr int kNumFunctions = 1000;
+  std::string ir = "declare void @__external_fn(ptr %arg)\n";
+  for (int i = 0; i < kNumFunctions; ++i) {
+    absl::StrAppend(&ir, "define void @CallExternalFn", i, "(ptr %arg) {\n",
+                    "  call void @__external_fn(ptr %arg)\n", "  ret void\n",
+                    "}\n");
+  }
+
+  ASSERT_OK_AND_ASSIGN(llvm::orc::ThreadSafeModule tsm,
+                       ParseModule(tsc, ir, "CallExternalFn"));
+  ASSERT_OK(compiler.AddModule(std::move(tsm)));
+
+  using ScalarFn = void(float*);
+  std::vector<FunctionLibrary::Symbol> symbols = {
+      FunctionLibrary::Sym<ScalarFn>("CallExternalFn0"),
+      FunctionLibrary::Sym<ScalarFn>(
+          absl::StrCat("CallExternalFn", kNumFunctions - 1))};
+
+  ASSERT_OK_AND_ASSIGN(auto function_library,
+                       Compile(std::move(compiler), symbols));
+
+  for (const FunctionLibrary::Symbol& symbol : symbols) {
+    ASSERT_OK_AND_ASSIGN(
+        ScalarFn * call_external_fn,
+        function_library->ResolveFunction<ScalarFn>(symbol.name));
+    float value = 1.0f;
+    CallScalarFn(call_external_fn, &value);
+    EXPECT_EQ(value, 2.0f);
+  }
 }
 
 class JitCompilerTestFixture : public ::testing::Test {
