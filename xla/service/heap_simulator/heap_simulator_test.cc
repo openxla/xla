@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/heap_simulator/heap_simulator.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -1108,6 +1109,232 @@ TEST_F(NoFragmentationStatsHeapTest, Mixed) {
 }
 
 class GlobalDecreasingSizeBestFitHeapTest : public HeapAlgorithmTestBase {};
+
+class HeapPackingSearchTest : public HeapAlgorithmTestBase {};
+
+TEST_F(HeapPackingSearchTest, ImprovesBothExistingStrategies) {
+  using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
+  for (int64_t alignment : {1, 16}) {
+    Heap spatial(alignment, Heap::kSpatial);
+    Heap temporal(alignment, Heap::kTemporal);
+    std::unique_ptr<HeapAlgorithm<HloValue>> search =
+        CreateHeapWithPackingSearch(alignment);
+    for (HeapAlgorithm<HloValue>* heap :
+         {static_cast<HeapAlgorithm<HloValue>*>(&spatial),
+          static_cast<HeapAlgorithm<HloValue>*>(&temporal), search.get()}) {
+      // B and C need 9 units together. Later A and D need 8. Both existing
+      // greedy orders use 12; size times lifetime finds a 9-unit placement.
+      heap->Alloc(buffer_b_, 4 * alignment);
+      heap->Alloc(buffer_c_, 5 * alignment);
+      heap->Free(buffer_c_, 5 * alignment);
+      heap->Alloc(buffer_a_, 3 * alignment);
+      heap->Free(buffer_b_, 4 * alignment);
+      heap->Alloc(buffer_d_, 5 * alignment);
+      heap->Free(buffer_a_, 3 * alignment);
+      heap->Free(buffer_d_, 5 * alignment);
+    }
+    ASSERT_OK_AND_ASSIGN(const auto spatial_result, spatial.Finish());
+    ASSERT_OK_AND_ASSIGN(const auto temporal_result, temporal.Finish());
+    ASSERT_OK_AND_ASSIGN(const auto result, search->Finish());
+    EXPECT_EQ(spatial_result.heap_size, 12 * alignment);
+    EXPECT_EQ(temporal_result.heap_size, 12 * alignment);
+    EXPECT_EQ(result.heap_size, 9 * alignment);
+    ASSERT_EQ(result.heap_results.size(), 1);
+    for (const auto& [buffer, chunk] : result.heap_results[0].chunk_map) {
+      EXPECT_EQ(chunk.offset % alignment, 0);
+    }
+  }
+}
+
+TEST_F(HeapPackingSearchTest, PreservesBaselineOnTie) {
+  GlobalDecreasingSizeBestFitHeap<HloValue> baseline(1);
+  std::unique_ptr<HeapAlgorithm<HloValue>> search =
+      CreateHeapWithPackingSearch(1);
+  for (HeapAlgorithm<HloValue>* heap :
+       {static_cast<HeapAlgorithm<HloValue>*>(&baseline), search.get()}) {
+    heap->Alloc(buffer_a_, 4);
+    heap->Alloc(buffer_b_, 4);
+    heap->Free(buffer_a_, 4);
+    heap->Alloc(buffer_c_, 6);
+    heap->Free(buffer_b_, 4);
+    heap->Free(buffer_c_, 6);
+  }
+  ASSERT_OK_AND_ASSIGN(const auto expected, baseline.Finish());
+  ASSERT_OK_AND_ASSIGN(const auto result, search->Finish());
+  EXPECT_EQ(result.heap_size, 10);
+  EXPECT_THAT(result.heap_results[0].chunk_map,
+              ContainerEq(expected.heap_results[0].chunk_map));
+}
+
+TEST_F(HeapPackingSearchTest, ColocationGapsAndDifferentSizes) {
+  using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
+  for (Heap::ChunkPlacement placement :
+       {Heap::ChunkPlacement::kBestFit, Heap::ChunkPlacement::kLowestOffset}) {
+    Heap heap(4, Heap::kSpatialTemporal, nullptr,
+              SliceTimePermutationIterator::Ty::kAll, placement);
+    heap.Alloc(buffer_a_, 4);
+    heap.Free(buffer_a_, 4);
+    heap.Alloc(buffer_b_, 9);
+    heap.Free(buffer_b_, 9);
+    heap.ShareWith(buffer_c_, buffer_a_, 6);
+    heap.Free(buffer_c_, 6);
+    heap.Alloc(buffer_d_, 0);
+    heap.Free(buffer_d_, 0);
+    ASSERT_OK_AND_ASSIGN(const auto result, heap.Finish());
+    EXPECT_EQ(result.heap_size, 9);
+    const auto& chunks = result.heap_results[0].chunk_map;
+    EXPECT_EQ(chunks.at(buffer_a_), chunks.at(buffer_c_));
+    EXPECT_EQ(chunks.at(buffer_a_).size, 6);
+    EXPECT_EQ(chunks.at(buffer_b_).offset, 0);
+    EXPECT_EQ(chunks.at(buffer_d_).size, 0);
+  }
+}
+
+TEST_F(HeapPackingSearchTest, Empty) {
+  ASSERT_OK_AND_ASSIGN(const auto result,
+                       CreateHeapWithPackingSearch(16)->Finish());
+  EXPECT_EQ(result.heap_size, 0);
+  ASSERT_EQ(result.heap_results.size(), 1);
+  EXPECT_TRUE(result.heap_results[0].chunk_map.empty());
+}
+
+TEST_F(HeapPackingSearchTest, OverlappingAliasesAreCountedOnceForOrdering) {
+  using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
+  Heap heap(1, Heap::kSpatialTemporal);
+  heap.Alloc(buffer_a_, 4);
+  heap.Alloc(buffer_b_, 7);
+  heap.ShareWith(buffer_c_, buffer_a_, 4);
+  heap.Free(buffer_a_, 4);
+  heap.Free(buffer_b_, 7);
+  heap.Free(buffer_c_, 4);
+  // The A/C union has area 4 * 6 = 24; B has area 7 * 4 = 28.
+  // Summing the two alias lifetimes would incorrectly give A/C area 32.
+  ASSERT_OK_AND_ASSIGN(const auto result, heap.Finish());
+  const auto& chunks = result.heap_results[0].chunk_map;
+  EXPECT_EQ(chunks.at(buffer_b_).offset, 0);
+  EXPECT_EQ(chunks.at(buffer_a_).offset, 7);
+  EXPECT_EQ(chunks.at(buffer_a_), chunks.at(buffer_c_));
+  EXPECT_EQ(result.heap_size, 11);
+}
+
+TEST_F(HeapPackingSearchTest, AreaComparisonDoesNotOverflowInt64) {
+  using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
+  Heap heap(1, Heap::kSpatialTemporal);
+  const int64_t size = int64_t{1} << 60;
+  heap.Alloc(buffer_a_, size);
+  heap.Alloc(buffer_b_, size);
+  heap.Alloc(buffer_c_, 1);
+  heap.Free(buffer_c_, 1);
+  heap.Alloc(buffer_d_, 1);
+  heap.Free(buffer_d_, 1);
+  heap.Free(buffer_b_, size);
+  heap.Alloc(buffer_e_, 1);
+  heap.Free(buffer_e_, 1);
+  heap.Free(buffer_a_, size);
+  // A's area is 10 * 2^60, exceeding int64_t; B's area is 6 * 2^60.
+  ASSERT_OK_AND_ASSIGN(const auto result, heap.Finish());
+  EXPECT_EQ(result.heap_results[0].chunk_map.at(buffer_a_).offset, 0);
+  EXPECT_EQ(result.heap_results[0].chunk_map.at(buffer_b_).offset, size);
+}
+
+TEST_F(HeapPackingSearchTest, LowestOffsetCanImproveBestFit) {
+  using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
+  Heap best_fit(1, Heap::kSpatial);
+  Heap lowest_offset(1, Heap::kSpatial, nullptr,
+                     SliceTimePermutationIterator::Ty::kAll,
+                     Heap::ChunkPlacement::kLowestOffset);
+  for (HeapAlgorithm<HloValue>* heap :
+       {static_cast<HeapAlgorithm<HloValue>*>(&best_fit),
+        static_cast<HeapAlgorithm<HloValue>*>(&lowest_offset)}) {
+    heap->Alloc(buffer_h_, 2);
+    heap->Alloc(buffer_b_, 5);
+    heap->Alloc(buffer_c_, 1);
+    heap->Alloc(buffer_f_, 2);
+    heap->Alloc(buffer_g_, 4);
+    heap->Free(buffer_f_, 2);
+    heap->Alloc(buffer_a_, 1);
+    heap->Free(buffer_b_, 5);
+    heap->Free(buffer_a_, 1);
+    heap->Alloc(buffer_d_, 12);
+    heap->Free(buffer_c_, 1);
+    heap->Free(buffer_g_, 4);
+    heap->Alloc(buffer_e_, 6);
+    heap->Free(buffer_e_, 6);
+    heap->Free(buffer_h_, 2);
+    heap->Free(buffer_d_, 12);
+  }
+  ASSERT_OK_AND_ASSIGN(const auto baseline, best_fit.Finish());
+  ASSERT_OK_AND_ASSIGN(const auto result, lowest_offset.Finish());
+  EXPECT_EQ(baseline.heap_size, 21);
+  EXPECT_EQ(result.heap_size, 20);
+}
+
+TEST_F(HeapPackingSearchTest, RandomIntervalsStayDisjointAndNeverRegress) {
+  using Heap = GlobalDecreasingSizeBestFitHeap<HloValue>;
+  const std::vector<const HloValue*> buffers = {
+      buffer_a_, buffer_b_, buffer_c_, buffer_d_, buffer_e_,
+      buffer_f_, buffer_g_, buffer_h_, buffer_i_};
+  std::mt19937 generator(6811592);
+  for (int trial = 0; trial < 100; ++trial) {
+    const int64_t alignment = trial % 2 == 0 ? 1 : 16;
+    std::vector<int> events(2 * buffers.size());
+    for (int i = 0; i < events.size(); ++i) {
+      events[i] = i;
+    }
+    std::shuffle(events.begin(), events.end(), generator);
+    std::vector<int64_t> sizes(buffers.size());
+    std::vector<int> starts(buffers.size(), -1);
+    std::vector<int> ends(buffers.size(), -1);
+    Heap spatial(alignment, Heap::kSpatial);
+    Heap temporal(alignment, Heap::kTemporal);
+    std::unique_ptr<HeapAlgorithm<HloValue>> search =
+        CreateHeapWithPackingSearch(alignment);
+    std::unique_ptr<HeapAlgorithm<HloValue>> repeat =
+        CreateHeapWithPackingSearch(alignment);
+    for (int t = 0; t < events.size(); ++t) {
+      const int i = events[t] / 2;
+      const bool allocate = starts[i] < 0;
+      if (allocate) {
+        starts[i] = t;
+        sizes[i] = 1 + generator() % 100;
+      } else {
+        ends[i] = t;
+      }
+      for (HeapAlgorithm<HloValue>* heap :
+           {static_cast<HeapAlgorithm<HloValue>*>(&spatial),
+            static_cast<HeapAlgorithm<HloValue>*>(&temporal), search.get(),
+            repeat.get()}) {
+        if (allocate) {
+          heap->Alloc(buffers[i], sizes[i]);
+        } else {
+          heap->Free(buffers[i], sizes[i]);
+        }
+      }
+    }
+    ASSERT_OK_AND_ASSIGN(const auto spatial_result, spatial.Finish());
+    ASSERT_OK_AND_ASSIGN(const auto temporal_result, temporal.Finish());
+    ASSERT_OK_AND_ASSIGN(const auto result, search->Finish());
+    ASSERT_OK_AND_ASSIGN(const auto repeated_result, repeat->Finish());
+    EXPECT_LE(result.heap_size,
+              std::min(spatial_result.heap_size, temporal_result.heap_size));
+    const auto& chunks = result.heap_results[0].chunk_map;
+    EXPECT_THAT(chunks, ContainerEq(repeated_result.heap_results[0].chunk_map));
+    ASSERT_EQ(chunks.size(), buffers.size());
+    for (int i = 0; i < buffers.size(); ++i) {
+      const auto& a = chunks.at(buffers[i]);
+      EXPECT_EQ(a.offset % alignment, 0);
+      EXPECT_GE(a.offset, 0);
+      EXPECT_EQ(a.size, sizes[i]);
+      EXPECT_LE(a.chunk_end(), result.heap_size);
+      for (int j = 0; j < i; ++j) {
+        if (starts[i] <= ends[j] && starts[j] <= ends[i]) {
+          const auto& b = chunks.at(buffers[j]);
+          EXPECT_TRUE(a.chunk_end() <= b.offset || b.chunk_end() <= a.offset);
+        }
+      }
+    }
+  }
+}
 
 TEST_F(GlobalDecreasingSizeBestFitHeapTest, Empty) {
   GlobalDecreasingSizeBestFitHeap<HloValue> heap(/*alignment=*/1);
