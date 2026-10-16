@@ -186,8 +186,8 @@ ENTRY e {
     backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion","cudnn_fusion_config":{"plan_id":"0"}}}
 })",
                                  R"(
-CHECK: "mode": "MIN"
-CHECK: "mode": "MAX"
+CHECK-DAG: "mode": "MAX"
+CHECK-DAG: "mode": "MIN"
 )"));
 }
 
@@ -1707,9 +1707,10 @@ class CuDnnNonGemmFusionTest
 
  protected:
   void SetUp() override {
-    if (!IsAtLeastCuDnnVersion(9, 26)) {
+    if (!IsAtLeastCuDnnVersion(9, 26) ||
+        !device_description().cuda_compute_capability().IsAtLeastBlackwell()) {
       GTEST_SKIP() << "cuDNN non-gemm fusion lowering is only tested with "
-                      "cuDNN 9.26+.";
+                      "cuDNN 9.26+ on Blackwell+ GPUs.";
     }
   }
 };

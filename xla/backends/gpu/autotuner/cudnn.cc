@@ -138,6 +138,12 @@ bool IsSupportedCudnnFusion(const HloInstruction& instr,
       VLOG(1) << "Cudnn version is too old for cudnn non-gemm fusion.";
       return false;
     }
+    if (!target_config.device_description.cuda_compute_capability()
+             .IsAtLeastBlackwell()) {
+      VLOG(1) << "Compute capability is not supported for cudnn non-gemm "
+                 "fusion.";
+      return false;
+    }
     absl::StatusOr<bool> is_supported =
         CuDnnFusionCompiler::IsSupportedNonGemmFusion(
             stream_exec, target_config.device_description,
