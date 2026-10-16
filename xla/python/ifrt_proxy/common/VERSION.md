@@ -156,3 +156,11 @@
 *   Added date: 2026-03-10
 *   Changes:
     *   Added support for `LoadedExecutable::SetDeleteOptions`.
+
+## Version kDeserializeLoadedExecutable
+
+*   Added date: 2026-10-15
+*   Changes:
+    *   Added a new op `DeserializeLoadedExecutable` for
+        `Compiler::DeserializeLoadedExecutable`. The serialized executable
+        travels through the host buffer store.

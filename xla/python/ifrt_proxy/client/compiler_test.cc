@@ -17,10 +17,14 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -30,9 +34,12 @@
 #include "absl/time/time.h"
 #include "google/protobuf/text_format.h"
 #include "tsl/platform/protobuf.h"
+#include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
+#include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/mock.h"
 #include "xla/python/ifrt/program.h"
 #include "xla/python/ifrt/rtti.h"
@@ -46,7 +53,9 @@
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
 #include "xla/python/ifrt_proxy/common/test_utils.h"
 #include "xla/python/ifrt_proxy/common/versions.h"
+#include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/tsl/concurrency/future.h"
+#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {
@@ -122,9 +131,9 @@ class TestCompileOptionsSerDes
 
 [[maybe_unused]] char TestCompileOptionsSerDes::ID = 0;  // NOLINT
 
-IfrtProxyVersion Version() {
+IfrtProxyVersion Version(int protocol = protocol_version::kClientMin) {
   IfrtProxyVersion version;
-  version.set_protocol_version(protocol_version::kClientMin);
+  version.set_protocol_version(protocol);
   version.set_ifrt_serdes_version_number(
       SerDesAnyVersionAccessor::GetMinimum().version_number().value());
   return version;
@@ -133,9 +142,14 @@ IfrtProxyVersion Version() {
 class CompilerTest : public testing::Test {
  protected:
   static void SetUpTestSuite() {
-    RegisterSerDes<TestProgram>(std::make_unique<TestProgramSerDes>());
-    RegisterSerDes<TestCompileOptions>(
-        std::make_unique<TestCompileOptionsSerDes>());
+    // Derived fixtures run this once per suite; register the SerDes once per
+    // process.
+    static absl::once_flag once;
+    absl::call_once(once, [] {
+      RegisterSerDes<TestProgram>(std::make_unique<TestProgramSerDes>());
+      RegisterSerDes<TestCompileOptions>(
+          std::make_unique<TestCompileOptionsSerDes>());
+    });
   }
 
   void SetUp() override {
@@ -154,12 +168,13 @@ class CompilerTest : public testing::Test {
 
   std::shared_ptr<MockClientSession> session_;
   std::shared_ptr<RpcHelper> rpc_helper_;
-  std::shared_ptr<ClientHostBufferStore> host_buffer_store_;
+  std::shared_ptr<MockClientHostBufferStore> host_buffer_store_;
 };
 
 TEST_F(CompilerTest, Compile) {
   std::vector<MockDevice> devices(2);
-  TestQueue<IfrtRequest> requests_queue(/*pop_timeout=*/absl::Minutes(1));
+  TestQueue<IfrtRequest> requests_queue(
+      /*default_pop_timeout=*/absl::Minutes(1));
   auto device_list = BasicDeviceList::Create({&devices[0], &devices[1]});
 
   MockClient client;
@@ -208,6 +223,195 @@ TEST_F(CompilerTest, Compile) {
   EXPECT_THAT(executable->devices(), Optional(device_list));
   EXPECT_THAT(executable->Fingerprint(),
               absl_testing::IsOkAndHolds(Optional(std::string("fingerprint"))));
+}
+
+// Tests for `DeserializeLoadedExecutable`.
+class DeserializeLoadedExecutableTest : public CompilerTest {
+ protected:
+  void SetUp() override {
+    CompilerTest::SetUp();
+    // Use the first protocol version that has the deserialize RPC.
+    rpc_helper_ = std::make_shared<RpcHelper>(
+        Version(protocol_version::kDeserializeLoadedExecutable), session_);
+    rpc_helper_->set_host_buffer_store(host_buffer_store_);
+
+    for (int i = 0; i < devices_.size(); ++i) {
+      ON_CALL(devices_[i], Id()).WillByDefault(Return(DeviceId(i)));
+    }
+    device_list_ = BasicDeviceList::Create({&devices_[0], &devices_[1]});
+    ON_CALL(client_, LookupDevice(_)).WillByDefault([this](DeviceId id) {
+      return &devices_[id.value()];
+    });
+    ON_CALL(client_, MakeDeviceList(_)).WillByDefault(Return(device_list_));
+  }
+
+  std::unique_ptr<DeserializeExecutableOptions> MakeOptions(
+      std::optional<xla::CompileOptions> compile_options = std::nullopt) {
+    return std::make_unique<XlaDeserializeExecutableOptions>(
+        std::move(compile_options), device_list_);
+  }
+
+  std::vector<MockDevice> devices_ = std::vector<MockDevice>(2);
+  DeviceListRef device_list_;
+  MockClient client_;
+};
+
+TEST_F(DeserializeLoadedExecutableTest, UploadsBytesAndCreatesExecutable) {
+  Compiler compiler(&client_, rpc_helper_);
+
+  uint64_t stored_handle = 0;
+  absl::Cord stored_data;
+  EXPECT_CALL(*host_buffer_store_, Store(_, testing::An<const absl::Cord&>()))
+      .WillOnce([&](uint64_t handle, const absl::Cord& data) {
+        stored_handle = handle;
+        stored_data = data;
+        return tsl::Future<>(absl::OkStatus());
+      });
+
+  TestQueue<IfrtRequest> requests_queue(
+      /*default_pop_timeout=*/absl::Minutes(1));
+  IfrtResponse response;
+  ASSERT_TRUE(TextFormat::ParseFromString(
+      R"pb(deserialize_loaded_executable_response {
+             compile_response {
+               loaded_executable_handle: 1234
+               name: "deserialized-executable"
+               num_devices: 2
+               device_ids: [ 0, 1 ]
+               addressable_device_ids: [ 0, 1 ]
+               fingerprint_value: "fingerprint"
+             }
+           })pb",
+      &response));
+  EXPECT_CALL(*session_, Enqueue(IfrtRequestOfType(
+                             IfrtRequest::kDeserializeLoadedExecutableRequest)))
+      .WillOnce(MockClientCaptureAndReturn(&requests_queue, response));
+
+  const absl::Cord serialized("serialized executable bytes");
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto executable,
+      compiler.DeserializeLoadedExecutable(serialized, MakeOptions()).Await());
+
+  const IfrtRequest request = requests_queue.Pop();
+  const DeserializeLoadedExecutableRequest& deserialize_request =
+      request.deserialize_loaded_executable_request();
+  EXPECT_EQ(deserialize_request.serialized_executable_handle(), stored_handle);
+  EXPECT_NE(stored_handle, 0);
+  EXPECT_EQ(stored_data, serialized);
+  EXPECT_THAT(deserialize_request.device_ids(), ElementsAre(0, 1));
+  EXPECT_FALSE(deserialize_request.has_compile_options());
+
+  EXPECT_EQ(executable->name(), "deserialized-executable");
+  EXPECT_THAT(executable->devices(), Optional(device_list_));
+  EXPECT_THAT(executable->Fingerprint(),
+              absl_testing::IsOkAndHolds(Optional(std::string("fingerprint"))));
+}
+
+TEST_F(DeserializeLoadedExecutableTest, SendsCompileOptions) {
+  Compiler compiler(&client_, rpc_helper_);
+
+  EXPECT_CALL(*host_buffer_store_, Store(_, testing::An<const absl::Cord&>()))
+      .WillOnce(Return(tsl::Future<>(absl::OkStatus())));
+
+  TestQueue<IfrtRequest> requests_queue(
+      /*default_pop_timeout=*/absl::Minutes(1));
+  IfrtResponse response;
+  ASSERT_TRUE(TextFormat::ParseFromString(
+      R"pb(deserialize_loaded_executable_response {
+             compile_response { loaded_executable_handle: 1 }
+           })pb",
+      &response));
+  EXPECT_CALL(*session_, Enqueue(IfrtRequestOfType(
+                             IfrtRequest::kDeserializeLoadedExecutableRequest)))
+      .WillOnce(MockClientCaptureAndReturn(&requests_queue, response));
+
+  xla::CompileOptions compile_options;
+  compile_options.argument_layouts = std::nullopt;
+  ASSERT_THAT(compiler
+                  .DeserializeLoadedExecutable(absl::Cord("bytes"),
+                                               MakeOptions(compile_options))
+                  .Await()
+                  .status(),
+              absl_testing::IsOk());
+  EXPECT_TRUE(requests_queue.Pop()
+                  .deserialize_loaded_executable_request()
+                  .has_compile_options());
+}
+
+TEST_F(DeserializeLoadedExecutableTest, ReturnsUnimplementedOnOldServer) {
+  // The default fixture version predates `kDeserializeLoadedExecutable`.
+  rpc_helper_ = std::make_shared<RpcHelper>(
+      Version(protocol_version::kLoadedExecutableDeleteOptions), session_);
+  rpc_helper_->set_host_buffer_store(host_buffer_store_);
+  Compiler compiler(&client_, rpc_helper_);
+
+  // No bytes are uploaded and no request is sent.
+  EXPECT_CALL(*host_buffer_store_, Store(_, testing::An<const absl::Cord&>()))
+      .Times(0);
+  EXPECT_CALL(*session_, Enqueue(_)).Times(0);
+
+  EXPECT_THAT(
+      compiler.DeserializeLoadedExecutable(absl::Cord("bytes"), MakeOptions())
+          .Await()
+          .status(),
+      absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
+}
+
+TEST_F(DeserializeLoadedExecutableTest, RejectsNonXlaOptions) {
+  Compiler compiler(&client_, rpc_helper_);
+  EXPECT_CALL(*host_buffer_store_, Store(_, testing::An<const absl::Cord&>()))
+      .Times(0);
+
+  EXPECT_THAT(compiler
+                  .DeserializeLoadedExecutable(
+                      absl::Cord("bytes"),
+                      std::make_unique<DeserializeExecutableOptions>())
+                  .Await()
+                  .status(),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST_F(DeserializeLoadedExecutableTest, RejectsHostCallbacks) {
+  Compiler compiler(&client_, rpc_helper_);
+  EXPECT_CALL(*host_buffer_store_, Store(_, testing::An<const absl::Cord&>()))
+      .Times(0);
+
+  auto options = std::make_unique<XlaDeserializeExecutableOptions>(
+      std::nullopt, device_list_);
+  options->loaded_host_callbacks.push_back(
+      tsl::MakeRef<MockLoadedHostCallback>());
+
+  EXPECT_THAT(
+      compiler
+          .DeserializeLoadedExecutable(absl::Cord("bytes"), std::move(options))
+          .Await()
+          .status(),
+      absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
+}
+
+TEST_F(DeserializeLoadedExecutableTest, PropagatesServerError) {
+  Compiler compiler(&client_, rpc_helper_);
+  EXPECT_CALL(*host_buffer_store_, Store(_, testing::An<const absl::Cord&>()))
+      .WillOnce(Return(tsl::Future<>(absl::OkStatus())));
+
+  // The server reports application errors in the response metadata.
+  IfrtResponse response;
+  ASSERT_TRUE(TextFormat::ParseFromString(
+      R"pb(response_metadata {
+             status { code: 9 message: "ABI mismatch" }  # FAILED_PRECONDITION
+           })pb",
+      &response));
+  EXPECT_CALL(*session_, Enqueue(IfrtRequestOfType(
+                             IfrtRequest::kDeserializeLoadedExecutableRequest)))
+      .WillOnce(Return(tsl::Future<ClientSession::Response>(
+          std::make_shared<IfrtResponse>(response))));
+
+  EXPECT_THAT(
+      compiler.DeserializeLoadedExecutable(absl::Cord("bytes"), MakeOptions())
+          .Await()
+          .status(),
+      absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
+                             testing::HasSubstr("ABI mismatch")));
 }
 
 }  // namespace
