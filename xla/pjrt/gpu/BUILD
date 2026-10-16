@@ -96,6 +96,24 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "gpu_helpers_test",
+    srcs = ["gpu_helpers_test.cc"],
+    deps = [
+        ":allocator_config",
+        ":gpu_helpers",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:memory_allocation",
+        "//xla/stream_executor:memory_reservation",
+        "//xla/stream_executor:mock_stream_executor",
+        "//xla/tsl/framework:bfc_allocator",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "se_gpu_pjrt_client_impl",
     srcs = ["se_gpu_pjrt_client.cc"],
@@ -452,6 +470,7 @@ xla_test(
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:event",
+        "//xla/stream_executor:memory_reservation",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
@@ -493,7 +512,6 @@ xla_test(
         "@riegeli//riegeli/bytes:string_reader",
         "@riegeli//riegeli/bytes:string_writer",
         "@tsl//tsl/platform",
-        "@tsl//tsl/platform:casts",
         "@tsl//tsl/platform:platform_port",
     ] + if_cuda([
         "//xla/stream_executor/cuda:cuda_compute_capability",
