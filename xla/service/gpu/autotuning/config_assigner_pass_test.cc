@@ -1065,6 +1065,13 @@ TEST_F(ConfigAssignerPassTest, CudnnNonGemmFusionSelectedForUntaggedFusion) {
   tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "autotuning",
                                       /*num_threads=*/4);
   GpuCompiler::GpuTargetConfig target_config(stream_executor_);
+  if (target_config.device_description.dnn_version() <
+          se::SemanticVersion(9, 26, 0) ||
+      !target_config.device_description.cuda_compute_capability()
+           .IsAtLeastBlackwell()) {
+    GTEST_SKIP() << "cuDNN non-GEMM fusion requires cuDNN 9.26+ and Blackwell+ "
+                    "GPU.";
+  }
 
   std::vector<std::unique_ptr<CodegenBackend>> backends;
   backends.push_back(std::make_unique<CudnnBackend>(
