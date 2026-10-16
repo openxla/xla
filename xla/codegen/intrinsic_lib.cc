@@ -41,6 +41,7 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/TypeSize.h"
 #include "llvm/Support/raw_ostream.h"
+#include "xla/codegen/intrinsic/cpp/cosh_ll.h"
 #include "xla/codegen/intrinsic/cpp/cpp_gen_intrinsics.h"
 #include "xla/codegen/intrinsic/cpp/intrinsic_declarations.h"
 #include "xla/codegen/intrinsic/cpp/trig_ll.h"
@@ -132,6 +133,9 @@ IntrinsicFunctionLib::IntrinsicFunctionLib(const IntrinsicOptions& options)
     if (!::llvm_ir::kTrigLlIr.empty()) {
       ir_libraries_.emplace_back(::llvm_ir::kTrigLlIr, "trig");
     }
+    if (!::llvm_ir::kCoshLlIr.empty()) {
+      ir_libraries_.emplace_back(::llvm_ir::kCoshLlIr, "cosh");
+    }
   }
   intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::Ldexp>>());
@@ -157,6 +161,8 @@ IntrinsicFunctionLib::IntrinsicFunctionLib(const IntrinsicOptions& options)
       std::make_unique<IntrinsicAdapter<intrinsics::Cos>>());
   intrinsic_functions_.push_back(
       std::make_unique<IntrinsicAdapter<intrinsics::Sinh>>());
+  intrinsic_functions_.push_back(
+      std::make_unique<IntrinsicAdapter<intrinsics::Cosh>>());
 }
 
 namespace {

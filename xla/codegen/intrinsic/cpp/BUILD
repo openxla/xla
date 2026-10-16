@@ -407,6 +407,46 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "cosh_lib",
+    srcs = ["cosh.cc"],
+    hdrs = ["cosh.h"],
+    copts = [
+        "-Wno-psabi",
+    ],
+    deps = [
+        ":vector_ops",
+    ],
+)
+
+cc_ir_header(
+    name = "cosh_ll",
+    src = "cosh.cc",
+    deps = [
+        ":cosh_lib",
+        ":cpp_context_provider",
+        ":vector_ops",
+    ],
+)
+
+xla_cc_test(
+    name = "cosh_test",
+    srcs = ["cosh_test.cc"],
+    copts = [
+        "-Wno-psabi",
+    ],
+    deps = [
+        ":_cpp_gen_intrinsics",
+        ":cosh_lib",
+        ":cosh_ll",
+        ":vector_ops",
+        "//xla/codegen/intrinsic:test_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_library(
     name = "_cpp_gen_intrinsics",
     srcs = ["cpp_gen_intrinsics.cc"],
     hdrs = ["cpp_gen_intrinsics.h"],

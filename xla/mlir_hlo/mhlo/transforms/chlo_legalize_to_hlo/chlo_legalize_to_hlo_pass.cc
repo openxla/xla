@@ -53,13 +53,16 @@ namespace {
 
 ChloLegalizeToHighLevelMhloPassOptions FromPassOptions(
     bool enableAcosh, bool enableAcos, bool enableAsin, bool enableAsinh,
-    bool enableAtanh, bool enableCosh, bool enableSinh) {
+    bool enableAtanh, bool enableCosh, bool enableF64Cosh, bool enableSinh,
+    bool enableF64Sinh) {
   ChloLegalizeToHighLevelMhloPassOptions options;
   options.enable_acosh_ = enableAcosh;
   options.enable_acos_ = enableAcos;
   options.enable_atanh_ = enableAtanh;
   options.enable_cosh_ = enableCosh;
+  options.enable_f64_cosh_ = enableF64Cosh;
   options.enable_sinh_ = enableSinh;
+  options.enable_f64_sinh_ = enableF64Sinh;
   options.enable_asin_ = enableAsin;
   options.enable_asinh_ = enableAsinh;
   return options;
@@ -77,12 +80,20 @@ static bool qualifiesForDirectMhloLoweringAtanh(chlo::AtanhOp op) {
   return llvm::isa<FloatType>(getElementTypeOrSelf(op.getType()));
 }
 
-static bool qualifiesForDirectMhloLoweringCosh(chlo::CoshOp op) {
-  return llvm::isa<FloatType>(getElementTypeOrSelf(op.getType()));
+static bool qualifiesForDirectMhloLoweringCosh(chlo::CoshOp op,
+                                               bool enable_f64) {
+  auto elem_type = getElementTypeOrSelf(op.getType());
+  if (!llvm::isa<FloatType>(elem_type)) return false;
+  if (!enable_f64 && elem_type.isF64()) return false;
+  return true;
 }
 
-static bool qualifiesForDirectMhloLoweringSinh(chlo::SinhOp op) {
-  return llvm::isa<FloatType>(getElementTypeOrSelf(op.getType()));
+static bool qualifiesForDirectMhloLoweringSinh(chlo::SinhOp op,
+                                               bool enable_f64) {
+  auto elem_type = getElementTypeOrSelf(op.getType());
+  if (!llvm::isa<FloatType>(elem_type)) return false;
+  if (!enable_f64 && elem_type.isF64()) return false;
+  return true;
 }
 
 static bool qualifiesForDirectMhloLoweringAsin(chlo::AsinOp op) {
@@ -111,7 +122,7 @@ struct ChloLegalizeToHighLevelMhloPass
         &context, &conversionPatterns,
         FromPassOptions(enable_acosh_, enable_acos_, enable_asin_,
                         enable_asinh_, enable_atanh_, enable_cosh_,
-                        enable_sinh_));
+                        enable_f64_cosh_, enable_sinh_, enable_f64_sinh_));
 
     // Consider the mhlo dialect legal for tests. Also add helper dialects
     // that are needed by the patterns.
@@ -134,14 +145,16 @@ struct ChloLegalizeToHighLevelMhloPass
           });
     }
     if (enable_cosh_) {
-      conversionTarget.addDynamicallyLegalOp<chlo::CoshOp>([](chlo::CoshOp op) {
-        return !qualifiesForDirectMhloLoweringCosh(op);
-      });
+      conversionTarget.addDynamicallyLegalOp<chlo::CoshOp>(
+          [enable_f64 = static_cast<bool>(enable_f64_cosh_)](chlo::CoshOp op) {
+            return !qualifiesForDirectMhloLoweringCosh(op, enable_f64);
+          });
     }
     if (enable_sinh_) {
-      conversionTarget.addDynamicallyLegalOp<chlo::SinhOp>([](chlo::SinhOp op) {
-        return !qualifiesForDirectMhloLoweringSinh(op);
-      });
+      conversionTarget.addDynamicallyLegalOp<chlo::SinhOp>(
+          [enable_f64 = static_cast<bool>(enable_f64_sinh_)](chlo::SinhOp op) {
+            return !qualifiesForDirectMhloLoweringSinh(op, enable_f64);
+          });
     }
     if (enable_asin_) {
       conversionTarget.addDynamicallyLegalOp<chlo::AsinOp>([](chlo::AsinOp op) {
@@ -312,23 +325,41 @@ LogicalResult convertAtanhChloToMhlo(chlo::AtanhOp op,
   return success();
 }
 
-LogicalResult convertCoshChloToMhlo(chlo::CoshOp op,
-                                    PatternRewriter& rewriter) {
-  if (!mhlo::qualifiesForDirectMhloLoweringCosh(op)) {
-    return failure();
-  }
-  rewriter.replaceOpWithNewOp<mhlo::CoshOp>(op, op->getOperands());
-  return success();
-}
+struct ConvertCoshChloToMhloPattern : public OpRewritePattern<chlo::CoshOp> {
+  ConvertCoshChloToMhloPattern(MLIRContext* context, bool enable_f64,
+                               PatternBenefit benefit)
+      : OpRewritePattern(context, benefit), enable_f64_(enable_f64) {}
 
-LogicalResult convertSinhChloToMhlo(chlo::SinhOp op,
-                                    PatternRewriter& rewriter) {
-  if (!mhlo::qualifiesForDirectMhloLoweringSinh(op)) {
-    return failure();
+  LogicalResult matchAndRewrite(chlo::CoshOp op,
+                                PatternRewriter& rewriter) const override {
+    if (!mhlo::qualifiesForDirectMhloLoweringCosh(op, enable_f64_)) {
+      return failure();
+    }
+    rewriter.replaceOpWithNewOp<mhlo::CoshOp>(op, op->getOperands());
+    return success();
   }
-  rewriter.replaceOpWithNewOp<mhlo::SinhOp>(op, op->getOperands());
-  return success();
-}
+
+ private:
+  bool enable_f64_;
+};
+
+struct ConvertSinhChloToMhloPattern : public OpRewritePattern<chlo::SinhOp> {
+  ConvertSinhChloToMhloPattern(MLIRContext* context, bool enable_f64,
+                               PatternBenefit benefit)
+      : OpRewritePattern(context, benefit), enable_f64_(enable_f64) {}
+
+  LogicalResult matchAndRewrite(chlo::SinhOp op,
+                                PatternRewriter& rewriter) const override {
+    if (!mhlo::qualifiesForDirectMhloLoweringSinh(op, enable_f64_)) {
+      return failure();
+    }
+    rewriter.replaceOpWithNewOp<mhlo::SinhOp>(op, op->getOperands());
+    return success();
+  }
+
+ private:
+  bool enable_f64_;
+};
 
 LogicalResult convertAsinChloToMhlo(chlo::AsinOp op,
                                     PatternRewriter& rewriter) {
@@ -357,18 +388,21 @@ LogicalResult convertMulhiChloToMhlo(chlo::MulhiOp op,
 
 ChloLegalizeToHighLevelMhloPassOptions getDefaultChloToHighLevelMhloOptions() {
   ChloLegalizeToHighLevelMhloPassOptions opts;
+  opts.enable_cosh_ = true;
   opts.enable_sinh_ = true;
   return opts;
 }
 
 ChloLegalizeToHighLevelMhloPassOptions getCpuChloToHighLevelMhloOptions() {
   ChloLegalizeToHighLevelMhloPassOptions opts;
+  opts.enable_cosh_ = true;
   opts.enable_sinh_ = true;
   return opts;
 }
 
 ChloLegalizeToHighLevelMhloPassOptions getTpuChloToHighLevelMhloOptions() {
   ChloLegalizeToHighLevelMhloPassOptions opts;
+  opts.enable_cosh_ = true;
   opts.enable_sinh_ = true;
   return opts;
 }
@@ -379,7 +413,9 @@ ChloLegalizeToHighLevelMhloPassOptions getGpuChloToHighLevelMhloOptions() {
   opts.enable_acos_ = true;
   opts.enable_atanh_ = true;
   opts.enable_cosh_ = true;
+  opts.enable_f64_cosh_ = true;
   opts.enable_sinh_ = true;
+  opts.enable_f64_sinh_ = true;
   opts.enable_asin_ = true;
   opts.enable_asinh_ = true;
   return opts;
@@ -393,7 +429,7 @@ namespace {
 }  // namespace
 
 void populateChloToHighLevelMhloOpPatterns(
-    MLIRContext*, RewritePatternSet* patterns,
+    MLIRContext* context, RewritePatternSet* patterns,
     const mhlo::ChloLegalizeToHighLevelMhloPassOptions& options) {
   constexpr unsigned kBenefit = 10;
   if (options.enable_acosh_) {
@@ -406,10 +442,12 @@ void populateChloToHighLevelMhloOpPatterns(
     patterns->add(mhlo::convertAtanhChloToMhlo, kBenefit);
   }
   if (options.enable_cosh_) {
-    patterns->add(mhlo::convertCoshChloToMhlo, kBenefit);
+    patterns->add<mhlo::ConvertCoshChloToMhloPattern>(
+        context, options.enable_f64_cosh_, kBenefit);
   }
   if (options.enable_sinh_) {
-    patterns->add(mhlo::convertSinhChloToMhlo, kBenefit);
+    patterns->add<mhlo::ConvertSinhChloToMhloPattern>(
+        context, options.enable_f64_sinh_, kBenefit);
   }
   if (options.enable_asin_) {
     patterns->add(mhlo::convertAsinChloToMhlo, kBenefit);
