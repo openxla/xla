@@ -24,6 +24,7 @@ limitations under the License.
 #include "xla/error_spec.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 
 namespace xla {
@@ -96,6 +97,10 @@ TEST_F(SortTest, MultiElementComparator) {
   // comparator with non-scalar intermediate values used to crash the GPU
   // LLVM IR emitter (llvm_loop.cc CHECK) on the second loop-emitted op.
   // The comparator is semantically p0 < p1, computed via f32[2] values.
+  // TPU compiles comparators as elementwise vector ops and rejects iota.
+  if (test::DeviceTypeIs(test::kTpu)) {
+    GTEST_SKIP();
+  }
   absl::string_view hlo_text_module = R"(
     HloModule sort
 
