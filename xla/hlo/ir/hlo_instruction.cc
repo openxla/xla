@@ -5649,6 +5649,8 @@ std::string PrecisionToString(const PrecisionConfig::Precision& precision) {
 
 std::string ShuffleModeToString(ShuffleMode::ModeCase shuffle_mode) {
   switch (shuffle_mode) {
+    case ShuffleMode::kPermute:
+      return "permute";
     case ShuffleMode::kRotate:
       return "rotate";
     case ShuffleMode::MODE_NOT_SET:
@@ -5922,6 +5924,9 @@ absl::StatusOr<PrecisionConfig::Precision> StringToPrecision(
 
 absl::StatusOr<ShuffleMode::ModeCase> StringToShuffleMode(
     absl::string_view mode) {
+  if (mode == "permute") {
+    return ShuffleMode::ModeCase::kPermute;
+  }
   if (mode == "rotate") {
     return ShuffleMode::ModeCase::kRotate;
   }
