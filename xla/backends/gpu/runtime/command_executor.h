@@ -66,7 +66,7 @@ class CommandExecutor {
     kConcurrent,
 
     // Preserves the thunk schedule produced by the latency hiding scheduler.
-    // The emitter expresses command order as token resources in
+    // The emitter expresses stream order and async joins as token resources in
     // `extra_resources`; the execution graph is built like kConcurrent.
     kLHS,
 
