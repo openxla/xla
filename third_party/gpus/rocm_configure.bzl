@@ -440,6 +440,7 @@ def _create_local_rocm_repository(repository_ctx):
 
     repository_dict = {
         "%{rocm_root}": rocm_toolkit_path,
+        "%{rocm_execroot_path}": str(Label("@local_config_rocm//rocm:BUILD").workspace_root),
         "%{rocm_toolkit_path}": str(repository_ctx.path(rocm_config.rocm_toolkit_path)),
         "%{rocm_rbe_docker_image}": repository_ctx.os.environ.get(_TF_ROCM_RBE_DOCKER_IMAGE, _DEFAULT_TF_ROCM_RBE_DOCKER_IMAGE),
         "%{rocm_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_POOL, _DEFAULT_TF_ROCM_RBE_POOL),

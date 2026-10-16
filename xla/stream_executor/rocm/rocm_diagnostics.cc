@@ -83,9 +83,10 @@ void LogDiagnosticInformation() {
   LOG(INFO) << "hipGetDeviceCount=" << device_count;
 
   hipDeviceProp_t props{};
-  err = hipGetDeviceProperties(&props, 0);
+  err = hipGetDevicePropertiesR0600(&props, 0);
   if (err != hipSuccess) {
-    LOG(INFO) << "hipGetDeviceProperties(0) failed: " << gpu::ToString(err);
+    LOG(INFO) << "hipGetDevicePropertiesR0600(0) failed: "
+              << gpu::ToString(err);
     return;
   }
   LOG(INFO) << "device 0 name=\"" << props.name

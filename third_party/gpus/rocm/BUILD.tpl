@@ -126,22 +126,18 @@ cc_library(
     ],
 )
 
+_ROCM_STAGED_RPATHS = [
+    "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
+    "-Wl,-rpath,%{rocm_execroot_path}/rocm/%{rocm_root}/lib",
+]
+
 cc_library(
     name = "rocm_rpath",
     linkopts = select({
-        ":build_hermetic": [
-            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
-        ],
-        ":link_only": [
-        ],
-        ":multiple_rocm_paths": [
-            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
-            "-Wl,-rpath=%{rocm_lib_paths}",
-        ],
-        "//conditions:default": [
-            "-Wl,-rpath,../%{rocm_repo_name}/rocm/%{rocm_root}/lib",
-            "-Wl,-rpath,/opt/rocm/lib",
-        ],
+        ":build_hermetic": _ROCM_STAGED_RPATHS,
+        ":link_only": [],
+        ":multiple_rocm_paths": _ROCM_STAGED_RPATHS + ["-Wl,-rpath=%{rocm_lib_paths}"],
+        "//conditions:default": _ROCM_STAGED_RPATHS + ["-Wl,-rpath,/opt/rocm/lib"],
     }),
     visibility = ["//visibility:public"],
 )
