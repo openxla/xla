@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/layout_util.h"
+#include "xla/literal_util.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
@@ -3597,6 +3598,20 @@ TEST(XlaBuilderTest, UnboundedShuffle) {
 
   Shuffle(Parameter(&b, 0, operand, "operand"), /*dimensions=*/{0, 1},
           shuffle::Rotate(/*shifts=*/{1, 3}));
+  ASSERT_OK_AND_ASSIGN(const std::unique_ptr<HloModule> module,
+                       BuildHloModule(b));
+
+  EXPECT_THAT(GetRoot(*module),
+              GmockMatch(m::Op().WithShapeEqualTo(&expected)));
+}
+
+TEST(XlaBuilderTest, UnboundedShuffleMultiRotate) {
+  XlaBuilder b(TestName());
+  ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[?, 10]"));
+  ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[?, 10]"));
+
+  Shuffle(Parameter(&b, 0, operand, "operand"), /*dimensions=*/{1},
+          shuffle::MultiRotate(LiteralUtil::CreateR2<int32_t>({{3}})));
   ASSERT_OK_AND_ASSIGN(const std::unique_ptr<HloModule> module,
                        BuildHloModule(b));
 

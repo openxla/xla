@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/shuffle.h"
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/util.h"
@@ -2020,11 +2021,33 @@ void HloShuffleInstruction::PrintExtraAttributesImpl(
   });
   // Each mode's inner attributes.
   switch (mode()) {
+    case ShuffleMode::kPermute:
+      printer.Next([this](Printer* printer) {
+        printer->Append("indices=");
+        absl::StatusOr<Literal> indices = shuffle::GetPermuteIndices(mode_);
+        if (indices.ok()) {
+          indices->PrintWithLayoutOneline(printer);
+        } else {
+          printer->Append("{...}");
+        }
+      });
+      break;
     case ShuffleMode::kRotate:
       printer.Next([this](Printer* printer) {
         printer->Append("shifts={");
         AppendJoin(printer, rotate().shifts(), ",");
         printer->Append("}");
+      });
+      break;
+    case ShuffleMode::kMultiRotate:
+      printer.Next([this](Printer* printer) {
+        printer->Append("multi_shifts=");
+        absl::StatusOr<Literal> multi_shifts = shuffle::GetMultiShifts(mode_);
+        if (multi_shifts.ok()) {
+          multi_shifts->PrintWithLayoutOneline(printer);
+        } else {
+          printer->Append("{...}");
+        }
       });
       break;
     case ShuffleMode::MODE_NOT_SET:

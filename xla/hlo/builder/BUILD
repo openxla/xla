@@ -208,6 +208,7 @@ xla_cc_test(
         ":xla_computation",
         "//xla:comparison_util",
         "//xla:debug_options_flags",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:shuffle",
         "//xla:tuple_tree",
