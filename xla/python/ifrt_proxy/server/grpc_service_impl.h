@@ -28,6 +28,7 @@
 #include "absl/log/die_if_null.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "grpcpp/server_context.h"
 #include "grpcpp/support/status.h"
 #include "grpcpp/support/sync_stream.h"
@@ -51,8 +52,31 @@ class GrpcServiceImpl : public grpc::GrpcIfrtService::Service {
           std::shared_ptr<xla::ifrt::proxy::HostBufferStore> host_buffer_store,
           AttributeMap initialization_data)>;
 
+  struct Options {
+    // How long tearing down a session may take. The teardown waits until the
+    // session's pending requests are answered; if it takes longer, the process
+    // exits so that the server can be restarted. Infinite disables the check.
+    // A zero or negative value gives the teardown no time, so nearly every
+    // teardown exits the process; pass a positive duration or infinite.
+    absl::Duration session_teardown_timeout = absl::InfiniteDuration();
+
+    // If set, called on the thread that tears down a session, right before the
+    // teardown starts. The returned object is destroyed on the same thread
+    // right after the teardown finishes. Lets a server watch the teardown from
+    // the thread that runs it, e.g., to report that thread's stack if the
+    // teardown hangs. May be called concurrently for different sessions.
+    absl::AnyInvocable<std::shared_ptr<void>(uint64_t session_id) const>
+        on_session_teardown_start;
+  };
+
   explicit GrpcServiceImpl(BackendFactory backend_factory)
-      : backend_factory_(ABSL_DIE_IF_NULL(std::move(backend_factory))) {}
+      : GrpcServiceImpl(std::move(backend_factory), Options()) {}
+
+  // Two constructors instead of `Options options = {}`: the member initializers
+  // of `Options` cannot be used in a default argument inside this class.
+  GrpcServiceImpl(BackendFactory backend_factory, Options options)
+      : backend_factory_(ABSL_DIE_IF_NULL(std::move(backend_factory))),
+        options_(std::move(options)) {}
 
   ::grpc::Status GetVersion(::grpc::ServerContext* context,
                             const GrpcGetVersionRequest* request,
@@ -98,6 +122,7 @@ class GrpcServiceImpl : public grpc::GrpcIfrtService::Service {
       ABSL_LOCKS_EXCLUDED(host_buffer_store_mu_);
 
   BackendFactory backend_factory_;
+  Options options_;
   std::atomic<uint64_t> next_session_id_ = 1;
 
   absl::Mutex host_buffer_store_mu_;
