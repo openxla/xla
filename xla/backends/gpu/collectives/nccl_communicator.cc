@@ -190,26 +190,12 @@ NcclCapabilities GetCapabilities(std::shared_ptr<NcclCommState> comm_state) {
 #endif
 }
 
-// Releases a communicator that Create has not published yet. A non-blocking
-// ncclCommAbort returns ncclInProgress and is finished only once
-// ncclCommGetAsyncError leaves that state. `poll_status` stays the caller's
-// poll error.
+// Releases a communicator that Create has not published yet. ncclCommAbort
+// stays blocking and completes before it returns. `poll_status` is the
+// caller's poll error, logged if abort fails.
 void AbortUnownedCommunicator(ncclComm_t comm,
                               const absl::Status& poll_status) {
   ncclResult_t abort = ncclCommAbort(comm);
-  if (abort == ncclInProgress) {
-    ncclResult_t state = ncclInProgress;
-    while (state == ncclInProgress) {
-      ncclResult_t query = ncclCommGetAsyncError(comm, &state);
-      if (query != ncclSuccess && query != ncclInProgress) {
-        LOG(ERROR) << "Failed to poll NCCL communicator " << comm
-                   << " abort: " << ncclGetErrorString(query)
-                   << "; poll status: " << poll_status;
-        return;
-      }
-    }
-    return;
-  }
   if (abort != ncclSuccess) {
     LOG(ERROR) << "Failed to abort NCCL communicator " << comm
                << " after initialization poll failed: "
