@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/layout.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/gpu_executable_buffer_allocator.h"
@@ -41,6 +42,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_address_vmm_allocator.h"
 #include "xla/stream_executor/memory_allocation.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -453,6 +455,9 @@ GpuExecutableVaRemapAllocator::GpuExecutableVaRemapAllocator(
     ThunkExecutor* thunk_executor)
     : GpuExecutableBufferAllocator(module_name, allocations, result_shape,
                                    debug_options, thunk_executor) {
+  // Allocation colors are matched against the VMM allocator's memory spaces.
+  static_assert(Layout::kHostMemorySpace ==
+                static_cast<int64_t>(se::MemorySpace::kHost));
   update_mode_ = debug_options != nullptr
                      ? debug_options->xla_gpu_command_buffer_update_mode()
                      : DebugOptions::ALWAYS_UPDATE;
@@ -466,6 +471,10 @@ GpuExecutableVaRemapAllocator::GpuExecutableVaRemapAllocator(
       [&](BufferAllocation::Index index, const BufferAllocation& allocation) {
         if (allocation.is_constant()) {
           // Collected by the base class.
+          return;
+        }
+        // Not VMM physical memory: Map() and mapped Allocate() reject it.
+        if (allocation.color() == Layout::kHostMemorySpace) {
           return;
         }
         if ((update_mode_ == DebugOptions::SKIP_TEMP ||
