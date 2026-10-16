@@ -20,14 +20,11 @@ License.
 
 #include <memory>
 #include <string>
-#include <tuple>
-#include <vector>
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
