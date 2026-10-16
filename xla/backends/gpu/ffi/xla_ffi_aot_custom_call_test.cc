@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -38,6 +39,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor_address_allocator.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
