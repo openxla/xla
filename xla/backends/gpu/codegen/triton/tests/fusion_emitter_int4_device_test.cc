@@ -16,6 +16,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -28,11 +29,13 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "xla/autotuning.pb.h"
+#include "xla/backends/autotuner/in_memory_store.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/service/gpu/autotuning/autotuner_cache.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
@@ -42,9 +45,29 @@ namespace xla {
 namespace gpu {
 namespace {
 
+// DEBUG ONLY (do not submit): investigating intermittent
+// HSA_STATUS_ERROR_ILLEGAL_INSTRUCTION on MI350 CI runners.
+// Route the GPU coredump into the test's undeclared outputs so CI uploads it.
+// This has to happen before the HSA runtime is initialized.
+const bool kCoredumpPatternSet = [] {
+  if (const char* dir = std::getenv("TEST_UNDECLARED_OUTPUTS_DIR")) {
+    setenv("HSA_COREDUMP_PATTERN", absl::StrCat(dir, "/gpucore.%p").c_str(),
+           /*overwrite=*/0);
+  }
+  return true;
+}();
+
 class TritonTestBase : public HloInterpreterReferenceMixin<HloPjRtGpuTestBase> {
  public:
   virtual bool EnableGemmFusionV2() const { return false; }
+
+  // DEBUG ONLY: the autotuning caches are process-wide, so without clearing
+  // them --gtest_repeat only autotunes each fusion once per process.
+  void SetUp() override {
+    HloInterpreterReferenceMixin<HloPjRtGpuTestBase>::SetUp();
+    InMemoryStore::Clear();
+    AutotunerCache::ClearAutotuneResults();
+  }
 
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloPjRtGpuTestBase::GetDebugOptionsForTest();
@@ -56,6 +79,19 @@ class TritonTestBase : public HloInterpreterReferenceMixin<HloPjRtGpuTestBase> {
     debug_options
         .set_xla_gpu_experimental_enable_subchannel_dequantisation_fusion(true);
     debug_options.set_xla_gpu_experimental_gemm_fusion_v2(EnableGemmFusionV2());
+    // DEBUG ONLY: dump the optimized HLO and Triton kernels so the crashing
+    // kernel can be identified from the CI artifacts.
+    if (const char* dir = std::getenv("TEST_UNDECLARED_OUTPUTS_DIR")) {
+      debug_options.set_xla_dump_to(absl::StrCat(dir, "/xla_dump"));
+      debug_options.set_xla_dump_hlo_as_text(true);
+      debug_options.set_xla_dump_hlo_pass_re("^$");
+      debug_options.set_xla_dump_emitter_re("triton");
+    }
+    // DEBUG ONLY: the *_noautotune target sets this to check whether the crash
+    // only happens while autotuning candidate configs.
+    if (std::getenv("INT4_DEBUG_DISABLE_AUTOTUNE") != nullptr) {
+      debug_options.set_xla_gpu_autotune_level(0);
+    }
     return debug_options;
   }
 };
