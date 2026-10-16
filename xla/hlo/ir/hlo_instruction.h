@@ -1361,8 +1361,8 @@ class HloInstruction {
   absl::Status DropAllControlDeps();
 
   // Drops all control predecessors and successors from this HLO instruction,
-  // and the maintain the transitivie control dependencies between
-  // control predecessors and control successors.
+  // and maintains the transitive control dependencies from control predecessors
+  // and data operands to control successors.
   absl::Status SafelyDropAllControlDependencies();
 
   // Returns if instruction has any control dependencies.
