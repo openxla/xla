@@ -203,21 +203,12 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> AddI32Thunk::Execute(
   if (params.intra_op_threadpool) {
     auto event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
 
-    // Collective communicator resource creates only a scheduling edge,
-    // incrementing the shared resource value from the intra-op thread pool
-    // might lead to data races. ThunkExecutor will only guarantee that calls
-    // to Execute() are properly synchronized.
-    if (shared_resource_ &&
-        *shared_resource_ == Resource::kCollectiveCommunicator) {
-      shared_resource++;
-    }
-
     params.intra_op_threadpool->getPool()->Schedule([&, event, execute] {
-      // Token creates an execution edge, and it means that dependent thunks
-      // will wait for the completion of execution of all dependencies, and we
-      // verify that we don't have data races by mutating shared resource from a
-      // task that runs on a thread pool.
-      if (shared_resource_ && *shared_resource_ == Resource::kToken) {
+      // Resource uses create an execution edge, and it means that dependent
+      // thunks will wait for the completion of execution of all dependencies,
+      // and we verify that we don't have data races by mutating shared
+      // resource from a task that runs on a thread pool.
+      if (shared_resource_) {
         shared_resource++;
       }
 
