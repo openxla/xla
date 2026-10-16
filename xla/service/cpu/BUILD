@@ -19,7 +19,7 @@ load(
     "xla_internal",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
+load("//xla/tsl:tsl.bzl", "check_deps", "internal_visibility", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable", "if_include_google_deps")
 load("//xla/tsl/mkl:build_defs.bzl", "if_graph_api", "if_onednn")
 load("//xla/tsl/mkl:graph.bzl", "onednn_cc_library")
@@ -147,6 +147,9 @@ cc_library(
         ":conv_canonicalization",
         ":cpu_aot_compilation_result",
         ":cpu_aot_loader",
+        # `Export` and runtimes that link the compiler load object files with
+        # ORC.
+        ":cpu_aot_object_file_loader",  # build_cleaner: keep
         ":cpu_executable",
         ":cpu_float_support",
         ":cpu_instruction_fusion",
@@ -159,6 +162,28 @@ cc_library(
         ":metrics",
         ":parallel_task_assignment",
         ":thunk_emitter",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:vlog_is_on",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Linker",
+        "@llvm-project//llvm:MC",
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:OrcJIT",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
         "//xla:comparison_util",
         "//xla:literal_pool",
         "//xla:shape_pool",
@@ -202,6 +227,7 @@ cc_library(
         "//xla/hlo/transforms:while_loop_trip_count_annotator",
         "//xla/hlo/transforms/collectives:all_reduce_promotion",
         "//xla/hlo/transforms/collectives:all_to_all_decomposer",
+        "//xla/hlo/transforms/collectives:async_collective_custom_call_rewriter",
         "//xla/hlo/transforms/collectives:async_collective_replacer",
         "//xla/hlo/transforms/collectives:collective_permute_cse",
         "//xla/hlo/transforms/expanders:bitcast_dtypes_expander",
@@ -248,7 +274,6 @@ cc_library(
         "//xla/hlo/transforms/simplifiers:zero_sized_hlo_elimination",
         "//xla/mlir_hlo:all_passes",
         "//xla/mlir_hlo:transforms_passes",
-        "//xla/service:async_collective_custom_call_rewriter",
         "//xla/service:batched_gather_scatter_normalizer",
         "//xla/service:batchnorm_expander",
         "//xla/service:buffer_assignment",
@@ -306,28 +331,6 @@ cc_library(
         "//xla/stream_executor/host:host_platform_id",
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/platform:env",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/log:vlog_is_on",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:status_macros",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Linker",
-        "@llvm-project//llvm:MC",
-        "@llvm-project//llvm:Object",
-        "@llvm-project//llvm:OrcJIT",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:Target",
-        "@llvm-project//llvm:TargetParser",
         "@tsl//tsl/platform:logging",
         "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/profiler/lib:traceme",
@@ -1436,9 +1439,6 @@ cc_library(
         ":executable_proto_cc",
         "//xla:util",
         "//xla/backends/cpu:target_machine_options",
-        "//xla/backends/cpu/codegen:builtin_definition_generator",
-        "//xla/backends/cpu/codegen:execution_engine",
-        "//xla/backends/cpu/codegen:object_loader",
         "//xla/backends/cpu/runtime:function_library",
         "//xla/hlo/ir:hlo",
         "//xla/service:compiled_module",
@@ -1453,8 +1453,69 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
-        "@llvm-project//llvm:ir_headers",
     ],
+)
+
+# Registers ORC as the loader for object files. Everything that links
+# `cpu_compiler_pure` gets it.
+cc_library(
+    name = "cpu_aot_object_file_loader",
+    srcs = ["cpu_aot_object_file_loader.cc"],
+    deps = [
+        ":cpu_aot_loader",
+        ":executable_proto_cc",
+        "//xla/backends/cpu/codegen:builtin_definition_generator",
+        "//xla/backends/cpu/codegen:execution_engine",
+        "//xla/backends/cpu/codegen:object_loader",
+        "//xla/backends/cpu/runtime:function_library",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:OrcJIT",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:ir_headers",
+    ] + if_llvm_aarch64_available([
+        "@llvm-project//llvm:AArch64CodeGen",  # fixdeps: keep
+    ]) + if_llvm_powerpc_available([
+        "@llvm-project//llvm:PowerPCCodeGen",  # fixdeps: keep
+    ]) + if_llvm_riscv_available([
+        "@llvm-project//llvm:RISCVCodeGen",  # fixdeps: keep
+    ]) + if_llvm_system_z_available([
+        "@llvm-project//llvm:SystemZCodeGen",  # fixdeps: keep
+    ]) + if_llvm_x86_available([
+        "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
+    ]),
+    alwayslink = True,
+)
+
+xla_cc_test(
+    name = "cpu_aot_loader_without_object_file_loader_test",
+    srcs = ["cpu_aot_loader_without_object_file_loader_test.cc"],
+    data = [":cpu_aot_loader_check_deps"],
+    deps = [
+        ":cpu_aot_loader",
+        ":executable_proto_cc",
+        "//xla/backends/cpu/runtime:function_library",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# AOT runtimes don't link the compiler, so `cpu_aot_loader` must not pull in
+# ORC.
+check_deps(
+    name = "cpu_aot_loader_check_deps",
+    disallowed_deps = [
+        "@llvm-project//llvm:JITLink",
+        "@llvm-project//llvm:OrcJIT",
+        "//xla/backends/cpu/codegen:object_loader",
+    ],
+    deps = [":cpu_aot_loader"],
 )
 
 xla_cc_test(

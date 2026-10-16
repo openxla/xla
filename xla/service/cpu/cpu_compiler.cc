@@ -104,6 +104,7 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/collectives/all_reduce_promotion.h"
 #include "xla/hlo/transforms/collectives/all_to_all_decomposer.h"
+#include "xla/hlo/transforms/collectives/async_collective_custom_call_rewriter.h"
 #include "xla/hlo/transforms/collectives/async_collective_replacer.h"
 #include "xla/hlo/transforms/collectives/collective_permute_cse.h"
 #include "xla/hlo/transforms/expanders/bitcast_dtypes_expander.h"
@@ -156,7 +157,6 @@ limitations under the License.
 #include "xla/literal_pool.h"
 #include "xla/map_util.h"
 #include "xla/mlir_hlo/transforms/passes.h"
-#include "xla/service/async_collective_custom_call_rewriter.h"
 #include "xla/service/batched_gather_scatter_normalizer.h"
 #include "xla/service/batchnorm_expander.h"
 #include "xla/service/buffer_assignment.h"
@@ -1921,12 +1921,9 @@ absl::StatusOr<std::unique_ptr<CompiledModule>> CpuCompiler::Export(
   ABSL_ASSIGN_OR_RETURN(auto compiled_symbols,
                         GetCompiledSymbolsFromProto(compiled_symbols_proto));
 
-  ABSL_ASSIGN_OR_RETURN(
-      auto function_library,
-      LoadFunctionLibrary(compiled_symbols, obj_files,
-                          &cpu_executable->module(),
-                          cpu_executable->target_machine_options(),
-                          cpu_executable->data_layout()));
+  ABSL_ASSIGN_OR_RETURN(auto function_library,
+                        LoadFunctionLibrary(compiled_symbols, obj_files,
+                                            cpu_executable->data_layout()));
 
   return CpuAotCompilationResult::Create(
       &cpu_executable->module(), &cpu_executable->buffer_assignment(),

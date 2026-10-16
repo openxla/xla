@@ -15,7 +15,7 @@ limitations under the License.
 
 #include "xla/service/cpu/cpu_aot_loader.h"
 
-#include <cstddef>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <utility>
@@ -28,13 +28,11 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/IR/DataLayout.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
-#include "xla/backends/cpu/codegen/builtin_definition_generator.h"
-#include "xla/backends/cpu/codegen/execution_engine.h"
-#include "xla/backends/cpu/codegen/object_loader.h"
+#include "llvm/TargetParser/Triple.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/service/compiled_module.h"
@@ -81,36 +79,26 @@ GetCompiledSymbolsFromProto(
   return compiled_symbols;
 }
 
+namespace {
+
+std::atomic<ObjectFileLoader> object_file_loader = nullptr;
+
+}  // namespace
+
+void RegisterObjectFileLoader(ObjectFileLoader loader) {
+  object_file_loader.store(loader);
+}
+
 absl::StatusOr<std::unique_ptr<FunctionLibrary>> LoadFunctionLibrary(
     const std::vector<FunctionLibrary::Symbol>& compiled_symbols,
-    absl::Span<const ObjFileProto> obj_files, const HloModule* hlo_module,
-    const TargetMachineOptions& target_machine_options,
+    absl::Span<const ObjFileProto> obj_files,
     absl::string_view data_layout_str) {
-  llvm::DataLayout data_layout(
-      llvm::StringRef(data_layout_str.data(), data_layout_str.size()));
-
-  // Definition generator to link with XLA:CPU host runtime symbols.
-  ExecutionEngine::DefinitionGenerator definition_generator =
-      [](const llvm::DataLayout& data_layout) {
-        return std::make_unique<BuiltinDefinitionGenerator>(data_layout);
-      };
-
-  ObjectLoader object_loader(/*num_dylibs=*/1, data_layout,
-                             definition_generator);
-
-  for (size_t i = 0; i < object_loader.num_dylibs(); ++i) {
-    object_loader.dylib(i).value()->addGenerator(
-        std::make_unique<BuiltinDefinitionGenerator>(data_layout));
+  if (ObjectFileLoader loader = object_file_loader.load()) {
+    return loader(compiled_symbols, obj_files, data_layout_str);
   }
-
-  for (auto& obj_file : obj_files) {
-    llvm::StringRef data(obj_file.contents().data(),
-                         obj_file.contents().size());
-    ABSL_RETURN_IF_ERROR(object_loader.AddObjFile(
-        llvm::MemoryBuffer::getMemBuffer(data, obj_file.name())));
-  }
-
-  return std::move(object_loader).Load(compiled_symbols);
+  return FailedPrecondition(
+      "No loader registered for XLA:CPU object files. Link "
+      "`:cpu_aot_object_file_loader` to load them with ORC.");
 }
 
 absl::StatusOr<std::unique_ptr<Executable>> CpuAotLoader::LoadExecutable(
@@ -225,11 +213,9 @@ CpuAotLoader::LoadAotCompilationResult(
     obj_files.push_back(obj_file);
   }
 
-  ABSL_ASSIGN_OR_RETURN(
-      auto function_library,
-      LoadFunctionLibrary(compiled_symbols, obj_files, hlo_module.get(),
-                          target_machine_options,
-                          aot_result_proto.data_layout()));
+  ABSL_ASSIGN_OR_RETURN(auto function_library,
+                        LoadFunctionLibrary(compiled_symbols, obj_files,
+                                            aot_result_proto.data_layout()));
 
   return CpuAotCompilationResult::FromProto(aot_result_proto,
                                             std::move(function_library));
