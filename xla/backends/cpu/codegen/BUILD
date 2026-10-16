@@ -133,6 +133,16 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "contiguous_section_memory_manager_test",
+    srcs = ["contiguous_section_memory_manager_test.cc"],
+    deps = [
+        ":contiguous_section_memory_manager",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
 cc_library(
     name = "cpu_features",
     srcs = ["cpu_features.cc"],
@@ -409,6 +419,7 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
@@ -669,9 +680,12 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@llvm-project//llvm:BinaryFormat",
         "@llvm-project//llvm:ExecutionEngine",
+        "@llvm-project//llvm:Object",
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:ir_headers",
     ],
 )

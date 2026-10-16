@@ -301,6 +301,42 @@ TEST(IrCompilerTest, InferTargetMachineWithEmptyTriple) {
             llvm::sys::getProcessTriple());
 }
 
+TEST(IrCompilerTest, InferTargetMachinePicWhenRequested) {
+  TargetMachineOptions target_machine_options(GetDebugOptionsFromFlags());
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<llvm::TargetMachine> default_target_machine,
+      IrCompiler::InferTargetMachine(llvm::TargetOptions(),
+                                     llvm::CodeGenOptLevel::Default,
+                                     target_machine_options));
+  EXPECT_FALSE(default_target_machine->isPositionIndependent());
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<llvm::TargetMachine> pic_target_machine,
+      IrCompiler::InferTargetMachine(
+          llvm::TargetOptions(), llvm::CodeGenOptLevel::Default,
+          target_machine_options, llvm::Reloc::PIC_, llvm::CodeModel::Small));
+  EXPECT_TRUE(pic_target_machine->isPositionIndependent());
+  EXPECT_EQ(pic_target_machine->getCodeModel(), llvm::CodeModel::Small);
+}
+
+TEST(IrCompilerTest, CreatePicTargetMachineWhenRequested) {
+  IrCompiler::Options options{/*opt_level=*/llvm::CodeGenOptLevel::Default,
+                              /*optimize_for_size=*/false,
+                              TargetMachineOptions(GetDebugOptionsFromFlags())};
+  options.reloc_model = llvm::Reloc::PIC_;
+  options.code_model = llvm::CodeModel::Small;
+
+  std::unique_ptr<IrCompiler> ir_compiler =
+      IrCompiler::Create(llvm::TargetOptions(), std::move(options),
+                         IrCompiler::CompilationHooks());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<llvm::TargetMachine> target_machine,
+                       ir_compiler->build_target_machine());
+  EXPECT_TRUE(target_machine->isPositionIndependent());
+  EXPECT_EQ(target_machine->getCodeModel(), llvm::CodeModel::Small);
+}
+
 TEST(IrCompilerTest, IntrinsicsUseCpuImpliedFeatures) {
   if (!tsl::port::IsX86CPU()) {
     GTEST_SKIP() << "Test only supported on x86.";
@@ -592,6 +628,21 @@ TEST_P(IrCompilerParameterizedTest, CrossCompileForDifferentTriples) {
   ir_module->setDataLayout(target_machine->createDataLayout());
   ir_module->setTargetTriple(target_machine->getTargetTriple());
   EXPECT_FALSE(static_cast<bool>((*ir_compiler)(*ir_module).takeError()));
+}
+
+TEST_P(IrCompilerParameterizedTest, InferPicTargetMachineForTriple) {
+  const std::string& triple = GetParam();
+  absl::call_once(init_once, InitializeAllLLVMTargets);
+
+  TargetMachineOptions target_machine_options(triple, /*cpu=*/"",
+                                              /*features=*/"");
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<llvm::TargetMachine> target_machine,
+      IrCompiler::InferTargetMachine(
+          llvm::TargetOptions(), llvm::CodeGenOptLevel::Default,
+          target_machine_options, llvm::Reloc::PIC_, llvm::CodeModel::Small));
+  EXPECT_TRUE(target_machine->isPositionIndependent());
+  EXPECT_EQ(target_machine->getCodeModel(), llvm::CodeModel::Small);
 }
 
 INSTANTIATE_TEST_SUITE_P(IrCompilerParameterizedTestInstantiation,

@@ -236,9 +236,10 @@ std::unique_ptr<IrCompiler> IrCompiler::Create(
     llvm::TargetOptions target_options, Options options,
     CompilationHooks hooks) {
   TargetMachineBuilder target_machine_builder =
-      IrCompiler::InferTargetMachineBuilder(std::move(target_options),
-                                            options.opt_level,
-                                            options.target_machine_options);
+      IrCompiler::InferTargetMachineBuilder(
+          std::move(target_options), options.opt_level,
+          options.target_machine_options, options.reloc_model,
+          options.code_model);
 
   return std::make_unique<IrCompiler>(target_machine_builder,
                                       std::move(options), std::move(hooks));
@@ -254,20 +255,27 @@ IrCompiler::IrCompiler(TargetMachineBuilder target_machine_builder,
 absl::StatusOr<std::unique_ptr<llvm::TargetMachine>>
 IrCompiler::InferTargetMachine(
     const llvm::TargetOptions& target_options, llvm::CodeGenOptLevel opt_level,
-    const TargetMachineOptions& target_machine_options) {
+    const TargetMachineOptions& target_machine_options,
+    std::optional<llvm::Reloc::Model> reloc_model,
+    std::optional<llvm::CodeModel::Model> code_model) {
   auto attrs_vec = target_machine_options.GetTargetMachineFeaturesVector();
   llvm::SmallVector<std::string> attrs(attrs_vec.begin(), attrs_vec.end());
 
   absl::call_once(internal::targets_init, &internal::InitializeTargets);
+  llvm::EngineBuilder engine_builder;
+  engine_builder.setTargetOptions(target_options).setOptLevel(opt_level);
+  if (reloc_model.has_value()) {
+    engine_builder.setRelocationModel(*reloc_model);
+  }
+  if (code_model.has_value()) {
+    engine_builder.setCodeModel(*code_model);
+  }
   std::unique_ptr<llvm::TargetMachine> target_machine(
-      llvm::EngineBuilder()
-          .setTargetOptions(target_options)
-          .setOptLevel(opt_level)
-          .selectTarget(
-              /*TargetTriple=*/llvm::Triple(target_machine_options.triple()),
-              /*MArch=*/"",
-              /*MCPU=*/target_machine_options.cpu(),
-              /*MAttrs=*/attrs));
+      engine_builder.selectTarget(
+          /*TargetTriple=*/llvm::Triple(target_machine_options.triple()),
+          /*MArch=*/"",
+          /*MCPU=*/target_machine_options.cpu(),
+          /*MAttrs=*/attrs));
 
   if (target_machine == nullptr) {
     return Internal("Failed to create target machine for CPU %s",
@@ -279,10 +287,13 @@ IrCompiler::InferTargetMachine(
 
 IrCompiler::TargetMachineBuilder IrCompiler::InferTargetMachineBuilder(
     const llvm::TargetOptions& target_options, llvm::CodeGenOptLevel opt_level,
-    const TargetMachineOptions& target_machine_options) {
-  return [target_options, opt_level, target_machine_options] {
-    return InferTargetMachine(target_options, opt_level,
-                              target_machine_options);
+    const TargetMachineOptions& target_machine_options,
+    std::optional<llvm::Reloc::Model> reloc_model,
+    std::optional<llvm::CodeModel::Model> code_model) {
+  return [target_options, opt_level, target_machine_options, reloc_model,
+          code_model] {
+    return InferTargetMachine(target_options, opt_level, target_machine_options,
+                              reloc_model, code_model);
   };
 }
 
