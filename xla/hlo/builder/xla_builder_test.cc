@@ -4258,5 +4258,68 @@ TEST(XlaBuilderTest, AsyncStartWithOutputOperandAliasing) {
   EXPECT_EQ(root->output_operand_aliasing(), aliasing);
 }
 
+// Builds a computation `neg(p0)` whose instructions reference a single stack
+// frame at `file_name:line` in `function_name`, mimicking what
+// ConvertMlirHloToHlo produces for an XlaCallModule body.
+XlaComputation BuildNegWithStackFrame(const std::string& name,
+                                      const std::string& file_name,
+                                      const std::string& function_name,
+                                      int32_t line) {
+  XlaBuilder b(name);
+  OpMetadata metadata;
+  metadata.set_stack_frame_id(1);
+  b.SetOpMetadata(metadata);
+  Neg(Parameter(&b, 0, ShapeUtil::MakeShape(F32, {4}), "p0"));
+  XlaComputation computation = std::move(b.Build().value());
+
+  StackFrameIndexProto* index =
+      computation.mutable_proto()->mutable_stack_frame_index();
+  index->add_file_names(file_name);
+  index->add_function_names(function_name);
+  StackFrameIndexProto::FileLocation* location = index->add_file_locations();
+  location->set_file_name_id(1);
+  location->set_function_name_id(1);
+  location->set_line(line);
+  index->add_stack_frames()->set_file_location_id(1);
+  return computation;
+}
+
+// Returns the stack frame of the root instruction of the computation called by
+// `call`, as resolved through `module`.
+HloStackFrame CalledRootStackFrame(const HloModule& module,
+                                   const HloInstruction* call) {
+  const HloInstruction* root = call->to_apply()->root_instruction();
+  return module.get_stack_frame(
+      StackFrameId{root->metadata().stack_frame_id()});
+}
+
+TEST(XlaBuilderTest, AddSubComputationPreservesStackFrameIndex) {
+  XlaComputation sub_a = BuildNegWithStackFrame("sub_a", "a.py", "fn_a", 10);
+  XlaComputation sub_b = BuildNegWithStackFrame("sub_b", "b.py", "fn_b", 20);
+
+  XlaBuilder b(TestName());
+  XlaOp p = Parameter(&b, 0, ShapeUtil::MakeShape(F32, {4}), "p");
+  Call(&b, sub_b, {Call(&b, sub_a, {p})});
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module, BuildHloModule(b));
+
+  // Both tables are merged into the module and each call site resolves to the
+  // frame of its own computation, i.e. the ids of the second import are offset
+  // past those of the first rather than colliding with them.
+  const HloInstruction* call_b = GetRoot(*module);
+  ASSERT_EQ(call_b->opcode(), HloOpcode::kCall);
+  const HloInstruction* call_a = call_b->operand(0);
+  ASSERT_EQ(call_a->opcode(), HloOpcode::kCall);
+
+  HloStackFrame frame_a = CalledRootStackFrame(*module, call_a);
+  EXPECT_EQ(frame_a.file_name, "a.py");
+  EXPECT_EQ(frame_a.function_name, "fn_a");
+  EXPECT_EQ(frame_a.line, 10);
+
+  HloStackFrame frame_b = CalledRootStackFrame(*module, call_b);
+  EXPECT_EQ(frame_b.file_name, "b.py");
+  EXPECT_EQ(frame_b.function_name, "fn_b");
+  EXPECT_EQ(frame_b.line, 20);
+}
+
 }  // namespace
 }  // namespace xla

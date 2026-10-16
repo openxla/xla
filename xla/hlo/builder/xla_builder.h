@@ -1434,6 +1434,19 @@ class XlaBuilder {
   };
   std::map<int64_t, Subcomputation> embedded_;
 
+  // Source location table referenced by the `stack_frame_id`s of instructions
+  // in `embedded_`. Accumulated from imported computations (see
+  // AddSubComputation) and emitted into the HloModuleProto by Build().
+  StackFrameIndexProto stack_frame_index_;
+
+  // Appends `index` to `stack_frame_index_` and returns the offset that must be
+  // added to every `stack_frame_id` that referred to `index`.
+  int32_t MergeStackFrameIndex(const StackFrameIndexProto& index);
+
+  // Adds `offset` to every non-zero `stack_frame_id` in `computation`.
+  static void OffsetStackFrameIds(int32_t offset,
+                                  HloComputationProto& computation);
+
   // True if the instructions in this builder refer to computations from a
   // parent builder. Used only for error checking.
   bool calls_computations_from_parent_ = false;
