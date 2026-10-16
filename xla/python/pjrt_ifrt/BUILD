@@ -332,6 +332,7 @@ cc_library(
     testonly = True,
     srcs = ["pjrt_executable_impl_test_lib.cc"],
     deps = [
+        ":executable_metadata_proto_cc",
         ":pjrt_ifrt",
         ":xla_ifrt",
         "//xla:literal",
@@ -355,6 +356,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
+        "@tsl//tsl/platform:protobuf",
     ],
     alwayslink = True,
 )
@@ -540,6 +542,7 @@ cc_library(
         "//xla/python/ifrt:user_context",
         "//xla/python/ifrt/hlo:hlo_program",
         "//xla/runtime:device_id",
+        "//xla/service:computation_layout",
         "//xla/service:device_assignment",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/concurrency:executor",

@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/ffi/execution_context.h"
 #include "xla/ffi/type_registry.h"
 #include "xla/future.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
@@ -91,6 +92,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/xla_executable_version.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/status_macros.h"
@@ -433,6 +435,75 @@ xla::CustomOptions::Map ToCustomOptionsMap(const AttributeMap& attribute_map) {
   return custom_options;
 }
 
+// Global dtype and shape of one executable parameter.
+struct ParameterArraySpec {
+  DType dtype;
+  Shape shape;
+};
+
+// Returns the global dtype and shape of each executable parameter, or
+// `std::nullopt` for a parameter where the information is not available.
+//
+// The values come from the per-device entry computation layout of the HLO
+// module. The per-device shape is converted to the global shape with the
+// parameter sharding. This conversion assumes that each tiled dimension is
+// divisible by its number of tiles. An unevenly tiled parameter gets a wrong
+// (rounded up) global shape. The information is not available if the
+// executable has more than one HLO module, has a dynamic, token or tuple
+// parameter, or has a manual or unknown sharding.
+std::vector<std::optional<ParameterArraySpec>> GetParameterArraySpecs(
+    xla::PjRtExecutable& pjrt_executable,
+    const std::optional<std::vector<xla::OpSharding>>& parameter_shardings,
+    uint64_t num_parameters) {
+  std::vector<std::optional<ParameterArraySpec>> specs(num_parameters);
+  absl::StatusOr<std::vector<std::shared_ptr<xla::HloModule>>> hlo_modules =
+      pjrt_executable.GetHloModules();
+  if (!hlo_modules.ok() || hlo_modules->size() != 1) {
+    VLOG(1) << "No parameter dtype and shape: the executable does not have "
+               "exactly one HLO module";
+    return specs;
+  }
+  const xla::ComputationLayout& layout =
+      (*hlo_modules)[0]->entry_computation_layout();
+  if (layout.parameter_count() != num_parameters) {
+    VLOG(1) << "No parameter dtype and shape: the parameter count of the "
+               "layout is different from the metadata";
+    return specs;
+  }
+  for (int i = 0; i < num_parameters; ++i) {
+    const xla::Shape& device_shape = layout.parameter_shape(i);
+    if (!device_shape.IsArray() || device_shape.is_dynamic()) {
+      VLOG(1) << "No dtype and shape for parameter " << i
+              << ": not a static array";
+      continue;
+    }
+    absl::StatusOr<DType> dtype = ToDType(device_shape.element_type());
+    if (!dtype.ok()) {
+      continue;
+    }
+    xla::Shape global_shape = device_shape;
+    if (parameter_shardings.has_value()) {
+      absl::StatusOr<xla::HloSharding> sharding =
+          xla::HloSharding::FromProto(parameter_shardings->at(i));
+      if (!sharding.ok()) {
+        continue;
+      }
+      if (sharding->UseNamedShardingLeaf()) {
+        *sharding = xla::HloSharding::V3ToV2Sharding(*sharding);
+      }
+      if (sharding->IsManual() || sharding->IsUnknown()) {
+        VLOG(1) << "No dtype and shape for parameter " << i
+                << ": manual or unknown sharding";
+        continue;
+      }
+      global_shape =
+          xla::hlo_sharding_util::UntileShape(*sharding, device_shape);
+    }
+    specs[i] = ParameterArraySpec{*dtype, Shape(global_shape.dimensions())};
+  }
+  return specs;
+}
+
 }  // namespace
 
 char PjRtCompatibleExecutable::ID = 0;
@@ -624,6 +695,21 @@ absl::StatusOr<std::string> PjRtExecutable::CommonMetadata::Serialize(
   }
   absl::flat_hash_set<int> donated_inputs_set(donatable_input_indices.begin(),
                                               donatable_input_indices.end());
+  // The dtype and shape of the parameters are optional in the metadata. A
+  // loader that has no access to the HLO module (for example, a remote
+  // runtime) needs them to check the inputs of the executable.
+  const std::vector<std::optional<ParameterArraySpec>> parameter_array_specs =
+      GetParameterArraySpecs(*pjrt_executable, parameter_shardings,
+                             num_parameters);
+  // Memory kinds of the parameters. An empty vector means the default memory
+  // kind for all parameters.
+  std::vector<std::string> parameter_memory_kinds;
+  if (absl::StatusOr<std::vector<std::vector<absl::string_view>>> kinds =
+          pjrt_executable->GetParameterMemoryKinds();
+      kinds.ok() && !kinds->empty() &&
+      kinds->front().size() == num_parameters) {
+    parameter_memory_kinds.assign(kinds->front().begin(), kinds->front().end());
+  }
 
   // Encode parameter specs.
   for (int i = 0; i < num_parameters; ++i) {
@@ -644,6 +730,19 @@ absl::StatusOr<std::string> PjRtExecutable::CommonMetadata::Serialize(
         hlo_sharding = xla::HloSharding::V3ToV2Sharding(hlo_sharding);
       }
       *parameter_spec.mutable_op_sharding() = hlo_sharding.ToProto();
+    }
+
+    // Global dtype and shape
+    if (parameter_array_specs[i].has_value()) {
+      *parameter_spec.mutable_dtype() =
+          parameter_array_specs[i]->dtype.ToProto(serdes_version);
+      *parameter_spec.mutable_shape() =
+          parameter_array_specs[i]->shape.ToProto(serdes_version);
+    }
+
+    // Memory kind
+    if (!parameter_memory_kinds.empty()) {
+      parameter_spec.set_memory_kind(parameter_memory_kinds[i]);
     }
 
     // Donated input
