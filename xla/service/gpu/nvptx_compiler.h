@@ -74,7 +74,7 @@ class NVPTXCompiler : public GpuCompiler {
       const se::SemanticVersion& toolkit_version,
       CompilationStats* compilation_stats) override;
 
-  bool IsRaggedDotSupportedByCuDnn(
+  Decision IsRaggedDotSupportedByCuDnn(
       const HloInstruction* instr, const GpuTargetConfig& gpu_target_config,
       se::StreamExecutor* absl_nullable stream_exec) const override;
 

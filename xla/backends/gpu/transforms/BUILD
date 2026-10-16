@@ -2928,6 +2928,7 @@ cc_library(
         ":cudnn_fusion_compiler",
         ":ragged_dot_fusion_rewriter",
         "//xla/hlo/ir:hlo",
+        "//xla/service:decision",
         "//xla/stream_executor/cuda:cudnn_plugin",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream_executor_h",

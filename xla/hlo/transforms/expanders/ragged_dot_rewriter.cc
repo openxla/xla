@@ -456,7 +456,7 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
             CanBeHandledByCuDNNFusion(instruction, gpu_compute_capability_,
                                       cudnn_version_, toolkit_version_) &&
             (is_supported_by_cudnn_fusion_ == nullptr ||
-             is_supported_by_cudnn_fusion_(instruction))) {
+             is_supported_by_cudnn_fusion_(instruction).IsAllowed())) {
           continue;
         }
         if (has_grouped_gemm && CanBeHandledByGpublasltGroupGemm(

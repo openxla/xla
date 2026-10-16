@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/service/compilation_stats.h"
 #include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
+#include "xla/service/decision.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
@@ -134,10 +135,10 @@ class GpuCompiler : public LLVMCompiler {
   // fusion can actually be lowered by cuDNN on the target. `stream_exec` is
   // null for deviceless (AOT) compilation. Backends without a cuDNN probe
   // accept every ragged dot.
-  virtual bool IsRaggedDotSupportedByCuDnn(
+  virtual Decision IsRaggedDotSupportedByCuDnn(
       const HloInstruction* instr, const GpuTargetConfig& gpu_target_config,
       se::StreamExecutor* absl_nullable stream_exec) const {
-    return true;
+    return Decision::Allow();
   }
 
   enum class AlgebraicSimplifierMode {

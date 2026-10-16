@@ -15,16 +15,16 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/ragged_dot_rewriter.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
+#include "xla/service/decision.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
@@ -236,7 +236,7 @@ TEST_F(RaggedDotRewriterTest, CudnnSupportCallbackDecidesFusionOrExpansion) {
                           kMinCudaToolkitVersionForRaggedDotWgradFusion,
                           [&](const HloInstruction* ragged_dot) {
                             ++calls;
-                            return cudnn_supported;
+                            return Decision(cudnn_supported, "unsupported");
                           })
             .Run(module.get()));
     EXPECT_EQ(calls, 1);

@@ -277,7 +277,7 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
   return absl::OkStatus();
 }
 
-bool NVPTXCompiler::IsRaggedDotSupportedByCuDnn(
+Decision NVPTXCompiler::IsRaggedDotSupportedByCuDnn(
     const HloInstruction* instr, const GpuTargetConfig& gpu_target_config,
     se::StreamExecutor* absl_nullable stream_exec) const {
   return gpu::IsRaggedDotSupportedByCuDnn(

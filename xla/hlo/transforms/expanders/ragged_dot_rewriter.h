@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/service/decision.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -51,16 +52,17 @@ bool SupportsCudnnRaggedDotWgrad(
 class RaggedDotRewriter : public HloModulePass {
  public:
   // `is_supported_by_cudnn_fusion`, if set, is consulted for every ragged dot
-  // that passes the version/dtype/mode gates; returning false expands the
-  // ragged dot instead of leaving it for the cuDNN fusion. It lets the caller
-  // probe cuDNN (e.g. devicelessly) without this pass depending on cuDNN.
+  // that passes the version/dtype/mode gates; returning a forbidden Decision
+  // expands the ragged dot instead of leaving it for the cuDNN fusion. It lets
+  // the caller probe cuDNN (e.g. devicelessly) without this pass depending on
+  // cuDNN.
   explicit RaggedDotRewriter(
       se::GpuComputeCapability gpu_compute_capability,
       stream_executor::dnn::VersionInfo cudnn_version =
           stream_executor::dnn::VersionInfo(),
       stream_executor::SemanticVersion toolkit_version = {0, 0, 0},
-      std::function<bool(const HloInstruction*)> is_supported_by_cudnn_fusion =
-          nullptr)
+      std::function<Decision(const HloInstruction*)>
+          is_supported_by_cudnn_fusion = nullptr)
       : gpu_compute_capability_(gpu_compute_capability),
         cudnn_version_(cudnn_version),
         toolkit_version_(toolkit_version),
@@ -78,7 +80,7 @@ class RaggedDotRewriter : public HloModulePass {
   stream_executor::GpuComputeCapability gpu_compute_capability_;
   stream_executor::dnn::VersionInfo cudnn_version_;
   stream_executor::SemanticVersion toolkit_version_;
-  std::function<bool(const HloInstruction*)> is_supported_by_cudnn_fusion_;
+  std::function<Decision(const HloInstruction*)> is_supported_by_cudnn_fusion_;
 };
 
 }  // namespace xla
