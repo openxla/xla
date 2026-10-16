@@ -96,6 +96,7 @@ jobs:
             --override_repository=xla="${GITHUB_WORKSPACE}" \
             --override_module=xla="${GITHUB_WORKSPACE}" \
             --config=single_gpu \
+            --config=no_flaky \
             --//jax:build_jaxlib=wheel \
             --//jax:build_jax=true \
             --local_test_jobs=1 \
@@ -149,6 +150,7 @@ jobs:
             --config=rocm_ci_hermetic \
             --config=rocm_rbe_dynamic \
             --config=ci_single_gpu \
+            --config=no_flaky \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
             --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx950 \
             --repo_env=ROCM_PATH="" \
@@ -172,6 +174,7 @@ jobs:
             --config=rocm_ci_hermetic \
             --config=rocm_rbe_dynamic \
             --config=ci_rocm_cpu \
+            --config=no_flaky \
             --local_test_jobs=200 \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}" \
             --repo_env=TF_ROCM_AMDGPU_TARGETS=gfx950 \
