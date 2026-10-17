@@ -577,6 +577,10 @@ absl::Status MaybeSyncAndProfile(const ServiceExecutableRunOptions* run_options,
                                  se::EventBasedTimer* execution_timer,
                                  se::Stream* stream_to_sync);
 
+absl::Status RendezvousBeforeFirstExecution(
+    RendezvousFlag& flag, const ServiceExecutableRunOptions& run_options,
+    const DebugOptions* absl_nullable debug_options);
+
 absl::Status RendezvousAfterInitialization(
     const ServiceExecutableRunOptions& run_options,
     const DebugOptions* absl_nullable debug_options);
@@ -978,24 +982,30 @@ struct InitializationKey {
 bool operator==(const InitializationKey& a, const InitializationKey& b) {
   return a.run_id == b.run_id;
 }
-}  // namespace
 
-absl::Status RendezvousAfterInitialization(
-    const ServiceExecutableRunOptions& run_options,
-    const DebugOptions* absl_nullable debug_options) {
-  // Thunk initialization can allocate new control data structures on device
-  // that can lead to deadlocks if other replicas are executing concurrently
-  // (i.e. this happens if we try to instantiate CUDA graph when other replica
-  // is executing NCCL kernels). If we detect that we are running in multi-gpu
-  // setup we synchronize after first initialization to make sure that all
-  // replicas completed initialization process before we start execution.
+struct FirstExecutionKey {
+  RunId run_id;
+
+  template <typename H>
+  friend H AbslHashValue(H h, const FirstExecutionKey& key) {
+    return H::combine(std::move(h), key.run_id);
+  }
+
+  friend bool operator==(const FirstExecutionKey& a,
+                         const FirstExecutionKey& b) {
+    return a.run_id == b.run_id;
+  }
+};
+
+absl::StatusOr<int64_t> GetNumLocalParticipants(
+    const ServiceExecutableRunOptions& run_options) {
   auto* gpu_opts = run_options.run_options().gpu_executable_run_options();
   auto* device_assn = run_options.run_options().device_assignment();
 
   // If we don't have Gpu executable options or device assignment it means we
   // are running in a single Gpu config and don't need a rendezvous.
   if (!gpu_opts || !device_assn) {
-    return absl::OkStatus();
+    return 1;
   }
 
   // Assume that all participants execute locally first, if we have a local
@@ -1017,6 +1027,59 @@ absl::Status RendezvousAfterInitialization(
       return absl::InternalError(
           "Cound't find the number of local participants");
     }
+  }
+  return num_local_participants;
+}
+}  // namespace
+
+absl::Status RendezvousBeforeFirstExecution(
+    RendezvousFlag& flag, const ServiceExecutableRunOptions& run_options,
+    const DebugOptions* absl_nullable debug_options) {
+  if (flag.IsCompleted()) {
+    return absl::OkStatus();
+  }
+
+  ABSL_ASSIGN_OR_RETURN(int64_t num_local_participants,
+                        GetNumLocalParticipants(run_options));
+  if (num_local_participants <= 1) {
+    return absl::OkStatus();
+  }
+
+  XLA_VLOG_DEVICE(1, run_options.device_ordinal()) << absl::StreamFormat(
+      "Join first execution rendezvous with %d local participants",
+      num_local_participants);
+
+  tsl::profiler::TraceMe trace([&] {
+    return tsl::profiler::TraceMeEncode(
+        "RendezvousBeforeFirstExecution",
+        {{"run_id", run_options.run_options().run_id().ToInt()},
+         {"num_local_participants", num_local_participants}});
+  });
+
+  auto rendezvous_key = FirstExecutionKey{run_options.run_options().run_id()};
+  auto rendezvous_name = absl::StrFormat(
+      "first execution for device ordinal %d; run_id=%d",
+      run_options.device_ordinal(), run_options.run_options().run_id().ToInt());
+
+  return Rendezvous(
+      flag, rendezvous_name, rendezvous_key, num_local_participants,
+      absl::Seconds(
+          debug_options
+              ? debug_options->xla_gpu_executable_warn_stuck_timeout_seconds()
+              : 10),
+      absl::Seconds(
+          debug_options
+              ? debug_options->xla_gpu_executable_terminate_timeout_seconds()
+              : 30));
+}
+
+absl::Status RendezvousAfterInitialization(
+    const ServiceExecutableRunOptions& run_options,
+    const DebugOptions* absl_nullable debug_options) {
+  ABSL_ASSIGN_OR_RETURN(int64_t num_local_participants,
+                        GetNumLocalParticipants(run_options));
+  if (num_local_participants <= 1) {
+    return absl::OkStatus();
   }
 
   XLA_VLOG_DEVICE(1, run_options.device_ordinal()) << absl::StreamFormat(
@@ -1140,6 +1203,10 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
       gpu_opts && gpu_opts->requires_exclusive_lock_on_gpu()) {
     gpu_lock.emplace<1>(GetGpuMutex(executor));
   }
+
+  ABSL_RETURN_IF_ERROR(RendezvousBeforeFirstExecution(
+      first_execution_rendezvous_flag_, *run_options,
+      has_module() ? &module_config().debug_options() : nullptr));
 
   const GpuExecutable::BufferAllocToDeviceMemoryMap* globals;
   {

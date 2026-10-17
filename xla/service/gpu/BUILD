@@ -984,6 +984,8 @@ xla_test(
         "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/service:buffer_assignment",
         "//xla/service:buffer_value",
+        "//xla/service:device_assignment",
+        "//xla/service:executable",
         "//xla/service:gpu_topology",
         "//xla/service:hlo_module_config",
         "//xla/service:logical_buffer",
