@@ -81,8 +81,10 @@ absl::Status HostBufferStore::ReadFromDisk(uint64_t handle) {
     auto deleter = [tsl_mmaped = std::move(tsl_mmaped),
                     file_path](absl::string_view* ptr) mutable {
       tsl_mmaped = nullptr;
+      // Newer clients delete the file themselves after `ReadFromDisk()`
+      // returns; keep deleting it here for older clients.
       auto status = tsl::Env::Default()->DeleteFile(*file_path);
-      if (!status.ok()) {
+      if (!status.ok() && !absl::IsNotFound(status)) {
         LOG(WARNING) << "Failed to delete file " << *file_path << ": "
                      << status;
       }
