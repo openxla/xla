@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -410,12 +409,8 @@ TEST_F(HloConstantFoldingTest, ConstantFoldCopyOp) {
     %constant.2 = f32[] constant(0)
     ROOT %copy.3 = f32[] copy(f32[] %constant.2)
   })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, HloConstantFolding()));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Constant()));
 }
@@ -453,12 +448,8 @@ TEST_F(HloConstantFoldingTest, FoldOpsWhereOneOperandIsBroadcast) {
                   f32[4] broadcast(f32[] constant(5)))
     ROOT root = tuple(not_folded1, not_folded2, folded1, folded2)
   })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, HloConstantFolding()));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Tuple(m::Broadcast(m::Constant()),
                                   m::Add(m::Broadcast(m::Constant()),
@@ -482,12 +473,11 @@ TEST_F(HloConstantFoldingTest, AgressiveFoldOpsWhereBothOperandAreBroadcast) {
                   f32[4] broadcast(f32[] constant(5)))
     ROOT root = tuple(not_folded1, folded1, folded2, folded3)
   })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding(HloConstantFolding::Level::kAggressive);
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      RunAndCheckHloRewrite(
+          kModuleStr,
+          HloConstantFolding(HloConstantFolding::Level::kAggressive)));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Tuple(m::Broadcast(m::Constant()),
                                   m::Constant(),  //
@@ -510,12 +500,8 @@ TEST_F(HloConstantFoldingTest, FoldOpsWhereOneOperandIsIota) {
                   f32[4] iota)
     ROOT root = tuple(iota, not_folded1, folded1, folded2)
   })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, HloConstantFolding()));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Tuple(m::Iota(),                     //
                                   m::Add(m::Iota(), m::Iota()),  //
@@ -535,12 +521,8 @@ TEST_F(HloConstantFoldingTest, FoldInt4Ops) {
     add2 = s4[2]{0:E(4)} add(c0, s4[2]{0:E(4)} broadcast(c2))
     ROOT root = tuple(add1, add2)
   })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, HloConstantFolding()));
   auto is_4_bit = [](const HloInstruction* instr) {
     return instr->shape().layout().element_size_in_bits() == 4;
   };
@@ -621,10 +603,10 @@ TEST_F(HloConstantFoldingTest, FoldWhile) {
       ROOT while = (s32[], s32[10]) while(tuple_arg), condition=condition_fn, body=body_fn
     }
    )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(mod_str));
-  HloConstantFolding const_fold(HloConstantFolding::Level::kAggressive);
-  TF_ASSERT_OK_AND_ASSIGN(bool result, RunHloPass(&const_fold, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      RunAndCheckHloRewrite(
+          mod_str, HloConstantFolding(HloConstantFolding::Level::kAggressive)));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Constant()));
 }
@@ -644,12 +626,8 @@ TEST_F(HloConstantFoldingTest, FoldCall) {
       constant.1 = f32[] constant(2)
       ROOT call = f32[] call(constant.0, constant.1), to_apply=Fn
     })";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, HloConstantFolding()));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::Constant()));
 }
@@ -693,12 +671,8 @@ TEST_F(HloConstantFoldingTest, InterproceduralSingleCallsite) {
       ROOT call = f32[8] call(constant.0, entry.param), to_apply=Fn
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, HloConstantFolding()));
   HloComputation* fn = module->GetComputationWithName("Fn");
   EXPECT_THAT(fn->root_instruction(),
               GmockMatch(m::Add(m::Constant(), m::Parameter(1))));
@@ -725,12 +699,8 @@ TEST_F(HloConstantFoldingTest, InterproceduralMultipleCallsites) {
       ROOT add = f32[8] add(call.0, call.1)
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, HloConstantFolding()));
   HloComputation* fn = module->GetComputationWithName("Fn");
   EXPECT_THAT(fn->root_instruction(),
               GmockMatch(m::Add(m::Constant(), m::Parameter(1))));
@@ -790,12 +760,8 @@ TEST_F(HloConstantFoldingTest, InterproceduralMultipleCallsitesSomeConstants) {
       ROOT add = f32[] add(call.0, call.1)
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, HloConstantFolding()));
   HloComputation* fn = module->GetComputationWithName("Fn");
   EXPECT_THAT(
       fn->root_instruction(),
@@ -828,12 +794,8 @@ TEST_F(HloConstantFoldingTest,
       ROOT add = f32[8] add(call.0, call.1)
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding;
-  TF_ASSERT_OK_AND_ASSIGN(bool result,
-                          RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(kModuleStr, HloConstantFolding()));
   HloComputation* fn = module->GetComputationWithName("Fn");
   EXPECT_THAT(fn->root_instruction(),
               GmockMatch(m::Subtract(m::Add(m::Constant(), m::Parameter(1)),
@@ -911,12 +873,8 @@ TEST_F(HloConstantFoldingTest,
   EXPECT_GT(constant_name.size(), 0);
   // Run the pass repeatedly and check the result is deterministic.
   for (int i = 0; i < 10; ++i) {
-    TF_ASSERT_OK_AND_ASSIGN(auto module,
-                            ParseAndReturnVerifiedModule(kModuleStr));
-    HloConstantFolding constant_folding;
-    TF_ASSERT_OK_AND_ASSIGN(bool result,
-                            RunHloPass(&constant_folding, module.get()));
-    EXPECT_TRUE(result);
+    ASSERT_OK_AND_ASSIGN(
+        auto module, RunAndCheckHloRewrite(kModuleStr, HloConstantFolding()));
     HloComputation* fn = module->GetComputationWithName("Fn");
     std::string new_constant_name;
     for (HloInstruction* inst : fn->instructions()) {
@@ -1058,11 +1016,9 @@ TEST_F(HloConstantFoldingTest, LateOptionsFoldUnstackFusionViaGteRewrite) {
       p0 = u32[] parameter(0)
       ROOT out = u32[] add(x, p0)
     })";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding(LateFoldingOptions());
-  ASSERT_OK_AND_ASSIGN(bool result,
-                       RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      auto module, RunAndCheckHloRewrite(
+                       kModuleStr, HloConstantFolding(LateFoldingOptions())));
   const HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::Add(op::Constant(), op::Parameter(0)));
   // 0x12345678 ^ 0x0000ABCD == 0x1234FDB5.
@@ -1139,11 +1095,9 @@ TEST_F(HloConstantFoldingTest, LateOptionsFoldFloatDataMovement) {
       p0 = f32[2]{0} parameter(0)
       ROOT out = f32[2]{0} add(s, p0)
     })";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding(LateFoldingOptions());
-  ASSERT_OK_AND_ASSIGN(bool result,
-                       RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      auto module, RunAndCheckHloRewrite(
+                       kModuleStr, HloConstantFolding(LateFoldingOptions())));
   const HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::Add(op::Constant(), op::Parameter(0)));
   EXPECT_EQ(root->operand(0)->literal().Get<float>({0}), 3.0f);
@@ -1164,11 +1118,9 @@ TEST_F(HloConstantFoldingTest, LateOptionsFoldIntButNotFloatOperandConvert) {
       a = s32[2]{0} add(from_float, p0)
       ROOT out = s32[2]{0} add(a, widened)
     })";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding(LateFoldingOptions());
-  ASSERT_OK_AND_ASSIGN(bool result,
-                       RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      auto module, RunAndCheckHloRewrite(
+                       kModuleStr, HloConstantFolding(LateFoldingOptions())));
   const HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root,
               op::Add(op::Add(op::Convert(op::Constant()), op::Parameter(0)),
@@ -1222,11 +1174,9 @@ TEST_F(HloConstantFoldingTest, LateOptionsFoldFloatPadSelectAndDynamicSlice) {
       a2 = f32[2]{0} add(ds, p2)
       ROOT t = (f32[6]{0}, f32[4]{0}, f32[2]{0}) tuple(a0, a1, a2)
     })";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding(LateFoldingOptions());
-  ASSERT_OK_AND_ASSIGN(bool result,
-                       RunHloPass(&constant_folding, module.get()));
-  EXPECT_TRUE(result);
+  ASSERT_OK_AND_ASSIGN(
+      auto module, RunAndCheckHloRewrite(
+                       kModuleStr, HloConstantFolding(LateFoldingOptions())));
   const HloInstruction* root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, op::Tuple(op::Add(op::Constant(), op::Parameter(0)),
                               op::Add(op::Constant(), op::Parameter(1)),
@@ -1290,11 +1240,10 @@ TEST_F(HloConstantFoldingTest, LateOptionsDontFoldTupleWithNonGteUser) {
       f = (u32[1]{0}, u32[1]{0}) fusion(key), kind=kLoop, calls=unstack_comp
       ROOT cc = u32[1]{0} custom-call(f), custom_call_target="Consume"
     })";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding(LateFoldingOptions());
-  ASSERT_OK_AND_ASSIGN(bool result,
-                       RunHloPass(&constant_folding, module.get()));
-  EXPECT_FALSE(result);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunAndCheckHloRewrite(
+                           kModuleStr, HloConstantFolding(LateFoldingOptions()),
+                           /*expect_change=*/false));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               op::CustomCall(op::Fusion()));
 }
@@ -1397,11 +1346,9 @@ TEST_F(HloConstantFoldingTest, LateOptionsDontFoldGteWithControlDependency) {
       x = u32[1]{0} xor(g0, g1)
       ROOT out = u32[1]{0} add(x, gate)
     })";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
-  HloConstantFolding constant_folding(LateFoldingOptions());
-  ASSERT_OK_AND_ASSIGN(bool result,
-                       RunHloPass(&constant_folding, module.get()));
-  EXPECT_FALSE(result);
+  ASSERT_OK(RunAndCheckHloRewrite(kModuleStr,
+                                  HloConstantFolding(LateFoldingOptions()),
+                                  /*expect_change=*/false));
 }
 
 TEST_F(HloConstantFoldingTest, ComputationCalledTwiceOnDifferentConstants) {
