@@ -21,6 +21,7 @@ limitations under the License.
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -43,6 +44,7 @@ limitations under the License.
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/gpu_performance_model.h"
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
+#include "xla/service/gpu/reduction_utils.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/shape_util.h"
@@ -305,11 +307,51 @@ bool IsSiblingFusionCandidate(const HloInstruction* instr,
                          HloPredicateIsOp<HloOpcode::kGetTupleElement>));
 }
 
+// A column reduction emitted in one pass gets a grid sized for its output,
+// often far fewer blocks than cores. Merging a sibling that is not a reduction
+// runs the sibling on that grid too, which is slower than two kernels. Grids
+// that fill every core still merge well.
+FusionDecision ColumnReductionDoesNotStarveSibling(
+    const HloInstruction& sibling_consumer_1,
+    const HloInstruction& sibling_consumer_2,
+    const se::DeviceDescription& device_info,
+    HloFusionAnalysisCache* fusion_analysis_cache) {
+  for (auto [reduction, other] :
+       {std::pair(&sibling_consumer_1, &sibling_consumer_2),
+        std::pair(&sibling_consumer_2, &sibling_consumer_1)}) {
+    if (!IsInputFusibleReduction(*reduction, device_info) ||
+        IsInputFusibleReduction(*other, device_info)) {
+      continue;
+    }
+    const HloInstruction* hero =
+        GetRealHeroForMultiOutputFusion(*reduction, device_info);
+    ReductionDimensions reduction_dimensions =
+        GetReductionKindAndContiguousComponents(*hero);
+    // Reductions that are not race free are split later, so their final grid
+    // is unknown, and the emitter cannot be queried for them.
+    if (reduction_dimensions.is_row_reduction ||
+        !ReductionIsRaceFree(reduction_dimensions, device_info)) {
+      continue;
+    }
+    int64_t num_blocks =
+        GpuPerformanceModelBase::EstimateFusionLaunchDimensions(
+            fusion_analysis_cache->Get(*reduction))
+            .num_blocks();
+    if (num_blocks < device_info.core_count()) {
+      return FusionDecision::Forbid(absl::StrCat(
+          "column reduction ", reduction->name(), " runs on ", num_blocks,
+          " blocks, too few for sibling ", other->name()));
+    }
+  }
+  return FusionDecision::Allow();
+}
+
 FusionDecision CanFuseSiblings(const HloInstruction& sibling_consumer_1,
                                const HloInstruction& sibling_consumer_2,
                                const HloInstruction& common_producer,
                                const HloDfsReachability& reachability,
                                FusionInfoCache* fusion_info_cache,
+                               HloFusionAnalysisCache* fusion_analysis_cache,
                                const se::DeviceDescription& device_info) {
   if (reachability.IsConnected(&sibling_consumer_1, &sibling_consumer_2)) {
     return FusionDecision::Forbid(
@@ -329,6 +371,10 @@ FusionDecision CanFuseSiblings(const HloInstruction& sibling_consumer_1,
   RETURN_IF_NOT_FUSIBLE(ParameterSlicesAreNonOverlapping(
       sibling_consumer_1, sibling_consumer_2, &common_producer));
 
+  RETURN_IF_NOT_FUSIBLE(ColumnReductionDoesNotStarveSibling(
+      sibling_consumer_1, sibling_consumer_2, device_info,
+      fusion_analysis_cache));
+
   // This check should be last, as it may be expensive.
   RETURN_IF_NOT_FUSIBLE(LegalToFuse(sibling_consumer_1, sibling_consumer_2,
                                     device_info, fusion_info_cache));
@@ -345,7 +391,9 @@ bool MultiOutputFusion::FuseSiblings(
     HloInstruction* parent,
     const std::function<void(const HloInstruction*)>&
         invalidate_caches_callback,
-    FusionInfoCache* fusion_info_cache, GpuHloCostAnalysis* cost_analysis) {
+    FusionInfoCache* fusion_info_cache,
+    HloFusionAnalysisCache* fusion_analysis_cache,
+    GpuHloCostAnalysis* cost_analysis) {
   const HloComputation* computation = parent->parent();
   const HloModule* module = computation->parent();
   bool dump_fusion =
@@ -378,7 +426,8 @@ bool MultiOutputFusion::FuseSiblings(
       VLOG(3) << "Considering " << (*i)->name() << " and " << (*j)->name();
 
       if (auto fusible = CanFuseSiblings(**i, **j, *parent, *reachability_,
-                                         fusion_info_cache, device_info_);
+                                         fusion_info_cache,
+                                         fusion_analysis_cache, device_info_);
           !fusible) {
         // We pick `j` arbitrarily as a consumer.
         if (dump_fusion) {
@@ -474,7 +523,8 @@ absl::StatusOr<bool> MultiOutputFusion::DoMultiOutputFusion() {
                        fusion_analysis_cache.Invalidate(instr->unique_id());
                        fusion_info_cache.Invalidate(instr);
                      },
-                     &fusion_info_cache, &cost_analysis)) {
+                     &fusion_info_cache, &fusion_analysis_cache,
+                     &cost_analysis)) {
       changed = true;
     }
     // Second, perform producer-consumer multi-output fusion. This order will
