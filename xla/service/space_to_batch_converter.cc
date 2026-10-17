@@ -3854,6 +3854,12 @@ bool ConvolutionVisitor::DoesConvolutionFeedUnpropagatableOp(
       unpropagatability_cache_[key] = true;
       return true;
     }
+    // GENERIC: semantic SpaceToBatch propagation always terminates with
+    // BatchToSpace at kReshape, so ops downstream of kReshape never receive
+    // space to batched operands from this convolution.
+    if (user->opcode() == HloOpcode::kReshape) {
+      continue;
+    }
 
     int64_t depth_to_use = depth;
     // When we see a convolution/dot, we reduce the depth to look further for.
