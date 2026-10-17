@@ -77,33 +77,6 @@ FindAccumulatorInputPairs(const HloDataflowAnalysis& dataflow_analysis,
   HloComputation* computation = while_instr->while_body();
   HloInstruction* body_param = computation->parameter_instruction(0);
 
-  // Finding the accumulator instructions
-  std::vector<HloInstruction*> possible_acc;
-  for (HloInstruction* gte : body_param->users()) {
-    if (gte->opcode() != HloOpcode::kGetTupleElement) {
-      continue;
-    }
-    int64_t param_idx = gte->tuple_index();
-    // HloVerifier ensures that param_idx >= 0.
-    CHECK_GE(param_idx, 0);
-
-    // The accumulator should only be used exactly once as the operand of
-    // dynamic-update-slice.
-    if (gte->user_count() != 1) {
-      continue;
-    }
-    HloInstruction* gte_user = gte->users().at(0);
-    if (MatchShapeCoveringDynamicIndexInstruction(
-            gte_user, gte, HloOpcode::kDynamicUpdateSlice, config)
-            .has_value()) {
-      // The accumulator should be written at the same index
-      if (computation->root_instruction()->operand(param_idx) == gte_user) {
-        possible_acc.push_back(gte);
-        VLOG(3) << "accumulator index: " << param_idx << " = " << gte->name();
-      }
-    }
-  }
-
   // Version of HloInstruction::operand_index that returns -1 if the operand is
   // not found instead of crashing.
   auto find_operand_index = [](const HloInstruction* instr,
@@ -114,6 +87,17 @@ FindAccumulatorInputPairs(const HloDataflowAnalysis& dataflow_analysis,
       }
     }
     return -1;
+  };
+
+  auto count_operand = [](const HloInstruction* instr,
+                          const HloInstruction* operand) -> int64_t {
+    int64_t count = 0;
+    for (const HloInstruction* op : instr->operands()) {
+      if (op == operand) {
+        ++count;
+      }
+    }
+    return count;
   };
 
   // Returns the first GTE instruction in the users of the tuple with the form
@@ -128,6 +112,38 @@ FindAccumulatorInputPairs(const HloDataflowAnalysis& dataflow_analysis,
     }
     return nullptr;
   };
+
+  // Finding the accumulator instructions
+  std::vector<HloInstruction*> possible_acc;
+  for (HloInstruction* gte : body_param->users()) {
+    if (gte->opcode() != HloOpcode::kGetTupleElement) {
+      continue;
+    }
+    int64_t param_idx = gte->tuple_index();
+    // HloVerifier ensures that param_idx >= 0.
+    CHECK_GE(param_idx, 0);
+
+    // The accumulator should only be used exactly once as the operand of
+    // dynamic-update-slice, and the updated accumulator must only feed the
+    // loop body root at the same tuple index.
+    if (gte->user_count() != 1) {
+      continue;
+    }
+    HloInstruction* gte_user = gte->users().at(0);
+    if (gte_user->user_count() != 1 ||
+        count_operand(computation->root_instruction(), gte_user) != 1) {
+      continue;
+    }
+    if (MatchShapeCoveringDynamicIndexInstruction(
+            gte_user, gte, HloOpcode::kDynamicUpdateSlice, config)
+            .has_value()) {
+      // The accumulator should be written at the same index
+      if (computation->root_instruction()->operand(param_idx) == gte_user) {
+        possible_acc.push_back(gte);
+        VLOG(3) << "accumulator index: " << param_idx << " = " << gte->name();
+      }
+    }
+  }
 
   auto check_single_user_not_null = [](HloInstruction* instr) -> bool {
     if (instr == nullptr || instr->user_count() != 1) {
@@ -184,8 +200,11 @@ FindAccumulatorInputPairs(const HloDataflowAnalysis& dataflow_analysis,
             << ", index = " << input_gte_inner->tuple_index();
 
     // Input must have two users, one is the dynamic-slice and the other is the
-    // root of the loop body.
-    if (input_gte_inner->user_count() != 2) {
+    // root of the loop body, and the input tuple slot must not be used after
+    // the inner loop.
+    if (input_gte_inner->user_count() != 2 ||
+        count_operand(computation->root_instruction(), input_gte_inner) != 1 ||
+        find_gte_instr(while_instr, input_idx_inner) != nullptr) {
       continue;
     }
     // Get the first user of the input and check if it is a shape covering
