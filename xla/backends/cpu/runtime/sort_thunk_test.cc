@@ -16,8 +16,10 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/sort_thunk.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -403,6 +405,72 @@ TEST_P(SortThunkTest, SortKeyValueBfloat16Descending) {
             LiteralUtil::CreateR1<bfloat16>({bfloat16(4.0f), bfloat16(3.0f),
                                              bfloat16(2.0f), bfloat16(1.0f)}));
   EXPECT_EQ(indices, LiteralUtil::CreateR1<int32_t>({1, 3, 0, 2}));
+}
+
+TEST_P(SortThunkTest, SortFloatSpecialValues) {
+  bool is_stable = GetParam();
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float neg_nan = -nan;
+  const float inf = std::numeric_limits<float>::infinity();
+  const float neg_inf = -inf;
+
+  for (auto direction : {SortThunk::SortDirection::kAscending,
+                         SortThunk::SortDirection::kDescending}) {
+    auto keys = LiteralUtil::CreateR1<float>(
+        {nan, 1.0f, -0.0f, neg_inf, +0.0f, -2.0f, inf, neg_nan});
+    auto values = LiteralUtil::CreateR1<int32_t>({0, 1, 2, 3, 4, 5, 6, 7});
+
+    BufferAllocations allocations = CreateBufferAllocations(keys, values);
+    auto [alloc0, alloc1] = CreateBufferAllocation(keys, values);
+    auto [slice0, slice1] = CreateBufferAllocationSlice(alloc0, alloc1);
+
+    auto fake_less_than = [](const void**) { return false; };
+    ASSERT_OK_AND_ASSIGN(
+        auto thunk,
+        SortThunk::Create(
+            {"sort"}, {{slice0, keys.shape()}, {slice1, values.shape()}},
+            /*dimension=*/0, is_stable, fake_less_than, direction));
+
+    Thunk::ExecuteParams params;
+    params.buffer_allocations = &allocations;
+    auto execute_event = thunk->Execute(params);
+    tsl::BlockUntilReady(execute_event);
+    ASSERT_FALSE(execute_event.IsError());
+
+    auto sorted_keys = keys.data<float>();
+    auto sorted_vals = values.data<int32_t>();
+    if (direction == SortThunk::SortDirection::kAscending) {
+      EXPECT_EQ(sorted_keys[0], neg_inf);
+      EXPECT_EQ(sorted_keys[1], -2.0f);
+      EXPECT_EQ(sorted_keys[2], 0.0f);
+      EXPECT_EQ(sorted_keys[3], 0.0f);
+      EXPECT_EQ(sorted_keys[4], 1.0f);
+      EXPECT_EQ(sorted_keys[5], inf);
+      EXPECT_TRUE(std::isnan(sorted_keys[6]));
+      EXPECT_TRUE(std::isnan(sorted_keys[7]));
+      if (is_stable) {
+        EXPECT_EQ(sorted_vals[2], 2);
+        EXPECT_EQ(sorted_vals[3], 4);
+        EXPECT_EQ(sorted_vals[6], 0);
+        EXPECT_EQ(sorted_vals[7], 7);
+      }
+    } else {
+      EXPECT_TRUE(std::isnan(sorted_keys[0]));
+      EXPECT_TRUE(std::isnan(sorted_keys[1]));
+      EXPECT_EQ(sorted_keys[2], inf);
+      EXPECT_EQ(sorted_keys[3], 1.0f);
+      EXPECT_EQ(sorted_keys[4], 0.0f);
+      EXPECT_EQ(sorted_keys[5], 0.0f);
+      EXPECT_EQ(sorted_keys[6], -2.0f);
+      EXPECT_EQ(sorted_keys[7], neg_inf);
+      if (is_stable) {
+        EXPECT_EQ(sorted_vals[0], 0);
+        EXPECT_EQ(sorted_vals[1], 7);
+        EXPECT_EQ(sorted_vals[4], 2);
+        EXPECT_EQ(sorted_vals[5], 4);
+      }
+    }
+  }
 }
 
 TEST_P(SortThunkTest, SortKeyValueStridedSlices) {
