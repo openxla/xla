@@ -2671,6 +2671,30 @@ TEST_F(HloInstructionTest, GatherDoesNotReuseElements) {
   EXPECT_FALSE(root->ReusesOperandElements(1));
 }
 
+TEST_F(HloInstructionTest, ReduceWindowReusesElementsIfWindowsOverlap) {
+  constexpr char kHloString[] = R"(
+  add {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT add = f32[] add(lhs, rhs)
+  }
+
+  ENTRY test {
+    input = f32[50,64] parameter(0)
+    init = f32[] constant(0)
+    disjoint = f32[50,2] reduce-window(input, init),
+      window={size=1x32 stride=1x32}, to_apply=add
+    overlapping = f32[50,62] reduce-window(input, init),
+      window={size=1x3 stride=1x1}, to_apply=add
+    ROOT t = tuple(disjoint, overlapping)
+  })";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_FALSE(root->operand(0)->ReusesOperandElements(0));
+  EXPECT_TRUE(root->operand(0)->ReusesOperandElements(1));
+  EXPECT_TRUE(root->operand(1)->ReusesOperandElements(0));
+}
+
 TEST_F(HloInstructionTest, BackendConfigCanContainNonFiniteFloats) {
   HloComputation::Builder b(TestName());
   Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
