@@ -17,6 +17,7 @@ syntax = "proto3";
 package xla.ifrt.proxy;
 
 import "google/protobuf/any.proto";
+import "xla/pjrt/proto/compile_options.proto";
 import "xla/pjrt/proto/executable_metadata.proto";
 import "xla/python/ifrt/array_spec.proto";
 import "xla/python/ifrt/attribute_map.proto";
@@ -38,7 +39,7 @@ message IfrtProxyVersion {
   int32 ifrt_serdes_version_number = 2;
 }
 
-// Next ID: 35.
+// Next ID: 36.
 message IfrtRequest {
   RequestMetadata request_metadata = 1;
 
@@ -72,6 +73,8 @@ message IfrtRequest {
 
     // ==== Compiler ====
     CompileRequest compile_request = 13;
+    DeserializeLoadedExecutableRequest deserialize_loaded_executable_request =
+        35;
 
     // ===== LoadedExecutable =====
     LoadedExecutableMetadataRequest loaded_executable_metadata_request = 14;
@@ -107,7 +110,7 @@ message IfrtRequest {
   reserved 10;
 }
 
-// Next ID: 35.
+// Next ID: 36.
 message IfrtResponse {
   ResponseMetadata response_metadata = 1;
 
@@ -141,6 +144,8 @@ message IfrtResponse {
 
     // ===== Compiler =====
     CompileResponse compile_response = 13;
+    DeserializeLoadedExecutableResponse deserialize_loaded_executable_response =
+        35;
 
     // ===== LoadedExecutable =====
     LoadedExecutableMetadataResponse loaded_executable_metadata_response = 14;
@@ -519,6 +524,33 @@ message CompileResponse {
   optional fixed64 ready_future_handle = 9;
 
   reserved 4;
+}
+
+// Loads an executable that was serialized ahead of time (for example by
+// compiling in the client process) and returns a `LoadedExecutable`.
+// Equivalent to `ifrt::Compiler::DeserializeLoadedExecutable`.
+//
+// The proxy only transports the bytes. The backend decides whether the
+// serialized executable is compatible with its runtime.
+message DeserializeLoadedExecutableRequest {
+  // Handle of the `HostBufferStore` entry that holds the serialized
+  // executable. The client stores the bytes before it sends this request. The
+  // server deletes the entry after it reads the bytes.
+  fixed64 serialized_executable_handle = 1;
+
+  // IDs of the devices that the executable loads on, in the device order of
+  // the executable. If empty, the backend chooses the devices. Some backends
+  // reject an empty list.
+  repeated int32 device_ids = 2;
+
+  // Optional compile options that override the options in the serialized
+  // executable. The backend may ignore them.
+  optional xla.CompileOptionsProto compile_options = 3;
+}
+message DeserializeLoadedExecutableResponse {
+  // Same content as the response of `CompileRequest`. The client creates the
+  // `LoadedExecutable` from it in the same way.
+  CompileResponse compile_response = 1;
 }
 
 // ================ LoadedExecutable-related operations ================
