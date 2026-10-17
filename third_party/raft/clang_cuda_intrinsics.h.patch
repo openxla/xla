@@ -15,7 +15,7 @@
 diff --git a/cpp/include/raft/compat/clang_cuda_intrinsics.h b/cpp/include/raft/compat/clang_cuda_intrinsics.h
 --- /dev/null
 +++ b/cpp/include/raft/compat/clang_cuda_intrinsics.h
-@@ -0,0 +1,274 @@
+@@ -0,0 +1,284 @@
 +#pragma once
 +
 +#if defined(__clang__) && defined(__CUDA__) && !defined(__NVCC__) && (__clang_major__ < 21)
@@ -290,6 +290,16 @@ diff --git a/cpp/include/raft/compat/clang_cuda_intrinsics.h b/cpp/include/raft/
 +#endif // defined(__cplusplus) && (__cplusplus >= 201103L)
 +
 +#endif  // clang < 21
++
++#if defined(__clang__) && defined(__CUDA__) && \
++    !defined(__NVCC__) && (__clang_major__ >= 21) && (__clang_major__ < 23)
++inline __device__ unsigned long __ldcs(const unsigned long* ptr) {
++  if (__SIZEOF_LONG__ == __SIZEOF_LONG_LONG__) {
++    return (unsigned long)__ldcs((const unsigned long long*)ptr);
++  }
++  return (unsigned long)__ldcs((const unsigned int*)ptr);
++}
++#endif
 diff --git a/cpp/include/raft/matrix/detail/select_warpsort.cuh b/cpp/include/raft/matrix/detail/select_warpsort.cuh
 --- a/cpp/include/raft/matrix/detail/select_warpsort.cuh
 +++ b/cpp/include/raft/matrix/detail/select_warpsort.cuh
