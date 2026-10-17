@@ -97,5 +97,32 @@ TEST_F(SimplifyFPConversionsTest, SimplifiesF64ToF16ToF32ToBF16) {
       op::Tuple(AllOf(op::Shape("bf16[2,3]"), op::Convert(op::Parameter(0)))));
 }
 
+TEST_F(SimplifyFPConversionsTest, DoesNotSimplifyF32ToF8E4M3FNToF32) {
+  for (absl::string_view module_str : {
+           R"(
+    HloModule test
+    ENTRY entry {
+      p0 = f32[2,3] parameter(0)
+      c0 = f8e4m3fn[2,3] convert(p0)
+      c1 = f32[2,3] convert(c0)
+      ROOT ret = (f32[2,3]) tuple(c1)
+    })",
+           R"(
+    HloModule test
+    ENTRY entry {
+      p0 = bf16[2,3] parameter(0)
+      c0 = f8e4m3fn[2,3] convert(p0)
+      c1 = f32[2,3] convert(c0)
+      ROOT ret = (f32[2,3]) tuple(c1)
+    })",
+       }) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(module_str));
+    SimplifyFPConversions simplifier;
+    EXPECT_THAT(simplifier.Run(module.get()),
+                absl_testing::IsOkAndHolds(false));
+  }
+}
+
 }  // namespace
 }  // namespace xla

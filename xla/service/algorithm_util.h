@@ -104,6 +104,13 @@ bool IsSupportedDotAlgorithmOnGpu(
 // and output.
 bool IsBf16ToF32AlgorithmRequested(const HloInstruction* instr);
 
+// Rewrites a BF16 or F32 dot with ALG_DOT_BF16_BF16_FP8X3 or
+// ALG_DOT_BF16_BF16_FP8X4 into per channel power of two scaling and 3 or 4
+// F8E4M3FN dots accumulated in F32. `f8_dot_precision` is the operand precision
+// of the emitted F8E4M3FN dots.
+absl::StatusOr<bool> RewriteFp8xNDot(
+    HloInstruction* dot, PrecisionConfig::Precision f8_dot_precision);
+
 }  // namespace algorithm_util
 }  // namespace xla
 

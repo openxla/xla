@@ -16,17 +16,25 @@ limitations under the License.
 #include "xla/service/algorithm_util.h"
 
 #include <cstdint>
+#include <iterator>
 #include <variant>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/types/span.h"
 #include "tsl/platform/protobuf.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/primitive_util.h"
+#include "xla/service/hlo_creation_utils.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -326,6 +334,14 @@ bool IsSupportedDotAlgorithmOnGpu(
         }
       }
       return false;
+    case PrecisionConfig::ALG_DOT_BF16_BF16_FP8X3:
+    case PrecisionConfig::ALG_DOT_BF16_BF16_FP8X4:
+      // DotAlgorithmRewriter lowers these to F8E4M3FN dots run by cuBLASLt or
+      // Triton.
+      return is_cuda_ge_ada &&
+             (lhs_storage_type == BF16 || lhs_storage_type == F32) &&
+             (rhs_storage_type == BF16 || rhs_storage_type == F32) &&
+             (output_storage_type == BF16 || output_storage_type == F32);
     case PrecisionConfig::ALG_DOT_F16_F16_F32:
       return lhs_storage_type == rhs_storage_type && lhs_storage_type == F16 &&
              (output_storage_type == F16 || output_storage_type == F32);
@@ -373,6 +389,260 @@ bool IsBf16ToF32AlgorithmRequested(const HloInstruction* instr) {
          instr->operand(0)->shape().element_type() == F32 &&
          instr->operand(1)->shape().element_type() == F32 &&
          instr->shape().element_type() == F32;
+}
+
+namespace {
+
+// Maps each kept non-contracting dimension of a reduced operand scale tensor
+// to its destination dimension index in dot_shape, inserting a transpose only
+// when the target output dimensions are not strictly increasing.
+absl::StatusOr<HloInstruction*> BroadcastScaleToDotOutput(
+    HloInstruction* scale, absl::Span<const int64_t> operand_batch_dims,
+    absl::Span<const int64_t> operand_contracting_dims, int64_t operand_rank,
+    int64_t non_contracting_out_offset, const Shape& dot_shape) {
+  if (dot_shape.dimensions().empty()) {
+    return scale;
+  }
+  if (scale->shape().dimensions().empty()) {
+    return MakeBroadcastHlo(scale, {}, dot_shape);
+  }
+
+  std::vector<int64_t> target_out_dims;
+  target_out_dims.reserve(scale->shape().dimensions().size());
+  int64_t nc_index = 0;
+  for (int64_t d = 0; d < operand_rank; ++d) {
+    if (absl::c_linear_search(operand_contracting_dims, d)) {
+      continue;
+    }
+    auto batch_it = absl::c_find(operand_batch_dims, d);
+    if (batch_it != operand_batch_dims.end()) {
+      target_out_dims.push_back(
+          std::distance(operand_batch_dims.begin(), batch_it));
+    } else {
+      target_out_dims.push_back(non_contracting_out_offset + nc_index);
+      ++nc_index;
+    }
+  }
+
+  if (!absl::c_is_sorted(target_out_dims)) {
+    std::vector<int64_t> perm(target_out_dims.size());
+    absl::c_iota(perm, 0);
+    absl::c_sort(perm, [&](int64_t a, int64_t b) {
+      return target_out_dims[a] < target_out_dims[b];
+    });
+    ABSL_ASSIGN_OR_RETURN(scale, MakeTransposeHlo(scale, perm));
+    absl::c_sort(target_out_dims);
+  }
+  return MakeBroadcastHlo(scale, target_out_dims, dot_shape);
+}
+
+}  // namespace
+
+// Rewrites BF16 or F32 dots with ALG_DOT_BF16_BF16_FP8X3/4 into per channel
+// power of two scaling, two slice F8E4M3FN decomposition, and 3 or 4 F8E4M3FN
+// matmuls accumulated in FP32.
+absl::StatusOr<bool> RewriteFp8xNDot(
+    HloInstruction* dot, PrecisionConfig::Precision f8_dot_precision) {
+  const PrecisionConfig::Algorithm algorithm =
+      dot->precision_config().algorithm();
+  if (algorithm != PrecisionConfig::ALG_DOT_BF16_BF16_FP8X3 &&
+      algorithm != PrecisionConfig::ALG_DOT_BF16_BF16_FP8X4) {
+    return false;
+  }
+
+  HloInstruction* lhs = dot->mutable_operand(0);
+  HloInstruction* rhs = dot->mutable_operand(1);
+  const PrimitiveType lhs_type = lhs->shape().element_type();
+  const PrimitiveType rhs_type = rhs->shape().element_type();
+  if ((lhs_type != BF16 && lhs_type != F32) ||
+      (rhs_type != BF16 && rhs_type != F32)) {
+    return false;
+  }
+  const DotDimensionNumbers& dnums = dot->dot_dimension_numbers();
+  if (dnums.lhs_contracting_dimensions().empty() ||
+      dnums.rhs_contracting_dimensions().empty()) {
+    return false;
+  }
+
+  // Mask for IEEE 754 binary32 biased exponent bits (bits 30..23).
+  static constexpr uint32_t kF32ExponentMask = 0x7F800000;
+  // Combined biased exponent sum for scale_neg: (127 + 134) << 23 = 0x82800000.
+  static constexpr uint32_t kNegScaleBiasedExponentSumBits = 261u << 23;
+  // Combined descaling shift factor undoing both 2^7 scales: 2^-14.
+  static constexpr float kDescaleShiftFactor = 6.103515625e-5f;
+  // Positive floor clamp preventing log2(0) on all zero channels. It also keeps
+  // the biased exponent of amax at least 7, so 2^-S stays a normal F32.
+  static constexpr float kMinClampF32 = 1e-30f;
+  // Binade shift (2^4 = 16.0) elevating residual mantissa bits into normal
+  // F8E4M3FN range.
+  static constexpr float kLowSliceShiftScale = 16.0f;
+  // Scale factor (2^-4 = 0.0625) undoing the 16x low slice shift on first order
+  // cross terms.
+  static constexpr float kFirstOrderCrossTermScale = 0.0625f;
+  // Scale factor (2^-8 = 0.00390625) undoing the 16x shift on both operands for
+  // second order p11.
+  static constexpr float kSecondOrderResidualTermScale = 0.00390625f;
+
+  HloComputation* comp = dot->parent();
+
+  struct QuantizedOperand {
+    HloInstruction* high;
+    HloInstruction* low;
+    HloInstruction* exponent;
+  };
+
+  auto quantize_operand = [&](HloInstruction* op,
+                              absl::Span<const int64_t> contracting_dims)
+      -> absl::StatusOr<QuantizedOperand> {
+    std::vector<int64_t> reduce_dims(contracting_dims.begin(),
+                                     contracting_dims.end());
+    absl::c_sort(reduce_dims);
+    std::vector<int64_t> kept_dims;
+    const int64_t op_rank = op->shape().dimensions().size();
+    for (int64_t d = 0; d < op_rank; ++d) {
+      if (!absl::c_linear_search(reduce_dims, d)) {
+        kept_dims.push_back(d);
+      }
+    }
+
+    HloInstruction* op_f32 = MakeConvertToHlo(op, F32);
+    ABSL_ASSIGN_OR_RETURN(HloInstruction * abs_op,
+                          MakeUnaryHlo(HloOpcode::kAbs, op_f32));
+
+    // Dynamic exponent shift S = floor(log2(amax)) - 7 centers max magnitude in
+    // [128.0, 256.0).
+    HloInstruction* zero_f32 = MakeR0ConstantHlo<float>(comp, 0.0f);
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * max_op,
+        MakeReduceHlo(abs_op, zero_f32, reduce_dims, HloOpcode::kMaximum));
+    ABSL_ASSIGN_OR_RETURN(HloInstruction * max_clamped,
+                          MakeBinaryHlo(HloOpcode::kMaximum, max_op,
+                                        MakeScalarLike(max_op, kMinClampF32)));
+
+    // Extract IEEE 754 biased exponent field and construct exact power of two
+    // scale 2^(-S) via single unsigned subtract (261 << 23) - exp_op.
+    HloInstruction* bits_op = MakeBitcastConvertToHlo(max_clamped, U32);
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * exp_op,
+        MakeBinaryHlo(HloOpcode::kAnd, bits_op,
+                      MakeScalarLike(bits_op, kF32ExponentMask)));
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * neg_s_bits,
+        MakeBinaryHlo(HloOpcode::kSubtract,
+                      MakeScalarLike(exp_op, kNegScaleBiasedExponentSumBits),
+                      exp_op));
+    HloInstruction* scale_neg = MakeBitcastConvertToHlo(neg_s_bits, F32);
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * scaled,
+        MakeBinaryHlo(HloOpcode::kMultiply, op_f32,
+                      MakeBroadcastHlo(scale_neg, kept_dims, op_f32->shape())));
+
+    // High slice x_high: convert scaled value to F8E4M3FN using round to
+    // nearest even, then convert back to F32 for residual subtraction.
+    HloInstruction* high = MakeConvertToHlo(scaled, F8E4M3FN);
+    HloInstruction* high_f32 = MakeConvertToHlo(high, F32);
+
+    // Residual r = x_scaled - x_high cancels top bits exactly by Sterbenz
+    // Lemma, leaving signed lower mantissa bits centered around zero.
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * residual_f32,
+        MakeBinaryHlo(HloOpcode::kSubtract, scaled, high_f32));
+
+    // Low slice x_low: shift residual up by 4 binades (* 16.0) into normal
+    // F8E4M3FN exponent range.
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * low_f32,
+        MakeBinaryHlo(HloOpcode::kMultiply, residual_f32,
+                      MakeScalarLike(residual_f32, kLowSliceShiftScale)));
+
+    return QuantizedOperand{high, MakeConvertToHlo(low_f32, F8E4M3FN),
+                            MakeBitcastConvertToHlo(exp_op, F32)};
+  };
+
+  ABSL_ASSIGN_OR_RETURN(
+      QuantizedOperand lhs_quant,
+      quantize_operand(lhs, dnums.lhs_contracting_dimensions()));
+  ABSL_ASSIGN_OR_RETURN(
+      QuantizedOperand rhs_quant,
+      quantize_operand(rhs, dnums.rhs_contracting_dimensions()));
+  auto [a_high, a_low, exp_a_f32] = lhs_quant;
+  auto [b_high, b_low, exp_b_f32] = rhs_quant;
+
+  PrecisionConfig f8_pc;
+  f8_pc.add_operand_precision(f8_dot_precision);
+  f8_pc.add_operand_precision(f8_dot_precision);
+  // Keep the dot's layout: on GPU this runs after layout assignment.
+  const Shape dot_shape_f32 = ShapeUtil::ChangeElementType(dot->shape(), F32);
+  auto make_f8_dot = [&](HloInstruction* a, HloInstruction* b) {
+    return comp->AddInstruction(
+        HloInstruction::CreateDot(dot_shape_f32, a, b, dnums, f8_pc),
+        &dot->metadata());
+  };
+
+  // Cartesian cross terms: A * B = A_high * B_high + (A_high * B_low + A_low *
+  // B_high) * 2^-4 + (A_low * B_low) * 2^-8.
+  HloInstruction* p00 = make_f8_dot(a_high, b_high);
+  HloInstruction* p01 = make_f8_dot(a_high, b_low);
+  HloInstruction* p10 = make_f8_dot(a_low, b_high);
+
+  // Scale first order cross terms (p01 + p10) by 2^-4 (0.0625) to undo the 16x
+  // low slice shift.
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * p01_p10_raw,
+                        MakeBinaryHlo(HloOpcode::kAdd, p01, p10));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * p01_p10,
+      MakeBinaryHlo(HloOpcode::kMultiply, p01_p10_raw,
+                    MakeScalarLike(p01_p10_raw, kFirstOrderCrossTermScale)));
+
+  HloInstruction* sum_f32 = p00;
+  if (algorithm == PrecisionConfig::ALG_DOT_BF16_BF16_FP8X4) {
+    // Scale second order residual term p11 by 2^-8 (0.00390625) for FP8x4.
+    HloInstruction* p11_raw = make_f8_dot(a_low, b_low);
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * p11,
+        MakeBinaryHlo(HloOpcode::kMultiply, p11_raw,
+                      MakeScalarLike(p11_raw, kSecondOrderResidualTermScale)));
+    ABSL_ASSIGN_OR_RETURN(sum_f32,
+                          MakeBinaryHlo(HloOpcode::kAdd, sum_f32, p11));
+  }
+  ABSL_ASSIGN_OR_RETURN(sum_f32,
+                        MakeBinaryHlo(HloOpcode::kAdd, sum_f32, p01_p10));
+
+  // Restore true output dynamic range by multiplying accumulated FP32 sum by
+  // per channel descale factor 2^(S_A + S_B) = exp_a_f32 * (exp_b_f32 * 2^-14).
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * scale_b,
+      MakeBinaryHlo(HloOpcode::kMultiply, exp_b_f32,
+                    MakeScalarLike(exp_b_f32, kDescaleShiftFactor)));
+  const int64_t lhs_rank = lhs->shape().dimensions().size();
+  const int64_t rhs_rank = rhs->shape().dimensions().size();
+  const int64_t num_batch_dims = dnums.lhs_batch_dimensions_size();
+  const int64_t num_lhs_nc =
+      lhs_rank - num_batch_dims - dnums.lhs_contracting_dimensions_size();
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * s_a_out,
+      BroadcastScaleToDotOutput(exp_a_f32, dnums.lhs_batch_dimensions(),
+                                dnums.lhs_contracting_dimensions(), lhs_rank,
+                                /*non_contracting_out_offset=*/num_batch_dims,
+                                dot_shape_f32));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * s_b_out,
+      BroadcastScaleToDotOutput(
+          scale_b, dnums.rhs_batch_dimensions(),
+          dnums.rhs_contracting_dimensions(), rhs_rank,
+          /*non_contracting_out_offset=*/num_batch_dims + num_lhs_nc,
+          dot_shape_f32));
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * descaled_a,
+                        MakeBinaryHlo(HloOpcode::kMultiply, sum_f32, s_a_out));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * descaled_f32,
+      MakeBinaryHlo(HloOpcode::kMultiply, descaled_a, s_b_out));
+  HloInstruction* final_out =
+      dot->shape().element_type() == F32
+          ? descaled_f32
+          : MakeConvertToHlo(descaled_f32, dot->shape().element_type());
+  ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(dot, final_out));
+  return true;
 }
 
 }  // namespace algorithm_util
