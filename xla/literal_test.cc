@@ -929,7 +929,7 @@ TEST_F(LiteralUtilTest, MaterializeSparseOperandValidConfigReturnsDense) {
       tsl::proto_testing::ParseTextProtoOrDie<
           SparsityConfig::TensorSparsityConfig>(
           R"pb(
-            dimension: 1 block_size: 4 num_non_zero: 1 stride: 1
+            dimension: 1 block_size: 4 num_non_zero: 1
           )pb"));
   ASSERT_TRUE(dense_or.ok());
   Literal dense = std::move(dense_or).value();
@@ -949,7 +949,7 @@ TEST_F(LiteralUtilTest, MaterializeSparseOperandInvalidConfigReturnsError) {
                    tsl::proto_testing::ParseTextProtoOrDie<
                        SparsityConfig::TensorSparsityConfig>(
                        R"pb(
-                         dimension: 1 block_size: 4 num_non_zero: 2 stride: 1
+                         dimension: 1 block_size: 4 num_non_zero: 2
                        )pb"))
                    .ok());
 }
