@@ -208,9 +208,11 @@ xla_cc_test(
         "@llvm-project//llvm:AsmParser",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:MC",
+        "@llvm-project//llvm:Object",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:WebAssemblyCodeGen",  # fixdeps: keep
         "@llvm-project//llvm:X86AsmParser",  # fixdeps: keep
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
         "@tsl//tsl/platform:platform_port",
@@ -595,6 +597,65 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "wasm_object_linker",
+    srcs = ["wasm_object_linker.cc"],
+    hdrs = ["wasm_object_linker.h"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@llvm-project//lld:Common",
+        "@llvm-project//lld:Wasm",
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "wasm_object_linker_test",
+    srcs = ["wasm_object_linker_test.cc"],
+    linkopts = select({
+        "@platforms//os:emscripten": ["-sMAIN_MODULE=2"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":wasm_function_library",
+        ":wasm_object_linker",
+        "//xla/backends/cpu/runtime:function_library",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:AsmParser",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:MC",
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:WebAssemblyCodeGen",  # fixdeps: keep
+    ],
+)
+
+cc_library(
+    name = "wasm_function_library",
+    srcs = ["wasm_function_library.cc"],
+    hdrs = ["wasm_function_library.h"],
+    deps = [
+        ":aot_compiled_function_library",
+        ":wasm_object_linker",
+        "//xla/backends/cpu/runtime:function_library",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
     ],
 )
 

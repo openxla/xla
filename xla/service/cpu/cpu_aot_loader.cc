@@ -30,11 +30,15 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/execution_engine.h"
 #include "xla/backends/cpu/codegen/object_loader.h"
+#ifdef __EMSCRIPTEN__
+#include "xla/backends/cpu/codegen/wasm_function_library.h"
+#endif
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/service/compiled_module.h"
@@ -86,6 +90,15 @@ absl::StatusOr<std::unique_ptr<FunctionLibrary>> LoadFunctionLibrary(
     absl::Span<const ObjFileProto> obj_files, const HloModule* hlo_module,
     const TargetMachineOptions& target_machine_options,
     absl::string_view data_layout_str) {
+#ifdef __EMSCRIPTEN__
+  if (obj_files.size() != 1) {
+    return InvalidArgument("Expected one Wasm object, got %d", obj_files.size());
+  }
+  return LoadWasmFunctionLibrary(
+      compiled_symbols,
+      llvm::MemoryBufferRef(obj_files.front().contents(),
+                            obj_files.front().name()));
+#else
   llvm::DataLayout data_layout(
       llvm::StringRef(data_layout_str.data(), data_layout_str.size()));
 
@@ -111,6 +124,7 @@ absl::StatusOr<std::unique_ptr<FunctionLibrary>> LoadFunctionLibrary(
   }
 
   return std::move(object_loader).Load(compiled_symbols);
+#endif
 }
 
 absl::StatusOr<std::unique_ptr<Executable>> CpuAotLoader::LoadExecutable(

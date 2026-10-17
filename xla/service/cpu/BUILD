@@ -404,7 +404,10 @@ cc_library(
         "@llvm-project//llvm:SystemZCodeGen",  # fixdeps: keep
     ]) + if_llvm_x86_available([
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
-    ]) + if_onednn([
+    ]) + select({
+        "@platforms//os:emscripten": ["@llvm-project//llvm:WebAssemblyCodeGen"],
+        "//conditions:default": [],
+    }) + if_onednn([
         ":onednn_contraction_rewriter",
         ":onednn_float_support",
         ":onednn_ops_rewriter",
@@ -1854,7 +1857,10 @@ cc_library(
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:ir_headers",
-    ],
+    ] + select({
+        "@platforms//os:emscripten": ["//xla/backends/cpu/codegen:wasm_function_library"],
+        "//conditions:default": [],
+    }),
 )
 
 xla_cc_test(

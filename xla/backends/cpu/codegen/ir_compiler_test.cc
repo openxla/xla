@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
@@ -38,6 +39,7 @@ limitations under the License.
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBufferRef.h"
@@ -63,6 +65,7 @@ namespace xla::cpu {
 
 namespace {
 
+using ::testing::Contains;
 using ::testing::ContainsRegex;
 using ::testing::HasSubstr;
 using ::testing::Not;
@@ -301,6 +304,66 @@ TEST(IrCompilerTest, InferTargetMachineWithEmptyTriple) {
                                      target_machine_options));
   EXPECT_EQ(target_machine->getTargetTriple().getTriple(),
             llvm::sys::getProcessTriple());
+}
+
+TEST(IrCompilerTest, CompileWasmObject) {
+  LLVMInitializeWebAssemblyTargetInfo();
+  LLVMInitializeWebAssemblyTarget();
+  LLVMInitializeWebAssemblyTargetMC();
+  LLVMInitializeWebAssemblyAsmPrinter();
+
+  constexpr absl::string_view kWasmModule = R"(
+    @values = internal constant [4 x i32] [i32 1, i32 2, i32 3, i32 4]
+    define ptr @values_address() {
+      ret ptr @values
+    }
+    declare float @xla.tanh.f32(float)
+    define float @tanh_call(float %x) {
+      %r = call float @xla.tanh.f32(float %x)
+      ret float %r
+    }
+  )";
+  for (absl::string_view triple : {"wasm32-unknown-unknown",
+                                  "wasm64-unknown-unknown"}) {
+    SCOPED_TRACE(triple);
+    llvm::LLVMContext context;
+    std::unique_ptr<IrCompiler> ir_compiler = IrCompiler::Create(
+        llvm::TargetOptions(),
+        IrCompiler::Options{
+            /*opt_level=*/llvm::CodeGenOptLevel::Aggressive,
+            /*optimize_for_size=*/false,
+            TargetMachineOptions(triple, "generic", "")},
+        IrCompiler::CompilationHooks());
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseModule(context, kWasmModule, "wasm_module"));
+    ASSERT_OK_AND_ASSIGN(auto target_machine,
+                         ir_compiler->build_target_machine());
+    module->setDataLayout(target_machine->createDataLayout());
+    module->setTargetTriple(target_machine->getTargetTriple());
+
+    auto buffer = (*ir_compiler)(*module);
+    ASSERT_TRUE(static_cast<bool>(buffer))
+        << llvm::toString(buffer.takeError());
+    EXPECT_EQ(module->getFunction("xla.tanh.f32"), nullptr);
+    auto object = llvm::object::ObjectFile::createObjectFile(**buffer);
+    ASSERT_TRUE(static_cast<bool>(object))
+        << llvm::toString(object.takeError());
+    EXPECT_TRUE((*object)->isWasm());
+    EXPECT_EQ((*object)->getBytesInAddress(),
+              triple == "wasm32-unknown-unknown" ? 4 : 8);
+    std::vector<std::string> relocations;
+    for (const auto& section : (*object)->sections()) {
+      for (const auto& relocation : section.relocations()) {
+        llvm::SmallVector<char, 32> name;
+        relocation.getTypeName(name);
+        relocations.emplace_back(name.begin(), name.end());
+      }
+    }
+    EXPECT_THAT(relocations,
+                Contains(ContainsRegex("^R_WASM_MEMORY_ADDR_REL_")));
+    EXPECT_THAT(relocations,
+                Not(Contains(ContainsRegex("^R_WASM_MEMORY_ADDR_(S)?LEB"))));
+  }
 }
 
 TEST(IrCompilerTest, IntrinsicsUseCpuImpliedFeatures) {
