@@ -80,6 +80,10 @@ class CollectiveReduceThunk : public AllReduceReduceScatterThunkBase {
 
   absl::Status Initialize(const InitializeParams& params) override;
 
+  SetUpScope set_up_scope() const override {
+    return SetUpScope::kCollectiveTopology;
+  }
+
  protected:
   bool RequiresRendezvous() const override { return true; }
 

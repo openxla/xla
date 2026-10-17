@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,10 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/per_device_state.h"
@@ -38,6 +43,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/util/tied_ref.h"
 
 namespace xla::gpu {
 
@@ -87,6 +93,32 @@ class CommandBufferThunk : public Thunk {
   }
 
  private:
+  // An object tied to a clique to detect when the clique gets new
+  // communicators.
+  struct CommunicatorSentinel {};
+
+  // The clique and collective memory requests of all commands, collected on an
+  // executor where all commands were prepared and initialized before. Later
+  // executions with the same collective topology make them instead of
+  // preparing and initializing the commands.
+  struct CachedCollectiveRequests {
+    // Returns true if an execution with `params` makes these requests.
+    bool Matches(const CollectiveParams* params) const;
+
+    // The topology of the execution that collected the requests, unset if it
+    // had no collective parameters.
+    std::optional<CollectiveTopology> topology;
+    CollectiveCliqueRequests cliques;
+    CollectiveMemoryRequests memory;
+
+    // Sentinels tied to the acquired cliques of `cliques` by the last execution
+    // that reused the set-up and initialized all commands, unset before. A
+    // sentinel expires when its clique gets new communicators.
+    absl::Mutex mutex;
+    std::optional<std::vector<tsl::TiedRef<CommunicatorSentinel>>>
+        communicator_sentinels ABSL_GUARDED_BY(mutex);
+  };
+
   // Command buffer instantiated on a `se::StreamExecutor` instance, and
   // auxiliary state required for efficient command buffer updates.
   struct ExecutorCommandBuffer {
@@ -142,6 +174,20 @@ class CommandBufferThunk : public Thunk {
     // will do the proper NCCL setup, so later iterations running through
     // command buffer does not need to call NCCL setup APIs.
     bool warmup_done ABSL_GUARDED_BY(mutex) = false;
+
+    // The requests collected after `command_buffer` was recorded, null before.
+    // Later executions that make them launch `command_buffer`.
+    std::shared_ptr<CachedCollectiveRequests> cached_collective_requests
+        ABSL_GUARDED_BY(mutex);
+  };
+
+  // The command buffer and the cached requests that `Prepare` decided to
+  // reuse, i.e. to make the requests and launch the command buffer without
+  // preparing and initializing commands. Executions keep it in their execution
+  // scoped state under the id of this thunk.
+  struct ReusedSetUp {
+    std::shared_ptr<ExecutorCommandBuffer> cmd_buffer;
+    std::shared_ptr<CachedCollectiveRequests> requests;
   };
 
   struct DeviceState {
@@ -161,6 +207,34 @@ class CommandBufferThunk : public Thunk {
   // Returns a command buffer for `executor` or creates a new one.
   absl::StatusOr<std::shared_ptr<ExecutorCommandBuffer>>
   GetOrCreateCommandBuffer(se::StreamExecutor* executor);
+
+  // Returns the command buffer for `executor`, or null if it has none.
+  std::shared_ptr<ExecutorCommandBuffer> FindCommandBuffer(
+      se::StreamExecutor* executor) const;
+
+  // Prepares `thunks_` (when present) or `commands_`.
+  absl::Status PrepareAll(const PrepareParams& params);
+
+  // Initializes `thunks_` (when present) or `commands_`.
+  absl::Status InitializeAll(const InitializeParams& params);
+
+  // Initializes all commands if a clique of `requests` got new communicators
+  // since the last call, or on the first call, and ties sentinels to the
+  // cliques to detect the next change.
+  absl::Status InitializeAllIfCommunicatorsChanged(
+      const InitializeParams& params, CachedCollectiveRequests& requests);
+
+  // Prepares all commands and returns their requests to cache.
+  absl::StatusOr<std::shared_ptr<CachedCollectiveRequests>>
+  PrepareAndCollectRequests(const PrepareParams& params);
+
+  // Returns the set-up that `Prepare` decided to reuse in the execution with
+  // `state`, or one with null members.
+  ReusedSetUp FindReusedSetUp(const ExecutionScopedState* state) const;
+
+  // Returns true if commands execute as a regular thunk sequence because a
+  // profiler session is active.
+  bool IsProfilingWithoutCommandBuffers() const;
 
   // Each individual command buffer allocates state on device (CUDA graph) and
   // it adds up pretty quickly. To prevent OOM errors we proactively evict
@@ -188,6 +262,10 @@ class CommandBufferThunk : public Thunk {
   // available (e.g. during the VA remapping profiling window), in which case
   // command buffer lowering is disabled for the step.
   std::unique_ptr<SequentialThunk> thunks_;
+
+  // The set-up scope of `commands_`. Executions reuse their set-up only if
+  // it is not `kExecution`.
+  SetUpScope commands_set_up_scope_;
 
   // When true, allows command buffers to be used while profiling active.
   // TODO(b/355487968): Remove this option when validation complete.

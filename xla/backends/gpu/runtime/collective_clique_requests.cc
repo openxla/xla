@@ -21,9 +21,12 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -32,10 +35,10 @@ limitations under the License.
 
 namespace xla::gpu {
 
-absl::Status CollectiveCliqueRequests::RequestClique(
+absl::StatusOr<CollectiveCliqueRequests::CliqueRequest*>
+CollectiveCliqueRequests::FindOrAddRequest(
     const GpuCliqueKey& clique_key,
-    absl::Span<const std::vector<GlobalDeviceId>> device_groups,
-    const CliqueRequirements& requirements) {
+    absl::Span<const std::vector<GlobalDeviceId>> device_groups) {
   // Each replica group should have devices in sorted order.
   DCHECK(absl::c_all_of(device_groups, [](const auto& g) {
     return absl::c_is_sorted(g);
@@ -46,12 +49,6 @@ absl::Status CollectiveCliqueRequests::RequestClique(
   DCHECK(absl::c_is_sorted(device_groups))
       << "Device groups must be sorted by first device id";
 
-  VLOG(5) << absl::StreamFormat(
-      "Add collective clique request: %v; device_groups=[%s]; "
-      "requirements=%v",
-      clique_key, HumanReadableDeviceGroups(device_groups), requirements);
-
-  // If the clique already exists, update it with new requirements.
   if (auto it = cliques_.find(clique_key); it != cliques_.end()) {
     CliqueRequest& req = it->second;
 
@@ -67,19 +64,7 @@ absl::Status CollectiveCliqueRequests::RequestClique(
           clique_key, HumanReadableDeviceGroups(req.device_groups),
           HumanReadableDeviceGroups(device_groups));
     }
-
-    if (requirements.dev_comm) {
-      req.dev_comms.insert(*requirements.dev_comm);
-    }
-
-    if (requirements.barrier_reqs.has_value()) {
-      req.use_cross_device_barrier_requested |=
-          requirements.barrier_reqs->use_cross_device_barrier;
-    }
-
-    req.use_gxl_requested |= requirements.use_gxl;
-
-    return absl::OkStatus();
+    return &req;
   }
 
   // XLA compiler guarantees that all collective operations have the same
@@ -88,18 +73,55 @@ absl::Status CollectiveCliqueRequests::RequestClique(
   CliqueRequest req{/*id=*/cliques_.size(),
                     clique_key,
                     {device_groups.begin(), device_groups.end()}};
+  return &cliques_.try_emplace(clique_key, std::move(req)).first->second;
+}
+
+absl::Status CollectiveCliqueRequests::RequestClique(
+    const GpuCliqueKey& clique_key,
+    absl::Span<const std::vector<GlobalDeviceId>> device_groups,
+    const CliqueRequirements& requirements) {
+  VLOG(5) << absl::StreamFormat(
+      "Add collective clique request: %v; device_groups=[%s]; "
+      "requirements=%v",
+      clique_key, HumanReadableDeviceGroups(device_groups), requirements);
+
+  ABSL_ASSIGN_OR_RETURN(CliqueRequest * req,
+                        FindOrAddRequest(clique_key, device_groups));
+
   if (requirements.dev_comm) {
-    req.dev_comms.insert(*requirements.dev_comm);
+    req->dev_comms.insert(*requirements.dev_comm);
   }
 
   if (requirements.barrier_reqs.has_value()) {
-    req.use_cross_device_barrier_requested |=
+    req->use_cross_device_barrier_requested |=
         requirements.barrier_reqs->use_cross_device_barrier;
   }
 
-  req.use_gxl_requested |= requirements.use_gxl;
+  req->use_gxl_requested |= requirements.use_gxl;
 
-  cliques_.try_emplace(clique_key, std::move(req));
+  return absl::OkStatus();
+}
+
+absl::Status CollectiveCliqueRequests::Merge(
+    const CollectiveCliqueRequests& other) {
+  absl::InlinedVector<const CliqueRequest*, 4> others;
+  others.reserve(other.cliques_.size());
+  for (const auto& [_, request] : other.cliques_) {
+    others.push_back(&request);
+  }
+  absl::c_sort(others, [](const CliqueRequest* a, const CliqueRequest* b) {
+    return a->id < b->id;
+  });
+
+  for (const CliqueRequest* request : others) {
+    ABSL_ASSIGN_OR_RETURN(
+        CliqueRequest * req,
+        FindOrAddRequest(request->key, request->device_groups));
+    req->dev_comms.insert(request->dev_comms.begin(), request->dev_comms.end());
+    req->use_cross_device_barrier_requested |=
+        request->use_cross_device_barrier_requested;
+    req->use_gxl_requested |= request->use_gxl_requested;
+  }
   return absl::OkStatus();
 }
 

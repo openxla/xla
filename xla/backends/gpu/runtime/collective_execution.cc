@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_execution.h"
 
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -95,6 +96,32 @@ absl::StatusOr<GpuCliqueKey> GetGpuCliqueKey(
 
   return GpuCliqueKey(std::move(devices), num_local_participants,
                       communication_id, incarnations);
+}
+
+template <typename T>
+static std::optional<T> CopyOf(const T* value) {
+  return value != nullptr ? std::optional<T>(*value) : std::nullopt;
+}
+
+template <typename T>
+static bool Equals(const std::optional<T>& copy, const T* value) {
+  return copy.has_value() ? value != nullptr && *copy == *value
+                          : value == nullptr;
+}
+
+CollectiveTopology::CollectiveTopology(const CollectiveParams& params)
+    : collectives_(params.collectives),
+      global_device_id_(params.global_device_id),
+      device_assn_(CopyOf(params.device_assn)),
+      global_device_id_map_(CopyOf(params.global_device_id_map)),
+      incarnations_(CopyOf(params.incarnations)) {}
+
+bool CollectiveTopology::Matches(const CollectiveParams& params) const {
+  return collectives_ == params.collectives &&
+         global_device_id_ == params.global_device_id &&
+         Equals(device_assn_, params.device_assn) &&
+         Equals(global_device_id_map_, params.global_device_id_map) &&
+         Equals(incarnations_, params.incarnations);
 }
 
 }  // namespace xla::gpu

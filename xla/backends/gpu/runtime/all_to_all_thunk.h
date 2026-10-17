@@ -80,6 +80,13 @@ class AllToAllThunk : public CollectiveThunk {
   const CollectiveConfig& config() const override { return config_.config; }
   bool has_split_dimension() const { return config_.has_split_dimension; }
 
+  // With p2p memcpy and all replicas local, Initialize exchanges buffer
+  // addresses with the other ranks in every execution.
+  SetUpScope set_up_scope() const override {
+    return p2p_memcpy_enabled_ ? SetUpScope::kExecution
+                               : SetUpScope::kCollectiveTopology;
+  }
+
  protected:
   // No rendezvous needed when using P2P memcpy in local mode instead of NCCL.
   bool RequiresRendezvous() const override { return !p2p_memcpy_enabled_; }

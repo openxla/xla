@@ -19,6 +19,8 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -33,7 +35,16 @@ namespace xla::gpu {
 
 CollectiveMemoryRequests::CollectiveMemoryRequests(
     const BufferAllocations& buffers)
-    : buffers_(buffers) {}
+    : buffers_(&buffers) {}
+
+std::optional<BufferAllocation::Index>
+CollectiveMemoryRequests::FindAllocationIndex(
+    const se::DeviceAddressBase& addr) const {
+  if (buffers_ == nullptr) {
+    return std::nullopt;
+  }
+  return buffers_->FindAllocationIndex(addr);
+}
 
 absl::Status CollectiveMemoryRequests::RequestSymmetricAllocation(
     const GpuCliqueKey& clique, BufferAllocation::Index allocation) {
@@ -76,7 +87,7 @@ absl::Status CollectiveMemoryRequests::RequestSymmetricAddress(
   VLOG(5) << "Add collective address request: " << clique
           << "; address=" << addr.opaque();
 
-  if (auto allocation = buffers_.FindAllocationIndex(addr)) {
+  if (auto allocation = FindAllocationIndex(addr)) {
     return RequestSymmetricAllocation(clique, *allocation);
   }
   return Internal("Can't find buffer allocation index for a device address");
@@ -122,7 +133,7 @@ absl::Status CollectiveMemoryRequests::RequestMulticastAddress(
   VLOG(5) << "Add multicast address request: " << clique.ToString()
           << "; address=" << addr.opaque();
 
-  if (auto allocation = buffers_.FindAllocationIndex(addr)) {
+  if (auto allocation = FindAllocationIndex(addr)) {
     return RequestMulticastAllocation(clique, *allocation);
   }
   return Internal("Can't find buffer allocation index for a device address");
@@ -159,10 +170,54 @@ absl::Status CollectiveMemoryRequests::RequestPeerAddress(
   VLOG(5) << "Add peer address request: " << clique.ToString()
           << "; address=" << addr.opaque();
 
-  if (auto allocation = buffers_.FindAllocationIndex(addr)) {
+  if (auto allocation = FindAllocationIndex(addr)) {
     return RequestPeerAllocation(clique, *allocation);
   }
   return Internal("Can't find buffer allocation index for a device address");
+}
+
+// Calls `request` for each allocation of `allocations`, in the order in which
+// their cliques were requested.
+static absl::Status RequestInOrder(
+    const absl::flat_hash_map<GpuCliqueKey,
+                              CollectiveMemoryRequests::CollectiveAllocations>&
+        allocations,
+    absl::FunctionRef<absl::Status(const GpuCliqueKey&,
+                                   BufferAllocation::Index)>
+        request) {
+  std::vector<const CollectiveMemoryRequests::CollectiveAllocations*> ordered;
+  ordered.reserve(allocations.size());
+  for (const auto& [_, allocs] : allocations) {
+    ordered.push_back(&allocs);
+  }
+  absl::c_sort(ordered,
+               [](const auto* a, const auto* b) { return a->id < b->id; });
+  for (const CollectiveMemoryRequests::CollectiveAllocations* allocs :
+       ordered) {
+    for (BufferAllocation::Index allocation : allocs->allocations) {
+      ABSL_RETURN_IF_ERROR(request(allocs->clique, allocation));
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::Status CollectiveMemoryRequests::Merge(
+    const CollectiveMemoryRequests& other) {
+  ABSL_RETURN_IF_ERROR(RequestInOrder(
+      other.sym_allocations_,
+      [this](const GpuCliqueKey& clique, BufferAllocation::Index allocation) {
+        return RequestSymmetricAllocation(clique, allocation);
+      }));
+  ABSL_RETURN_IF_ERROR(RequestInOrder(
+      other.mcast_allocations_,
+      [this](const GpuCliqueKey& clique, BufferAllocation::Index allocation) {
+        return RequestMulticastAllocation(clique, allocation);
+      }));
+  return RequestInOrder(
+      other.peer_allocations_,
+      [this](const GpuCliqueKey& clique, BufferAllocation::Index allocation) {
+        return RequestPeerAllocation(clique, allocation);
+      });
 }
 
 std::vector<GpuCliqueKey> CollectiveMemoryRequests::RequestedCliques() const {

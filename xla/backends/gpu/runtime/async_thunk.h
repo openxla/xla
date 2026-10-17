@@ -108,6 +108,8 @@ class AsyncDoneThunk : public Command {
                  std::shared_ptr<AsyncExecution> async_execution);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Async done needs no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,

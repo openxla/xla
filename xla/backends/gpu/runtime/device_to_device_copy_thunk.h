@@ -52,6 +52,8 @@ class DeviceToDeviceCopyThunk : public Command {
   DeviceToDeviceCopyThunk& operator=(const DeviceToDeviceCopyThunk&) = delete;
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Copies need no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,

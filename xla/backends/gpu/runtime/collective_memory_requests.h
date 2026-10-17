@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_MEMORY_REQUESTS_H_
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "absl/container/btree_set.h"
@@ -67,6 +68,11 @@ namespace xla::gpu {
 class CollectiveMemoryRequests {
  public:
   explicit CollectiveMemoryRequests(const BufferAllocations& buffers);
+
+  // Requests without buffer allocations, which can only be made by allocation
+  // index, e.g. to keep the requests of an execution for later executions (see
+  // `Merge`).
+  CollectiveMemoryRequests() = default;
 
   // For all kinds of collective memory we use a synthetic id that is
   // generated automatically when collective allocations is requested, and
@@ -138,6 +144,14 @@ class CollectiveMemoryRequests {
   absl::Status RequestPeerAddress(const GpuCliqueKey& clique,
                                   const se::DeviceAddressBase& addr);
 
+  // Makes the requests of `other` after the requests made so far, in the order
+  // in which `other` got them, as if they were made directly.
+  absl::Status Merge(const CollectiveMemoryRequests& other);
+
+  // Drops the buffer allocations, e.g. to keep the requests after the execution
+  // that made them. Later requests can only be made by allocation index.
+  void DropBufferAllocations() { buffers_ = nullptr; }
+
   // Returns all cliques that have symmetric or multicast allocation requests.
   std::vector<GpuCliqueKey> RequestedCliques() const;
 
@@ -154,10 +168,15 @@ class CollectiveMemoryRequests {
   size_t multicast_size() const { return mcast_allocations_.size(); }
   size_t peer_size() const { return peer_allocations_.size(); }
 
-  const BufferAllocations& buffers() const { return buffers_; }
+  // Returns the buffer allocations of requests that have them.
+  const BufferAllocations& buffers() const { return *buffers_; }
 
  private:
-  const BufferAllocations& buffers_;
+  // Returns the index of the buffer allocation that contains `addr`.
+  std::optional<BufferAllocation::Index> FindAllocationIndex(
+      const se::DeviceAddressBase& addr) const;
+
+  const BufferAllocations* buffers_ = nullptr;
   absl::flat_hash_map<GpuCliqueKey, CollectiveAllocations> sym_allocations_;
   absl::flat_hash_map<GpuCliqueKey, CollectiveAllocations> mcast_allocations_;
   absl::flat_hash_map<GpuCliqueKey, CollectiveAllocations> peer_allocations_;

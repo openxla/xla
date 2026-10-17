@@ -59,6 +59,8 @@ class CublasLtMatmulThunk : public TracedCommand {
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
   absl::Status Initialize(const InitializeParams& params) override;
+  // Initialize only checks that the executor supports BLAS.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
   std::optional<const ShapedSlice> workspace() const { return workspace_; }
 
   bool is_grouped() const {

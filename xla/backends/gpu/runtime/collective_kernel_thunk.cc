@@ -337,6 +337,21 @@ absl::Status CollectiveKernelThunk::IsSupported(
   return absl::OkStatus();
 }
 
+bool CollectiveKernelThunk::UsesSymmetricScratchMemory() const {
+  return absl::c_any_of(
+      kernel_spec_.scratch_buffers, [](const ScratchBufferSpec& spec) {
+        return spec.symmetric_memory_type ==
+               SymmetricMemoryType::kLoadStoreAccessible;
+      });
+}
+
+Thunk::SetUpScope CollectiveKernelThunk::set_up_scope() const {
+  // `Initialize` creates symmetric scratch memory again for new communicators,
+  // and otherwise all state once per executor.
+  return UsesSymmetricScratchMemory() ? SetUpScope::kCommunicator
+                                      : SetUpScope::kCollectiveTopology;
+}
+
 absl::Status CollectiveKernelThunk::Prepare(const PrepareParams& params) {
   TF_RET_CHECK(params.collective_params &&
                params.collective_params->device_assn);
@@ -446,11 +461,7 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
       << "Device " << params.collective_params->global_device_id
       << "is not in the clique.";
 
-  const bool use_symmetric_memory = absl::c_any_of(
-      kernel_spec_.scratch_buffers, [](const ScratchBufferSpec& spec) {
-        return spec.symmetric_memory_type ==
-               SymmetricMemoryType::kLoadStoreAccessible;
-      });
+  const bool use_symmetric_memory = UsesSymmetricScratchMemory();
 
   auto get_parameters = [&](const StreamState& state) {
     std::vector<se::DeviceAddressBase> parameters;

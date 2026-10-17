@@ -18,8 +18,11 @@ limitations under the License.
 #include <gmock/gmock.h>
 
 #include <array>
+#include <cstddef>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -128,6 +131,86 @@ TEST(CollectiveMemoryRequestsTest, RequestSymmetricAddresses) {
   auto ordered = requests.OrderedSymmetricAllocations();
   ASSERT_EQ(ordered.size(), 1);
   EXPECT_EQ(ordered[0].allocations.size(), 2);
+}
+
+static void ExpectSameAllocations(
+    const std::vector<CollectiveMemoryRequests::CollectiveAllocations>& a,
+    const std::vector<CollectiveMemoryRequests::CollectiveAllocations>& b) {
+  ASSERT_EQ(a.size(), b.size());
+  for (size_t i = 0; i < a.size(); ++i) {
+    EXPECT_EQ(a[i].id, b[i].id);
+    EXPECT_EQ(a[i].clique, b[i].clique);
+    EXPECT_EQ(a[i].allocations, b[i].allocations);
+  }
+}
+
+static void ExpectSameRequests(const CollectiveMemoryRequests& a,
+                               const CollectiveMemoryRequests& b) {
+  ExpectSameAllocations(a.OrderedSymmetricAllocations(),
+                        b.OrderedSymmetricAllocations());
+  ExpectSameAllocations(a.OrderedMulticastAllocations(),
+                        b.OrderedMulticastAllocations());
+  ExpectSameAllocations(a.OrderedPeerAllocations(), b.OrderedPeerAllocations());
+}
+
+TEST(CollectiveMemoryRequestsTest, MergeEqualsRequestingDirectly) {
+  GpuCliqueKey k0({kD0, kD1}, 2);
+  GpuCliqueKey k1({kD2, kD3}, 2);
+
+  // Requests made both directly and through `Merge`, after a request for `k1`.
+  auto request = [&](CollectiveMemoryRequests& requests) {
+    ASSERT_OK(requests.RequestSymmetricAllocation(k0, 1));
+    ASSERT_OK(requests.RequestSymmetricAllocation(k1, 2));
+    ASSERT_OK(requests.RequestSymmetricAllocation(k0, 3));
+    ASSERT_OK(requests.RequestMulticastAllocation(k1, 1));
+    ASSERT_OK(requests.RequestPeerAllocation(k0, 2));
+  };
+
+  BufferAllocations buffers({}, /*device_ordinal=*/0, nullptr);
+  CollectiveMemoryRequests direct(buffers);
+  ASSERT_OK(direct.RequestSymmetricAllocation(k1, 0));
+  request(direct);
+
+  CollectiveMemoryRequests merged(buffers);
+  ASSERT_OK(merged.RequestSymmetricAllocation(k1, 0));
+  CollectiveMemoryRequests separate;
+  request(separate);
+  ASSERT_OK(merged.Merge(separate));
+  ExpectSameRequests(merged, direct);
+
+  // Merging the same requests again changes nothing.
+  ASSERT_OK(merged.Merge(separate));
+  ExpectSameRequests(merged, direct);
+}
+
+TEST(CollectiveMemoryRequestsTest, RequestsWithoutBuffersRejectAddresses) {
+  GpuCliqueKey k0({kD0, kD1}, 2);
+  std::array<char, 10> data;
+  se::DeviceAddressBase buffer(data.data(), 10);
+
+  CollectiveMemoryRequests requests;
+  EXPECT_THAT(requests.RequestSymmetricAddress(k0, buffer),
+              absl_testing::StatusIs(absl::StatusCode::kInternal));
+  ASSERT_OK(requests.RequestSymmetricAllocation(k0, 0));
+  EXPECT_EQ(requests.symmetric_size(), 1);
+}
+
+TEST(CollectiveMemoryRequestsTest, DroppedBufferAllocationsRejectAddresses) {
+  GpuCliqueKey k0({kD0, kD1}, 2);
+  GpuCliqueKey k1({kD2, kD3}, 2);
+  std::array<char, 10> data;
+  se::DeviceAddressBase buffer(data.data(), 10);
+
+  BufferAllocations buffers({buffer}, /*device_ordinal=*/0, nullptr);
+  CollectiveMemoryRequests requests(buffers);
+  ASSERT_OK(requests.RequestSymmetricAddress(k0, buffer));
+
+  // Requests made so far are kept, later ones can only be made by index.
+  requests.DropBufferAllocations();
+  EXPECT_THAT(requests.RequestSymmetricAddress(k1, buffer),
+              absl_testing::StatusIs(absl::StatusCode::kInternal));
+  ASSERT_OK(requests.RequestSymmetricAllocation(k1, 0));
+  EXPECT_EQ(requests.symmetric_size(), 2);
 }
 
 }  // namespace xla::gpu

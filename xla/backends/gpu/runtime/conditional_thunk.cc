@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -178,6 +179,22 @@ absl::Status ConditionalThunk::Initialize(const InitializeParams& params) {
                               HostMemoryPool::Create(params.executor, type));
         return absl::OkStatus();
       });
+}
+
+Thunk::SetUpScope ConditionalThunk::set_up_scope() const {
+  // Visits the executors that `Prepare` and `Initialize` visit. The host memory
+  // pool is created once per executor.
+  SetUpScope set_up_scope = SetUpScope::kDevice;
+  for (size_t i = 0; i < branch_executors_.size(); ++i) {
+    if (!branch_executors_[i].thunks().empty()) {
+      set_up_scope =
+          std::max(set_up_scope, branch_executors_[i].set_up_scope());
+    } else if (command_branch_executors_.has_value()) {
+      set_up_scope = std::max(set_up_scope,
+                              (*command_branch_executors_)[i].set_up_scope());
+    }
+  }
+  return set_up_scope;
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*> ConditionalThunk::Record(

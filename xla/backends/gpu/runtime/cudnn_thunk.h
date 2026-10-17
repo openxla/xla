@@ -56,6 +56,8 @@ class CuDnnThunk : public TracedCommand {
   ~CuDnnThunk() override = default;
 
   absl::Status Initialize(const InitializeParams&) override;
+  // Initialize deserializes the graph once per executor.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
   absl::Status ExecuteOnStream(const ExecuteParams&) override;
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(

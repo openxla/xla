@@ -34,6 +34,9 @@ class HostAsyncThunk : public Thunk {
  public:
   using Thunk::Thunk;
 
+  // Host send and receive thunks need no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
+
   virtual std::optional<AsyncEventsUniqueId> GetAsyncEventsUniqueId() const {
     return std::nullopt;
   }

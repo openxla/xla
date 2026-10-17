@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/stream_executor/device_description.h"
@@ -71,13 +72,15 @@ class CommandBufferConversionPass : public ThunkPassInterface {
   // Implementation of `Run`. `open_async_streams` are the async streams with
   // an outstanding operation for the whole of `thunk_sequence`: it is the body
   // of a loop or branch nested in an async region that is not captured as a
-  // whole; see the comment in `RunImpl`.
+  // whole; see the comment in `RunImpl`. Command buffer thunks get their IDs
+  // from `thunk_ids`.
   absl::StatusOr<bool> RunImpl(
       ThunkSequence* thunk_sequence, const DebugOptions& debug_options,
       const HloModule* absl_nullable hlo_module,
       const se::DeviceDescription& device_info,
       ThunkPassBufferAllocator& allocator,
-      const absl::flat_hash_set<ExecutionStreamId>& open_async_streams);
+      const absl::flat_hash_set<ExecutionStreamId>& open_async_streams,
+      ThunkIdGenerator& thunk_ids);
 
   std::string module_name_;
   int devices_in_process_;

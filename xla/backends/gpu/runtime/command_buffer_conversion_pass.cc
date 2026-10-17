@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_pass_pipeline.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
@@ -630,7 +631,8 @@ absl::StatusOr<std::unique_ptr<CommandBufferThunk>>
 ConvertThunksToCommandBuffer(
     ThunkSequence thunks_to_convert,
     CommandExecutor::SynchronizationMode synchronization_mode,
-    const DebugOptions& debug_options, int devices_in_process) {
+    const DebugOptions& debug_options, int devices_in_process,
+    ThunkIdGenerator& thunk_ids) {
   bool enable_loop_unroll = debug_options.xla_gpu_command_buffer_unroll_loops();
   ABSL_ASSIGN_OR_RETURN(
       CommandExecutor cmd_executor,
@@ -653,6 +655,7 @@ ConvertThunksToCommandBuffer(
 
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = command_buffer_profile_annotation;
+  thunk_info.thunk_id = thunk_ids.GetNextThunkId();
   if (tsl::profiler::ProfilerLock::HasActiveSession() &&
       !debug_options.xla_enable_command_buffers_during_profiling()) {
     thunk_info.profile_annotation += " (disabled for profiling)";
@@ -688,8 +691,8 @@ int64_t CountCommandBufferSize(ThunkSequence& thunks) {
 absl::Status FlushCommandBuffer(
     CommandExecutor::SynchronizationMode synchronization_mode,
     const DebugOptions& debug_options, int devices_in_process,
-    ThunkSequence& current_command_buffer_thunks, ThunkSequence& new_thunks,
-    bool& changed) {
+    ThunkIdGenerator& thunk_ids, ThunkSequence& current_command_buffer_thunks,
+    ThunkSequence& new_thunks, bool& changed) {
   // If we don't have enough thunks to form a command buffer, we just add
   // them to the new thunks sequence as is.
   if (CountCommandBufferSize(current_command_buffer_thunks) <
@@ -713,7 +716,7 @@ absl::Status FlushCommandBuffer(
       auto cmd_buffer_thunk,
       ConvertThunksToCommandBuffer(std::move(current_command_buffer_thunks),
                                    synchronization_mode, debug_options,
-                                   devices_in_process));
+                                   devices_in_process, thunk_ids));
   current_command_buffer_thunks.clear();
 
   // Check that the command buffer thunk is not empty
@@ -757,8 +760,16 @@ absl::StatusOr<bool> CommandBufferConversionPass::Run(
     const HloModule* absl_nullable hlo_module,
     const se::DeviceDescription& device_info,
     ThunkPassBufferAllocator& allocator) {
+  // Command buffer thunks get IDs after those of all thunks, so that they are
+  // unique too, e.g. to key execution scoped state.
+  ThunkId max_thunk_id(0);
+  ABSL_RETURN_IF_ERROR(thunk_sequence->WalkNested([&](const Thunk* thunk) {
+    max_thunk_id = std::max(max_thunk_id, thunk->thunk_info().thunk_id);
+    return absl::OkStatus();
+  }));
+  ThunkIdGenerator thunk_ids(ThunkId(max_thunk_id.value() + 1));
   return RunImpl(thunk_sequence, debug_options, hlo_module, device_info,
-                 allocator, /*open_async_streams=*/{});
+                 allocator, /*open_async_streams=*/{}, thunk_ids);
 }
 
 absl::StatusOr<bool> CommandBufferConversionPass::RunImpl(
@@ -766,7 +777,8 @@ absl::StatusOr<bool> CommandBufferConversionPass::RunImpl(
     const HloModule* absl_nullable hlo_module,
     const se::DeviceDescription& device_info,
     ThunkPassBufferAllocator& allocator,
-    const absl::flat_hash_set<ExecutionStreamId>& open_async_streams) {
+    const absl::flat_hash_set<ExecutionStreamId>& open_async_streams,
+    ThunkIdGenerator& thunk_ids) {
   tsl::profiler::TraceMe traceme("CommandBufferConversionPass");
 
   CommandBufferConfig config =
@@ -785,7 +797,7 @@ absl::StatusOr<bool> CommandBufferConversionPass::RunImpl(
 
   auto flush_command_buffer = [&]() -> absl::Status {
     return FlushCommandBuffer(
-        synchronization_mode, debug_options, devices_in_process_,
+        synchronization_mode, debug_options, devices_in_process_, thunk_ids,
         current_command_buffer_thunks, new_thunks, changed);
   };
 
@@ -870,7 +882,7 @@ absl::StatusOr<bool> CommandBufferConversionPass::RunImpl(
       ABSL_ASSIGN_OR_RETURN(
           bool changed_in_body,
           RunImpl(&while_thunk->body_executor().thunks(), debug_options,
-                  hlo_module, device_info, allocator, open_streams));
+                  hlo_module, device_info, allocator, open_streams, thunk_ids));
       changed |= changed_in_body;
     } else if (thunk->kind() == Thunk::kConditional) {
       // If a `ConditionalThunk` itself is not captured into a command buffer,
@@ -880,7 +892,7 @@ absl::StatusOr<bool> CommandBufferConversionPass::RunImpl(
         ABSL_ASSIGN_OR_RETURN(
             bool changed_in_branch,
             RunImpl(&branch_executor.thunks(), debug_options, hlo_module,
-                    device_info, allocator, open_streams));
+                    device_info, allocator, open_streams, thunk_ids));
         changed |= changed_in_branch;
       }
     }

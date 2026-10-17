@@ -52,6 +52,8 @@ class GemmThunk : public TracedCommand {
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
+  // Initialize only checks that the executor supports BLAS.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   const GemmConfig& config() const { return config_; }
   BufferAllocation::Slice lhs_buffer() const { return lhs_buffer_; }

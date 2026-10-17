@@ -346,6 +346,32 @@ TEST(CustomCallThunkTest, CustomCallWithOwnedHandlersWithoutOptionalOnes) {
   EXPECT_EQ(execute_calls, 1);
 }
 
+TEST(CustomCallThunkTest, SetUpScopeDependsOnPrepareAndInitializeStages) {
+  auto create = [](bool prepare, bool initialize) {
+    CustomCallThunk::OwnedHandlerBundle bundle;
+    bundle.execute = ffi::Ffi::Bind().To([]() { return absl::OkStatus(); });
+    if (prepare) {
+      bundle.prepare = ffi::Ffi::Bind().To([]() { return absl::OkStatus(); });
+    }
+    if (initialize) {
+      bundle.initialize =
+          ffi::Ffi::Bind().To([]() { return absl::OkStatus(); });
+    }
+    return CustomCallThunk::Create(
+        Thunk::ThunkInfo(), "target_name", std::move(bundle), /*operands=*/{},
+        /*results=*/{}, /*attributes=*/{}, /*called_computation=*/nullptr,
+        se::GpuComputeCapability());
+  };
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CustomCallThunk> thunk,
+                       create(/*prepare=*/false, /*initialize=*/false));
+  EXPECT_EQ(thunk->set_up_scope(), Thunk::SetUpScope::kDevice);
+  ASSERT_OK_AND_ASSIGN(thunk, create(/*prepare=*/true, /*initialize=*/false));
+  EXPECT_EQ(thunk->set_up_scope(), Thunk::SetUpScope::kExecution);
+  ASSERT_OK_AND_ASSIGN(thunk, create(/*prepare=*/false, /*initialize=*/true));
+  EXPECT_EQ(thunk->set_up_scope(), Thunk::SetUpScope::kExecution);
+}
+
 TEST(CustomCallThunkTest, CustomCallWithOwnedHandlersWithoutExecute) {
   ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,

@@ -517,6 +517,22 @@ TEST(CollectiveKernelThunkTest, BufferUses) {
                            metadata.buffers[0].destination_buffer.shape)));
 }
 
+TEST(CollectiveKernelThunkTest, SetUpScopeDependsOnSymmetricMemory) {
+  EXPECT_EQ(CreateCollectiveKernelThunk(
+                /*num_devices=*/2, /*num_elements=*/kNumElements,
+                /*is_multimem_enabled=*/false, /*use_ptx=*/true,
+                /*scratch_memory_type=*/SymmetricMemoryType::kNone)
+                .thunk->set_up_scope(),
+            Thunk::SetUpScope::kCollectiveTopology);
+  EXPECT_EQ(CreateCollectiveKernelThunk(
+                /*num_devices=*/2, /*num_elements=*/kNumElements,
+                /*is_multimem_enabled=*/false, /*use_ptx=*/true,
+                /*scratch_memory_type=*/
+                SymmetricMemoryType::kLoadStoreAccessible)
+                .thunk->set_up_scope(),
+            Thunk::SetUpScope::kCommunicator);
+}
+
 bool IsAtLeastCuda12900(const se::StreamExecutor* executor) {
   const auto& desc = executor->GetDeviceDescription();
   const auto* cuda_cc = desc.gpu_compute_capability().cuda_compute_capability();

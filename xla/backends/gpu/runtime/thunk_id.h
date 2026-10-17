@@ -29,6 +29,13 @@ TSL_LIB_GTL_DEFINE_INT_TYPE(ThunkId, uint64_t);
 // Generates unique IDs for thunks. This class is thread-compatible.
 class ThunkIdGenerator {
  public:
+  ThunkIdGenerator() = default;
+
+  // Generates IDs from `next_thunk_id` on, e.g. after the IDs of thunks that
+  // were created before.
+  explicit ThunkIdGenerator(ThunkId next_thunk_id)
+      : next_thunk_id_(next_thunk_id.value()) {}
+
   ThunkId GetNextThunkId() { return ThunkId(next_thunk_id_++); }
 
  private:

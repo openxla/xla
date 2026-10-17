@@ -112,6 +112,8 @@ class CollectiveKernelThunk : public TracedCommand {
   // custom cuda kernel.
   absl::Status Initialize(const InitializeParams& params) final;
 
+  SetUpScope set_up_scope() const override;
+
   // Execute the kernel on all devices.
   absl::Status ExecuteOnStream(const ExecuteParams& params) final;
 
@@ -144,6 +146,10 @@ class CollectiveKernelThunk : public TracedCommand {
   absl::StatusOr<ThunkProto> ToProto() const override;
 
  private:
+  // Returns true if scratch buffers use symmetric memory, which `Initialize`
+  // creates again when it expired.
+  bool UsesSymmetricScratchMemory() const;
+
   // We use a double buffering strategy for the buffers.
   // See docs on struct StreamState for more details.
   static constexpr int64_t kNumBuffers = 2;

@@ -83,6 +83,7 @@ class DynamicSliceFusionV2Thunk : public Command {
 
   absl::Status Prepare(const PrepareParams& params) override;
   absl::Status Initialize(const InitializeParams& params) override;
+  SetUpScope set_up_scope() const override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,

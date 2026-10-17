@@ -34,6 +34,11 @@ limitations under the License.
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/lib/traceme_encode.h"
+#include "xla/backends/gpu/runtime/collective_clique_requests.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
+#include "xla/backends/gpu/runtime/collective_execution.h"
+#include "xla/backends/gpu/runtime/collective_memory_requests.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/per_device_state.h"
@@ -42,11 +47,14 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/status_macros.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
+#include "xla/tsl/util/tied_ref.h"
+#include "xla/tsl/util/unique_any.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
@@ -76,6 +84,7 @@ CommandBufferThunk::CommandBufferThunk(
     : Thunk(Thunk::kCommandBuffer, std::move(thunk_info)),
       commands_(std::move(commands)),
       thunks_(std::move(thunks)),
+      commands_set_up_scope_(commands_.set_up_scope()),
       enable_command_buffers_during_profiling_(
           enable_command_buffers_during_profiling),
       state_(std::make_shared<State>(devices_in_process)) {
@@ -135,6 +144,17 @@ CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
   return updated_allocs;
 }
 
+bool CommandBufferThunk::CachedCollectiveRequests::Matches(
+    const CollectiveParams* params) const {
+  // Only the requests depend on the collective topology.
+  if (cliques.size() == 0 && memory.symmetric_size() == 0 &&
+      memory.multicast_size() == 0 && memory.peer_size() == 0) {
+    return true;
+  }
+  return params != nullptr ? topology.has_value() && topology->Matches(*params)
+                           : !topology.has_value();
+}
+
 absl::Status CommandBufferThunk::Prepare(const PrepareParams& params) {
   // We might end up with empty command sequence if all of the captured fusions
   // are no-op (e.g. memcpy of size 0) and we have no emitted thunks for them.
@@ -142,13 +162,125 @@ absl::Status CommandBufferThunk::Prepare(const PrepareParams& params) {
     return absl::OkStatus();
   }
 
-  // `commands_` borrows pointers to the same Thunk objects owned by `thunks_`,
-  // so preparing `thunks_` (when present) already prepares all commands.
-  if (thunks_) {
-    return thunks_->Prepare(params);
+  // A recorded command buffer means that an earlier execution prepared and
+  // initialized `thunks_` (when present) or `commands_` on this executor. If
+  // no command has set-up scope `kExecution`, later executions with the same
+  // collective topology reuse that set-up: they make the cached requests
+  // instead of preparing and initializing commands, and launch the command
+  // buffer even if a profiler session starts before they execute it.
+  std::shared_ptr<ExecutorCommandBuffer> cmd_buffer;
+  if (commands_set_up_scope_ != SetUpScope::kExecution &&
+      params.execution_scoped_state != nullptr &&
+      params.collective_clique_requests != nullptr &&
+      params.collective_memory_requests != nullptr &&
+      !IsProfilingWithoutCommandBuffers()) {
+    cmd_buffer = FindCommandBuffer(params.executor);
   }
 
-  return commands_.Prepare(params);
+  std::shared_ptr<CachedCollectiveRequests> cached_collective_requests;
+  bool recorded = false;
+  if (cmd_buffer != nullptr) {
+    absl::MutexLock lock(cmd_buffer->mutex);
+    cached_collective_requests = cmd_buffer->cached_collective_requests;
+    recorded = cmd_buffer->command_buffer->state() !=
+               se::CommandBuffer::State::kCreate;
+  }
+
+  // Requests are only collected once the command buffer is recorded: before
+  // that, there may be no command buffer to cache them on, and executions must
+  // prepare, initialize and record commands anyway (or run `thunks_` to warm up
+  // commands). This keeps a cache only on command buffers whose commands were
+  // all set up on this executor, at the cost of one more execution that
+  // prepares all commands before later ones reuse the set-up.
+  if (!recorded) {
+    return PrepareAll(params);
+  }
+
+  if (cached_collective_requests != nullptr &&
+      cached_collective_requests->Matches(params.collective_params)) {
+    VLOG(3) << "Reuse the set-up of commands on device #"
+            << params.executor->device_ordinal();
+    ABSL_RETURN_IF_ERROR(params.collective_clique_requests->Merge(
+        cached_collective_requests->cliques));
+    ABSL_RETURN_IF_ERROR(params.collective_memory_requests->Merge(
+        cached_collective_requests->memory));
+    auto [_, inserted] = params.execution_scoped_state->try_emplace(
+        thunk_info().thunk_id, std::in_place_type<ReusedSetUp>,
+        ReusedSetUp{std::move(cmd_buffer),
+                    std::move(cached_collective_requests)});
+    TF_RET_CHECK(inserted) << "Another thunk has execution scoped state under "
+                           << "thunk id " << thunk_info().thunk_id;
+    return absl::OkStatus();
+  }
+
+  ABSL_ASSIGN_OR_RETURN(std::shared_ptr<CachedCollectiveRequests> collected,
+                        PrepareAndCollectRequests(params));
+  absl::MutexLock lock(cmd_buffer->mutex);
+  cmd_buffer->cached_collective_requests = std::move(collected);
+  return absl::OkStatus();
+}
+
+absl::Status CommandBufferThunk::PrepareAll(const PrepareParams& params) {
+  // `commands_` borrows pointers to the same Thunk objects owned by `thunks_`,
+  // so preparing `thunks_` (when present) already prepares all commands.
+  return thunks_ ? thunks_->Prepare(params) : commands_.Prepare(params);
+}
+
+absl::Status CommandBufferThunk::InitializeAll(const InitializeParams& params) {
+  // `commands_` borrows pointers to the same Thunk objects owned by `thunks_`,
+  // so initializing `thunks_` (when present) already initializes all commands.
+  return thunks_ ? thunks_->Initialize(params) : commands_.Initialize(params);
+}
+
+absl::Status CommandBufferThunk::InitializeAllIfCommunicatorsChanged(
+    const InitializeParams& params, CachedCollectiveRequests& requests) {
+  // Cliques get new communicators while they are acquired, so before
+  // `Initialize`.
+  absl::MutexLock lock(requests.mutex);
+  if (requests.communicator_sentinels.has_value() &&
+      absl::c_none_of(*requests.communicator_sentinels,
+                      [](const tsl::TiedRef<CommunicatorSentinel>& sentinel) {
+                        return sentinel.Expired();
+                      })) {
+    return absl::OkStatus();
+  }
+
+  VLOG(3) << "Initialize commands for new communicators on device #"
+          << params.executor->device_ordinal();
+  ABSL_RETURN_IF_ERROR(InitializeAll(params));
+  std::vector<tsl::TiedRef<CommunicatorSentinel>> sentinels;
+  for (const CollectiveCliqueRequests::CliqueRequest& request :
+       requests.cliques.OrderedRequestedCliques()) {
+    TF_RET_CHECK(params.collective_cliques != nullptr);
+    ABSL_ASSIGN_OR_RETURN(
+        tsl::TiedRef<CommunicatorSentinel> sentinel,
+        params.collective_cliques->Tie(
+            request.key, std::make_unique<CommunicatorSentinel>()));
+    sentinels.push_back(std::move(sentinel));
+  }
+  requests.communicator_sentinels = std::move(sentinels);
+  return absl::OkStatus();
+}
+
+absl::StatusOr<std::shared_ptr<CommandBufferThunk::CachedCollectiveRequests>>
+CommandBufferThunk::PrepareAndCollectRequests(const PrepareParams& params) {
+  auto collected = std::make_shared<CachedCollectiveRequests>();
+  collected->memory = CollectiveMemoryRequests(*params.buffer_allocations);
+  PrepareParams collect_params = params;
+  collect_params.collective_clique_requests = &collected->cliques;
+  collect_params.collective_memory_requests = &collected->memory;
+  ABSL_RETURN_IF_ERROR(PrepareAll(collect_params));
+  // The cached requests outlive the buffer allocations of this execution.
+  collected->memory.DropBufferAllocations();
+
+  ABSL_RETURN_IF_ERROR(
+      params.collective_clique_requests->Merge(collected->cliques));
+  ABSL_RETURN_IF_ERROR(
+      params.collective_memory_requests->Merge(collected->memory));
+  if (params.collective_params != nullptr) {
+    collected->topology.emplace(*params.collective_params);
+  }
+  return collected;
 }
 
 absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
@@ -158,38 +290,42 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
     return absl::OkStatus();
   }
 
-  // Always initialize fallback thunks (or commands when there are no fallback
-  // thunks). `commands_` borrows pointers to the same Thunk objects owned by
-  // `thunks_`, so initializing `thunks_` (when present) already initializes all
-  // commands.
-  if (thunks_) {
-    ABSL_RETURN_IF_ERROR(thunks_->Initialize(params));
+  ReusedSetUp reused = FindReusedSetUp(params.execution_scoped_state);
+  std::shared_ptr<ExecutorCommandBuffer> cmd_buffer =
+      std::move(reused.cmd_buffer);
+  if (cmd_buffer != nullptr) {
+    // The command buffer was recorded, so with persistent allocation indices,
+    // which stay present once they are.
+    TF_RET_CHECK(params.persistent_alloc_indices.has_value());
+    if (commands_set_up_scope_ == SetUpScope::kCommunicator) {
+      ABSL_RETURN_IF_ERROR(
+          InitializeAllIfCommunicatorsChanged(params, *reused.requests));
+    }
   } else {
-    ABSL_RETURN_IF_ERROR(commands_.Initialize(params));
-  }
+    // Always initialize fallback thunks (or commands when there are no
+    // fallback thunks).
+    ABSL_RETURN_IF_ERROR(InitializeAll(params));
 
-  // TODO(b/290773547): Disabled CUDA graphs when profiling is active because of
-  // memory corruption.
-  if (tsl::profiler::ProfilerLock::HasActiveSession() && thunks_ &&
-      !enable_command_buffers_during_profiling_) {
-    VLOG(1) << "Initialize command buffer thunk as a regular thunk sequence "
-               "because we detected active profiling session";
-    TraceMe trace("WARNING: CommandBuffer disabled when profiling");
-    return absl::OkStatus();
-  }
+    if (IsProfilingWithoutCommandBuffers()) {
+      VLOG(1) << "Initialize command buffer thunk as a regular thunk sequence "
+                 "because we detected active profiling session";
+      TraceMe trace("WARNING: CommandBuffer disabled when profiling");
+      return absl::OkStatus();
+    }
 
-  // Command buffer lowering is enabled only when persistent allocation
-  // indices are available; until then the thunk executes its fallback thunk
-  // sequence, so there is no command buffer to initialize.
-  if (!params.persistent_alloc_indices.has_value()) {
-    VLOG(1) << "Skip command buffer initialization because persistent "
-               "allocation indices are not yet available (falling back to "
-               "thunk sequence)";
-    return absl::OkStatus();
-  }
+    // Command buffer lowering is enabled only when persistent allocation
+    // indices are available; until then the thunk executes its fallback thunk
+    // sequence, so there is no command buffer to initialize.
+    if (!params.persistent_alloc_indices.has_value()) {
+      VLOG(1) << "Skip command buffer initialization because persistent "
+                 "allocation indices are not yet available (falling back to "
+                 "thunk sequence)";
+      return absl::OkStatus();
+    }
 
-  ABSL_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-                        GetOrCreateCommandBuffer(params.executor));
+    ABSL_ASSIGN_OR_RETURN(cmd_buffer,
+                          GetOrCreateCommandBuffer(params.executor));
+  }
   absl::MutexLock lock(cmd_buffer->mutex);
 
   // If there are no thunks, or command buffer does not require warmup,
@@ -274,34 +410,36 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
     return absl::OkStatus();
   }
 
-  // TODO(b/290773547): Profiler (CUPTI) + CUDA graphs lead to memory
-  // corruption. As a work around disable command buffers (CUDA graphs) and run
-  // everything in op-by-op mode.
-  if (tsl::profiler::ProfilerLock::HasActiveSession() && thunks_ &&
-      !enable_command_buffers_during_profiling_) {
-    VLOG(1) << "Execute command buffer thunk as a regular thunk sequence "
-               "because we detected active profiling session";
-    TraceMe trace("WARNING: CommandBuffer disabled when profiling");
-    return thunks_->ExecuteOnStream(params);
-  }
-
-  // Command buffer lowering is enabled only when persistent allocation
-  // indices are available. Until then (e.g. during the VA remapping profiling
-  // window) execute the fallback thunk sequence in op-by-op mode.
-  if (!params.persistent_alloc_indices.has_value()) {
-    if (thunks_ == nullptr) {
-      return Internal(
-          "CommandBufferThunk requires either valid persistent allocation "
-          "indices or a fallback thunk sequence");
-    }
-    VLOG(2) << "Execute command buffer thunk as a regular thunk sequence "
-               "because persistent allocation indices are not yet available";
-    return thunks_->ExecuteOnStream(params);
-  }
-
   se::StreamExecutor* executor = params.stream->parent();
-  ABSL_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-                        GetOrCreateCommandBuffer(executor));
+  std::shared_ptr<ExecutorCommandBuffer> cmd_buffer =
+      FindReusedSetUp(params.execution_scoped_state).cmd_buffer;
+  if (cmd_buffer == nullptr) {
+    // As a work around for CUPTI bugs, run everything in op-by-op mode.
+    if (IsProfilingWithoutCommandBuffers()) {
+      VLOG(1) << "Execute command buffer thunk as a regular thunk sequence "
+                 "because we detected active profiling session";
+      TraceMe trace("WARNING: CommandBuffer disabled when profiling");
+      return thunks_->ExecuteOnStream(params);
+    }
+
+    // Command buffer lowering is enabled only when persistent allocation
+    // indices are available. Until then (e.g. during the VA remapping
+    // profiling window) execute the fallback thunk sequence in op-by-op mode.
+    if (!params.persistent_alloc_indices.has_value()) {
+      if (thunks_ == nullptr) {
+        return Internal(
+            "CommandBufferThunk requires either valid persistent allocation "
+            "indices or a fallback thunk sequence");
+      }
+      VLOG(2) << "Execute command buffer thunk as a regular thunk sequence "
+                 "because persistent allocation indices are not yet available";
+      return thunks_->ExecuteOnStream(params);
+    }
+
+    ABSL_ASSIGN_OR_RETURN(cmd_buffer, GetOrCreateCommandBuffer(executor));
+  } else {
+    TF_RET_CHECK(params.persistent_alloc_indices.has_value());
+  }
 
   absl::MutexLock lock(cmd_buffer->mutex);
 
@@ -393,6 +531,36 @@ CommandBufferThunk::GetOrCreateCommandBuffer(se::StreamExecutor* executor) {
         std::make_shared<ExecutorCommandBuffer>(std::move(command_buffer));
   }
   return device_state->command_buffer;
+}
+
+std::shared_ptr<CommandBufferThunk::ExecutorCommandBuffer>
+CommandBufferThunk::FindCommandBuffer(se::StreamExecutor* executor) const {
+  DeviceState* device_state =
+      state_->device_states.Find(executor->device_ordinal());
+  if (device_state == nullptr) {
+    return nullptr;
+  }
+  absl::MutexLock lock(device_state->mutex);
+  return device_state->command_buffer;
+}
+
+CommandBufferThunk::ReusedSetUp CommandBufferThunk::FindReusedSetUp(
+    const ExecutionScopedState* state) const {
+  if (state == nullptr) {
+    return {};
+  }
+  auto it = state->find(thunk_info().thunk_id);
+  if (it == state->end()) {
+    return {};
+  }
+  return tsl::any_cast<ReusedSetUp>(it->second);
+}
+
+bool CommandBufferThunk::IsProfilingWithoutCommandBuffers() const {
+  // TODO(b/290773547): Profiler (CUPTI) + CUDA graphs lead to memory
+  // corruption.
+  return tsl::profiler::ProfilerLock::HasActiveSession() && thunks_ &&
+         !enable_command_buffers_during_profiling_;
 }
 
 //===----------------------------------------------------------------------===//

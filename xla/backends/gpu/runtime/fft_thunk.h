@@ -80,6 +80,8 @@ class FftThunk : public Thunk {
 
   // Does the FFT for the thunk on "stream".
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // FFTs need no set-up: plans are created when they execute.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   BufferUses buffer_uses() const override {
     return {

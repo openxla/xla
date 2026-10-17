@@ -50,6 +50,8 @@ class RngSeedThunk : public xla::gpu::Thunk {
 
   absl::Status ExecuteOnStream(
       const xla::gpu::Thunk::ExecuteParams& params) override;
+  // RNG seeds need no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   BufferAllocation::Slice dest() const { return dest_; }
 

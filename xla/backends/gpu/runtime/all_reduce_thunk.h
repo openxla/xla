@@ -84,6 +84,10 @@ class AllReduceThunk : public AllReduceReduceScatterThunkBase {
 
   absl::StatusOr<ThunkProto> ToProto() const override;
 
+  SetUpScope set_up_scope() const override {
+    return SetUpScope::kCollectiveTopology;
+  }
+
  protected:
   bool RequiresRendezvous() const override { return true; }
 
@@ -121,6 +125,10 @@ class ReduceScatterThunk : public AllReduceReduceScatterThunkBase {
       absl::Span<const BufferAllocation> buffer_allocations);
 
   absl::StatusOr<ThunkProto> ToProto() const override;
+
+  SetUpScope set_up_scope() const override {
+    return SetUpScope::kCollectiveTopology;
+  }
 
  protected:
   bool RequiresRendezvous() const override { return true; }

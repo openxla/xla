@@ -191,6 +191,8 @@ class HostExecuteDoneThunk : public Command {
 
   absl::Status Initialize(const InitializeParams& params) override;
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
+  // Host execute done needs no set-up.
+  SetUpScope set_up_scope() const override { return SetUpScope::kDevice; }
 
   absl::StatusOr<const se::CommandBuffer::Command*> Record(
       const Thunk::ExecuteParams& execute_params,

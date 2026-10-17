@@ -80,6 +80,10 @@ class CollectivePermuteThunk : public CollectiveThunk {
 
   absl::StatusOr<ThunkProto> ToProto() const override;
 
+  SetUpScope set_up_scope() const override {
+    return SetUpScope::kCollectiveTopology;
+  }
+
  protected:
   // No rendezvous needed for peer-memory mode (uses its own event-based sync).
   // Symmetric and private memory modes still require rendezvous.
