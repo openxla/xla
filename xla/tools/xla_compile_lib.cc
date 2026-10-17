@@ -23,7 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/call_once.h"
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
@@ -35,7 +34,6 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "google/protobuf/duration.pb.h"
 #include "google/protobuf/text_format.h"
-#include "llvm-c/Target.h"
 #include "llvm/TargetParser/Host.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -365,54 +363,6 @@ absl::StatusOr<bool> LoadAutotuneDataFromModule(HloModuleAndMetadata* mod,
   return false;
 }
 
-static absl::once_flag targets_init;
-
-static void InitializeTargets() {
-  // Initialize all LLVM targets so we can cross compile.
-#if XLA_LLVM_AARCH32_AVAILABLE
-  LLVMInitializeARMTarget();
-  LLVMInitializeARMTargetInfo();
-  LLVMInitializeARMTargetMC();
-  LLVMInitializeARMAsmParser();
-  LLVMInitializeARMAsmPrinter();
-#endif
-#if XLA_LLVM_AARCH64_AVAILABLE
-  LLVMInitializeAArch64Target();
-  LLVMInitializeAArch64TargetInfo();
-  LLVMInitializeAArch64TargetMC();
-  LLVMInitializeAArch64AsmParser();
-  LLVMInitializeAArch64AsmPrinter();
-#endif
-#if XLA_LLVM_HEXAGON_AVAILABLE
-  LLVMInitializeHexagonTarget();
-  LLVMInitializeHexagonTargetInfo();
-  LLVMInitializeHexagonTargetMC();
-  LLVMInitializeHexagonAsmParser();
-  LLVMInitializeHexagonAsmPrinter();
-#endif
-#if XLA_LLVM_POWERPC_AVAILABLE
-  LLVMInitializePowerPCTarget();
-  LLVMInitializePowerPCTargetInfo();
-  LLVMInitializePowerPCTargetMC();
-  LLVMInitializePowerPCAsmParser();
-  LLVMInitializePowerPCAsmPrinter();
-#endif
-#if XLA_LLVM_S390X_AVAILABLE
-  LLVMInitializeSystemZTarget();
-  LLVMInitializeSystemZTargetInfo();
-  LLVMInitializeSystemZTargetMC();
-  LLVMInitializeSystemZAsmParser();
-  LLVMInitializeSystemZAsmPrinter();
-#endif
-#if XLA_LLVM_X86_AVAILABLE
-  LLVMInitializeX86Target();
-  LLVMInitializeX86TargetInfo();
-  LLVMInitializeX86TargetMC();
-  LLVMInitializeX86AsmParser();
-  LLVMInitializeX86AsmPrinter();
-#endif
-}
-
 }  // namespace internal
 
 static absl::StatusOr<std::unique_ptr<HloModuleConfig>> LoadModuleConfig(
@@ -432,7 +382,6 @@ static absl::StatusOr<std::unique_ptr<HloModuleConfig>> LoadModuleConfig(
 }
 
 absl::Status XlaCompileMain(const XlaCompileOptions& options) {
-  absl::call_once(internal::targets_init, &internal::InitializeTargets);
   std::unique_ptr<HloModule> hlo_module;
   if (options.platform != "cpu" && options.platform != "gpu") {
     return absl::UnimplementedError(

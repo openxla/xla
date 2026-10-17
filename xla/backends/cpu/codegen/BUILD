@@ -124,9 +124,12 @@ cc_library(
             "XLA_LLVM_AARCH32_AVAILABLE=1",
         ],
         "//conditions:default": [],
-    }) + if_llvm_aarch64_available([
-        "XLA_LLVM_AARCH64_AVAILABLE=1",
-    ]) + if_llvm_powerpc_available([
+    }) + select({
+        "//xla/tsl:aarch64_or_cross": [
+            "XLA_LLVM_AARCH64_AVAILABLE=1",
+        ],
+        "//conditions:default": [],
+    }) + if_llvm_powerpc_available([
         "XLA_LLVM_POWERPC_AVAILABLE=1",
     ]) + if_llvm_system_z_available([
         "XLA_LLVM_S390X_AVAILABLE=1",

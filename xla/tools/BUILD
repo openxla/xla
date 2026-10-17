@@ -1116,24 +1116,6 @@ cc_library(
     name = "xla_cpu_compile_lib",
     srcs = ["xla_cpu_compile_lib.cc"],
     hdrs = ["xla_cpu_compile_lib.h"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "//xla/backends/cpu:target_machine_options",
-        "//xla/hlo/ir:hlo",
-        "//xla/service:compiled_module",
-        "//xla/service:compiler",
-        "//xla/service:executable",
-        "//xla/service:xla_compile_result_proto_cc",
-        "//xla/service/cpu:cpu_compiler_pure",
-        "@com_google_absl//absl/status:status_macros",
-        "@com_google_absl//absl/status:statusor",
-    ],
-)
-
-cc_library(
-    name = "xla_compile_lib",
-    srcs = ["xla_compile_lib.cc"],
-    hdrs = ["xla_compile_lib.h"],
     defines = if_llvm_aarch32_available(["XLA_LLVM_AARCH32_AVAILABLE=1"]) + if_llvm_aarch64_available([
         "XLA_LLVM_AARCH64_AVAILABLE=1",
     ]) + if_llvm_hexagon_available([
@@ -1147,8 +1129,28 @@ cc_library(
     ]),
     visibility = ["//visibility:public"],
     deps = [
-        ":hlo_module_loader",
         ":llvm_targets",  # fixdeps: keep
+        "//xla/backends/cpu:target_machine_options",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:compiled_module",
+        "//xla/service:compiler",
+        "//xla/service:executable",
+        "//xla/service:xla_compile_result_proto_cc",
+        "//xla/service/cpu:cpu_compiler_pure",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@llvm-project//llvm:Target",
+    ],
+)
+
+cc_library(
+    name = "xla_compile_lib",
+    srcs = ["xla_compile_lib.cc"],
+    hdrs = ["xla_compile_lib.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":hlo_module_loader",
         ":xla_cpu_compile_lib",
         "//xla:debug_options_flags",
         "//xla:shape_util",
@@ -1206,7 +1208,6 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_protobuf//:duration_cc_proto",
         "@com_google_protobuf//:protobuf",
-        "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",

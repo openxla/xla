@@ -75,6 +75,17 @@ TEST_F(XlaCompileLibTest, CompilesForCpu) {
       absl_testing::IsOkAndHolds(Not(IsEmpty())));
 }
 
+TEST_F(XlaCompileLibTest, CompilesForAArch64) {
+  CompilationResult result;
+  Compiler::CpuTargetConfig cpu_target_config(
+      cpu::TargetMachineOptions("aarch64-unknown-linux-gnu", "", ""));
+  EXPECT_THAT(
+      CompileExecutable(std::move(module_), BackendType::kCpu,
+                        /*gpu_target_config=*/std::nullopt, cpu_target_config,
+                        /*num_partitions=*/1, /*num_replicas=*/1, result),
+      absl_testing::IsOkAndHolds(Not(IsEmpty())));
+}
+
 TEST_F(XlaCompileLibTest, ErrorsOnUnexpectedPlatform) {
   XlaCompileOptions options;
   options.platform = "tpu";

@@ -21,8 +21,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "llvm-c/Target.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/compiled_module.h"
@@ -32,11 +34,63 @@ limitations under the License.
 #include "xla/service/xla_compile_result.pb.h"
 
 namespace xla {
+namespace {
+
+absl::once_flag targets_init;
+
+void InitializeTargets() {
+  // Initialize all LLVM targets so we can cross compile.
+#if XLA_LLVM_AARCH32_AVAILABLE
+  LLVMInitializeARMTarget();
+  LLVMInitializeARMTargetInfo();
+  LLVMInitializeARMTargetMC();
+  LLVMInitializeARMAsmParser();
+  LLVMInitializeARMAsmPrinter();
+#endif
+#if XLA_LLVM_AARCH64_AVAILABLE
+  LLVMInitializeAArch64Target();
+  LLVMInitializeAArch64TargetInfo();
+  LLVMInitializeAArch64TargetMC();
+  LLVMInitializeAArch64AsmParser();
+  LLVMInitializeAArch64AsmPrinter();
+#endif
+#if XLA_LLVM_HEXAGON_AVAILABLE
+  LLVMInitializeHexagonTarget();
+  LLVMInitializeHexagonTargetInfo();
+  LLVMInitializeHexagonTargetMC();
+  LLVMInitializeHexagonAsmParser();
+  LLVMInitializeHexagonAsmPrinter();
+#endif
+#if XLA_LLVM_POWERPC_AVAILABLE
+  LLVMInitializePowerPCTarget();
+  LLVMInitializePowerPCTargetInfo();
+  LLVMInitializePowerPCTargetMC();
+  LLVMInitializePowerPCAsmParser();
+  LLVMInitializePowerPCAsmPrinter();
+#endif
+#if XLA_LLVM_S390X_AVAILABLE
+  LLVMInitializeSystemZTarget();
+  LLVMInitializeSystemZTargetInfo();
+  LLVMInitializeSystemZTargetMC();
+  LLVMInitializeSystemZAsmParser();
+  LLVMInitializeSystemZAsmPrinter();
+#endif
+#if XLA_LLVM_X86_AVAILABLE
+  LLVMInitializeX86Target();
+  LLVMInitializeX86TargetInfo();
+  LLVMInitializeX86TargetMC();
+  LLVMInitializeX86AsmParser();
+  LLVMInitializeX86AsmPrinter();
+#endif
+}
+
+}  // namespace
 
 absl::StatusOr<std::string> AotCompileCpuExecutable(
     std::unique_ptr<HloModule> hlo_module,
     std::optional<cpu::TargetMachineOptions> target_config,
     CompilationResult* result) {
+  absl::call_once(targets_init, &InitializeTargets);
   cpu::CpuCompiler cpu_compiler;
   Compiler::CompileOptions compile_options;
   if (target_config.has_value()) {
