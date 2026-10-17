@@ -3497,6 +3497,7 @@ xla_test(
         "//xla/tsl/cuda:nccl",
         "//xla/tsl/framework:bfc_allocator",
         "//xla/tsl/framework:device_id",
+        "//xla/tsl/platform:env",
         "@com_google_googletest//:gtest_main",
         "@local_config_cuda//cuda:cuda_headers",
     ] + if_google(["//xla/tsl/framework:allocator"]),
