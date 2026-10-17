@@ -278,6 +278,32 @@ TEST_P(YnnDotTest, SingleDot) {
   )");
 }
 
+TEST_P(YnnDotTest, TransposeFolding) {
+  const char* hlo_template = R"(
+  HloModule dot_transpose_folding
+
+  ENTRY main {
+    %lhs = $lhs_dtype[128,256] parameter(0)
+    %lhs_t = $lhs_dtype[256,128] transpose(%lhs), dimensions={1,0}
+    %rhs = $rhs_dtype[128,512] parameter(1)
+    ROOT %out = $out_dtype[256,512] dot(%lhs_t, %rhs), lhs_contracting_dims={1},
+                                                       rhs_contracting_dims={0}
+  }
+  )";
+  DotTestConfig config = GetParam();
+  std::string hlo_text =
+      absl::StrReplaceAll(hlo_template, {{"$lhs_dtype", config.lhs_dtype},
+                                         {"$rhs_dtype", config.rhs_dtype},
+                                         {"$out_dtype", config.out_dtype}});
+  MatchOptimizedHlo(hlo_text, R"(
+    CHECK: dot
+    CHECK: ENTRY
+    CHECK: kind=kCustom
+    CHECK: "kind":"__ynn_fusion"
+  )");
+  EXPECT_TRUE(Run(hlo_text, /*run_hlo_passes=*/true));
+}
+
 TEST_F(YnnReduceTest, ReduceSquared) {
   const char* hlo_text = R"(
   HloModule reduce_squared
