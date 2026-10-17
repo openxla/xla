@@ -4136,6 +4136,7 @@ DebugOptions GetDebugOptionsFromProtoAndFlags(
     DebugOptions* proto_debug_options) {
   if (proto_debug_options != nullptr) {
     DebugOptions debug_options = *proto_debug_options;
+    debug_options.set_xla_gpu_experimental_enable_tiling_propagation(true);
     // Apply overrides from XLA_FLAGS environment variable.
     std::vector<tsl::Flag> flag_list;
     MakeDebugOptionsFlags(&flag_list, &debug_options);
