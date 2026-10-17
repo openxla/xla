@@ -74,5 +74,28 @@ TEST_F(Atan2Test, LargeMagnitudeOperands) {
                              ErrorSpec(1e-6, 1e-6));
 }
 
+TEST_F(Atan2Test, F64SubnormalOperands) {
+  XlaBuilder builder("atan2 with subnormal F64 operands");
+  const double tiny = std::numeric_limits<double>::denorm_min();
+  const double min_normal = std::numeric_limits<double>::min();
+  const std::vector<double> ys = {tiny,     -tiny, tiny,           -tiny,
+                                  2 * tiny, tiny,  min_normal / 2, min_normal};
+  const std::vector<double> xs = {tiny, tiny,     -tiny,      -tiny,
+                                  tiny, 2 * tiny, min_normal, min_normal / 2};
+  std::vector<double> expected;
+  for (size_t i = 0; i < ys.size(); ++i) {
+    expected.push_back(std::atan2(ys[i], xs[i]));
+  }
+  Literal y_literal = LiteralUtil::CreateR1<double>(ys);
+  Literal x_literal = LiteralUtil::CreateR1<double>(xs);
+  // Parameters ensure the subnormal inputs reach compiled CPU code instead of
+  // being constant-folded on the host.
+  auto y = Parameter(&builder, 0, y_literal.shape(), "y");
+  auto x = Parameter(&builder, 1, x_literal.shape(), "x");
+  Atan2(y, x);
+  ComputeAndCompareR1<double>(&builder, expected, {&y_literal, &x_literal},
+                              ErrorSpec(1e-15, 1e-15));
+}
+
 }  // namespace
 }  // namespace xla
