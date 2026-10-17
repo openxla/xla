@@ -52,6 +52,7 @@ enum class OutputFormat : std::uint8_t {
   kText,         // Text format returned by Literal::ToString().
   kProtoBinary,  // Protobuf binary format of an xla::LiteralProto message.
   kProtoText,    // Protobuf text format of an xla::LiteralProto message.
+  kRiegeli,      // Riegeli record format of xla::LiteralProto messages.
 };
 
 bool AbslParseFlag(absl::string_view text, OutputFormat* output_format,
