@@ -384,10 +384,7 @@ void convertShardedToUnreduced(sdy::ShardedToUnreducedOp op,
 void convertReplicatedToUnreduced(sdy::ReplicatedToUnreducedOp op,
                                   mlir::IRRewriter& rewriter) {
   TensorShardingAttr outSharding = op.getOutSharding();
-  // We intentionally do not support non-sum reductions (e.g. `MAX`, `MIN`)
-  // because the operation semantics are specific to `SUM` and are not intended
-  // to be used with other reduction ops without an explicit use case.
-  CHECK_EQ(outSharding.getReductionOp(), sdy::ReductionOp::SUM);
+  sdy::ReductionOp reductionOp = outSharding.getReductionOp();
   MeshAttr mesh = outSharding.getMesh(op);
 
   mlir::Location loc = op.getLoc();
@@ -395,7 +392,7 @@ void convertReplicatedToUnreduced(sdy::ReplicatedToUnreducedOp op,
 
   Value manualComputation = createFullyManualComputation(
       loc, op.getTensor(), outSharding, mesh, rewriter,
-      /*unreducedAxes=*/{}, sdy::ReductionOp::SUM,
+      /*unreducedAxes=*/{}, reductionOp,
       [&](mlir::BlockArgument arg, OpBuilder& blockBuilder,
           RankedTensorType /*paddedGlobalType*/) {
         auto [axisCoordinates, axisSizes] =
@@ -419,12 +416,16 @@ void convertReplicatedToUnreduced(sdy::ReplicatedToUnreducedOp op,
         CHECK(pred != nullptr) << "No replicated-to-unreduced axes.";
 
         RankedTensorType type = mlir::cast<RankedTensorType>(arg.getType());
-        Value zeroVal = stablehlo::ConstantOp::create(
-            blockBuilder, loc, blockBuilder.getZeroAttr(type.getElementType()));
-        Value zeroBroadcast = stablehlo::BroadcastOp::create(
-            blockBuilder, loc, type, zeroVal, type.getShape());
+        mlir::Attribute identityAttr = sdy::getReductionIdentityAttr(
+            type.getElementType(), reductionOp, blockBuilder);
+        auto scalarType = RankedTensorType::get({}, type.getElementType());
+        Value identityVal = stablehlo::ConstantOp::create(
+            blockBuilder, loc,
+            mlir::DenseElementsAttr::get(scalarType, identityAttr));
+        Value identityBroadcast = stablehlo::BroadcastOp::create(
+            blockBuilder, loc, type, identityVal, type.getShape());
         return stablehlo::SelectOp::create(blockBuilder, loc, pred, arg,
-                                           zeroBroadcast);
+                                           identityBroadcast);
       });
   rewriter.replaceOp(op, manualComputation);
 }
