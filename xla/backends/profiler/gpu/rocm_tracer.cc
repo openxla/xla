@@ -163,6 +163,11 @@ absl::Status RocmTracer::Enable(const RocmTracerOptions& options,
   if (collector_ != nullptr) {
     return absl::AlreadyExistsError("ROCM tracer is already running");
   }
+  if (!profiling_initialized_.load(std::memory_order_acquire)) {
+    return absl::FailedPreconditionError(
+        "ROCm tracer is not initialized: rocprofiler-sdk never configured it, "
+        "or its setup failed");
+  }
 
   // Clear per-session state while holding collector_mutex_ so no in-flight
   // callback can race between the clear and the new session start.
@@ -792,6 +797,7 @@ int RocmTracer::toolInit(rocprofiler_client_finalize_t fini_func,
     LOG(ERROR) << "RocmTracer initialization failed: " << status.message();
     return -1;
   }
+  profiling_initialized_.store(true, std::memory_order_release);
   return 0;
 }
 
@@ -897,5 +903,21 @@ extern "C" rocprofiler_tool_configure_result_t* rocprofiler_configure(
 }  // namespace xla
 
 void __attribute__((constructor)) init_rocm_lib() {
+  // If another library's start-up code reached HIP first, rocprofiler-sdk is
+  // already initializing, and its client discovery may be running this
+  // constructor after dlopening this library. Forcing configuration from
+  // inside that initialization deadlocks in rocprofiler-sdk 1.4 and later, and
+  // is rejected by earlier versions anyway, so leave configuration to
+  // discovery. Discovery misses the tracer if dlsym cannot see
+  // rocprofiler_configure, or if another thread is initializing and discovery
+  // has already passed this library. Once initialization has finished, still
+  // force it: rocprofiler-sdk 1.4 and later then register the tracer late.
+  int init_status = 0;
+  if (rocprofiler_is_initialized(&init_status) == ROCPROFILER_STATUS_SUCCESS &&
+      init_status < 0) {
+    VLOG(1) << "rocprofiler-sdk is initializing; leaving tracer configuration "
+               "to its client discovery";
+    return;
+  }
   rocprofiler_force_configure(xla::profiler::rocprofiler_configure);
 }
