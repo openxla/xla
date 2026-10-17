@@ -55,6 +55,13 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+
+class LayoutAssignmentPeer : public LayoutAssignment {
+ public:
+  using LayoutAssignment::ConsumeAddedConstraints;
+  using LayoutAssignment::LayoutAssignment;
+};
+
 namespace {
 
 namespace m = xla::match;
@@ -3605,6 +3612,110 @@ ENTRY %main (x: f32[1024,32], y: f32[1024,32], v: f32[1024]) -> (f32[1024,96], f
   ExpectLayoutIs(add->shape(), {0, 1});
   ExpectLayoutIs(add->operand(0)->shape(), {0, 1});
   ExpectLayoutIs(add->operand(1)->shape(), {0, 1});
+}
+
+// SetArrayOperandLayout and UpdateLayout decide with
+// OperandLayoutConstraint::IsSatisfiedBy whether an array layout is already in
+// place; it must agree with the ShapeLayout predicate UpdateLayout keeps for
+// tuple shapes, which compares minor_to_major only.
+TEST_F(LayoutAssignmentTest, OperandLayoutConstraintIsSatisfiedBy) {
+  const char* module_str = R"hlo(
+HloModule m
+
+ENTRY e {
+  p0 = f32[4,8]{1,0} parameter(0)
+  p1 = f32[4,8]{1,0} parameter(1)
+  ROOT add = f32[4,8]{1,0} add(p0, p1)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(module_str));
+  const HloInstruction* add = m->entry_computation()->root_instruction();
+  const Shape& operand_shape = add->operand(0)->shape();
+  OperandLayoutConstraint constraint(ShapeLayout(operand_shape), add,
+                                     /*operand_no=*/0, /*mandatory=*/true,
+                                     /*dfs=*/true, /*priority=*/0);
+
+  auto expect_satisfied = [&](const Layout& layout, bool expected) {
+    Shape shape_with_layout = operand_shape;
+    *shape_with_layout.mutable_layout() = layout;
+    EXPECT_EQ(constraint.shape_layout().MatchesLayoutInShape(
+                  shape_with_layout, /*minor_to_major_only=*/true),
+              expected)
+        << shape_with_layout;
+    EXPECT_EQ(constraint.IsSatisfiedBy(layout), expected) << layout;
+  };
+
+  expect_satisfied(LayoutUtil::MakeLayout({1, 0}), true);
+  expect_satisfied(LayoutUtil::MakeLayout({0, 1}), false);
+  // Tiles, element size and memory space do not take part in the decision.
+  expect_satisfied(
+      LayoutUtil::MakeLayout({1, 0}, {Tile({8, 128})},
+                             /*tail_padding_alignment_in_elements=*/1,
+                             PRIMITIVE_TYPE_INVALID, PRIMITIVE_TYPE_INVALID,
+                             /*element_size_in_bits=*/32, /*memory_space=*/1),
+      true);
+}
+
+// SetArrayOperandLayout returns early when the constraint in place already
+// holds the layout: nothing is pushed, the constraint keeps its flags and only
+// its priority rises, as on the full SetOperandLayout path. A new layout still
+// replaces it.
+TEST_F(LayoutAssignmentTest, SetArrayOperandLayoutLeavesSatisfiedConstraint) {
+  const char* module_str = R"hlo(
+HloModule m
+
+ENTRY e {
+  p0 = f32[4,8] parameter(0)
+  p1 = f32[4,8] parameter(1)
+  ROOT add = f32[4,8] add(p0, p1)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(module_str));
+  HloInstruction* add = m->entry_computation()->root_instruction();
+  LayoutAssignmentPeer layout_assignment(m->mutable_entry_computation_layout());
+  LayoutAssignment::LayoutConstraints* constraints =
+      layout_assignment.mutable_computation_constraints(m->entry_computation());
+
+  const Layout row_major = LayoutUtil::MakeLayout({1, 0});
+  ASSERT_OK(layout_assignment.SetArrayOperandLayout(
+      row_major, add, /*operand_no=*/0, /*mandatory=*/false, /*dfs=*/true,
+      /*priority=*/1));
+  const OperandLayoutConstraint* constraint =
+      constraints->GetOperandLayoutConstraint(add, /*operand_no=*/0);
+  ASSERT_NE(constraint, nullptr);
+  EXPECT_THAT(layout_assignment.ConsumeAddedConstraints(),
+              ElementsAre(constraint));
+
+  // The same layout with other flags and a higher priority only raises the
+  // priority; a lower one changes nothing.
+  ASSERT_OK(layout_assignment.SetArrayOperandLayout(
+      row_major, add, /*operand_no=*/0, /*mandatory=*/true, /*dfs=*/false,
+      /*priority=*/5));
+  EXPECT_THAT(layout_assignment.ConsumeAddedConstraints(),
+              ::testing::IsEmpty());
+  EXPECT_EQ(constraint->priority(), 5);
+  EXPECT_FALSE(constraint->mandatory());
+  EXPECT_TRUE(constraint->dfs());
+  ASSERT_OK(layout_assignment.SetArrayOperandLayout(
+      row_major, add, /*operand_no=*/0, /*mandatory=*/true, /*dfs=*/false,
+      /*priority=*/2));
+  EXPECT_THAT(layout_assignment.ConsumeAddedConstraints(),
+              ::testing::IsEmpty());
+  EXPECT_EQ(constraint->priority(), 5);
+
+  // Another layout at a higher priority replaces the constraint in place.
+  ASSERT_OK(layout_assignment.SetArrayOperandLayout(
+      LayoutUtil::MakeLayout({0, 1}), add, /*operand_no=*/0,
+      /*mandatory=*/true, /*dfs=*/false, /*priority=*/6));
+  EXPECT_THAT(layout_assignment.ConsumeAddedConstraints(),
+              ElementsAre(constraint));
+  EXPECT_EQ(constraint->priority(), 6);
+  EXPECT_TRUE(constraint->mandatory());
+  EXPECT_FALSE(constraint->dfs());
+  EXPECT_THAT(constraint->shape_layout().layout().minor_to_major(),
+              ElementsAre(0, 1));
 }
 
 }  // namespace
