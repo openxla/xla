@@ -3232,6 +3232,7 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
             buffer_assignment::BufferAssignmentAlgorithmProto::Value algo)
         -> std::unique_ptr<HeapAlgorithm<HloValue>> {
       switch (algo) {
+        case buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT:
         case buffer_assignment::BufferAssignmentAlgorithmProto::SPATIAL:
           return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
               assignment->multiheap_size_constraint_per_heap(), alignment,
@@ -3250,7 +3251,6 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
               HeapType::kFastSplit);
         case buffer_assignment::BufferAssignmentAlgorithmProto::
             BEST_OF_SPATIAL_TEMPORAL:
-        case buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT:
         default: {
           auto algorithms = std::make_unique<
               std::vector<std::unique_ptr<HeapAlgorithm<HloValue>>>>();
