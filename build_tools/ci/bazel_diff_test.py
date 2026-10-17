@@ -445,6 +445,64 @@ class BazelDiffTest(parameterized.TestCase):
         ],
     )
 
+  @mock.patch.object(
+      bazel_diff, "compute_impacted_targets", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "evaluate_skip", autospec=True, spec_set=True
+  )
+  def test_main_impacted_writes_github_output(
+      self, mock_eval_skip, mock_compute
+  ):
+    output_file = self.create_tempfile("github_output.txt")
+    targets_file = self.create_tempfile("impacted.txt", content="//xla:test\n")
+    dest_targets_file = self.create_tempfile("dest_impacted.txt")
+    mock_eval_skip.return_value = change_detector.SkipDecision(
+        should_skip=False, reason="Non-doc change", changed_files_count=1
+    )
+    mock_compute.return_value = bazel_diff.BazelDiffDecision(
+        decision=bazel_diff.BazelDiffDecisionType.IMPACTED,
+        impacted_targets=("//xla:test",),
+        impacted_targets_file=targets_file.full_path,
+        reason="Found 1 impacted target",
+        changed_files_count=1,
+    )
+    rc = bazel_diff.main([
+        "--base_sha=base_sha",
+        "--head_sha=head_sha",
+        "--build_name=XLA ROCm",
+        "--target_pattern=//xla/...",
+        f"--output_target_pattern_file={dest_targets_file.full_path}",
+        f"--github_output={output_file.full_path}",
+    ])
+    self.assertEqual(rc, 0)
+    self.assertEqual(
+        output_file.read_text(),
+        "decision=IMPACTED\n"
+        "should_skip=false\n"
+        f"target_pattern_file={os.path.abspath(dest_targets_file.full_path)}\n",
+    )
+    self.assertEqual(dest_targets_file.read_text(), "//xla:test\n")
+
+  @mock.patch.object(
+      change_detector, "evaluate_skip", autospec=True, spec_set=True
+  )
+  def test_main_docs_skip_writes_github_output(self, mock_eval_skip):
+    output_file = self.create_tempfile("github_output.txt")
+    mock_eval_skip.return_value = change_detector.SkipDecision(
+        should_skip=True, reason="Docs only", changed_files_count=1
+    )
+    rc = bazel_diff.main([
+        "--base_sha=base_sha",
+        "--head_sha=head_sha",
+        f"--github_output={output_file.full_path}",
+    ])
+    self.assertEqual(rc, 0)
+    self.assertEqual(
+        output_file.read_text(),
+        "decision=SKIP\nshould_skip=true\ntarget_pattern_file=\n",
+    )
+
 
 if __name__ == "__main__":
   absltest.main()
