@@ -430,8 +430,7 @@ ENTRY e {
   EXPECT_EQ(calls.a.fingerprint(), calls.b.fingerprint());
 }
 
-// The unused parameter p1 has a buffer outside the kernel table.
-TEST_F(ComputationKernelArgumentsTest, UndescribedBufferNotReusable) {
+TEST_F(ComputationKernelArgumentsTest, UnusedParameterSharesFingerprint) {
   constexpr absl::string_view kHlo = R"(
 HloModule m
 
@@ -456,8 +455,8 @@ ENTRY e {
 }
 )";
   ASSERT_OK_AND_ASSIGN(Calls calls, CreateForModule(kHlo));
-  EXPECT_EQ(calls.a.fingerprint(), std::nullopt);
-  EXPECT_EQ(calls.b.fingerprint(), std::nullopt);
+  ASSERT_TRUE(calls.a.fingerprint().has_value());
+  EXPECT_EQ(calls.a.fingerprint(), calls.b.fingerprint());
 }
 
 }  // namespace
