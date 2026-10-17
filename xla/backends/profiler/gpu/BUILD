@@ -539,6 +539,16 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "rocm_tracer_utils_test",
+    size = "small",
+    srcs = ["rocm_tracer_utils_test.cc"],
+    deps = [
+        ":rocm_tracer_utils",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "rocm_collector",
     srcs = ["rocm_collector.cc"],
@@ -621,6 +631,8 @@ xla_test(
         "//xla/tsl/platform:env_time",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
