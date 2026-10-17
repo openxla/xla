@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -635,7 +636,9 @@ tsl::Future<> PjRtArray::GetReadyFuture() const {
 tsl::Future<> PjRtArray::Delete() {
   DCHECK(this);
   for (auto& buffer : pjrt_buffers_) {
-    buffer->Delete();
+    if (buffer != nullptr) {
+      buffer->Delete();
+    }
   }
   is_deleted_ = true;
   // TODO(hyeontaek): Return a correct future.
@@ -644,10 +647,9 @@ tsl::Future<> PjRtArray::Delete() {
 
 bool PjRtArray::IsDeleted() const {
   DCHECK(this);
-  // TODO(hyeontaek): This may be incorrect if PjRtBuffers are shared and a
-  // portion of pjrt_buffers_ is deleted or not deleted.
-  return is_deleted_ ||
-         (!pjrt_buffers_.empty() && pjrt_buffers_.front()->IsDeleted());
+  return is_deleted_ || absl::c_any_of(pjrt_buffers_, [](const auto& buffer) {
+           return buffer == nullptr || buffer->IsDeleted();
+         });
 }
 
 std::string PjRtArray::DebugString() const {
