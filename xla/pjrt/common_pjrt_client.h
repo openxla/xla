@@ -87,6 +87,7 @@ class CommonPjRtClient : public PjRtClient {
   virtual bool executable_compatibility_check_on_deserialization() const {
     return true;
   }
+  virtual bool enable_async_compilation() const { return false; }
   // Returns true if we should skip the staging buffer during ToLiteral.
   bool ShouldDoDirectTransfer(const MutableLiteralBase& literal,
                               const Shape& shape,
@@ -1199,6 +1200,9 @@ class CommonPjRtClientImpl : public CommonPjRtClient {
   bool executable_compatibility_check_on_deserialization() const override {
     return executable_compatibility_check_on_deserialization_;
   }
+  bool enable_async_compilation() const override {
+    return enable_async_compilation_;
+  }
 
  private:
   const PjRtPlatformId platform_id_;
@@ -1236,6 +1240,7 @@ class CommonPjRtClientImpl : public CommonPjRtClient {
   bool dump_on_deserialize_ = false;
   bool should_stage_host_to_device_transfers_ = false;
   bool executable_compatibility_check_on_deserialization_ = true;
+  bool enable_async_compilation_ = false;
 };
 
 // A common base class for PjRtDevice implementations that delegate to
