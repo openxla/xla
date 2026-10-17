@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/codegen/intrinsic/cpp/eigen_unary_64_ll.h"
 #include "xla/codegen/intrinsic/cpp/expm1_32_ll.h"
 #include "xla/codegen/intrinsic/cpp/expm1_64_ll.h"
+#include "xla/codegen/intrinsic/cpp/log_ll.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 
@@ -114,6 +115,9 @@ std::vector<CppGenIntrinsicLibrary> GetCppGenLibraries(
   if (!::llvm_ir::kCustomCppIntrinsicsLlIr.empty()) {
     libraries.emplace_back(::llvm_ir::kCustomCppIntrinsicsLlIr,
                            "custom_cpp_intrinsics");
+  }
+  if (!::llvm_ir::kLogLlIr.empty()) {
+    libraries.emplace_back(::llvm_ir::kLogLlIr, "log");
   }
   return libraries;
 }
