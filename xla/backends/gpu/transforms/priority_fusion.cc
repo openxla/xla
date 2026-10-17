@@ -49,9 +49,11 @@ limitations under the License.
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_dfs_reachability.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instruction_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/utils/hlo_traversal.h"
@@ -90,6 +92,28 @@ namespace gpu {
 namespace {
 
 using ::xla::xtile::BlockLevelParameters;
+
+// Producers are only fused into scan fusions with a scan dimension of at
+// most this size, where the row fits into a single tile and row-wise
+// producers such as a softmax need no loop over the scan dimension.
+constexpr int64_t kMaxRowLocalScanDimSize = 128;
+
+bool AllScansHaveDimSizeAtMost(const HloInstruction& instr, int64_t max_size) {
+  if (instr.opcode() == HloOpcode::kScan) {
+    const auto* scan = Cast<HloScanInstruction>(&instr);
+    absl::StatusOr<int64_t> scan_dim_size = scan->GetScanDimSize();
+    return scan_dim_size.ok() && *scan_dim_size <= max_size;
+  }
+  if (instr.opcode() == HloOpcode::kFusion) {
+    for (const HloInstruction* fused :
+         instr.fused_instructions_computation()->instructions()) {
+      if (!AllScansHaveDimSizeAtMost(*fused, max_size)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
 // Bitcasts are fusible if they don't change the bit width.
 bool IsFusibleBitcast(const HloInstruction& instr) {
@@ -858,9 +882,23 @@ class PriorityFusionQueue {
       return FusionDecision::Forbid("the consumer is not fusible");
     }
 
-    if (ContainsScan(*producer, &fusion_info_cache_)) {
+    if (ContainsScan(*producer, &fusion_info_cache_) &&
+        !IsGenericTritonFusion(*producer)) {
       return FusionDecision::Forbid(
-          "epilogue fusion for scan is not supported");
+          "epilogue fusion for a non-Triton scan is not supported");
+    }
+
+    if (ContainsScan(*consumer, &fusion_info_cache_)) {
+      if (!IsGenericTritonFusion(*consumer)) {
+        return FusionDecision::Forbid(
+            "producer fusion into a non-Triton scan fusion is not supported");
+      }
+      if (!AllScansHaveDimSizeAtMost(*consumer, kMaxRowLocalScanDimSize)) {
+        return FusionDecision::Forbid(
+            absl::StrCat("producer fusion into scan fusions with a scan "
+                         "dimension > ",
+                         kMaxRowLocalScanDimSize, " is not supported"));
+      }
     }
 
     if (!(IsGenericTritonFusion(*producer) ||
