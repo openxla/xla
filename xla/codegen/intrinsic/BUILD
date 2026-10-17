@@ -433,11 +433,13 @@ cc_library(
         ":intrinsic",
         ":type",
         "//xla:xla_data_proto_cc",
+        "//xla/service/cpu:cpu_runtime",
         "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:ir_headers",
     ],
 )

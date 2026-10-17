@@ -136,6 +136,8 @@ inline constexpr absl::string_view kReduceScatterSymbolName =
     "__xla_cpu_runtime_ReduceScatter";
 inline constexpr absl::string_view kHandleFfiCallSymbolName =
     "__xla_cpu_runtime_HandleFfiCall";
+inline constexpr absl::string_view kAarch64SveHyperbolicTangentSymbolName =
+    "__xla_cpu_runtime_Aarch64SveHyperbolicTangent";
 
 // All symbol names for XLA CPU runtime functions need to start with this
 // prefix.
