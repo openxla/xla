@@ -638,6 +638,7 @@ cc_library(
     hdrs = ["rng_expander.h"],
     deps = [
         ":op_expander_pass",
+        "//xla:comparison_util",
         "//xla:shape_util",
         "//xla:side_effect_util",
         "//xla:xla_data_proto_cc",
