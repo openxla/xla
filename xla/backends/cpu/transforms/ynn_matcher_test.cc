@@ -278,6 +278,30 @@ TEST_P(YnnDotTest, SingleDot) {
   )");
 }
 
+TEST_P(YnnDotTest, SingleDotM1) {
+  const char* hlo_template = R"(
+  HloModule single_dot_m1
+
+  ENTRY main {
+    %lhs = $lhs_dtype[1,1024] parameter(0)
+    %rhs = $rhs_dtype[1024,1024] parameter(1)
+    ROOT %out = $out_dtype[1,1024] dot(%lhs, %rhs), lhs_contracting_dims={1},
+                                                    rhs_contracting_dims={0}
+  }
+  )";
+  DotTestConfig config = GetParam();
+  std::string hlo_text =
+      absl::StrReplaceAll(hlo_template, {{"$lhs_dtype", config.lhs_dtype},
+                                         {"$rhs_dtype", config.rhs_dtype},
+                                         {"$out_dtype", config.out_dtype}});
+  MatchOptimizedHlo(hlo_text, R"(
+    CHECK: dot
+    CHECK: ENTRY
+    CHECK: kind=kCustom
+    CHECK: "kind":"__ynn_fusion"
+  )");
+}
+
 TEST_F(YnnReduceTest, ReduceSquared) {
   const char* hlo_text = R"(
   HloModule reduce_squared
