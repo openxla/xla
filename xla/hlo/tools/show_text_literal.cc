@@ -18,9 +18,9 @@ limitations under the License.
 #include <stdio.h>
 
 #include <algorithm>
-#include <memory>
 #include <string>
 
+#include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "tsl/platform/init_main.h"
 #include "tsl/platform/logging.h"
