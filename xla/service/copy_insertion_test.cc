@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -35,6 +37,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -43,11 +46,13 @@ limitations under the License.
 #include "xla/frontend_attributes.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
@@ -61,6 +66,7 @@ limitations under the License.
 #include "xla/service/buffer_value.h"
 #include "xla/service/copy_removal.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_value.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/test_benchmark.h"
@@ -77,6 +83,21 @@ class CopyInsertionTestPeer {
       CopyInsertion& copy_insertion, HloModule* module) {
     return copy_insertion.AddCopiesToResolveInterference(
         module, /*execution_threads=*/{});
+  }
+};
+
+// Reaches the private order queries of ComputeRelativeLocation.
+class ComputeRelativeLocationTestPeer {
+ public:
+  static Relation::RuntimeOrder ComputeRuntimeOrdering(
+      ComputeRelativeLocation& analysis, HloInstruction* instr1,
+      HloInstruction* instr2) {
+    return analysis.ComputeRuntimeOrdering(instr1, instr2);
+  }
+  static std::optional<Relation::RuntimeOrder> StateIndependentRuntimeOrdering(
+      const ComputeRelativeLocation& analysis, HloInstruction* instr1,
+      HloInstruction* instr2) {
+    return analysis.StateIndependentRuntimeOrdering(instr1, instr2);
   }
 };
 
@@ -2750,9 +2771,67 @@ void BM_ManyElementTuple(::testing::benchmark::State& state) {
   }
 }
 
+// Parallel while loops that update one parameter in place, under the region
+// based analysis: all the copies of the parameter interfere, and each check
+// relates live ranges that span every loop.
+void BM_ParallelWhilesRegionAnalysis(::testing::benchmark::State& state) {
+  const int num_whiles = state.range(0);
+  std::string hlo = "HloModule BM_ParallelWhilesRegionAnalysis\n";
+  std::vector<std::string> results;
+  std::string whiles;
+  for (int i = 0; i < num_whiles; ++i) {
+    absl::StrAppend(&hlo, absl::Substitute(R"(
+cond$0 {
+  cp$0 = (s32[], f32[64]) parameter(0)
+  ci$0 = s32[] get-tuple-element(cp$0), index=0
+  climit$0 = s32[] constant(3)
+  ROOT clt$0 = pred[] compare(ci$0, climit$0), direction=LT
+}
+
+body$0 {
+  bp$0 = (s32[], f32[64]) parameter(0)
+  bi$0 = s32[] get-tuple-element(bp$0), index=0
+  bv$0 = f32[64] get-tuple-element(bp$0), index=1
+  bone$0 = s32[] constant(1)
+  bnext$0 = s32[] add(bi$0, bone$0)
+  bupd$0 = f32[1] constant({1})
+  bdus$0 = f32[64] dynamic-update-slice(bv$0, bupd$0, bi$0)
+  ROOT bt$0 = (s32[], f32[64]) tuple(bnext$0, bdus$0)
+}
+)",
+                                           i));
+    absl::StrAppend(&whiles, absl::Substitute(R"(
+  w$0 = (s32[], f32[64]) while(init), condition=cond$0, body=body$0
+  g$0 = f32[64] get-tuple-element(w$0), index=1)",
+                                              i));
+    results.push_back(absl::StrCat("g", i));
+  }
+  absl::StrAppend(
+      &hlo, R"(
+ENTRY entry {
+  p = f32[64] parameter(0)
+  zero = s32[] constant(0)
+  init = (s32[], f32[64]) tuple(zero, p))",
+      whiles, "\n  ROOT t = (",
+      absl::StrJoin(std::vector<std::string>(num_whiles, "f32[64]"), ", "),
+      ") tuple(", absl::StrJoin(results, ", "), ")\n}\n");
+  AliasInfo alias_info;
+  for (auto s : state) {
+    state.PauseTiming();
+    absl::StatusOr<std::unique_ptr<HloModule>> module =
+        ParseAndReturnUnverifiedModule(hlo);
+    ASSERT_IS_OK(module.status());
+    CopyInsertion copy_insertion(&alias_info,
+                                 /*use_region_based_live_range_analysis=*/-1);
+    state.ResumeTiming();
+    ASSERT_IS_OK(copy_insertion.Run(module->get()).status());
+  }
+}
+
 BENCHMARK(BM_SequentialWhiles)->Arg(512)->Arg(1024)->Arg(2048)->Arg(4096);
 BENCHMARK(BM_ParallelWhiles)->Arg(512)->Arg(1024)->Arg(2048)->Arg(4096);
 BENCHMARK(BM_ManyElementTuple)->Arg(1024)->Arg(12288);
+BENCHMARK(BM_ParallelWhilesRegionAnalysis)->Arg(64)->Arg(128)->Arg(256);
 
 TEST_F(CopyInsertionTest, SimpleControlFlowTest) {
   const std::string& hlo_string = R"(
@@ -4226,6 +4305,286 @@ ENTRY entry {
     EXPECT_EQ(count(stack_uses, reader), 1) << stack_uses;
     EXPECT_EQ(count(view_uses, reader), 1) << view_uses;
   }
+}
+
+// ValuesInterfere stops computing a relation once interference is certain,
+// which is exact only because a union never clears the overlap or the
+// interception of the relation it updates. Checks every reachable relation.
+TEST(CopyRemovalRelationTest, UnionNeverClearsOverlapOrInterception) {
+  std::vector<Relation> singles = {Relation()};
+  for (Relation::RuntimeOrder order :
+       {Relation::kNoOverlap, Relation::kSameInstr, Relation::kBeforeStart,
+        Relation::kBeforeStartOrSameInstr, Relation::kAfterEnd,
+        Relation::kAfterEndOrSameInstr, Relation::kBeforeStartOrAfterEnd,
+        Relation::kBeforeOrAfterOrOverlap}) {
+    for (bool intercept : {false, true}) {
+      singles.push_back(Relation(order, intercept));
+    }
+  }
+  std::vector<Relation> reached = {Relation()};
+  for (size_t i = 0; i < reached.size(); ++i) {
+    for (const Relation& single : singles) {
+      Relation updated = reached[i];
+      updated.UnionRelationFromDifferentSource(single);
+      if (reached[i].RuntimeOrderOverlap()) {
+        EXPECT_TRUE(updated.RuntimeOrderOverlap())
+            << reached[i].ToString() << " with " << single.ToString();
+      }
+      if (reached[i].InterceptDefUse()) {
+        EXPECT_TRUE(updated.InterceptDefUse())
+            << reached[i].ToString() << " with " << single.ToString();
+      }
+      if (!absl::c_linear_search(reached, updated)) {
+        reached.push_back(updated);
+      }
+    }
+  }
+}
+
+// A module with unordered instructions, a while condition and body,
+// conditional branches and an asynchronous call: the places where the orders
+// that ComputeRelativeLocation saved or forced can differ from plain ones.
+constexpr absl::string_view kSurelyInterferesHlo = R"(
+HloModule surely_interferes
+
+async_wrapped {
+  ap0 = f32[8] parameter(0)
+  ap1 = f32[8] parameter(1)
+  ROOT aadd = f32[8] add(ap0, ap1)
+}
+
+cond {
+  cp = (s32[], f32[8]) parameter(0)
+  ci = s32[] get-tuple-element(cp), index=0
+  climit = s32[] constant(4)
+  ROOT clt = pred[] compare(ci, climit), direction=LT
+}
+
+body {
+  bp = (s32[], f32[8]) parameter(0)
+  bi = s32[] get-tuple-element(bp), index=0
+  bv = f32[8] get-tuple-element(bp), index=1
+  one = s32[] constant(1)
+  binc = s32[] add(bi, one)
+  bneg = f32[8] negate(bv)
+  upd = f32[1] constant({2})
+  bdus = f32[8] dynamic-update-slice(bneg, upd, bi)
+  bside = f32[8] abs(bv)
+  ROOT bt = (s32[], f32[8]) tuple(binc, bdus)
+}
+
+on_true {
+  tp = f32[8] parameter(0)
+  tside = f32[8] negate(tp)
+  ROOT texp = f32[8] exponential(tp)
+}
+
+on_false {
+  fp = f32[8] parameter(0)
+  ROOT fsqrt = f32[8] sqrt(fp)
+}
+
+ENTRY entry {
+  p0 = f32[8] parameter(0)
+  p1 = pred[] parameter(1)
+  zero = s32[] constant(0)
+  x = f32[8] negate(p0)
+  y = f32[8] abs(p0)
+  init = (s32[], f32[8]) tuple(zero, x)
+  w = (s32[], f32[8]) while(init), condition=cond, body=body
+  wv = f32[8] get-tuple-element(w), index=1
+  c = f32[8] conditional(p1, wv, y), true_computation=on_true,
+      false_computation=on_false
+  start = ((f32[8], f32[8]), f32[8], u32[]) async-start(x, y),
+      calls=async_wrapped
+  z = f32[8] exponential(y)
+  done = f32[8] async-done(start), calls=async_wrapped
+  u = f32[8] add(c, done)
+  side = f32[8] negate(y)
+  ROOT t = (f32[8], f32[8], f32[8]) tuple(u, z, x)
+}
+)";
+
+// A dependency ordering, a post order schedule, and a schedule that runs each
+// root right after the instructions it depends on. Roots execute before
+// nothing, even when scheduled before other instructions.
+std::vector<std::unique_ptr<HloOrdering>> SurelyInterferesOrderings(
+    HloModule* module) {
+  std::vector<std::unique_ptr<HloOrdering>> orderings;
+  orderings.push_back(std::make_unique<DependencyHloOrdering>(module));
+  HloSchedule post_order(module);
+  HloSchedule root_early(module);
+  int64_t num_roots_not_last = 0;
+  for (HloComputation* computation : module->computations()) {
+    std::vector<HloInstruction*> sequence =
+        computation->MakeInstructionPostOrder();
+    post_order.set_sequence(computation, sequence);
+    HloInstruction* root = computation->root_instruction();
+    absl::flat_hash_set<const HloInstruction*> root_operands;
+    std::vector<const HloInstruction*> stack(root->operands().begin(),
+                                             root->operands().end());
+    while (!stack.empty()) {
+      const HloInstruction* instruction = stack.back();
+      stack.pop_back();
+      if (root_operands.insert(instruction).second) {
+        stack.insert(stack.end(), instruction->operands().begin(),
+                     instruction->operands().end());
+      }
+    }
+    absl::c_stable_partition(sequence, [&](const HloInstruction* instruction) {
+      return root_operands.contains(instruction);
+    });
+    sequence.erase(absl::c_find(sequence, root));
+    sequence.insert(sequence.begin() + root_operands.size(), root);
+    num_roots_not_last += sequence.back() != root;
+    root_early.set_sequence(computation, sequence);
+  }
+  CHECK_OK(root_early.Verify());
+  CHECK_GT(num_roots_not_last, 0);
+  orderings.push_back(std::make_unique<SequentialHloOrdering>(post_order));
+  orderings.push_back(std::make_unique<SequentialHloOrdering>(root_early));
+  return orderings;
+}
+
+// Live ranges of each value and of each two neighboring values, as
+// CopyRemover::ComputeLiveRangeRegions builds them.
+std::vector<LiveRangeRegions> ValueLiveRanges(
+    const HloDataflowAnalysis& dataflow) {
+  auto add_value = [](LiveRangeRegions& range, const HloValue* value) {
+    HloInstruction* def = value->defining_instruction();
+    range[def->parent()][def].is_definition = true;
+    for (const HloUse& use : value->GetUses()) {
+      range[use.instruction->parent()][use.instruction].value_definition = def;
+    }
+  };
+  const auto& values = dataflow.values();
+  std::vector<LiveRangeRegions> ranges;
+  for (int64_t i = 0; i < values.size(); ++i) {
+    add_value(ranges.emplace_back(), values[i]);
+    if (i + 1 < values.size()) {
+      LiveRangeRegions& range = ranges.emplace_back();
+      add_value(range, values[i]);
+      add_value(range, values[i + 1]);
+    }
+  }
+  return ranges;
+}
+
+// SurelyInterferes claims only what the full relations show, for monotone
+// predicates such as the ones CopyRemover::ValuesInterfere uses, and leaves no
+// state behind.
+TEST_F(CopyInsertionTest, SurelyInterferesClaimsOnlyWhatFullRelationsShow) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kSurelyInterferesHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  const std::vector<LiveRangeRegions> ranges =
+      ValueLiveRanges(alias_analysis->dataflow_analysis());
+  auto values_interfere = [](bool first_dest_in_source) {
+    return [first_dest_in_source](const Relation& rel1, const Relation& rel2) {
+      bool overlap1 = rel1.RuntimeOrderOverlap();
+      bool overlap2 = rel2.RuntimeOrderOverlap();
+      return (overlap1 && overlap2) ||
+             (overlap1 &&
+              (rel1.InterceptDefUse() ||
+               (!first_dest_in_source && rel2.InterceptDefUse()))) ||
+             (overlap2 && (rel2.InterceptDefUse() ||
+                           (first_dest_in_source && rel1.InterceptDefUse())));
+    };
+  };
+  const std::function<bool(const Relation&, const Relation&)> predicates[] = {
+      values_interfere(true), values_interfere(false),
+      [](const Relation& rel1, const Relation& rel2) {
+        return rel1.RuntimeOrderOverlap() || rel2.RuntimeOrderOverlap();
+      }};
+  auto never = [](const Relation&) { return false; };
+  int64_t num_surely = 0;
+  for (const std::unique_ptr<HloOrdering>& ordering :
+       SurelyInterferesOrderings(module.get())) {
+    for (const LiveRangeRegions& src : ranges) {
+      for (const LiveRangeRegions& dest : ranges) {
+        ComputeRelativeLocation full(ordering.get(), &alias_info_);
+        Relation rel1 = full.ComputeBetweenLiveRangeRegions(src, dest, never);
+        Relation rel2 = full.ComputeBetweenLiveRangeRegions(dest, src, never);
+        for (const auto& interferes : predicates) {
+          ComputeRelativeLocation analysis(ordering.get(), &alias_info_);
+          if (analysis.SurelyInterferes(src, dest, interferes)) {
+            ++num_surely;
+            EXPECT_TRUE(interferes(rel1, rel2))
+                << "src:\n"
+                << src.ToString() << "dest:\n"
+                << dest.ToString() << rel1.ToString() << rel2.ToString();
+          }
+          Relation again1 =
+              analysis.ComputeBetweenLiveRangeRegions(src, dest, never);
+          Relation again2 =
+              analysis.ComputeBetweenLiveRangeRegions(dest, src, never);
+          EXPECT_TRUE(again1 == rel1) << again1.ToString() << rel1.ToString();
+          EXPECT_TRUE(again2 == rel2) << again2.ToString() << rel2.ToString();
+        }
+      }
+    }
+  }
+  EXPECT_GT(num_surely, 0);
+}
+
+// The orders SurelyInterferes uses are the ones ComputeRuntimeOrdering returns
+// after relating live ranges in both directions, which saves and forces
+// orders, and after asking for every pair in either direction first, which
+// makes later answers reverse the saved ones.
+TEST_F(CopyInsertionTest, StateIndependentOrdersHoldAfterSavedAndForcedOrders) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kSurelyInterferesHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  const std::vector<LiveRangeRegions> ranges =
+      ValueLiveRanges(alias_analysis->dataflow_analysis());
+  auto never = [](const Relation&) { return false; };
+  int64_t num_checked = 0;
+  for (const std::unique_ptr<HloOrdering>& ordering :
+       SurelyInterferesOrderings(module.get())) {
+    for (const LiveRangeRegions& src : ranges) {
+      for (const LiveRangeRegions& dest : ranges) {
+        ComputeRelativeLocation analysis(ordering.get(), &alias_info_);
+        analysis.ComputeBetweenLiveRangeRegions(src, dest, never);
+        analysis.ComputeBetweenLiveRangeRegions(dest, src, never);
+        std::vector<HloInstruction*> instructions;
+        for (const LiveRangeRegions* range : {&src, &dest}) {
+          for (const HloComputation* computation : *range) {
+            for (const auto& [instruction, info] : (*range)[computation]) {
+              instructions.push_back(instruction);
+            }
+          }
+        }
+        for (bool reversed_first : {false, true}) {
+          ComputeRelativeLocation state = analysis;
+          for (HloInstruction* instr1 : instructions) {
+            for (HloInstruction* instr2 : instructions) {
+              ComputeRelativeLocationTestPeer::ComputeRuntimeOrdering(
+                  state, reversed_first ? instr2 : instr1,
+                  reversed_first ? instr1 : instr2);
+            }
+          }
+          for (HloInstruction* instr1 : instructions) {
+            for (HloInstruction* instr2 : instructions) {
+              std::optional<Relation::RuntimeOrder> order =
+                  ComputeRelativeLocationTestPeer::
+                      StateIndependentRuntimeOrdering(state, instr1, instr2);
+              if (!order.has_value()) {
+                continue;
+              }
+              ++num_checked;
+              EXPECT_EQ(ComputeRelativeLocationTestPeer::ComputeRuntimeOrdering(
+                            state, instr1, instr2),
+                        *order)
+                  << instr1->name() << " vs " << instr2->name();
+            }
+          }
+        }
+      }
+    }
+  }
+  EXPECT_GT(num_checked, 0);
 }
 
 TEST_F(CopyInsertionTest, InPlaceCollectivePermuteCopy) {
