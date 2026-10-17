@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/stream_executor/sycl/oneapi_compute_capability.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
@@ -1761,10 +1762,14 @@ absl::StatusOr<bool> CudnnFusedConvRewriter::RunImpl(
     ABSL_ASSIGN_OR_RETURN(changed, FuseLeakyRelu(comp, compute_capability_));
     any_changed |= changed;
 
-    // Check that we don't have any convs outputting integer types other than
-    // s8 - cudnn does not support these.  They should have been transformed to
-    // int8->int8 or int8->float above.
-    ABSL_RETURN_IF_ERROR(CheckNoIllegalIntegerConvs(comp));
+    // Skip integer conv legality check for oneAPI; the restriction is
+    // cuDNN-specific.
+    if (!compute_capability_.IsOneAPI()) {
+      // Check that we don't have any convs outputting integer types other than
+      // s8 - cudnn does not support these.  They should have been transformed
+      // to int8->int8 or int8->float above.
+      ABSL_RETURN_IF_ERROR(CheckNoIllegalIntegerConvs(comp));
+    }
   }
 
   VlogStats(module);
