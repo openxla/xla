@@ -1311,6 +1311,34 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskShape) {
                             "length: 8, but got 16.")));
 }
 
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetVerificationWorks) {
+  Value src = ConstantI1Vector(/*shape=*/{4, 8}, /*values=*/{true});
+  Type dst = VectorType::get(/*shape=*/{4, 1}, /*type=*/i32());
+
+  ASSERT_OK(VerifyOp(Create<ReduceOp>(dst, src, ArrayRef<int64_t>{1},
+                                      ReductionKind::kFindFirstSet)));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetInvalidInputType) {
+  Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{1}, /*type=*/i32());
+
+  ASSERT_THAT(VerifyOp(Create<ReduceOp>(dst, src, ArrayRef<int64_t>{0},
+                                        ReductionKind::kFindFirstSet)),
+              StatusIs(_, HasSubstr("find_first_set requires i1 input and i32 "
+                                    "output element types")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetInvalidOutputType) {
+  Value src = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
+  Type dst = VectorType::get(/*shape=*/{1}, /*type=*/builder().getI1Type());
+
+  ASSERT_THAT(VerifyOp(Create<ReduceOp>(dst, src, ArrayRef<int64_t>{0},
+                                        ReductionKind::kFindFirstSet)),
+              StatusIs(_, HasSubstr("find_first_set requires i1 input and i32 "
+                                    "output element types")));
+}
+
 TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidDimension) {
   Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
   Type dst = VectorType::get(/*shape=*/{8}, /*type=*/builder().getI32Type());
