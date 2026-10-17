@@ -89,6 +89,11 @@ absl::StatusOr<bool> CombineConstants(
 
     HloInstruction* match = nullptr;
     if (auto* constant_inst = DynCast<HloConstantInstruction>(instruction)) {
+      // Replacing control-dependent constants or using them as representatives
+      // can discard ordering constraints or introduce cycles.
+      if (instruction->HasControlDependencies()) {
+        continue;
+      }
       auto [it, did_insert] = constants.insert(
           {CseConstantKey<kIsLayoutSensitive>{
                constant_inst->literal(), constant_inst->shape(),
