@@ -17,7 +17,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <thread>
 #include <utility>
 
 #include <gmock/gmock.h>
@@ -33,6 +32,7 @@ limitations under the License.
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/bfc_allocator.h"
 #include "xla/tsl/framework/device_id.h"
+#include "xla/tsl/platform/env.h"
 
 // Include NCCL after XLA headers.
 #include "third_party/nccl/nccl.h"
@@ -45,10 +45,10 @@ class CudaBfcSymmetricGrowthTest : public ::testing::Test {
  protected:
   template <typename F>
   void OnBothRanks(F function) {
-    std::thread first([&] { function(0); });
-    std::thread second([&] { function(1); });
-    first.join();
-    second.join();
+    std::unique_ptr<tsl::Thread> first(tsl::Env::Default()->StartThread(
+        tsl::ThreadOptions(), "rank_0", [&] { function(0); }));
+    std::unique_ptr<tsl::Thread> second(tsl::Env::Default()->StartThread(
+        tsl::ThreadOptions(), "rank_1", [&] { function(1); }));
   }
 
   void SetUp() override {
