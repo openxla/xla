@@ -48,7 +48,13 @@ message DeviceInterconnectInfoProto {
   string clique_id = 3;
 }
 
-// Next ID: 49
+message DataCacheInfoProto {
+  int32 level = 1;
+  int64 size_bytes = 2;
+  int32 num_instances = 3;
+}
+
+// Next ID: 50
 message GpuDeviceInfoProto {
   string device_vendor = 30;
   string platform_version = 31;
@@ -66,7 +72,8 @@ message GpuDeviceInfoProto {
   int64 block_dim_limit_y = 9;
   int64 block_dim_limit_z = 10;
   int64 memory_bandwidth = 11;
-  int64 l2_cache_size = 12;
+  reserved 12;  // was l2_cache_size
+  reserved "l2_cache_size";
   float clock_rate_ghz = 13;
   int64 device_memory_size = 14;
   int32 shared_memory_per_block_optin = 15;
@@ -100,6 +107,7 @@ message GpuDeviceInfoProto {
   int64 collective_memory_granularity = 46;
   int64 oversized_shared_memory_per_block = 47;
   bool confidential_computing_enabled = 48;
+  repeated DataCacheInfoProto data_caches = 49;
 }
 
 message RuntimeVersionProto {
