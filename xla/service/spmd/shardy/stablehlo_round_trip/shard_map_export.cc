@@ -220,43 +220,41 @@ void setFuncManualAxesRecursively(
     FuncOp funcOp, ManualAxesAttr manualAxes, Attribute meshOrRef,
     const mlir::SymbolTable& symbolTable,
     ManualComputationToParentManualAxes& parentManualCompAxes) {
-  llvm::SmallVector<mlir::DictionaryAttr> funcArgAttrs;
-  funcArgAttrs.reserve(funcOp.getNumArguments());
-  for (int argNum = 0; argNum < funcOp.getNumArguments(); argNum++) {
-    mlir::NamedAttrList attrs(funcOp.getArgAttrDict(argNum));
-    if (!attrs.get(kShardingAttr)) {
-      attrs.set(
-          kShardingAttr,
-          TensorShardingAttr::getFullyReplicated(
-              funcOp->getContext(),
-              mlir::sdy::getTensorRank(funcOp.getArgument(argNum)), meshOrRef,
-              /*isClosed=*/true));
-    }
-    attrs.set(kManualAxes, manualAxes);
-    funcArgAttrs.push_back(attrs.getDictionary(funcOp.getContext()));
-  }
-  funcOp.setAllArgAttrs(funcArgAttrs);
+  mlir::sdy::modifyAllArgAttrs(
+      funcOp, [&](mlir::NamedAttrList& attrs, int64_t argNum) {
+        bool changed = false;
+        if (!attrs.get(kShardingAttr)) {
+          attrs.set(kShardingAttr,
+                    TensorShardingAttr::getFullyReplicated(
+                        funcOp->getContext(),
+                        mlir::sdy::getTensorRank(funcOp.getArgument(argNum)),
+                        meshOrRef, /*isClosed=*/true));
+          changed = true;
+        }
+        if (attrs.get(kManualAxes) != manualAxes) {
+          attrs.set(kManualAxes, manualAxes);
+          changed = true;
+        }
+        return changed;
+      });
 
-  // TODO(b/510714593): Create a shardy utility to modify func arg/result
-  // attributes as below but in a more general way and re-use it.
-  llvm::SmallVector<mlir::DictionaryAttr> newResultAttrs;
-  newResultAttrs.reserve(funcOp.getNumResults());
-  for (int resNum = 0; resNum < funcOp.getNumResults(); resNum++) {
-    mlir::NamedAttrList attrs(funcOp.getResultAttrDict(resNum));
+  mlir::sdy::modifyAllResultAttrs(funcOp, [&](mlir::NamedAttrList& attrs,
+                                              int64_t resNum) {
+    bool changed = false;
     if (!attrs.get(kShardingAttr)) {
       attrs.set(kShardingAttr,
                 TensorShardingAttr::getFullyReplicated(
                     funcOp->getContext(),
                     mlir::sdy::getTensorRank(funcOp.getResultTypes()[resNum]),
-                    meshOrRef,
-                    /*isClosed=*/true));
+                    meshOrRef, /*isClosed=*/true));
+      changed = true;
     }
     if (attrs.get(kManualAxes) != manualAxes) {
       attrs.set(kManualAxes, manualAxes);
+      changed = true;
     }
-    newResultAttrs.push_back(attrs.getDictionary(funcOp.getContext()));
-  }
-  funcOp.setAllResultAttrs(newResultAttrs);
+    return changed;
+  });
 
   // Walk in preorder of blocks in order to stop walks on manual computations.
   funcOp->walk<mlir::WalkOrder::PreOrder>([&](Operation* op) {
@@ -401,42 +399,32 @@ void convertManualComputationOp(
   setNonEmptyManualAxes(callOp, regionManualAxesAttr);
   sdy::inlineRegionAndConvertTerminatorOp<mlir::func::ReturnOp>(
       op.getBody(), funcOp.getBody());
-  // TODO(b/5107145930): Use a shardy utility to batch set argument attributes.
-  llvm::SmallVector<mlir::DictionaryAttr> funcArgAttrs;
-  funcArgAttrs.reserve(funcOp.getNumArguments());
-  bool anyChanged = false;
-  for (auto [blockArg, sharding] : llvm::zip_equal(
-           funcOp.getArguments(), op.getInShardings().getShardings())) {
-    mlir::NamedAttrList attrs(funcOp.getArgAttrDict(blockArg.getArgNumber()));
-    if (sharding) {
+  ArrayRef<TensorShardingAttr> inShardings = op.getInShardings().getShardings();
+  mlir::sdy::modifyAllArgAttrs(funcOp, [&](mlir::NamedAttrList& attrs,
+                                           int64_t argNum) {
+    if (TensorShardingAttr sharding = inShardings[argNum]) {
       attrs.set(kShardingAttr, eraseManualAxes(sharding, manualAxes.region));
       if (!regionManualAxesAttr.empty()) {
         attrs.set(kManualAxes, regionManualAxesAttr);
       }
-      anyChanged = true;
+      return true;
     }
-    funcArgAttrs.push_back(attrs.getDictionary(funcOp.getContext()));
-  }
-  if (anyChanged) {
-    funcOp.setAllArgAttrs(funcArgAttrs);
-  }
+    return false;
+  });
 
-  // TODO(b/510714593): Create a shardy utility to modify func arg/result
-  // attributes as below but in a more general way and re-use it.
-  llvm::SmallVector<mlir::DictionaryAttr> newResultAttrs;
-  newResultAttrs.reserve(op.getNumResults());
-  for (auto [i, sharding] :
-       llvm::enumerate(op.getOutShardings().getShardings())) {
-    mlir::NamedAttrList attrs;
-    if (sharding) {
+  ArrayRef<TensorShardingAttr> outShardings =
+      op.getOutShardings().getShardings();
+  mlir::sdy::modifyAllResultAttrs(funcOp, [&](mlir::NamedAttrList& attrs,
+                                              int64_t resNum) {
+    if (TensorShardingAttr sharding = outShardings[resNum]) {
       attrs.set(kShardingAttr, eraseManualAxes(sharding, manualAxes.region));
       if (!regionManualAxesAttr.empty()) {
         attrs.set(kManualAxes, regionManualAxesAttr);
       }
+      return true;
     }
-    newResultAttrs.push_back(attrs.getDictionary(funcOp.getContext()));
-  }
-  funcOp.setAllResultAttrs(newResultAttrs);
+    return false;
+  });
 
   SmallVector<TensorShardingAttr> erasedManualAxisOutShardings;
   erasedManualAxisOutShardings.reserve(op.getNumResults());

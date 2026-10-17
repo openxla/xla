@@ -386,48 +386,38 @@ void convertShardyAttrsWithoutHloShardingV3(FuncOp funcOp,
   // copying the result shardings.
   StringRef attributeName =
       xla::ToStringRef(HloSharding::kShardingFrontendAttrName);
-  llvm::SmallVector<mlir::DictionaryAttr> funcArgAttrs;
-  funcArgAttrs.reserve(funcOp.getNumArguments());
-  for (int64_t argNum = 0; argNum < funcOp.getNumArguments(); argNum++) {
-    // Attempt to extract the TensorShardingAttr from the frontend attributes
-    // of the function argument/result.
-    // TODO(b/510714593): Batch remove/set attributes through a shardy utility.
-    mlir::NamedAttrList attrs(funcOp.getArgAttrDict(argNum));
-    if (DictionaryAttr dictAttr = getFuncArgFrontendAttrs(funcOp, argNum)) {
-      if (auto sharding =
-              parseStringAttr<TensorShardingAttr>(dictAttr, attributeName)) {
-        attrs.set(kShardingAttr, sharding);
-        llvm::SmallVector<NamedAttribute> existingAttributes =
-            getExistingFrontendAttributes(dictAttr,
-                                          /*excludedAttribute=*/attributeName);
-        if (!existingAttributes.empty()) {
-          attrs.set(
-              kFrontendAttributesAttr,
-              DictionaryAttr::get(funcOp.getContext(), existingAttributes));
-        } else {
-          attrs.erase(kFrontendAttributesAttr);
+  mlir::sdy::modifyAllArgAttrs(
+      funcOp, [&](mlir::NamedAttrList& attrs, int64_t argNum) {
+        bool changed = false;
+        if (DictionaryAttr dictAttr = getFuncArgFrontendAttrs(funcOp, argNum)) {
+          if (auto sharding = parseStringAttr<TensorShardingAttr>(
+                  dictAttr, attributeName)) {
+            attrs.set(kShardingAttr, sharding);
+            llvm::SmallVector<NamedAttribute> existingAttributes =
+                getExistingFrontendAttributes(
+                    dictAttr, /*excludedAttribute=*/attributeName);
+            if (!existingAttributes.empty()) {
+              attrs.set(
+                  kFrontendAttributesAttr,
+                  DictionaryAttr::get(funcOp.getContext(), existingAttributes));
+            } else {
+              attrs.erase(kFrontendAttributesAttr);
+            }
+            changed = true;
+          }
         }
-      }
-    }
-    attrs.erase(kXlaShardingAttr);
-    funcArgAttrs.push_back(attrs.getDictionary(funcOp.getContext()));
-  }
-  funcOp.setAllArgAttrs(funcArgAttrs);
+        if (attrs.erase(kXlaShardingAttr)) {
+          changed = true;
+        }
+        return changed;
+      });
 
   // Due to `SdyRoundTripExportShardingsPass` keeping `kXlaShardingAttr`, remove
   // them purely for cleanliness of the module.
-  llvm::SmallVector<mlir::DictionaryAttr> newResultAttrs;
-  newResultAttrs.reserve(funcOp.getNumResults());
-  for (int64_t resNum = 0; resNum < funcOp.getNumResults(); ++resNum) {
-    mlir::DictionaryAttr dict = funcOp.getResultAttrDict(resNum);
-    mlir::NamedAttrList attrs(dict);
-    if (attrs.erase(kXlaShardingAttr)) {
-      newResultAttrs.push_back(attrs.getDictionary(funcOp.getContext()));
-    } else {
-      newResultAttrs.push_back(dict);
-    }
-  }
-  funcOp.setAllResultAttrs(newResultAttrs);
+  mlir::sdy::modifyAllResultAttrs(
+      funcOp, [&](mlir::NamedAttrList& attrs, int64_t /*resNum*/) {
+        return static_cast<bool>(attrs.erase(kXlaShardingAttr));
+      });
 
   if (funcOp.isExternal()) {
     return;
