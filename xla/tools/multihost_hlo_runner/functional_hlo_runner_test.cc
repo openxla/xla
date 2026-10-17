@@ -46,6 +46,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "riegeli/records/record_reader.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/protobuf.h"
@@ -57,6 +58,7 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/mock_pjrt_client.h"
@@ -70,6 +72,7 @@ limitations under the License.
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/platform_util.h"
+#include "xla/service/riegeli_file_reader_factory.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/shape_util.h"
@@ -1600,6 +1603,59 @@ TEST_F(FunctionalHloRunnerTest,
   EXPECT_TRUE(first_arg_transfer_finished.load());
 }
 
+TEST_F(FunctionalHloRunnerTest, DumpOutputAsRiegeli) {
+  ASSERT_OK_AND_ASSIGN(
+      tsl::testing::TemporaryDirectory temp_dir,
+      tsl::testing::TemporaryDirectory::CreateForCurrentTestcase());
+  std::string dump_output_to =
+      tsl::io::JoinPath(temp_dir.path(), "output.riegeli");
+
+  FunctionalHloRunner::PerDeviceLiteralVecType output;
+  output[0].push_back(LiteralUtil::CreateR1<float>({1.0f, 2.0f}));
+  output[0].push_back(LiteralUtil::CreateR1<int32_t>({3, 4, 5}));
+  output[1].push_back(LiteralUtil::CreateR0<float>(42.0f));
+
+  ASSERT_THAT(
+      FunctionalHloRunner::DumpOutput(output, dump_output_to,
+                                      /*task_id=*/2, OutputFormat::kRiegeli),
+      absl_testing::IsOk());
+
+  std::string dev0_path =
+      tsl::io::JoinPath(temp_dir.path(), "output.task_2.device_0.riegeli");
+  std::string dev1_path =
+      tsl::io::JoinPath(temp_dir.path(), "output.task_2.device_1.riegeli");
+
+  {
+    riegeli::RecordReader reader(CreateRiegeliFileReader(dev0_path));
+    ASSERT_THAT(reader.status(), absl_testing::IsOk());
+    LiteralProto proto0;
+    ASSERT_TRUE(reader.ReadRecord(proto0));
+    ASSERT_OK_AND_ASSIGN(Literal lit0, Literal::CreateFromProto(proto0));
+    EXPECT_EQ(lit0, output[0][0]);
+
+    LiteralProto proto1;
+    ASSERT_TRUE(reader.ReadRecord(proto1));
+    ASSERT_OK_AND_ASSIGN(Literal lit1, Literal::CreateFromProto(proto1));
+    EXPECT_EQ(lit1, output[0][1]);
+
+    LiteralProto extra;
+    EXPECT_FALSE(reader.ReadRecord(extra));
+    ASSERT_TRUE(reader.Close()) << reader.status();
+  }
+
+  {
+    riegeli::RecordReader reader(CreateRiegeliFileReader(dev1_path));
+    ASSERT_THAT(reader.status(), absl_testing::IsOk());
+    LiteralProto proto0;
+    ASSERT_TRUE(reader.ReadRecord(proto0));
+    ASSERT_OK_AND_ASSIGN(Literal lit0, Literal::CreateFromProto(proto0));
+    EXPECT_EQ(lit0, output[1][0]);
+
+    LiteralProto extra;
+    EXPECT_FALSE(reader.ReadRecord(extra));
+    ASSERT_TRUE(reader.Close()) << reader.status();
+  }
+}
 }  // namespace
 }  // namespace xla
 
