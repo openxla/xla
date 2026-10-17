@@ -13,9 +13,12 @@
 # limitations under the License.
 # ==============================================================================
 
+load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
+load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/tests:build_defs.bzl", "xla_test")
-load("//xla/tsl:tsl.bzl", "if_google")
+load("//xla/tsl:tsl.bzl", "if_cuda_or_rocm", "if_google")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -30,12 +33,19 @@ cc_library(
         "xla_gpu_pjrt_client.cc",
     ],
     hdrs = ["xla_gpu_pjrt_client.h"],
+    defines = if_cuda(["GOOGLE_CUDA=1"]) + if_rocm(["TENSORFLOW_USE_ROCM=1"]) + if_sycl([
+        "TENSORFLOW_USE_SYCL=1",
+    ]),
     deps = [
         ":xla_gpu_client_options",
         "//xla/pjrt:pjrt_client",
-        "//xla/pjrt/gpu:se_gpu_pjrt_client",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-    ],
+    ] + if_cuda_or_rocm([
+        "//xla/pjrt/gpu:se_gpu_pjrt_client",
+    ]) + if_sycl([
+        "//xla/pjrt/gpu:se_gpu_pjrt_client",
+    ]),
 )
 
 cc_library(
