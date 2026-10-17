@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -25,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -38,14 +40,20 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/test.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/literal_util.h"
+#include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/pjrt/transpose.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
@@ -929,6 +937,217 @@ INSTANTIATE_TEST_SUITE_P(
             PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes,
             true, "ImmutableUntilTransferCompletes_Transpose"}),
     PrintLinearizePackTestParam);
+
+absl::StatusOr<std::shared_ptr<Literal>> RoundTripHostBuffer(
+    PjRtClient* client, PjRtMemorySpace* memory_space, const void* data,
+    const Shape& shape,
+    std::optional<absl::Span<int64_t const>> byte_strides = std::nullopt,
+    PjRtClient::HostBufferSemantics semantics =
+        PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+    const Layout* device_layout = nullptr) {
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostBuffer(data, shape.element_type(),
+                                   shape.dimensions(), byte_strides, semantics,
+                                   /*on_done_with_host_buffer=*/nullptr,
+                                   memory_space, device_layout));
+  ABSL_RETURN_IF_ERROR(buffer->GetReadyFuture().Await());
+  return buffer->ToLiteral().Await();
+}
+
+TEST(PjRtClientTest, ChunkedLinearizeAndDelinearizeRoundTrip) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client, GetClient());
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+  ASSERT_FALSE(client->addressable_devices().empty());
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * memory_space,
+      client->addressable_devices()[0]->default_memory_space());
+
+  // 1. 2D shapes exceeding 8 MiB (4 * 2 MiB default chunk size) with partial
+  // trailing chunks across F32, BF16, S8, and sub-byte S4.
+  for (const Shape& shape : {
+           ShapeUtil::MakeShape(F32, {2048, 1025}),
+           ShapeUtil::MakeShape(BF16, {2048, 2050}),
+           ShapeUtil::MakeShape(S8, {2048, 4100}),
+           ShapeUtil::MakeShape(S4, {2048, 8200}),
+       }) {
+    SCOPED_TRACE(shape.ToString(true));
+    ASSERT_OK_AND_ASSIGN(Literal src_literal, MakeFakeLiteral(shape));
+    for (PjRtClient::HostBufferSemantics semantics :
+         {PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes}) {
+      ASSERT_OK_AND_ASSIGN(
+          std::shared_ptr<Literal> dst_literal,
+          RoundTripHostBuffer(client.get(), memory_space,
+                              src_literal.untyped_data(), shape,
+                              /*byte_strides=*/std::nullopt, semantics));
+      EXPECT_TRUE(LiteralTestUtil::Equal(src_literal, *dst_literal));
+    }
+  }
+
+  // 2. Custom host byte strides: column-major and row-padded host buffers.
+  constexpr int64_t kRows = 2048;
+  constexpr int64_t kCols = 1536;
+  Shape col_major_shape =
+      ShapeUtil::MakeShapeWithDenseLayout(F32, {kRows, kCols}, {0, 1});
+  ASSERT_OK_AND_ASSIGN(Literal col_major_literal,
+                       MakeFakeLiteral(col_major_shape));
+  Literal expected_literal =
+      col_major_literal.Relayout(LayoutUtil::MakeDescendingLayout(2));
+
+  const std::vector<int64_t> col_major_strides = {sizeof(float),
+                                                  kRows * sizeof(float)};
+  ASSERT_OK_AND_ASSIGN(
+      std::shared_ptr<Literal> dst_col_major,
+      RoundTripHostBuffer(client.get(), memory_space,
+                          col_major_literal.untyped_data(),
+                          expected_literal.shape(), col_major_strides));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_literal, *dst_col_major));
+
+  constexpr int64_t kPaddedCols = kCols + 64;
+  std::vector<float> padded_host(kRows * kPaddedCols, -999.0f);
+  const float* src_row_major = expected_literal.data<float>().data();
+  for (int64_t r = 0; r < kRows; ++r) {
+    std::memcpy(&padded_host[r * kPaddedCols], &src_row_major[r * kCols],
+                kCols * sizeof(float));
+  }
+  const std::vector<int64_t> padded_strides = {kPaddedCols * sizeof(float),
+                                               sizeof(float)};
+  ASSERT_OK_AND_ASSIGN(
+      std::shared_ptr<Literal> dst_padded,
+      RoundTripHostBuffer(client.get(), memory_space, padded_host.data(),
+                          expected_literal.shape(), padded_strides));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_literal, *dst_padded));
+
+  auto make_tiled_device_shape =
+      [&](const Shape& logical_shape,
+          const Layout* layout) -> absl::StatusOr<Shape> {
+    ABSL_ASSIGN_OR_RETURN(Shape dev_shape,
+                          common_client->MakeDefaultShapeForMemorySpace(
+                              memory_space, logical_shape, layout));
+    if (logical_shape.element_type() == S4) {
+      dev_shape.mutable_layout()->mutable_tiles()->assign(
+          {Tile({8, 128}), Tile({8, 1})});
+      dev_shape.mutable_layout()->set_element_size_in_bits(4);
+    } else if (dev_shape.layout().tiles().empty()) {
+      if (logical_shape.element_type() == BF16) {
+        dev_shape.mutable_layout()->mutable_tiles()->assign(
+            {Tile({8, 128}), Tile({2, 1})});
+      } else {
+        dev_shape.mutable_layout()->mutable_tiles()->assign({Tile({8, 128})});
+      }
+    }
+    return dev_shape;
+  };
+
+  // 3. 3D and 4D shapes exceeding 2 MiB with default and non-default device
+  // layouts.
+  for (const Shape& shape : {
+           ShapeUtil::MakeShape(F32, {4, 512, 1025}),
+           ShapeUtil::MakeShape(BF16, {4, 16, 128, 257}),
+           ShapeUtil::MakeShape(S4, {4, 16, 128, 1026}),
+           ShapeUtil::MakeShapeWithDenseLayout(F32, {4, 512, 1025}, {1, 2, 0}),
+           ShapeUtil::MakeShapeWithDenseLayout(BF16, {4, 16, 129, 256},
+                                               {2, 3, 0, 1}),
+       }) {
+    SCOPED_TRACE(shape.ToString(true));
+    Shape host_shape =
+        ShapeUtil::MakeShape(shape.element_type(), shape.dimensions());
+    ASSERT_OK_AND_ASSIGN(Literal src_literal, MakeFakeLiteral(host_shape));
+    const Layout* device_layout =
+        shape.layout() != host_shape.layout() ? &shape.layout() : nullptr;
+    ASSERT_OK_AND_ASSIGN(Shape device_shape,
+                         make_tiled_device_shape(host_shape, device_layout));
+    std::unique_ptr<TransposePlan> lin_plan =
+        common_client->CreateChunkedTransposePlan(
+            /*is_h2d=*/true, host_shape, /*host_byte_strides=*/std::nullopt,
+            device_shape);
+    ASSERT_NE(lin_plan, nullptr);
+    const int num_chunks = lin_plan->Parallelism();
+    EXPECT_GT(num_chunks, 1);
+    EXPECT_EQ(lin_plan->OutputChunkOffsetBytes(num_chunks - 1) +
+                  lin_plan->OutputChunkSizeBytes(num_chunks - 1),
+              ShapeUtil::ArraySize(device_shape));
+    std::unique_ptr<TransposePlan> delin_plan =
+        common_client->CreateChunkedTransposePlan(
+            /*is_h2d=*/false, host_shape, /*host_byte_strides=*/std::nullopt,
+            device_shape);
+    if (shape.element_type() == S4) {
+      EXPECT_EQ(delin_plan, nullptr);
+      Shape unpacked_s4 = device_shape;
+      unpacked_s4.mutable_layout()->mutable_tiles()->resize(1);
+      EXPECT_EQ(common_client->CreateChunkedTransposePlan(
+                    /*is_h2d=*/true, host_shape,
+                    /*host_byte_strides=*/std::nullopt, unpacked_s4),
+                nullptr);
+      std::vector<uint8_t> expected(ShapeUtil::ArraySize(device_shape));
+      std::vector<uint8_t> actual(expected.size());
+      lin_plan->Execute(src_literal.untyped_data(), expected.data());
+      for (int i = 0; i < num_chunks; ++i) {
+        lin_plan->ExecuteChunk(
+            i, src_literal.untyped_data(),
+            actual.data() + lin_plan->OutputChunkOffsetBytes(i),
+            /*input_is_global=*/true, /*output_is_global=*/false);
+      }
+      EXPECT_EQ(actual, expected);
+    } else {
+      ASSERT_NE(delin_plan, nullptr);
+      EXPECT_EQ(delin_plan->Parallelism(), num_chunks);
+    }
+
+    for (PjRtClient::HostBufferSemantics semantics :
+         {PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes}) {
+      ASSERT_OK_AND_ASSIGN(
+          std::shared_ptr<Literal> dst_literal,
+          RoundTripHostBuffer(client.get(), memory_space,
+                              src_literal.untyped_data(), host_shape,
+                              /*byte_strides=*/std::nullopt, semantics,
+                              device_layout));
+      EXPECT_TRUE(LiteralTestUtil::Equal(src_literal, *dst_literal));
+    }
+  }
+
+  // 4. Fallback conditions: <= 2 MiB tensor, dynamic shape, and unaligned
+  // sublane dimension.
+  Shape small_host_shape = ShapeUtil::MakeShape(BF16, {256, 4096});  // 2 MiB
+  ASSERT_OK_AND_ASSIGN(
+      Shape small_device_shape,
+      make_tiled_device_shape(small_host_shape, /*layout=*/nullptr));
+  EXPECT_EQ(common_client->CreateChunkedTransposePlan(
+                /*is_h2d=*/true, small_host_shape,
+                /*host_byte_strides=*/std::nullopt, small_device_shape),
+            nullptr);
+
+  Shape unaligned_sublane = ShapeUtil::MakeShapeWithDenseLayout(
+      BF16, {2, 16, 128, 257}, {2, 3, 0, 1});
+  Shape host_shape = ShapeUtil::MakeShape(BF16, {2, 16, 128, 257});
+  ASSERT_OK_AND_ASSIGN(
+      Shape unaligned_device_shape,
+      make_tiled_device_shape(host_shape, &unaligned_sublane.layout()));
+  EXPECT_EQ(common_client->CreateChunkedTransposePlan(
+                /*is_h2d=*/true, host_shape, /*host_byte_strides=*/std::nullopt,
+                unaligned_device_shape),
+            nullptr);
+
+  ASSERT_OK_AND_ASSIGN(Shape dyn_device_shape,
+                       make_tiled_device_shape(host_shape, /*layout=*/nullptr));
+  dyn_device_shape.set_dynamic_dimension(0, true);
+  EXPECT_EQ(common_client->CreateChunkedTransposePlan(
+                /*is_h2d=*/true, host_shape, /*host_byte_strides=*/std::nullopt,
+                dyn_device_shape),
+            nullptr);
+
+  ASSERT_OK_AND_ASSIGN(Literal src_literal, MakeFakeLiteral(host_shape));
+  ASSERT_OK_AND_ASSIGN(
+      std::shared_ptr<Literal> dst_literal,
+      RoundTripHostBuffer(
+          client.get(), memory_space, src_literal.untyped_data(), host_shape,
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          &unaligned_sublane.layout()));
+  EXPECT_TRUE(LiteralTestUtil::Equal(src_literal, *dst_literal));
+}
 
 }  // namespace
 }  // namespace xla
