@@ -140,7 +140,7 @@ absl::Status RewriteScaledDot(
     HloComputation* computation, HloCallInstruction* call,
     const DotDimensionNumbers& dot_dimension_numbers) {
   PrecisionConfig precision{};
-  precision.mutable_operand_precision()->Resize(2, PrecisionConfig::DEFAULT);
+  precision.mutable_operand_precision()->resize(2, PrecisionConfig::DEFAULT);
   auto* scaled_dot =
       computation->AddInstruction(HloInstruction::CreateScaledDot(
           call->shape(), call->mutable_operand(0), call->mutable_operand(1),
