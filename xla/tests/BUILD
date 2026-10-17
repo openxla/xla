@@ -2781,6 +2781,7 @@ xla_test(
         "//xla/tsl/platform:logging",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@ml_dtypes_py//ml_dtypes:float8",
