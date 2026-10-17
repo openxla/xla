@@ -237,6 +237,53 @@ LogicalResult reduce_downgrade(Operation* op, int version, bool&) {
   return success();
 }
 
+LogicalResult all_reduce_upgrade(Operation* op, int version, bool&) {
+  if (version < 19) {
+    if (op->getNumOperands() == 0) {
+      return op->emitError("Missing input operand for all_reduce operation");
+    }
+    const auto input_type = dyn_cast<VectorType>(op->getOperand(0).getType());
+    if (!input_type) {
+      return op->emitError("Invalid input type for all_reduce operation");
+    }
+    const auto dim_attr = op->getAttrOfType<IntegerAttr>("dim");
+    if (!dim_attr ||
+        dim_attr.getType() != IntegerType::get(op->getContext(), 64)) {
+      return op->emitError("Missing or invalid dim attribute");
+    }
+    const int64_t dim = dim_attr.getInt();
+    op->removeAttr("dim");
+    op->setAttr("dimensions", DenseI64ArrayAttr::get(op->getContext(), {dim}));
+  }
+  return success();
+}
+
+LogicalResult all_reduce_downgrade(Operation* op, int version, bool&) {
+  if (version < 19) {
+    if (op->getNumOperands() == 0) {
+      return op->emitError("Missing input operand for all_reduce operation");
+    }
+    const auto input_type = dyn_cast<VectorType>(op->getOperand(0).getType());
+    if (!input_type) {
+      return op->emitError("Invalid input type for all_reduce operation");
+    }
+    const auto dims_attr = op->getAttrOfType<DenseI64ArrayAttr>("dimensions");
+    if (!dims_attr) {
+      return op->emitError("Missing or invalid dimensions attribute");
+    }
+    if (dims_attr.size() != 1) {
+      return op->emitOpError(
+          "Cannot downgrade all_reduce with multiple dimensions below "
+          "version 19");
+    }
+    const int64_t dim = dims_attr[0];
+    op->removeAttr("dimensions");
+    op->setAttr("dim",
+                IntegerAttr::get(IntegerType::get(op->getContext(), 64), dim));
+  }
+  return success();
+}
+
 // Upgrades an operation from a version without subcore_id (v13) to HEAD (v14+)
 // by delinearizing a single core_id into separate core_id and subcore_id.
 // This runs during deserialization (`serialize = false`), where operations have
@@ -845,6 +892,7 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
       {DynamicGatherOp::getOperationName(), dynamic_gather_upgrade},
       {ScanOp::getOperationName(), scan_upgrade},
       {ReduceOp::getOperationName(), reduce_upgrade},
+      {AllReduceOp::getOperationName(), all_reduce_upgrade},
       {IotaOp::getOperationName(), iota_upgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_upgrade},
       {vector::MultiDimReductionOp::getOperationName(),
@@ -866,6 +914,7 @@ const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
       {DynamicGatherOp::getOperationName(), dynamic_gather_downgrade},
       {ScanOp::getOperationName(), scan_downgrade},
       {ReduceOp::getOperationName(), reduce_downgrade},
+      {AllReduceOp::getOperationName(), all_reduce_downgrade},
       {IotaOp::getOperationName(), iota_downgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_downgrade},
       {StoreOp::getOperationName(), store_downgrade},
