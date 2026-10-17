@@ -3034,6 +3034,8 @@ bool HloPredicateIsNotOp(const HloInstruction* instruction) {
   }
 }
 
+CallContext GetInstructionCallContext(const HloInstruction* instruction);
+
 }  // namespace xla
 
 #endif  // XLA_HLO_IR_HLO_INSTRUCTION_H_
