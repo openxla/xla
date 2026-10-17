@@ -56,7 +56,6 @@ TEST(RocmCollectorTest, TestAddKernelEventAndExport) {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 100;
   options.max_activity_api_events = 100;
-  options.max_annotation_strings = 100;
   options.num_gpus = 1;
 
   constexpr uint64_t kStartWallTimeNs = 1000;
@@ -134,7 +133,6 @@ TEST(RocmCollectorTest, MultipleActivitiesPerCorrelationIdAllExported) {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 100;
   options.max_activity_api_events = 100;
-  options.max_annotation_strings = 100;
   options.num_gpus = 1;
 
   constexpr uint64_t kStartWallTimeNs = 1000;
@@ -270,7 +268,6 @@ TEST(RocmCollectorTest, MarkerEventsRespectMaxCallbackApiEvents) {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 8;
   options.max_activity_api_events = 100;
-  options.max_annotation_strings = 100;
   options.num_gpus = 1;
 
   DropCountingCollector collector(options, /*start_walltime_ns=*/1000,
@@ -311,7 +308,6 @@ TEST(RocmCollectorTest, MarkerEventsDroppedWhenNoGpusReported) {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 100;
   options.max_activity_api_events = 100;
-  options.max_annotation_strings = 100;
   options.num_gpus = 0;
 
   RocmTraceCollectorImpl collector(options, /*start_walltime_ns=*/1000,
@@ -339,7 +335,6 @@ TEST(RocmCollectorTest, MarkerAndApiEventsOnSameThreadGetSeparateLines) {
   RocmTraceCollectorOptions options;
   options.max_callback_api_events = 100;
   options.max_activity_api_events = 100;
-  options.max_annotation_strings = 100;
   options.num_gpus = 1;
 
   RocmTraceCollectorImpl collector(options, /*start_walltime_ns=*/1000,
