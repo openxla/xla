@@ -63,6 +63,7 @@ class CpuFloatSupport : public FloatSupport {
         case HloOpcode::kMaximum:
         case HloOpcode::kMinimum:
         case HloOpcode::kClamp:
+        case HloOpcode::kFma:
         case HloOpcode::kSelectAndScatter:
           return true;
         default:
@@ -95,6 +96,7 @@ class CpuFloatSupport : public FloatSupport {
         case HloOpcode::kMaximum:
         case HloOpcode::kMinimum:
         case HloOpcode::kClamp:
+        case HloOpcode::kFma:
         case HloOpcode::kSelectAndScatter:
           return true;
         default:

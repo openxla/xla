@@ -185,6 +185,22 @@ bool GpuFloatSupport::IsSupported(const HloInstruction& hlo) const {
                cuda_compute_capability->IsAtLeastAmpere();
       }
       return false;
+    case HloOpcode::kFma:
+      if (LowPrecisionType() == BF16) {
+        if (IsTritonFusedComputation(*hlo.parent())) {
+          auto* cuda_compute_capability =
+              compute_capability_.cuda_compute_capability();
+          return cuda_compute_capability != nullptr &&
+                 cuda_compute_capability->IsAtLeastAmpere();
+        }
+        // Upcasting bf16 `fma` to a single f32 `fma` in FloatNormalization is
+        // invalid because it double-rounds. Outside Triton fusions, the MLIR
+        // emitter lowers bf16 `fma` directly on all GPUs: via native
+        // `fma.rn.bf16` on Ampere+ CUDA, and via `ExpandFloatOpsPass` (f64
+        // TwoSum + Round-To-Odd) on pre-Ampere CUDA and ROCm.
+        return true;
+      }
+      return false;
     case HloOpcode::kAdd:
     case HloOpcode::kMultiply:
     case HloOpcode::kSubtract: {

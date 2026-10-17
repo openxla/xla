@@ -692,6 +692,99 @@ struct RewriteMinMaxFPattern : public mlir::OpRewritePattern<Op> {
   }
 };
 
+class RewriteNarrowFmaPattern
+    : public mlir::OpRewritePattern<mlir::math::FmaOp> {
+ public:
+  RewriteNarrowFmaPattern(mlir::MLIRContext* context, bool expand_bf16,
+                          bool expand_f16)
+      : OpRewritePattern(context),
+        expand_bf16_(expand_bf16),
+        expand_f16_(expand_f16) {}
+
+  mlir::LogicalResult matchAndRewrite(
+      mlir::math::FmaOp op, mlir::PatternRewriter& rewriter) const override {
+    mlir::Type type = op.getType();
+    mlir::Type elem_ty = mlir::getElementTypeOrSelf(type);
+    const bool is_bf16 = elem_ty.isBF16();
+    const bool is_f16 = elem_ty.isF16();
+    if (!(expand_bf16_ && is_bf16) && !(expand_f16_ && is_f16)) {
+      return rewriter.notifyMatchFailure(op, "not an expanded f16/bf16 fma");
+    }
+
+    // LLVM's SelectionDAG legalizer promotes bf16 and f16 FMA to f32, which
+    // double-rounds (and for bf16 can also overflow f32). Compute the exact
+    // product in a wider float type (f64 for bf16, f32 for f16), add the
+    // addend with Knuth's TwoSum and Round-To-Odd, and truncate once to the
+    // target type. Unlike HloEvaluator::EvaluateFma (which uses a second
+    // f64->f32 Round-To-Odd step because Eigen::bfloat16(double) converts via
+    // float), LLVM's fptrunc f64 to bf16 rounds directly in one step. Both
+    // single-stage (here and ElementalIrEmitter) and two-stage (HloEvaluator)
+    // algorithms are formally verified in Lean 4
+    // (`singleStageTwoSumRtoFma_eq_ffma` and `evaluateFmaImpl_eq_ffma`).
+    mlir::ImplicitLocOpBuilder b(op.getLoc(), rewriter);
+    auto get_type = [&](mlir::Type wide_elem_ty) -> mlir::Type {
+      if (auto vec_ty = mlir::dyn_cast<mlir::VectorType>(type)) {
+        return vec_ty.clone(wide_elem_ty);
+      }
+      return wide_elem_ty;
+    };
+    auto get_const = [&](mlir::Type ty, mlir::TypedAttr attr) -> Value {
+      if (mlir::isa<mlir::VectorType>(ty)) {
+        attr = mlir::SplatElementsAttr::get(mlir::cast<mlir::ShapedType>(ty),
+                                            attr);
+      }
+      return ma::ConstantOp::create(b, ty, attr);
+    };
+
+    mlir::Type wide_fp_elem_ty = is_bf16 ? b.getF64Type() : b.getF32Type();
+    mlir::Type wide_int_elem_ty = is_bf16 ? b.getI64Type() : b.getI32Type();
+    mlir::Type wide_fp_ty = get_type(wide_fp_elem_ty);
+    mlir::Type wide_int_ty = get_type(wide_int_elem_ty);
+
+    Value a_wide = ma::ExtFOp::create(b, wide_fp_ty, op.getA());
+    Value b_wide = ma::ExtFOp::create(b, wide_fp_ty, op.getB());
+    Value c_wide = ma::ExtFOp::create(b, wide_fp_ty, op.getC());
+    Value p = ma::MulFOp::create(b, a_wide, b_wide);
+
+    Value s = ma::AddFOp::create(b, p, c_wide);
+    Value v = ma::SubFOp::create(b, s, p);
+    Value e = ma::AddFOp::create(
+        b, ma::SubFOp::create(b, p, ma::SubFOp::create(b, s, v)),
+        ma::SubFOp::create(b, c_wide, v));
+
+    Value zero_fp = get_const(wide_fp_ty, b.getFloatAttr(wide_fp_elem_ty, 0.0));
+    Value zero_int =
+        get_const(wide_int_ty, b.getIntegerAttr(wide_int_elem_ty, 0));
+    Value one_int =
+        get_const(wide_int_ty, b.getIntegerAttr(wide_int_elem_ty, 1));
+    Value neg_one_int =
+        get_const(wide_int_ty, b.getIntegerAttr(wide_int_elem_ty, -1));
+
+    Value e_nz = ma::CmpFOp::create(b, ma::CmpFPredicate::ONE, e, zero_fp);
+    Value s_bits = ma::BitcastOp::create(b, wide_int_ty, s);
+    Value e_bits = ma::BitcastOp::create(b, wide_int_ty, e);
+    Value s_even =
+        ma::CmpIOp::create(b, ma::CmpIPredicate::eq,
+                           ma::AndIOp::create(b, s_bits, one_int), zero_int);
+    Value needs_nudge = ma::AndIOp::create(b, e_nz, s_even);
+
+    Value same_sign =
+        ma::CmpIOp::create(b, ma::CmpIPredicate::sge,
+                           ma::XOrIOp::create(b, s_bits, e_bits), zero_int);
+    Value delta = SelectOp::create(b, same_sign, one_int, neg_one_int);
+    Value nudge = SelectOp::create(b, needs_nudge, delta, zero_int);
+    Value s_rto = ma::BitcastOp::create(b, wide_fp_ty,
+                                        ma::AddIOp::create(b, s_bits, nudge));
+
+    rewriter.replaceOpWithNewOp<ma::TruncFOp>(op, type, s_rto);
+    return mlir::success();
+  }
+
+ private:
+  bool expand_bf16_;
+  bool expand_f16_;
+};
+
 class ExpandFloatOpsPass
     : public impl::ExpandFloatOpsPassBase<ExpandFloatOpsPass> {
  public:
@@ -709,6 +802,10 @@ class ExpandFloatOpsPass
                  RewriteMinMaxFPattern<ma::MinNumFOp>>(&getContext());
     if (approximate_tanh_) {
       mlir::populatePolynomialApproximateTanhPattern(patterns);
+    }
+    if (expand_bf16_fma_ || expand_f16_fma_) {
+      patterns.add<RewriteNarrowFmaPattern>(&getContext(), expand_bf16_fma_,
+                                            expand_f16_fma_);
     }
     patterns.add<RewriteErf32Pattern>(&getContext());
     if (mlir::failed(

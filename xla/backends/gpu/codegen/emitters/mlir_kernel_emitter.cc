@@ -694,7 +694,15 @@ void AddLoweringPasses(mlir::OpPassManager& pm,
     pm.addPass(createRecoverExp2Pass());
   }
 
-  pm.addPass(emitters::createExpandFloatOpsPass());
+  emitters::ExpandFloatOpsPassOptions expand_float_ops_options;
+  if (auto* cc = device.gpu_compute_capability().cuda_compute_capability()) {
+    // In PTX / LLVM NVPTX, `fma.rn.f16` was introduced in sm_53 (PTX 4.2,
+    // Maxwell), whereas `fma.rn.bf16` was introduced in sm_80 (PTX 7.0,
+    // Ampere).
+    expand_float_ops_options.expand_bf16_fma_ = !cc->IsAtLeastAmpere();
+    expand_float_ops_options.expand_f16_fma_ = !cc->IsAtLeast(5, 3);
+  }
+  pm.addPass(emitters::createExpandFloatOpsPass(expand_float_ops_options));
   pm.addPass(mlir::createLowerAffinePass());
   pm.addPass(mlir::createSCFToControlFlowPass());
 

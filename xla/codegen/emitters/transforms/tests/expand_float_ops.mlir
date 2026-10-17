@@ -15,6 +15,8 @@
 // RUN: emitters_opt %s -split-input-file -xla-expand-float-ops -canonicalize | FileCheck %s
 // RUN: emitters_opt %s -split-input-file -xla-expand-float-ops="approximate_tanh=false" -canonicalize
 // RUN | FileCheck %s -check-prefixes=CHECK-NO-APPROX-TANH
+// RUN: emitters_opt %s -split-input-file -xla-expand-float-ops="expand_bf16_fma=false expand_f16_fma=false" -canonicalize
+// RUN | FileCheck %s -check-prefixes=CHECK-NO-EXPAND-BF16-FMA
 
 module {
   func.func @tanh(%arg0: f32) -> f32 {
@@ -219,3 +221,51 @@ module {
 // CHECK-LABEL: @minimumf_f8
 // CHECK-NOT: arith.minimumf {{.*}}f8E4M3FN
 // CHECK: arith.minimumf {{.*}} : f32
+
+// -----
+
+module {
+  func.func @bf16_fma(%arg0: bf16, %arg1: bf16, %arg2: bf16) -> bf16 {
+    %ret = math.fma %arg0, %arg1, %arg2 : bf16
+    return %ret : bf16
+  }
+}
+
+// CHECK-LABEL: @bf16_fma
+// CHECK-NOT: math.fma {{.*}} : bf16
+// CHECK: arith.extf {{.*}} : bf16 to f64
+// CHECK: arith.mulf {{.*}} : f64
+// CHECK: arith.addf {{.*}} : f64
+// CHECK: arith.bitcast {{.*}} : f64 to i64
+// CHECK: arith.andi {{.*}} : i64
+// CHECK: arith.xori {{.*}} : i64
+// CHECK: arith.select {{.*}} : i64
+// CHECK: arith.addi {{.*}} : i64
+// CHECK: arith.truncf {{.*}} : f64 to bf16
+
+// CHECK-NO-EXPAND-BF16-FMA-LABEL: @bf16_fma
+// CHECK-NO-EXPAND-BF16-FMA: math.fma {{.*}} : bf16
+
+// -----
+
+module {
+  func.func @f16_fma(%arg0: f16, %arg1: f16, %arg2: f16) -> f16 {
+    %ret = math.fma %arg0, %arg1, %arg2 : f16
+    return %ret : f16
+  }
+}
+
+// CHECK-LABEL: @f16_fma
+// CHECK-NOT: math.fma {{.*}} : f16
+// CHECK: arith.extf {{.*}} : f16 to f32
+// CHECK: arith.mulf {{.*}} : f32
+// CHECK: arith.addf {{.*}} : f32
+// CHECK: arith.bitcast {{.*}} : f32 to i32
+// CHECK: arith.andi {{.*}} : i32
+// CHECK: arith.xori {{.*}} : i32
+// CHECK: arith.select {{.*}} : i32
+// CHECK: arith.addi {{.*}} : i32
+// CHECK: arith.truncf {{.*}} : f32 to f16
+
+// CHECK-NO-EXPAND-BF16-FMA-LABEL: @f16_fma
+// CHECK-NO-EXPAND-BF16-FMA: math.fma {{.*}} : f16

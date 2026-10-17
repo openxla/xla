@@ -97,6 +97,10 @@ def ExpandFloatOpsPass : Pass<"xla-expand-float-ops", "mlir::ModuleOp"> {
   let options = [
     Option<"approximate_tanh_", "approximate_tanh", "bool", /*default=*/"true",
            "Use built-in MLIR approximation for tanh.">,
+    Option<"expand_bf16_fma_", "expand_bf16_fma", "bool", /*default=*/"true",
+           "Expand bf16 math.fma into single-rounded f64 arithmetic when native bf16 FMA is unavailable.">,
+    Option<"expand_f16_fma_", "expand_f16_fma", "bool", /*default=*/"true",
+           "Expand f16 math.fma into single-rounded f32 arithmetic when native f16 FMA is unavailable.">,
   ];
 }
 

@@ -2740,6 +2740,63 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalClamp(
   }
 }
 
+absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalFma(
+    const HloInstruction* hlo,
+    const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
+    const llvm_ir::IrArray::Index& index) {
+  ABSL_ASSIGN_OR_RETURN(llvm::Value * a,
+                        operand_to_generator.at(hlo->operand(0))(index));
+  ABSL_ASSIGN_OR_RETURN(llvm::Value * b,
+                        operand_to_generator.at(hlo->operand(1))(index));
+  ABSL_ASSIGN_OR_RETURN(llvm::Value * c,
+                        operand_to_generator.at(hlo->operand(2))(index));
+  PrimitiveType prim_type = hlo->shape().element_type();
+  if (!primitive_util::IsFloatingPointType(prim_type)) {
+    return Unimplemented("Fma unimplemented for %s",
+                         PrimitiveType_Name(prim_type));
+  }
+  if (prim_type == BF16 || prim_type == F16) {
+    // For f32/f64, LLVM's SelectionDAG legalizer lowers `@llvm.fma` to a `libm`
+    // call (`fmaf` / `fma`) when the target CPU lacks hardware FMA
+    // instructions. For bf16 and f16, however, SelectionDAG instead promotes
+    // `ISD::FMA` to f32, which double-rounds (and for bf16 can also overflow
+    // f32). Compute the exact product in a wider float type (f64 for bf16, f32
+    // for f16), add the addend with Knuth's TwoSum and Round-To-Odd, and
+    // truncate once to the target type.
+    llvm::Type* wide_fp_ty =
+        prim_type == BF16 ? b_->getDoubleTy() : b_->getFloatTy();
+    llvm::Type* wide_int_ty =
+        prim_type == BF16 ? b_->getInt64Ty() : b_->getInt32Ty();
+    llvm::Value* a_wide = b_->CreateFPExt(a, wide_fp_ty);
+    llvm::Value* b_wide = b_->CreateFPExt(b, wide_fp_ty);
+    llvm::Value* c_wide = b_->CreateFPExt(c, wide_fp_ty);
+    llvm::Value* p = b_->CreateFMul(a_wide, b_wide);
+    llvm::Value* s = b_->CreateFAdd(p, c_wide);
+    llvm::Value* v = b_->CreateFSub(s, p);
+    llvm::Value* e = b_->CreateFAdd(b_->CreateFSub(p, b_->CreateFSub(s, v)),
+                                    b_->CreateFSub(c_wide, v));
+    llvm::Value* zero_fp = llvm::ConstantFP::get(wide_fp_ty, 0.0);
+    llvm::Value* zero_int = llvm::ConstantInt::get(wide_int_ty, 0);
+    llvm::Value* one_int = llvm::ConstantInt::get(wide_int_ty, 1);
+    llvm::Value* neg_one_int = llvm::ConstantInt::getSigned(wide_int_ty, -1);
+    llvm::Value* e_nz = b_->CreateFCmpONE(e, zero_fp);
+    llvm::Value* s_bits = b_->CreateBitCast(s, wide_int_ty);
+    llvm::Value* e_bits = b_->CreateBitCast(e, wide_int_ty);
+    llvm::Value* s_even =
+        b_->CreateICmpEQ(b_->CreateAnd(s_bits, one_int), zero_int);
+    llvm::Value* needs_nudge = b_->CreateAnd(e_nz, s_even);
+    llvm::Value* same_sign =
+        b_->CreateICmpSGE(b_->CreateXor(s_bits, e_bits), zero_int);
+    llvm::Value* delta = b_->CreateSelect(same_sign, one_int, neg_one_int);
+    llvm::Value* nudge = b_->CreateSelect(needs_nudge, delta, zero_int);
+    llvm::Value* s_rto =
+        b_->CreateBitCast(b_->CreateAdd(s_bits, nudge), wide_fp_ty);
+    return b_->CreateFPTrunc(s_rto, a->getType());
+  }
+  return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::fma, {a, b, c},
+                                      {a->getType()}, b_);
+}
+
 absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitElementalConcatenate(
     const HloInstruction* hlo,
     const ElementalIrEmitter::HloToElementGeneratorMap& operand_to_generator,
@@ -3464,6 +3521,11 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
       return [this, hlo, &operand_to_generator](
                  const IrArray::Index& index) -> absl::StatusOr<llvm::Value*> {
         return EmitElementalClamp(hlo, operand_to_generator, index);
+      };
+    case HloOpcode::kFma:
+      return [this, hlo, &operand_to_generator](
+                 const IrArray::Index& index) -> absl::StatusOr<llvm::Value*> {
+        return EmitElementalFma(hlo, operand_to_generator, index);
       };
     case HloOpcode::kReducePrecision:
       return [this, hlo, &operand_to_generator](

@@ -342,7 +342,16 @@ absl::flat_hash_set<HloOpcode> TritonSupportedTernaryElementwiseOps(
     return {HloOpcode::kSelect};
   }
 
-  return {HloOpcode::kSelect, HloOpcode::kClamp};
+  absl::flat_hash_set<HloOpcode> ret{HloOpcode::kSelect, HloOpcode::kClamp};
+  if (element_type == PrimitiveType::F16 ||
+      element_type == PrimitiveType::F32 ||
+      element_type == PrimitiveType::F64 ||
+      (element_type == PrimitiveType::BF16 &&
+       gpu_version.cuda_compute_capability() != nullptr &&
+       gpu_version.cuda_compute_capability()->IsAtLeastAmpere())) {
+    ret.insert(HloOpcode::kFma);
+  }
+  return ret;
 }
 
 // Returns `true` if the given opcode and element type correspond to a n-ary
