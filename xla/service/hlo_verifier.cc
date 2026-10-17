@@ -1483,10 +1483,16 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
   // transiently disagree on element type (e.g. body root pinned at F32 while
   // the scan output has been lowered to BF16). ResolveInconsistentScans
   // reconciles these mismatches before the final, strict verifier pass.
-  // This mirrors HandleReduce / HandleReduceWindow / HandleMap.
+  // This mirrors HandleReduce / HandleReduceWindow / HandleMap. The checks
+  // below call the predicate directly: ShapesSame falls back to
+  // ShapeUtil::Compatible, which compares element types, when the verifier
+  // is not layout sensitive.
   auto shape_equal = Shape::Equal().IgnoreLayout();
   if (opts_.allow_mixed_precision) {
     shape_equal.IgnoreFpPrecision();
+  }
+  if (!opts_.layout_sensitive) {
+    shape_equal.IgnoreDynamicDimension();
   }
 
   // Check shapes of operands vs to_apply parameters.
@@ -1505,7 +1511,7 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
       }
       expected_param_shape.DeleteDimension(scan_dim);
     }
-    if (!ShapesSame(param_shape, expected_param_shape, shape_equal)) {
+    if (!shape_equal(param_shape, expected_param_shape)) {
       return Internal(
           "Shapes of operand %d and to_apply computation parameter are "
           "inconsistent",
@@ -1519,7 +1525,7 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
   for (int64_t i = 0; i < num_carries; ++i) {
     const Shape& param_shape = parameter_shapes[i + num_inputs];
     const Shape& root_shape = root_shapes[i + num_outputs];
-    if (!ShapesSame(param_shape, root_shape, shape_equal)) {
+    if (!shape_equal(param_shape, root_shape)) {
       return Internal(
           "Shapes of parameter %d and root in to_apply computation are "
           "inconsistent",
@@ -1545,7 +1551,7 @@ absl::Status ShapeVerifier::HandleScan(HloInstruction* scan) {
       }
       expected_root_shape.DeleteDimension(scan_dim);
     }
-    if (!ShapesSame(root_shape, expected_root_shape, shape_equal)) {
+    if (!shape_equal(root_shape, expected_root_shape)) {
       return Internal(
           "Shapes of result %d and to_apply computation root are "
           "inconsistent",
