@@ -2893,5 +2893,159 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
   RunAndFilecheckHloRewrite(hlo, MakePipeline(), expected);
 }
 
+TEST_F(DynamicSliceFusionRewriterV2Test, AliasedOperandAndResultNotFused) {
+  const char* hlo = R"(
+    HloModule test
+
+    body {
+      p0 = (s32[], f32[4,8,8], f32[4,8,8]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      in = f32[4,8,8] get-tuple-element(p0), index=1
+      out = f32[4,8,8] get-tuple-element(p0), index=2
+      c0 = s32[] constant(0)
+      ds = f32[1,8,8] dynamic-slice(in, ivar, c0, c0),
+          dynamic_slice_sizes={1,8,8}
+      bc_in = f32[8,8] bitcast(ds)
+      hero = f32[8,8] custom-call(bc_in),
+          custom_call_target="fake_target",
+          output_to_operand_aliasing={{}: (0, {})}
+      bc_out = f32[1,8,8] bitcast(hero)
+      dus = f32[4,8,8] dynamic-update-slice(out, bc_out, ivar, c0, c0)
+      c1 = s32[] constant(1)
+      next_ivar = s32[] add(ivar, c1)
+      ROOT result = (s32[], f32[4,8,8], f32[4,8,8]) tuple(next_ivar, in, dus)
+    }
+
+    condition {
+      p0 = (s32[], f32[4,8,8], f32[4,8,8]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      c4 = s32[] constant(4)
+      ROOT cmp = pred[] compare(ivar, c4), direction=LT
+    }
+
+    ENTRY main {
+      in = f32[4,8,8] parameter(0)
+      out = f32[4,8,8] parameter(1)
+      c0 = s32[] constant(0)
+      tuple = (s32[], f32[4,8,8], f32[4,8,8]) tuple(c0, in, out)
+      ROOT while = (s32[], f32[4,8,8], f32[4,8,8]) while(tuple),
+          condition=condition, body=body,
+          backend_config={"known_trip_count":{"n":"4"},
+                          "known_init_step":{"init":"0","step":"1"},
+                          "known_induction_variable":{"tuple_index":"0"}}
+    }
+  )";
+
+  const char* expected = R"(
+    ; CHECK-NOT: dynamic-slice-fusion
+    ; CHECK:     body
+    ; CHECK:       {{.*}} custom-call(
+    ; CHECK-NOT:   custom-call(
+  )";
+
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(), expected);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       AliasedTupleResultSkippedWhenOtherResultHasDus) {
+  const char* hlo = R"(
+    HloModule test
+
+    body {
+      p0 = (s32[], f32[4,8,8], f32[4,8,8], f32[4,8,8], f32[4,8,8]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      in0 = f32[4,8,8] get-tuple-element(p0), index=1
+      in1 = f32[4,8,8] get-tuple-element(p0), index=2
+      out0 = f32[4,8,8] get-tuple-element(p0), index=3
+      out1 = f32[4,8,8] get-tuple-element(p0), index=4
+      c0 = s32[] constant(0)
+      ds0 = f32[1,8,8] dynamic-slice(in0, ivar, c0, c0),
+          dynamic_slice_sizes={1,8,8}
+      bc_in0 = f32[8,8] bitcast(ds0)
+      ds1 = f32[1,8,8] dynamic-slice(in1, ivar, c0, c0),
+          dynamic_slice_sizes={1,8,8}
+      bc_in1 = f32[8,8] bitcast(ds1)
+      hero = (f32[8,8], f32[8,8]) custom-call(bc_in0, bc_in1),
+          custom_call_target="fake_target",
+          output_to_operand_aliasing={{0}: (0, {})}
+      gte0 = f32[8,8] get-tuple-element(hero), index=0
+      gte1 = f32[8,8] get-tuple-element(hero), index=1
+      bc_out0 = f32[1,8,8] bitcast(gte0)
+      dus0 = f32[4,8,8] dynamic-update-slice(out0, bc_out0, ivar, c0, c0)
+      bc_out1 = f32[1,8,8] bitcast(gte1)
+      dus1 = f32[4,8,8] dynamic-update-slice(out1, bc_out1, ivar, c0, c0)
+      c1 = s32[] constant(1)
+      next_ivar = s32[] add(ivar, c1)
+      ROOT result = (s32[], f32[4,8,8], f32[4,8,8], f32[4,8,8], f32[4,8,8])
+          tuple(next_ivar, in0, in1, dus0, dus1)
+    }
+
+    condition {
+      p0 = (s32[], f32[4,8,8], f32[4,8,8], f32[4,8,8], f32[4,8,8]) parameter(0)
+      ivar = s32[] get-tuple-element(p0), index=0
+      c4 = s32[] constant(4)
+      ROOT cmp = pred[] compare(ivar, c4), direction=LT
+    }
+
+    ENTRY main {
+      in0 = f32[4,8,8] parameter(0)
+      in1 = f32[4,8,8] parameter(1)
+      out0 = f32[4,8,8] parameter(2)
+      out1 = f32[4,8,8] parameter(3)
+      c0 = s32[] constant(0)
+      tuple = (s32[], f32[4,8,8], f32[4,8,8], f32[4,8,8], f32[4,8,8])
+          tuple(c0, in0, in1, out0, out1)
+      ROOT while = (s32[], f32[4,8,8], f32[4,8,8], f32[4,8,8], f32[4,8,8])
+          while(tuple), condition=condition, body=body,
+          backend_config={"known_trip_count":{"n":"4"},
+                          "known_init_step":{"init":"0","step":"1"},
+                          "known_induction_variable":{"tuple_index":"0"}}
+    }
+  )";
+
+  const char* expected = R"(
+    ; CHECK:     %dynamic-slice-fusion{{.*}} {
+    ; CHECK:       {{.*}} dynamic-slice(
+    ; CHECK-NOT:   dynamic-slice(
+    ; CHECK:       {{.*}} custom-call(
+    ; CHECK:       {{.*}} dynamic-update-slice(
+    ; CHECK-NOT:   dynamic-update-slice(
+    ; CHECK:       ROOT {{.*}} = (f32[8,8]{1,0}, f32[4,8,8]{2,1,0}) tuple(
+    ; CHECK:     }
+    ; CHECK:     body
+    ; CHECK:       {{.*}} dynamic-slice(
+    ; CHECK:       {{.*}} fusion(
+    ; CHECK:       {{.*}} dynamic-update-slice(
+    ; CHECK:     }
+  )";
+
+  auto f32_488 = ShapeUtil::MakeShape(F32, {4, 8, 8});
+  auto f32_188 = ShapeUtil::MakeShape(F32, {1, 8, 8});
+  auto f32_88 = ShapeUtil::MakeShape(F32, {8, 8});
+  std::vector<Offset> offsets = {{0, Offset::Parameter(1)},
+                                 {1, Offset::Constant(0)},
+                                 {2, Offset::Constant(0)}};
+
+  auto fusion_checks = [&](HloModule* module) {
+    auto* hero = DynamicSliceFusion::FindHero(FindDsfBody(module));
+
+    ASSERT_OK_AND_ASSIGN(auto params,
+                         DynamicSliceFusion::ResolveParameters(hero));
+    EXPECT_THAT(
+        params,
+        ElementsAre(
+            Param{2, f32_88, f32_88, std::nullopt, std::nullopt},
+            Param{0, f32_488, f32_188, MakeConfig(0, 0, 256), offsets}));
+
+    ASSERT_OK_AND_ASSIGN(auto results,
+                         DynamicSliceFusion::ResolveResults(hero));
+    EXPECT_THAT(results, ElementsAre(Result{std::nullopt, 0, f32_88, f32_88},
+                                     Result{3, 1, f32_488, f32_188,
+                                            MakeConfig(0, 0, 256), offsets}));
+  };
+
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(), expected, fusion_checks);
+}
+
 }  // namespace
 }  // namespace xla::gpu
