@@ -205,13 +205,8 @@ class FastMergeBufferAllocationsManagerForComputationsWithoutOrdering
     : public BufferAllocationsManagerForComputationsWithoutOrdering {
  public:
   FastMergeBufferAllocationsManagerForComputationsWithoutOrdering(
-      BufferAssignment* assignment, BufferAssigner* assigner,
-      std::optional<BufferAssignment::LiveRangeInterferenceOptions>
-          live_range_interference_options = std::nullopt)
-      : assignment_(assignment),
-        assigner_(assigner),
-        live_range_interference_options_(
-            std::move(live_range_interference_options)) {}
+      BufferAssignment* assignment, BufferAssigner* assigner)
+      : assignment_(assignment), assigner_(assigner) {}
 
   void RegisterAliasedEntryParameterAllocation(
       BufferAllocation::Index index) override {
@@ -222,9 +217,42 @@ class FastMergeBufferAllocationsManagerForComputationsWithoutOrdering
   absl::StatusOr<bool> TryAssignToExistingAllocation(
       const HloBuffer* hlo_buffer, int64_t required_size) override {
     BufferLiveRange live_range = GetBufferLiveRange(hlo_buffer);
+    ABSL_ASSIGN_OR_RETURN(BufferValue::Color buffer_color, hlo_buffer->color());
+
+    if (assigner_->HasCustomInterference(*hlo_buffer)) {
+      // Custom-interference buffers are assigned ahead of regular buffers in
+      // largest-first order, so we must not advance the sweep-line
+      // `prev_start_time_` here. Collect all allocations of the same color with
+      // sufficient size and check exact custom interference in best-fit order.
+      std::vector<BufferAllocation*> candidates;
+      for (BufferAllocation::Index index : allocation_indices_) {
+        BufferAllocation* allocation = assignment_->GetMutableAllocation(index);
+        if (allocation->color() == buffer_color &&
+            allocation->size() >= required_size) {
+          candidates.push_back(allocation);
+        }
+      }
+      absl::c_sort(candidates,
+                   [](const BufferAllocation* a, const BufferAllocation* b) {
+                     if (a->size() != b->size()) {
+                       return a->size() < b->size();
+                     }
+                     return a->index() < b->index();
+                   });
+      for (BufferAllocation* allocation : candidates) {
+        ABSL_ASSIGN_OR_RETURN(
+            bool success,
+            assigner_->MaybeAssignBuffer(allocation, *hlo_buffer, assignment_));
+        if (success) {
+          RecordAllocationUse(allocation, live_range.max_end);
+          return true;
+        }
+      }
+      return false;
+    }
+
     UpdateLiveness(live_range.min_start);
 
-    ABSL_ASSIGN_OR_RETURN(BufferValue::Color buffer_color, hlo_buffer->color());
     auto& pool = free_pool_[buffer_color];
     // Finds the smallest buffer in the free pool that is at least
     // `required_size`.
@@ -254,49 +282,6 @@ class FastMergeBufferAllocationsManagerForComputationsWithoutOrdering
         return true;
       }
       ++it;
-    }
-
-    if (live_range_interference_options_.has_value()) {
-      bool has_custom_interference =
-          absl::c_any_of(hlo_buffer->values(), [&](const HloValue* hlo_value) {
-            return live_range_interference_options_->has_custom_interference(
-                assignment_->alias_analysis(), *hlo_value);
-          });
-      if (has_custom_interference) {
-        // Collect active allocations that are of the same color, have
-        // sufficient size, and are not in the free pool (which was already
-        // searched above). When custom interference rules are present, active
-        // allocations may be safely reusable if custom interference returns
-        // false.
-        std::vector<BufferAllocation*> candidates;
-        for (BufferAllocation::Index index : allocation_indices_) {
-          BufferAllocation* allocation =
-              assignment_->GetMutableAllocation(index);
-          if (allocation->color() == buffer_color &&
-              allocation->size() >= required_size &&
-              !pool.contains({allocation->size(), index})) {
-            candidates.push_back(allocation);
-          }
-        }
-        // Sort candidates by size (best-fit) to preserve larger allocations for
-        // future large buffers.
-        absl::c_sort(candidates,
-                     [](const BufferAllocation* a, const BufferAllocation* b) {
-                       if (a->size() != b->size()) {
-                         return a->size() < b->size();
-                       }
-                       return a->index() < b->index();
-                     });
-        for (BufferAllocation* allocation : candidates) {
-          ABSL_ASSIGN_OR_RETURN(bool success,
-                                assigner_->MaybeAssignBuffer(
-                                    allocation, *hlo_buffer, assignment_));
-          if (success) {
-            RecordAllocationUse(allocation, live_range.max_end);
-            return true;
-          }
-        }
-      }
     }
 
     return false;
@@ -359,8 +344,6 @@ class FastMergeBufferAllocationsManagerForComputationsWithoutOrdering
 
   BufferAssignment* const assignment_;
   BufferAssigner* const assigner_;
-  std::optional<BufferAssignment::LiveRangeInterferenceOptions>
-      live_range_interference_options_;
   int64_t prev_start_time_ = 0;
   std::priority_queue<ActiveAllocation, std::vector<ActiveAllocation>,
                       std::greater<ActiveAllocation>>
@@ -379,7 +362,7 @@ BufferAssigner::CreateFastMergeManagerForTest(BufferAssignment* assignment,
                                               BufferAssigner* assigner) {
   return std::make_unique<
       FastMergeBufferAllocationsManagerForComputationsWithoutOrdering>(
-      assignment, assigner, assigner->opts_.live_range_interference_options);
+      assignment, assigner);
 }
 
 namespace {
@@ -2090,6 +2073,28 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::Run(
                                    std::move(color_alignment));
 }
 
+void BufferAssigner::PrecomputeCustomInterference(
+    const HloAliasAnalysis& alias_analysis) {
+  has_custom_interference_for_buffer_.clear();
+  if (!opts_.live_range_interference_options.has_value()) {
+    return;
+  }
+
+  const auto& buffers = alias_analysis.buffers();
+  HloBuffer::Id max_buffer_id = -1;
+  for (const HloBuffer& buffer : buffers) {
+    max_buffer_id = std::max(max_buffer_id, buffer.id());
+  }
+  has_custom_interference_for_buffer_.assign(max_buffer_id + 1, false);
+  for (const HloBuffer& buffer : buffers) {
+    has_custom_interference_for_buffer_[buffer.id()] =
+        absl::c_any_of(buffer.values(), [&](const HloValue* hlo_value) {
+          return opts_.live_range_interference_options->has_custom_interference(
+              alias_analysis, *hlo_value);
+        });
+  }
+}
+
 bool BufferAssigner::LiveRangeInterferes(
     const HloValue* buffer1, BufferAllocation::ValueLiveRange live_range1,
     const HloValue* buffer2, BufferAllocation::ValueLiveRange live_range2,
@@ -2502,11 +2507,7 @@ bool BufferAssigner::DelayTemporaryBufferAssignment(
   // simply falls back to standard sequential assignment, where exact pairwise
   // interference is checked before any reuse and downstream buffers can still
   // reuse this allocation.
-  if (opts_.live_range_interference_options.has_value() &&
-      absl::c_any_of(hlo_buffer->values(), [&](const HloValue* hlo_value) {
-        return opts_.live_range_interference_options->has_custom_interference(
-            assignment->alias_analysis(), *hlo_value);
-      })) {
+  if (HasCustomInterference(*hlo_buffer)) {
     return false;
   }
 
@@ -2770,6 +2771,9 @@ absl::Status BufferAssigner::AssignBuffersForGlobalComputations(
           .has_value();
     });
   };
+  auto has_custom_interference = [&](const HloBuffer* buffer) {
+    return HasCustomInterference(*buffer);
+  };
 
   std::vector<Comparator> comparators;
   if (opts_.fixed_offset.has_value()) {
@@ -2798,6 +2802,20 @@ absl::Status BufferAssigner::AssignBuffersForGlobalComputations(
       comparators.push_back(std::move(compare_live_out));
       break;
     case BufferOrder::kLiveRangeStart:
+      if (opts_.live_range_interference_options.has_value()) {
+        comparators.push_back(
+            [&](const HloBuffer* a, const HloBuffer* b) -> std::optional<bool> {
+              bool a_custom = has_custom_interference(a);
+              bool b_custom = has_custom_interference(b);
+              if (a_custom != b_custom) {
+                return a_custom > b_custom;
+              }
+              if (a_custom) {
+                return CompareSize(size_of, a, b);
+              }
+              return std::nullopt;
+            });
+      }
       comparators.push_back(std::move(compare_live_range_start));
       comparators.push_back(std::move(compare_size));
       comparators.push_back(std::move(compare_live_out));
@@ -2815,7 +2833,7 @@ absl::Status BufferAssigner::AssignBuffersForGlobalComputations(
                });
 
   FastMergeBufferAllocationsManagerForComputationsWithoutOrdering fast_manager(
-      assignment, this, opts_.live_range_interference_options);
+      assignment, this);
   DefaultBufferAllocationsManagerForComputationsWithoutOrdering default_manager(
       assignment, this);
 
@@ -3643,6 +3661,7 @@ BufferAssigner::CreateAssignment(
 
   ABSL_RETURN_IF_ERROR(
       opts_.colorer(&assignment->alias_analysis(), assignment->hlo_ordering()));
+  PrecomputeCustomInterference(assignment->alias_analysis());
   VLOG(3) << "After coloring:";
   XLA_VLOG_LINES(3,
                  assignment->alias_analysis().dataflow_analysis().ToString());
