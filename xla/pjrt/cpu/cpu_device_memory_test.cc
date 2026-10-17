@@ -1,4 +1,4 @@
-/* Copyright 2022 The OpenXLA Authors.
+/* Copyright 2022, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/status_matchers.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/types.h"
@@ -151,6 +152,60 @@ TEST(CpuDeviceMemoryTest, PackOrCopyOobWrite) {
   // Asserts that the mismatched target size triggers the CHECK abort securely.
   EXPECT_DEATH(PackOrCopy(S4, literal, dst.data(), 4),
                "Mismatched packed target size in PackOrCopy");
+}
+
+TEST(CpuDeviceMemoryTest, CacheIdentityTracksWritesAndSlices) {
+  ASSERT_OK_AND_ASSIGN(auto memory, CpuDeviceMemory::Allocate(64));
+  // Writes before the first identity do not prevent subsequent caching.
+  memory->InvalidateCacheIdentity();
+  auto identity = memory->GetCacheIdentity();
+  ASSERT_NE(identity, nullptr);
+  EXPECT_EQ(identity, memory->GetCacheIdentity());
+  auto slice = CpuDeviceMemory::CreateSlicedMemory(memory, 16, 32);
+  EXPECT_EQ(identity, slice->GetCacheIdentity());
+  slice->InvalidateCacheIdentity();
+  auto updated = memory->GetCacheIdentity();
+  ASSERT_NE(updated, nullptr);
+  EXPECT_NE(identity, updated);
+  EXPECT_EQ(updated, slice->GetCacheIdentity());
+  slice->DisableCacheIdentity();
+  EXPECT_EQ(memory->GetCacheIdentity(), nullptr);
+  memory->InvalidateCacheIdentity();
+  EXPECT_EQ(slice->GetCacheIdentity(), nullptr);
+}
+
+TEST(CpuDeviceMemoryTest, DeferredWriteInvalidatesAfterItsDependencies) {
+  ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  ASSERT_OK_AND_ASSIGN(auto raw,
+                       CpuRawBuffer::Allocate(client->memory_spaces()[0], 64));
+  alignas(64) char bytes[64];
+  std::memset(bytes, 1, sizeof(bytes));
+  auto identity = raw->buffer()->GetCacheIdentity();
+  PjRtRawBufferInterface* interface = raw.get();
+  EXPECT_EQ(interface->GetHostPointerForInternalUse(
+                PjRtRawBufferInterface::HostAccess::kRead),
+            raw->buffer()->untyped_data());
+  EXPECT_EQ(identity, raw->buffer()->GetCacheIdentity());
+  std::memset(interface->GetHostPointerForInternalUse(
+                  PjRtRawBufferInterface::HostAccess::kWrite),
+              2, sizeof(bytes));
+  EXPECT_NE(identity, raw->buffer()->GetCacheIdentity());
+  identity = raw->buffer()->GetCacheIdentity();
+  ASSERT_NE(identity, nullptr);
+  auto pending = tsl::MakeConstructedAsyncValueRef<CpuEvent>();
+  ASSERT_OK_AND_ASSIGN(auto written,
+                       raw->CopyRawHostToDeviceAndReturnEvent(
+                           bytes, 0, 64, {PjRtDeviceEventRef(pending)}));
+  auto completion = written.down_cast<CpuEvent>();
+  EXPECT_FALSE(completion.IsAvailable());
+  EXPECT_EQ(identity, raw->buffer()->GetCacheIdentity());
+  pending.SetStateConcrete();
+  tsl::BlockUntilReady(completion);
+  ASSERT_FALSE(completion.IsError());
+  EXPECT_EQ(std::memcmp(raw->buffer()->untyped_data(), bytes, sizeof(bytes)),
+            0);
+  EXPECT_NE(identity, raw->buffer()->GetCacheIdentity());
+  EXPECT_NE(raw->buffer()->GetCacheIdentity(), nullptr);
 }
 
 }  // namespace

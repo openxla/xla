@@ -1,4 +1,4 @@
-/* Copyright 2025 The OpenXLA Authors.
+/* Copyright 2025, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -55,6 +55,8 @@ class PjRtRawBufferInterface : public PJRT_RawBuffer {
 
   PjRtMemorySpace* memory_space() const;
   void* GetHostPointer() const;
+  enum class HostAccess { kRead, kWrite };
+  void* GetHostPointerForInternalUse(HostAccess access) const;
   size_t GetOnDeviceSizeInBytes() const;
 
   Future<> CopyRawHostToDevice(const void* src, int64_t offset,
@@ -124,6 +126,10 @@ class PjRtRawBuffer : public PjRtRawBufferInterface,
 
   // If visible to the host, returns the base pointer for direct access.
   virtual void* GetHostPointer() const { return nullptr; }
+
+  virtual void* GetHostPointerForInternalUse(HostAccess access) const {
+    return GetHostPointer();
+  }
 
   // Returns the number of bytes of the buffer storage on the device.
   virtual size_t GetOnDeviceSizeInBytes() const = 0;
