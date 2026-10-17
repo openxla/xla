@@ -208,9 +208,11 @@ xla_cc_test(
         "@llvm-project//llvm:AsmParser",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:MC",
+        "@llvm-project//llvm:Object",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:WebAssemblyCodeGen",  # fixdeps: keep
         "@llvm-project//llvm:X86AsmParser",  # fixdeps: keep
         "@llvm-project//llvm:X86CodeGen",  # fixdeps: keep
         "@tsl//tsl/platform:platform_port",

@@ -264,15 +264,16 @@ IrCompiler::InferTargetMachine(
   llvm::SmallVector<std::string> attrs(attrs_vec.begin(), attrs_vec.end());
 
   absl::call_once(internal::targets_init, &internal::InitializeTargets);
+  llvm::Triple triple(target_machine_options.triple());
+  llvm::EngineBuilder engine_builder;
+  engine_builder.setTargetOptions(target_options).setOptLevel(opt_level);
+  if (triple.isWasm()) {
+    engine_builder.setRelocationModel(llvm::Reloc::PIC_);
+  }
   std::unique_ptr<llvm::TargetMachine> target_machine(
-      llvm::EngineBuilder()
-          .setTargetOptions(target_options)
-          .setOptLevel(opt_level)
-          .selectTarget(
-              /*TargetTriple=*/llvm::Triple(target_machine_options.triple()),
-              /*MArch=*/"",
-              /*MCPU=*/target_machine_options.cpu(),
-              /*MAttrs=*/attrs));
+      engine_builder.selectTarget(triple, /*MArch=*/"",
+                                  /*MCPU=*/target_machine_options.cpu(),
+                                  /*MAttrs=*/attrs));
 
   if (target_machine == nullptr) {
     return Internal("Failed to create target machine for CPU %s",
@@ -419,6 +420,8 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
     device_type = xla::codegen::intrinsics::DeviceType::kArmCpu;
   } else if (target_triple.isSystemZ()) {
     device_type = xla::codegen::intrinsics::DeviceType::kSystemZCpu;
+  } else if (target_triple.isWasm()) {
+    device_type = xla::codegen::intrinsics::DeviceType::kWasmCpu;
   } else {
     LOG(FATAL) << "Unsupported CPU type: " << target_triple.str();
   }
