@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/tsl/platform/threadpool.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cfenv>  // NOLINT
 #include <cstdint>
 #include <functional>
@@ -205,6 +207,67 @@ void ThreadPool::TransformRangeConcurrently(
               fn);
 }
 
+namespace {
+
+// Shared state for `ParallelForFixedBlockSizeScheduling`.
+//
+// Blocks are claimed dynamically via an atomic index, by both the calling
+// thread and any helper tasks scheduled onto the pool. This lets the caller
+// actively work-steal blocks instead of passively blocking, which guarantees
+// forward progress even if no pool thread is ever available to run a helper
+// (e.g. a nested call made from inside a pool thread of a saturated or tiny
+// pool).
+//
+// The state is reference counted because helper tasks may begin running (and
+// discover that no blocks remain) after the caller has already returned.
+class FixedBlockSizeState {
+ public:
+  FixedBlockSizeState(std::function<void(int64_t, int64_t)> fn, int64_t total,
+                      int64_t block_size, int num_blocks)
+      : fn_(std::move(fn)),
+        total_(total),
+        block_size_(block_size),
+        num_blocks_(num_blocks),
+        blocks_remaining_(num_blocks) {}
+
+  // Claims and runs blocks until there are none left to claim.
+  void RunBlocks() {
+    while (true) {
+      const int64_t block = next_block_.fetch_add(1, std::memory_order_relaxed);
+      if (block >= num_blocks_) {
+        return;
+      }
+      const int64_t first = block * block_size_;
+      const int64_t last = std::min(first + block_size_, total_);
+      fn_(first, last);
+      blocks_remaining_.DecrementCount();
+    }
+  }
+
+  // Returns true if every block has been claimed (but not necessarily
+  // finished).
+  bool AllBlocksClaimed() const {
+    return next_block_.load(std::memory_order_relaxed) >= num_blocks_;
+  }
+
+  // Waits until every block has finished running.
+  void WaitUntilAllBlocksFinished() { blocks_remaining_.Wait(); }
+
+ private:
+  const std::function<void(int64_t, int64_t)> fn_;
+  const int64_t total_;
+  const int64_t block_size_;
+  const int64_t num_blocks_;
+
+  // Index of the next block to be claimed.
+  std::atomic<int64_t> next_block_{0};
+
+  // Number of blocks that have not yet finished running.
+  BlockingCounter blocks_remaining_;
+};
+
+}  // namespace
+
 // This functionality is similar to parallelFor, except that reasoning about
 // the number of shards used is significantly easier.
 void ThreadPool::ParallelForFixedBlockSizeScheduling(
@@ -217,31 +280,31 @@ void ThreadPool::ParallelForFixedBlockSizeScheduling(
     return;
   }
 
-  // Adapted from Eigen's parallelFor implementation.
-  BlockingCounter counter(num_shards_used);
-  std::function<void(int64_t, int64_t)> handle_range =
-      [=, &handle_range, &counter, &fn](int64_t first, int64_t last) {
-        while (last - first > block_size) {
-          // Find something near the midpoint which is a multiple of block size.
-          const int64_t mid = first + ((last - first) / 2 + block_size - 1) /
-                                          block_size * block_size;
-          Schedule([=, &handle_range]() { handle_range(mid, last); });
-          last = mid;
-        }
-        // Single block or less, execute directly.
-        fn(first, last);
-        counter.DecrementCount();  // The shard is done.
-      };
-  if (num_shards_used <= NumThreads()) {
-    // Avoid a thread hop by running the root of the tree and one block on the
-    // main thread.
-    handle_range(0, total);
-  } else {
-    // Execute the root in the thread pool to avoid running work on more than
-    // numThreads() threads.
-    Schedule([=, &handle_range]() { handle_range(0, total); });
+  auto state = std::make_shared<FixedBlockSizeState>(fn, total, block_size,
+                                                     num_shards_used);
+
+  // The caller always participates, so schedule enough helpers such that at
+  // most `NumThreads()` threads execute blocks concurrently (matching the
+  // previous behavior).
+  const int num_helpers = std::min(num_shards_used, NumThreads()) - 1;
+  for (int i = 0; i < num_helpers; ++i) {
+    // Stop scheduling once already started helpers have claimed everything;
+    // additional helpers would just be no-ops.
+    if (state->AllBlocksClaimed()) {
+      break;
+    }
+    Schedule([state]() { state->RunBlocks(); });
   }
-  counter.Wait();
+
+  // Instead of blocking, the caller works through any blocks that have not
+  // yet been claimed by a helper. If the pool is too small (or fully
+  // occupied, e.g. by callers blocked in this function) the caller ends up
+  // running every block itself rather than deadlocking.
+  state->RunBlocks();
+
+  // All blocks have been claimed; wait for blocks that are still running on
+  // helper threads. These are actively executing, so this always terminates.
+  state->WaitUntilAllBlocksFinished();
 }
 
 void ThreadPool::ParallelFor(int64_t total, int64_t cost_per_unit,
