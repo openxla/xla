@@ -34,6 +34,7 @@ the License.
 #include "xla/service/buffer_value.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 
@@ -278,11 +279,15 @@ class HloLiveRange {
   absl::flat_hash_set<absl::string_view> execution_threads_;
 };
 
+// Holders of output `index` of `instruction`: itself for {}, its GTEs for {i}.
+std::vector<const HloInstruction*> InstructionsHoldingOutput(
+    const HloInstruction* instruction, const ShapeIndex& index);
+
 // Returns the latest schedule time at which `view` (a value colored
 // `view_color`, e.g. memory_space_assignment::Options::dus_view_color or
 // BufferAssigner::Options::dus_view_color) still has its underlying storage
 // read through it: the max schedule time over the transitive closure of the
-// view's readers, following users that are themselves view colored. A view
+// view's readers, following view colored users and in place outputs. A view
 // is an address into another buffer with no storage of its own, so that
 // buffer must stay reserved until this time.
 //
