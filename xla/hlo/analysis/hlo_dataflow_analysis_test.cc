@@ -18,8 +18,10 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -31,6 +33,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
@@ -2992,6 +2995,133 @@ ENTRY main {
   EXPECT_THAT(p0_value.GetUses(), ElementsAre(HloUse{pair, 0, {}}));
   EXPECT_THAT(p1_value.GetUses(), ElementsAre(HloUse{pair, 1, {}}));
   EXPECT_THAT(p1_value.ToString(), HasSubstr(" uses:\n"));
+}
+
+// A pass may remove instructions and compact a computation with
+// HloComputation::Cleanup while it still holds the analysis, which moves the
+// local ids of the instructions behind the removed one. Lookups must keep
+// resolving to the instruction they were made for.
+TEST_P(HloDataflowAnalysisTest, LookupsSurviveLocalIdCompaction) {
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(R"(
+HloModule LocalIdCompaction
+
+ENTRY main {
+  p0 = f32[] parameter(0)
+  a = f32[] negate(p0)
+  dead = f32[] exponential(p0)
+  c = f32[] negate(a)
+  ROOT t = (f32[], f32[]) tuple(a, c)
+}
+)"));
+  HloComputation* entry = module_->entry_computation();
+  HloInstruction* a = FindInstruction(module_.get(), "a");
+  HloInstruction* dead = FindInstruction(module_.get(), "dead");
+  HloInstruction* c = FindInstruction(module_.get(), "c");
+  HloInstruction* t = FindInstruction(module_.get(), "t");
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloDataflowAnalysis> analysis,
+                       HloDataflowAnalysis::Run(*module_, GetParam()));
+
+  const int32_t c_local_id = c->local_id();
+  ASSERT_OK(entry->RemoveInstruction(dead));
+  EXPECT_EQ(analysis->GetValueDefinedAt(dead).defining_instruction(), dead);
+  entry->Cleanup();
+  ASSERT_NE(c->local_id(), c_local_id);
+
+  EXPECT_EQ(analysis->GetValueDefinedAt(c).defining_instruction(), c);
+  EXPECT_EQ(analysis->GetValueDefinedAt(t).defining_instruction(), t);
+  EXPECT_EQ(analysis->GetUniqueValueAt(t, {0}).defining_instruction(), a);
+  EXPECT_EQ(analysis->GetUniqueValueAt(t, {1}).defining_instruction(), c);
+  EXPECT_THAT(analysis->GetValueDefinedAt(a).GetUses(),
+              UnorderedElementsAre(HloUse{c, 0, {}}, HloUse{t, 0, {}}));
+}
+
+// Only the async thread is analyzed. When the root of the async computation
+// changes, its caller on the excluded main thread has no value set to update.
+TEST_P(HloDataflowAnalysisTest, IncludedCalleeOfExcludedCaller) {
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(R"(
+HloModule IncludedCalleeOfExcludedCaller
+
+async_callee {
+  c0 = f32[] constant(1.0)
+  ROOT r = (f32[]) tuple(c0)
+}
+
+ENTRY main {
+  start = ((), (f32[]), u32[]) async-start(), async_execution_thread="parallel", calls=async_callee
+  ROOT done = (f32[]) async-done(start), async_execution_thread="parallel", calls=async_callee
+}
+)"));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> analysis,
+      HloDataflowAnalysis::Run(*module_, GetParam(),
+                               /*bitcast_defines_value=*/false,
+                               /*execution_threads=*/{"parallel"}));
+  const HloInstruction* c0 = FindInstruction(module_.get(), "c0");
+  const HloInstruction* r = FindInstruction(module_.get(), "r");
+  EXPECT_EQ(&analysis->GetUniqueValueAt(r, {0}),
+            &analysis->GetValueDefinedAt(c0));
+}
+
+// Computations the propagation schedule does not reach from the entry (here
+// one that nothing calls) are propagated first, in post order, so their phis
+// take the lowest phi ids and the numbering does not depend on addresses.
+TEST_P(HloDataflowAnalysisTest, UnreachedComputationsAreNumberedFirst) {
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(R"(
+HloModule UnreachedComputations
+
+dead_cond {
+  dcp = (f32[], f32[]) parameter(0)
+  ROOT dc = pred[] constant(true)
+}
+
+dead_body {
+  dbp = (f32[], f32[]) parameter(0)
+  da = f32[] get-tuple-element(dbp), index=0
+  db = f32[] get-tuple-element(dbp), index=1
+  ROOT dbr = (f32[], f32[]) tuple(db, da)
+}
+
+dead {
+  dp = (f32[], f32[]) parameter(0)
+  ROOT dw = (f32[], f32[]) while(dp), condition=dead_cond, body=dead_body
+}
+
+live_cond {
+  lcp = (f32[], f32[]) parameter(0)
+  ROOT lc = pred[] constant(true)
+}
+
+live_body {
+  lbp = (f32[], f32[]) parameter(0)
+  la = f32[] get-tuple-element(lbp), index=0
+  lb = f32[] get-tuple-element(lbp), index=1
+  ROOT lbr = (f32[], f32[]) tuple(lb, la)
+}
+
+ENTRY main {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  t = (f32[], f32[]) tuple(x, y)
+  ROOT w = (f32[], f32[]) while(t), condition=live_cond, body=live_body
+}
+)"));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloDataflowAnalysis> analysis,
+                       HloDataflowAnalysis::Run(*module_, /*ssa_form=*/true));
+  HloValue::Id last_dead_phi = -1;
+  HloValue::Id first_live_phi = std::numeric_limits<HloValue::Id>::max();
+  for (const HloValue* value : analysis->values()) {
+    if (!value->is_phi()) {
+      continue;
+    }
+    if (absl::StartsWith(value->defining_instruction()->parent()->name(),
+                         "dead")) {
+      last_dead_phi = std::max(last_dead_phi, value->id());
+    } else {
+      first_live_phi = std::min(first_live_phi, value->id());
+    }
+  }
+  EXPECT_GE(last_dead_phi, 0);
+  EXPECT_LT(last_dead_phi, first_live_phi);
 }
 
 INSTANTIATE_TEST_SUITE_P(HloDataflowAnalysisInstantiation,
