@@ -1830,116 +1830,340 @@ void LiteralBase::EachCellAsString(
 
 namespace {
 
-template <typename NativeSrcT, typename NativeDestT>
-void ConvertBetweenNativeTypes(absl::Span<const NativeSrcT> src_data,
-                               void* dst_base) {
-  static_assert(!std::is_same_v<NativeSrcT, NativeDestT>);
-  auto converter = [](NativeSrcT src) -> NativeDestT {
-    // C++ [conv.bool]p1:
-    //   A prvalue of arithmetic [...] type can be converted to a prvalue of
-    //   type bool. A zero value [...] is converted to false; any other value is
-    //   converted to true.
-    // C++ [conv.fpint]p1:
-    //   [...] The behavior is undefined if the truncated value cannot be
-    //   represented in the destination type.
-    //
-    // Using static_cast to convert a float to an integral type other than bool
-    // may be undefined if the value's magnitude is too large or it is a NaN.
-    // Let's choose saturating arithmetic as it captures the spirit of infinity
-    // and arbitrarily map NaN to zero.
-    if constexpr (!std::is_same_v<NativeDestT, bool> &&
-                  !std::numeric_limits<NativeSrcT>::is_integer &&
-                  std::numeric_limits<NativeDestT>::is_integer) {
-      // NaN check.
-      if (src != src) {
-        return NativeDestT{0};
-      }
+// Factor LiteralBase::Convert through lossless canonical intermediate ("hub")
+// representations in L1-cache-sized chunks instead of instantiating a 2D
+// Cartesian product of ArrayTypeSwitch x ArrayTypeSwitch (32 x 32 = 1,024
+// conversion loops):
+//   - int64_t for signed integral types (S1..S64)
+//   - uint64_t for PRED and unsigned integral types (U1..U64)
+//   - float for <= 32-bit floating-point types (F4..F32), as IEEE-754 binary32
+//     losslessly represents every value of all 13 narrow float formats
+//   - double for F64
+//   - complex64 / complex128 for complex types (C64, C128)
+constexpr int64_t kConvertChunkSize = 1024;
 
-      // Clamp values that cannot fit in the destination type to avoid undefined
-      // behavior.
-      // An N-bit integer has a max of 2^N - 1 so max() + 1 is 2^N. Ensure
-      // double can losslessly hold.
-      static_assert((std::numeric_limits<double>::max_exponent - 1) >=
-                    std::numeric_limits<NativeDestT>::digits);
-      if (static_cast<double>(src) >=
-          static_cast<double>(std::numeric_limits<NativeDestT>::max())) {
-        return std::numeric_limits<NativeDestT>::max();
-      }
-      if (static_cast<double>(src) <=
-          static_cast<double>(std::numeric_limits<NativeDestT>::lowest())) {
-        return std::numeric_limits<NativeDestT>::lowest();
-      }
+const int64_t* GetOrWidenSliceToInt64(const LiteralBase& src_literal,
+                                      int64_t offset, int64_t count,
+                                      int64_t* scratch) {
+  const PrimitiveType src_type = src_literal.shape().element_type();
+  if (src_type == S64) {
+    return src_literal.data<int64_t>().data() + offset;
+  }
+  primitive_util::IntegralTypeSwitch(
+      [&](auto src_type_const) {
+        constexpr PrimitiveType kSrcType = src_type_const;
+        if constexpr (primitive_util::IsSignedIntegralType(kSrcType)) {
+          using NativeSrcT = NativeTypeOf<kSrcType>;
+          const NativeSrcT* src =
+              src_literal.data<NativeSrcT>().data() + offset;
+          for (int64_t i = 0; i < count; ++i) {
+            scratch[i] = static_cast<int64_t>(src[i]);
+          }
+        }
+      },
+      src_type);
+  return scratch;
+}
+
+const uint64_t* GetOrWidenSliceToUint64(const LiteralBase& src_literal,
+                                        int64_t offset, int64_t count,
+                                        uint64_t* scratch) {
+  const PrimitiveType src_type = src_literal.shape().element_type();
+  if (src_type == U64) {
+    return src_literal.data<uint64_t>().data() + offset;
+  }
+  if (src_type == PRED) {
+    const bool* src = src_literal.data<bool>().data() + offset;
+    for (int64_t i = 0; i < count; ++i) {
+      scratch[i] = static_cast<uint64_t>(src[i]);
     }
+    return scratch;
+  }
+  primitive_util::IntegralTypeSwitch(
+      [&](auto src_type_const) {
+        constexpr PrimitiveType kSrcType = src_type_const;
+        if constexpr (primitive_util::IsUnsignedIntegralType(kSrcType)) {
+          using NativeSrcT = NativeTypeOf<kSrcType>;
+          const NativeSrcT* src =
+              src_literal.data<NativeSrcT>().data() + offset;
+          for (int64_t i = 0; i < count; ++i) {
+            scratch[i] = static_cast<uint64_t>(src[i]);
+          }
+        }
+      },
+      src_type);
+  return scratch;
+}
 
-    // TODO(b/370786669): Once ml_dtypes is updated to include
-    // https://github.com/jax-ml/ml_dtypes/pull/205, do not special-case e3m4 by
-    // casting to half first.
-    if constexpr (sizeof(src) == 1 &&
-                  std::is_same_v<NativeDestT, tsl::float8_e3m4>) {
-      return static_cast<NativeDestT>(static_cast<half>(src));
+const float* GetOrWidenSliceToFloat(const LiteralBase& src_literal,
+                                    int64_t offset, int64_t count,
+                                    float* scratch) {
+  const PrimitiveType src_type = src_literal.shape().element_type();
+  if (src_type == F32) {
+    return src_literal.data<float>().data() + offset;
+  }
+  primitive_util::FloatingPointTypeSwitch(
+      [&](auto src_type_const) {
+        constexpr PrimitiveType kSrcType = src_type_const;
+        if constexpr (kSrcType != F64) {
+          using NativeSrcT = NativeTypeOf<kSrcType>;
+          const NativeSrcT* src =
+              src_literal.data<NativeSrcT>().data() + offset;
+          for (int64_t i = 0; i < count; ++i) {
+            scratch[i] = static_cast<float>(src[i]);
+          }
+        }
+      },
+      src_type);
+  return scratch;
+}
+
+struct IntClampBounds {
+  double lowest_d;
+  double max_d;
+  uint64_t lowest_bits;
+  uint64_t max_bits;
+};
+
+IntClampBounds GetIntClampBounds(PrimitiveType dst_type) {
+  return primitive_util::IntegralTypeSwitch(
+      [](auto dst_type_const) -> IntClampBounds {
+        using NativeDestT = NativeTypeOf<dst_type_const>;
+        // An N-bit integer has a max of 2^N - 1 so max() + 1 is 2^N. Ensure
+        // double can losslessly hold.
+        static_assert((std::numeric_limits<double>::max_exponent - 1) >=
+                      std::numeric_limits<NativeDestT>::digits);
+        constexpr NativeDestT kLowest =
+            std::numeric_limits<NativeDestT>::lowest();
+        constexpr NativeDestT kMax = std::numeric_limits<NativeDestT>::max();
+        const uint64_t lowest_bits =
+            std::numeric_limits<NativeDestT>::is_signed
+                ? static_cast<uint64_t>(static_cast<int64_t>(kLowest))
+                : uint64_t{0};
+        return {static_cast<double>(kLowest), static_cast<double>(kMax),
+                lowest_bits, static_cast<uint64_t>(kMax)};
+      },
+      dst_type);
+}
+
+// C++ [conv.fpint]p1:
+//   [...] The behavior is undefined if the truncated value cannot be
+//   represented in the destination type.
+//
+// Using static_cast to convert a float to an integral type other than bool may
+// be undefined if the value's magnitude is too large or it is a NaN. Choose
+// saturating arithmetic to capture the spirit of infinity and map NaN to zero.
+template <typename FloatT>
+void ConvertFloatSliceToClampedIntBits(const FloatT* src, int64_t count,
+                                       const IntClampBounds& bounds,
+                                       uint64_t* dst) {
+  for (int64_t i = 0; i < count; ++i) {
+    const FloatT v = src[i];
+    if (v != v) {
+      dst[i] = 0;
+    } else if (static_cast<double>(v) >= bounds.max_d) {
+      dst[i] = bounds.max_bits;
+    } else if (static_cast<double>(v) <= bounds.lowest_d) {
+      dst[i] = bounds.lowest_bits;
+    } else if (v < FloatT{0}) {
+      dst[i] = static_cast<uint64_t>(static_cast<int64_t>(v));
     } else {
-      return static_cast<NativeDestT>(src);
+      dst[i] = static_cast<uint64_t>(v);
     }
-  };
-
-  NativeDestT* dest_data = static_cast<NativeDestT*>(dst_base);
-  for (const NativeSrcT& src : src_data) {
-    *(dest_data++) = converter(src);
   }
 }
 
-template <PrimitiveType kSrcType>
-absl::Status ConvertIfDestTypeMatches(const LiteralBase& src_literal,
-                                      MutableLiteralBase& dst_literal) {
-  DCHECK(dst_literal.shape().IsArray());
-  using NativeSrcT = NativeTypeOf<kSrcType>;
-  // Pass raw data Span/pointers to called template methods to avoid duplicating
-  // the Literal method calls to many time which hurts code size.
-  auto src_data = src_literal.data<NativeSrcT>();
-  void* dst_base = dst_literal.untyped_data();
-  DCHECK_EQ(src_data.size(), dst_literal.element_count());
-  return primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> absl::Status {
-        if constexpr (primitive_util::IsComplexType(kSrcType) &&
-                      !primitive_util::IsComplexType(primitive_type_constant)) {
-          return Unimplemented("%s from type %s to type %s is not implemented.",
-                               "Converting", PrimitiveType_Name(kSrcType),
-                               PrimitiveType_Name(primitive_type_constant()));
-        } else if constexpr (kSrcType != primitive_type_constant) {
-          using NativeDestT = NativeTypeOf<primitive_type_constant>;
-          ConvertBetweenNativeTypes<NativeSrcT, NativeDestT>(src_data,
-                                                             dst_base);
+void NarrowSliceFromIntBits(const uint64_t* src, int64_t offset, int64_t count,
+                            MutableLiteralBase& dst_literal) {
+  const PrimitiveType dst_type = dst_literal.shape().element_type();
+  if (dst_type == PRED) {
+    bool* dst = dst_literal.data<bool>().data() + offset;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = src[i] != 0;
+    }
+    return;
+  }
+  primitive_util::IntegralTypeSwitch(
+      [&](auto dst_type_const) {
+        using NativeDestT = NativeTypeOf<dst_type_const>;
+        NativeDestT* dst = dst_literal.data<NativeDestT>().data() + offset;
+        for (int64_t i = 0; i < count; ++i) {
+          dst[i] = static_cast<NativeDestT>(src[i]);
         }
-        return absl::OkStatus();
       },
-      dst_literal.shape().element_type());
+      dst_type);
+}
+
+template <typename SrcFpT>
+void ConvertFloatSliceToDest(const SrcFpT* src, int64_t offset, int64_t count,
+                             MutableLiteralBase& dst_literal) {
+  const PrimitiveType dst_type = dst_literal.shape().element_type();
+  if (dst_type == PRED) {
+    bool* dst = dst_literal.data<bool>().data() + offset;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = static_cast<bool>(src[i]);
+    }
+    return;
+  }
+  if (primitive_util::IsIntegralType(dst_type)) {
+    const IntClampBounds bounds = GetIntClampBounds(dst_type);
+    if (dst_type == S64 || dst_type == U64) {
+      uint64_t* dst =
+          static_cast<uint64_t*>(dst_literal.untyped_data()) + offset;
+      ConvertFloatSliceToClampedIntBits(src, count, bounds, dst);
+    } else {
+      uint64_t int_scratch[kConvertChunkSize];
+      ConvertFloatSliceToClampedIntBits(src, count, bounds, int_scratch);
+      NarrowSliceFromIntBits(int_scratch, offset, count, dst_literal);
+    }
+    return;
+  }
+  if (dst_type == C64) {
+    complex64* dst = dst_literal.data<complex64>().data() + offset;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = static_cast<complex64>(src[i]);
+    }
+    return;
+  }
+  if (dst_type == C128) {
+    complex128* dst = dst_literal.data<complex128>().data() + offset;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = static_cast<complex128>(src[i]);
+    }
+    return;
+  }
+  primitive_util::FloatingPointTypeSwitch(
+      [&](auto dst_type_const) {
+        using NativeDestT = NativeTypeOf<dst_type_const>;
+        NativeDestT* dst = dst_literal.data<NativeDestT>().data() + offset;
+        for (int64_t i = 0; i < count; ++i) {
+          dst[i] = static_cast<NativeDestT>(src[i]);
+        }
+      },
+      dst_type);
+}
+
+template <typename IntHubT>
+void ConvertIntHubSliceToNonIntDest(const IntHubT* src, int64_t offset,
+                                    int64_t count,
+                                    MutableLiteralBase& dst_literal) {
+  const PrimitiveType dst_type = dst_literal.shape().element_type();
+  if (dst_type == F64) {
+    double* dst = dst_literal.data<double>().data() + offset;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = static_cast<double>(src[i]);
+    }
+    return;
+  }
+  if (dst_type == C64) {
+    complex64* dst = dst_literal.data<complex64>().data() + offset;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = static_cast<complex64>(src[i]);
+    }
+    return;
+  }
+  if (dst_type == C128) {
+    complex128* dst = dst_literal.data<complex128>().data() + offset;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = static_cast<complex128>(src[i]);
+    }
+    return;
+  }
+  if (dst_type == F32) {
+    float* dst = dst_literal.data<float>().data() + offset;
+    for (int64_t i = 0; i < count; ++i) {
+      dst[i] = static_cast<float>(src[i]);
+    }
+    return;
+  }
+  // All narrow floating-point formats (F4..BF16) define integer conversion via
+  // static_cast<float>(int_val).
+  float float_scratch[kConvertChunkSize];
+  for (int64_t i = 0; i < count; ++i) {
+    float_scratch[i] = static_cast<float>(src[i]);
+  }
+  ConvertFloatSliceToDest(float_scratch, offset, count, dst_literal);
 }
 
 absl::StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
                                       PrimitiveType primitive_dest_type) {
   TF_RET_CHECK(literal.shape().IsArray());
-  if (literal.shape().element_type() == primitive_dest_type) {
+  const PrimitiveType src_type = literal.shape().element_type();
+  if (src_type == primitive_dest_type) {
     return literal.Clone();
   }
-  // Source Array type requirement is ensured before.
   if (!primitive_util::IsArrayType(primitive_dest_type) ||
-      !primitive_util::IsArrayType(literal.shape().element_type())) {
+      !primitive_util::IsArrayType(src_type) ||
+      (primitive_util::IsComplexType(src_type) &&
+       !primitive_util::IsComplexType(primitive_dest_type))) {
     return Unimplemented("%s from type %s to type %s is not implemented.",
-                         "Converting",
-                         PrimitiveType_Name(literal.shape().element_type()),
+                         "Converting", PrimitiveType_Name(src_type),
                          PrimitiveType_Name(primitive_dest_type));
   }
-  // At this point, we know both src & dst are array types, while src is not
-  // complex type, so we can allocate the result literal here to avoid
-  // duplicating it N^2 times in the conversion implementation.
   Literal result(
       ShapeUtil::ChangeElementType(literal.shape(), primitive_dest_type));
-  ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> absl::Status {
-        return ConvertIfDestTypeMatches<primitive_type_constant>(literal,
-                                                                 result);
-      },
-      literal.shape().element_type()));
+  const int64_t total_elements = literal.element_count();
+  if (total_elements == 0) {
+    return result;
+  }
+
+  if (primitive_util::IsComplexType(src_type)) {
+    if (src_type == C64 && primitive_dest_type == C128) {
+      const complex64* src = literal.data<complex64>().data();
+      complex128* dst = result.data<complex128>().data();
+      for (int64_t i = 0; i < total_elements; ++i) {
+        dst[i] = static_cast<complex128>(src[i]);
+      }
+    } else if (src_type == C128 && primitive_dest_type == C64) {
+      const complex128* src = literal.data<complex128>().data();
+      complex64* dst = result.data<complex64>().data();
+      for (int64_t i = 0; i < total_elements; ++i) {
+        dst[i] = static_cast<complex64>(src[i]);
+      }
+    }
+    return result;
+  }
+
+  if (src_type == F64) {
+    ConvertFloatSliceToDest(literal.data<double>().data(), /*offset=*/0,
+                            total_elements, result);
+    return result;
+  }
+
+  const bool dst_is_int_or_pred =
+      primitive_dest_type == PRED ||
+      primitive_util::IsIntegralType(primitive_dest_type);
+
+  for (int64_t offset = 0; offset < total_elements;
+       offset += kConvertChunkSize) {
+    const int64_t count = std::min(kConvertChunkSize, total_elements - offset);
+    if (primitive_util::IsSignedIntegralType(src_type)) {
+      int64_t scratch[kConvertChunkSize];
+      const int64_t* hub =
+          GetOrWidenSliceToInt64(literal, offset, count, scratch);
+      if (dst_is_int_or_pred) {
+        NarrowSliceFromIntBits(reinterpret_cast<const uint64_t*>(hub), offset,
+                               count, result);
+      } else {
+        ConvertIntHubSliceToNonIntDest(hub, offset, count, result);
+      }
+    } else if (src_type == PRED ||
+               primitive_util::IsUnsignedIntegralType(src_type)) {
+      uint64_t scratch[kConvertChunkSize];
+      const uint64_t* hub =
+          GetOrWidenSliceToUint64(literal, offset, count, scratch);
+      if (dst_is_int_or_pred) {
+        NarrowSliceFromIntBits(hub, offset, count, result);
+      } else {
+        ConvertIntHubSliceToNonIntDest(hub, offset, count, result);
+      }
+    } else {
+      float scratch[kConvertChunkSize];
+      const float* hub =
+          GetOrWidenSliceToFloat(literal, offset, count, scratch);
+      ConvertFloatSliceToDest(hub, offset, count, result);
+    }
+  }
   return result;
 }
 

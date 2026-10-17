@@ -2049,6 +2049,42 @@ TEST_F(LiteralUtilTest, ConvertIfTypesMatch) {
   EXPECT_EQ(c128.Convert(S32).status().code(), tsl::error::UNIMPLEMENTED);
 }
 
+TEST_F(LiteralUtilTest, ConvertFloatToIntegralClampingAndMultiChunk) {
+  Literal f32 = LiteralUtil::CreateR1<float>({
+      std::numeric_limits<float>::quiet_NaN(),
+      std::numeric_limits<float>::infinity(),
+      -std::numeric_limits<float>::infinity(),
+      300.0f,
+      -300.0f,
+      -5.75f,
+      42.9f,
+  });
+  ASSERT_OK_AND_ASSIGN(Literal s8, f32.Convert(S8));
+  EXPECT_EQ(s8,
+            LiteralUtil::CreateR1<int8_t>({0, 127, -128, 127, -128, -5, 42}));
+
+  ASSERT_OK_AND_ASSIGN(Literal u8, f32.Convert(U8));
+  EXPECT_EQ(u8, LiteralUtil::CreateR1<uint8_t>({0, 255, 0, 255, 0, 0, 42}));
+
+  ASSERT_OK_AND_ASSIGN(Literal s4_lit, f32.Convert(S4));
+  EXPECT_EQ(s4_lit, LiteralUtil::CreateR1<s4>(
+                        {s4(0), s4(7), s4(-8), s4(7), s4(-8), s4(-5), s4(7)}));
+
+  // Exercise multi-chunk conversion (> 1024 elements).
+  constexpr int kNumElements = 2500;
+  std::vector<int16_t> s16_values(kNumElements);
+  std::vector<bfloat16> bf16_expected(kNumElements);
+  for (int i = 0; i < kNumElements; ++i) {
+    s16_values[i] = static_cast<int16_t>((i % 251) - 125);
+    bf16_expected[i] = static_cast<bfloat16>(static_cast<float>(s16_values[i]));
+  }
+  Literal s16_large = LiteralUtil::CreateR1<int16_t>(s16_values);
+  ASSERT_OK_AND_ASSIGN(Literal bf16_large, s16_large.Convert(BF16));
+  EXPECT_EQ(bf16_large, LiteralUtil::CreateR1<bfloat16>(bf16_expected));
+  ASSERT_OK_AND_ASSIGN(Literal s16_roundtrip, bf16_large.Convert(S16));
+  EXPECT_EQ(s16_roundtrip, s16_large);
+}
+
 TEST_F(LiteralUtilTest, ConvertFromF4E2M1FN) {
   // Raw F4 inputs.
   Literal f4 = LiteralUtil::CreateR1<tsl::float4_e2m1fn>({
