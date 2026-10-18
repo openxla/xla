@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/cpu/transforms/library_rewriter.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -944,6 +945,63 @@ TEST_F(CpuLibraryTest, PeelBroadcastRoot) {
   spec.fusion_mode = "reduce";
   RunTestInternal(spec, kHloString,
                   FusionProperties{HloOpcode::kSqrt, 1, 4, true});
+}
+
+TEST_F(CpuLibraryTest, DuplicateSharedBroadcastUpIntoMultipleDots) {
+  constexpr absl::string_view kHloString = R"(
+    HloModule shared_broadcast_dots
+
+    ENTRY main {
+      %x = f32[64,64]{1,0} parameter(0)
+      %w0 = f32[64,64]{1,0} parameter(1)
+      %w1 = f32[64,64]{1,0} parameter(2)
+      %bias_1d = f32[64]{0} parameter(3)
+      %bias = f32[64,64]{1,0} broadcast(%bias_1d), dimensions={1}
+      %dot0 = f32[64,64]{1,0} dot(%x, %w0), lhs_contracting_dims={1},
+                                            rhs_contracting_dims={0}
+      %add0 = f32[64,64]{1,0} add(%dot0, %bias)
+      %dot1 = f32[64,64]{1,0} dot(%x, %w1), lhs_contracting_dims={1},
+                                            rhs_contracting_dims={0}
+      %add1 = f32[64,64]{1,0} add(%dot1, %bias)
+      ROOT %out = (f32[64,64]{1,0}, f32[64,64]{1,0}) tuple(%add0, %add1)
+    })";
+
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  std::unique_ptr<TargetMachineFeatures> features = CreateTargetMachineFeatures(
+      /*triple_string=*/"x86_64-unknown-linux-gnu", spec.cpu_name,
+      spec.features);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloString));
+
+  tsl::protobuf::RepeatedField<int> fusion_types;
+  fusion_types.Add(DebugOptions::LIBRARY_FUSION_TYPE_DOT);
+  tsl::protobuf::RepeatedField<int> empty_fusion_types;
+  LibraryRewriterOptions options = {
+      /*use_onednn=*/false,
+      /*use_ynnpack=*/true,
+      /*onednn_fusion_types=*/&empty_fusion_types,
+      /*ynn_fusion_types=*/&fusion_types,
+  };
+  LibraryRewriter rewriter(features.get(), options);
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  // The shared broadcast should be duplicated upward into both dot fusions and
+  // removed from the entry computation.
+  EXPECT_EQ(hlo_query::FindInstruction(module->entry_computation(),
+                                       HloOpcode::kBroadcast),
+            nullptr);
+  int fusion_count = 0;
+  for (HloInstruction* instr : module->entry_computation()->instructions()) {
+    if (instr->opcode() == HloOpcode::kFusion) {
+      ++fusion_count;
+      EXPECT_NE(
+          hlo_query::FindInstruction(instr->fused_instructions_computation(),
+                                     HloOpcode::kBroadcast),
+          nullptr);
+    }
+  }
+  EXPECT_EQ(fusion_count, 2);
 }
 
 }  // namespace

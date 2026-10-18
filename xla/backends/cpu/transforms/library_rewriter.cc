@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
@@ -190,6 +191,19 @@ bool ShouldPeelOp(const HloInstruction* instr) {
   }
 }
 
+bool IsFreeToDuplicateUp(const HloInstruction* instr) {
+  switch (instr->opcode()) {
+    case xla::HloOpcode::kBroadcast:
+    case xla::HloOpcode::kReshape:
+    case xla::HloOpcode::kBitcast:
+      return true;
+    case xla::HloOpcode::kConstant:
+      return ShapeUtil::IsEffectiveScalar(instr->shape());
+    default:
+      return false;
+  }
+}
+
 // If a fusion terminates with a broadcast, peel that instruction out of the
 // fusion. Keeping a broadcast at the root of a fusion forces libraries to
 // materialize the broadcast into memory, whereas keeping it outside the fusion
@@ -258,11 +272,19 @@ void LibraryRewriter::AddFusionCandidates(
   // Don't add anything that has already been fused or require multi-output
   // fusion support. (We don't support that yet.)
   if (dir == FusionDirection::kUp || dir == FusionDirection::kBoth) {
+    const bool instr_has_external_users =
+        instr != fusion &&
+        absl::c_any_of(instr->users(), [&](HloInstruction* u) {
+          return u != fusion && !fused_.contains(u);
+        });
     for (HloInstruction* operand : instr->operands()) {
-      if (!fused_.contains(operand) && !visited.contains(operand) &&
-          absl::c_all_of(operand->users(), [&](HloInstruction* user) {
-            return user == fusion || user == instr || fused_.contains(user);
-          })) {
+      const bool can_fuse_up =
+          IsFreeToDuplicateUp(operand) ||
+          (!instr_has_external_users && !fused_.contains(operand) &&
+           absl::c_all_of(operand->users(), [&](HloInstruction* user) {
+             return user == fusion || user == instr || fused_.contains(user);
+           }));
+      if (can_fuse_up && !visited.contains(operand)) {
         queue.push(std::make_pair(operand, FusionDirection::kUp));
         visited.insert(operand);
       }
@@ -308,6 +330,7 @@ absl::StatusOr<HloInstruction*> LibraryRewriter::GrowFusion(
   if (dir == FusionDirection::kUp) {
     new_instr = fusion->FuseInstruction(to_fuse);
     if (to_fuse->user_count() == 0) {
+      fused_.insert(to_fuse);
       ABSL_RETURN_IF_ERROR(to_fuse->parent()->RemoveInstruction(to_fuse));
     }
   } else if (dir == FusionDirection::kDown) {
@@ -362,7 +385,9 @@ absl::StatusOr<bool> LibraryRewriter::FuseNeighbors(
     }
 
     // Add neighbors to the frontier.
-    fused_.insert(instr);
+    if (dir != FusionDirection::kUp || !IsFreeToDuplicateUp(instr)) {
+      fused_.insert(instr);
+    }
     AddFusionCandidates(fusion, instr, dir, frontier, visited);
 
     // Fuse `instr` into `fusion` according to the travel direction.
