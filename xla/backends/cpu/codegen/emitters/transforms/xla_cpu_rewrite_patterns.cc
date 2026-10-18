@@ -406,6 +406,85 @@ class WrapEntryWithCallFrame
   int32_t vector_width_;
 };
 
+class WrapEntryWithComparatorArgs
+    : public mlir::OpRewritePattern<mlir::func::FuncOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      mlir::func::FuncOp op, mlir::PatternRewriter& rewriter) const override {
+    if (!op->hasAttr("xla.cpu.is_comparator")) {
+      return mlir::failure();
+    }
+
+    if (op->hasAttr("xla.cpu.is_wrapped")) {
+      return mlir::failure();
+    }
+
+    if (op.getNumArguments() < 1) {
+      return rewriter.notifyMatchFailure(
+          op, "Comparator entry function must have at least 1 argument.");
+    }
+
+    if (!op->getUsers().empty()) {
+      return rewriter.notifyMatchFailure(op, "Entry function has users.");
+    }
+
+    mlir::MLIRContext* context = rewriter.getContext();
+    mlir::ImplicitLocOpBuilder builder(op.getLoc(), rewriter);
+
+    std::string comparator_name(op.getName());
+    op.setName(absl::StrCat(comparator_name, "_wrapped"));
+
+    auto ptr_type = mlir::LLVM::LLVMPointerType::get(context);
+    llvm::SmallVector<mlir::Type, 6> comparator_arg_types(6, ptr_type);
+    mlir::func::FuncOp comparator_func = mlir::func::FuncOp::create(
+        builder, comparator_name,
+        rewriter.getFunctionType(comparator_arg_types, /*results=*/{}));
+
+    builder.setInsertionPointToStart(comparator_func.addEntryBlock());
+    comparator_func->setAttr(
+        "llvm.uwtable_kind",
+        mlir::LLVM::UWTableKindAttr::get(
+            context, mlir::LLVM::uwtable::UWTableKind::Sync));
+
+    mlir::Value result_ptr = comparator_func.getArgument(0);
+    mlir::Value params_ptr = comparator_func.getArgument(2);
+
+    llvm::SmallVector<mlir::Value> call_args;
+    call_args.reserve(op.getNumArguments());
+    for (const auto& [idx, arg] :
+         llvm::enumerate(op.getArguments().drop_back(1))) {
+      auto param_gep = mlir::LLVM::GEPOp::create(
+          builder, ptr_type, ptr_type, params_ptr,
+          llvm::SmallVector<mlir::LLVM::GEPArg, 1>{
+              mlir::LLVM::GEPArg(static_cast<int32_t>(idx))},
+          mlir::LLVM::GEPNoWrapFlags::inbounds);
+      auto param_ptr = mlir::LLVM::LoadOp::create(builder, ptr_type, param_gep);
+      param_ptr.setInvariant(true);
+      auto cast = mlir::UnrealizedConversionCastOp::create(
+          builder, arg.getType(), param_ptr.getResult());
+      call_args.push_back(cast.getResult(0));
+    }
+
+    mlir::Type result_type = op.getArguments().back().getType();
+    auto result_cast = mlir::UnrealizedConversionCastOp::create(
+        builder, result_type, result_ptr);
+    call_args.push_back(result_cast.getResult(0));
+
+    mlir::func::CallOp::create(builder, op, call_args);
+    mlir::func::ReturnOp::create(builder);
+
+    op->setAttr("xla.cpu.is_wrapped", builder.getUnitAttr());
+    op.setPrivate();
+    op->setAttr("llvm.linkage", mlir::LLVM::LinkageAttr::get(
+                                    context, mlir::LLVM::Linkage::Internal));
+    op->setAttr("llvm.always_inline", builder.getUnitAttr());
+
+    return mlir::success();
+  }
+};
+
 // Implementation similar to https://gudok.xyz/transpose/#_64_bit_simd_0_74.
 
 // Example that follows changes in the first row.
@@ -638,7 +717,7 @@ void PopulateXlaCpuConversionPatterns(mlir::RewritePatternSet& patterns,
   mlir::MLIRContext* context = patterns.getContext();
   patterns.add<LowerLoadOp, LowerWorkGroupIdOp, LowerSuccessOp,
                RewriteFunctionSignatures, LowerExtractWorkgroupIdOp,
-               LowerVector2DTransposeOp>(context);
+               LowerVector2DTransposeOp, WrapEntryWithComparatorArgs>(context);
   patterns.add<WrapEntryWithCallFrame>(context, vector_width);
 }
 
