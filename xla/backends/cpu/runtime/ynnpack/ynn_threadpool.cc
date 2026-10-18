@@ -17,8 +17,6 @@ limitations under the License.
 
 #include <cassert>
 
-#include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "xla/backends/cpu/runtime/ynnpack/slinky_threadpool.h"
 #include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
 #include "ynnpack/include/ynnpack.h"
