@@ -18,10 +18,19 @@ syntax = "proto3";
 package xla.ifrt;
 
 import "xla/pjrt/proto/compile_options.proto";
+import "xla/python/ifrt/device.proto";
 
 message XlaCompileOptionsProto {
   int32 version_number = 3;
 
   xla.CompileOptionsProto compile_options = 1;
   repeated int32 outputs_bundle_slice_sizes = 2;
+}
+
+// Wire format for `XlaDeserializeExecutableOptions`.
+message XlaDeserializeExecutableOptionsProto {
+  int32 version_number = 1;
+
+  optional xla.CompileOptionsProto compile_options = 2;
+  optional DeviceListProto devices = 3;
 }

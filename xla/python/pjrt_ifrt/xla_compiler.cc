@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable_serdes.h"
+#include "xla/python/ifrt/program_serdes.h"
 #include "xla/python/ifrt/rtti.h"
 #include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/serdes_version.h"
@@ -125,6 +126,93 @@ class XlaCompileOptionsSerDes
 bool register_xla_compile_options_serdes = ([]{
   RegisterSerDes<XlaCompileOptions>(
       std::make_unique<XlaCompileOptionsSerDes>());
+}(), true);
+
+class XlaDeserializeExecutableOptionsSerDes
+    : public RTTIExtends<XlaDeserializeExecutableOptionsSerDes, SerDes> {
+ public:
+  absl::string_view type_name() const override {
+    return "xla::ifrt::XlaDeserializeExecutableOptions";
+  }
+
+  absl::StatusOr<absl::Cord> Serialize(
+      const Serializable& serializable,
+      std::unique_ptr<SerializeOptions> options) override {
+    const SerDesVersion version = GetRequestedSerDesVersion(options.get());
+    if (version.version_number() < SerDesVersionNumber(0)) {
+      return absl::FailedPreconditionError(
+          absl::StrCat("Unsupported ", version.version_number(),
+                       " for XlaDeserializeExecutableOptions serialization"));
+    }
+    const auto& xla_deserialize_options =
+        cast<XlaDeserializeExecutableOptions>(serializable);
+
+    XlaDeserializeExecutableOptionsProto proto;
+    proto.set_version_number(SerDesVersionNumber(0).value());
+    if (xla_deserialize_options.compile_options.has_value()) {
+      ABSL_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
+                            xla_deserialize_options.compile_options->ToProto());
+    }
+    if (xla_deserialize_options.devices.has_value() &&
+        *xla_deserialize_options.devices != nullptr) {
+      (*xla_deserialize_options.devices)
+          ->ToProto(*proto.mutable_devices(), version);
+    }
+    if (!xla_deserialize_options.loaded_host_callbacks.empty()) {
+      return absl::UnimplementedError(
+          "xla::ifrt::XlaDeserializeExecutableOptions with "
+          "loaded_host_callbacks is not serializable");
+    }
+    return proto.SerializeAsCord();
+  }
+
+  absl::StatusOr<std::unique_ptr<Serializable>> Deserialize(
+      const absl::Cord& serialized,
+      std::unique_ptr<DeserializeOptions> deserialize_options) override {
+    XlaDeserializeExecutableOptionsProto proto;
+    if (!proto.ParseFromString(serialized)) {
+      return absl::DataLossError(
+          "Unable to parse serialized XlaDeserializeExecutableOptionsProto");
+    }
+    const SerDesVersionNumber version_number(proto.version_number());
+    if (version_number != SerDesVersionNumber(0)) {
+      return absl::FailedPreconditionError(
+          absl::StrCat("Unsupported ", version_number,
+                       " for XlaDeserializeExecutableOptions deserialization"));
+    }
+
+    auto result = std::make_unique<XlaDeserializeExecutableOptions>();
+    if (proto.has_compile_options()) {
+      ABSL_ASSIGN_OR_RETURN(
+          result->compile_options,
+          xla::CompileOptions::FromProto(proto.compile_options()));
+    }
+    if (proto.has_devices()) {
+      auto* deserialize_program_options =
+          dyn_cast_or_null<DeserializeProgramOptions>(
+              deserialize_options.get());
+      if (deserialize_program_options == nullptr ||
+          deserialize_program_options->client == nullptr) {
+        return absl::InvalidArgumentError(
+            "XlaDeserializeExecutableOptions requires Client to deserialize "
+            "devices");
+      }
+      ABSL_ASSIGN_OR_RETURN(
+          result->devices,
+          DeviceList::FromProto(deserialize_program_options->client,
+                                proto.devices()));
+    }
+    return result;
+  }
+
+  static char ID;  // NOLINT
+};
+
+[[maybe_unused]] char XlaDeserializeExecutableOptionsSerDes::ID = 0;  // NOLINT
+
+bool register_xla_deserialize_executable_options_serdes = ([]{
+  RegisterSerDes<XlaDeserializeExecutableOptions>(
+      std::make_unique<XlaDeserializeExecutableOptionsSerDes>());
 }(), true);
 
 }  // namespace

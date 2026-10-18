@@ -46,6 +46,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/pjrt:pjrt_executable",
         "//xla/python/ifrt",
+        "//xla/python/ifrt:program_serdes",
         "//xla/python/ifrt:serdes",
         "//xla/python/ifrt:serdes_version",
         "//xla/service:device_assignment",
@@ -79,7 +80,10 @@ tf_proto_library(
 tf_proto_library(
     name = "xla_compiler_proto",
     srcs = ["xla_compiler.proto"],
-    deps = ["//xla/pjrt/proto:compile_options_proto"],
+    deps = [
+        "//xla/pjrt/proto:compile_options_proto",
+        "//xla/python/ifrt:device_proto",
+    ],
 )
 
 tf_proto_library(
@@ -160,6 +164,29 @@ xla_cc_test(
         "//xla/tsl/platform:status_matchers",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "xla_compiler_serdes_test",
+    srcs = ["xla_compiler_serdes_test.cc"],
+    deps = [
+        ":xla_ifrt",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/python/ifrt",
+        "//xla/python/ifrt:device_test_util",
+        "//xla/python/ifrt:mock",
+        "//xla/python/ifrt:program_serdes",
+        "//xla/python/ifrt:serdes",
+        "//xla/python/ifrt:serdes_proto_cc",
+        "//xla/python/ifrt:serdes_test_util",
+        "//xla/python/ifrt:serdes_version",
+        "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",

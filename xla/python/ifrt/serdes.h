@@ -34,6 +34,8 @@ limitations under the License.
 namespace xla {
 namespace ifrt {
 
+struct DeserializeOptions;
+
 // Base class for serialization options to be passed to `Serialize`.
 struct SerializeOptions : RTTIExtends<SerializeOptions, RTTIRoot> {
   explicit SerializeOptions(
@@ -50,11 +52,6 @@ struct SerializeOptions : RTTIExtends<SerializeOptions, RTTIRoot> {
 // use the latest version that is no later than the requested version.
 SerDesVersion GetRequestedSerDesVersion(const SerializeOptions* options);
 
-// Base class for deserialization options to be passed to `Deserialize`.
-struct DeserializeOptions : RTTIExtends<DeserializeOptions, RTTIRoot> {
-  static char ID;  // NOLINT
-};
-
 // Base class for serializable IFRT types.
 class Serializable : public RTTIExtends<Serializable, RTTIRoot> {
  public:
@@ -64,6 +61,11 @@ class Serializable : public RTTIExtends<Serializable, RTTIRoot> {
   // `Serializable` can customize them.
   using SerializeOptions = ::xla::ifrt::SerializeOptions;
   using DeserializeOptions = ::xla::ifrt::DeserializeOptions;
+};
+
+// Base class for deserialization options to be passed to `Deserialize`.
+struct DeserializeOptions : RTTIExtends<DeserializeOptions, Serializable> {
+  static char ID;  // NOLINT
 };
 
 // Serializer and deserializer implementations for one `Serializable` type.
