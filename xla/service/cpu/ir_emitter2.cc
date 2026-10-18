@@ -280,7 +280,9 @@ absl::StatusOr<IrEmitter2::ComparatorInfo> IrEmitter2::EmitSortComparator(
   auto info = absl::c_find_if(comparators_, [&](const ComparatorInfo& info) {
     return info.name == comparator_name;
   });
-  if (info != comparators_.end()) return *info;
+  if (info != comparators_.end()) {
+    return *info;
+  }
 
   // We use simple post-order schedule as we are not emitting a "real"
   // computation that requires buffer assignment.

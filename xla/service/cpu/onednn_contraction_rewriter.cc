@@ -709,7 +709,9 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
   // library. Matched HLO instruction(s) are replaced by custom call.
   absl::Status HandleDot(HloInstruction* instr) override {
     // When oneDNN graph is enabled, dot will be handled via DotLibraryRewriter
-    if (graph_enabled_) return absl::OkStatus();
+    if (graph_enabled_) {
+      return absl::OkStatus();
+    }
 
     HloInstruction* dot_instr;
     auto pattern = m::Op(&dot_instr).WithOpcode(HloOpcode::kDot);
@@ -882,7 +884,9 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
           m::Convert(&addend, m::Op()),
           m::Broadcast(&optional_addend_broadcast, m::Op(&addend)),
           m::Op(&addend));
-      if (!Match(addend_intermediate, addend_pattern)) return absl::OkStatus();
+      if (!Match(addend_intermediate, addend_pattern)) {
+        return absl::OkStatus();
+      }
 
       // oneDNN library requires Convolution biases to always have rank 1.
       // Therefore, these bias shapes should remain unchanged.
@@ -977,7 +981,9 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
                      : OneDnnFusionConfig::UNDEFINED)
           : can_fuse_sum ? OneDnnFusionConfig::SUM
                          : OneDnnFusionConfig::BINARY_ADD;
-      if (kind == OneDnnFusionConfig::UNDEFINED) return absl::OkStatus();
+      if (kind == OneDnnFusionConfig::UNDEFINED) {
+        return absl::OkStatus();
+      }
 
       // Alias output buffers to addend for in-place accumulation
       if (kind == OneDnnFusionConfig::SUM) {
@@ -1330,7 +1336,9 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
     bool is_rhs_vector = rhs->shape().dimensions().size() ==
                          (rhs_batch_dims.size() + rhs_contraction_dims.size());
 
-    if (!is_lhs_vector && !is_rhs_vector) return dot_instr;
+    if (!is_lhs_vector && !is_rhs_vector) {
+      return dot_instr;
+    }
 
     std::vector<int64_t> adjusted_lhs_dims(lhs->shape().dimensions().begin(),
                                            lhs->shape().dimensions().end());
@@ -1379,7 +1387,9 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
   // This function upcasts BF16 dots to F32 if we are unable to rewrite them to
   // oneDNN custom calls.
   absl::Status UpcastDotToF32(HloInstruction* dot_instr) {
-    if (dot_instr->shape().element_type() != BF16) return absl::OkStatus();
+    if (dot_instr->shape().element_type() != BF16) {
+      return absl::OkStatus();
+    }
     std::vector<HloInstruction*> new_operands;
     auto bf16_operands = dot_instr->operands();
 
@@ -1469,7 +1479,8 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
       ABSL_RETURN_IF_ERROR(matmul_call->set_backend_config(*backend_config));
       ABSL_RETURN_IF_ERROR(ReplaceInstruction(contraction, matmul_call));
       return HandleCustomCallInternal<kOnednnMatmulConfig>(matmul_call);
-    } else if (Match(custom_call, OneDnnConvolutionInstr(&contraction))) {
+    }
+    if (Match(custom_call, OneDnnConvolutionInstr(&contraction))) {
       return HandleCustomCallInternal<kOnednnConvConfig>(custom_call);
     }
     return DefaultAction(custom_call);
@@ -1560,9 +1571,8 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
       ABSL_RETURN_IF_ERROR(SetWeightsPrepack(custom_call, false));
       return absl::CancelledError(
           "Cannot replace plain weights with prepacked weights.");
-    } else {
-      return custom_call;
     }
+    return custom_call;
   }
 
   absl::StatusOr<tsl::protobuf::RepeatedField<uint64_t>*> GetOperandTensor(

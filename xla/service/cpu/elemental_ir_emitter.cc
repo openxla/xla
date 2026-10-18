@@ -62,7 +62,8 @@ absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitTanh(
         xla::codegen::intrinsics::Tanh::GetOrInsertDeclaration(
             module(), Type::S(prim_type));
     return b()->CreateCall(tanh, value);
-  } else if (prim_type == F16 || prim_type == BF16) {
+  }
+  if (prim_type == F16 || prim_type == BF16) {
     llvm::Type* f32_type = b()->getFloatTy();
     llvm::Value* f32_value = b()->CreateFPCast(value, f32_type, "upcast");
     llvm::Function* tanh =

@@ -299,10 +299,14 @@ std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
     *eps = static_cast<float>(epsilon->literal().GetAsDouble({}).value());
   }
   // get scale
-  if (!Match(scale_node, m::Broadcast(m::Op(scale)))) return std::nullopt;
+  if (!Match(scale_node, m::Broadcast(m::Op(scale)))) {
+    return std::nullopt;
+  }
 
   // match variance
-  if (!Match(sqrd_diff_mean, MeanPattern(&sqrd_diff))) return std::nullopt;
+  if (!Match(sqrd_diff_mean, MeanPattern(&sqrd_diff))) {
+    return std::nullopt;
+  }
 
   if (!Match(sqrd_diff, Square(m::Subtract().WithBinaryOperandsAnyOrder(
                             m::Op(&src_a),
@@ -598,7 +602,9 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleDivide(HloInstruction* divide_instr) override {
-    if (divide_instr->HasControlDependencies()) return absl::OkStatus();
+    if (divide_instr->HasControlDependencies()) {
+      return absl::OkStatus();
+    }
     if (!IsSupportedType(divide_instr->shape().element_type())) {
       return absl::OkStatus();
     }

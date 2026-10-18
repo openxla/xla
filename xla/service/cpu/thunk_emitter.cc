@@ -633,13 +633,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCallThunk(
 
     return MakeKernelThunkSequence(instruction, std::move(kernel_spec),
                                    /*min_alignment=*/MinAlign());
-  } else {
-    ABSL_ASSIGN_OR_RETURN(
-        ThunkSequence called_sequence,
-        EmitHloComputation(instruction->called_computations().front()));
-    return ThunkSequence::Of<CallThunk>(ThunkInfo(instruction),
-                                        std::move(called_sequence));
   }
+  ABSL_ASSIGN_OR_RETURN(
+      ThunkSequence called_sequence,
+      EmitHloComputation(instruction->called_computations().front()));
+  return ThunkSequence::Of<CallThunk>(ThunkInfo(instruction),
+                                      std::move(called_sequence));
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConcatenateKernelThunk(
@@ -1141,7 +1140,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCustomCallThunk(
   }
   if (custom_call_target == "TopK") {
     return EmitTopKThunk(custom_call);
-  } else if (custom_call_target == "SliceToDynamic") {
+  }
+  if (custom_call_target == "SliceToDynamic") {
     return EmitSliceToDynamicThunk(instruction);
   } else if (custom_call_target == "GetRngSeed") {
     return EmitRngSeedThunk(instruction);

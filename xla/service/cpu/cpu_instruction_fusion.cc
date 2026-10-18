@@ -376,8 +376,9 @@ void CpuInstructionFusion::ComputeInstructionsToSkip(
           continue;
         }
         for (HloInstruction* instr :
-             callable->called_computation()->instructions())
+             callable->called_computation()->instructions()) {
           instructions_to_skip_.insert(instr);
+        }
       } else if (BlockSubcomputationFusion(instruction)) {
         for (const auto* computation : instruction->called_computations()) {
           for (const auto* instr : computation->instructions()) {
@@ -547,10 +548,11 @@ FusionDecision CpuInstructionFusion::ShouldFuse(HloInstruction* consumer,
               kFusionThresholdBytes) {
         VLOG(2) << "Fusing small matrix-vector product.";
         return FusionDecision::Allow();
-      } else if (consumer->operand(1)->shape().dimensions().size() == 1 &&
-                 operand_index == 0 &&
-                 ShapeUtil::ByteSizeOfElements(consumer->operand(1)->shape()) <
-                     kFusionThresholdBytes) {
+      }
+      if (consumer->operand(1)->shape().dimensions().size() == 1 &&
+          operand_index == 0 &&
+          ShapeUtil::ByteSizeOfElements(consumer->operand(1)->shape()) <
+              kFusionThresholdBytes) {
         VLOG(2) << "Fusing small matrix-vector product.";
         return FusionDecision::Allow();
       }

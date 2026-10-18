@@ -375,7 +375,8 @@ absl::Status IrEmitter::HandleCopy(HloInstruction* copy) {
     // tuple so just memcpy the top-level buffer for tuples.
     ABSL_RETURN_IF_ERROR(EmitTargetAddressForOp(copy));
     return EmitMemcpy(*(copy->operand(0)), *copy);
-  } else if (copy->shape().IsArray()) {
+  }
+  if (copy->shape().IsArray()) {
     // Use the elemental emitter for array shapes.
     return DefaultAction(copy);
   }
@@ -1863,10 +1864,9 @@ absl::Status IrEmitter::HandleReduce(HloInstruction* reduce) {
       VLOG(1) << "Successfully vectorized reduction " << reduce->ToString()
               << "\n";
       return absl::OkStatus();
-    } else {
-      VLOG(1) << "Could not vectorize reduction " << reduce->ToString() << ": "
-              << vectorization_failure_reason;
     }
+    VLOG(1) << "Could not vectorize reduction " << reduce->ToString() << ": "
+            << vectorization_failure_reason;
   }
 
   return DefaultAction(reduce);
@@ -1928,9 +1928,8 @@ absl::Status IrEmitter::HandleSlice(HloInstruction* slice) {
   if (is_trivial_copy) {
     if (ShapeUtil::IsEffectiveScalar(slice->shape())) {
       return DefaultAction(slice);
-    } else {
-      return EmitMemcpy(*slice, *operand);
     }
+    return EmitMemcpy(*slice, *operand);
   }
 
   // The memcpy will copy elements that are logically this shape (allowed to be
@@ -2032,8 +2031,9 @@ absl::Status IrEmitter::HandleDynamicUpdateSlice(
   if (ShapeUtil::IsScalar(dynamic_update_slice->shape())) {
     ABSL_RETURN_IF_ERROR(EmitTargetAddressForOp(dynamic_update_slice));
     return EmitMemcpy(*update, *dynamic_update_slice);
-  } else if (llvm_ir::CanUpdateDynamicSliceInPlace(dynamic_update_slice,
-                                                   assignment_)) {
+  }
+  if (llvm_ir::CanUpdateDynamicSliceInPlace(dynamic_update_slice,
+                                            assignment_)) {
     ABSL_RETURN_IF_ERROR(EmitTargetAddressForOp(dynamic_update_slice));
     auto operands = GetIrArraysForOperandsOf(dynamic_update_slice);
     return llvm_ir::EmitDynamicUpdateSliceInPlace(
@@ -2151,7 +2151,8 @@ absl::Status IrEmitter::HandleFusion(HloInstruction* fusion) {
         fused_emitter.GetGenerator(*fusion->fused_expression_root()));
     return EmitTargetElementLoop(fusion, "kLoop_fusion", generator,
                                  std::nullopt);
-  } else if (fusion->IsOutputFusion()) {
+  }
+  if (fusion->IsOutputFusion()) {
     VLOG(3) << "HandleFusion kOutput";
     int64_t dot_op_index =
         root->operand(0)->opcode() == HloOpcode::kDot ? 0 : 1;
@@ -3558,9 +3559,10 @@ llvm::Value* IrEmitter::EmitBufferPointer(const BufferAllocation::Slice& slice,
                                           const Shape& target_shape) {
   if (slice.allocation()->is_thread_local()) {
     return EmitThreadLocalBufferPointer(slice, target_shape);
-  } else if (const auto itr =
-                 constant_buffer_to_global_.find(slice.allocation()->index());
-             itr != constant_buffer_to_global_.end()) {
+  }
+  if (const auto itr =
+          constant_buffer_to_global_.find(slice.allocation()->index());
+      itr != constant_buffer_to_global_.end()) {
     return itr->second;
   } else {
     return EmitGlobalBufferPointer(slice, target_shape);

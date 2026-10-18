@@ -224,7 +224,8 @@ DotImplementationStrategy GetNonBatchDotImplementationStrategy(
     if (operands_match_result_type &&
         CanEmitTiledLlvmIrGemm(config, dot_info, target_machine_features)) {
       return DotImplementationStrategy::kTiledLlvmIrGemm;
-    } else if (allow_runtime_calls) {
+    }
+    if (allow_runtime_calls) {
       return DotImplementationStrategy::kEigen;
     }
   }
@@ -535,19 +536,18 @@ int64_t DotOpEmitter::EmitTiledLlvmIrGemv() {
         /*addend=*/addend_array_ ? addend_array_->GetBasePointer() : nullptr,
         /*result=*/result_op, b_, hlo_module_config_);
     return num_tasks;
-  } else {
-    VLOG(2) << "Emitting row major matrix-vector multiply with m = " << m
-            << " and k = " << k << "; num_tasks = " << num_tasks;
-
-    EmitRowMajorGemv(
-        /*scalar_type=*/primitive_type, num_tasks, work_group_id_,
-        /*tile_rows=*/tiling_factor,
-        /*tile_cols=*/vector_register_element_size,
-        /*m=*/m, /*k=*/k, /*lhs=*/lhs_op, /*rhs=*/rhs_op,
-        /*addend=*/addend_array_ ? addend_array_->GetBasePointer() : nullptr,
-        /*result=*/result_op, b_, hlo_module_config_);
-    return num_tasks;
   }
+  VLOG(2) << "Emitting row major matrix-vector multiply with m = " << m
+          << " and k = " << k << "; num_tasks = " << num_tasks;
+
+  EmitRowMajorGemv(
+      /*scalar_type=*/primitive_type, num_tasks, work_group_id_,
+      /*tile_rows=*/tiling_factor,
+      /*tile_cols=*/vector_register_element_size,
+      /*m=*/m, /*k=*/k, /*lhs=*/lhs_op, /*rhs=*/rhs_op,
+      /*addend=*/addend_array_ ? addend_array_->GetBasePointer() : nullptr,
+      /*result=*/result_op, b_, hlo_module_config_);
+  return num_tasks;
 }
 
 absl::StatusOr<uint64_t> DotOpEmitter::Emit() {
@@ -1264,7 +1264,9 @@ bool PotentiallyImplementedAsEigenMatmul(
       dot.dot_dimension_numbers().lhs_batch_dimensions_size();
 
   // TODO(kramerb): Remove this limitation.
-  if (num_batch_dims > 1) return false;
+  if (num_batch_dims > 1) {
+    return false;
+  }
 
   // First reshape the inputs to make sure we only have one batch dimension.
   // This is a no-op bitcast because the operands have to be in row-major layout
@@ -1296,7 +1298,9 @@ bool PotentiallyImplementedAsEigenMatmul(
       0, dot_info.dim_nums.rhs_contracting_dimensions(0) - num_batch_dims);
 
   PrimitiveType type = target_array.GetShape().element_type();
-  if (F32 != type) return false;
+  if (F32 != type) {
+    return false;
+  }
 
   if (ShapeUtil::IsScalar(dot_info.lhs_shape) ||
       ShapeUtil::IsScalar(dot_info.rhs_shape)) {
@@ -1338,93 +1342,90 @@ absl::StatusOr<DotOpWorkGroupDim> EmitBatchDotOperation(
 
     ABSL_RETURN_IF_ERROR(dot_emitter.EmitBatch());
     return DotOpWorkGroupDim{1, 1};
-
-  } else {
-    // Lower a batch dot into a (parallel) sequence of non-batch dot operations.
-
-    int64_t num_batch_dims =
-        dot.dot_dimension_numbers().lhs_batch_dimensions_size();
-
-    // First reshape the inputs to make sure we only have one batch dimension.
-    // This is a no-op bitcast because the operands have to be in row-major
-    // layout (enforced in CpuLayoutAssignment), and the batch dimensions are
-    // the leading dimensions (established by DotDecomposer and checked by
-    // ValidateDotDimensionNumbers above).
-    llvm_ir::IrArray lhs_array_reshaped =
-        CollapseFirstNDims(b, lhs_array, num_batch_dims);
-    llvm_ir::IrArray rhs_array_reshaped =
-        CollapseFirstNDims(b, rhs_array, num_batch_dims);
-    llvm_ir::IrArray target_array_reshaped =
-        CollapseFirstNDims(b, target_array, num_batch_dims);
-
-    int64_t batch_count = lhs_array_reshaped.GetShape().dimensions(0);
-
-    VLOG(2) << "Emitting batch dot operation: batch_count=" << batch_count;
-
-    KernelSupportLibrary ksl(b);
-
-    // Emit the inner non-batch dot operation.
-    auto inner_dot = [&](llvm::Value* batch_index) {
-      DotDimensionNumbers adjusted_dim_numbers = dot.dot_dimension_numbers();
-      adjusted_dim_numbers.clear_lhs_batch_dimensions();
-      adjusted_dim_numbers.clear_rhs_batch_dimensions();
-
-      // Create a DotInfo representing the "inner" non-batch dot operation.
-      DotInfo dot_info;
-      dot_info.lhs_shape = DropFirstDim(lhs_array_reshaped.GetShape());
-      dot_info.rhs_shape = DropFirstDim(rhs_array_reshaped.GetShape());
-      dot_info.result_shape = DropFirstDim(target_array_reshaped.GetShape());
-      dot_info.dim_nums = dot.dot_dimension_numbers();
-      dot_info.dim_nums.clear_lhs_batch_dimensions();
-      dot_info.dim_nums.clear_rhs_batch_dimensions();
-
-      dot_info.dim_nums.set_lhs_contracting_dimensions(
-          0, dot_info.dim_nums.lhs_contracting_dimensions(0) - num_batch_dims);
-      dot_info.dim_nums.set_rhs_contracting_dimensions(
-          0, dot_info.dim_nums.rhs_contracting_dimensions(0) - num_batch_dims);
-
-      llvm_ir::IrArray lhs_slice =
-          SliceOutInnerArray(lhs_array_reshaped, batch_index, b);
-      llvm_ir::IrArray rhs_slice =
-          SliceOutInnerArray(rhs_array_reshaped, batch_index, b);
-      llvm_ir::IrArray target_slice =
-          SliceOutInnerArray(target_array_reshaped, batch_index, b);
-
-      return EmitNonBatchDotOperation(
-          dot_info, std::string(dot.name()), target_slice, lhs_slice, rhs_slice,
-          nullptr, work_group_id.y, executable_run_options_value, b,
-          hlo_module_config, target_machine_features, allow_runtime_calls,
-          allow_parallelism);
-    };
-
-    int64_t lhs_size =
-        ShapeUtil::ElementsIn(DropFirstDim(lhs_array_reshaped.GetShape()));
-    int64_t rhs_size =
-        ShapeUtil::ElementsIn(DropFirstDim(rhs_array_reshaped.GetShape()));
-
-    // If inner dot is big enough and we have a work group id, use parallel
-    // loop to parallelize the batch dimension. Threshold picked randomly based
-    // on micro-benchmarks and needs more tuning.
-    static constexpr int64_t kParallelLoopThreshold = 32768;
-    if (allow_parallelism && (lhs_size > kParallelLoopThreshold ||
-                              rhs_size > kParallelLoopThreshold)) {
-      ABSL_ASSIGN_OR_RETURN(auto inner_dims, inner_dot(work_group_id.x));
-      DCHECK_EQ(inner_dims.y, 1);
-      return DotOpWorkGroupDim{static_cast<uint64_t>(batch_count),
-                               inner_dims.x};
-    }
-
-    // Emit sequential loop over the batch dimension, but still might decide to
-    // parallelize the inner loop.
-    DotOpWorkGroupDim inner_dims;
-    ABSL_RETURN_IF_ERROR(ksl.ForWithStatus(
-        llvm_ir::IrName(&dot, "bdot"), /*start=*/0, /*end=*/batch_count,
-        /*step=*/1, [&](llvm::Value* indvar) {
-          ABSL_ASSIGN_OR_RETURN(inner_dims, inner_dot(indvar));
-          return absl::OkStatus();
-        }));
-    return DotOpWorkGroupDim{1, inner_dims.x};
   }
+  // Lower a batch dot into a (parallel) sequence of non-batch dot operations.
+
+  int64_t num_batch_dims =
+      dot.dot_dimension_numbers().lhs_batch_dimensions_size();
+
+  // First reshape the inputs to make sure we only have one batch dimension.
+  // This is a no-op bitcast because the operands have to be in row-major
+  // layout (enforced in CpuLayoutAssignment), and the batch dimensions are
+  // the leading dimensions (established by DotDecomposer and checked by
+  // ValidateDotDimensionNumbers above).
+  llvm_ir::IrArray lhs_array_reshaped =
+      CollapseFirstNDims(b, lhs_array, num_batch_dims);
+  llvm_ir::IrArray rhs_array_reshaped =
+      CollapseFirstNDims(b, rhs_array, num_batch_dims);
+  llvm_ir::IrArray target_array_reshaped =
+      CollapseFirstNDims(b, target_array, num_batch_dims);
+
+  int64_t batch_count = lhs_array_reshaped.GetShape().dimensions(0);
+
+  VLOG(2) << "Emitting batch dot operation: batch_count=" << batch_count;
+
+  KernelSupportLibrary ksl(b);
+
+  // Emit the inner non-batch dot operation.
+  auto inner_dot = [&](llvm::Value* batch_index) {
+    DotDimensionNumbers adjusted_dim_numbers = dot.dot_dimension_numbers();
+    adjusted_dim_numbers.clear_lhs_batch_dimensions();
+    adjusted_dim_numbers.clear_rhs_batch_dimensions();
+
+    // Create a DotInfo representing the "inner" non-batch dot operation.
+    DotInfo dot_info;
+    dot_info.lhs_shape = DropFirstDim(lhs_array_reshaped.GetShape());
+    dot_info.rhs_shape = DropFirstDim(rhs_array_reshaped.GetShape());
+    dot_info.result_shape = DropFirstDim(target_array_reshaped.GetShape());
+    dot_info.dim_nums = dot.dot_dimension_numbers();
+    dot_info.dim_nums.clear_lhs_batch_dimensions();
+    dot_info.dim_nums.clear_rhs_batch_dimensions();
+
+    dot_info.dim_nums.set_lhs_contracting_dimensions(
+        0, dot_info.dim_nums.lhs_contracting_dimensions(0) - num_batch_dims);
+    dot_info.dim_nums.set_rhs_contracting_dimensions(
+        0, dot_info.dim_nums.rhs_contracting_dimensions(0) - num_batch_dims);
+
+    llvm_ir::IrArray lhs_slice =
+        SliceOutInnerArray(lhs_array_reshaped, batch_index, b);
+    llvm_ir::IrArray rhs_slice =
+        SliceOutInnerArray(rhs_array_reshaped, batch_index, b);
+    llvm_ir::IrArray target_slice =
+        SliceOutInnerArray(target_array_reshaped, batch_index, b);
+
+    return EmitNonBatchDotOperation(
+        dot_info, std::string(dot.name()), target_slice, lhs_slice, rhs_slice,
+        nullptr, work_group_id.y, executable_run_options_value, b,
+        hlo_module_config, target_machine_features, allow_runtime_calls,
+        allow_parallelism);
+  };
+
+  int64_t lhs_size =
+      ShapeUtil::ElementsIn(DropFirstDim(lhs_array_reshaped.GetShape()));
+  int64_t rhs_size =
+      ShapeUtil::ElementsIn(DropFirstDim(rhs_array_reshaped.GetShape()));
+
+  // If inner dot is big enough and we have a work group id, use parallel
+  // loop to parallelize the batch dimension. Threshold picked randomly based
+  // on micro-benchmarks and needs more tuning.
+  static constexpr int64_t kParallelLoopThreshold = 32768;
+  if (allow_parallelism && (lhs_size > kParallelLoopThreshold ||
+                            rhs_size > kParallelLoopThreshold)) {
+    ABSL_ASSIGN_OR_RETURN(auto inner_dims, inner_dot(work_group_id.x));
+    DCHECK_EQ(inner_dims.y, 1);
+    return DotOpWorkGroupDim{static_cast<uint64_t>(batch_count), inner_dims.x};
+  }
+
+  // Emit sequential loop over the batch dimension, but still might decide to
+  // parallelize the inner loop.
+  DotOpWorkGroupDim inner_dims;
+  ABSL_RETURN_IF_ERROR(ksl.ForWithStatus(
+      llvm_ir::IrName(&dot, "bdot"), /*start=*/0, /*end=*/batch_count,
+      /*step=*/1, [&](llvm::Value* indvar) {
+        ABSL_ASSIGN_OR_RETURN(inner_dims, inner_dot(indvar));
+        return absl::OkStatus();
+      }));
+  return DotOpWorkGroupDim{1, inner_dims.x};
 }
 
 }  // namespace

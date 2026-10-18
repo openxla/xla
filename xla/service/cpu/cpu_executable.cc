@@ -169,7 +169,8 @@ static absl::StatusOr<MaybeOwningDeviceAddress> MemoryForAllocation(
         << " at shape index " << allocation.param_shape_index().ToString();
     VLOG(3) << "allocation is a parameter";
     return MaybeOwningDeviceAddress{out};
-  } else if (allocation.is_constant()) {
+  }
+  if (allocation.is_constant()) {
     VLOG(3) << "allocation is a constant";
     if (allocation.index() < constants.size()) {
       return MaybeOwningDeviceAddress(
