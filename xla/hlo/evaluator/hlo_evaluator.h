@@ -50,8 +50,10 @@ limitations under the License.
 #include "xla/hlo/evaluator/hlo_evaluator_interface.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
@@ -693,6 +695,12 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
   // Crash with log if the given instruction has not been evaluated previously.
   const Literal& GetEvaluatedLiteralFor(const HloInstruction* hlo) {
     if (hlo->IsConstant()) {
+      // HloInstruction::CreateFromProto rejects a literal-less constant by
+      // default (prohibit_empty_literal=true), but defend in depth here in
+      // case some other path constructs one: fail with a clear diagnostic
+      // instead of dereferencing a null literal_.
+      CHECK(Cast<HloConstantInstruction>(hlo)->HasLiteral())
+          << "constant instruction has no literal: " << hlo->ToString();
       return hlo->literal();
     }
     if (hlo->opcode() == HloOpcode::kParameter && state_.has_args()) {
