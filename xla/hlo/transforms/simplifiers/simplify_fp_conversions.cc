@@ -46,7 +46,12 @@ absl::StatusOr<bool> RunOnComputation(HloComputation& computation) {
       ++convert_chain_length;
     }
 
-    if (convert_chain_length < 2) {
+    if (convert_chain_length < 2 ||
+        (instruction->shape().element_type() == F32 &&
+         (input->shape().element_type() == F32 ||
+          input->shape().element_type() == BF16) &&
+         primitive_util::BitWidth(
+             instruction->operand(0)->shape().element_type()) <= 8)) {
       continue;
     }
 
