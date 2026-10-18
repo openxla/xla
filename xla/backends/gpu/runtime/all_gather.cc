@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/all_gather.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <vector>
 
