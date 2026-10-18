@@ -248,18 +248,15 @@ absl::Status RunAllGather(std::vector<DeviceBufferPair>& buffers,
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal) << "Performing all-gather";
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
-  Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
-    for (DeviceBufferPair& buffer : buffers) {
-      // NCCL takes one launch event per group, the last call carries it.
-      bool is_last = &buffer == &buffers.back();
-      ABSL_RETURN_IF_ERROR(gpu_comm->LaunchAllGather(
-          buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
-          buffer.element_count,
-          GpuCollectives::On(stream, is_last ? launch_event : nullptr)));
-    }
-    return absl::OkStatus();
-  });
-  ABSL_RETURN_IF_ERROR(future.Await());
+  ABSL_RETURN_IF_ERROR(
+      LaunchInGroups(*gpu_comm, buffers, launch_event,
+                     [&](int64_t i, se::Event* event) -> absl::Status {
+                       DeviceBufferPair& buffer = buffers[i];
+                       return gpu_comm->LaunchAllGather(
+                           buffer.source_buffer, buffer.destination_buffer,
+                           buffer.element_type, buffer.element_count,
+                           GpuCollectives::On(stream, event));
+                     }));
   XLA_VLOG_DEVICE(3, device_ordinal) << "Done performing all-gather";
   return absl::OkStatus();
 }

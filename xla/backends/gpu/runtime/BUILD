@@ -3027,6 +3027,7 @@ cc_library(
     srcs = ["collective_thunk.cc"],
     hdrs = ["collective_thunk.h"],
     deps = [
+        "//xla/backends/gpu/collectives:gpu_communicator",
         ":collective_clique_requests",
         ":collective_execution",
         ":collective_params",
@@ -3646,6 +3647,7 @@ cc_library(
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:ir_emission_utils",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/concurrency:future",

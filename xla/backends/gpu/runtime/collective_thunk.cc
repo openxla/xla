@@ -36,6 +36,7 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.pb.h"
@@ -564,6 +565,34 @@ absl::Status IsValidOperand(Shape shape, Thunk::Kind reduction_op) {
         primitive_util::LowercasePrimitiveTypeName(shape.element_type())));
   }
   return absl::OkStatus();
+}
+
+absl::Status LaunchInGroups(
+    GpuCommunicator& comm, absl::Span<const DeviceBufferPair> buffers,
+    stream_executor::Event* launch_event,
+    absl::FunctionRef<absl::Status(int64_t, stream_executor::Event*)> launch) {
+  std::optional<int64_t> alone;  // the call that runs alone, with the event
+  if (launch_event != nullptr && !buffers.empty()) {
+    auto by_size = [](const DeviceBufferPair& a, const DeviceBufferPair& b) {
+      return a.source_buffer.size() < b.source_buffer.size();
+    };
+    alone = absl::c_max_element(buffers, by_size) - buffers.begin();
+  }
+  auto others = [&]() -> absl::Status {
+    for (int64_t i = 0; i < buffers.size(); ++i) {
+      if (i != alone) ABSL_RETURN_IF_ERROR(launch(i, nullptr));
+    }
+    return absl::OkStatus();
+  };
+  // No event, launch the group directly.
+  if (!alone) return comm.GroupExecute(others).Await();
+  // The other calls go first in their own group, skipped the alone call.
+  if (buffers.size() > 1) {
+    ABSL_RETURN_IF_ERROR(comm.GroupExecute(others).Await());
+  }
+  // The largest call goes alone.
+  return comm.GroupExecute([&] { return launch(*alone, launch_event); })
+      .Await();
 }
 
 }  // namespace xla::gpu

@@ -294,6 +294,14 @@ absl::StatusOr<std::vector<CollectiveThunk::Buffer>> GetCollectiveBuffers(
     const BufferAssignment& buffer_assignment, const HloInstruction* inst,
     Thunk::Kind kind, bool has_dynamic_root);
 
+class GpuCommunicator;
+
+// One call per buffer, the largest alone with the event after the other calls.
+absl::Status LaunchInGroups(
+    GpuCommunicator& comm, absl::Span<const DeviceBufferPair> buffers,
+    stream_executor::Event* launch_event,
+    absl::FunctionRef<absl::Status(int64_t, stream_executor::Event*)> launch);
+
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_THUNK_H_
