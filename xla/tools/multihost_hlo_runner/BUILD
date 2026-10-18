@@ -213,6 +213,7 @@ cc_library(
         ":hlo_input_output_format",
         ":hlo_runner_profiler",
         ":profiler_interface",
+        "//third_party/protobuf/io",
         "//xla:debug_options_flags",
         "//xla:future",
         "//xla:literal",
