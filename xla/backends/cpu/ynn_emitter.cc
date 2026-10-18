@@ -517,6 +517,21 @@ absl::StatusOr<uint32_t> DefineDotOp(
   ABSL_ASSIGN_OR_RETURN(DotCanonicalDims dot_canonical_dims,
                         GetDotCanonicalDims(dot_dimensions, dot_shape));
 
+  const size_t a_rank = lhs_shape.dimensions().size();
+  const bool transpose_a = !dot_canonical_dims.lhs_canonical;
+  if (transpose_a) {
+    uint32_t lhs_id_transposed = YNN_INVALID_VALUE_ID;
+    std::array<int32_t, YNN_MAX_TENSOR_RANK> perm;
+    absl::c_iota(perm, 0);
+    CHECK_LE(a_rank, YNN_MAX_TENSOR_RANK);
+    CHECK_GE(a_rank, 2);
+    std::swap(perm[a_rank - 1], perm[a_rank - 2]);
+    YNN_RETURN_IF_ERROR(ynn_define_static_transpose(
+        subgraph, /*num_axes=*/a_rank, perm.data(), lhs_id, &lhs_id_transposed,
+        /*flags=*/0));
+    lhs_id = lhs_id_transposed;
+  }
+
   const size_t b_rank = rhs_shape.dimensions().size();
   const bool transpose_b = !dot_canonical_dims.rhs_canonical;
 

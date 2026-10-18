@@ -458,11 +458,7 @@ absl::StatusOr<bool> IsDotSupportedByYnn(const HloInstruction* hlo) {
     return false;
   }
 
-  // YNNPACK supports transposing the inputs efficiently if possible (they will
-  // fuse with dot packing), but we don't currently support generating the
-  // necessary transposes.
-  if (!dot_canonical_dims.lhs_canonical ||
-      dot_canonical_dims.lhs_column_major ||
+  if (dot_canonical_dims.lhs_column_major ||
       dot_canonical_dims.rhs_column_major) {
     return false;
   }

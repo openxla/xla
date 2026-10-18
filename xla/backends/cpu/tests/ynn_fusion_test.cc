@@ -387,6 +387,28 @@ TEST_P(YnnFusionTest, DotWithConstant) {
   RunTest(kModuleStr);
 }
 
+TEST_P(YnnFusionTest, DotTransposeLhs) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule dot_transpose_lhs
+
+    ynn_fusion {
+      %lhs = $dtype[10, 8] parameter(0)
+      %rhs = $dtype[10, 12] parameter(1)
+      ROOT %dot = $dtype[8, 12] dot(%lhs, %rhs), lhs_contracting_dims={0},
+        rhs_contracting_dims={0}
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[10, 8] parameter(0)
+      %p1 = $dtype[10, 12] parameter(1)
+      ROOT %fusion = $dtype[8, 12] fusion(%p0, %p1), kind=kCustom,
+        calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
 TEST_P(YnnFusionTest, SliceWithStrides) {
   constexpr absl::string_view kModuleStr = R"(
     HloModule slice_with_strides
