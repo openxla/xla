@@ -182,6 +182,47 @@ TEST_F(CpuCompilerTest, CompilesElementalOpsWithFusionWrapperPassDisabled) {
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/true));
 }
 
+TEST_F(CpuCompilerTest, SimplifyFPConversionsInLibraryFusion) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      p0 = bf16[32,32]{1,0} parameter(0)
+      p1 = bf16[32,32]{1,0} parameter(1)
+      p2 = bf16[32,32]{1,0} parameter(2)
+      p0_f32 = f32[32,32]{1,0} convert(p0)
+      p1_f32 = f32[32,32]{1,0} convert(p1)
+      dot0 = f32[32,32]{1,0} dot(p0_f32, p1_f32), lhs_contracting_dims={1},
+                                                   rhs_contracting_dims={0}
+      dot0_bf16 = bf16[32,32]{1,0} convert(dot0)
+      dot0_f32 = f32[32,32]{1,0} convert(dot0_bf16)
+      p2_f32 = f32[32,32]{1,0} convert(p2)
+      ROOT dot1 = f32[32,32]{1,0} dot(dot0_f32, p2_f32),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    }
+  )";
+  HloModuleConfig config;
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_allow_excess_precision(true);
+  debug_options.clear_xla_cpu_experimental_ynn_fusion_type();
+  debug_options.add_xla_cpu_experimental_ynn_fusion_type(
+      DebugOptions::LIBRARY_FUSION_TYPE_DOT);
+  config.set_debug_options(debug_options);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                       GetOptimizedModule(kHlo, config));
+
+  for (const HloComputation* computation : optimized_module->computations()) {
+    for (const HloInstruction* instr : computation->instructions()) {
+      if (instr->opcode() == HloOpcode::kConvert &&
+          instr->shape().element_type() == BF16) {
+        FAIL() << "Expected intermediate f32->bf16->f32 conversion inside "
+                  "library fusion to be simplified, found: "
+               << instr->ToString();
+      }
+    }
+  }
+}
+
 }  // namespace
 }  // namespace cpu
 }  // namespace xla

@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/cpu/transforms/library_rewriter.h"
 
+#include <cstddef>
 #include <memory>
 #include <queue>
 #include <utility>
@@ -32,6 +33,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/primitive_util.h"
 #include "xla/service/cpu/backend_config.pb.h"
 #include "xla/shape.h"
 #include "xla/tsl/platform/errors.h"
@@ -188,6 +190,36 @@ bool ShouldPeelOp(const HloInstruction* instr) {
     default:
       return false;
   }
+}
+
+// Simplifies floating-point conversion chains (`A -> B -> ... -> C` into
+// `A -> C` or `A`) inside a library fusion computation.
+absl::StatusOr<bool> SimplifyFpConversionsInFusion(
+    HloFusionInstruction* fusion) {
+  HloComputation* fused_comp = fusion->fused_instructions_computation();
+  bool changed = false;
+  for (HloInstruction* instr : fused_comp->MakeInstructionPostOrder()) {
+    HloInstruction* input = instr;
+    size_t chain_length = 0;
+    while (input->opcode() == HloOpcode::kConvert &&
+           primitive_util::IsFloatingPointType(input->shape().element_type()) &&
+           primitive_util::IsFloatingPointType(
+               input->operand(0)->shape().element_type())) {
+      input = input->mutable_operand(0);
+      ++chain_length;
+    }
+    if (chain_length < 2) {
+      continue;
+    }
+    if (instr->shape().element_type() == input->shape().element_type()) {
+      ABSL_RETURN_IF_ERROR(fused_comp->ReplaceInstruction(instr, input));
+    } else {
+      ABSL_RETURN_IF_ERROR(fused_comp->ReplaceWithNewInstruction(
+          instr, HloInstruction::CreateConvert(instr->shape(), input)));
+    }
+    changed = true;
+  }
+  return changed;
 }
 
 // If a fusion terminates with a broadcast, peel that instruction out of the
@@ -427,6 +459,11 @@ absl::StatusOr<bool> LibraryRewriter::ProcessComputation(
         fusion->fused_expression_root(), lib->LibraryOpOutputType(centroid)));
 
     // Fuse as many neighbors as as we can.
+    const bool allow_excess_precision =
+        computation->parent() != nullptr && computation->parent()
+                                                ->config()
+                                                .debug_options()
+                                                .xla_allow_excess_precision();
     if (lib->ShouldGrowFusion(centroid)) {
       // It is possible that fusing down eliminates uses of a value outside the
       // fusion, which allows more fusion up to occur. To handle this case, we
@@ -434,6 +471,11 @@ absl::StatusOr<bool> LibraryRewriter::ProcessComputation(
       bool changed = true;
       while (changed) {
         ABSL_ASSIGN_OR_RETURN(changed, FuseNeighbors(fusion, lib));
+        if (allow_excess_precision) {
+          ABSL_ASSIGN_OR_RETURN(bool simplified,
+                                SimplifyFpConversionsInFusion(fusion));
+          changed |= simplified;
+        }
       }
     }
 

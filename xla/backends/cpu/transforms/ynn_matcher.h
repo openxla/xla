@@ -88,6 +88,9 @@ class YnnMatcher : public LibraryMatcher {
     if (instr->opcode() == HloOpcode::kCopy) {
       return IsCopyOpSupportedByYnn(instr);
     }
+    if (instr->opcode() == HloOpcode::kConvert) {
+      return IsElementwiseOpSupportedByYnn(instr);
+    }
     if (!IsInstructionPreferredByYnn(instr)) {
       // TODO: It might make sense sometimes that even though an instruction is
       // not preferred by YNNPACK, that we should still fuse it, if it lies

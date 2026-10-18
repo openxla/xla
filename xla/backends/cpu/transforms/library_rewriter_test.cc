@@ -946,5 +946,32 @@ TEST_F(CpuLibraryTest, PeelBroadcastRoot) {
                   FusionProperties{HloOpcode::kSqrt, 1, 4, true});
 }
 
+TEST_F(CpuLibraryTest, SimplifyFpConversionsInFusion) {
+  constexpr absl::string_view kHloString = R"(
+    HloModule simplify_fp_conversions_in_fusion
+
+    ENTRY main {
+      %p0 = bf16[32,32]{1,0} parameter(0)
+      %p1 = bf16[32,32]{1,0} parameter(1)
+      %p2 = bf16[32,32]{1,0} parameter(2)
+      %p0_f32 = f32[32,32]{1,0} convert(%p0)
+      %p1_f32 = f32[32,32]{1,0} convert(%p1)
+      %dot0 = f32[32,32]{1,0} dot(%p0_f32, %p1_f32),
+                  lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      %dot0_bf16 = bf16[32,32]{1,0} convert(%dot0)
+      %dot0_f32 = f32[32,32]{1,0} convert(%dot0_bf16)
+      %p2_f32 = f32[32,32]{1,0} convert(%p2)
+      ROOT %dot1 = f32[32,32]{1,0} dot(%dot0_f32, %p2_f32),
+                  lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })";
+
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  spec.fusion_mode = "dot";
+  // Fused instructions: 3 parameters + 3 bf16->f32 converts + 2 dots = 8.
+  // The intermediate f32->bf16->f32 convert pair is simplified away.
+  RunTestInternal(spec, kHloString,
+                  FusionProperties{HloOpcode::kDot, 3, 8, true});
+}
+
 }  // namespace
 }  // namespace xla::cpu
