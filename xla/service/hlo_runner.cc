@@ -19,6 +19,7 @@ limitations under the License.
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -454,6 +455,7 @@ HloRunner::ExecuteWithDeviceBuffers(
   if (execute_options == nullptr) {
     new_execute_options.strict_shape_checking = true;
   }
+  new_execute_options.poison_output_buffers = poison_output_buffers();
 
   ABSL_ASSIGN_OR_RETURN(
       PjRtLoadedExecutable * pjrt_executable,
