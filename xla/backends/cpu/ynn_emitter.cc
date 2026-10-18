@@ -198,7 +198,8 @@ absl::StatusOr<uint32_t> DefineBitcastOp(ynn_subgraph_t subgraph,
                                          const HloInstruction* instr) {
   VLOG(3) << absl::StreamFormat("Define tensor value for bitcast op: %s",
                                 instr->ToString());
-  CHECK_EQ(instr->opcode(), HloOpcode::kBitcast);
+  CHECK(instr->opcode() == HloOpcode::kBitcast ||
+        instr->opcode() == HloOpcode::kReshape);
   const HloInstruction* input = instr->operand(0);
   CHECK_EQ(input->shape().element_type(), instr->shape().element_type());
   ABSL_ASSIGN_OR_RETURN(auto in, FindTensorValue(tensor_ids, input));

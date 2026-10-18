@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape.h"
 #include "xla/xla.pb.h"
@@ -109,6 +110,12 @@ bool IsConvolutionOpSupportedByYnn(const HloInstruction* instr);
 // Returns true if we want to handle the instruction in YNNPACK. Does not imply
 // the instruction is supported.
 bool IsInstructionPreferredByYnn(const HloInstruction* instr);
+
+// Returns true if fusing `instr` into `fusion` preserves valid YNNPACK dot
+// operand layouts (i.e., no dot matrix dimension has stride 0 from a broadcast
+// or multi-dimensional iota).
+bool CanFuseWithYnnDot(const HloFusionInstruction* fusion,
+                       const HloInstruction* instr);
 
 // Convert XLA options to YNNPACK flags.
 uint32_t YnnFlags(const DebugOptions& debug_options);

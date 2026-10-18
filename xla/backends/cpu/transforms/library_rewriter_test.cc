@@ -946,5 +946,43 @@ TEST_F(CpuLibraryTest, PeelBroadcastRoot) {
                   FusionProperties{HloOpcode::kSqrt, 1, 4, true});
 }
 
+TEST_F(CpuLibraryTest, DoNotFuseBroadcastIntoDotMatrixDim) {
+  constexpr absl::string_view kHloString = R"(
+    HloModule dot_broadcast_matrix_dim
+
+    ENTRY main {
+      %c0 = f32[] constant(2.0)
+      %c1 = f32[] constant(0.1)
+      %b0 = f32[128,128]{1,0} broadcast(%c0), dimensions={}
+      %b1 = f32[128,128]{1,0} broadcast(%c1), dimensions={}
+      ROOT %dot = f32[128,128]{1,0} dot(%b0, %b1),
+                  lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })";
+
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  spec.fusion_mode = "dot";
+  RunTestInternal(spec, kHloString,
+                  FusionProperties{HloOpcode::kDot, 2, 3, true});
+}
+
+TEST_F(CpuLibraryTest, FuseBroadcastIntoDotBatchDim) {
+  constexpr absl::string_view kHloString = R"(
+    HloModule dot_broadcast_batch_dim
+
+    ENTRY main {
+      %p0 = f32[128,64]{1,0} parameter(0)
+      %p1 = f32[4,64,128]{2,1,0} parameter(1)
+      %b0 = f32[4,128,64]{2,1,0} broadcast(%p0), dimensions={1,2}
+      ROOT %dot = f32[4,128,128]{2,1,0} dot(%b0, %p1),
+                  lhs_batch_dims={0}, lhs_contracting_dims={2},
+                  rhs_batch_dims={0}, rhs_contracting_dims={1}
+    })";
+
+  DotRewriteTestSpec spec = GetDefaultTestSpec();
+  spec.fusion_mode = "dot";
+  RunTestInternal(spec, kHloString,
+                  FusionProperties{HloOpcode::kDot, 2, 4, true});
+}
+
 }  // namespace
 }  // namespace xla::cpu

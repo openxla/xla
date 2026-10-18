@@ -16,9 +16,11 @@ limitations under the License.
 #include "xla/backends/cpu/ynn_support.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -717,6 +719,178 @@ bool IsInstructionPreferredByYnn(const HloInstruction* instr) {
     }
   }
   return false;
+}
+
+namespace {
+
+std::vector<int64_t> GetDotMatrixDims(const HloDotInstruction* dot,
+                                      int64_t operand_idx) {
+  const DotDimensionNumbers& dnums = dot->dot_dimension_numbers();
+  const auto& batch_dims = operand_idx == 0 ? dnums.lhs_batch_dimensions()
+                                            : dnums.rhs_batch_dimensions();
+  int64_t rank = dot->operand(operand_idx)->shape().dimensions().size();
+  std::vector<int64_t> matrix_dims;
+  for (int64_t d = 0; d < rank; ++d) {
+    if (!absl::c_linear_search(batch_dims, d)) {
+      matrix_dims.push_back(d);
+    }
+  }
+  return matrix_dims;
+}
+
+// Returns true if any dimension in `dims` of `instr` (with extent > 1) traces
+// back through view ops to a stride-0 broadcasted dimension of `kBroadcast` or
+// `kIota` (rank > 1). When `fusion` and `unfused_producer` are non-null, a
+// fusion parameter whose corresponding fusion operand is `unfused_producer`
+// steps out to `unfused_producer`.
+bool IsBroadcastedInDims(const HloInstruction* instr,
+                         const std::vector<int64_t>& dims,
+                         const HloFusionInstruction* fusion,
+                         const HloInstruction* unfused_producer) {
+  std::vector<int64_t> current_dims;
+  for (int64_t d : dims) {
+    if (instr->shape().dimensions(d) > 1) {
+      current_dims.push_back(d);
+    }
+  }
+  const HloInstruction* current = instr;
+  while (!current_dims.empty()) {
+    switch (current->opcode()) {
+      case HloOpcode::kParameter: {
+        if (fusion != nullptr && unfused_producer != nullptr &&
+            current->parent() == fusion->fused_instructions_computation() &&
+            fusion->operand(current->parameter_number()) == unfused_producer) {
+          current = unfused_producer;
+          continue;
+        }
+        return false;
+      }
+      case HloOpcode::kBroadcast: {
+        const auto& bcast_dims = current->dimensions();
+        std::vector<int64_t> next_dims;
+        for (int64_t d : current_dims) {
+          auto it = absl::c_find(bcast_dims, d);
+          if (it == bcast_dims.end()) {
+            return true;
+          }
+          int64_t in_d = it - bcast_dims.begin();
+          if (current->operand(0)->shape().dimensions(in_d) > 1) {
+            next_dims.push_back(in_d);
+          }
+        }
+        current = current->operand(0);
+        current_dims = std::move(next_dims);
+        break;
+      }
+      case HloOpcode::kIota: {
+        if (current->shape().dimensions().size() <= 1) {
+          return false;
+        }
+        int64_t iota_dim = Cast<HloIotaInstruction>(current)->iota_dimension();
+        for (int64_t d : current_dims) {
+          if (d != iota_dim) {
+            return true;
+          }
+        }
+        return false;
+      }
+      case HloOpcode::kCopy:
+      case HloOpcode::kSlice:
+      case HloOpcode::kPad: {
+        const HloInstruction* operand = current->operand(0);
+        std::vector<int64_t> next_dims;
+        for (int64_t d : current_dims) {
+          if (operand->shape().dimensions(d) > 1) {
+            next_dims.push_back(d);
+          }
+        }
+        current = operand;
+        current_dims = std::move(next_dims);
+        break;
+      }
+      case HloOpcode::kTranspose: {
+        const auto& perm = current->dimensions();
+        const HloInstruction* operand = current->operand(0);
+        std::vector<int64_t> next_dims;
+        for (int64_t d : current_dims) {
+          int64_t in_d = perm[d];
+          if (operand->shape().dimensions(in_d) > 1) {
+            next_dims.push_back(in_d);
+          }
+        }
+        current = operand;
+        current_dims = std::move(next_dims);
+        break;
+      }
+      case HloOpcode::kReshape:
+      case HloOpcode::kBitcast: {
+        const HloInstruction* operand = current->operand(0);
+        auto factors = CommonFactors(operand->shape().dimensions(),
+                                     current->shape().dimensions());
+        std::vector<int64_t> next_dims;
+        for (size_t i = 0; i + 1 < factors.size(); ++i) {
+          int64_t in_begin = factors[i].first;
+          int64_t in_end = factors[i + 1].first;
+          int64_t out_begin = factors[i].second;
+          int64_t out_end = factors[i + 1].second;
+          bool interval_active = absl::c_any_of(current_dims, [&](int64_t d) {
+            return d >= out_begin && d < out_end;
+          });
+          if (interval_active) {
+            for (int64_t in_d = in_begin; in_d < in_end; ++in_d) {
+              if (operand->shape().dimensions(in_d) > 1) {
+                next_dims.push_back(in_d);
+              }
+            }
+          }
+        }
+        current = operand;
+        current_dims = std::move(next_dims);
+        break;
+      }
+      default:
+        return false;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+bool CanFuseWithYnnDot(const HloFusionInstruction* fusion,
+                       const HloInstruction* instr) {
+  if (instr->opcode() == HloOpcode::kDot && instr->IsUserOf(fusion)) {
+    const HloDotInstruction* dot = Cast<HloDotInstruction>(instr);
+    const HloInstruction* root = fusion->fused_expression_root();
+    for (int64_t i = 0; i < 2; ++i) {
+      if (dot->operand(i) == fusion &&
+          IsBroadcastedInDims(root, GetDotMatrixDims(dot, i),
+                              /*fusion=*/nullptr,
+                              /*unfused_producer=*/nullptr)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  if ((instr->opcode() == HloOpcode::kBroadcast ||
+       instr->opcode() == HloOpcode::kIota) &&
+      fusion->IsUserOf(instr)) {
+    for (const HloInstruction* fused :
+         fusion->fused_instructions_computation()->instructions()) {
+      if (fused->opcode() != HloOpcode::kDot) {
+        continue;
+      }
+      const HloDotInstruction* dot = Cast<HloDotInstruction>(fused);
+      for (int64_t i = 0; i < 2; ++i) {
+        if (IsBroadcastedInDims(dot->operand(i), GetDotMatrixDims(dot, i),
+                                fusion, instr)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
 }
 
 uint32_t YnnFlags(const DebugOptions& debug_options) {

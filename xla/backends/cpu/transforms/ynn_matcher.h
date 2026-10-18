@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/backends/cpu/transforms/library_matcher.h"
 #include "xla/backends/cpu/ynn_support.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/shape.h"
 
@@ -130,6 +131,14 @@ class YnnMatcher : public LibraryMatcher {
       return true;
     }
     return fuse_eltwise_ && instr->IsElementwise();
+  }
+
+  bool ShouldFuse(const HloFusionInstruction* fusion,
+                  const HloInstruction* instr) override {
+    if (!IsOpSupported(instr).value_or(false)) {
+      return false;
+    }
+    return CanFuseWithYnnDot(fusion, instr);
   }
 
   // Returns a prefix string for the fusion op's name.

@@ -578,13 +578,22 @@ auto LibrarySupportsConvolution(
 
 auto LibrarySupportsDot(HloModule* module,
                         TargetMachineFeatures* target_machine_features) {
+  const auto& ynn_fusion_types =
+      module->config().debug_options().xla_cpu_experimental_ynn_fusion_type();
   const bool ynnpack_dot_enabled =
       !IsHostOffload(module) &&
-      absl::c_linear_search(module->config()
-                                .debug_options()
-                                .xla_cpu_experimental_ynn_fusion_type(),
-                            DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
+      (absl::c_linear_search(ynn_fusion_types,
+                             DebugOptions::LIBRARY_FUSION_TYPE_DOT) ||
+       absl::c_linear_search(ynn_fusion_types,
+                             DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT));
   return [=](const HloInstruction& instr) {
+    if (instr.operand(0)->shape().element_type() == BF16 &&
+        target_machine_features != nullptr &&
+        target_machine_features->target_machine() != nullptr &&
+        target_machine_features->target_machine()->getTargetTriple().isX86() &&
+        !target_machine_features->has_avx512bf16()) {
+      return false;
+    }
     if (ynnpack_dot_enabled && IsInstructionPreferredByYnn(&instr) &&
         IsDotSupportedByYnn(&instr).value_or(false)) {
       return true;

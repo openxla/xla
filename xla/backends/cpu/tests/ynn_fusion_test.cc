@@ -187,6 +187,28 @@ TEST_P(YnnFusionTest, Broadcast) {
   RunTest(kModuleStr);
 }
 
+TEST_P(YnnFusionTest, ReshapeAndAdd) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule reshape_and_add
+
+    ynn_fusion {
+      %p0 = $dtype[80] parameter(0)
+      %p1 = $dtype[8, 10] parameter(1)
+      %reshape = $dtype[8, 10] reshape(%p0)
+      ROOT %add = $dtype[8, 10] add(%reshape, %p1)
+    }
+
+    ENTRY entry {
+      %p0 = $dtype[80] parameter(0)
+      %p1 = $dtype[8, 10] parameter(1)
+      ROOT %fusion = $dtype[8, 10] fusion(%p0, %p1), kind=kCustom,
+        calls=ynn_fusion,
+        backend_config={"fusion_config": {kind: "__ynn_fusion"}}
+    })";
+
+  RunTest(kModuleStr);
+}
+
 TEST_P(YnnFusionTest, Concatenate) {
   constexpr absl::string_view kModuleStr = R"(
     HloModule concatenate

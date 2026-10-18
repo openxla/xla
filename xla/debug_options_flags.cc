@@ -271,7 +271,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_cpu_experimental_xnn_graph_fusion_mode(
       DebugOptions::XNN_GRAPH_FUSION_MODE_DISABLED);
   opts.add_xla_cpu_experimental_ynn_fusion_type(
-      DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
+      DebugOptions::LIBRARY_FUSION_TYPE_DOT);
   opts.add_xla_cpu_experimental_ynn_fusion_type(
       DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_CONVOLUTION);
   opts.add_xla_cpu_experimental_ynn_fusion_type(
