@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/service/cpu/parallel_task_assignment.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -29,7 +28,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -91,14 +89,9 @@ class DefaultCostModel : public ParallelCostModel {
         static_cast<float>(bytes_accessed);
     // Check for I/O bound instructions.
     if (flops_to_bytes_ratio <= 1.0) {
-      // Limit max parallelism for I/O bound instructions by assuming a
-      // sub-linear scaling function (fit based on empirical benchmark results).
-      // TODO(b/29630486) Develop system bandwidth model.
-      max_parallelism = std::min<int64_t>(
-          max_parallelism_, std::ceil(std::sqrt(tsl::port::MaxParallelism())));
-      // Use bytes accessed cost and L2 cache size min per-thread cost.
+      max_parallelism = max_parallelism_;
       instruction_cost = bytes_accessed;
-      min_cost_per_thread = 256LL << 10;  // 256KB L2 Cache size.
+      min_cost_per_thread = 64LL << 10;  // 64KB per thread.
     } else {
       // Use max parallelism for compute bound instructions.
       max_parallelism = max_parallelism_;

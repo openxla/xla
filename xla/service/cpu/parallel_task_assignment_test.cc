@@ -83,7 +83,7 @@ TEST_F(ParallelTaskAssignmentTest, ReduceWindowParallelized) {
   ASSERT_OK_AND_ASSIGN(auto backend_config,
                        reduce_window->backend_config<cpu::BackendConfig>());
   EXPECT_EQ(backend_config.outer_dimension_partitions_size(), 1);
-  EXPECT_EQ(backend_config.outer_dimension_partitions(0), 2);
+  EXPECT_EQ(backend_config.outer_dimension_partitions(0), 8);
 }
 
 TEST_F(ParallelTaskAssignmentTest, DotOperationNotParallelized) {
