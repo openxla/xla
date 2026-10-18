@@ -39,10 +39,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_fusible.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/gpu_performance_model.h"
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
+#include "xla/service/gpu/reduction_utils.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/shape_util.h"
@@ -319,6 +321,27 @@ FusionDecision CanFuseSiblings(const HloInstruction& sibling_consumer_1,
 
   RETURN_IF_NOT_FUSIBLE(ShapesCompatibleForMultiOutputFusion(
       sibling_consumer_1, sibling_consumer_2, device_info));
+
+  // Same read-pattern conflict as the nested transpose case in
+  // FusionHeroesAreCompatible: the column reduction's 2D-tiled read of the
+  // shared producer does not match the loop root's row-major one. Siblings
+  // only, as the producer-consumer path is cost-gated. This is a heuristic.
+  const HloInstruction* hero1 =
+      GetRealHeroForMultiOutputFusion(sibling_consumer_1, device_info);
+  const HloInstruction* hero2 =
+      GetRealHeroForMultiOutputFusion(sibling_consumer_2, device_info);
+  // Neither a reduction nor a transpose, i.e. emitted as a row-major loop.
+  auto is_loop_root = [&](const HloInstruction* hero) {
+    return !IsReductionFromOrToContiguousDimensions(*hero, device_info) &&
+           !GetDescriptionForTiledTransposeEmitter(*hero).has_value() &&
+           hero->opcode() != HloOpcode::kTranspose;
+  };
+  if ((IsColumnReductionHero(hero1, device_info) && is_loop_root(hero2)) ||
+      (IsColumnReductionHero(hero2, device_info) && is_loop_root(hero1))) {
+    return FusionDecision::Forbid(
+        "sibling multi-output fusion of a column reduction with an "
+        "element-wise root");
+  }
 
   // Technically, this check is order-dependent (e.g. siblings A, B, C where
   // {A, B} and {B, C} overlap, but {A, C} do not. If the priority order is
