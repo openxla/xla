@@ -504,5 +504,90 @@ HloModule OnlyDeduplicateCalledComputations
   EXPECT_EQ(map2->to_apply(), called_computation_2);
 }
 
+// Verify that two identical computations with different metadata are merged.
+TEST_F(UnflattenCallGraphTest, DuplicatesWithDifferentMetadata) {
+  const std::string hlo_string = R"(
+  HloModule DeadCode
+
+  %Duplicate1 (a: f32[], b: f32[]) -> f32[] {
+    %a = f32[] parameter(0)
+    %b = f32[] parameter(1)
+    ROOT %add.1 = f32[] add(f32[] %a, f32[] %b), metadata={op_type="add" op_name="block_0/add"}
+  }
+
+  %Duplicate2 (a: f32[], b: f32[]) -> f32[] {
+    %a = f32[] parameter(0)
+    %b = f32[] parameter(1)
+    ROOT %add.2 = f32[] add(f32[] %a, f32[] %b), metadata={op_type="add" op_name="block_1/add"}
+  }
+
+  ENTRY %main (x: f32[], y: f32[]) -> f32[] {
+    %x = f32[] parameter(0)
+    %y = f32[] parameter(1)
+    %call.1 = f32[] call(f32[] %x, f32[] %y), to_apply=%Duplicate1
+    %call.2 = f32[] call(f32[] %call.1, f32[] %y), to_apply=%Duplicate2
+    ROOT %add.0 = f32[] add(f32[] %call.1, f32[] %call.2)
+  }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunUnflattenCallGraph(module.get()));
+  ASSERT_TRUE(changed);
+  ASSERT_EQ(module->computation_count(), 2);
+  const HloInstruction* call1 = FindInstruction(module.get(), "call.1");
+  const HloInstruction* call2 = FindInstruction(module.get(), "call.2");
+  EXPECT_EQ(call1->to_apply(), call2->to_apply());
+}
+
+TEST_F(UnflattenCallGraphTest, FilterCallsByPredicate) {
+  const std::string hlo_string = R"(
+  HloModule FilterCallsByPredicate
+
+  %Late1 (a: f32[]) -> f32[] {
+    %a = f32[] parameter(0)
+    ROOT %neg.1 = f32[] negate(%a)
+  }
+
+  %Late2 (a: f32[]) -> f32[] {
+    %a = f32[] parameter(0)
+    ROOT %neg.2 = f32[] negate(%a)
+  }
+
+  %Regular1 (a: f32[]) -> f32[] {
+    %a = f32[] parameter(0)
+    ROOT %neg.3 = f32[] negate(%a)
+  }
+
+  %Regular2 (a: f32[]) -> f32[] {
+    %a = f32[] parameter(0)
+    ROOT %neg.4 = f32[] negate(%a)
+  }
+
+  ENTRY %main (x: f32[]) -> f32[] {
+    %x = f32[] parameter(0)
+    %late_call1 = f32[] call(%x), to_apply=%Late1, frontend_attributes={inlineable="xla_late"}
+    %late_call2 = f32[] call(%late_call1), to_apply=%Late2, frontend_attributes={inlineable="xla_late"}
+    %reg_call1 = f32[] call(%late_call2), to_apply=%Regular1
+    ROOT %reg_call2 = f32[] call(%reg_call1), to_apply=%Regular2
+  }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  UnflattenCallGraph unflatten([](const HloInstruction* call) {
+    auto it = call->frontend_attributes().map().find("inlineable");
+    return it != call->frontend_attributes().map().end() &&
+           it->second == "xla_late";
+  });
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, unflatten.Run(module.get()));
+  ASSERT_TRUE(changed);
+  EXPECT_EQ(module->computation_count(), 4);
+  EXPECT_EQ(FindInstruction(module.get(), "late_call1")->to_apply(),
+            FindInstruction(module.get(), "late_call2")->to_apply());
+  EXPECT_NE(FindInstruction(module.get(), "reg_call1")->to_apply(),
+            FindInstruction(module.get(), "reg_call2")->to_apply());
+}
+
 }  // namespace
 }  // namespace xla
