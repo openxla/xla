@@ -1836,8 +1836,9 @@ ENTRY e {
   EXPECT_THAT(
       root,
       GmockMatch(
-          m::Fusion(m::Fusion(m::Parameter(), m::Parameter())
-                        .WithFusionKind(HloInstruction::FusionKind::kCustom))
+          m::Fusion(m::Bitcast(m::Fusion(m::Parameter(), m::Parameter())
+                                   .WithFusionKind(
+                                       HloInstruction::FusionKind::kCustom)))
               .WithFusionKind(HloInstruction::FusionKind::kInput)));
 
   const HloFusionInstruction* root_fusion = Cast<HloFusionInstruction>(root);

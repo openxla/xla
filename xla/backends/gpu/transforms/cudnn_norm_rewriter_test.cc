@@ -295,7 +295,8 @@ TEST_F(CudnnNormRewriterTest, LayerNorm4D2) {
 ; CHECK-DAG:         "epsilon":0.001
 ; CHECK:           }
 ; CHECK-DAG:    [[GTE:%[^ ]+]] = f32[64,6,1,1]{3,2,1,0} get-tuple-element([[CC]]), index=0
-; CHECK-DAG:  ROOT {{.*}} = f32[2,4,6,8]{3,2,1,0} fusion([[GTE]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
+; CHECK-DAG:    [[GTE_BITCAST:%[^ ]+]] = f32[2,4,8,6]{3,2,1,0} bitcast([[GTE]])
+; CHECK-DAG:  ROOT {{.*}} = f32[2,4,6,8]{3,2,1,0} fusion([[GTE_BITCAST]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
   )";
 
   TestNorm(hlo_text, optimized_hlo);
@@ -355,7 +356,8 @@ TEST_F(CudnnNormRewriterTest, LayerNorm4D2Degenerate1) {
 ; CHECK-DAG:         "epsilon":0.001
 ; CHECK:           }
 ; CHECK-DAG:    [[GTE:%[^ ]+]] = f32[16,6,1,1]{3,2,1,0} get-tuple-element([[CC]]), index=0
-; CHECK-DAG:  ROOT {{.*}} = f32[2,1,6,8]{3,2,1,0} fusion([[GTE]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
+; CHECK-DAG:    [[GTE_BITCAST:%[^ ]+]] = f32[1,2,8,6]{3,2,1,0} bitcast([[GTE]])
+; CHECK-DAG:  ROOT {{.*}} = f32[2,1,6,8]{3,2,1,0} fusion([[GTE_BITCAST]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
   )";
 
   TestNorm(hlo_text, optimized_hlo);
@@ -415,7 +417,8 @@ TEST_F(CudnnNormRewriterTest, LayerNorm4D12) {
 ; CHECK-DAG:         "epsilon":0.001
 ; CHECK:           }
 ; CHECK-DAG:    [[GTE:%[^ ]+]] = f32[16,4,6,1]{3,2,1,0} get-tuple-element([[CC]]), index=0
-; CHECK-DAG:  ROOT {{.*}} = f32[2,4,6,8]{3,2,1,0} fusion([[GTE]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
+; CHECK-DAG:    [[GTE_BITCAST:%[^ ]+]] = f32[2,8,4,6]{3,2,1,0} bitcast([[GTE]])
+; CHECK-DAG:  ROOT {{.*}} = f32[2,4,6,8]{3,2,1,0} fusion([[GTE_BITCAST]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
   )";
 
   TestNorm(hlo_text, optimized_hlo);
@@ -475,7 +478,8 @@ TEST_F(CudnnNormRewriterTest, LayerNorm4D12Degenerate2) {
 ; CHECK-DAG:         "epsilon":0.001
 ; CHECK:           }
 ; CHECK-DAG:    [[GTE:%[^ ]+]] = f32[16,4,1,1]{3,2,1,0} get-tuple-element([[CC]]), index=0
-; CHECK-DAG:  ROOT {{.*}} = f32[2,4,1,8]{3,2,1,0} fusion([[GTE]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
+; CHECK-DAG:    [[GTE_BITCAST:%[^ ]+]] = f32[1,2,8,4]{3,2,1,0} bitcast([[GTE]])
+; CHECK-DAG:  ROOT {{.*}} = f32[2,4,1,8]{3,2,1,0} fusion([[GTE_BITCAST]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
   )";
 
   TestNorm(hlo_text, optimized_hlo);
@@ -699,7 +703,7 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain2D1) {
 ; CHECK-DAG:    [[GTE1_BITCAST:%[^ ]+]] = f32[2]{0} bitcast([[GTE1]])
 ; CHECK-DAG:    [[GTE2:%[^ ]+]] = f32[2,1,1,1]{3,2,1,0} get-tuple-element([[CC]]), index=2
 ; CHECK-DAG:    [[GTE2_BITCAST:%[^ ]+]] = f32[2]{0} bitcast([[GTE2]])
-; CHECK-DAG:    [[FUSION:%[^ ]+]] = f32[2]{0} fusion([[GTE2]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
+; CHECK-DAG:    [[FUSION:%[^ ]+]] = f32[2]{0} fusion([[GTE2_BITCAST]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
 ; CHECK-DAG:  ROOT [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2]{0}, f32[2]{0}, f32[2]{0}) tuple([[GTE0_BITCAST]], [[GTE1_BITCAST]], [[GTE2_BITCAST]], [[FUSION]])
   )";
 
@@ -766,7 +770,7 @@ TEST_F(CudnnNormRewriterTest, LayerNormTrain4D3) {
 ; CHECK-DAG:    [[GTE1_BITCAST:%[^ ]+]] = f32[2,4,6]{2,1,0} bitcast([[GTE1]])
 ; CHECK-DAG:    [[GTE2:%[^ ]+]] = f32[48,1,1,1]{3,2,1,0} get-tuple-element([[CC]]), index=2
 ; CHECK-DAG:    [[GTE2_BITCAST:%[^ ]+]] = f32[2,4,6]{2,1,0} bitcast([[GTE2]])
-; CHECK-DAG:    [[FUSION:%[^ ]+]] = f32[2,4,6]{2,1,0} fusion([[GTE2]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
+; CHECK-DAG:    [[FUSION:%[^ ]+]] = f32[2,4,6]{2,1,0} fusion([[GTE2_BITCAST]]), kind={{.*}}, calls=[[FUSED_COMPUTATION:%[^ ]+]]
 ; CHECK-DAG:  ROOT [[OUT:%[^ ]+]] = (f32[2,4,6,8]{3,2,1,0}, f32[2,4,6]{2,1,0}, f32[2,4,6]{2,1,0}, f32[2,4,6]{2,1,0}) tuple([[GTE0_BITCAST]], [[GTE1_BITCAST]], [[GTE2_BITCAST]], [[FUSION]])
   )";
 

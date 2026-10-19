@@ -19,16 +19,15 @@ limitations under the License.
 #include <utility>
 
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/platform/threadpool.h"
 #include "xla/backends/gpu/transforms/conv_canonicalizer.h"
 #include "xla/backends/gpu/transforms/conv_fusion_rewriter.h"
+#include "xla/backends/gpu/transforms/hoist_fusion_boundary_bitcasts.h"
 #include "xla/backends/gpu/transforms/multi_output_fusion.h"
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/backends/gpu/transforms/ragged_dot_fusion_rewriter.h"
 #include "xla/backends/gpu/transforms/sort_iota_fusion.h"
 #include "xla/backends/gpu/transforms/variadic_op_splitter.h"
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
@@ -109,6 +108,9 @@ HloPassPipeline FusionPipeline(
   fusion.AddPass<HloDCE>();
   fusion.AddPass<MultiOutputFusion>(gpu_device_info, alias_info,
                                     shape_size_bytes_function);
+  fusion.AddPass<HoistFusionBoundaryBitcasts>(
+      gpu_device_info, shape_size_bytes_function, mlir_context, thread_pool,
+      mlir_context_pool);
   fusion.AddPass<HloCSE>(
       /*is_layout_sensitive=*/true, /*ignore_control_dependencies=*/false,
       /*should_eliminate_computation=*/&HloComputation::IsFusionComputation);

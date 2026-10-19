@@ -928,9 +928,8 @@ ENTRY main {
   }
 }
 
-TEST_F(
-    GpuCompilerTest,
-    FusionBlockLevelRewriterRewritesKLoopTransposeWithBitcastIfTheSmallMinorDimIsAPowerOfTwo) {  // NOLINT(whitespace/line_length)
+TEST_F(GpuCompilerTest,
+       FusionBlockLevelRewriterRewritesKLoopTransposeWithBitcast) {
   if (!get_cuda_cc().IsAtLeastAmpere()) {
     GTEST_SKIP() << "FusionBlockLevelRewriter requires Ampere+ to run.";
   }
@@ -938,10 +937,7 @@ TEST_F(
   // If this test starts failing, then it's likely that this no longer generates
   // a kLoop transpose. That's great---it probably means the rewrite in question
   // is no longer necessary!
-  //
-  // The small minor dimension here is a power of two, so the rewrite should
-  // succeed.
-  constexpr absl::string_view rewritable_transpose_string = R"(
+  constexpr absl::string_view power_of_two_transpose_string = R"(
 ENTRY main {
   p0 = f32[1024,4096]{1,0} parameter(0)
   reshape = f32[1024,1024,4]{2,1,0} reshape(p0)
@@ -952,33 +948,30 @@ ENTRY main {
   HloModuleConfig config = GetModuleConfigForTest();
   config.mutable_debug_options().set_xla_gpu_autotune_level(0);
   ASSERT_OK_AND_ASSIGN(
-      auto rewritable_transpose_optimized_module_and_executable,
-      GetOptimizedModuleForExecutable(rewritable_transpose_string, config));
+      auto power_of_two_transpose_optimized_module_and_executable,
+      GetOptimizedModuleForExecutable(power_of_two_transpose_string, config));
   EXPECT_TRUE(HasBlockLevelFusionConfig(
-      rewritable_transpose_optimized_module_and_executable.first
+      power_of_two_transpose_optimized_module_and_executable.first
           ->entry_computation()
           ->root_instruction()));
 
-  // The small minor dimension here is not a power of two, so the rewrite should
-  // fail.
-  constexpr absl::string_view unrewritable_transpose_string = R"(
+  // Even when the small minor dimension is not a power of two,
+  // HoistFusionBoundaryBitcasts hoists the bitcast out of the kLoop transpose
+  // fusion so that FusionBlockLevelRewriter can rewrite the pure transpose.
+  constexpr absl::string_view non_power_of_two_transpose_string = R"(
 ENTRY main {
   p0 = f32[1024,6144]{1,0} parameter(0)
   reshape = f32[1024,1024,6]{2,1,0} reshape(p0)
   ROOT transpose = f32[6,1024,1024]{2,1,0} transpose(reshape), dimensions={2,1,0}
 })";
 
-  ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<VerifiedHloModule> unrewritable_transpose_module,
-      ParseAndReturnVerifiedModule(unrewritable_transpose_string));
-
-  ASSERT_OK_AND_ASSIGN(
-      auto unrewritable_transpose_module_and_executable,
-      GetOptimizedModuleForExecutable(unrewritable_transpose_string, config));
-  const HloModule* unrewritable_transpose_optimized_module =
-      unrewritable_transpose_module_and_executable.first;
-  EXPECT_FALSE(HasBlockLevelFusionConfig(
-      unrewritable_transpose_optimized_module->entry_computation()
+  ASSERT_OK_AND_ASSIGN(auto non_power_of_two_transpose_module_and_executable,
+                       GetOptimizedModuleForExecutable(
+                           non_power_of_two_transpose_string, config));
+  const HloModule* non_power_of_two_transpose_optimized_module =
+      non_power_of_two_transpose_module_and_executable.first;
+  EXPECT_TRUE(HasBlockLevelFusionConfig(
+      non_power_of_two_transpose_optimized_module->entry_computation()
           ->root_instruction()));
 }
 
@@ -1737,7 +1730,7 @@ m {
   const HloModule* ref_module = ref_module_and_ref_executable.first;
   OpaqueExecutable* ref_executable = ref_module_and_ref_executable.second.get();
   EXPECT_THAT(ref_module->entry_computation()->root_instruction(),
-              GmockMatch(m::Fusion(m::Parameter())));
+              GmockMatch(m::Fusion(m::Bitcast(m::Parameter()))));
 
   EXPECT_TRUE(
       RunAndCompareTwoExecutables(executable, ref_executable, std::nullopt));
