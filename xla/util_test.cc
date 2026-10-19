@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "ml_dtypes/include/float8.h"
+#include "tsl/platform/denormal.h"
 #include "tsl/platform/ml_dtypes.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/tsl/platform/logging.h"
@@ -222,6 +223,17 @@ TEST(UtilTest, RoundTripFpToString) {
             "nan(0x1)");
   EXPECT_EQ(RoundTripFpToString(NanWithSignAndPayload<double>(true, 0x1)),
             "-nan(0x1)");
+}
+
+TEST(UtilTest, RoundTripFpToStringOnFlushDenormalThread) {
+  // tsl::thread::ThreadPool workers run their tasks in this mode.
+  tsl::port::ScopedFlushDenormal flush;
+  EXPECT_EQ(RoundTripFpToString(std::numeric_limits<float>::denorm_min()),
+            "1.4013e-45");
+  EXPECT_EQ(RoundTripFpToString(std::numeric_limits<double>::denorm_min()),
+            "4.94065645841247e-324");
+  EXPECT_EQ(RoundTripFpToString(std::numeric_limits<bfloat16>::denorm_min()),
+            "9.184e-41");
 }
 
 namespace {
