@@ -18,7 +18,12 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -28,15 +33,19 @@ limitations under the License.
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "absl/types/span.h"
 #include "tsl/platform/null_file_system.h"
 #include "tsl/platform/path.h"
 #include "xla/tsl/platform/file_system.h"
+#include "xla/tsl/protobuf/error_codes.pb.h"
+#include "xla/tsl/protobuf/status.pb.h"
 #include "xla/tsl/testing/temporary_directory.h"
 
 namespace tsl {
 namespace {
 
-using absl_testing::IsOk;
+using ::absl_testing::IsOk;
+using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
 
 TEST(EnvTest, StartDetachedThread) {
@@ -201,6 +210,115 @@ TEST(EnvTest, ReadFileToStringAllowsShortReadsForSystemFiles) {
   EXPECT_FALSE(content.empty());
 }
 #endif
+
+class FailingReadRandomAccessFile : public RandomAccessFile {
+ public:
+  FailingReadRandomAccessFile(std::string prefix, absl::Status status,
+                              bool fail_on_first_call = true)
+      : prefix_(std::move(prefix)),
+        status_(std::move(status)),
+        fail_on_first_call_(fail_on_first_call) {}
+
+  absl::Status Read(uint64_t offset, absl::string_view& result,
+                    absl::Span<char> scratch) const override {
+    if (offset < prefix_.size()) {
+      const size_t n = std::min(scratch.size(), prefix_.size() - offset);
+      std::memcpy(scratch.data(), prefix_.data() + offset, n);
+      result = absl::string_view(scratch.data(), n);
+      return fail_on_first_call_ ? status_ : absl::OkStatus();
+    }
+    result = absl::string_view();
+    return status_;
+  }
+
+ private:
+  std::string prefix_;
+  absl::Status status_;
+  bool fail_on_first_call_;
+};
+
+class FailingRandomAccessFileSystem : public NullFileSystem {
+ public:
+  FailingRandomAccessFileSystem(std::string prefix, absl::Status status,
+                                bool fail_on_first_call = true)
+      : prefix_(std::move(prefix)),
+        status_(std::move(status)),
+        fail_on_first_call_(fail_on_first_call) {}
+
+  absl::Status NewRandomAccessFile(
+      const std::string& fname,
+      std::unique_ptr<RandomAccessFile>* result) override {
+    *result = std::make_unique<FailingReadRandomAccessFile>(
+        prefix_, status_, fail_on_first_call_);
+    return absl::OkStatus();
+  }
+
+ private:
+  std::string prefix_;
+  absl::Status status_;
+  bool fail_on_first_call_;
+};
+
+TEST(EnvTest, ReadProtoEmptyAndCorruptFiles) {
+  Env* env = Env::Default();
+  ASSERT_OK_AND_ASSIGN(
+      tsl::testing::TemporaryDirectory temp_dir,
+      tsl::testing::TemporaryDirectory::CreateForCurrentTestcase());
+
+  const std::string empty_path =
+      tsl::io::JoinPath(temp_dir.path(), "empty.proto");
+  ASSERT_THAT(WriteStringToFile(env, empty_path, ""), IsOk());
+  tensorflow::StatusProto proto;
+  EXPECT_THAT(ReadBinaryProto(env, empty_path, &proto), IsOk());
+  EXPECT_THAT(ReadTextProto(env, empty_path, &proto), IsOk());
+
+  const std::string corrupt_path =
+      tsl::io::JoinPath(temp_dir.path(), "corrupt.proto");
+  ASSERT_THAT(WriteStringToFile(env, corrupt_path, "\xff\xff\xff"), IsOk());
+  EXPECT_THAT(ReadBinaryProto(env, corrupt_path, &proto),
+              StatusIs(absl::StatusCode::kDataLoss));
+  EXPECT_THAT(ReadTextProto(env, corrupt_path, &proto),
+              StatusIs(absl::StatusCode::kDataLoss));
+}
+
+TEST(EnvTest, ReadProtoPropagatesLazyRandomAccessFileError) {
+  FailingRandomAccessFileSystem lazy_fs(
+      /*prefix=*/"", absl::NotFoundError("Object not found"));
+  SingleFileSystemEnv env(&lazy_fs);
+
+  tensorflow::StatusProto proto;
+  EXPECT_THAT(ReadBinaryProto(&env, "missing.pb", &proto),
+              StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_THAT(ReadTextProto(&env, "missing.txtpb", &proto),
+              StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_THAT(ReadTextOrBinaryProto(&env, "missing", &proto),
+              StatusIs(absl::StatusCode::kNotFound));
+}
+
+TEST(EnvTest, ReadProtoPropagatesPartialReadError) {
+  tensorflow::StatusProto valid_proto;
+  valid_proto.set_code(tensorflow::error::INVALID_ARGUMENT);
+  valid_proto.set_message("partial prefix");
+  const std::string valid_binary = valid_proto.SerializeAsString();
+  const std::string valid_text = "code: INVALID_ARGUMENT\n";
+
+  for (bool fail_on_first_call : {true, false}) {
+    SCOPED_TRACE(fail_on_first_call);
+    FailingRandomAccessFileSystem bin_fs(valid_binary,
+                                         absl::UnavailableError("Stream reset"),
+                                         fail_on_first_call);
+    SingleFileSystemEnv bin_env(&bin_fs);
+    tensorflow::StatusProto proto;
+    EXPECT_THAT(ReadBinaryProto(&bin_env, "truncated.pb", &proto),
+                StatusIs(absl::StatusCode::kUnavailable));
+
+    FailingRandomAccessFileSystem txt_fs(
+        valid_text, absl::UnavailableError("Stream reset"), fail_on_first_call);
+    SingleFileSystemEnv txt_env(&txt_fs);
+    EXPECT_THAT(ReadTextProto(&txt_env, "truncated.txtpb", &proto),
+                StatusIs(absl::StatusCode::kUnavailable));
+  }
+}
 
 }  // namespace
 }  // namespace tsl
