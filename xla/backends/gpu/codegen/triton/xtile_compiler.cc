@@ -236,8 +236,7 @@ bool IsCollectiveFusion(const HloFusionInstruction& fusion) {
   }
   return absl::c_any_of(
       computation->instructions(),
-      HloPredicateIsOp<HloOpcode::kAllGather, HloOpcode::kAllToAll,
-                       HloOpcode::kReduceScatter>);
+      HloPredicateIsOp<HloOpcode::kAllGather, HloOpcode::kReduceScatter>);
 }
 
 }  // namespace
