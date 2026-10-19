@@ -861,10 +861,7 @@ static int toolInitStatic(rocprofiler_client_finalize_t finalize_func,
                                                        tool_data);
 }
 
-// ----------------------------------------------------------------------------
-// C‑linkage entry‑point expected by rocprofiler-sdk.
-// ----------------------------------------------------------------------------
-extern "C" rocprofiler_tool_configure_result_t* rocprofiler_configure(
+static rocprofiler_tool_configure_result_t* rocprofiler_configure(
     uint32_t version, const char* runtime_version, uint32_t priority,
     rocprofiler_client_id_t* id) {
   auto& obj = RocmTracer::GetRocmTracerSingleton();  // Ensure constructed,
