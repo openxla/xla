@@ -1439,5 +1439,116 @@ ENTRY main {
   EXPECT_EQ(FindInstruction(module.get(), "producer_cc"), nullptr);
 }
 
+TEST_F(HloDceTest, DeadEmptyTupleConditionalWithCollectives) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule test_dead_empty_tuple_conditional
+
+add_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+true_branch {
+  p = f32[8] parameter(0)
+  ar = f32[8] all-reduce(p), channel_id=1, replica_groups={{0,1}}, to_apply=add_op
+  ROOT t = () tuple()
+}
+
+false_branch {
+  p = f32[8] parameter(0)
+  ag = f32[16] all-gather(p), channel_id=2, dimensions={0}, replica_groups={{0,1}}
+  ROOT t = () tuple()
+}
+
+ENTRY main {
+  pred_ = pred[] parameter(0)
+  p0 = f32[8] parameter(1)
+  dead_cond = () conditional(pred_, p0, p0), true_computation=true_branch, false_computation=false_branch
+  ROOT root = f32[8] copy(p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+
+  // Without remove_cross_partition_collective_ops, conditional stays alive.
+  HloDCE dce_no_collectives(/*remove_cross_partition_collective_ops=*/false);
+  ASSERT_OK_AND_ASSIGN(bool changed, dce_no_collectives.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_NE(FindInstruction(module.get(), "dead_cond"), nullptr);
+
+  // With remove_cross_partition_collective_ops, conditional and its branches
+  // are removed.
+  HloDCE dce_collectives(/*remove_cross_partition_collective_ops=*/true);
+  ASSERT_OK_AND_ASSIGN(changed, dce_collectives.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "dead_cond"), nullptr);
+}
+
+TEST_F(HloDceTest, DeadEmptyTupleConditionalWithAllowedCustomCalls) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule test_dead_empty_tuple_conditional_custom_calls
+
+true_branch {
+  p = f32[8] parameter(0)
+  cc = f32[8] custom-call(p), custom_call_target="tpu_custom_call", custom_call_has_side_effect=true, frontend_attributes={xla_allow_dce_side_effecting_op="true"}
+  ROOT t = () tuple()
+}
+
+false_branch {
+  p = f32[8] parameter(0)
+  ROOT t = () tuple()
+}
+
+ENTRY main {
+  pred_ = pred[] parameter(0)
+  p0 = f32[8] parameter(1)
+  dead_cond = () conditional(pred_, p0, p0), true_computation=true_branch, false_computation=false_branch
+  ROOT root = f32[8] copy(p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  HloDCE dce(/*remove_cross_partition_collective_ops=*/false);
+  ASSERT_OK_AND_ASSIGN(bool changed, dce.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "dead_cond"), nullptr);
+}
+
+TEST_F(HloDceTest, DeadAsyncAllReduceAllGatherAndCollectivePermute) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule test_dead_async_collectives
+
+add_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  ars = f32[8] all-reduce-start(p0), channel_id=1, replica_groups={{0,1}}, to_apply=add_op
+  ard = f32[8] all-reduce-done(ars)
+  ags = (f32[8], f32[16]) all-gather-start(p0), channel_id=2, dimensions={0}, replica_groups={{0,1}}
+  agd = f32[16] all-gather-done(ags)
+  cps = (f32[8], f32[8]) collective-permute-start(p0), channel_id=3, source_target_pairs={{0,1},{1,0}}
+  cpd = f32[8] collective-permute-done(cps)
+  ROOT root = f32[8] copy(p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  HloDCE dce_no_collectives(/*remove_cross_partition_collective_ops=*/false);
+  ASSERT_OK_AND_ASSIGN(bool changed, dce_no_collectives.Run(module.get()));
+  EXPECT_FALSE(changed);
+
+  HloDCE dce(/*remove_cross_partition_collective_ops=*/true);
+  ASSERT_OK_AND_ASSIGN(changed, dce.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "ard"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "ars"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "agd"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "ags"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "cpd"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "cps"), nullptr);
+}
+
 }  // namespace
 }  // namespace xla
