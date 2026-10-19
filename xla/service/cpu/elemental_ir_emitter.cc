@@ -26,6 +26,7 @@ limitations under the License.
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Value.h"
+#include "xla/codegen/intrinsic/cpp/cpp_gen_intrinsics.h"
 #include "xla/codegen/intrinsic/cpp/intrinsic_declarations.h"
 #include "xla/codegen/intrinsic/exp.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
@@ -130,6 +131,30 @@ absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitExp(
   }
   return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::exp, {value},
                                       {value->getType()}, b(), name);
+}
+
+absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitLog(
+    PrimitiveType prim_type, llvm::Value* value) {
+  if (prim_type == F64 && xla::codegen::AreCppGenIntrinsicsAvailable()) {
+    llvm::Function* log_f64 =
+        xla::codegen::intrinsics::Log::GetOrInsertDeclaration(module(),
+                                                              Type::S(F64));
+    return b()->CreateCall(log_f64, value);
+  }
+  return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::log, {value},
+                                      {value->getType()}, b());
+}
+
+absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitLog2(
+    PrimitiveType prim_type, llvm::Value* value) {
+  if (prim_type == F64 && xla::codegen::AreCppGenIntrinsicsAvailable()) {
+    llvm::Function* log2_f64 =
+        xla::codegen::intrinsics::Log2::GetOrInsertDeclaration(module(),
+                                                               Type::S(F64));
+    return b()->CreateCall(log2_f64, value);
+  }
+  return llvm_ir::EmitCallToIntrinsic(llvm::Intrinsic::log2, {value},
+                                      {value->getType()}, b());
 }
 
 absl::StatusOr<llvm::Value*> CpuElementalIrEmitter::EmitRsqrt(

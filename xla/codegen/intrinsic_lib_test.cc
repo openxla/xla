@@ -234,6 +234,42 @@ TEST(IntrinsicLibTest, SinhVectorizations) {
                            "xla.sinh.f32:xla.sinh.v8f32:8:_ZGV_LLVM_N8v",
                            "xla.sinh.f32:xla.sinh.v16f32:16:_ZGV_LLVM_N16v"));
 }
+
+TEST(IntrinsicLibTest, LogAndLog2Vectorizations) {
+  auto descs_with_prefix = [](absl::string_view features,
+                              absl::string_view prefix) {
+    IntrinsicOptions options;
+    options.features = features;
+    auto lib = IntrinsicFunctionLib(options);
+    std::vector<std::string> descs;
+    for (const auto& vec_desc : lib.Vectorizations()) {
+      if (vec_desc.getScalarFnName().starts_with(prefix)) {
+        descs.push_back(ToString(vec_desc));
+      }
+    }
+    return descs;
+  };
+
+  EXPECT_THAT(
+      descs_with_prefix("", "xla.log."),
+      UnorderedElementsAre("xla.log.f64:xla.log.v2f64:2:_ZGV_LLVM_N2v",
+                           "xla.log.f64:xla.log.v4f64:4:_ZGV_LLVM_N4v"));
+  EXPECT_THAT(
+      descs_with_prefix("", "xla.log2."),
+      UnorderedElementsAre("xla.log2.f64:xla.log2.v2f64:2:_ZGV_LLVM_N2v",
+                           "xla.log2.f64:xla.log2.v4f64:4:_ZGV_LLVM_N4v"));
+
+  EXPECT_THAT(
+      descs_with_prefix("+avx512f", "xla.log."),
+      UnorderedElementsAre("xla.log.f64:xla.log.v2f64:2:_ZGV_LLVM_N2v",
+                           "xla.log.f64:xla.log.v4f64:4:_ZGV_LLVM_N4v",
+                           "xla.log.f64:xla.log.v8f64:8:_ZGV_LLVM_N8v"));
+  EXPECT_THAT(
+      descs_with_prefix("+avx512f", "xla.log2."),
+      UnorderedElementsAre("xla.log2.f64:xla.log2.v2f64:2:_ZGV_LLVM_N2v",
+                           "xla.log2.f64:xla.log2.v4f64:4:_ZGV_LLVM_N4v",
+                           "xla.log2.f64:xla.log2.v8f64:8:_ZGV_LLVM_N8v"));
+}
 TEST(IntrinsicLibTest, CppGenIntrinsicLibraryPreservesNoInline) {
   llvm::LLVMContext context;
   llvm::Module dst_module("dst_module", context);

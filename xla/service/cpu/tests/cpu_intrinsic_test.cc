@@ -214,6 +214,30 @@ IntrinsicTestSpec CpuUnaryIntrinsicTestCases[] = {
         HloOpcode::kLog, F32, true, kTriple_x86_64, "+avx",
         R"(CHECK: fadd fast <8 x float> splat (float f0x3DEF251A)"},
 
+    IntrinsicTestSpec{HloOpcode::kLog, F64, true, kTriple_x86_64, "",
+                      R"(
+        CHECK-NOT: @llvm.log.v2f64
+        CHECK: fmul {{.*}}contract <2 x double> {{.*}}splat (double f0x3FE62E42FEFA0000)
+        )"},
+
+    IntrinsicTestSpec{HloOpcode::kLog, F64, true, kTriple_x86_64, "+avx",
+                      R"(
+        CHECK-NOT: @llvm.log.v4f64
+        CHECK: fmul {{.*}}contract <4 x double> {{.*}}splat (double f0x3FE62E42FEFA0000)
+        )"},
+
+    IntrinsicTestSpec{HloOpcode::kLog2, F64, true, kTriple_x86_64, "",
+                      R"(
+        CHECK-NOT: @llvm.log2.v2f64
+        CHECK: fmul {{.*}}contract <2 x double> {{.*}}splat (double f0x3FF7154768000000)
+        )"},
+
+    IntrinsicTestSpec{HloOpcode::kLog2, F64, true, kTriple_x86_64, "+avx",
+                      R"(
+        CHECK-NOT: @llvm.log2.v4f64
+        CHECK: fmul {{.*}}contract <4 x double> {{.*}}splat (double f0x3FF7154768000000)
+        )"},
+
     IntrinsicTestSpec{
         HloOpcode::kLog, F32, true, kTriple_android_arm, "",
         R"(CHECK: fadd fast <4 x float> splat (float f0x3DEF251A)"}};
