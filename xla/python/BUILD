@@ -649,6 +649,7 @@ xla_cc_test(
         "//xla/tsl/profiler/utils:file_system_utils",
         "//xla/tsl/profiler/utils:xplane_builder",
         "//xla/tsl/profiler/utils:xplane_schema",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
@@ -830,7 +831,6 @@ py_test(
     deps = [
         ":_hlo",
         ":xla_client",
-        "//third_party/py/numpy",
         "@absl_py//absl/logging",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",

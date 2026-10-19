@@ -113,15 +113,10 @@ const HloFusionInstruction& GetFusionInstruction(
 
 constexpr ErrorSpec kExactMatch{/*aabs=*/0, /*arel=*/0};
 
-std::string TilingParametersToString(bool tiling_propagation_enabled) {
-  return tiling_propagation_enabled ? "ExperimentalTiling" : "SymbolicTiling";
-}
-
 class TritonEmitterTest
     : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest>,
       public XTileTestBase {
  public:
-  virtual bool EnableTilingPropagation() const = 0;
   DebugOptions GetDebugOptionsForTest() const override {
     // TODO: b/509502550 - remove the flag and disable tests that use
     // multi-output fusions when removing the feature.
@@ -130,8 +125,6 @@ class TritonEmitterTest
     debug_options.set_xla_gpu_unsupported_enable_triton_multi_output_fusion(
         true);
     debug_options.set_xla_gpu_experimental_disable_binary_libraries(true);
-    debug_options.set_xla_gpu_experimental_enable_tiling_propagation(
-        EnableTilingPropagation());
     return debug_options;
   }
 
@@ -169,43 +162,17 @@ class TritonEmitterTest
   }
 };
 
-class TritonEmitterTestWithTilingParam
-    : public TritonEmitterTest,
-      public ::testing::WithParamInterface<bool> {
- public:
-  bool EnableTilingPropagation() const override { return GetParam(); }
-};
-
-INSTANTIATE_TEST_SUITE_P(TritonEmitterTestWithTilingParamTestSuite,
-                         TritonEmitterTestWithTilingParam, ::testing::Bool(),
-                         [](const ::testing::TestParamInfo<bool>& info) {
-                           return TilingParametersToString(info.param);
-                         });
-
 class TmaParameterizedTritonEmitterTest
     : public TritonEmitterTest,
-      public ::testing::WithParamInterface<std::tuple<bool, bool>> {
- public:
-  bool EnableTilingPropagation() const override {
-    return std::get<1>(GetParam());
-  }
-};
+      public ::testing::WithParamInterface<bool> {};
 
-INSTANTIATE_TEST_SUITE_P(
-    TmaParameterizedTritonEmitterTestSuite, TmaParameterizedTritonEmitterTest,
-    ::testing::Combine(::testing::Bool(), ::testing::Bool()),
-    [](const ::testing::TestParamInfo<std::tuple<bool, bool>>& info) {
-      return absl::StrCat(
-          std::get<0>(info.param) ? "tma_allowed" : "tma_disabled",
-          TilingParametersToString(std::get<1>(info.param)));
-    });
+INSTANTIATE_TEST_SUITE_P(TmaParameterizedTritonEmitterTestSuite,
+                         TmaParameterizedTritonEmitterTest, ::testing::Bool(),
+                         [](const ::testing::TestParamInfo<bool>& info) {
+                           return info.param ? "tma_allowed" : "tma_disabled";
+                         });
 
-class WarpSpecializationTritonEmitterTest
-    : public TritonEmitterTest,
-      public ::testing::WithParamInterface<bool> {
- public:
-  bool EnableTilingPropagation() const override { return GetParam(); }
-
+class WarpSpecializationTritonEmitterTest : public TritonEmitterTest {
  public:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = TritonEmitterTest::GetDebugOptionsForTest();
@@ -215,13 +182,7 @@ class WarpSpecializationTritonEmitterTest
   }
 };
 
-INSTANTIATE_TEST_SUITE_P(WarpSpecializationTritonEmitterTestSuite,
-                         WarpSpecializationTritonEmitterTest, ::testing::Bool(),
-                         [](const ::testing::TestParamInfo<bool>& info) {
-                           return TilingParametersToString(info.param);
-                         });
-
-TEST_P(TritonEmitterTestWithTilingParam, BitcastReduceWithStride4Tiling) {
+TEST_F(TritonEmitterTest, BitcastReduceWithStride4Tiling) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -256,40 +217,28 @@ ENTRY entry_computation {
 })";
   auto status =
       CreateTritonIrFromHloTextAndFileCheck(kHloText, "fused_computation", "");
-  if (EnableTilingPropagation()) {
-    EXPECT_THAT(
-        status,
-        StatusIs(
-            tsl::error::UNIMPLEMENTED,
-            HasSubstr("Only single-result fusions are supported for now")));
-  } else {
-    EXPECT_THAT(status,
-                StatusIs(tsl::error::UNIMPLEMENTED,
-                         HasSubstr("Unsupported case of multi-output fusion")));
-  }
+  EXPECT_THAT(
+      status,
+      StatusIs(
+          tsl::error::UNIMPLEMENTED,
+          HasSubstr(
+              "TilingSpace does not support fusions with multiple roots.")));
 }
 
 class TritonEmitterTestWithOffsetParam
     : public TritonEmitterTest,
-      public ::testing::WithParamInterface<std::tuple<int32_t, bool>> {
- public:
-  bool EnableTilingPropagation() const override {
-    return std::get<1>(GetParam());
-  }
-};
+      public ::testing::WithParamInterface<int32_t> {};
 
 using EmitDynamicSliceTest = TritonEmitterTestWithOffsetParam;
 
-INSTANTIATE_TEST_SUITE_P(
-    DynamicSliceSuite, EmitDynamicSliceTest,
-    ::testing::Combine(::testing::Values(0, 1, 10, 100), ::testing::Bool()),
-    [](const ::testing::TestParamInfo<std::tuple<int32_t, bool>>& info) {
-      return absl::StrCat("offset_", std::get<0>(info.param),
-                          TilingParametersToString(std::get<1>(info.param)));
-    });
+INSTANTIATE_TEST_SUITE_P(DynamicSliceSuite, EmitDynamicSliceTest,
+                         ::testing::Values(0, 1, 10, 100),
+                         [](const ::testing::TestParamInfo<int32_t>& info) {
+                           return absl::StrCat("offset_", info.param);
+                         });
 
 TEST_P(EmitDynamicSliceTest, LowerDynamicSliceWithSingleDimension) {
-  int32_t offset = std::get<0>(GetParam());
+  int32_t offset = GetParam();
   constexpr absl::string_view kHloText = R"(
 f {
   p0 = f32[64] parameter(0)
@@ -341,7 +290,7 @@ ENTRY entry_computation {
                        ParseAndReturnVerifiedModule(kHloText));
   ASSERT_OK_AND_ASSIGN(std::vector<Literal> parameters,
                        MakeFakeArguments(module.get()));
-  int32_t offset = std::get<0>(GetParam());
+  int32_t offset = GetParam();
   parameters[1].Set<int32_t>({}, offset);
   parameters[2].Set<int32_t>({}, offset);
   EXPECT_TRUE(RunAndCompareNoHloPasses(
@@ -371,7 +320,7 @@ ENTRY entry_computation {
                        ParseAndReturnVerifiedModule(kHloText));
   ASSERT_OK_AND_ASSIGN(std::vector<Literal> parameters,
                        MakeFakeArguments(module.get()));
-  int32_t offset = std::get<0>(GetParam());
+  int32_t offset = GetParam();
   parameters[1].Set<int32_t>({}, offset);
   parameters[2].Set<int32_t>({}, offset);
   EXPECT_TRUE(RunAndCompareNoHloPasses(
@@ -379,7 +328,7 @@ ENTRY entry_computation {
 }
 
 TEST_P(EmitDynamicSliceTest, LowerDynamicSliceWithConstantOffset) {
-  int32_t offset = std::get<0>(GetParam());
+  int32_t offset = GetParam();
   std::string kHloText =
       absl::StrReplaceAll(R"(
 f {
@@ -436,13 +385,13 @@ ENTRY entry {
                        ParseAndReturnVerifiedModule(kHloText));
   ASSERT_OK_AND_ASSIGN(std::vector<Literal> parameters,
                        MakeFakeArguments(module.get()));
-  int32_t offset = std::get<0>(GetParam());
+  int32_t offset = GetParam();
   parameters[2].Set<int32_t>({}, offset);
   EXPECT_TRUE(RunAndCompareNoHloPasses(
       std::move(module), LiteralUtil::MakePointers(parameters), kExactMatch));
 }
 
-TEST_P(TritonEmitterTestWithTilingParam, LowerDynamicSliceOfAdd) {
+TEST_F(TritonEmitterTest, LowerDynamicSliceOfAdd) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -473,29 +422,11 @@ ENTRY entry_computation {
 }
 
 class TritonDevicelessTest : public HloHardwareIndependentTestBase,
-                             public XTileTestBase,
-                             public ::testing::WithParamInterface<bool> {
- public:
-  bool EnableTilingPropagation() const { return GetParam(); }
-
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options =
-        HloHardwareIndependentTestBase::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_experimental_enable_tiling_propagation(
-        EnableTilingPropagation());
-    return debug_options;
-  }
-};
-
-INSTANTIATE_TEST_SUITE_P(TritonDevicelessTestSuite, TritonDevicelessTest,
-                         ::testing::Bool(),
-                         [](const ::testing::TestParamInfo<bool>& info) {
-                           return TilingParametersToString(info.param);
-                         });
+                             public XTileTestBase {};
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
-TEST_P(TritonDevicelessTest, TestGenericEmitterWithSoftMaxSingleParameter) {
+TEST_F(TritonDevicelessTest, TestGenericEmitterWithSoftMaxSingleParameter) {
   constexpr absl::string_view kHloText = R"(
 HloModule t
 add {
@@ -565,7 +496,7 @@ CHECK:        }
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
-TEST_P(TritonDevicelessTest, TestGenericEmitterWithMultipleParameters) {
+TEST_F(TritonDevicelessTest, TestGenericEmitterWithMultipleParameters) {
   constexpr absl::string_view kHloText = R"(
 HloModule t
 
@@ -643,7 +574,7 @@ CHECK-SAME:       [%[[TID]], %{{.*}}] [1, 128] [1, 1] : tensor<1x128xf32>
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
-TEST_P(TritonDevicelessTest, EmitterFailsIfComputeCapabilityIsBelowAmpere) {
+TEST_F(TritonDevicelessTest, EmitterFailsIfComputeCapabilityIsBelowAmpere) {
   constexpr absl::string_view kHloText = R"(
 triton_computation {
   p0 = f32[10,10] parameter(0)
@@ -686,7 +617,7 @@ ENTRY entry {
                          "(compute capability 8.0) and up, but got")));
 }
 
-TEST_P(TritonDevicelessTest, RejectsPackedFp4OddMinorOffset) {
+TEST_F(TritonDevicelessTest, RejectsPackedFp4OddMinorOffset) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -725,7 +656,7 @@ ENTRY e {
                                "to be divisible by 2")));
 }
 
-TEST_P(TritonDevicelessTest, EmitsPackedFp4StorageForEvenMinorOffset) {
+TEST_F(TritonDevicelessTest, EmitsPackedFp4StorageForEvenMinorOffset) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -774,7 +705,7 @@ CHECK-SAME: lhs_elem_type = f4E2M1FN, rhs_elem_type = f4E2M1FN
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
-TEST_P(TritonDevicelessTest,
+TEST_F(TritonDevicelessTest,
        EmitterFailsIfFusionBackendConfigDoesNotSatisfyConstraints) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
                        ParseAndReturnVerifiedModule(R"(
@@ -834,7 +765,7 @@ ENTRY entry_computation {
 
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should b
 // moved to deviceless test file.
-TEST_P(TritonDevicelessTest, TestGenericEmitterReductionFusion) {
+TEST_F(TritonDevicelessTest, TestGenericEmitterReductionFusion) {
   constexpr absl::string_view kHloText = R"(
 HloModule t
 add {
@@ -898,7 +829,7 @@ CHECK:            xtile.insert {{.*}} : tensor<1xf32>
                            "triton_reduction_computation")));
 }
 
-TEST_P(TritonEmitterTestWithTilingParam,
+TEST_F(TritonEmitterTest,
        TestGenericEmitterWithReductionAndMultidimensionalTile) {
   constexpr absl::string_view kHloText = R"(
 HloModule t
@@ -931,8 +862,7 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
-TEST_P(TritonEmitterTestWithTilingParam,
-       TestSoftMaxWithTileElementsNotAllContiguous) {
+TEST_F(TritonEmitterTest, TestSoftMaxWithTileElementsNotAllContiguous) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -996,7 +926,7 @@ ENTRY entry_computation {
         "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
@@ -1026,14 +956,13 @@ ENTRY entry_computation {
         "num_stages":"1",
         "is_tma_allowed":"$0"}}}
 })";
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
-TEST_P(TritonEmitterTestWithTilingParam,
-       TestSliceWithTileElementsNotAllContiguous) {
+TEST_F(TritonEmitterTest, TestSliceWithTileElementsNotAllContiguous) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -1087,14 +1016,13 @@ ENTRY entry_computation {
         "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
-TEST_P(TritonEmitterTestWithTilingParam,
-       TestSliceWithTileElementsNotAllContiguousUnaligned) {
+TEST_F(TritonEmitterTest, TestSliceWithTileElementsNotAllContiguousUnaligned) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -1147,7 +1075,7 @@ ENTRY entry_computation {
           "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
@@ -1177,7 +1105,7 @@ ENTRY main {
           "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
 
@@ -1197,8 +1125,7 @@ CHECK: tt.reshape
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
 
-TEST_P(TritonEmitterTestWithTilingParam,
-       BitcastIntoBroadcastIsLoweredCorrectly) {
+TEST_F(TritonEmitterTest, BitcastIntoBroadcastIsLoweredCorrectly) {
   constexpr absl::string_view kHloText = R"(
 triton_computation {
   param_0 = f32[128,256]{1,0} parameter(0)
@@ -1256,7 +1183,7 @@ ENTRY entry_computation {
       "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
@@ -1286,7 +1213,7 @@ ENTRY entry_computation {
         "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
@@ -1316,7 +1243,7 @@ backend_config={
    "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
@@ -1348,7 +1275,7 @@ backend_config={
    "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
@@ -1379,7 +1306,7 @@ backend_config={
  "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
@@ -1387,7 +1314,7 @@ backend_config={
 
 // TODO(b/390559452): Capture the iteration order from the propagated tiling.
 // When computing the tiling separately we need to use the same iteration order.
-TEST_P(TritonEmitterTestWithTilingParam, DISABLED_Transpose3DWithExtraOutput) {
+TEST_F(TritonEmitterTest, DISABLED_Transpose3DWithExtraOutput) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -1438,15 +1365,10 @@ CHECK-COUNT-2: xtile.insert
 
 class IotaEmitterParametrizedTest
     : public TritonEmitterTest,
-      public ::testing::WithParamInterface<std::tuple<PrimitiveType, bool>> {
- public:
-  bool EnableTilingPropagation() const override {
-    return std::get<1>(GetParam());
-  }
-};
+      public ::testing::WithParamInterface<PrimitiveType> {};
 
 TEST_P(IotaEmitterParametrizedTest, Iota4DIsCodegeneratedCorrectly) {
-  auto data_type = std::get<0>(GetParam());
+  auto data_type = GetParam();
   const std::string kHloText =
       absl::Substitute(R"(
 triton_computation {
@@ -1492,22 +1414,18 @@ CHECK:      tt.broadcast {{.*}} -> tensor<1x2x64x8x
 }
 
 std::string TypeTestParamToString(
-    const ::testing::TestParamInfo<std::tuple<PrimitiveType, bool>>& data) {
-  return absl::StrCat(
-      primitive_util::LowercasePrimitiveTypeName(std::get<0>(data.param)),
-      TilingParametersToString(std::get<1>(data.param)));
+    const ::testing::TestParamInfo<PrimitiveType>& data) {
+  return std::string(primitive_util::LowercasePrimitiveTypeName(data.param));
 }
 
 INSTANTIATE_TEST_SUITE_P(IotaEmitterParametrizedTestSuite,
                          IotaEmitterParametrizedTest,
-                         ::testing::Combine(::testing::ValuesIn({S8, S16, S32,
-                                                                 S64, BF16, F16,
-                                                                 F32, F64}),
-                                            ::testing::Bool()),
+                         ::testing::ValuesIn({S8, S16, S32, S64, BF16, F16, F32,
+                                              F64}),
                          TypeTestParamToString);
 
 // Reproducer from b/384110192.
-TEST_P(TritonEmitterTestWithTilingParam,
+TEST_F(TritonEmitterTest,
        FusionWithOutputContainingMoreThanInt32MaxElementsExecutesCorrectly) {
   if (GpuComputeCapability().IsRocm()) {
     GTEST_SKIP() << "Requires more than 4GB GPU memory, exceeds ROCm RBE "
@@ -1568,14 +1486,7 @@ ENTRY entry_computation {
                                       /*run_hlo_passes=*/false));
 }
 
-TEST_P(TritonEmitterTestWithTilingParam, ConvertF16ToF8E5M2Exhaustive) {
-  // TODO(b/396595945): enable post-Ampere once Triton respects RTNE semantics
-  // on H100.
-  if (auto cc = GpuComputeCapability().cuda_compute_capability();
-      cc && cc->IsAtLeastHopper()) {
-    GTEST_SKIP() << "Skipping tests above Ampere, Triton's conversion isn't "
-                    "always correct";
-  }
+TEST_F(TritonEmitterTest, ConvertF16ToF8E5M2Exhaustive) {
   if (GpuComputeCapability().IsRocm()) {
     GTEST_SKIP() << "Triton's F16 to F8E5M2 conversion doesn't preserve "
                     "infinities on ROCm";
@@ -1603,8 +1514,14 @@ ENTRY entry_computation {
 
   std::vector<Eigen::half> all_f16_values;
   for (int i = 0; i < 65536; i++) {
-    all_f16_values.push_back(
-        Eigen::numext::bit_cast<Eigen::half>(static_cast<uint16_t>(i)));
+    Eigen::half v =
+        Eigen::numext::bit_cast<Eigen::half>(static_cast<uint16_t>(i));
+    // TODO(b/396595945): Triton's F16 to F8E5M2 conversion uses satfinite
+    // semantics and saturates values that overflow to infinity.
+    if (Eigen::numext::isinf(static_cast<tsl::float8_e5m2>(v))) {
+      v = Eigen::half(0.0f);
+    }
+    all_f16_values.push_back(v);
   }
 
   std::string hlo_text =
@@ -1616,7 +1533,7 @@ ENTRY entry_computation {
   EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), kExactMatch));
 }
 
-TEST_P(TritonEmitterTestWithTilingParam, ConvertS4ToS8Exhaustive) {
+TEST_F(TritonEmitterTest, ConvertS4ToS8Exhaustive) {
   constexpr absl::string_view kHloText = R"(
 computation {
   p0 = s4[16]{0:E(4)} parameter(0)
@@ -1668,7 +1585,7 @@ ENTRY entry_computation {
           "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   std::string hlo_text = absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(hlo_text, kExactMatch));
 }
@@ -1701,7 +1618,7 @@ ENTRY entry {
           "is_tma_allowed":"$0"}}}
 })";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   std::string hlo_text = absl::Substitute(kHloTextTemplate, is_tma_allowed);
 
   ASSERT_OK_AND_ASSIGN(auto xtile_module_and_hlo_module,
@@ -1750,7 +1667,7 @@ CHECK-COUNT-1: xtile.insert
       hlo_text, ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
 }
 
-TEST_P(WarpSpecializationTritonEmitterTest,
+TEST_F(WarpSpecializationTritonEmitterTest,
        DotAccumulationLoopUsesWarpSpecialization) {
   if (auto cc = GpuComputeCapability().cuda_compute_capability();
       cc && !cc->IsAtLeastBlackwell()) {
@@ -1827,7 +1744,7 @@ ENTRY e (p0.1: f32[11,1,24,1], p1.1: f32[128,32]) -> f32[256,32] {
 }
 )";
 
-  const bool is_tma_allowed = std::get<0>(GetParam());
+  const bool is_tma_allowed = GetParam();
   const std::string hlo_text =
       absl::Substitute(kHloTextTemplate, is_tma_allowed);
   EXPECT_TRUE(RunAndCompareNoHloPasses(
@@ -1934,13 +1851,7 @@ ErrorSpec ErrorSpecForDotAlgorithm(PrecisionConfig::Algorithm algorithm) {
 
 class TritonEmitterTestWithAlgorithmParam
     : public TritonEmitterTest,
-      public ::testing::WithParamInterface<
-          std::tuple<PrecisionConfig::Algorithm, bool>> {
- public:
-  bool EnableTilingPropagation() const override {
-    return std::get<1>(GetParam());
-  }
-};
+      public ::testing::WithParamInterface<PrecisionConfig::Algorithm> {};
 
 // Regroups tests for dot algorithms that have no ambiguous type parameters as
 // per `algorithm_util::GetAllowedOperandsTypeForAlgorithm` and
@@ -1959,7 +1870,7 @@ constexpr std::array kBasicAlgorithms = {
 };
 
 TEST_P(BasicDotAlgorithmEmitterTest, BasicAlgorithmIsEmittedCorrectly) {
-  auto algorithm = std::get<0>(GetParam());
+  auto algorithm = GetParam();
   ASSERT_OK_AND_ASSIGN(
       std::vector<PrimitiveType> allowed_types,
       algorithm_util::GetAllowedOperandsTypeForAlgorithm(algorithm));
@@ -1995,17 +1906,14 @@ TEST_P(BasicDotAlgorithmEmitterTest, BasicAlgorithmIsEmittedCorrectly) {
 }
 
 std::string DotAlgorithmTestToString(
-    const ::testing::TestParamInfo<
-        std::tuple<PrecisionConfig::Algorithm, bool>>& data) {
-  return absl::StrCat(PrecisionConfig::Algorithm_Name(std::get<0>(data.param)),
-                      TilingParametersToString(std::get<1>(data.param)));
+    const ::testing::TestParamInfo<PrecisionConfig::Algorithm>& data) {
+  return PrecisionConfig::Algorithm_Name(data.param);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    BasicDotAlgorithmEmitterTestSuite, BasicDotAlgorithmEmitterTest,
-    ::testing::Combine(::testing::ValuesIn(kBasicAlgorithms),
-                       ::testing::Bool()),
-    DotAlgorithmTestToString);
+INSTANTIATE_TEST_SUITE_P(BasicDotAlgorithmEmitterTestSuite,
+                         BasicDotAlgorithmEmitterTest,
+                         ::testing::ValuesIn(kBasicAlgorithms),
+                         DotAlgorithmTestToString);
 
 // Regroups tests for dot algorithms that issue several dot instructions.
 using MultiDotAlgorithmEmitterTest = TritonEmitterTestWithAlgorithmParam;
@@ -2020,7 +1928,7 @@ constexpr std::array kMultiDotAlgorithms = {
 };
 
 TEST_P(MultiDotAlgorithmEmitterTest, MultiDotAlgorithmIsEmittedCorrectly) {
-  auto algorithm = std::get<0>(GetParam());
+  auto algorithm = GetParam();
   ASSERT_OK_AND_ASSIGN(PrimitiveType out_ty,
                        algorithm_util::GetDotAccumulatorType(algorithm));
   PrimitiveType in_ty =
@@ -2078,11 +1986,10 @@ TEST_P(MultiDotAlgorithmEmitterTest, MultiDotAlgorithmIsEmittedCorrectly) {
       RunAndCompareNoHloPasses(kHloText, ErrorSpecForDotAlgorithm(algorithm)));
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    MultiDotAlgorithmEmitterTestSuite, MultiDotAlgorithmEmitterTest,
-    ::testing::Combine(::testing::ValuesIn(kMultiDotAlgorithms),
-                       ::testing::Bool()),
-    DotAlgorithmTestToString);
+INSTANTIATE_TEST_SUITE_P(MultiDotAlgorithmEmitterTestSuite,
+                         MultiDotAlgorithmEmitterTest,
+                         ::testing::ValuesIn(kMultiDotAlgorithms),
+                         DotAlgorithmTestToString);
 
 // Regroups tests that use TF32 precision by definition.
 using TF32DotAlgorithmEmitterTest = TritonEmitterTestWithAlgorithmParam;
@@ -2092,7 +1999,7 @@ constexpr std::array kTF32DotAlgorithms = {
     PrecisionConfig::ALG_DOT_TF32_TF32_F32_X3};
 
 TEST_P(TF32DotAlgorithmEmitterTest, TF32AlgorithmsUseTF32InputPrecision) {
-  auto algorithm = std::get<0>(GetParam());
+  auto algorithm = GetParam();
   ASSERT_OK_AND_ASSIGN(
       std::vector<PrimitiveType> allowed_types,
       algorithm_util::GetAllowedOperandsTypeForAlgorithm(algorithm));
@@ -2136,34 +2043,28 @@ TEST_P(TF32DotAlgorithmEmitterTest, TF32AlgorithmsUseTF32InputPrecision) {
   // other tests.
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    TF32DotAlgorithmEmitterTestSuite, TF32DotAlgorithmEmitterTest,
-    ::testing::Combine(::testing::ValuesIn(kTF32DotAlgorithms),
-                       ::testing::Bool()),
-    DotAlgorithmTestToString);
+INSTANTIATE_TEST_SUITE_P(TF32DotAlgorithmEmitterTestSuite,
+                         TF32DotAlgorithmEmitterTest,
+                         ::testing::ValuesIn(kTF32DotAlgorithms),
+                         DotAlgorithmTestToString);
 
 class DotUnsetAlgorithmEmitterTest
     : public TritonEmitterTest,
       public ::testing::WithParamInterface<
-          std::tuple<PrimitiveType, PrimitiveType, bool>> {
+          std::tuple<PrimitiveType, PrimitiveType>> {
  public:
-  bool EnableTilingPropagation() const override {
-    return std::get<2>(GetParam());
-  }
-
   static std::string ParamToString(
       const ::testing::TestParamInfo<DotUnsetAlgorithmEmitterTest::ParamType>&
           data) {
-    auto [result_type, input_type, tiling_enabled] = data.param;
+    auto [result_type, input_type] = data.param;
     return absl::StrCat(primitive_util::LowercasePrimitiveTypeName(result_type),
                         "_",
-                        primitive_util::LowercasePrimitiveTypeName(input_type),
-                        TilingParametersToString(tiling_enabled));
+                        primitive_util::LowercasePrimitiveTypeName(input_type));
   };
 };
 
 TEST_P(DotUnsetAlgorithmEmitterTest, UnsetAlgorithmIsEmittedCorrectly) {
-  auto [result_type, input_type, tiling_enabled] = GetParam();
+  auto [result_type, input_type] = GetParam();
   const std::string kHloText =
       GetDotAlgorithmHlo(input_type, result_type, PrecisionConfig::ALG_UNSET);
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
@@ -2184,12 +2085,10 @@ TEST_P(DotUnsetAlgorithmEmitterTest, UnsetAlgorithmIsEmittedCorrectly) {
 INSTANTIATE_TEST_SUITE_P(
     DotUnsetAlgorithmEmitterTestSuite, DotUnsetAlgorithmEmitterTest,
     ::testing::Combine(::testing::ValuesIn(AllXlaDataTypes()),
-                       ::testing::ValuesIn(AllXlaDataTypes()),
-                       ::testing::Bool()),
+                       ::testing::ValuesIn(AllXlaDataTypes())),
     DotUnsetAlgorithmEmitterTest::ParamToString);
 
-TEST_P(TritonEmitterTestWithTilingParam,
-       ScaledDotIsSupportedByReferencePlatform) {
+TEST_F(TritonEmitterTest, ScaledDotIsSupportedByReferencePlatform) {
   constexpr absl::string_view kHloText = R"(
     HloModule ScaledDotIsSupportedByReferencePlatform
 
@@ -2207,7 +2106,7 @@ TEST_P(TritonEmitterTestWithTilingParam,
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_P(TritonEmitterTestWithTilingParam, RocmWarpSizeIsSetCorrectly) {
+TEST_F(TritonEmitterTest, RocmWarpSizeIsSetCorrectly) {
   if (GpuComputeCapability().IsCuda()) {
     GTEST_SKIP() << "Warp size is always 32 on CUDA";
   }
@@ -2283,7 +2182,7 @@ TEST_P(TritonEmitterTestWithTilingParam, RocmWarpSizeIsSetCorrectly) {
   EXPECT_THAT(RunFileCheck(triton_passes_log, kPattern_n), true);
 }
 
-TEST_P(TritonEmitterTestWithTilingParam, RocmWavesPerEuAttributeIsSet) {
+TEST_F(TritonEmitterTest, RocmWavesPerEuAttributeIsSet) {
   if (GpuComputeCapability().IsCuda()) {
     GTEST_SKIP() << "waves_per_eu is ROCm-specific";
   }
@@ -2323,7 +2222,7 @@ TEST_P(TritonEmitterTestWithTilingParam, RocmWavesPerEuAttributeIsSet) {
   EXPECT_EQ(attr.getValueAsString().str(), "4, 4");
 }
 
-TEST_P(TritonEmitterTestWithTilingParam, RocmWavesPerEuZeroOmitsAttribute) {
+TEST_F(TritonEmitterTest, RocmWavesPerEuZeroOmitsAttribute) {
   if (GpuComputeCapability().IsCuda()) {
     GTEST_SKIP() << "waves_per_eu is ROCm-specific";
   }
@@ -2362,11 +2261,7 @@ TEST_P(TritonEmitterTestWithTilingParam, RocmWavesPerEuZeroOmitsAttribute) {
       << "waves_per_eu=0 should not set amdgpu-waves-per-eu attribute";
 }
 
-// Scans are only emitted with the experimental tiling propagation enabled.
 class ScanTritonEmitterTest : public TritonEmitterTest {
- public:
-  bool EnableTilingPropagation() const override { return true; }
-
  protected:
   // Returns arguments for the entry computation of `module` filled with small
   // integers. All intermediate scan results are then exactly representable in

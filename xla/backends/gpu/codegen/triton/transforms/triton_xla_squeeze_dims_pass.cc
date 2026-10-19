@@ -130,13 +130,19 @@ RankedTensorType SqueezeTensorType(RankedTensorType type,
   if (encoding) {
     auto inferLayoutInterface =
         cast<DialectInferLayoutInterface>(&encoding.getDialect());
-    Attribute dst_encoding = dst_encoding_hint;
+    Attribute dst_encoding;
     [[maybe_unused]] LogicalResult result =
         inferLayoutInterface->inferReshapeOpEncoding(
             type.getShape(), encoding, shape, dst_encoding,
             /*allowReorder=*/false, /*loc=*/std::nullopt);
     CHECK(succeeded(result));
-    encoding = dst_encoding;
+    if (dst_encoding_hint &&
+        succeeded(inferLayoutInterface->verifyLayoutsAreEqual(
+            shape, dst_encoding, dst_encoding_hint, /*loc=*/std::nullopt))) {
+      encoding = dst_encoding_hint;
+    } else {
+      encoding = dst_encoding;
+    }
   }
   return RankedTensorType::get(shape, type.getElementType(), encoding);
 }
@@ -269,6 +275,9 @@ class PushSqueezeDimsUpThroughElementwise final
     state.addAttributes(op->getAttrs());
     Operation* new_op = rewriter.create(state);
     ReplaceOpWithExpandDimsOf(rewriter, op, new_op->getResults(), *axis);
+    // All uses now refer to the replacement. Side-effecting elementwise ops
+    // cannot be left for dead-code elimination: that would execute them twice.
+    rewriter.eraseOp(op);
     return success();
   }
 };

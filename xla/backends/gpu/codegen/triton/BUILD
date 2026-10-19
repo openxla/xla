@@ -606,9 +606,8 @@ cc_library(
 
 xla_cc_test(
     name = "support_test",
-    timeout = "long",  # TODO: b/514293537 - remove after disabling symbolic analysis.
     srcs = ["support_test.cc"],
-    shard_count = 50,  # TODO: b/514293537 - change to 25 after disabling symbolic analysis.
+    shard_count = 25,
     deps = [
         ":support",
         ":support_test_base",
@@ -760,6 +759,7 @@ cc_library(
         "//xla/backends/gpu/codegen/triton/ir:triton_xla",
         "//xla/backends/gpu/runtime:all_gather",
         "//xla/backends/gpu/runtime:all_reduce",
+        "//xla/backends/gpu/runtime:all_to_all",
         "//xla/backends/gpu/runtime:collective_params",
         "//xla/backends/gpu/runtime:reduce_scatter",
         "//xla/backends/gpu/transforms/collectives:collective_ops_utils",
@@ -776,15 +776,12 @@ cc_library(
         "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:launch_dimensions",
-        "//xla/stream_executor:device_description",
         "//xla/stream_executor/gpu:all_reduce_kernel",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
@@ -793,7 +790,6 @@ cc_library(
         "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",

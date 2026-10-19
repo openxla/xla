@@ -433,7 +433,7 @@ xla_test(
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",  # buildcleaner: keep
     ] + if_cuda_or_rocm_is_configured([
-        ":nccl_or_rccl_collectives",
+        ":nccl_or_rccl_collectives",  # buildcleaner: keep
     ]) + if_rocm_is_configured([
         ":mori_collectives",
     ]),
@@ -463,8 +463,10 @@ xla_test(
         ":nccl_or_rccl_collectives",  # buildcleaner: keep
         "//xla:future",
         "//xla:xla_data_proto_cc",
+        "//xla/core/collectives:rank_id",
         "//xla/core/collectives:reduction_kind",
         "//xla/runtime:device_id",
+        "//xla/stream_executor:device_address",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
@@ -474,9 +476,11 @@ xla_test(
         "//xla/stream_executor/cuda:cuda_platform",  # buildcleaner: keep
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/platform:env",
+        "//xla/tsl/util:tied_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",  # buildcleaner: keep
@@ -496,10 +500,12 @@ cc_library(
         "//xla/core/collectives:reduction_kind",
         "//xla/core/collectives:registered_memory",
         "//xla/core/collectives:symmetric_memory",
+        "//xla/ffi/api:c_api",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:memory_allocation",
         "//xla/tsl/util:tied_ref",
+        "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
@@ -1114,6 +1120,7 @@ cc_library(
         "//xla/core/collectives:reduction_kind",
         "//xla/core/collectives:registered_memory",
         "//xla/core/collectives:symmetric_memory",
+        "//xla/ffi/api:c_api",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:memory_allocation",
@@ -1273,10 +1280,6 @@ rocm_library(
     ],
     hdrs = ["mori_kernels.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
-    copts = [
-        "-DBUILD_CCO_SDMA=1",
-    ],
-    linkstatic = True,
     tags = [
         "gpu",
         "no-oneapi",

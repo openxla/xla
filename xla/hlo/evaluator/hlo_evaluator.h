@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/container/node_hash_map.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -520,6 +521,23 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
     DimensionVector contracting_dim_scale_divisors;
   };
 
+  absl::Status EvaluateConvolution(
+      const HloInstruction* conv, bool use_f32_fast_path,
+      absl::FunctionRef<absl::Status(
+          const Literal& lhs_literal, const Literal& rhs_literal,
+          const Shape& window_shape, const DimensionVector& lhs_dim_multipliers,
+          const DimensionVector& rhs_dim_multipliers, Literal* result)>
+          evaluate_impl);
+
+  absl::Status EvaluateScaledDot(
+      const HloInstruction* dot,
+      absl::FunctionRef<absl::Status(
+          const Literal& lhs_literal, const Literal& rhs_literal,
+          const Literal& lhs_scale_literal, const Literal& rhs_scale_literal,
+          const ShapeInfo& lhs_info, const ShapeInfo& rhs_info,
+          int64_t total_contraction_size, Literal* result)>
+          evaluate_impl);
+
   // Make HloEvaluatorTypedVisitor a friend because it is logically part of this
   // class.
   //
@@ -598,6 +616,9 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
   absl::Status HandleCustomCall(const HloInstruction* custom_call) override;
   absl::Status HandleOptimizationBarrier(
       const HloInstruction* optimization_barrier) override;
+  absl::Status HandleDot(const HloInstruction* dot) override;
+  absl::Status HandleRaggedDot(const HloInstruction* dot) override;
+  absl::Status HandlePad(const HloInstruction* pad) override;
 
   // Unsupported HLOs, note some of them (such as BatchNorm*) are typically
   // expanded in a semantic-preserving way into other HLOs by adding expansion

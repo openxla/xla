@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/core/collectives/registered_memory.h"
 #include "xla/core/collectives/symmetric_memory.h"
+#include "xla/ffi/api/record_c_api.h"
 #include "xla/future.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/device_address.h"
@@ -1147,6 +1148,27 @@ absl::Status NcclCommunicator::LaunchMultiGpuBarrier(const Executor& executor) {
       tied_cross_device_barrier_signal_value_.Lock()->address());
 }
 
+absl::StatusOr<const XLA_FFI_Command*> NcclCommunicator::RecordMultiGpuBarrier(
+    xla::ffi::RecordContext& record_ctx,
+    const XLA_FFI_Command* absl_nullable cmd) {
+  if (!IsCrossDeviceBarrierInitiated()) {
+    return FailedPrecondition(
+        "Cross device barrier buffers are not set on this communicator. Did "
+        "you set use_cross_device_barrier=true in BarrierRequirements?");
+  }
+  absl::MutexLock lock(barrier_mu_);
+  if (cancel_->IsCancelled()) {
+    return FailedPrecondition("NcclCommunicator aborted");
+  }
+  ABSL_ASSIGN_OR_RETURN(size_t num_ranks, NumRanks());
+  ABSL_ASSIGN_OR_RETURN(size_t current_rank, CurrentRank());
+
+  return xla::gpu::RecordMultiGpuBarrierWithNccl(
+      stream_executor_, record_ctx, num_ranks, RankId(current_rank),
+      tied_cross_device_barrier_symmetric_memory_.Lock().get(),
+      tied_cross_device_barrier_signal_value_.Lock()->address(), cmd);
+}
+
 void NcclCommunicator::InitializeCrossDeviceBarrier(
     tsl::TiedRef<se::MemoryAllocation> tied_signal_value,
     tsl::TiedRef<se::MemoryAllocation> tied_signal,
@@ -1157,6 +1179,58 @@ void NcclCommunicator::InitializeCrossDeviceBarrier(
   tied_cross_device_barrier_signal_ = std::move(tied_signal);
   tied_cross_device_barrier_symmetric_memory_ =
       std::move(tied_symmetric_memory);
+}
+
+absl::StatusOr<se::DeviceAddressBase> NcclCommunicator::GetCliqueSemaphore(
+    RankId peer_rank, int64_t collective_id) const {
+  absl::MutexLock lock(semaphore_mu_);
+  int device = stream_executor_->device_ordinal();
+
+  auto locked_sym = tied_clique_symmetric_memory_.Lock();
+  if (locked_sym == nullptr) {
+    return absl::NotFoundError(
+        absl::StrFormat("%sSymmetric memory is not initialized for clique of "
+                        "rank %d",
+                        xla::XlaFormatDevice(device), peer_rank.value()));
+  }
+
+  ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase peer_addr,
+                        locked_sym->peer_addr(peer_rank));
+
+  if (collective_id < 0 || collective_id >= kMaxCollectiveIds) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "%sCollective ID %d is out of range [0, %d) for rank %d",
+        xla::XlaFormatDevice(device), collective_id, kMaxCollectiveIds,
+        peer_rank.value()));
+  }
+
+  constexpr uint64_t kSemaphoreSliceBytes =
+      kMaxCliqueSemaphores * sizeof(uint32_t);
+  uint64_t offset_bytes = collective_id * kSemaphoreSliceBytes;
+  if (offset_bytes + kSemaphoreSliceBytes > peer_addr.size()) {
+    return absl::InternalError(absl::StrFormat(
+        "%sSemaphore slice [%d, %d) bytes exceeds peer address size %d bytes",
+        xla::XlaFormatDevice(device), offset_bytes,
+        offset_bytes + kSemaphoreSliceBytes, peer_addr.size()));
+  }
+
+  return se::DeviceAddressBase(
+      static_cast<char*>(peer_addr.opaque()) + offset_bytes,
+      kSemaphoreSliceBytes);
+}
+
+void NcclCommunicator::InitializeCliqueSemaphore(
+    tsl::TiedRef<se::MemoryAllocation> tied_semaphore,
+    tsl::TiedRef<SymmetricMemory> tied_symmetric_memory) {
+  absl::MutexLock lock(semaphore_mu_);
+  tied_clique_semaphores_ = std::move(tied_semaphore);
+  tied_clique_symmetric_memory_ = std::move(tied_symmetric_memory);
+}
+
+bool NcclCommunicator::IsCliqueSemaphoreInitialized() const {
+  absl::MutexLock lock(semaphore_mu_);
+  return tied_clique_semaphores_.Lock() != nullptr &&
+         tied_clique_symmetric_memory_.Lock() != nullptr;
 }
 
 std::string NcclCommunicator::ToString() const {

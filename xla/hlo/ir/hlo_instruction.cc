@@ -3719,6 +3719,7 @@ absl::Status HloInstruction::Defuse() {
   // computation as the fusion instruction itself.
   // TODO(b/68227302): Moving instruction to new computation rather than
   // cloning and deleting.
+  HloInstruction* first_defused = nullptr;
   for (HloInstruction* fused_instruction :
        fused_computation->MakeInstructionPostOrder()) {
     if (fused_instruction->opcode() == HloOpcode::kParameter) {
@@ -3731,11 +3732,37 @@ absl::Status HloInstruction::Defuse() {
     HloInstruction* defused_instruction =
         parent()->AddInstruction(fused_instruction->CloneWithNewOperands(
             fused_instruction->shape(), new_operands));
+    if (first_defused == nullptr) {
+      first_defused = defused_instruction;
+    }
     defused_instructions[fused_instruction] = defused_instruction;
   }
 
-  ABSL_RETURN_IF_ERROR(
-      ReplaceAllUsesWith(defused_instructions.at(fused_expression_root())));
+  HloInstruction* defused_root =
+      defused_instructions.at(fused_expression_root());
+  ABSL_RETURN_IF_ERROR(ReplaceAllUsesWith(defused_root));
+  if (HasControlDependencies()) {
+    if (first_defused != nullptr) {
+      // Preserve ordering: control predecessors run before every defused
+      // instruction, and control successors run after the defused root.
+      for (HloInstruction* predecessor : control_predecessors()) {
+        for (HloInstruction* fused_instruction :
+             fused_computation->instructions()) {
+          if (fused_instruction->opcode() == HloOpcode::kParameter) {
+            continue;
+          }
+          ABSL_RETURN_IF_ERROR(predecessor->AddControlDependencyTo(
+              defused_instructions.at(fused_instruction)));
+        }
+      }
+      for (HloInstruction* successor : control_successors()) {
+        ABSL_RETURN_IF_ERROR(defused_root->AddControlDependencyTo(successor));
+      }
+      ABSL_RETURN_IF_ERROR(DropAllControlDeps());
+    } else {
+      ABSL_RETURN_IF_ERROR(SafelyDropAllControlDependencies());
+    }
+  }
 
   HloModule* module = GetModule();
   ABSL_RETURN_IF_ERROR(parent()->RemoveInstruction(this));

@@ -1725,6 +1725,7 @@ xla_test(
         "b200",
     ],
     data = ["data/cudnn_reproducer.hlo"],
+    shard_count = 5,
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         "//xla:error_spec",
@@ -2232,6 +2233,7 @@ xla_test(
         ":hlo_test_base",
         ":literal_test_util",
         ":xla_internal_test_main",
+        ":xla_test_backend_predicates",
         "//xla:array2d",
         "//xla:error_spec",
         "//xla:literal",
@@ -3071,7 +3073,7 @@ xla_test(
         "gpu",
         "interpreter",
     ],
-    shard_count = 30,
+    shard_count = 15,
     tags = ["optonly"],
     use_legacy_runtime = True,
     deps = [
@@ -3225,7 +3227,7 @@ xla_test(
         "gpu",
         "interpreter",
     ],
-    shard_count = 15,
+    shard_count = 8,
     use_legacy_runtime = True,
     deps = [
         ":literal_test_util",
@@ -3630,7 +3632,6 @@ xla_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
         "//xla/tsl/lib/core:status_test_util",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
@@ -3712,6 +3713,7 @@ cc_library(
     srcs = ["aot_interception_pjrt_client.cc"],
     hdrs = ["aot_interception_pjrt_client.h"],
     deps = [
+        "//xla:debug_options_runtime_fields",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -3734,6 +3736,7 @@ cc_library(
         "//xla/util/split_proto:split_executable_and_options_writer",
         "//xla/util/split_proto:split_gpu_executable_writer",
         "//xla/util/split_proto:split_proto_reader",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
