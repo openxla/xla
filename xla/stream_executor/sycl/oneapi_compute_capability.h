@@ -30,9 +30,16 @@ limitations under the License.
 namespace stream_executor {
 
 #define FOR_KNOWN_ONEAPI_DEVICES(EMIT)                               \
-  EMIT(/*device=*/PVC, /*idx=*/0, /*gen=*/0xc, /*default_ver=*/0x3c) \
-  EMIT(/*device=*/BMG, /*idx=*/1, /*gen=*/0x14, /*default_ver=*/0x1) \
-  EMIT(/*device=*/DG2, /*idx=*/2, /*gen=*/0xc, /*default_ver=*/0x37)
+  EMIT(/*device=*/DG2, /*idx=*/0, /*gen=*/0xc, /*default_ver=*/0x37) \
+  EMIT(/*device=*/PVC, /*idx=*/1, /*gen=*/0xc, /*default_ver=*/0x3c) \
+  EMIT(/*device=*/MTL, /*idx=*/2, /*gen=*/0xc, /*default_ver=*/0x46) \
+  EMIT(/*device=*/ARL, /*idx=*/3, /*gen=*/0xc, /*default_ver=*/0x4a) \
+  EMIT(/*device=*/BMG, /*idx=*/4, /*gen=*/0x14, /*default_ver=*/0x1) \
+  EMIT(/*device=*/LNL, /*idx=*/5, /*gen=*/0x14, /*default_ver=*/0x4) \
+  EMIT(/*device=*/PTL, /*idx=*/6, /*gen=*/0x1e, /*default_ver=*/0x0) \
+  EMIT(/*device=*/WCL, /*idx=*/7, /*gen=*/0x1e, /*default_ver=*/0x3) \
+  EMIT(/*device=*/NVL, /*idx=*/8, /*gen=*/0x1e, /*default_ver=*/0x4) \
+  EMIT(/*device=*/NVLP, /*idx=*/9, /*gen=*/0x23, /*default_ver=*/0xa)
 
 #define DEVICE_INFO(HW, ...) {#HW, OneAPIDeviceType::k##HW},
 #define DEVICE_ENTRIES(HW, I, G, V) k##HW = ((G << 22) | (V << 14) | (I)),
