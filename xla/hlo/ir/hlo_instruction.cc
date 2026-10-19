@@ -701,7 +701,7 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       break;
     }
     case HloOpcode::kConstant: {
-// TODO(b/110214922): Revert this to CHECK(proto.has_literal()).
+    // TODO(b/110214922): Revert this to CHECK(proto.has_literal()).
       if (proto.has_literal()) {
         ABSL_ASSIGN_OR_RETURN(
             auto literal,
