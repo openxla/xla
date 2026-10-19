@@ -17,8 +17,18 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include "llvm/IR/LLVMContext.h"
+
 namespace xla::llvm_ir {
 namespace {
+
+TEST(LLVMCommandLineOptionsLockTest, ParseIntoContext) {
+  llvm::LLVMContext context;
+  LLVMCommandLineOptionsLock lock({"-enable-load-in-loop-pre=false"}, &context);
+  // Also verify ParseCommandLineOptions static method on another context.
+  llvm::LLVMContext context2;
+  LLVMCommandLineOptionsLock::ParseCommandLineOptions(context2);
+}
 
 TEST(LLVMCommandLineOptionsReleasableLockTest, Basic) {
   LLVMCommandLineOptionsReleasableLock lock(

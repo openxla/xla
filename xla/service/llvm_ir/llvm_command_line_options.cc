@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "llvm/CodeGen/MachinePassRegistry.h"
 #include "llvm/CodeGen/RegAllocRegistry.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/CommandLine.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -61,7 +62,7 @@ void SyncRegisterAllocatorDefault() {
 }  // namespace
 
 LLVMCommandLineOptionsLock::LLVMCommandLineOptionsLock(
-    const std::vector<std::string>& client_options)
+    const std::vector<std::string>& client_options, llvm::LLVMContext* context)
     : client_signature_(absl::HashOf(client_options)) {
   // Wait until other clients are done using LLVM.
   auto no_competing_clients =
@@ -106,6 +107,10 @@ LLVMCommandLineOptionsLock::LLVMCommandLineOptionsLock(
             << client_signature_;
   }
 
+  if (context != nullptr) {
+    ParseCommandLineOptionsLocked(*context);
+  }
+
   // We're good to start compilation.
   num_active_clients_ += 1;
   lock_.unlock();
@@ -115,6 +120,27 @@ LLVMCommandLineOptionsLock::~LLVMCommandLineOptionsLock() {
   absl::MutexLock lock(lock_);
   CHECK_GT(num_active_clients_, 0);
   num_active_clients_ -= 1;
+}
+
+void LLVMCommandLineOptionsLock::ParseCommandLineOptionsLocked(
+    llvm::LLVMContext& context) {
+  std::vector<const char*> fake_argv;
+  fake_argv.reserve(GetActiveClientOptions().size() +
+                    GetGlobalOptions().size() + 1);
+  fake_argv.push_back("xla");
+  for (absl::string_view client_option : GetActiveClientOptions()) {
+    fake_argv.push_back(client_option.data());
+  }
+  for (absl::string_view global_option : GetGlobalOptions()) {
+    fake_argv.push_back(global_option.data());
+  }
+  llvm::cl::parseCommandLineOptions(context.getLibraryOptions(), fake_argv);
+}
+
+void LLVMCommandLineOptionsLock::ParseCommandLineOptions(
+    llvm::LLVMContext& context) {
+  absl::MutexLock lock(&lock_);
+  ParseCommandLineOptionsLocked(context);
 }
 
 }  // namespace llvm_ir

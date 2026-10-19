@@ -30,6 +30,10 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/synchronization/mutex.h"
 
+namespace llvm {
+class LLVMContext;
+}  // namespace llvm
+
 namespace xla {
 namespace llvm_ir {
 
@@ -69,8 +73,8 @@ std::vector<std::string> ExtractXlaBackendExtraOptions(const T& options) {
 class ABSL_SCOPED_LOCKABLE LLVMCommandLineOptionsLock {
  public:
   explicit LLVMCommandLineOptionsLock(
-      const std::vector<std::string>& client_options)
-      ABSL_EXCLUSIVE_LOCK_FUNCTION(lock_);
+      const std::vector<std::string>& client_options,
+      llvm::LLVMContext* context = nullptr) ABSL_EXCLUSIVE_LOCK_FUNCTION(lock_);
 
   LLVMCommandLineOptionsLock(const LLVMCommandLineOptionsLock&) = delete;
   LLVMCommandLineOptionsLock(LLVMCommandLineOptionsLock&&) = delete;
@@ -79,6 +83,9 @@ class ABSL_SCOPED_LOCKABLE LLVMCommandLineOptionsLock {
   LLVMCommandLineOptionsLock& operator=(LLVMCommandLineOptionsLock&&) = delete;
 
   ~LLVMCommandLineOptionsLock() ABSL_UNLOCK_FUNCTION();
+
+  // Parses active options into the given LLVMContext's library options.
+  static void ParseCommandLineOptions(llvm::LLVMContext& context);
 
   static std::vector<std::string>& GetGlobalOptions() {
     // absl::NoDestructor is not available in OSS XLA.
@@ -103,6 +110,9 @@ class ABSL_SCOPED_LOCKABLE LLVMCommandLineOptionsLock {
         new std::vector<std::string>();
     return *active_client_options;
   }
+
+  static void ParseCommandLineOptionsLocked(llvm::LLVMContext& context)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   // Signature of the current clients LLVM options.
   uint64_t client_signature_;
