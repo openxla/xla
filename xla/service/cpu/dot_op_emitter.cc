@@ -190,30 +190,42 @@ DotImplementationStrategy GetNonBatchDotImplementationStrategy(
          dot_info.dim_nums.rhs_batch_dimensions_size() == 0)
       << "Dot operations must be non-batch";
 
-  // Any Matrix-Vector product of floating point or integral type, or
+  // Small Matrix-Vector products of floating point or integral type, or
   // a transpose-dot fusion of the same can be lowered to a tiled LLVM
-  // IR implementation.
-  if ((dot_info.result_shape.dimensions().size() <= 1 ||
-       (dot_info.result_shape.dimensions().size() == 2 &&
-        (dot_info.result_shape.dimensions(0) == 1 ||
-         dot_info.result_shape.dimensions(1) == 1))) &&
+  // IR implementation. Large GEMV operations should fall through to kEigen so
+  // that runtime libraries (e.g. YNNPACK) or multi-threaded Eigen can be used.
+  bool is_gemv = dot_info.result_shape.dimensions().size() <= 1 ||
+                 (dot_info.result_shape.dimensions().size() == 2 &&
+                  (dot_info.result_shape.dimensions(0) == 1 ||
+                   dot_info.result_shape.dimensions(1) == 1));
+  if (is_gemv &&
       (primitive_util::IsFloatingPointType(element_type) ||
        primitive_util::IsIntegralType(element_type)) &&
       operands_match_result_type) {
-    return DotImplementationStrategy::kTiledLlvmIrGemv;
+    if (!allow_runtime_calls ||
+        dot_info.result_shape.dimensions().size() <= 1 ||
+        !IsAlignedGemm(dot_info, target_machine_features) ||
+        CanEmitTiledLlvmIrGemm(config, dot_info, target_machine_features) ||
+        dot_info.dim_nums.lhs_contracting_dimensions_size() != 1) {
+      return DotImplementationStrategy::kTiledLlvmIrGemv;
+    }
+    int64_t m = dot_info.result_shape.dimensions(0);
+    int64_t k = dot_info.lhs_shape.dimensions(
+        dot_info.dim_nums.lhs_contracting_dimensions(0));
+    int64_t n = dot_info.result_shape.dimensions(1);
+    if (k <= 128 || (m * k * n <= (1 << 19))) {
+      return DotImplementationStrategy::kTiledLlvmIrGemv;
+    }
   }
 
   // MatMul smaller than 3x3 should use naive nested loop.
-  if ((dot_info.lhs_shape.dimensions().size() <= 1 ||
-       (dot_info.lhs_shape.dimensions().size() == 2 &&
-        (dot_info.lhs_shape.dimensions(0) <= 3 ||
-         dot_info.lhs_shape.dimensions(1) <= 3))) &&
-      (dot_info.rhs_shape.dimensions().size() <= 1 ||
-       (dot_info.rhs_shape.dimensions().size() == 2 &&
-        (dot_info.rhs_shape.dimensions(0) <= 3 ||
-         dot_info.rhs_shape.dimensions(1) <= 3))) &&
+  if ((dot_info.result_shape.dimensions().size() <= 1 ||
+       (dot_info.result_shape.dimensions().size() == 2 &&
+        dot_info.result_shape.dimensions(0) <= 3 &&
+        dot_info.result_shape.dimensions(1) <= 3)) &&
       (primitive_util::IsFloatingPointType(element_type) ||
-       primitive_util::IsIntegralType(element_type))) {
+       primitive_util::IsIntegralType(element_type)) &&
+      operands_match_result_type) {
     return DotImplementationStrategy::kNaiveLlvmIr;
   }
 
