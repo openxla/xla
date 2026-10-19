@@ -4167,6 +4167,7 @@ cc_library(
         "//xla/codegen/intrinsic:fptrunc",
         "//xla/codegen/intrinsic:log1p",
         "//xla/codegen/intrinsic:type",
+        "//xla/codegen/intrinsic/cpp:_cpp_gen_intrinsics",
         "//xla/codegen/intrinsic/cpp:_intrinsic_declarations",
         "//xla/hlo/ir:hlo",
         "//xla/service/llvm_ir:ir_array",
