@@ -1130,7 +1130,8 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
                 if (buffer_offset > range.size() ||
                     mem->mem().size() > range.size() - buffer_offset) {
                   return Unimplemented(
-                      "Cross-host fabric transfer of a buffer spanning physical "
+                      "Cross-host fabric transfer of a buffer spanning "
+                      "physical "
                       "allocations is not supported.");
                 }
                 ABSL_ASSIGN_OR_RETURN(
@@ -1169,8 +1170,9 @@ StreamExecutorGpuRawClient::CrossHostReceiveBuffersInto(
                  buffer_sequencing_events) {
               SetEventAsError(buffer_sequencing_event, results.status());
             }
-            // Descriptor consumers must also see the failure; they may be waiting
-            // for this callback before they can start or cancel the remote send.
+            // Descriptor consumers must also see the failure; they may be
+            // waiting for this callback before they can start or cancel the
+            // remote send.
             notifier(results.status());
             return;
           }
