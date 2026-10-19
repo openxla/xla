@@ -61,7 +61,8 @@ struct HloCalls {
 // parameter count).
 HloCalls CollectHloCalls(
     HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+    const absl::flat_hash_set<absl::string_view>& execution_threads,
+    const HloPredicate& should_unflatten_call) {
   std::unique_ptr<CallGraph> call_graph =
       CallGraph::Build(module, execution_threads);
   HloCalls calls;
@@ -70,7 +71,9 @@ HloCalls CollectHloCalls(
 
   for (const CallGraphNode& node : call_graph->nodes()) {
     for (const CallSite& callsite : node.callsites()) {
-      if (callsite.instruction()->opcode() == HloOpcode::kCall) {
+      if (callsite.instruction()->opcode() == HloOpcode::kCall &&
+          (!should_unflatten_call ||
+           should_unflatten_call(callsite.instruction()))) {
         calls.call_sites.insert(callsite.instruction());
         HloComputation* target = callsite.instruction()->to_apply();
         calls.targets.insert(target);
@@ -167,7 +170,8 @@ absl::StatusOr<bool> UnflattenCallGraph::RunImpl(
       absl::StrCat("Ran UnflattenCallGraph on module: ", module->name()), 1);
 
   // Find all call instructions and their unique computation targets
-  const HloCalls calls = CollectHloCalls(module, execution_threads);
+  const HloCalls calls =
+      CollectHloCalls(module, execution_threads, should_unflatten_call_);
   if (calls.targets.empty()) {
     return false;
   }
