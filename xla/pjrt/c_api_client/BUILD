@@ -79,6 +79,7 @@ cc_library(
         "//xla/pjrt:pjrt_device_dimensions",
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:pjrt_layout",
+        "//xla/pjrt:pjrt_relocatable",
         "//xla/pjrt:pjrt_topology_description_registry",
         "//xla/pjrt:scoped_async_tracking_event",
         "//xla/pjrt:string_utils",
