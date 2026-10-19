@@ -53,6 +53,11 @@ struct InfNanIntentOptions {
 bool IsIntentionalInfNan(const HloModule& module,
                          const InfNanIntentOptions& options = {});
 
+// Returns true if `instr` is a bit-preserving data-movement operation (or a
+// fusion composed entirely of bit-preserving operations) that must preserve
+// floating-point subnormal bit patterns.
+bool IsBitPreservingOp(const HloInstruction& instr);
+
 namespace internal {
 bool IsStructuralOperand(const HloInstruction* user,
                          const HloInstruction* operand);

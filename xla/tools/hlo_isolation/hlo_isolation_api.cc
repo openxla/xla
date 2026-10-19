@@ -31,6 +31,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -465,9 +466,13 @@ absl::Status NearWithSubnormalFlushCheck(
     const LiteralSlice& expected, const LiteralSlice& actual,
     const ErrorSpec& error_spec,
     const literal_comparison::MiscompareCallback& callback,
-    std::vector<NumericMismatch>& flush_mismatches) {
+    std::vector<NumericMismatch>& flush_mismatches,
+    bool trap_subnormal_flush = true) {
   absl::Status status = literal_comparison::Near(
       expected, actual, error_spec, /*detailed_message=*/true, callback);
+  if (!trap_subnormal_flush) {
+    return status;
+  }
   std::optional<SubnormalFlushReport> report = DetectSubnormalFlushInLiteral(
       expected, actual, status.ok() ? callback : nullptr);
   if (!report.has_value()) {
@@ -575,10 +580,14 @@ absl::Status CompareOutputs(const HloModule& module, const Literal& test_output,
   absl::flat_hash_map<int64_t, numerics::debug_info::MismatchBoundingBox>
       computed_bboxes;
   std::vector<NumericMismatch> flush_mismatches;
+  const bool trap_subnormal_flush =
+      options.trap_subnormal_flush ||
+      (module.has_entry_computation() &&
+       IsBitPreservingOp(*module.entry_computation()->root_instruction()));
   absl::Status status = NearWithSubnormalFlushCheck(
       reference_output, test_output, error_spec,
       MakeMiscompareCallback(std::string(literal_prefix), &computed_bboxes),
-      flush_mismatches);
+      flush_mismatches, trap_subnormal_flush);
   NumericCheck* numeric_check = result.add_numeric_checks();
   numeric_check->set_name(check_name);
   numeric_check->set_expected_contains_inf_or_nan(
@@ -735,13 +744,16 @@ std::vector<HloOutputCallback> CreateComparisonHloOutputCallbacks(
 
       double abs_error = options.abs_error_bound;
       double rel_error = options.rel_error_bound;
+      bool trap_subnormal_flush =
+          options.trap_subnormal_flush || IsBitPreservingOp(*instruction);
 
       xla::HloOutputCallback dynamic_cb;
       dynamic_cb.callback_id = hlo_id;
       dynamic_cb.num_operands = 1;
       dynamic_cb.callback = [op_name, ref_op_name, expected_literals,
                              module_name = original_module.name(), abs_error,
-                             rel_error, result_mutex, test_result](
+                             rel_error, trap_subnormal_flush, result_mutex,
+                             test_result](
                                 int64_t replica_id, int64_t partition_id,
                                 absl::Span<std::shared_ptr<const Literal> const>
                                     literals) {
@@ -789,7 +801,7 @@ std::vector<HloOutputCallback> CreateComparisonHloOutputCallbacks(
             expected_literal, actual_literal, error_spec,
             MakeMiscompareCallback(absl::StrCat(module_name, "-", op_name),
                                    &computed_bboxes),
-            flush_mismatches);
+            flush_mismatches, trap_subnormal_flush);
 
         if (!matched.ok()) {
           std::string error_message = absl::StrFormat(
@@ -1029,7 +1041,17 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
   // The backend may flush subnormals to zero in both the fused and the
   // defused run, so a matching stage 1 proves nothing about subnormal inputs.
   // Only skip the stage 1 short circuit when a reference will actually run.
+  const bool has_bit_preserving_op =
+      absl::c_any_of(module.computations(), [](const HloComputation* comp) {
+        return absl::c_any_of(
+            comp->instructions(), [](const HloInstruction* instr) {
+              return !instr->IsConstant() &&
+                     instr->opcode() != HloOpcode::kParameter &&
+                     IsBitPreservingOp(*instr);
+            });
+      });
   const bool inputs_have_subnormals =
+      (options.trap_subnormal_flush || has_bit_preserving_op) &&
       reference_runner != nullptr && InputsContainSubnormal(input_data);
   if (defused_output.ok()) {
     // Compare Test vs Defused Test.

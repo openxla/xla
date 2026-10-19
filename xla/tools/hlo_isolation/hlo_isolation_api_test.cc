@@ -446,7 +446,7 @@ TEST(HloIsolationApiTest, SubnormalFlushToZeroTrappedUnderDefaultTolerance) {
 HloModule subnormal_flush
 ENTRY main {
   p0 = f32[4] parameter(0)
-  ROOT add = f32[4] add(p0, p0)
+  ROOT copy = f32[4] copy(p0)
 }
 )hlo";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -459,8 +459,9 @@ ENTRY main {
 
   ModuleIsolationOptions options;
   // Both fused and defused device runs flush the subnormal to 0.0f, while the
-  // interpreter reference preserves 2 * denorm_min(). Even under the default
-  // tolerance (abs=0.01, rel=0.1), the subnormal flush to zero must fail. The
+  // interpreter reference preserves denorm_min(). On a bit-preserving op such
+  // as `copy`, even under the default tolerance (abs=0.01, rel=0.1) and default
+  // `trap_subnormal_flush=false`, the subnormal flush to zero must fail. The
   // normal elements differ by rounding noise that the tolerance accepts and
   // must not be counted as mismatches.
   options.run_module_fn =
@@ -469,11 +470,10 @@ ENTRY main {
           absl::Span<const Literal> i,
           const RunModuleOptions& run_opts) -> absl::StatusOr<Literal> {
     if (r == FakeReferenceRunner()) {
-      const float expected = subnormal_f32 * 2.0f;
-      Literal ref =
-          LiteralUtil::CreateR1<float>({expected, 2.0f, expected, 2.0f});
+      Literal ref = LiteralUtil::CreateR1<float>(
+          {subnormal_f32, 2.0f, subnormal_f32, 2.0f});
       if (run_opts.expected_literals != nullptr) {
-        (*run_opts.expected_literals)["add"] =
+        (*run_opts.expected_literals)["copy"] =
             std::make_shared<Literal>(ref.Clone());
       }
       return ref;
@@ -523,7 +523,7 @@ ENTRY main {
     ++flush_checks;
     ASSERT_EQ(check.top_mismatches_size(), 1) << check.name();
     const NumericMismatch& mismatch = check.top_mismatches(0);
-    EXPECT_DOUBLE_EQ(mismatch.expected(), subnormal_f32 * 2.0f) << check.name();
+    EXPECT_DOUBLE_EQ(mismatch.expected(), subnormal_f32) << check.name();
     EXPECT_DOUBLE_EQ(mismatch.actual(), 0.0) << check.name();
     EXPECT_EQ(mismatch.mismatch_count(), 2) << check.name();
     EXPECT_EQ(mismatch.total_elements(), 4) << check.name();
@@ -589,7 +589,7 @@ TEST(HloIsolationApiTest, SubnormalFlushRespectsNonDefaultLayouts) {
 HloModule subnormal_layout_test
 ENTRY main {
   p0 = f32[2,2]{0,1} parameter(0)
-  ROOT add = f32[2,2]{0,1} add(p0, p0)
+  ROOT copy = f32[2,2]{0,1} copy(p0)
 }
 )hlo";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -645,6 +645,61 @@ ENTRY main {
     EXPECT_EQ(mismatch.mismatch_box_max(1), 1);
   }
   EXPECT_TRUE(found_interp_check);
+}
+
+TEST(HloIsolationApiTest, SubnormalFlushOnComputeOpsRequiresOptIn) {
+  const absl::string_view kHlo = R"hlo(
+HloModule subnormal_flush_compute_op
+ENTRY main {
+  p0 = f32[4] parameter(0)
+  ROOT add = f32[4] add(p0, p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       xla::ParseAndReturnUnverifiedModule(kHlo));
+
+  const float subnormal_f32 = std::numeric_limits<float>::denorm_min();
+  std::vector<Literal> inputs;
+  inputs.push_back(
+      LiteralUtil::CreateR1<float>({subnormal_f32, 1.0f, subnormal_f32, 1.0f}));
+
+  ModuleIsolationOptions options;
+  options.run_module_fn =
+      [subnormal_f32](
+          std::unique_ptr<HloModule> m, HloRunnerInterface* r,
+          absl::Span<const Literal> i,
+          const RunModuleOptions& run_opts) -> absl::StatusOr<Literal> {
+    if (r == FakeReferenceRunner()) {
+      const float expected = subnormal_f32 * 2.0f;
+      return LiteralUtil::CreateR1<float>({expected, 2.0f, expected, 2.0f});
+    }
+    if (absl::StrContains(m->name(), "defused")) {
+      return LiteralUtil::CreateR1<float>({0.0f, 3.0f, 0.0f, 2.0f});
+    }
+    return LiteralUtil::CreateR1<float>({0.0f, 2.0f, 0.0f, 2.0f});
+  };
+  int mismatch_reports = 0;
+  options.on_mismatch_fn = [&](const HloModule&, const Literal&, const Literal&,
+                               const absl::Status&) { ++mismatch_reports; };
+
+  // By default (`trap_subnormal_flush == false`), a compute op (`add`) that
+  // flushes subnormals to zero does not report a false-positive mismatch.
+  ASSERT_OK_AND_ASSIGN(
+      HloIsolationTestResult result,
+      RunIsolationTestOnModule(*module, nullptr, FakeReferenceRunner(), options,
+                               inputs));
+  EXPECT_EQ(result.state(), State::SUCCESS);
+  EXPECT_EQ(result.reason(), "STAGE_2_INTERPRETER_SUCCESS");
+  EXPECT_EQ(mismatch_reports, 0);
+
+  // Opting in via `trap_subnormal_flush = true` traps the flush on compute ops.
+  options.trap_subnormal_flush = true;
+  ASSERT_OK_AND_ASSIGN(
+      result, RunIsolationTestOnModule(*module, nullptr, FakeReferenceRunner(),
+                                       options, inputs));
+  EXPECT_EQ(result.state(), State::FAILURE);
+  EXPECT_EQ(result.reason(), "NUMERIC_MISMATCH");
+  EXPECT_EQ(mismatch_reports, 1);
 }
 
 }  // namespace

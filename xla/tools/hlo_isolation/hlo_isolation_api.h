@@ -78,6 +78,15 @@ struct ModuleIsolationOptions {
   // the false positive rate matters more than the miss rate.
   bool retry_without_excess_precision = false;
 
+  // When true, an expected subnormal that the device flushed to signed zero
+  // fails verification on all ops even when the difference falls within
+  // `abs_error_bound` / `rel_error_bound`. When false (the default), subnormal
+  // flush trapping is scoped to bit-preserving ops (such as `copy`, `reshape`,
+  // `bitcast-convert`, `transpose`, `slice`, `pad`) so compute instructions
+  // that architecturally flush subnormals to zero do not report false-positive
+  // mismatches.
+  bool trap_subnormal_flush = false;
+
   std::function<absl::StatusOr<Literal>(
       std::unique_ptr<HloModule> module, HloRunnerInterface* runner,
       absl::Span<const Literal> input_data, const RunModuleOptions& options)>
