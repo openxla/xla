@@ -19,8 +19,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -33,18 +35,23 @@
 #include "grpcpp/support/channel_arguments.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/serdes_version.h"
+#include "xla/python/ifrt_proxy/client/global_flags.h"
 #include "xla/python/ifrt_proxy/client/grpc_host_buffer.h"
 #include "xla/python/ifrt_proxy/common/grpc_ifrt_service.grpc.pb.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
+#include "xla/python/ifrt_proxy/common/transfer_util.h"
 #include "xla/python/ifrt_proxy/common/versions.h"
 #include "xla/python/ifrt_proxy/server/grpc_server.h"
 #include "xla/python/ifrt_proxy/server/host_buffer.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {
 namespace proxy {
 namespace {
+
+using ::testing::HasSubstr;
 
 IfrtProxyVersion Version() {
   IfrtProxyVersion version;
@@ -71,6 +78,18 @@ TEST(GrpcServiceImplTest, CanBeUsedToSetupAnGrpcServer) {
   ASSERT_THAT(MakeGrpcServer(), absl_testing::IsOk());
   // Also implicitly tests that destruction of both the server and the
   // implementation objects.
+}
+
+// Makes the client send host buffers of at least `threshold` bytes via files
+// until the returned object is destroyed.
+auto SetLargeTransferThreshold(int64_t threshold) {
+  int64_t* flag =
+      &GetGlobalClientFlags()->grpc_large_transfer_optimization_threshold_bytes;
+  absl::Cleanup restore = [flag, old_threshold = *flag] {
+    *flag = old_threshold;
+  };
+  *flag = threshold;
+  return restore;
 }
 
 class GrpcIfrtServiceImplHostBufferTest
@@ -121,6 +140,55 @@ TEST_P(GrpcIfrtServiceImplHostBufferTest, StoreAndLookupStringView) {
   EXPECT_THAT(client.Lookup(kHandle).Await(), absl_testing::IsOkAndHolds(data));
 
   EXPECT_TRUE(impl_.Test_DeleteHostBufferStore(kSessionId));
+}
+
+TEST_P(GrpcIfrtServiceImplHostBufferTest, StoreViaFileDeletesFile) {
+  if (GetParam() == 0) {
+    GTEST_SKIP() << "Empty buffers are below the threshold.";
+  }
+  static constexpr uint64_t kSessionId = 1;
+  auto restore_threshold = SetLargeTransferThreshold(1);
+
+  auto store = std::make_shared<HostBufferStore>();
+  ASSERT_TRUE(impl_.Test_InsertHostBufferStore(kSessionId, store));
+  GrpcClientHostBufferStore client(stub_, Version(), kSessionId);
+
+  constexpr uint64_t kHandle = 2;
+  const std::string data = GetTestData();
+  absl::string_view source(data);
+
+  ASSERT_THAT(client.Store(kHandle, source).Await(), absl_testing::IsOk());
+  // The server still holds the host buffer, but no longer needs the file.
+  const std::optional<std::string> file_path = LargeTransferFilePath(kHandle);
+  ASSERT_TRUE(file_path.has_value());
+  EXPECT_THAT(tsl::Env::Default()->FileExists(*file_path),
+              absl_testing::StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_THAT(client.Lookup(kHandle).Await(), absl_testing::IsOkAndHolds(data));
+
+  EXPECT_TRUE(impl_.Test_DeleteHostBufferStore(kSessionId));
+}
+
+TEST_P(GrpcIfrtServiceImplHostBufferTest, StoreViaFileDeletesFileOnError) {
+  if (GetParam() == 0) {
+    GTEST_SKIP() << "Empty buffers are below the threshold.";
+  }
+  // No host buffer store is registered for this session, so the server fails
+  // the request without reading the file.
+  static constexpr uint64_t kSessionId = 1;
+  auto restore_threshold = SetLargeTransferThreshold(1);
+  GrpcClientHostBufferStore client(stub_, Version(), kSessionId);
+
+  constexpr uint64_t kHandle = 2;
+  const std::string data = GetTestData();
+  absl::string_view source(data);
+
+  EXPECT_THAT(client.Store(kHandle, source).Await(),
+              absl_testing::StatusIs(absl::StatusCode::kNotFound,
+                                     HasSubstr("does not exist")));
+  const std::optional<std::string> file_path = LargeTransferFilePath(kHandle);
+  ASSERT_TRUE(file_path.has_value());
+  EXPECT_THAT(tsl::Env::Default()->FileExists(*file_path),
+              absl_testing::StatusIs(absl::StatusCode::kNotFound));
 }
 
 TEST_P(GrpcIfrtServiceImplHostBufferTest, StoreAndLookupCord) {

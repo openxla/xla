@@ -46,7 +46,9 @@ class HostBufferStore {
   absl::Status Store(uint64_t handle, std::string data);
 
   // Reads the data associated with the given handle from storage and stores it.
-  // Returns an error if the handle already exists.
+  // Returns an error if the handle already exists. The file at
+  // `LargeTransferFilePath(handle)` may be deleted as soon as this method
+  // returns.
   absl::Status ReadFromDisk(uint64_t handle);
 
   // Retrieves the data associated with the handle. Returns an error if the

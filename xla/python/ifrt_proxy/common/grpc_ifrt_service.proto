@@ -53,7 +53,10 @@ service GrpcIfrtService {
   rpc HostBufferDelete(GrpcHostBufferDeleteRequest)
       returns (GrpcHostBufferDeleteResponse);
 
-  // Sends a host buffer from the client to the server as a file.
+  // Sends a host buffer from the client to the server as a file in a directory
+  // that both share on the same machine. The server must not need the file
+  // once it has responded (e.g., it has mapped or read it): the client may
+  // delete the file as soon as this RPC returns, successfully or not.
   rpc HostBufferReadFromDisk(GrpcHostBufferReadFromDiskRequest)
       returns (GrpcHostBufferReadFromDiskResponse);
 }
