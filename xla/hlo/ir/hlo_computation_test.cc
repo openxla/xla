@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
@@ -33,9 +34,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test_benchmark.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -184,6 +187,59 @@ ENTRY entry {
   auto post_order_2 = module->entry_computation()->MakeInstructionPostOrder();
   EXPECT_EQ(post_order, post_order_2);
 }
+
+TEST_F(HLOComputationTest, ForEachInstructionPostOrderFastPath) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[100] parameter(0)
+  p1 = f32[100] parameter(1)
+  add0 = f32[100] add(p0, p1)
+  mul0 = f32[100] multiply(p0, add0)
+  ROOT div0 = f32[100] divide(p1, mul0)
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  std::vector<HloInstruction*> visited;
+  module->entry_computation()->ForEachInstructionPostOrder(
+      [&visited](HloInstruction* inst) { visited.push_back(inst); });
+
+  EXPECT_EQ(visited.size(), 5);
+  EXPECT_EQ(visited.back()->name(), "div0");
+}
+
+void BM_ForEachInstructionPostOrder(::testing::benchmark::State& state) {
+  const int n = state.range(0);
+  HloComputation::Builder builder("bm_computation");
+  const Shape shape = ShapeUtil::MakeShape(F32, {10});
+  HloInstruction* p0 =
+      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0"));
+  HloInstruction* p1 =
+      builder.AddInstruction(HloInstruction::CreateParameter(1, shape, "p1"));
+
+  std::vector<HloInstruction*> prev_layer = {p0, p1};
+  for (int i = 2; i < n; ++i) {
+    HloInstruction* left = prev_layer[i % prev_layer.size()];
+    HloInstruction* right = prev_layer[(i - 1) % prev_layer.size()];
+    HloInstruction* inst = builder.AddInstruction(
+        HloInstruction::CreateBinary(shape, HloOpcode::kAdd, left, right));
+    prev_layer.push_back(inst);
+  }
+
+  HloModuleConfig config;
+  HloModule module("bm_module", config);
+  HloComputation* comp = module.AddEntryComputation(builder.Build());
+
+  for (auto s : state) {
+    int count = 0;
+    comp->ForEachInstructionPostOrder([&count](HloInstruction*) { ++count; });
+    benchmark::DoNotOptimize(count);
+  }
+}
+BENCHMARK(BM_ForEachInstructionPostOrder)->Arg(1000)->Arg(10000);
 
 // Test AddCallee
 TEST_F(HLOComputationTest, AddCallee) {
