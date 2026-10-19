@@ -96,6 +96,7 @@ ENTRY compare {
 }
 
 TEST_F(PredArithmeticTest, MinPreds) {
+  // Verify bazel-diff target selection for single_gpu tests on ROCm CI.
   const char* hlo_text = R"(
 HloModule TestModule
 

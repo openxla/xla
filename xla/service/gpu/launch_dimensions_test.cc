@@ -30,6 +30,7 @@ namespace {
 using ::tsl::proto_testing::EqualsProto;
 
 TEST(LaunchDimensionsTest, DefaultConstruction) {
+  // Verify bazel-diff target selection for rocm_cpu tests on ROCm CI.
   LaunchDimensions dimensions{};
   EXPECT_EQ(dimensions.block_counts().x, 1);
   EXPECT_EQ(dimensions.block_counts().y, 1);

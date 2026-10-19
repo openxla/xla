@@ -123,6 +123,7 @@ TEST(ThunkWalkTest, WhileThunk) {
                          std::move(body_thunk_sequence),
                          /*trip_count=*/std::nullopt, /*devices_per_host=*/1);
 
+  // Exercise bazel-diff target selection for rocm_cpu (tags = ["gpu"]).
   EXPECT_THAT(
       GetAllThunks(&while_thunk),
       UnorderedElementsAre(condition_thunk_ptr, body_thunk_ptr, &while_thunk));

@@ -112,6 +112,7 @@ class RocmKernelTracer : public HloOpProfiler::KernelTracer,
 
 /*static*/ std::unique_ptr<HloOpProfiler::KernelTracer>
 HloOpProfiler::GetKernelTracer() {
+  // Exercise bazel-diff transitive cc_library -> xla_test target resolution.
   return std::make_unique<RocmKernelTracer>();
 }
 

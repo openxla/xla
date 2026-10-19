@@ -19,6 +19,7 @@ reliability on every commit.
 
 `rocm_ci.yml` runs on:
 
+-   `push` to `main` (to warm the remote build and test cache at post-submit).
 -   `pull_request` against `main` (the `jax` job is additionally gated to
     `github.base_ref == 'main'`).
 -   `workflow_dispatch` (manual).
@@ -92,8 +93,11 @@ The `xla` job is *not* gated on `github.base_ref == 'main'`; the `jax` job is.
 This means the JAX suite only runs for PRs targeted at `main`, while the XLA
 suite runs for any PR plus `workflow_dispatch`.
 
-`timeout-minutes` is set at the job level, with a tighter `timeout-minutes: 60`
-(XLA single-GPU, JAX) or 80 (XLA CPU suite) on each test step.
+`timeout-minutes: 50` is set at the job level, with a tighter
+`timeout-minutes: 45` (XLA single-GPU, JAX) or 30 (XLA CPU suite) on each test
+step. On pull requests, `rocm-config` runs `change_detector.py` to skip
+unaffected `jax`/`xla` jobs before allocating GPU runners, and `bazel_diff.py`
+restricts the XLA test steps to impacted targets via `--target_pattern_file`.
 
 ## XLA CI job
 
