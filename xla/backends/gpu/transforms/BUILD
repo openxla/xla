@@ -2504,6 +2504,7 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:status_macros",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
@@ -2521,6 +2522,20 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "recompute_fusion_side_outputs_policy_test",
+    srcs = ["recompute_fusion_side_outputs_policy_test.cc"],
+    deps = [
+        ":recompute_fusion_side_outputs",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:decision",
+        "//xla/service:hlo_module_config",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

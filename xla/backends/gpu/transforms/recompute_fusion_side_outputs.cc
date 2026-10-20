@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -317,7 +318,20 @@ absl::StatusOr<FusionRecomputeVariants> ExtractFusionRecomputeVariants(
 absl::StatusOr<bool> RecomputeFusionSideOutputs::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  if (!evaluator_) return false;
+  if (!evaluator_) {
+    return false;
+  }
+  const DebugOptions& debug = module->config().debug_options();
+  // Both modes perform live profiling. Respect the same autotuning and
+  // determinism controls as config assignment. Recomputation decisions are
+  // not persisted, so cached-results-only compilation must also skip the pass.
+  if (debug.xla_gpu_autotune_level() <= 0 ||
+      debug.xla_gpu_deterministic_ops() ||
+      debug.xla_gpu_exclude_nondeterministic_ops() ||
+      debug.xla_gpu_require_complete_aot_autotune_results()) {
+    VLOG(1) << "Fusion recomputation skipped: live autotuning is disabled";
+    return false;
+  }
   bool changed = false;
   absl::flat_hash_set<std::string> attempted;
   for (int64_t attempt = 0; attempt < max_candidates_; ++attempt) {

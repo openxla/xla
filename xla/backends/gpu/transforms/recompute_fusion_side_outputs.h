@@ -58,6 +58,8 @@ absl::StatusOr<FusionRecomputeVariants> ExtractFusionRecomputeVariants(
 // Eligibility is independent of dtype, opcode cost, and whether another
 // producer output is a reduction. Profitability MUST be established by the
 // evaluator; a missing evaluator never rewrites HLO.
+// Both modes skip evaluation when live autotuning is disabled, determinism is
+// requested, or complete cached autotuning results are required.
 class RecomputeFusionSideOutputs : public HloModulePass {
  public:
   using Evaluator = std::function<absl::StatusOr<Decision>(
