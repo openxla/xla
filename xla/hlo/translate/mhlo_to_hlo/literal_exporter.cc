@@ -110,8 +110,12 @@ absl::StatusOr<xla::Literal> CreateLiteralFromAttribute(mlir::ElementsAttr attr,
 
   return xla::primitive_util::PrimitiveTypeSwitch<absl::StatusOr<xla::Literal>>(
       [&](auto primitive_type_constant) -> absl::StatusOr<xla::Literal> {
-        if constexpr (xla::primitive_util::IsArrayType(
-                          primitive_type_constant)) {
+        if constexpr (primitive_type_constant == xla::C32 ||
+                      primitive_type_constant == xla::BC32) {
+          return absl::UnimplementedError(
+              "C32/BC32 literals are not supported by the MHLO exporter yet");
+        } else if constexpr (xla::primitive_util::IsArrayType(
+                                 primitive_type_constant)) {
           using cpp_type =
               xla::primitive_util::NativeTypeOf<primitive_type_constant>;
           // The attribute lists its elements in row major order, which is the

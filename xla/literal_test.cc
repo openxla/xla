@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "xla/literal.h"
 
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -32,6 +30,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/hash/hash.h"
@@ -39,7 +38,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/match.h"
 #include "absl/types/span.h"
-#include "tsl/platform/ml_dtypes.h"
 #include "xla/array.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
@@ -65,6 +63,7 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
@@ -769,6 +768,22 @@ TEST_F(LiteralUtilTest, C128Equality) {
   EXPECT_NE(vector, vector_reversed);
 }
 
+TEST_F(LiteralUtilTest, CreateR0C64FromLargeIntegerRoundsDirectly) {
+  constexpr int64_t kValue = (int64_t{1} << 62) + (int64_t{1} << 38) + 1;
+  Literal literal = LiteralUtil::CreateR0(C64, kValue);
+  EXPECT_EQ(literal.Get<complex64>({}),
+            complex64(static_cast<float>(kValue), 0.0f));
+}
+
+TEST_F(LiteralUtilTest, CreateR0BC32FromLargeIntegerRoundsDirectly) {
+  constexpr int64_t kValue =
+      (int64_t{1} << 62) + (int64_t{3} << 54) - (int64_t{1} << 38) - 1;
+  Literal literal = LiteralUtil::CreateR0(BC32, kValue);
+  EXPECT_EQ(
+      literal.Get<bcomplex32>({}),
+      bcomplex32(static_cast<bfloat16>(kValue), static_cast<bfloat16>(0.0)));
+}
+
 TEST_F(LiteralUtilTest, IsAllTuple) {
   auto element1 = LiteralUtil::CreateR0<float>(0.0);
   auto element2 = LiteralUtil::CreateR2<float>({{0.0, 0.0}, {0.0, 0.0}});
@@ -930,7 +945,7 @@ TEST_F(LiteralUtilTest, MaterializeSparseOperandValidConfigReturnsDense) {
       tsl::proto_testing::ParseTextProtoOrDie<
           SparsityConfig::TensorSparsityConfig>(
           R"pb(
-            dimension: 1 block_size: 4 num_non_zero: 1 stride: 1
+               dimension: 1 block_size: 4 num_non_zero: 1 stride: 1
           )pb"));
   ASSERT_TRUE(dense_or.ok());
   Literal dense = std::move(dense_or).value();
@@ -950,7 +965,7 @@ TEST_F(LiteralUtilTest, MaterializeSparseOperandInvalidConfigReturnsError) {
                    tsl::proto_testing::ParseTextProtoOrDie<
                        SparsityConfig::TensorSparsityConfig>(
                        R"pb(
-                         dimension: 1 block_size: 4 num_non_zero: 2 stride: 1
+                            dimension: 1 block_size: 4 num_non_zero: 2 stride: 1
                        )pb"))
                    .ok());
 }
@@ -1070,13 +1085,40 @@ TEST_F(LiteralUtilTest, CountEqualBool) {
             1);
 }
 
-TEST_F(LiteralUtilTest, CountEqualComplex) {
-  EXPECT_EQ(LiteralUtil::CreateR1<std::complex<double>>(
-                {std::complex<float>(1, 2), std::complex<float>(3, 4),
-                 std::complex<float>(5, 6), std::complex<float>(6, 7)})
-                .CountEqual<float>(std::complex<float>(5, 6)),
-            1);
+constexpr PrimitiveType kCountEqualComplexTypes[] = {C32, BC32, C64, C128};
+
+class LiteralCountEqualComplexTest
+    : public ::testing::TestWithParam<
+          std::tuple<PrimitiveType, PrimitiveType>> {};
+
+TEST_P(LiteralCountEqualComplexTest, CountEqual) {
+  const PrimitiveType native_type = std::get<0>(GetParam());
+  const PrimitiveType query_type = std::get<1>(GetParam());
+  primitive_util::ComplexTypeSwitch(
+      [&](auto native_type_constant) {
+        using NativeT = primitive_util::NativeTypeOf<native_type_constant>;
+        const Literal literal = LiteralUtil::CreateR1<NativeT>(
+            {NativeT(0.5f, -0.25f), NativeT(1.5f, 2.0f),
+             NativeT(0.5f, -0.25f)});
+        primitive_util::ComplexTypeSwitch(
+            [&](auto query_type_constant) {
+              using QueryT = primitive_util::NativeTypeOf<query_type_constant>;
+              using ComponentT = typename QueryT::value_type;
+              EXPECT_EQ(literal.CountEqual(QueryT(0.5f, -0.25f)), 2);
+              EXPECT_EQ(literal.CountEqual<QueryT>(QueryT(1.5f, 2.0f)), 1);
+              EXPECT_EQ(literal.CountEqual<ComponentT>(QueryT(0.25f, -0.25f)),
+                        0);
+              EXPECT_EQ(literal.CountEqual<QueryT>(QueryT(0.5f, 0.25f)), 0);
+            },
+            query_type);
+      },
+      native_type);
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    AllComplexTypes, LiteralCountEqualComplexTest,
+    ::testing::Combine(::testing::ValuesIn(kCountEqualComplexTypes),
+                       ::testing::ValuesIn(kCountEqualComplexTypes)));
 
 TEST_F(LiteralUtilTest, CountEqualMismatched) {
   EXPECT_EQ(LiteralUtil::CreateR1<float>({13, 10.5, 15.6, 22.7})
@@ -1090,6 +1132,16 @@ TEST_F(LiteralUtilTest, CountEqualMismatched) {
                  std::complex<float>(5, 6), std::complex<float>(6, 7)})
                 .CountEqual<float>(1),
             0);
+  const Literal real_literal = LiteralUtil::CreateR1<float>({1.0f});
+  for (PrimitiveType query_type : kCountEqualComplexTypes) {
+    SCOPED_TRACE(primitive_util::LowercasePrimitiveTypeName(query_type));
+    primitive_util::ComplexTypeSwitch(
+        [&](auto query_type_constant) {
+          using QueryT = primitive_util::NativeTypeOf<query_type_constant>;
+          EXPECT_EQ(real_literal.CountEqual<QueryT>(QueryT(1.0f, 0.0f)), 0);
+        },
+        query_type);
+  }
 }
 
 TEST_F(LiteralUtilTest, IsZero) {
@@ -1969,6 +2021,15 @@ TEST_F(LiteralUtilTest, ConvertIfTypesMatch) {
     {{0.0, 19.0, 0.0, 21.0}, {22.0, 0.0, 24.0, 0.0}},
     {{26.0, 0.0, 28.0, 0.0}, {0.0, 31.0, 0.0, 33.0}},
   }}, layout_r4_dim0major_);  // clang-format on
+  const Literal c32 = LiteralUtil::CreateR1<complex32>(
+      {complex32(half(0.5f), half(0.25f)), complex32(half(-1.0f), half(2.0f))});
+  const Literal expected_c64_from_c32 =
+      LiteralUtil::CreateR1<complex64>({{0.5f, 0.25f}, {-1.0f, 2.0f}});
+  const Literal bc32 = LiteralUtil::CreateR1<bcomplex32>(
+      {bcomplex32(bfloat16(0.5f), bfloat16(0.25f)),
+       bcomplex32(bfloat16(-1.0f), bfloat16(2.0f))});
+  const Literal expected_c128_from_bc32 =
+      LiteralUtil::CreateR1<complex128>({{0.5, 0.25}, {-1.0, 2.0}});
   Literal conv;
 
   conv = s8.Convert(U16).value();
@@ -2042,6 +2103,12 @@ TEST_F(LiteralUtilTest, ConvertIfTypesMatch) {
 
   conv = f16.Convert(C128).value();
   EXPECT_EQ(conv, c128);
+
+  ASSERT_OK_AND_ASSIGN(conv, c32.Convert(C64));
+  EXPECT_EQ(conv, expected_c64_from_c32);
+
+  ASSERT_OK_AND_ASSIGN(conv, bc32.Convert(C128));
+  EXPECT_EQ(conv, expected_c128_from_bc32);
 
   EXPECT_EQ(s32.Convert(TUPLE).status().code(), tsl::error::UNIMPLEMENTED);
   EXPECT_EQ(c64.Convert(F32).status().code(), tsl::error::UNIMPLEMENTED);
@@ -2684,6 +2751,10 @@ TEST_F(LiteralUtilTest, ProtoRoundTrip) {
   auto two_f32 = LiteralUtil::CreateR0<float>(2.0);
   auto vector_int8 = LiteralUtil::CreateR1<int8_t>({-128, 0, 2, 4, 7, 56, 127});
   auto vector_uint8 = LiteralUtil::CreateR1<uint8_t>({128, 0, 2, 56, 127, 255});
+  auto vector_c32 = LiteralUtil::CreateR1<complex32>(
+      {{half(1.0f), half(2.0f)}, {half(3.0f), half(4.0f)}});
+  auto vector_bc32 = LiteralUtil::CreateR1<bcomplex32>(
+      {{bfloat16(1.0f), bfloat16(2.0f)}, {bfloat16(3.0f), bfloat16(4.0f)}});
   auto vector_c64 = LiteralUtil::CreateR1<complex64>({{1.0, 2.0}, {3.0, 4.0}});
   auto vector_c128 =
       LiteralUtil::CreateR1<complex128>({{1.0, 2.0}, {3.0, 4.0}});
@@ -2734,6 +2805,8 @@ TEST_F(LiteralUtilTest, ProtoRoundTrip) {
   EXPECT_EQ(one_f32, to_from_proto(one_f32));
   EXPECT_EQ(vector_int8, to_from_proto(vector_int8));
   EXPECT_EQ(vector_uint8, to_from_proto(vector_uint8));
+  EXPECT_EQ(vector_c32, to_from_proto(vector_c32));
+  EXPECT_EQ(vector_bc32, to_from_proto(vector_bc32));
   EXPECT_EQ(vector_c64, to_from_proto(vector_c64));
   EXPECT_EQ(vector_c128, to_from_proto(vector_c128));
   EXPECT_EQ(vector_bfloat16, to_from_proto(vector_bfloat16));
@@ -2755,6 +2828,49 @@ TEST_F(LiteralUtilTest, ProtoRoundTrip) {
 
   EXPECT_NE(one_f32, two_f32);
   EXPECT_NE(one_f32, to_from_proto(two_f32));
+}
+
+TEST_F(LiteralUtilTest, ProtoRoundTripC32Bc32PreservesBitPatterns) {
+  // Signed zero, subnormals, max finite, infinities, quiet/signaling NaNs.
+  const auto expect_round_trip = [](auto carrier, auto component,
+                                    const std::vector<uint16_t>& patterns) {
+    using Carrier = decltype(carrier);
+    using Component = decltype(component);
+    std::vector<Carrier> values;
+    values.reserve(patterns.size());
+    for (int i = 0; i < patterns.size(); ++i) {
+      values.push_back(Carrier(
+          absl::bit_cast<Component>(patterns[i]),
+          absl::bit_cast<Component>(patterns[patterns.size() - 1 - i])));
+    }
+    const Literal literal = LiteralUtil::CreateR1<Carrier>(values);
+    const auto roundtrip = Literal::CreateFromProto(literal.ToProto());
+    if (!roundtrip.ok()) {
+      ADD_FAILURE() << roundtrip.status();
+      return;
+    }
+    const auto data = roundtrip->data<Carrier>();
+    if (data.size() != patterns.size()) {
+      ADD_FAILURE() << "expected " << patterns.size() << " elements, got "
+                    << data.size();
+      return;
+    }
+    for (int i = 0; i < patterns.size(); ++i) {
+      EXPECT_EQ(absl::bit_cast<uint16_t>(data[i].real()), patterns[i]);
+      EXPECT_EQ(absl::bit_cast<uint16_t>(data[i].imag()),
+                patterns[patterns.size() - 1 - i]);
+    }
+  };
+
+  const std::vector<uint16_t> f16_patterns = {0x0000, 0x8000, 0x0001, 0x03ff,
+                                              0x0400, 0x7bff, 0x7c00, 0xfc00,
+                                              0x7e00, 0x7c01, 0x1234, 0xffff};
+  expect_round_trip(complex32(), half(), f16_patterns);
+
+  const std::vector<uint16_t> bf16_patterns = {0x0000, 0x8000, 0x0001, 0x007f,
+                                               0x0080, 0x7f7f, 0x7f80, 0xff80,
+                                               0x7fc0, 0x7f81, 0x1234, 0xffff};
+  expect_round_trip(bcomplex32(), bfloat16(), bf16_patterns);
 }
 
 TEST_F(LiteralUtilTest, InvalidProtoNoValues) {
@@ -3502,7 +3618,7 @@ class LiteralSerializationTest : public ::testing::Test,
           U16,           S32,      U32,        S64,      U64,        F16,
           F32,           F64,      BF16,       F4E2M1FN, F8E3M4,     F8E4M3,
           F8E4M3B11FNUZ, F8E4M3FN, F8E4M3FNUZ, F8E5M2,   F8E5M2FNUZ, F8E8M0FNU,
-          C64,           C128}) {
+          C32,           BC32,     C64,        C128}) {
       for (const DimensionVector& dimensions : {
                DimensionVector{},
                DimensionVector{0},

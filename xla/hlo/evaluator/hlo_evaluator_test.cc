@@ -26,11 +26,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/numeric/bits.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -460,6 +462,24 @@ TEST_F(HloEvaluatorTest, DoesAddDifferentResultLayout) {
   TestBinaryOp(HloOpcode::kAdd, std::move(expected), std::move(lhs),
                std::move(rhs));
 }
+
+TEST_F(HloEvaluatorTest, AddC32ReturnsError) {
+  auto literal = LiteralUtil::CreateR0<complex32>({half(3.0f), half(4.0f)});
+  EXPECT_THAT(
+      evaluator_.EvaluateElementwiseBinaryOp(HloOpcode::kAdd, literal, literal),
+      absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                             ::testing::HasSubstr("C32")));
+}
+
+TEST_F(HloEvaluatorTest, AddBc32ReturnsError) {
+  auto literal =
+      LiteralUtil::CreateR0<bcomplex32>({bfloat16(3.0f), bfloat16(4.0f)});
+  EXPECT_THAT(
+      evaluator_.EvaluateElementwiseBinaryOp(HloOpcode::kAdd, literal, literal),
+      absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                             ::testing::HasSubstr("BC32")));
+}
+
 // Verifies that HloEvaluator evaluates a HLO instruction that performs
 // element-wise and with 2 operands.
 TEST_P(HloEvaluatorBf16Test, DoesAnd) {
@@ -634,6 +654,47 @@ TEST_F(HloEvaluatorTest, DoesAbsC128) {
   TestUnaryOp(HloOpcode::kAbs, std::move(expected_real), std::move(x), 3e-06);
 }
 
+TEST_F(HloEvaluatorTest, AbsC32ReturnsError) {
+  auto literal = LiteralUtil::CreateR0<complex32>({half(3.0f), half(4.0f)});
+  EXPECT_THAT(evaluator_.EvaluateElementwiseUnaryOp(HloOpcode::kAbs, literal),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                                     ::testing::HasSubstr("abs")));
+
+  const absl::string_view kModule = R"(
+HloModule c32_abs
+ENTRY main {
+  input = c32[] constant((3, 4))
+  ROOT root = f16[] abs(input)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kModule));
+  EXPECT_THAT(evaluator_.Evaluate(*module, {}),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                                     ::testing::HasSubstr("abs")));
+}
+
+TEST_F(HloEvaluatorTest, AbsBc32ReturnsError) {
+  auto literal =
+      LiteralUtil::CreateR0<bcomplex32>({bfloat16(3.0f), bfloat16(4.0f)});
+  EXPECT_THAT(evaluator_.EvaluateElementwiseUnaryOp(HloOpcode::kAbs, literal),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                                     ::testing::HasSubstr("abs")));
+
+  const absl::string_view kModule = R"(
+HloModule bc32_abs
+ENTRY main {
+  input = bc32[] constant((3, 4))
+  ROOT root = bf16[] abs(input)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kModule));
+  EXPECT_THAT(evaluator_.Evaluate(*module, {}),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                                     ::testing::HasSubstr("abs")));
+}
+
 TEST_F(HloEvaluatorTest, DoesNegateR2) {
   auto operand = LiteralUtil::CreateR2<int32_t>(
       {{0, std::numeric_limits<int32_t>::min()}, {-1, 4}});
@@ -779,10 +840,65 @@ TEST_F(HloEvaluatorTest, DoesNotR2) {
   TestUnaryOp(HloOpcode::kNot, std::move(expected), std::move(operand));
 }
 
+TEST_F(HloEvaluatorTest, DoesComplexC32) {
+  auto real = LiteralUtil::CreateR1<half>({half(0.5f), half(-1.0f)});
+  auto imag = LiteralUtil::CreateR1<half>({half(0.25f), half(2.0f)});
+  auto expected = LiteralUtil::CreateR1<complex32>(
+      {complex32(half(0.5f), half(0.25f)), complex32(half(-1.0f), half(2.0f))});
+  TestBinaryOp(HloOpcode::kComplex, std::move(expected), std::move(real),
+               std::move(imag));
+}
+
+TEST_F(HloEvaluatorTest, DoesComplexBc32) {
+  auto real =
+      LiteralUtil::CreateR1<bfloat16>({bfloat16(0.5f), bfloat16(-1.0f)});
+  auto imag =
+      LiteralUtil::CreateR1<bfloat16>({bfloat16(0.25f), bfloat16(2.0f)});
+  auto expected = LiteralUtil::CreateR1<bcomplex32>(
+      {bcomplex32(bfloat16(0.5f), bfloat16(0.25f)),
+       bcomplex32(bfloat16(-1.0f), bfloat16(2.0f))});
+  TestBinaryOp(HloOpcode::kComplex, std::move(expected), std::move(real),
+               std::move(imag));
+}
+
+TEST_F(HloEvaluatorTest, DoesRealC32) {
+  auto x = LiteralUtil::CreateR1<complex32>(
+      {complex32(half(0.5f), half(0.25f)), complex32(half(-1.0f), half(2.0f))});
+  ASSERT_EQ(x.shape().element_type(), C32);
+  auto expected_real = LiteralUtil::CreateR1<half>({half(0.5f), half(-1.0f)});
+  TestUnaryOp(HloOpcode::kReal, std::move(expected_real), std::move(x));
+}
+
+TEST_F(HloEvaluatorTest, DoesRealBc32) {
+  auto x = LiteralUtil::CreateR1<bcomplex32>(
+      {bcomplex32(bfloat16(0.5f), bfloat16(0.25f)),
+       bcomplex32(bfloat16(-1.0f), bfloat16(2.0f))});
+  ASSERT_EQ(x.shape().element_type(), BC32);
+  auto expected_real =
+      LiteralUtil::CreateR1<bfloat16>({bfloat16(0.5f), bfloat16(-1.0f)});
+  TestUnaryOp(HloOpcode::kReal, std::move(expected_real), std::move(x));
+}
+
 TEST_F(HloEvaluatorTest, DoesRealC128) {
   auto x = LiteralUtil::CreateR1<complex128>({{1, 0}, {-100, 4}});
   auto expected_real = LiteralUtil::CreateR1<double>({1, -100});
   TestUnaryOp(HloOpcode::kReal, std::move(expected_real), std::move(x));
+}
+
+TEST_F(HloEvaluatorTest, DoesImagC32) {
+  auto x = LiteralUtil::CreateR1<complex32>(
+      {complex32(half(0.5f), half(0.25f)), complex32(half(-1.0f), half(2.0f))});
+  auto expected_imag = LiteralUtil::CreateR1<half>({half(0.25f), half(2.0f)});
+  TestUnaryOp(HloOpcode::kImag, std::move(expected_imag), std::move(x));
+}
+
+TEST_F(HloEvaluatorTest, DoesImagBc32) {
+  auto x = LiteralUtil::CreateR1<bcomplex32>(
+      {bcomplex32(bfloat16(0.5f), bfloat16(0.25f)),
+       bcomplex32(bfloat16(-1.0f), bfloat16(2.0f))});
+  auto expected_imag =
+      LiteralUtil::CreateR1<bfloat16>({bfloat16(0.25f), bfloat16(2.0f)});
+  TestUnaryOp(HloOpcode::kImag, std::move(expected_imag), std::move(x));
 }
 
 TEST_F(HloEvaluatorTest, DoesImagC128) {

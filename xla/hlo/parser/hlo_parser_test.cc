@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/hlo/parser/hlo_parser.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -25,6 +22,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -108,8 +107,7 @@ std::string NonRoundtripTestDataToString(
 //  - we parse it to an HloModule successfully, and
 //  - the stringification of the resulting HloModule is equal to our original
 //    string.
-[[clang::optnone]]
-std::vector<TestData> CreateTestCases() {
+[[clang::optnone]] std::vector<TestData> CreateTestCases() {
   // clang-format off
   return std::vector<TestData>({
 // ax + y
@@ -1437,6 +1435,26 @@ ENTRY %CustomCall () -> f32[1,2,3] {
 
 )"
 },
+{
+"ParseC32Literal",
+R"(HloModule ParseC32Literal, entry_computation_layout={()->c32[2]{0}}
+
+ENTRY %ParseC32Literal () -> c32[2] {
+  ROOT %c = c32[2]{0} constant({(0.5, -0.25), (1.5, 2)})
+}
+
+)"
+},
+{
+"ParseBC32Literal",
+R"(HloModule ParseBC32Literal, entry_computation_layout={()->bc32[2]{0}}
+
+ENTRY %ParseBC32Literal () -> bc32[2] {
+  ROOT %c = bc32[2]{0} constant({(0.5, -0.25), (1.5, 2)})
+}
+
+)"
+},
 // Parse c64 literal
 {
 "ParseC64Literal",
@@ -1799,8 +1817,7 @@ ENTRY %constant_pred () -> pred[] {
   // clang-format on
 }
 
-[[clang::optnone]]
-std::vector<TestData> CreateShortTestCases() {
+[[clang::optnone]] std::vector<TestData> CreateShortTestCases() {
   // clang-format off
   return std::vector<TestData>({
 // map
@@ -2945,8 +2962,8 @@ ENTRY Scan {
   // clang-format on
 }
 
-[[clang::optnone]]
-std::vector<NonRoundtripTestData> CreateNonRoundtripTestCases() {
+[[clang::optnone]] std::vector<NonRoundtripTestData>
+CreateNonRoundtripTestCases() {
   // clang-format off
 return std::vector<NonRoundtripTestData>({
 {
@@ -4865,8 +4882,9 @@ comp {
 comp {
   const2 = f32[1]{0} constant({67890})
 })";
-  ExpectHasSubstr(ParseAndReturnUnverifiedModule(original).status().message(),
-                  R"(was parsing 2:1: error: computation previously defined here
+  ExpectHasSubstr(
+      ParseAndReturnUnverifiedModule(original).status().message(),
+      R"(was parsing 2:1: error: computation previously defined here
 comp {
 ^)");
 }
@@ -5458,7 +5476,8 @@ TEST(HloParserSingleOpTest, SingleOpWithControlPredecessors) {
 }
 
 TEST(HloParserSingleOpTest, SkipStackFrameIndex) {
-  const std::string text = R"(HloModule m, entry_computation_layout={()->pred[]}
+  const std::string text =
+      R"(HloModule m, entry_computation_layout={()->pred[]}
 
 FileNames
 1 "<embedded module>"

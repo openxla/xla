@@ -225,6 +225,7 @@ cc_library(
         "@com_google_absl//absl/numeric:int128",
         "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
+        "@ml_dtypes_py//ml_dtypes:complex_types",
         "@ml_dtypes_py//ml_dtypes:intn",
         "@tsl//tsl/platform:ml_dtypes",
     ],
@@ -239,6 +240,7 @@ xla_cc_test(
         ":types",
         "//xla/hlo/testlib:test",
         "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/base",
         "@com_google_googletest//:gtest",
     ],
 )
@@ -647,6 +649,7 @@ xla_cc_test(
     srcs = ["primitive_util_test.cc"],
     deps = [
         ":shape_util",
+        ":types",
         ":xla_data_proto_cc",
         "//xla/hlo/testlib:test",
         "//xla/hlo/testlib:test_helpers",

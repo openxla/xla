@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/service/cpu_gpu_shape_verifier.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <memory>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/hlo_module_config.h"
@@ -97,6 +98,50 @@ TEST_F(CpuGpuShapeVerifierTest, Int4ShardingCustomCall) {
 
   auto status = verifier().Run(module.get()).status();
   EXPECT_OK(status);
+}
+
+TEST_F(CpuGpuShapeVerifierTest, RejectsStorageComplexTypeInBufferShape) {
+  const char* const hlo_string = R"(
+  HloModule Module
+
+  ENTRY main {
+    p0 = b(c32[4]) parameter(0)
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  EXPECT_THAT(VerifyNoUnsupportedStorageComplexTypes(*module, "CPU"),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                                     HasSubstr("element type c32")));
+}
+
+TEST_F(CpuGpuShapeVerifierTest, AcceptsBufferShapeWithoutStorageComplexTypes) {
+  const char* const hlo_string = R"(
+  HloModule Module
+
+  ENTRY main {
+    p0 = b(f32[4]) parameter(0)
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  EXPECT_OK(VerifyNoUnsupportedStorageComplexTypes(*module, "CPU"));
+}
+
+TEST_F(CpuGpuShapeVerifierTest,
+       RejectsStorageComplexTypeInTupleNestedBufferShape) {
+  const char* const hlo_string = R"(
+  HloModule Module
+
+  ENTRY main {
+    p0 = (f32[4], b(bc32[2])) parameter(0)
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  EXPECT_THAT(VerifyNoUnsupportedStorageComplexTypes(*module, "CPU"),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                                     HasSubstr("element type bc32")));
 }
 
 }  // namespace

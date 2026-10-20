@@ -67,10 +67,6 @@ limitations under the License.
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
@@ -237,6 +233,10 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 #ifdef TF_LLVM_X86_AVAILABLE
 #include "llvm/TargetParser/X86TargetParser.h"
@@ -1405,6 +1405,9 @@ CpuCompiler::CompileCpuExecutable(
     return TraceMeEncode("CpuCompiler::CompileCpuExecutable",
                          {{"name", module->name()}});
   });
+
+  // Shared by JIT and AOT compilation.
+  ABSL_RETURN_IF_ERROR(VerifyNoUnsupportedStorageComplexTypes(*module, "CPU"));
 
   ModuleHook pre_optimization_ir_hook;
   ModuleHook post_optimization_ir_hook;

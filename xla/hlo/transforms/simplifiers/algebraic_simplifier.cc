@@ -45,7 +45,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/protobuf.h"
 #include "xla/comparison_util.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
@@ -85,6 +84,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/window_util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -1563,7 +1563,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcast(
 
   // Simplify bitcast(unary_elementwise(bitcast(x))) to
   // bitcast(unary_elementwise(x)).
-  if (HloInstruction* unary_op, * inner_bitcast;
+  if (HloInstruction * unary_op, *inner_bitcast;
       Match(bitcast,
             m::Bitcast(m::Op(&unary_op)
                            .WithPredicate([](const HloInstruction* instr) {
@@ -2691,10 +2691,12 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
     Literal new_literal(result_shape);
     return primitive_util::PrimitiveTypeSwitch<absl::Status>(
         [&](auto primitive_type_constant) -> absl::Status {
-          if constexpr (primitive_util::IsFloatingPointType(
-                            primitive_type_constant) ||
-                        primitive_util::IsComplexType(
-                            primitive_type_constant)) {
+          if constexpr ((primitive_util::IsFloatingPointType(
+                             primitive_type_constant) ||
+                         primitive_util::IsComplexType(
+                             primitive_type_constant)) &&
+                        primitive_type_constant != C32 &&
+                        primitive_type_constant != BC32) {
             using NativeT = NativeTypeOf<primitive_type_constant>;
             ABSL_RETURN_IF_ERROR(InvertConstant<NativeT>(*c, &new_literal));
 
@@ -4563,7 +4565,9 @@ GatherOfPadInfo CheckPaddedDimsForGatherOfPad(
   };
 
   int64_t num_padded_batching_dims = 0;
-  struct GatherOfPadInfo skip_transform{false, false};
+  struct GatherOfPadInfo skip_transform {
+    false, false
+  };
   for (int64_t operand_dim : padded_operand_dims) {
     if (padded_operand_dims_to_output_dims.contains(operand_dim)) {
       continue;
@@ -8008,7 +8012,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleSlice(HloInstruction* slice) {
     }
   }
 
-  if (HloInstruction* reduce_window;
+  if (HloInstruction * reduce_window;
       options_.enable_window_reduce_to_reduce_replacement() &&
       hlo_instruction_utils::IsUnstridedSlice(slice) &&
       Match(slice, m::Slice(m::ReduceWindow(&reduce_window).WithOneUse()))) {
@@ -9420,7 +9424,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
   // For Computation equal to Min, Max, And or Or, replace Reduce(Broadcast(x),
   // a, Computation()) with Computation(x, a) when x is a scalar and the
   // broadcast is reduced to a scalar.
-  if (HloInstruction* broadcast_arg;
+  if (HloInstruction * broadcast_arg;
       Match(arg, m::Broadcast(m::Op(&broadcast_arg))) &&
       (Match(function->root_instruction(),
              m::MaximumAnyOrder(m::Parameter(0), m::Parameter(1))) ||

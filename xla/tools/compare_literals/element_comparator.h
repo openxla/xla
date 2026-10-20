@@ -31,18 +31,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "xla/tools/compare_literals/compare_literals.h"
+#include "xla/types.h"
 
 namespace xla::compare_literals {
-
-namespace internal {
-// Type trait helpers for complex values.
-template <typename T>
-struct IsComplex : std::false_type {};
-template <typename T>
-struct IsComplex<std::complex<T>> : std::true_type {};
-template <typename T>
-inline constexpr bool is_complex_v = IsComplex<T>::value;
-}  // namespace internal
 
 template <typename T>
 struct ValueTraits {
@@ -103,6 +94,12 @@ struct ValueTraits<std::complex<U>> {
                            absl::StrCat(val.imag()));
   }
 };
+
+template <>
+struct ValueTraits<complex32> : ValueTraits<complex64> {};
+
+template <>
+struct ValueTraits<bcomplex32> : ValueTraits<complex64> {};
 
 // Element-level comparator and metric accumulator.
 template <typename NativeT>
@@ -222,7 +219,7 @@ class ElementComparator {
         double clean_mag = ValueTraits<NativeT>::Magnitude(clean_val);
         if (clean_mag != 0.0) {
           has_rel_error = true;
-          if constexpr (internal::is_complex_v<NativeT>) {
+          if constexpr (is_complex_v<NativeT>) {
             rel_diff = abs_diff / clean_mag;
             signed_rel = rel_diff;
           } else {

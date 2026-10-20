@@ -456,12 +456,7 @@ OriginalTensorSummaryPropagator::PropagateConstantsAndParameters() {
                     primitive_util::NativeTypeOf<primitive_type_constant>;
                 ABSL_RETURN_IF_ERROR(iota_literal.Populate<NativeT>(
                     [&](absl::Span<const int64_t> multi_index) -> NativeT {
-                      if constexpr (is_complex_v<NativeT>) {
-                        return NativeT(multi_index[iota_dimension], 0);
-                      } else {
-                        return static_cast<NativeT>(
-                            multi_index[iota_dimension]);
-                      }
+                      return static_cast<NativeT>(multi_index[iota_dimension]);
                     }));
               }
               return absl::OkStatus();

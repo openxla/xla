@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/service/shape_inference.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +24,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -36,7 +35,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
-#include "tsl/platform/errors.h"
 #include "xla/hlo/builder/padding.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -48,6 +46,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/shuffle.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace {
@@ -66,6 +65,7 @@ class ShapeInferenceTest : public ::testing::Test {
   // Some handy scalar shapes.
   const Shape s32_ = ShapeUtil::MakeShape(S32, {});
   const Shape f16_ = ShapeUtil::MakeShape(F16, {});
+  const Shape bf16_ = ShapeUtil::MakeShape(BF16, {});
   const Shape f32_ = ShapeUtil::MakeShape(F32, {});
   const Shape f64_ = ShapeUtil::MakeShape(F64, {});
   const Shape pred_ = ShapeUtil::MakeShape(PRED, {});
@@ -449,11 +449,14 @@ TEST_F(ShapeInferenceTest, Complex) {
   ASSERT_FALSE(complex_shape(pred_, pred_, {}).ok());
   // Component types must match.
   ASSERT_FALSE(complex_shape(f32_, f64_, {}).ok());
-  // Only F32->C64 and F64->C128 supported.
-  ASSERT_FALSE(complex_shape(f16_, f16_, {}).ok());
+  // F32->C64, F64->C128, F16->C32 and BF16->BC32 are supported.
+  ASSERT_OK_AND_ASSIGN(Shape result, complex_shape(f16_, f16_, {}));
+  ASSERT_TRUE(ShapeUtil::Equal(result, ShapeUtil::MakeShape(C32, {})));
+  ASSERT_OK_AND_ASSIGN(result, complex_shape(bf16_, bf16_, {}));
+  ASSERT_TRUE(ShapeUtil::Equal(result, ShapeUtil::MakeShape(BC32, {})));
   // Validate correct uses.
   const Shape c64_32 = ShapeUtil::MakeShape(C64, {32});
-  ASSERT_OK_AND_ASSIGN(Shape result, complex_shape(f32_, f32_, {}));
+  ASSERT_OK_AND_ASSIGN(result, complex_shape(f32_, f32_, {}));
   ASSERT_TRUE(ShapeUtil::Equal(result, ShapeUtil::MakeShape(C64, {})));
   ASSERT_OK_AND_ASSIGN(result, complex_shape(vector_32_, f32_, {}));
   ASSERT_TRUE(ShapeUtil::Equal(result, c64_32));
