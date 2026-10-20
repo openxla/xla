@@ -17,8 +17,6 @@ limitations under the License.
 #define XLA_BACKENDS_CPU_RUNTIME_YNNPACK_YNN_MEMORY_POOL_H_
 
 #include <cstddef>
-#include <memory>
-#include <thread>  // NOLINT
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -36,11 +34,9 @@ namespace xla::cpu {
 // them all when destroyed at the end of the execution. Nothing is kept between
 // executions.
 //
-// Each thread has its own pool, which keeps the buffers it freed, so a buffer
-// is reused by the thread whose cache holds it. A pool reuses a freed buffer
-// for a request of up to twice its size, and releases buffers that went unused
-// through two requests it could not serve; buffers of a thread that stops
-// allocating stay until the end of the execution. Thread-safe.
+// The pool reuses a freed buffer for a request of up to twice its size, and
+// releases buffers that went unused through two requests it could not serve.
+// Thread-safe.
 class YnnMemoryPool {
  public:
   YnnMemoryPool() = default;
@@ -56,12 +52,8 @@ class YnnMemoryPool {
   size_t retained_bytes() const;
 
  private:
-  // The pool of the calling thread.
-  slinky::memory_pool& ThreadPool() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-
   mutable absl::Mutex mu_;
-  absl::flat_hash_map<std::thread::id, std::unique_ptr<slinky::memory_pool>>
-      pools_ ABSL_GUARDED_BY(mu_);
+  slinky::memory_pool pool_ ABSL_GUARDED_BY(mu_);
   // Sizes of the buffers in use, which can exceed the requested size of a
   // reused buffer.
   absl::flat_hash_map<void*, size_t> sizes_ ABSL_GUARDED_BY(mu_);

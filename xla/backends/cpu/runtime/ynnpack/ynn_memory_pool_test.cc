@@ -50,7 +50,7 @@ TEST(YnnMemoryPoolTest, ReturnsReusedBuffersWithTheirOwnSize) {
   EXPECT_EQ(pool.retained_bytes(), 4096);
 }
 
-TEST(YnnMemoryPoolTest, ReusesBuffersOnTheThreadThatFreedThem) {
+TEST(YnnMemoryPoolTest, ReusesBuffersAcrossThreads) {
   YnnMemoryPool pool;
   void* other = nullptr;
   std::thread([&] {
@@ -58,9 +58,9 @@ TEST(YnnMemoryPoolTest, ReusesBuffersOnTheThreadThatFreedThem) {
     YnnMemoryPool::Free(&pool, other, 4096);
   }).join();
   void* ptr = YnnMemoryPool::Allocate(&pool, 4096, 64);
-  EXPECT_NE(ptr, other);
+  EXPECT_EQ(ptr, other);
   YnnMemoryPool::Free(&pool, ptr, 4096);
-  EXPECT_EQ(pool.retained_bytes(), 8192);
+  EXPECT_EQ(pool.retained_bytes(), 4096);
 }
 
 TEST(YnnMemoryPoolTest, RespectsAlignment) {

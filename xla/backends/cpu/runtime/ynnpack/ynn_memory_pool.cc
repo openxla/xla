@@ -17,8 +17,6 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstddef>
-#include <memory>
-#include <thread>  // NOLINT
 #include <vector>
 
 #include "absl/synchronization/mutex.h"
@@ -29,20 +27,9 @@ namespace xla::cpu {
 
 YnnMemoryPool::~YnnMemoryPool() {
   absl::MutexLock lock(mu_);
-  for (auto& [thread, pool] : pools_) {
-    for (auto b = pool->evict_any(); b.ptr; b = pool->evict_any()) {
-      slinky::deallocate_bytes(b.ptr);
-    }
+  for (auto b = pool_.evict_any(); b.ptr; b = pool_.evict_any()) {
+    slinky::deallocate_bytes(b.ptr);
   }
-}
-
-slinky::memory_pool& YnnMemoryPool::ThreadPool() {
-  std::unique_ptr<slinky::memory_pool>& pool =
-      pools_[std::this_thread::get_id()];
-  if (pool == nullptr) {
-    pool = std::make_unique<slinky::memory_pool>();
-  }
-  return *pool;
 }
 
 void* YnnMemoryPool::Allocate(void* context, size_t size, size_t alignment) {
@@ -50,12 +37,12 @@ void* YnnMemoryPool::Allocate(void* context, size_t size, size_t alignment) {
   std::vector<void*> stale;
   {
     absl::MutexLock lock(self->mu_);
-    slinky::memory_pool& pool = self->ThreadPool();
-    slinky::memory_pool::block block = pool.allocate(size, alignment);
+    slinky::memory_pool::block block = self->pool_.allocate(size, alignment);
     if (block.ptr) {
       self->sizes_[block.ptr] = block.size;
       return block.ptr;
     }
+    slinky::memory_pool& pool = self->pool_;
     for (auto b = pool.evict_stale(); b.ptr; b = pool.evict_stale()) {
       stale.push_back(b.ptr);
     }
@@ -76,17 +63,13 @@ void YnnMemoryPool::Free(void* context, void* ptr, size_t size) {
   YnnMemoryPool* self = static_cast<YnnMemoryPool*>(context);
   absl::MutexLock lock(self->mu_);
   auto it = self->sizes_.find(ptr);
-  self->ThreadPool().free(ptr, it->second);
+  self->pool_.free(ptr, it->second);
   self->sizes_.erase(it);
 }
 
 size_t YnnMemoryPool::retained_bytes() const {
   absl::MutexLock lock(mu_);
-  size_t bytes = 0;
-  for (const auto& [thread, pool] : pools_) {
-    bytes += pool->retained_size();
-  }
-  return bytes;
+  return pool_.retained_size();
 }
 
 }  // namespace xla::cpu
