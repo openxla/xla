@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/service/cpu/onednn_float_support.h"
 
+#include "xla/backends/cpu/onednn_support.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/cpu/onednn_contraction_rewriter.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace cpu {

@@ -28,7 +28,7 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/cpu/onednn_util.h"
+#include "xla/layout_util.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
 

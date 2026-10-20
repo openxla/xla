@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/cpu/onednn_support.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 
 #include "absl/base/no_destructor.h"
@@ -24,7 +25,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "oneapi/dnnl/dnnl.hpp"  // NOLINT: for DNNL_MAX_NDIMS
+#include "oneapi/dnnl/dnnl_common_types.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/runtime/dot_dims.h"
 #include "xla/hlo/ir/hlo_instruction.h"

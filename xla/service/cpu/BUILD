@@ -1599,7 +1599,8 @@ onednn_cc_library(
     hdrs = ["onednn_float_support.h"],
     copts = tsl_copts(),
     deps = [
-        ":onednn_contraction_rewriter",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu:onednn_support",
         "//xla/hlo/ir:hlo",
         "//xla/service:float_support",
     ],
