@@ -370,23 +370,88 @@ xla_cc_test(
 
 xla_test(
     name = "fusion_emitter_int4_device_test",
+    timeout = "long",
     srcs = ["fusion_emitter_int4_device_test.cc"],
+    # DEBUG ONLY (do not submit): investigating intermittent
+    # HSA_STATUS_ERROR_ILLEGAL_INSTRUCTION on the MI350 CI runners.
+    backend_args = {
+        "amdgpu_any": [
+            "--gtest_repeat=10",
+        ],
+    },
     backends = [
         "a100",
         "h100",
         "b200",
         "amdgpu_any",
     ],
+    env = {
+        # Report async GPU faults at the kernel that caused them.
+        "AMD_SERIALIZE_KERNEL": "3",
+        "HIP_LAUNCH_BLOCKING": "1",
+        "AMD_LOG_LEVEL": "1",
+        # Log which autotuning candidate is compiled/run before a crash.
+        "TF_CPP_VMODULE": "autotuner=2,config_assigner=2,codegen_orchestrator=4,config_runner=3",
+    },
     shard_count = 10,
     tags = ["no_mac"],
     deps = [
         "//xla:autotuning_proto_cc",
         "//xla:error_spec",
         "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:in_memory_store",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu/autotuning:autotuner_cache",
+        "//xla/stream_executor:device_description",
+        "//xla/tests:hlo_interpreter_reference_mixin",
+        "//xla/tests:xla_internal_test_main",  # fixdeps: keep
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+        "@tsl//tsl/platform:path",
+    ],
+)
+
+xla_test(
+    name = "fusion_emitter_int4_device_noautotune_test",
+    timeout = "long",
+    srcs = ["fusion_emitter_int4_device_test.cc"],
+    # DEBUG ONLY (do not submit): investigating intermittent
+    # HSA_STATUS_ERROR_ILLEGAL_INSTRUCTION on the MI350 CI runners.
+    backend_args = {
+        "amdgpu_any": [
+            "--gtest_repeat=10",
+        ],
+    },
+    backends = [
+        "h100",
+        "amdgpu_any",
+    ],
+    env = {
+        # Report async GPU faults at the kernel that caused them.
+        "AMD_SERIALIZE_KERNEL": "3",
+        "HIP_LAUNCH_BLOCKING": "1",
+        "AMD_LOG_LEVEL": "1",
+        # Log which autotuning candidate is compiled/run before a crash.
+        "TF_CPP_VMODULE": "autotuner=2,config_assigner=2,codegen_orchestrator=4,config_runner=3",
+        # Same tests with autotuning disabled.
+        "INT4_DEBUG_DISABLE_AUTOTUNE": "1",
+    },
+    shard_count = 10,
+    tags = ["no_mac"],
+    deps = [
+        "//xla:autotuning_proto_cc",
+        "//xla:error_spec",
+        "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:in_memory_store",
+        "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu/autotuning:autotuner_cache",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_interpreter_reference_mixin",
         "//xla/tests:xla_internal_test_main",  # fixdeps: keep

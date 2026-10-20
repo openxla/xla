@@ -68,9 +68,13 @@ ConfigRunner::ProfileAll(
 
   absl::MutexLock lock(profiler_m_);
 
+  // DEBUG ONLY (do not submit).
+  LOG(INFO) << "INT4_DEBUG creating input buffers for " << candidates.size()
+            << " candidate(s)";
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<InputBuffers> input_buffers,
       profiler_->CreateInputBuffers(candidates[0].executable.get(), instr));
+  LOG(INFO) << "INT4_DEBUG created input buffers";
 
   const auto is_trusted =
       [](const ConfigRunner::ExecutableCandidate& candidate) {
@@ -127,8 +131,13 @@ ConfigRunner::ConfigProfile ConfigRunner::ProfileCandidate(
     ConfigRunner::ExecutableCandidate candidate, InputBuffers& input_buffers,
     std::vector<OutputCluster>& clusters, bool is_trusted_config,
     bool allow_new_cluster) {
+  // DEBUG ONLY (do not submit): identify the candidate that faults on MI350.
+  LOG(INFO) << "INT4_DEBUG profiling candidate: "
+            << candidate.config.ToString();
   absl::StatusOr<ProfileResult> profile_result =
       profiler_->Profile(candidate.executable.get(), input_buffers);
+  LOG(INFO) << "INT4_DEBUG profiled candidate: " << candidate.config.ToString()
+            << " status=" << profile_result.status();
 
   if (!profile_result.ok()) {
     if (options_.enable_correctness_check) {
