@@ -64,6 +64,7 @@ cc_library(
         "//xla:future",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
+        "//xla/runtime:device_id",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
         "@com_google_absl//absl/functional:any_invocable",
@@ -265,6 +266,20 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "common_pjrt_client_test",
+    srcs = ["common_pjrt_client_test.cc"],
+    deps = [
+        ":common_pjrt_client",
+        ":pjrt_client",
+        "//xla/runtime:device_id",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "infer_dispatch_info",
     srcs = ["infer_dispatch_info.cc"],
@@ -402,6 +417,7 @@ cc_library(
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
+        "//xla/runtime:device_id",
         "//xla/service:device_assignment",
         "//xla/service:hlo_cost_analysis",
         "//xla/tsl/framework:allocator",
@@ -612,6 +628,7 @@ cc_library(
         ":pjrt_device_description",
         ":pjrt_device_dimensions",
         ":pjrt_executable",
+        ":pjrt_relocatable",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_computation",
@@ -822,7 +839,6 @@ cc_library(
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:MLProgramDialect",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
@@ -946,9 +962,10 @@ xla_cc_test(
 
 cc_library(
     name = "transpose_kernels",
+    srcs = ["transpose_kernels.cc"],
     hdrs = ["transpose_kernels.h"],
     deps = [
-        "//xla:compiler_macros",
+        "@com_google_absl//absl/base:core_headers",
         "@highway//:hwy",
     ],
 )
@@ -1021,6 +1038,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
+        "@highway//:hwy",
     ],
 )
 
@@ -1316,7 +1334,15 @@ cc_library(
         ":pjrt_client",
         ":pjrt_compiler",
         ":pjrt_executable",
+        ":pjrt_layout",
+        ":pjrt_relocatable",
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_computation",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/translate:stablehlo",
         "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/c:pjrt_c_api_helpers",
         "//xla/pjrt/c:pjrt_c_api_phase_compile_extension_hdrs",
@@ -1329,16 +1355,23 @@ cc_library(
         "//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Transforms",
+        "@riegeli//riegeli/bytes:string_reader",
+        "@riegeli//riegeli/bytes:string_writer",
+        "@riegeli//riegeli/messages:parse_message",
+        "@riegeli//riegeli/messages:serialize_message",
         "@stablehlo//:stablehlo_passes_optimization",
         "@stablehlo//:stablehlo_portable_api",
         "@stablehlo//:stablehlo_serialization",
+        "@tsl//tsl/platform:fingerprint",
     ],
 )
 
@@ -1362,6 +1395,7 @@ xla_cc_test(
         ":pjrt_compiler",
         ":pjrt_executable",
         ":pjrt_phase_compile_sample_plugin",
+        ":pjrt_relocatable",
         "//xla:debug_options_flags",
         "//xla/backends/cpu:target_machine_options",
         "//xla/hlo/builder:xla_computation",
@@ -1372,6 +1406,7 @@ xla_cc_test(
         "//xla/pjrt/proto:pjrt_partial_program_proto_cc",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
@@ -1543,5 +1578,45 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/strings:string_view",
         "@tsl//tsl/platform:fingerprint",
+    ],
+)
+
+cc_library(
+    name = "pjrt_relocatable",
+    hdrs = ["pjrt_relocatable.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        ":pjrt_layout",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_relocatable_test",
+    srcs = ["pjrt_relocatable_test.cc"],
+    deps = [
+        ":maybe_owning_mlir_module",
+        ":pjrt_compiler",
+        ":pjrt_layout",
+        ":pjrt_phase_compile_sample_plugin",
+        ":pjrt_relocatable",
+        "//xla:debug_options_flags",
+        "//xla:shape_util",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/backends/cpu:target_machine_options",
+        "//xla/pjrt/plugin/xla_cpu:cpu_topology",
+        "//xla/pjrt/plugin/xla_cpu:cpu_topology_description",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@stablehlo//:reference_api",
     ],
 )

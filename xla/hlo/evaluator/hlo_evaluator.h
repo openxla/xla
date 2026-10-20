@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/container/node_hash_map.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -496,30 +497,6 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
 
   bool TryEvaluateDotFastPathF32(const HloInstruction* dot);
 
-  struct ShapeInfo {
-    static std::pair<DimensionVector, DimensionVector> dims(
-        const DimensionVector& dim_indexes, const Shape& literal_shape,
-        const Shape& scale_shape);
-
-    ShapeInfo(const Literal& literal, const Literal& scale_literal,
-              absl::Span<const int64_t> contracting_dims_field,
-              absl::Span<const int64_t> batch_dims_field);
-    ~ShapeInfo();
-
-    const int64_t rank;
-    DimensionVector batch_dim_indexes;
-    DimensionVector batch_dim_sizes;
-    DimensionVector batch_dim_scale_divisors;
-
-    DimensionVector non_contracting_dim_indexes;
-    DimensionVector non_contracting_dim_sizes;
-    DimensionVector non_contracting_dim_scale_divisors;
-
-    DimensionVector contracting_dim_indexes;
-    DimensionVector contracting_dim_sizes;
-    DimensionVector contracting_dim_scale_divisors;
-  };
-
   // Make HloEvaluatorTypedVisitor a friend because it is logically part of this
   // class.
   //
@@ -598,6 +575,11 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
   absl::Status HandleCustomCall(const HloInstruction* custom_call) override;
   absl::Status HandleOptimizationBarrier(
       const HloInstruction* optimization_barrier) override;
+  absl::Status HandleConvolution(const HloInstruction* conv) override;
+  absl::Status HandleDot(const HloInstruction* dot) override;
+  absl::Status HandleRaggedDot(const HloInstruction* dot) override;
+  absl::Status HandleScaledDot(const HloInstruction* dot) override;
+  absl::Status HandlePad(const HloInstruction* pad) override;
 
   // Unsupported HLOs, note some of them (such as BatchNorm*) are typically
   // expanded in a semantic-preserving way into other HLOs by adding expansion
