@@ -1763,6 +1763,48 @@ cc_library(
 )
 
 cc_library(
+    name = "scheduler_memory_fencing_fallback",
+    srcs = ["scheduler_memory_fencing_fallback.cc"],
+    hdrs = ["scheduler_memory_fencing_fallback.h"],
+    deps = [
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:buffer_assignment",
+        "//xla/service:hlo_module_config",
+        "//xla/service:logical_buffer",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "scheduler_memory_fencing_fallback_test",
+    srcs = ["scheduler_memory_fencing_fallback_test.cc"],
+    deps = [
+        ":scheduler_memory_fencing_fallback",
+        "//xla:shape_util",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/analysis:alias_info",
+        "//xla/hlo/analysis:hlo_ordering",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:test",
+        "//xla/service:buffer_assignment",
+        "//xla/service:buffer_value",
+        "//xla/service:hlo_module_config",
+        "//xla/service:logical_buffer",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "gpu_compiler",
     srcs = ["gpu_compiler.cc"],
     hdrs = ["gpu_compiler.h"],
@@ -1793,6 +1835,7 @@ cc_library(
         ":mlir_context_pool",
         ":pre_scheduling_copy_insertion_pipeline",
         ":reduction_utils",
+        ":scheduler_memory_fencing_fallback",
         ":stream_executor_util",
         "//xla:autotune_results_proto_cc",
         "//xla:shape_util",
@@ -1984,7 +2027,6 @@ cc_library(
         "//xla/service:batched_gather_scatter_normalizer",
         "//xla/service:batchnorm_expander",
         "//xla/service:buffer_assignment",
-        "//xla/service:buffer_value",
         "//xla/service:call_inliner",
         "//xla/service:collective_pipeliner",
         "//xla/service:collective_pipeliner_utils",

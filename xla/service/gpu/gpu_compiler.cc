@@ -254,7 +254,6 @@ limitations under the License.
 #include "xla/service/batched_gather_scatter_normalizer.h"
 #include "xla/service/batchnorm_expander.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/buffer_value.h"
 #include "xla/service/call_inliner.h"
 #include "xla/service/collective_pipeliner.h"
 #include "xla/service/collective_pipeliner_utils.h"
@@ -305,6 +304,7 @@ limitations under the License.
 #include "xla/service/gpu/model/sol_gpu_cost_model_stats_collection.h"
 #include "xla/service/gpu/pre_scheduling_copy_insertion_pipeline.h"
 #include "xla/service/gpu/reduction_utils.h"
+#include "xla/service/gpu/scheduler_memory_fencing_fallback.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo.pb.h"
@@ -2748,13 +2748,14 @@ absl::StatusOr<xla::cpu::CompilationResultProto> GetCpuCompilationResult(
 
 absl::StatusOr<GpuCompiler::CompileResultWithMetadata>
 GpuCompiler::CompileToBackendResult(
-    HloModule* module, llvm::LLVMContext* llvm_context,
+    std::unique_ptr<HloModule>& module_owner, llvm::LLVMContext* llvm_context,
     const GpuTopology& gpu_topology, const CompileOptions& options,
     se::StreamExecutor* absl_nullable stream_exec,
     mlir::MLIRContext* mlir_context) {
   tsl::profiler::TraceMe traceme("CompileToBackendResult");
 
-  absl::string_view cache_path =
+  HloModule* module = module_owner.get();
+  const std::string cache_path =
       module->config().debug_options().xla_gpu_kernel_cache_file();
   const bool use_cache = !cache_path.empty();
 
@@ -2763,15 +2764,6 @@ GpuCompiler::CompileToBackendResult(
   ABSL_RETURN_IF_ERROR(RunPreSchedulingPasses(
       module, gpu_topology.gpu_target_config().device_description,
       alias_info.get(), mlir_context));
-  ABSL_ASSIGN_OR_RETURN(
-      ScheduleMetadata schedule_metadata,
-      ScheduleGpuModule(module, pointer_size_,
-                        gpu_topology.gpu_target_config().device_description,
-                        mlir_context, alias_info.get()));
-  HloPassPipeline pipeline("scheduled-gpu-module");
-  AddHloVerifier(&pipeline);
-  ABSL_RETURN_IF_ERROR(pipeline.Run(module).status());
-
   MaybeOwningThreadPool thread_pool = CreateMaybeOwningThreadPool(
       /*parallelism=*/module->config()
           .debug_options()
@@ -2779,9 +2771,29 @@ GpuCompiler::CompileToBackendResult(
       /*default_thread_pool=*/options.thread_pool,
       /*default_parallelism=*/tsl::port::MaxParallelism());
 
-  ABSL_RETURN_IF_ERROR(RunPostSchedulingPipelines(
-      module, schedule_metadata.scheduler_mem_limit, gpu_topology,
-      alias_info.get(), mlir_context, thread_pool.get_mutable()));
+  ABSL_ASSIGN_OR_RETURN(
+      BufferAssignedModule prepared,
+      ScheduleWithMemoryFencingFallback(
+          std::move(module_owner),
+          [&](HloModule* candidate)
+              -> absl::StatusOr<std::unique_ptr<BufferAssignment>> {
+            ABSL_ASSIGN_OR_RETURN(
+                ScheduleMetadata schedule_metadata,
+                ScheduleGpuModule(
+                    candidate, pointer_size_,
+                    gpu_topology.gpu_target_config().device_description,
+                    mlir_context, alias_info.get()));
+            HloPassPipeline pipeline("scheduled-gpu-module");
+            AddHloVerifier(&pipeline);
+            ABSL_RETURN_IF_ERROR(pipeline.Run(candidate).status());
+            ABSL_RETURN_IF_ERROR(RunPostSchedulingPipelines(
+                candidate, schedule_metadata.scheduler_mem_limit, gpu_topology,
+                alias_info.get(), mlir_context, thread_pool.get_mutable()));
+            return RunBufferAssignment(candidate, alias_info.get(),
+                                       BufferSizeBytesFunction());
+          }));
+  module_owner = std::move(prepared.module);
+  module = module_owner.get();
 
   absl::Mutex module_stats_m_;
   ModuleStats module_stats;
@@ -2792,9 +2804,6 @@ GpuCompiler::CompileToBackendResult(
   {
     xla::llvm_ir::LLVMCommandLineOptionsReleasableLock llvm_options_lock(
         GetLLVMCommandLineOptions(module->config().debug_options()));
-    BufferValue::SizeFunction buffer_size_bytes_function =
-        BufferSizeBytesFunction();
-
     auto llvm_compiler =
         [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
             const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
@@ -2828,10 +2837,9 @@ GpuCompiler::CompileToBackendResult(
         compile_module_results,
         CompileModuleToLlvmIr(
             module, llvm_context, target_triple_, data_layout_, PlatformId(),
-            gpu_topology, alias_info.get(),
-            std::move(buffer_size_bytes_function), llvm_options_lock,
-            &kernel_compiler, std::move(cpu_target_machine_options),
-            &mlir_context_pool_));
+            gpu_topology, std::move(prepared.buffer_assignment),
+            llvm_options_lock, &kernel_compiler,
+            std::move(cpu_target_machine_options), &mlir_context_pool_));
 
     backend_result.binary = std::move(compile_module_results.constants_binary);
   }
@@ -2910,7 +2918,8 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
     }
   }
 
-  const DebugOptions& debug_opts = module->config().debug_options();
+  // Scheduling can replace the module with an unfenced clone.
+  const DebugOptions debug_opts = module->config().debug_options();
   XLA_SCOPED_LOGGING_TIMER_IF(
       absl::StrCat("GpuCompiler::RunBackend for ", module->name()),
       debug_opts.xla_enable_scoped_logging_timers());
@@ -2955,7 +2964,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
 
   ABSL_ASSIGN_OR_RETURN(
       CompileResultWithMetadata res,
-      CompileToBackendResult(module.get(), &llvm_context, gpu_topology, options,
+      CompileToBackendResult(module, &llvm_context, gpu_topology, options,
                              stream_exec, borrowed_context->get()));
   ModuleStats module_stats = res.backend_result.module_stats;
 
