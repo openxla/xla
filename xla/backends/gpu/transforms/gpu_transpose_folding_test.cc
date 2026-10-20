@@ -35,19 +35,23 @@ using ::absl_testing::IsOkAndHolds;
 
 class GpuTransposeFoldingTest : public HloHardwareIndependentTestBase {
  protected:
-  void ExpectFolded(absl::string_view hlo, absl::string_view expected) {
+  void ExpectFolded(absl::string_view hlo, absl::string_view expected,
+                    bool fold_into_convolutions = true) {
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                          ParseAndReturnVerifiedModule(hlo));
-    EXPECT_THAT(GpuTransposeFolding(kHopper).Run(module.get()),
-                IsOkAndHolds(true));
+    EXPECT_THAT(
+        GpuTransposeFolding(kHopper, fold_into_convolutions).Run(module.get()),
+        IsOkAndHolds(true));
     EXPECT_THAT(RunFileCheck(module->ToString(), expected), IsOkAndHolds(true));
   }
 
-  void ExpectNotFolded(absl::string_view hlo) {
+  void ExpectNotFolded(absl::string_view hlo,
+                       bool fold_into_convolutions = true) {
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                          ParseAndReturnVerifiedModule(hlo));
-    EXPECT_THAT(GpuTransposeFolding(kHopper).Run(module.get()),
-                IsOkAndHolds(false));
+    EXPECT_THAT(
+        GpuTransposeFolding(kHopper, fold_into_convolutions).Run(module.get()),
+        IsOkAndHolds(false));
   }
 
   const se::GpuComputeCapability kHopper{se::CudaComputeCapability::Hopper()};
@@ -228,6 +232,20 @@ TEST_F(GpuTransposeFoldingTest, FoldsConvolutionOperands) {
     // CHECK: %[[Y:.*]] = {{.*}} parameter(1)
     // CHECK: convolution(%[[X]], %[[Y]]), window={size=1x2}, dim_labels=fb10_01io->bf01
     )");
+}
+
+TEST_F(GpuTransposeFoldingTest, DoesNotFoldConvolutionOperandsIfDisabled) {
+  ExpectNotFolded(R"(
+    HloModule m
+    ENTRY e {
+      x = f32[3,2,4,5]{3,2,1,0} parameter(0)
+      y = f32[1,2,3,6]{3,2,1,0} parameter(1)
+      tx = f32[2,3,5,4]{3,2,1,0} transpose(x), dimensions={1,0,3,2}
+      ty = f32[3,6,1,2]{3,2,1,0} transpose(y), dimensions={2,3,0,1}
+      ROOT conv = f32[2,6,5,3]{3,2,1,0} convolution(tx, ty),
+        window={size=1x2}, dim_labels=bf01_io01->bf01
+    })",
+                  /*fold_into_convolutions=*/false);
 }
 
 }  // namespace

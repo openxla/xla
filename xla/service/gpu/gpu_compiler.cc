@@ -1021,7 +1021,8 @@ absl::Status RunOptimizationPasses(
     pipeline.AddPass<ReshapeMover>(reshape_mover_options);
     pipeline.AddPass<HloConstantFolding>();
     pipeline.AddPass<ConditionalSimplifier>();
-    pipeline.AddPass<GpuTransposeFolding>(gpu_version);
+    pipeline.AddPass<GpuTransposeFolding>(gpu_version,
+                                          /*fold_into_convolutions=*/true);
     pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/false);
     pipeline.AddPass<HloDCE>();
   }();
@@ -1040,7 +1041,8 @@ absl::Status RunOptimizationPasses(
   // gpu_version) once Triton emitter supports multiple non-contracting
   // dimensions.
   pipeline.AddPass<DotDimensionNormalizer>(true);
-  pipeline.AddPass<GpuTransposeFolding>(gpu_version);
+  pipeline.AddPass<GpuTransposeFolding>(gpu_version,
+                                        /*fold_into_convolutions=*/true);
 
   // ConvertMover and ReshapeMover fight with each other: ConvertMover wants
   // to move some converts down the graph, but ReshapeMover wants to move them
@@ -2141,8 +2143,10 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
 
     // GemmRewriter assumes that all transposes are folded into gemms, but,
     // since commit 7d529df, this is not always true at this point.
-    // Therefore, rerun transpose folding.
-    pipeline.AddPass<GpuTransposeFolding>(gpu_version);
+    // Therefore, rerun transpose folding. Convolution layouts are already
+    // assigned at this point, so do not fold into convolutions.
+    pipeline.AddPass<GpuTransposeFolding>(gpu_version,
+                                          /*fold_into_convolutions=*/false);
 
     pipeline.AddPass<ReshapeDecomposer>();
     pipeline.AddPass<ReduceDecomposer>([&](const HloInstruction* r) {

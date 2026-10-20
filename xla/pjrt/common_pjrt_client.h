@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_COMMON_PJRT_CLIENT_H_
 #define XLA_PJRT_COMMON_PJRT_CLIENT_H_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -63,6 +64,14 @@ limitations under the License.
 
 namespace xla {
 
+// Source and destination task incarnations, in that order. An empty snapshot
+// returns nullopt. A non-empty snapshot that is missing a participating task
+// returns FailedPrecondition.
+absl::StatusOr<std::optional<std::array<IncarnationId, 2>>>
+TransferIncarnations(
+    int src_process_index, int dst_process_index,
+    const absl::flat_hash_map<TaskId, IncarnationId>& incarnations);
+
 // A common base class for Pjrt clients based on raw buffers.
 class CommonPjRtClient : public PjRtClient {
  public:
@@ -87,6 +96,7 @@ class CommonPjRtClient : public PjRtClient {
   virtual bool executable_compatibility_check_on_deserialization() const {
     return true;
   }
+  virtual bool enable_async_compilation() const { return false; }
   // Returns true if we should skip the staging buffer during ToLiteral.
   bool ShouldDoDirectTransfer(const MutableLiteralBase& literal,
                               const Shape& shape,
@@ -105,15 +115,11 @@ class CommonPjRtClient : public PjRtClient {
   // TODO(parkers): Properly support error buffers on GPU and CPU.
   virtual bool include_raw_buffer_in_ready_event() const { return false; }
   virtual bool supports_predetermined_error() const { return true; }
-  virtual bool SupportsPredeterminedError(PjRtMemorySpace* memory_space) const {
-    return supports_predetermined_error();
-  }
+  bool SupportsPredeterminedError(PjRtMemorySpace* memory_space) const;
   // TODO(parkers): The xla::Shape should know how to update itself when we go
   // from a static to the runtime shape. This should not be runtime dependent.
   virtual absl::StatusOr<xla::Shape> UpdateLayoutForDynamicShapes(
-      int memory_space_kind_id, xla::Shape shape) const {
-    return std::move(shape);
-  }
+      int memory_space_kind_id, xla::Shape shape) const;
 
   // Backend specific handlers for when an oom is detected during execute.
   void CallOomHandlers() const { raw_client()->CallOomHandlers(); }
@@ -154,8 +160,7 @@ class CommonPjRtClient : public PjRtClient {
 
   // Computes the DMA transfer size for shape, omitting trailing 0-padding
   // beyond the DMA granule boundary when supported.
-  virtual absl::StatusOr<int64_t> GetDmaByteCount(
-      const xla::Shape& shape) const;
+  absl::StatusOr<int64_t> GetDmaByteCount(const xla::Shape& shape) const;
 
   // Gets the memory_space_kind for a particular XLA layout.
   virtual absl::StatusOr<int> GetMemorySpaceKindForShape(
@@ -468,13 +473,15 @@ class CommonPjRtClient : public PjRtClient {
   absl::StatusOr<std::vector<Future<>>> CrossHostSendBuffers(
       absl::Span<PjRtBuffer* const> buffers,
       absl::Span<const GlobalDeviceId> dst_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) override;
+      std::vector<CrossHostTransferKey> transfer_keys,
+      absl::flat_hash_map<TaskId, IncarnationId> incarnations = {}) override;
 
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   CrossHostReceiveBuffers(
       xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
       absl::Span<const GlobalDeviceId> src_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) override;
+      std::vector<CrossHostTransferKey> transfer_keys,
+      absl::flat_hash_map<TaskId, IncarnationId> incarnations = {}) override;
 
   using CrossHostTransferSpec = PjRtRawClient::CrossHostTransferSpec;
 
@@ -618,7 +625,10 @@ class CommonPjRtClient : public PjRtClient {
       std::shared_ptr<PjRtExecutable> executable,
       const LoadOptions& load_options, bool dump);
   // Returns the required alignment for device memory addresses when slicing.
-  virtual absl::StatusOr<size_t> GetDeviceAddressAlignment() const {
+  absl::StatusOr<size_t> GetDeviceAddressAlignment() const {
+    if (raw_client() != nullptr) {
+      return raw_client()->GetDeviceAddressAlignment();
+    }
     return absl::UnimplementedError(
         "GetDeviceAddressAlignment is not implemented.");
   }
@@ -1016,7 +1026,8 @@ class CommonPjRtBufferImpl : public CommonPjRtBuffer {
       xla::Shape shape, PjRtMemorySpace* dst_memory_space);
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyFromCpuToMemorySpace(
-      xla::Shape shape, PjRtMemorySpace* dst_memory_space);
+      xla::Shape shape, PjRtMemorySpace* dst_memory_space,
+      PjRtBuffer* donated_dst = nullptr);
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>>
   CopyToMemorySpaceFallbackThroughLiteral(PjRtMemorySpace* dst_memory_space);
@@ -1199,6 +1210,12 @@ class CommonPjRtClientImpl : public CommonPjRtClient {
   bool executable_compatibility_check_on_deserialization() const override {
     return executable_compatibility_check_on_deserialization_;
   }
+  bool enable_async_compilation() const override {
+    return enable_async_compilation_;
+  }
+  bool include_raw_buffer_in_ready_event() const override {
+    return include_raw_buffer_in_ready_event_;
+  }
 
  private:
   const PjRtPlatformId platform_id_;
@@ -1236,6 +1253,8 @@ class CommonPjRtClientImpl : public CommonPjRtClient {
   bool dump_on_deserialize_ = false;
   bool should_stage_host_to_device_transfers_ = false;
   bool executable_compatibility_check_on_deserialization_ = true;
+  bool enable_async_compilation_ = false;
+  bool include_raw_buffer_in_ready_event_ = false;
 };
 
 // A common base class for PjRtDevice implementations that delegate to
