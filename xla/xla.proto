@@ -807,6 +807,13 @@ message DebugOptions {
   // preallocation.
   optional bool xla_gpu_enable_allocator_spatial_partitioning = 494;
 
+  // Overrides the client's memory fraction for the GPU BFC allocator. Uses the
+  // START, START+, or START-CAP grammar: "0.75" is fixed at 75% of device
+  // memory, "0.75+" preallocates 75% and lets the shared spatial pool grow to
+  // all of it, and "0.75-0.85" caps growth at 85%.
+  // Empty (the default) keeps the client's setting.
+  optional string xla_gpu_memory_fraction_policy = 560;
+
   optional bool xla_gpu_enable_analytical_latency_estimator = 255;
 
   // Enables NCCL Speed-of-Light (SoL) analytical cost model
@@ -1969,12 +1976,12 @@ message DebugOptions {
 
   // Fusion side-output recomputation: 0=off, 1=measure only, 2=apply measured
   // improvements. Requires a GPU; analytical predictions alone never approve.
-  optional int32 xla_gpu_experimental_fusion_recomputation = 560;
+  optional int32 xla_gpu_experimental_fusion_recomputation = 561;
   // Candidate size and count limits bound autotuning overhead, not profitability.
-  optional int64 xla_gpu_fusion_recomputation_min_bytes = 561;
-  optional int64 xla_gpu_fusion_recomputation_max_candidates = 562;
+  optional int64 xla_gpu_fusion_recomputation_min_bytes = 562;
+  optional int64 xla_gpu_fusion_recomputation_max_candidates = 563;
 
-  // Next id: 563
+  // Next id: 564
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
