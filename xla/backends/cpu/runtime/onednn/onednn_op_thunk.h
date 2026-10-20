@@ -41,7 +41,7 @@ class OneDnnOpThunk : public Thunk {
 
     std::vector<BufferAllocation::Slice> results_buffers;
     std::vector<Shape> results_shapes;
-    bool is_tuple_result;
+    bool is_tuple_result = false;
   };
 
   // Variant config for supported oneDNN ops.
@@ -57,6 +57,10 @@ class OneDnnOpThunk : public Thunk {
   tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
 
   BufferUses buffer_uses() const final;
+
+  const std::string& target() const { return target_; }
+  const OpBuffers& op_buffers() const { return op_buffers_; }
+  const OneDnnOpConfig& onednn_op_config() const { return config_; }
 
  private:
   OneDnnOpThunk(const std::string& custom_call_target, Info info,
