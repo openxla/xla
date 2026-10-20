@@ -17,10 +17,8 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/backends/gpu/transforms/recompute_fusion_side_outputs.h"
-#include "xla/hlo/ir/hlo_module.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 

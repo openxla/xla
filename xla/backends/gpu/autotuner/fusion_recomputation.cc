@@ -33,15 +33,19 @@ limitations under the License.
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
+#include "xla/backends/gpu/transforms/recompute_fusion_side_outputs.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/compiler.h"
 #include "xla/service/decision.h"
 #include "xla/service/dump.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/model/gpu_recomputation_cost_model.h"
 #include "xla/service/gpu_topology.h"
+#include "xla/stream_executor/device_address_allocator.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
@@ -52,8 +56,9 @@ absl::StatusOr<Decision> Evaluate(const FusionRecomputeVariants& variants,
                                   const Compiler::GpuTargetConfig& target,
                                   se::StreamExecutor* executor,
                                   se::DeviceAddressAllocator* allocator) {
-  if (executor == nullptr)
+  if (executor == nullptr) {
     return Decision::Forbid("requires a profiling device");
+  }
   auto compile = [&](const HloModule& source) {
     auto module = source.Clone();
     auto& debug = module->mutable_config().mutable_debug_options();
@@ -70,10 +75,14 @@ absl::StatusOr<Decision> Evaluate(const FusionRecomputeVariants& variants,
   ABSL_ASSIGN_OR_RETURN(auto after, compile(*variants.after));
   auto temp_bytes = [](Executable* executable) -> absl::StatusOr<int64_t> {
     const auto* gpu = dynamic_cast<GpuExecutable*>(executable);
-    if (!gpu) return absl::InternalError("expected a GPU executable");
+    if (!gpu) {
+      return absl::InternalError("expected a GPU executable");
+    }
     int64_t bytes = 0;
     for (const BufferAllocation& allocation : gpu->allocations()) {
-      if (allocation.IsPreallocatedTempBuffer()) bytes += allocation.size();
+      if (allocation.IsPreallocatedTempBuffer()) {
+        bytes += allocation.size();
+      }
     }
     return bytes;
   };
@@ -85,7 +94,9 @@ absl::StatusOr<Decision> Evaluate(const FusionRecomputeVariants& variants,
   auto profiler = GpuProfiler::Create(
       executor, {/*redzone_padding_bytes=*/256, /*should_init_buffers=*/true},
       allocator);
-  if (!profiler) return absl::InternalError("could not create GPU profiler");
+  if (!profiler) {
+    return absl::InternalError("could not create GPU profiler");
+  }
   ABSL_ASSIGN_OR_RETURN(auto inputs,
                         profiler->CreateInputBuffers(before.get()));
   // Verify all externally observable region outputs, not just the gradient.
@@ -185,7 +196,9 @@ RecomputeFusionSideOutputs::Evaluator MakeFusionRecomputationEvaluator(
         v.before->config().debug_options().SerializeAsString(), "\nBEFORE\n",
         v.before->ToString(print), "\nAFTER\n", v.after->ToString(print));
     auto found = cache->find(key);
-    if (found != cache->end()) return found->second;
+    if (found != cache->end()) {
+      return found->second;
+    }
     ABSL_ASSIGN_OR_RETURN(auto decision,
                           Evaluate(v, compiler, target, executor, allocator));
     cache->emplace(key, decision);

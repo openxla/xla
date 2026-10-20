@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/service/compilation_environments.h"
+#include "xla/service/decision.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/hlo_module_config.h"
@@ -172,7 +173,9 @@ std::optional<FusionRecomputeCandidate> MatchCandidate(
       producer, consumer, extraction, expression, {}};
   for (const HloInstruction* operand : expression->operands()) {
     HloInstruction* existing = matcher.Find(operand);
-    if (existing == nullptr) return std::nullopt;
+    if (existing == nullptr) {
+      return std::nullopt;
+    }
     candidate.operands.push_back(existing);
   }
   return candidate;
@@ -218,10 +221,12 @@ absl::StatusOr<FusionRecomputeVariants> ExtractFusionRecomputeVariants(
   std::function<void(HloInstruction*)> include =
       [&](HloInstruction* instruction) {
         if (!descendants.contains(instruction) ||
-            !region.insert(instruction).second)
+            !region.insert(instruction).second) {
           return;
-        for (HloInstruction* operand : instruction->operands())
+        }
+        for (HloInstruction* operand : instruction->operands()) {
           include(operand);
+        }
       };
   include(candidate.consumer);
   // Preserve producer outputs observable by users outside the region.
@@ -259,7 +264,9 @@ absl::StatusOr<FusionRecomputeVariants> ExtractFusionRecomputeVariants(
   int64_t parameter_number = 0;
   std::vector<HloInstruction*> outputs;
   for (HloInstruction* instruction : order) {
-    if (!region.contains(instruction)) continue;
+    if (!region.contains(instruction)) {
+      continue;
+    }
     std::vector<HloInstruction*> operands;
     for (HloInstruction* operand : instruction->operands()) {
       if (!clones.contains(operand)) {
@@ -340,10 +347,14 @@ absl::StatusOr<bool> RecomputeFusionSideOutputs::RunImpl(
          module->MakeNonfusionComputations(execution_threads)) {
       for (HloInstruction* instruction :
            computation->MakeInstructionPostOrder()) {
-        if (instruction->opcode() != HloOpcode::kGetTupleElement) continue;
+        if (instruction->opcode() != HloOpcode::kGetTupleElement) {
+          continue;
+        }
         const std::string key =
             absl::StrCat(computation->name(), ":", instruction->name());
-        if (attempted.contains(key)) continue;
+        if (attempted.contains(key)) {
+          continue;
+        }
         candidate = MatchCandidate(instruction->mutable_operand(0), instruction,
                                    min_bytes_);
         if (candidate) {
@@ -351,9 +362,13 @@ absl::StatusOr<bool> RecomputeFusionSideOutputs::RunImpl(
           break;
         }
       }
-      if (candidate) break;
+      if (candidate) {
+        break;
+      }
     }
-    if (!candidate) break;
+    if (!candidate) {
+      break;
+    }
     const std::string name(candidate->extraction->name());
     absl::StatusOr<FusionRecomputeVariants> variants =
         ExtractFusionRecomputeVariants(*candidate);

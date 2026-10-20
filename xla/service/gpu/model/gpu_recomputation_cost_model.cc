@@ -17,9 +17,12 @@ limitations under the License.
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 #include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "absl/time/time.h"
+#include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -31,6 +34,7 @@ limitations under the License.
 #include "xla/service/gpu/model/gpu_performance_model_base.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
@@ -54,12 +58,14 @@ absl::StatusOr<RecomputationEstimate> EstimateRecomputationRegion(
   CombinedGpuPerformanceModel model(
       device, fusion_cache, context,
       [](const Shape& shape) { return ShapeUtil::ByteSizeOf(shape, 8); },
-      debug.xla_gpu_experimental_enable_tiling_propagation(),
+      /*use_experimental_tiling=*/true,
       debug.xla_gpu_experimental_enable_same_shape_multi_output_fusion());
   RecomputationEstimate total;
   for (HloInstruction* instruction :
        module.entry_computation()->instructions()) {
-    if (instruction->opcode() != HloOpcode::kFusion) continue;
+    if (instruction->opcode() != HloOpcode::kFusion) {
+      continue;
+    }
     ABSL_ASSIGN_OR_RETURN(auto estimate, model.EstimateRunTimeForInstruction(
                                              instruction, &analysis));
     total.duration_ns += absl::ToDoubleNanoseconds(

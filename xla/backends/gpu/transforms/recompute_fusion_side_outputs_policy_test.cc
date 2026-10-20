@@ -18,7 +18,6 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "xla/backends/gpu/transforms/recompute_fusion_side_outputs.h"
-#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/decision.h"
 #include "xla/service/hlo_module_config.h"

@@ -1259,10 +1259,8 @@ xla_test(
         ":fusion_recomputation",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/backends/gpu/transforms:recompute_fusion_side_outputs",
-        "//xla/hlo/ir:hlo",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
-        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
 )
