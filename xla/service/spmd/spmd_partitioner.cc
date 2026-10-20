@@ -8545,7 +8545,10 @@ void SpmdPartitioningVisitor::SetPartitionedHlo(
     const HloInstruction* hlo, PartitionedHlo&& partitioned_hlo) {
   CHECK_EQ(partitioned_instructions_.count(hlo), 0);
   const HloSharding& sharding = partitioned_hlo.sharding();
-  if (sharding.IsManual()) {
+  if (hlo->original_value() != nullptr &&
+      hlo->original_value()->is_synthetic_call()) {
+    partitioned_hlo.hlo()->set_original_value(hlo->original_value());
+  } else if (sharding.IsManual()) {
     // Skip manual sharding because our toolings currently don't support it.
     // TODO(b/444750067): handle manual sharding.
     partitioned_hlo.hlo()->set_original_value(nullptr);

@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/stack_frames.h"
 #include "xla/hlo/pass/hlo_pass_context.h"
@@ -80,6 +81,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tuple_tree.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -511,6 +513,11 @@ absl::StatusOr<bool> eraseInlineableAttrForShardyManualComputations(
                        value == "auto")
               << "Unexpected inlineable attribute value: " << value;
           instruction->erase_frontend_attribute(kXlaInlineableAttr);
+          if (instruction->original_value() != nullptr) {
+            instruction->set_original_value(std::make_shared<OriginalValue>(
+                TupleTree<std::optional<OriginalArray>>(),
+                /*call_hierarchy=*/""));
+          }
           // TODO(b/436603025). CallInliner do not inline the Shardy related
           // manual computations based on the callee name. We have to rename the
           // callee to a name such that it can be inlined. If we can remove the
@@ -523,6 +530,24 @@ absl::StatusOr<bool> eraseInlineableAttrForShardyManualComputations(
     }
   }
   return changed;
+}
+
+void recordOriginalValueRecoveryForIdentityShardingCustomCalls(
+    HloModule* module) {
+  for (HloComputation* computation : module->computations()) {
+    for (HloInstruction* instruction :
+         computation->MakeInstructionPostOrder()) {
+      if (instruction->operand_count() == 1 &&
+          ShapeUtil::EqualStructure(instruction->shape(),
+                                    instruction->operand(0)->shape()) &&
+          (instruction->IsCustomCall(kShardingCustomCallTargetName.str()) ||
+           instruction->IsCustomCall(
+               kPropagationBarrierCustomCallTargetName.str()))) {
+        module->mutable_original_value_recovery_table().AddRecoveryComputation(
+            instruction, instruction->mutable_operand(0));
+      }
+    }
+  }
 }
 
 }  // namespace
@@ -551,6 +576,10 @@ absl::StatusOr<bool> ShardyXLA::RunImpl(
   if (hloModule->use_auto_spmd_partitioning() ||
       hloModule->config().use_auto_spmd_partitioning()) {
     hloModule->set_use_auto_spmd_partitioning(true);
+  }
+
+  if (runSdyShardingPropagation) {
+    recordOriginalValueRecoveryForIdentityShardingCustomCalls(hloModule);
   }
 
   // HLO -> StableHLO
