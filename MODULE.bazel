@@ -16,7 +16,7 @@ bazel_dep(name = "boringssl", version = "0.20250818.0")
 bazel_dep(name = "curl", version = "8.22.0")
 bazel_dep(name = "flatbuffers", version = "25.9.23")
 bazel_dep(name = "google_benchmark", version = "1.9.4", repo_name = "com_google_benchmark")
-bazel_dep(name = "googletest", version = "1.17.0", repo_name = "com_google_googletest")
+bazel_dep(name = "googletest", version = "1.18.0", repo_name = "com_google_googletest")
 bazel_dep(name = "grpc", version = "1.81.0")
 bazel_dep(name = "gutil", version = "20260309.0.bcr.1", repo_name = "com_google_gutil")
 bazel_dep(name = "highway", version = "1.4.0")
@@ -93,16 +93,16 @@ single_version_override(
     version = "34.1",
 )
 
-# Use an unreleased version of googletest
 archive_override(
     module_name = "googletest",
+    integrity = "sha256-bjGRwUVUaLP8NaQX+1ZcHFBxruG35/heMM9IqY032LU=",
     patch_strip = 1,
     patches = [
         "//third_party/googletest:0001-Add-ASSERT_OK-EXPECT_OK-ASSERT_OK_AND_ASSIGN-macros.patch",
         "//third_party/googletest:googletest.patch",
     ],
-    strip_prefix = "googletest-28e9d1f26771c6517c3b4be10254887673c94018",
-    urls = ["https://github.com/google/googletest/archive/28e9d1f26771c6517c3b4be10254887673c94018.zip"],
+    strip_prefix = "googletest-1.18.0",
+    urls = ["https://github.com/google/googletest/archive/refs/tags/v1.18.0.tar.gz"],
 )
 
 archive_override(
