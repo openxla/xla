@@ -21,7 +21,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/recompute_fusion_side_outputs.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/decision.h"
 #include "xla/service/hlo_module_config.h"
@@ -115,10 +114,10 @@ ENTRY main)"},
   ASSERT_EQ(other_thread->execution_thread(), "other");
   ASSERT_NE(other_thread->GetInstructionWithName("dead"), nullptr);
   const std::string original = other_thread->ToString();
-  const std::string saved_name = module->entry_computation()
-                                     ->GetInstructionWithName("consumer")
-                                     ->operand(0)
-                                     ->name();
+  const std::string saved_name(module->entry_computation()
+                                   ->GetInstructionWithName("consumer")
+                                   ->operand(0)
+                                   ->name());
   int evaluated = 0;
   RecomputeFusionSideOutputs pass(
       [&](const FusionRecomputeVariants&) {

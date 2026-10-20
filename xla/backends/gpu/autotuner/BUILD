@@ -1264,6 +1264,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
+        "@tsl//tsl/platform:protobuf",
     ],
 )
 

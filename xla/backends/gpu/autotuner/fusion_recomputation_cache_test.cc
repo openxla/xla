@@ -164,6 +164,35 @@ TEST_F(FusionRecomputationCacheTest, DistinguishesBothGraphsAndDebugOptions) {
   EXPECT_EQ(evaluations, 5);
 }
 
+TEST_F(FusionRecomputationCacheTest, IgnoresDebugOptionMapInsertionOrder) {
+  ASSERT_OK_AND_ASSIGN(auto first, Extract(RegionHlo()));
+  ASSERT_OK_AND_ASSIGN(auto reordered, Extract(RegionHlo()));
+  auto& first_options = *first.before->mutable_config()
+                             .mutable_debug_options()
+                             .mutable_xla_backend_extra_options();
+  first_options.clear();
+  first_options["a"] = "1";
+  first_options["b"] = "2";
+  auto& reordered_options = *reordered.before->mutable_config()
+                                 .mutable_debug_options()
+                                 .mutable_xla_backend_extra_options();
+  reordered_options.clear();
+  reordered_options["b"] = "2";
+  reordered_options["a"] = "1";
+  int evaluations = 0;
+  auto evaluate =
+      CacheFusionRecomputationEvaluator([&](const FusionRecomputeVariants&) {
+        ++evaluations;
+        return Decision::Allow();
+      });
+  EXPECT_OK(evaluate(first).status());
+  EXPECT_OK(evaluate(reordered).status());
+  EXPECT_EQ(evaluations, 1);
+  reordered_options["a"] = "3";
+  EXPECT_OK(evaluate(reordered).status());
+  EXPECT_EQ(evaluations, 2);
+}
+
 TEST_F(FusionRecomputationCacheTest, PreservesExecutionThreads) {
   ASSERT_OK_AND_ASSIGN(auto region, Extract(RegionHlo()));
   int evaluations = 0;

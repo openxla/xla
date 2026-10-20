@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/time/time.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
@@ -226,8 +227,13 @@ RecomputeFusionSideOutputs::Evaluator CacheFusionRecomputationEvaluator(
                      .set_print_large_constants(true);
     std::string key;
     for (const HloModule* module : {v.before.get(), v.after.get()}) {
-      const std::string debug =
-          module->config().debug_options().SerializeAsString();
+      std::string debug;
+      // DebugOptions contains maps, whose default serialization order can
+      // differ between equivalent extractions.
+      if (!tsl::SerializeToStringDeterministic(module->config().debug_options(),
+                                               &debug)) {
+        return absl::InternalError("Failed to serialize recomputation options");
+      }
       const std::string graph = module->ToString(print);
       absl::StrAppend(&key, debug.size(), ":", debug, graph.size(), ":", graph);
       // print_ids(false) also suppresses execution threads. Preserve them
