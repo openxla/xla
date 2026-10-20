@@ -96,7 +96,8 @@ class SchedulerMemoryFencingFallbackTest
         [](const BufferValue& value) {
           return ShapeUtil::ByteSizeOf(value.shape(), /*pointer_size=*/8);
         },
-        &alias_info_, [](LogicalBuffer::Color) { return 256; });
+        &alias_info_, [](LogicalBuffer::Color) { return 256; },
+        BufferAssigner::Options{});
   }
 
   AliasInfo alias_info_;
