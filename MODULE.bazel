@@ -23,7 +23,7 @@ bazel_dep(name = "highway", version = "1.4.0")
 bazel_dep(name = "jsoncpp", version = "1.9.6.bcr.2", repo_name = "jsoncpp_git")
 bazel_dep(name = "or-tools", version = "9.12", repo_name = "com_google_ortools")
 bazel_dep(name = "platforms", version = "1.1.0")
-bazel_dep(name = "protobuf", version = "32.1", repo_name = "com_google_protobuf")
+bazel_dep(name = "protobuf", version = "34.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "pybind11_abseil", version = "202402.0")
 bazel_dep(name = "pybind11_bazel", version = "3.0.0")
 bazel_dep(name = "pybind11_protobuf", version = "0.0.0-20250210-f02a2b7")
@@ -97,7 +97,7 @@ single_version_override(
         # The following patch is needed to fix package loading for `bazel query "deps(//xla/...)"`.
         "//third_party/protobuf:fix_python_dist_package.patch",
     ],
-    version = "32.1",
+    version = "34.1",
 )
 
 # Use an unreleased version of googletest
