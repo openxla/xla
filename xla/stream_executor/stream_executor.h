@@ -230,6 +230,11 @@ class StreamExecutor {
     return absl::UnimplementedError("Not implemented for this executor.");
   }
 
+  // Returns true if HostMemoryUnregister may synchronize with work in flight
+  // on this executor's device (e.g. kernels or collectives that may in turn
+  // wait on other devices). If so, callers should avoid unregistering host
+  // memory concurrently with launches on this device.
+  virtual bool HostMemoryUnregisterMaySynchronize() const { return false; }
   virtual bool HostMemoryUnregister(void* location) { return false; };
   virtual bool HostMemoryRegister(void* location, uint64_t size) {
     return false;

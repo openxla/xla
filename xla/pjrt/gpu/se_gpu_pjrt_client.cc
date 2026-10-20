@@ -232,17 +232,20 @@ CreateSEGpuTopology(absl::string_view platform_name,
       std::move(gpu_topology), attrs, target_config);
 }
 
-static se::StreamExecutor* GetFirstExecutor(
+namespace {
+
+LocalDeviceState* GetFirstDevice(
     absl::Span<const std::unique_ptr<LocalDeviceState>> local_device_states) {
-  for (const auto& state : local_device_states) {
-    if (state != nullptr) {
-      return state->executor();
-    }
-  }
-  return nullptr;
+  auto it = absl::c_find_if(local_device_states,
+                            [](const auto& state) { return state != nullptr; });
+  return it != local_device_states.end() ? it->get() : nullptr;
 }
 
-namespace {
+se::StreamExecutor* GetFirstExecutor(
+    absl::Span<const std::unique_ptr<LocalDeviceState>> local_device_states) {
+  LocalDeviceState* first_device = GetFirstDevice(local_device_states);
+  return first_device ? first_device->executor() : nullptr;
+}
 
 // Derives the platform version string (e.g. "cuda 12080") from the runtime
 // device description, independent of compile-time macros.
@@ -2214,8 +2217,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
                                            error_already_fired);
   }
 
-  se::StreamExecutor* first_executor =
-      GetFirstExecutor(devices_and_topology.local_device_states);
+  LocalDeviceState* first_device =
+      GetFirstDevice(devices_and_topology.local_device_states);
 
   const bool confidential_computing_enabled =
       devices_and_topology.topology->confidential_computing_enabled();
@@ -2247,24 +2250,14 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       HostMemoryAllocator::Options allocator_options;
       allocator_options.alignment = tsl::Allocator::kAllocatorAlignment;
       allocator_options.map_fn =
-          [first_executor](std::optional<LocalDeviceId> local_device_id,
-                           void* data, size_t size) {
-            bool success = first_executor->HostMemoryRegister(data, size);
-            if (!success) {
-              return absl::InternalError(absl::StrFormat(
-                  "Failed to register host memory at address: %ps", data));
-            }
-            return absl::OkStatus();
+          [first_device](std::optional<LocalDeviceId> local_device_id,
+                         void* data, size_t size) {
+            return first_device->HostMemoryRegister(data, size);
           };
       allocator_options.unmap_fn =
-          [first_executor](std::optional<LocalDeviceId> local_device_id,
-                           void* data) {
-            bool success = first_executor->HostMemoryUnregister(data);
-            if (!success) {
-              return absl::InternalError(absl::StrFormat(
-                  "Failed to unregister host memory at address: %ps", data));
-            }
-            return absl::OkStatus();
+          [first_device](std::optional<LocalDeviceId> local_device_id,
+                         void* data) {
+            return first_device->HostMemoryUnregister(data);
           };
       ABSL_ASSIGN_OR_RETURN(
           host_memory_allocator,
@@ -2274,7 +2267,8 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
   if (host_memory_allocator == nullptr) {
     ABSL_ASSIGN_OR_RETURN(
         auto allocator,
-        GetGpuHostAllocator(first_executor, preallocate_host_memory));
+        GetGpuHostAllocator(first_device ? first_device->executor() : nullptr,
+                            preallocate_host_memory));
     host_memory_allocator = std::make_unique<BasicHostMemoryAllocator>(
         std::move(allocator), tsl::Allocator::kAllocatorAlignment);
   }
@@ -2285,9 +2279,9 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
       xla_client, std::move(host_memory_allocator),
       options.should_stage_host_to_device_transfers,
       confidential_computing_enabled,
-      /*async_work_runner=*/nullptr, first_executor, kv_store,
-      preallocate_device_memory, options.abort_collectives_on_failure,
-      std::move(gpu_run_options), std::move(memory_registration));
+      /*async_work_runner=*/nullptr, kv_store, preallocate_device_memory,
+      options.abort_collectives_on_failure, std::move(gpu_run_options),
+      std::move(memory_registration));
   VLOG(1) << absl::StreamFormat(
       "Constructed StreamExecutor GPU client: #devices=%d #num_nodes=%d",
       devices_and_topology.devices.size(), options.num_nodes);
@@ -2348,17 +2342,14 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetSharedStreamExecutorGpuClient(
     }
   }
 
-  se::StreamExecutor* first_executor =
-      GetFirstExecutor(devices_and_topology.local_device_states);
   auto raw_client = std::make_unique<StreamExecutorGpuRawClient>(
       tsl::Fingerprint64(platform_name),
       std::move(devices_and_topology.local_device_states), std::move(allocator),
       local_client, std::move(host_memory_allocator),
       /*should_stage_host_to_device_transfers=*/true,
-      confidential_computing_enabled,
-      /*async_work_runner=*/nullptr, first_executor, kv_store,
-      /*cache_fabric_handles=*/false,
-      /*abort_collectives_on_failure=*/false, std::move(gpu_run_options));
+      confidential_computing_enabled, /*async_work_runner=*/nullptr, kv_store,
+      /*cache_fabric_handles=*/false, /*abort_collectives_on_failure=*/false,
+      std::move(gpu_run_options));
   VLOG(1) << absl::StreamFormat(
       "Constructed StreamExecutor GPU client: #devices=%d #num_nodes=%d",
       devices_and_topology.devices.size(), options.num_nodes);

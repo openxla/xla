@@ -127,6 +127,25 @@ class LocalDeviceState {
                    DeviceErrorCallback device_error_callback = nullptr);
   virtual ~LocalDeviceState();
 
+  // Synchronizes all stream activity, destroys all streams and events, and
+  // joins all worker threads. Safe to call before ~LocalDeviceState();
+  // subsequent calls (including from ~LocalDeviceState()) are no-ops.
+  void Destroy();
+
+  // Waits for all closures currently scheduled on execute_thread_ and
+  // async_dispatch_thread_ to finish, without stopping the threads or
+  // synchronizing device streams. The threads keep accepting new work
+  // afterwards; use Destroy() to join them.
+  void DrainDispatchThreads();
+
+  // Registers/unregisters host memory for DMA transfers on this device's
+  // StreamExecutor. If `unregister_host_memory_on_dispatch_thread_` is set,
+  // HostMemoryUnregister runs on this device's dispatch thread
+  // (async_dispatch_thread_ if present, otherwise execute_thread_) and blocks
+  // until it completes.
+  absl::Status HostMemoryRegister(void* data, size_t size);
+  absl::Status HostMemoryUnregister(void* data);
+
   se::StreamExecutor* executor() const { return executor_; }
 
   LocalDeviceId local_device_id() { return local_device_id_; }
@@ -220,8 +239,10 @@ class LocalDeviceState {
 
   std::optional<Semaphore>& compute_semaphore() { return compute_semaphore_; }
 
-  // Whether to allow deleting a buffer before the operation fulfilling the
-  // buffer is scheduled by the host.
+  bool unregister_host_memory_on_dispatch_thread() const {
+    return unregister_host_memory_on_dispatch_thread_;
+  }
+
   bool allow_delete_before_fulfill() const {
     return allow_delete_before_fulfill_;
   }
@@ -307,7 +328,16 @@ class LocalDeviceState {
   // may wait for other threads to schedule writes to buffers.
   std::unique_ptr<WorkerThread> cleanup_thread_;
 
+  // Whether to allow deleting a buffer before the operation fulfilling the
+  // buffer is scheduled by the host.
   bool allow_delete_before_fulfill_ = true;
+
+  // Whether HostMemoryUnregister runs on the device's dispatch thread. True if
+  // the StreamExecutor reports that HostMemoryUnregister may synchronize with
+  // in-flight device work; can be overridden with the
+  // XLA_PJRT_GPU_UNREGISTER_HOST_MEMORY_ON_DISPATCH_THREAD environment
+  // variable.
+  bool unregister_host_memory_on_dispatch_thread_ = false;
 
   std::atomic<size_t> next_compute_stream_sync_point_{0};
   size_t base_compute_event_sequence_id_ ABSL_GUARDED_BY(mu_) = 0;
