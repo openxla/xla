@@ -47,6 +47,7 @@ namespace xla {
 namespace gpu {
 
 namespace m = ::xla::match;
+using ::absl_testing::IsOkAndHolds;
 
 class MultiOutputFusionTest : public HloHardwareIndependentTestBase {
  public:
@@ -143,7 +144,7 @@ TEST_F(MultiOutputFusionTest, NoSiblingFusionOfColumnReductionAndElementwise) {
       elementwise_fusion = f32[4096,768]{1,0} fusion(p0), kind=kLoop, calls=fused_elementwise
       ROOT root = (f32[768]{0}, f32[4096,768]{1,0}) tuple(reduce_fusion, elementwise_fusion)
     })")));
-  EXPECT_THAT(mof_.Run(module.get()), absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(mof_.Run(module.get()), IsOkAndHolds(false));
 }
 
 TEST_F(MultiOutputFusionTest,
@@ -170,7 +171,40 @@ TEST_F(MultiOutputFusionTest,
       elementwise_fusion = f32[128,256,768]{2,1,0} fusion(p0), kind=kLoop, calls=fused_elementwise
       ROOT root = (f32[128,768]{1,0}, f32[128,256,768]{2,1,0}) tuple(reduce_fusion, elementwise_fusion)
     })")));
-  ASSERT_THAT(mof_.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  ASSERT_THAT(mof_.Run(module.get()), IsOkAndHolds(true));
+  SCOPED_TRACE(module->ToString());
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction()->operand(0)->operand(0);
+  ASSERT_TRUE(fusion->IsMultiOutputFusion());
+  EXPECT_THAT(fusion->fused_expression_root(),
+              GmockMatch(m::Tuple(m::Reduce(), m::Sqrt())));
+}
+
+TEST_F(MultiOutputFusionTest,
+       SiblingFusionOfSmallColumnReductionAndElementwise) {
+  // The column reduction runs on a few blocks, but the sqrt alone would not
+  // fill the GPU either, so merging only saves a kernel launch and a read.
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
+    fused_reduce {
+      p0.1 = f32[64,64]{1,0} parameter(0)
+      const.1 = f32[] constant(0)
+      ROOT reduce = f32[64]{0} reduce(p0.1, const.1), dimensions={0}, to_apply=scalar_add_computation
+    }
+
+    fused_elementwise {
+      p0.2 = f32[64,64]{1,0} parameter(0)
+      ROOT sqrt = f32[64,64]{1,0} sqrt(p0.2)
+    }
+
+    ENTRY entry {
+      p0 = f32[64,64]{1,0} parameter(0)
+      reduce_fusion = f32[64]{0} fusion(p0), kind=kInput, calls=fused_reduce
+      elementwise_fusion = f32[64,64]{1,0} fusion(p0), kind=kLoop, calls=fused_elementwise
+      ROOT root = (f32[64]{0}, f32[64,64]{1,0}) tuple(reduce_fusion, elementwise_fusion)
+    })")));
+  ASSERT_THAT(mof_.Run(module.get()), IsOkAndHolds(true));
   SCOPED_TRACE(module->ToString());
   const HloInstruction* fusion =
       module->entry_computation()->root_instruction()->operand(0)->operand(0);

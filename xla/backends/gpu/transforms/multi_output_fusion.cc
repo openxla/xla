@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_fusible.h"
+#include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/gpu_performance_model.h"
@@ -49,6 +50,7 @@ limitations under the License.
 #include "xla/service/instruction_fusion.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -309,40 +311,51 @@ bool IsSiblingFusionCandidate(const HloInstruction* instr,
 
 // A column reduction emitted in one pass gets a grid sized for its output,
 // often far fewer blocks than cores. Merging a sibling that is not a reduction
-// runs the sibling on that grid too, which is slower than two kernels. Grids
-// that fill every core still merge well.
+// runs the sibling on that grid too, which is slower than two kernels, unless
+// the sibling is too small to fill the GPU on its own either. Grids that fill
+// every core still merge well.
 FusionDecision ColumnReductionDoesNotStarveSibling(
     const HloInstruction& sibling_consumer_1,
     const HloInstruction& sibling_consumer_2,
     const se::DeviceDescription& device_info,
     HloFusionAnalysisCache* fusion_analysis_cache) {
-  for (auto [reduction, other] :
-       {std::pair(&sibling_consumer_1, &sibling_consumer_2),
-        std::pair(&sibling_consumer_2, &sibling_consumer_1)}) {
-    if (!IsInputFusibleReduction(*reduction, device_info) ||
-        IsInputFusibleReduction(*other, device_info)) {
-      continue;
-    }
-    const HloInstruction* hero =
-        GetRealHeroForMultiOutputFusion(*reduction, device_info);
-    const ReductionDimensions reduction_dimensions =
-        GetReductionKindAndContiguousComponents(*hero);
-    // TreeReductionRewriter has already split reductions that are not race
-    // free. This guard only keeps unsplit input, e.g. in tests, away from the
-    // emitter query.
-    if (reduction_dimensions.is_row_reduction ||
-        !ReductionIsRaceFree(reduction_dimensions, device_info)) {
-      continue;
-    }
-    const int64_t num_blocks =
-        GpuPerformanceModelBase::EstimateFusionLaunchDimensions(
-            fusion_analysis_cache->Get(*reduction))
-            .num_blocks();
-    if (num_blocks < device_info.core_count()) {
-      return FusionDecision::Forbid(absl::StrCat(
-          "column reduction ", reduction->name(), " runs on ", num_blocks,
-          " blocks, too few for sibling ", other->name()));
-    }
+  const HloInstruction* reduction = &sibling_consumer_1;
+  const HloInstruction* other = &sibling_consumer_2;
+  if (fusion_analysis_cache->Get(*reduction).FindHeroReduction() == nullptr) {
+    std::swap(reduction, other);
+  }
+  const HloFusionAnalysis& reduction_analysis =
+      fusion_analysis_cache->Get(*reduction);
+  const HloInstruction* hero = reduction_analysis.FindHeroReduction();
+  if (hero == nullptr ||
+      fusion_analysis_cache->Get(*other).FindHeroReduction() != nullptr) {
+    return FusionDecision::Allow();
+  }
+  const ReductionDimensions reduction_dimensions =
+      GetReductionKindAndContiguousComponents(*hero);
+  // TreeReductionRewriter has already split reductions that are not race
+  // free. This guard only keeps unsplit input, e.g. in tests, away from the
+  // emitter query.
+  if (reduction_dimensions.is_row_reduction ||
+      !ReductionIsRaceFree(reduction_dimensions, device_info)) {
+    return FusionDecision::Allow();
+  }
+  // The sibling joins a single reduction group, so only one blockIdx.z slice
+  // of the grid runs it.
+  const se::BlockDim reduction_grid =
+      GpuPerformanceModelBase::EstimateFusionLaunchDimensions(
+          reduction_analysis)
+          .block_counts();
+  const int64_t num_blocks = reduction_grid.x * reduction_grid.y;
+  const int64_t other_num_blocks =
+      GpuPerformanceModelBase::EstimateFusionLaunchDimensions(
+          fusion_analysis_cache->Get(*other))
+          .num_blocks();
+  if (num_blocks < device_info.core_count() &&
+      other_num_blocks >= device_info.core_count()) {
+    return FusionDecision::Forbid(absl::StrCat(
+        "column reduction ", reduction->name(), " runs on ", num_blocks,
+        " blocks, too few for sibling ", other->name()));
   }
   return FusionDecision::Allow();
 }
@@ -372,13 +385,13 @@ FusionDecision CanFuseSiblings(const HloInstruction& sibling_consumer_1,
   RETURN_IF_NOT_FUSIBLE(ParameterSlicesAreNonOverlapping(
       sibling_consumer_1, sibling_consumer_2, &common_producer));
 
+  // These checks should be last, as they may be expensive.
+  RETURN_IF_NOT_FUSIBLE(LegalToFuse(sibling_consumer_1, sibling_consumer_2,
+                                    device_info, fusion_info_cache));
+  // Builds a fusion emitter, so it only runs for pairs that are legal to fuse.
   RETURN_IF_NOT_FUSIBLE(ColumnReductionDoesNotStarveSibling(
       sibling_consumer_1, sibling_consumer_2, device_info,
       fusion_analysis_cache));
-
-  // This check should be last, as it may be expensive.
-  RETURN_IF_NOT_FUSIBLE(LegalToFuse(sibling_consumer_1, sibling_consumer_2,
-                                    device_info, fusion_info_cache));
   return FusionDecision::Allow();
 }
 
