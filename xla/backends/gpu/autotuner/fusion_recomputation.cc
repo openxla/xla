@@ -31,7 +31,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/time/time.h"
-#include "tsl/platform/protobuf.h"
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
@@ -49,6 +48,7 @@ limitations under the License.
 #include "xla/service/gpu_topology.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
