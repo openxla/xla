@@ -2681,7 +2681,11 @@ absl::Status HloDataflowPropagation::ForEachCallerBoundaryWithStatus(
   if (callee == nullptr) {
     return absl::OkStatus();
   }
-  for (HloInstruction* caller : callee->caller_instructions()) {
+  auto callers = callee->caller_instructions();
+  absl::c_sort(callers, [](const HloInstruction* a, const HloInstruction* b) {
+    return a->unique_id() < b->unique_id();
+  });
+  for (HloInstruction* caller : callers) {
     ABSL_RETURN_IF_ERROR(ForEachCallBoundaryWithStatus(
         caller,
         [&](const HloCallBoundary& boundary) -> absl::Status {
@@ -2773,7 +2777,10 @@ ShapeIndex HloDataflowPropagation::GetForwardedUseOutputIndex(
     const HloUse& use) {
   ShapeIndex output_index;
   if (use.instruction->opcode() == HloOpcode::kTuple ||
-      (use.instruction->opcode() == HloOpcode::kAllReduce &&
+      ((use.instruction->opcode() == HloOpcode::kAllReduce ||
+        use.instruction->opcode() == HloOpcode::kAllReduceStart ||
+        use.instruction->opcode() == HloOpcode::kAllGather ||
+        use.instruction->opcode() == HloOpcode::kReduceScatter) &&
        use.instruction->shape().IsTuple())) {
     output_index.push_back(use.operand_number);
     output_index.insert(output_index.end(), use.operand_index.begin(),
@@ -2895,9 +2902,9 @@ absl::Status HloDataflowPropagation::PropagateParameterToCallers(
           return absl::OkStatus();
         }
         if (caller->opcode() == HloOpcode::kWhile) {
-          return PropagateWhileBoundary(caller, index, param, allow_override,
-                                        changed,
-                                        /*check_caller_to_body=*/false);
+          return PropagateWhileBoundary(
+              caller, index, param, allow_override, changed,
+              /*check_caller_to_body=*/param->parent() != caller->while_body());
         }
         return PropagateAcrossEdge(
             param, index, boundary.caller_operand(param_no), index,
