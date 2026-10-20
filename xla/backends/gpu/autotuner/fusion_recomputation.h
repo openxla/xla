@@ -22,6 +22,14 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 
 namespace xla::gpu {
+// Caches successful decisions for equivalent before/after regions, ignoring
+// instruction and computation names. The wrapped evaluator must use a fixed
+// compiler, device and profiling policy for the lifetime of the cache. Errors
+// are not cached. Keeping this wrapper separate also permits deterministic
+// tests that count evaluations without compiling or profiling GPU kernels.
+RecomputeFusionSideOutputs::Evaluator CacheFusionRecomputationEvaluator(
+    RecomputeFusionSideOutputs::Evaluator evaluator);
+
 // The evaluator and its cache are scoped to ONE compilation on ONE device.
 // Compiler/target/executor must outlive the returned function. No cross-process
 // decisions are reused: codegen, flags and device changes require
