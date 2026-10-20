@@ -1544,6 +1544,8 @@ FusionDecision ShouldFuseOperand(HloInstruction* operand,
             "Not fusing power op with multiple users.");
       }
       break;
+    case HloOpcode::kDynamicSlice:
+      return FusionDecision::Allow();
     default:
       break;
   }
