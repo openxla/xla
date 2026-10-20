@@ -804,7 +804,6 @@ ENTRY test {
       source_target_pairs={{0,2},{2,4},{1,3},{3,5}},
       backend_config={
           "operation_queue_id":"0",
-          "wait_on_operation_queues":[],
           "collective_backend_config":{
               "is_sync":false,
               "is_pipelined":false,
