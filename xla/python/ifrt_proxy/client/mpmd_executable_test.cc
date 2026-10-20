@@ -162,7 +162,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdAddressableDevicesSuccess) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/2, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/devices_map,
       /*fingerprint=*/"fingerprint",
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
@@ -178,7 +178,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdAddressableDevicesError) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/2, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{},
       /*mpmd_addressable_devices=*/absl::InternalError("injected error"),
       /*fingerprint=*/"fingerprint",
@@ -196,7 +196,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdAddressableDevicesVersionCheck) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/2, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{},
       /*mpmd_addressable_devices=*/absl::InternalError("injected error"),
       /*fingerprint=*/"fingerprint",
@@ -225,7 +225,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCompiledMemoryStatsSuccess) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -248,7 +248,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCompiledMemoryStatsRpcError) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -273,7 +273,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCompiledMemoryStatsVersionCheck) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -289,7 +289,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdHloModules) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -328,7 +328,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCostAnalysisSuccess) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -355,7 +355,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCostAnalysisRpcError) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",
@@ -379,7 +379,7 @@ TEST_F(MpmdLoadedExecutableTest, GetMpmdCostAnalysisVersionCheck) {
 
   MpmdLoadedExecutable executable(
       &client_, rpc_helper_, /*handle=*/1234, /*name=*/"mpmd_foo",
-      /*num_devices=*/1, /*devices=*/{},
+      /*devices=*/{},
       /*addressable_devices=*/{}, /*mpmd_addressable_devices=*/
       absl::flat_hash_map<std::string, std::vector<xla::ifrt::Device*>>(),
       /*fingerprint=*/"fingerprint",

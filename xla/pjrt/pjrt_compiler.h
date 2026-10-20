@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -44,6 +45,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_relocatable.h"
 #include "xla/pjrt/proto/pjrt_partial_program.pb.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/runtime/chip_id.h"
@@ -181,6 +183,13 @@ class PjRtCompilerRegistry {
   absl::StatusOr<PjRtCompiler*> GetCompiler(absl::string_view platform_name,
                                             absl::string_view variant_name);
 
+  // Returns true if a compiler instance or a compiler factory is registered
+  // for the given platform and variant. Unlike GetCompiler(), this never
+  // instantiates the compiler.
+  bool IsCompilerRegistered(absl::string_view platform_name,
+                            absl::string_view variant_name)
+      ABSL_LOCKS_EXCLUDED(compiler_mutex_, factory_mutex_);
+
   // Explicitly initializes a compiler with a given variant.
   absl::Status InitializeVariant(absl::string_view platform_name,
                                  absl::string_view variant_name);
@@ -245,6 +254,12 @@ absl::Status PjRtInitializeCompilerVariant(absl::string_view platform_name,
 
 // Initializes all compiler variants.
 absl::Status PjRtInitializeCompilerVariants();
+
+// Returns true if a compiler or a compiler factory is registered
+// for the given platform and variant, i.e. if the variant can be served by
+// this binary. Does not instantiate the compiler.
+bool PjRtIsCompilerVariantRegistered(absl::string_view platform_name,
+                                     absl::string_view variant_name);
 
 class PjRtClient;
 
@@ -544,7 +559,8 @@ class PjRtCompiler {
   virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> DeserializeExecutable(
       const PjRtTopologyDescription& topology,
       riegeli::Any<riegeli::Reader*> reader,
-      std::optional<CompileOptions>&& options) {
+      std::optional<CompileOptions>&& options,
+      bool executable_compatibility_check_on_deserialization) {
     return absl::UnimplementedError(
         absl::StrCat("DeserializeExecutable is not implemented for: ",
                      topology.platform_name(), "."));
@@ -598,7 +614,8 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCompile(
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtDeserializeExecutable(
     const PjRtTopologyDescription& topology,
     riegeli::Any<riegeli::Reader*> reader,
-    std::optional<CompileOptions> options = std::nullopt);
+    std::optional<CompileOptions> options = std::nullopt,
+    bool executable_compatibility_check_on_deserialization = true);
 
 // Stores a compilation phase's compiler and validator functions.
 // This struct bundles the essential functional components required to define
@@ -675,6 +692,46 @@ class PjRtPhaseCompiler : public PjRtCompiler {
       const std::string& serialized_topology) override {
     return absl::UnimplementedError(
         "DeserializePjRtTopologyDescription is not implemented.");
+  }
+
+  // Compiles a StableHLO module to a relocatable.
+  //
+  // See LinkRelocatables for how to use is_entrypoint.
+  //
+  // Implementations of `PjRtPhaseCompiler` are not required to implement
+  // this method, but is grouped here because a phased compiler is a
+  // prerequisite for precompiling modules at all.
+  virtual absl::StatusOr<std::unique_ptr<PjRtRelocatable>> CompileToRelocatable(
+      CompileOptions options, MaybeOwningMlirModule module,
+      const PjRtTopologyDescription& topology, absl::string_view name,
+      bool is_entrypoint, PjRtClient* client) {
+    return absl::UnimplementedError("CompileToRelocatable is not implemented.");
+  }
+
+  // Deserializes a relocatable into a PjRtRelocatable.
+  //
+  // Implementations of `PjRtPhaseCompiler` are not required to implement
+  // this method, but is grouped here because a phased compiler is a
+  // prerequisite for precompiling modules at all.
+  virtual absl::StatusOr<std::unique_ptr<PjRtRelocatable>>
+  DeserializeRelocatable(absl::string_view serialized) const {
+    return absl::UnimplementedError(
+        "DeserializeRelocatable is not implemented.");
+  }
+
+  // Links the provided relocatables into an executable.
+  //
+  // The entrypoint relocatable must have been compiled with is_entrypoint=true,
+  // while the dependencies must have been compiled with is_entrypoint=false.
+  //
+  // Implementations of `PjRtPhaseCompiler` are not required to implement
+  // this method, but is grouped here because a phased compiler is a
+  // prerequisite for having a link phase at all.
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> LinkRelocatables(
+      CompileOptions options, const PjRtTopologyDescription& topology,
+      std::shared_ptr<const PjRtRelocatable> entrypoint,
+      std::vector<std::shared_ptr<const PjRtRelocatable>> dependencies) {
+    return absl::UnimplementedError("LinkRelocatables is not implemented.");
   }
 
   PjRtPhaseCompiler* AsPhaseCompiler() override { return this; }

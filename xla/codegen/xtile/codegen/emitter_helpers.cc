@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -41,7 +40,6 @@ limitations under the License.
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -201,8 +199,14 @@ mlir::Value OnesLike(mlir::ImplicitLocOpBuilder& b, mlir::Type type) {
   return cst;
 }
 
-Value ReducePrecision(mlir::ImplicitLocOpBuilder& b, const HloInstruction& hlo,
-                      Value value) {
+absl::StatusOr<Value> ReducePrecision(mlir::ImplicitLocOpBuilder& b,
+                                      const HloInstruction& hlo, Value value) {
+  // The lowering assumes an IEEE-like layout with a sign bit and a mantissa,
+  // which F8E8M0FNU does not have.
+  if (hlo.operand(0)->shape().element_type() == F8E8M0FNU) {
+    return absl::UnimplementedError(
+        "ReducePrecision is not supported for F8E8M0FNU.");
+  }
   // Check if it's a no-op.
   auto elem_type =
       GetPrimitiveType(mlir::getElementTypeOrSelf(value.getType()));
@@ -240,6 +244,17 @@ Value DivideBy(mlir::ImplicitLocOpBuilder& b, Value value,
                int64_t elements_per_byte) {
   return ma::DivSIOp::create(
       b, value, CreateConst(b, value.getType(), elements_per_byte));
+}
+
+Value MaybeBroadcastScalarToShape(mlir::ImplicitLocOpBuilder& b, Value input,
+                                  Type target_type) {
+  ArrayRef<int64_t> target_shape =
+      mlir::cast<ShapedType>(target_type).getShape();
+  if (!target_shape.empty() &&
+      mlir::cast<ShapedType>(input.getType()).getShape().empty()) {
+    return Splat(b, input, target_shape);
+  }
+  return input;
 }
 
 }  // namespace
@@ -448,6 +463,7 @@ absl::StatusOr<SmallVector<Value>> EmitterContext::EvaluateTilingParameters(
   for (const int64_t dim : dim_ids) {
     switch (tiling_space.dimensions()[dim].type) {
       case ge::TilingSpace::DimensionSemantics::kParallel:
+      case ge::TilingSpace::DimensionSemantics::kReplica:
         dim_replacements[dim] = schedule_.GetPidExpr(dim);
         break;
       case ge::TilingSpace::DimensionSemantics::kSequential: {
@@ -721,8 +737,13 @@ absl::StatusOr<Value> EmitElementwise(mlir::ImplicitLocOpBuilder& b,
       return Maximum(b, inputs);
     case HloOpcode::kMinimum:
       return Minimum(b, inputs);
-    case HloOpcode::kClamp:
-      return Minimum(b, {Maximum(b, {inputs[0], inputs[1]}), inputs[2]});
+    case HloOpcode::kClamp: {
+      Value min_val =
+          MaybeBroadcastScalarToShape(b, inputs[0], inputs[1].getType());
+      Value max_val =
+          MaybeBroadcastScalarToShape(b, inputs[2], inputs[1].getType());
+      return Minimum(b, {Maximum(b, {min_val, inputs[1]}), max_val});
+    }
     case HloOpcode::kAnd:
       return mlir::stablehlo::AndOp::create(b, inputs[0], inputs[1]);
     case HloOpcode::kOr:
@@ -737,12 +758,12 @@ absl::StatusOr<Value> EmitElementwise(mlir::ImplicitLocOpBuilder& b,
           mlir::stablehlo::symbolizeComparisonDirection(
               ComparisonDirectionToString(hlo.comparison_direction()))
               .value());
-    case HloOpcode::kSelect:
-      return ma::SelectOp::create(
-          b,
-          Compare(b, {inputs[0], ZerosLike(b, inputs[0])},
-                  mlir::stablehlo::ComparisonDirection::NE),
-          inputs[1], inputs[2]);
+    case HloOpcode::kSelect: {
+      Value pred = Compare(b, {inputs[0], ZerosLike(b, inputs[0])},
+                           mlir::stablehlo::ComparisonDirection::NE);
+      pred = MaybeBroadcastScalarToShape(b, pred, inputs[1].getType());
+      return ma::SelectOp::create(b, pred, inputs[1], inputs[2]);
+    }
     case HloOpcode::kReducePrecision:
       return ReducePrecision(b, hlo, inputs[0]);
     case HloOpcode::kAcos:
@@ -763,12 +784,16 @@ absl::StatusOr<Value> EmitElementwise(mlir::ImplicitLocOpBuilder& b,
       return mm::CoshOp::create(b, inputs[0]);
     case HloOpcode::kExp:
       return mm::ExpOp::create(b, inputs[0]);
+    case HloOpcode::kExp2:
+      return mm::Exp2Op::create(b, inputs[0]);
     case HloOpcode::kErf:
       return mm::ErfOp::create(b, inputs[0]);
     case HloOpcode::kExpm1:
       return mm::ExpM1Op::create(b, inputs[0]);
     case HloOpcode::kLog:
       return mm::LogOp::create(b, inputs[0]);
+    case HloOpcode::kLog2:
+      return mm::Log2Op::create(b, inputs[0]);
     case HloOpcode::kLog1p:
       return mm::Log1pOp::create(b, inputs[0]);
     case HloOpcode::kPower:
@@ -942,52 +967,14 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
                   std::move(replica_id_offsets), std::move(replica_id_bounds));
 }
 
-absl::StatusOr<int64_t> GetConstantIntValue(mlir::Value value) {
-  if (std::optional<int64_t> int_value = mlir::getConstantIntValue(value);
-      int_value.has_value()) {
-    return int_value.value();
-  }
-  return absl::InternalError(absl::StrFormat(
-      "Expected constant integer value for replica ID bound, but got: %v",
-      value));
-}
-
 absl::StatusOr<TensorValue> EmitParameterExtract(mlir::ImplicitLocOpBuilder& b,
                                                  const TileInfo& tile_info,
                                                  Value arg) {
   auto tensor_type = mlir::RankedTensorType::get(tile_info.padded_tile_sizes(),
                                                  tile_info.storage_type());
-  mlir::Value source_buffer = arg;
-  if (!tile_info.replica_id_offsets().empty()) {
-    const auto& replica_id_offsets = tile_info.replica_id_offsets();
-    const auto& replica_id_bounds = tile_info.replica_id_bounds();
-    CHECK_EQ(replica_id_offsets.size(), replica_id_bounds.size());
-    const int num_replica_dims = replica_id_offsets.size();
-    for (int i = 0; i < num_replica_dims - 1; ++i) {
-      mlir::Value replica_id = replica_id_offsets[i];
-      ABSL_ASSIGN_OR_RETURN(int64_t next_bound,
-                            GetConstantIntValue(replica_id_bounds[i + 1]));
-      mlir::Type next_buffer_type =
-          mlir::MemRefType::get({next_bound}, b.getI64Type());
-      source_buffer = b.create<xtile::SelectBufferOp>(
-          next_buffer_type, source_buffer, replica_id);
-    }
-    // Final selection to obtain the spatial buffer
-    mlir::Value replica_id = replica_id_offsets.back();
-    ABSL_ASSIGN_OR_RETURN(PrimitiveType element_type,
-                          GetPrimitiveType(tile_info.storage_type()));
-    xla::Shape spatial_shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
-        element_type, tile_info.storage_shape(),
-        tile_info.minor_to_major_layout());
-    ABSL_ASSIGN_OR_RETURN(
-        mlir::MemRefType spatial_memref_type,
-        GetMemRefType(spatial_shape, tile_info.storage_type()));
-    source_buffer = b.create<xtile::SelectBufferOp>(spatial_memref_type,
-                                                    source_buffer, replica_id);
-  }
   return xla::xtile::ExtractTileOp::create(
-      b, tensor_type, source_buffer, tile_info.offsets(),
-      tile_info.padded_tile_sizes(), tile_info.tile_strides());
+      b, tensor_type, arg, tile_info.offsets(), tile_info.padded_tile_sizes(),
+      tile_info.tile_strides());
 }
 
 absl::StatusOr<TensorValue> EmitScope(
@@ -1169,7 +1156,7 @@ absl::StatusOr<SmallVector<Type>> GetFnArgTypes(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
     absl::Span<mlir::Type> opaque_args_types,
     const std::optional<GpuComputeCapability>& gpu_cc,
-    const DefaultTileRequirementsVisitor& tile_requirements_visitor) {
+    const DefaultTileRequirementsVisitor& /*tile_requirements_visitor*/) {
   SmallVector<Type> fn_arg_types;
 
   auto hlo_computation = fusion.fused_instructions_computation();
@@ -1177,21 +1164,9 @@ absl::StatusOr<SmallVector<Type>> GetFnArgTypes(
   for (HloInstruction* p : hlo_computation->parameter_instructions()) {
     ABSL_ASSIGN_OR_RETURN(Type ir_type,
                           GetMlirType(b, p->shape().element_type(), gpu_cc));
-    ABSL_ASSIGN_OR_RETURN(
-        SmallVector<int64_t> replica_id_bounds,
-        tile_requirements_visitor.RequiredReplicaIdBounds(*p));
-    if (!replica_id_bounds.empty()) {
-      // Nested pointer schema for replica dimensions.
-      // R x S x <type> where R is the number of replica dimensions and S is
-      // the shape on the local device. In total we have R pointers to
-      // S-dimensional tensors.
-      fn_arg_types.push_back(
-          mlir::MemRefType::get({replica_id_bounds.front()}, b.getI64Type()));
-    } else {
-      ABSL_ASSIGN_OR_RETURN(mlir::MemRefType memref_type,
-                            GetMemRefType(p->shape(), ir_type));
-      fn_arg_types.push_back(memref_type);
-    }
+    ABSL_ASSIGN_OR_RETURN(mlir::MemRefType memref_type,
+                          GetMemRefType(p->shape(), ir_type));
+    fn_arg_types.push_back(memref_type);
   }
 
   // Add result types.
@@ -1307,12 +1282,11 @@ TensorValue EmitTiledTranspose(mlir::ImplicitLocOpBuilder& b,
 }
 
 absl::Status EmitReduceComputation(mlir::ImplicitLocOpBuilder& b,
-                                   const HloInstruction* hlo_reduction,
+                                   PrimitiveType element_type,
                                    const HloComputation* reduction_computation,
                                    mlir::Operation* reduction) {
-  ABSL_ASSIGN_OR_RETURN(
-      Type result_ty,
-      PrimitiveTypeToMlirType(b, hlo_reduction->shape().element_type()));
+  ABSL_ASSIGN_OR_RETURN(Type result_ty,
+                        PrimitiveTypeToMlirType(b, element_type));
   result_ty = mlir::RankedTensorType::get({}, result_ty);
 
   mlir::Location loc = b.getLoc();

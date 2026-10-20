@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -103,10 +104,10 @@ class AsyncCollectiveAnnotatorTest
 
 TEST_P(AsyncCollectiveAnnotatorTest, Test) {
   const TestCase& test_case = GetParam();
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       ParseAndReturnVerifiedModule(kHloString, /*replica_count=*/2));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       AsyncCollectiveAnnotator(test_case.is_async_predicate).Run(module.get()));
   EXPECT_TRUE(changed);

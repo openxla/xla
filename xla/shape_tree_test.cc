@@ -22,6 +22,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "tsl/platform/platform.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -242,16 +243,16 @@ TEST_F(ShapeTreeTest, NestedTupleShape) {
 
 TEST_F(ShapeTreeTest, InvalidIndexingTuple) {
   ShapeTree<int> shape_tree{tuple_shape_};
-#ifndef NDEBUG
-  EXPECT_DEATH(shape_tree.element({4}), "");
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    EXPECT_DEATH(shape_tree.element({4}), "");
+  }
 }
 
 TEST_F(ShapeTreeTest, InvalidIndexingNestedTuple) {
   ShapeTree<int> shape_tree{nested_tuple_shape_};
-#ifndef NDEBUG
-  EXPECT_DEATH(shape_tree.element({0, 0}), "");
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    EXPECT_DEATH(shape_tree.element({0, 0}), "");
+  }
 }
 
 TEST_F(ShapeTreeTest, ShapeTreeOfNonCopyableType) {

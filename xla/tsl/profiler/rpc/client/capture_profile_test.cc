@@ -110,7 +110,9 @@ TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesSuccess) {
 
   std::vector<XSpace> xspaces = {space1, space2};
   ASSERT_OK(ExportToTensorBoard(temp_dir, run, xspaces));
-  EXPECT_TRUE(xspaces.empty());
+  EXPECT_EQ(xspaces.size(), 2);
+  EXPECT_EQ(xspaces[0].hostnames(0), "host1");
+  EXPECT_EQ(xspaces[1].hostnames(0), "host2");
 
   std::string file_path =
       io::JoinPath(GetTensorBoardProfilePluginDir(temp_dir), run,
@@ -139,7 +141,7 @@ TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesSuccess) {
                                        )pb"))));
 }
 
-TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesSuccessAndClear) {
+TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesPreservesInput) {
   std::string temp_dir = testing::TmpDir();
   std::string run = "test_run_pointer";
 
@@ -150,7 +152,8 @@ TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesSuccessAndClear) {
   std::vector<XSpace> xspaces = {space};
 
   ASSERT_OK(ExportToTensorBoard(temp_dir, run, xspaces));
-  EXPECT_TRUE(xspaces.empty());
+  EXPECT_EQ(xspaces.size(), 1);
+  EXPECT_EQ(xspaces[0].hostnames(0), "host1");
 
   std::string file_path =
       io::JoinPath(GetTensorBoardProfilePluginDir(temp_dir), run,
@@ -159,7 +162,7 @@ TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesSuccessAndClear) {
 }
 
 TEST(CaptureProfileTest,
-     ExportToTensorBoardVectorXSpacesDefaultRunSuccessAndClear) {
+     ExportToTensorBoardVectorXSpacesDefaultRunPreservesInput) {
   std::string temp_dir = testing::TmpDir();
 
   XSpace space = ParseTextProtoOrDie<XSpace>(R"pb(
@@ -169,7 +172,8 @@ TEST(CaptureProfileTest,
   std::vector<XSpace> xspaces = {space};
 
   ASSERT_OK(ExportToTensorBoard(temp_dir, xspaces));
-  EXPECT_TRUE(xspaces.empty());
+  EXPECT_EQ(xspaces.size(), 1);
+  EXPECT_EQ(xspaces[0].hostnames(0), "host1");
 }
 
 TEST(CaptureProfileTest, ExportToTensorBoardSingleXSpaceFailurePropagation) {

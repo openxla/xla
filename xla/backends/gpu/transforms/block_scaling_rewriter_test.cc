@@ -29,7 +29,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/stream_executor/dnn.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
@@ -372,13 +371,13 @@ ENTRY main {
   ROOT %result = f16[128,128] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
       lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_TRUE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
       test_module->entry_computation()->root_instruction())));
 }
 
-TEST_F(BlockScalingRewriterTest, CudnnFusionUnsupportedE5M2) {
+TEST_F(BlockScalingRewriterTest, CudnnFusionSupportedE5M2) {
   constexpr absl::string_view hlo_string = R"(
 ENTRY main {
   %lhs = f8e5m2[128,256] parameter(0)
@@ -388,8 +387,40 @@ ENTRY main {
   ROOT %result = f16[128,128] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
       lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  EXPECT_TRUE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
+      test_module->entry_computation()->root_instruction())));
+}
+
+TEST_F(BlockScalingRewriterTest, CudnnFusionSupportedMxfp4) {
+  constexpr absl::string_view hlo_string = R"(
+ENTRY main {
+  %lhs = f4e2m1fn[128,256] parameter(0)
+  %rhs = f4e2m1fn[128,256] parameter(1)
+  %lhs_scale = f8e8m0fnu[128,8] parameter(2)
+  %rhs_scale = f8e8m0fnu[128,8] parameter(3)
+  ROOT %result = f16[128,128] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}
+})";
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  EXPECT_TRUE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
+      test_module->entry_computation()->root_instruction())));
+}
+
+TEST_F(BlockScalingRewriterTest, CudnnFusionUnsupportedMixedFp8Fp4) {
+  constexpr absl::string_view hlo_string = R"(
+ENTRY main {
+  %lhs = f8e4m3fn[128,256] parameter(0)
+  %rhs = f4e2m1fn[128,256] parameter(1)
+  %lhs_scale = f8e8m0fnu[128,8] parameter(2)
+  %rhs_scale = f8e8m0fnu[128,8] parameter(3)
+  ROOT %result = f16[128,128] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}
+})";
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_FALSE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
       test_module->entry_computation()->root_instruction())));
 }
@@ -404,8 +435,8 @@ ENTRY main {
   ROOT %result = f16[128,128] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
       lhs_contracting_dims={1}, rhs_contracting_dims={0}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_FALSE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
       test_module->entry_computation()->root_instruction())));
 }
@@ -422,8 +453,8 @@ ENTRY main {
   ROOT %result = f16[16,32]{1,0} scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
       lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_FALSE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
       test_module->entry_computation()->root_instruction())));
 }
@@ -439,8 +470,8 @@ ENTRY main {
   ROOT %result = f16[128,128] scaled-dot(%lhs_bc, %rhs, %lhs_scale, %rhs_scale),
       lhs_contracting_dims={1}, rhs_contracting_dims={1}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   EXPECT_FALSE(CudnnScaledDotHelper::IsSupported(Cast<HloScaledDotInstruction>(
       test_module->entry_computation()->root_instruction())));
 }
@@ -466,8 +497,8 @@ ENTRY main {
       kind=kCustom, calls=fusion,
       backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   ASSERT_IS_OK(CudnnScaledDotHelper::AddScaleSwizzle(Cast<HloFusionInstruction>(
       test_module->entry_computation()->root_instruction())));
 
@@ -512,8 +543,8 @@ ENTRY main {
       kind=kCustom, calls=fusion,
       backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   ASSERT_IS_OK(CudnnScaledDotHelper::AddScaleSwizzle(Cast<HloFusionInstruction>(
       test_module->entry_computation()->root_instruction())));
 
@@ -560,8 +591,8 @@ ENTRY main {
       kind=kCustom, calls=fusion,
       backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}}
 })";
-  TF_ASSERT_OK_AND_ASSIGN(auto test_module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto test_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
   ASSERT_IS_OK(CudnnScaledDotHelper::AddScaleSwizzle(Cast<HloFusionInstruction>(
       test_module->entry_computation()->root_instruction())));
 

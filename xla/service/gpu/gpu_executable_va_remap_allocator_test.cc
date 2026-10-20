@@ -19,6 +19,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -30,6 +31,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/synchronization/blocking_counter.h"
+#include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
@@ -48,6 +51,8 @@ limitations under the License.
 #include "xla/stream_executor/mock_stream.h"
 #include "xla/stream_executor/mock_stream_executor.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
@@ -114,6 +119,9 @@ class TestMemoryReservation final : public se::MemoryReservation {
   se::DeviceAddressBase address() const override {
     return se::DeviceAddressBase(storage_.data(), size_);
   }
+
+  // Matches the allocation granularity the test installs on the allocator.
+  size_t granularity() const override { return kGranularity; }
 
   int active_mapping_count() const { return active_mapping_count_; }
   const void* last_mapped_allocation_address() const {
@@ -323,9 +331,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   ThunkExecutor thunk_executor{ThunkSequence{}};
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(DebugOptions::SKIP_TEMP);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddVaRemappedAllocationForTesting(0);
   EXPECT_EQ(allocator.command_buffer_allocation_count(), 1);
 
@@ -438,9 +446,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   ThunkExecutor thunk_executor{ThunkSequence{}};
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(DebugOptions::SKIP_TEMP);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddVaRemappedAllocationForTesting(0);
   allocator.AddVaRemappedAllocationForTesting(1);
 
@@ -512,9 +520,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   ThunkExecutor thunk_executor{ThunkSequence{}};
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(DebugOptions::SKIP_TEMP);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddVaRemappedAllocationForTesting(0);
 
   ASSERT_OK_AND_ASSIGN(
@@ -580,9 +588,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   ThunkExecutor thunk_executor{ThunkSequence{}};
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(DebugOptions::SKIP_TEMP);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {250}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {250}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddVaRemappedAllocationForTesting(0);
 
   auto get_parameter_buffer = [&](const BufferAllocation& allocation)
@@ -684,9 +692,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(
       DebugOptions::SKIP_PROFILED);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddProfileCandidateAllocationForTesting(0);
 
   // The parameter keeps the same VMM-backed address on every execution, so
@@ -748,9 +756,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(
       DebugOptions::SKIP_PROFILED);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddProfileCandidateAllocationForTesting(0);
 
   ASSERT_OK_AND_ASSIGN(
@@ -814,9 +822,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(
       DebugOptions::SKIP_PROFILED);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   // Simulate automatic constructor classification with an empty test thunk
   // sequence.
   allocator.AddVaRemappedAllocationForTesting(0);
@@ -873,9 +881,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(
       DebugOptions::SKIP_PROFILED);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   // Simulate constructor classification with an empty test thunk sequence:
   // the temp is automatic, while the parameter is profiled.
   allocator.AddVaRemappedAllocationForTesting(0);
@@ -944,9 +952,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(
       DebugOptions::SKIP_PROFILED);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {250}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {250}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddProfileCandidateAllocationForTesting(0);
 
   auto get_parameter_buffer = [&](const BufferAllocation& allocation)
@@ -1038,9 +1046,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(
       DebugOptions::SKIP_PROFILED);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddProfileCandidateAllocationForTesting(0);
 
   // The parameter address changes between profiling executions.
@@ -1091,9 +1099,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(
       DebugOptions::SKIP_PROFILED);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddProfileCandidateAllocationForTesting(0);
 
   // Stable address, but not an address owned by the VMM allocator, so it
@@ -1137,9 +1145,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(
       DebugOptions::SKIP_PROFILED);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddProfileCandidateAllocationForTesting(0);
   allocator.AddProfileCandidateAllocationForTesting(1);
 
@@ -1183,9 +1191,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(
       DebugOptions::SKIP_PROFILED);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddProfileCandidateAllocationForTesting(0);
 
   ASSERT_OK_AND_ASSIGN(
@@ -1302,9 +1310,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   DebugOptions debug_options;
   debug_options.set_xla_gpu_command_buffer_update_mode(
       DebugOptions::SKIP_PROFILED);
-  GpuExecutableVaRemapAllocator allocator("test", allocations,
-                                          ShapeUtil::MakeShape(F32, {256}),
-                                          &debug_options, &thunk_executor);
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/1);
   allocator.AddProfileCandidateAllocationForTesting(0);
 
   ASSERT_OK_AND_ASSIGN(
@@ -1378,6 +1386,53 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
   ASSERT_OK(vmm_allocator->SynchronizePendingOperations(/*device_ordinal=*/0));
   ASSERT_NE(va_reservation, nullptr);
   EXPECT_EQ(va_reservation->active_mapping_count(), 0);
+}
+
+TEST_F(GpuExecutableVaRemapAllocatorTest,
+       ConcurrentMultiDeviceExecutionScopes) {
+  constexpr std::array<int, 3> kOrdinals = {0, 1, 17};
+  BufferAllocation temp_alloc(/*index=*/0, /*size=*/1024, /*color=*/0);
+  std::vector<const BufferAllocation*> allocations = {&temp_alloc};
+  ThunkExecutor thunk_executor{ThunkSequence{}};
+  DebugOptions debug_options;
+  debug_options.set_xla_gpu_command_buffer_update_mode(DebugOptions::SKIP_TEMP);
+
+  std::array<NiceMock<se::MockStreamExecutor>, kOrdinals.size()> executors;
+  std::array<NiceMock<se::MockStream>, kOrdinals.size()> streams;
+  std::vector<se::DeviceAddressVmmAllocator::DeviceConfig> device_configs;
+  for (size_t i = 0; i < kOrdinals.size(); ++i) {
+    ON_CALL(executors[i], device_ordinal()).WillByDefault(Return(kOrdinals[i]));
+    ON_CALL(executors[i], SynchronizeAllActivity()).WillByDefault(Return(true));
+    ON_CALL(streams[i], parent()).WillByDefault(Return(&executors[i]));
+    device_configs.push_back({&executors[i], &streams[i]});
+  }
+  ASSERT_OK_AND_ASSIGN(auto vmm_allocator,
+                       TestVmmAllocator::Create(&platform_, device_configs));
+
+  GpuExecutableVaRemapAllocator allocator(
+      "test", allocations, ShapeUtil::MakeShape(F32, {256}), &debug_options,
+      &thunk_executor, /*num_devices=*/2);
+  allocator.AddVaRemappedAllocationForTesting(0);
+
+  absl::BlockingCounter all_scopes_held(kOrdinals.size());
+  absl::Notification release_scopes;
+  tsl::thread::ThreadPool pool(tsl::Env::Default(), "va_remap",
+                               kOrdinals.size());
+  for (size_t i = 0; i < kOrdinals.size(); ++i) {
+    pool.Schedule([&, i]() {
+      ExecutableRunOptions run_opts;
+      run_opts.set_stream(&streams[i]);
+      ServiceExecutableRunOptions service_opts(run_opts);
+      ASSERT_OK_AND_ASSIGN(
+          auto scope, allocator.CreateExecutionScope(
+                          &service_opts, vmm_allocator.get(), kOrdinals[i]));
+      EXPECT_TRUE(scope->va_remap_enabled());
+      all_scopes_held.DecrementCount();
+      release_scopes.WaitForNotification();
+    });
+  }
+  all_scopes_held.Wait();
+  release_scopes.Notify();
 }
 
 }  // namespace

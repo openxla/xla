@@ -472,6 +472,17 @@ class SubAllocator {
     return AllocatorMemoryType::kUnknown;
   }
 
+  // Returns a positive size multiple that Alloc() pads requests up to, for
+  // example a virtual memory mapping granularity. BFCAllocator sizes region
+  // extensions and backpedal retries in multiples of this value so that a
+  // shrunken retry is not padded back up to a size that just failed.
+  // Implementations whose granularity changes after suballocator construction
+  // (e.g. once an address range has been reserved) must return the current
+  // value on every call. Complete such configuration before passing the
+  // suballocator to BFCAllocator, whose constructor caches
+  // SupportsCoalescing().
+  virtual size_t GetAllocationGranularity() const { return 1; }
+
  protected:
   // Implementation of Alloc() method must call this on newly allocated
   // value.

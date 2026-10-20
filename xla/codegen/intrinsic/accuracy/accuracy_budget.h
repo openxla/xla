@@ -69,6 +69,23 @@ constexpr AccuracyBudget kExpF64Budget = {/*cpu=*/{/*regular=*/1,
                                           /*gpu=*/{/*regular=*/1,
                                                    /*subnormal=*/0}};
 
+// Expm1
+constexpr AccuracyBudget kExpm1F32Budget = {
+    /*cpu=*/{/*regular=*/1,
+             /*subnormal=*/0},
+    /*gpu=*/
+    {/*regular=*/1,
+     /*subnormal=*/0},
+};
+
+constexpr AccuracyBudget kExpm1F64Budget = {
+    /*cpu=*/{/*regular=*/1,
+             /*subnormal=*/0},
+    /*gpu=*/
+    {/*regular=*/1,
+     /*subnormal=*/0},
+};
+
 // Log1p
 constexpr AccuracyBudget kLog1pF32Budget = {
     /*cpu=*/{/*regular=*/1,
