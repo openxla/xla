@@ -96,6 +96,7 @@ class CommonPjRtClient : public PjRtClient {
   virtual bool executable_compatibility_check_on_deserialization() const {
     return true;
   }
+  virtual bool enable_async_compilation() const { return false; }
   // Returns true if we should skip the staging buffer during ToLiteral.
   bool ShouldDoDirectTransfer(const MutableLiteralBase& literal,
                               const Shape& shape,
@@ -114,15 +115,11 @@ class CommonPjRtClient : public PjRtClient {
   // TODO(parkers): Properly support error buffers on GPU and CPU.
   virtual bool include_raw_buffer_in_ready_event() const { return false; }
   virtual bool supports_predetermined_error() const { return true; }
-  virtual bool SupportsPredeterminedError(PjRtMemorySpace* memory_space) const {
-    return supports_predetermined_error();
-  }
+  bool SupportsPredeterminedError(PjRtMemorySpace* memory_space) const;
   // TODO(parkers): The xla::Shape should know how to update itself when we go
   // from a static to the runtime shape. This should not be runtime dependent.
   virtual absl::StatusOr<xla::Shape> UpdateLayoutForDynamicShapes(
-      int memory_space_kind_id, xla::Shape shape) const {
-    return std::move(shape);
-  }
+      int memory_space_kind_id, xla::Shape shape) const;
 
   // Backend specific handlers for when an oom is detected during execute.
   void CallOomHandlers() const { raw_client()->CallOomHandlers(); }
@@ -1029,7 +1026,8 @@ class CommonPjRtBufferImpl : public CommonPjRtBuffer {
       xla::Shape shape, PjRtMemorySpace* dst_memory_space);
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyFromCpuToMemorySpace(
-      xla::Shape shape, PjRtMemorySpace* dst_memory_space);
+      xla::Shape shape, PjRtMemorySpace* dst_memory_space,
+      PjRtBuffer* donated_dst = nullptr);
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>>
   CopyToMemorySpaceFallbackThroughLiteral(PjRtMemorySpace* dst_memory_space);
@@ -1212,6 +1210,12 @@ class CommonPjRtClientImpl : public CommonPjRtClient {
   bool executable_compatibility_check_on_deserialization() const override {
     return executable_compatibility_check_on_deserialization_;
   }
+  bool enable_async_compilation() const override {
+    return enable_async_compilation_;
+  }
+  bool include_raw_buffer_in_ready_event() const override {
+    return include_raw_buffer_in_ready_event_;
+  }
 
  private:
   const PjRtPlatformId platform_id_;
@@ -1249,6 +1253,8 @@ class CommonPjRtClientImpl : public CommonPjRtClient {
   bool dump_on_deserialize_ = false;
   bool should_stage_host_to_device_transfers_ = false;
   bool executable_compatibility_check_on_deserialization_ = true;
+  bool enable_async_compilation_ = false;
+  bool include_raw_buffer_in_ready_event_ = false;
 };
 
 // A common base class for PjRtDevice implementations that delegate to
