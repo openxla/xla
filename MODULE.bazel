@@ -23,7 +23,7 @@ bazel_dep(name = "highway", version = "1.4.0")
 bazel_dep(name = "jsoncpp", version = "1.9.6.bcr.2", repo_name = "jsoncpp_git")
 bazel_dep(name = "or-tools", version = "9.12", repo_name = "com_google_ortools")
 bazel_dep(name = "platforms", version = "1.1.0")
-bazel_dep(name = "protobuf", version = "34.1", repo_name = "com_google_protobuf")
+bazel_dep(name = "protobuf", version = "33.6", repo_name = "com_google_protobuf")
 bazel_dep(name = "pybind11_abseil", version = "202402.0")
 bazel_dep(name = "pybind11_bazel", version = "3.0.0")
 bazel_dep(name = "pybind11_protobuf", version = "0.0.0-20250210-f02a2b7")
@@ -85,12 +85,13 @@ single_version_override(
     module_name = "protobuf",
     patch_strip = 1,
     patches = [
+        "//third_party/protobuf:bazel9.patch",
         "//third_party/protobuf:protobuf_arena.patch",
         "//third_party/protobuf:fix_message_lite_incomplete_type.patch",
         # The following patch is needed to fix package loading for `bazel query "deps(//xla/...)"`.
         "//third_party/protobuf:fix_python_dist_package.patch",
     ],
-    version = "34.1",
+    version = "33.6",
 )
 
 archive_override(
