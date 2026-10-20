@@ -32,6 +32,8 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/decision.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_description.h"
 
 namespace xla::gpu {
 namespace {
@@ -393,6 +395,12 @@ TEST_F(RecomputeFusionSideOutputsExecutionTest, PreservesResults) {
 
 TEST_F(RecomputeFusionSideOutputsExecutionTest,
        PreservesResultsWithTritonIntermediate) {
+  if (const auto* cuda_cc = device_description()
+                                .gpu_compute_capability()
+                                .cuda_compute_capability();
+      cuda_cc != nullptr && !cuda_cc->IsAtLeastAmpere()) {
+    GTEST_SKIP() << "Triton requires Ampere or newer CUDA GPUs.";
+  }
   ASSERT_OK_AND_ASSIGN(auto before,
                        ParseAndReturnVerifiedModule(WithTritonReduction()));
   auto after = before->Clone();
