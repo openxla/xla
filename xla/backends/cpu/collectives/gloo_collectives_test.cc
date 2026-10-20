@@ -21,6 +21,8 @@ limitations under the License.
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -29,17 +31,21 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "gmock/gmock.h"
 #include "xla/backends/cpu/collectives/cpu_clique_key.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
+#include "xla/backends/cpu/collectives/gloo_communicator.h"
 #include "xla/backends/cpu/collectives/gloo_kv_store.h"
 #include "xla/backends/cpu/collectives/gloo_reduce_scatter.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/executable_run_options.h"
+#include "xla/future.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/runtime/device_id.h"
@@ -161,6 +167,150 @@ TEST(GlooCollectives, AllReduce) {
     ASSERT_TRUE(output_buffers[rank].ok()) << output_buffers[rank].status();
     EXPECT_THAT(output_buffers[rank].value(),
                 Each(Eq(kNumParticipants * (kNumParticipants + 1) / 2)));
+  }
+}
+
+// Exercise packing independently of the transport, and count actual reductions.
+class CountingGlooCommunicator : public GlooCommunicator {
+ public:
+  CountingGlooCommunicator() : GlooCommunicator(nullptr, 0, 1) {}
+
+  Future<> AllReduce(se::DeviceAddressBase input, se::DeviceAddressBase output,
+                     PrimitiveType dtype, size_t count, ReductionKind kind,
+                     const Executor& executor) override {
+    ++calls;
+    if (!status.ok()) return status;
+    if (input.size() != 0) {
+      std::memcpy(output.opaque(), input.opaque(), input.size());
+    }
+    return absl::OkStatus();
+  }
+
+  int calls = 0;
+  absl::Status status;
+};
+
+TEST(GlooCollectives, AllReduceManyCoalescesByType) {
+  CountingGlooCommunicator communicator;
+  Communicator::Executor executor;
+  std::vector<float> a = {1, 2}, b = {3, 4, 5}, out_a(2), out_b(3);
+  std::vector<int32_t> c = {6}, d = {7, 8}, out_c(1), out_d(2);
+  std::vector<Communicator::AllReduceBuffer> buffers = {
+      {AsDeviceMemory(a), AsDeviceMemory(out_a), F32, a.size()},
+      {AsDeviceMemory(c), AsDeviceMemory(out_c), S32, c.size()},
+      {AsDeviceMemory(b), AsDeviceMemory(out_b), F32, b.size()},
+      {AsDeviceMemory(d), AsDeviceMemory(out_d), S32, d.size()},
+      {se::DeviceAddressBase(), se::DeviceAddressBase(), F32, 0}};
+  ASSERT_OK(communicator.AllReduceMany(buffers, ReductionKind::SUM, executor)
+                .Await());
+  EXPECT_EQ(communicator.calls, 2);
+  EXPECT_EQ(a, out_a);
+  EXPECT_EQ(b, out_b);
+  EXPECT_EQ(c, out_c);
+  EXPECT_EQ(d, out_d);
+
+  communicator.calls = 0;
+  ASSERT_OK(
+      communicator
+          .Communicator::AllReduceMany(buffers, ReductionKind::SUM, executor)
+          .Await());
+  EXPECT_EQ(communicator.calls, buffers.size());
+}
+
+TEST(GlooCollectives, AllReduceManyEmptyAndSingleBuffer) {
+  CountingGlooCommunicator communicator;
+  Communicator::Executor executor;
+  ASSERT_OK(
+      communicator.AllReduceMany({}, ReductionKind::SUM, executor).Await());
+  std::vector<Communicator::AllReduceBuffer> empty(2);
+  for (auto& buffer : empty) buffer.dtype = F32;
+  ASSERT_OK(
+      communicator.AllReduceMany(empty, ReductionKind::SUM, executor).Await());
+  EXPECT_EQ(communicator.calls, 0);
+  std::vector<float> input = {1, 2}, output(2);
+  ASSERT_OK(communicator
+                .AllReduceMany({{AsDeviceMemory(input), AsDeviceMemory(output),
+                                 F32, input.size()}},
+                               ReductionKind::SUM, executor)
+                .Await());
+  EXPECT_EQ(communicator.calls, 1);
+  EXPECT_EQ(input, output);
+}
+
+TEST(GlooCollectives, AllReduceManyPropagatesFailureWithoutUnpacking) {
+  CountingGlooCommunicator communicator;
+  communicator.status = absl::UnknownError("collective failed");
+  Communicator::Executor executor;
+  std::vector<float> input = {1, 2}, output(2, -1);
+  std::vector<Communicator::AllReduceBuffer> buffers(
+      2, {AsDeviceMemory(input), AsDeviceMemory(output), F32, input.size()});
+  EXPECT_THAT(
+      communicator.AllReduceMany(buffers, ReductionKind::SUM, executor).Await(),
+      absl_testing::StatusIs(absl::StatusCode::kUnknown));
+  EXPECT_THAT(output, Each(-1));
+  buffers[0].count = std::numeric_limits<size_t>::max();
+  EXPECT_THAT(
+      communicator.AllReduceMany(buffers, ReductionKind::SUM, executor).Await(),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(GlooCollectives, AllReduceManyAcrossRanks) {
+  for (ReductionKind kind : {ReductionKind::SUM, ReductionKind::PRODUCT,
+                             ReductionKind::MIN, ReductionKind::MAX}) {
+    for (bool in_place : {false, true}) {
+      auto kv_store = std::make_shared<InMemoryKeyValueStore>();
+      std::vector<GlobalDeviceId> devices = {GlobalDeviceId(0),
+                                             GlobalDeviceId(1)};
+      tsl::thread::ThreadPool pool(tsl::Env::Default(), "AllReduceMany", 2);
+      for (int rank = 0; rank < 2; ++rank) {
+        pool.Schedule([&, rank] {
+          ASSERT_OK_AND_ASSIGN(auto communicator,
+                               GetCommunicator(devices, kv_store, rank));
+          RendezvousKey key = MakeRendezvousKey(devices);
+          CpuCollectives::Executor executor(key, kTimeout);
+          std::vector<std::vector<float>> inputs(64), outputs(64);
+          std::vector<int32_t> integers = {rank + 1, rank + 2};
+          std::vector<int32_t> integer_output(2);
+          std::vector<Communicator::AllReduceBuffer> buffers;
+          for (size_t i = 0; i < inputs.size(); ++i) {
+            inputs[i].assign(i, rank + 1 + i);
+            outputs[i].resize(i);
+            buffers.push_back(
+                {AsDeviceMemory(inputs[i]),
+                 AsDeviceMemory(in_place ? inputs[i] : outputs[i]), F32, i});
+            if (i < integers.size()) {
+              int32_t* destination =
+                  in_place ? integers.data() : integer_output.data();
+              buffers.push_back(
+                  {se::DeviceAddressBase(&integers[i], sizeof(int32_t)),
+                   se::DeviceAddressBase(&destination[i], sizeof(int32_t)), S32,
+                   1});
+            }
+          }
+          ASSERT_OK(
+              communicator->AllReduceMany(buffers, kind, executor).Await());
+          auto expected = [kind](int i) {
+            switch (kind) {
+              case ReductionKind::SUM:
+                return 2 * i + 3;
+              case ReductionKind::PRODUCT:
+                return (i + 1) * (i + 2);
+              case ReductionKind::MIN:
+                return i + 1;
+              case ReductionKind::MAX:
+                return i + 2;
+            }
+            return 0;
+          };
+          for (int i = 0; i < inputs.size(); ++i) {
+            EXPECT_THAT(in_place ? inputs[i] : outputs[i], Each(expected(i)));
+          }
+          for (int i = 0; i < integers.size(); ++i) {
+            EXPECT_EQ(in_place ? integers[i] : integer_output[i], expected(i));
+          }
+        });
+      }
+    }
   }
 }
 

@@ -20,6 +20,8 @@ limitations under the License.
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -58,6 +60,87 @@ GlooCommunicator::GlooCommunicator(std::shared_ptr<gloo::Context> context,
     : context_(std::move(context)), rank_(rank), num_ranks_(num_ranks) {}
 
 GlooCommunicator::~GlooCommunicator() = default;
+
+Future<> GlooCommunicator::AllReduceMany(
+    absl::Span<const AllReduceBuffer> buffers, ReductionKind reduction_kind,
+    const Executor& executor) {
+  if (buffers.size() <= 1) {
+    return Communicator::AllReduceMany(buffers, reduction_kind, executor);
+  }
+
+  // An ordered map gives every rank the same collective ordering, including
+  // when the tuple interleaves different element types.
+  std::map<PrimitiveType, std::vector<const AllReduceBuffer*>> groups;
+  for (const AllReduceBuffer& buffer : buffers) {
+    if (!primitive_util::IsArrayType(buffer.dtype)) {
+      return absl::InvalidArgumentError("Invalid all-reduce datatype");
+    }
+    const size_t width = primitive_util::ByteWidth(buffer.dtype);
+    if (buffer.count > std::numeric_limits<size_t>::max() / width ||
+        buffer.count * width > buffer.send_buffer.size() ||
+        buffer.count * width > buffer.recv_buffer.size()) {
+      return absl::InvalidArgumentError("Invalid all-reduce buffer size");
+    }
+    groups[buffer.dtype].push_back(&buffer);
+  }
+
+  for (const auto& [dtype, group] : groups) {
+    if (group.size() == 1) {
+      const AllReduceBuffer& buffer = *group.front();
+      ABSL_RETURN_IF_ERROR(AllReduce(buffer.send_buffer, buffer.recv_buffer,
+                                     dtype, buffer.count, reduction_kind,
+                                     executor)
+                               .Await());
+      continue;
+    }
+
+    const size_t width = primitive_util::ByteWidth(dtype);
+    size_t bytes = 0;
+    for (const AllReduceBuffer* buffer : group) {
+      const size_t size = buffer->count * width;
+      if (size > std::numeric_limits<size_t>::max() - bytes) {
+        return absl::InvalidArgumentError("All-reduce packed size overflow");
+      }
+      bytes += size;
+    }
+    if (bytes == 0) continue;
+
+    // Align scratch storage for any supported scalar type. Separate input and
+    // output storage avoids relying on Gloo's handling of aliased buffers.
+    const size_t words = bytes / sizeof(std::max_align_t) +
+                         (bytes % sizeof(std::max_align_t) != 0);
+    std::vector<std::max_align_t> input(words);
+    std::vector<std::max_align_t> output(words);
+    char* input_data = reinterpret_cast<char*>(input.data());
+    char* output_data = reinterpret_cast<char*>(output.data());
+    size_t offset = 0;
+    for (const AllReduceBuffer* buffer : group) {
+      const size_t size = buffer->count * width;
+      if (size != 0) {
+        std::memcpy(input_data + offset, buffer->send_buffer.opaque(), size);
+      }
+      offset += size;
+    }
+
+    // Gloo completes synchronously. Keep scratch alive until the reduction
+    // succeeds, then scatter to the original destinations (which may be
+    // in-place).
+    ABSL_RETURN_IF_ERROR(AllReduce(se::DeviceAddressBase(input_data, bytes),
+                                   se::DeviceAddressBase(output_data, bytes),
+                                   dtype, bytes / width, reduction_kind,
+                                   executor)
+                             .Await());
+    offset = 0;
+    for (const AllReduceBuffer* buffer : group) {
+      const size_t size = buffer->count * width;
+      if (size != 0) {
+        std::memcpy(buffer->recv_buffer.opaque(), output_data + offset, size);
+      }
+      offset += size;
+    }
+  }
+  return absl::OkStatus();
+}
 
 template <typename T>
 static absl::Status SetAllReduceOptions(ReductionKind reduction_kind,
