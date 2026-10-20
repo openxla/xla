@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -111,10 +112,19 @@ absl::StatusOr<Decision> Evaluate(const FusionRecomputeVariants& variants,
         *output.output_buffer, *reference.output_buffer, /*rtol=*/1e-5));
     ABSL_RETURN_IF_ERROR(profiler->CheckInputBuffers(*inputs));
   }
+  const DebugOptions& debug = variants.before->config().debug_options();
+  const bool dumping_enabled =
+      debug.xla_enable_dumping() &&
+      DumpingEnabledForHloModule(variants.before->name(), debug);
   std::vector<RecomputationSample> samples;
-  std::string samples_csv =
-      "block,before_first_ns,after_first_ns,after_second_ns,before_second_ns\n";
-  for (int block = 0; block < 25; ++block) {
+  samples.reserve(kRecomputationSampleBlocks);
+  std::string samples_csv;
+  if (dumping_enabled) {
+    samples_csv =
+        "block,before_first_ns,after_first_ns,after_second_ns,before_second_"
+        "ns\n";
+  }
+  for (int block = 0; block < kRecomputationSampleBlocks; ++block) {
     std::array<double, 4> ns;
     for (int i = 0; i < 4; ++i) {
       ABSL_ASSIGN_OR_RETURN(
@@ -124,11 +134,16 @@ absl::StatusOr<Decision> Evaluate(const FusionRecomputeVariants& variants,
       ns[i] = absl::ToDoubleNanoseconds(profile.duration);
     }
     samples.push_back({ns[0], ns[1], ns[2], ns[3]});
-    absl::StrAppendFormat(&samples_csv, "%d,%.0f,%.0f,%.0f,%.0f\n", block,
-                          ns[0], ns[1], ns[2], ns[3]);
+    if (dumping_enabled) {
+      absl::StrAppendFormat(&samples_csv, "%d,%.0f,%.0f,%.0f,%.0f\n", block,
+                            ns[0], ns[1], ns[2], ns[3]);
+    }
   }
   ABSL_RETURN_IF_ERROR(profiler->CheckInputBuffers(*inputs));
   const auto measurement = EvaluateRecomputationMeasurements(samples);
+  if (!VLOG_IS_ON(1) && !dumping_enabled) {
+    return measurement.decision;
+  }
   std::string report;
   absl::StrAppendFormat(
       &report,
@@ -164,17 +179,20 @@ absl::StatusOr<Decision> Evaluate(const FusionRecomputeVariants& variants,
   absl::StrAppend(&report, "device=", target.device_description.ToString(),
                   "\n");
   VLOG(1) << "Fusion recomputation: " << report;
-  DumpToFileInDir(*variants.before, "fusion-recomputation", "csv", samples_csv);
-  DumpToFileInDir(*variants.before, "fusion-recomputation", "txt", report);
-  DumpToFileInDir(*variants.before, "fusion-recomputation", "before.hlo",
-                  variants.before->ToString());
-  DumpToFileInDir(*variants.before, "fusion-recomputation", "after.hlo",
-                  variants.after->ToString());
-  if (before->has_module() && after->has_module()) {
-    DumpToFileInDir(*variants.before, "fusion-recomputation",
-                    "compiled-before.hlo", before->module().ToString());
-    DumpToFileInDir(*variants.before, "fusion-recomputation",
-                    "compiled-after.hlo", after->module().ToString());
+  if (dumping_enabled) {
+    DumpToFileInDir(*variants.before, "fusion-recomputation", "csv",
+                    samples_csv);
+    DumpToFileInDir(*variants.before, "fusion-recomputation", "txt", report);
+    DumpToFileInDir(*variants.before, "fusion-recomputation", "before.hlo",
+                    variants.before->ToString());
+    DumpToFileInDir(*variants.before, "fusion-recomputation", "after.hlo",
+                    variants.after->ToString());
+    if (before->has_module() && after->has_module()) {
+      DumpToFileInDir(*variants.before, "fusion-recomputation",
+                      "compiled-before.hlo", before->module().ToString());
+      DumpToFileInDir(*variants.before, "fusion-recomputation",
+                      "compiled-after.hlo", after->module().ToString());
+    }
   }
   return measurement.decision;
 }

@@ -181,7 +181,9 @@ std::optional<FusionRecomputeCandidate> MatchCandidate(
   return candidate;
 }
 
-absl::Status ApplyCandidate(const FusionRecomputeCandidate& candidate) {
+absl::Status ApplyCandidate(
+    const FusionRecomputeCandidate& candidate,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
   HloComputation* body = candidate.consumer->fused_instructions_computation();
   HloInstruction* parameter = candidate.consumer->fused_parameter(
       candidate.consumer->operand_index(candidate.extraction));
@@ -197,7 +199,9 @@ absl::Status ApplyCandidate(const FusionRecomputeCandidate& candidate) {
     config.clear_reification_cost();
     ABSL_RETURN_IF_ERROR(fusion->set_backend_config(config));
   }
-  return HloDCE().Run(candidate.consumer->GetModule()).status();
+  return HloDCE()
+      .Run(candidate.consumer->GetModule(), execution_threads)
+      .status();
 }
 
 }  // namespace
@@ -308,7 +312,8 @@ absl::StatusOr<FusionRecomputeVariants> ExtractFusionRecomputeVariants(
       MatchCandidate(producer, extraction, 0);
   TF_RET_CHECK(cloned.has_value());
   const int64_t bytes = ShapeUtil::ByteSizeOf(candidate.expression->shape());
-  ABSL_RETURN_IF_ERROR(ApplyCandidate(*cloned));
+  // The extracted module contains only the candidate's tuning region.
+  ABSL_RETURN_IF_ERROR(ApplyCandidate(*cloned, /*execution_threads=*/{}));
   TF_RET_CHECK(ShapeUtil::Equal(
       before->entry_computation()->root_instruction()->shape(),
       after->entry_computation()->root_instruction()->shape()));
@@ -386,7 +391,7 @@ absl::StatusOr<bool> RecomputeFusionSideOutputs::RunImpl(
     }
     VLOG(1) << "Recomputation " << name << ": " << decision->Explain();
     if (decision->IsAllowed() && !analyze_only_) {
-      ABSL_RETURN_IF_ERROR(ApplyCandidate(*candidate));
+      ABSL_RETURN_IF_ERROR(ApplyCandidate(*candidate, execution_threads));
       changed = true;
     }
     // Restart discovery after each rewrite. Tuple indices, shared inputs and

@@ -17,7 +17,11 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/strings/str_replace.h"
 #include "xla/backends/gpu/transforms/recompute_fusion_side_outputs.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/decision.h"
 #include "xla/service/hlo_module_config.h"
@@ -87,6 +91,46 @@ class RecomputeFusionSideOutputsPolicyTest
 TEST_P(RecomputeFusionSideOutputsPolicyTest,
        EvaluatesWhenLiveAutotuningAllowed) {
   ExpectEvaluation(GetDebugOptionsForTest(), /*expect_evaluation=*/true);
+}
+
+TEST_P(RecomputeFusionSideOutputsPolicyTest,
+       PreservesDeadCodeInExcludedExecutionThread) {
+  const std::string hlo = absl::StrReplaceAll(
+      kHlo,
+      {{"ENTRY main", R"(
+other_thread {
+  x = f32[256]{0} parameter(0)
+  dead = f32[256]{0} negate(x)
+  ROOT output = f32[256]{0} copy(x)
+}
+ENTRY main)"},
+       {"  ROOT result = (f32[256]{0}, f32[256]{0}) tuple(other, consumer)",
+        R"(
+  start = ((f32[256]{0}), f32[256]{0}, s32[]) async-start(x), calls=other_thread, async_execution_thread="other"
+  done = f32[256]{0} async-done(start)
+  ROOT result = (f32[256]{0}, f32[256]{0}, f32[256]{0}) tuple(other, consumer, done))"}});
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HloComputation* other_thread = module->GetComputationWithName("other_thread");
+  ASSERT_NE(other_thread, nullptr);
+  ASSERT_EQ(other_thread->execution_thread(), "other");
+  ASSERT_NE(other_thread->GetInstructionWithName("dead"), nullptr);
+  const std::string original = other_thread->ToString();
+  int evaluated = 0;
+  RecomputeFusionSideOutputs pass(
+      [&](const FusionRecomputeVariants&) {
+        ++evaluated;
+        return Decision::Allow();
+      },
+      /*min_bytes=*/0, /*max_candidates=*/1, /*analyze_only=*/GetParam());
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      pass.Run(module.get(), {HloInstruction::kMainExecutionThread}));
+  EXPECT_EQ(evaluated, 1);
+  EXPECT_EQ(changed, !GetParam());
+  EXPECT_EQ(other_thread->ToString(), original);
+  EXPECT_EQ(
+      module->entry_computation()->GetInstructionWithName("saved") == nullptr,
+      !GetParam());
 }
 
 TEST_P(RecomputeFusionSideOutputsPolicyTest, SkipsWhenAutotuningDisabled) {
