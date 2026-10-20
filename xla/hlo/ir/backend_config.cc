@@ -28,20 +28,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "google/protobuf/message.h"
-#include "re2/re2.h"
 #include "tsl/platform/human_readable_json.h"
 #include "tsl/platform/protobuf.h"
 #include "xla/util.h"
-
-// TODO(dasenov): Remove this after 2026-07-15.
-namespace {
-std::string RemoveWaitOnOperationQueues(std::string&& s) {
-  static constexpr LazyRE2 kReWaitOnOperationQueues = {
-      R"("wait_on_operation_queues"\s*:\s*\[\s*\]\s*,)"};
-  RE2::GlobalReplace(&s, *kReWaitOnOperationQueues, "");
-  return std::move(s);
-}
-}  // namespace
 
 namespace xla {
 
@@ -63,9 +52,6 @@ absl::StatusOr<std::string> BackendConfigToRawString(
   // accuracy loss for int64_t.
   return tsl::ProtoToHumanReadableJson(proto, /*ignore_accuracy_loss=*/true);
 }
-
-BackendConfigWrapper::BackendConfigWrapper(std::string raw_string)
-    : raw_string_(RemoveWaitOnOperationQueues(std::move(raw_string))) {}
 
 const std::string& BackendConfigWrapper::GetRawStringWithoutMutex() const {
   if (proto_ && raw_string_.empty()) {
