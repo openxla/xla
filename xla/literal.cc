@@ -1888,45 +1888,103 @@ void ConvertBetweenNativeTypes(absl::Span<const NativeSrcT> src_data,
   }
 }
 
+// Converts elements from one of the four canonical intermediate types
+// (int64_t, uint64_t, float, double) into `dst_base` of type `dst_type`.
+template <typename CanonicalT>
+void ConvertFromCanonical(absl::Span<const CanonicalT> src_data,
+                          PrimitiveType dst_type, void* dst_base) {
+  constexpr PrimitiveType kCanonicalType =
+      primitive_util::NativeToPrimitiveType<CanonicalT>();
+  primitive_util::ArrayTypeSwitch(
+      [&](auto primitive_type_constant) {
+        constexpr PrimitiveType kDestType = primitive_type_constant;
+        if constexpr (kDestType != kCanonicalType) {
+          using NativeDestT = NativeTypeOf<kDestType>;
+          ConvertBetweenNativeTypes<CanonicalT, NativeDestT>(src_data,
+                                                             dst_base);
+        }
+      },
+      dst_type);
+}
+
+// Factors the O(N^2) pairwise conversion matrix across all array PrimitiveTypes
+// through four lossless canonical intermediate types:
+//   - signed integers (S1..S64) -> int64_t
+//   - PRED and unsigned integers (U1..U64) -> uint64_t
+//   - <= 32-bit floats (F4..BF16, F32) -> float
+//   - F64 -> double
+// When `NativeSrcT` is already `CanonicalT` or `dst_type` is `CanonicalT`,
+// conversion executes in a single pass directly into `dst_base`. Otherwise,
+// elements are widened into a fixed-size stack buffer in L1-cache-sized chunks
+// before converting from `CanonicalT` into `dst_base`.
+template <typename NativeSrcT, typename CanonicalT>
+void ConvertViaCanonical(absl::Span<const NativeSrcT> src_data,
+                         PrimitiveType dst_type, void* dst_base) {
+  if constexpr (std::is_same_v<NativeSrcT, CanonicalT>) {
+    ConvertFromCanonical<CanonicalT>(src_data, dst_type, dst_base);
+  } else {
+    if (dst_type == primitive_util::NativeToPrimitiveType<CanonicalT>()) {
+      ConvertBetweenNativeTypes<NativeSrcT, CanonicalT>(src_data, dst_base);
+      return;
+    }
+    constexpr int64_t kBlockSize = 512;
+    CanonicalT buffer[kBlockSize];
+    const int64_t dst_byte_width = primitive_util::ByteWidth(dst_type);
+    char* dst_bytes = static_cast<char*>(dst_base);
+    for (int64_t offset = 0; offset < src_data.size(); offset += kBlockSize) {
+      const int64_t count =
+          std::min<int64_t>(kBlockSize, src_data.size() - offset);
+      ConvertBetweenNativeTypes<NativeSrcT, CanonicalT>(
+          src_data.subspan(offset, count), buffer);
+      ConvertFromCanonical<CanonicalT>(absl::MakeConstSpan(buffer, count),
+                                       dst_type,
+                                       dst_bytes + offset * dst_byte_width);
+    }
+  }
+}
+
 template <PrimitiveType kSrcType>
-absl::Status ConvertIfDestTypeMatches(const LiteralBase& src_literal,
-                                      MutableLiteralBase& dst_literal) {
+void ConvertIfDestTypeMatches(const LiteralBase& src_literal,
+                              MutableLiteralBase& dst_literal) {
   DCHECK(dst_literal.shape().IsArray());
   using NativeSrcT = NativeTypeOf<kSrcType>;
   // Pass raw data Span/pointers to called template methods to avoid duplicating
   // the Literal method calls to many time which hurts code size.
   auto src_data = src_literal.data<NativeSrcT>();
   void* dst_base = dst_literal.untyped_data();
+  const PrimitiveType dst_type = dst_literal.shape().element_type();
   DCHECK_EQ(src_data.size(), dst_literal.element_count());
-  return primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> absl::Status {
-        if constexpr (primitive_util::IsComplexType(kSrcType) &&
-                      !primitive_util::IsComplexType(primitive_type_constant)) {
-          return Unimplemented("%s from type %s to type %s is not implemented.",
-                               "Converting", PrimitiveType_Name(kSrcType),
-                               PrimitiveType_Name(primitive_type_constant()));
-        } else if constexpr (kSrcType != primitive_type_constant) {
-          using NativeDestT = NativeTypeOf<primitive_type_constant>;
-          ConvertBetweenNativeTypes<NativeSrcT, NativeDestT>(src_data,
-                                                             dst_base);
-        }
-        return absl::OkStatus();
-      },
-      dst_literal.shape().element_type());
+  if constexpr (kSrcType == C64) {
+    DCHECK_EQ(dst_type, C128);
+    ConvertBetweenNativeTypes<complex64, complex128>(src_data, dst_base);
+  } else if constexpr (kSrcType == C128) {
+    DCHECK_EQ(dst_type, C64);
+    ConvertBetweenNativeTypes<complex128, complex64>(src_data, dst_base);
+  } else if constexpr (kSrcType == F64) {
+    ConvertFromCanonical<double>(src_data, dst_type, dst_base);
+  } else if constexpr (primitive_util::IsFloatingPointType(kSrcType)) {
+    ConvertViaCanonical<NativeSrcT, float>(src_data, dst_type, dst_base);
+  } else if constexpr (primitive_util::IsSignedIntegralType(kSrcType)) {
+    ConvertViaCanonical<NativeSrcT, int64_t>(src_data, dst_type, dst_base);
+  } else {
+    ConvertViaCanonical<NativeSrcT, uint64_t>(src_data, dst_type, dst_base);
+  }
 }
 
 absl::StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
                                       PrimitiveType primitive_dest_type) {
   TF_RET_CHECK(literal.shape().IsArray());
-  if (literal.shape().element_type() == primitive_dest_type) {
+  const PrimitiveType src_type = literal.shape().element_type();
+  if (src_type == primitive_dest_type) {
     return literal.Clone();
   }
   // Source Array type requirement is ensured before.
   if (!primitive_util::IsArrayType(primitive_dest_type) ||
-      !primitive_util::IsArrayType(literal.shape().element_type())) {
+      !primitive_util::IsArrayType(src_type) ||
+      (primitive_util::IsComplexType(src_type) &&
+       !primitive_util::IsComplexType(primitive_dest_type))) {
     return Unimplemented("%s from type %s to type %s is not implemented.",
-                         "Converting",
-                         PrimitiveType_Name(literal.shape().element_type()),
+                         "Converting", PrimitiveType_Name(src_type),
                          PrimitiveType_Name(primitive_dest_type));
   }
   // At this point, we know both src & dst are array types, while src is not
@@ -1934,12 +1992,11 @@ absl::StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
   // duplicating it N^2 times in the conversion implementation.
   Literal result(
       ShapeUtil::ChangeElementType(literal.shape(), primitive_dest_type));
-  ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> absl::Status {
-        return ConvertIfDestTypeMatches<primitive_type_constant>(literal,
-                                                                 result);
+  primitive_util::ArrayTypeSwitch(
+      [&](auto primitive_type_constant) {
+        ConvertIfDestTypeMatches<primitive_type_constant>(literal, result);
       },
-      literal.shape().element_type()));
+      src_type);
   return result;
 }
 

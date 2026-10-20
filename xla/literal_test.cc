@@ -2109,6 +2109,32 @@ TEST_F(LiteralUtilTest, ConvertFromF4E2M1FN) {
   EXPECT_EQ(f4.Convert(F32).value(), f32);
 }
 
+TEST_F(LiteralUtilTest, ConvertMultiBlockArray) {
+  constexpr int64_t kNumElements = 1050;
+  std::vector<int16_t> s16_values(kNumElements);
+  std::vector<int32_t> s32_values(kNumElements);
+  std::vector<bfloat16> bf16_values(kNumElements);
+  std::vector<float> f32_values(kNumElements);
+  for (int64_t i = 0; i < kNumElements; ++i) {
+    int16_t val = static_cast<int16_t>((i % 200) - 100);
+    s16_values[i] = val;
+    s32_values[i] = val;
+    bf16_values[i] = static_cast<bfloat16>(static_cast<float>(val));
+    f32_values[i] = static_cast<float>(val);
+  }
+  Literal s16 = LiteralUtil::CreateR1<int16_t>(s16_values);
+  Literal s32 = LiteralUtil::CreateR1<int32_t>(s32_values);
+  Literal bf16 = LiteralUtil::CreateR1<bfloat16>(bf16_values);
+  Literal f32 = LiteralUtil::CreateR1<float>(f32_values);
+
+  EXPECT_EQ(s16.Convert(S32).value(), s32);
+  EXPECT_EQ(s16.Convert(BF16).value(), bf16);
+  EXPECT_EQ(s16.Convert(F32).value(), f32);
+  EXPECT_EQ(bf16.Convert(S16).value(), s16);
+  EXPECT_EQ(bf16.Convert(S32).value(), s32);
+  EXPECT_EQ(bf16.Convert(F32).value(), f32);
+}
+
 TYPED_TEST(LiteralUtilFloatTest, ConvertIfTypesMatchF8) {
   constexpr auto ptype = primitive_util::NativeToPrimitiveType<TypeParam>();
   if (!primitive_util::IsF8Type(ptype)) {
