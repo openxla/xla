@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "xla/service/platform_util.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
@@ -103,7 +104,7 @@ absl::StatusOr<int64_t> PackedBackwardWorkspaceSize(StreamExecutor* executor,
 // The packed backward graph declares Q/K/V/dO/O with batch `B * M`, but real
 // tokens can never exceed `B * S`. GetCudnnFlashAttentionBackwardOperationGraph
 // passes that bound to cuDNN as max_total_seq_len_{q,kv}, so the dominant
-// workspace terms (softmax_sum, FP32 dQ_accum) must not grow with M. Only tiny
+// workspace terms (FP32 dQ_accum) must not grow with M. Only tiny
 // per-segment buffers (TMA descriptors, batch remap) may.
 TEST(CudnnFlashAttentionTest, PackedBackwardWorkspaceIndependentOfSegments) {
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor, GpuExecutor());
@@ -120,20 +121,18 @@ TEST(CudnnFlashAttentionTest, PackedBackwardWorkspaceIndependentOfSegments) {
     GTEST_SKIP() << "Requires SM90 or newer.";
   }
 
-  absl::StatusOr<int64_t> ws_few = PackedBackwardWorkspaceSize(executor, 2);
-  absl::StatusOr<int64_t> ws_many = PackedBackwardWorkspaceSize(executor, 8);
-  if (!ws_few.ok() || !ws_many.ok()) {
-    GTEST_SKIP() << "Packed backward graph is not supported here: "
-                 << (ws_few.ok() ? ws_many.status() : ws_few.status());
-  }
-  LOG(INFO) << "workspace M=2: " << *ws_few << " bytes, M=8: " << *ws_many
-            << " bytes";
+  ASSERT_OK_AND_ASSIGN(int64_t ws_few,
+                       PackedBackwardWorkspaceSize(executor, 2));
+  ASSERT_OK_AND_ASSIGN(int64_t ws_many,
+                       PackedBackwardWorkspaceSize(executor, 8));
+  VLOG(1) << "workspace M=2: " << ws_few << " bytes, M=8: " << ws_many
+          << " bytes";
 
   // Lower bound: the FP32 dQ_accum for B * S tokens. Guards against a vacuous
   // pass where the engine does not use the buffer this change shrinks.
   constexpr int64_t kDqAccumBytes =
       kBatch * kSeqLen * kNumHeads * kHeadDim * sizeof(float);
-  if (*ws_few < kDqAccumBytes) {
+  if (ws_few < kDqAccumBytes) {
     GTEST_SKIP() << "Selected engine does not use a dQ_accum workspace.";
   }
 
@@ -141,7 +140,7 @@ TEST(CudnnFlashAttentionTest, PackedBackwardWorkspaceIndependentOfSegments) {
   // must stay near constant. Measured on B200 with cuDNN 9.27 for this shape:
   //   without: M=2: 67,635,840 B, M=8: 270,539,904 B (ratio 4.0)
   //   with:    M=2: 34,081,792 B, M=8:  35,660,032 B (ratio 1.05)
-  EXPECT_LT(static_cast<double>(*ws_many), 1.1 * static_cast<double>(*ws_few));
+  EXPECT_LT(static_cast<double>(ws_many), 1.1 * static_cast<double>(ws_few));
 }
 
 }  // namespace
