@@ -13,16 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <string>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/onednn_support.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -31,6 +29,7 @@ limitations under the License.
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/test.h"
+#include "tsl/platform/cpu_info.h"
 
 namespace xla::cpu {
 namespace {
