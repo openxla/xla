@@ -25,17 +25,21 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/call_once.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/CodeGen.h"
@@ -43,6 +47,7 @@ limitations under the License.
 #include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
@@ -372,6 +377,111 @@ TEST(IrCompilerTest, IntrinsicsRecognizeAmdCpuFromImpliedSse4a) {
   EXPECT_THAT(ir, ::testing::ContainsRegex("fmul [a-z ]*<8 x float>")) << ir;
   EXPECT_THAT(ir, Not(HasSubstr("<4 x float>"))) << ir;
 }
+
+// Runs the IR compiler passes on `ir` for `cpu` and returns assembly.
+static std::string CompileToAsm(absl::string_view ir,
+                                absl::string_view cpu = "skylake-avx512") {
+  auto context = std::make_unique<llvm::LLVMContext>();
+  std::unique_ptr<IrCompiler> ir_compiler = IrCompiler::Create(
+      llvm::TargetOptions(),
+      IrCompiler::Options{
+          /*opt_level=*/llvm::CodeGenOptLevel::Aggressive,
+          /*optimize_for_size=*/false,
+          TargetMachineOptions("x86_64-unknown-linux-gnu", cpu, "")},
+      IrCompiler::CompilationHooks());
+  std::unique_ptr<llvm::Module> ir_module =
+      ParseModule(*context, ir, "test_module").value();
+  std::unique_ptr<llvm::TargetMachine> target_machine =
+      ir_compiler->build_target_machine().value();
+  ir_module->setDataLayout(target_machine->createDataLayout());
+  ir_module->setTargetTriple(target_machine->getTargetTriple());
+  cantFail(ir_compiler->RunIrPasses(*ir_module, target_machine.get()));
+
+  llvm::SmallString<0> asm_buffer;
+  llvm::raw_svector_ostream asm_stream(asm_buffer);
+  llvm::legacy::PassManager codegen_passes;
+  CHECK(!target_machine->addPassesToEmitFile(
+      codegen_passes, asm_stream, nullptr,
+      llvm::CodeGenFileType::AssemblyFile));
+  codegen_passes.run(*ir_module);
+  return std::string(asm_buffer);
+}
+
+TEST(IrCompilerTest, PreferVectorWidthLimitsRegisterWidth) {
+  if (!tsl::port::IsX86CPU()) {
+    GTEST_SKIP() << "Test only supported on x86.";
+  }
+  // xla.tanh.v8f64 is defined and inlined by the IR compiler itself.
+  constexpr absl::string_view kWideVectorIr = R"(
+  declare <8 x double> @xla.tanh.v8f64(<8 x double>)
+  define void @kernel(ptr %p) "prefer-vector-width"="$0" {
+    %v = load <8 x double>, ptr %p, align 64
+    %t = call <8 x double> @xla.tanh.v8f64(<8 x double> %v)
+    %r = fadd <8 x double> %t, %v
+    store <8 x double> %r, ptr %p, align 64
+    ret void
+  }
+  )";
+
+  const std::string asm_256 =
+      CompileToAsm(absl::Substitute(kWideVectorIr, 256));
+  EXPECT_THAT(asm_256, HasSubstr("ymm")) << asm_256;
+  EXPECT_THAT(asm_256, Not(HasSubstr("zmm"))) << asm_256;
+
+  const std::string asm_512 =
+      CompileToAsm(absl::Substitute(kWideVectorIr, 512));
+  EXPECT_THAT(asm_512, HasSubstr("zmm")) << asm_512;
+}
+
+TEST(IrCompilerTest, PreferVectorWidthSplitsTargetSpecificRsqrt) {
+  if (!tsl::port::IsX86CPU()) {
+    GTEST_SKIP() << "Test only supported on x86.";
+  }
+  // xla.rsqrt uses x86 rsqrt14 intrinsics, which the backend cannot split.
+  constexpr absl::string_view kRsqrtIr = R"(
+  declare <8 x double> @xla.rsqrt.v8f64(<8 x double>)
+  declare <16 x float> @xla.rsqrt.v16f32(<16 x float>)
+  define void @kernel(ptr %p, ptr %q) "prefer-vector-width"="256" {
+    %d = load <8 x double>, ptr %p, align 64
+    %rd = call <8 x double> @xla.rsqrt.v8f64(<8 x double> %d)
+    store <8 x double> %rd, ptr %p, align 64
+    %f = load <16 x float>, ptr %q, align 64
+    %rf = call <16 x float> @xla.rsqrt.v16f32(<16 x float> %f)
+    store <16 x float> %rf, ptr %q, align 64
+    ret void
+  }
+  )";
+
+  const std::string asm_256 = CompileToAsm(kRsqrtIr);
+  EXPECT_THAT(asm_256, HasSubstr("vrsqrt14pd")) << asm_256;
+  EXPECT_THAT(asm_256, HasSubstr("vrsqrt14ps")) << asm_256;
+  EXPECT_THAT(asm_256, Not(HasSubstr("zmm"))) << asm_256;
+}
+
+TEST(IrCompilerTest, PreferVectorWidthAppliesToFunctionsWithoutAttribute) {
+  if (!tsl::port::IsX86CPU()) {
+    GTEST_SKIP() << "Test only supported on x86.";
+  }
+  // znver4 has no 256-bit tuning preference, so a function without
+  // "prefer-vector-width" would otherwise keep 512-bit vectors legal.
+  constexpr absl::string_view kHelperIr = R"(
+  define internal <8 x double> @helper(<8 x double> %v) noinline {
+    %r = fadd <8 x double> %v, %v
+    ret <8 x double> %r
+  }
+  define void @kernel(ptr %p) "prefer-vector-width"="256" {
+    %v = load <8 x double>, ptr %p, align 64
+    %r = call <8 x double> @helper(<8 x double> %v)
+    store <8 x double> %r, ptr %p, align 64
+    ret void
+  }
+  )";
+
+  const std::string asm_256 = CompileToAsm(kHelperIr, "znver4");
+  EXPECT_THAT(asm_256, HasSubstr("ymm")) << asm_256;
+  EXPECT_THAT(asm_256, Not(HasSubstr("zmm"))) << asm_256;
+}
+
 TEST(IrCompilerTest, EmitIntrinsicCall) {
   constexpr absl::string_view kModuleName = "test_module";
   constexpr absl::string_view kMemcpyCall = R"(

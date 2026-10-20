@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/codegen/intrinsic/rsqrt.h"
 
 #include <cstddef>
+#include <numeric>
 #include <vector>
 
 #include "absl/log/check.h"
@@ -23,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -76,14 +78,18 @@ struct RsqrtIntrinsic {
   int mask_bits;                  // Some avx512 calls require masks.
   int needs_insert_element_size;  // Some avx512 calls require padding.
 
-  static RsqrtIntrinsic ForF32(size_t num_elements) {
+  static RsqrtIntrinsic ForF32(size_t num_elements, bool use_avx512) {
     switch (num_elements) {
       case 1:
         return {llvm::Intrinsic::x86_sse_rsqrt_ss, 0, 4};
       case 4:
         return {llvm::Intrinsic::x86_sse_rsqrt_ps, 0, 0};
       case 8:
-        return {llvm::Intrinsic::x86_avx_rsqrt_ps_256, 0, 0};
+        return use_avx512
+                   ? RsqrtIntrinsic{llvm::Intrinsic::x86_avx512_rsqrt14_ps_256,
+                                    8, 0}
+                   : RsqrtIntrinsic{llvm::Intrinsic::x86_avx_rsqrt_ps_256, 0,
+                                    0};
       case 16:
         return {llvm::Intrinsic::x86_avx512_rsqrt14_ps_512, 16, 0};
       default:
@@ -189,14 +195,47 @@ absl::StatusOr<llvm::Function*> Rsqrt::CreateDefinition(
     return func;
   }
 
-  RsqrtIntrinsic rsqrt_intrinsic = input_type->getScalarType()->isFloatTy()
-                                       ? RsqrtIntrinsic::ForF32(num_elements)
-                                       : RsqrtIntrinsic::ForF64(num_elements);
-  llvm::Value* y_approx = rsqrt_intrinsic.CreateCall(builder, x);
-
   // Eigen only does 1 step for F32, but that only gives within 2 ULPs and we
   // are targeting 1.
   const size_t num_steps = 2;
+
+  // F64 and 16 x F32 use the AVX-512 rsqrt14 estimate.
+  const bool using_avx512 =
+      options.Contains("+avx512f") &&
+      (type.element_type() == F64 ||
+       (type.element_type() == F32 && type.vector_width().value_or(1) > 8));
+
+  // Below a preferred width of 512, 512-bit vectors are not legal on targets
+  // with AVX512VL, and the backend cannot split the x86 rsqrt intrinsics, so
+  // they are split into halves here. The halves use the same estimate as the
+  // whole vector, so the results do not change.
+  const int piece_elements =
+      (num_elements * input_type->getScalarSizeInBits() == 512 &&
+       options.prefer_vector_width > 0 && options.prefer_vector_width < 512 &&
+       (!using_avx512 || options.Contains("+avx512vl")))
+          ? num_elements / 2
+          : num_elements;
+  RsqrtIntrinsic rsqrt_intrinsic =
+      input_type->getScalarType()->isFloatTy()
+          ? RsqrtIntrinsic::ForF32(piece_elements, using_avx512)
+          : RsqrtIntrinsic::ForF64(piece_elements);
+  llvm::Value* y_approx;
+  if (piece_elements == num_elements) {
+    y_approx = rsqrt_intrinsic.CreateCall(builder, x);
+  } else {
+    llvm::SmallVector<int> low(piece_elements);
+    llvm::SmallVector<int> high(piece_elements);
+    llvm::SmallVector<int> all(num_elements);
+    std::iota(low.begin(), low.end(), 0);
+    std::iota(high.begin(), high.end(), piece_elements);
+    std::iota(all.begin(), all.end(), 0);
+    y_approx = builder.CreateShuffleVector(
+        rsqrt_intrinsic.CreateCall(builder,
+                                   builder.CreateShuffleVector(x, low)),
+        rsqrt_intrinsic.CreateCall(builder,
+                                   builder.CreateShuffleVector(x, high)),
+        all);
+  }
   llvm::Value* refined_result =
       NewtonRaphsonRsqrtIteration(builder, x, y_approx, input_type, num_steps);
 
