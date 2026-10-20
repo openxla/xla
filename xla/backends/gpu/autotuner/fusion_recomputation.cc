@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
 #include "xla/backends/gpu/transforms/recompute_fusion_side_outputs.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/service/buffer_assignment.h"
@@ -201,24 +202,47 @@ absl::StatusOr<Decision> Evaluate(const FusionRecomputeVariants& variants,
 RecomputeFusionSideOutputs::Evaluator MakeFusionRecomputationEvaluator(
     Compiler* compiler, const Compiler::GpuTargetConfig& target,
     se::StreamExecutor* executor, se::DeviceAddressAllocator* allocator) {
+  return CacheFusionRecomputationEvaluator(
+      [compiler, &target, executor,
+       allocator](const FusionRecomputeVariants& variants) {
+        return Evaluate(variants, compiler, target, executor, allocator);
+      });
+}
+
+RecomputeFusionSideOutputs::Evaluator CacheFusionRecomputationEvaluator(
+    RecomputeFusionSideOutputs::Evaluator evaluator) {
   // Canonical graphs include constants, layouts and backend configs. The cache
   // lifetime fixes compiler version, device, flags and profiling policy. Unlike
   // a process-global cache it cannot reuse a result on a different GPU/context.
   auto cache = std::make_shared<absl::flat_hash_map<std::string, Decision>>();
-  return [compiler, &target, executor, allocator,
+  return [evaluator = std::move(evaluator),
           cache](const FusionRecomputeVariants& v) -> absl::StatusOr<Decision> {
+    // Canonical() canonicalizes instruction names, but still prints the names
+    // of top-level computations. Those differ between otherwise identical
+    // layers. Do not use Fingerprint(), which elides nonessential constants.
     auto print = HloPrintOptions::Canonical()
+                     .set_print_ids(false)
                      .set_print_backend_config(true)
                      .set_print_large_constants(true);
-    const std::string key = absl::StrCat(
-        v.before->config().debug_options().SerializeAsString(), "\nBEFORE\n",
-        v.before->ToString(print), "\nAFTER\n", v.after->ToString(print));
+    std::string key;
+    for (const HloModule* module : {v.before.get(), v.after.get()}) {
+      const std::string debug =
+          module->config().debug_options().SerializeAsString();
+      const std::string graph = module->ToString(print);
+      absl::StrAppend(&key, debug.size(), ":", debug, graph.size(), ":", graph);
+      // print_ids(false) also suppresses execution threads. Preserve them
+      // separately, in the same deterministic order as the printed bodies.
+      for (const HloComputation* computation :
+           module->MakeComputationPostOrder(/*dfs_postorder=*/true)) {
+        absl::StrAppend(&key, computation->execution_thread().size(), ":",
+                        computation->execution_thread());
+      }
+    }
     auto found = cache->find(key);
     if (found != cache->end()) {
       return found->second;
     }
-    ABSL_ASSIGN_OR_RETURN(auto decision,
-                          Evaluate(v, compiler, target, executor, allocator));
+    ABSL_ASSIGN_OR_RETURN(auto decision, evaluator(v));
     cache->emplace(key, decision);
     return decision;
   };

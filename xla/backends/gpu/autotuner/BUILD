@@ -1265,3 +1265,23 @@ xla_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+xla_cc_test(
+    name = "fusion_recomputation_cache_test",
+    srcs = ["fusion_recomputation_cache_test.cc"],
+    deps = [
+        ":fusion_recomputation",
+        "//xla:xla_proto_cc",
+        "//xla/backends/gpu/transforms:recompute_fusion_side_outputs",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:decision",
+        "//xla/service:hlo_module_config",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
