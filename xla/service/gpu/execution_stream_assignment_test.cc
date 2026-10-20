@@ -15,11 +15,10 @@ limitations under the License.
 
 #include "xla/service/gpu/execution_stream_assignment.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
@@ -609,6 +608,49 @@ TEST_F(
               absl_testing::StatusIs(absl::StatusCode::kNotFound));
 }
 
+TEST_F(
+    ExecutionStreamAssignmentTest,
+    CollectiveStreamAnnotatedCallSharesSingleCommunicationStreamWithWrappedCollective) {
+  const char* const hlo_string = R"(
+  HloModule m
+
+  body {
+    p0 = f32[1] parameter(0)
+    ag-start = (f32[1], f32[1]) all-gather-start(p0), dimensions={0}
+    ROOT ag-done = f32[1] all-gather-done(ag-start)
+  }
+
+  ENTRY main {
+    p0 = f32[1] parameter(0)
+    call-start = ((f32[1]), f32[1]) call-start(p0), to_apply=body,
+      frontend_attributes={_xla_stream_annotation="collective"}
+    ROOT call-done = f32[1] call-done(call-start),
+      frontend_attributes={_xla_stream_annotation="collective"}
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+
+  ExecutionStreamAssignment assignment(
+      module.get(), {/*number_of_compute_execution_streams=*/4,
+                     /*number_of_communication_execution_streams=*/1});
+
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(
+          FindInstruction(module.get(), "call-start")),
+      absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(0))));
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(
+          FindInstruction(module.get(), "ag-start")),
+      absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(0))));
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(FindInstruction(module.get(), "ag-done")),
+      absl_testing::StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_THAT(assignment.GetExecutionStreamId(
+                  FindInstruction(module.get(), "call-done")),
+              absl_testing::StatusIs(absl::StatusCode::kNotFound));
+}
+
 TEST_F(ExecutionStreamAssignmentTest, PipelinedSendRecv) {
   const char* kModuleStr = R"(
     HloModule test, num_partitions=2
@@ -728,15 +770,20 @@ TEST_F(ExecutionStreamAssignmentTest,
       module.get(), {/*number_of_compute_execution_streams=*/4,
                      /*number_of_communication_execution_streams=*/2});
 
-  for (absl::string_view name : {"cs0", "cs1", "ag-start.0", "ag-start.1"}) {
-    EXPECT_THAT(
-        assignment.GetExecutionStreamId(FindInstruction(module.get(), name)),
-        absl_testing::IsOk())
-        << "Expected a stream id for " << name
-        << "; execution_stream_assignment must recurse into async-start bodies "
-           "so SPMD-inserted collectives inside compute_on wrappers get a "
-           "stream.";
-  }
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(FindInstruction(module.get(), "cs0")),
+      absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(0))));
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(FindInstruction(module.get(), "cs1")),
+      absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(1))));
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(
+          FindInstruction(module.get(), "ag-start.0")),
+      absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(0))));
+  EXPECT_THAT(
+      assignment.GetExecutionStreamId(
+          FindInstruction(module.get(), "ag-start.1")),
+      absl_testing::IsOkAndHolds(ExecutionStreamId(CommunicationStreamId(1))));
 }
 
 }  // namespace

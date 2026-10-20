@@ -321,7 +321,6 @@ ExecutionStreamAssignment::ExecutionStreamAssignment(const HloModule* module,
   std::deque<const HloComputation*> queue;
   absl::flat_hash_set<const HloComputation*> enqueued;
   auto enqueue = [&](const HloComputation* comp) {
-    if (comp == nullptr) return;
     if (enqueued.insert(comp).second) {
       queue.push_back(comp);
     }
