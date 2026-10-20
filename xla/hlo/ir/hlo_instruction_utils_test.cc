@@ -60,8 +60,8 @@ TEST_F(HloInstructionUtilsTest, TestIsUnstridedSlice) {
       ROOT tuple = (f32[2,2], f32[2,4]) tuple(strided_slice, unstrided_slice)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(hlo_text));
   HloInstruction* unstrided_slice =
       hlo_query::FindInstruction(m->entry_computation(), "unstrided_slice");
   HloInstruction* strided_slice =
@@ -73,8 +73,8 @@ TEST_F(HloInstructionUtilsTest, TestIsUnstridedSlice) {
 }
 
 TEST_F(HloInstructionUtilsTest, KeepsBitwidth) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(R"(
 e {
   a = s8[2] parameter(0)
   b = s16[] bitcast(a)
@@ -92,8 +92,8 @@ TEST_F(HloInstructionUtilsTest, TestAddOrUpdateVectorOfPairsAsAttribute) {
     ENTRY main {
       ROOT param = s32[] parameter(0), frontend_attributes={foo="bar", baz="qux"}
     })";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(hlo));
   HloInstruction* param = m->entry_computation()->root_instruction();
   EXPECT_EQ(param->frontend_attributes().map().size(), 2);
   EXPECT_EQ(param->frontend_attributes().map().at("foo"), "bar");
@@ -806,8 +806,8 @@ TEST_F(HloInstructionUtilsTest, IsAllowedAsyncIntermediary) {
       ROOT add = f32[2,4] add(p0, p0)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto* sharding = FindInstruction(m.get(), "sharding");
   auto* ltg = FindInstruction(m.get(), "ltg");
   auto* gtl = FindInstruction(m.get(), "gtl");
@@ -861,8 +861,8 @@ TEST_F(HloInstructionUtilsTest, TraceAndPropagateDataflow) {
       ROOT dummy = tuple(done)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnVerifiedModule(hlo_text));
   auto* start = FindInstruction(m.get(), "start");
   auto* gte0 = FindInstruction(m.get(), "gte0");
   auto* copy = FindInstruction(m.get(), "copy");
@@ -910,8 +910,8 @@ TEST_F(HloInstructionUtilsTest, TraceAndPropagateDataflow) {
   replacement = m->entry_computation()->AddInstruction(
       HloInstruction::CreateTuple({replacement}));
 
-  TF_ASSERT_OK_AND_ASSIGN(HloInstruction * propagated,
-                          async::PropagateDataflow(*path, replacement));
+  ASSERT_OK_AND_ASSIGN(HloInstruction * propagated,
+                       async::PropagateDataflow(*path, replacement));
 
   EXPECT_EQ(gte0->shape(), ShapeUtil::MakeShape(F32, {4, 2}));
   EXPECT_EQ(copy->shape(), ShapeUtil::MakeShape(F32, {4, 2}));
@@ -947,8 +947,8 @@ TEST_F(HloInstructionUtilsTest, FindAsyncTraversal) {
       ROOT dummy = (f32[2,4], f32[4,4]) tuple(done, ag_done)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
-                          ParseAndReturnUnverifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                       ParseAndReturnUnverifiedModule(hlo_text));
   auto* start = FindInstruction(m.get(), "start");
   auto* update = FindInstruction(m.get(), "update");
   auto* done = FindInstruction(m.get(), "done");
