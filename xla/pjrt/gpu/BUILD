@@ -107,11 +107,16 @@ xla_cc_test(
         "//xla/stream_executor:memory_reservation",
         "//xla/stream_executor:mock_stream_executor",
         "//xla/tsl/framework:bfc_allocator",
+        "//xla/tsl/platform:env",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_googletest//:gtest_main",
-    ],
+    ] + if_google([
+        # In OSS this dependency is added automatically for xla_cc_test targets.
+        # See xla/xla.default.bzl.
+        "//xla/tsl/framework:allocator",
+    ]),
 )
 
 cc_library(
@@ -448,6 +453,7 @@ xla_test(
         "//xla/pjrt:pjrt_executable",
         "//xla/pjrt:raw_buffer",
         "//xla/pjrt:strided_gather",
+        "//xla/pjrt:worker_thread",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_allocator_config",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
         "//xla/pjrt/profiling:device_time_measurement",
