@@ -2609,7 +2609,6 @@ xla_cc_test(
     deps = [
         ":recompute_fusion_side_outputs",
         "//xla:xla_proto_cc",
-        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:decision",
         "//xla/service:hlo_module_config",
@@ -2631,7 +2630,6 @@ xla_test(
         "//xla/service:decision",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
