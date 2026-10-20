@@ -1552,13 +1552,14 @@ ShapeInference::InferScalarBroadcastShape(absl::Span<const Shape> shapes) {
       ABSL_ASSIGN_OR_RETURN(const Shape& shape,
                             InferElementwiseBinaryOpShape(
                                 opcode, lhs, rhs, broadcast_dimensions));
-      if (lhs.element_type() == F32 && rhs.element_type() == F32) {
-        return ShapeUtil::ChangeElementType(shape, C64);
-      } else if (lhs.element_type() == F64 && rhs.element_type() == F64) {
-        return ShapeUtil::ChangeElementType(shape, C128);
-      } else {
-        return Unimplemented("Complex component type is not implemented.");
+      if (lhs.element_type() == rhs.element_type()) {
+        PrimitiveType complex_type =
+            primitive_util::ComplexType(lhs.element_type());
+        if (complex_type != PRIMITIVE_TYPE_INVALID) {
+          return ShapeUtil::ChangeElementType(shape, complex_type);
+        }
       }
+      return Unimplemented("Complex component type is not implemented.");
     }
     case HloOpcode::kAnd:
     case HloOpcode::kOr:

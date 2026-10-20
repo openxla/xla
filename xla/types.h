@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_TYPES_H_
 
 #include <complex>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <type_traits>
@@ -48,10 +49,99 @@ using ::Eigen::half;      // NOLINT(misc-unused-using-decls)
 using complex64 = std::complex<float>;
 using complex128 = std::complex<double>;
 
+struct complex32 {
+  using value_type = half;
+
+  half real_value;
+  half imag_value;
+
+  complex32() = default;
+  complex32(half real, half imag) : real_value(real), imag_value(imag) {}
+  complex32(half real) : real_value(real), imag_value(half(0)) {}
+  complex32(bfloat16 real)
+      : real_value(static_cast<half>(real)), imag_value(half(0)) {}
+  template <typename T, std::enable_if_t<std::is_arithmetic_v<T>, int> = 0>
+  complex32(T real)
+      : real_value(static_cast<half>(real)), imag_value(static_cast<half>(0)) {
+  }
+  template <typename T, typename U,
+            std::enable_if_t<std::is_arithmetic_v<T> && std::is_arithmetic_v<U>,
+                             int> = 0>
+  complex32(T real, U imag)
+      : real_value(static_cast<half>(real)),
+        imag_value(static_cast<half>(imag)) {}
+  template <typename T>
+  complex32(const std::complex<T>& value)
+      : real_value(static_cast<half>(value.real())),
+        imag_value(static_cast<half>(value.imag())) {}
+
+  half real() const { return real_value; }
+  half imag() const { return imag_value; }
+
+  friend bool operator==(const complex32& a, const complex32& b) {
+    return a.real_value == b.real_value && a.imag_value == b.imag_value;
+  }
+  friend bool operator!=(const complex32& a, const complex32& b) {
+    return !(a == b);
+  }
+};
+
+struct bcomplex32 {
+  using value_type = bfloat16;
+
+  bfloat16 real_value;
+  bfloat16 imag_value;
+
+  bcomplex32() = default;
+  bcomplex32(bfloat16 real, bfloat16 imag)
+      : real_value(real), imag_value(imag) {}
+  bcomplex32(bfloat16 real)
+      : real_value(real), imag_value(bfloat16(0)) {}
+  bcomplex32(half real)
+      : real_value(static_cast<bfloat16>(real)), imag_value(bfloat16(0)) {}
+  template <typename T, std::enable_if_t<std::is_arithmetic_v<T>, int> = 0>
+  bcomplex32(T real)
+      : real_value(static_cast<bfloat16>(real)),
+        imag_value(static_cast<bfloat16>(0)) {}
+  template <typename T, typename U,
+            std::enable_if_t<std::is_arithmetic_v<T> && std::is_arithmetic_v<U>,
+                             int> = 0>
+  bcomplex32(T real, U imag)
+      : real_value(static_cast<bfloat16>(real)),
+        imag_value(static_cast<bfloat16>(imag)) {}
+  template <typename T>
+  bcomplex32(const std::complex<T>& value)
+      : real_value(static_cast<bfloat16>(value.real())),
+        imag_value(static_cast<bfloat16>(value.imag())) {}
+
+  bfloat16 real() const { return real_value; }
+  bfloat16 imag() const { return imag_value; }
+
+  friend bool operator==(const bcomplex32& a, const bcomplex32& b) {
+    return a.real_value == b.real_value && a.imag_value == b.imag_value;
+  }
+  friend bool operator!=(const bcomplex32& a, const bcomplex32& b) {
+    return !(a == b);
+  }
+};
+
+static_assert(sizeof(complex32) == 4, "complex32 must be 4 bytes");
+static_assert(sizeof(bcomplex32) == 4, "bcomplex32 must be 4 bytes");
+static_assert(offsetof(complex32, imag_value) == 2);
+static_assert(offsetof(bcomplex32, imag_value) == 2);
+static_assert(std::is_standard_layout_v<complex32>);
+static_assert(std::is_standard_layout_v<bcomplex32>);
+static_assert(std::is_trivially_copyable_v<complex32>);
+static_assert(std::is_trivially_copyable_v<bcomplex32>);
+
 template <class T>
 struct is_complex : std::false_type {};
 template <class T>
 struct is_complex<std::complex<T>> : std::true_type {};
+template <>
+struct is_complex<complex32> : std::true_type {};
+template <>
+struct is_complex<bcomplex32> : std::true_type {};
 
 template <typename T>
 inline constexpr bool is_complex_v = is_complex<T>::value;

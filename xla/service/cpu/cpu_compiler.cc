@@ -1774,6 +1774,9 @@ CpuCompiler::CompileCpuExecutable(
                          {{"name", module->name()}});
   });
 
+  // Shared by JIT and AOT compilation.
+  ABSL_RETURN_IF_ERROR(VerifyNoUnsupportedStorageComplexTypes(*module, "CPU"));
+
   ModuleHook pre_optimization_ir_hook;
   ModuleHook post_optimization_ir_hook;
   std::tie(pre_optimization_ir_hook, post_optimization_ir_hook) =

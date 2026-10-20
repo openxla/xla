@@ -856,6 +856,60 @@ std::optional<ParsedWhileLoop> PatternMatchParseWhileLoop(
   }
 }
 
+namespace {
+
+// Capability boundary of C32 and BC32 within the evaluator: they are
+// storage-only element types. Supported are literal movement (constant,
+// parameter, tuple, get-tuple-element, copy, bitcast, bitcast-convert) and
+// the minimal complex ops (real, imag, complex, convert); everything else is
+// rejected with Unimplemented.
+
+bool InstructionUsesStorageComplexType(const HloInstruction* instruction) {
+  if (ShapeUtil::TouchesStorageComplexTypes(instruction->shape())) {
+    return true;
+  }
+  for (const HloInstruction* operand : instruction->operands()) {
+    if (ShapeUtil::TouchesStorageComplexTypes(operand->shape())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool IsStorageComplexSupportedOpcode(HloOpcode opcode) {
+  switch (opcode) {
+    case HloOpcode::kConstant:
+    case HloOpcode::kParameter:
+    case HloOpcode::kTuple:
+    case HloOpcode::kGetTupleElement:
+    case HloOpcode::kReal:
+    case HloOpcode::kImag:
+    case HloOpcode::kComplex:
+    case HloOpcode::kConvert:
+    case HloOpcode::kBitcast:
+    case HloOpcode::kBitcastConvert:
+    case HloOpcode::kCopy:
+      return true;
+    default:
+      return false;
+  }
+}
+
+absl::Status VerifyStorageComplexSupport(const HloInstruction* instruction) {
+  if (InstructionUsesStorageComplexType(instruction) &&
+      !IsStorageComplexSupportedOpcode(instruction->opcode())) {
+    return Unimplemented(
+        "HloEvaluator does not implement the %s opcode for C32/BC32 element "
+        "types; they are storage-only and support only literal movement "
+        "(constant, parameter, tuple, get-tuple-element, copy, bitcast, "
+        "bitcast-convert) and real/imag/complex/convert.",
+        HloOpcodeString(instruction->opcode()));
+  }
+  return absl::OkStatus();
+}
+
+}  // namespace
+
 // Note that unsupported types by the typed visitor does not necessarily imply
 // the non-typed HloEvaluator (parent evaluator) would not support them either
 // in the type-agnostic handler. For e.g., HandleGetTupleElement in the parent
@@ -903,6 +957,15 @@ HloEvaluator::HloEvaluator(
               typed_visitors_[primitive_type] =
                   std::make_unique<HloEvaluatorTypedVisitor<NativeT, float>>(
                       this);
+            } else if constexpr (primitive_type == C32 ||
+                                 primitive_type == BC32) {
+              typed_visitors_[primitive_type] =
+                  std::make_unique<ConstFunctionVisitor>(
+                      [](const HloInstruction*) {
+                        return Unimplemented(
+                            "HloEvaluatorTypedVisitor: C32 and BC32 are "
+                            "storage-only types.");
+                      });
             } else {
               typed_visitors_[primitive_type] =
                   std::make_unique<HloEvaluatorTypedVisitor<NativeT>>(this);
@@ -1590,6 +1653,40 @@ absl::Status HloEvaluator::HandleIsFinite(const HloInstruction* is_finite) {
       elem_ty);
 }
 
+absl::Status HloEvaluator::HandleAbs(const HloInstruction* abs) {
+  // Dispatched on the operand type: abs is the one op whose result type
+  // differs from its operand type, so the typed visitor (selected by result
+  // type) cannot own it.
+  auto operand = abs->operand(0);
+  return primitive_util::PrimitiveTypeSwitch<absl::Status>(
+      [&](auto primitive_type_constant) -> absl::Status {
+        if constexpr (primitive_util::IsComplexType(
+                          primitive_type_constant)) {
+          using NativeT = primitive_util::NativeTypeOf<primitive_type_constant>;
+          if constexpr (primitive_type_constant == C32 ||
+                        primitive_type_constant == BC32) {
+            return Unimplemented(
+                "HloEvaluator does not implement abs for C32/BC32 element "
+                "types.");
+          } else {
+            const Literal& operand_literal = GetEvaluatedLiteralFor(operand);
+            ABSL_ASSIGN_OR_RETURN(
+                Literal literal,
+                (ElementWiseUnaryOpImpl<typename NativeT::value_type, NativeT>(
+                    abs, [](NativeT elem_operand) {
+                      return std::abs(elem_operand);
+                    },
+                    operand_literal)));
+            SetEvaluatedLiteralFor(abs, std::move(literal));
+            return absl::OkStatus();
+          }
+        } else {
+          return DefaultAction(abs);
+        }
+      },
+      operand->shape().element_type());
+}
+
 absl::Status HloEvaluator::HandleReal(const HloInstruction* real) {
   auto operand = real->operand(0);
   return primitive_util::PrimitiveTypeSwitch<absl::Status>(
@@ -1611,7 +1708,7 @@ absl::Status HloEvaluator::HandleReal(const HloInstruction* real) {
               Literal literal,
               (ElementWiseUnaryOpImpl<typename NativeT::value_type, NativeT>(
                   real,
-                  [](NativeT elem_operand) { return std::real(elem_operand); },
+                  [](NativeT elem_operand) { return elem_operand.real(); },
                   GetEvaluatedLiteralFor(operand))));
           SetEvaluatedLiteralFor(real, std::move(literal));
           return absl::OkStatus();
@@ -1643,7 +1740,7 @@ absl::Status HloEvaluator::HandleImag(const HloInstruction* imag) {
               Literal literal,
               (ElementWiseUnaryOpImpl<typename NativeT::value_type, NativeT>(
                   imag,
-                  [](NativeT elem_operand) { return std::imag(elem_operand); },
+                  [](NativeT elem_operand) { return elem_operand.imag(); },
                   GetEvaluatedLiteralFor(operand))));
           SetEvaluatedLiteralFor(imag, std::move(literal));
           return absl::OkStatus();
@@ -4977,7 +5074,9 @@ std::optional<HloOpcode> MatchSimpleBinaryReducer(
   switch (op->opcode()) {
     case HloOpcode::kAdd:
     case HloOpcode::kMultiply:
-      return elem_type != PRED ? op_code : std::nullopt;
+      return elem_type != PRED && elem_type != C32 && elem_type != BC32
+                 ? op_code
+                 : std::nullopt;
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
       return !primitive_util::IsComplexType(elem_type) ? op_code : std::nullopt;
@@ -5122,10 +5221,16 @@ absl::Status HloEvaluator::HandleReduceWindow(const HloInstruction* hlo) {
             function, inferred_return_shape.element_type())) {
       Literal result(inferred_return_shape);
       ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
-          [&](auto type) {
-            return EvaluateSimpleReduceWindowTyped<type>(
-                *fast_op, *input_literal_vec[0], *init_literal_vec[0],
-                window_shape, window, result);
+          [&](auto type) -> absl::Status {
+            if constexpr (type == C32 || type == BC32) {
+              return Unimplemented(
+                  "HloEvaluator does not implement reduce-window for "
+                  "C32/BC32 element types.");
+            } else {
+              return EvaluateSimpleReduceWindowTyped<type>(
+                  *fast_op, *input_literal_vec[0], *init_literal_vec[0],
+                  window_shape, window, result);
+            }
           },
           inferred_return_shape.element_type()));
       VLOG(2) << "Final result is:" << result.ToString() << "\n";
@@ -5294,6 +5399,9 @@ absl::Status HloEvaluator::HandleCustomCall(const HloInstruction* custom_call) {
 
 absl::Status HloEvaluator::Preprocess(const HloInstruction* hlo) {
   VLOG(3) << "About to visit HLO: " << hlo->ToString();
+  // Checked in Preprocess, not EvaluateInternal, so that whole-module
+  // evaluation via computation->Accept() is covered as well.
+  ABSL_RETURN_IF_ERROR(VerifyStorageComplexSupport(hlo));
   if (!enable_partial_evaluation_) {
     for (const HloInstruction* operand : hlo->operands()) {
       if (!IsAlreadyEvaluated(operand) ||

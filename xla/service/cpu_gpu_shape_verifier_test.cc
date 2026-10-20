@@ -99,5 +99,52 @@ TEST_F(CpuGpuShapeVerifierTest, Int4ShardingCustomCall) {
   EXPECT_OK(status);
 }
 
+TEST_F(CpuGpuShapeVerifierTest, RejectsStorageComplexTypeInBufferShape) {
+  const char* const hlo_string = R"(
+  HloModule Module
+
+  ENTRY main {
+    p0 = b(c32[4]) parameter(0)
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto status = VerifyNoUnsupportedStorageComplexTypes(*module, "CPU");
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("element type c32"));
+}
+
+TEST_F(CpuGpuShapeVerifierTest, AcceptsBufferShapeWithoutStorageComplexTypes) {
+  const char* const hlo_string = R"(
+  HloModule Module
+
+  ENTRY main {
+    p0 = b(f32[4]) parameter(0)
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+
+  EXPECT_OK(VerifyNoUnsupportedStorageComplexTypes(*module, "CPU"));
+}
+
+TEST_F(CpuGpuShapeVerifierTest,
+       RejectsStorageComplexTypeInTupleNestedBufferShape) {
+  const char* const hlo_string = R"(
+  HloModule Module
+
+  ENTRY main {
+    p0 = (f32[4], b(bc32[2])) parameter(0)
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+
+  auto status = VerifyNoUnsupportedStorageComplexTypes(*module, "CPU");
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("element type bc32"));
+}
+
 }  // namespace
 }  // namespace xla
