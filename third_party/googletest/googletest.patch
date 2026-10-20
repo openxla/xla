@@ -16,7 +16,11 @@ diff --git a/BUILD.bazel b/BUILD.bazel
 index cc254457..49120384 100644
 --- a/BUILD.bazel
 +++ b/BUILD.bazel
-@@ -181,6 +181,24 @@ alias(
+@@ -33,1 +33,3 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
++
+ package(default_visibility = ["//visibility:public"])
+@@ -181,6 +183,24 @@ alias(
  cc_library(
      name = "gtest_main",
      srcs = ["googlemock/src/gmock_main.cc"],
@@ -41,3 +45,13 @@ index cc254457..49120384 100644
      features = select({
          ":windows": ["windows_export_all_symbols"],
          "//conditions:default": [],
+diff --git a/MODULE.bazel b/MODULE.bazel
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -55,2 +55,6 @@
+ bazel_dep(
++    name = "rules_cc",
++    version = "0.2.8",
++)
++bazel_dep(
+     name = "rules_python",
