@@ -156,6 +156,9 @@ class PjRtRawBuffer : public PjRtRawBufferInterface,
   // If visible to the host, returns the base pointer for direct access.
   virtual void* GetHostPointer() const { return nullptr; }
 
+  // Keep the buffer alive and honor access dependencies. kRead is read-only.
+  // kWrite invalidates caches on acquisition; reacquire after an intervening
+  // execution before writing again. Use GetHostPointer() for external exports.
   virtual void* GetHostPointerForInternalUse(HostAccess access) const {
     return GetHostPointer();
   }

@@ -13,18 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <utility>
 
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/barrier.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "oneapi/dnnl/dnnl.hpp"
+#include "xla/client/executable_build_options.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -36,8 +42,11 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/raw_buffer.h"
+#include "xla/pjrt/strided_gather.h"
 #include "xla/service/cpu/onednn_weight_cache.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/util/tied_ref.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -65,15 +74,17 @@ class OneDnnWeightCachePjRtTest : public ::testing::Test {
   }
 
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> Compile(
-      absl::string_view hlo = kMatMul) {
+      absl::string_view hlo = kMatMul, CompileOptions options = {}) {
     ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnUnverifiedModule(hlo, {}));
-    return client_->CompileAndLoad(XlaComputation(module->ToProto()), {});
+    return client_->CompileAndLoad(XlaComputation(module->ToProto()),
+                                   std::move(options));
   }
 
   absl::Status Run(PjRtLoadedExecutable& executable, PjRtBuffer& weights,
-                   const Literal& expected) {
-    ABSL_ASSIGN_OR_RETURN(auto result,
-                          executable.Execute({{input_.get(), &weights}}, {}));
+                   const Literal& expected,
+                   const ExecuteOptions& options = {}) {
+    ABSL_ASSIGN_OR_RETURN(
+        auto result, executable.Execute({{input_.get(), &weights}}, options));
     ABSL_ASSIGN_OR_RETURN(auto actual, result[0][0]->ToLiteral().Await());
     EXPECT_EQ(*actual, expected);
     return absl::OkStatus();
@@ -85,6 +96,116 @@ class OneDnnWeightCachePjRtTest : public ::testing::Test {
   std::unique_ptr<PjRtClient> client_;
   std::unique_ptr<PjRtBuffer> input_;
 };
+
+TEST_F(OneDnnWeightCachePjRtTest, CapacityRejectionPreservesBias) {
+  ASSERT_OK_AND_ASSIGN(auto executable, Compile(R"(
+HloModule biased_matmul
+ENTRY main {
+  lhs = f32[2,3]{1,0} parameter(0)
+  rhs = f32[3,2]{1,0} parameter(1)
+  bias = f32[1,2]{1,0} parameter(2)
+  ROOT result = f32[2,2]{1,0} custom-call(lhs, rhs, bias),
+    custom_call_target="__onednn$matmul",
+    backend_config={"onednn_matmul_config":{"fusions":{"ops":["BIAS"]}}}
+})"));
+  auto rhs = LiteralUtil::CreateR2<float>({{7, 8}, {9, 10}, {11, 12}});
+  ASSERT_OK_AND_ASSIGN(auto weights, client_->BufferFromHostLiteral(
+                                         rhs, client_->memory_spaces()[0]));
+  auto owner = std::make_shared<tsl::TiedAny>();
+  dnnl::memory::desc desc({static_cast<int64_t>(cache_.capacity_bytes())},
+                          dnnl::memory::data_type::u8,
+                          dnnl::memory::format_tag::x);
+  auto held = cache_.LookupOrCreate({owner.get(), desc, desc, owner});
+  ASSERT_EQ(held.kind, cpu::OneDnnWeightCache::LookupKind::kMiss);
+  // Cancel the entry but retain its allocation to keep the budget full.
+  cache_.Complete(held.weights, /*success=*/false);
+  ASSERT_EQ(cache_.stats().live_bytes, cache_.capacity_bytes());
+  // Changing bias must be honored on fallback and after releasing the budget.
+  // Reuse in the second phase confirms these weights are eligible for caching.
+  for (bool reject : {true, false}) {
+    SCOPED_TRACE(reject ? "capacity rejection" : "cache reuse");
+    if (!reject) {
+      held.weights.reset();
+    }
+    auto before = cache_.stats();
+    for (float bias_value : {3.f, -7.f}) {
+      auto bias = LiteralUtil::CreateR2<float>({{bias_value, -bias_value}});
+      ASSERT_OK_AND_ASSIGN(
+          auto bias_buffer,
+          client_->BufferFromHostLiteral(bias, client_->memory_spaces()[0]));
+      ASSERT_OK_AND_ASSIGN(
+          auto result,
+          executable->Execute(
+              {{input_.get(), weights.get(), bias_buffer.get()}}, {}));
+      ASSERT_OK_AND_ASSIGN(auto actual, result[0][0]->ToLiteral().Await());
+      EXPECT_EQ(*actual, LiteralUtil::CreateR2<float>(
+                             {{58 + bias_value, 64 - bias_value},
+                              {139 + bias_value, 154 - bias_value}}));
+    }
+    EXPECT_EQ(cache_.stats().insertions, before.insertions + (reject ? 0 : 1));
+    EXPECT_EQ(cache_.stats().hits, before.hits + (reject ? 0 : 1));
+  }
+}
+
+TEST_F(OneDnnWeightCachePjRtTest, ConcurrentColdAndWarmRequests) {
+  // Cover compiler selection and a transposed RHS as well as concurrent reuse.
+  CompileOptions compile_options;
+  auto* debug_options =
+      compile_options.executable_build_options.mutable_debug_options();
+  debug_options->set_xla_cpu_experimental_onednn_custom_call(true);
+  debug_options->clear_xla_cpu_experimental_ynn_fusion_type();
+  constexpr char kDot[] = R"(
+HloModule concurrent_matmul
+ENTRY main {
+  lhs = f32[256,256]{1,0} parameter(0)
+  rhs = f32[256,256]{1,0} parameter(1)
+  ROOT result = f32[256,256]{1,0} dot(lhs, rhs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+})";
+  ASSERT_OK_AND_ASSIGN(auto executable,
+                       Compile(kDot, std::move(compile_options)));
+  auto lhs = LiteralUtil::CreateFull<float>({256, 256}, 1);
+  auto rhs = LiteralUtil::CreateFull<float>({256, 256}, 0);
+  auto expected = LiteralUtil::CreateFull<float>({256, 256}, 0);
+  for (int64_t row = 0; row < 256; ++row) {
+    for (int64_t column = 0; column < 256; ++column) {
+      rhs.Set<float>({row, column}, row + 2 * column);
+      // Each output column is the sum of one RHS row.
+      expected.Set<float>({row, column}, 256 * (column + 255));
+    }
+  }
+  ASSERT_OK_AND_ASSIGN(
+      input_, client_->BufferFromHostLiteral(lhs, client_->memory_spaces()[0]));
+  ASSERT_OK_AND_ASSIGN(auto weights, client_->BufferFromHostLiteral(
+                                         rhs, client_->memory_spaces()[0]));
+  // Separate streams allow overlap while sharing weights. Expect one cold
+  // insertion, then two warm hits.
+  for (bool warm : {false, true}) {
+    SCOPED_TRACE(warm ? "warm cache" : "cold cache");
+    auto before = cache_.stats();
+    absl::Barrier start(2);
+    std::array<std::thread, 2> callers;
+    for (int stream_id : {1, 2}) {
+      callers[stream_id - 1] = std::thread([&, stream_id] {
+        SCOPED_TRACE(warm ? "warm cache" : "cold cache");
+        SCOPED_TRACE(stream_id);
+        ExecuteOptions options;
+        options.execution_mode = ExecuteOptions::ExecutionMode::kAsynchronous;
+        options.execution_stream_id = stream_id;
+        start.Block();
+        EXPECT_OK(Run(*executable, *weights, expected, options));
+      });
+    }
+    for (auto& caller : callers) {
+      caller.join();
+    }
+    EXPECT_EQ(cache_.stats().insertions, before.insertions + (warm ? 0 : 1));
+    // A cold caller can bypass a pending fill or hit after it completes.
+    if (warm) {
+      EXPECT_EQ(cache_.stats().hits, before.hits + callers.size());
+    }
+  }
+}
 
 TEST_F(OneDnnWeightCachePjRtTest, InvalidatesDonation) {
   ASSERT_OK_AND_ASSIGN(auto executable, Compile());
@@ -110,6 +231,44 @@ ENTRY main {
                 LiteralUtil::CreateR2<float>({{64, 70}, {154, 169}})));
   EXPECT_TRUE(weights->IsDeleted());
   EXPECT_EQ(cache_.stats().insertions, before.insertions + 2);
+}
+
+TEST_F(OneDnnWeightCachePjRtTest,
+       SliceCopiesPreserveReuseAndUpdatesInvalidate) {
+  ASSERT_OK_AND_ASSIGN(auto executable, Compile());
+  auto rhs = LiteralUtil::CreateR2<float>({{7, 8}, {9, 10}, {11, 12}});
+  ASSERT_OK_AND_ASSIGN(auto weights, client_->BufferFromHostLiteral(
+                                         rhs, client_->memory_spaces()[0]));
+  auto before = cache_.stats();
+  ASSERT_OK(Run(*executable, *weights, expected_));
+  ASSERT_EQ(cache_.stats().insertions, before.insertions + 1);
+
+  StridedGather gather({
+      /*element_size=*/sizeof(float),
+      /*counts=*/{2, 3},
+      /*src_byte_offset=*/0,
+      /*src_byte_size=*/6 * sizeof(float),
+      /*src_byte_strides=*/{sizeof(float), 2 * sizeof(float)},
+  });
+  // Copying column-wise preserves source reuse and leaves the copy cacheable.
+  ASSERT_OK_AND_ASSIGN(auto copied, weights->CopySlice(gather, rhs.shape()));
+  ASSERT_OK(Run(*executable, *copied,
+                LiteralUtil::CreateR2<float>({{59, 61}, {143, 148}})));
+  ASSERT_OK(Run(*executable, *weights, expected_));
+  EXPECT_EQ(cache_.stats().insertions, before.insertions + 2);
+  EXPECT_EQ(cache_.stats().hits, before.hits + 1);
+
+  // Updating replaces the copy's generation; both buffers remain cacheable.
+  ASSERT_OK_AND_ASSIGN(auto updated,
+                       copied->UpdateSlice(gather, weights.get()));
+  EXPECT_TRUE(copied->IsDeleted());
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_OK(Run(*executable, *updated,
+                  LiteralUtil::CreateR2<float>({{50, 68}, {122, 167}})));
+  }
+  ASSERT_OK(Run(*executable, *weights, expected_));
+  EXPECT_EQ(cache_.stats().insertions, before.insertions + 3);
+  EXPECT_EQ(cache_.stats().hits, before.hits + 3);
 }
 
 TEST_F(OneDnnWeightCachePjRtTest,
