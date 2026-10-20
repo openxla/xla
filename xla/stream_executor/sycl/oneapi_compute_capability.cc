@@ -33,7 +33,8 @@ namespace stream_executor {
 // Nova Lake P (NVLP) variant codec
 // ==============================================================================
 template <>
-struct OneAPIComputeCapability::OneAPIDeviceVariantOps<OneAPIDeviceType::kNVLP> {
+struct OneAPIComputeCapability::OneAPIDeviceVariantOps<
+    OneAPIDeviceType::kNVLP> {
   static bool IsKnown(uint32_t version) { return version == 0xa; }
 
   static std::string Decode(uint32_t version) { return "P"; }
