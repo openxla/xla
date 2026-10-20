@@ -23,6 +23,7 @@ def repo():
         sha256 = "e720a6ca29428b803f4ad165371771f5398faba397edf6778837a18599ea13ff",
         strip_prefix = "brotli-1.1.0",
         patch_file = [
+            "//third_party/brotli:build_rules.patch",
             # On a version upgrade, this patch can be regenerated with the command:
             # build_tools/dependencies/gen_disable_layering_check_patch.sh.  \
             #   https://github.com/google/brotli/archive/refs/tags/v1.1.0.tar.gz \
