@@ -115,6 +115,10 @@ ENTRY main)"},
   ASSERT_EQ(other_thread->execution_thread(), "other");
   ASSERT_NE(other_thread->GetInstructionWithName("dead"), nullptr);
   const std::string original = other_thread->ToString();
+  const std::string saved_name = module->entry_computation()
+                                     ->GetInstructionWithName("consumer")
+                                     ->operand(0)
+                                     ->name();
   int evaluated = 0;
   RecomputeFusionSideOutputs pass(
       [&](const FusionRecomputeVariants&) {
@@ -128,9 +132,9 @@ ENTRY main)"},
   EXPECT_EQ(evaluated, 1);
   EXPECT_EQ(changed, !GetParam());
   EXPECT_EQ(other_thread->ToString(), original);
-  EXPECT_EQ(
-      module->entry_computation()->GetInstructionWithName("saved") == nullptr,
-      !GetParam());
+  EXPECT_EQ(module->entry_computation()->GetInstructionWithName(saved_name) ==
+                nullptr,
+            !GetParam());
 }
 
 TEST_P(RecomputeFusionSideOutputsPolicyTest, SkipsWhenAutotuningDisabled) {

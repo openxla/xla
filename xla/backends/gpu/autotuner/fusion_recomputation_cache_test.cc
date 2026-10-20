@@ -78,7 +78,7 @@ class FusionRecomputationCacheTest : public HloHardwareIndependentTestBase {
     return ExtractFusionRecomputeVariants(
         {producer,
          consumer,
-         entry->GetInstructionWithName("y"),
+         consumer->mutable_operand(0),
          producer->fused_expression_root()->mutable_operand(0),
          {consumer->fused_parameter(1)}});
   }
