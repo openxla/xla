@@ -1255,6 +1255,7 @@ cc_library(
         "//xla/service/gpu/model:gpu_recomputation_cost_model",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/lib/strings:proto_serialization",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:vlog_is_on",
@@ -1264,7 +1265,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
-        "@tsl//tsl/platform:protobuf",
     ],
 )
 
