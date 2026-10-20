@@ -1559,6 +1559,90 @@ TEST(PjRtCpuClientTest, DonateWithControlDependencyError) {
                        HasSubstr("control dependency failed")));
 }
 
+TEST(PjRtCpuClientTest, SliceBuffer) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetPjRtCpuClient(CpuClientOptions()));
+  Literal literal = LiteralUtil::CreateR2<int32_t>(
+      {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostLiteral(literal, client->memory_spaces()[0],
+                                    /*device_layout=*/nullptr));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> sliced_buffer,
+                       buffer->Slice(/*offset=*/{1, 1}, /*shape=*/{2, 2},
+                                     /*dst_layout=*/nullptr));
+
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
+                       sliced_buffer->ToLiteralSync());
+  Literal expected_literal = LiteralUtil::CreateR2<int32_t>({{6, 7}, {10, 11}});
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_literal, *result_literal));
+}
+
+TEST(PjRtCpuClientTest, SliceBufferEmpty) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetPjRtCpuClient(CpuClientOptions()));
+  Literal literal = LiteralUtil::CreateR2<int32_t>(
+      {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostLiteral(literal, client->memory_spaces()[0],
+                                    /*device_layout=*/nullptr));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> sliced_buffer,
+                       buffer->Slice(/*offset=*/{1, 0}, /*shape=*/{0, 4},
+                                     /*dst_layout=*/nullptr));
+
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
+                       sliced_buffer->ToLiteralSync());
+  EXPECT_EQ(result_literal->element_count(), 0);
+  EXPECT_EQ(result_literal->shape().dimensions(),
+            absl::Span<const int64_t>({0, 4}));
+}
+
+TEST(PjRtCpuClientTest, SliceBufferWithLayout) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetPjRtCpuClient(CpuClientOptions()));
+  Literal literal = LiteralUtil::CreateR2<int32_t>(
+      {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostLiteral(literal, client->memory_spaces()[0],
+                                    /*device_layout=*/nullptr));
+
+  Layout col_major = LayoutUtil::MakeAscendingLayout(2);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> sliced_buffer,
+                       buffer->Slice(/*offset=*/{1, 1}, /*shape=*/{2, 2},
+                                     /*dst_layout=*/&col_major));
+
+  EXPECT_EQ(sliced_buffer->on_device_shape().layout(), col_major);
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
+                       sliced_buffer->ToLiteralSync());
+  Literal expected_literal = LiteralUtil::CreateR2<int32_t>({{6, 7}, {10, 11}});
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected_literal, *result_literal));
+}
+
+TEST(PjRtCpuClientTest, SliceBufferInvalidBounds) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetPjRtCpuClient(CpuClientOptions()));
+  Literal literal = LiteralUtil::CreateR2<int32_t>(
+      {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostLiteral(literal, client->memory_spaces()[0],
+                                    /*device_layout=*/nullptr));
+
+  EXPECT_THAT(buffer->Slice(/*offset=*/{-1, 0}, /*shape=*/{1, 1},
+                            /*dst_layout=*/nullptr),
+              StatusIs(absl::StatusCode::kOutOfRange));
+  EXPECT_THAT(buffer->Slice(/*offset=*/{2, 2}, /*shape=*/{2, 3},
+                            /*dst_layout=*/nullptr),
+              StatusIs(absl::StatusCode::kOutOfRange));
+  EXPECT_THAT(
+      buffer->Slice(/*offset=*/{0}, /*shape=*/{1}, /*dst_layout=*/nullptr),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
 }  // namespace
 
 //===----------------------------------------------------------------------===//

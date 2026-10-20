@@ -1366,6 +1366,15 @@ class PjRtBuffer {
       xla::PrimitiveType element_type, absl::Span<const int64_t> dims,
       const Layout* device_layout) = 0;
 
+  // Slices the buffer starting at `offset` with dimensions `shape` and
+  // optional `dst_layout` (defaults to this buffer's layout if nullptr) into
+  // a new buffer on the same memory space.
+  virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> Slice(
+      absl::Span<const int64_t> offset, absl::Span<const int64_t> shape,
+      const Layout* dst_layout) {
+    return absl::UnimplementedError("Slice is not supported.");
+  }
+
   // Donates 'this' and returns a new buffer that is ready only when both 'this'
   // and 'dependency' are ready.
   //
