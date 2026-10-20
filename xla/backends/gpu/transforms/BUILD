@@ -2163,6 +2163,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/codegen/xtile:xtile_config_proto_cc",
         "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
@@ -2298,6 +2299,22 @@ xla_test(
         "//xla:xla_proto_cc",
         "//xla/service:hlo_module_config",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# Tests for the experimental Triton XTile backend for kRaggedDot.
+xla_test(
+    name = "gemm_rewriter_triton_ragged_dot_test",
+    srcs = ["gemm_rewriter_triton_ragged_dot_test.cc"],
+    backends = ["gpu"],
+    deps = [
+        ":gemm_rewriter_test_lib",
+        "//xla:error_spec",
+        "//xla:xla_proto_cc",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:hlo_pjrt_interpreter_reference_mixin",
+        "//xla/tsl/platform:statusor",
         "@com_google_googletest//:gtest_main",
     ],
 )
