@@ -721,7 +721,8 @@ bool AllowedInGemmFusion(const HloInstruction& instr) {
   return HloPredicateIsNotOp<HloOpcode::kDot, HloOpcode::kScaledDot,
                              HloOpcode::kParameter, HloOpcode::kAllGather,
                              HloOpcode::kAllGatherStart,
-                             HloOpcode::kAllGatherDone>(&instr);
+                             HloOpcode::kAllGatherDone, HloOpcode::kAllToAll>(
+      &instr);
 }
 
 // Returns true if we should consider fusing the instruction into the GEMM

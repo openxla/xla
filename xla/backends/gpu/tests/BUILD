@@ -1865,6 +1865,7 @@ xla_test(
     ],
     deps = [
         ":collective_ops_e2e_test_base",
+        "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
@@ -1873,6 +1874,7 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/tests:literal_test_util",
+        "//xla/tsl/platform:env",
         "//xla/tsl/platform:test",
         "//xla/tsl/testing:temporary_directory",
         "@com_google_absl//absl/status:status_macros",
@@ -1881,6 +1883,7 @@ xla_test(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:path",
     ],
 )
 

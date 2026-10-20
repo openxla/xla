@@ -28,7 +28,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/gpu/tests/collective_ops_e2e_test_base.h"
+#include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -40,6 +42,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/literal_test_util.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/testing/temporary_directory.h"
 #include "xla/xla.pb.h"
@@ -574,6 +577,90 @@ INSTANTIATE_TEST_SUITE_P(
       return std::string(
           primitive_util::LowercasePrimitiveTypeName(info.param));
     });
+
+TEST_F(AllToAllTest, AllToAllWithGemmFusionStaticAutotuneConfig) {
+  constexpr int32_t kNumReplicas = 2;
+  if (!CheckDeviceCount(kNumReplicas)) {
+    return;
+  }
+
+  constexpr absl::string_view kAutotuneConfigStr = R"pb(
+    configs {
+      backend: TRITON
+      backend_config {
+        triton {
+          block_m: 16
+          block_n: 16
+          block_k: 16
+          num_stages: 1
+          num_warps: 4
+          num_ctas: 1
+        }
+      }
+    }
+  )pb";
+  ASSERT_OK_AND_ASSIGN(
+      tsl::testing::TemporaryDirectory temp_dir,
+      tsl::testing::TemporaryDirectory::CreateForCurrentTestcase());
+  const std::string autotune_config_path =
+      tsl::io::JoinPath(temp_dir.path(), "autotune_config.textproto");
+  ASSERT_OK(tsl::WriteStringToFile(tsl::Env::Default(), autotune_config_path,
+                                   kAutotuneConfigStr));
+
+  constexpr absl::string_view kModuleStr = R"(
+  HloModule test
+  ENTRY test_computation {
+    p0 = f32[64,64] parameter(0)
+    p1 = f32[64,64] parameter(1)
+    a2a = f32[64,64] all-to-all(p0), dimensions={0}, replica_groups={{0,1}}
+    ROOT dot = f32[64,64] dot(a2a, p1),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, kNumReplicas));
+
+  DebugOptions& debug_options =
+      module->mutable_config().mutable_debug_options();
+  debug_options.set_xla_candidate_configs_file(autotune_config_path);
+
+  ASSERT_OK_AND_ASSIGN(
+      TwoGpuTestData a2a_data,
+      PrepareTwoGpuTestData(ShapeUtil::MakeShape(F32, {64, 64})));
+  Literal rhs = LiteralUtil::CreateFull<float>({64, 64}, 0.0f);
+  for (int64_t i = 0; i < 64; ++i) {
+    rhs.Set<float>({i, i}, 1.0f);
+  }
+  std::vector<std::vector<Literal*>> args = {{&a2a_data.input_r0, &rhs},
+                                             {&a2a_data.input_r1, &rhs}};
+  ASSERT_OK_AND_ASSIGN(ExecutionResult result,
+                       ExecuteReplicated(std::move(module), args));
+
+  VerifyOneShotAllToAll(result.optimized_module);
+  for (const HloComputation* comp : result.optimized_module->computations()) {
+    for (const HloInstruction* instr : comp->instructions()) {
+      if (instr->opcode() == HloOpcode::kAllToAll && instr->IsFused()) {
+        for (const HloInstruction* fused_instr : comp->instructions()) {
+          if (fused_instr != instr) {
+            EXPECT_EQ(fused_instr->opcode(), HloOpcode::kParameter)
+                << "Expected all-to-all not to be fused with another "
+                   "operation, but found "
+                << fused_instr->ToString() << " in " << comp->ToString();
+          }
+        }
+      }
+    }
+  }
+
+  ASSERT_EQ(result.results.size(), kNumReplicas);
+  EXPECT_TRUE(LiteralTestUtil::Near(a2a_data.expected_r0, result.results[0],
+                                    ErrorSpec(1e-3f, 1e-3f)))
+      << "Mismatch at replica 0";
+  EXPECT_TRUE(LiteralTestUtil::Near(a2a_data.expected_r1, result.results[1],
+                                    ErrorSpec(1e-3f, 1e-3f)))
+      << "Mismatch at replica 1";
+}
 
 }  // namespace
 }  // namespace xla
