@@ -2688,7 +2688,7 @@ absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
               !LayoutUtil::HasMinorToMajorSetInLayout(*subshape)) {
             *subshape->mutable_layout() =
                 ShapeUtil::GetSubshape(computation->root_instruction()->shape(),
-                                      index)
+                                       index)
                     .layout();
           }
         });
