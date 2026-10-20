@@ -72,10 +72,16 @@ TransferIncarnations(
     int src_process_index, int dst_process_index,
     const absl::flat_hash_map<TaskId, IncarnationId>& incarnations);
 
+class CommonPjRtBufferImpl;
+
 // A common base class for Pjrt clients based on raw buffers.
 class CommonPjRtClient : public PjRtClient {
  public:
   CommonPjRtClient();
+
+  virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> SliceBuffer(
+      CommonPjRtBuffer* src_buffer, absl::Span<const int64_t> offset,
+      absl::Span<const int64_t> shape, const Layout* dst_layout);
 
   // A thread pool for dispatching background work.
   // TODO(parkers): make pure virtual and update all clients.
@@ -615,6 +621,17 @@ class CommonPjRtClient : public PjRtClient {
       const LoadOptions& load_options);
 
  protected:
+  friend class CommonPjRtBufferImpl;
+
+  static absl::Status CommonCopyToMemorySpace(
+      CommonPjRtBuffer* src_buffer, PjRtMemorySpace* dst_memory_space,
+      std::shared_ptr<const xla::Shape> dst_shape,
+      PjRtDeviceEventPromiseRef& definition_event_promise,
+      PjRtDeviceEventPromiseRef& src_usage_event_promise,
+      PjRtRawBufferRef& src_raw_buffer, PjRtRawBufferRef& dst_raw_buffer,
+      std::unique_ptr<PjRtBuffer>& dst_buffer,
+      PjRtDeviceEventRefVector& definition_events,
+      ::tsl::AsyncValueRef<bool>& allocation_event);
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadInternal(
       std::shared_ptr<PjRtExecutable> executable,
       CompileOptions&& compile_options,
@@ -1005,6 +1022,10 @@ class CommonPjRtBufferImpl : public CommonPjRtBuffer {
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(
       xla::PrimitiveType element_type, absl::Span<const int64_t> dims,
       const Layout* device_layout) override;
+
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> Slice(
+      absl::Span<const int64_t> offset, absl::Span<const int64_t> shape,
+      const Layout* dst_layout) override;
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopyToMemorySpace(
       PjRtMemorySpace* dst_memory_space) override;

@@ -1805,6 +1805,145 @@ CommonPjRtClient::GetTransposePlan(const TransposePlan::Options& options) {
   return transpose_cache_.GetOrCreate(options);
 }
 
+absl::StatusOr<std::unique_ptr<PjRtBuffer>> CommonPjRtClient::SliceBuffer(
+    CommonPjRtBuffer* src_buffer, absl::Span<const int64_t> offset,
+    absl::Span<const int64_t> shape, const Layout* dst_layout) {
+  if (src_buffer == nullptr) {
+    return absl::InvalidArgumentError("src_buffer cannot be null");
+  }
+  const Shape& src_shape = src_buffer->on_device_shape();
+  if (!src_shape.IsArray()) {
+    return absl::InvalidArgumentError(
+        "SliceBuffer can only slice array shapes");
+  }
+  if (!src_shape.is_static()) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Slice is not supported on dynamic shapes: ",
+                     src_shape.ToString(true)));
+  }
+  if (offset.size() != src_shape.dimensions().size() ||
+      shape.size() != offset.size()) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Slice offset and shape rank (", offset.size(), ", ", shape.size(),
+        ") must match src_shape rank (", src_shape.dimensions().size(), ")"));
+  }
+  for (int i = 0; i < offset.size(); ++i) {
+    if (offset[i] < 0 || shape[i] < 0 ||
+        offset[i] + shape[i] > src_shape.dimensions(i)) {
+      return absl::OutOfRangeError(absl::StrCat(
+          "Slice bounds out of range for dimension ", i, ": offset=", offset[i],
+          ", size=", shape[i], ", limit=", src_shape.dimensions(i)));
+    }
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      const Shape validated_shape,
+      ShapeUtil::MakeValidatedShape(src_shape.element_type(), shape));
+  const Layout* target_layout =
+      dst_layout != nullptr ? dst_layout : &src_shape.layout();
+  ABSL_ASSIGN_OR_RETURN(Shape dst_shape, MakeDefaultShapeForMemorySpace(
+                                             src_buffer->memory_space(),
+                                             validated_shape, target_layout));
+  if (!src_shape.layout().tiles().empty() ||
+      !dst_shape.layout().tiles().empty()) {
+    return absl::InvalidArgumentError(
+        "Tiled layout is not supported by CommonPjRtClient::SliceBuffer");
+  }
+  if (primitive_util::IsSubByteNonPredType(src_shape.element_type())) {
+    return absl::UnimplementedError(
+        "Sub-byte element types are not supported by SliceBuffer");
+  }
+  if (!IsOnCpu(src_buffer->memory_space())) {
+    return absl::UnimplementedError(
+        "CommonPjRtClient::SliceBuffer is only supported on CPU memory spaces; "
+        "subclasses must override SliceBuffer for other memory spaces.");
+  }
+  std::optional<absl::InlinedVector<int64_t, 4>> byte_strides =
+      ShapeUtil::ByteStrides(src_shape);
+  if (!byte_strides.has_value()) {
+    return absl::InvalidArgumentError(
+        "Failed to compute byte strides for src_buffer");
+  }
+  int64_t src_byte_offset = 0;
+  for (int i = 0; i < offset.size(); ++i) {
+    src_byte_offset += offset[i] * (*byte_strides)[i];
+  }
+  std::shared_ptr<TransposePlan> plan;
+  if (ShapeUtil::ElementsIn(dst_shape) > 0) {
+    absl::InlinedVector<int64_t, 4> permutation(dst_shape.dimensions().size());
+    absl::c_reverse_copy(dst_shape.layout().minor_to_major(),
+                         permutation.begin());
+    TransposePlan::Options options;
+    options.elem_size_in_bytes =
+        primitive_util::ByteWidth(dst_shape.element_type());
+    options.dims = dst_shape.dimensions();
+    options.permutation = permutation;
+    options.input_striding =
+        TransposePlan::Striding{absl::MakeSpan(*byte_strides)};
+    ABSL_ASSIGN_OR_RETURN(plan, GetTransposePlan(options));
+  }
+
+  PjRtDeviceEventPromiseRef definition_event_promise;
+  PjRtDeviceEventPromiseRef src_usage_event_promise;
+  PjRtRawBufferRef src_raw_buffer;
+  PjRtRawBufferRef dst_raw_buffer;
+  std::unique_ptr<PjRtBuffer> dst_buffer;
+  PjRtDeviceEventRefVector definition_events;
+  ::tsl::AsyncValueRef<bool> allocation_event;
+  std::shared_ptr<const Shape> shared_dst_shape =
+      std::make_shared<const Shape>(std::move(dst_shape));
+  ABSL_RETURN_IF_ERROR(CommonCopyToMemorySpace(
+      src_buffer, src_buffer->memory_space(), shared_dst_shape,
+      definition_event_promise, src_usage_event_promise, src_raw_buffer,
+      dst_raw_buffer, dst_buffer, definition_events, allocation_event));
+
+  if (src_raw_buffer) {
+    PjRtDeviceEventSpan deps_span(definition_events);
+    xla::ExecuteWhenReady(
+        deps_span, async_work_runner(),
+        [dst_raw_buffer = std::move(dst_raw_buffer),
+         src_raw_buffer = std::move(src_raw_buffer), src_byte_offset,
+         plan = std::move(plan),
+         definition_events = std::move(definition_events),
+         definition_event_promise = std::move(definition_event_promise),
+         src_usage_event_promise = std::move(src_usage_event_promise),
+         allocation_event = std::move(allocation_event)]() mutable {
+          auto set_error = [&](absl::Status status) {
+            if (allocation_event) {
+              allocation_event.SetError(status);
+            }
+            definition_event_promise.SetError(status);
+            src_usage_event_promise.SetError(status);
+          };
+          absl::Status status = xla::GetErrors(definition_events);
+          if (!status.ok()) {
+            set_error(status);
+            return;
+          }
+          if (allocation_event) {
+            allocation_event.SetStateConcrete();
+          }
+          if (plan == nullptr) {
+            src_usage_event_promise.SetReady();
+            definition_event_promise.SetReady();
+            return;
+          }
+          const char* src_base =
+              reinterpret_cast<const char*>(src_raw_buffer->GetHostPointer());
+          char* dst_base =
+              reinterpret_cast<char*>(dst_raw_buffer->GetHostPointer());
+          if (src_base == nullptr || dst_base == nullptr) {
+            set_error(absl::InternalError(
+                "SliceBuffer expects that GetHostPointer() is nonnull"));
+            return;
+          }
+          plan->Execute(src_base + src_byte_offset, dst_base);
+          src_usage_event_promise.SetReady();
+          definition_event_promise.SetReady();
+        });
+  }
+  return dst_buffer;
+}
+
 Future<> CommonPjRtRawBufferImpl::CopyRawHostToDevice(const void* src,
                                                       int64_t offset,
                                                       int64_t transfer_size) {
@@ -1940,6 +2079,12 @@ absl::StatusOr<std::unique_ptr<PjRtBuffer>> CommonPjRtBufferImpl::Bitcast(
   return std::make_unique<CommonPjRtBufferImpl>(
       std::make_shared<const Shape>(std::move(new_on_device_shape)),
       std::move(device_buffer), memory_space());
+}
+
+absl::StatusOr<std::unique_ptr<PjRtBuffer>> CommonPjRtBufferImpl::Slice(
+    absl::Span<const int64_t> offset, absl::Span<const int64_t> shape,
+    const Layout* dst_layout) {
+  return client()->SliceBuffer(this, offset, shape, dst_layout);
 }
 
 void CommonPjRtClient::ScheduleRemoteSend(
@@ -3787,7 +3932,7 @@ static absl::AnyInvocable<void(absl::Status) &&> ToAllocationCallback(
   };
 }
 
-static absl::Status CommonCopyToMemorySpace(
+absl::Status CommonPjRtClient::CommonCopyToMemorySpace(
     CommonPjRtBuffer* src_buffer, PjRtMemorySpace* dst_memory_space,
     std::shared_ptr<const xla::Shape> dst_shape,
     PjRtDeviceEventPromiseRef& definition_event_promise,
@@ -3970,7 +4115,7 @@ CommonPjRtBufferImpl::CopyFromCpuToMemorySpace(
   ::tsl::AsyncValueRef<bool> allocation_event;
   auto shared_dst_shape =
       std::make_shared<const xla::Shape>(std::move(dst_shape));
-  ABSL_RETURN_IF_ERROR(CommonCopyToMemorySpace(
+  ABSL_RETURN_IF_ERROR(CommonPjRtClient::CommonCopyToMemorySpace(
       this, dst_memory_space, shared_dst_shape, definition_event_promise,
       src_usage_event_promise, src_raw_buffer, dst_raw_buffer, dst_buffer,
       definition_events, allocation_event));
@@ -4253,7 +4398,7 @@ CommonPjRtBufferImpl::DirectCopyToMemorySpace(
   std::unique_ptr<PjRtBuffer> dst_buffer;
   PjRtDeviceEventRefVector definition_events;
   ::tsl::AsyncValueRef<bool> allocation_event;
-  ABSL_RETURN_IF_ERROR(CommonCopyToMemorySpace(
+  ABSL_RETURN_IF_ERROR(CommonPjRtClient::CommonCopyToMemorySpace(
       this, dst_memory_space, on_device_shape_, definition_event_promise,
       src_usage_event_promise, src_raw_buffer, dst_raw_buffer, dst_buffer,
       definition_events, allocation_event));
@@ -4327,7 +4472,7 @@ CommonPjRtBufferImpl::DirectCopyToMemorySpace(PjRtBuffer* donated_dst) {
   hold.ConfirmDonation();
 
   ::tsl::AsyncValueRef<bool> allocation_event;
-  ABSL_RETURN_IF_ERROR(CommonCopyToMemorySpace(
+  ABSL_RETURN_IF_ERROR(CommonPjRtClient::CommonCopyToMemorySpace(
       this, dst_memory_space, on_device_shape_, definition_event_promise,
       src_usage_event_promise, src_raw_buffer, dst_raw_buffer, dst_buffer,
       definition_events, allocation_event));
