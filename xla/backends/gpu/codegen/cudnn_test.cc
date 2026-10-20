@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/error_spec.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -3151,9 +3150,8 @@ ENTRY %wrapper_fused_convert.clone (param_0.20312: bf16[1,1,8,2], param_1.20508:
                             ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-4}));
 }
 
-TEST_F(
-    CuDnnNonGemmFusionTest,
-    ConvertBitcastReshapeTransposeConcatenateSliceBroadcastAddMultiplySubtract) {
+TEST_F(CuDnnNonGemmFusionTest,
+       ConvertBitcastReshapeTransposeConcatSliceBcastAddMulSub) {
   EXPECT_TRUE(RunAndCompare(R"(
 HloModule fused_transpose.95_module, entry_computation_layout={(f32[1,11,128]{2,1,0}, bf16[1,11,16,256]{3,2,1,0}, f32[1,11,128]{2,1,0})->bf16[8,256,11,2]{3,2,1,0}}
 
