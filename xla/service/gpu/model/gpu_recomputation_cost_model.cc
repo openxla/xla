@@ -82,8 +82,8 @@ absl::StatusOr<RecomputationEstimate> EstimateRecomputationRegion(
 RecomputationMeasurement EvaluateRecomputationMeasurements(
     absl::Span<const RecomputationSample> samples) {
   RecomputationMeasurement result;
-  if (samples.size() < 25) {
-    result.decision = Decision::Forbid("fewer than 25 ABBA blocks");
+  if (samples.size() < kRecomputationSampleBlocks) {
+    result.decision = Decision::Forbid("insufficient ABBA blocks");
     return result;
   }
   double first_gain = 0;

@@ -41,6 +41,9 @@ struct RecomputationEstimate {
 absl::StatusOr<RecomputationEstimate> EstimateRecomputationRegion(
     HloModule& module, const se::DeviceDescription& device);
 
+// Number of ABBA blocks collected by the profiler and required by the policy.
+inline constexpr int kRecomputationSampleBlocks = 25;
+
 // One ABBA block: A=materialize, B=recompute. Opposite orders mitigate linear
 // drift. All four samples are warm, whole-region GPU execution times.
 struct RecomputationSample {
@@ -58,10 +61,11 @@ struct RecomputationMeasurement {
   Decision decision = Decision::Forbid("not measured");
 };
 
-// Require >=25 ABBA blocks, a gain exceeding both 1% and 1us,
-// a three-standard-error margin, and agreement between the two orders. This is
-// a conservative tuning policy, not a calibrated statistical guarantee or an
-// end-to-end latency estimate. Noise, invalid samples and small gains reject.
+// Require >=kRecomputationSampleBlocks ABBA blocks, a gain exceeding 1% and
+// 1us, a three-standard-error margin, and agreement between the two orders.
+// This is a conservative tuning policy, not a calibrated statistical guarantee
+// or an end-to-end latency estimate. Noise, invalid samples and small gains
+// reject.
 RecomputationMeasurement EvaluateRecomputationMeasurements(
     absl::Span<const RecomputationSample> samples);
 

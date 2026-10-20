@@ -3936,8 +3936,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::set_xla_gpu_experimental_fusion_recomputation),
       debug_options->xla_gpu_experimental_fusion_recomputation(),
       "Fusion side-output recomputation: 0=off, 1=measure only, 2=apply "
-      "measured "
-      "improvements. Profiles 50 samples per variant; requires a GPU."));
+      "measured improvements. Profiles both variants; requires a GPU."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_fusion_recomputation_min_bytes",
                 int64_setter_for(

@@ -90,7 +90,8 @@ TEST_F(RecomputationEstimateTest, AccountsForDtypeBytesWithoutMergingKernels) {
 }
 
 TEST(RecomputationMeasurementTest, AcceptsStableGain) {
-  std::vector<RecomputationSample> samples(25, {100000, 80000, 80000, 100000});
+  std::vector<RecomputationSample> samples(kRecomputationSampleBlocks,
+                                           {100000, 80000, 80000, 100000});
   auto result = EvaluateRecomputationMeasurements(samples);
   EXPECT_TRUE(result.decision.IsAllowed());
   EXPECT_DOUBLE_EQ(result.gain_ns, 20000);
@@ -98,17 +99,18 @@ TEST(RecomputationMeasurementTest, AcceptsStableGain) {
 }
 TEST(RecomputationMeasurementTest, RejectsRegressionsAndSmallGains) {
   for (double after : {110000, 100000, 99500}) {
-    std::vector<RecomputationSample> samples(25,
+    std::vector<RecomputationSample> samples(kRecomputationSampleBlocks,
                                              {100000, after, after, 100000});
     EXPECT_FALSE(
         EvaluateRecomputationMeasurements(samples).decision.IsAllowed());
   }
-  std::vector<RecomputationSample> samples(25, {2000, 1500, 1500, 2000});
+  std::vector<RecomputationSample> samples(kRecomputationSampleBlocks,
+                                           {2000, 1500, 1500, 2000});
   EXPECT_FALSE(EvaluateRecomputationMeasurements(samples).decision.IsAllowed());
 }
 TEST(RecomputationMeasurementTest, RejectsNoiseDespitePositiveMean) {
   std::vector<RecomputationSample> samples;
-  for (int i = 0; i < 25; ++i) {
+  for (int i = 0; i < kRecomputationSampleBlocks; ++i) {
     double after = (i % 2 == 0) ? 50000 : 140000;
     samples.push_back({100000, after, after, 100000});
   }
@@ -117,13 +119,15 @@ TEST(RecomputationMeasurementTest, RejectsNoiseDespitePositiveMean) {
   EXPECT_FALSE(result.decision.IsAllowed());
 }
 TEST(RecomputationMeasurementTest, RejectsOrderBias) {
-  std::vector<RecomputationSample> samples(25, {100000, 50000, 110000, 100000});
+  std::vector<RecomputationSample> samples(kRecomputationSampleBlocks,
+                                           {100000, 50000, 110000, 100000});
   auto result = EvaluateRecomputationMeasurements(samples);
   EXPECT_GT(result.gain_ns, 0);
   EXPECT_FALSE(result.decision.IsAllowed());
 }
 TEST(RecomputationMeasurementTest, RejectsInsufficientAndInvalidData) {
-  std::vector<RecomputationSample> samples(24, {100000, 80000, 80000, 100000});
+  std::vector<RecomputationSample> samples(kRecomputationSampleBlocks - 1,
+                                           {100000, 80000, 80000, 100000});
   EXPECT_FALSE(EvaluateRecomputationMeasurements(samples).decision.IsAllowed());
   samples.push_back(samples.front());
   for (double invalid : {0.0, -1.0, std::numeric_limits<double>::infinity(),
