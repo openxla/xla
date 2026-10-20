@@ -145,14 +145,16 @@ class OneDnnFusionBinaryOpTest : public OneDnnFusionTestBase {
 // TODO(intel-tf): Expand testing to other dtypes as library integration
 // matures.
 class OneDnnGraphPipelineTest
-    : public HloTestBaseLegacy,
+    : public HloInterpreterReferenceMixin<HloTestBase>,
       public ::testing::WithParamInterface<PrimitiveType> {
  protected:
   DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options = HloTestBaseLegacy::GetDebugOptionsForTest();
+    DebugOptions debug_options =
+        HloInterpreterReferenceMixin::GetDebugOptionsForTest();
     debug_options.set_xla_cpu_experimental_onednn_custom_call(false);
     debug_options.set_xla_cpu_use_onednn(true);
     debug_options.set_xla_cpu_use_xnnpack(false);
+    debug_options.clear_xla_cpu_experimental_ynn_fusion_type();
     debug_options.mutable_xla_cpu_experimental_onednn_fusion_type()->Add(
         DebugOptions::LIBRARY_FUSION_TYPE_DOT);
     return debug_options;

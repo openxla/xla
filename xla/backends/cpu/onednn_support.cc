@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout_util.h"
+#include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/shape.h"
 #include "xla/util.h"

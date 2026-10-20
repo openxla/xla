@@ -138,6 +138,7 @@ onednn_cc_library(
         "//xla/backends/cpu/codegen:target_machine_features",
         "//xla/backends/cpu/runtime:dot_dims",
         "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_cost_analysis",
         "//xla/service/cpu:onednn_util",
         "//xla/tsl/mkl:onednn",
         "@com_google_absl//absl/base:no_destructor",
