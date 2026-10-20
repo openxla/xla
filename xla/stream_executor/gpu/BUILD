@@ -240,10 +240,7 @@ cc_library(
     visibility = internal_visibility([
         "//xla/tsl:internal",
     ]),
-    deps = [
-        "@com_google_absl//absl/status",
-        "@tsl//tsl/platform:status",
-    ] + if_static(
+    deps = ["@com_google_absl//absl/status"] + if_static(
         [":gpu_init_impl"],
     ),
 )
@@ -987,7 +984,6 @@ xla_cc_test(
         ":elf_section_extraction",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
-        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],

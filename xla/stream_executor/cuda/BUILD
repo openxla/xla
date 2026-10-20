@@ -371,7 +371,6 @@ cc_library(
     deps = [
         ":cuda_blas_utils",
         ":cuda_compute_capability",
-        ":cuda_executor",
         ":cuda_helpers",
         ":cuda_platform_id",
         "//xla:shape_util",
@@ -382,7 +381,6 @@ cc_library(
         "//xla/stream_executor:activate_context",
         "//xla/stream_executor:blas",
         "//xla/stream_executor:device_address",
-        "//xla/stream_executor:device_description",
         "//xla/stream_executor:engine_options",
         "//xla/stream_executor:event_based_timer",
         "//xla/stream_executor:plugin_registry",
@@ -411,11 +409,6 @@ cc_library(
         "@com_google_absl//absl/time",
         "@eigen_archive//:eigen3",
         "@local_config_cuda//cuda:cuda_headers",
-        "@tsl//tsl/platform:errors",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:ml_dtypes",
-        "@tsl//tsl/platform:status",
-        "@tsl//tsl/platform:statusor",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
     ] + if_static([
         "@tsl//tsl/platform:tensor_float_32_utils",
@@ -1151,7 +1144,6 @@ cc_library(
     }) + [
         ":compilation_provider",
         ":cuda_compute_capability",
-        "//xla/stream_executor:device_description",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor/gpu:gpu_asm_opts",
         "@com_google_absl//absl/status:statusor",
