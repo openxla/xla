@@ -111,11 +111,12 @@ tsl::AsyncValueRef<AllReduceThunk::ExecuteEvent> AllReduceThunk::Execute(
           const Shape& shape = destination_shape(i);
 
           buffers.push_back(
-              {data.source[i], data.destination[i], shape.element_type(),
+              {data.source[i], data.destination[i],
                static_cast<size_t>(ShapeUtil::ElementsIn(shape))});
         }
 
-        return comm.AllReduceMany(buffers, reduction_kind_, executor);
+        return comm.AllReduceMany(buffers, source_shape(0).element_type(),
+                                  reduction_kind_, executor);
       });
 
   return ToExecuteEvent(future);

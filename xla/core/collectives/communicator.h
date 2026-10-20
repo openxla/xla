@@ -105,23 +105,22 @@ class Communicator {
   struct AllReduceBuffer {
     se::DeviceAddressBase send_buffer;
     se::DeviceAddressBase recv_buffer;
-    PrimitiveType dtype;
     size_t count;
   };
 
-  // Elementwise reductions of independent buffers, with identical datatypes,
+  // Elementwise reductions of independent buffers sharing dtype, with identical
   // counts and ordering on every rank. Implementations may coalesce buffers.
   // Descriptors are consumed before returning; the underlying storage has the
   // same lifetime requirements as AllReduce.
   virtual Future<> AllReduceMany(absl::Span<const AllReduceBuffer> buffers,
+                                 PrimitiveType dtype,
                                  ReductionKind reduction_kind,
                                  const Executor& executor) {
     absl::InlinedVector<Future<>, 4> futures;
     futures.reserve(buffers.size());
     for (const AllReduceBuffer& buffer : buffers) {
-      futures.push_back(AllReduce(buffer.send_buffer, buffer.recv_buffer,
-                                  buffer.dtype, buffer.count, reduction_kind,
-                                  executor));
+      futures.push_back(AllReduce(buffer.send_buffer, buffer.recv_buffer, dtype,
+                                  buffer.count, reduction_kind, executor));
     }
     return JoinFutures(futures);
   }

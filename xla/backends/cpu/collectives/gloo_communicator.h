@@ -44,7 +44,7 @@ class GlooCommunicator : public Communicator {
   ~GlooCommunicator() override;
 
   Future<> AllReduceMany(absl::Span<const AllReduceBuffer> buffers,
-                         ReductionKind reduction_kind,
+                         PrimitiveType dtype, ReductionKind reduction_kind,
                          const Executor& executor) override;
 
   Future<> AllReduce(se::DeviceAddressBase send_buffer,
