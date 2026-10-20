@@ -123,11 +123,7 @@ xla_cc_test(
 cc_ir_header(
     name = "tanh_ll",
     src = "tanh.cc",
-    deps = [
-        ":cpp_context_provider",
-        ":tanh",
-        ":vector_ops",
-    ],
+    deps = [":tanh"],
 )
 
 xla_cc_test(
@@ -166,7 +162,6 @@ cc_ir_header(
         "-inline-threshold=500",
     ],
     deps = [
-        ":cpp_context_provider",
         ":eigen_unary_lib",
         ":vector_ops",
         "@eigen_archive//:eigen3",
@@ -181,7 +176,6 @@ cc_ir_header(
         "-mprefer-vector-width=256",
     ],
     deps = [
-        ":cpp_context_provider",
         ":eigen_unary_lib",
         ":vector_ops",
         "@eigen_archive//:eigen3",
@@ -202,7 +196,6 @@ cc_ir_header(
         }),
     ),
     deps = [
-        ":cpp_context_provider",
         ":eigen_unary_lib",
         ":vector_ops",
         "@eigen_archive//:eigen3",
@@ -268,7 +261,6 @@ cc_ir_header(
         "-mprefer-vector-width=256",
     ],
     deps = [
-        ":cpp_context_provider",
         ":expm1",
         ":vector_ops",
     ],
@@ -287,7 +279,6 @@ cc_ir_header(
         }),
     ),
     deps = [
-        ":cpp_context_provider",
         ":expm1",
         ":vector_ops",
     ],
@@ -342,7 +333,6 @@ cc_ir_header(
     name = "custom_cpp_intrinsics_ll",
     src = "custom_cpp_intrinsics.cc",
     deps = [
-        ":cpp_context_provider",
         ":custom_cpp_intrinsics_lib",
         ":vector_ops",
     ],
@@ -383,7 +373,6 @@ cc_ir_header(
     name = "trig_ll",
     src = "trig.cc",
     deps = [
-        ":cpp_context_provider",
         ":trig_lib",
         ":vector_ops",
     ],
