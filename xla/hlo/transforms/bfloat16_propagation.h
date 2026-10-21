@@ -436,6 +436,10 @@ class BFloat16Propagation : public HloModulePass {
   // module. Populated at the beginning of this pass.
   absl::flat_hash_map<const HloComputation*, int64_t> caller_counts_;
 
+  // Mapping from each called HloComputation to the number of kCall instructions
+  // calling it that have been visited so far in the backward pass.
+  absl::flat_hash_map<const HloComputation*, int64_t> visited_call_counts_;
+
   // We first store the potential F32-to-BF16 changes to changes_to_bf16_, which
   // are subject to further adjustment, then finally applied to the HLOs. This
   // avoids setting changed_ to true but all changes are reverted during
