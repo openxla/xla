@@ -26,7 +26,9 @@ limitations under the License.
 
 namespace xla::gpu {
 
-// Converts both operands to the highest precision operand type.
+// Converts both operands of a dot to a common element type (typically the
+// higher-precision operand type, or BF16 when multiplying an <=8-bit integer
+// operand by an F32 operand with default precision).
 class DotOperandConverter : public OpExpanderPass {
  public:
   explicit DotOperandConverter(HloPredicate extra_filter = nullptr)

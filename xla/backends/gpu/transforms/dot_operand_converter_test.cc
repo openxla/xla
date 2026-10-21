@@ -90,6 +90,59 @@ TEST_F(DotOperandConverterTest, ConvertsLeftAndRight) {
   TestConvert(/*left_less_precise=*/false, BF16, S8, F32);
 }
 
+TEST_F(DotOperandConverterTest, ConvertsSmallIntAndF32ToBf16ByDefault) {
+  for (PrimitiveType int_type : {S4, U4, S8, U8}) {
+    absl::string_view module_tmpl = R"(
+    HloModule module
+
+    ENTRY main {
+      p0 = $0[2,3]{1,0} parameter(0)
+      p1 = f32[3,2]{1,0} parameter(1)
+      ROOT dot = f32[2,2]{1,0} dot(p0, p1), lhs_contracting_dims={1},
+                                            rhs_contracting_dims={0}
+    })";
+    auto module_string = absl::Substitute(
+        module_tmpl, primitive_util::LowercasePrimitiveTypeName(int_type));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(module_string));
+    ASSERT_OK_AND_ASSIGN(bool changed, DotOperandConverter().Run(module.get()));
+    EXPECT_TRUE(changed);
+    auto converted_lhs =
+        AllOf(op::Convert(op::Parameter(0)), op::Shape("bf16[2,3]{1,0}"));
+    auto converted_rhs =
+        AllOf(op::Convert(op::Parameter(1)), op::Shape("bf16[3,2]{1,0}"));
+    EXPECT_THAT(module->entry_computation()->root_instruction(),
+                AllOf(op::Dot(converted_lhs, converted_rhs),
+                      op::Shape("f32[2,2]{1,0}")));
+  }
+}
+
+TEST_F(DotOperandConverterTest, PreservesF32ForSmallIntWithHighPrecision) {
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = s8[2,3]{1,0} parameter(0)
+    p1 = f32[3,2]{1,0} parameter(1)
+    ROOT dot = f32[2,2]{1,0} dot(p0, p1), lhs_contracting_dims={1},
+                                          rhs_contracting_dims={0},
+                                          operand_precision={HIGH, HIGH}
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool changed, DotOperandConverter().Run(module.get()));
+  EXPECT_TRUE(changed);
+  auto upcasted_lhs =
+      AllOf(op::Convert(op::Parameter(0)), op::Shape("f32[2,3]{1,0}"));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              AllOf(op::Dot(upcasted_lhs, op::Parameter(1)),
+                    op::Shape("f32[2,2]{1,0}")));
+}
+
+TEST_F(DotOperandConverterTest, PreservesF32ForS16AndF32) {
+  TestConvert(/*left_less_precise=*/true, S16, F32, F32);
+}
+
 TEST_F(DotOperandConverterTest, NoConvertHappensWithSameTypes) {
   absl::string_view module_string = R"(
   HloModule module
