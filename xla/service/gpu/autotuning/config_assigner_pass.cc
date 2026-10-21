@@ -247,6 +247,15 @@ std::unique_ptr<AutotunerCacheInterface> CreateAutotunerCache(
     const DebugOptions& debug_options,
     const Compiler::GpuTargetConfig& target_config,
     const std::vector<std::unique_ptr<CodegenBackend>>& backends) {
+  // The autotune cache is process-wide and keyed without debug options, so it
+  // may contain timing-based picks inserted by other (non-deterministic)
+  // modules. Using them would make a deterministic compilation depend on what
+  // else was compiled in the process first, so don't use any cache.
+  if (debug_options.xla_gpu_deterministic_ops() ||
+      debug_options.xla_gpu_exclude_nondeterministic_ops()) {
+    return nullptr;
+  }
+
   std::string cache_dir = debug_options.xla_gpu_per_fusion_autotune_cache_dir();
 
   if (!debug_options.xla_gpu_use_new_autotune_cache_format()) {
@@ -264,9 +273,12 @@ std::unique_ptr<AutotunerCacheInterface> CreateAutotunerCache(
         cache_dir,
         GetCacheMode(debug_options.xla_gpu_experimental_autotune_cache_mode()));
   }
-  return std::make_unique<TieredCache>(cache_ctx, KeyMatchingMode::kLoose,
-                                       std::move(primary),
-                                       std::move(secondary));
+  KeyMatchingMode matching_mode =
+      debug_options.xla_autotune_cache_require_strict_codegen_match()
+          ? KeyMatchingMode::kStrict
+          : KeyMatchingMode::kLoose;
+  return std::make_unique<TieredCache>(
+      cache_ctx, matching_mode, std::move(primary), std::move(secondary));
 }
 
 }  // namespace
@@ -420,9 +432,15 @@ ConfigAssignerPass::GetEnabledBackends(
         autotuner::Backend::BLOCK_LEVEL_EMITTER);
   }
 
-  if (debug_options.xla_gpu_exclude_nondeterministic_ops() ||
-      debug_options.xla_gpu_deterministic_ops()) {
+  if ((debug_options.xla_gpu_exclude_nondeterministic_ops() ||
+       debug_options.xla_gpu_deterministic_ops()) &&
+      debug_options.xla_gpu_experimental_deterministic_ops_triton() ==
+          DebugOptions::DETERMINISTIC_OPS_TRITON_MODE_OFF) {
     disabled_autotune_backends.push_back(autotuner::Backend::TRITON);
+  }
+
+  if (!debug_options.xla_gpu_experimental_enable_tensor_ir()) {
+    disabled_autotune_backends.push_back(autotuner::Backend::TENSOR_IR);
   }
 
   autotune_backends.erase(
@@ -465,6 +483,7 @@ absl::StatusOr<std::unique_ptr<ConfigAssignerPass>> ConfigAssignerPass::Create(
       GetConfigAssignerOptions(debug_options, is_deviceless);
   CodegenOrchestrator::Options orchestrator_options =
       GetCodegenOrchestratorOptions(debug_options);
+  // Null in deterministic mode.
   std::unique_ptr<AutotunerCacheInterface> cache =
       CreateAutotunerCache(debug_options, *target_config, backends);
 

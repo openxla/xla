@@ -11,7 +11,7 @@ bazel_dep(name = "bazel_features", version = "1.43.0")
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "boringssl", version = "0.20250818.0")
 bazel_dep(name = "curl", version = "8.22.0")
-bazel_dep(name = "flatbuffers", version = "24.3.25.bcr.1")
+bazel_dep(name = "flatbuffers", version = "25.9.23")
 bazel_dep(name = "google_benchmark", version = "1.9.4", repo_name = "com_google_benchmark")
 bazel_dep(name = "googletest", version = "1.17.0", repo_name = "com_google_googletest")
 bazel_dep(name = "grpc", version = "1.81.0")
@@ -48,9 +48,9 @@ bazel_dep(name = "rules_ml_toolchain")
 # echo "sha256-${HASH}"
 archive_override(
     module_name = "rules_ml_toolchain",
-    integrity = "sha256-XrL/AKDPawv6pfBMKS1QlceKHPIu1OXi0wfH42qmfe8=",
-    strip_prefix = "rules_ml_toolchain-cdfa52fa7e8bd9fb51cf66de1da166969d850edd",
-    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/cdfa52fa7e8bd9fb51cf66de1da166969d850edd.tar.gz"],
+    integrity = "sha256-4ivqt/JPkkc109WQNgbqPDRhKMxwdncvcyhwbdjOXaU=",
+    strip_prefix = "rules_ml_toolchain-09925f69ffb6e1e765a246073ace69bfb33fbb57",
+    urls = ["https://github.com/google-ml-infra/rules_ml_toolchain/archive/09925f69ffb6e1e765a246073ace69bfb33fbb57.tar.gz"],
 )
 
 # TODO: Upstream the patch?

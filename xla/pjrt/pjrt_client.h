@@ -56,6 +56,8 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/scoped_async_tracking_event.h"
+#include "xla/pjrt/strided_gather.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/device_assignment.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
@@ -489,6 +491,9 @@ struct PjRtPluginAttributes {
 // unique CrossHostTransferKey.
 TSL_LIB_GTL_DEFINE_INT_TYPE(CrossHostTransferKey, int64_t);
 
+// Task id of a distributed process. Transfer code uses process_index().
+TSL_LIB_GTL_DEFINE_INT_TYPE(TaskId, int32_t);
+
 // Encapsulates the state of Python session with XLA.
 //
 // It is the responsibility of the client of this API to keep the PjRtClient
@@ -767,9 +772,18 @@ class PjRtClient {
   }
 
   // Creates buffer in the given memory space that carries an error future
-  // without allocating memory.
+  // without allocating memory. If `layout` is not provided, a default layout
+  // for `shape` and `memory` will be used, and any layout in `shape` will be
+  // ignored.
   virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateErrorBuffer(
       absl::Status error, const Shape& shape, PjRtMemorySpace* memory) {
+    return CreateErrorBuffer(std::move(error), shape, memory,
+                             /*layout=*/nullptr);
+  }
+
+  virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateErrorBuffer(
+      absl::Status error, const Shape& shape, PjRtMemorySpace* memory,
+      const Layout* layout) {
     return absl::UnimplementedError("CreateErrorBuffer not supported.");
   }
 
@@ -1078,10 +1092,14 @@ class PjRtClient {
   // cross-host transfers API.
 
   // Send buffers to remote devices specified by dst_global_device_ids.
+  // `incarnations` is the last GetAliveTasks snapshot, keyed by task id. An
+  // empty map keeps the historical clique key. The cross-host transfers
+  // extension carries the same snapshot as task id and incarnation arrays.
   virtual absl::StatusOr<std::vector<Future<>>> CrossHostSendBuffers(
       absl::Span<PjRtBuffer* const> buffers,
       absl::Span<const GlobalDeviceId> dst_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) {
+      std::vector<CrossHostTransferKey> transfer_keys,
+      absl::flat_hash_map<TaskId, IncarnationId> /*incarnations*/ = {}) {
     return absl::UnimplementedError(
         "Cross-host data transfers are not supported by this client.");
   }
@@ -1091,7 +1109,8 @@ class PjRtClient {
   CrossHostReceiveBuffers(
       xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
       absl::Span<const GlobalDeviceId> src_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) {
+      std::vector<CrossHostTransferKey> transfer_keys,
+      absl::flat_hash_map<TaskId, IncarnationId> /*incarnations*/ = {}) {
     return absl::UnimplementedError(
         "Cross-host data transfers are not supported.");
   }
@@ -1356,6 +1375,13 @@ class PjRtBuffer {
   virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> Bitcast(
       xla::PrimitiveType element_type, absl::Span<const int64_t> dims,
       const Layout* device_layout) = 0;
+
+  // Copies a strided slice of the buffer's on-device bytes into a new buffer
+  // of `dst_shape` in the same memory space.
+  virtual absl::StatusOr<std::unique_ptr<PjRtBuffer>> CopySlice(
+      const StridedGather& gather, const xla::Shape& dst_shape) {
+    return absl::UnimplementedError("CopySlice is not supported.");
+  }
 
   // Donates 'this' and returns a new buffer that is ready only when both 'this'
   // and 'dependency' are ready.

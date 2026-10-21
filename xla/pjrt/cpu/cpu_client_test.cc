@@ -63,6 +63,8 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
+#include "xla/pjrt/raw_buffer.h"
+#include "xla/pjrt/strided_gather.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -233,6 +235,57 @@ ENTRY RuntimeDonationDenial() -> f32[2, 2] {
 
     EXPECT_TRUE(buffer->IsDeleted());
   }
+}
+
+TEST(PjRtCpuClientTest, DonateWithExternalReference) {
+  static constexpr char kProgram[] =
+      R"(
+HloModule DonateWithExternalReference,
+          input_output_alias={ {}: (0, {}, may-alias) }
+
+ENTRY DonateWithExternalReference() -> f32[2, 2] {
+    %param = f32[2, 2] parameter(0)
+    %one = f32[] constant(1.0)
+    %one_bcast = f32[2, 2] broadcast(%one), dimensions={}
+    ROOT %result = f32[2, 2] add(%param, %one_bcast)
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  ASSERT_OK_AND_ASSIGN(auto hlo_module,
+                       ParseAndReturnUnverifiedModule(kProgram, {}));
+  XlaComputation xla_computation(hlo_module->ToProto());
+  ASSERT_OK_AND_ASSIGN(auto pjrt_executable,
+                       client->CompileAndLoad(xla_computation, {}));
+
+  std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
+  ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall,
+          /*on_done_with_host_buffer=*/nullptr, client->memory_spaces()[0],
+          /*device_layout=*/nullptr));
+
+  ASSERT_OK_AND_ASSIGN(auto external_ref, buffer->AcquireExternalReference());
+  const float* ext_data =
+      static_cast<const float*>(external_ref->OpaqueDeviceMemoryDataPointer());
+
+  ASSERT_OK_AND_ASSIGN(auto result, pjrt_executable->Execute(
+                                        /*argument_handles=*/{{buffer.get()}},
+                                        /*options=*/{}));
+  // Even though an external reference prevented in-place buffer reuse and
+  // forced a fallback copy, the donated PjRtBuffer itself must be marked
+  // deleted while the external reference's underlying memory remains intact.
+  EXPECT_TRUE(buffer->IsDeleted());
+  ASSERT_EQ(result.size(), 1);
+  ASSERT_EQ(result[0].size(), 1);
+  ASSERT_OK_AND_ASSIGN(auto result_literal, result[0][0]->ToLiteral().Await());
+  EXPECT_EQ(*result_literal,
+            LiteralUtil::CreateR2<float>({{2.0f, 3.0f}, {4.0f, 5.0f}}));
+  EXPECT_THAT(absl::MakeConstSpan(ext_data, 4),
+              ElementsAre(1.0f, 2.0f, 3.0f, 4.0f));
 }
 
 TEST(PjRtCpuClientTest, ArgumentMemorySpace) {
@@ -840,6 +893,46 @@ TEST(PjRtCpuClientTest, CreateErrorBuffer) {
         buffer->ToLiteral().Await(),
         absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("foobar")));
     EXPECT_EQ(buffer->memory_space(), memory_space);
+  }
+}
+
+TEST(PjRtCpuClientTest, CreateErrorBufferWithCustomLayout) {
+  ASSERT_OK_AND_ASSIGN(auto client, GetXlaPjrtCpuClient(CpuClientOptions()));
+  xla::Shape shape = ShapeUtil::MakeShapeWithDenseLayout(U32, {3, 2}, {0, 1});
+  *shape.mutable_layout()->add_tiles() = Tile({2, 2});
+  Layout default_layout = LayoutUtil::MakeDescendingLayout(2);
+  Layout custom_layout = LayoutUtil::MakeAscendingLayout(2);
+  Layout invalid_layout = LayoutUtil::MakeLayout({0});
+  for (PjRtMemorySpace* memory_space : client->memory_spaces()) {
+    // Without an explicit layout argument, `shape.layout()` is ignored and the
+    // default layout is used.
+    ASSERT_OK_AND_ASSIGN(
+        auto default_layout_buffer,
+        client->CreateErrorBuffer(Internal("foobar"), shape, memory_space));
+    EXPECT_EQ(default_layout_buffer->layout()->xla_layout(), default_layout);
+
+    // With an explicit layout argument, the custom layout is used and any
+    // pre-existing layout fields on `shape` are cleared.
+    ASSERT_OK_AND_ASSIGN(
+        auto custom_layout_buffer,
+        client->CreateErrorBuffer(Internal("foobar"), shape, memory_space,
+                                  &custom_layout));
+    EXPECT_THAT(
+        custom_layout_buffer->ToLiteral().Await(),
+        absl_testing::StatusIs(tsl::error::INTERNAL, HasSubstr("foobar")));
+    EXPECT_EQ(custom_layout_buffer->memory_space(), memory_space);
+    EXPECT_EQ(custom_layout_buffer->layout()->xla_layout(), custom_layout);
+
+    // An invalid layout for `shape` is rejected.
+    EXPECT_THAT(client->CreateErrorBuffer(Internal("foobar"), shape,
+                                          memory_space, &invalid_layout),
+                absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+
+    // Tuple shapes are rejected.
+    EXPECT_THAT(client->CreateErrorBuffer(Internal("foobar"),
+                                          ShapeUtil::MakeTupleShape({shape}),
+                                          memory_space),
+                absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
   }
 }
 
@@ -1506,6 +1599,292 @@ TEST(PjRtCpuClientTest, DonateWithControlDependencyError) {
   EXPECT_THAT(to_literal_status,
               StatusIs(absl::StatusCode::kInternal,
                        HasSubstr("control dependency failed")));
+}
+
+TEST(PjRtCpuClientTest, PjRtBufferCopySliceSingleChunk) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetPjRtCpuClient(CpuClientOptions()));
+  PjRtDevice* device = client->addressable_devices().front();
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * pinned_space,
+      device->memory_space_by_kind(PinnedHostMemorySpace::kKind));
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * unpinned_space,
+      device->memory_space_by_kind(UnpinnedHostMemorySpace::kKind));
+
+  std::vector<PjRtMemorySpace*> memory_spaces = {pinned_space, unpinned_space};
+
+  for (PjRtMemorySpace* memory_space : memory_spaces) {
+    Literal literal =
+        LiteralUtil::CreateR1<int32_t>({10, 11, 12, 13, 14, 15, 16, 17});
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtBuffer> src_buffer,
+        client->BufferFromHostLiteral(literal, memory_space,
+                                      /*device_layout=*/nullptr));
+
+    // Slice 4 elements (16 bytes) starting at element 2 (byte offset 8).
+    StridedGather::Spec spec = {
+        /*element_size=*/16,
+        /*counts=*/{1},
+        /*src_byte_offset=*/8,
+        /*src_byte_size=*/32,
+        /*src_byte_strides=*/{16},
+    };
+    StridedGather gather(spec);
+    ASSERT_EQ(gather.num_chunks(), 1);
+    ASSERT_EQ(gather.chunk_size(), 16);
+
+    Shape dst_shape = ShapeUtil::MakeShape(S32, {4});
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> sliced_buffer,
+                         src_buffer->CopySlice(gather, dst_shape));
+    EXPECT_EQ(sliced_buffer->on_device_shape(), dst_shape);
+    EXPECT_EQ(sliced_buffer->memory_space(), memory_space);
+
+    ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
+                         sliced_buffer->ToLiteralSync());
+    EXPECT_THAT(result_literal->data<int32_t>(),
+                ::testing::ElementsAre(12, 13, 14, 15));
+  }
+}
+
+TEST(PjRtCpuClientTest, PjRtBufferCopySliceMultiChunkWithTranspose) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetPjRtCpuClient(CpuClientOptions()));
+  PjRtDevice* device = client->addressable_devices().front();
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * pinned_space,
+      device->memory_space_by_kind(PinnedHostMemorySpace::kKind));
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * unpinned_space,
+      device->memory_space_by_kind(UnpinnedHostMemorySpace::kKind));
+
+  std::vector<PjRtMemorySpace*> memory_spaces = {pinned_space, unpinned_space};
+
+  for (PjRtMemorySpace* memory_space : memory_spaces) {
+    Literal literal =
+        LiteralUtil::CreateR2<int32_t>({{10, 11, 12}, {20, 21, 22}});
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtBuffer> src_buffer,
+        client->BufferFromHostLiteral(literal, memory_space,
+                                      /*device_layout=*/nullptr));
+
+    // Slice columns 1 and 2 transposed: counts={2, 2}, strides={4, 12},
+    // offset=4.
+    StridedGather::Spec spec = {
+        /*element_size=*/sizeof(int32_t),
+        /*counts=*/{2, 2},
+        /*src_byte_offset=*/sizeof(int32_t),
+        /*src_byte_size=*/6 * sizeof(int32_t),
+        /*src_byte_strides=*/{sizeof(int32_t), 3 * sizeof(int32_t)},
+    };
+    StridedGather gather(spec);
+    ASSERT_GT(gather.num_chunks(), 1);
+
+    Shape dst_shape = ShapeUtil::MakeShape(S32, {2, 2});
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> sliced_buffer,
+                         src_buffer->CopySlice(gather, dst_shape));
+    EXPECT_EQ(sliced_buffer->on_device_shape(), dst_shape);
+    EXPECT_EQ(sliced_buffer->memory_space(), memory_space);
+
+    ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
+                         sliced_buffer->ToLiteralSync());
+    EXPECT_THAT(result_literal->data<int32_t>(),
+                ::testing::ElementsAre(11, 21, 12, 22));
+  }
+}
+
+TEST(PjRtCpuClientTest, PjRtBufferCopySliceZeroSizedGather) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetPjRtCpuClient(CpuClientOptions()));
+  PjRtDevice* device = client->addressable_devices().front();
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * pinned_space,
+      device->memory_space_by_kind(PinnedHostMemorySpace::kKind));
+
+  Literal literal = LiteralUtil::CreateR1<int32_t>({10, 11, 12, 13});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> src_buffer,
+      client->BufferFromHostLiteral(literal, pinned_space,
+                                    /*device_layout=*/nullptr));
+
+  StridedGather::Spec spec = {
+      /*element_size=*/4,
+      /*counts=*/{0},
+      /*src_byte_offset=*/0,
+      /*src_byte_size=*/16,
+      /*src_byte_strides=*/{4},
+  };
+  StridedGather gather(spec);
+  ASSERT_EQ(gather.num_chunks(), 0);
+
+  Shape dst_shape = ShapeUtil::MakeShape(S32, {0});
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> sliced_buffer,
+                       src_buffer->CopySlice(gather, dst_shape));
+  EXPECT_EQ(sliced_buffer->on_device_shape(), dst_shape);
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
+                       sliced_buffer->ToLiteralSync());
+  EXPECT_EQ(result_literal->element_count(), 0);
+}
+
+TEST(PjRtCpuClientTest, PjRtBufferCopySliceDelayedReadiness) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetPjRtCpuClient(CpuClientOptions()));
+  PjRtDevice* device = client->addressable_devices().front();
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * pinned_space,
+      device->memory_space_by_kind(PinnedHostMemorySpace::kKind));
+
+  Literal literal = LiteralUtil::CreateR1<int32_t>({10, 11, 12, 13});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> src_buffer,
+      client->BufferFromHostLiteral(literal, pinned_space,
+                                    /*device_layout=*/nullptr));
+
+  auto [promise, future] = MakePromise<>();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> blocked_buffer,
+                       src_buffer->DonateWithControlDependency(future));
+
+  StridedGather::Spec spec = {
+      /*element_size=*/8,
+      /*counts=*/{1},
+      /*src_byte_offset=*/4,
+      /*src_byte_size=*/16,
+      /*src_byte_strides=*/{8},
+  };
+  StridedGather gather(spec);
+
+  Shape dst_shape = ShapeUtil::MakeShape(S32, {2});
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> sliced_buffer,
+                       blocked_buffer->CopySlice(gather, dst_shape));
+
+  Future<> ready_future = sliced_buffer->GetReadyFuture();
+  EXPECT_FALSE(ready_future.IsReady());
+
+  promise.Set();
+  EXPECT_THAT(ready_future.Await(), ::absl_testing::IsOk());
+
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
+                       sliced_buffer->ToLiteralSync());
+  EXPECT_THAT(result_literal->data<int32_t>(), ::testing::ElementsAre(11, 12));
+}
+
+TEST(PjRtCpuClientTest, PjRtBufferCopySliceControlDependencyError) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetPjRtCpuClient(CpuClientOptions()));
+  PjRtDevice* device = client->addressable_devices().front();
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * pinned_space,
+      device->memory_space_by_kind(PinnedHostMemorySpace::kKind));
+
+  Literal literal = LiteralUtil::CreateR1<int32_t>({10, 11, 12, 13});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> src_buffer,
+      client->BufferFromHostLiteral(literal, pinned_space,
+                                    /*device_layout=*/nullptr));
+
+  auto [promise, future] = MakePromise<>();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> blocked_buffer,
+                       src_buffer->DonateWithControlDependency(future));
+
+  StridedGather::Spec spec = {
+      /*element_size=*/8,
+      /*counts=*/{1},
+      /*src_byte_offset=*/4,
+      /*src_byte_size=*/16,
+      /*src_byte_strides=*/{8},
+  };
+  StridedGather gather(spec);
+
+  Shape dst_shape = ShapeUtil::MakeShape(S32, {2});
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> sliced_buffer,
+                       blocked_buffer->CopySlice(gather, dst_shape));
+
+  Future<> ready_future = sliced_buffer->GetReadyFuture();
+  EXPECT_FALSE(ready_future.IsReady());
+
+  promise.Set(absl::InternalError("control dependency failed"));
+
+  EXPECT_THAT(ready_future.Await(),
+              ::absl_testing::StatusIs(
+                  absl::StatusCode::kInternal,
+                  ::testing::HasSubstr("control dependency failed")));
+}
+
+TEST(PjRtCpuClientTest, PjRtBufferCopySliceInvalidArgument) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetPjRtCpuClient(CpuClientOptions()));
+  PjRtDevice* device = client->addressable_devices().front();
+  ASSERT_OK_AND_ASSIGN(
+      PjRtMemorySpace * pinned_space,
+      device->memory_space_by_kind(PinnedHostMemorySpace::kKind));
+
+  Literal literal = LiteralUtil::CreateR1<int32_t>({1, 2, 3, 4});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostLiteral(literal, pinned_space,
+                                    /*device_layout=*/nullptr));
+
+  // Case 1a: src_byte_size exceeds buffer size (32 > 16).
+  {
+    StridedGather::Spec spec = {
+        /*element_size=*/4,
+        /*counts=*/{1},
+        /*src_byte_offset=*/0,
+        /*src_byte_size=*/32,
+        /*src_byte_strides=*/{4},
+    };
+    StridedGather gather(spec);
+    Shape dst_shape = ShapeUtil::MakeShape(S32, {1});
+    EXPECT_THAT(buffer->CopySlice(gather, dst_shape),
+                ::absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  }
+
+  // Case 1b: max accessed byte offset exceeds buffer size (20 > 16).
+  {
+    StridedGather::Spec spec = {
+        /*element_size=*/4,
+        /*counts=*/{1},
+        /*src_byte_offset=*/16,
+        /*src_byte_size=*/16,
+        /*src_byte_strides=*/{4},
+    };
+    StridedGather gather(spec);
+    Shape dst_shape = ShapeUtil::MakeShape(S32, {1});
+    EXPECT_THAT(buffer->CopySlice(gather, dst_shape),
+                ::absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  }
+
+  // Case 2: dst_shape byte size does not match slice size (8 != 4).
+  {
+    StridedGather::Spec spec = {
+        /*element_size=*/4,
+        /*counts=*/{1},
+        /*src_byte_offset=*/0,
+        /*src_byte_size=*/16,
+        /*src_byte_strides=*/{4},
+    };
+    StridedGather gather(spec);
+    Shape mismatched_dst_shape =
+        ShapeUtil::MakeShape(S32, {2});  // 8 bytes != 4 bytes
+    EXPECT_THAT(buffer->CopySlice(gather, mismatched_dst_shape),
+                ::absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  }
+
+  // Case 3: CopySlice called on a deleted buffer.
+  {
+    buffer->Delete();
+    StridedGather::Spec spec = {
+        /*element_size=*/4,
+        /*counts=*/{1},
+        /*src_byte_offset=*/0,
+        /*src_byte_size=*/16,
+        /*src_byte_strides=*/{4},
+    };
+    StridedGather gather(spec);
+    Shape dst_shape = ShapeUtil::MakeShape(S32, {1});
+    EXPECT_THAT(buffer->CopySlice(gather, dst_shape),
+                ::absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  }
 }
 
 }  // namespace

@@ -19,9 +19,11 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "absl/log/check.h"
@@ -422,6 +424,22 @@ TEST_F(WhileLoopAnalysisTest, ExactBoundTrivialTripCount) {
   EXPECT_EQ(
       MakeWhileLoopAndGetTripCount(0, 40, 5, ComparisonDirection::kLe).value(),
       CalculateTripCount(0, 40, 5, ComparisonDirection::kLe));
+}
+
+TEST_F(WhileLoopAnalysisTest, NegativeAndZeroTripCountNonUnitStep) {
+  for (auto [init, bound, step, dir] : std::initializer_list<
+           std::tuple<int32_t, int32_t, int32_t, ComparisonDirection>>{
+           {-5, 0, 2, ComparisonDirection::kLt},
+           {-10, -3, 2, ComparisonDirection::kLt},
+           {-2, 1, 2, ComparisonDirection::kLt},
+           {5, 2, 4, ComparisonDirection::kLt},
+           {-5, 0, 2, ComparisonDirection::kLe},
+           {1, 0, 2, ComparisonDirection::kLe},
+           {5, 2, 4, ComparisonDirection::kLe}}) {
+    ASSERT_OK_AND_ASSIGN(int64_t tc,
+                         MakeWhileLoopAndGetTripCount(init, bound, step, dir));
+    EXPECT_EQ(tc, CalculateTripCount(init, bound, step, dir));
+  }
 }
 
 TEST_F(WhileLoopAnalysisTest, NoAIVNoConstChain) {
@@ -1393,6 +1411,68 @@ TEST_F(WhileLoopAnalysisTest,
   HloInstruction* while_op = m->entry_computation()->root_instruction();
   ASSERT_EQ(while_op->opcode(), HloOpcode::kWhile);
   EXPECT_EQ(GetLoopInductionVarTupleIdx(while_op), std::nullopt);
+}
+
+TEST_F(WhileLoopAnalysisTest,
+       MatchTrivialLoopTripCountReturnsNulloptWhenIndvarOverflowsType) {
+  absl::string_view kS32WrapHlo = R"(
+    HloModule s32_wrap
+    body {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      step = s32[] constant(1342177280)
+      next_i = s32[] add(i, step)
+      ROOT root = (s32[]) tuple(next_i)
+    }
+    condition {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      bound = s32[] constant(1879048192)
+      ROOT cond = pred[] compare(i, bound), direction=LT
+    }
+    ENTRY main {
+      init = s32[] constant(1073741824)
+      t = (s32[]) tuple(init)
+      ROOT while = (s32[]) while(t), body=body, condition=condition
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_s32,
+                       ParseAndReturnVerifiedModule(kS32WrapHlo));
+  HloInstruction* while_s32 = m_s32->entry_computation()->root_instruction();
+  EXPECT_EQ(MatchTrivialLoopTripCount(
+                while_s32, 0, LiteralUtil::CreateR0<int32_t>(1073741824)),
+            std::nullopt);
+  EXPECT_EQ(MatchTrivialLoopRange(while_s32), std::nullopt);
+  EXPECT_EQ(ComputeWhileLoopTripCount(while_s32), 7);
+
+  absl::string_view kU32WrapHlo = R"(
+    HloModule u32_wrap
+    body {
+      p = (u32[]) parameter(0)
+      i = u32[] get-tuple-element(p), index=0
+      step = u32[] constant(2147483648)
+      next_i = u32[] add(i, step)
+      ROOT root = (u32[]) tuple(next_i)
+    }
+    condition {
+      p = (u32[]) parameter(0)
+      i = u32[] get-tuple-element(p), index=0
+      bound = u32[] constant(3221225472)
+      ROOT cond = pred[] compare(i, bound), direction=LT
+    }
+    ENTRY main {
+      init = u32[] constant(2147483648)
+      t = (u32[]) tuple(init)
+      ROOT while = (u32[]) while(t), body=body, condition=condition
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m_u32,
+                       ParseAndReturnVerifiedModule(kU32WrapHlo));
+  HloInstruction* while_u32 = m_u32->entry_computation()->root_instruction();
+  EXPECT_EQ(MatchTrivialLoopTripCount(
+                while_u32, 0, LiteralUtil::CreateR0<uint32_t>(2147483648U)),
+            std::nullopt);
+  EXPECT_EQ(MatchTrivialLoopRange(while_u32), std::nullopt);
 }
 
 }  // namespace

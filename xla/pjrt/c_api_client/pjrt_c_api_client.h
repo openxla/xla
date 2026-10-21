@@ -453,8 +453,10 @@ class PjRtCApiClient : public PjRtClient {
       std::pair<std::unique_ptr<PjRtBuffer>, PjRtFulfillAliasBufferCallback>>
   CreateAliasBuffer(const Shape& shape, PjRtMemorySpace* memory_space) override;
 
+  using PjRtClient::CreateErrorBuffer;
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateErrorBuffer(
-      absl::Status error, const Shape& shape, PjRtMemorySpace* memory) override;
+      absl::Status error, const Shape& shape, PjRtMemorySpace* memory,
+      const Layout* layout) override;
 
   absl::StatusOr<const PjRtTopologyDescription*> GetTopologyDescription()
       const override;
@@ -494,13 +496,15 @@ class PjRtCApiClient : public PjRtClient {
   absl::StatusOr<std::vector<Future<>>> CrossHostSendBuffers(
       absl::Span<PjRtBuffer* const> buffers,
       absl::Span<const GlobalDeviceId> dst_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) override;
+      std::vector<CrossHostTransferKey> transfer_keys,
+      absl::flat_hash_map<TaskId, IncarnationId> incarnations = {}) override;
 
   absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
   CrossHostReceiveBuffers(
       xla::PjRtDevice* device, absl::Span<const xla::Shape> shapes,
       absl::Span<const GlobalDeviceId> src_global_device_ids,
-      std::vector<CrossHostTransferKey> transfer_keys) override;
+      std::vector<CrossHostTransferKey> transfer_keys,
+      absl::flat_hash_map<TaskId, IncarnationId> incarnations = {}) override;
 
   absl::Status DmaMap(void* data, size_t size) override;
 
