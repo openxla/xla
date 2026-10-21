@@ -442,6 +442,43 @@ xla_test(
 )
 
 xla_test(
+    name = "gpu_collectives_symmetric_test",
+    srcs = ["gpu_collectives_symmetric_test.cc"],
+    backend_tags = {
+        "gpu": [
+            "multi_gpu",
+        ],
+    },
+    backends = ["gpu"],
+    env = {
+        "XLA_FLAGS": "--xla_gpu_experimental_nccl_window_symmetric=true",
+    },
+    deps = [
+        ":collectives_test_util",
+        ":gpu_collectives",
+        ":gpu_communicator",
+        "//xla:future",
+        "//xla/core/collectives:communicator",
+        "//xla/core/collectives:rank_id",
+        "//xla/runtime:device_id",
+        "//xla/service:platform_util",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:memory_allocation",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/tsl/concurrency:executor",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_googletest//:gtest_main",  # buildcleaner: keep
+    ] + if_cuda_or_rocm_is_configured([
+        ":nccl_or_rccl_collectives",  # buildcleaner: keep
+    ]),
+)
+
+xla_test(
     name = "nccl_communicator_test",
     srcs = ["nccl_communicator_test.cc"],
     backend_tags = {
@@ -763,6 +800,7 @@ cc_library(
     deps = [
         ":nccl_errors",
         ":nccl_types",
+        "//xla:debug_options_flags",
         "//xla:future",
         "//xla/core/collectives:rank_id",
         "//xla/core/collectives:symmetric_memory",
