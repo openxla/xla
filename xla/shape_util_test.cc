@@ -1222,6 +1222,10 @@ TEST(ShapeUtilTest, AppendMinorDimension) {
   ShapeUtil::AppendMinorDimension(40, &shape);
   EXPECT_EQ(shape, ShapeUtil::MakeShapeWithDenseLayout(F32, {10, 20, 30, 40},
                                                        {3, 0, 2, 1}));
+
+  Shape unlayouted(F32, {10, 20, 30});
+  ShapeUtil::AppendMinorDimension(40, &unlayouted);
+  EXPECT_EQ(unlayouted, Shape(F32, {10, 20, 30, 40}));
 }
 
 TEST(ShapeUtilTest, InsertDimensionAtIndex) {
