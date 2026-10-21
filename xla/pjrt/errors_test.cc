@@ -18,13 +18,17 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <optional>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 
 namespace xla {
 
 using ::absl_testing::StatusIs;
+using ::testing::Eq;
 using ::testing::HasSubstr;
+using ::testing::Optional;
 
 TEST(ErrorsTest, SetCompilationErrorWithPayload) {
   absl::Status status = absl::InvalidArgumentError("test error");
@@ -32,6 +36,20 @@ TEST(ErrorsTest, SetCompilationErrorWithPayload) {
   EXPECT_THAT(status_with_payload, StatusIs(absl::StatusCode::kInvalidArgument,
                                             HasSubstr("test error")));
   EXPECT_TRUE(HasCompilationErrorPayload(status_with_payload));
+}
+
+TEST(ErrorsTest, SetOomErrorWithPayloadAndReason) {
+  absl::Status status = SetOomErrorWithPayload(
+      absl::ResourceExhaustedError("test error"), OomReason::kFragmentation);
+  EXPECT_TRUE(HasOomErrorPayload(status));
+  EXPECT_THAT(GetOomErrorReason(status),
+              Optional(Eq(OomReason::kFragmentation)));
+}
+
+TEST(ErrorsTest, NoOomErrorPayload) {
+  absl::Status status = absl::ResourceExhaustedError("test error");
+  EXPECT_FALSE(HasOomErrorPayload(status));
+  EXPECT_EQ(GetOomErrorReason(status), std::nullopt);
 }
 
 }  // namespace xla

@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_PJRT_ERRORS_H_
 #define XLA_PJRT_ERRORS_H_
 
+#include <optional>
+
 #include "absl/status/status.h"
 
 namespace xla {
@@ -30,8 +32,38 @@ absl::Status SetCompilationErrorWithPayload(absl::Status status);
 // Returns true if the status has the OOM error payload.
 bool HasOomErrorPayload(const absl::Status& status);
 
-// Sets the payload of the status to denote an out-of-memory error.
-absl::Status SetOomErrorWithPayload(absl::Status status);
+// Reason for the OOM error.
+enum class OomReason {
+  // The requested size is larger than the total free HBM.
+  kOutOfMemory,
+  // Enough HBM is free in total, but no contiguous region is large enough.
+  kFragmentation,
+  // Catch-all.
+  kUnknown,
+};
+
+template <typename Sink>
+void AbslStringify(Sink& sink, OomReason reason) {
+  switch (reason) {
+    case OomReason::kOutOfMemory:
+      sink.Append("out_of_memory");
+      break;
+    case OomReason::kFragmentation:
+      sink.Append("fragmentation");
+      break;
+    case OomReason::kUnknown:
+      sink.Append("unknown");
+      break;
+  }
+}
+
+// Sets the payload of the status to denote an out-of-memory error, along with
+// an optional reason, e.g. "fragmentation".
+absl::Status SetOomErrorWithPayload(absl::Status status, OomReason reason);
+
+// Returns the reason passed to SetOomErrorWithPayload(), which is empty if none
+// was given, or std::nullopt if the status doesn't have the OOM error payload.
+std::optional<OomReason> GetOomErrorReason(const absl::Status& status);
 }  // namespace xla
 
 #endif  // XLA_PJRT_ERRORS_H_
