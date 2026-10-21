@@ -1206,6 +1206,12 @@ message DebugOptions {
   // If true, disables CUDA Virtual Memory Management (VMM) APIs for device
   // memory allocation and collective fusion.
   optional bool xla_gpu_experimental_vmm_disabled = 551;
+  
+  // If true, route kRaggedDot through the experimental Triton XTile backend
+  // instead of hipBLASLt GroupedMatMul or cuDNN fusions.
+  // Requires xla_gpu_experimental_enable_tiling_propagation=true for the
+  // XTile emitter to use the experimental tiling analysis path.
+  optional bool xla_gpu_experimental_triton_ragged_dot = 560;
 
   // If true, PTX compilation will fail if a kernel spills registers.
   // This is meant for debugging and only applies to CUDA PTX compilation.
