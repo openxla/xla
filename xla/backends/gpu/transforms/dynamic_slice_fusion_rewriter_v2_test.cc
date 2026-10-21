@@ -979,6 +979,28 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
   EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"), "{0:7}");
 }
 
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       UpdateSliceWithControlDependenciesIsRejected) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[1,8,8]{2,1,0} parameter(0)
+      destination = f32[4,8,8]{2,1,0} parameter(1)
+      zero = s32[] constant(0)
+      call = f32[1,8,8]{2,1,0} custom-call(input),
+        custom_call_target="fake_target"
+      ROOT update = f32[4,8,8]{2,1,0} dynamic-update-slice(destination, call, zero, zero, zero)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  HloComputation* entry = module->entry_computation();
+  ASSERT_OK(entry->parameter_instruction(0)->AddControlDependencyTo(
+      entry->root_instruction()));
+
+  EXPECT_THAT(MakePipeline().Run(module.get()),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
+}
+
 TEST_F(DynamicSliceFusionRewriterV2Test, PropagatesTupleResultMemorySpaces) {
   constexpr absl::string_view kHlo = R"(
     HloModule test

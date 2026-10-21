@@ -64,10 +64,6 @@ absl::StatusOr<MemorySpaceColor> AsMemorySpaceColor(int64_t memory_space);
 absl::StatusOr<std::vector<std::pair<int64_t, MemorySpaceColor>>>
 ParseIndexMemorySpacePairs(absl::string_view str);
 
-// Only the dynamic-slice rewriter remaps these index-based annotations when
-// forming a fusion. Other fusion kinds must not consume inherited annotations.
-bool SupportsMemorySpaceAnnotations(const HloInstruction* inst);
-
 // Returns true if the instruction's collectives mode requires symmetric
 // (collective) memory. Device-initiated and one-sided collectives need all
 // buffers registered with the collective runtime ahead of time.
