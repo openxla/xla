@@ -1039,8 +1039,7 @@ TEST_F(DynamicSliceFusionRewriterV2Test, PropagatesTupleResultMemorySpaces) {
             "update");
 }
 
-TEST_F(DynamicSliceFusionRewriterV2Test,
-       AliasedSlicedOperandPreservesOriginalOperands) {
+TEST_F(DynamicSliceFusionRewriterV2Test, AliasedSlicedOperandMemorySpaces) {
   constexpr absl::string_view kHlo = R"(
     HloModule test
     ENTRY main {
@@ -1051,19 +1050,35 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
       view = f32[1,8,8]{2,1,0} get-tuple-element(barrier), index=0
       ROOT call = f32[1,8,8]{2,1,0} custom-call(view),
         custom_call_target="fake_target", output_to_operand_aliasing={{}: (0, {})},
-        frontend_attributes={results_memory_spaces="{0:7}"}
+        frontend_attributes={$attribute="{0:7}"}
     }
   )";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  const std::string original = module->ToString();
-  DynamicSliceFusionRewriterV2 rewriter(platform_id(),
-                                        DefaultOptions(OptLevel::kO2));
-  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
-  EXPECT_FALSE(changed);
-  EXPECT_EQ(module->ToString(), original);
+  for (absl::string_view attribute :
+       {"operands_memory_spaces", "results_memory_spaces"}) {
+    SCOPED_TRACE(attribute);
+    std::string hlo = absl::StrReplaceAll(kHlo, {{"$attribute", attribute}});
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+    DynamicSliceFusionRewriterV2 rewriter(platform_id(),
+                                          DefaultOptions(OptLevel::kO2));
+    ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+    ASSERT_TRUE(changed);
+    const HloInstruction* fusion =
+        module->entry_computation()->root_instruction();
+    ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+    ASSERT_EQ(fusion->operand_count(), 1);
+    EXPECT_EQ(fusion->operand(0)->name(), "input");
+    EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"), "{0:7}");
+    if (attribute == "operands_memory_spaces") {
+      EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"),
+                "{0:7}");
+    } else {
+      EXPECT_FALSE(
+          fusion->get_frontend_attribute("operands_memory_spaces").has_value());
+    }
+  }
 }
 
-TEST_F(DynamicSliceFusionRewriterV2Test, AliasedTupleResultUpdateNotFused) {
+TEST_F(DynamicSliceFusionRewriterV2Test, AliasedTupleResultUpdateMemorySpaces) {
   constexpr absl::string_view kHlo = R"(
     HloModule test
     ENTRY main {
@@ -1072,7 +1087,7 @@ TEST_F(DynamicSliceFusionRewriterV2Test, AliasedTupleResultUpdateNotFused) {
       zero = s32[] constant(0)
       call = (f32[8,8]{1,0}, f32[8,8]{1,0}) custom-call(input),
         custom_call_target="fake_target", output_to_operand_aliasing={{1}: (0, {})},
-        frontend_attributes={results_memory_spaces="{1:7}"}
+        frontend_attributes={$attribute="{$index:7}"}
       first = f32[8,8]{1,0} get-tuple-element(call), index=0
       second = f32[8,8]{1,0} get-tuple-element(call), index=1
       view = f32[1,8,8]{2,1,0} bitcast(second)
@@ -1081,15 +1096,30 @@ TEST_F(DynamicSliceFusionRewriterV2Test, AliasedTupleResultUpdateNotFused) {
       ROOT result = (f32[8,8]{1,0}, f32[4,8,8]{2,1,0}) tuple(first, update)
     }
   )";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  const std::string original = module->ToString();
-  DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
-  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
-  EXPECT_FALSE(changed);
-  EXPECT_EQ(module->ToString(), original);
+  for (absl::string_view attribute :
+       {"operands_memory_spaces", "results_memory_spaces"}) {
+    SCOPED_TRACE(attribute);
+    const bool operand_annotation = attribute == "operands_memory_spaces";
+    std::string hlo =
+        absl::StrReplaceAll(kHlo, {{"$attribute", attribute},
+                                   {"$index", operand_annotation ? "0" : "1"}});
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+    DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
+    ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+    ASSERT_TRUE(changed);
+    const HloInstruction* fusion =
+        module->entry_computation()->root_instruction()->operand(0)->operand(0);
+    ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+    ASSERT_EQ(fusion->operand_count(), 2);
+    EXPECT_EQ(fusion->operand(0)->name(), "input");
+    EXPECT_EQ(fusion->operand(1)->name(), "destination");
+    EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"),
+              operand_annotation ? "{0:7,1:7}" : "{1:7}");
+    EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"), "{1:7}");
+  }
 }
 
-TEST_F(DynamicSliceFusionRewriterV2Test, AliasedSliceUpdateRequiresSameRegion) {
+TEST_F(DynamicSliceFusionRewriterV2Test, AliasedSliceUpdateMemorySpaces) {
   constexpr absl::string_view kHlo = R"(
     HloModule test
     ENTRY main {
@@ -1117,22 +1147,31 @@ TEST_F(DynamicSliceFusionRewriterV2Test, AliasedSliceUpdateRequiresSameRegion) {
           kHlo, {{"$destination", destination}, {"$offset", offset}});
       ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
       ASSERT_OK(DynamicSliceAnnotator().Run(module.get()).status());
-      const std::string original = module->ToString();
       DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
       ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
-      if (destination != "input" || offset != "1") {
-        EXPECT_FALSE(changed);
-        EXPECT_EQ(module->ToString(), original);
-        continue;
-      }
       ASSERT_TRUE(changed);
       const HloInstruction* fusion =
           module->entry_computation()->root_instruction()->operand(0)->operand(
               0);
       ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
-      EXPECT_EQ(fusion->operand_count(), 1);
-      EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"),
-                "{0:7}");
+      const bool captures_update = destination != "input" || offset == "1";
+      EXPECT_EQ(
+          CountInstructionsWithOpcode(fusion->fused_instructions_computation(),
+                                      HloOpcode::kDynamicUpdateSlice),
+          captures_update ? 1 : 0);
+      EXPECT_EQ(fusion->operand_count(), destination == "input" ? 1 : 2);
+      if (captures_update) {
+        EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"),
+                  destination == "input" ? "{0:7}" : "{1:7}");
+      } else {
+        EXPECT_FALSE(fusion->get_frontend_attribute("operands_memory_spaces")
+                         .has_value());
+        EXPECT_EQ(module->entry_computation()
+                      ->root_instruction()
+                      ->operand(1)
+                      ->opcode(),
+                  HloOpcode::kDynamicUpdateSlice);
+      }
       EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"),
                 "{1:7}");
     }
@@ -1140,7 +1179,7 @@ TEST_F(DynamicSliceFusionRewriterV2Test, AliasedSliceUpdateRequiresSameRegion) {
 }
 
 TEST_F(DynamicSliceFusionRewriterV2Test,
-       AliasedSliceUpdateWithOtherReadNotFused) {
+       AliasedSliceUpdateWithOtherReadLeavesUpdateOutside) {
   constexpr absl::string_view kHlo = R"(
     HloModule test
     ENTRY main {
@@ -1154,12 +1193,17 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
-  ASSERT_OK(DynamicSliceAnnotator().Run(module.get()).status());
-  const std::string original = module->ToString();
-  DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
-  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
-  EXPECT_FALSE(changed);
-  EXPECT_EQ(module->ToString(), original);
+  ASSERT_OK_AND_ASSIGN(bool changed, MakePipeline().Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloInstruction* update =
+      module->entry_computation()->root_instruction();
+  ASSERT_EQ(update->opcode(), HloOpcode::kDynamicUpdateSlice);
+  const HloInstruction* fusion = update->operand(1);
+  ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+  const HloComputation* body = fusion->fused_instructions_computation();
+  EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kSlice), 2);
+  EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kDynamicUpdateSlice),
+            0);
 }
 
 TEST_F(DynamicSliceFusionRewriterV2Test,
@@ -1215,7 +1259,51 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
 }
 
 TEST_F(DynamicSliceFusionRewriterV2Test,
-       AliasedSliceUpdateWithOtherWriteNotFused) {
+       AliasedSliceUpdateWithOtherWriteLeavesAliasedUpdateOutside) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[256]{0} parameter(0)
+      destination = f32[256]{0} parameter(1)
+      zero = s32[] constant(0)
+      offset = s32[] constant(64)
+      slice = f32[128]{0} slice(input), slice={[64:192]}
+      call = (f32[128]{0}, f32[128]{0}) custom-call(slice),
+        custom_call_target="fake_target", output_to_operand_aliasing={{0}: (0, {})},
+        frontend_attributes={results_memory_spaces="{0:7,1:2}"}
+      first = f32[128]{0} get-tuple-element(call), index=0
+      second = f32[128]{0} get-tuple-element(call), index=1
+      update = f32[256]{0} dynamic-update-slice($destination, first, offset)
+      other = f32[256]{0} dynamic-update-slice($destination, second, zero)
+      ROOT result = (f32[256]{0}, f32[256]{0}) tuple(update, other)
+    }
+  )";
+  for (absl::string_view destination : {"input", "destination"}) {
+    SCOPED_TRACE(destination);
+    std::string hlo =
+        absl::StrReplaceAll(kHlo, {{"$destination", destination}});
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+    ASSERT_OK_AND_ASSIGN(bool changed, MakePipeline().Run(module.get()));
+    ASSERT_TRUE(changed);
+    const HloInstruction* root =
+        module->entry_computation()->root_instruction();
+    EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kDynamicUpdateSlice);
+    ASSERT_EQ(root->operand(1)->opcode(), HloOpcode::kGetTupleElement);
+    const HloInstruction* fusion = root->operand(1)->operand(0);
+    ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+    const HloComputation* body = fusion->fused_instructions_computation();
+    EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kSlice), 1);
+    EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kDynamicUpdateSlice),
+              1);
+    EXPECT_EQ(fusion->get_frontend_attribute("operands_memory_spaces"),
+              destination == "input" ? "{0:2}" : "{1:2}");
+    EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"),
+              "{0:7,1:2}");
+  }
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       AliasedSliceUpdateWithOtherReadAndWriteLeavesUpdatesOutside) {
   constexpr absl::string_view kHlo = R"(
     HloModule test
     ENTRY main {
@@ -1223,13 +1311,77 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
       zero = s32[] constant(0)
       offset = s32[] constant(64)
       slice = f32[128]{0} slice(input), slice={[64:192]}
-      call = (f32[128]{0}, f32[128]{0}) custom-call(slice),
+      other_slice = f32[128]{0} slice(input), slice={[0:128]}
+      call = (f32[128]{0}, f32[128]{0}) custom-call(slice, other_slice),
         custom_call_target="fake_target", output_to_operand_aliasing={{0}: (0, {})}
       first = f32[128]{0} get-tuple-element(call), index=0
       second = f32[128]{0} get-tuple-element(call), index=1
       update = f32[256]{0} dynamic-update-slice(input, first, offset)
-      other = f32[256]{0} dynamic-update-slice(input, second, zero)
-      ROOT result = (f32[256]{0}, f32[256]{0}) tuple(update, other)
+      other_update = f32[256]{0} dynamic-update-slice(input, second, zero)
+      ROOT result = (f32[256]{0}, f32[256]{0}) tuple(update, other_update)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(bool changed, MakePipeline().Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloComputation* body = FindDsfBody(module.get());
+  ASSERT_NE(body, nullptr);
+  EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kSlice), 2);
+  EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kDynamicUpdateSlice),
+            0);
+  for (const HloInstruction* update :
+       module->entry_computation()->root_instruction()->operands()) {
+    ASSERT_EQ(update->opcode(), HloOpcode::kDynamicUpdateSlice);
+    ASSERT_EQ(update->operand(1)->opcode(), HloOpcode::kGetTupleElement);
+    ASSERT_EQ(update->operand(1)->operand(0)->opcode(), HloOpcode::kFusion);
+    EXPECT_EQ(update->operand(1)->operand(0)->fused_instructions_computation(),
+              body);
+  }
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       AliasedDirectResultWithOtherWriteLeavesUpdateOutside) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[256]{0} parameter(0)
+      weights = f32[256]{0} parameter(1)
+      zero = s32[] constant(0)
+      slice = f32[128]{0} slice(weights), slice={[0:128]}
+      call = (f32[256]{0}, f32[128]{0}) custom-call(input, slice),
+        custom_call_target="fake_target", output_to_operand_aliasing={{0}: (0, {})}
+      first = f32[256]{0} get-tuple-element(call), index=0
+      second = f32[128]{0} get-tuple-element(call), index=1
+      update = f32[256]{0} dynamic-update-slice(input, second, zero)
+      ROOT result = (f32[256]{0}, f32[256]{0}) tuple(first, update)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(bool changed, MakePipeline().Run(module.get()));
+  ASSERT_TRUE(changed);
+  const HloComputation* body = FindDsfBody(module.get());
+  ASSERT_NE(body, nullptr);
+  EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kSlice), 1);
+  EXPECT_EQ(CountInstructionsWithOpcode(body, HloOpcode::kDynamicUpdateSlice),
+            0);
+  EXPECT_EQ(
+      module->entry_computation()->root_instruction()->operand(1)->opcode(),
+      HloOpcode::kDynamicUpdateSlice);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       ConflictingAliasedOperandAndResultMemorySpacesNotFused) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[256]{0} parameter(0)
+      destination = f32[256]{0} parameter(1)
+      offset = s32[] constant(64)
+      slice = f32[128]{0} slice(input), slice={[64:192]}
+      call = f32[128]{0} custom-call(slice),
+        custom_call_target="fake_target", output_to_operand_aliasing={{}: (0, {})},
+        frontend_attributes={operands_memory_spaces="{0:7}", results_memory_spaces="{0:2}"}
+      ROOT update = f32[256]{0} dynamic-update-slice(destination, call, offset)
     }
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
