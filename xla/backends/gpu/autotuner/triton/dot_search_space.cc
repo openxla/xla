@@ -49,7 +49,7 @@ namespace xla::gpu {
 namespace {
 
 // Returns the size (in number of elements) of the subshape of `shape` defined
-// by `dimensions`.
+// by the given `dimensions`.
 int64_t GetSizeInDimensions(
     const Shape& shape,
     const tsl::protobuf::RepeatedField<int64_t>& dimensions) {

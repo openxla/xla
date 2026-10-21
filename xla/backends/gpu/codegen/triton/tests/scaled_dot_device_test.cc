@@ -88,6 +88,7 @@ using ::testing::HasSubstr;
 using ::xla::xtile::BlockLevelFusionConfig;
 using ::xla::xtile::BlockLevelParameters;
 
+// Test fixture for Triton scaled dot emitter tests.
 class TritonEmitterTest
     : public HloInterpreterReferenceMixin<GpuPjRtCodegenTest>,
       public XTileTestBase {

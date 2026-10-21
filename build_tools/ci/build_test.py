@@ -121,7 +121,6 @@ class BuildTest(parameterized.TestCase):
       self, mock_sh: mock.MagicMock
   ) -> None:
     mock_sh.side_effect = [
-        subprocess.CompletedProcess(args=["parallel"], returncode=0),
         subprocess.CompletedProcess(args=["bazel"], returncode=2),
     ]
     target_build = build.Build.all_builds()[
@@ -129,7 +128,7 @@ class BuildTest(parameterized.TestCase):
     ]
     with self.assertRaisesRegex(SystemExit, "^2$"):
       build.execute_build_commands(target_build)
-    self.assertEqual(mock_sh.call_count, 2)
+    self.assertEqual(mock_sh.call_count, 1)
 
   @mock.patch.object(build, "sh", autospec=True, spec_set=True)
   def test_execute_build_commands_exit_code_4_with_target_pattern_file(
