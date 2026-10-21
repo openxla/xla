@@ -48,14 +48,17 @@ namespace xla {
 // topological order, so the added edges can never create a cycle, and the
 // existing schedule remains valid.
 //
-// If `producer_slack_windows` is non-negative, the pass also fences production:
-// each (non-parameter) producer of a fenced buffer gets a control dependency
-// from the async start `producer_slack_windows` windows before the last window
-// that starts before the producer in the reference schedule. LHS therefore
-// cannot materialize the buffer more than that many windows earlier than the
-// reference schedule did, which bounds how many large buffers it can keep live
-// simultaneously by hoisting their producers. These edges also point forward
-// in the reference schedule and cannot create cycles.
+// If `producer_slack` is non-negative, the pass also fences allocation: the
+// producer of every fenced buffer (unless it is an async operation) gets a
+// control dependency from the last user of the `producer_slack + 1`-th most
+// recent fenced buffer released before that producer in the reference
+// schedule. A schedule respecting the dependency graph therefore cannot
+// allocate a large buffer before (most of) the large buffers the reference
+// schedule released ahead of it, which bounds how many large buffers it can
+// keep simultaneously live by hoisting producers. These edges also point
+// forward in the reference schedule and cannot create cycles. Async windows
+// are deliberately not used as anchors: the scheduler moves async starts
+// freely, so an edge from an async start does not pin a producer.
 //
 // The module must be scheduled. Buffers that escape their computation (module
 // live-outs, computation root outputs) and parameter-defined buffers are not
@@ -65,11 +68,11 @@ class SchedulerMemoryFencing : public HloModulePass {
   SchedulerMemoryFencing(HloCostAnalysis::ShapeSizeFunction shape_size_bytes,
                          int64_t size_threshold_bytes, int32_t slack_windows,
                          const AliasInfo* alias_info,
-                         int32_t producer_slack_windows = -1)
+                         int32_t producer_slack = -1)
       : shape_size_bytes_(std::move(shape_size_bytes)),
         size_threshold_bytes_(size_threshold_bytes),
         slack_windows_(slack_windows),
-        producer_slack_windows_(producer_slack_windows),
+        producer_slack_(producer_slack),
         alias_info_(alias_info) {}
 
   absl::string_view name() const override { return "scheduler-memory-fencing"; }
@@ -83,7 +86,7 @@ class SchedulerMemoryFencing : public HloModulePass {
   HloCostAnalysis::ShapeSizeFunction shape_size_bytes_;
   int64_t size_threshold_bytes_;
   int32_t slack_windows_;
-  int32_t producer_slack_windows_;
+  int32_t producer_slack_;
   const AliasInfo* alias_info_;
 };
 
