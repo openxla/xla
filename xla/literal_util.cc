@@ -1064,7 +1064,7 @@ absl::StatusOr<Literal> MaterializeSparseOperand(
   int64_t block_size = config.block_size();
   TF_RET_CHECK(config.num_non_zero() == 1)
       << "Only 1:N sparsity is currently supported.";
-  TF_RET_CHECK(config.stride() == 1)
+  TF_RET_CHECK(config.stride() == 0)
       << "Strided sparsity is not supported yet.";
   TF_RET_CHECK(dim >= 0 && dim < values.shape().dimensions().size())
       << "Invalid sparsity dimension: " << dim << ", must be in [0, "
