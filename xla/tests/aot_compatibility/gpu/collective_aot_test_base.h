@@ -42,6 +42,12 @@ class CollectiveAotTestBase
   CollectiveAotTestBase() : AotCompatibilityTest(GetParam()) {}
 
  protected:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = AotCompatibilityTest::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_experimental_nccl_window_symmetric(false);
+    return debug_options;
+  }
+
   // Parses `hlo` under `config` and runs it with one thread per device on the
   // devices of the config's static device assignment, which
   // GetModuleConfigForTest always sets.

@@ -124,20 +124,6 @@ TEST_P(DataMovementCollectivesAotTest, MemcpyLocalP2P) {
   ExpectDataMovementResults(std::move(results));
 }
 
-// COLLECTIVES_SYMMETRIC_MEMORY all-gather and use_symmetric_buffer on every
-// collective of the module.
-TEST_P(DataMovementCollectivesAotTest, SymmetricMemory) {
-  HloModuleConfig config = GetModuleConfigForTest(kNumReplicas);
-  DebugOptions& debug_options = config.mutable_debug_options();
-  debug_options.set_xla_gpu_all_gather_mode(
-      DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY);
-  EnableNcclSymmetricBuffers(debug_options);
-
-  ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
-                       RunReplicated(kDataMovementHlo, config));
-  ExpectDataMovementResults(std::move(results));
-}
-
 // Serializes collectives_mode = COLLECTIVES_PEER_MEMORY on AllGatherThunk. The
 // runtime has no peer-memory all-gather yet and runs NCCL. ag_minor gathers
 // along a minor dimension, which the compiler canonicalizes into a major-dim

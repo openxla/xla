@@ -81,6 +81,32 @@ xla_test(
 )
 
 xla_test(
+    name = "data_movement_collectives_aot_symmetric_test",
+    srcs = ["data_movement_collectives_aot_symmetric_test.cc"],
+    backends = _GPU_TARGETS,
+    data = glob(["executables/data_movement_collectives_aot_symmetric_test_2gpu_*/**/*.pbtxt"]),
+    disabled_backends = _DISABLED_GPU_TARGETS,
+    env = {
+        "XLA_FLAGS": "--xla_gpu_experimental_nccl_window_symmetric=true",
+    },
+    tags = [
+        "multi_gpu",
+        "no_oss",
+    ],
+    deps = [
+        ":collective_aot_test_base",
+        "//xla:literal",
+        "//xla:xla_proto_cc",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_test(
     name = "p2p_collectives_aot_test",
     srcs = ["p2p_collectives_aot_test.cc"],
     backends = _GPU_TARGETS,
