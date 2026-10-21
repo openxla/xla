@@ -2227,7 +2227,6 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    disabled_backends = ["amdgpu_any"],
     deps = [
         ":hlo_interpreter_reference_mixin",
         ":hlo_test_base",

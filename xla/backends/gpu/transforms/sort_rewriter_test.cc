@@ -331,6 +331,40 @@ ENTRY %main {
   EXPECT_FALSE(RunModuleAndPass(module.get()));
 }
 
+// ROCm rewrites a plain float total-order sort onto signed integer keys.
+// CUDA rewrites the float keys.
+TEST_F(SortRewriterTest, FloatTotalOrder) {
+  constexpr char kHlo[] = R"(
+HloModule TestModule
+
+%compare {
+  %lhs = f32[] parameter(0)
+  %rhs = f32[] parameter(1)
+  ROOT %gt = pred[] compare(%lhs, %rhs), direction=GT, order=TOTAL
+}
+
+ENTRY %main {
+  %input = f32[1000] parameter(0)
+  ROOT %sort = f32[1000] sort(%input), dimensions={0}, is_stable=true, to_apply=%compare
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_TRUE(RunModuleAndPass(module.get()));
+#if defined(TENSORFLOW_USE_ROCM)
+  bool found_integral_key = false;
+  for (const HloInstruction* inst :
+       module->entry_computation()->instructions()) {
+    if (inst->opcode() == HloOpcode::kCustomCall &&
+        inst->custom_call_target() ==
+            kCubDeviceRadixSortUnassignedScratchSizeTarget) {
+      EXPECT_EQ(inst->operand(0)->shape().element_type(), S32);
+      found_integral_key = true;
+    }
+  }
+  EXPECT_TRUE(found_integral_key);
+#endif
+}
+
 // Only 1D shapes are supported.
 TEST_F(SortRewriterTest, NoRewriteNonMinorSortDimension) {
   constexpr char kHlo[] = R"(
