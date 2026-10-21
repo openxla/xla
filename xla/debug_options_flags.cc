@@ -544,6 +544,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(-1);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows(1);
+  opts.set_xla_gpu_experimental_scheduler_memory_fencing_producer_slack_windows(
+      -1);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
@@ -3482,6 +3484,17 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           ->xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
       "How many async operation windows the users of a fenced buffer may be "
       "deferred past the buffer's last-use window in the pre-LHS schedule."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_scheduler_memory_fencing_producer_slack_windows",
+      int32_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_scheduler_memory_fencing_producer_slack_windows),
+      debug_options
+          ->xla_gpu_experimental_scheduler_memory_fencing_producer_slack_windows(),
+      "If non-negative, also fence the producers of large buffers so they "
+      "cannot be scheduled more than this many async operation windows earlier "
+      "than in the pre-LHS schedule. Negative values disable producer "
+      "fencing."));
   flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",
       bool_setter_for(&DebugOptions::set_xla_pjrt_allow_auto_layout_in_hlo),

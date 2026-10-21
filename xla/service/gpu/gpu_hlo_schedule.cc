@@ -827,7 +827,9 @@ absl::Status RunLatencyHidingSchedulerPasses(
     pipeline.AddPass<SchedulerMemoryFencing>(
         shape_size_in_bytes, *fencing_threshold_bytes,
         options.xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
-        alias_info);
+        alias_info,
+        options
+            .xla_gpu_experimental_scheduler_memory_fencing_producer_slack_windows());
   }
   pipeline.AddPass<LatencyHidingScheduler>(scheduling_context,
                                            std::move(scheduler_core));

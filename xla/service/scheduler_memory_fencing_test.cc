@@ -48,9 +48,10 @@ class SchedulerMemoryFencingTest : public HloHardwareIndependentTestBase {
  protected:
   absl::StatusOr<bool> RunFencing(HloModule* module,
                                   int64_t size_threshold_bytes,
-                                  int32_t slack_windows) {
+                                  int32_t slack_windows,
+                                  int32_t producer_slack_windows = -1) {
     SchedulerMemoryFencing pass(&ShapeSize, size_threshold_bytes, slack_windows,
-                                &alias_info_);
+                                &alias_info_, producer_slack_windows);
     return pass.Run(module);
   }
 
@@ -81,6 +82,72 @@ ENTRY entry {
   cp2d = f32[16]{0} collective-permute-done(cp2s)
   ROOT r = f32[16]{0} add(cp2d, cp2d)
 })";
+
+// `big` is produced inside the second collective window and only used inside
+// the third, so user fencing has no later window to target.
+constexpr absl::string_view kProducerHlo = R"(
+HloModule m, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[1024,1024]{1,0} parameter(0)
+  p1 = f32[16]{0} parameter(1)
+  cp1s = (f32[16]{0}, f32[16]{0}) collective-permute-start(p1), source_target_pairs={{0,1},{1,0}}
+  cp1d = f32[16]{0} collective-permute-done(cp1s)
+  cp2s = (f32[16]{0}, f32[16]{0}) collective-permute-start(cp1d), source_target_pairs={{0,1},{1,0}}
+  big = f32[1024,1024]{1,0} add(p0, p0)
+  cp2d = f32[16]{0} collective-permute-done(cp2s)
+  cp3s = (f32[16]{0}, f32[16]{0}) collective-permute-start(cp2d), source_target_pairs={{0,1},{1,0}}
+  wg = f32[1024,1024]{1,0} multiply(big, big)
+  cp3d = f32[16]{0} collective-permute-done(cp3s)
+  ROOT r = f32[16]{0} add(cp3d, cp3d)
+})";
+
+TEST_F(SchedulerMemoryFencingTest, ProducerFencingDisabledByDefault) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kProducerHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/0));
+  EXPECT_FALSE(changed);
+  EXPECT_THAT(Instr(module.get(), "big")->control_predecessors(), IsEmpty());
+}
+
+TEST_F(SchedulerMemoryFencingTest, ProducerSlackZeroAnchorsToEnclosingWindow) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kProducerHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/0,
+                               /*producer_slack_windows=*/0));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(Instr(module.get(), "big")->control_predecessors(),
+              UnorderedElementsAre(Instr(module.get(), "cp2s")));
+  EXPECT_OK(module->schedule().Verify());
+}
+
+TEST_F(SchedulerMemoryFencingTest, ProducerSlackOneAnchorsToPreviousWindow) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kProducerHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/0,
+                               /*producer_slack_windows=*/1));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(Instr(module.get(), "big")->control_predecessors(),
+              UnorderedElementsAre(Instr(module.get(), "cp1s")));
+  EXPECT_OK(module->schedule().Verify());
+}
+
+TEST_F(SchedulerMemoryFencingTest, ProducerSlackBeyondFirstWindowIsNoOp) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kProducerHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/0,
+                               /*producer_slack_windows=*/2));
+  EXPECT_FALSE(changed);
+  EXPECT_THAT(Instr(module.get(), "big")->control_predecessors(), IsEmpty());
+}
 
 TEST_F(SchedulerMemoryFencingTest, FencesLastUserToSlackShiftedStart) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,

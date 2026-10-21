@@ -1164,6 +1164,15 @@ message DebugOptions {
   optional int32 xla_gpu_experimental_scheduler_memory_fencing_slack_windows =
       527;
 
+  // If non-negative, SchedulerMemoryFencing also fences the producers of large
+  // buffers: each producer is made dependent on the async operation start
+  // that is this many windows before the producer's position in the pre-LHS
+  // schedule, so LHS cannot materialize a large buffer much earlier than the
+  // reference schedule did. Negative values disable producer fencing.
+  optional int32
+      xla_gpu_experimental_scheduler_memory_fencing_producer_slack_windows =
+          561;
+
   // This controls how many in-flight collectives latency hiding scheduler
   // can schedule. Example usage:
   // With xla_gpu_experimental_parallel_collective_overlap_limit = 1:
@@ -1974,7 +1983,7 @@ message DebugOptions {
   // when the cuDNN version changes).
   optional bool xla_autotune_cache_require_strict_codegen_match = 559;
 
-  // Next id: 561
+  // Next id: 562
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
