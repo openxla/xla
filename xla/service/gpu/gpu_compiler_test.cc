@@ -2872,7 +2872,26 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test_sliced_custom_call",
 
 class DynamicSliceFusionMemorySpaceTest
     : public GpuCompilerTest,
-      public ::testing::WithParamInterface<bool> {};
+      public ::testing::WithParamInterface<bool> {
+ protected:
+  absl::StatusOr<std::unique_ptr<Executable>> CompileWithDynamicSliceFusion(
+      absl::string_view hlo) {
+    HloModuleConfig config = GetModuleConfigForTest();
+    config.mutable_debug_options().set_xla_gpu_enable_dynamic_slice_fusion(
+        true);
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnVerifiedModule(hlo, config));
+    Compiler::CompileOptions compile_options;
+    compile_options.gpu_topology = GetSingleDeviceGpuTopology(
+        /*platform_version=*/"", gpu_target_config());
+    ABSL_ASSIGN_OR_RETURN(
+        auto optimized_module,
+        compiler()->RunHloPasses(std::move(module), /*executor=*/nullptr,
+                                 compile_options));
+    return compiler()->RunBackend(std::move(optimized_module),
+                                  /*executor=*/nullptr, compile_options);
+  }
+};
 
 TEST_P(DynamicSliceFusionMemorySpaceTest, PreservesSymmetricMemory) {
   constexpr absl::string_view kHloTemplate = R"(
@@ -2971,22 +2990,9 @@ TEST_P(DynamicSliceFusionMemorySpaceTest, PreservesSymmetricResultAlias) {
     }
   )";
   const bool update_slice = GetParam();
-  HloModuleConfig config = GetModuleConfigForTest();
-  config.mutable_debug_options().set_xla_gpu_enable_dynamic_slice_fusion(true);
-  ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(
-                       update_slice ? kMatchingSliceHlo : kDirectHlo, config));
-  Compiler::CompileOptions compile_options;
-  compile_options.gpu_topology =
-      GetSingleDeviceGpuTopology(/*platform_version=*/"", gpu_target_config());
-  ASSERT_OK_AND_ASSIGN(
-      auto optimized_module,
-      compiler()->RunHloPasses(std::move(module), /*executor=*/nullptr,
-                               compile_options));
-  ASSERT_OK_AND_ASSIGN(
-      auto executable,
-      compiler()->RunBackend(std::move(optimized_module), /*executor=*/nullptr,
-                             compile_options));
+  ASSERT_OK_AND_ASSIGN(auto executable,
+                       CompileWithDynamicSliceFusion(
+                           update_slice ? kMatchingSliceHlo : kDirectHlo));
   const auto* gpu_executable =
       absl::down_cast<GpuExecutable*>(executable.get());
   const HloComputation* entry = gpu_executable->module().entry_computation();
@@ -3038,6 +3044,80 @@ TEST_P(DynamicSliceFusionMemorySpaceTest, PreservesSymmetricResultAlias) {
   ASSERT_OK_AND_ASSIGN(auto input_slice, assignment->GetUniqueSlice(input, {}));
   EXPECT_EQ(result_slice, input_slice);
   EXPECT_EQ(result_slice.allocation()->color(), Layout::kCollectiveMemorySpace);
+}
+
+TEST_P(DynamicSliceFusionMemorySpaceTest,
+       PreservesSymmetricAliasWithSeparateBuffers) {
+  constexpr absl::string_view kHloTemplate = R"(
+    HloModule test
+
+    ENTRY main {
+      input = f32[256]{0} parameter(0)
+      weights = f32[128]{0} parameter(1)
+      destination = f32[256]{0} parameter(2)
+      offset = s32[] constant(128)
+      input_slice = f32[128]{0} dynamic-slice(input, offset),
+        dynamic_slice_sizes={128}
+      call = f32[128]{0} custom-call(input_slice, weights),
+        custom_call_target="__xla_test_sliced_custom_call",
+        api_version=API_VERSION_TYPED_FFI,
+        output_to_operand_aliasing={{}: (0, {})},
+        frontend_attributes={$attribute="{0:7}"}
+      $root
+    }
+  )";
+
+  const bool update_slice = GetParam();
+  for (absl::string_view attribute :
+       {"operands_memory_spaces", "results_memory_spaces"}) {
+    SCOPED_TRACE(attribute);
+    std::string hlo = absl::StrReplaceAll(
+        kHloTemplate,
+        {{"$attribute", attribute},
+         {"$root", update_slice
+                       ? "ROOT result = f32[256]{0} dynamic-update-slice("
+                         "destination, call, offset)"
+                       : "ROOT result = f32[128]{0} copy(call)"}});
+    ASSERT_OK_AND_ASSIGN(auto executable, CompileWithDynamicSliceFusion(hlo));
+    const auto* gpu_executable =
+        absl::down_cast<GpuExecutable*>(executable.get());
+    const HloInstruction* result =
+        gpu_executable->module().entry_computation()->root_instruction();
+    ASSERT_EQ(result->opcode(), HloOpcode::kCopy);
+    const HloInstruction* fusion = result->operand(0);
+    ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+    ASSERT_OK_AND_ASSIGN(auto backend_config,
+                         fusion->backend_config<GpuBackendConfig>());
+    EXPECT_EQ(
+        backend_config.fusion_backend_config().custom_fusion_config().name(),
+        "dynamic_slice_fusion");
+    ASSERT_EQ(fusion->operand_count(), update_slice ? 3 : 2);
+
+    ASSERT_OK_AND_ASSIGN(
+        auto assignment,
+        BufferAssignment::FromProto(gpu_executable->buffer_assignment_proto(),
+                                    &gpu_executable->module(),
+                                    compiler()->BufferSizeBytesFunction(),
+                                    gpu_executable->alias_info()));
+    ASSERT_OK_AND_ASSIGN(auto result_slice,
+                         assignment->GetUniqueSlice(fusion, {}));
+    ASSERT_OK_AND_ASSIGN(auto input_slice,
+                         assignment->GetUniqueSlice(fusion->operand(0), {}));
+    // The emitter copies the aliased input into this result allocation and
+    // passes the result pointer as both the custom call's input and output.
+    EXPECT_NE(result_slice, input_slice);
+    EXPECT_EQ(result_slice.allocation()->color(),
+              Layout::kCollectiveMemorySpace);
+    if (attribute == "operands_memory_spaces") {
+      EXPECT_EQ(input_slice.allocation()->color(),
+                Layout::kCollectiveMemorySpace);
+    }
+    if (update_slice) {
+      ASSERT_OK_AND_ASSIGN(auto destination_slice,
+                           assignment->GetUniqueSlice(fusion->operand(2), {}));
+      EXPECT_EQ(result_slice, destination_slice);
+    }
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(DynamicSliceFusion, DynamicSliceFusionMemorySpaceTest,

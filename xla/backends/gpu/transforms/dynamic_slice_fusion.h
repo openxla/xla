@@ -238,6 +238,11 @@ struct DynamicSliceFusion {
   // Finds the "hero" instruction inside a dynamic-slice fusion body.
   static const HloInstruction* FindHero(const HloComputation* body);
 
+  // Resolves the runtime addressing config of a slice or dynamic (update)
+  // slice. Returns nullopt when the config cannot be resolved.
+  static std::optional<DynamicSliceConfig> ResolveSliceConfig(
+      const HloInstruction* instr);
+
   // Resolves parameters for the hero instruction. Returns an entry for each
   // operand of the hero; the same fusion parameter may appear more than once
   // if it feeds multiple hero operands.
