@@ -1439,6 +1439,47 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
             HloOpcode::kCustomCall);
 }
 
+TEST_F(DynamicSliceFusionRewriterV2Test, ResultLayoutMemorySpaces) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+    ENTRY main {
+      input = f32[2,8,8]{2,1,0} parameter(0)
+      slice = f32[1,8,8]{2,1,0} slice(input), slice={[0:1],[0:8],[0:8]}
+      ROOT call = $result_shape custom-call(slice),
+        custom_call_target="fake_target",
+        frontend_attributes={results_memory_spaces="{$index:7}"}
+    }
+  )";
+  set_verifier_layout_sensitive(true);
+  for (bool tuple_result : {false, true}) {
+    for (absl::string_view memory_space : {"0", "1", "2", "7"}) {
+      SCOPED_TRACE(tuple_result);
+      SCOPED_TRACE(memory_space);
+      std::string hlo = absl::StrReplaceAll(
+          kHlo, {{"$result_shape",
+                  tuple_result ? "(f32[8,8]{1,0:S(2)}, f32[8,8]{1,0:S($space)})"
+                               : "f32[8,8]{1,0:S($space)}"},
+                 {"$index", tuple_result ? "1" : "0"}});
+      hlo = absl::StrReplaceAll(hlo, {{"$space", memory_space}});
+      ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+      const std::string original = module->ToString();
+      DynamicSliceFusionRewriterV2 rewriter(platform_id(), DefaultOptions());
+      ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+      if (memory_space == "2") {
+        EXPECT_FALSE(changed);
+        EXPECT_EQ(module->ToString(), original);
+        continue;
+      }
+      ASSERT_TRUE(changed);
+      const HloInstruction* fusion =
+          module->entry_computation()->root_instruction();
+      ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+      EXPECT_EQ(fusion->get_frontend_attribute("results_memory_spaces"),
+                tuple_result ? "{1:7}" : "{0:7}");
+    }
+  }
+}
+
 TEST_F(DynamicSliceFusionRewriterV2Test,
        OutOfBoundsMemorySpaceIndicesAreRejected) {
   constexpr absl::string_view kHlo = R"(

@@ -921,13 +921,23 @@ absl::StatusOr<std::optional<FrontendAttributes>> FusionMemorySpaces(
     }
   }
 
-  for (auto [index, color] : operands) {
-    const Shape& shape = body->parameter_instruction(index)->shape();
+  auto matches_layout = [](const Shape& shape, int64_t color) {
     if (!shape.has_layout() || shape.layout().memory_space() == 0) {
-      continue;
+      return true;
     }
     auto layout_color = AsMemorySpaceColor(shape.layout().memory_space());
-    if (!layout_color.ok() || static_cast<int64_t>(*layout_color) != color) {
+    return layout_color.ok() && static_cast<int64_t>(*layout_color) == color;
+  };
+  for (auto [index, color] : operands) {
+    if (!matches_layout(body->parameter_instruction(index)->shape(), color)) {
+      return std::nullopt;
+    }
+  }
+  const Shape& root_shape = body->root_instruction()->shape();
+  for (auto [index, color] : results) {
+    const Shape& shape =
+        root_shape.IsTuple() ? root_shape.tuple_shapes(index) : root_shape;
+    if (!matches_layout(shape, color)) {
       return std::nullopt;
     }
   }
