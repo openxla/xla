@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,7 +52,6 @@ limitations under the License.
 #include "xla/permutation_util.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
 namespace xla::gpu::triton {
@@ -237,6 +237,9 @@ mlir::Value ExpandAndBroadcastValue(mlir::ImplicitLocOpBuilder& builder,
 }
 
 bool IsGuaranteedDivisible(mlir::Value value, int64_t divisor) {
+  if (divisor == 1) {
+    return true;
+  }
   if (auto const_op = value.getDefiningOp<arith::ConstantIndexOp>()) {
     return const_op.value() % divisor == 0;
   }
@@ -252,20 +255,13 @@ bool IsGuaranteedDivisible(mlir::Value value, int64_t divisor) {
 
 bool IsGuaranteedInBounds(mlir::Value value, int64_t tile_size,
                           int64_t original_shape) {
-  if (auto const_op = value.getDefiningOp<arith::ConstantIndexOp>()) {
-    return const_op.value() >= 0 &&
-           const_op.value() + tile_size <= original_shape;
+  if (auto apply_indexing = value.getDefiningOp<::xla::ApplyIndexingOp>();
+      apply_indexing && apply_indexing.getIndexingMap().GetNumResults() != 1) {
+    return false;
   }
-  if (auto apply_indexing = value.getDefiningOp<::xla::ApplyIndexingOp>()) {
-    IndexingMap indexing_map = apply_indexing.getIndexingMap();
-    if (indexing_map.GetNumResults() != 1) {
-      return false;
-    }
-
-    // Compute the maximum possible offset for the given indexing map.
-    Interval range = indexing_map.GetRangeEvaluator().ComputeExpressionRange(
-        indexing_map.GetSymbolicMap().GetResult(0));
-    return range.lower >= 0 && range.upper + tile_size <= original_shape;
+  if (std::optional<Interval> range = ::xla::GetRange(value)) {
+    return range->IsFeasible() && range->lower >= 0 &&
+           range->upper <= original_shape - tile_size;
   }
   return false;
 }

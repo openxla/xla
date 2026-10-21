@@ -92,31 +92,46 @@ using mlir::ValueRange;
 
 namespace arith = mlir::arith;
 
+std::optional<Interval> AttrToRange(mlir::Attribute attr) {
+  if (!attr) {
+    return std::nullopt;
+  }
+  auto values = llvm::to_vector(
+      mlir::cast<mlir::ArrayAttr>(attr).getAsValueRange<mlir::IntegerAttr>());
+  return {{values[0].getSExtValue(), values[1].getSExtValue()}};
+}
+
+// Returns true if folding a single-result variable expression of `indexing_op`
+// to `operand` does not drop a tighter `xla.range` annotation on `indexing_op`.
+bool CanFoldVariableResult(ApplyIndexingOp indexing_op, Value operand) {
+  if (indexing_op.getResults().size() != 1) {
+    return true;
+  }
+  std::optional<Interval> attr_range =
+      AttrToRange(indexing_op->getAttr("xla.range"));
+  if (!attr_range.has_value()) {
+    return true;
+  }
+  std::optional<Interval> operand_range = GetRange(operand);
+  return operand_range.has_value() && attr_range->Contains(*operand_range);
+}
+
 }  // namespace
 
 std::optional<Interval> GetRange(mlir::Value value) {
-  auto attr_to_range = [](mlir::Attribute attr) -> std::optional<Interval> {
-    if (!attr) {
-      return std::nullopt;
-    }
-    auto values = llvm::to_vector(
-        mlir::cast<mlir::ArrayAttr>(attr).getAsValueRange<mlir::IntegerAttr>());
-    return {{values[0].getSExtValue(), values[1].getSExtValue()}};
-  };
-
   if (auto apply = value.getDefiningOp<ApplyIndexingOp>()) {
     Interval range =
         apply.getIndexingMap().GetRangeEvaluator().ComputeExpressionRange(
             apply.getIndexingMap().GetSymbolicMap().GetResult(
                 mlir::cast<mlir::OpResult>(value).getResultNumber()));
-    if (auto attr_range = attr_to_range(apply->getAttr("xla.range"))) {
+    if (auto attr_range = AttrToRange(apply->getAttr("xla.range"))) {
       range = range.Intersect(*attr_range);
     }
     return range;
   } else if (auto cst = value.getDefiningOp<mlir::arith::ConstantIndexOp>()) {
     return {{cst.value(), cst.value()}};
   } else if (value.getDefiningOp()) {
-    return attr_to_range(value.getDefiningOp()->getAttr("xla.range"));
+    return AttrToRange(value.getDefiningOp()->getAttr("xla.range"));
   }
 
   auto bbarg = mlir::dyn_cast<mlir::BlockArgument>(value);
@@ -126,7 +141,7 @@ std::optional<Interval> GetRange(mlir::Value value) {
 
   auto parent = bbarg.getParentBlock()->getParentOp();
   if (auto func_op = mlir::dyn_cast<mlir::FunctionOpInterface>(parent)) {
-    return attr_to_range(func_op.getArgAttr(bbarg.getArgNumber(), "xla.range"));
+    return AttrToRange(func_op.getArgAttr(bbarg.getArgNumber(), "xla.range"));
   }
   return GetIVRange(value);
 }
@@ -615,8 +630,11 @@ struct FoldApplyIndexingResults
         continue;
       }
       if (result_expr.GetType() == SymbolicExprType::kVariable) {
-        new_values.push_back(indexing_op.getOperand(result_expr.GetValue()));
-        continue;
+        Value operand = indexing_op.getOperand(result_expr.GetValue());
+        if (CanFoldVariableResult(indexing_op, operand)) {
+          new_values.push_back(operand);
+          continue;
+        }
       }
       new_exprs.push_back(result_expr);
       new_values.push_back(Value{});
@@ -660,7 +678,12 @@ mlir::LogicalResult ApplyIndexingOp::fold(
   mlir::ImplicitLocOpBuilder builder(getLoc(), getContext());
   for (auto expr : map.GetResults()) {
     if (expr.GetType() == SymbolicExprType::kVariable) {
-      results.push_back(getOperand(expr.GetValue()));
+      Value operand = getOperand(expr.GetValue());
+      if (!CanFoldVariableResult(*this, operand)) {
+        results.clear();
+        return failure();
+      }
+      results.push_back(operand);
     } else if (expr.GetType() == SymbolicExprType::kConstant) {
       results.push_back(builder.getIndexAttr(expr.GetValue()));
     } else {

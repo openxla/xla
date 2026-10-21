@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/codegen/xtile/codegen/fusion_emitter.h"
 
 #include <algorithm>
+#include <complex>
 #include <cstdint>
 #include <iterator>
 #include <optional>
@@ -478,20 +479,53 @@ absl::StatusOr<TensorValue> EmitConcatenate(
   // which one by looking at the offset within the concatenation dimension.
   Value concatenate_dimension_offset =
       tile_info.offsets()[concatenate_dimension];
+  int64_t concat_dim_size =
+      hlo_concat->shape().dimensions(concatenate_dimension);
+  std::optional<Interval> concat_offset_range =
+      ::xla::GetRange(concatenate_dimension_offset);
+  bool can_be_below_zero = !concat_offset_range.has_value() ||
+                           !concat_offset_range->IsFeasible() ||
+                           concat_offset_range->lower < 0;
+  bool can_exceed_upper_bound = !concat_offset_range.has_value() ||
+                                !concat_offset_range->IsFeasible() ||
+                                concat_offset_range->upper >= concat_dim_size;
+  auto create_zero_tile = [&]() -> TensorValue {
+    if (mlir::isa<mlir::ComplexType>(element_type)) {
+      return CreateConst(b, element_type, std::complex<double>(0.0, 0.0),
+                         tile_sizes);
+    }
+    return CreateConst(b, element_type, 0, tile_sizes);
+  };
 
   // It would have been nice to be able to use `scf::IndexSwitchOp`, but Triton
   // does not want to deal with the `Index` type, and does not support the op.
   // Instead, we generate a sequence of nested `scf::IfOp`s.
   SmallVector<mlir::scf::IfOp, 4> if_ops;
+  if (can_be_below_zero) {
+    Value zero_offset = CreateConst(b, b.getIndexType(), 0);
+    auto below_zero_cond =
+        arith::CmpIOp::create(b, arith::CmpIPredicate::slt,
+                              concatenate_dimension_offset, zero_offset);
+    auto below_zero_if =
+        mlir::scf::IfOp::create(b, mlir::TypeRange(result_type),
+                                below_zero_cond, /*withElseRegion=*/true);
+    b.setInsertionPointToStart(below_zero_if.thenBlock());
+    mlir::scf::YieldOp::create(b, create_zero_tile());
+    if_ops.push_back(below_zero_if);
+  }
+
   int64_t limit = 0;
+  int64_t num_operands = tiled_concat.operands().size();
   for (const auto& [i, operand] : llvm::enumerate(tiled_concat.operands())) {
     // Write in the else branch of the previous if op if one exists.
     if (!if_ops.empty()) {
       b.setInsertionPointToStart(if_ops.back().elseBlock());
     }
-    // Add an `if_op` if we have not reached the last operand. The last operand
-    // directly populates the `else` block of the previous `if_op`.
-    if (if_ops.size() < tiled_concat.operands().size() - 1) {
+    bool is_last_operand = (static_cast<int64_t>(i) == num_operands - 1);
+    // Add an `if_op` if we have not reached the last operand, or for the last
+    // operand if `concatenate_dimension_offset` can exceed `concat_dim_size`
+    // (e.g. when a surrounding `pad` evaluates high-padding tiles).
+    if (!is_last_operand || can_exceed_upper_bound) {
       limit += operand->hlo()->shape().dimensions()[concatenate_dimension];
       Value offset_limit = CreateConst(b, b.getIndexType(), limit);
 
@@ -519,7 +553,14 @@ absl::StatusOr<TensorValue> EmitConcatenate(
         << results.size();
     TF_RET_CHECK(results[0].getType() == result_type)
         << "Region result type must match the concatenate result type";
+    if (if_ops.empty()) {
+      return results.back();
+    }
     mlir::scf::YieldOp::create(b, results.back());
+    if (is_last_operand && can_exceed_upper_bound) {
+      b.setInsertionPointToStart(if_ops.back().elseBlock());
+      mlir::scf::YieldOp::create(b, create_zero_tile());
+    }
   }
   b.setInsertionPointAfter(if_ops.front());
   return mlir::cast<TensorValue>(if_ops.front().getResult(0));
