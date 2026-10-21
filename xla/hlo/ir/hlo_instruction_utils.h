@@ -25,7 +25,6 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -57,15 +56,6 @@ void AddOrUpdateVectorOfPairsAsAttribute(
 void UpdateFrontendAttributes(
     HloInstruction* instruction, FrontendAttributes updates,
     absl::Span<const absl::string_view> attributes_to_remove = {});
-
-// Replaces an instruction and inherits missing frontend attributes from it,
-// even when the replacement already has attributes. Replacement values win.
-// Attributes are not inherited when forwarding an operand of the old
-// instruction. Both instructions must belong to the same computation and have
-// compatible shapes. Returns an error if control dependencies prevent
-// replacement. Frontend attributes are unchanged if replacement fails.
-absl::Status ReplaceInstructionWithMergedFrontendAttributes(
-    HloInstruction* old_instruction, HloInstruction* new_instruction);
 
 // Returns the nesting depth in computations from the top-level computation of
 // `hlo`. i.e. 0 = in the top-level computation, ...

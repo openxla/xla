@@ -119,7 +119,9 @@ ParseIndexMemorySpacePairs(absl::string_view str) {
   return result;
 }
 
-bool SupportsMemorySpaceAnnotations(const HloInstruction* inst) {
+// Only the dynamic-slice rewriter remaps these index-based annotations when
+// forming a fusion. Other fusion kinds must not consume inherited annotations.
+static bool SupportsMemorySpaceAnnotations(const HloInstruction* inst) {
   return inst->opcode() == HloOpcode::kCustomCall ||
          GetCustomFusionConfigName(inst) == kDynamicSliceFusionConfigName;
 }

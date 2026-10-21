@@ -58,8 +58,6 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-using hlo_instruction_utils::ReplaceInstructionWithMergedFrontendAttributes;
-
 //===----------------------------------------------------------------------===//
 // Data structures
 //===----------------------------------------------------------------------===//
@@ -988,6 +986,15 @@ absl::StatusOr<bool> RewriteHero(
     HloModule* module, HloInstruction* hero,
     absl::Span<const SlicedParameter> sliced_params,
     absl::Span<const SlicedResult> sliced_results) {
+  std::vector<HloInstruction*> original_operands(hero->operands().begin(),
+                                                 hero->operands().end());
+  auto restore_operands = [&]() -> absl::Status {
+    // Fusion planning may bypass O2 tuple barriers before validation.
+    for (int64_t i = 0; i < original_operands.size(); ++i) {
+      ABSL_RETURN_IF_ERROR(hero->ReplaceOperandWith(i, original_operands[i]));
+    }
+    return absl::OkStatus();
+  };
   auto plan = BuildFusionPlan(hero, sliced_params, sliced_results);
   if (!plan.has_value()) {
     return false;
@@ -998,12 +1005,26 @@ absl::StatusOr<bool> RewriteHero(
   ABSL_ASSIGN_OR_RETURN(bool preserves_aliases,
                         PreservesCustomCallAliases(body.get()));
   if (!preserves_aliases) {
+    ABSL_RETURN_IF_ERROR(restore_operands());
     return false;
   }
   ABSL_ASSIGN_OR_RETURN(auto memory_spaces,
                         FusionMemorySpaces(hero, body.get()));
   if (!memory_spaces.has_value()) {
+    ABSL_RETURN_IF_ERROR(restore_operands());
     return false;
+  }
+  for (const SlicedResult& result : sliced_results) {
+    const HloInstruction* replaced = result.update_slice;
+    if (replaced == nullptr && !result.noops.empty()) {
+      replaced = result.noops.back();
+    }
+    if (replaced != nullptr && replaced->HasControlDependencies()) {
+      ABSL_RETURN_IF_ERROR(restore_operands());
+      return absl::FailedPreconditionError(absl::StrCat(
+          "Cannot replace fusion result with control dependencies: ",
+          replaced->name()));
+    }
   }
   HloComputation* fusion_body =
       module->AddComputationAndUnifyNamesAndIds(std::move(body), false);
@@ -1026,42 +1047,38 @@ absl::StatusOr<bool> RewriteHero(
       auto* gte = parent->AddInstruction(
           HloInstruction::CreateGetTupleElement(fusion, i));
       if (sliced_results[i].update_slice != nullptr) {
-        ABSL_RETURN_IF_ERROR(ReplaceInstructionWithMergedFrontendAttributes(
-            sliced_results[i].update_slice, gte));
+        ABSL_RETURN_IF_ERROR(
+            parent->ReplaceInstruction(sliced_results[i].update_slice, gte));
         any_result_replaced = true;
       } else if (!sliced_results[i].noops.empty()) {
         HloInstruction* original_leaf = sliced_results[i].noops.back();
-        ABSL_RETURN_IF_ERROR(
-            ReplaceInstructionWithMergedFrontendAttributes(original_leaf, gte));
+        ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(original_leaf, gte));
         any_result_replaced = true;
       }
     }
     if (!any_result_replaced) {
-      ABSL_RETURN_IF_ERROR(
-          ReplaceInstructionWithMergedFrontendAttributes(hero, fusion));
+      ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
     } else if (hero_has_side_effect) {
       ABSL_RETURN_IF_ERROR(parent->RemoveInstructionAndUnusedOperands(hero));
     }
   } else if (sliced_results.size() == 1) {
     if (sliced_results[0].update_slice != nullptr) {
-      ABSL_RETURN_IF_ERROR(ReplaceInstructionWithMergedFrontendAttributes(
-          sliced_results[0].update_slice, fusion));
+      ABSL_RETURN_IF_ERROR(
+          parent->ReplaceInstruction(sliced_results[0].update_slice, fusion));
       if (hero_has_side_effect) {
         ABSL_RETURN_IF_ERROR(parent->RemoveInstructionAndUnusedOperands(hero));
       }
     } else if (hero->shape().IsTuple() && !sliced_results[0].noops.empty()) {
-      ABSL_RETURN_IF_ERROR(ReplaceInstructionWithMergedFrontendAttributes(
-          sliced_results[0].noops.back(), fusion));
+      ABSL_RETURN_IF_ERROR(
+          parent->ReplaceInstruction(sliced_results[0].noops.back(), fusion));
       if (hero_has_side_effect) {
         ABSL_RETURN_IF_ERROR(parent->RemoveInstructionAndUnusedOperands(hero));
       }
     } else {
-      ABSL_RETURN_IF_ERROR(
-          ReplaceInstructionWithMergedFrontendAttributes(hero, fusion));
+      ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
     }
   } else {
-    ABSL_RETURN_IF_ERROR(
-        ReplaceInstructionWithMergedFrontendAttributes(hero, fusion));
+    ABSL_RETURN_IF_ERROR(parent->ReplaceInstruction(hero, fusion));
   }
 
   hlo_instruction_utils::UpdateFrontendAttributes(
@@ -1102,8 +1119,6 @@ absl::StatusOr<bool> DynamicSliceFusionRewriterV2::RunImpl(
     }
 
     for (HloInstruction* hero : heroes) {
-      std::vector<HloInstruction*> original_operands(hero->operands().begin(),
-                                                     hero->operands().end());
       auto sliced_params = ResolveSlicedParameters(hero, options_.opt_level,
                                                    options_.capture_slice);
       auto sliced_results =
@@ -1113,13 +1128,6 @@ absl::StatusOr<bool> DynamicSliceFusionRewriterV2::RunImpl(
       ABSL_ASSIGN_OR_RETURN(
           bool hero_changed,
           RewriteHero(module, hero, sliced_params, sliced_results));
-      if (!hero_changed) {
-        // O2 slice resolution can bypass tuple barriers before fusion planning.
-        for (int64_t i = 0; i < original_operands.size(); ++i) {
-          ABSL_RETURN_IF_ERROR(
-              hero->ReplaceOperandWith(i, original_operands[i]));
-        }
-      }
       changed |= hero_changed;
     }
   }
