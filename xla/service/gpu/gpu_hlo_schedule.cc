@@ -694,6 +694,17 @@ absl::Status RunLatencyHidingSchedulerPasses(
       options.xla_gpu_experimental_parallel_collective_overlap_limit(),
       options.xla_gpu_experimental_parallel_scale_up_collective_overlap_limit(),
       options.xla_gpu_experimental_parallel_async_compute_limit());
+  config.memory_aware_scheduling =
+      options.xla_gpu_experimental_memory_aware_scheduling();
+  config.memory_aware_min_bytes =
+      options.xla_gpu_experimental_memory_aware_min_bytes();
+  config.memory_aware_held_budget =
+      options.xla_gpu_experimental_memory_aware_held_budget();
+  if (options.xla_gpu_experimental_memory_priced_overlap_lambda() > 0.0f) {
+    config.memory_priced_overlap = true;
+    config.memory_cost_lambda =
+        options.xla_gpu_experimental_memory_priced_overlap_lambda();
+  }
   const bool enable_selective_memcpy_overlap =
       options.xla_gpu_experimental_enable_selective_memcpy_overlap();
   if (enable_selective_memcpy_overlap) {

@@ -545,6 +545,10 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(-1);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows(1);
+  opts.set_xla_gpu_experimental_memory_aware_scheduling(false);
+  opts.set_xla_gpu_experimental_memory_aware_min_bytes(64 * 1024 * 1024);
+  opts.set_xla_gpu_experimental_memory_aware_held_budget(0.0f);
+  opts.set_xla_gpu_experimental_memory_priced_overlap_lambda(0.0f);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
@@ -3490,6 +3494,37 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           ->xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
       "How many async operation windows the users of a fenced buffer may be "
       "deferred past the buffer's last-use window in the pre-LHS schedule."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_memory_aware_scheduling",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_memory_aware_scheduling),
+      debug_options->xla_gpu_experimental_memory_aware_scheduling(),
+      "Make the latency hiding scheduler prefer, among ready candidates with "
+      "equal stall, the one that releases more live bytes per unit of "
+      "estimated time."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_memory_aware_min_bytes",
+      int64_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_memory_aware_min_bytes),
+      debug_options->xla_gpu_experimental_memory_aware_min_bytes(),
+      "Candidates whose net live-byte change is below this size are treated "
+      "as memory-neutral by memory-aware scheduling."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_memory_aware_held_budget",
+      float_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_memory_aware_held_budget),
+      debug_options->xla_gpu_experimental_memory_aware_held_budget(),
+      "If > 0, a ready candidate whose released bytes times the time it has "
+      "been ready reaches this budget is prioritized by memory-aware "
+      "scheduling."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_memory_priced_overlap_lambda",
+      float_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_memory_priced_overlap_lambda),
+      debug_options->xla_gpu_experimental_memory_priced_overlap_lambda(),
+      "If > 0, extending an async op's overlap by one more op is accepted "
+      "only if the stall it hides is at least lambda times the bytes the "
+      "async op keeps live times the op's duration."));
   flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",
       bool_setter_for(&DebugOptions::set_xla_pjrt_allow_auto_layout_in_hlo),
