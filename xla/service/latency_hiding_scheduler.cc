@@ -2046,6 +2046,85 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
     }
   }
 
+  // Tie-breaker for two ready async-done operations: if a data input of one's
+  // async chain (async-start and any async-updates) is an ancestor of the
+  // other's async chain (e.g. two dependent layers each offloading their
+  // result), the done transferring the earlier-produced data completes first
+  // in program order. Async ops that execute in order (e.g. on SparseCore)
+  // are then also issued in data order, right after their data is produced.
+  // Unrelated async-dones keep their original order.
+  if (an->IsSupportedAsyncDone() && bn->IsSupportedAsyncDone()) {
+    // The async chain of a done, from its start to the done itself. Empty if
+    // the done has no separate start (e.g. a synchronous collective that the
+    // backend schedules as async), which this tie-breaker does not order.
+    auto async_chain = [](const HloInstruction& done) {
+      if (const auto* async_done = DynCast<HloAsyncInstruction>(&done)) {
+        std::vector<HloAsyncInstruction*> chain = async_done->GetAsyncChain();
+        return std::vector<const HloInstruction*>(chain.begin(), chain.end());
+      }
+      if (done.operand_count() == 0) {
+        return std::vector<const HloInstruction*>{};
+      }
+      switch (done.operand(0)->opcode()) {
+        case HloOpcode::kCopyStart:
+        case HloOpcode::kSend:
+        case HloOpcode::kRecv:
+        case HloOpcode::kAllGatherStart:
+        case HloOpcode::kAllReduceStart:
+        case HloOpcode::kCollectivePermuteStart:
+          return std::vector<const HloInstruction*>{done.operand(0), &done};
+        default:
+          return std::vector<const HloInstruction*>{};
+      }
+    };
+    std::vector<const HloInstruction*> a_chain = async_chain(an->GetInstr());
+    std::vector<const HloInstruction*> b_chain = async_chain(bn->GetInstr());
+    // The chain may cross a loop boundary; only ops in the scheduled
+    // computation are in the reachability map.
+    auto in_computation = [&](absl::Span<const HloInstruction* const> chain) {
+      return absl::c_all_of(chain, [&](const HloInstruction* op) {
+        return op->parent() == an->GetInstr().parent();
+      });
+    };
+    if (!a_chain.empty() && !b_chain.empty() && in_computation(a_chain) &&
+        in_computation(b_chain)) {
+      const HloReachabilityMap& reachability =
+          sched_state.sched_graph->reachability();
+      auto is_operand_of = [](absl::Span<const HloInstruction* const> chain,
+                              const HloInstruction* operand) {
+        return absl::c_any_of(chain, [&](const HloInstruction* op) {
+          return absl::c_linear_search(op->operands(), operand);
+        });
+      };
+      // True if a data operand of x's chain reaches y's chain. Operands shared
+      // by both chains (e.g. common offsets) do not order the transfers, and
+      // neither do parameters and constants, which are available from the
+      // start and would otherwise relate every two chains reading them.
+      auto transfers_earlier_data =
+          [&](absl::Span<const HloInstruction* const> x,
+              absl::Span<const HloInstruction* const> y) {
+            return absl::c_any_of(x, [&](const HloInstruction* x_op) {
+              return absl::c_any_of(
+                  x_op->operands(), [&](const HloInstruction* operand) {
+                    return operand->opcode() != HloOpcode::kParameter &&
+                           operand->opcode() != HloOpcode::kConstant &&
+                           !is_operand_of(y, operand) &&
+                           absl::c_any_of(y, [&](const HloInstruction* y_op) {
+                             return y_op != y.back() &&
+                                    reachability.IsReachable(operand, y_op);
+                           });
+                  });
+            });
+          };
+      if (auto res = CmpDirectional(core_->top_down_scheduling_,
+                                    transfers_earlier_data(a_chain, b_chain),
+                                    transfers_earlier_data(b_chain, a_chain),
+                                    "kAsyncDoneDataDependency", reason)) {
+        return *res;
+      }
+    }
+  }
+
   *reason = "kOriginalOrder";
   return core_->top_down_scheduling_
              ? (an->GetOriginalPosition() < bn->GetOriginalPosition())
