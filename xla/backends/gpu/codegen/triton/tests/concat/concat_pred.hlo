@@ -25,13 +25,14 @@ fusion {
 // CHECK:       %[[OFFSET:.*]] = xla.apply_indexing #[[$MAP0]](%[[PID]])
 // CHECK:       %[[CMPI_0:.*]] = arith.cmpi slt, %[[OFFSET]], %[[C128]] : index
 // CHECK:       %[[IF_0:.*]] = scf.if %[[CMPI_0]] -> (tensor<32xi1>) {
-// CHECK:         %[[EXTRACT_0:.*]] = xtile.extract %[[ARG0]][%[[OFFSET]]] [32] [1] : memref<128xi8> -> tensor<32xi8>
+// CHECK:         %[[OFFSET_1:.*]] = xla.apply_indexing #[[$MAP0]](%[[PID]]) {xla.range = [0 : index, 96 : index]}
+// CHECK:         %[[EXTRACT_0:.*]] = xtile.extract %[[ARG0]][%[[OFFSET_1]]] [32] [1] : memref<128xi8> -> tensor<32xi8>
 // CHECK:         %[[CMPI_1:.*]] = arith.cmpi ne, %[[EXTRACT_0]], %[[CST]] : tensor<32xi8>
 // CHECK:         scf.yield %[[CMPI_1]] : tensor<32xi1>
 // CHECK:       } else {
 // CHECK:         %[[CMPI_2:.*]] = arith.cmpi slt, %[[OFFSET]], %[[C256]] : index
 // CHECK:         %[[IF_1:.*]] = scf.if %[[CMPI_2]] -> (tensor<32xi1>) {
-// CHECK:           %[[OFFSET_2:.*]] = xla.apply_indexing #[[$MAP1]](%[[PID]])
+// CHECK:           %[[OFFSET_2:.*]] = xla.apply_indexing #[[$MAP1]](%[[PID]]) {xla.range = [0 : index, 96 : index]}
 // CHECK:           %[[EXTRACT_1:.*]] = xtile.extract %[[ARG1]][%[[OFFSET_2]]] [32] [1] : memref<128xi8> -> tensor<32xi8>
 // CHECK:           %[[CMPI_3:.*]] = arith.cmpi ne, %[[EXTRACT_1]], %[[CST]] : tensor<32xi8>
 // CHECK:           scf.yield %[[CMPI_3]] : tensor<32xi1>
