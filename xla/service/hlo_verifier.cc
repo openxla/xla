@@ -4067,6 +4067,12 @@ int64_t CountWritersInUser(const HloInstruction* inst,
     // For other case, Without interprocedural analysis, we assume if a buffer
     // is passed into a while loop or dynamic-update-slice, it is written
     // there.
+    //
+    // A buffer passed as several operands of a custom-call is written through
+    // each of them.
+    if (user->opcode() == HloOpcode::kCustomCall) {
+      return user->OperandIndices(inst).size();
+    }
     return 1;
   }
 
