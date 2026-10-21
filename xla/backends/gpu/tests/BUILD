@@ -1326,6 +1326,70 @@ xla_test(
     ],
 )
 
+xla_test(
+    name = "collective_ops_e2e_symmetric_test",
+    srcs = ["collective_ops_e2e_symmetric_test.cc"],
+    backend_tags = {
+        "gpu": [
+            "multi_gpu",
+            # Run the test on Ampere or newer.
+            "requires-gpu-sm80",
+        ],
+    },
+    backends = [
+        "gpu",
+    ],
+    # TODO: Remove this workaround after the RCCL team fixes the WarpSpeed issue.
+    env = {
+        "RCCL_WARP_SPEED_AUTO": "0",
+        "XLA_FLAGS": "--xla_gpu_experimental_nccl_window_symmetric=true",
+    },
+    deps = [
+        ":collective_ops_e2e_test_base",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_test(
+    name = "ragged_all_to_all_e2e_symmetric_test",
+    srcs = ["ragged_all_to_all_e2e_symmetric_test.cc"],
+    backend_tags = {
+        "gpu": [
+            "multi_gpu",
+            # Run the test on Ampere or newer.
+            "requires-gpu-sm80",
+        ],
+    },
+    backends = [
+        "gpu",
+    ],
+    env = {
+        "XLA_FLAGS": "--xla_gpu_experimental_nccl_window_symmetric=true",
+    },
+    deps = [
+        ":ragged_all_to_all_test_utils",
+        "//xla:array",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:xla_proto_cc",
+        "//xla/service:hlo_module_config",
+        "//xla/tests:literal_test_util",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
 cc_library(
     name = "collective_ops_ffi_kernels",
     testonly = True,
@@ -1513,7 +1577,19 @@ cc_library(
     srcs = ["ragged_all_to_all_test_utils.cc"],
     hdrs = ["ragged_all_to_all_test_utils.h"],
     deps = [
+        ":collective_ops_e2e_test_base",
         "//xla:array",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/tsl/platform:test",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
     ],
 )
