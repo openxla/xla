@@ -6488,5 +6488,165 @@ ENTRY main {
   EXPECT_EQ(FindStart(done), pipelined_ctx);
 }
 
+// Gives `negate` a higher cost than every other op, so that bytes released per
+// unit of time differs from bytes released.
+class NegateIsSlowLatencyEstimator : public ApproximateLatencyEstimator {
+ public:
+  TimeCost NodeCost(const HloInstruction* instr) const override {
+    if (instr->opcode() == HloOpcode::kNegate) {
+      return 10.0;
+    }
+    return ApproximateLatencyEstimator::NodeCost(instr);
+  }
+};
+
+class MemoryCostSchedulerTest : public LatencyHidingSchedulerTest {
+ protected:
+  // Schedules the entry computation of `hlo_string` bottom-up and returns the
+  // resulting instruction sequence.
+  absl::StatusOr<std::vector<HloInstruction*>> ScheduleEntry(
+      HloModule* module, SchedulerConfig sched_config,
+      std::unique_ptr<LatencyEstimator> latency_estimator =
+          std::make_unique<ApproximateLatencyEstimator>()) {
+    ABSL_ASSIGN_OR_RETURN(
+        auto setup,
+        SetupScheduler(module, sched_config, std::move(latency_estimator)));
+    std::shared_ptr<SchedulerCore> scheduler_core = std::move(setup.second);
+    ABSL_RETURN_IF_ERROR(scheduler_core->InitializeScheduler(module));
+    ABSL_ASSIGN_OR_RETURN(
+        std::shared_ptr<SchedulerCore::SchedulingState> state,
+        scheduler_core->MakeSchedulingState(module->entry_computation()));
+    return scheduler_core->ScheduleComputation(module->entry_computation(),
+                                               state);
+  }
+
+  // Number of instructions with `opcode` scheduled after `after` and before
+  // `before`.
+  static int CountOpcodeBetween(absl::Span<HloInstruction* const> sequence,
+                                HloOpcode opcode, absl::string_view after,
+                                absl::string_view before) {
+    const int begin = GetIndex(sequence, after) + 1;
+    const int end = GetIndex(sequence, before);
+    if (begin >= end) {
+      return 0;
+    }
+    return std::count_if(sequence.begin() + begin, sequence.begin() + end,
+                         [opcode](const HloInstruction* instr) {
+                           return instr->opcode() == opcode;
+                         });
+  }
+
+  // `large` and `small` are both ready once the root is scheduled and tie on
+  // every other rule, so the original order decides unless kMemoryCost is on.
+  static constexpr absl::string_view kLargeSmallHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[100] parameter(0)
+  large = f32[100] negate(p0)
+  small = f32[1] slice(p0), slice={[0:1]}
+  ROOT result = (f32[100], f32[1]) tuple(large, small)
+}
+)";
+};
+
+TEST_F(MemoryCostSchedulerTest, DisabledKeepsOriginalOrder) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kLargeSmallHlo));
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), GetDefaultSchedConfig()));
+  EXPECT_LT(GetIndex(sequence, "large"), GetIndex(sequence, "small"));
+}
+
+TEST_F(MemoryCostSchedulerTest, ReleasesLargerBufferFirst) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kLargeSmallHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  // Scheduling is bottom-up: `large` is picked first, so it ends up last and
+  // its buffer is live for the shortest time.
+  EXPECT_LT(GetIndex(sequence, "small"), GetIndex(sequence, "large"));
+}
+
+TEST_F(MemoryCostSchedulerTest, BelowMinBytesIsIgnored) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kLargeSmallHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 1000;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  EXPECT_LT(GetIndex(sequence, "large"), GetIndex(sequence, "small"));
+}
+
+TEST_F(MemoryCostSchedulerTest, ScoreIsNormalizedByTime) {
+  // `large` releases 2x the bytes of `small` but takes 10x as long, so `small`
+  // has the higher bytes-per-time score and is picked first.
+  constexpr absl::string_view kHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[100] parameter(0)
+  small = f32[50] slice(p0), slice={[0:50]}
+  large = f32[100] negate(p0)
+  ROOT result = (f32[50], f32[100]) tuple(small, large)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<HloInstruction*> sequence,
+      ScheduleEntry(module.get(), sched_config,
+                    std::make_unique<NegateIsSlowLatencyEstimator>()));
+  EXPECT_LT(GetIndex(sequence, "large"), GetIndex(sequence, "small"));
+}
+
+// Diamond: `big` (4 MiB) is produced first in the original order and consumed
+// by `r`; the chain of small negates is independent of both. Scheduling `r`
+// (bottom-up) opens the live range of `big`, so kMemoryCost defers it behind
+// the chain and `big` is then released right away, which places the producer
+// next to its consumer. Without the rule the original order keeps `big` live
+// across the whole chain.
+constexpr absl::string_view kDiamondHlo = R"(
+HloModule module, is_scheduled=true
+
+add {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT s = f32[] add(x, y)
+}
+
+ENTRY main {
+  p0 = f32[1024] parameter(0)
+  zero = f32[] constant(0)
+  big = f32[1024,1024] broadcast(p0), dimensions={0}
+  n0 = f32[1024] negate(p0)
+  n1 = f32[1024] negate(n0)
+  n2 = f32[1024] negate(n1)
+  r = f32[1024] reduce(big, zero), dimensions={1}, to_apply=add
+  ROOT t = (f32[1024], f32[1024]) tuple(r, n2)
+}
+)";
+
+TEST_F(MemoryCostSchedulerTest, DiamondDisabledHoldsLargeBuffer) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kDiamondHlo));
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), GetDefaultSchedConfig()));
+  EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kNegate, "big", "r"), 3);
+}
+
+TEST_F(MemoryCostSchedulerTest, DiamondFreesLargeBufferEarly) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kDiamondHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 1024 * 1024;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  EXPECT_LT(GetIndex(sequence, "big"), GetIndex(sequence, "r"));
+  EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kNegate, "big", "r"), 0);
+}
+
 }  // namespace
 }  // namespace xla

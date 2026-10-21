@@ -2196,6 +2196,20 @@ class ReadySetLt {
       const HloGraphNode* bn, std::pair<int64_t, int64_t>& b_increase,
       const char** reason) const;
 
+  // Soft, always-on memory rule (see SchedulerConfig::memory_aware_scheduling):
+  // prefers the candidate that releases more live bytes per unit of estimated
+  // time. Only used for bottom-up scheduling.
+  std::optional<bool> MemoryCostPolicy(
+      const DefaultSchedulerCore::SchedulingState& state,
+      DefaultSchedulerCore::ScheduleCandidate& a, const HloGraphNode* an,
+      DefaultSchedulerCore::ScheduleCandidate& b, const HloGraphNode* bn,
+      const char** reason) const;
+
+  // Fills (and caches in `cand`) the memory score of a candidate.
+  void ComputeMemoryCost(const DefaultSchedulerCore::SchedulingState& state,
+                         DefaultSchedulerCore::ScheduleCandidate& cand,
+                         const HloGraphNode* cand_node) const;
+
   std::optional<bool> ReleaseStartPolicy(
       const DefaultSchedulerCore::SchedulingState& state,
       const HloGraphNode* an, const HloGraphNode* bn,

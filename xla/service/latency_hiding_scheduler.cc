@@ -1519,6 +1519,41 @@ std::optional<bool> ReadySetLt::MemoryPressurePolicy(
   return std::nullopt;
 }
 
+void ReadySetLt::ComputeMemoryCost(const SchedulingState& sched_state,
+                                   ScheduleCandidate& cand,
+                                   const HloGraphNode* cand_node) const {
+  if (cand.has_memory_cost) {
+    return;
+  }
+  // Time costs can be zero (e.g. bitcasts); keep the score finite.
+  constexpr double kMinCost = 1e-3;
+  // `increase` is the net growth of live bytes if the candidate is scheduled,
+  // so its negation is the number of bytes the candidate releases.
+  const int64_t released =
+      -GetMemoryPressureChanges(sched_state, cand, cand_node).first;
+  double score = 0.0;
+  double held = 0.0;
+  if (std::abs(released) >= sched_state.config.memory_aware_min_bytes) {
+    score = static_cast<double>(released) /
+            std::max(static_cast<double>(cand_node->GetCost()), kMinCost);
+    if (released > 0) {
+      held =
+          static_cast<double>(released) *
+          std::max(sched_state.current_time - cand_node->GetReadySince(), 0.0);
+    }
+  }
+  cand.set_memory_cost(score, held);
+}
+
+std::optional<bool> ReadySetLt::MemoryCostPolicy(
+    const SchedulingState& sched_state, ScheduleCandidate& a,
+    const HloGraphNode* an, ScheduleCandidate& b, const HloGraphNode* bn,
+    const char** reason) const {
+  ComputeMemoryCost(sched_state, a, an);
+  ComputeMemoryCost(sched_state, b, bn);
+  return CmpExplicit(a.memory_score, b.memory_score, kMemoryCostReason, reason);
+}
+
 std::optional<bool> ReadySetLt::ReleaseStartPolicy(
     const SchedulingState& sched_state, const HloGraphNode* an,
     const HloGraphNode* bn, const char** reason) const {
@@ -1973,6 +2008,15 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
                                  IsResourceConstrained(sched_state, b, bn),
                              "kFreeBackedupResource", reason)) {
     return *res;
+  }
+
+  // Among candidates that the stall and resource rules rate as equal, prefer
+  // the one that releases the most live bytes per unit of time.
+  if (ABSL_PREDICT_FALSE(config.memory_aware_scheduling &&
+                         !core_->top_down_scheduling_)) {
+    if (auto res = MemoryCostPolicy(sched_state, a, an, b, bn, reason)) {
+      return *res;
+    }
   }
 
   if (aggressive_scheduling_policies) {
