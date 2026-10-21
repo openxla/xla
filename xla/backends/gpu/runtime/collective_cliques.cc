@@ -335,9 +335,9 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
             tsl::TiedRef<SymmetricMemory> tied_symmetric_memory,
             (*clique)->Tie(std::move(symmetric_memory)));
 
-        comm->InitializeCrossDeviceBarrier(std::move(tied_signal_value),
-                                           std::move(tied_signal),
-                                           std::move(tied_symmetric_memory));
+        ABSL_RETURN_IF_ERROR(comm->InitializeCrossDeviceBarrier(
+            std::move(tied_signal_value), std::move(tied_signal),
+            std::move(tied_symmetric_memory)));
       }
     }
     if (r.use_gxl_requested) {
