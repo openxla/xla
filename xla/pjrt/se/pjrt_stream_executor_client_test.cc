@@ -748,5 +748,51 @@ TEST(PjRtStreamExecutorClientTest, CrossHostReceiveBuffersCleanupAfterFailure) {
       absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
+TEST(PjRtStreamExecutorClientTest,
+     ConcurrentGetEventForComputeStreamSyncPoint) {
+  LocalClient* local_client = xla::ClientLibrary::LocalClientOrDie();
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       PlatformUtil::GetPlatform("Host"));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  LocalDeviceState local_device_state(
+      executor, local_client, LocalDeviceState::kComputeSynchronized,
+      /*max_inflight_computations=*/32,
+      /*allow_event_reuse=*/true, /*use_callback_stream=*/false);
+  std::unique_ptr<AsyncWorkRunner> async_work_runner =
+      MakeUnboundedAsyncWorkRunner("test_async_work_runner",
+                                   {/*stack_size=*/512 * 1024});
+
+  constexpr int kNumSyncPoints = 20;
+  constexpr int kNumThreads = 8;
+  for (int iter = 0; iter < kNumSyncPoints; ++iter) {
+    size_t sync_point = local_device_state.GetNextComputeStreamSyncPoint();
+    EXPECT_EQ(sync_point, static_cast<size_t>(iter));
+
+    absl::Notification start;
+    std::vector<BufferSequencingEventRef> events(kNumThreads);
+    std::vector<std::unique_ptr<tsl::Thread>> threads;
+    threads.reserve(kNumThreads);
+    for (int t = 0; t < kNumThreads; ++t) {
+      threads.emplace_back(tsl::Env::Default()->StartThread(
+          tsl::ThreadOptions(), "GetEventForSyncPoint", [&, t]() {
+            start.WaitForNotification();
+            ASSERT_OK_AND_ASSIGN(
+                events[t], local_device_state.GetEventForComputeStreamSyncPoint(
+                               sync_point, async_work_runner.get()));
+          }));
+    }
+    start.Notify();
+    threads.clear();
+
+    for (int t = 1; t < kNumThreads; ++t) {
+      EXPECT_EQ(events[t].GetAsyncValue(), events[0].GetAsyncValue());
+    }
+    EXPECT_EQ(local_device_state.GetNextComputeStreamSyncPoint(),
+              sync_point + 1);
+    tsl::BlockUntilReady(events[0]);
+  }
+}
+
 }  // namespace
 }  // namespace xla

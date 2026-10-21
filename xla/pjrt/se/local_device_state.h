@@ -249,6 +249,11 @@ class LocalDeviceState {
  private:
   absl::Status SynchronizeAllActivity();
 
+  absl::Status RecordEvent(EventPool::Handle device_event,
+                           BufferSequencingEventRef event, se::Stream* stream,
+                           absl::string_view tag,
+                           absl::AnyInvocable<void() &&> cleanup = {});
+
   AllocationModel allocation_model_;
 
   EventPool event_pool_;

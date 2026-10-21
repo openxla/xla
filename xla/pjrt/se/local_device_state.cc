@@ -392,70 +392,99 @@ void LocalDeviceState::ReturnStreamToPool(std::unique_ptr<se::Stream> stream) {
   usage_stream_pool_.push(std::move(stream));
 }
 
-absl::Status LocalDeviceState::AllocateAndRecordEvent(
-    AsyncWorkRunner* async_work_runner, BufferSequencingEventRef event,
+absl::Status LocalDeviceState::RecordEvent(
+    EventPool::Handle device_event, BufferSequencingEventRef event,
     se::Stream* stream, absl::string_view tag,
     absl::AnyInvocable<void() &&> cleanup) {
-  auto status = [&]() {
-    ABSL_ASSIGN_OR_RETURN(
-        EventPool::Handle device_event,
-        event_pool().AllocateEvent(async_work_runner, stream->parent()));
-    event_pool().ThenRecordEvent(stream, device_event);
-    event->SetSequencingEvent(std::move(device_event), stream);
-    return ThenExecuteCallback(
-        stream,
-        [event, cleanup = std::move(cleanup)]() mutable {
-          if (cleanup) {
-            std::move(cleanup)();
-            cleanup = nullptr;
-          }
-          event.SetStateConcrete();
-        },
-        [event](absl::Status status) {
-          event.SetError(event->AppendErrorContext(status));
-        },
-        tag);
-  }();
+  event_pool().ThenRecordEvent(stream, device_event);
+  event->SetSequencingEvent(std::move(device_event), stream);
+  absl::Status status = ThenExecuteCallback(
+      stream,
+      [event, cleanup = std::move(cleanup)]() mutable {
+        if (cleanup) {
+          std::move(cleanup)();
+          cleanup = nullptr;
+        }
+        event.SetStateConcrete();
+      },
+      [event](absl::Status status) {
+        event.SetError(event->AppendErrorContext(status));
+      },
+      tag);
   if (!status.ok()) {
     event.SetError(event->AppendErrorContext(status));
   }
   return status;
 }
 
+absl::Status LocalDeviceState::AllocateAndRecordEvent(
+    AsyncWorkRunner* async_work_runner, BufferSequencingEventRef event,
+    se::Stream* stream, absl::string_view tag,
+    absl::AnyInvocable<void() &&> cleanup) {
+  absl::StatusOr<EventPool::Handle> device_event =
+      event_pool().AllocateEvent(async_work_runner, stream->parent());
+  if (!device_event.ok()) {
+    event.SetError(event->AppendErrorContext(device_event.status()));
+    return device_event.status();
+  }
+  return RecordEvent(*std::move(device_event), std::move(event), stream, tag,
+                     std::move(cleanup));
+}
+
 absl::StatusOr<BufferSequencingEventRef>
 LocalDeviceState::GetEventForComputeStreamSyncPoint(
     size_t sync_point, AsyncWorkRunner* async_work_runner,
     bool nullptr_if_past) {
-  mu_.lock();
-  size_t cur_sync_point = next_compute_stream_sync_point_.load();
-  if (sync_point < base_compute_event_sequence_id_ + compute_events_.size()) {
-    BufferSequencingEventRef event;
-    if (sync_point < base_compute_event_sequence_id_) {
-      if (!nullptr_if_past) {
-        DCHECK_GT(compute_events_.size(), 0);
-        event = compute_events_.front();
+  auto lookup_existing_event =
+      [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(
+          mu_) -> std::optional<BufferSequencingEventRef> {
+    if (sync_point < base_compute_event_sequence_id_ + compute_events_.size()) {
+      BufferSequencingEventRef event;
+      if (sync_point < base_compute_event_sequence_id_) {
+        if (!nullptr_if_past) {
+          DCHECK_GT(compute_events_.size(), 0);
+          event = compute_events_.front();
+        }
+      } else {
+        event = compute_events_[sync_point - base_compute_event_sequence_id_];
       }
-    } else {
-      event = compute_events_[sync_point - base_compute_event_sequence_id_];
+      return event;
     }
-    mu_.unlock();
-    return event;
+    return std::nullopt;
+  };
+
+  {
+    absl::MutexLock lock(mu_);
+    if (std::optional<BufferSequencingEventRef> event =
+            lookup_existing_event()) {
+      return *std::move(event);
+    }
   }
-  next_compute_stream_sync_point_.store(cur_sync_point + 1);
-  auto event = BufferSequencingEvent::Create(async_work_runner);
-  auto status =
-      AllocateAndRecordEvent(async_work_runner, event, compute_stream(),
-                             "GetEventForComputeStreamSyncPoint");
-  if (!status.ok()) {
-    mu_.unlock();
-    return status;
+
+  ABSL_ASSIGN_OR_RETURN(EventPool::Handle device_event,
+                        event_pool().AllocateEvent(async_work_runner,
+                                                   compute_stream()->parent()));
+
+  BufferSequencingEventRef event;
+  size_t cur_sync_point;
+  {
+    absl::MutexLock lock(mu_);
+    if (std::optional<BufferSequencingEventRef> existing_event =
+            lookup_existing_event()) {
+      return *std::move(existing_event);
+    }
+    cur_sync_point = next_compute_stream_sync_point_.load();
+    next_compute_stream_sync_point_.store(cur_sync_point + 1);
+    event = BufferSequencingEvent::Create(async_work_runner);
+    ABSL_RETURN_IF_ERROR(RecordEvent(std::move(device_event), event,
+                                     compute_stream(),
+                                     "GetEventForComputeStreamSyncPoint"));
+    while (!(cur_sync_point - base_compute_event_sequence_id_ <
+             compute_events_.size())) {
+      // Pad for any failed event allocations.
+      compute_events_.push_back(event);
+    }
   }
-  while (!(cur_sync_point - base_compute_event_sequence_id_ <
-           compute_events_.size())) {
-    // Pad for any failed event allocations.
-    compute_events_.push_back(event);
-  }
-  mu_.unlock();
   event.AndThen([this, cur_sync_point]() {
     absl::MutexLock l(mu_);
     while (base_compute_event_sequence_id_ < cur_sync_point) {
