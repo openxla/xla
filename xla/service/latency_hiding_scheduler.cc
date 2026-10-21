@@ -1551,6 +1551,17 @@ std::optional<bool> ReadySetLt::MemoryCostPolicy(
     const char** reason) const {
   ComputeMemoryCost(sched_state, a, an);
   ComputeMemoryCost(sched_state, b, bn);
+  // A candidate that has held a large released buffer for too long jumps the
+  // queue even if its bytes-per-time score is lower. This bounds how long a
+  // deferred producer can keep its buffer live.
+  const double held_budget = sched_state.config.memory_aware_held_budget;
+  if (held_budget > 0.0) {
+    if (auto res = CmpExplicit(a.memory_held_byte_time >= held_budget,
+                               b.memory_held_byte_time >= held_budget,
+                               kMemoryHeldReason, reason)) {
+      return res;
+    }
+  }
   return CmpExplicit(a.memory_score, b.memory_score, kMemoryCostReason, reason);
 }
 

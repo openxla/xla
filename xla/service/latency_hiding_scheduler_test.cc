@@ -6648,5 +6648,49 @@ TEST_F(MemoryCostSchedulerTest, DiamondFreesLargeBufferEarly) {
   EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kNegate, "big", "r"), 0);
 }
 
+// `large` has the lowest bytes-per-time score, so it is deferred behind the
+// slices until it has been ready for long enough.
+constexpr absl::string_view kHeldBufferHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[100] parameter(0)
+  large = f32[100] negate(p0)
+  s0 = f32[50] slice(p0), slice={[0:50]}
+  s1 = f32[50] slice(p0), slice={[1:51]}
+  s2 = f32[50] slice(p0), slice={[2:52]}
+  ROOT result = (f32[100], f32[50], f32[50], f32[50]) tuple(large, s0, s1, s2)
+}
+)";
+
+TEST_F(MemoryCostSchedulerTest, WithoutHeldBudgetLowScoreProducerWaits) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kHeldBufferHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<HloInstruction*> sequence,
+      ScheduleEntry(module.get(), sched_config,
+                    std::make_unique<NegateIsSlowLatencyEstimator>()));
+  // All slices are picked before `large`, so it precedes all of them.
+  EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kSlice, "p0", "large"), 0);
+}
+
+TEST_F(MemoryCostSchedulerTest, HeldBudgetBoundsDeferral) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kHeldBufferHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  // `large` releases 400 bytes; after two unit-cost slices it has been ready
+  // for 2 time units, i.e. 800 byte-time.
+  sched_config.memory_aware_held_budget = 500.0;
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<HloInstruction*> sequence,
+      ScheduleEntry(module.get(), sched_config,
+                    std::make_unique<NegateIsSlowLatencyEstimator>()));
+  // Bottom-up: slice, slice, large, slice. Only one slice precedes `large`.
+  EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kSlice, "p0", "large"), 1);
+}
+
 }  // namespace
 }  // namespace xla
