@@ -6605,10 +6605,11 @@ ENTRY main {
 
 // Diamond: `big` (4 MiB) is produced first in the original order and consumed
 // by `r`; the chain of small negates is independent of both. Scheduling `r`
-// (bottom-up) opens the live range of `big`, so kMemoryCost defers it behind
-// the chain and `big` is then released right away, which places the producer
-// next to its consumer. Without the rule the original order keeps `big` live
-// across the whole chain.
+// (bottom-up) opens the live range of `big`. kMemoryCost must not rank the
+// opener `r` against the memory-neutral negates: a greedy rule cannot tell how
+// long `big` will stay live once opened, and deferring openers behind neutral
+// ops is what pulls small consumers away from their producers in real models.
+// So the order has to match the disabled schedule.
 constexpr absl::string_view kDiamondHlo = R"(
 HloModule module, is_scheduled=true
 
@@ -6637,15 +6638,52 @@ TEST_F(MemoryCostSchedulerTest, DiamondDisabledHoldsLargeBuffer) {
   EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kNegate, "big", "r"), 3);
 }
 
-TEST_F(MemoryCostSchedulerTest, DiamondFreesLargeBufferEarly) {
+TEST_F(MemoryCostSchedulerTest, DiamondOpenerIsNotDeferred) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kDiamondHlo));
   SchedulerConfig sched_config = GetDefaultSchedConfig();
   sched_config.memory_aware_scheduling = true;
   sched_config.memory_aware_min_bytes = 1024 * 1024;
   ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
                        ScheduleEntry(module.get(), sched_config));
-  EXPECT_LT(GetIndex(sequence, "big"), GetIndex(sequence, "r"));
-  EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kNegate, "big", "r"), 0);
+  EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kNegate, "big", "r"), 3);
+}
+
+// `r` releases its 8 MiB output but opens the 4 MiB input `big` at the same
+// time. Its net change (+4 MiB released) is above the threshold, yet it opens a
+// large buffer, so kMemoryCost treats it as neutral and does not prefer it over
+// the neutral `n`; the schedule matches the disabled one.
+TEST_F(MemoryCostSchedulerTest, ReleaserThatOpensLargeBufferIsNeutral) {
+  constexpr absl::string_view kHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[1024] parameter(0)
+  big = f32[1024,1024] broadcast(p0), dimensions={0}
+  r = f32[2048,1024] concatenate(big, big), dimensions={0}
+  n = f32[1024] negate(p0)
+  ROOT t = (f32[2048,1024], f32[1024]) tuple(r, n)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> baseline,
+                       ScheduleEntry(module.get(), GetDefaultSchedConfig()));
+  ASSERT_OK_AND_ASSIGN(auto module2, ParseHloText(kHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 1024 * 1024;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module2.get(), sched_config));
+  std::vector<std::string> baseline_names, names;
+  for (const HloInstruction* instr : baseline) {
+    baseline_names.push_back(instr->name());
+  }
+  for (const HloInstruction* instr : sequence) {
+    names.push_back(instr->name());
+  }
+  // Bottom-up, the original order picks `n` first in both cases, so `r` (and
+  // `big` right before it) precede `n`.
+  EXPECT_LT(GetIndex(sequence, "r"), GetIndex(sequence, "n"));
+  EXPECT_EQ(names, baseline_names);
 }
 
 // `large` has the lowest bytes-per-time score, so it is deferred behind the

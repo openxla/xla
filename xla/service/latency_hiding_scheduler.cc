@@ -1527,20 +1527,25 @@ void ReadySetLt::ComputeMemoryCost(const SchedulingState& sched_state,
   }
   // Time costs can be zero (e.g. bitcasts); keep the score finite.
   constexpr double kMinCost = 1e-3;
-  // `increase` is the net growth of live bytes if the candidate is scheduled,
-  // so its negation is the number of bytes the candidate releases.
-  const int64_t released =
-      -GetMemoryPressureChanges(sched_state, cand, cand_node).first;
+  // `first` is the net growth of live bytes if the candidate is scheduled, so
+  // its negation is the number of bytes the candidate releases. `second` is the
+  // number of bytes it opens (buffers that become live), before releases.
+  const auto [increase, opened] =
+      GetMemoryPressureChanges(sched_state, cand, cand_node);
+  const int64_t released = -increase;
+  const int64_t min_bytes = sched_state.config.memory_aware_min_bytes;
   double score = 0.0;
   double held = 0.0;
-  if (std::abs(released) >= sched_state.config.memory_aware_min_bytes) {
+  // Only a candidate that frees a large amount of memory without opening a
+  // large buffer gets a score. Openers are deliberately left at zero: ranking
+  // them by -bytes/cost prefers slow openers over fast ones and makes every
+  // memory-neutral op outrank every opener, which hoists small consumers of
+  // large buffers away from the producers and extends live ranges.
+  if (released >= min_bytes && opened < min_bytes) {
     score = static_cast<double>(released) /
             std::max(static_cast<double>(cand_node->GetCost()), kMinCost);
-    if (released > 0) {
-      held =
-          static_cast<double>(released) *
-          std::max(sched_state.current_time - cand_node->GetReadySince(), 0.0);
-    }
+    held = static_cast<double>(released) *
+           std::max(sched_state.current_time - cand_node->GetReadySince(), 0.0);
   }
   cand.set_memory_cost(score, held);
 }
@@ -1551,6 +1556,11 @@ std::optional<bool> ReadySetLt::MemoryCostPolicy(
     const char** reason) const {
   ComputeMemoryCost(sched_state, a, an);
   ComputeMemoryCost(sched_state, b, bn);
+  // No opinion unless at least one candidate is a releaser; everything else
+  // (openers and neutral ops) is left to the remaining rules.
+  if (a.memory_score <= 0.0 && b.memory_score <= 0.0) {
+    return std::nullopt;
+  }
   // A candidate that has held a large released buffer for too long jumps the
   // queue even if its bytes-per-time score is lower. This bounds how long a
   // deferred producer can keep its buffer live.
@@ -2064,15 +2074,6 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
     return *res;
   }
 
-  // Among candidates that the stall and resource rules rate as equal, prefer
-  // the one that releases the most live bytes per unit of time.
-  if (ABSL_PREDICT_FALSE(config.memory_aware_scheduling &&
-                         !core_->top_down_scheduling_)) {
-    if (auto res = MemoryCostPolicy(sched_state, a, an, b, bn, reason)) {
-      return *res;
-    }
-  }
-
   if (aggressive_scheduling_policies) {
     // Try to favor paths that are dependent of chains of async operations
     // with long latency as we want to get to them as soon as possible to
@@ -2105,6 +2106,17 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
               "kAvoidWaste", reason)) {
         return *res;
       }
+    }
+  }
+
+  // Among candidates that the stall, resource and async-depth rules rate as
+  // equal, prefer the one that releases the most live bytes per unit of time.
+  // Placed below kAsyncDepth so that it only reorders within the neighborhood
+  // the depth ordering already picked and cannot pull work across layers.
+  if (ABSL_PREDICT_FALSE(config.memory_aware_scheduling &&
+                         !core_->top_down_scheduling_)) {
+    if (auto res = MemoryCostPolicy(sched_state, a, an, b, bn, reason)) {
+      return *res;
     }
   }
 

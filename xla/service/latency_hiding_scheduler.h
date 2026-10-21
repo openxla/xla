@@ -215,13 +215,19 @@ struct SchedulerConfig {
   // If set, only log computations that match the given regular expression.
   std::string log_computation_re;
 
-  // Memory-cost-aware scheduling. When enabled, ReadySetLt gets an always-on
-  // soft rule (kMemoryCost) that prefers candidates releasing more live bytes
-  // per unit of estimated time. It is evaluated only among candidates that the
-  // stall and resource rules rate as equal, so it never adds a stall.
+  // Memory-cost-aware scheduling. When enabled, ReadySetLt gets a soft rule
+  // (kMemoryCost) that, among candidates releasing live bytes, prefers the one
+  // releasing more bytes per unit of estimated time. It is evaluated only among
+  // candidates that the stall, resource and async-depth rules rate as equal, so
+  // it never adds a stall. Candidates that would open a large buffer are never
+  // ranked by this rule: a greedy rule cannot know how long a newly opened
+  // buffer stays live, and penalizing openers pulls their small consumers away
+  // from the producers' neighborhood, which extends live ranges instead of
+  // shortening them.
   bool memory_aware_scheduling = false;
-  // Candidates whose net live-byte change is below this magnitude are treated
-  // as memory-neutral by kMemoryCost.
+  // A candidate is a "releaser" for kMemoryCost if it frees at least this many
+  // net live bytes while opening fewer than this many bytes; anything else is
+  // memory-neutral for the rule.
   int64_t memory_aware_min_bytes = 64 * 1024 * 1024;
   // If > 0, a ready candidate that releases >= memory_aware_min_bytes and whose
   // `released bytes * time spent ready` reaches this budget (in byte * cost
@@ -2196,9 +2202,11 @@ class ReadySetLt {
       const HloGraphNode* bn, std::pair<int64_t, int64_t>& b_increase,
       const char** reason) const;
 
-  // Soft, always-on memory rule (see SchedulerConfig::memory_aware_scheduling):
-  // prefers the candidate that releases more live bytes per unit of estimated
-  // time. Only used for bottom-up scheduling.
+  // Soft memory rule (see SchedulerConfig::memory_aware_scheduling): among
+  // candidates that release live bytes without opening a large buffer, prefers
+  // the one releasing more bytes per unit of estimated time. Returns no opinion
+  // when neither candidate is such a releaser. Only used for bottom-up
+  // scheduling.
   std::optional<bool> MemoryCostPolicy(
       const DefaultSchedulerCore::SchedulingState& state,
       DefaultSchedulerCore::ScheduleCandidate& a, const HloGraphNode* an,
