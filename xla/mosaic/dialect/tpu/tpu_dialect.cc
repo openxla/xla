@@ -856,6 +856,27 @@ std::optional<bool> isStructurallyDivisible(Value value, int64_t divisor,
       .Case([&](arith::IndexCastOp cast_op) {
         return isDivisible(cast_op.getOperand(), divisor, fuel - 1);
       })
+      .Case([&](arith::ShLIOp shl_op) -> std::optional<bool> {  // `x << c`
+        if (!llvm::isPowerOf2_64(divisor)) {
+          return std::nullopt;
+        }
+        APInt shift;
+        if (!matchPattern(shl_op.getRhs(), m_ConstantInt(&shift)) ||
+            shift.uge(shift.getBitWidth())) {
+          return std::nullopt;
+        }
+        const uint64_t c = shift.getZExtValue();
+        const uint64_t k = llvm::Log2_64(divisor);
+
+        if (k <= c) {  // `x << c` has its low `c` bits clear.
+          return true;
+        }
+        // Otherwise, x must supply the remaining 2^(k - c) factor.
+        if (isGuaranteedDivisible(shl_op.getLhs(), divisor >> c, fuel - 1)) {
+          return true;
+        }
+        return std::nullopt;
+      })
       .Case<arith::DivUIOp, arith::DivSIOp>(
           [&](auto div_op) -> std::optional<bool> {
             // Divisibility of lhs by divisor * rhs is sufficient, not

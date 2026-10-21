@@ -213,5 +213,47 @@ TEST_F(DivisibilityCheckTest, OverflowGuardsInMulAndDiv) {
   EXPECT_EQ(isDivisible(div_large, /*divisor=*/8), std::nullopt);
 }
 
+// Tests that x << c is divisible by the powers of two it clears, plus any
+// power of two its operand is divisible by.
+TEST_F(DivisibilityCheckTest, ShLIByConstantIsDivisibleByPowersOfTwo) {
+  Location loc = builder_.getUnknownLoc();
+  Value x = CreateEntryBlock(1)->getArgument(0);
+  auto c3 = Create<arith::ConstantIndexOp>(loc, 3);
+  auto c4 = Create<arith::ConstantIndexOp>(loc, 4);
+  auto c7 = Create<arith::ConstantIndexOp>(loc, 7);
+
+  auto shl = Create<arith::ShLIOp>(loc, x, c7);
+  EXPECT_EQ(isDivisible(shl, /*divisor=*/8), std::optional<bool>(true));
+  EXPECT_EQ(isDivisible(shl, /*divisor=*/128), std::optional<bool>(true));
+  EXPECT_EQ(isDivisible(shl, /*divisor=*/256), std::nullopt);
+  // Only powers of two are handled.
+  EXPECT_EQ(isDivisible(shl, /*divisor=*/3), std::nullopt);
+
+  // (x * 4) << 3: the shift provides 8 and the product 4 more.
+  auto mul = Create<arith::MulIOp>(loc, x, c4);
+  auto shl_mul = Create<arith::ShLIOp>(loc, mul, c3);
+  EXPECT_EQ(isDivisible(shl_mul, /*divisor=*/32), std::optional<bool>(true));
+  EXPECT_EQ(isDivisible(shl_mul, /*divisor=*/64), std::nullopt);
+}
+
+// Tests that non-constant and out-of-range (poison) shifts prove nothing.
+TEST_F(DivisibilityCheckTest, ShLIByUnknownOrPoisonAmountIsUnknown) {
+  Location loc = builder_.getUnknownLoc();
+  Block* entry = CreateEntryBlock(2);
+  Value x = Create<arith::IndexCastOp>(loc, builder_.getI32Type(),
+                                       entry->getArgument(0));
+  Value y = Create<arith::IndexCastOp>(loc, builder_.getI32Type(),
+                                       entry->getArgument(1));
+  auto c32 = Create<arith::ConstantIntOp>(loc, builder_.getI32Type(), 32);
+  auto cm1 = Create<arith::ConstantIntOp>(loc, builder_.getI32Type(), -1);
+
+  EXPECT_EQ(isDivisible(Create<arith::ShLIOp>(loc, x, y), /*divisor=*/8),
+            std::nullopt);
+  EXPECT_EQ(isDivisible(Create<arith::ShLIOp>(loc, x, c32), /*divisor=*/8),
+            std::nullopt);
+  EXPECT_EQ(isDivisible(Create<arith::ShLIOp>(loc, x, cm1), /*divisor=*/8),
+            std::nullopt);
+}
+
 }  // namespace
 }  // namespace mlir::tpu
