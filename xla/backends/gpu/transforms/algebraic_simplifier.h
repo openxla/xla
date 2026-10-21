@@ -42,6 +42,8 @@ class GpuAlgebraicSimplifierVisitor : public AlgebraicSimplifierVisitor {
 
   absl::Status HandleAdd(HloInstruction* add) override;
 
+  absl::Status HandleMultiply(HloInstruction* multiply) override;
+
  private:
   // Returns true if the dot precision config is supported by simplifier.
   bool SupportedDotPrecisionConfig(const PrecisionConfig& config,
@@ -62,6 +64,19 @@ class GpuAlgebraicSimplifierVisitor : public AlgebraicSimplifierVisitor {
   // instructions are fused to cudnnConvolutionBiasActivationForward later.
   absl::StatusOr<bool> TryToSinkBroadcastOperandsOfChainedAdds(
       HloInstruction* add);
+
+  // Try to fold a per-channel scale applied to the output of a dot into the
+  // dequantized dot operand:
+  //   multiply(dot(x, convert(w)), broadcast(s))
+  //   -> dot(x, multiply(convert(w), broadcast(s)))
+  // where `w` has a narrower element type than `convert(w)` and `s` is
+  // broadcast only along dimensions that originate from batch or
+  // non-contracting dimensions of `w`. Single-user transposes and reshapes
+  // between the dot and the multiply, and between the convert and the dot, are
+  // looked through. Returns true if the rewrite was applied. Enabled by
+  // AlgebraicSimplifierOptions::enable_dot_output_scale_folding().
+  absl::StatusOr<bool> TryFoldDotOutputScaleIntoDequantizedOperand(
+      HloInstruction* multiply);
 
   se::GpuComputeCapability compute_capability_;
 };

@@ -410,6 +410,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_collective_cse_distance_threshold(0);
 
   opts.set_xla_gpu_experimental_enable_subchannel_dequantisation_fusion(false);
+  opts.set_xla_gpu_experimental_enable_dot_output_scale_folding(false);
   opts.set_xla_partitioning_algorithm(
       DebugOptions::PARTITIONING_ALGORITHM_NOOP);
 
@@ -2778,6 +2779,18 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "[x,z]param -> [x,y,z]broadcast -> [x*y,z]bitcast -> multiply -> dot. "
       "Performance can be worse, because some block sizes / split-k > 1 "
       "is not considered for subchannel dequant fusions."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_dot_output_scale_folding",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_dot_output_scale_folding),
+      debug_options->xla_gpu_experimental_enable_dot_output_scale_folding(),
+      "Fold a per-channel scale applied to the output of a dot into the "
+      "dequantized (convert from a narrower type) dot operand, e.g. "
+      "multiply(dot(x, convert(w)), broadcast(s)) -> "
+      "dot(x, multiply(convert(w), broadcast(s))), so that the scale is "
+      "applied in the GEMM prologue instead of after the GEMM. This changes "
+      "rounding of the result."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_enable_triton_heroless_priority_fusion",
       bool_setter_for(

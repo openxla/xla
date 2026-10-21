@@ -407,6 +407,21 @@ class AlgebraicSimplifierOptions {
     enable_dynamic_update_slice_to_pad_replacement_ = value;
   }
 
+  // If true, a per-channel scale multiplied into the output of a dot whose
+  // operand is a dequantized (`convert` from a narrower type) tensor is folded
+  // into that operand: `multiply(dot(x, convert(w)), broadcast(s))` becomes
+  // `dot(x, multiply(convert(w), broadcast(s)))` when `s` only varies along
+  // batch and non-contracting dimensions of `w`. This changes rounding: the
+  // scale is applied to each dequantized weight element instead of to the
+  // accumulated result.
+  bool enable_dot_output_scale_folding() const {
+    return enable_dot_output_scale_folding_;
+  }
+
+  void set_enable_dot_output_scale_folding(bool value) {
+    enable_dot_output_scale_folding_ = value;
+  }
+
  private:
   // Metadata struct can be used to store any metadata information encapsulated
   // with the AlgebraicSimplifierOptions that can be later used in an
@@ -459,6 +474,7 @@ class AlgebraicSimplifierOptions {
   bool enable_hoist_transpose_of_reshape_{false};
   bool enable_fold_transpose_into_scatter_{false};
   bool enable_folding_pad_into_convolution_{true};
+  bool enable_dot_output_scale_folding_{false};
   Metadata metadata_;
 };
 
