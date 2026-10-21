@@ -82,6 +82,22 @@ limitations under the License.
 namespace xla {
 namespace {
 
+// Reason strings of the memory-aware scheduling rules. They are compared by
+// address, so every use must go through these constants.
+constexpr char kMemoryCostReason[] = "kMemoryCost";
+constexpr char kMemoryHeldReason[] = "kMemoryHeld";
+constexpr char kMemoryPricedOverlapReason[] = "kMemoryPricedOverlap";
+
+// Counts ready-set comparisons decided by a memory-aware rule so that their
+// number can be reported without enabling VLOG(2).
+void CountMemoryDecision(DefaultSchedulerCore::SchedulingState& sched_state,
+                         const char* reason) {
+  if (reason == kMemoryCostReason || reason == kMemoryHeldReason ||
+      reason == kMemoryPricedOverlapReason) {
+    ++sched_state.memory_decision_counts[reason];
+  }
+}
+
 thread_local bool vlog_filter_match = true;
 
 // RAII Guard: Use this to "activate" the filter in ScheduleComputation.
@@ -2212,6 +2228,7 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       const char* reason;
       bool new_candidate_selected =
           ready_lt->MaybeUpdate(ready_candidate, ready_chosen, &reason);
+      CountMemoryDecision(sched_state, reason);
       if (ABSL_PREDICT_FALSE(vlog_2)) {
         auto print_pressure_change =
             [](const DefaultSchedulerCore::ScheduleCandidate& p) {
@@ -2961,6 +2978,7 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
       }
     }
     edge.Target().SetReadyTime(ready_time);
+    edge.Target().SetReadySince(current_time);
     int64_t annotation = edge.Target().GetAnnotation();
     // We are adding the no-op instructions to a separate set so that we can
     // immediately schedule them when they are ready.
@@ -3968,6 +3986,7 @@ void DefaultSchedulerCore::SchedulingState::Reset() {
   resource_occupiers_in_flight.clear();
   resource_users_in_queue.clear();
   scheduled_count = 0;
+  memory_decision_counts.clear();
   next_ready_stack.clear();
   shareable_resource_occupiers.clear();
   selective_resource_releasers.clear();
@@ -4144,6 +4163,10 @@ DefaultSchedulerCore::ScheduleComputation(
               *scheduling_context_->GetLatencyEstimator(),
               sched_state->new_sequence_reversed);
     }
+  }
+  for (const auto& [reason, count] : sched_state->memory_decision_counts) {
+    VLOG(1) << "Memory-aware scheduling decisions in " << computation->name()
+            << ": " << reason << " = " << count;
   }
   return std::move(sched_state->new_sequence_reversed);
 }
