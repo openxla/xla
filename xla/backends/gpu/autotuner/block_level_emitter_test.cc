@@ -19,13 +19,15 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
-#include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
@@ -337,6 +339,59 @@ ENTRY %main {
   for (int i = 0; i < parallel_configs.size(); ++i) {
     EXPECT_THAT(*parallel_configs[i], EqualsProto(*sequential_configs[i]));
   }
+}
+
+TEST_F(TritonBlockLevelFusionEmitterBackendTest,
+       GetSupportedConfigs_WarpVariantsGatedOnTopK) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+%wrapped_transpose_computation {
+  %param_0 = f32[16,1,64]{2,1,0} parameter(0)
+  ROOT %transpose.3.1 = f32[64,1,16]{2,1,0} transpose(%param_0), dimensions={2,1,0}
+}
+
+ENTRY %main {
+  %p0 = f32[16,1,64]{2,1,0} parameter(0)
+  ROOT %wrapped_transpose = f32[64,1,16]{2,1,0} fusion(%p0), kind=kInput,
+  calls=%wrapped_transpose_computation
+}
+)"));
+  const HloInstruction& instr =
+      *module->entry_computation()->root_instruction();
+
+  // top_k = 1: only base configs, no warp variants generated.
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_fusion_autotune_top_k_configs(1);
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> configs_top_1,
+      backend_.GetSupportedConfigs(instr));
+  ASSERT_FALSE(configs_top_1.empty());
+  int64_t base_warps = configs_top_1.front()->block_level().num_warps();
+  for (const auto& config : configs_top_1) {
+    EXPECT_EQ(config->block_level().num_warps(), base_warps);
+  }
+
+  // top_k > 1: generates warp variants (half and double warps).
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_fusion_autotune_top_k_configs(5);
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<BackendConfig>> configs_top_5,
+      backend_.GetSupportedConfigs(instr));
+  EXPECT_GT(configs_top_5.size(), configs_top_1.size());
+
+  EXPECT_TRUE(absl::c_any_of(configs_top_5, [&](const auto& config) {
+    return config->block_level().num_warps() != base_warps;
+  }));
+
+  // Assert that no duplicate configs exist.
+  absl::flat_hash_set<std::string> unique_configs;
+  for (const auto& config : configs_top_5) {
+    unique_configs.insert(config->SerializeAsString());
+  }
+  EXPECT_EQ(unique_configs.size(), configs_top_5.size());
 }
 
 TEST_F(TritonBlockLevelFusionEmitterBackendTest, Version) {

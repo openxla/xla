@@ -78,6 +78,25 @@ std::unique_ptr<BackendConfig> Pack(
   return config;
 }
 
+// BlockLevelFusionConfig contains only primitive integers and repeated integer
+// sequences without maps or floats, making SerializeAsString() deterministic
+// and fast for deduplication.
+bool ConfigsEqual(const BlockLevelFusionConfig& a,
+                  const BlockLevelFusionConfig& b) {
+  return a.SerializeAsString() == b.SerializeAsString();
+}
+
+void AddConfigIfUnique(const BlockLevelFusionConfig& new_config,
+                       std::vector<std::unique_ptr<BackendConfig>>& configs) {
+  for (const auto& existing_config : configs) {
+    if (existing_config->has_block_level() &&
+        ConfigsEqual(existing_config->block_level(), new_config)) {
+      return;
+    }
+  }
+  configs.push_back(Pack(new_config));
+}
+
 void ExtendConfigsWithTma(
     std::vector<std::unique_ptr<BackendConfig>>& configs) {
   int64_t original_size = configs.size();
@@ -156,10 +175,32 @@ BlockLevelEmitterBackend::GetSupportedConfigs(const HloInstruction& instr) {
       std::get<absl::InlinedVector<TiledRunTimeData, 4>>(tiled_runtime_data);
 
   std::vector<std::unique_ptr<BackendConfig>> configs;
-  configs.reserve(num_configs);
-  for (const auto& tiled_runtime_data : tiled_runtime_data_list) {
-    configs.push_back(Pack(
-        tiled_runtime_data.block_level_parameters.ToBlockLevelFusionConfig()));
+  if (num_configs > 1) {
+    configs.reserve(num_configs * 3);
+    for (const auto& tiled_runtime_data : tiled_runtime_data_list) {
+      BlockLevelFusionConfig base_cfg =
+          tiled_runtime_data.block_level_parameters.ToBlockLevelFusionConfig();
+      int64_t orig_warps = base_cfg.num_warps();
+      AddConfigIfUnique(base_cfg, configs);
+      if (orig_warps / 2 >= 1) {
+        BlockLevelFusionConfig half_warps_cfg = base_cfg;
+        half_warps_cfg.set_num_warps(orig_warps / 2);
+        AddConfigIfUnique(half_warps_cfg, configs);
+      }
+      // Cap at 16 warps (512 threads), the practical upper bound for Triton
+      // block-level kernel autotuning to avoid excessive register pressure.
+      if (orig_warps * 2 <= 16) {
+        BlockLevelFusionConfig double_warps_cfg = base_cfg;
+        double_warps_cfg.set_num_warps(orig_warps * 2);
+        AddConfigIfUnique(double_warps_cfg, configs);
+      }
+    }
+  } else {
+    configs.reserve(num_configs);
+    for (const auto& tiled_runtime_data : tiled_runtime_data_list) {
+      configs.push_back(Pack(tiled_runtime_data.block_level_parameters
+                                 .ToBlockLevelFusionConfig()));
+    }
   }
   if (stream_executor::gpu::IsTmaAvailableForDevice(
           target_config().device_description)) {
