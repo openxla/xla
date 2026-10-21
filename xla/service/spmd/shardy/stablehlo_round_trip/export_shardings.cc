@@ -527,6 +527,7 @@ NamedSharding convertToNamedSharding(
   for (StringRef axisName : manualAxes) {
     manualAxesSharding.push_back(AxisRef(axisNameToIndex[axisName]));
   }
+  llvm::sort(manualAxesSharding);
 
   ReductionOp reductionOp;
   switch (sdySharding.getReductionOp()) {

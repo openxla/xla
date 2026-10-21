@@ -988,4 +988,15 @@ module @multiple_outputs_tuple_metadata attributes {
   }
 }
 
+// -----
 
+sdy.mesh @mesh = <["a"=2, "b"=4]>
+
+// CHECK-LABEL: func @unsorted_manual_axes_attr
+func.func @unsorted_manual_axes_attr(%arg0: tensor<4x2xf32>) -> tensor<4x2xf32> {
+  // CHECK-NEXT: stablehlo.add
+  // CHECK-V2-SAME: {mhlo.sharding = "{manual}"}
+  // CHECK-V3-SAME: {mhlo.sharding = "{mesh['a'=2,'b'=4], manual}"}
+  %0 = stablehlo.add %arg0, %arg0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}, {}]>]>, xla.sdy.manual_axes = #sdy<manual_axes{"b", "a"}>} : tensor<4x2xf32>
+  return %0 : tensor<4x2xf32>
+}

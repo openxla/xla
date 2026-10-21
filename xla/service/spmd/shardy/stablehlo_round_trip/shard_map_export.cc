@@ -107,7 +107,8 @@ struct ManualAxesHierarchy {
 
 ManualAxesHierarchy getManualAxesHierarchy(
     ManualComputationOp op,
-    const ManualComputationToParentManualAxes& parentManualCompAxes) {
+    const ManualComputationToParentManualAxes& parentManualCompAxes,
+    MeshAttr mesh) {
   ManualAxesHierarchy hierarchy;
 
   if (auto parentManualAxes = parentManualCompAxes.find(op);
@@ -118,6 +119,7 @@ ManualAxesHierarchy getManualAxesHierarchy(
   hierarchy.region =
       SmallVector<StringAttr>(hierarchy.parent.begin(), hierarchy.parent.end());
   hierarchy.region.append(op.getManualAxes().begin(), op.getManualAxes().end());
+  llvm::sort(hierarchy.region, mesh.getAxisNameComparator());
   return hierarchy;
 }
 
@@ -276,8 +278,11 @@ void setManualAxesForOpsInBody(
     return;
   }
 
+  MeshAttr mesh = sharding.getMesh(symbolTable);
+  CHECK(mesh);
+
   ManualAxesHierarchy manualAxes =
-      getManualAxesHierarchy(op, parentManualCompAxes);
+      getManualAxesHierarchy(op, parentManualCompAxes, mesh);
   if (manualAxes.region.empty()) {
     return;
   }
@@ -353,7 +358,7 @@ void convertManualComputationOp(
 
   // The axes that are manual inside `op`'s region.
   ManualAxesHierarchy manualAxes =
-      getManualAxesHierarchy(op, parentManualCompAxes);
+      getManualAxesHierarchy(op, parentManualCompAxes, mesh);
   ManualAxesAttr parentManualAxesAttr =
       ManualAxesAttr::get(context, manualAxes.parent);
   ManualAxesAttr regionManualAxesAttr =
@@ -501,6 +506,11 @@ class ShardMapExportPass
         }
         parentAxes.append(parentOp.getManualAxes().begin(),
                           parentOp.getManualAxes().end());
+        if (TensorShardingAttr sharding = getFirstSharding(op)) {
+          if (MeshAttr mesh = sharding.getMesh(symbolTable)) {
+            llvm::sort(parentAxes, mesh.getAxisNameComparator());
+          }
+        }
         parentManualCompAxes[op] = std::move(parentAxes);
       }
       setManualAxesForOpsInBody(op, symbolTable, parentManualCompAxes);
