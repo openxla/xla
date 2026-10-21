@@ -135,7 +135,38 @@ def DefaultMemWrite : MemoryEffects<[MemWrite<DefaultResource>]>;
 def DefaultMemRead : MemoryEffects<[MemRead<DefaultResource>]>;
 
 def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure]> {
-  let arguments = (ins AnyVectorOfNonZeroRank:$input, I64Attr:$dim, TPU_ReductionKindAttr:$kind);
+  let summary = "Multi-dimensional reduction followed by a broadcast";
+  let description = [{
+    This operation reduces the specified `dimensions` of the `input` vector as if
+    they were one single collapsed dimension, and broadcasts the result to the
+    `output` vector shape.
+
+    When only a subset of dimensions of `input` are reduced, `output` has the
+    same shape as `input`, and the reduced result is broadcast along the reduced
+    `dimensions`. When all dimensions of `input` are reduced, the single scalar
+    reduction result is broadcast to the entire `output` shape (which does not
+    have to match the `input` shape).
+
+    For non-indexing reductions (i.e. excluding `arg_min`, `arg_max` and
+    `find_first_set`), reducing a subset of dimensions is equivalent to
+    `tpu.reduce` with the specified `dimensions` followed by a `vector.broadcast`
+    back to the `output` shape, and the result is not sensitive to the ordering
+    of `dimensions`.
+
+    For indexing reductions (i.e. `arg_min`, `arg_max` and `find_first_set`),
+    the reduced `dimensions` are collapsed in the order specified (from major to
+    minor), so the result is sensitive to the ordering of `dimensions`.
+
+    For example, the following operation
+
+    ```
+    %output = tpu.all_reduce %input {dimensions = array<i64: 0, 1>, kind = #tpu.reduction_kind<sum>} : vector<2x2xi1> -> vector<4xi32>
+    ```
+
+    reduces `%input` = [[true, false], [true, true]] to `3` and broadcasts it to
+    `%output` = [3, 3, 3, 3].
+  }];
+  let arguments = (ins AnyVectorOfNonZeroRank:$input, DenseI64ArrayAttr:$dimensions, TPU_ReductionKindAttr:$kind);
   let results = (outs AnyVectorOfNonZeroRank:$output);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)
