@@ -53,6 +53,19 @@ ABSL_FLAG(float, tensorflow_num_threads_scale_factor, 1.0,
 
 namespace tsl::thread {
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+namespace {
+
+class InlineThreadPool final : public ThreadPoolInterface {
+ public:
+  void Schedule(std::function<void()> fn) override { fn(); }
+  int NumThreads() const override { return 1; }
+  int CurrentThreadId() const override { return -1; }
+};
+
+}  // namespace
+#endif
+
 struct EigenEnvironment {
   using EnvThread = Thread;
 
@@ -139,10 +152,15 @@ ThreadPool::ThreadPool(Env* env, const ThreadOptions& thread_options,
   if (num_threads < 1) num_threads = 1;
 #endif  // TENSORFLOW_THREADSCALING_EXPERIMENTAL
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+  eigen_threadpool_ = std::make_unique<InlineThreadPool>();
+  num_threads = 1;
+#else
   eigen_threadpool_ =
       std::make_unique<Eigen::ThreadPoolTempl<EigenEnvironment>>(
           num_threads, low_latency_hint,
           EigenEnvironment(env, thread_options, "tf_" + name));
+#endif
   underlying_threadpool_ = eigen_threadpool_.get();
   threadpool_device_ = std::make_unique<Eigen::ThreadPoolDevice>(
       underlying_threadpool_, num_threads, allocator);
