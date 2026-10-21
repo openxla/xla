@@ -3433,6 +3433,7 @@ cc_library(
     srcs = ["sort_rewriter.cc"],
     hdrs = ["sort_rewriter.h"],
     deps = [
+        "//xla:comparison_util",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:status_macros",
