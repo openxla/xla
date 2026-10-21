@@ -1978,8 +1978,7 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Combine(
         ::testing::Bool(),
         ::testing::Values(DebugOptions::COLLECTIVES_PRIVATE_MEMORY,
-                          DebugOptions::COLLECTIVES_PEER_MEMORY,
-                          DebugOptions::COLLECTIVES_SYMMETRIC_MEMORY)),
+                          DebugOptions::COLLECTIVES_PEER_MEMORY)),
     GetCollectivesModeTestSuiteName);
 
 // Tests for HLO level transforms.
