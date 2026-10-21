@@ -4408,6 +4408,240 @@ TEST_F(HloEvaluatorPreciseReduceTest, AddReductionPrecisionTest) {
   LiteralTestUtil::ExpectR0Equal<float>(kNumElements, result);
 }
 
+TEST_F(HloEvaluatorTest, ReduceS32FastPathMatchesSlowPath) {
+  constexpr absl::string_view kHloText = R"(
+HloModule ReduceS32
+
+add_s32 {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  ROOT add = s32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  input = s32[2,3] constant({{1, 2, 3}, {5, 6, 7}})
+  init = s32[] constant(0)
+  ROOT result = s32[2] reduce(input, init), dimensions={1}, to_apply=add_s32
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+
+  HloEvaluator fast_eval;
+  fast_eval.set_reduce_use_fast_path(true);
+  ASSERT_OK_AND_ASSIGN(Literal fast_result, fast_eval.Evaluate(*module, {}));
+
+  HloEvaluator slow_eval;
+  slow_eval.set_reduce_use_fast_path(false);
+  ASSERT_OK_AND_ASSIGN(Literal slow_result, slow_eval.Evaluate(*module, {}));
+
+  Literal expected = LiteralUtil::CreateR1<int32_t>({6, 18});
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, fast_result));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, slow_result));
+}
+
+TEST_F(HloEvaluatorTest, VariadicTupleReduceFastPathMatchesSlowPath) {
+  constexpr absl::string_view kHloText = R"(
+HloModule VariadicTupleReduce
+
+reduce_fn {
+  acc0 = s32[] parameter(0)
+  acc1 = s32[] parameter(1)
+  val0 = s32[] parameter(2)
+  val1 = s32[] parameter(3)
+  sum = s32[] add(acc0, val0)
+  max = s32[] maximum(acc1, val1)
+  ROOT tuple = (s32[], s32[]) tuple(sum, max)
+}
+
+ENTRY main {
+  input0 = s32[2,3] constant({{1, 2, 3}, {5, 6, 7}})
+  input1 = s32[2,3] constant({{9, 4, 8}, {2, 11, 3}})
+  init0 = s32[] constant(0)
+  init1 = s32[] constant(0)
+  ROOT result = (s32[2], s32[2]) reduce(input0, input1, init0, init1),
+      dimensions={1}, to_apply=reduce_fn
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+
+  HloEvaluator fast_eval;
+  fast_eval.set_reduce_use_fast_path(true);
+  ASSERT_OK_AND_ASSIGN(Literal fast_result, fast_eval.Evaluate(*module, {}));
+
+  HloEvaluator slow_eval;
+  slow_eval.set_reduce_use_fast_path(false);
+  ASSERT_OK_AND_ASSIGN(Literal slow_result, slow_eval.Evaluate(*module, {}));
+
+  Literal expected_sum = LiteralUtil::CreateR1<int32_t>({6, 18});
+  Literal expected_max = LiteralUtil::CreateR1<int32_t>({9, 11});
+  Literal expected = LiteralUtil::MakeTuple({&expected_sum, &expected_max});
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, fast_result));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, slow_result));
+}
+
+TEST_F(HloEvaluatorTest, ReduceMultiDimensionalFastPathMatchesSlowPath) {
+  auto verify_fast_and_slow = [&](absl::string_view hlo_text,
+                                  const Literal& expected) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text));
+    HloEvaluator fast_eval;
+    fast_eval.set_reduce_use_fast_path(true);
+    ASSERT_OK_AND_ASSIGN(Literal fast_result, fast_eval.Evaluate(*module, {}));
+
+    HloEvaluator slow_eval;
+    slow_eval.set_reduce_use_fast_path(false);
+    ASSERT_OK_AND_ASSIGN(Literal slow_result, slow_eval.Evaluate(*module, {}));
+
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected, fast_result));
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected, slow_result));
+  };
+
+  verify_fast_and_slow(R"(
+HloModule ReduceContiguous2d
+
+add_s32 {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  ROOT add = s32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  input = s32[1,2,3] constant({{{1, 2, 3}, {4, 5, 6}}})
+  init = s32[] constant(0)
+  ROOT result = s32[1] reduce(input, init), dimensions={1, 2}, to_apply=add_s32
+}
+)",
+                       LiteralUtil::CreateR1<int32_t>({21}));
+
+  // Non-contiguous reduced dimensions with distinct extents {2, 4} and
+  // {2, 3, 4} exercise the 2D and N-D odometer loops in
+  // ForEachReducedLinearIndex.
+  verify_fast_and_slow(R"(
+HloModule ReduceNonContiguous2d
+
+add_s32 {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  ROOT add = s32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  iota = s32[24] iota(), iota_dimension=0
+  input = s32[2,3,4] reshape(iota)
+  init = s32[] constant(0)
+  ROOT result = s32[3] reduce(input, init), dimensions={0, 2}, to_apply=add_s32
+}
+)",
+                       LiteralUtil::CreateR1<int32_t>({60, 92, 124}));
+
+  verify_fast_and_slow(R"(
+HloModule ReduceNonContiguous3d
+
+add_s32 {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  ROOT add = s32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  iota = s32[48] iota(), iota_dimension=0
+  input = s32[2,2,3,1,4] reshape(iota)
+  init = s32[] constant(0)
+  ROOT result = s32[2,1] reduce(input, init), dimensions={0, 2, 4},
+      to_apply=add_s32
+}
+)",
+                       LiteralUtil::CreateR2<int32_t>({{420}, {708}}));
+}
+
+TEST_F(HloEvaluatorTest, ReduceLeadingTrivialDimFastPathMatchesSlowPath) {
+  auto verify_fast_and_slow = [&](absl::string_view hlo_text,
+                                  const Literal& expected) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo_text));
+    HloEvaluator fast_eval;
+    fast_eval.set_reduce_use_fast_path(true);
+    ASSERT_OK_AND_ASSIGN(Literal fast_result, fast_eval.Evaluate(*module, {}));
+
+    HloEvaluator slow_eval;
+    slow_eval.set_reduce_use_fast_path(false);
+    ASSERT_OK_AND_ASSIGN(Literal slow_result, slow_eval.Evaluate(*module, {}));
+
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected, fast_result));
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected, slow_result));
+  };
+
+  verify_fast_and_slow(R"(
+HloModule ReduceTrivialDim
+
+add_s32 {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  ROOT add = s32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  input = s32[1,3] constant({{1, 2, 3}})
+  init = s32[] constant(0)
+  ROOT result = s32[3] reduce(input, init), dimensions={0}, to_apply=add_s32
+}
+)",
+                       LiteralUtil::CreateR1<int32_t>({1, 2, 3}));
+
+  verify_fast_and_slow(R"(
+HloModule ReduceZeroElement
+
+add_s32 {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  ROOT add = s32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  input = s32[2,0] constant({{}, {}})
+  init = s32[] constant(7)
+  ROOT result = s32[2] reduce(input, init), dimensions={1}, to_apply=add_s32
+}
+)",
+                       LiteralUtil::CreateR1<int32_t>({7, 7}));
+}
+
+TEST_F(HloEvaluatorTest,
+       ReduceNonDefaultLayoutAndCommutedOperandsFastPathMatchesSlowPath) {
+  constexpr absl::string_view kHloText = R"(
+HloModule ReduceNonDefaultLayout
+
+add_commuted_s32 {
+  lhs = s32[] parameter(0)
+  rhs = s32[] parameter(1)
+  ROOT add = s32[] add(rhs, lhs)
+}
+
+ENTRY main {
+  input = s32[2,3]{0,1} constant({{1, 2, 3}, {4, 5, 6}})
+  init = s32[] constant(10)
+  ROOT result = s32[3] reduce(input, init), dimensions={0},
+      to_apply=add_commuted_s32
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+
+  HloEvaluator fast_eval;
+  fast_eval.set_reduce_use_fast_path(true);
+  ASSERT_OK_AND_ASSIGN(Literal fast_result, fast_eval.Evaluate(*module, {}));
+
+  HloEvaluator slow_eval;
+  slow_eval.set_reduce_use_fast_path(false);
+  ASSERT_OK_AND_ASSIGN(Literal slow_result, slow_eval.Evaluate(*module, {}));
+
+  Literal expected = LiteralUtil::CreateR1<int32_t>({15, 17, 19});
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, fast_result));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, slow_result));
+}
+
 TEST_P(HloEvaluatorBf16Test, ReduceAdd) {
   HloComputation::Builder b(TestName());
 
