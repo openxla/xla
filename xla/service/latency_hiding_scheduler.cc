@@ -1565,6 +1565,40 @@ std::optional<bool> ReadySetLt::MemoryCostPolicy(
   return CmpExplicit(a.memory_score, b.memory_score, kMemoryCostReason, reason);
 }
 
+std::optional<bool> ReadySetLt::MemoryPricedOverlapPolicy(
+    const SchedulingState& sched_state, ScheduleCandidate& a,
+    const HloGraphNode* an, ScheduleCandidate& b, const HloGraphNode* bn,
+    const char** reason) const {
+  const double ready_a = an->GetReadyTime() - sched_state.current_time;
+  const double ready_b = bn->GetReadyTime() - sched_state.current_time;
+  const bool a_is_stalling_start = an->IsSupportedAsyncStart() && ready_a > 0;
+  const bool b_is_stalling_start = bn->IsSupportedAsyncStart() && ready_b > 0;
+  // Only handle a stalling start against an op that can run without a stall.
+  if (a_is_stalling_start == b_is_stalling_start ||
+      (a_is_stalling_start ? ready_b : ready_a) > 0) {
+    return std::nullopt;
+  }
+  ScheduleCandidate& start_cand = a_is_stalling_start ? a : b;
+  const HloGraphNode* start = a_is_stalling_start ? an : bn;
+  const HloGraphNode* extender = a_is_stalling_start ? bn : an;
+  const double remaining_latency = a_is_stalling_start ? ready_a : ready_b;
+
+  // Scheduling the extender first keeps the buffers released by the start live
+  // for the duration of the extender.
+  const double extender_cost = extender->GetCost();
+  const double stall_saved = std::min(extender_cost, remaining_latency);
+  const int64_t held_bytes = std::max<int64_t>(
+      -GetMemoryPressureChanges(sched_state, start_cand, start).first, 0);
+  const double byte_time = static_cast<double>(held_bytes) * extender_cost;
+  if (stall_saved >= sched_state.config.memory_cost_lambda * byte_time) {
+    // Extending the overlap is worth its memory cost; let the stall rules
+    // choose the extender as usual.
+    return std::nullopt;
+  }
+  return CmpExplicit(a_is_stalling_start, b_is_stalling_start,
+                     kMemoryPricedOverlapReason, reason);
+}
+
 std::optional<bool> ReadySetLt::ReleaseStartPolicy(
     const SchedulingState& sched_state, const HloGraphNode* an,
     const HloGraphNode* bn, const char** reason) const {
@@ -1973,6 +2007,15 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
             CmpExplicit(AsyncDepth0CandidateCondition(sched_state, a, an),
                         AsyncDepth0CandidateCondition(sched_state, b, bn),
                         "kStartAtZeroDepth", reason)) {
+      return *res;
+    }
+  }
+
+  if (ABSL_PREDICT_FALSE(config.memory_priced_overlap &&
+                         config.memory_cost_lambda > 0.0 &&
+                         !core_->top_down_scheduling_)) {
+    if (auto res =
+            MemoryPricedOverlapPolicy(sched_state, a, an, b, bn, reason)) {
       return *res;
     }
   }

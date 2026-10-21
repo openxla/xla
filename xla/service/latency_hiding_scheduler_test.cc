@@ -6692,5 +6692,53 @@ TEST_F(MemoryCostSchedulerTest, HeldBudgetBoundsDeferral) {
   EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kSlice, "p0", "large"), 1);
 }
 
+constexpr absl::string_view kPricedOverlapHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[8,256,256] parameter(0)
+  p1 = f32[16,256,256] parameter(1)
+  ag-start = (f32[8,256,256], f32[16,256,256]) all-gather-start(p0),
+    replica_groups={{0,1}}, dimensions={0}
+  ag-done = f32[16,256,256] all-gather-done(ag-start)
+  c0 = f32[16,256,256] negate(p1)
+  ROOT a = f32[16,256,256] add(ag-done, c0)
+}
+)";
+
+TEST_F(MemoryCostSchedulerTest, PricedOverlapOffExtendsOverlap) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kPricedOverlapHlo));
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), GetDefaultSchedConfig()));
+  EXPECT_LT(GetIndex(sequence, "ag-start"), GetIndex(sequence, "c0"));
+  EXPECT_LT(GetIndex(sequence, "c0"), GetIndex(sequence, "ag-done"));
+}
+
+TEST_F(MemoryCostSchedulerTest, PricedOverlapSmallLambdaExtendsOverlap) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kPricedOverlapHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_priced_overlap = true;
+  sched_config.memory_cost_lambda = 1e-12;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  EXPECT_LT(GetIndex(sequence, "ag-start"), GetIndex(sequence, "c0"));
+  EXPECT_LT(GetIndex(sequence, "c0"), GetIndex(sequence, "ag-done"));
+}
+
+TEST_F(MemoryCostSchedulerTest, PricedOverlapLargeLambdaRejectsOverlap) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kPricedOverlapHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_priced_overlap = true;
+  // The all-gather output is ~4 MiB and `c0` hides at most one time unit, so
+  // this lambda makes the extension cost far more than the stall it saves.
+  sched_config.memory_cost_lambda = 1e-3;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  // `ag-start` is picked before `c0` (bottom-up), so `c0` moves above it and
+  // the async op no longer overlaps with it.
+  EXPECT_LT(GetIndex(sequence, "c0"), GetIndex(sequence, "ag-start"));
+  EXPECT_LT(GetIndex(sequence, "ag-start"), GetIndex(sequence, "ag-done"));
+}
+
 }  // namespace
 }  // namespace xla

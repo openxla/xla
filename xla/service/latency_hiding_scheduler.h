@@ -2205,6 +2205,17 @@ class ReadySetLt {
       DefaultSchedulerCore::ScheduleCandidate& b, const HloGraphNode* bn,
       const char** reason) const;
 
+  // Memory-priced overlap (see SchedulerConfig::memory_priced_overlap): when
+  // one candidate is an async start that would stall and the other is an op
+  // that could extend its overlap, picks the start if the stall the extension
+  // hides is worth less than the memory it keeps live. Only used for bottom-up
+  // scheduling.
+  std::optional<bool> MemoryPricedOverlapPolicy(
+      const DefaultSchedulerCore::SchedulingState& state,
+      DefaultSchedulerCore::ScheduleCandidate& a, const HloGraphNode* an,
+      DefaultSchedulerCore::ScheduleCandidate& b, const HloGraphNode* bn,
+      const char** reason) const;
+
   // Fills (and caches in `cand`) the memory score of a candidate.
   void ComputeMemoryCost(const DefaultSchedulerCore::SchedulingState& state,
                          DefaultSchedulerCore::ScheduleCandidate& cand,
