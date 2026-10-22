@@ -1215,7 +1215,7 @@ message DebugOptions {
   // instead of hipBLASLt GroupedMatMul or cuDNN fusions.
   // Requires xla_gpu_experimental_enable_tiling_propagation=true for the
   // XTile emitter to use the experimental tiling analysis path.
-  optional bool xla_gpu_experimental_triton_ragged_dot = 561;
+  optional bool xla_gpu_experimental_triton_ragged_dot = 562;
 
   // If true, PTX compilation will fail if a kernel spills registers.
   // This is meant for debugging and only applies to CUDA PTX compilation.
@@ -1984,7 +1984,7 @@ message DebugOptions {
   // when the cuDNN version changes).
   optional bool xla_autotune_cache_require_strict_codegen_match = 559;
 
-  // Next id: 562
+  // Next id: 563
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
