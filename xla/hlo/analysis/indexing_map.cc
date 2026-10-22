@@ -1561,6 +1561,7 @@ bool IndexingMap::CompressVars(const llvm::SmallBitVector& unused_dims,
   std::vector<SymbolicExpr> to_remove;
   std::vector<std::pair<SymbolicExpr, Interval>> to_add;
   for (const auto& [expr, range] : constraints_) {
+    // TODO(b/576653787): This logic should not be here.
     SymbolicExpr updated_expr = expr;
     if (num_dims_changed && num_symbols_changed) {
       updated_expr =
