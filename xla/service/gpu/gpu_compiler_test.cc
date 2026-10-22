@@ -2990,6 +2990,40 @@ TEST_P(FrontendAttributesMemorySpaceTest, FusionUsage) {
               absl_testing::IsOkAndHolds(true));
 }
 
+// Exercise attribute propagation through the rewriter, rather than starting
+// with an already attributed fusion.
+TEST_F(GpuCompilerTest, SlicedCustomCallMemorySpaceAttributes) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule test
+
+    ENTRY main {
+      p = f32[128]{0} parameter(0)
+      sliced = f32[64]{0} slice(p), slice={[64:128]}
+      ROOT cc = f32[64]{0} custom-call(sliced),
+        custom_call_target="__xla_test_mock_custom_call_f32",
+        api_version=API_VERSION_TYPED_FFI,
+        frontend_attributes={operands_memory_spaces="{0:7}",
+                             results_memory_spaces="{0:7}"}
+    }
+  )";
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options().set_xla_gpu_enable_dynamic_slice_fusion(true);
+  ASSERT_OK_AND_ASSIGN(auto module_and_executable,
+                       GetOptimizedModuleForExecutable(kHlo, config));
+  constexpr absl::string_view kExpected = R"(
+    // CHECK: %p = f32[128]{0} parameter(0)
+    // CHECK: [[COPY:%copy[0-9.]*]] = f32[128]{0:S(7)} copy(%p)
+    // CHECK: [[FUSION:%[^ ]+]] = f32[64]{0:S(7)} fusion([[COPY]])
+    // CHECK: ROOT %copy{{.*}} = f32[64]{0} copy([[FUSION]])
+  )";
+  EXPECT_THAT(RunFileCheck(module_and_executable.first->ToString(
+                               HloPrintOptions{}
+                                   .set_print_operand_shape(false)
+                                   .set_print_metadata(false)),
+                           kExpected),
+              absl_testing::IsOkAndHolds(true));
+}
+
 TEST_P(FrontendAttributesMemorySpaceTest, LoopUsage) {
   constexpr absl::string_view kHloTemplate = R"(
     HloModule test$0

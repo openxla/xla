@@ -1814,6 +1814,7 @@ cc_library(
         "//xla/codegen/xtile:xtile_config_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/service:decision",
         "//xla/service/gpu:backend_configs_cc",
         "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:gpu_memory_space_assignment",
