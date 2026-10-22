@@ -6778,5 +6778,43 @@ TEST_F(MemoryCostSchedulerTest, PricedOverlapLargeLambdaRejectsOverlap) {
   EXPECT_LT(GetIndex(sequence, "ag-start"), GetIndex(sequence, "ag-done"));
 }
 
+// Two independent all-gathers whose starts look like releasers bottom-up (they
+// free the gathered outputs). kMemoryCost must not reorder them: the schedule
+// with the rule on is the one the overlap rules produce with it off.
+constexpr absl::string_view kTwoCollectivesHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[8,256,256] parameter(0)
+  p1 = f32[8,64,64] parameter(1)
+  ag-start.0 = (f32[8,256,256], f32[16,256,256]) all-gather-start(p0),
+    replica_groups={{0,1}}, dimensions={0}
+  ag-done.0 = f32[16,256,256] all-gather-done(ag-start.0)
+  ag-start.1 = (f32[8,64,64], f32[16,64,64]) all-gather-start(p1),
+    replica_groups={{0,1}}, dimensions={0}
+  ag-done.1 = f32[16,64,64] all-gather-done(ag-start.1)
+  c0 = f32[16,256,256] negate(ag-done.0)
+  c1 = f32[16,64,64] negate(ag-done.1)
+  ROOT t = (f32[16,256,256], f32[16,64,64]) tuple(c0, c1)
+}
+)";
+
+TEST_F(MemoryCostSchedulerTest, AsyncStartsAreNotScored) {
+  ASSERT_OK_AND_ASSIGN(auto module_off, ParseHloText(kTwoCollectivesHlo));
+  ASSERT_OK_AND_ASSIGN(auto module_on, ParseHloText(kTwoCollectivesHlo));
+  SchedulerConfig off = GetDefaultSchedConfig();
+  SchedulerConfig on = GetDefaultSchedConfig();
+  on.memory_aware_scheduling = true;
+  on.memory_aware_min_bytes = 1024;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> seq_off,
+                       ScheduleEntry(module_off.get(), off));
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> seq_on,
+                       ScheduleEntry(module_on.get(), on));
+  std::vector<std::string> names_off, names_on;
+  for (const HloInstruction* i : seq_off) names_off.push_back(i->name());
+  for (const HloInstruction* i : seq_on) names_on.push_back(i->name());
+  EXPECT_EQ(names_on, names_off);
+}
+
 }  // namespace
 }  // namespace xla

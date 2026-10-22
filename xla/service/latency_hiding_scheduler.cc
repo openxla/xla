@@ -1541,7 +1541,13 @@ void ReadySetLt::ComputeMemoryCost(const SchedulingState& sched_state,
   // them by -bytes/cost prefers slow openers over fast ones and makes every
   // memory-neutral op outrank every opener, which hoists small consumers of
   // large buffers away from the producers and extends live ranges.
-  if (released >= min_bytes && opened < min_bytes) {
+  // Async starts and dones are left to the overlap rules: bottom-up, a start
+  // looks like a pure releaser of the collective's output, so scoring it would
+  // reorder collectives by bytes-per-cost, which is an overlap decision and
+  // perturbs the simulated timeline without changing the peak.
+  const bool is_async_op =
+      cand_node->IsSupportedAsyncStart() || cand_node->IsSupportedAsyncDone();
+  if (!is_async_op && released >= min_bytes && opened < min_bytes) {
     score = static_cast<double>(released) /
             std::max(static_cast<double>(cand_node->GetCost()), kMinCost);
     held = static_cast<double>(released) *
