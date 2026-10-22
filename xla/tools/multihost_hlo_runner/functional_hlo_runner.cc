@@ -548,9 +548,6 @@ absl::StatusOr<PerDeviceLiteralVecType> RunInternal(
         create_argument_buffers_on_device,
     const RunningOptions& running_options) {
   ExecuteOptions execute_options;
-  if (running_options.multi_slice_config != nullptr) {
-    execute_options.multi_slice_config = running_options.multi_slice_config;
-  }
   ABSL_ASSIGN_OR_RETURN(std::vector<std::shared_ptr<HloModule>> hlo_modules,
                         executable->GetHloModules());
   CHECK_EQ(hlo_modules.size(), 1);
