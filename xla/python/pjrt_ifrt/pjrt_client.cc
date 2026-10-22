@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/base/no_destructor.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/coordination/coordination_service_agent.h"
@@ -112,7 +114,6 @@ limitations under the License.
 #include "xla/tsl/distributed_runtime/call_options.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
-#include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -1179,10 +1180,14 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
     ABSL_ASSIGN_OR_RETURN(Shape shard_shape,
                           array_spec.sharding->GetShardShape(array_spec.shape));
     xla::Shape xla_shape;
+    const xla::Layout* layout = nullptr;
     if (primitive_type == xla::TOKEN) {
       xla_shape = xla::ShapeUtil::MakeTokenShape();
     } else {
       xla_shape = xla::ShapeUtil::MakeShape(primitive_type, shard_shape.dims());
+      if (array_spec.layout != nullptr) {
+        layout = &array_spec.layout->xla_layout();
+      }
     }
 
     PjRtArray::PjRtBuffers buffers;
@@ -1211,7 +1216,7 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::MakeErrorArrays(
           buffers.emplace_back(),
           pjrt_client_->CreateErrorBuffer(
               error, xla_shape,
-              absl::down_cast<PjRtMemory*>(memory)->pjrt_memory()));
+              absl::down_cast<PjRtMemory*>(memory)->pjrt_memory(), layout));
     }
     ABSL_ASSIGN_OR_RETURN(
         arrays.emplace_back(),
@@ -1243,9 +1248,10 @@ absl::StatusOr<ArrayRef> PjRtClient::AssembleArrayFromSingleDeviceArrays(
           arrays.size());
     }
     return arrays[0];
-  } else if (!isa<const SingleDeviceSharding, const OpaqueSharding,
-                  const ConcreteSharding, const ConcreteEvenSharding,
-                  const HloSharding>(sharding.get())) {
+  }
+  if (!isa<const SingleDeviceSharding, const OpaqueSharding,
+           const ConcreteSharding, const ConcreteEvenSharding,
+           const HloSharding>(sharding.get())) {
     return InvalidArgument(
         "Only SingleDeviceSharding, OpaqueSharding, ConcreteSharding, "
         "ConcreteEvenSharding, and HloSharding are supported: sharding=%v",
@@ -1316,6 +1322,68 @@ absl::StatusOr<ArrayRef> PjRtClient::AssembleArrayFromSingleDeviceArrays(
 absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArrays(
     absl::Span<ArrayRef> arrays, std::optional<DeviceListRef> devices,
     std::optional<MemoryKind> memory_kind, ArrayCopySemantics semantics) {
+  return CopyArraysImpl(arrays, std::move(devices), memory_kind,
+                        /*donated_dst_arrays=*/{}, semantics);
+}
+
+absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArraysWithDonatedDst(
+    absl::Span<ArrayRef> arrays, absl::Span<ArrayRef> donated_dst_arrays,
+    ArrayCopySemantics semantics) {
+  if (arrays.size() != donated_dst_arrays.size()) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "CopyArraysWithDonatedDst requires arrays and donated_dst_arrays to "
+        "have the same size, got %d vs %d",
+        arrays.size(), donated_dst_arrays.size()));
+  }
+  if (semantics == ArrayCopySemantics::kReuseInput) {
+    return absl::InvalidArgumentError(
+        "CopyArraysWithDonatedDst does not support kReuseInput semantics");
+  }
+  if (arrays.empty()) {
+    return std::vector<ArrayRef>();
+  }
+
+  absl::flat_hash_set<const Array*> seen_donated;
+  for (size_t i = 0; i < arrays.size(); ++i) {
+    if (!seen_donated.insert(donated_dst_arrays[i].get()).second) {
+      return absl::InvalidArgumentError(
+          "Passing duplicate arrays in donated_dst_arrays is not allowed");
+    }
+    if (donated_dst_arrays[i]->IsDeleted()) {
+      return absl::FailedPreconditionError(
+          absl::StrFormat("CopyArraysWithDonatedDst donated_dst_arrays[%d] is "
+                          "already deleted",
+                          i));
+    }
+    if (i > 0) {
+      const auto& dst_sharding = donated_dst_arrays[i]->sharding();
+      if (*dst_sharding.devices() !=
+              *donated_dst_arrays[0]->sharding().devices() ||
+          dst_sharding.memory_kind() !=
+              donated_dst_arrays[0]->sharding().memory_kind()) {
+        return absl::InvalidArgumentError(
+            "CopyArraysWithDonatedDst only supports destination arrays with "
+            "the same device list and memory kind");
+      }
+    }
+  }
+  for (const ArrayRef& arr : arrays) {
+    if (seen_donated.contains(arr.get())) {
+      return absl::InvalidArgumentError(
+          "Passing the same array in both arrays and donated_dst_arrays is not "
+          "allowed");
+    }
+  }
+
+  return CopyArraysImpl(arrays, donated_dst_arrays[0]->sharding().devices(),
+                        donated_dst_arrays[0]->sharding().memory_kind(),
+                        donated_dst_arrays, semantics);
+}
+
+absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArraysImpl(
+    absl::Span<ArrayRef> arrays, std::optional<DeviceListRef> devices,
+    std::optional<MemoryKind> memory_kind,
+    absl::Span<ArrayRef> donated_dst_arrays, ArrayCopySemantics semantics) {
   if (arrays.empty()) {
     return std::vector<ArrayRef>();
   }
@@ -1340,8 +1408,8 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArrays(
           "CopyArrays only supports destination device list of the same size "
           "as the array device lists.");
     };
-    if (src_devices->size() > 0 && (src_devices->devices()[0]->client() ==
-                                    dst_devices->devices()[0]->client())) {
+    if (!src_devices->empty() && (src_devices->devices()[0]->client() ==
+                                  dst_devices->devices()[0]->client())) {
       for (int i = 0; i < dst_devices->size(); ++i) {
         if (dst_devices->devices()[i]->ProcessIndex() !=
             src_devices->devices()[i]->ProcessIndex()) {
@@ -1355,11 +1423,19 @@ absl::StatusOr<std::vector<ArrayRef>> PjRtClient::CopyArrays(
   if (all_host_local_transfers) {
     std::vector<ArrayRef> new_arrays;
     new_arrays.reserve(arrays.size());
-    for (const ArrayRef& array : arrays) {
+    for (size_t i = 0; i < arrays.size(); ++i) {
+      const ArrayRef& array = arrays[i];
       if (auto* const pjrt_array = dyn_cast<PjRtArray>(array.get())) {
-        ABSL_ASSIGN_OR_RETURN(
-            new_arrays.emplace_back(),
-            pjrt_array->Copy(devices, memory_kind, semantics));
+        if (!donated_dst_arrays.empty()) {
+          ABSL_ASSIGN_OR_RETURN(
+              new_arrays.emplace_back(),
+              pjrt_array->CopyWithDonatedDst(
+                  cast<PjRtArray>(donated_dst_arrays[i].get()), semantics));
+        } else {
+          ABSL_ASSIGN_OR_RETURN(
+              new_arrays.emplace_back(),
+              pjrt_array->Copy(devices, memory_kind, semantics));
+        }
       } else if (auto* const string_array =
                      dyn_cast<BasicStringArray>(array.get())) {
         ABSL_ASSIGN_OR_RETURN(
@@ -1406,6 +1482,20 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
       LOG(ERROR) << "Cross-host receive buffer failed: " << status;
     }
   };
+  // Same snapshot execute uses. A missing cache keeps the historical key
+  // instead of failing the copy. Both hosts must pass this map; one side
+  // alone would make the clique keys diverge.
+  absl::flat_hash_map<TaskId, IncarnationId> incarnations;
+  absl::StatusOr<absl::flat_hash_map<int, IncarnationId>> incarnations_or =
+      Incarnations();
+  if (incarnations_or.ok()) {
+    incarnations.reserve(incarnations_or->size());
+    for (const auto& [task_id, incarnation_id] : *incarnations_or) {
+      incarnations.emplace(TaskId(task_id), incarnation_id);
+    }
+  } else {
+    VLOG(3) << "Unable to get incarnations: " << incarnations_or.status();
+  }
   int j = 0;  // Counter for the addressable buffers.
   for (int i = 0; i < dst_devices->size(); ++i) {
     // TODO(emilyaf): Extend CreateNewTransferKey to take N and return N keys
@@ -1452,8 +1542,9 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
         // plugin's `CopyToRemoteDevice` API, getting the buffer descriptors
         // from the KV store.
         absl::StatusOr<std::vector<Future<>>> send_futures =
-            pjrt_client_->CrossHostSendBuffers(
-                send_buffers, std::move(dst_global_device_ids), transfer_keys);
+            pjrt_client_->CrossHostSendBuffers(send_buffers,
+                                               std::move(dst_global_device_ids),
+                                               transfer_keys, incarnations);
         if (send_futures.ok()) {
           for (Future<>& send_future : *send_futures) {
             send_future.OnReady(on_send_done);
@@ -1507,7 +1598,7 @@ PjRtClient::CopyArraysForCrossHost(absl::Span<ArrayRef> arrays,
       absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>
           received_buffers = pjrt_client_->CrossHostReceiveBuffers(
               pjrt_device, recv_shapes, std::move(src_global_device_ids),
-              transfer_keys);
+              transfer_keys, incarnations);
       if (absl::IsUnimplemented(received_buffers.status())) {
         ABSL_ASSIGN_OR_RETURN(received_buffers, CrossHostReceiveBuffers(
                                                     recv_shapes, pjrt_device,

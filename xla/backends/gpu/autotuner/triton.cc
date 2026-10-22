@@ -19,7 +19,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -44,8 +43,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
-#include "xla/codegen/tiling/symbolic_tile_analysis.h"
-#include "xla/codegen/tiling/tiling_specification.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -60,11 +57,11 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/gpu/mlir_context_pool.h"
-#include "xla/service/gpu/model/triton_emitter_constraints.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -222,6 +219,12 @@ TritonBackend::GetSupportedConfigsForScaledDot(const HloInstruction* instr) {
 
   const bool exhaustive_search =
       debug_options().xla_gpu_exhaustive_tiling_search();
+
+  // Only MI300 measured a win, matching mi300.txtpb for regular dots.
+  const bool autotune_mfma_size =
+      gpu_cc.IsRocm() &&
+      gpu_cc.rocm_compute_capability()->has_mfma_instr_support() &&
+      (exhaustive_search || gpu_cc.rocm_compute_capability()->gfx9_mi300());
   for (int block_m = 128; block_m <= 256; block_m *= 2) {
     for (int block_n = 16; block_n <= 256; block_n *= 2) {
       for (int block_k = 128; block_k <= 256; block_k *= 2) {
@@ -235,12 +238,19 @@ TritonBackend::GetSupportedConfigsForScaledDot(const HloInstruction* instr) {
           continue;
         }
 
-        configs.push_back(TritonGemmConfig(block_m, block_n,
-                                           /*block_k=*/block_k,
-                                           /*num_stages=*/1,
-                                           /*num_warps=*/4,
-                                           /*num_ctas=*/1,
-                                           /*is_tma_allowed=*/false));
+        TritonGemmConfig config(block_m, block_n,
+                                /*block_k=*/block_k,
+                                /*num_stages=*/1,
+                                /*num_warps=*/4,
+                                /*num_ctas=*/1,
+                                /*is_tma_allowed=*/false);
+        configs.push_back(config);
+
+        const int mfma_size = MfmaSizeToTry(block_m, block_n);
+        if (autotune_mfma_size && mfma_size != 0) {
+          config.mfma_size = mfma_size;
+          configs.push_back(config);
+        }
       }
     }
   }

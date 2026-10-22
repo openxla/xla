@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -46,13 +47,11 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/autotuner/triton/triton_configs.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
-#include "xla/backends/gpu/codegen/triton/support_legacy.h"
 #include "xla/backends/gpu/transforms/bitcast_utils.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
 #include "xla/codegen/tiling/experimental/tile.h"
 #include "xla/codegen/tiling/experimental/tiled_hlo.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
-#include "xla/codegen/tiling/symbolic_tile_analysis.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/hlo/analysis/shape_tracker.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -706,6 +705,23 @@ struct Fusion {
   HloInstruction* output = nullptr;
 };
 
+// Triton emitter requires concatenate operands to be aligned to the tile size
+// to avoid tiles straddling operand boundaries. Since we don't know the
+// concrete tile size yet, we enforce divisibility by a minimum reasonable
+// tile size (64).
+bool IsTritonSupportedConcatenateForGemm(const HloInstruction& hlo) {
+  constexpr int64_t kMinConcatFragmentSize = 64;
+  const int64_t concatenate_dimension = hlo.concatenate_dimension();
+  // The last operand does not need to be aligned.
+  return absl::c_all_of(
+      absl::MakeConstSpan(hlo.operands()).first(hlo.operand_count() - 1),
+      [&](const HloInstruction* operand) {
+        return operand->shape().dimensions(concatenate_dimension) %
+                   kMinConcatFragmentSize ==
+               0;
+      });
+}
+
 // Some instructions can be codegened by Triton, but we don't allow them in
 // GEMM fusions specifically or it doesn't make sense to fuse.
 bool AllowedInGemmFusion(const HloInstruction& instr) {
@@ -718,10 +734,17 @@ bool AllowedInGemmFusion(const HloInstruction& instr) {
     // the moment. Includes kFusion, kReduce, kAllReduce, etc.
     return false;
   }
+  // Collectives need runtime collective parameters, so keep them separate.
+  if (hlo_query::IsCollectiveCommunicationOp(instr.opcode())) {
+    return false;
+  }
+  if (instr.opcode() == HloOpcode::kConcatenate &&
+      !IsTritonSupportedConcatenateForGemm(instr)) {
+    return false;
+  }
   return HloPredicateIsNotOp<HloOpcode::kDot, HloOpcode::kScaledDot,
-                             HloOpcode::kParameter, HloOpcode::kAllGather,
-                             HloOpcode::kAllGatherStart,
-                             HloOpcode::kAllGatherDone>(&instr);
+                             HloOpcode::kParameter, HloOpcode::kAllGatherDone>(
+      &instr);
 }
 
 // Returns true if we should consider fusing the instruction into the GEMM
@@ -1293,7 +1316,6 @@ FusionDecision CanUnpackS4ParametersInFusion(
   return FusionDecision::Allow();
 }
 
-// Checks if the fusion can be tiled by SymbolicTileAnalysis.
 FusionDecision CanTile(mlir::MLIRContext& mlir_context,
                        const HloFusionAdaptor& fusion,
                        const se::DeviceDescription& device_description) {
@@ -2241,7 +2263,17 @@ absl::StatusOr<bool> RunOnComputation(
     HloComputation* computation,
     const se::DeviceDescription& device_description) {
   GemmFusionVisitor visitor(device_description);
-  ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));
+  // Collect the dots up front: fusing an epilogue can remove an unvisited
+  // operand (e.g. bitcast(other_dot)), hiding other dots from a DFS traversal.
+  std::vector<HloInstruction*> dots;
+  for (HloInstruction* instruction : computation->MakeInstructionPostOrder()) {
+    if (HloPredicateIsOp<HloOpcode::kDot, HloOpcode::kScaledDot>(instruction)) {
+      dots.push_back(instruction);
+    }
+  }
+  for (HloInstruction* dot : dots) {
+    ABSL_RETURN_IF_ERROR(dot->Visit(&visitor));
+  }
   return visitor.changed();
 }
 

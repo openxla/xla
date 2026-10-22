@@ -141,25 +141,31 @@ class BuildAllGatherInfoTest : public HloHardwareIndependentTestBase {
 };
 
 TEST_F(BuildAllGatherInfoTest, SucceedsForSupportedF32) {
-  EXPECT_THAT(BuildInfo(F32, /*num_elements=*/512, /*replica_groups=*/{0, 1}),
-              IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
-                                 Field(&AllGatherInfo::num_elements, 512),
-                                 Field(&AllGatherInfo::element_type, F32))));
+  EXPECT_THAT(
+      BuildInfo(F32, /*num_elements=*/512, /*replica_groups=*/{0, 1}),
+      IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
+                         Field(&AllGatherInfo::max_output_elements, 1024))));
 }
 
 TEST_F(BuildAllGatherInfoTest, SucceedsForSupportedBF16) {
-  EXPECT_THAT(BuildInfo(BF16, /*num_elements=*/512, /*replica_groups=*/{0, 1}),
-              IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
-                                 Field(&AllGatherInfo::num_elements, 512),
-                                 Field(&AllGatherInfo::element_type, BF16))));
+  EXPECT_THAT(
+      BuildInfo(BF16, /*num_elements=*/512, /*replica_groups=*/{0, 1}),
+      IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
+                         Field(&AllGatherInfo::max_output_elements, 1024))));
 }
 
 TEST_F(BuildAllGatherInfoTest, SucceedsForFourDevices) {
   EXPECT_THAT(
       BuildInfo(F32, /*num_elements=*/512, /*replica_groups=*/{0, 1, 2, 3}),
       IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 4),
-                         Field(&AllGatherInfo::num_elements, 512),
-                         Field(&AllGatherInfo::element_type, F32))));
+                         Field(&AllGatherInfo::max_output_elements, 2048))));
+}
+
+TEST_F(BuildAllGatherInfoTest, FailsForSingleDevicePerReplicaGroup) {
+  EXPECT_THAT(
+      BuildInfo(F32, /*num_elements=*/512, /*replica_groups=*/{0}),
+      StatusIs(absl::StatusCode::kUnimplemented,
+               HasSubstr("Degenerate collectives with a single device")));
 }
 
 TEST_F(BuildAllGatherInfoTest, FailsForNonPowerOfTwoDevices) {
@@ -173,8 +179,7 @@ TEST_F(BuildAllGatherInfoTest, SucceedsForSupportedF8E4M3FN) {
   EXPECT_THAT(
       BuildInfo(F8E4M3FN, /*num_elements=*/512, /*replica_groups=*/{0, 1}),
       IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
-                         Field(&AllGatherInfo::num_elements, 512),
-                         Field(&AllGatherInfo::element_type, F8E4M3FN))));
+                         Field(&AllGatherInfo::max_output_elements, 1024))));
 }
 
 TEST_F(BuildAllGatherInfoTest, FailsForUnsupportedType) {
@@ -200,21 +205,20 @@ TEST_F(BuildAllGatherInfoTest, FailsForNonPowerOfTwoGatherDimSize) {
 TEST_F(BuildAllGatherInfoTest,
        SucceedsForSubTransactionAndUnalignedNonGatherDim) {
   // s32[2] = 8 bytes (< 16-byte transaction).
-  EXPECT_THAT(BuildInfo(S32, /*num_elements=*/2, /*replica_groups=*/{0, 1}),
-              IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
-                                 Field(&AllGatherInfo::num_elements, 2),
-                                 Field(&AllGatherInfo::element_type, S32))));
+  EXPECT_THAT(
+      BuildInfo(S32, /*num_elements=*/2, /*replica_groups=*/{0, 1}),
+      IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
+                         Field(&AllGatherInfo::max_output_elements, 4))));
   // s32[2, 7] = 56 bytes (gather dim = 2, non-gather dim = 7).
-  EXPECT_THAT(BuildInfo(S32, /*input_dims=*/{2, 7}, /*replica_groups=*/{0, 1}),
-              IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
-                                 Field(&AllGatherInfo::num_elements, 14),
-                                 Field(&AllGatherInfo::element_type, S32))));
+  EXPECT_THAT(
+      BuildInfo(S32, /*input_dims=*/{2, 7}, /*replica_groups=*/{0, 1}),
+      IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
+                         Field(&AllGatherInfo::max_output_elements, 28))));
   // s32[2, 529] = 4,232 bytes (gather dim = 2, non-gather dim = 529).
   EXPECT_THAT(
       BuildInfo(S32, /*input_dims=*/{2, 529}, /*replica_groups=*/{0, 1}),
       IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
-                         Field(&AllGatherInfo::num_elements, 1058),
-                         Field(&AllGatherInfo::element_type, S32))));
+                         Field(&AllGatherInfo::max_output_elements, 2116))));
 }
 
 TEST_F(BuildAllGatherInfoTest, FailsIfReplicaGroupsEmpty) {
@@ -252,19 +256,18 @@ TEST_F(BuildAllGatherInfoTest, FailsForLargeOutputs) {
 
 TEST_F(BuildAllGatherInfoTest, SucceedsFor16MBOutput) {
   // 2 * 1024 * 1024 F32 elements * 2 devices = 16 MB == 16 MB limit -> ok.
-  EXPECT_THAT(
-      BuildInfo(F32, /*num_elements=*/2 * 1024 * 1024,
-                /*replica_groups=*/{0, 1}),
-      IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
-                         Field(&AllGatherInfo::num_elements, 2 * 1024 * 1024),
-                         Field(&AllGatherInfo::element_type, F32))));
+  EXPECT_THAT(BuildInfo(F32, /*num_elements=*/2 * 1024 * 1024,
+                        /*replica_groups=*/{0, 1}),
+              IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
+                                 Field(&AllGatherInfo::max_output_elements,
+                                       4 * 1024 * 1024))));
 }
 
 TEST_F(BuildAllGatherInfoTest, VariadicChecksSizePerOperandAndUsesMaxElements) {
   // Each operand's output is <= 16 MB (16 MB and 8 MB), while the combined
   // output is 24 MB. Since each operand tile is processed sequentially, the
-  // byte limit applies per operand and `num_elements` is the maximum across
-  // operands.
+  // byte limit applies per operand and `max_output_elements` is the maximum
+  // across operands.
   constexpr absl::string_view kModuleStr = R"(
   HloModule test
   ENTRY test_computation {
@@ -294,9 +297,53 @@ TEST_F(BuildAllGatherInfoTest, VariadicChecksSizePerOperandAndUsesMaxElements) {
   EXPECT_THAT(
       BuildAllGatherInfo(gpu_topology, Cast<HloAllGatherInstruction>(hlo_instr),
                          /*device_assignment=*/nullptr),
-      IsOkAndHolds(AllOf(Field(&AllGatherInfo::num_devices, 2),
-                         Field(&AllGatherInfo::num_elements, 2 * 1024 * 1024),
-                         Field(&AllGatherInfo::element_type, F32))));
+      IsOkAndHolds(
+          AllOf(Field(&AllGatherInfo::num_devices, 2),
+                Field(&AllGatherInfo::max_output_elements, 4 * 1024 * 1024))));
+}
+
+TEST_F(BuildAllGatherInfoTest, FailsForMoreThanMaxOperands) {
+  std::vector<std::string> params;
+  std::vector<std::string> param_names;
+  std::vector<std::string> output_shapes;
+  for (int i = 0; i <= kAllGatherMaxNumOperands; ++i) {
+    params.push_back(absl::StrFormat("param_%d = f32[8] parameter(%d)", i, i));
+    param_names.push_back(absl::StrFormat("param_%d", i));
+    output_shapes.push_back("f32[16]");
+  }
+  const std::string module_str = absl::StrFormat(
+      R"(
+  HloModule test
+  ENTRY test_computation {
+    %s
+    ROOT all-gather = (%s) all-gather(%s),
+        dimensions={0}, replica_groups={{0,1}}
+  }
+  )",
+      absl::StrJoin(params, "\n"), absl::StrJoin(output_shapes, ", "),
+      absl::StrJoin(param_names, ", "));
+  se::DeviceDescription device_info = TestGpuDeviceInfo::H100SXMDeviceInfo();
+  stream_executor::GpuTargetConfigProto target_config_proto;
+  *target_config_proto.mutable_gpu_device_info() = device_info.ToProto();
+  target_config_proto.mutable_gpu_device_info()
+      ->mutable_device_interconnect_info()
+      ->set_active_links(18);
+  target_config_proto.set_platform_name("CUDA");
+  ASSERT_OK_AND_ASSIGN(gpu::GpuTargetConfig target_config,
+                       gpu::GpuTargetConfig::FromProto(target_config_proto));
+  GpuTopology gpu_topology("platform_version", /*num_partitions=*/1,
+                           /*num_hosts_per_partition=*/1,
+                           /*num_devices_per_host=*/2, target_config);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_str, 2));
+  const HloInstruction* hlo_instr =
+      HloHardwareIndependentTestBase::FindInstruction(module.get(),
+                                                      HloOpcode::kAllGather);
+  EXPECT_THAT(
+      BuildAllGatherInfo(gpu_topology, Cast<HloAllGatherInstruction>(hlo_instr),
+                         /*device_assignment=*/nullptr),
+      StatusIs(absl::StatusCode::kUnimplemented,
+               HasSubstr("supports at most 16 operands")));
 }
 
 TEST_F(BuildAllGatherInfoTest,

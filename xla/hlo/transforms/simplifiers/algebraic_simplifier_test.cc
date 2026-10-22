@@ -7283,14 +7283,16 @@ struct ConvTestOptions {
     int col_stride = 1;
     int col_padding = 0;
     int col_dilation = 1;
+    bool col_reversal = false;
     int row_stride = 1;
     int row_padding = 0;
     int row_dilation = 1;
+    bool row_reversal = false;
   } window_options;
 
   std::unique_ptr<HloComputation> Build(const std::string& test_name) const {
-    auto create_dimension = [](int size, int stride, int padding,
-                               int dilation) {
+    auto create_dimension = [](int size, int stride, int padding, int dilation,
+                               bool reversal) {
       WindowDimension dim;
       dim.set_size(size);
       dim.set_stride(stride);
@@ -7298,14 +7300,15 @@ struct ConvTestOptions {
       dim.set_padding_high(padding);
       dim.set_window_dilation(dilation);
       dim.set_base_dilation(dilation);
+      dim.set_window_reversal(reversal);
       return dim;
     };
-    auto vertical = create_dimension(kernel_height, window_options.row_stride,
-                                     window_options.row_padding,
-                                     window_options.row_dilation);
-    auto horizontal = create_dimension(kernel_width, window_options.col_stride,
-                                       window_options.col_padding,
-                                       window_options.col_dilation);
+    auto vertical = create_dimension(
+        kernel_height, window_options.row_stride, window_options.row_padding,
+        window_options.row_dilation, window_options.row_reversal);
+    auto horizontal = create_dimension(
+        kernel_width, window_options.col_stride, window_options.col_padding,
+        window_options.col_dilation, window_options.col_reversal);
     bool width_first = kernel_order.find('0') < kernel_order.find('1');
     Window window;
     *window.add_dimensions() = width_first ? horizontal : vertical;
@@ -7404,6 +7407,28 @@ TEST_F(ConvTestBase, ContractedDimension) {
       ConvTestOptions{.kernel_height = 2},
       m::Reshape(m::Reduce(m::Multiply(m::Parameter(0), m::Broadcast()),
                            m::Convert(m::Constant()))));
+}
+
+TEST_F(ConvTestBase, ContractedDimensionWithWindowReversal) {
+  ExpectSimplifyMatch(
+      ConvTestOptions{.kernel_height = 2,
+                      .window_options = {.row_reversal = true}},
+      m::Reshape(m::Reduce(
+          m::Multiply(m::Parameter(0),
+                      m::Broadcast(m::Reshape(
+                          m::Reverse(m::Parameter(1))
+                              .WithPredicate([](const HloInstruction* inst) {
+                                return inst->dimensions() ==
+                                       std::vector<int64_t>{3};
+                              })))),
+          m::Convert(m::Constant()))));
+}
+
+TEST_F(ConvTestBase, TrivialDimensionWithWindowReversal) {
+  ExpectSimplifyMatch(
+      ConvTestOptions{
+          .window_options = {.col_reversal = true, .row_reversal = true}},
+      m::Multiply(m::Parameter(0), m::Broadcast(m::Reshape(m::Parameter(1)))));
 }
 
 TEST_F(ConvTestBase, InputConvert) {
@@ -9239,6 +9264,41 @@ TEST_F(AlgebraicSimplifierTest, BatchDotTransposeBatchDimsAndOperands) {
             PrecisionConfig::DEFAULT);
   EXPECT_EQ(dot->precision_config().operand_precision()[1],
             PrecisionConfig::HIGH);
+}
+
+TEST_F(AlgebraicSimplifierTest, BatchDotTransposeNonCommutingBatchDims) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    ENTRY test {
+      lhs = f32[2,3,5,7,11] parameter(0)
+      rhs = f32[2,3,5,11,13] parameter(1)
+      lhs_t = f32[3,2,5,7,11] transpose(lhs), dimensions={1,0,2,3,4}
+      rhs_t = f32[3,2,5,11,13] transpose(rhs), dimensions={1,0,2,3,4}
+      ROOT root = f32[3,5,2,7,13] dot(lhs_t, rhs_t),
+                  lhs_batch_dims={0,2,1}, rhs_batch_dims={0,2,1},
+                  lhs_contracting_dims={4}, rhs_contracting_dims={3}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifierOptions options = default_options_;
+  AlgebraicSimplifier simplifier(options);
+  ASSERT_THAT(RunHloPass(&simplifier, module.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* dot;
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Transpose(m::Dot(&dot, m::Parameter(0), m::Parameter(1))
+                                  .WithShape(F32, {2, 3, 5, 7, 13}))
+                     .WithShape(F32, {3, 5, 2, 7, 13})));
+  EXPECT_THAT(module->entry_computation()->root_instruction()->dimensions(),
+              ElementsAre(1, 2, 0, 3, 4));
+  EXPECT_THAT(dot->dot_dimension_numbers().lhs_batch_dimensions(),
+              ElementsAre(0, 1, 2));
+  EXPECT_THAT(dot->dot_dimension_numbers().rhs_batch_dimensions(),
+              ElementsAre(0, 1, 2));
 }
 
 TEST_F(AlgebraicSimplifierTest, DotIsAnnotatedWithUnreducedSharding) {

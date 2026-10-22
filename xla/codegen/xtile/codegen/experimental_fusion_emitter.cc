@@ -1685,6 +1685,99 @@ absl::StatusOr<TensorValue> EmitRaggedDotContracting(
   return ReshapeTo(b, mlir::cast<TensorValue>(result_2d), padded_tile_sizes);
 }
 
+// Emits the kRaggedBatch variant.
+//
+// kRaggedBatch = regular batched GEMM: output[b,:,:] = LHS[b,:,:] @
+// RHS[b,:,:] for all b in [0, B_total). group_sizes control which batch
+// elements belong to which group (for scheduling only, not computation).
+//
+// TilingSpace: B_total, M, N kParallel; K kSequential.
+// Output tile: [1, BLOCK_M, BLOCK_N] (one batch element per program).
+// The group_sizes operand (op 2) is NOT loaded — it's irrelevant here.
+absl::StatusOr<TensorValue> EmitRaggedDotBatch(
+    EmitterContext& emitter_ctx,
+    const ge::TiledHloInstruction& tiled_ragged_dot,
+    const RaggedDotParams& rctx) {
+  auto& b = emitter_ctx.b();
+  const auto* ragged_dot_instr = rctx.ragged_dot_instr;
+  const DotDimensionNumbers& dot_dims = rctx.dot_dims;
+  const ge::TilingSpace& tiling_space = rctx.tiling_space;
+  const int64_t output_rank = rctx.output_rank;
+  const Type acc_type = rctx.acc_type;
+  TensorValue accumulator = rctx.accumulator;
+  const ge::TiledHloRegion& region = tiled_ragged_dot.hlo_regions().front();
+
+  const ge::TilingSpace::DimensionInfo& k_dim_info =
+      tiling_space.GetDimensionInfo(*ragged_dot_instr, output_rank);
+  CHECK(k_dim_info.tile_size.has_value())
+      << "K tile size not set for kRaggedBatch.";
+  const int64_t K_tiles =
+      CeilOfRatio(k_dim_info.dimension_size, *k_dim_info.tile_size);
+
+  const int64_t num_batch = dot_dims.lhs_batch_dimensions_size();
+
+  const ge::TiledHloInstruction* lhs_tiled = tiled_ragged_dot.operand(0);
+  const ge::TiledHloInstruction* rhs_tiled = tiled_ragged_dot.operand(1);
+  // operand(2) = group_sizes — NOT emitted.
+
+  // K sequential accumulation loop (same structure as EmitDot).
+  auto k_for = mlir::scf::ForOp::create(
+      b, MakeIndex(b, 0), MakeIndex(b, K_tiles), MakeIndex(b, 1), accumulator);
+  {  // Loop body.
+    mlir::OpBuilder::InsertionGuard g(b);
+    b.setInsertionPointToStart(k_for.getBody());
+    Value k_iv = k_for.getInductionVar();
+    Value k_iv_i32 = Cast(b, k_iv, b.getI32Type());
+
+    ABSL_ASSIGN_OR_RETURN(ScopedSequentialDimBinding k_iv_binding,
+                          emitter_ctx.MapSymbolIdToSequentialDimValueScoped(
+                              k_dim_info.id, k_iv, Interval{0, K_tiles - 1}));
+
+    ABSL_ASSIGN_OR_RETURN(
+        TensorValue lhs_tensor,
+        EmitRegionInstructionWithDependencies(emitter_ctx, region, lhs_tiled));
+    ABSL_ASSIGN_OR_RETURN(
+        TensorValue rhs_tensor,
+        EmitRegionInstructionWithDependencies(emitter_ctx, region, rhs_tiled));
+
+    // K-boundary masking of LHS and RHS.
+    ABSL_ASSIGN_OR_RETURN(
+        Type lhs_k_elem_ty,
+        PrimitiveTypeToMlirType(b, lhs_tiled->hlo()->shape().element_type()));
+    ABSL_ASSIGN_OR_RETURN(lhs_tensor,
+                          MaskOperand(b, *lhs_tiled, lhs_tensor, k_iv_i32,
+                                      dot_dims.lhs_contracting_dimensions(0),
+                                      CreateConst(b, lhs_k_elem_ty, 0.0f)));
+    ABSL_ASSIGN_OR_RETURN(
+        Type rhs_k_elem_ty,
+        PrimitiveTypeToMlirType(b, rhs_tiled->hlo()->shape().element_type()));
+    ABSL_ASSIGN_OR_RETURN(rhs_tensor,
+                          MaskOperand(b, *rhs_tiled, rhs_tensor, k_iv_i32,
+                                      dot_dims.rhs_contracting_dimensions(0),
+                                      CreateConst(b, rhs_k_elem_ty, 0.0f)));
+
+    // Batch-squeeze → partial dot → batch-unsqueeze. kRaggedBatch does not
+    // squeeze a group dimension, so the RHS contracting dim is unchanged.
+    TensorValue acc_k_in =
+        mlir::cast<TensorValue>(k_for.getRegionIterArgs()[0]);
+    ABSL_ASSIGN_OR_RETURN(
+        Value acc_next,
+        RunSqueezedTileDot(b, *ragged_dot_instr, dot_dims,
+                           dot_dims.rhs_contracting_dimensions(0), num_batch,
+                           lhs_tensor, rhs_tensor, acc_k_in));
+    mlir::scf::YieldOp::create(b, acc_next);
+  }
+
+  Value result = k_for.getResult(0);
+  ABSL_ASSIGN_OR_RETURN(Type out_type,
+                        PrimitiveTypeToMlirType(
+                            b, tiled_ragged_dot.hlo()->shape().element_type()));
+  if (out_type != acc_type) {
+    result = Cast(b, result, out_type);
+  }
+  return mlir::cast<TensorValue>(result);
+}
+
 // Emits a kRaggedDot instruction by dispatching to the appropriate mode.
 absl::StatusOr<TensorValue> EmitRaggedDot(
     EmitterContext& emitter_ctx,
@@ -1700,7 +1793,7 @@ absl::StatusOr<TensorValue> EmitRaggedDot(
       absl::c_count(rctx.dot_dims.lhs_batch_dimensions(), lhs_ragged_dim) > 0;
 
   if (is_batch) {
-    return absl::UnimplementedError("kRaggedBatch: not yet implemented");
+    return EmitRaggedDotBatch(emitter_ctx, tiled_ragged_dot, rctx);
   }
   if (!is_contracting) {
     return EmitRaggedDotNonContracting(emitter_ctx, tiled_ragged_dot, rctx);
@@ -2095,16 +2188,14 @@ absl::StatusOr<std::vector<TensorValue>> EmitScan(
           "Only extracting scan output (tuple index 0) is currently "
           "supported.");
     }
-    for (const HloInstruction* gte_user : user->users()) {
-      if (gte_user != root || root->opcode() != HloOpcode::kTuple) {
-        return absl::UnimplementedError(
-            "Epilogue fusion for scan is not supported yet.");
-      }
-    }
   }
 
   if (!tiled_hlo_scan.hlo_regions().empty()) {
     // Tiled scan with scf.for loop across the scan dimension.
+    if (emitter_ctx.open_scan_loop()) {
+      return absl::UnimplementedError(
+          "Only one tiled scan per fusion is currently supported.");
+    }
     const auto& dim_info = tiling_space.GetDimensionInfo(hlo_scan, scan_dim);
     int64_t scan_dim_size = dim_info.dimension_size;
     int64_t tile_size = *dim_info.tile_size;
@@ -2171,34 +2262,13 @@ absl::StatusOr<std::vector<TensorValue>> EmitScan(
     ABSL_RETURN_IF_ERROR(
         EmitScanComputation(b, &hlo_scan, hlo_scan.to_apply(), scan));
 
-    // Inside loop body, insert output tile into destination argument.
-    // TODO(b/390559452): Support multi-output scans by mapping each tuple_index
-    // to its corresponding scan output rather than hardcoding index 0.
-    for (const auto& [r_idx, root] :
-         llvm::enumerate(emitter_ctx.tiled_computation().roots())) {
-      const HloInstruction* root_hlo = root->hlo();
-      if ((root_hlo->opcode() == HloOpcode::kGetTupleElement &&
-           root->operand(0) == &tiled_hlo_scan &&
-           root_hlo->tuple_index() == 0) ||
-          root == &tiled_hlo_scan) {
-        Value output_arg =
-            emitter_ctx.entry_func()
-                .getArguments()[computation->num_parameters() + r_idx];
-        ABSL_ASSIGN_OR_RETURN(auto tile_info,
-                              TileInfo::Construct(emitter_ctx, *root));
-        xtile::InsertTileOp::create(
-            b, scan.getOutputs()[0], output_arg, tile_info.offsets(),
-            tile_info.padded_tile_sizes(), tile_info.tile_strides());
-      }
-    }
-
-    b.create<mlir::scf::YieldOp>(scan.getCarries());
-    b.setInsertionPointAfter(for_op);
+    emitter_ctx.SetOpenScanLoop(for_op, scan.getCarries(),
+                                std::move(iv_binding));
 
     std::vector<TensorValue> results;
-    results.reserve(for_op.getNumResults());
-    for (auto res : for_op.getResults()) {
-      results.push_back(mlir::cast<TensorValue>(res));
+    results.reserve(scan.getOutputs().size());
+    for (auto output : scan.getOutputs()) {
+      results.push_back(mlir::cast<TensorValue>(output));
     }
     return results;
   }
@@ -2211,6 +2281,13 @@ absl::StatusOr<std::vector<TensorValue>> EmitScan(
 
   ABSL_ASSIGN_OR_RETURN(SmallVector<int64_t> unpadded_tile_sizes,
                         tiled_hlo_scan.operand(0)->tile().GetStaticTileSizes());
+  if (int64_t scan_dim_size = hlo_scan.operand(0)->shape().dimensions(scan_dim);
+      unpadded_tile_sizes[scan_dim] < scan_dim_size) {
+    return Internal(
+        "Scan %s is tiled with size %d along its scan dimension of size %d "
+        "without a loop over the scan dimension.",
+        hlo_scan.name(), unpadded_tile_sizes[scan_dim], scan_dim_size);
+  }
 
   for (int i = 0; i < num_operands; ++i) {
     const ge::TiledHloInstruction* input_operand = tiled_hlo_scan.operand(i);
@@ -2620,6 +2697,9 @@ absl::StatusOr<std::vector<TensorValue>> EmitTiledComputation(
     EmitterContext& emitter_ctx, const ge::TiledHloRegion& region,
     absl::Span<const ge::TiledHloInstruction* const> roots) {
   for (const auto* tiled_hlo : region.instructions()) {
+    if (emitter_ctx.IsEmitted(*tiled_hlo)) {
+      continue;
+    }
     const HloInstruction* hlo = tiled_hlo->hlo();
     VLOG(8) << "Emitting " << hlo->ToString(HloPrintOptions::ShortParsable());
     ABSL_ASSIGN_OR_RETURN(EmittedResults results,
@@ -2924,6 +3004,19 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
   ABSL_ASSIGN_OR_RETURN(
       std::vector<ScopedSequentialDimBinding> fully_tiled_dim_bindings,
       EmitFullyTiledSequentialDimensions(b, emitter_ctx, tiled_computation));
+  // Emit tiled scans first to open their loop and bind its induction variable,
+  // which epilogue instructions tiled along the scan dimension (e.g. an iota)
+  // depend on.
+  for (const ge::TiledHloInstruction* tiled_hlo :
+       tiled_computation.tiled_root_region().instructions()) {
+    if (tiled_hlo->hlo()->opcode() == HloOpcode::kScan &&
+        !tiled_hlo->hlo_regions().empty()) {
+      ABSL_RETURN_IF_ERROR(
+          EmitRegionInstructionWithDependencies(
+              emitter_ctx, tiled_computation.tiled_root_region(), tiled_hlo)
+              .status());
+    }
+  }
   ABSL_ASSIGN_OR_RETURN(
       auto results,
       EmitTiledComputation(emitter_ctx, tiled_computation.tiled_root_region(),
@@ -2932,19 +3025,6 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
   for (const auto& [root, result, arg] :
        llvm::zip(tiled_computation.roots(), results,
                  fn.getArguments().drop_front(computation->num_parameters()))) {
-    // The array output of a looped scan is inserted inside the loop body.
-    // Handle scans and GTEs that extract the output of a scan.
-    if (root->hlo()->opcode() == HloOpcode::kScan &&
-        !root->hlo_regions().empty()) {
-      continue;
-    }
-    if (root->hlo()->opcode() == HloOpcode::kGetTupleElement &&
-        root->operand(0)->hlo()->opcode() == HloOpcode::kScan &&
-        !root->operand(0)->hlo_regions().empty() &&
-        root->hlo()->tuple_index() == 0) {
-      continue;
-    }
-
     // Workaround(i1_to_i8_workaround)
     // Some types are stored using different types, e.g. i1 is stored in memory
     // as i8. It's important to check converted types before storing if the type
@@ -2962,6 +3042,12 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
     xtile::InsertTileOp::create(b, result, arg, tile_info.offsets(),
                                 tile_info.padded_tile_sizes(),
                                 tile_info.tile_strides());
+  }
+  // Close the loop of a tiled scan, see SetOpenScanLoop.
+  if (mlir::scf::ForOp for_op = emitter_ctx.open_scan_loop()) {
+    b.setInsertionPointToEnd(for_op.getBody());
+    mlir::scf::YieldOp::create(b, emitter_ctx.open_scan_carries());
+    emitter_ctx.ResetOpenScanLoop();
   }
   b.setInsertionPointToEnd(&fn.front());
   b.create<xtile::EntryFuncReturnOp>();

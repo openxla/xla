@@ -1846,20 +1846,32 @@ void BufferAssignment::ToProto(BufferAssignmentProto* proto) const {
         pb->set_color(value->color());
       }
 
-      // Fill buffer aliases.
-      for (const HloValue* alias :
-           alias_analysis().GetBufferContainingValue(*value).values()) {
-        if (alias->instruction() == value->instruction() &&
-            alias->index() == value->index()) {
-          continue;  // skip self-aliases
+      // Fill buffer aliases once per HloBuffer (using the first allocated
+      // HloValue as the canonical source_buffer_id) to avoid O(K^2) all-pairs
+      // serialization when an HloBuffer contains K aliased HloValues.
+      const HloBuffer& buffer =
+          alias_analysis().GetBufferContainingValue(*value);
+      const HloValue* first_allocated_value = nullptr;
+      for (const HloValue* v : buffer.values()) {
+        if (HasAllocation(*v)) {
+          first_allocated_value = v;
+          break;
         }
-        BufferAssignmentProto::BufferAlias* proto_alias =
-            proto->add_buffer_aliases();
-        proto_alias->set_source_buffer_id(value->id());
-        LogicalBufferProto::Location* aloc = proto_alias->mutable_location();
-        aloc->set_instruction_id(alias->instruction()->unique_id());
-        for (int64_t i : alias->index()) {
-          aloc->add_shape_index(i);
+      }
+      if (first_allocated_value == value) {
+        for (const HloValue* alias : buffer.values()) {
+          if (alias->instruction() == value->instruction() &&
+              alias->index() == value->index()) {
+            continue;  // skip self-aliases
+          }
+          BufferAssignmentProto::BufferAlias* proto_alias =
+              proto->add_buffer_aliases();
+          proto_alias->set_source_buffer_id(value->id());
+          LogicalBufferProto::Location* aloc = proto_alias->mutable_location();
+          aloc->set_instruction_id(alias->instruction()->unique_id());
+          for (int64_t i : alias->index()) {
+            aloc->add_shape_index(i);
+          }
         }
       }
     }
@@ -2256,6 +2268,13 @@ absl::StatusOr<bool> BufferAssigner::MaybeAssignBuffer(
     return false;
   }
 
+  if (!opts_.allow_reusing_aliased_entry_params_for_temp &&
+      allocation->is_parameter_aliased_with_output()) {
+    VLOG(4) << "Can't assign: reusing aliased parameter allocation for "
+               "temporary buffers is disabled";
+    return false;
+  }
+
   if (opts_.must_not_live_out.has_value()) {
     if (allocation->maybe_live_out()) {
       // If a buffer maybe live out, the allocation cannot contain any node
@@ -2459,7 +2478,8 @@ absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
 
       allocation->set_entry_computation_parameter(
           instruction->parameter_number(), value->index(), parameter_has_alias);
-      if (parameter_has_alias) {
+      if (parameter_has_alias &&
+          opts_.allow_reusing_aliased_entry_params_for_temp) {
         allocation_manager->RegisterAliasedEntryParameterAllocation(
             allocation->index());
       }

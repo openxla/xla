@@ -48,12 +48,15 @@ inline constexpr int64_t kAllGatherMaxBlocksPerGrid = 64;
 // Base on the experimental results.
 inline constexpr int64_t kMaxAllGatherSizeBytes = 16 * 1024 * 1024;  // 16 MB
 
+// Maximum number of operands supported by the variadic Triton all-gather
+// kernel.
+inline constexpr int64_t kAllGatherMaxNumOperands = 16;
+
 // Encapsulates the information needed to perform an all-gather via the Triton
 // collective kernel backend.
 struct AllGatherInfo {
   int64_t num_devices;
-  int64_t num_elements;
-  PrimitiveType element_type;
+  int64_t max_output_elements;
 };
 
 // Constructs an AllGatherInfo object for the given all-gather instruction.

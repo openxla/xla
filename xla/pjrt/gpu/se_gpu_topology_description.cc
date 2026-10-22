@@ -64,6 +64,11 @@ REGISTER_PJRT_TOPOLOGY_DESERIALIZER(
     [](const xla::PjRtTopologyDescriptionProto& proto) {
       return StreamExecutorGpuTopologyDescription::FromProto(proto);
     });
+REGISTER_PJRT_TOPOLOGY_DESERIALIZER(
+    Oneapi, xla::OneapiId(), xla::OneapiName(),
+    [](const xla::PjRtTopologyDescriptionProto& proto) {
+      return StreamExecutorGpuTopologyDescription::FromProto(proto);
+    });
 
 /*static*/ void StreamExecutorGpuTopologyDescription::SetupDeviceDescription(
     PjRtStreamExecutorDeviceDescription& description,
@@ -259,24 +264,34 @@ StreamExecutorGpuTopologyDescription::MakeCanonicalShapeForMemorySpace(
     int memory_space_kind_id, xla::Shape shape,
     const xla::Layout* layout) const {
   if (shape.IsToken()) {
+    if (layout != nullptr) {
+      return absl::InvalidArgumentError(
+          "Layout is not supported for token shapes.");
+    }
     return shape;
   }
+  if (!shape.IsArray()) {
+    return InvalidArgument(
+        "MakeCanonicalShapeForMemorySpace only supports array or token shapes, "
+        "got %s",
+        shape.ToString());
+  }
+  shape.clear_layout();
+  ABSL_RETURN_IF_ERROR(ShapeUtil::ValidateShapeWithOptionalLayout(shape));
 
   if (layout != nullptr) {
+    ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutForShape(*layout, shape));
     *shape.mutable_layout() = *layout;
-    if (primitive_util::IsSubByteNonPredType(shape.element_type())) {
-      ABSL_ASSIGN_OR_RETURN(
-          Layout default_layout,
-          GetDefaultLayout(shape.element_type(), shape.dimensions()));
-      if (default_layout.element_size_in_bits() !=
-          shape.layout().element_size_in_bits()) {
-        return InvalidArgument(
-            "Device buffers require %d bits per element for an element type "
-            "%s, but got layout %s for shape %s",
-            default_layout.element_size_in_bits(),
-            PrimitiveType_Name(shape.element_type()), layout->ToString(),
-            shape.ToString());
-      }
+    if (primitive_util::IsSubByteNonPredType(shape.element_type()) &&
+        shape.layout().element_size_in_bits() != 0 &&
+        shape.layout().element_size_in_bits() !=
+            primitive_util::BitWidth(shape.element_type())) {
+      return InvalidArgument(
+          "Device buffers require %d bits per element for an element type "
+          "%s, but got layout %s for shape %s",
+          primitive_util::BitWidth(shape.element_type()),
+          PrimitiveType_Name(shape.element_type()), layout->ToString(),
+          shape.ToString());
     }
   } else {
     ABSL_ASSIGN_OR_RETURN(
@@ -386,7 +401,9 @@ StreamExecutorGpuTopologyDescription::FromProto(
                        proto.platform_name() == xla::CudaName();
   const bool is_rocm = proto.platform_id() == xla::RocmId() ||
                        proto.platform_name() == xla::RocmName();
-  if (!is_cuda && !is_rocm) {
+  const bool is_oneapi = proto.platform_id() == xla::OneapiId() ||
+                         proto.platform_name() == xla::OneapiName();
+  if (!is_cuda && !is_rocm && !is_oneapi) {
     return absl::InvalidArgumentError(absl::StrCat(
         "The platform is not a GPU platform. platform_id: ",
         proto.platform_id(), ", platform_name: '", proto.platform_name(), "'"));

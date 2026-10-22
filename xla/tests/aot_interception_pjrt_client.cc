@@ -37,6 +37,7 @@ limitations under the License.
 #include "riegeli/bytes/string_writer.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"
+#include "xla/backends/gpu/runtime/collective_kernel_thunk.pb.h"
 #include "xla/debug_options_runtime_fields.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
@@ -279,12 +280,20 @@ absl::Status AOTInterceptionPjrtClient::CompareGPUExecutables(
           gpu::GpuExecutableProto::descriptor()->FindFieldByName(
               "buffer_allocations"),
           gpu::GpuExecutableProto::descriptor()->FindFieldByName(
+              "buffer_assignment"),
+          gpu::GpuExecutableProto::descriptor()->FindFieldByName(
+              "buffer_allocations_debug_summary"),
+          gpu::GpuExecutableProto::descriptor()->FindFieldByName(
               "gpu_compute_capability"),
           // Non-deterministic kernel binaries in custom-kernel thunks. Both
           // oneof variants are ignored, so a ptx<->cubin flip is tolerated.
           stream_executor::KernelLoaderSpecProto::descriptor()->FindFieldByName(
               "ptx"),
           stream_executor::KernelLoaderSpecProto::descriptor()->FindFieldByName(
+              "cubin"),
+          // Opaque collective-kernel binary, same as the KernelLoaderSpecProto
+          // payloads above.
+          gpu::CollectiveKernelThunkProto::descriptor()->FindFieldByName(
               "cubin"),
           stream_executor::ExecutableAbiVersionProto::CudaPlatformVersion::
               descriptor()

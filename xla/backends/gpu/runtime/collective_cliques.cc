@@ -324,7 +324,8 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
         ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
         ABSL_ASSIGN_OR_RETURN(std::unique_ptr<SymmetricMemory> symmetric_memory,
-                              comm->CreateSymmetricMemory(signal_addr));
+                              comm->CreateSymmetricMemory(
+                                  signal_addr, params.nccl_window_symmetric));
 
         ABSL_ASSIGN_OR_RETURN(
             tsl::TiedRef<se::MemoryAllocation> tied_signal_value,
@@ -335,9 +336,9 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
             tsl::TiedRef<SymmetricMemory> tied_symmetric_memory,
             (*clique)->Tie(std::move(symmetric_memory)));
 
-        comm->InitializeCrossDeviceBarrier(std::move(tied_signal_value),
-                                           std::move(tied_signal),
-                                           std::move(tied_symmetric_memory));
+        ABSL_RETURN_IF_ERROR(comm->InitializeCrossDeviceBarrier(
+            std::move(tied_signal_value), std::move(tied_signal),
+            std::move(tied_symmetric_memory)));
       }
     }
     if (r.use_gxl_requested) {
@@ -415,8 +416,10 @@ absl::StatusOr<CollectiveCliques> AcquireCollectiveCliques(
             stream->MemZero(&semaphore_addr, semaphore_addr.size()));
         ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
 
-        ABSL_ASSIGN_OR_RETURN(std::unique_ptr<SymmetricMemory> symmetric_memory,
-                              comm->CreateSymmetricMemory(semaphore_addr));
+        ABSL_ASSIGN_OR_RETURN(
+            std::unique_ptr<SymmetricMemory> symmetric_memory,
+            comm->CreateSymmetricMemory(semaphore_addr,
+                                        params.nccl_window_symmetric));
 
         ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<se::MemoryAllocation> tied_semaphore,
                               (*clique)->Tie(std::move(semaphore)));

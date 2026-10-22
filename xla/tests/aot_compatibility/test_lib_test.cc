@@ -265,6 +265,83 @@ TEST(TestLibTest, CompareGPUExecutables_IgnoresMachineCodeAndXlaDumpTo) {
   EXPECT_OK(AOTInterceptionPjrtClient::CompareGPUExecutables(fresh, golden));
 }
 
+TEST(TestLibTest, CompareGPUExecutables_IgnoresBufferAssignmentFields) {
+  auto golden = ParseTextProtoOrDie<HumanReadableAotExecutable>(R"pb(
+    gpu_executable {
+      buffer_allocations { values { index: 0 size: 16 } }
+      buffer_assignment {
+        logical_buffers { id: 1 size: 16 }
+        buffer_aliases {
+          source_buffer_id: 1
+          location { instruction_id: 10 }
+        }
+        buffer_aliases {
+          source_buffer_id: 1
+          location { instruction_id: 20 }
+        }
+      }
+      buffer_allocations_debug_summary: "golden_summary"
+    }
+  )pb");
+  auto fresh = ParseTextProtoOrDie<HumanReadableAotExecutable>(R"pb(
+    gpu_executable {
+      buffer_allocations { values { index: 0 size: 32 } }
+      buffer_assignment {
+        logical_buffers { id: 2 size: 32 }
+        buffer_aliases {
+          source_buffer_id: 2
+          location { instruction_id: 10 }
+        }
+      }
+      buffer_allocations_debug_summary: "fresh_summary"
+    }
+  )pb");
+  EXPECT_OK(AOTInterceptionPjrtClient::CompareGPUExecutables(fresh, golden));
+}
+
+TEST(TestLibTest, CompareGPUExecutables_IgnoresOnlyCollectiveKernelCubin) {
+  auto golden = ParseTextProtoOrDie<HumanReadableAotExecutable>(R"pb(
+    gpu_executable {
+      thunks {
+        collective_kernel_thunk {
+          kernel_name: "collective_kernel"
+          shmem_bytes: 64
+          cubin: "golden_cubin"
+        }
+      }
+    }
+  )pb");
+  auto fresh_cubin = ParseTextProtoOrDie<HumanReadableAotExecutable>(R"pb(
+    gpu_executable {
+      thunks {
+        collective_kernel_thunk {
+          kernel_name: "collective_kernel"
+          shmem_bytes: 64
+          cubin: "fresh_cubin_that_should_be_ignored"
+        }
+      }
+    }
+  )pb");
+  EXPECT_OK(
+      AOTInterceptionPjrtClient::CompareGPUExecutables(fresh_cubin, golden));
+
+  // Fields next to the cubin that the runtime acts on are still compared.
+  auto fresh_shmem = ParseTextProtoOrDie<HumanReadableAotExecutable>(R"pb(
+    gpu_executable {
+      thunks {
+        collective_kernel_thunk {
+          kernel_name: "collective_kernel"
+          shmem_bytes: 128
+          cubin: "golden_cubin"
+        }
+      }
+    }
+  )pb");
+  EXPECT_THAT(
+      AOTInterceptionPjrtClient::CompareGPUExecutables(fresh_shmem, golden),
+      StatusIs(absl::StatusCode::kInternal, HasSubstr("shmem_bytes")));
+}
+
 // Where in the executable a copy of the debug options lives. Both copies must
 // be compared, except for the fields the comparator ignores.
 enum class DebugOptionsCopy { kModuleConfig, kCompileOptions };

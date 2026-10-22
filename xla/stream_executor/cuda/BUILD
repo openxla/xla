@@ -563,6 +563,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":cuda_compute_capability",
+        ":cuda_device_allocator",
         ":cuda_diagnostics",
         ":cuda_platform_id",
         ":cuda_status",
@@ -2145,6 +2146,9 @@ xla_test(
         "//xla/stream_executor/gpu:gpu_test_kernels",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/log:log_entry",
+        "@com_google_absl//absl/log:log_sink",
+        "@com_google_absl//absl/log:log_sink_registry",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",  # build_cleaner: keep
         "@com_google_absl//absl/strings",
@@ -2859,6 +2863,7 @@ cuda_library(
         ":cuda_platform_id",
         "//xla:shape_util",
         "//xla:types",
+        "//xla:xla_data_proto_cc",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:platform",
         "//xla/stream_executor/gpu:buffer_comparator_kernel",
@@ -3512,4 +3517,46 @@ xla_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
     ],
+)
+
+xla_test(
+    name = "bfc_allocator_multigpu_test",
+    timeout = "moderate",
+    srcs = ["bfc_allocator_multigpu_test.cc"],
+    backend_tags = {"gpu": ["multi_gpu"]},
+    backends = ["gpu"],
+    tags = ["cuda-only"],
+    deps = [
+        ":cuda_platform_id",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/gpu:gpu_executor_header",
+        "//xla/stream_executor/integrations:device_mem_allocator",
+        "//xla/tsl/cuda:nccl",
+        "//xla/tsl/framework:bfc_allocator",
+        "//xla/tsl/framework:device_id",
+        "//xla/tsl/platform:env",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cuda_headers",
+    ] + if_google(["//xla/tsl/framework:allocator"]),
+)
+
+xla_test(
+    name = "bfc_allocator_test",
+    srcs = ["bfc_allocator_test.cc"],
+    backends = ["gpu"],
+    tags = ["cuda-only"],
+    deps = [
+        ":cuda_platform_id",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/integrations:device_mem_allocator",
+        "//xla/tsl/framework:bfc_allocator",
+        "//xla/tsl/framework:device_id",
+        "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cuda_headers",
+    ] + if_google(["//xla/tsl/framework:allocator"]),
 )

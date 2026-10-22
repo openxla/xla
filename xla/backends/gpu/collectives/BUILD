@@ -1,7 +1,10 @@
 load(
+    "@config_rocm_hipcc//rocm:build_defs.bzl",
+    "rocm_library",
+)
+load(
     "@local_config_rocm//rocm:build_defs.bzl",
     "if_rocm_is_configured",
-    "rocm_library",
 )
 load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl_is_configured")
 load("//xla:xla.default.bzl", "xla_cc_test")
@@ -316,7 +319,6 @@ xla_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",  # fixdeps: keep
-        "@tsl//tsl/platform:casts",
     ] + if_cuda_or_rocm_is_configured([
         ":nccl_or_rccl_collectives",
     ]),
@@ -479,9 +481,11 @@ xla_test(
         "//xla/tsl/util:tied_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:globals",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",  # buildcleaner: keep
     ],
@@ -501,6 +505,7 @@ cc_library(
         "//xla/core/collectives:registered_memory",
         "//xla/core/collectives:symmetric_memory",
         "//xla/ffi/api:c_api",
+        "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:memory_allocation",
@@ -1121,11 +1126,13 @@ cc_library(
         "//xla/core/collectives:registered_memory",
         "//xla/core/collectives:symmetric_memory",
         "//xla/ffi/api:c_api",
+        "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:memory_allocation",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/gpu:multi_gpu_barrier_kernel",
         "//xla/tsl/concurrency:executor",
         "//xla/tsl/cuda:nccl",
         "//xla/tsl/platform:env",
