@@ -73,7 +73,8 @@ CustomKernelThunk::CustomKernelThunk(
       device_states_(devices_in_process) {}
 
 std::string CustomKernelThunk::ToString(int indent) const {
-  return custom_kernel_.ToString();
+  return absl::StrCat(custom_kernel_.ToString(),
+                      use_pdl_ ? " use_pdl: true" : "");
 }
 
 absl::Status CustomKernelThunk::Initialize(const InitializeParams& params) {

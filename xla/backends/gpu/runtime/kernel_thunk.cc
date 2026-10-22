@@ -81,10 +81,12 @@ KernelThunk::KernelThunk(Thunk::ThunkInfo thunk_info, std::string kernel_name,
 
 std::string KernelThunk::ToString(int indent) const {
   return absl::StrFormat(
-      "kernel=%s, profile_annotation=%s, launch dimensions=%s, cluster_dim=%s",
+      "kernel=%s, profile_annotation=%s, launch dimensions=%s, "
+      "cluster_dim=%s%s",
       kernel_name_, thunk_info().profile_annotation,
       launch_dimensions_.ToString(),
-      cluster_dim_.has_value() ? cluster_dim_->ToString() : "nullopt");
+      cluster_dim_.has_value() ? cluster_dim_->ToString() : "nullopt",
+      use_pdl_ ? ", use_pdl=true" : "");
 }
 
 absl::StatusOr<ThunkProto> KernelThunk::ToProto() const {
