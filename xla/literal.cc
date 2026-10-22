@@ -1830,116 +1830,236 @@ void LiteralBase::EachCellAsString(
 
 namespace {
 
-template <typename NativeSrcT, typename NativeDestT>
-void ConvertBetweenNativeTypes(absl::Span<const NativeSrcT> src_data,
-                               void* dst_base) {
-  static_assert(!std::is_same_v<NativeSrcT, NativeDestT>);
-  auto converter = [](NativeSrcT src) -> NativeDestT {
-    // C++ [conv.bool]p1:
-    //   A prvalue of arithmetic [...] type can be converted to a prvalue of
-    //   type bool. A zero value [...] is converted to false; any other value is
-    //   converted to true.
-    // C++ [conv.fpint]p1:
-    //   [...] The behavior is undefined if the truncated value cannot be
-    //   represented in the destination type.
-    //
-    // Using static_cast to convert a float to an integral type other than bool
-    // may be undefined if the value's magnitude is too large or it is a NaN.
-    // Let's choose saturating arithmetic as it captures the spirit of infinity
-    // and arbitrarily map NaN to zero.
-    if constexpr (!std::is_same_v<NativeDestT, bool> &&
-                  !std::numeric_limits<NativeSrcT>::is_integer &&
-                  std::numeric_limits<NativeDestT>::is_integer) {
-      // NaN check.
-      if (src != src) {
-        return NativeDestT{0};
-      }
-
-      // Clamp values that cannot fit in the destination type to avoid undefined
-      // behavior.
-      // An N-bit integer has a max of 2^N - 1 so max() + 1 is 2^N. Ensure
-      // double can losslessly hold.
-      static_assert((std::numeric_limits<double>::max_exponent - 1) >=
-                    std::numeric_limits<NativeDestT>::digits);
-      if (static_cast<double>(src) >=
-          static_cast<double>(std::numeric_limits<NativeDestT>::max())) {
-        return std::numeric_limits<NativeDestT>::max();
-      }
-      if (static_cast<double>(src) <=
-          static_cast<double>(std::numeric_limits<NativeDestT>::lowest())) {
-        return std::numeric_limits<NativeDestT>::lowest();
-      }
-    }
-
-    // TODO(b/370786669): Once ml_dtypes is updated to include
-    // https://github.com/jax-ml/ml_dtypes/pull/205, do not special-case e3m4 by
-    // casting to half first.
-    if constexpr (sizeof(src) == 1 &&
-                  std::is_same_v<NativeDestT, tsl::float8_e3m4>) {
-      return static_cast<NativeDestT>(static_cast<half>(src));
-    } else {
-      return static_cast<NativeDestT>(src);
-    }
-  };
-
-  NativeDestT* dest_data = static_cast<NativeDestT*>(dst_base);
-  for (const NativeSrcT& src : src_data) {
-    *(dest_data++) = converter(src);
+template <typename IntT>
+IntT SaturateDoubleToInt(double src) {
+  // C++ [conv.bool]p1:
+  //   A prvalue of arithmetic [...] type can be converted to a prvalue of
+  //   type bool. A zero value [...] is converted to false; any other value is
+  //   converted to true.
+  // C++ [conv.fpint]p1:
+  //   [...] The behavior is undefined if the truncated value cannot be
+  //   represented in the destination type.
+  //
+  // Using static_cast to convert a float to an integral type other than bool
+  // may be undefined if the value's magnitude is too large or it is a NaN.
+  // Let's choose saturating arithmetic as it captures the spirit of infinity
+  // and arbitrarily map NaN to zero.
+  if (src != src) {
+    return IntT{0};
   }
-}
-
-template <PrimitiveType kSrcType>
-absl::Status ConvertIfDestTypeMatches(const LiteralBase& src_literal,
-                                      MutableLiteralBase& dst_literal) {
-  DCHECK(dst_literal.shape().IsArray());
-  using NativeSrcT = NativeTypeOf<kSrcType>;
-  // Pass raw data Span/pointers to called template methods to avoid duplicating
-  // the Literal method calls to many time which hurts code size.
-  auto src_data = src_literal.data<NativeSrcT>();
-  void* dst_base = dst_literal.untyped_data();
-  DCHECK_EQ(src_data.size(), dst_literal.element_count());
-  return primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> absl::Status {
-        if constexpr (primitive_util::IsComplexType(kSrcType) &&
-                      !primitive_util::IsComplexType(primitive_type_constant)) {
-          return Unimplemented("%s from type %s to type %s is not implemented.",
-                               "Converting", PrimitiveType_Name(kSrcType),
-                               PrimitiveType_Name(primitive_type_constant()));
-        } else if constexpr (kSrcType != primitive_type_constant) {
-          using NativeDestT = NativeTypeOf<primitive_type_constant>;
-          ConvertBetweenNativeTypes<NativeSrcT, NativeDestT>(src_data,
-                                                             dst_base);
-        }
-        return absl::OkStatus();
-      },
-      dst_literal.shape().element_type());
+  // Clamp values that cannot fit in the destination type to avoid undefined
+  // behavior.
+  // An N-bit integer has a max of 2^N - 1 so max() + 1 is 2^N. Ensure
+  // double can losslessly hold.
+  static_assert((std::numeric_limits<double>::max_exponent - 1) >=
+                std::numeric_limits<IntT>::digits);
+  if (src >= static_cast<double>(std::numeric_limits<IntT>::max())) {
+    return std::numeric_limits<IntT>::max();
+  }
+  if (src <= static_cast<double>(std::numeric_limits<IntT>::lowest())) {
+    return std::numeric_limits<IntT>::lowest();
+  }
+  return static_cast<IntT>(src);
 }
 
 absl::StatusOr<Literal> ConvertSwitch(const LiteralBase& literal,
                                       PrimitiveType primitive_dest_type) {
   TF_RET_CHECK(literal.shape().IsArray());
-  if (literal.shape().element_type() == primitive_dest_type) {
+  PrimitiveType src_type = literal.shape().element_type();
+  if (src_type == primitive_dest_type) {
     return literal.Clone();
   }
   // Source Array type requirement is ensured before.
   if (!primitive_util::IsArrayType(primitive_dest_type) ||
-      !primitive_util::IsArrayType(literal.shape().element_type())) {
+      !primitive_util::IsArrayType(src_type) ||
+      (primitive_util::IsComplexType(src_type) &&
+       !primitive_util::IsComplexType(primitive_dest_type))) {
     return Unimplemented("%s from type %s to type %s is not implemented.",
-                         "Converting",
-                         PrimitiveType_Name(literal.shape().element_type()),
+                         "Converting", PrimitiveType_Name(src_type),
                          PrimitiveType_Name(primitive_dest_type));
   }
   // At this point, we know both src & dst are array types, while src is not
-  // complex type, so we can allocate the result literal here to avoid
-  // duplicating it N^2 times in the conversion implementation.
+  // complex type (unless dst is also complex), so we can allocate the result
+  // literal here to avoid duplicating it N^2 times in the conversion
+  // implementation.
   Literal result(
       ShapeUtil::ChangeElementType(literal.shape(), primitive_dest_type));
-  ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
-      [&](auto primitive_type_constant) -> absl::Status {
-        return ConvertIfDestTypeMatches<primitive_type_constant>(literal,
-                                                                 result);
-      },
-      literal.shape().element_type()));
+  int64_t total_elements = literal.element_count();
+  if (primitive_util::IsComplexType(src_type)) {
+    src_type = (src_type == C64) ? F32 : F64;
+    primitive_dest_type = (primitive_dest_type == C64) ? F32 : F64;
+    total_elements *= 2;
+  }
+
+  const void* src_base = literal.untyped_data();
+  void* dst_base = result.untyped_data();
+  const bool src_is_int =
+      primitive_util::IsIntegralType(src_type) || src_type == PRED;
+  const bool dst_is_int = primitive_util::IsIntegralType(primitive_dest_type) ||
+                          primitive_dest_type == PRED;
+  const bool src_is_signed = primitive_util::IsSignedIntegralType(src_type);
+  const bool dst_is_signed =
+      primitive_util::IsSignedIntegralType(primitive_dest_type);
+  const bool dst_is_f64 =
+      primitive_dest_type == F64 || primitive_dest_type == C128;
+  const bool dst_is_f32 =
+      primitive_dest_type == F32 || primitive_dest_type == C64;
+
+  // Instead of instantiating a 32x32 Cartesian product of conversion loops
+  // across all array PrimitiveTypes (which duplicates software-emulated narrow
+  // float and sub-byte integer conversions across >600 loop pairs), convert in
+  // L1-sized chunks through canonical 64-bit integer (uint64_t),
+  // single-precision (float), and double-precision (double) buffers.
+  constexpr int64_t kChunkSize = 512;
+  uint64_t int_buf[kChunkSize];
+  float f32_buf[kChunkSize];
+  double f64_buf[kChunkSize];
+
+  for (int64_t offset = 0; offset < total_elements; offset += kChunkSize) {
+    const int64_t count = std::min(kChunkSize, total_elements - offset);
+
+    primitive_util::ArrayTypeSwitch(
+        [&](auto type_const) {
+          using SrcT = NativeTypeOf<type_const>;
+          if constexpr (!primitive_util::IsComplexType(type_const)) {
+            const SrcT* src = static_cast<const SrcT*>(src_base) + offset;
+            if constexpr (std::numeric_limits<SrcT>::is_integer) {
+              using WideIntT =
+                  std::conditional_t<std::numeric_limits<SrcT>::is_signed,
+                                     int64_t, uint64_t>;
+              for (int64_t i = 0; i < count; ++i) {
+                int_buf[i] =
+                    static_cast<uint64_t>(static_cast<WideIntT>(src[i]));
+              }
+            } else if constexpr (std::is_same_v<SrcT, double>) {
+              for (int64_t i = 0; i < count; ++i) {
+                f64_buf[i] = src[i];
+              }
+            } else {
+              for (int64_t i = 0; i < count; ++i) {
+                f32_buf[i] = static_cast<float>(src[i]);
+              }
+            }
+          }
+        },
+        src_type);
+
+    if (src_is_int && !dst_is_int) {
+      if (dst_is_f64) {
+        if (src_is_signed) {
+          for (int64_t i = 0; i < count; ++i) {
+            f64_buf[i] = static_cast<double>(static_cast<int64_t>(int_buf[i]));
+          }
+        } else {
+          for (int64_t i = 0; i < count; ++i) {
+            f64_buf[i] = static_cast<double>(int_buf[i]);
+          }
+        }
+      } else if (dst_is_f32) {
+        if (src_is_signed) {
+          for (int64_t i = 0; i < count; ++i) {
+            f32_buf[i] = static_cast<float>(static_cast<int64_t>(int_buf[i]));
+          }
+        } else {
+          for (int64_t i = 0; i < count; ++i) {
+            f32_buf[i] = static_cast<float>(int_buf[i]);
+          }
+        }
+      } else if (src_is_signed) {
+        for (int64_t i = 0; i < count; ++i) {
+          f32_buf[i] = Eigen::half_impl::narrow_to_float(
+              static_cast<int64_t>(int_buf[i]));
+        }
+      } else {
+        for (int64_t i = 0; i < count; ++i) {
+          f32_buf[i] = Eigen::half_impl::narrow_to_float(int_buf[i]);
+        }
+      }
+    } else if (!src_is_int && dst_is_int) {
+      if (src_type != F64) {
+        if (primitive_dest_type == PRED) {
+          for (int64_t i = 0; i < count; ++i) {
+            int_buf[i] = static_cast<bool>(f32_buf[i]);
+          }
+        } else {
+          for (int64_t i = 0; i < count; ++i) {
+            f64_buf[i] = static_cast<double>(f32_buf[i]);
+          }
+        }
+      }
+      if (primitive_dest_type == PRED) {
+        if (src_type == F64) {
+          for (int64_t i = 0; i < count; ++i) {
+            int_buf[i] = static_cast<bool>(f64_buf[i]);
+          }
+        }
+      } else if (dst_is_signed) {
+        for (int64_t i = 0; i < count; ++i) {
+          int_buf[i] =
+              static_cast<uint64_t>(SaturateDoubleToInt<int64_t>(f64_buf[i]));
+        }
+      } else {
+        for (int64_t i = 0; i < count; ++i) {
+          int_buf[i] = SaturateDoubleToInt<uint64_t>(f64_buf[i]);
+        }
+      }
+    } else if (!src_is_int && !dst_is_int) {
+      if (src_type == F64 && dst_is_f32) {
+        for (int64_t i = 0; i < count; ++i) {
+          f32_buf[i] = static_cast<float>(f64_buf[i]);
+        }
+      } else if (src_type == F64 && !dst_is_f64) {
+        for (int64_t i = 0; i < count; ++i) {
+          f32_buf[i] = Eigen::half_impl::narrow_to_float(f64_buf[i]);
+        }
+      } else if (src_type != F64 && dst_is_f64) {
+        for (int64_t i = 0; i < count; ++i) {
+          f64_buf[i] = static_cast<double>(f32_buf[i]);
+        }
+      }
+    }
+
+    primitive_util::ArrayTypeSwitch(
+        [&](auto type_const) {
+          using DstT = NativeTypeOf<type_const>;
+          DstT* dst = static_cast<DstT*>(dst_base) + offset;
+          if constexpr (std::is_same_v<DstT, bool>) {
+            for (int64_t i = 0; i < count; ++i) {
+              dst[i] = static_cast<bool>(int_buf[i]);
+            }
+          } else if constexpr (std::numeric_limits<DstT>::is_integer) {
+            using WideIntT =
+                std::conditional_t<std::numeric_limits<DstT>::is_signed,
+                                   int64_t, uint64_t>;
+            if constexpr (sizeof(DstT) < sizeof(WideIntT)) {
+              if (!src_is_int) {
+                constexpr WideIntT kMin =
+                    static_cast<WideIntT>(std::numeric_limits<DstT>::lowest());
+                constexpr WideIntT kMax =
+                    static_cast<WideIntT>(std::numeric_limits<DstT>::max());
+                for (int64_t i = 0; i < count; ++i) {
+                  dst[i] = static_cast<DstT>(std::clamp(
+                      static_cast<WideIntT>(int_buf[i]), kMin, kMax));
+                }
+                return;
+              }
+            }
+            for (int64_t i = 0; i < count; ++i) {
+              dst[i] = static_cast<DstT>(static_cast<WideIntT>(int_buf[i]));
+            }
+          } else if constexpr (std::is_same_v<DstT, double> ||
+                               std::is_same_v<DstT, complex128>) {
+            for (int64_t i = 0; i < count; ++i) {
+              dst[i] = static_cast<DstT>(f64_buf[i]);
+            }
+          } else {
+            for (int64_t i = 0; i < count; ++i) {
+              dst[i] = static_cast<DstT>(f32_buf[i]);
+            }
+          }
+        },
+        primitive_dest_type);
+  }
   return result;
 }
 
