@@ -26,6 +26,7 @@ package(
     default_visibility = internal_visibility([
         "//learning/brain/google/runtime:__subpackages__",
         "//learning/brain/tpu/runtime/hal/internal:__subpackages__",
+        "//learning/brain/tpu/runtime/hal/xos:__subpackages__",
         "//learning/serving/model_servers:__subpackages__",
         "//xla:internal",
     ]),
@@ -60,6 +61,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
     ],
+    alwayslink = 1,
 )
 
 cc_library(
