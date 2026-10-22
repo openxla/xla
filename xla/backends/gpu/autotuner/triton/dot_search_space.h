@@ -234,6 +234,10 @@ class TritonDotFusionSearchSpace {
       const ConfigWithNotes& config,
       std::vector<ConfigWithNotes>& updated_configs) const;
 
+  // Extend the passed configs with kpack values.
+  void AddKpackParameter(const ConfigWithNotes& config,
+                         std::vector<ConfigWithNotes>& updated_configs) const;
+
   // The order of these fields is important: the values of those defined earlier
   // are used to compute the values of later ones.
   se::DeviceDescription device_description_;

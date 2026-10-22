@@ -495,7 +495,8 @@ absl::StatusOr<TritonKernelSource> LowerTritonToLlvmDialect(
                           enable_pdl);
 
   CreateTritonPipeline(&pm, gpu_cc, num_warps, num_ctas, num_stages,
-                       block_level_parameters.mfma_size);
+                       block_level_parameters.mfma_size,
+                       block_level_parameters.kpack);
 
   // Triton generates pointers to the global address space, while XLA needs a
   // kernel signature with pointers to the generic address space.

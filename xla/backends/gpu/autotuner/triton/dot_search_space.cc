@@ -149,10 +149,14 @@ std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::GenerateConfigs(
     ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddWavesPerEuParameter);
     // The default path keeps only configs listed in the hint tables, and only
     // mi300.txtpb lists the variants.
-    if (device_description_.gpu_compute_capability()
-            .rocm_compute_capability()
-            ->has_mfma_instr_support()) {
+    const stream_executor::RocmComputeCapability& rocm_cc =
+        *device_description_.gpu_compute_capability().rocm_compute_capability();
+    if (rocm_cc.has_mfma_instr_support()) {
       ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddMfmaSizeParameter);
+    }
+    // gfx950 always runs with kpack 1.
+    if (rocm_cc.has_mfma_instr_support() && !rocm_cc.gfx9_mi350()) {
+      ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddKpackParameter);
     }
   }
 
@@ -723,6 +727,29 @@ void TritonDotFusionSearchSpace::AddMfmaSizeParameter(
   ConfigWithNotes new_config = config;
   new_config.config.mfma_size = mfma_size;
   VLOG(10) << "Adding mfma_size parameter: config = " << new_config.ToString();
+  updated_configs.push_back(new_config);
+}
+
+void TritonDotFusionSearchSpace::AddKpackParameter(
+    const ConfigWithNotes& config,
+    std::vector<ConfigWithNotes>& updated_configs) const {
+  updated_configs.push_back(config);
+  const TritonGemmConfig& c = config.config;
+  // Triton does not pack the 4x64 MFMAs used on tiles under 16.
+  if (std::min(c.block_m, c.block_n) < 16) {
+    return;
+  }
+  // Triton ignores kpack unless block_k spans two MFMA K steps: 128 bits on
+  // 32x32 MFMAs, 256 bits on 16x16 (always used for f64).
+  const bool uses_mfma_32 = c.mfma_size == 0 && operand_bitwidth_ < 64 &&
+                            std::min(c.block_m, c.block_n) >= 32;
+  const int64_t k_step_bits = uses_mfma_32 ? 128 : 256;
+  if (c.block_k * operand_bitwidth_ < 2 * k_step_bits) {
+    return;
+  }
+  ConfigWithNotes new_config = config;
+  new_config.config.kpack = 2;
+  VLOG(10) << "Adding kpack parameter: config = " << new_config.ToString();
   updated_configs.push_back(new_config);
 }
 
