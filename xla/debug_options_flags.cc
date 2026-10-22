@@ -3470,9 +3470,10 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options
           ->xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(),
       "Buffers of at least this size in bytes are fenced by the "
-      "SchedulerMemoryFencing pass. -1 disables the pass, 0 uses 1% of the "
-      "scheduler memory limit, and positive values are capped at the scheduler "
-      "memory limit."));
+      "SchedulerMemoryFencing pass. Negative values disable it. 0 searches up "
+      "to eight fence sets for the lowest estimated peak memory, breaking "
+      "ties by estimated latency, then replays the winner. Positive values "
+      "are capped at the scheduler memory limit. Slack is fixed at 1."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_scheduler_memory_fencing_slack_windows",
       int32_setter_for(
@@ -3480,8 +3481,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
               set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows),
       debug_options
           ->xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
-      "How many async operation windows the users of a fenced buffer may be "
-      "deferred past the buffer's last-use window in the pre-LHS schedule."));
+      "Deprecated: scheduler memory fencing uses fixed slack 1. When fencing "
+      "is enabled, explicitly setting any other value is an error."));
   flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",
       bool_setter_for(&DebugOptions::set_xla_pjrt_allow_auto_layout_in_hlo),

@@ -6422,6 +6422,39 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "scheduler_memory_fencing_autotuner",
+    srcs = ["scheduler_memory_fencing_autotuner.cc"],
+    hdrs = ["scheduler_memory_fencing_autotuner.h"],
+    deps = [
+        ":scheduler_memory_fencing",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "scheduler_memory_fencing_autotuner_test",
+    srcs = ["scheduler_memory_fencing_autotuner_test.cc"],
+    deps = [
+        ":hlo_proto_cc",
+        ":scheduler_memory_fencing",
+        ":scheduler_memory_fencing_autotuner",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 xla_cc_test(
     name = "scheduler_memory_fencing_test",
     srcs = ["scheduler_memory_fencing_test.cc"],

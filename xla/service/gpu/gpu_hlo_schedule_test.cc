@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -29,6 +26,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/log_severity.h"
 #include "absl/log/log.h"
@@ -37,9 +36,9 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
-#include "google/protobuf/text_format.h"
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
+#include "google/protobuf/text_format.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -52,10 +51,13 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/backend.h"
+#include "xla/service/buffer_value.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/heap_simulator/heap_simulator.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/logical_buffer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -66,6 +68,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -195,7 +198,7 @@ TEST(GpuHloScheduleFencingThresholdTest, ResolvesConfiguredThreshold) {
             std::nullopt);
   EXPECT_EQ(GetSchedulerMemoryFencingThresholdBytes(
                 /*configured_threshold_bytes=*/0, kMemoryLimit),
-            100);
+            0);
   EXPECT_EQ(GetSchedulerMemoryFencingThresholdBytes(
                 /*configured_threshold_bytes=*/123, kMemoryLimit),
             123);
@@ -243,6 +246,64 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingDisabledOmitsFence) {
   ASSERT_NE(wg, nullptr);
   ASSERT_NE(cp2s, nullptr);
   EXPECT_THAT(wg->control_successors(), Not(Contains(cp2s)));
+}
+
+TEST_F(GpuHloScheduleFencingTest, AutomaticFencingRetainsLowestEstimatedPeak) {
+  auto peak = [&](HloModule* module) -> absl::StatusOr<int64_t> {
+    auto* compiler = dynamic_cast<GpuCompiler*>(backend().compiler());
+    auto alias_info = compiler->GetAliasInfo(
+        backend().default_stream_executor()->GetDeviceDescription());
+    auto aliases = HloAliasAnalysis::Run(module, alias_info.get());
+    if (!aliases.ok()) return aliases.status();
+    LogicalBuffer::SizeFunction size = [&](const BufferValue& buffer) {
+      return ShapeUtil::ByteSizeOf(buffer.shape(), compiler->GetPointerSize());
+    };
+    return HeapSimulator::MinimumMemoryForModule(module->schedule(), **aliases,
+                                                 alias_info.get(), &size);
+  };
+  ASSERT_OK_AND_ASSIGN(
+      auto automatic,
+      ParseAndReturnVerifiedModule(kFencingHloText, GetFencingModuleConfig(0)));
+  ASSERT_OK(ScheduleGpuModule(automatic.get()).status());
+  ASSERT_OK(automatic->schedule().Verify());
+  ASSERT_OK_AND_ASSIGN(int64_t automatic_peak, peak(automatic.get()));
+  // This small HLO's 4 MiB buffers are below the fixed anchors; refinement must
+  // discover their size class. Include the unfenced baseline in the comparison.
+  for (int64_t threshold : {-1LL, 4LL * 1024 * 1024}) {
+    ASSERT_OK_AND_ASSIGN(
+        auto explicit_module,
+        ParseAndReturnVerifiedModule(kFencingHloText,
+                                     GetFencingModuleConfig(threshold)));
+    ASSERT_OK(ScheduleGpuModule(explicit_module.get()).status());
+    ASSERT_OK_AND_ASSIGN(int64_t explicit_peak, peak(explicit_module.get()));
+    EXPECT_LE(automatic_peak, explicit_peak);
+  }
+}
+
+TEST_F(GpuHloScheduleFencingTest, AutomaticFencingHonorsPassFilter) {
+  HloModuleConfig config = GetFencingModuleConfig(0);
+  config.mutable_debug_options().add_xla_disable_hlo_passes(
+      "scheduler-memory-fencing");
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kFencingHloText, config));
+  ASSERT_OK(ScheduleGpuModule(module.get()).status());
+  ASSERT_OK(module->schedule().Verify());
+  const HloInstruction* wg =
+      module->entry_computation()->GetInstructionWithName("wg");
+  EXPECT_TRUE(wg->control_successors().empty());
+}
+
+TEST_F(GpuHloScheduleFencingTest, RejectsNonconstantSlackWhenEnabled) {
+  for (int64_t threshold : {0, 1024}) {
+    HloModuleConfig config = GetFencingModuleConfig(threshold);
+    config.mutable_debug_options()
+        .set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows(2);
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseAndReturnVerifiedModule(kFencingHloText, config));
+    EXPECT_THAT(ScheduleGpuModule(module.get()).status(),
+                absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                       ::testing::HasSubstr("fixed slack 1")));
+  }
 }
 
 // Test of a single stream, where data dependencies fully determine the

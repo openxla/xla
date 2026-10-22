@@ -156,9 +156,10 @@ FencedUsers FindFencedUsers(const HloBuffer& buffer,
 
 }  // namespace
 
-absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
+absl::StatusOr<std::vector<SchedulerMemoryFencing::BufferFences>>
+SchedulerMemoryFencing::GetFences(
     HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+    const absl::flat_hash_set<absl::string_view>& execution_threads) const {
   if (!module->has_schedule()) {
     return absl::FailedPreconditionError(
         "SchedulerMemoryFencing requires a scheduled module.");
@@ -178,9 +179,7 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
 
   absl::flat_hash_map<const HloComputation*, ComputationFencingInfo>
       computation_infos;
-  absl::flat_hash_set<std::pair<HloInstruction*, HloInstruction*>> added_edges;
-  int64_t buffers_considered = 0;
-  int64_t edges_added = 0;
+  std::vector<BufferFences> result;
 
   for (const HloBuffer& buffer : alias_analysis->buffers()) {
     const int64_t buffer_size = shape_size_bytes_(buffer.values()[0]->shape());
@@ -192,7 +191,6 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
     if (!fenceable_computations.contains(computation)) {
       continue;
     }
-    ++buffers_considered;
 
     auto info_it = computation_infos.find(computation);
     if (info_it == computation_infos.end()) {
@@ -235,32 +233,39 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
     }
     HloInstruction* target = info.windows[target_index].start;
 
-    // Fence every user: the buffer stays live until all of its users have
-    // executed, so a single fenced user would not bound the live range — an
-    // unfenced sibling could still be deferred arbitrarily far.
+    BufferFences buffer_fences{buffer_size, {}};
+    // All users must finish before the buffer can be released. Only omit edges
+    // already implied by the original graph, keeping the plan independent of
+    // which thresholds the caller will evaluate.
     for (HloInstruction* user : fenced.users) {
-      if (user == target || !added_edges.insert({user, target}).second) {
-        continue;
+      if (user != target && !info.reachability->IsReachable(user, target)) {
+        buffer_fences.edges.emplace_back(user, target);
       }
-      // Skip edges that are already implied by the dependency graph. The
-      // reachability map is not updated for added edges; a stale map can only
-      // let a redundant (but still forward and acyclic) edge through.
-      if (info.reachability->IsReachable(user, target)) {
-        continue;
-      }
-      ABSL_RETURN_IF_ERROR(user->AddControlDependencyTo(target));
-      ++edges_added;
-      VLOG(2) << "Fenced buffer " << buffer.ToString() << " (" << buffer_size
-              << " bytes): control edge " << user->name() << " -> "
-              << target->name();
+    }
+    if (!buffer_fences.edges.empty()) {
+      result.push_back(std::move(buffer_fences));
     }
   }
+  return result;
+}
 
-  VLOG(1) << "SchedulerMemoryFencing: considered " << buffers_considered
-          << " buffers >= " << size_threshold_bytes_ << " bytes, added "
-          << edges_added << " control edges (slack_windows=" << slack_windows_
-          << ").";
-  return edges_added > 0;
+absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  ABSL_ASSIGN_OR_RETURN(std::vector<BufferFences> buffers,
+                        GetFences(module, execution_threads));
+  absl::flat_hash_set<std::pair<HloInstruction*, HloInstruction*>> added_edges;
+  for (const BufferFences& buffer : buffers) {
+    for (const auto& [user, target] : buffer.edges) {
+      if (added_edges.insert({user, target}).second) {
+        ABSL_RETURN_IF_ERROR(user->AddControlDependencyTo(target));
+      }
+    }
+  }
+  VLOG(1) << "SchedulerMemoryFencing: added " << added_edges.size()
+          << " control edges (threshold_bytes=" << size_threshold_bytes_
+          << ", slack_windows=" << slack_windows_ << ").";
+  return !added_edges.empty();
 }
 
 }  // namespace xla

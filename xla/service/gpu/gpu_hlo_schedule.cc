@@ -40,15 +40,12 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/backends/gpu/transforms/pgle_accuracy_checker.h"
 #include "xla/backends/gpu/transforms/scheduling_instruction_annotator.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
@@ -73,19 +70,26 @@ limitations under the License.
 #include "xla/service/gpu/model/analytical_latency_estimator.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/sol_latency_estimator.h"
+#include "xla/service/heap_simulator/heap_simulator.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/service/legalize_scheduling_annotations.h"
+#include "xla/service/logical_buffer.h"
 #include "xla/service/p2p_schedule_preparation.h"
 #include "xla/service/profile_guided_latency_estimator.h"
 #include "xla/service/scheduler_memory_fencing.h"
+#include "xla/service/scheduler_memory_fencing_autotuner.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -674,26 +678,86 @@ DelayMoveToHostAsyncStartCandidateCondition(
   return std::nullopt;
 }
 
+// Plan under the existing pass name so HLO pass filters also govern automatic
+// fencing. Unlike running the pass, collecting a plan leaves the graph intact.
+class SchedulerMemoryFencingPlanner : public SchedulerMemoryFencing {
+ public:
+  using SchedulerMemoryFencing::SchedulerMemoryFencing;
+  const std::vector<BufferFences>& buffers() const { return buffers_; }
+
+ protected:
+  absl::StatusOr<bool> RunImpl(HloModule* module,
+                               const absl::flat_hash_set<absl::string_view>&
+                                   execution_threads) override {
+    ABSL_ASSIGN_OR_RETURN(buffers_, GetFences(module, execution_threads));
+    return false;
+  }
+
+ private:
+  std::vector<BufferFences> buffers_;
+};
+
 // Adds necessary passes to perform latency hiding estimations for the
 // `pipeline`.
 absl::Status RunLatencyHidingSchedulerPasses(
     HloModule* module, int pointer_size, absl::string_view fingerprint,
     uint64_t memory_limit, const se::DeviceDescription& gpu_device_info,
-    mlir::MLIRContext* mlir_context, const GpuAliasInfo* alias_info) {
+    mlir::MLIRContext* mlir_context, const GpuAliasInfo* alias_info,
+    SchedulerMemoryFencingCost* tuning_cost = nullptr) {
   tsl::profiler::TraceMe traceme("RunLatencyHidingSchedulerPasses");
   HloPassPipeline pipeline("latency-hiding-scheduler");
   const DebugOptions& options = module->config().debug_options();
+  const int64_t configured_threshold =
+      options.has_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes()
+          ? options
+                .xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes()
+          : -1;
+  if (configured_threshold >= 0 &&
+      options
+          .has_xla_gpu_experimental_scheduler_memory_fencing_slack_windows() &&
+      options.xla_gpu_experimental_scheduler_memory_fencing_slack_windows() !=
+          1) {
+    return absl::InvalidArgumentError(
+        "Scheduler memory fencing uses fixed slack 1; the slack_windows flag "
+        "is deprecated and only accepts 1");
+  }
+  if (configured_threshold == 0 && tuning_cost == nullptr) {
+    // Legalize once, before planning fences, matching the explicit-threshold
+    // pipeline. Every trial starts from this same reference graph and schedule.
+    HloPassPipeline prepare("latency-hiding-scheduler");
+    prepare.AddPass<LegalizeSchedulingAnnotations>(
+        SchedulingAnnotationsConfig());
+    auto& planner = prepare.AddPass<SchedulerMemoryFencingPlanner>(
+        ShapeSizeBytesFunction(pointer_size, Layout::kDefaultMemorySpace),
+        /*size_threshold_bytes=*/1, /*slack_windows=*/1, alias_info);
+    ABSL_RETURN_IF_ERROR(prepare.Run(module).status());
+    return AutotuneSchedulerMemoryFencing(
+        module, planner.buffers(), memory_limit,
+        [&](HloModule* candidate)
+            -> absl::StatusOr<SchedulerMemoryFencingCost> {
+          SchedulerMemoryFencingCost cost;
+          ABSL_RETURN_IF_ERROR(RunLatencyHidingSchedulerPasses(
+              candidate, pointer_size, fingerprint, memory_limit,
+              gpu_device_info, mlir_context, alias_info, &cost));
+          return cost;
+        });
+  }
   ABSL_ASSIGN_OR_RETURN(bool uses_multiple_collective_domains,
                         UsesMultipleCollectiveDomains(*module));
 
-  pipeline.AddPass<LegalizeSchedulingAnnotations>(
-      SchedulingAnnotationsConfig());
+  if (tuning_cost == nullptr) {
+    pipeline.AddPass<LegalizeSchedulingAnnotations>(
+        SchedulingAnnotationsConfig());
+  }
 
   SchedulerConfig config = MakeGPUSchedulerConfig(
       memory_limit,
       options.xla_gpu_experimental_parallel_collective_overlap_limit(),
       options.xla_gpu_experimental_parallel_scale_up_collective_overlap_limit(),
       options.xla_gpu_experimental_parallel_async_compute_limit());
+  // The outer search has its own deterministic work budget. Do not multiply it
+  // by internal LHS retries, including when replaying the winning threshold.
+  if (tuning_cost != nullptr) config.rerun = 0;
   const bool enable_selective_memcpy_overlap =
       options.xla_gpu_experimental_enable_selective_memcpy_overlap();
   if (enable_selective_memcpy_overlap) {
@@ -815,25 +879,51 @@ absl::Status RunLatencyHidingSchedulerPasses(
       /*scheduling_instruction_crosses_overlap_limit=*/
       std::move(overlap_limit_rule));
 
-  const int64_t configured_fencing_threshold_bytes =
-      // NOLINTNEXTLINE
-      options.has_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes()
-          ? options
-                .xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes()
-          : -1;
-  if (std::optional<int64_t> fencing_threshold_bytes =
-          GetSchedulerMemoryFencingThresholdBytes(
-              configured_fencing_threshold_bytes, memory_limit)) {
-    pipeline.AddPass<SchedulerMemoryFencing>(
-        shape_size_in_bytes, *fencing_threshold_bytes,
-        options.xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
-        alias_info);
+  if (tuning_cost == nullptr) {
+    if (std::optional<int64_t> threshold =
+            GetSchedulerMemoryFencingThresholdBytes(configured_threshold,
+                                                    memory_limit)) {
+      pipeline.AddPass<SchedulerMemoryFencing>(shape_size_in_bytes, *threshold,
+                                               /*slack_windows=*/1, alias_info);
+    }
   }
   pipeline.AddPass<LatencyHidingScheduler>(scheduling_context,
                                            std::move(scheduler_core));
   pipeline.AddPass<SchedulingInstructionAnnotator>();
 
-  return pipeline.Run(module).status();
+  ABSL_RETURN_IF_ERROR(pipeline.Run(module).status());
+  if (tuning_cost != nullptr) {
+    ABSL_ASSIGN_OR_RETURN(auto aliases,
+                          HloAliasAnalysis::Run(module, alias_info));
+    auto device_shape_size =
+        ShapeSizeBytesFunction(pointer_size, Layout::kDefaultMemorySpace);
+    LogicalBuffer::SizeFunction device_buffer_size =
+        [&](const BufferValue& buffer) {
+          return device_shape_size(buffer.shape());
+        };
+    ABSL_ASSIGN_OR_RETURN(
+        tuning_cost->peak_memory_bytes,
+        HeapSimulator::MinimumMemoryForModule(module->schedule(), *aliases,
+                                              alias_info, &device_buffer_size));
+    tuning_cost->estimated_cycles = 0;
+    // A static tie-breaker: sum per-computation estimates once (not a dynamic
+    // execution-count model). Peak memory remains the primary objective.
+    auto computations =
+        module->entry_computation()->MakeEmbeddedComputationsList();
+    computations.push_back(module->entry_computation());
+    for (HloComputation* computation : computations) {
+      if (!computation->IsFusionComputation() &&
+          module->schedule().is_computation_scheduled(computation)) {
+        tuning_cost->estimated_cycles +=
+            LatencyHidingScheduler::LatencyHidingStatistics(
+                computation,
+                module->schedule().sequence(computation).instructions(),
+                scheduling_context)
+                .total_cycles;
+      }
+    }
+  }
+  return absl::OkStatus();
 }
 
 absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
@@ -1122,10 +1212,7 @@ std::optional<int64_t> GetSchedulerMemoryFencingThresholdBytes(
     return std::nullopt;
   }
 
-  const uint64_t threshold_bytes =
-      configured_threshold_bytes == 0
-          ? memory_limit / 100
-          : static_cast<uint64_t>(configured_threshold_bytes);
+  const uint64_t threshold_bytes = configured_threshold_bytes;
   return static_cast<int64_t>(std::min(threshold_bytes, memory_limit));
 }
 
