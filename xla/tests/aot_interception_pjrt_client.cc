@@ -37,6 +37,7 @@ limitations under the License.
 #include "riegeli/bytes/string_writer.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/protobuf.h"
+#include "xla/backends/gpu/runtime/collective_kernel_thunk.pb.h"
 #include "xla/debug_options_runtime_fields.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
@@ -289,6 +290,10 @@ absl::Status AOTInterceptionPjrtClient::CompareGPUExecutables(
           stream_executor::KernelLoaderSpecProto::descriptor()->FindFieldByName(
               "ptx"),
           stream_executor::KernelLoaderSpecProto::descriptor()->FindFieldByName(
+              "cubin"),
+          // Opaque collective-kernel binary, same as the KernelLoaderSpecProto
+          // payloads above.
+          gpu::CollectiveKernelThunkProto::descriptor()->FindFieldByName(
               "cubin"),
           stream_executor::ExecutableAbiVersionProto::CudaPlatformVersion::
               descriptor()
