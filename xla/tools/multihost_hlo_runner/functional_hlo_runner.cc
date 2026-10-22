@@ -41,12 +41,14 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "riegeli/records/record_writer.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/debug_options_flags.h"
 #include "xla/future.h"
@@ -78,6 +80,7 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_module_util.h"
+#include "xla/service/riegeli_file_writer_factory.h"
 #include "xla/service/slow_operation_alarm.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
@@ -1315,6 +1318,29 @@ absl::StatusOr<CompileOptions> CreateCompileOptions(
       raw_options, task_id, num_nodes, std::move(kv_store));
 }
 
+namespace {
+
+absl::Status WriteLiteralsToRiegeliFile(absl::string_view file_path,
+                                        absl::Span<const Literal> literals) {
+  riegeli::RecordWriter record_writer(
+      CreateRiegeliFileWriter(file_path),
+      riegeli::RecordWriterBase::Options().set_uncompressed());
+  if (!record_writer.ok()) {
+    return record_writer.status();
+  }
+  for (const Literal& literal : literals) {
+    if (!record_writer.WriteRecord(literal.ToProto())) {
+      return record_writer.status();
+    }
+  }
+  if (!record_writer.Close()) {
+    return record_writer.status();
+  }
+  return absl::OkStatus();
+}
+
+}  // namespace
+
 // Dumps the output literals to the specified path.
 // Example:
 //  `dump_output_to` filepath: /tmp/output.pb
@@ -1322,6 +1348,20 @@ absl::StatusOr<CompileOptions> CreateCompileOptions(
 absl::Status DumpOutput(
     const FunctionalHloRunner::PerDeviceLiteralVecType& output,
     absl::string_view dump_output_to, int task_id, OutputFormat output_format) {
+  XLA_SCOPED_LOGGING_TIMER("FunctionalHloRunner::DumpOutput");
+  int64_t total_literals = 0;
+  int64_t total_bytes = 0;
+  for (const auto& [device_id, literal_vec] : output) {
+    total_literals += literal_vec.size();
+    for (const Literal& literal : literal_vec) {
+      ShapeUtil::ForEachSubshape(
+          literal.shape(), [&](const Shape& subshape, const ShapeIndex& index) {
+            if (subshape.IsArray()) {
+              total_bytes += literal.size_bytes(index);
+            }
+          });
+    }
+  }
   std::vector<std::string> output_path_vec =
       absl::StrSplit(dump_output_to, '.');
   std::string suffix = output_path_vec.back();
@@ -1329,12 +1369,23 @@ absl::Status DumpOutput(
   output_path_vec.push_back(absl::StrCat("task_", task_id));
   output_path_vec.push_back("");
   int device_id_index = output_path_vec.size() - 1;
-  output_path_vec.push_back("");
+  if (output_format != OutputFormat::kRiegeli) {
+    output_path_vec.push_back("");
+  }
   int literal_id_index = output_path_vec.size() - 1;
   output_path_vec.push_back(suffix);
   std::vector<std::function<absl::Status()>> write_tasks;
   for (const auto& [device_id, literal_vec] : output) {
     output_path_vec[device_id_index] = absl::StrCat("device_", device_id);
+    if (output_format == OutputFormat::kRiegeli) {
+      CHECK_EQ(suffix, std::string("riegeli"));
+      std::string device_path = absl::StrJoin(output_path_vec, ".");
+      const std::vector<Literal>* literals_ptr = &literal_vec;
+      write_tasks.push_back([device_path, literals_ptr]() {
+        return WriteLiteralsToRiegeliFile(device_path, *literals_ptr);
+      });
+      continue;
+    }
     for (int literal_id = 0; literal_id < literal_vec.size(); ++literal_id) {
       output_path_vec[literal_id_index] = absl::StrCat("literal_", literal_id);
       std::string literal_path = absl::StrJoin(output_path_vec, ".");
@@ -1366,9 +1417,17 @@ absl::Status DumpOutput(
           });
           break;
         }
+        case OutputFormat::kRiegeli:
+          LOG(FATAL) << "Unreachable";
       }
     }
   }
+  LOG(INFO) << absl::StreamFormat(
+      "Dumping %d output literals (%d bytes across %d devices) to %d files "
+      "(format: %s, base path: %s)...",
+      total_literals, total_bytes, output.size(), write_tasks.size(),
+      AbslUnparseFlag(output_format), dump_output_to);
+  const absl::Time start_time = absl::Now();
   std::vector<absl::Status> results;
   results.resize(write_tasks.size());
   {
@@ -1382,7 +1441,16 @@ absl::Status DumpOutput(
   for (const auto& result : results) {
     ABSL_RETURN_IF_ERROR(result) << "Failed to dump output";
   }
-  LOG(INFO) << "Dumped output to " << write_tasks.size() << " files.";
+  const absl::Duration elapsed = absl::Now() - start_time;
+  const double elapsed_seconds = absl::ToDoubleSeconds(elapsed);
+  const double total_mib = static_cast<double>(total_bytes) / (1024.0 * 1024.0);
+  const double mib_per_second =
+      elapsed_seconds > 0.0 ? (total_mib / elapsed_seconds) : 0.0;
+  LOG(INFO) << absl::StreamFormat(
+      "Dumped %d output literals (%.2f MiB, %d bytes) to %d files in %s "
+      "(%.2f MiB/s).",
+      total_literals, total_mib, total_bytes, write_tasks.size(),
+      absl::FormatDuration(elapsed), mib_per_second);
   return absl::OkStatus();
 }
 

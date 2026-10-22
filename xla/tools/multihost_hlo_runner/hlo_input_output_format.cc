@@ -41,7 +41,8 @@ static const FixedOptionSetFlagParser<OutputFormat>& GetOutputFormatParser() {
   static const auto& parser = GetFixedOptionSetFlagParser<OutputFormat>(
       {{"text", OutputFormat::kText},
        {"proto_binary", OutputFormat::kProtoBinary},
-       {"proto_text", OutputFormat::kProtoText}});
+       {"proto_text", OutputFormat::kProtoText},
+       {"riegeli", OutputFormat::kRiegeli}});
   return parser;
 }
 
