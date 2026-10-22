@@ -237,11 +237,17 @@ auto Square(Pattern pattern) {
       });
 }
 
+// Matches the mean-centered input D = X - Mean(X) shared by both variance
+// formulations below.
+auto CenteredInput(HloInstruction** input, HloInstruction** mean_input) {
+  return m::Subtract().WithBinaryOperandsAnyOrder(
+      m::Op(input), m::Broadcast(m::Reshape(MeanPattern(mean_input))));
+}
+
 std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
                                           HloInstruction** src,
                                           HloInstruction** scale,
                                           HloInstruction** bias, float* eps) {
-  // variance = Mean((X - Mean(x))^2)
   // Z = scale / sqrt(variance + eps)
   // LN(X) = X*Z + Bias - Mean(X)*Z
 
@@ -301,13 +307,42 @@ std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
   // get scale
   if (!Match(scale_node, m::Broadcast(m::Op(scale)))) return std::nullopt;
 
-  // match variance
-  if (!Match(sqrd_diff_mean, MeanPattern(&sqrd_diff))) return std::nullopt;
+  // Match variance. tf.nn.moments emits one of two forms for variance
+  //   (a) variance = Mean(D^2)
+  //
+  //   (b) variance = Max(Mean(D^2) - Mean(D)^2, 0)
+  //   (https://github.com/tensorflow/tensorflow/commit/b14991de0ee209b0cc4546e80fd81f6d71927d00)
 
-  if (!Match(sqrd_diff, Square(m::Subtract().WithBinaryOperandsAnyOrder(
-                            m::Op(&src_a),
-                            m::Broadcast(m::Reshape(MeanPattern(&src_b))))))) {
-    return std::nullopt;
+  // Strip the Max(., 0) clamp that only form (b) carries.
+  HloInstruction* clamped_variance = nullptr;
+  if (Match(sqrd_diff_mean, m::Maximum().WithBinaryOperandsAnyOrder(
+                                pu::OptionalBroadcast(m::ConstantScalar(0)),
+                                m::Op(&clamped_variance)))) {
+    sqrd_diff_mean = clamped_variance;
+  }
+
+  if (Match(sqrd_diff_mean, MeanPattern(&sqrd_diff))) {
+    // (a) Mean(D^2).
+    if (!Match(sqrd_diff, Square(CenteredInput(&src_a, &src_b)))) {
+      return std::nullopt;
+    }
+  } else {
+    // (b) Mean(D^2) - Mean(D)^2.
+    HloInstruction *mean_sqrd_diff, *sqrd_mean_diff;
+    if (!Match(sqrd_diff_mean,
+               m::Subtract(m::Op(&mean_sqrd_diff), m::Op(&sqrd_mean_diff)))) {
+      return std::nullopt;
+    }
+    HloInstruction *diff_a, *diff_b;
+    if (!Match(mean_sqrd_diff, MeanPattern(&sqrd_diff)) ||
+        !Match(sqrd_diff, Square(m::Op(&diff_a))) ||
+        !Match(sqrd_mean_diff, Square(MeanPattern(&diff_b)))) {
+      return std::nullopt;
+    }
+    // Both reductions have to consume the very same mean-centered input,
+    // otherwise this is not the two-pass variance of a single LayerNorm.
+    if (diff_a != diff_b) return std::nullopt;
+    if (!Match(diff_a, CenteredInput(&src_a, &src_b))) return std::nullopt;
   }
 
   if (src_a != src_b && src_a != *src) {
@@ -503,7 +538,9 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     float eps = 1e-5;
     bool is_bf16orfp16_convert = false;
     bool is_producer_bf16orfp16 = false;
-    HloInstruction* convert_instr;
+    // Only MatchFlaxLayerNorm sets this; keep it well-defined for the read
+    // below when the TF/Keras matcher succeeds first.
+    HloInstruction* convert_instr = nullptr;
 
     bool found_ln =
         MatchTFKerasLayerNorm(instr, &src, &scale, &bias, &eps).value_or(false);
