@@ -922,7 +922,8 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
       AtomicRMWOp op, mlir::PatternRewriter& rewriter) const override {
     auto modifier_parameters = GetAtomicModifierParameters(op);
     if (modifier_parameters.has_value()) {
-      if (mlir::isa<mlir::VectorType>(modifier_parameters->first.getType()) &&
+      if (mlir::isa<mlir::VectorType>(
+              modifier_parameters->modifier.getType()) &&
           (!device_spec_.IsNvidiaGpu() ||
            !device_spec_.gpu().cuda_compute_capability().IsAtLeastHopper())) {
         return rewriter.notifyMatchFailure(
@@ -953,21 +954,23 @@ class RewriteAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
   // true; otherwise, returns false.
   LogicalResult rewriteAsDirectAtomicRMW(
       AtomicRMWOp op,
-      std::optional<std::pair<mlir::Value, ml::AtomicBinOp>>
-          modifier_parameters,
+      std::optional<AtomicModifierParameters> modifier_parameters,
       mlir::PatternRewriter& rewriter) const {
     if (device_spec_.IsCpu()) {
       return failure();  // Unimplemented.
     }
 
-    Value modifier_arg = modifier_parameters->first;
+    Value modifier_arg = modifier_parameters->modifier;
     Type element_type = modifier_arg.getType();
-    ml::AtomicBinOp atomic_bin_op = modifier_parameters->second;
+    ml::AtomicBinOp atomic_bin_op = modifier_parameters->bin_op;
 
     Location loc = op.getLoc();
     auto sync_scope = determinateScope();
     mlir::ImplicitLocOpBuilder b(loc, rewriter);
     Value addr = CreateGep(op.getInput(), op.getIndices(), b);
+    if (modifier_parameters->negated) {
+      modifier_arg = arith::NegFOp::create(b, loc, modifier_arg);
+    }
 
     switch (atomic_bin_op) {
       case ml::AtomicBinOp::xchg: {

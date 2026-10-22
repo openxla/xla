@@ -16,7 +16,6 @@ limitations under the License.
 #include "xla/codegen/emitters/transforms/atomic_rmw_utils.h"
 
 #include <optional>
-#include <utility>
 
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/ADT/ilist.h"
@@ -96,8 +95,7 @@ Value LookThroughExtF(Value value) {
 
 }  // namespace
 
-// Returns atomic op modifier and the atomic bin op kind.
-std::optional<std::pair<Value, ml::AtomicBinOp>> GetAtomicModifierParameters(
+std::optional<AtomicModifierParameters> GetAtomicModifierParameters(
     AtomicRMWOp op) {
   Type element_type = op.getInput().getType().getElementType();
   auto& operations = op.getBody()->getOperations();
@@ -108,7 +106,8 @@ std::optional<std::pair<Value, ml::AtomicBinOp>> GetAtomicModifierParameters(
   if (operations.size() == 1) {
     // TODO(b/336367145): Support complex<f32> atomic store.
     if (element_type.isF32() || IsAtomicIntegral(element_type)) {
-      return std::make_pair(terminator->getOperand(0), ml::AtomicBinOp::xchg);
+      return AtomicModifierParameters{terminator->getOperand(0),
+                                      ml::AtomicBinOp::xchg};
     }
     return std::nullopt;
   }
@@ -117,6 +116,17 @@ std::optional<std::pair<Value, ml::AtomicBinOp>> GetAtomicModifierParameters(
   // operating directly on the atomic element type.
   if (operations.size() == 2) {
     mlir::Operation* modifier_op = &operations.front();
+
+    // `subf(current, x)` comes from canonicalizing
+    // `addf(current, negf(x))`.
+    if (auto sub_op = llvm::dyn_cast<arith::SubFOp>(modifier_op)) {
+      if (sub_op.getLhs() != block_arg || sub_op.getRhs() == block_arg) {
+        return std::nullopt;
+      }
+      return AtomicModifierParameters{sub_op.getRhs(), ml::AtomicBinOp::fadd,
+                                      /*negated=*/true};
+    }
+
     auto kind = GetAtomicBinOp(modifier_op, element_type);
     if (!kind.has_value()) {
       return std::nullopt;
@@ -126,7 +136,7 @@ std::optional<std::pair<Value, ml::AtomicBinOp>> GetAtomicModifierParameters(
     Value modifier_arg = modifier_op->getOperand(0) == block_arg
                              ? modifier_op->getOperand(1)
                              : modifier_op->getOperand(0);
-    return std::make_pair(modifier_arg, *kind);
+    return AtomicModifierParameters{modifier_arg, *kind};
   }
 
   // Widened low-precision case (e.g. bf16): the reduction is computed in a
@@ -154,26 +164,40 @@ std::optional<std::pair<Value, ml::AtomicBinOp>> GetAtomicModifierParameters(
   if (!modifier_op || modifier_op->getNumOperands() != 2) {
     return std::nullopt;
   }
-  auto kind = GetAtomicBinOp(modifier_op, element_type);
-  if (!kind.has_value()) {
-    return std::nullopt;
-  }
   Value lhs = LookThroughExtF(modifier_op->getOperand(0));
   Value rhs = LookThroughExtF(modifier_op->getOperand(1));
   Value modifier_arg;
-  if (lhs == block_arg) {
+  bool negated = false;
+  ml::AtomicBinOp kind;
+  if (llvm::isa<arith::SubFOp>(modifier_op)) {
+    // `subf(current, x)` comes from canonicalizing
+    // `addf(current, negf(x))`.
+    if (lhs != block_arg || rhs == block_arg) {
+      return std::nullopt;
+    }
     modifier_arg = rhs;
-  } else if (rhs == block_arg) {
-    modifier_arg = lhs;
+    kind = ml::AtomicBinOp::fadd;
+    negated = true;
   } else {
-    return std::nullopt;
+    auto kind_or = GetAtomicBinOp(modifier_op, element_type);
+    if (!kind_or.has_value()) {
+      return std::nullopt;
+    }
+    kind = *kind_or;
+    if (lhs == block_arg) {
+      modifier_arg = rhs;
+    } else if (rhs == block_arg) {
+      modifier_arg = lhs;
+    } else {
+      return std::nullopt;
+    }
   }
   // The recovered modifier must have the atomic element type for the downstream
   // direct-atomic emission to be valid.
   if (modifier_arg.getType() != element_type) {
     return std::nullopt;
   }
-  return std::make_pair(modifier_arg, *kind);
+  return AtomicModifierParameters{modifier_arg, kind, negated};
 }
 
 }  // namespace emitters

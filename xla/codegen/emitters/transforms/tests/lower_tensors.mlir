@@ -776,6 +776,57 @@ func.func @direct_atomic_rmw_fadd_f32(%in: tensor<8xf32>,
 
 // -----
 
+func.func @direct_atomic_rmw_fsub_f32(%in: tensor<8xf32>,
+  %i: index, %x: f32) -> (tensor<8xf32>) {
+  %ret = xla.atomic_rmw %in[%i] : tensor<8xf32> {
+    ^bb0(%current : f32):
+      %sub = arith.subf %current, %x : f32
+      xla.yield %sub : f32
+  }
+  return %ret : tensor<8xf32>
+}
+// CHECK-PASCAL-LABEL: @direct_atomic_rmw_fsub_f32
+// CHECK-PASCAL: %[[ADDR:.*]] = llvm.getelementptr
+// CHECK-PASCAL: %[[NEG:.*]] = arith.negf %{{.*}} : f32
+// CHECK-PASCAL: llvm.atomicrmw ignore_denormal_mode fadd %[[ADDR]], %[[NEG]] monotonic
+
+// CHECK-VOLTA-LABEL: @direct_atomic_rmw_fsub_f32
+// CHECK-VOLTA: %[[ADDR:.*]] = llvm.getelementptr
+// CHECK-VOLTA: %[[NEG:.*]] = arith.negf %{{.*}} : f32
+// CHECK-VOLTA: llvm.atomicrmw ignore_denormal_mode fadd %[[ADDR]], %[[NEG]] monotonic
+
+// CHECK-AMPERE-LABEL: @direct_atomic_rmw_fsub_f32
+// CHECK-AMPERE: %[[ADDR:.*]] = llvm.getelementptr
+// CHECK-AMPERE: %[[NEG:.*]] = arith.negf %{{.*}} : f32
+// CHECK-AMPERE: llvm.atomicrmw ignore_denormal_mode fadd %[[ADDR]], %[[NEG]] monotonic
+
+// CHECK-GFX908-MI100-LABEL: @direct_atomic_rmw_fsub_f32
+// CHECK-GFX908-MI100: %[[ADDR:.*]] = llvm.getelementptr
+// CHECK-GFX908-MI100: %[[NEG:.*]] = arith.negf %{{.*}} : f32
+// CHECK-GFX908-MI100: llvm.atomicrmw ignore_denormal_mode fadd %[[ADDR]], %[[NEG]] syncscope("agent-one-as") monotonic {rocdl.no_fine_grained_memory, rocdl.no_remote_memory}
+
+// CHECK-GFX90A-MI200-LABEL: @direct_atomic_rmw_fsub_f32
+// CHECK-GFX90A-MI200: %[[ADDR:.*]] = llvm.getelementptr
+// CHECK-GFX90A-MI200: %[[NEG:.*]] = arith.negf %{{.*}} : f32
+// CHECK-GFX90A-MI200: llvm.atomicrmw ignore_denormal_mode fadd %[[ADDR]], %[[NEG]] syncscope("agent-one-as") monotonic {rocdl.no_fine_grained_memory, rocdl.no_remote_memory}
+
+// -----
+
+func.func @direct_atomic_rmw_fsub_swapped_f32(%in: tensor<8xf32>,
+  %i: index, %x: f32) -> (tensor<8xf32>) {
+  %ret = xla.atomic_rmw %in[%i] : tensor<8xf32> {
+    ^bb0(%current : f32):
+      %sub = arith.subf %x, %current : f32
+      xla.yield %sub : f32
+  }
+  return %ret : tensor<8xf32>
+}
+// CHECK-PASCAL-LABEL: @direct_atomic_rmw_fsub_swapped_f32
+// CHECK-PASCAL-NOT: llvm.atomicrmw fadd
+// CHECK-PASCAL: llvm.cmpxchg
+
+// -----
+
 func.func @direct_atomic_rmw_fadd_f16(%in: tensor<8xf16>,
   %i: index) -> (tensor<8xf16>) {
   %c2 = arith.constant 2.0 : f16
@@ -920,6 +971,24 @@ func.func @direct_atomic_rmw_fadd_bf16_widened(%in: tensor<8xbf16>,
 // CHECK-GFX942-MI300: %[[ADDR_PTR:.*]] = llvm.inttoptr %[[ADDR_MASKED]]
 // CHECK-GFX942-MI300: %[[VAL:.*]] = llvm.bitcast %[[VAL_SHIFT]] : i32 to vector<2xbf16>
 // CHECK-GFX942-MI300: llvm.atomicrmw ignore_denormal_mode fadd %[[ADDR_PTR]], %[[VAL]] syncscope("agent-one-as") monotonic {rocdl.no_fine_grained_memory, rocdl.no_remote_memory}
+
+// -----
+
+func.func @direct_atomic_rmw_fsub_bf16_widened(%in: tensor<8xbf16>,
+    %i: index, %arg: bf16) -> (tensor<8xbf16>) {
+  %ret = xla.atomic_rmw %in[%i] : tensor<8xbf16> {
+    ^bb0(%current : bf16):
+      %ext0 = arith.extf %current : bf16 to f32
+      %ext1 = arith.extf %arg : bf16 to f32
+      %sub = arith.subf %ext0, %ext1 : f32
+      %res = arith.truncf %sub : f32 to bf16
+      xla.yield %res : bf16
+  }
+  return %ret : tensor<8xbf16>
+}
+// CHECK-GFX942-MI300-LABEL: @direct_atomic_rmw_fsub_bf16_widened
+// CHECK-GFX942-MI300: %[[NEG:.*]] = arith.negf %{{.*}} : bf16
+// CHECK-GFX942-MI300: llvm.atomicrmw ignore_denormal_mode fadd %{{.*}}, %{{.*}} syncscope("agent-one-as") monotonic {rocdl.no_fine_grained_memory, rocdl.no_remote_memory}
 
 // -----
 
