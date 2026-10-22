@@ -3290,14 +3290,20 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
 
     buffer_assignment::BufferAssignmentAlgorithmProto::Value algo_to_use =
         buffer_assignment_algorithm;
-    if (algo_to_use ==
-            buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE ||
-        algo_to_use ==
-            buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT) {
-      if (!opts_.supports_fast_buffer_assignment(color)) {
+    if (opts_.supports_fast_buffer_assignment(color)) {
+      // For the colors that support fast buffer assignment, DEFAULT is
+      // SPATIAL, so the heap simulation runs once instead of twice.
+      if (algo_to_use ==
+          buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT) {
         algo_to_use =
-            buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
+            buffer_assignment::BufferAssignmentAlgorithmProto::SPATIAL;
       }
+    } else if (algo_to_use == buffer_assignment::
+                                  BufferAssignmentAlgorithmProto::FAST_MERGE ||
+               algo_to_use == buffer_assignment::
+                                  BufferAssignmentAlgorithmProto::FAST_SPLIT) {
+      // For the other colors, DEFAULT is BEST_OF_SPATIAL_TEMPORAL.
+      algo_to_use = buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
     }
     return build_algorithm(algo_to_use);
   };

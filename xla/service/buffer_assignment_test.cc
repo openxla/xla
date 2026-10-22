@@ -273,7 +273,9 @@ class BufferAssignmentTest : public HloHardwareIndependentTestBase {
       BufferAssigner::CanUseAllocation can_use_allocation =
           BufferAssigner::DefaultCanUseAllocation(),
       buffer_assignment::BufferAssignmentAlgorithmProto::Value algorithm =
-          buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT) {
+          buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT,
+      std::function<bool(LogicalBuffer::Color)>
+          supports_fast_buffer_assignment = nullptr) {
     HloSchedule schedule(module);
     schedule.set_sequence(module->entry_computation(), instruction_sequence);
     CHECK_OK(schedule.Update());
@@ -281,6 +283,10 @@ class BufferAssignmentTest : public HloHardwareIndependentTestBase {
     opts.allocate_buffers_for_constants = true;
     opts.can_use_allocation = std::move(can_use_allocation);
     opts.buffer_assignment_algorithm = algorithm;
+    if (supports_fast_buffer_assignment != nullptr) {
+      opts.supports_fast_buffer_assignment =
+          std::move(supports_fast_buffer_assignment);
+    }
     return BufferAssigner::Run(
                module, std::make_unique<SequentialHloOrdering>(schedule),
                &BufferSizeBytes, &alias_info_,
@@ -3351,6 +3357,86 @@ TEST_F(BufferAssignmentTest, PeakBuffers) {
     }
     EXPECT_THAT(peak_instructions, UnorderedElementsAre(rev, neg, concat));
   }
+}
+
+TEST_F(BufferAssignmentTest,
+       DefaultAlgorithmUsesSpatialPackingIfFastBufferAssignmentIsSupported) {
+  // Live ranges (positions in the sequence below) and sizes of the large temp
+  // buffers:
+  //   w:   [1, 5],   800B
+  //   a:   [2, 3],  1600B
+  //   mid: [4, 7],  1200B
+  //   big: [6, 10], 2000B
+  // SPATIAL packs the largest buffers first, so `w` does not fit into the gap
+  // between `a` and `mid` and is placed on top of them. TEMPORAL packs the
+  // long-lived `big` and `w` first and needs less memory, so
+  // BEST_OF_SPATIAL_TEMPORAL picks the TEMPORAL result. DEFAULT uses SPATIAL
+  // if the color supports fast buffer assignment, and BEST_OF_SPATIAL_TEMPORAL
+  // otherwise.
+  const char* const kHloText = R"(
+HloModule DefaultAlgorithmUsesSpatialPacking
+
+add {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT r = f32[] add(x, y)
+}
+
+ENTRY entry {
+  p = f32[] parameter(0)
+  w = f32[200] broadcast(p), dimensions={}
+  a = f32[400] broadcast(p), dimensions={}
+  a_sum = f32[] reduce(a, p), dimensions={0}, to_apply=add
+  mid = f32[300] broadcast(a_sum), dimensions={}
+  w_sum = f32[] reduce(w, p), dimensions={0}, to_apply=add
+  big = f32[500] broadcast(w_sum), dimensions={}
+  mid_sum = f32[] reduce(mid, p), dimensions={0}, to_apply=add
+  f1 = f32[] add(mid_sum, mid_sum)
+  f2 = f32[] add(f1, f1)
+  ROOT big_sum = f32[] reduce(big, f2), dimensions={0}, to_apply=add
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  std::vector<HloInstruction*> sequence;
+  for (const char* name : {"p", "w", "a", "a_sum", "mid", "w_sum", "big",
+                           "mid_sum", "f1", "f2", "big_sum"}) {
+    sequence.push_back(FindInstruction(module.get(), name));
+  }
+  const HloInstruction* big = FindInstruction(module.get(), "big");
+
+  auto temp_allocation_size =
+      [&](buffer_assignment::BufferAssignmentAlgorithmProto::Value algorithm,
+          bool supports_fast_buffer_assignment = true) {
+        std::unique_ptr<BufferAssignment> assignment =
+            RunBufferAssignmentWithInstructionSequence(
+                module.get(), sequence, /*alignment=*/1,
+                BufferAssigner::DefaultCanUseAllocation(), algorithm,
+                [supports_fast_buffer_assignment](LogicalBuffer::Color) {
+                  return supports_fast_buffer_assignment;
+                });
+        const BufferAllocation& allocation =
+            GetTopLevelAllocation(*assignment, big);
+        EXPECT_TRUE(allocation.IsPreallocatedTempBuffer());
+        return allocation.size();
+      };
+
+  const int64_t spatial_size = temp_allocation_size(
+      buffer_assignment::BufferAssignmentAlgorithmProto::SPATIAL);
+  const int64_t temporal_size = temp_allocation_size(
+      buffer_assignment::BufferAssignmentAlgorithmProto::TEMPORAL);
+  // The test is only meaningful if the two packing strategies differ.
+  ASSERT_LT(temporal_size, spatial_size);
+  EXPECT_EQ(
+      temp_allocation_size(buffer_assignment::BufferAssignmentAlgorithmProto::
+                               BEST_OF_SPATIAL_TEMPORAL),
+      temporal_size);
+  EXPECT_EQ(temp_allocation_size(
+                buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT),
+            spatial_size);
+  EXPECT_EQ(temp_allocation_size(
+                buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT,
+                /*supports_fast_buffer_assignment=*/false),
+            temporal_size);
 }
 
 TEST_F(BufferAssignmentTest, MemoryUsageReportGroupedByMemorySpace) {
