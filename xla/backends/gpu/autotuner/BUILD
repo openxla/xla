@@ -513,6 +513,7 @@ xla_test(
         "//xla/tsl/testing:temporary_directory",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",

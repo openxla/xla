@@ -28,11 +28,11 @@ void CreateTritonXlaPipeline(
     bool allow_tma, int num_stages, bool warp_specialization_allowed,
     bool enable_pdl);
 
-// Creates a Triton compilation pipeline. `mfma_size` is ROCm only.
+// Creates a Triton compilation pipeline. `mfma_size` and `kpack` are ROCm only.
 void CreateTritonPipeline(mlir::OpPassManager* pm,
                           const stream_executor::GpuComputeCapability& gpu_cc,
                           int num_warps, int num_ctas, int num_stages,
-                          int mfma_size = 0);
+                          int mfma_size = 0, int kpack = 1);
 
 // Returns the default PTX version for a given CUDA compute capability.
 int GetDefaultPtxVersion(const stream_executor::CudaComputeCapability& cuda_cc);

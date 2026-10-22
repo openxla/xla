@@ -1099,13 +1099,17 @@ absl::StatusOr<se::gpu::BlasLt::Epilogue> AsBlasLtEpilogue(
   TF_RET_CHECK(proto.mfma_size() <= std::min(proto.block_m(), proto.block_n()))
       << "mfma_size " << proto.mfma_size() << " exceeds the " << proto.block_m()
       << "x" << proto.block_n() << " tile";
+  // kpack == 0 in old protos (field absent) is treated as 1.
+  TF_RET_CHECK(proto.kpack() >= 0 && proto.kpack() <= 2)
+      << "kpack must be 0, 1 or 2, got " << proto.kpack();
 
   return TritonGemmConfig(
       proto.block_m(), proto.block_n(), proto.block_k(), proto.num_stages(),
       proto.num_warps(), proto.num_ctas(), proto.is_tma_allowed(),
       proto.is_warp_specialization_allowed(), proto.waves_per_eu(),
       /*group_size=*/std::max(static_cast<int64_t>(1), proto.group_size()),
-      proto.mfma_size());
+      proto.mfma_size(),
+      /*kpack=*/std::max(static_cast<int64_t>(1), proto.kpack()));
 }
 
 AutotuneResult::TritonGemmKey TritonGemmConfig::ToProto() const {
@@ -1121,6 +1125,7 @@ AutotuneResult::TritonGemmKey TritonGemmConfig::ToProto() const {
   key.set_waves_per_eu(waves_per_eu);
   key.set_group_size(group_size);
   key.set_mfma_size(mfma_size);
+  key.set_kpack(kpack);
   return key;
 }
 
@@ -1131,7 +1136,7 @@ std::string TritonGemmConfig::ToString() const {
       ",num_ctas:", num_ctas, ",is_tma_allowed:", is_tma_allowed,
       ",is_warp_specialization_allowed:", is_warp_specialization_allowed,
       ",waves_per_eu:", waves_per_eu, ",group_size:", group_size,
-      ",mfma_size:", mfma_size, "}");
+      ",mfma_size:", mfma_size, ",kpack:", kpack, "}");
 }
 
 absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(

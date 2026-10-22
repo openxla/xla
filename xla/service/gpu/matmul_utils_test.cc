@@ -524,6 +524,63 @@ TEST(TritonGemmConfigTest, ToStringIncludesMfmaSize) {
   EXPECT_NE(str.find("mfma_size:16"), std::string::npos);
 }
 
+TEST(TritonGemmConfigTest, ProtoRoundTripPreservesKpack) {
+  TritonGemmConfig config(/*block_m=*/64, /*block_n=*/128, /*block_k=*/32,
+                          /*num_stages=*/2, /*num_warps=*/4,
+                          /*num_ctas=*/1, /*is_tma_allowed=*/false,
+                          /*is_warp_specialization_allowed=*/false,
+                          /*waves_per_eu=*/0, /*group_size=*/1,
+                          /*mfma_size=*/0, /*kpack=*/2);
+
+  AutotuneResult::TritonGemmKey key = config.ToProto();
+  EXPECT_EQ(key.kpack(), 2);
+
+  ASSERT_OK_AND_ASSIGN(TritonGemmConfig restored,
+                       TritonGemmConfig::FromProto(key));
+  EXPECT_EQ(restored.kpack, 2);
+  EXPECT_EQ(restored, config);
+}
+
+TEST(TritonGemmConfigTest, FromProtoTreatsAbsentKpackAsOne) {
+  TritonGemmConfig config(/*block_m=*/32, /*block_n=*/32, /*block_k=*/32,
+                          /*num_stages=*/1, /*num_warps=*/4);
+  AutotuneResult::TritonGemmKey key = config.ToProto();
+  key.clear_kpack();
+
+  ASSERT_OK_AND_ASSIGN(TritonGemmConfig restored,
+                       TritonGemmConfig::FromProto(key));
+  EXPECT_EQ(restored.kpack, 1);
+  EXPECT_EQ(restored, config);
+}
+
+TEST(TritonGemmConfigTest, FromProtoRejectsInvalidKpack) {
+  TritonGemmConfig config(/*block_m=*/32, /*block_n=*/32, /*block_k=*/32,
+                          /*num_stages=*/1, /*num_warps=*/4);
+  AutotuneResult::TritonGemmKey key = config.ToProto();
+
+  key.set_kpack(1);
+  EXPECT_OK(TritonGemmConfig::FromProto(key));
+  key.set_kpack(2);
+  EXPECT_OK(TritonGemmConfig::FromProto(key));
+  key.set_kpack(3);
+  EXPECT_FALSE(TritonGemmConfig::FromProto(key).ok());
+  key.set_kpack(4);
+  EXPECT_FALSE(TritonGemmConfig::FromProto(key).ok());
+  key.set_kpack(-1);
+  EXPECT_FALSE(TritonGemmConfig::FromProto(key).ok());
+}
+
+TEST(TritonGemmConfigTest, ToStringIncludesKpack) {
+  TritonGemmConfig config(/*block_m=*/64, /*block_n=*/128, /*block_k=*/32,
+                          /*num_stages=*/2, /*num_warps=*/4,
+                          /*num_ctas=*/1, /*is_tma_allowed=*/false,
+                          /*is_warp_specialization_allowed=*/false,
+                          /*waves_per_eu=*/0, /*group_size=*/1,
+                          /*mfma_size=*/0, /*kpack=*/2);
+  std::string str = config.ToString();
+  EXPECT_NE(str.find("kpack:2"), std::string::npos);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

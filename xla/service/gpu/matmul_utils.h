@@ -232,7 +232,7 @@ struct TritonGemmConfig {
                              bool is_tma_allowed = false,
                              bool is_warp_specialization_allowed = false,
                              int waves_per_eu = 0, int group_size = 1,
-                             int mfma_size = 0)
+                             int mfma_size = 0, int kpack = 1)
       : block_m(block_m),
         block_n(block_n),
         block_k(block_k),
@@ -243,7 +243,8 @@ struct TritonGemmConfig {
         is_warp_specialization_allowed(is_warp_specialization_allowed),
         waves_per_eu(waves_per_eu),
         group_size(group_size),
-        mfma_size(mfma_size) {}
+        mfma_size(mfma_size),
+        kpack(kpack) {}
   // LINT.IfChange
   int block_m = 0;
   int block_n = 0;
@@ -264,6 +265,9 @@ struct TritonGemmConfig {
   // AMD MFMA MN instruction size, 0 = auto or 16. Ignored on WMMA and on
   // non-ROCm targets.
   int mfma_size = 0;
+  // AMD MFMA K packing factor, 1 or 2. Ignored on WMMA, gfx950 and non-ROCm
+  // targets.
+  int kpack = 1;
   // LINT.ThenChange(//tensorflow/compiler/xla/autotuning.proto)
 
   // When adding new members, please update all methods, such as ToTuple,
@@ -278,7 +282,7 @@ struct TritonGemmConfig {
     return std::make_tuple(block_m, block_n, block_k, num_stages, num_warps,
                            num_ctas, is_tma_allowed,
                            is_warp_specialization_allowed, waves_per_eu,
-                           group_size, mfma_size);
+                           group_size, mfma_size, kpack);
   }
 
  public:

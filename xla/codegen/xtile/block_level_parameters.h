@@ -40,6 +40,7 @@ struct BlockLevelParameters {
   int num_tiles_per_pid = 1;
   int waves_per_eu = 0;
   int mfma_size = 0;
+  int kpack = 1;
 
   // Tile sizes of the sequential dimensions, in tiling space order. Empty when
   // sequential tile sizes are not set in the fusion config.
@@ -58,6 +59,7 @@ struct BlockLevelParameters {
     result.num_tiles_per_pid = std::max(1, config.num_tiles_per_pid());
     result.waves_per_eu = config.waves_per_eu();
     result.mfma_size = config.mfma_size();
+    result.kpack = std::max(1, config.kpack());
     result.output_tile_sizes.reserve(config.output_tiles_size());
     for (const auto& tile : config.output_tiles()) {
       result.output_tile_sizes.push_back(
@@ -87,6 +89,9 @@ struct BlockLevelParameters {
     config.set_mfma_size(mfma_size);
     if (num_tiles_per_pid > 1) {
       config.set_num_tiles_per_pid(num_tiles_per_pid);
+    }
+    if (kpack > 1) {
+      config.set_kpack(kpack);
     }
     return config;
   }
