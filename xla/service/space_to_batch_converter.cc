@@ -602,14 +602,14 @@ absl::StatusOr<HloInstruction*> ConvolutionVisitor::HaloDuplicateWithSlice(
                                   &halo_region->frontend_attributes()));
     }
 
-    if ((halo_size == 0 && low_padding != 0) || low_padding < 0) {
+    if ((low_padding > 0 && halo_size < low_padding) || low_padding < 0) {
       std::vector<int64_t> start_indices_activations_cut(rank, 0),
           end_indices_activations_cut(activations->shape().dimensions().begin(),
                                       activations->shape().dimensions().end());
-      // When no halo is needed, we must slice out activations.
+      // When halo_size < low_padding, we must slice out excess activations.
       if (low_padding > 0) {
         end_indices_activations_cut[spatial_dimension_to_split] =
-            spatial_split_size - low_padding;
+            spatial_split_size - (low_padding - halo_size);
       } else {
         start_indices_activations_cut[spatial_dimension_to_split] =
             0 - low_padding;
@@ -1776,8 +1776,10 @@ bool ConvolutionVisitor::SupportedOpForPropagation(HloInstruction* consumer,
       return false;
     }
 
-    // Only allow no-low-padding cases.
-    if (window.dimensions(old_space_dim).padding_low() != 0) {
+    // Only allow non-negative small low pads.
+    if (window.dimensions(old_space_dim).padding_low() < 0 ||
+        window.dimensions(old_space_dim).padding_low() >
+            window.dimensions(old_space_dim).size()) {
       return false;
     }
 
@@ -2283,7 +2285,7 @@ absl::StatusOr<bool> ConvolutionVisitor::Propagate(HloInstruction* consumer,
     auto new_shape = first_operand->shape();
     auto old_shape = consumer->mutable_operand(0)->shape();
 
-    const int64_t new_space_size = new_shape.dimensions(new_space_dim);
+    int64_t new_space_size = new_shape.dimensions(new_space_dim);
     const int64_t stride =
         consumer->window().dimensions(old_space_dim).stride();
 
@@ -2293,11 +2295,6 @@ absl::StatusOr<bool> ConvolutionVisitor::Propagate(HloInstruction* consumer,
                   HloInstruction::CreateConstant(LiteralUtil::MinValue(
                       consumer->operand(2)->shape().element_type())))
             : init_val;
-    ABSL_ASSIGN_OR_RETURN(
-        first_operand,
-        SelectValidPortion(first_operand, consumer->mutable_operand(0), pad_val,
-                           new_batch_dim, new_spatial_dims, old_batch_dim,
-                           old_spatial_dims));
 
     const int64_t extra_space = new_space_size % stride;
     if (extra_space) {
@@ -2321,19 +2318,47 @@ absl::StatusOr<bool> ConvolutionVisitor::Propagate(HloInstruction* consumer,
                 new_space_size + stride - extra_space,
                 /*increase_spatial_size*/ true));
       }
+      new_space_size = first_operand->shape().dimensions(new_space_dim);
     }
+    if (consumer->opcode() == HloOpcode::kReduceWindow) {
+      // Ensure the space to batch output spatial dimension covers the
+      // unpartitioned output spatial size so downstream BatchToSpace slicing
+      // remains in bounds.
+      const int64_t old_batch_size = old_shape.dimensions(old_batch_dim);
+      const int64_t old_output_space_size =
+          consumer->shape().dimensions(old_space_dim);
+      const int64_t required_output_per_split =
+          CeilOfRatio(old_output_space_size, ctrl_.number_of_splits);
+      const int64_t target_space_size =
+          std::max(new_space_size, required_output_per_split * stride);
+      if (target_space_size > new_space_size) {
+        ABSL_ASSIGN_OR_RETURN(first_operand,
+                              ChangeSpatialSizeOnSpaceToBatchedShape(
+                                  first_operand, new_batch_dim, old_batch_size,
+                                  new_spatial_dims, target_space_size,
+                                  /*increase_spatial_size=*/true));
+        new_space_size = first_operand->shape().dimensions(new_space_dim);
+      }
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        first_operand,
+        SelectValidPortion(first_operand, consumer->mutable_operand(0), pad_val,
+                           new_batch_dim, new_spatial_dims, old_batch_dim,
+                           old_spatial_dims));
     const int64_t window_size =
         consumer->window().dimensions(old_space_dim).size();
+    const int64_t low_padding =
+        consumer->window().dimensions(old_space_dim).padding_low();
     const int64_t last_overlap_point = ((new_space_size - 1) / stride) * stride;
     VLOG(1) << "last_overlap_point " << last_overlap_point << " window_size "
             << window_size << " new_space_size " << new_space_size;
 
     const int64_t halo_size = last_overlap_point + window_size - new_space_size;
-    if (halo_size > 0) {
+    if (halo_size > 0 || low_padding > 0) {
       ABSL_ASSIGN_OR_RETURN(
           first_operand,
           HaloDuplicateWithSlice(first_operand, new_spatial_dims, new_batch_dim,
-                                 /*low_padding=*/0, halo_size, init_val));
+                                 low_padding, halo_size, init_val));
     }
 
     Window new_win;
@@ -2344,7 +2369,7 @@ absl::StatusOr<bool> ConvolutionVisitor::Propagate(HloInstruction* consumer,
           consumer->window().dimensions(dim).stride());
       new_win.mutable_dimensions(i)->set_size(
           consumer->window().dimensions(dim).size());
-      if (i == old_space_dim) {
+      if (dim == old_space_dim) {
         new_win.mutable_dimensions(i)->set_padding_high(0);
         new_win.mutable_dimensions(i)->set_padding_low(0);
       } else {

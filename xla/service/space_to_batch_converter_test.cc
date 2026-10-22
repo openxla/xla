@@ -585,5 +585,82 @@ ENTRY computation {
   EXPECT_THAT(RunFileCheck(module->ToString(), hlo_string), IsOkAndHolds(true));
 }
 
+TEST_F(SpaceToBatchConverterTest, PropagateThroughReduceWindowWithLowPadding) {
+  const std::string hlo_string = R"(
+HloModule module
+
+max_fn (lhs: bf16[], rhs: bf16[]) -> bf16[] {
+  lhs = bf16[] parameter(0)
+  rhs = bf16[] parameter(1)
+  ROOT maximum = bf16[] maximum(lhs, rhs)
+}
+
+ENTRY computation {
+  p0 = bf16[1,64,224,224] parameter(0)
+  p1 = bf16[64,64,7,7] parameter(1)
+  p2 = bf16[64,64,3,3] parameter(2)
+  conv0 = bf16[1,64,112,112] convolution(p0, p1),
+    window={size=7x7 stride=2x2 pad=3_3x3_3}, dim_labels=bf01_oi01->bf01
+  init = bf16[] constant(-inf)
+  pool = bf16[1,64,56,56] reduce-window(conv0, init),
+    window={size=1x1x3x3 stride=1x1x2x2 pad=0_0x0_0x1_1x1_1}, to_apply=max_fn
+  conv1 = bf16[1,64,56,56] convolution(pool, p2),
+    window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_oi01->bf01
+  ROOT out = bf16[1,64,56,56] add(conv1, pool)
+}
+
+// CHECK-LABEL: ENTRY %computation
+// CHECK:         bf16[112,8,16,64]{{.*}} convolution(
+// CHECK:         %[[POOL:.*]] = bf16[56,8,8,64]{{.*}} reduce-window(
+// CHECK-SAME:      window={size=3x1x3x1 stride=2x1x2x1 pad=1_1x0_0x0_0x0_0}
+// CHECK:         %[[CONV1:.*]] = bf16[56,8,8,64]{{.*}} convolution(
+// CHECK:         %[[ADD:.*]] = bf16[56,8,8,64]{{.*}} add(%[[CONV1]], %[[POOL]])
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  SpaceToBatchConverter converter(SpaceToBatchController{
+      true, true, true, true, /*limit_on_batch_size=*/8});
+  ASSERT_THAT(converter.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(module->ToString(), hlo_string), IsOkAndHolds(true));
+}
+
+TEST_F(SpaceToBatchConverterTest,
+       PropagateThroughReduceWindowWithHaloSmallerThanLowPadding) {
+  const std::string hlo_string = R"(
+HloModule module
+
+max_fn (lhs: bf16[], rhs: bf16[]) -> bf16[] {
+  lhs = bf16[] parameter(0)
+  rhs = bf16[] parameter(1)
+  ROOT maximum = bf16[] maximum(lhs, rhs)
+}
+
+ENTRY computation {
+  p0 = bf16[1,64,224,224] parameter(0)
+  p1 = bf16[64,64,7,7] parameter(1)
+  p2 = bf16[64,64,3,3] parameter(2)
+  conv0 = bf16[1,64,112,112] convolution(p0, p1),
+    window={size=7x7 stride=2x2 pad=3_3x3_3}, dim_labels=bf01_oi01->bf01
+  init = bf16[] constant(-inf)
+  pool = bf16[1,64,56,56] reduce-window(conv0, init),
+    window={size=1x1x2x2 stride=1x1x2x2 pad=0_0x0_0x1_0x1_0}, to_apply=max_fn
+  conv1 = bf16[1,64,56,56] convolution(pool, p2),
+    window={size=3x3 pad=1_1x1_1}, dim_labels=bf01_oi01->bf01
+  ROOT out = bf16[1,64,56,56] add(conv1, pool)
+}
+
+// CHECK-LABEL: ENTRY %computation
+// CHECK:         bf16[112,8,16,64]{{.*}} convolution(
+// CHECK:         %[[POOL:.*]] = bf16[56,8,8,64]{{.*}} reduce-window(
+// CHECK-SAME:      window={size=2x1x2x1 stride=2x1x2x1 pad=1_0x0_0x0_0x0_0}
+// CHECK:         %[[CONV1:.*]] = bf16[56,8,8,64]{{.*}} convolution(
+// CHECK:         %[[ADD:.*]] = bf16[56,8,8,64]{{.*}} add(%[[CONV1]], %[[POOL]])
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  SpaceToBatchConverter converter(SpaceToBatchController{
+      true, true, true, true, /*limit_on_batch_size=*/8});
+  ASSERT_THAT(converter.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(module->ToString(), hlo_string), IsOkAndHolds(true));
+}
+
 }  // namespace
 }  // namespace xla
