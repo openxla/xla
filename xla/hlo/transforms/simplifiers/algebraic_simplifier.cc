@@ -2939,10 +2939,30 @@ AlgebraicSimplifierVisitor::RemoveTransposesFromDotOperands(
 namespace {
 // Whether an HloInstruction is either a kParameter directly, or produced from
 // a parameter through a series of trivial operations.
-bool IsParameterLike(const HloInstruction* inst) {
+bool IsParameterLike(const HloInstruction* inst, int depth = 0) {
   while (true) {
     if (inst->opcode() == HloOpcode::kParameter) {
       return true;
+    }
+    // An elementwise op of one parameter-like operand and broadcasts of
+    // parameter-like values (e.g. a block-scaled weight) is parameter-like.
+    if (inst->operand_count() > 1 && inst->IsElementwise() && depth < 4) {
+      int num_non_broadcast = 0;
+      for (const HloInstruction* op : inst->operands()) {
+        while (op->opcode() == HloOpcode::kBitcast ||
+               op->opcode() == HloOpcode::kReshape ||
+               op->opcode() == HloOpcode::kConvert) {
+          op = op->operand(0);
+        }
+        if (op->opcode() == HloOpcode::kBroadcast &&
+            IsParameterLike(op->operand(0), depth + 1)) {
+          continue;
+        }
+        if (++num_non_broadcast > 1 || !IsParameterLike(op, depth + 1)) {
+          return false;
+        }
+      }
+      return num_non_broadcast == 1;
     }
     if (inst->operand_count() != 1) {
       return false;
