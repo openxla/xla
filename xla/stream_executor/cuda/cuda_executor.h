@@ -44,7 +44,6 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
 #include "xla/stream_executor/cuda/cuda_device_allocator.h"
-#include "xla/stream_executor/cuda/cuda_host_allocator.h"
 #include "xla/stream_executor/cuda/cuda_kernel.h"
 #include "xla/stream_executor/cuda/green_context.h"
 #include "xla/stream_executor/cuda/host_callback_registry.h"
@@ -378,7 +377,7 @@ class CudaExecutor : public GpuExecutor {
 
   // Memory allocators for supported memory spaces.
   std::unique_ptr<CudaDeviceAllocator> device_allocator_;
-  std::unique_ptr<CudaHostAllocator> host_allocator_;
+  std::unique_ptr<MemoryAllocator> host_allocator_;
 
   // Tracks allocations made through the memory allocators, bridging the RAII
   // MemoryAllocation API to the raw-pointer Allocate/Deallocate interface.

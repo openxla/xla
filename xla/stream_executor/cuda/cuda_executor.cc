@@ -97,6 +97,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/read_numa_node.h"
 #include "xla/stream_executor/gpu/scoped_activate_context.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
+#include "xla/stream_executor/integrations/stream_executor_allocator.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/kernel_args_packing_spec.h"
@@ -114,6 +115,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/tensor_map.h"
+#include "xla/tsl/framework/bfc_allocator.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
@@ -786,6 +788,51 @@ absl::StatusOr<SemanticVersion> GetDeviceDriverVersion() {
   return SemanticVersion::ParseFromString(version_str);
 }
 
+// Pools pinned host allocations through BFCAllocator so small frequent
+// HostMemoryAllocate calls sub-allocate from large slabs rather than creating
+// a separate cuMemHostRegister / cuMemHostAlloc driver entry per buffer.
+class PooledCudaHostAllocator final : public MemoryAllocator {
+ public:
+  PooledCudaHostAllocator(StreamExecutor* executor, int32_t numa_node)
+      : bfc_allocator_(
+            std::make_unique<StreamExecutorAllocator>(
+                std::make_unique<CudaHostAllocator>(executor, numa_node),
+                MemorySpace::kHost, executor->device_ordinal()),
+            kMaxHostMemoryBytes,
+            absl::StrFormat("cuda_host_bfc_%d", executor->device_ordinal()),
+            tsl::BFCAllocator::Options{.allow_growth = true,
+                                       .allow_retry_on_failure = false}),
+        device_ordinal_(executor->device_ordinal()) {}
+
+  absl::StatusOr<std::unique_ptr<MemoryAllocation>> Allocate(
+      uint64_t size) final {
+    if (size == 0) {
+      return std::make_unique<GenericMemoryAllocation>(nullptr, 0,
+                                                       [](void*, uint64_t) {});
+    }
+    void* ptr =
+        bfc_allocator_.AllocateRaw(tsl::BFCAllocator::kMinAllocationSize, size);
+    if (ptr == nullptr) {
+      return absl::InternalError(absl::StrFormat(
+          "%sFailed to allocate %s (%llu bytes) of pooled pinned host memory",
+          xla::XlaFormatDevice(device_ordinal_),
+          tsl::strings::HumanReadableNumBytes(size), size));
+    }
+    return std::make_unique<GenericMemoryAllocation>(
+        ptr, size,
+        [this](void* p, uint64_t /*s*/) { bfc_allocator_.DeallocateRaw(p); });
+  }
+
+ private:
+  // Cap at 128 TiB (47-bit user-space VA ceiling): large enough not to
+  // artificially cap multi-TiB host RAM, while immediately rejecting
+  // out-of-range requests (e.g. 1 PiB in HostMemoryAllocateTest.TooBig).
+  static constexpr size_t kMaxHostMemoryBytes = size_t{1} << 47;
+
+  tsl::BFCAllocator bfc_allocator_;
+  int device_ordinal_;
+};
+
 }  // namespace
 
 // Given const GPU memory, returns a libcuda device pointer datatype, suitable
@@ -1082,7 +1129,7 @@ absl::Status CudaExecutor::Init() {
 
   device_allocator_ =
       std::make_unique<CudaDeviceAllocator>(this, device_allocator_options_);
-  host_allocator_ = std::make_unique<CudaHostAllocator>(this, numa_node_);
+  host_allocator_ = std::make_unique<PooledCudaHostAllocator>(this, numa_node_);
 
   return absl::OkStatus();
 }

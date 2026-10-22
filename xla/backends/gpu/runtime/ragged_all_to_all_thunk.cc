@@ -746,14 +746,16 @@ absl::Status RaggedAllToAllThunk::Initialize(const InitializeParams& params) {
         *state = RaggedAllToAllStreamState(executor->device_ordinal(),
                                            rank.value(), std::move(clique_key));
 
-        // Allocate temp buffers in the host memory to load the sizes and
-        // offsets of ragged tensors from device memory.
-        for (int64_t i = 0; i < kNumRaggedMetadataOperands; ++i) {
+        // Allocate a contiguous temp buffer in host memory to load the sizes
+        // and offsets of ragged tensors from device memory when NCCL fallback
+        // is allowed.
+        if (config_.allow_fallback_to_nccl) {
           ABSL_ASSIGN_OR_RETURN(
-              std::unique_ptr<se::MemoryAllocation> alloc,
-              executor->HostMemoryAllocate(config_.num_total_updates *
-                                           sizeof(int64_t)));
-          state->host_buffer_allocs.push_back(std::move(alloc));
+              state->host_buffer_alloc,
+              executor->HostMemoryAllocate(
+                  kNumRaggedMetadataOperands *
+                  static_cast<uint64_t>(config_.num_total_updates) *
+                  sizeof(int64_t)));
         }
 
         const uint64_t output_offsets_buffer_bytes =
@@ -1217,15 +1219,6 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
     }
   }
 
-  // Get buffer allocs to load sizes and offsets of ragged tensors from device
-  // memory.
-  absl::InlinedVector<int64_t*, 8> ragged_metadata_allocs;
-  ragged_metadata_allocs.reserve(kNumRaggedMetadataOperands);
-  for (int64_t i = 0; i < kNumRaggedMetadataOperands; ++i) {
-    ragged_metadata_allocs.push_back(reinterpret_cast<int64_t*>(
-        state->host_buffer_allocs[i]->address().opaque()));
-  }
-
   SymmetricMemory* output_sym_mem = nullptr;
   size_t output_base_offset = 0;
   if (use_symmetric_memory() && params.collective_memory) {
@@ -1251,6 +1244,16 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
         "(`xla_gpu_experimental_ragged_all_to_all_use_device_kernel`) is used. "
         "If NCCL fallback is intentional, please set "
         "`xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback` to true.");
+  }
+
+  TF_RET_CHECK(state->host_buffer_alloc != nullptr);
+  int64_t* metadata_base =
+      reinterpret_cast<int64_t*>(state->host_buffer_alloc->address().opaque());
+  absl::InlinedVector<int64_t*, 8> ragged_metadata_allocs;
+  ragged_metadata_allocs.reserve(kNumRaggedMetadataOperands);
+  for (int64_t i = 0; i < kNumRaggedMetadataOperands; ++i) {
+    ragged_metadata_allocs.push_back(metadata_base +
+                                     i * config_.num_total_updates);
   }
 
   return RunNcclFallbackRaggedAllToAll(

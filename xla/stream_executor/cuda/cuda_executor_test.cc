@@ -20,19 +20,26 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/cleanup/cleanup.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
+#include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/debug_options_flags.h"
+#include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
+#include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
@@ -44,6 +51,7 @@ limitations under the License.
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/semantic_version.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/command_line_flags.h"
@@ -417,6 +425,147 @@ TEST(CudaExecutorTest, RetainVmmMemoryHandleForDefaultDeviceMemory) {
                        cuda_executor->RetainVmmMemoryHandle(ptr.opaque()));
   EXPECT_NE(handle.handle(), 0);
   cuda_executor->Deallocate(&ptr);
+}
+
+absl::StatusOr<DeviceAddressBase> GetCudaRegisteredRange(CudaExecutor& executor,
+                                                         const void* ptr) {
+  std::unique_ptr<ActivateContext> activation = executor.Activate();
+  uint64_t start_addr = 0;
+  uint64_t range_size = 0;
+  CUpointer_attribute attrs[2] = {CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
+                                  CU_POINTER_ATTRIBUTE_RANGE_SIZE};
+  void* results[2] = {&start_addr, &range_size};
+  absl::Status status = cuda::ToStatus(cuPointerGetAttributes(
+      2, attrs, results,
+      reinterpret_cast<CUdeviceptr>(const_cast<void*>(ptr))));
+  if (!status.ok()) {
+    return status;
+  }
+  return DeviceAddressBase(reinterpret_cast<void*>(start_addr), range_size);
+}
+
+TEST(CudaExecutorTest, HostMemoryAllocatePoolsSmallAllocations) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_GT(platform->VisibleDeviceCount(), 0);
+
+  // Use a fresh executor so the host memory pool starts empty.
+  CudaExecutor executor(platform, /*device_ordinal=*/0);
+  ASSERT_OK(executor.Init());
+
+  // Zero-byte allocations succeed without touching the backing pool.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> zero_alloc,
+                       executor.HostMemoryAllocate(0));
+  ASSERT_NE(zero_alloc, nullptr);
+  EXPECT_EQ(zero_alloc->address().opaque(), nullptr);
+  EXPECT_EQ(zero_alloc->address().size(), 0);
+
+  // Allocate 128 x 8 KiB = 1 MiB of pinned host buffers (matching the 8 KiB
+  // metadata buffers allocated per RaggedAllToAllThunk in b/575648319).
+  constexpr uint64_t kAllocSize = 8192;
+  constexpr int kNumAllocations = 128;
+  std::vector<std::unique_ptr<MemoryAllocation>> allocations;
+  allocations.reserve(kNumAllocations);
+  absl::flat_hash_set<const void*> registered_slab_starts;
+
+  uint64_t slab_size = 0;
+  for (int i = 0; i < kNumAllocations; ++i) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> alloc,
+                         executor.HostMemoryAllocate(kAllocSize));
+    void* ptr = alloc->address().opaque();
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_EQ(alloc->address().size(), kAllocSize);
+    EXPECT_EQ(reinterpret_cast<uintptr_t>(ptr) % 256, 0);
+    EXPECT_TRUE(executor.IsHostMemoryPinned(ptr, kAllocSize));
+    EXPECT_THAT(executor.GetPointerMemorySpace(ptr),
+                IsOkAndHolds(MemorySpace::kHost));
+
+    ASSERT_OK_AND_ASSIGN(DeviceAddressBase range,
+                         GetCudaRegisteredRange(executor, ptr));
+    registered_slab_starts.insert(range.opaque());
+    slab_size = range.size();
+    allocations.push_back(std::move(alloc));
+  }
+
+  // All 128 allocations (1 MiB total) should sub-allocate from a single 2 MiB
+  // CUDA-registered slab rather than creating 128 separate driver entries.
+  EXPECT_EQ(registered_slab_starts.size(), 1);
+  EXPECT_GE(slab_size, kNumAllocations * kAllocSize);
+
+  // Verify async H2D/D2H DMA works on a sub-allocated chunk at non-zero offset.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                       executor.CreateStream(std::nullopt));
+  void* sub_chunk = allocations.back()->address().opaque();
+  std::memset(sub_chunk, 0x5A, kAllocSize);
+  DeviceAddressBase device_buf = executor.Allocate(kAllocSize, 0);
+  ASSERT_NE(device_buf.opaque(), nullptr);
+  ASSERT_OK(stream->Memcpy(&device_buf, sub_chunk, kAllocSize));
+  std::memset(sub_chunk, 0, kAllocSize);
+  ASSERT_OK(stream->Memcpy(sub_chunk, device_buf, kAllocSize));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  executor.Deallocate(&device_buf);
+  const auto* bytes = static_cast<const uint8_t*>(sub_chunk);
+  EXPECT_EQ(bytes[0], 0x5A);
+  EXPECT_EQ(bytes[kAllocSize - 1], 0x5A);
+
+  // Freeing a chunk returns it to the pool for reuse without a new
+  // registration.
+  const void* freed_ptr = sub_chunk;
+  allocations.pop_back();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> reused,
+                       executor.HostMemoryAllocate(kAllocSize));
+  EXPECT_EQ(reused->address().opaque(), freed_ptr);
+  ASSERT_OK_AND_ASSIGN(
+      DeviceAddressBase reused_range,
+      GetCudaRegisteredRange(executor, reused->address().opaque()));
+  EXPECT_TRUE(registered_slab_starts.contains(reused_range.opaque()));
+
+  // Allocate(..., MemorySpace::kHost) shares the same pooled host allocator.
+  DeviceAddressBase tracked_host =
+      executor.Allocate(kAllocSize, static_cast<int64_t>(MemorySpace::kHost));
+  ASSERT_NE(tracked_host.opaque(), nullptr);
+  ASSERT_OK_AND_ASSIGN(DeviceAddressBase tracked_range,
+                       GetCudaRegisteredRange(executor, tracked_host.opaque()));
+  EXPECT_TRUE(registered_slab_starts.contains(tracked_range.opaque()));
+  executor.Deallocate(&tracked_host);
+}
+
+TEST(CudaExecutorTest,
+     HostMemoryAllocateManySmallBuffersUsesBoundedDriverRegistrations) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_GT(platform->VisibleDeviceCount(), 0);
+
+  // Initialize all visible devices so portable host registrations map across
+  // all active device contexts on multi-GPU hosts, as in b/575648319.
+  for (int i = 0; i < platform->VisibleDeviceCount(); ++i) {
+    ASSERT_OK(platform->ExecutorForDevice(i).status());
+  }
+
+  CudaExecutor executor(platform, /*device_ordinal=*/0);
+  ASSERT_OK(executor.Init());
+
+  // 16,384 x 8 KiB = 128 MiB total, exceeding the ~10,325 portable driver
+  // registration limit observed across 8 GPUs in b/575648319.
+  constexpr uint64_t kAllocSize = 8192;
+  constexpr int kNumAllocations = 16384;
+  std::vector<std::unique_ptr<MemoryAllocation>> allocations;
+  allocations.reserve(kNumAllocations);
+  absl::flat_hash_set<const void*> registered_slab_starts;
+
+  for (int i = 0; i < kNumAllocations; ++i) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> alloc,
+                         executor.HostMemoryAllocate(kAllocSize));
+    ASSERT_OK_AND_ASSIGN(
+        DeviceAddressBase range,
+        GetCudaRegisteredRange(executor, alloc->address().opaque()));
+    registered_slab_starts.insert(range.opaque());
+    allocations.push_back(std::move(alloc));
+  }
+
+  // Power-of-two slab growth from 2 MiB covers 128 MiB in <= 7 slabs
+  // (2 + 4 + 8 + 16 + 32 + 64 + 128 MiB), rather than 16,384 registrations.
+  EXPECT_LE(registered_slab_starts.size(), 16);
 }
 }  // namespace
 }  // namespace stream_executor::gpu
