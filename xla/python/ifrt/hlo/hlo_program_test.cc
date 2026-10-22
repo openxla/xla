@@ -67,7 +67,8 @@ module @hlo_module attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas 
   ASSERT_OK_AND_ASSIGN(auto program, ParseHloProgramString(kModule));
   ASSERT_OK_AND_ASSIGN(auto serialized, program->ToBytes());
   ASSERT_OK_AND_ASSIGN(auto deserialized, HloProgram::FromBytes(serialized));
-  EXPECT_EQ(program->Fingerprint(), deserialized->Fingerprint());
+  EXPECT_EQ(program->Fingerprint(FingerprintOptions()),
+            deserialized->Fingerprint(FingerprintOptions()));
 }
 
 TEST(HloProgramTest, ToMaybeOwningMlirModule) {
