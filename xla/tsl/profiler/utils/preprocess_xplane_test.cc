@@ -283,8 +283,8 @@ TEST(PreprocessXPlane, ThreadPoolPreprocessorTest) {
         new_event_added = true;
         EXPECT_EQ(event.DurationPs(), 100);
         EXPECT_EQ(event.TimestampPs(), 200);
-        // TODO: b/510930307 - Verify consumer stat value for the region event
-        // once preprocess_xplane.h implements it.
+        EXPECT_FALSE(event.GetStat(StatType::kConsumerId).has_value());
+        EXPECT_FALSE(event.GetStat(StatType::kConsumerType).has_value());
       }
     });
   });
