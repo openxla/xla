@@ -533,6 +533,39 @@ TEST_F(HeapSimulatorTest, MultiplyAdd) {
   tracker.ExpectSharedBuffers(add, {}, mul, {});
 }
 
+// Verifies that an elementwise consumer of a kCopyDone can share the buffer
+// defined at the corresponding kCopyStart{0} in place.
+TEST_F(HeapSimulatorTest, ShareOperandBufferThroughCopyDone) {
+  auto builder = HloComputation::Builder(TestName());
+  auto param0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, f32vec4_, "param0"));
+  Shape copy_start_shape = ShapeUtil::MakeTupleShape(
+      {f32vec4_, f32vec4_, ShapeUtil::MakeShape(U32, {})});
+  auto copy_start = builder.AddInstruction(
+      HloInstruction::CreateCopyStart(copy_start_shape, param0));
+  auto copy_done = builder.AddInstruction(
+      HloInstruction::CreateUnary(f32vec4_, HloOpcode::kCopyDone, copy_start));
+  auto neg = builder.AddInstruction(
+      HloInstruction::CreateUnary(f32vec4_, HloOpcode::kNegate, copy_done));
+
+  HeapSimulatorTracker tracker(TestName(), builder.Build(),
+                               {param0, copy_start, copy_done, neg});
+  tracker.ExpectCallSequence({
+      {kAlloc, tracker.BufferAt(param0, {})},
+      {kAlloc, tracker.BufferAt(copy_start, {})},
+      {kAlloc, tracker.BufferAt(copy_start, {2})},
+      {kAlloc, tracker.BufferAt(copy_start, {0})},
+      {kFree, tracker.BufferAt(copy_start, {})},
+      {kFree, tracker.BufferAt(copy_start, {2})},
+      {kFree, tracker.BufferAt(copy_start, {0})},
+      {kShare, tracker.BufferAt(neg, {})},
+      {kFree, tracker.BufferAt(param0, {})},
+      {kFree, tracker.BufferAt(neg, {})},
+      {kFinish, nullptr},
+  });
+  tracker.ExpectSharedBuffers(neg, {}, copy_start, {0});
+}
+
 class CanShareWithSameShapeAliasInfo : public AliasInfo {
  public:
   std::optional<bool> MayAlias(const HloInstruction* operand, const ShapeIndex&,

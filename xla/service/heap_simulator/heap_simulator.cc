@@ -435,7 +435,7 @@ absl::Status HeapSimulator::RunComputation(
           hlo_buffer->values().size() == 1) {
         // We don't support sharing an aliased buffer
         // (hlo_buffer->values().size() > 1) with its operand.
-        for (const HloInstruction* operand : value->instruction()->operands()) {
+        for (HloInstruction* operand : value->instruction()->operands()) {
           const HloValueSet& operand_value_set =
               dataflow_analysis.GetValueSet(operand);
           for (const HloValue* operand_value : operand_value_set.values()) {
@@ -473,10 +473,24 @@ absl::Status HeapSimulator::RunComputation(
             // from the actual operand, if directly passing the defining
             // instruction into "CanShareOperandBufferWithUser" it creates a
             // check failure. The first condition guards against that case.
-            if (value->instruction()->IsUserOf(operand_value->instruction()) &&
+            // A kCopyDone forwards the value defined at kCopyStart{0}, so pass
+            // the kCopyDone instruction as the direct operand when checking
+            // buffer sharing.
+            const bool is_copy_done_of_operand_value =
+                operand->opcode() == HloOpcode::kCopyDone &&
+                operand->operand(0) == operand_value->instruction() &&
+                operand_value->index() == ShapeIndex({0});
+            HloInstruction* operand_for_sharing =
+                is_copy_done_of_operand_value ? operand
+                                              : operand_value->instruction();
+            ShapeIndex operand_index_for_sharing = is_copy_done_of_operand_value
+                                                       ? ShapeIndex({})
+                                                       : operand_value->index();
+            if ((value->instruction()->IsUserOf(operand_value->instruction()) ||
+                 is_copy_done_of_operand_value) &&
                 value->instruction()->opcode() != HloOpcode::kCopy &&
                 dataflow_analysis.CanShareOperandBufferWithUser(
-                    operand_value->instruction(), operand_value->index(),
+                    operand_for_sharing, operand_index_for_sharing,
                     value->instruction(), value->index(), alias_info)) {
               // Remove the operand buffer right before sharing (allocating) a
               // new one.
