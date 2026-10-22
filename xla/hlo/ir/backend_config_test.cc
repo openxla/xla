@@ -15,12 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/ir/backend_config.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <thread>  // NOLINT
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/notification.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -157,6 +160,74 @@ TEST(BackendConfigWrapperTest, EmptyStateIsTrackedCorrectly) {
   // Move empty into non-empty: destination becomes empty.
   move_dst = BackendConfigWrapper();
   EXPECT_TRUE(move_dst.empty());
+}
+
+TEST(BackendConfigWrapperTest, ContentIdIsStableAcrossFormatConversions) {
+  BackendConfigWrapper from_string(std::string{kRawString});
+  const uint64_t from_string_id = from_string.content_id();
+  gpu::GpuBackendConfig proto;
+  EXPECT_OK(from_string.GetProto(&proto));
+  EXPECT_EQ(from_string.content_id(), from_string_id);
+
+  BackendConfigWrapper from_proto(proto);
+  const uint64_t from_proto_id = from_proto.content_id();
+  EXPECT_EQ(from_proto.GetRawString(), kRawString);
+  EXPECT_EQ(from_proto.content_id(), from_proto_id);
+}
+
+TEST(BackendConfigWrapperTest, ContentIdChangesWhenProtoIsMutated) {
+  BackendConfigWrapper original(std::string{kRawString});
+  const uint64_t original_id = original.content_id();
+
+  BackendConfigWrapper copy(original);
+  const uint64_t copy_id = copy.content_id();
+  EXPECT_OK(copy.ApplyFnOnProto<gpu::GpuBackendConfig>(
+      [](gpu::GpuBackendConfig* config) {
+        config->set_operation_queue_id(1);
+        return absl::OkStatus();
+      }));
+  const uint64_t mutated_id = copy.content_id();
+  EXPECT_NE(mutated_id, copy_id);
+  EXPECT_EQ(original.content_id(), original_id);
+
+  // A failing function may still have mutated the proto.
+  EXPECT_FALSE(copy.ApplyFnOnProto<gpu::GpuBackendConfig>(
+                       [](gpu::GpuBackendConfig* config) {
+                         config->set_operation_queue_id(2);
+                         return absl::InternalError("failed after mutating");
+                       })
+                   .ok());
+  EXPECT_NE(copy.content_id(), mutated_id);
+}
+
+TEST(BackendConfigWrapperTest, ContentIdChangesOnMoveAssignment) {
+  BackendConfigWrapper target(std::string{kRawString});
+  BackendConfigWrapper source(std::string{"{}"});
+  const uint64_t target_id = target.content_id();
+  const uint64_t source_id = source.content_id();
+  target = std::move(source);
+  EXPECT_NE(target.content_id(), target_id);
+  EXPECT_NE(source.content_id(), source_id);  // NOLINT(bugprone-use-after-move)
+}
+
+TEST(BackendConfigWrapperTest, ConcurrentContentIdIsAssignedOnce) {
+  BackendConfigWrapper source(std::string{kRawString});
+  std::vector<uint64_t> ids(kNumThreads);
+  absl::Notification all_threads_created;
+  std::vector<std::unique_ptr<std::thread>> threads;
+  for (int i = 0; i < kNumThreads; ++i) {
+    threads.emplace_back(std::make_unique<std::thread>([&, i] {
+      all_threads_created.WaitForNotification();
+      ids[i] = source.content_id();
+    }));
+  }
+  all_threads_created.Notify();
+  for (std::unique_ptr<std::thread>& thread : threads) {
+    thread->join();
+  }
+  for (uint64_t id : ids) {
+    EXPECT_EQ(id, ids[0]);
+  }
 }
 
 }  // namespace
