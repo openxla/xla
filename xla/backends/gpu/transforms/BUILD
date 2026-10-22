@@ -2319,6 +2319,7 @@ xla_test(
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:types",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
