@@ -40,6 +40,14 @@ namespace tsl {
 namespace profiler {
 namespace {
 
+using ::testing::_;
+using ::testing::AllOf;
+using ::testing::Each;
+using ::testing::Field;
+using ::testing::IsEmpty;
+using ::testing::Pair;
+using ::testing::UnorderedElementsAre;
+
 constexpr int64_t kTfExecutor = static_cast<int64_t>(ContextType::kTfExecutor);
 
 TEST(GroupEventsTest, GroupGpuTraceLegacyRootTest) {
@@ -1507,6 +1515,105 @@ TEST(GroupEventsTest, SubprocessGroupingNoMatchTest) {
               ::testing::UnorderedElementsAre(::testing::Pair("root1", 0),
                                               ::testing::Pair("root2", 1),
                                               ::testing::Pair("producer", 1)));
+}
+
+// End-to-end tripwire for b/510930307: raw threadpool markers go through
+// PreprocessXSpace and GroupTfEvents, and each TF loop iteration must keep its
+// own group. Keep the threadpool producer on a nested Record: PreprocessXSpace
+// overwrites _pt/_p on ExecutorState::Process events that have step_id and
+// iter_num (kLegacy connected-event mutator). StartRegion offsets must be > 0
+// or the preprocessor ignores the pair.
+TEST(GroupEventsTest, ThreadpoolRegionDoesNotMergeTfLoopIterations) {
+  constexpr int64_t kStepId = 0;
+  constexpr int64_t kThreadpool =
+      static_cast<int64_t>(ContextType::kThreadpoolEvent);
+  constexpr int64_t kClosure1 = 101;
+  constexpr int64_t kClosure2 = 102;
+
+  XSpace space;
+  XPlane* host_plane = GetOrCreateHostXPlane(&space);
+  SetXPlanePidIfNotSet(*host_plane, 1);
+  XPlaneBuilder builder(host_plane);
+  builder.ReserveLines(3);
+
+  // Iteration 0 runs on the executor thread and schedules closure 1.
+  XLineBuilder executor_thread = builder.GetOrCreateLine(0);
+  CreateXEvent(&builder, &executor_thread, HostEventType::kExecutorStateProcess,
+               10, 90,
+               {{StatType::kStepId, kStepId},
+                {StatType::kIterNum, int64_t{0}},
+                {StatType::kConsumerType, kTfExecutor},
+                {StatType::kConsumerId, kStepId}});
+  CreateXEvent(&builder, &executor_thread, kThreadpoolListenerRecord, 50, 0,
+               {{StatType::kProducerType, kThreadpool},
+                {StatType::kProducerId, kClosure1}});
+
+  // Closure 1 runs iteration 1 on a worker and schedules closure 2.
+  XLineBuilder worker_1 = builder.GetOrCreateLine(1);
+  CreateXEvent(&builder, &worker_1, kThreadpoolListenerStartRegion, 200, 0,
+               {{StatType::kConsumerType, kThreadpool},
+                {StatType::kConsumerId, kClosure1}});
+  CreateXEvent(&builder, &worker_1, HostEventType::kExecutorStateProcess, 210,
+               80,
+               {{StatType::kStepId, kStepId},
+                {StatType::kIterNum, int64_t{1}},
+                {StatType::kConsumerType, kTfExecutor},
+                {StatType::kConsumerId, kStepId}});
+  CreateXEvent(&builder, &worker_1, kThreadpoolListenerRecord, 250, 0,
+               {{StatType::kProducerType, kThreadpool},
+                {StatType::kProducerId, kClosure2}});
+  CreateXEvent(&builder, &worker_1, kThreadpoolListenerStopRegion, 300, 0);
+
+  // Closure 2 runs iteration 2 on another worker.
+  XLineBuilder worker_2 = builder.GetOrCreateLine(2);
+  CreateXEvent(&builder, &worker_2, kThreadpoolListenerStartRegion, 400, 0,
+               {{StatType::kConsumerType, kThreadpool},
+                {StatType::kConsumerId, kClosure2}});
+  CreateXEvent(&builder, &worker_2, HostEventType::kExecutorStateProcess, 410,
+               80,
+               {{StatType::kStepId, kStepId},
+                {StatType::kIterNum, int64_t{2}},
+                {StatType::kConsumerType, kTfExecutor},
+                {StatType::kConsumerId, kStepId}});
+  CreateXEvent(&builder, &worker_2, kThreadpoolListenerStopRegion, 500, 0);
+
+  PreprocessXSpace(&space);
+  EventForest event_forest;
+  GroupTfEvents(&space, &event_forest);
+
+  absl::flat_hash_map<int64_t, int64_t> group_id_by_iter_num;
+  absl::flat_hash_map<int64_t, int64_t> start_region_group_id_by_line;
+  int region_count = 0;
+  CreateTfXPlaneVisitor(host_plane).ForEachLine([&](const XLineVisitor& line) {
+    line.ForEachEvent([&](const XEventVisitor& event) {
+      if (event.Type() == HostEventType::kExecutorStateProcess) {
+        std::optional<XStatVisitor> iter_num =
+            event.GetStat(StatType::kIterNum);
+        std::optional<XStatVisitor> group_id =
+            event.GetStat(StatType::kGroupId);
+        ASSERT_TRUE(iter_num.has_value());
+        ASSERT_TRUE(group_id.has_value());
+        group_id_by_iter_num[iter_num->IntValue()] = group_id->IntValue();
+      } else if (event.Name() == kThreadpoolListenerStartRegion) {
+        std::optional<XStatVisitor> group_id =
+            event.GetStat(StatType::kGroupId);
+        ASSERT_TRUE(group_id.has_value());
+        start_region_group_id_by_line[line.Id()] = group_id->IntValue();
+      } else if (event.Name() == kThreadpoolListenerRegion) {
+        ++region_count;
+      }
+    });
+  });
+  EXPECT_EQ(region_count, 2);
+  EXPECT_THAT(start_region_group_id_by_line,
+              UnorderedElementsAre(Pair(1, 0), Pair(2, 1)));
+  EXPECT_THAT(group_id_by_iter_num,
+              UnorderedElementsAre(Pair(0, 0), Pair(1, 1), Pair(2, 2)));
+  // No iteration may claim another, so no group links either. This also
+  // catches Root-preassign's links. groups.size() is 3 in every case.
+  EXPECT_THAT(event_forest.GetGroupMetadataMap(),
+              Each(Pair(_, AllOf(Field(&GroupMetadata::parents, IsEmpty()),
+                                 Field(&GroupMetadata::children, IsEmpty())))));
 }
 
 }  // namespace

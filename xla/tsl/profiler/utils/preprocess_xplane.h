@@ -451,10 +451,9 @@ class TpuModuleLineMutatorFactory : public XplaneEventMutatorFactory {
   };
 };
 
-// Line mutator for threadpool line.
-// Threadpool Line Mutator create a kThreadpoolListenerRegion from StartRegion
-// to StopRegion events, and propagates the context information from the
-// StartRegion to the newly added event.
+// Line mutator for threadpool lines. Creates a kThreadpoolListenerRegion
+// event spanning each StartRegion/StopRegion pair. The region carries no
+// context stats; see MutateEventsInLine.
 class ThreadpoolLineMutatorFactory : public XplaneEventMutatorFactory {
  public:
   static std::unique_ptr<XplaneEventMutatorFactory> CreateFactory() {
@@ -529,8 +528,12 @@ class ThreadpoolLineMutatorFactory : public XplaneEventMutatorFactory {
         XEventBuilder region = line.AddEvent(*thread_pool_metadata_);
         region.SetTimestampPs(event_metadata.start_region_timestamp_ps);
         region.SetEndTimestampPs(event_metadata.end_region_timestamp_ps);
-        // TODO: b/510930307 - Set consumer stat value for the region event and
-        // properly address the grouping issue described above.
+        // Intentionally no consumer (_ct/_c) stats. As a consumer, this
+        // enclosing span would pass the scheduling thread's group to all
+        // work nested in the closure (go/xprof-trace-context-propagation).
+        // A closure scheduled by TF loop iteration k can run iteration k+1,
+        // so iterations would merge (b/510930307). StartRegion keeps this
+        // closure's producer/consumer link and flow; it encloses nothing.
       }
       if (!event_metadata.empty()) {
         SortXLine(line.GetLine());
