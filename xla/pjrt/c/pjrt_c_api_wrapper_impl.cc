@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
@@ -1332,7 +1333,8 @@ PJRT_Error* PJRT_Client_CreateErrorBuffer(
     PJRT_Client_CreateErrorBuffer_Args* args) {
   PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
       "PJRT_Client_CreateErrorBuffer_Args",
-      PJRT_Client_CreateErrorBuffer_Args_STRUCT_SIZE, args->struct_size));
+      PJRT_STRUCT_SIZE(PJRT_Client_CreateErrorBuffer_Args, num_payload),
+      args->struct_size));
 
   absl::Status error = absl::Status(
       pjrt::PjrtErrorCodeToStatusCode(args->error_code),
@@ -1355,12 +1357,41 @@ PJRT_Error* PJRT_Client_CreateErrorBuffer(
   PJRT_ASSIGN_OR_RETURN(
       xla::Shape shape,
       pjrt::BuildXlaShapeFromC(args->shape_element_type, args->shape_dims,
-                               args->shape_num_dims, args->shape_layout));
+                               args->shape_num_dims, /*layout=*/nullptr));
+  xla::LayoutUtil::SetToDefaultLayout(&shape);
+
+  std::optional<xla::Layout> cpp_layout;
+  const xla::Layout* device_layout = nullptr;
+  if (args->struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_Client_CreateErrorBuffer_Args, device_layout) &&
+      args->device_layout != nullptr) {
+    switch (args->device_layout->type) {
+      case PJRT_Buffer_MemoryLayout_Type::PJRT_Buffer_MemoryLayout_Type_Tiled: {
+        PJRT_ASSIGN_OR_RETURN(cpp_layout,
+                              ConvertToLayout(args->device_layout->tiled));
+        break;
+      }
+      case PJRT_Buffer_MemoryLayout_Type::
+          PJRT_Buffer_MemoryLayout_Type_Strides: {
+        PJRT_RETURN_IF_ERROR(absl::InvalidArgumentError(
+            "PJRT_Buffer_MemoryLayout_Type_Strides is not supported to be "
+            "converted to a xla::Layout."));
+        break;
+      }
+      default: {
+        PJRT_RETURN_IF_ERROR(absl::InvalidArgumentError(
+            absl::StrCat("Unexpected PJRT_Buffer_MemoryLayout_Type type: ",
+                         args->device_layout->type)));
+      }
+    }
+    device_layout = &*cpp_layout;
+  }
 
   PJRT_ASSIGN_OR_RETURN(
       auto error_buffer,
       args->client->client->CreateErrorBuffer(
-          error, shape, xla::PjRtMemorySpace::FromC(args->memory)));
+          error, shape, xla::PjRtMemorySpace::FromC(args->memory),
+          device_layout));
 
   args->buffer = new PJRT_Buffer{std::move(error_buffer), args->client};
   return nullptr;
@@ -1921,11 +1952,8 @@ PJRT_Error* PJRT_LoadedExecutable_AddressableDeviceLogicalIds(
       PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args_STRUCT_SIZE,
       args->struct_size));
 
-  args->num_addressable_device_logical_ids =
-      args->executable->addressable_device_logical_ids.size();
-  args->addressable_device_logical_ids =
-      args->executable->addressable_device_logical_ids.data();
-  return nullptr;
+  return StatusToPjRtError(xla::Unimplemented(
+      "PJRT_LoadedExecutable_AddressableDeviceLogicalIds is not implemented."));
 }
 
 PJRT_Error* PJRT_Executable_NumOutputs(PJRT_Executable_NumOutputs_Args* args) {
@@ -3290,10 +3318,10 @@ PJRT_Error* PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace(
       PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args_STRUCT_SIZE,  // NOLINT (whitespace/line_length)
       args->struct_size));
 
-  xla::PrimitiveType element_type =
-      pjrt::ConvertFromPjRtBufferType(args->element_type);
-  xla::Shape input_shape =
-      xla::ShapeUtil::MakeShape(element_type, {args->dims, args->num_dims});
+  PJRT_ASSIGN_OR_RETURN(
+      xla::Shape input_shape,
+      pjrt::BuildXlaShapeFromC(args->element_type, args->dims, args->num_dims,
+                               /*layout=*/nullptr));
 
   const xla::Layout* layout_ptr = nullptr;
   xla::Layout layout;
@@ -3753,25 +3781,10 @@ PJRT_Executable::PJRT_Executable(xla::PjRtExecutable* unowned_executable)
     : executable(unowned_executable),
       fingerprint(executable->FingerprintExecutable()) {}
 
-static void PopulatePjrtExecutableAddressableDeviceLogicalIds(
-    PJRT_LoadedExecutable* executable) {
-  CHECK(executable->client != nullptr) << ": client was null";
-  absl::Span<const xla::PjRtLoadedExecutable::LogicalDeviceIds> cpp_ids =
-      executable->get()->addressable_device_logical_ids();
-
-  std::vector<PJRT_LogicalDeviceIds>& exec_ids =
-      executable->addressable_device_logical_ids;
-  exec_ids.reserve(cpp_ids.size());
-  for (const auto& id : cpp_ids) {
-    exec_ids.push_back(PJRT_LogicalDeviceIds{id.replica, id.partition});
-  }
-}
-
 PJRT_LoadedExecutable::PJRT_LoadedExecutable(
     std::shared_ptr<xla::PjRtLoadedExecutable> executable, PJRT_Client* client)
     : executable(std::move(executable)), client(client) {
   pjrt::PopulatePjrtExecutableAddressableDevices(this);
-  PopulatePjrtExecutableAddressableDeviceLogicalIds(this);
 }
 
 namespace pjrt {

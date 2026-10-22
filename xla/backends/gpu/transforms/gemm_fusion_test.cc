@@ -21,11 +21,9 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
-#include <tuple>
 
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/autotuning.pb.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -51,6 +49,7 @@ using ::testing::Contains;
 using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::FieldsAre;
+using ::testing::Not;
 using ::testing::UnorderedElementsAre;
 
 namespace m = ::xla::match;
@@ -431,6 +430,29 @@ ENTRY e {
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Bitcast(m::Fusion(m::Bitcast(m::Parameter()),
                                       m::Parameter(), m::Parameter()))));
+}
+
+// The epilogue of `d0` absorbs `b1`, the only user of `d1`. `d1` must still be
+// fused even though the instruction through which it was reachable is removed.
+TEST_F(GemmFusionTestV2, DotWhoseUserIsFusedIntoAnotherDotEpilogueIsFused) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+ENTRY e {
+  p0 = f32[32,6] parameter(0)
+  p1 = f32[32,14] parameter(1)
+  d0 = f32[6,14] dot(p0, p1),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+  p2 = f32[32,42] parameter(2)
+  p3 = f32[32,2] parameter(3)
+  d1 = f32[42,2] dot(p2, p3),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+  b1 = f32[6,14] bitcast(d1)
+  ROOT m = f32[6,14] multiply(d0, b1)
+})"));
+  ASSERT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(module->entry_computation()->instructions(),
+              Each(Not(GmockMatch(m::Dot()))));
 }
 
 TEST_F(GemmFusionTestV2, BitcastIsHoistedAboveConstants) {
@@ -2055,6 +2077,40 @@ TEST_F(GemmFusionTest, ScaledDotIsFused) {
   MatchHloModule(*module, kExpectedHloText);
 }
 
+TEST_P(GemmFusionTestVersioned, ScaledDotScaleBroadcastsAreFusedOnRocm) {
+  constexpr absl::string_view kHloText = R"(
+    HloModule m
+
+    ENTRY e {
+      lhs = f8e4m3fn[3,128,128] parameter(0)
+      rhs = f8e4m3fn[3,128,128] parameter(1)
+      lhs_scale = f8e8m0fnu[3,128] parameter(2)
+      lhs_scale_broadcast = f8e8m0fnu[3,128,4] broadcast(lhs_scale),
+          dimensions={0,1}
+      rhs_scale = f8e8m0fnu[3,128] parameter(3)
+      rhs_scale_broadcast = f8e8m0fnu[3,128,4] broadcast(rhs_scale),
+          dimensions={0,1}
+      ROOT dot = bf16[3,128,128] scaled-dot(lhs, rhs, lhs_scale_broadcast,
+          rhs_scale_broadcast),
+        lhs_batch_dims={0}, rhs_batch_dims={0},
+        lhs_contracting_dims={2}, rhs_contracting_dims={2}
+    }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(
+      GemmFusion(TestGpuDeviceInfo::AMDMI350DeviceInfo()).Run(module.get()),
+      IsOkAndHolds(true));
+  MatchHloModule(*module, R"(
+    CHECK: f8e8m0fnu[3,128,4]{2,1,0} broadcast(
+    CHECK: f8e8m0fnu[3,128,4]{2,1,0} broadcast(
+    CHECK: ROOT {{.*}} scaled-dot(
+    CHECK: ENTRY
+    CHECK-NOT: broadcast(
+    CHECK: ROOT {{.*}} fusion(
+  )");
+}
+
 TEST_P(GemmFusionTestVersioned, SkipNonFusibleComputations) {
   const char* hlo_text = R"(
 HloModule module
@@ -2720,6 +2776,57 @@ ENTRY e {
                                    GmockMatch(m::Parameter())));
 }
 
+TEST_F(GemmFusionTestV2, DoNotFuseEpilogueTransposeIfUserCanAbsorbIt) {
+  // The transpose only reorders the sub-dimensions of the LHS non-contracting
+  // dimension, so it is left for its user (a residual add) to absorb, even
+  // though the user could be fused into the GEMM otherwise. The bias is still
+  // fused.
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+ENTRY e {
+  p0 = f16[3072,64]{1,0} parameter(0)
+  p1 = f16[64,32]{1,0} parameter(1)
+  dot = f16[3072,32]{1,0} dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  p2 = f16[32]{0} parameter(2)
+  bias = f16[3072,32]{1,0} broadcast(p2), dimensions={1}
+  add = f16[3072,32]{1,0} add(dot, bias)
+  bitcast = f16[3,16,64,32]{3,2,1,0} bitcast(add)
+  transpose = f16[16,64,3,32]{3,2,1,0} transpose(bitcast),
+    dimensions={1,2,0,3}
+  p3 = f16[16,64,3,32]{3,2,1,0} parameter(3)
+  ROOT sum = f16[16,64,3,32]{3,2,1,0} add(p3, transpose)
+})"));
+  ASSERT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(true));
+  const HloInstruction* fusion = nullptr;
+  ASSERT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Add(m::Parameter(), TransposeOrTransposeBitcast(
+                                                    m::Fusion(&fusion)))));
+  EXPECT_THAT(fusion->fused_expression_root(), GmockMatch(m::Add()));
+}
+
+TEST_F(GemmFusionTestV2, FuseEpilogueTransposeIfRoot) {
+  // There is no user kernel that could absorb the transpose.
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+ENTRY e {
+  p0 = f16[3072,64]{1,0} parameter(0)
+  p1 = f16[64,32]{1,0} parameter(1)
+  dot = f16[3072,32]{1,0} dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  bitcast = f16[3,16,64,32]{3,2,1,0} bitcast(dot)
+  ROOT transpose = f16[16,64,3,32]{3,2,1,0} transpose(bitcast),
+    dimensions={1,2,0,3}
+})"));
+  ASSERT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(true));
+  const HloInstruction* fusion =
+      module->entry_computation()->root_instruction();
+  ASSERT_THAT(fusion, GmockMatch(m::Fusion()));
+  EXPECT_THAT(fusion->fused_expression_root(), GmockMatch(m::Transpose()));
+}
+
 TEST_F(GemmFusionTestV2, ConcatResetTrackerCrash) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
@@ -2996,6 +3103,26 @@ ENTRY e {
               GmockMatch(m::Bitcast(m::Concatenate(
                   m::Parameter(),
                   m::Bitcast(m::Fusion(m::Parameter(), m::Parameter()))))));
+}
+
+TEST_F(GemmFusionTestV2, DoNotFuseCollective) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+ENTRY e {
+  p0 = bf16[8,64,128] parameter(0)
+  a2a = bf16[8,64,128] all-to-all(p0),
+    replica_groups={{0,1,2,3,4,5,6,7}}, dimensions={0}
+  p1 = bf16[8,128,256] parameter(1)
+  ROOT dot = bf16[8,64,256] dot(a2a, p1),
+    lhs_batch_dims={0}, lhs_contracting_dims={2},
+    rhs_batch_dims={0}, rhs_contracting_dims={1}
+})"));
+  ASSERT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::Fusion(m::AllToAll(m::Parameter()), m::Parameter())));
 }
 
 }  // namespace
