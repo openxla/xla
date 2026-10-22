@@ -5084,7 +5084,6 @@ xla_test(
         ":async_thunk",
         ":collective_group_thunk",
         ":collective_thunk",
-        ":command",
         ":command_buffer_conversion_pass",
         ":command_buffer_thunk",
         ":conditional_thunk",
