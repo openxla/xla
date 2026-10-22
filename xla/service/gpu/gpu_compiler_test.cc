@@ -285,6 +285,27 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{0, 0}));
 }
 
+TEST_F(GpuCompilerTest, MemoryFencingUsesSelectedBufferAssignment) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule fencing_assignment
+
+ENTRY main {
+  p = f32[64,64]{1,0} parameter(0)
+  q = f32[64,64]{1,0} parameter(1)
+  product = f32[64,64]{1,0} dot(p, q),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  sum = f32[64,64]{1,0} add(product, p)
+  ROOT result = (f32[64,64]{1,0}, f32[64,64]{1,0}) tuple(sum, product)
+}
+)"));
+  DebugOptions& options = module->mutable_config().mutable_debug_options();
+  options.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(0);
+  options.set_xla_gpu_enable_latency_hiding_scheduler(true);
+  options.set_xla_gpu_autotune_level(0);
+  EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{1e-3, 1e-3}));
+}
+
 TEST_F(GpuCompilerTest, CanRunScheduledModules) {
   HloModuleConfig config;
   DebugOptions debug_options = GetDebugOptionsForTest();

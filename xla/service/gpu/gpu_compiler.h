@@ -217,7 +217,7 @@ class GpuCompiler : public LLVMCompiler {
 
   // Schedule and compile the module.
   absl::StatusOr<CompileResultWithMetadata> CompileToBackendResult(
-      HloModule* module, llvm::LLVMContext* llvm_context,
+      std::unique_ptr<HloModule>& module, llvm::LLVMContext* llvm_context,
       const GpuTopology& gpu_topology, const CompileOptions& options,
       se::StreamExecutor* absl_nullable stream_exec,
       mlir::MLIRContext* mlir_context);
