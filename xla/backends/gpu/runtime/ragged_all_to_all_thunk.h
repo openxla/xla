@@ -24,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -105,9 +104,8 @@ struct RaggedAllToAllStreamState {
   std::optional<int64_t> lsa_size;
   GpuCliqueKey clique_key{{}, 0};
 
-  // Host memory allocations for ragged metadata.
-  absl::InlinedVector<std::unique_ptr<se::MemoryAllocation>, 8>
-      host_buffer_allocs;
+  // Contiguous host memory allocation for all ragged metadata operands.
+  std::unique_ptr<se::MemoryAllocation> host_buffer_alloc;
 
   // Device memory buffer for output offsets.
   se::ScopedDeviceAddress<uint8_t> output_offsets_device_buffer;
