@@ -15,7 +15,6 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/fusion.h"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -369,26 +368,14 @@ namespace {
 // Computes the number of GPU blocks (workgroups) for a launch grid from the
 // output shape dimensions and the per-dimension tile sizes.
 //
-// When tile_sizes has fewer elements than dimensions, the computation aligns to
-// the *trailing* dimensions.  The leading dimensions that have no corresponding
-// tile entry are assumed to be handled as sequential loops inside each block
-// (e.g. the G outer-loop in a kRaggedNonContracting kernel) and do NOT
-// contribute to the block count.
-//
-// Examples:
-//   dims=[8, 192, 512], tiles=[32, 32]  → trailing dims=[192,512]
-//     → ceil(192/32)*ceil(512/32) = 6*16 = 96  (correct for K×N grid)
-//   dims=[256, 512],    tiles=[4,  16]  → (equal size, no offset)
-//     → ceil(256/4)*ceil(512/16) = 64*32 = 2048
+// `tile_sizes` must hold one entry per *parallel* dimension of the tiling
+// space, and those are exactly the dimensions of the root's shape (sequential
+// dimensions are carried by the instruction's own tile config).
 int64_t GetNumberOfBlocks(absl::Span<const int64_t> dimensions,
                           absl::Span<const int64_t> tile_sizes) {
-  // Align to trailing dimensions when tile_sizes is shorter than dimensions.
-  const size_t offset = dimensions.size() >= tile_sizes.size()
-                            ? dimensions.size() - tile_sizes.size()
-                            : 0;
+  CHECK_EQ(dimensions.size(), tile_sizes.size());
   int64_t num_blocks = 1;
-  for (auto [dim_size, dim_tile_size] :
-       llvm::zip(dimensions.subspan(offset), tile_sizes)) {
+  for (auto [dim_size, dim_tile_size] : llvm::zip(dimensions, tile_sizes)) {
     num_blocks *= (dim_size + dim_tile_size - 1) / dim_tile_size;
   }
   return num_blocks;
