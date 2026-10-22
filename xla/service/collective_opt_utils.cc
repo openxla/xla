@@ -161,6 +161,9 @@ bool IsPerIdOffsets(absl::Span<const HloInstruction*> offsets,
           table_entry = *scalar_offset->operand(0)->literal().GetIntegralAsS64(
               {table_index});
         }
+        if (table_entry < 0 || table_entry >= slice_group_sizes[dim]) {
+          return false;
+        }
         slice_group_size /= slice_group_sizes[dim];
         final_table_entry += table_entry * slice_group_size;
       }
@@ -1181,6 +1184,9 @@ std::optional<ReduceScatterSpec> MatchWithDynamicSlice(
     std::vector<const HloInstruction*> offsets;
     int shard_size = 1;
     for (auto dim : split_dims) {
+      if (user->dynamic_slice_sizes()[dim] != 1) {
+        return std::nullopt;
+      }
       offsets.push_back(user->operand(dim + 1));
       shard_size *= user->dynamic_slice_sizes()[dim];
     }
