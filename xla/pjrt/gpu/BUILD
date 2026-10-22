@@ -218,7 +218,7 @@ cc_library(
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:device_address_vmm_allocator",
-        "//xla/stream_executor:device_address_vmm_allocator_factory",
+        "//xla/stream_executor:device_address_vmm_allocator_factory",  # buildcleaner: keep
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor:device_interconnect_resource",
