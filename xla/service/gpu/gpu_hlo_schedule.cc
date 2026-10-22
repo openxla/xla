@@ -906,19 +906,26 @@ absl::Status RunLatencyHidingSchedulerPasses(
         HeapSimulator::MinimumMemoryForModule(module->schedule(), *aliases,
                                               alias_info, &device_buffer_size));
     tuning_cost->estimated_cycles = 0;
+    ModulePressureState pressure_state(
+        module, scheduling_context->GetAliasAnalysis().get(),
+        scheduling_context->GetShapeSizeBytes(),
+        scheduling_context->GetAsyncTracker()->IsTopDownScheduling());
+    pressure_state.InitializePressureStates();
     // A static tie-breaker: sum per-computation estimates once (not a dynamic
     // execution-count model). Peak memory remains the primary objective.
+    // Embedded computations inside fusions (e.g. reducers) can have schedules,
+    // but have no standalone memory-pressure state. Their cost belongs to the
+    // enclosing fusion, so do not request scheduler statistics for them.
     auto computations =
         module->entry_computation()->MakeEmbeddedComputationsList();
     computations.push_back(module->entry_computation());
     for (HloComputation* computation : computations) {
-      if (!computation->IsFusionComputation() &&
-          module->schedule().is_computation_scheduled(computation)) {
+      if (pressure_state.ComputationIsMemoryTracked(computation)) {
         tuning_cost->estimated_cycles +=
             LatencyHidingScheduler::LatencyHidingStatistics(
                 computation,
                 module->schedule().sequence(computation).instructions(),
-                scheduling_context)
+                scheduling_context, &pressure_state)
                 .total_cycles;
       }
     }

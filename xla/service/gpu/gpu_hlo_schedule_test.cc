@@ -280,6 +280,39 @@ TEST_F(GpuHloScheduleFencingTest, AutomaticFencingRetainsLowestEstimatedPeak) {
   }
 }
 
+TEST_F(GpuHloScheduleFencingTest, AutomaticFencingHandlesFusedReducer) {
+  constexpr absl::string_view kHlo = R"(
+HloModule fused_reducer
+
+sum {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+fused {
+  p = f32[16]{0} parameter(0)
+  zero = f32[] constant(0)
+  ROOT reduce = f32[] reduce(p, zero), dimensions={0}, to_apply=sum
+}
+
+ENTRY entry {
+  p = f32[16]{0} parameter(0)
+  reduced = f32[] fusion(p), kind=kInput, calls=fused
+  start = (f32[], f32[]) collective-permute-start(reduced), source_target_pairs={{0,1},{1,0}}
+  ROOT done = f32[] collective-permute-done(start)
+})";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
+                                        kHlo, GetFencingModuleConfig(0)));
+  ASSERT_OK(ScheduleGpuModule(module.get()).status());
+  ASSERT_OK(module->schedule().Verify());
+  // Memory scheduling includes the reducer even though LHS does not track
+  // memory for computations nested inside a fusion.
+  HloComputation* reducer = module->GetComputationWithName("sum");
+  ASSERT_NE(reducer, nullptr);
+  EXPECT_TRUE(module->schedule().is_computation_scheduled(reducer));
+}
+
 TEST_F(GpuHloScheduleFencingTest, AutomaticFencingHonorsPassFilter) {
   HloModuleConfig config = GetFencingModuleConfig(0);
   config.mutable_debug_options().add_xla_disable_hlo_passes(
