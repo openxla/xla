@@ -15,16 +15,16 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -84,6 +84,18 @@ using ::testing::ElementsAre;
 static constexpr absl::string_view kProfileName = "test_kernel_profiler";
 static constexpr absl::string_view kKernelName = "five_argument_kernel";
 static constexpr int64_t kNumElements = 128;
+
+TEST(CollectiveKernelThunkTest, ToStringIncludesPdlOnlyWhenEnabled) {
+  for (bool use_pdl : {false, true}) {
+    CollectiveKernelThunk thunk(
+        Thunk::ThunkInfo(), CollectiveConfig{}, CollectiveKernelSpec{},
+        /*buffers=*/{}, /*is_collective_kernel_enabled=*/true, kKernelName,
+        LaunchDimensions(), /*devices_in_process=*/1, /*shmem_bytes=*/0,
+        /*cubin=*/std::nullopt, use_pdl);
+    EXPECT_EQ(thunk.ToString(0), use_pdl ? "kCollectiveKernel, use_pdl=true"
+                                         : "kCollectiveKernel");
+  }
+}
 
 // Test kernel was compiled using following CUDA source:
 // __global__ void five_argument_kernel(int64_t* input_buffer,         // 1

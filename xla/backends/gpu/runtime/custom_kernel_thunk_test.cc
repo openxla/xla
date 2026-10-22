@@ -65,6 +65,25 @@ using ::testing::Optional;
 using tsl::proto_testing::EqualsProto;
 using tsl::proto_testing::ParseTextProtoOrDie;
 
+TEST(CustomKernelThunkTest, ToStringIncludesPdlOnlyWhenEnabled) {
+  CustomKernel kernel("name",
+                      se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
+                          /*ptx=*/"", /*kernel_name=*/"name", /*arity=*/0),
+                      se::BlockDim(3, 2, 1), se::ThreadDim(4, 5, 6),
+                      /*shared_memory_bytes=*/42);
+  emitters::KernelArguments kernel_arguments({});
+  CustomKernelThunk thunk(Thunk::ThunkInfo{}, kernel, kernel_arguments,
+                          /*devices_in_process=*/1);
+  EXPECT_EQ(thunk.ToString(0),
+            "name grid: [3, 2, 1] threads: [4, 5, 6]  shared_memory: 42 bytes");
+
+  CustomKernelThunk pdl_thunk(Thunk::ThunkInfo{}, kernel, kernel_arguments,
+                              /*devices_in_process=*/1, /*use_pdl=*/true);
+  EXPECT_EQ(pdl_thunk.ToString(0),
+            "name grid: [3, 2, 1] threads: [4, 5, 6]  shared_memory: 42 bytes "
+            "use_pdl: true");
+}
+
 TEST(CustomKernelThunkTest, BufferUsesReturnsCorrectBuffers) {
   Shape arg_shape = ShapeUtil::MakeShape(F32, {512});
   CustomKernel kernel(
