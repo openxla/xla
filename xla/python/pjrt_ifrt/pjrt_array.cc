@@ -410,6 +410,10 @@ tsl::Future<> PjRtArray::CopyToHostBuffer(
   }
 
   PjRtBuffer* pjrt_buffer = pjrt_buffers_.front().get();
+  if (pjrt_buffer == nullptr) {
+    return tsl::Future<>(
+        FailedPrecondition("Cannot copy a deleted or donated buffer"));
+  }
   if (*dtype == xla::TOKEN) {
     return pjrt_buffer->GetReadyFuture();
   }
@@ -489,6 +493,9 @@ absl::StatusOr<std::shared_ptr<PjRtBuffer>> PjRtArray::CopySinglePjRtBuffer(
         "(=%d)",
         index, pjrt_buffers_.size());
   }
+  if (pjrt_buffers_[index] == nullptr) {
+    return FailedPrecondition("Cannot copy a deleted or donated buffer");
+  }
   ABSL_ASSIGN_OR_RETURN(
       Device * buffer_device,
       client_->LookupPjRtDevice(pjrt_buffers_[index]->device()));
@@ -512,9 +519,7 @@ absl::StatusOr<std::shared_ptr<PjRtBuffer>> PjRtArray::CopySinglePjRtBuffer(
       case ArrayCopySemantics::kReuseInput:
         return pjrt_buffers_[index];
       case ArrayCopySemantics::kDonateInput:
-        // TODO(hyeontaek): We may try std::move(src_buffer), but this
-        // would be unsafe if there is a subsequent access to the buffer.
-        return pjrt_buffers_[index];
+        return std::move(pjrt_buffers_[index]);
     }
   } else {
     PjRtCompatibleDevice* pjrt_device =
@@ -545,10 +550,7 @@ absl::StatusOr<std::shared_ptr<PjRtBuffer>> PjRtArray::CopySinglePjRtBuffer(
         std::unique_ptr<PjRtBuffer> copied_buffer,
         pjrt_buffers_[index]->CopyToMemorySpace(pjrt_memory_space));
     if (semantics == ArrayCopySemantics::kDonateInput) {
-      if (!memory_kind_equal) {
-        return Unimplemented(
-            "Donation across different memory kinds is not implemented.");
-      }
+      pjrt_buffers_[index]->Delete();
       pjrt_buffers_[index] = nullptr;
     }
     return copied_buffer;
@@ -599,6 +601,9 @@ absl::StatusOr<ArrayRef> PjRtArray::CopyImpl(
   for (int i = 0; i < pjrt_buffers_.size(); ++i) {
     std::shared_ptr<PjRtBuffer> copied_buffer;
     if (donated_dst != nullptr) {
+      if (pjrt_buffers_[i] == nullptr) {
+        return FailedPrecondition("Cannot copy a deleted or donated buffer");
+      }
       ABSL_ASSIGN_OR_RETURN(copied_buffer,
                             pjrt_buffers_[i]->CopyToMemorySpace(
                                 donated_dst->pjrt_buffers_[i].get()));
@@ -649,11 +654,19 @@ absl::StatusOr<ArrayRef> PjRtArray::CopyImpl(
 tsl::Future<> PjRtArray::GetReadyFuture() const {
   DCHECK(this);
   if (pjrt_buffers_.size() == 1) {
+    if (pjrt_buffers_.front() == nullptr) {
+      return tsl::Future<>(FailedPrecondition(
+          "Cannot get ready future of a deleted or donated buffer"));
+    }
     return pjrt_buffers_.front()->GetReadyFuture();
   }
   std::vector<tsl::Future<>> futures;
   futures.reserve(pjrt_buffers_.size());
   for (auto& buf : pjrt_buffers_) {
+    if (buf == nullptr) {
+      return tsl::Future<>(FailedPrecondition(
+          "Cannot get ready future of a deleted or donated buffer"));
+    }
     futures.push_back(buf->GetReadyFuture());
   }
   return JoinFutures(absl::MakeSpan(futures));
@@ -718,6 +731,9 @@ absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>> PjRtArray::pjrt_layout()
     const {
   if constexpr (tsl::kIsDebugBuild) {
     for (int i = 1; i < pjrt_buffers_.size(); ++i) {
+      if (pjrt_buffers_[0] == nullptr || pjrt_buffers_[i] == nullptr) {
+        continue;
+      }
       std::shared_ptr<const xla::PjRtLayout> layout_i =
           pjrt_buffers_[i]->layout();
       DCHECK(*pjrt_buffers_[0]->layout() == *layout_i)
