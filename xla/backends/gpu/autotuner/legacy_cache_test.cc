@@ -59,7 +59,8 @@ se::DeviceDescription CreateDummyDeviceDescription(
   desc.set_core_count(108);
   desc.set_clock_rate_ghz(name == "test_device" ? 1.98 : 2.00);
   desc.set_memory_bandwidth(1000e9);
-  desc.set_l2_cache_size(50 * 1024 * 1024);
+  desc.set_data_caches({{/*level=*/2, /*size_bytes=*/50 * 1024 * 1024,
+                         /*num_instances=*/1}});
   return desc;
 }
 

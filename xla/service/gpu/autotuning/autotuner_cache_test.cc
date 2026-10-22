@@ -72,7 +72,7 @@ static constexpr absl::string_view kDeviceDescriptionTextProto = R"pb(
   core_count: 108
   clock_rate_ghz: 1.41
   memory_bandwidth: 1555000000000
-  l2_cache_size: 41943040
+  data_caches { level: 2 size_bytes: 41943040 num_instances: 1 }
   cuda_compute_capability { major: 8 }
 )pb";
 

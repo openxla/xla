@@ -287,7 +287,9 @@ CreateOneApiDeviceDescription(int device_ordinal) {
     l2_cache_size =
         std::max<int64_t>(l2_cache_size, static_cast<int64_t>(cache.cacheSize));
   }
-  desc.set_l2_cache_size(l2_cache_size);
+  // Listed even at 0 bytes, as l2_cache_size() reported before.
+  desc.set_data_caches(
+      {DataCacheInfo{/*level=*/2, l2_cache_size, /*num_instances=*/1}});
   desc.set_shared_memory_per_block(compute_props.maxSharedLocalMemory);
   desc.set_shared_memory_per_block_optin(compute_props.maxSharedLocalMemory);
   desc.set_shared_memory_per_core(compute_props.maxSharedLocalMemory);
