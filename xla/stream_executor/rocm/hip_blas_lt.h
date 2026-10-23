@@ -192,7 +192,7 @@ class BlasLt : public gpu::BlasLt {
     mutable DeviceAddressBase saved_address_workspace_{};
     // Saved default activation parameters from hipBLASLt
     int32_t activation_type_ = 0;
-    int8_t bias_type_ = 0;
+    int32_t bias_type_ = 0;
   };  // class GroupedMatmulPlan
 
   // Executes complex (C64/C128) matmuls via rocBLAS (rocblas_cgemm/zgemm) when
