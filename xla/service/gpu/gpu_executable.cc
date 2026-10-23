@@ -1660,11 +1660,6 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
           .mutable_debug_options()
           .set_xla_dump_to(params.debug_options.xla_dump_to());
     }
-    if (params.debug_options.xla_gpu_experimental_nccl_window_symmetric()) {
-      params.debug_module->mutable_config()
-          .mutable_debug_options()
-          .set_xla_gpu_experimental_nccl_window_symmetric(false);
-    }
   }
   if (!proto.has_buffer_assignment()) {
     return absl::InvalidArgumentError(
