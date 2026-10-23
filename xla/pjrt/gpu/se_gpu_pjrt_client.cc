@@ -52,6 +52,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
@@ -235,14 +236,28 @@ CreateSEGpuTopology(absl::string_view platform_name,
       std::move(gpu_topology), attrs, target_config);
 }
 
+static LocalDeviceState* GetFirstDevice(
+    absl::Span<const std::unique_ptr<LocalDeviceState>> local_device_states) {
+  auto it = absl::c_find_if(local_device_states,
+                            [](const auto& state) { return state != nullptr; });
+  return it != local_device_states.end() ? it->get() : nullptr;
+}
+
 static se::StreamExecutor* GetFirstExecutor(
     absl::Span<const std::unique_ptr<LocalDeviceState>> local_device_states) {
-  for (const auto& state : local_device_states) {
-    if (state != nullptr) {
-      return state->executor();
+  LocalDeviceState* first_device = GetFirstDevice(local_device_states);
+  return first_device ? first_device->executor() : nullptr;
+}
+
+static std::vector<WorkerThread*> GetAsyncDispatchThreads(
+    absl::Span<const std::unique_ptr<LocalDeviceState>> local_device_states) {
+  std::vector<WorkerThread*> async_dispatch_threads;
+  for (const auto& device_state : local_device_states) {
+    if (device_state && device_state->async_dispatch_thread()) {
+      async_dispatch_threads.push_back(device_state->async_dispatch_thread());
     }
   }
-  return nullptr;
+  return async_dispatch_threads;
 }
 
 namespace {
@@ -2223,8 +2238,10 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
                                            error_already_fired);
   }
 
+  LocalDeviceState* first_device =
+      GetFirstDevice(devices_and_topology.local_device_states);
   se::StreamExecutor* first_executor =
-      GetFirstExecutor(devices_and_topology.local_device_states);
+      first_device ? first_device->executor() : nullptr;
 
   const bool confidential_computing_enabled =
       devices_and_topology.topology->confidential_computing_enabled();
@@ -2265,10 +2282,35 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> GetStreamExecutorGpuClient(
             }
             return absl::OkStatus();
           };
+      WorkerThread* first_dispatch_thread =
+          first_device ? first_device->async_dispatch_thread() : nullptr;
       allocator_options.unmap_fn =
-          [first_executor](std::optional<LocalDeviceId> local_device_id,
-                           void* data) {
-            bool success = first_executor->HostMemoryUnregister(data);
+          [first_executor, first_dispatch_thread,
+           async_dispatch_threads = GetAsyncDispatchThreads(
+               devices_and_topology.local_device_states)](
+              std::optional<LocalDeviceId> local_device_id, void* data) {
+            // Check if the caller is running on any GPU's
+            // async_dispatch_thread. If unmap_fn is invoked from a peer GPU's
+            // async_dispatch_thread while GPU 0's async_dispatch_thread is
+            // waiting at RendezvousAfterExecutableStart, scheduling onto GPU 0
+            // and blocking would deadlock. Running inline on any dispatch
+            // thread is safe because no multi-GPU collective can proceed past
+            // RendezvousAfterExecutableStart while any participating GPU's
+            // dispatch thread is in unmap_fn.
+            bool is_on_dispatch_thread = absl::c_any_of(
+                async_dispatch_threads,
+                [](WorkerThread* thread) { return thread->IsCurrentThread(); });
+            bool success = false;
+            if (first_dispatch_thread != nullptr && !is_on_dispatch_thread) {
+              absl::Notification done;
+              first_dispatch_thread->Schedule([&]() {
+                success = first_executor->HostMemoryUnregister(data);
+                done.Notify();
+              });
+              done.WaitForNotification();
+            } else {
+              success = first_executor->HostMemoryUnregister(data);
+            }
             if (!success) {
               return absl::InternalError(absl::StrFormat(
                   "Failed to unregister host memory at address: %ps", data));

@@ -127,6 +127,11 @@ class LocalDeviceState {
                    DeviceErrorCallback device_error_callback = nullptr);
   virtual ~LocalDeviceState();
 
+  // Drains in-flight work on device threads, synchronizes all stream activity,
+  // destroys all streams and events, and drains callback/cleanup threads while
+  // keeping the worker threads alive until ~LocalDeviceState().
+  void DestroyStreams();
+
   se::StreamExecutor* executor() const { return executor_; }
 
   LocalDeviceId local_device_id() { return local_device_id_; }

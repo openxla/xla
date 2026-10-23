@@ -160,16 +160,24 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
       tsl::Env::Default(), thread_options, "py_xla_cleanup");
 }
 
-LocalDeviceState::~LocalDeviceState() {
+void LocalDeviceState::DestroyStreams() {
+  if (compute_stream_ == nullptr) {
+    return;
+  }
+
+  // 1. Drain scheduling threads first so all previously scheduled work has
+  // been enqueued onto the streams before synchronizing activity.
+  if (execute_thread_ != nullptr) {
+    execute_thread_->Drain();
+  }
+  if (async_dispatch_thread_ != nullptr) {
+    async_dispatch_thread_->Drain();
+  }
+
   absl::Status status = SynchronizeAllActivity();
   if (!status.ok()) {
     LOG(ERROR) << "Error when closing device: " << status;
   }
-
-  // 1. Join scheduling threads first to prevent any new work from being
-  // enqueued.
-  execute_thread_.reset();
-  async_dispatch_thread_.reset();
 
   // 2. Clear streams and stream pools to trigger all pending
   // callbacks/finalizations.
@@ -211,13 +219,18 @@ LocalDeviceState::~LocalDeviceState() {
   host_to_device_stream_.reset();
   compute_stream_.reset();
 
-  // 3. Join callback/cleanup threads to execute all pending tasks.
-  callback_thread_.reset();
-  cleanup_thread_.reset();
+  // 3. Drain callback/cleanup threads to execute all pending tasks.
+  callback_thread_->Drain();
+  cleanup_thread_->Drain();
 
   // 4. Finally, clear compute events.
-  compute_events_.clear();
+  {
+    absl::MutexLock lock(mu_);
+    compute_events_.clear();
+  }
 }
+
+LocalDeviceState::~LocalDeviceState() { DestroyStreams(); }
 
 absl::Status LocalDeviceState::SynchronizeAllActivity() {
   absl::Status status;

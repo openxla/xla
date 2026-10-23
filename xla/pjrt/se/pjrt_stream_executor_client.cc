@@ -325,13 +325,34 @@ PjRtStreamExecutorRawClient::PjRtStreamExecutorRawClient(
 }
 
 PjRtStreamExecutorRawClient::~PjRtStreamExecutorRawClient() {
-  // Properly quiesce async_dispatch_thread on all local devices.
+  // Properly quiesce async_dispatch_thread and execute_thread on all local
+  // devices before resetting async_work_runner_, since tasks on those threads
+  // may reference async_work_runner_.
   for (const auto& local_device_state : local_device_states_) {
-    if (local_device_state != nullptr &&
-        local_device_state->async_dispatch_thread() != nullptr) {
-      local_device_state->async_dispatch_thread()->Drain();
+    if (local_device_state != nullptr) {
+      if (local_device_state->async_dispatch_thread() != nullptr) {
+        local_device_state->async_dispatch_thread()->Drain();
+      }
+      if (local_device_state->execute_thread() != nullptr) {
+        local_device_state->execute_thread()->Drain();
+      }
     }
   }
+  // Stop async_work_runner_ before destroying streams so in-flight staged
+  // transfer tasks finish enqueueing onto device streams.
+  async_work_runner_.reset();
+  // Destroy streams and drain callback/cleanup threads on all local devices so
+  // all in-flight host staging buffers are released before
+  // host_memory_allocator_ is destroyed.
+  for (const auto& local_device_state : local_device_states_) {
+    if (local_device_state != nullptr) {
+      local_device_state->DestroyStreams();
+    }
+  }
+  // Destroy host_memory_allocator_ before local_device_states_ so that any
+  // cached host buffers unmapped in ~HostMemoryAllocator() can still dispatch
+  // onto async_dispatch_thread.
+  host_memory_allocator_.reset();
 }
 
 namespace {

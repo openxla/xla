@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/worker_thread.h"
 
+#include <atomic>
 #include <string>
 #include <utility>
 
@@ -53,9 +54,16 @@ void WorkerThread::Drain() {
   done.WaitForNotification();
 }
 
+bool WorkerThread::IsCurrentThread() const {
+  return thread_id_.load(std::memory_order_relaxed) ==
+         tsl::Env::Default()->GetCurrentThreadId();
+}
+
 bool WorkerThread::WorkAvailable() { return !work_queue_.empty(); }
 
 void WorkerThread::WorkLoop() {
+  thread_id_.store(tsl::Env::Default()->GetCurrentThreadId(),
+                   std::memory_order_relaxed);
   absl::MutexLock lock(mu_);
   while (true) {
     mu_.Await(absl::Condition(this, &WorkerThread::WorkAvailable));

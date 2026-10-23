@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_PJRT_WORKER_THREAD_H_
 #define XLA_PJRT_WORKER_THREAD_H_
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <queue>
 #include <string>
@@ -57,6 +59,9 @@ class WorkerThread {
     return !work_queue_.empty() || is_running_;
   }
 
+  // Returns true if the caller is currently running on this worker thread.
+  bool IsCurrentThread() const;
+
  private:
   bool WorkAvailable() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
   void WorkLoop();
@@ -64,6 +69,7 @@ class WorkerThread {
   absl::Mutex mu_;
   std::queue<absl::AnyInvocable<void() &&>> work_queue_ ABSL_GUARDED_BY(mu_);
   bool is_running_ = false;
+  std::atomic<int64_t> thread_id_{-1};
 
   std::unique_ptr<tsl::Thread> thread_;
 };
