@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/all_reduce.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -28,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/bit.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
@@ -35,14 +37,15 @@ limitations under the License.
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/device_assignment.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/service/gpu_topology.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/all_reduce_kernel.h"
@@ -65,6 +68,36 @@ bool IsElementReductionSupported(PrimitiveType element_type,
       SupportedReductionOps(element_type);
   HloOpcode opcode = ReductionKindToOpcode(reduction_kind, element_type);
   return absl::c_linear_search(supported_ops, opcode);
+}
+
+// Returns the number of scratch elements needed across `num_blocks` program
+// slots when `shape` is tiled with power-of-two tiles.
+int64_t PaddedAllReduceScratchElements(const Shape& shape, int64_t num_blocks) {
+  const int64_t num_elements = ShapeUtil::ElementsIn(shape);
+  if (num_blocks <= 0) {
+    return num_elements;
+  }
+  const int32_t rank = static_cast<int32_t>(shape.dimensions().size());
+  if (rank == 0) {
+    return std::max(num_elements, num_blocks);
+  }
+  const llvm::ArrayRef<const int64_t> minor_to_major =
+      LayoutUtil::MinorToMajor(shape);
+  uint64_t remaining_blocks = num_blocks;
+  int64_t tile_elements = 1;
+  for (int32_t i = rank - 1; i >= 0; --i) {
+    const int32_t dim = static_cast<int32_t>(minor_to_major[i]);
+    const uint64_t dim_size = shape.dimensions(dim);
+    const uint64_t k = std::max(
+        uint64_t{1}, llvm::bit_floor(std::min(remaining_blocks, dim_size)));
+    const int64_t tile_size =
+        static_cast<int64_t>(llvm::bit_ceil(xla::CeilOfRatio(dim_size, k)));
+    tile_elements *= tile_size;
+    const uint64_t blocks_used =
+        xla::CeilOfRatio(dim_size, static_cast<uint64_t>(tile_size));
+    remaining_blocks = xla::FloorOfRatio(remaining_blocks, blocks_used);
+  }
+  return std::max(num_elements, num_blocks * tile_elements);
 }
 
 }  // namespace
@@ -263,8 +296,10 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllReduceKernelSpec(
       const AllReduceInfo all_reduce_info,
       BuildAllReduceInfo(/*is_multimem_enabled=*/false, gpu_topology,
                          all_reduce, device_assignment));
+  const int64_t scratch_elements = PaddedAllReduceScratchElements(
+      all_reduce->operand(0)->shape(), launch_dimensions.num_blocks());
   const int64_t input_size_bytes =
-      all_reduce_info.num_elements *
+      scratch_elements *
       primitive_util::ByteWidth(all_reduce_info.element_type);
   const int64_t num_signal_flags =
       all_reduce_info.num_devices * launch_dimensions.num_blocks();

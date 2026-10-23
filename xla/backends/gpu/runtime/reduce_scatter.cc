@@ -26,12 +26,14 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/bit.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/core/collectives/reduction_kind.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -89,6 +91,53 @@ bool IsPerRankInputContiguous(const HloReduceScatterInstruction* rs,
           << " is not flattenable: scatter dimension " << scatter_dim
           << " not found in layout.";
   return false;
+}
+
+// Returns the byte size needed in the symmetric scratch buffer for operand
+// `operand_index` across `num_blocks` program slots when its per-rank output
+// shard is tiled with power-of-two tiles.
+int64_t PaddedReduceScatterScratchBytes(const HloReduceScatterInstruction* rs,
+                                        int64_t operand_index,
+                                        int64_t group_size,
+                                        int64_t num_blocks) {
+  const Shape& input_shape = rs->operand(operand_index)->shape();
+  const int64_t input_bytes = ShapeUtil::ByteSizeOf(input_shape);
+  const Shape& output_shape = OutputShape(rs, operand_index);
+  const int64_t scatter_dim = rs->scatter_dimension();
+  if (group_size <= 0 || num_blocks <= 0 || scatter_dim < 0 ||
+      scatter_dim >= static_cast<int64_t>(output_shape.dimensions().size()) ||
+      output_shape.dimensions(scatter_dim) < group_size) {
+    return input_bytes;
+  }
+  const int64_t per_rank_size =
+      output_shape.dimensions(scatter_dim) / group_size;
+  Shape per_rank_shape = output_shape;
+  per_rank_shape.set_dimensions(scatter_dim, per_rank_size);
+  const llvm::ArrayRef<const int64_t> minor_to_major =
+      LayoutUtil::MinorToMajor(per_rank_shape);
+  const int32_t rank = static_cast<int32_t>(per_rank_shape.dimensions().size());
+  uint64_t remaining_blocks = std::max<int64_t>(1, num_blocks / group_size);
+  int64_t output_tile_elements = 1;
+  for (int32_t i = rank - 1; i >= 0; --i) {
+    const int32_t dim = static_cast<int32_t>(minor_to_major[i]);
+    const uint64_t dim_size = per_rank_shape.dimensions(dim);
+    const uint64_t k = std::max(
+        uint64_t{1}, llvm::bit_floor(std::min(remaining_blocks, dim_size)));
+    int64_t tile_size =
+        static_cast<int64_t>(llvm::bit_ceil(xla::CeilOfRatio(dim_size, k)));
+    if (dim == scatter_dim) {
+      tile_size = std::min(tile_size, static_cast<int64_t>(llvm::bit_floor(
+                                          static_cast<uint64_t>(dim_size))));
+    }
+    output_tile_elements *= tile_size;
+    const uint64_t blocks_used =
+        xla::CeilOfRatio(dim_size, static_cast<uint64_t>(tile_size));
+    remaining_blocks = xla::FloorOfRatio(remaining_blocks, blocks_used);
+  }
+  const int64_t slot_elements = group_size * output_tile_elements;
+  const int64_t elem_bytes =
+      ShapeUtil::ByteSizeOfPrimitiveType(input_shape.element_type());
+  return std::max(input_bytes, num_blocks * slot_elements * elem_bytes);
 }
 
 }  // namespace
@@ -299,13 +348,15 @@ absl::StatusOr<CollectiveKernelSpec> CreateReduceScatterKernelSpec(
                                          scratch_memory_type,
                                          /*should_memzero=*/true,
                                          /*should_double_buffer=*/true});
-  // One symmetric scratch buffer per operand that holds this rank's full input
-  // (= input size). Double-buffering is handled by the should_double_buffer
-  // flag.
+  // One symmetric scratch buffer per operand that holds one slot per program
+  // (`num_blocks * slot_elements`, at least the operand byte size).
+  // Double-buffering is handled by the should_double_buffer flag.
+  const auto* rs = Cast<HloReduceScatterInstruction>(instr);
   for (int32_t i = 0; i < num_operands; ++i) {
-    const int64_t remote_size = xla::RoundUpTo<uint64_t>(
-        ShapeUtil::ByteSizeOf(instr->operand(i)->shape()),
-        kXlaAllocatedBufferAlignBytes);
+    const int64_t scratch_bytes = PaddedReduceScatterScratchBytes(
+        rs, i, group_size, launch_dimensions.num_blocks());
+    const int64_t remote_size =
+        xla::RoundUpTo<uint64_t>(scratch_bytes, kXlaAllocatedBufferAlignBytes);
     codegen_config.argument_descriptors.push_back(
         {KernelArgType::kScratchBuffer, /*index=*/1 + i});
     kernel_spec.scratch_buffers.push_back({remote_size,
