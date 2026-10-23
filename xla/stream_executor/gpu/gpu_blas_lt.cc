@@ -18,15 +18,18 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/primitive_util.h"
@@ -305,6 +308,79 @@ DataType GetScaleType(DataType c_type, ComputationType computation_type) {
               : c_type);
 }
 
+absl::StatusOr<CublasLtMatmulAlgorithm> CublasLtMatmulAlgorithm::FromProto(
+    const xla::CublasLtMatmulAlgorithmProto& proto) {
+  if (proto.tile_id() < 0 || proto.reduction_scheme() < 0 ||
+      proto.cta_swizzling() < 0 || proto.custom_option() < 0 ||
+      proto.stages_id() < 0 || proto.inner_shape_id() < 0 ||
+      proto.cluster_shape_id() < 0 || proto.numerical_impl_flags() < 0) {
+    return absl::InvalidArgumentError(
+        "cuBLASLt algorithm attributes must be non-negative.");
+  }
+  if (proto.inner_shape_id() > std::numeric_limits<uint16_t>::max() ||
+      proto.cluster_shape_id() > std::numeric_limits<uint16_t>::max()) {
+    return absl::InvalidArgumentError(
+        "cuBLASLt inner_shape_id or cluster_shape_id exceeds uint16_t range.");
+  }
+  return CublasLtMatmulAlgorithm{
+      .algo_id = proto.algo_id(),
+      .tile_id = static_cast<uint32_t>(proto.tile_id()),
+      .split_k = proto.split_k(),
+      .reduction_scheme = static_cast<uint32_t>(proto.reduction_scheme()),
+      .cta_swizzling = static_cast<uint32_t>(proto.cta_swizzling()),
+      .custom_option = static_cast<uint32_t>(proto.custom_option()),
+      .stages_id = static_cast<uint32_t>(proto.stages_id()),
+      .inner_shape_id = static_cast<uint16_t>(proto.inner_shape_id()),
+      .cluster_shape_id = static_cast<uint16_t>(proto.cluster_shape_id()),
+      .numerical_impl_flags =
+          static_cast<uint64_t>(proto.numerical_impl_flags()),
+  };
+}
+
+xla::CublasLtMatmulAlgorithmProto CublasLtMatmulAlgorithm::ToProto() const {
+  xla::CublasLtMatmulAlgorithmProto proto;
+  proto.set_algo_id(algo_id);
+  proto.set_tile_id(static_cast<int32_t>(tile_id));
+  proto.set_split_k(split_k);
+  proto.set_reduction_scheme(static_cast<int32_t>(reduction_scheme));
+  proto.set_cta_swizzling(static_cast<int32_t>(cta_swizzling));
+  proto.set_custom_option(static_cast<int32_t>(custom_option));
+  proto.set_stages_id(static_cast<int32_t>(stages_id));
+  proto.set_inner_shape_id(inner_shape_id);
+  proto.set_cluster_shape_id(cluster_shape_id);
+  proto.set_numerical_impl_flags(static_cast<int64_t>(numerical_impl_flags));
+  return proto;
+}
+
+absl::StatusOr<BlasLtMatmulAlgorithm> BlasLtMatmulAlgorithm::FromProto(
+    const xla::BlasLtMatmulAlgorithmProto& proto) {
+  switch (proto.algorithm_case()) {
+    case xla::BlasLtMatmulAlgorithmProto::kCublaslt: {
+      ABSL_ASSIGN_OR_RETURN(
+          CublasLtMatmulAlgorithm cublaslt,
+          CublasLtMatmulAlgorithm::FromProto(proto.cublaslt()));
+      return BlasLtMatmulAlgorithm{
+          .library_version = proto.library_version(),
+          .algorithm = cublaslt,
+      };
+    }
+    case xla::BlasLtMatmulAlgorithmProto::ALGORITHM_NOT_SET:
+      return absl::InvalidArgumentError(
+          "BlasLtMatmulAlgorithmProto does not have an algorithm set.");
+  }
+  return absl::InvalidArgumentError(
+      "Unrecognized BlasLtMatmulAlgorithmProto algorithm case.");
+}
+
+xla::BlasLtMatmulAlgorithmProto BlasLtMatmulAlgorithm::ToProto() const {
+  xla::BlasLtMatmulAlgorithmProto proto;
+  proto.set_library_version(library_version);
+  if (const auto* cublaslt = std::get_if<CublasLtMatmulAlgorithm>(&algorithm)) {
+    *proto.mutable_cublaslt() = cublaslt->ToProto();
+  }
+  return proto;
+}
+
 absl::Status BlasLt::MatmulPlan::SetCachedAlgorithm(size_t algorithm_idx,
                                                     size_t max_algorithm_count,
                                                     size_t max_workspace_size) {
@@ -327,23 +403,42 @@ absl::Status BlasLt::MatmulPlan::SetCachedAlgorithm(size_t algorithm_idx,
     cache_dirty = true;
   }
   // SetAlgorithm could be expensive, e.g., for GroupedMatmulPlan.
-  if (cache_dirty || cached_algorithm_idx_ != algorithm_idx) {
+  const size_t* cached_idx = std::get_if<size_t>(&cached_algorithm_);
+  if (cache_dirty || cached_idx == nullptr || *cached_idx != algorithm_idx) {
     if (algorithm_idx >= cached_algorithms_.size()) {
       return absl::InternalError(
           absl::StrFormat("Algorithm index is out of range: %zu >= %zu",
                           algorithm_idx, cached_algorithms_.size()));
     }
-    cached_algorithm_idx_ = algorithm_idx;
-    return SetAlgorithm(cached_algorithms_[algorithm_idx]);
+    ABSL_RETURN_IF_ERROR(SetAlgorithm(cached_algorithms_[algorithm_idx]));
+    cached_algorithm_ = algorithm_idx;
   }
   return absl::OkStatus();
 }
 
-absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateMatmulPlanWithAlgorithm(
-    const std::string& key, PlanCreateFunc create, size_t algorithm_idx,
-    size_t num_algorithms, size_t max_workspace_size) {
-  absl::MutexLock lock(plan_cache_mu_);
-  auto res = plan_cache_.emplace(key, MatmulPlanPtr{});
+absl::Status BlasLt::MatmulPlan::SetCachedAlgorithm(
+    const BlasLtMatmulAlgorithm& algorithm, size_t max_workspace_size) {
+  const BlasLtMatmulAlgorithm* cached_algo =
+      std::get_if<BlasLtMatmulAlgorithm>(&cached_algorithm_);
+  if (cached_algo != nullptr && cached_workspace_size_ == max_workspace_size &&
+      *cached_algo == algorithm) {
+    return absl::OkStatus();
+  }
+  ABSL_ASSIGN_OR_RETURN(MatmulAlgorithm matmul_algo,
+                        GetMatmulAlgorithm(algorithm, max_workspace_size));
+  ABSL_RETURN_IF_ERROR(SetAlgorithm(matmul_algo));
+  if (cached_workspace_size_ != max_workspace_size) {
+    cached_algorithms_.clear();
+    cached_algorithm_count_ = 0;
+    cached_workspace_size_ = max_workspace_size;
+  }
+  cached_algorithm_ = algorithm;
+  return absl::OkStatus();
+}
+
+absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateMatmulPlan(
+    absl::string_view key, PlanCreateFunc create) {
+  auto res = plan_cache_.try_emplace(key, MatmulPlanPtr{});
   // New entry inserted: always create a new matmul plan if key is empty,
   // this is used by command_buffer_thunk test.
   if (res.second || key.empty()) {
@@ -351,9 +446,27 @@ absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateMatmulPlanWithAlgorithm(
     ABSL_ASSIGN_OR_RETURN(res.first->second, create());
     VLOG(2) << "Plan created: cache size: " << plan_cache_.size();
   }
-  auto plan = res.first->second.get();
+  return res.first->second.get();
+}
+
+absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateMatmulPlanWithAlgorithm(
+    absl::string_view key, PlanCreateFunc create, size_t algorithm_idx,
+    size_t num_algorithms, size_t max_workspace_size) {
+  absl::MutexLock lock(plan_cache_mu_);
+  ABSL_ASSIGN_OR_RETURN(MatmulPlan * plan,
+                        GetOrCreateMatmulPlan(key, std::move(create)));
   ABSL_RETURN_IF_ERROR(plan->SetCachedAlgorithm(algorithm_idx, num_algorithms,
                                                 max_workspace_size));
+  return plan;
+}
+
+absl::StatusOr<BlasLt::MatmulPlan*> BlasLt::GetOrCreateMatmulPlanWithAlgorithm(
+    absl::string_view key, PlanCreateFunc create,
+    const BlasLtMatmulAlgorithm& algorithm, size_t max_workspace_size) {
+  absl::MutexLock lock(plan_cache_mu_);
+  ABSL_ASSIGN_OR_RETURN(MatmulPlan * plan,
+                        GetOrCreateMatmulPlan(key, std::move(create)));
+  ABSL_RETURN_IF_ERROR(plan->SetCachedAlgorithm(algorithm, max_workspace_size));
   return plan;
 }
 

@@ -310,4 +310,32 @@ INSTANTIATE_TEST_SUITE_P(
       return ToString(info.param);
     });
 
+TEST(BlasLtMatmulAlgorithmTest, ProtoConversionAndEquality) {
+  BlasLtMatmulAlgorithm original{
+      .library_version = 120800,
+      .algorithm =
+          CublasLtMatmulAlgorithm{
+              .algo_id = 23,
+              .tile_id = 15,
+              .split_k = 1,
+              .reduction_scheme = 2,
+              .cta_swizzling = 0,
+              .custom_option = 3,
+              .stages_id = 19,
+              .inner_shape_id = 4,
+              .cluster_shape_id = 1,
+              .numerical_impl_flags = 0x101,
+          },
+  };
+
+  xla::BlasLtMatmulAlgorithmProto proto = original.ToProto();
+  ASSERT_OK_AND_ASSIGN(BlasLtMatmulAlgorithm round_tripped,
+                       BlasLtMatmulAlgorithm::FromProto(proto));
+  EXPECT_EQ(original, round_tripped);
+
+  BlasLtMatmulAlgorithm modified = round_tripped;
+  modified.library_version = 120900;
+  EXPECT_NE(original, modified);
+}
+
 }  // namespace stream_executor::gpu
