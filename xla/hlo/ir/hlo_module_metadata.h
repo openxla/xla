@@ -135,6 +135,13 @@ class HloModuleMetadata {
     module_metadata_.add_partitioned_module_ids(id);
   }
   absl::Status set_custom_metadata(const ::tsl::protobuf::Message& message);
+  // Adds a decision record attributed to the currently running pass. Returns
+  // NotFound if no pass is running.
+  absl::Status AddDecisionRecord(const ::tsl::protobuf::Message& payload);
+  const ::tsl::protobuf::RepeatedPtrField<HloPassDecisionRecord>&
+  decision_records() const {
+    return module_metadata_.decision_records();
+  }
   // Adds a (key, value) pair metric if none was already set. Otherwise, it
   // updates the existing value.
   absl::Status set_key_value_metric(absl::string_view key, int64_t value);
