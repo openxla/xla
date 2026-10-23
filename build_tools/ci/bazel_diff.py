@@ -278,6 +278,7 @@ def run_generate_hashes(
     cquery_options: Optional[Sequence[str]] = None,
     use_cquery: bool = True,
     startup_options: Optional[Sequence[str]] = None,
+    command_options: Optional[Sequence[str]] = None,
     cwd: Optional[str] = None,
     java_bin: Optional[str] = None,
 ) -> None:
@@ -305,6 +306,8 @@ def run_generate_hashes(
     )
     if cquery_options:
       args.append(f"--cqueryCommandOptions={' '.join(cquery_options)}")
+  if command_options:
+    args.append(f"--bazelCommandOptions={' '.join(command_options)}")
   if startup_options:
     args.append(f"--bazelStartupOptions={' '.join(startup_options)}")
 
@@ -403,6 +406,21 @@ def dict_to_cli_options(options_dict: Any) -> List[str]:
   return options
 
 
+# Bazel cache flags forwarded to every Bazel command bazel-diff invokes, so
+# that hashing runs reuse the CI caches instead of refetching external repos.
+CACHE_OPTION_KEYS: Tuple[str, ...] = ("repository_cache", "repo_contents_cache")
+
+
+def get_bazel_cache_options(build: BuildConfig) -> List[str]:
+  """Extracts --repository_cache/--repo_contents_cache flags from a Build."""
+  options = []
+  for key in CACHE_OPTION_KEYS:
+    value = build.options.get(key)
+    if value:
+      options.append(f"--{key}={value}")
+  return options
+
+
 def get_cquery_command_options(build: BuildConfig) -> List[str]:
   """Extracts --config, --repo_env, and Starlark build flags from a Build."""
   options = [f"--config={config}" for config in build.configs]
@@ -414,7 +432,7 @@ def get_cquery_command_options(build: BuildConfig) -> List[str]:
         options.append(f"--{key}")
       else:
         options.append(f"--{key}={value}")
-  return options
+  return options + get_bazel_cache_options(build)
 
 
 # b/519689071: keywords in BUILD/.bzl changes that signal unconfigured hashing
@@ -574,6 +592,7 @@ def compute_impacted_targets(
   impacted_txt = os.path.join(temp_dir, "impacted_targets.txt")
 
   cquery_options = get_cquery_command_options(build)
+  command_options = get_bazel_cache_options(build)
   use_cquery = build.bazel_diff_use_cquery
   startup_options = None
   if build.startup_options:
@@ -599,6 +618,7 @@ def compute_impacted_targets(
         cquery_options=cquery_options,
         use_cquery=use_cquery,
         startup_options=startup_options,
+        command_options=command_options,
     )
 
     # Generate head hashes
@@ -615,6 +635,7 @@ def compute_impacted_targets(
         cquery_options=cquery_options,
         use_cquery=use_cquery,
         startup_options=startup_options,
+        command_options=command_options,
     )
 
     # Determine impacted targets
@@ -782,6 +803,18 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
       help="Bazel --repo_env KEY=VALUE option for cquery (repeatable).",
   )
   parser.add_argument(
+      "--repository_cache",
+      default="",
+      help="Bazel --repository_cache path used by the hashing invocations.",
+  )
+  parser.add_argument(
+      "--repo_contents_cache",
+      default="",
+      help=(
+          "Bazel --repo_contents_cache path used by the hashing invocations."
+      ),
+  )
+  parser.add_argument(
       "--bazelrc",
       default="",
       help="Optional path to a .bazelrc file passed as a Bazel startup option.",
@@ -849,10 +882,16 @@ def run_cli(args: argparse.Namespace) -> int:
       key, value = entry.split("=", 1)
       repo_env[key] = value
   startup_options = {"bazelrc": args.bazelrc} if args.bazelrc else {}
+  options = {}
+  if args.repository_cache:
+    options["repository_cache"] = args.repository_cache
+  if args.repo_contents_cache:
+    options["repo_contents_cache"] = args.repo_contents_cache
   build_config = CliBuildConfig(
       target_patterns=target_patterns,
       configs=tuple(args.configs),
       repo_env=repo_env,
+      options=options,
       startup_options=startup_options,
       bazel_diff_use_cquery=args.use_cquery,
   )
