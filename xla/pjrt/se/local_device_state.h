@@ -240,7 +240,7 @@ class LocalDeviceState {
   // needed. This allows constructing a definition event per buffer.
   absl::StatusOr<BufferSequencingEventRef> GetEventForComputeStreamSyncPoint(
       size_t sync_point, AsyncWorkRunner* async_work_runner,
-      bool nullptr_if_past = false);
+      bool nullptr_if_past = false, absl::AnyInvocable<void() &&> cleanup = {});
 
   const DeviceErrorCallback& device_error_callback() const {
     return device_error_callback_;
