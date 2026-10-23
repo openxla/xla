@@ -748,5 +748,64 @@ TEST(PjRtStreamExecutorClientTest, CrossHostReceiveBuffersCleanupAfterFailure) {
       absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
+class TopologyRecordingRawClient : public PjRtStreamExecutorRawClient {
+ public:
+  using PjRtStreamExecutorRawClient::PjRtStreamExecutorRawClient;
+
+  void UpdateCompileOptionsTopology(const PjRtTopologyDescription& topology,
+                                    CompileOptions* options) const override {
+    observed_topology_ = &topology;
+  }
+
+  const PjRtTopologyDescription* observed_topology() const {
+    return observed_topology_;
+  }
+
+ private:
+  mutable const PjRtTopologyDescription* observed_topology_ = nullptr;
+};
+
+TEST(PjRtStreamExecutorClientTest, CrossCompileUsesTargetTopology) {
+  LocalClient* local_client = xla::ClientLibrary::LocalClientOrDie();
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       PlatformUtil::GetPlatform("Host"));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  std::vector<std::unique_ptr<LocalDeviceState>> local_device_states;
+  local_device_states.emplace_back(std::make_unique<LocalDeviceState>(
+      executor, local_client, LocalDeviceState::kSynchronous,
+      /*max_inflight_computations=*/32,
+      /*allow_event_reuse=*/false, /*use_callback_stream=*/false));
+  TopologyRecordingRawClient raw_client(
+      std::move(local_device_states), /*allocator=*/nullptr, local_client,
+      /*host_memory_allocator=*/nullptr,
+      /*should_stage_host_to_device_transfers=*/false,
+      MakeUnboundedAsyncWorkRunner("pjrt_async_work_runner",
+                                   {/*stack_size=*/512 * 1024}),
+      executor, /*gpu_run_options=*/nullptr);
+
+  auto local_topology = CreateCpuTopologyDescription(/*cpu_device_count=*/1);
+  auto target_topology = CreateCpuTopologyDescription(/*cpu_device_count=*/2);
+
+  Shape shape = ShapeUtil::MakeScalarShape(F32);
+  XlaBuilder builder("Add");
+  auto a = Parameter(&builder, 0, shape, "a");
+  Add(a, a);
+  ASSERT_OK_AND_ASSIGN(XlaComputation computation, builder.Build());
+
+  CompileOptions options;
+  options.executable_build_options.set_num_replicas(2);
+  options.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_shard_autotuning(true);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> executable,
+      raw_client.CrossCompile(computation, options, /*process_index=*/0,
+                              /*key_value_store=*/std::nullopt,
+                              local_topology.get(), *target_topology));
+  EXPECT_EQ(raw_client.observed_topology(), target_topology.get());
+  EXPECT_EQ(executable->num_replicas(), 2);
+}
+
 }  // namespace
 }  // namespace xla
