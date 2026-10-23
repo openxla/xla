@@ -35,11 +35,13 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_description.pb.h"
+#include "xla/stream_executor/gpu/gpu_blas_lt.pb.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
@@ -155,8 +157,14 @@ TEST_F(CublasLtBackendTest, GetSupportedConfigs) {
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
           *hlo_module->entry_computation()->root_instruction()->operand(0));
-  EXPECT_THAT(configs,
+  ASSERT_THAT(configs,
               absl_testing::IsOkAndHolds(testing::SizeIs(testing::Gt(0))));
+  if (stream_executor_->GetDeviceDescription()
+          .gpu_compute_capability()
+          .IsCuda()) {
+    EXPECT_TRUE((*configs)[0]->gemm().has_algorithm_proto());
+    EXPECT_TRUE((*configs)[0]->gemm().algorithm_proto().has_cublaslt());
+  }
 }
 
 TEST_F(CublasLtBackendTest, GetSupportedConfigsReturnsErrorForDeviceless) {
@@ -194,6 +202,12 @@ TEST_F(CublasLtBackendTest, GetDefaultConfig) {
   CublasLtBackendConfig config_proto = config->gemm();
   EXPECT_THAT(config_proto.algorithm(), 0);
   EXPECT_THAT(config_proto.autotune_workspace_size(), 4194304);
+  if (stream_executor_->GetDeviceDescription()
+          .gpu_compute_capability()
+          .IsCuda()) {
+    EXPECT_TRUE(config_proto.has_algorithm_proto());
+    EXPECT_TRUE(config_proto.algorithm_proto().has_cublaslt());
+  }
 }
 
 TEST_F(CublasLtBackendTest, GetDefaultConfigFailsWithoutACublasLtCustomCall) {
@@ -222,17 +236,35 @@ TEST_F(CublasLtBackendTest, ApplyConfig) {
   CublasLtBackendConfig config;
   config.set_algorithm(2);
   config.set_autotune_workspace_size(42);
+  config.mutable_algorithm_proto()->mutable_cublaslt()->set_algo_id(123);
   BackendConfig backend_config;
   *backend_config.mutable_gemm() = config;
-  EXPECT_OK(backend_.ApplyConfig(*hlo_module->entry_computation()
-                                      ->root_instruction()
-                                      ->mutable_operands()
-                                      .at(0),
-                                 backend_config));
+  HloInstruction* instr = hlo_module->entry_computation()
+                              ->root_instruction()
+                              ->mutable_operands()
+                              .at(0);
+  EXPECT_OK(backend_.ApplyConfig(*instr, backend_config));
   EXPECT_THAT(RunFileCheck(hlo_module->ToString(),
                            R"(CHECK: (f32[100,100]{1,0}, s8[42]{0}) custom-call
                               CHECK: "selected_algorithm":"2")"),
               absl_testing::IsOkAndHolds(true));
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig applied_gpu_config,
+                       instr->backend_config<GpuBackendConfig>());
+  EXPECT_EQ(applied_gpu_config.gemm_backend_config()
+                .algorithm_proto()
+                .cublaslt()
+                .algo_id(),
+            123);
+
+  // Applying a config without algorithm_proto should clear any pre-existing
+  // algorithm_proto on the instruction.
+  backend_config.mutable_gemm()->clear_algorithm_proto();
+  backend_config.mutable_gemm()->set_algorithm(3);
+  EXPECT_OK(backend_.ApplyConfig(*instr, backend_config));
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                       instr->backend_config<GpuBackendConfig>());
+  EXPECT_EQ(gpu_config.gemm_backend_config().selected_algorithm(), 3);
+  EXPECT_FALSE(gpu_config.gemm_backend_config().has_algorithm_proto());
 }
 
 TEST_F(CublasLtBackendTest, CompileFp8SwapOperands) {
