@@ -4713,264 +4713,17 @@ absl::Status HloEvaluator::HandleStochasticConvert(
   return absl::OkStatus();
 }
 
-static bool IsScalarAdd(HloComputation* computation) {
-  HloInstruction* instruction = computation->root_instruction();
-  if (instruction->opcode() == HloOpcode::kAdd &&
-      computation->num_parameters() == 2) {
-    const HloInstruction* lhs = instruction->operand(0);
-    const HloInstruction* rhs = instruction->operand(1);
-    return lhs->opcode() == HloOpcode::kParameter &&
-           ShapeUtil::IsScalar(lhs->shape()) &&
-           rhs->opcode() == HloOpcode::kParameter &&
-           ShapeUtil::IsScalar(rhs->shape()) && lhs != rhs;
-  }
-  return false;
-}
-
-// Run a single step of an inner loop while running reduction, which applies
-// the user-provided computation on the accumulator and the output element
-// (until the reduction is completed, the output element is also used as
-// an accumulator).
-static absl::StatusOr<bool> PerformReductionStep(
-    bool is_tuple, absl::Span<const int64_t> input_index,
-    absl::Span<const int64_t> output_index,
-    absl::Span<const Literal* const> input_args, absl::Span<Literal> results,
-    HloComputation* computation, HloEvaluator* embedded_evaluator) {
-  int num_args = results.size();
-
-  absl::InlinedVector<Literal, 1> arg_values;
-  arg_values.reserve(num_args);
-  absl::InlinedVector<Literal, 1> accumulators;
-  accumulators.reserve(num_args);
-  for (int64_t i = 0; i < num_args; ++i) {
-    arg_values.emplace_back(
-        ShapeUtil::MakeShape(input_args[i]->shape().element_type(), {}));
-    accumulators.emplace_back(
-        ShapeUtil::MakeShape(input_args[i]->shape().element_type(), {}));
-
-    arg_values[i].CopyElementFrom(*input_args[i], input_index, {});
-    accumulators[i].CopyElementFrom(results[i], output_index, {});
-  }
-
-  // Evaluate computation with specified literal operands.
-  absl::InlinedVector<Literal*, 2> embedded_operands;
-  for (Literal& accumulator : accumulators) {
-    embedded_operands.push_back(&accumulator);
-  }
-  for (Literal& local_input : arg_values) {
-    embedded_operands.push_back(&local_input);
-  }
-
-  ABSL_ASSIGN_OR_RETURN(
-      Literal computed_result,
-      embedded_evaluator->Evaluate(*computation, embedded_operands));
-
-  // Clear visit states so that we can use the evaluator again on the same
-  // computation.
-  embedded_evaluator->ResetVisitStates();
-
-  if (is_tuple) {
-    std::vector<Literal> computed_results = computed_result.DecomposeTuple();
-    for (int64_t i = 0; i < num_args; ++i) {
-      results[i].CopyElementFrom(computed_results[i], {}, output_index);
-    }
-  } else {
-    results[0].CopyElementFrom(computed_result, {}, output_index);
-  }
-
-  return true;
-}
-
-static absl::StatusOr<bool> GenerateReduceOutputElement(
-    bool is_tuple, bool use_fast_path, absl::Span<const int64_t> output_index,
-
-    absl::Span<const Literal* const> init_values,
-    absl::Span<const Literal* const> input_args, absl::Span<Literal> results,
-
-    HloComputation* function, HloEvaluator* embedded_evaluator,
-
-    absl::Span<const int64_t> arg_dim_steps,
-    absl::Span<const int64_t> arg_dim_counts,
-    absl::Span<const int64_t> result_to_arg_index) {
-  bool use_fast_add = use_fast_path &&
-                      ShapeUtil::ElementIsFloating(init_values[0]->shape()) &&
-                      IsScalarAdd(function) && !is_tuple;
-
-  const Shape& arg_shape = input_args[0]->shape();
-  absl::Span<const int64_t> arg_dimensions = arg_shape.dimensions();
-  std::vector<int64_t> base(arg_dimensions.size());
-  for (int64_t i = 0; i < output_index.size(); ++i) {
-    base[result_to_arg_index[i]] = output_index[i];
-  }
-
-  for (int64_t i = 0; i < results.size(); ++i) {
-    results[i].CopyElementFrom(*init_values[i], {}, output_index);
-  }
-
-  if (use_fast_add) {
-    double computed_result = *init_values[0]->GetAsDouble({});
-    const Literal* input_arg0 = input_args[0];
-    const Shape& shape = input_arg0->shape();
-    absl::Span<const int64_t> minor_to_major = LayoutUtil::MinorToMajor(shape);
-
-    static constexpr int kChunkSize = 512;
-    int64_t linear_indices[kChunkSize];
-    int n_linear_indices = 0;
-
-    auto reduction_step = [&](absl::Span<const int64_t> input_index) -> bool {
-      linear_indices[n_linear_indices++] =
-          IndexUtil::MultidimensionalIndexToLinearIndex(shape, minor_to_major,
-                                                        input_index);
-      if (n_linear_indices == kChunkSize) {
-        // Periodically compute partial sum to avoid linear_indices getting
-        // large
-        computed_result += *input_arg0->GetSumAsDouble(
-            absl::MakeConstSpan(linear_indices, n_linear_indices));
-        n_linear_indices = 0;
-      }
-      return true;
-    };
-    ShapeUtil::ForEachIndexNoStatus(arg_shape, base, arg_dim_counts,
-                                    arg_dim_steps, reduction_step);
-    if (n_linear_indices > 0) {
-      // Add in sum over any final indices collected
-      computed_result += *input_arg0->GetSumAsDouble(
-          absl::MakeConstSpan(linear_indices, n_linear_indices));
-    }
-    ABSL_RETURN_IF_ERROR(
-        results[0].SetFromDouble(output_index, computed_result));
-    return true;
-  }
-
-  // Iterates only over reduced shape, as counts and steps are set to zero
-  // for all non-reduced dimensions.
-  ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachIndexWithStatus(
-      arg_shape, base, arg_dim_counts, arg_dim_steps,
-      [&](absl::Span<const int64_t> input_index) {
-        return PerformReductionStep(is_tuple, input_index, output_index,
-                                    input_args, results, function,
-                                    embedded_evaluator);
-      }));
-  return true;
-}
-
-absl::Status HloEvaluator::HandleReduce(const HloInstruction* hlo) {
-  const HloReduceInstruction* reduce = Cast<HloReduceInstruction>(hlo);
-  int64_t num_args = reduce->inputs().size();
-  absl::Span<const int64_t> dimensions_to_reduce(reduce->dimensions());
-  HloComputation* function = reduce->to_apply();
-
-  absl::InlinedVector<const Shape*, 1> operand_shapes;
-  for (const HloInstruction* operand : reduce->operands()) {
-    operand_shapes.push_back(&operand->shape());
-  }
-  ABSL_ASSIGN_OR_RETURN(auto inferred_return_shape,
-                        ShapeInference::InferReduceShape(
-                            operand_shapes, dimensions_to_reduce,
-                            /*to_apply=*/function->ComputeProgramShape()));
-  TF_RET_CHECK(ShapeUtil::CompatibleIgnoringFpPrecision(reduce->shape(),
-                                                        inferred_return_shape))
-      << "return shape is set to: " << ShapeUtil::HumanString(reduce->shape())
-      << " but is inferred to be: "
-      << ShapeUtil::HumanString(inferred_return_shape);
-
-  absl::InlinedVector<const Literal*, 1> input_args(num_args);
-  absl::InlinedVector<const Literal*, 1> init_values(num_args);
-  for (int64_t i = 0; i < num_args; ++i) {
-    input_args[i] = &GetEvaluatedLiteralFor(reduce->inputs()[i]);
-    VLOG(3) << "HandleReduce arg_literal: " << input_args[i]->ToString();
-    init_values[i] = &GetEvaluatedLiteralFor(reduce->init_values()[i]);
-    VLOG(3) << "HandleReduce init_literal: " << init_values[i]->ToString();
-    TF_RET_CHECK(ShapeUtil::IsScalar(init_values[i]->shape()));
-  }
-
-  // All args and results have the same dimensions, so pick an arbitrary one.
-  const Shape& arg_shape = input_args[0]->shape();
-  const Shape& out_shape = inferred_return_shape;
-  bool is_tuple = out_shape.IsTuple();
-  const Shape& output_shape = inferred_return_shape.IsTuple()
-                                  ? inferred_return_shape.tuple_shapes(0)
-                                  : inferred_return_shape;
-
-  absl::Span<const int64_t> arg_dimensions = arg_shape.dimensions();
-
-  // All increments are set to 0.
-  std::vector<int64_t> arg_dim_steps(arg_dimensions.size());
-
-  // All counts are set to 0.
-  std::vector<int64_t> arg_dim_counts(arg_dimensions.size());
-
-  // Set steps and counts for reduced dimensions.
-  // This avoids iterating over non-reduced dimensions, as their step
-  // and count is set to zero.
-  for (const int64_t dim : dimensions_to_reduce) {
-    arg_dim_steps[dim] = 1;
-    arg_dim_counts[dim] = arg_dimensions[dim];
-  }
-
-  // Map each dimension in the result to a dimension in arg that isn't
-  // being reduced.
-  std::vector<int64_t> result_to_arg_index;
-  for (int64_t i = 0; i < arg_dimensions.size(); ++i) {
-    if (arg_dim_steps[i] == 0) {
-      result_to_arg_index.push_back(i);
-    }
-  }
-
-  const int num_threads = ShapeUtil::GetForEachIndexParallelThreadCount() + 1;
-  std::vector<std::unique_ptr<HloEvaluator>> embedded_evaluators;
-  embedded_evaluators.reserve(num_threads);
-  for (int i = 0; i < num_threads; ++i) {
-    embedded_evaluators.push_back(CreateEmbedded(max_loop_iterations_));
-  }
-
-  absl::InlinedVector<Literal, 1> results(num_args);
-  for (int64_t i = 0; i < num_args; ++i) {
-    ABSL_ASSIGN_OR_RETURN(
-        results[i],
-        Literal::Make(is_tuple ? out_shape.tuple_shapes(i) : out_shape));
-  }
-
-  ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachIndexParallelWithStatus(
-      output_shape, [&](absl::Span<const int64_t> output_index, int thread_id) {
-        return GenerateReduceOutputElement(
-            is_tuple, use_fast_path_reduce_, output_index, init_values,
-            input_args, absl::Span<Literal>(results), function,
-            embedded_evaluators[thread_id + 1].get(), arg_dim_steps,
-            arg_dim_counts, result_to_arg_index);
-      }));
-
-  if (is_tuple) {
-    Literal tuple_result(inferred_return_shape);
-    for (int64_t i = 0; i < num_args; ++i) {
-      CHECK_OK(tuple_result.MoveFrom(std::move(results[i]), {i}));
-    }
-    SetEvaluatedLiteralFor(reduce, std::move(tuple_result));
-  } else {
-    CHECK_EQ(results.size(), 1);
-    SetEvaluatedLiteralFor(reduce, std::move(results[0]));
-  }
-  if (!ShapeUtil::Compatible(reduce->shape(), inferred_return_shape)) {
-    ABSL_ASSIGN_OR_RETURN(
-        Literal converted,
-        GetEvaluatedLiteralFor(reduce).ConvertToShape(reduce->shape()));
-    SetEvaluatedLiteralFor(reduce, std::move(converted));
-  }
-  return absl::OkStatus();
-}
-
 namespace {
 
-std::optional<HloOpcode> MatchSimpleBinaryReducer(
-    const HloComputation* computation, PrimitiveType elem_type) {
-  if (computation->num_parameters() != 2) {
-    return std::nullopt;
-  }
-  const HloInstruction* op = computation->root_instruction();
+std::optional<HloOpcode> MatchSimpleBinaryReducerInstruction(
+    const HloInstruction* op, const HloInstruction* lhs_param,
+    const HloInstruction* rhs_param, PrimitiveType elem_type) {
   if (op->operand_count() != 2 ||
-      op->operand(0) != computation->parameter_instruction(0) ||
-      op->operand(1) != computation->parameter_instruction(1) ||
-      !ShapeUtil::IsScalarWithElementType(op->shape(), elem_type)) {
+      !((op->operand(0) == lhs_param && op->operand(1) == rhs_param) ||
+        (op->operand(0) == rhs_param && op->operand(1) == lhs_param)) ||
+      !ShapeUtil::IsScalarWithElementType(op->shape(), elem_type) ||
+      !ShapeUtil::IsScalarWithElementType(lhs_param->shape(), elem_type) ||
+      !ShapeUtil::IsScalarWithElementType(rhs_param->shape(), elem_type)) {
     return std::nullopt;
   }
   const auto op_code = std::make_optional(op->opcode());
@@ -4980,7 +4733,12 @@ std::optional<HloOpcode> MatchSimpleBinaryReducer(
       return elem_type != PRED ? op_code : std::nullopt;
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
-      return !primitive_util::IsComplexType(elem_type) ? op_code : std::nullopt;
+      if (primitive_util::IsComplexType(elem_type) ||
+          (primitive_util::IsFloatingPointType(elem_type) &&
+           op->operand(0) != lhs_param)) {
+        return std::nullopt;
+      }
+      return op_code;
     case HloOpcode::kAnd:
     case HloOpcode::kOr:
     case HloOpcode::kXor:
@@ -4991,6 +4749,68 @@ std::optional<HloOpcode> MatchSimpleBinaryReducer(
       return std::nullopt;
   }
 }
+
+std::optional<HloOpcode> MatchSimpleBinaryReducer(
+    const HloComputation* computation, PrimitiveType elem_type) {
+  if (computation->num_parameters() != 2) {
+    return std::nullopt;
+  }
+  return MatchSimpleBinaryReducerInstruction(
+      computation->root_instruction(), computation->parameter_instruction(0),
+      computation->parameter_instruction(1), elem_type);
+}
+
+std::optional<absl::InlinedVector<HloOpcode, 2>> MatchSimpleBinaryReducers(
+    const HloComputation* computation,
+    absl::Span<const Literal* const> input_args,
+    absl::Span<const Literal* const> init_values,
+    absl::Span<const Literal> results, bool is_tuple) {
+  const int64_t num_args = results.size();
+  if (num_args <= 0 || computation->num_parameters() != 2 * num_args) {
+    return std::nullopt;
+  }
+  const HloInstruction* root = computation->root_instruction();
+  if (is_tuple && (root->opcode() != HloOpcode::kTuple ||
+                   root->operand_count() != num_args)) {
+    return std::nullopt;
+  }
+  if (!is_tuple && num_args != 1) {
+    return std::nullopt;
+  }
+  absl::InlinedVector<HloOpcode, 2> opcodes;
+  opcodes.reserve(num_args);
+  for (int64_t i = 0; i < num_args; ++i) {
+    const HloInstruction* reducer = is_tuple ? root->operand(i) : root;
+    const PrimitiveType elem_type = results[i].shape().element_type();
+    std::optional<HloOpcode> op = MatchSimpleBinaryReducerInstruction(
+        reducer, computation->parameter_instruction(i),
+        computation->parameter_instruction(num_args + i), elem_type);
+    if (!op.has_value()) {
+      return std::nullopt;
+    }
+    const bool is_floating_add =
+        *op == HloOpcode::kAdd &&
+        primitive_util::IsFloatingPointType(elem_type) &&
+        ShapeUtil::ElementIsFloating(input_args[i]->shape()) &&
+        ShapeUtil::ElementIsFloating(init_values[i]->shape());
+    if (!is_floating_add &&
+        (input_args[i]->shape().element_type() != elem_type ||
+         init_values[i]->shape().element_type() != elem_type)) {
+      return std::nullopt;
+    }
+    opcodes.push_back(*op);
+  }
+  return opcodes;
+}
+
+template <PrimitiveType kType, typename ReturnT = NativeTypeOf<kType>>
+using SimpleReduceElementwiseType = std::conditional_t<
+    primitive_util::IsSignedIntegralType(kType), int64_t,
+    std::conditional_t<
+        primitive_util::IsUnsignedIntegralType(kType), uint64_t,
+        std::conditional_t<primitive_util::IsFloatingPointType(kType) &&
+                               sizeof(ReturnT) < sizeof(float),
+                           float, ReturnT>>>;
 
 template <typename ReturnT, typename ElementwiseT>
 ReturnT ApplyBinaryOp(HloOpcode opcode, ReturnT a, ReturnT b) {
@@ -5051,18 +4871,231 @@ ReturnT ApplyBinaryOp(HloOpcode opcode, ReturnT a, ReturnT b) {
              << HloOpcodeString(opcode);
 }
 
+struct SimpleReducePlan {
+  DimensionVector output_strides;
+  DimensionVector reduced_counts;
+  DimensionVector reduced_strides;
+  bool is_zero_element = false;
+};
+
+SimpleReducePlan MakeSimpleReducePlan(
+    const Shape& shape, absl::Span<const int64_t> arg_dim_counts,
+    absl::Span<const int64_t> arg_dim_steps,
+    absl::Span<const int64_t> result_to_arg_index) {
+  SimpleReducePlan plan;
+  plan.is_zero_element = ShapeUtil::IsZeroElementArray(shape);
+  if (plan.is_zero_element) {
+    return plan;
+  }
+  absl::Span<const int64_t> dims = shape.dimensions();
+  absl::Span<const int64_t> minor_to_major = LayoutUtil::MinorToMajor(shape);
+  DimensionVector strides(dims.size(), 0);
+  int64_t stride = 1;
+  for (int64_t d : minor_to_major) {
+    strides[d] = stride;
+    stride *= dims[d];
+  }
+  plan.output_strides.reserve(result_to_arg_index.size());
+  for (int64_t arg_dim : result_to_arg_index) {
+    plan.output_strides.push_back(strides[arg_dim]);
+  }
+  for (int64_t d : minor_to_major) {
+    if (arg_dim_steps[d] != 0 && arg_dim_counts[d] > 1) {
+      if (!plan.reduced_counts.empty() &&
+          plan.reduced_strides.back() * plan.reduced_counts.back() ==
+              strides[d]) {
+        plan.reduced_counts.back() *= arg_dim_counts[d];
+      } else {
+        plan.reduced_counts.push_back(arg_dim_counts[d]);
+        plan.reduced_strides.push_back(strides[d]);
+      }
+    }
+  }
+  return plan;
+}
+
+template <typename Fn>
+void ForEachReducedLinearIndex(const SimpleReducePlan& plan,
+                               absl::Span<const int64_t> output_index,
+                               Fn&& fn) {
+  if (plan.is_zero_element) {
+    return;
+  }
+  int64_t base_linear_index = 0;
+  for (size_t i = 0; i < output_index.size(); ++i) {
+    base_linear_index += output_index[i] * plan.output_strides[i];
+  }
+  const size_t num_reduced = plan.reduced_counts.size();
+  if (num_reduced == 0) {
+    fn(base_linear_index);
+    return;
+  }
+  if (num_reduced == 1) {
+    const int64_t c0 = plan.reduced_counts[0];
+    const int64_t s0 = plan.reduced_strides[0];
+    int64_t idx = base_linear_index;
+    for (int64_t i0 = 0; i0 < c0; ++i0, idx += s0) {
+      fn(idx);
+    }
+    return;
+  }
+  if (num_reduced == 2) {
+    const int64_t c0 = plan.reduced_counts[0];
+    const int64_t s0 = plan.reduced_strides[0];
+    const int64_t c1 = plan.reduced_counts[1];
+    const int64_t s1 = plan.reduced_strides[1];
+    int64_t outer_idx = base_linear_index;
+    for (int64_t i1 = 0; i1 < c1; ++i1, outer_idx += s1) {
+      int64_t idx = outer_idx;
+      for (int64_t i0 = 0; i0 < c0; ++i0, idx += s0) {
+        fn(idx);
+      }
+    }
+    return;
+  }
+  DimensionVector coords(num_reduced, 0);
+  int64_t idx = base_linear_index;
+  while (true) {
+    fn(idx);
+    size_t d = 0;
+    for (; d < num_reduced; ++d) {
+      coords[d]++;
+      idx += plan.reduced_strides[d];
+      if (coords[d] < plan.reduced_counts[d]) {
+        break;
+      }
+      idx -= coords[d] * plan.reduced_strides[d];
+      coords[d] = 0;
+    }
+    if (d == num_reduced) {
+      break;
+    }
+  }
+}
+
+absl::Status EvaluateSimpleReduceElement(HloOpcode opcode,
+                                         const SimpleReducePlan& plan,
+                                         const Literal& input,
+                                         const Literal& init,
+                                         absl::Span<const int64_t> output_index,
+                                         Literal& result) {
+  if (opcode == HloOpcode::kAdd && ShapeUtil::ElementIsFloating(init.shape())) {
+    double computed_result = *init.GetAsDouble({});
+
+    static constexpr int kChunkSize = 512;
+    int64_t linear_indices[kChunkSize];
+    int n_linear_indices = 0;
+
+    ForEachReducedLinearIndex(plan, output_index, [&](int64_t linear_index) {
+      linear_indices[n_linear_indices++] = linear_index;
+      if (n_linear_indices == kChunkSize) {
+        // Periodically compute partial sum to avoid linear_indices getting
+        // large
+        computed_result += *input.GetSumAsDouble(
+            absl::MakeConstSpan(linear_indices, n_linear_indices));
+        n_linear_indices = 0;
+      }
+    });
+    if (n_linear_indices > 0) {
+      // Add in sum over any final indices collected
+      computed_result += *input.GetSumAsDouble(
+          absl::MakeConstSpan(linear_indices, n_linear_indices));
+    }
+    return result.SetFromDouble(output_index, computed_result);
+  }
+
+  primitive_util::ArrayTypeSwitch(
+      [&](auto primitive_type_constant) -> void {
+        constexpr PrimitiveType kType = primitive_type_constant;
+        using ReturnT = NativeTypeOf<kType>;
+        using ElementwiseT = SimpleReduceElementwiseType<kType>;
+        ReturnT acc = init.Get<ReturnT>({});
+        absl::Span<const ReturnT> input_data = input.data<ReturnT>();
+        ForEachReducedLinearIndex(plan, output_index,
+                                  [&](int64_t linear_index) {
+                                    acc = ApplyBinaryOp<ReturnT, ElementwiseT>(
+                                        opcode, acc, input_data[linear_index]);
+                                  });
+        result.Set<ReturnT>(output_index, acc);
+      },
+      result.shape().element_type());
+  return absl::OkStatus();
+}
+
+absl::StatusOr<bool> GenerateReduceOutputElement(
+    bool is_tuple, absl::Span<const int64_t> output_index,
+    absl::Span<const Literal* const> init_values,
+    absl::Span<const Literal* const> input_args, absl::Span<Literal> results,
+    HloComputation* function, HloEvaluator* embedded_evaluator,
+    absl::Span<const int64_t> arg_dim_counts,
+    absl::Span<const int64_t> arg_dim_steps,
+    absl::Span<const int64_t> result_to_arg_index) {
+  const Shape& arg_shape = input_args[0]->shape();
+  absl::Span<const int64_t> arg_dimensions = arg_shape.dimensions();
+  DimensionVector base(arg_dimensions.size(), 0);
+  for (int64_t i = 0; i < output_index.size(); ++i) {
+    base[result_to_arg_index[i]] = output_index[i];
+  }
+
+  const int64_t num_args = results.size();
+  absl::InlinedVector<Literal, 1> arg_values;
+  arg_values.reserve(num_args);
+  absl::InlinedVector<Literal, 1> accumulators;
+  accumulators.reserve(num_args);
+  for (int64_t i = 0; i < num_args; ++i) {
+    arg_values.emplace_back(
+        ShapeUtil::MakeShape(input_args[i]->shape().element_type(), {}));
+    accumulators.emplace_back(
+        ShapeUtil::MakeShape(results[i].shape().element_type(), {}));
+    accumulators[i].CopyElementFrom(*init_values[i], {}, {});
+  }
+
+  absl::InlinedVector<Literal*, 2> embedded_operands;
+  embedded_operands.reserve(2 * num_args);
+  for (Literal& accumulator : accumulators) {
+    embedded_operands.push_back(&accumulator);
+  }
+  for (Literal& local_input : arg_values) {
+    embedded_operands.push_back(&local_input);
+  }
+
+  // Iterates only over reduced shape, as counts and steps are set to zero
+  // for all non-reduced dimensions.
+  ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachIndexWithStatus(
+      arg_shape, base, arg_dim_counts, arg_dim_steps,
+      [&](absl::Span<const int64_t> input_index) -> absl::StatusOr<bool> {
+        for (int64_t i = 0; i < num_args; ++i) {
+          arg_values[i].CopyElementFrom(*input_args[i], input_index, {});
+        }
+        ABSL_ASSIGN_OR_RETURN(
+            Literal computed_result,
+            embedded_evaluator->Evaluate(*function, embedded_operands));
+        // Clear visit states so that we can use the evaluator again on the same
+        // computation.
+        embedded_evaluator->ResetVisitStates();
+        if (is_tuple) {
+          for (int64_t i = 0; i < num_args; ++i) {
+            accumulators[i].CopyElementFrom(LiteralSlice(computed_result, {i}),
+                                            {}, {});
+          }
+        } else {
+          accumulators[0].CopyElementFrom(computed_result, {}, {});
+        }
+        return true;
+      }));
+
+  for (int64_t i = 0; i < num_args; ++i) {
+    results[i].CopyElementFrom(accumulators[i], {}, output_index);
+  }
+  return true;
+}
+
 template <PrimitiveType kType>
 absl::Status EvaluateSimpleReduceWindowTyped(
     HloOpcode opcode, const Literal& input, const Literal& init,
     const Shape& window_shape, const Window& window, Literal& result) {
   using ReturnT = NativeTypeOf<kType>;
-  using ElementwiseT = std::conditional_t<
-      primitive_util::IsSignedIntegralType(kType), int64_t,
-      std::conditional_t<
-          primitive_util::IsUnsignedIntegralType(kType), uint64_t,
-          std::conditional_t<primitive_util::IsFloatingPointType(kType) &&
-                                 sizeof(ReturnT) < sizeof(float),
-                             float, ReturnT>>>;
+  using ElementwiseT = SimpleReduceElementwiseType<kType>;
   const ReturnT init_val = init.Get<ReturnT>({});
   return result.PopulateParallel<ReturnT>(
       [&](absl::Span<const int64_t> output_index, int) -> ReturnT {
@@ -5078,6 +5111,138 @@ absl::Status EvaluateSimpleReduceWindowTyped(
 }
 
 }  // namespace
+
+absl::Status HloEvaluator::HandleReduce(const HloInstruction* hlo) {
+  const HloReduceInstruction* reduce = Cast<HloReduceInstruction>(hlo);
+  int64_t num_args = reduce->inputs().size();
+  absl::Span<const int64_t> dimensions_to_reduce(reduce->dimensions());
+  HloComputation* function = reduce->to_apply();
+
+  absl::InlinedVector<const Shape*, 1> operand_shapes;
+  for (const HloInstruction* operand : reduce->operands()) {
+    operand_shapes.push_back(&operand->shape());
+  }
+  ABSL_ASSIGN_OR_RETURN(auto inferred_return_shape,
+                        ShapeInference::InferReduceShape(
+                            operand_shapes, dimensions_to_reduce,
+                            /*to_apply=*/function->ComputeProgramShape()));
+  TF_RET_CHECK(ShapeUtil::CompatibleIgnoringFpPrecision(reduce->shape(),
+                                                        inferred_return_shape))
+      << "return shape is set to: " << ShapeUtil::HumanString(reduce->shape())
+      << " but is inferred to be: "
+      << ShapeUtil::HumanString(inferred_return_shape);
+
+  absl::InlinedVector<const Literal*, 1> input_args(num_args);
+  absl::InlinedVector<const Literal*, 1> init_values(num_args);
+  for (int64_t i = 0; i < num_args; ++i) {
+    input_args[i] = &GetEvaluatedLiteralFor(reduce->inputs()[i]);
+    VLOG(3) << "HandleReduce arg_literal: " << input_args[i]->ToString();
+    init_values[i] = &GetEvaluatedLiteralFor(reduce->init_values()[i]);
+    VLOG(3) << "HandleReduce init_literal: " << init_values[i]->ToString();
+    TF_RET_CHECK(ShapeUtil::IsScalar(init_values[i]->shape()));
+  }
+
+  // All args and results have the same dimensions, so pick an arbitrary one.
+  const Shape& arg_shape = input_args[0]->shape();
+  const Shape& out_shape = inferred_return_shape;
+  bool is_tuple = out_shape.IsTuple();
+  const Shape& output_shape = inferred_return_shape.IsTuple()
+                                  ? inferred_return_shape.tuple_shapes(0)
+                                  : inferred_return_shape;
+
+  absl::Span<const int64_t> arg_dimensions = arg_shape.dimensions();
+
+  // All increments are set to 0.
+  DimensionVector arg_dim_steps(arg_dimensions.size(), 0);
+
+  // All counts are set to 0.
+  DimensionVector arg_dim_counts(arg_dimensions.size(), 0);
+
+  // Set steps and counts for reduced dimensions.
+  // This avoids iterating over non-reduced dimensions, as their step
+  // and count is set to zero.
+  for (const int64_t dim : dimensions_to_reduce) {
+    arg_dim_steps[dim] = 1;
+    arg_dim_counts[dim] = arg_dimensions[dim];
+  }
+
+  // Map each dimension in the result to a dimension in arg that isn't
+  // being reduced.
+  DimensionVector result_to_arg_index;
+  for (int64_t i = 0; i < arg_dimensions.size(); ++i) {
+    if (arg_dim_steps[i] == 0) {
+      result_to_arg_index.push_back(i);
+    }
+  }
+
+  absl::InlinedVector<Literal, 1> results(num_args);
+  for (int64_t i = 0; i < num_args; ++i) {
+    ABSL_ASSIGN_OR_RETURN(
+        results[i],
+        Literal::Make(is_tuple ? out_shape.tuple_shapes(i) : out_shape));
+  }
+
+  const std::optional<absl::InlinedVector<HloOpcode, 2>> fast_ops =
+      use_fast_path_reduce_
+          ? MatchSimpleBinaryReducers(function, input_args, init_values,
+                                      results, is_tuple)
+          : std::nullopt;
+
+  if (fast_ops.has_value()) {
+    absl::InlinedVector<SimpleReducePlan, 2> fast_plans;
+    fast_plans.reserve(num_args);
+    for (int64_t i = 0; i < num_args; ++i) {
+      fast_plans.push_back(MakeSimpleReducePlan(input_args[i]->shape(),
+                                                arg_dim_counts, arg_dim_steps,
+                                                result_to_arg_index));
+    }
+    ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachIndexParallelWithStatus(
+        output_shape,
+        [&](absl::Span<const int64_t> output_index,
+            int /*thread_id*/) -> absl::StatusOr<bool> {
+          for (int64_t i = 0; i < num_args; ++i) {
+            ABSL_RETURN_IF_ERROR(EvaluateSimpleReduceElement(
+                (*fast_ops)[i], fast_plans[i], *input_args[i], *init_values[i],
+                output_index, results[i]));
+          }
+          return true;
+        }));
+  } else {
+    const int num_threads = ShapeUtil::GetForEachIndexParallelThreadCount() + 1;
+    std::vector<std::unique_ptr<HloEvaluator>> embedded_evaluators;
+    embedded_evaluators.reserve(num_threads);
+    for (int i = 0; i < num_threads; ++i) {
+      embedded_evaluators.push_back(CreateEmbedded(max_loop_iterations_));
+    }
+    ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachIndexParallelWithStatus(
+        output_shape,
+        [&](absl::Span<const int64_t> output_index, int thread_id) {
+          return GenerateReduceOutputElement(
+              is_tuple, output_index, init_values, input_args,
+              absl::Span<Literal>(results), function,
+              embedded_evaluators[thread_id + 1].get(), arg_dim_counts,
+              arg_dim_steps, result_to_arg_index);
+        }));
+  }
+
+  if (is_tuple) {
+    Literal tuple_result(inferred_return_shape);
+    for (int64_t i = 0; i < num_args; ++i) {
+      CHECK_OK(tuple_result.MoveFrom(std::move(results[i]), {i}));
+    }
+    SetEvaluatedLiteralFor(reduce, std::move(tuple_result));
+  } else {
+    CHECK_EQ(results.size(), 1);
+    SetEvaluatedLiteralFor(reduce, std::move(results[0]));
+  }
+  if (!ShapeUtil::Compatible(reduce->shape(), inferred_return_shape)) {
+    ABSL_ASSIGN_OR_RETURN(
+        Literal converted,
+        GetEvaluatedLiteralFor(reduce).ConvertToShape(reduce->shape()));
+    SetEvaluatedLiteralFor(reduce, std::move(converted));
+  }
+  return absl::OkStatus();
+}
 
 absl::Status HloEvaluator::HandleReduceWindow(const HloInstruction* hlo) {
   auto* reduce_window = Cast<HloReduceWindowInstruction>(hlo);
