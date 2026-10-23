@@ -1571,6 +1571,9 @@ std::vector<HloComputation*> HloModule::MakeComputationPostOrder(
     absl::flat_hash_set<HloComputation*> nonroot_computations;
     nonroot_computations.reserve(computation_count() - 1);
     for (auto* computation : computations()) {
+      if (!computation->HasCalledComputations()) {
+        continue;
+      }
       for (const HloInstructionInfo& inst :
            computation->instructions_with_info()) {
         if (HloInstruction::MightHaveCalledComputations(inst.opcode())) {
@@ -1595,10 +1598,12 @@ std::vector<HloComputation*> HloModule::MakeComputationPostOrder(
       if (nonroot_computations.contains(computation)) {
         continue;
       }
-      for (HloComputation* embedded_computation :
-           computation->MakeEmbeddedComputationsList()) {
-        if (added_computations.insert(embedded_computation).second) {
-          post_order.push_back(embedded_computation);
+      if (computation->HasCalledComputations()) {
+        for (HloComputation* embedded_computation :
+             computation->MakeEmbeddedComputationsList()) {
+          if (added_computations.insert(embedded_computation).second) {
+            post_order.push_back(embedded_computation);
+          }
         }
       }
       // Root computations should only be encountered once.
@@ -1865,9 +1870,15 @@ absl::Status HloModule::RemoveUnusedComputations() {
   while (!agenda.empty()) {
     HloComputation* computation = agenda.top();
     agenda.pop();
-    for (HloInstruction* instruction : computation->instructions()) {
-      for (HloComputation* called_computation :
-           instruction->called_computations()) {
+    if (!computation->HasCalledComputations()) {
+      continue;
+    }
+    for (const HloInstructionInfo& inst :
+         computation->instructions_with_info()) {
+      if (!HloInstruction::MightHaveCalledComputations(inst.opcode())) {
+        continue;
+      }
+      for (HloComputation* called_computation : inst->called_computations()) {
         if (to_remove.erase(called_computation) > 0) {
           agenda.push(called_computation);
         }
