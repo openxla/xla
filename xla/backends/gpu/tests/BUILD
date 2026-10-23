@@ -2,6 +2,7 @@
 # verify the IR emitted.
 
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 
 # copybara:uncomment load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
@@ -1991,7 +1992,11 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:all_runtime",  # buildcleaner: keep
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor/rocm:all_runtime",  # buildcleaner: keep
+    ]),
 )
 
 xla_test(
