@@ -58,6 +58,7 @@ class MxScaledDotExecutionTest : public HloPjRtGpuTestBase {
     test_config.mutable_debug_options()
         .set_xla_gpu_experimental_scaled_dot_with_triton(true);
     test_config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(true);
+    test_config.mutable_debug_options().set_xla_gpu_cublas_fallback(false);
     ASSERT_OK_AND_ASSIGN(auto test_optimized,
                          GetOptimizedModule(hlo_string, test_config));
     // The autotuner may pick any of the MX-aware ROCm backends:
