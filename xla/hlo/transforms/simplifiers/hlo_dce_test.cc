@@ -1439,5 +1439,277 @@ ENTRY main {
   EXPECT_EQ(FindInstruction(module.get(), "producer_cc"), nullptr);
 }
 
+// Verifies that an unused empty-tuple `() conditional(...)` (such as one left
+// behind after `ConditionalSimplifier::ReplaceRootWithEmptyTupleIfNoUsers`
+// strips unused outputs from a conditional whose branches contain collectives)
+// is preserved when `remove_cross_partition_collective_ops=false` and removed
+// along with its branch computations when
+// `remove_cross_partition_collective_ops=true`.
+TEST_F(HloDceTest, DeadEmptyTupleConditionalWithCollectives) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule test_dead_empty_tuple_conditional
+
+add_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+true_branch {
+  p = f32[8] parameter(0)
+  ar = f32[8] all-reduce(p), channel_id=1, replica_groups={{0,1}}, to_apply=add_op
+  cps = (f32[8], f32[8]) collective-permute-start(ar), channel_id=2, source_target_pairs={{0,1},{1,0}}
+  cpd = f32[8] collective-permute-done(cps)
+  ROOT t = () tuple()
+}
+
+false_branch {
+  p = f32[8] parameter(0)
+  ag = f32[16] all-gather(p), channel_id=3, dimensions={0}, replica_groups={{0,1}}
+  ROOT t = () tuple()
+}
+
+ENTRY main {
+  pred_ = pred[] parameter(0)
+  p0 = f32[8] parameter(1)
+  dead_cond = () conditional(pred_, p0, p0), true_computation=true_branch, false_computation=false_branch
+  ROOT root = f32[8] copy(p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+
+  // Without remove_cross_partition_collective_ops, conditional stays alive.
+  HloDCE dce_no_collectives(/*remove_cross_partition_collective_ops=*/false);
+  ASSERT_OK_AND_ASSIGN(bool changed, dce_no_collectives.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_NE(FindInstruction(module.get(), "dead_cond"), nullptr);
+
+  // With remove_cross_partition_collective_ops, conditional and its unreachable
+  // branch computations (`true_branch`, `false_branch`, `add_op`) are removed.
+  HloDCE dce_collectives(/*remove_cross_partition_collective_ops=*/true);
+  ASSERT_OK_AND_ASSIGN(changed, dce_collectives.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "dead_cond"), nullptr);
+  EXPECT_EQ(FindComputation(module.get(), "true_branch"), nullptr);
+  EXPECT_EQ(FindComputation(module.get(), "false_branch"), nullptr);
+}
+
+// Verifies that an unused `kConditional` that has NOT been simplified to an
+// empty tuple `()` is not removed by `HloDCE` alone, and that an empty-tuple
+// `() conditional(...)` is preserved if a branch contains a layout-constrained
+// collective (`constrain_layout=true`).
+TEST_F(HloDceTest,
+       NonEmptyTupleOrLayoutConstrainedConditionalWithCollectivesPreserved) {
+  constexpr absl::string_view kNonEmptyTupleHlo = R"hlo(
+HloModule test_non_empty_tuple_conditional
+
+add_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+true_branch {
+  p = f32[8] parameter(0)
+  ROOT ar = f32[8] all-reduce(p), channel_id=1, replica_groups={{0,1}}, to_apply=add_op
+}
+
+false_branch {
+  ROOT p = f32[8] parameter(0)
+}
+
+ENTRY main {
+  pred_ = pred[] parameter(0)
+  p0 = f32[8] parameter(1)
+  dead_cond = f32[8] conditional(pred_, p0, p0), true_computation=true_branch, false_computation=false_branch
+  ROOT root = f32[8] copy(p0)
+}
+)hlo";
+  {
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseAndReturnVerifiedModule(kNonEmptyTupleHlo));
+    HloDCE dce(/*remove_cross_partition_collective_ops=*/true);
+    ASSERT_OK_AND_ASSIGN(bool changed, dce.Run(module.get()));
+    EXPECT_FALSE(changed);
+    EXPECT_NE(FindInstruction(module.get(), "dead_cond"), nullptr);
+  }
+
+  constexpr absl::string_view kConstrainedCollectiveHlo = R"hlo(
+HloModule test_constrained_collective_conditional
+
+add_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+true_branch {
+  p = f32[8] parameter(0)
+  ar = f32[8] all-reduce(p), channel_id=1, replica_groups={{0,1}}, constrain_layout=true, to_apply=add_op
+  ROOT t = () tuple()
+}
+
+false_branch {
+  p = f32[8] parameter(0)
+  ROOT t = () tuple()
+}
+
+ENTRY main {
+  pred_ = pred[] parameter(0)
+  p0 = f32[8] parameter(1)
+  dead_cond = () conditional(pred_, p0, p0), true_computation=true_branch, false_computation=false_branch
+  ROOT root = f32[8] copy(p0)
+}
+)hlo";
+  {
+    ASSERT_OK_AND_ASSIGN(
+        auto module, ParseAndReturnVerifiedModule(kConstrainedCollectiveHlo));
+    HloDCE dce(/*remove_cross_partition_collective_ops=*/true);
+    ASSERT_OK_AND_ASSIGN(bool changed, dce.Run(module.get()));
+    EXPECT_FALSE(changed);
+    EXPECT_NE(FindInstruction(module.get(), "dead_cond"), nullptr);
+  }
+}
+
+// Verifies that an unused empty-tuple `() conditional(...)` whose branch
+// contains a side-effecting `tpu_custom_call` marked with
+// `xla_allow_dce_side_effecting_op="true"` is eliminated, while an unmarked
+// side-effecting custom-call keeps the conditional alive.
+TEST_F(HloDceTest, DeadEmptyTupleConditionalWithAllowedCustomCalls) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule test_dead_empty_tuple_conditional_custom_calls
+
+true_branch {
+  p = f32[8] parameter(0)
+  cc = f32[8] custom-call(p), custom_call_target="tpu_custom_call", custom_call_has_side_effect=true, frontend_attributes={xla_allow_dce_side_effecting_op="true"}
+  ROOT t = () tuple()
+}
+
+false_branch {
+  p = f32[8] parameter(0)
+  ROOT t = () tuple()
+}
+
+ENTRY main {
+  pred_ = pred[] parameter(0)
+  p0 = f32[8] parameter(1)
+  dead_cond = () conditional(pred_, p0, p0), true_computation=true_branch, false_computation=false_branch
+  ROOT root = f32[8] copy(p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  HloDCE dce(/*remove_cross_partition_collective_ops=*/false);
+  ASSERT_OK_AND_ASSIGN(bool changed, dce.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "dead_cond"), nullptr);
+}
+
+// Verifies that dedicated async collective `-start`/`-done` pairs
+// (`all-reduce-start`/`all-reduce-done`, `all-gather-start`/`all-gather-done`,
+// `collective-permute-start`/`collective-permute-done`) and synchronous
+// `collective-permute` instructions are eliminated in a single `HloDCE` pass
+// when `remove_cross_partition_collective_ops=true`, and that setting
+// `xla_allow_dce_side_effecting_op="false"` on the `-start` instruction
+// prevents both `-done` and `-start` from being removed.
+TEST_F(HloDceTest, DeadAsyncAllReduceAllGatherAndCollectivePermute) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule test_dead_async_collectives
+
+add_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  ars = f32[8] all-reduce-start(p0), channel_id=1, replica_groups={{0,1}}, to_apply=add_op
+  ard = f32[8] all-reduce-done(ars)
+  ags = (f32[8], f32[16]) all-gather-start(p0), channel_id=2, dimensions={0}, replica_groups={{0,1}}
+  agd = f32[16] all-gather-done(ags)
+  cps = (f32[8], f32[8]) collective-permute-start(p0), channel_id=3, source_target_pairs={{0,1},{1,0}}
+  cpd = f32[8] collective-permute-done(cps)
+  cp_sync = f32[8] collective-permute(p0), channel_id=4, source_target_pairs={{0,1},{1,0}}
+  pinned_ars = f32[8] all-reduce-start(p0), channel_id=5, replica_groups={{0,1}}, to_apply=add_op, frontend_attributes={xla_allow_dce_side_effecting_op="false"}
+  pinned_ard = f32[8] all-reduce-done(pinned_ars)
+  ROOT root = f32[8] copy(p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  HloDCE dce_no_collectives(/*remove_cross_partition_collective_ops=*/false);
+  ASSERT_OK_AND_ASSIGN(bool changed, dce_no_collectives.Run(module.get()));
+  EXPECT_FALSE(changed);
+
+  HloDCE dce(/*remove_cross_partition_collective_ops=*/true);
+  ASSERT_OK_AND_ASSIGN(changed, dce.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "ard"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "ars"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "agd"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "ags"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "cpd"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "cps"), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), "cp_sync"), nullptr);
+  // `pinned_ars` has `xla_allow_dce_side_effecting_op="false"`, which
+  // `pinned_ard` inspects via `GetAsyncStartInstruction`, keeping both alive.
+  EXPECT_NE(FindInstruction(module.get(), "pinned_ard"), nullptr);
+  EXPECT_NE(FindInstruction(module.get(), "pinned_ars"), nullptr);
+}
+
+// Verifies that `IsRemovableWhile` (which delegates to
+// `IsInstructionSideEffectRemovable`) can eliminate a dead `kWhile` loop whose
+// body contains async collective `-start`/`-done` pairs and
+// `collective-permute` instructions when
+// `remove_cross_partition_collective_ops=true`.
+TEST_F(HloDceTest, DeadWhileWithAsyncCollectivesAndCollectivePermute) {
+  constexpr absl::string_view kHloString = R"hlo(
+HloModule test_dead_while_with_async_collectives
+
+add_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+while_cond {
+  p = (s32[], f32[8]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  limit = s32[] constant(4)
+  ROOT cmp = pred[] compare(i, limit), direction=LT
+}
+
+while_body {
+  p = (s32[], f32[8]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[8] get-tuple-element(p), index=1
+  one = s32[] constant(1)
+  next_i = s32[] add(i, one)
+  ars = f32[8] all-reduce-start(x), channel_id=1, replica_groups={{0,1}}, to_apply=add_op
+  ard = f32[8] all-reduce-done(ars)
+  cps = (f32[8], f32[8]) collective-permute-start(ard), channel_id=2, source_target_pairs={{0,1},{1,0}}
+  cpd = f32[8] collective-permute-done(cps)
+  ROOT res = (s32[], f32[8]) tuple(next_i, cpd)
+}
+
+ENTRY main {
+  c0 = s32[] constant(0)
+  p0 = f32[8] parameter(0)
+  init = (s32[], f32[8]) tuple(c0, p0)
+  dead_while = (s32[], f32[8]) while(init), condition=while_cond, body=while_body
+  ROOT root = f32[8] copy(p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloString));
+  HloDCE dce_no_collectives(/*remove_cross_partition_collective_ops=*/false);
+  ASSERT_OK_AND_ASSIGN(bool changed, dce_no_collectives.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_NE(FindInstruction(module.get(), "dead_while"), nullptr);
+
+  HloDCE dce_collectives(/*remove_cross_partition_collective_ops=*/true);
+  ASSERT_OK_AND_ASSIGN(changed, dce_collectives.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "dead_while"), nullptr);
+}
+
 }  // namespace
 }  // namespace xla

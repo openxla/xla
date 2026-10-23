@@ -191,6 +191,31 @@ class HloLinker {
 };
 }  // namespace
 
+absl::StatusOr<HloComputation* absl_nonnull> LinkComputationInto(
+    HloModule* module, const HloLinkingManifest& linking_manifest,
+    const HloComputation* absl_nonnull root_computation) {
+  VLOG(6) << "Root computation: " << root_computation->name();
+  HloLinker linker(module, linking_manifest, root_computation);
+  ABSL_ASSIGN_OR_RETURN(HloComputation * linked_clone_ptr, linker.Link());
+
+  module->ReplaceEntryComputation(linked_clone_ptr);
+  if (root_computation->parent() != nullptr) {
+    *module->mutable_entry_computation_layout() =
+        root_computation->parent()->entry_computation_layout();
+    module->set_input_output_alias_config(
+        root_computation->parent()->input_output_alias_config());
+    module->set_buffer_donor_config(
+        root_computation->parent()->buffer_donor_config());
+    *module->metadata() = root_computation->parent()->metadata();
+  } else {
+    module->mutable_config().SetComputationLayoutIfExists(
+        linked_clone_ptr->ComputeProgramShape());
+  }
+  xla::HloDCE dce_pass;
+  ABSL_RETURN_IF_ERROR(dce_pass.Run(module).status());
+  return linked_clone_ptr;
+}
+
 absl::StatusOr<std::unique_ptr<HloModule>> LinkComputation(
     const HloLinkingManifest& linking_manifest,
     const HloComputation* absl_nonnull root_computation) {
@@ -200,14 +225,11 @@ absl::StatusOr<std::unique_ptr<HloModule>> LinkComputation(
       std::make_unique<CompilationEnvironments>(
           *linking_manifest.compilation_environment));
 
-  HloLinker linker(linked_module.get(), linking_manifest, root_computation);
-  ABSL_ASSIGN_OR_RETURN(HloComputation * linked_clone_ptr, linker.Link());
-
-  linked_module->ReplaceEntryComputation(linked_clone_ptr);
-  linked_module->mutable_config().SetComputationLayoutIfExists(
-      linked_clone_ptr->ComputeProgramShape());
-  xla::HloDCE dce_pass;
-  ABSL_RETURN_IF_ERROR(dce_pass.Run(linked_module.get()).status());
+  ABSL_ASSIGN_OR_RETURN(
+      HloComputation * linked_clone_ptr,
+      LinkComputationInto(linked_module.get(), linking_manifest,
+                          root_computation));
+  (void)linked_clone_ptr;
 
   if (VLOG_IS_ON(6)) {
     for (const HloComputation* comp : linked_module->computations()) {

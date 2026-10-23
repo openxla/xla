@@ -1712,5 +1712,45 @@ ENTRY %main (p0: f32[], p1: f32[]) -> f32[] {
   EXPECT_EQ(root->frontend_attributes().map().at("_xla_compute_type"), "host");
 }
 
+TEST_F(CallInlinerTest, InlinePreservesScheduleWithNestedCalledComputations) {
+  constexpr absl::string_view kHlo = R"(
+HloModule main, is_scheduled=true
+nested_sub {
+  p0 = f32[] parameter(0)
+  c1 = f32[] constant(2.0)
+  ROOT mul = f32[] multiply(p0, c1)
+}
+late_callee {
+  arg = f32[] parameter(0)
+  neg = f32[] negate(arg)
+  ROOT sub_call = f32[] call(neg), to_apply=nested_sub
+}
+ENTRY main {
+  p0 = f32[] parameter(0)
+  call0 = f32[] call(p0), to_apply=late_callee, frontend_attributes={inlineable="xla_late"}
+  ROOT call1 = f32[] call(call0), to_apply=late_callee, frontend_attributes={inlineable="xla_late"}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  CallInliner call_inliner(
+      /*single_call_site=*/false,
+      /*composites_to_preserve=*/{},
+      [](const CallGraph&, const HloInstruction* inst) {
+        return inst->frontend_attributes().map().contains("inlineable")
+                   ? CallInliner::InlineOverridePolicy::
+                         kAllowIgnoreFrontendAttributes
+                   : CallInliner::InlineOverridePolicy::kProhibitInline;
+      });
+  ASSERT_OK_AND_ASSIGN(bool mutated, call_inliner.Run(module.get()));
+  EXPECT_TRUE(mutated);
+  EXPECT_OK(module->schedule().Verify());
+  for (const HloInstruction* inst :
+       module->entry_computation()->instructions()) {
+    for (HloComputation* sub : inst->called_computations()) {
+      EXPECT_TRUE(module->schedule().is_computation_scheduled(sub));
+    }
+  }
+}
+
 }  // namespace
 }  // namespace xla

@@ -416,25 +416,47 @@ void BFloat16Propagation::DetermineAsyncComputationsPrecision(
 void BFloat16Propagation::DetermineCalledComputationsPrecision(
     HloInstruction* call) {
   CHECK_EQ(call->opcode(), HloOpcode::kCall);
+  HloComputation* callee = call->to_apply();
+  if (ContainsKey(computations_visited_in_backward_pass_, callee)) {
+    return;
+  }
 
-  auto root = call->to_apply()->root_instruction();
+  auto root = callee->root_instruction();
   ShapeUtil::ForEachSubshape(
       root->shape(), [&](const Shape& subshape, const ShapeIndex& index) {
         if (subshape.element_type() != F32) {
           return;
         }
-        if (OutputTypeAfterChange(call, index) == BF16) {
+        const bool all_callers_bf16 =
+            AllUsersConsumeBF16(*call, index) &&
+            absl::c_all_of(
+                callee->caller_instructions(), [&](HloInstruction* caller) {
+                  return !included_computations_.contains(caller->parent()) ||
+                         (caller->opcode() == HloOpcode::kCall &&
+                          OutputTypeAfterChange(caller, index) == BF16);
+                });
+        if (all_callers_bf16) {
           AddToOrRemoveFromBF16ChangeSet(root, index, BF16);
           VLOG(2) << "Called computation root " << root->ToString()
                   << " at shape index " << index
                   << " changed to BF16 precision for call " << call->ToString();
+        } else {
+          // If any caller needs F32, keep the callee root in F32 and undo any
+          // tentative BF16 marks on callers that were visited earlier.
+          AddToOrRemoveFromBF16ChangeSet(root, index, F32);
+          for (HloInstruction* caller : callee->caller_instructions()) {
+            if (caller->opcode() == HloOpcode::kCall &&
+                included_computations_.contains(caller->parent())) {
+              AddToOrRemoveFromBF16ChangeSet(caller, index, F32);
+            }
+          }
         }
       });
-  auto insts = call->to_apply()->MakeInstructionPostOrder();
+  auto insts = callee->MakeInstructionPostOrder();
   for (auto inst_it = insts.rbegin(); inst_it != insts.rend(); ++inst_it) {
     DetermineInstructionPrecision(*inst_it, /*skip_parameters=*/false);
   }
-  computations_visited_in_backward_pass_.insert(call->to_apply());
+  computations_visited_in_backward_pass_.insert(callee);
 }
 
 bool BFloat16Propagation::AllUsersConsumeBF16(const HloInstruction& hlo,
@@ -496,6 +518,14 @@ bool BFloat16Propagation::AllUsersConsumeBF16(const HloInstruction& hlo,
           use.instruction, use.operand_number,
           [&](HloInstruction* param) {
             handled_by_call = true;
+            if (!ContainsKey(instructions_visited_in_backward_pass_, param)) {
+              // A kCall callee may be deferred until its last caller; for any
+              // other op, an unvisited parameter was skipped and stays F32.
+              if (use.instruction->opcode() != HloOpcode::kCall) {
+                call_params_consume_bf16 = false;
+              }
+              return;
+            }
             if (OutputTypeAfterChange(param, use.operand_index) != BF16) {
               call_params_consume_bf16 = false;
             }
@@ -609,9 +639,8 @@ void BFloat16Propagation::DetermineInstructionPrecision(HloInstruction* hlo,
     // Associative scan bodies are constructed alongside the scan op and not
     // shared with any other caller, so we never need to postpone processing
     // them (unlike kWhile/kCall whose called computations may have multiple
-    // callers). Assert the single-caller invariant rather than relying on the
-    // pre-existing caller_counts_ map (which is currently never populated).
-    CHECK_EQ(hlo->to_apply()->caller_instructions().size(), 1u)
+    // callers).
+    CHECK_EQ(caller_counts_[hlo->to_apply()], 1)
         << "Associative scan body has multiple callers: "
         << hlo->to_apply()->name();
   }
@@ -633,10 +662,14 @@ void BFloat16Propagation::DetermineInstructionPrecision(HloInstruction* hlo,
     return;
   }
 
-  if (hlo->opcode() == HloOpcode::kCall &&
-      caller_counts_[hlo->to_apply()] > 1) {
-    postpone_processing_called_computations = true;
-    return;
+  if (hlo->opcode() == HloOpcode::kCall) {
+    // Wait until all callers have been visited (so we know whether they all
+    // want BF16) before propagating into the callee.
+    HloComputation* callee = hlo->to_apply();
+    const int64_t visited_callers = ++visited_call_counts_[callee];
+    if (visited_callers < caller_counts_[callee]) {
+      postpone_processing_called_computations = true;
+    }
   }
 
   // Prevent root instructions from having their output modified by recording
@@ -671,7 +704,10 @@ void BFloat16Propagation::DetermineInstructionPrecision(HloInstruction* hlo,
     return;
   }
 
-  if (!bfloat16_support_->SupportsLowPrecisionOutput(*hlo)) {
+  // Base FloatSupport rejects kParameter, but subcomputation parameters can
+  // still become BF16 (skip_parameters above already guards entry ones).
+  if (!bfloat16_support_->SupportsLowPrecisionOutput(*hlo) &&
+      hlo->opcode() != HloOpcode::kParameter) {
     return;
   }
 
@@ -778,8 +814,6 @@ bool BFloat16Propagation::InstructionIsCandidateForBF16Output(
 void BFloat16Propagation::BuildF32ConstraintGraph(HloModule* module) {
   const std::vector<HloComputation*> computations =
       module->MakeComputationPostOrder(execution_threads_);
-  included_computations_ = absl::flat_hash_set<const HloComputation*>(
-      computations.begin(), computations.end());
 
   // The seeds depend on the push index, so build it first.
   BuildCallBoundaryPushIndex(computations);
@@ -1254,6 +1288,18 @@ void BFloat16Propagation::ResolveInconsistencyOfAliasingBuffers(
   BuildF32ConstraintGraph(module);
   PropagateF32Constraints();
   MaterializeResolvedPrecisions(module);
+  // If F32 resolution reverted a fusion's output or parameter back to F32,
+  // undo any internal BF16 changes that no longer cross the fusion boundary.
+  const std::vector<HloComputation*> computations =
+      module->MakeComputationPostOrder(execution_threads_);
+  for (auto comp_it = computations.rbegin(); comp_it != computations.rend();
+       ++comp_it) {
+    for (HloInstruction* inst : (*comp_it)->MakeInstructionPostOrder()) {
+      if (inst->opcode() == HloOpcode::kFusion) {
+        RevertIfFusionInternalBF16Changes(inst);
+      }
+    }
+  }
 }
 
 absl::Status BFloat16Propagation::ResolveInconsistentFusions(
@@ -1385,6 +1431,7 @@ absl::StatusOr<bool> BFloat16Propagation::RunImpl(
   computations_visited_in_backward_pass_.clear();
   values_that_must_be_kept_as_f32_.clear();
   caller_counts_.clear();
+  visited_call_counts_.clear();
   changes_to_bf16_.clear();
   value_queue_.clear();
   position_queue_.clear();
@@ -1410,6 +1457,18 @@ absl::StatusOr<bool> BFloat16Propagation::RunImpl(
 
   auto computations_topological_order =
       module->MakeComputationPostOrder(execution_threads_);
+  // Record which computations are in scope for this run and count how many
+  // call sites each one has, so the backward pass can recognize shared callees.
+  included_computations_ = absl::flat_hash_set<const HloComputation*>(
+      computations_topological_order.begin(),
+      computations_topological_order.end());
+  for (auto computation : computations_topological_order) {
+    for (auto inst : computation->instructions()) {
+      for (auto called_comp : inst->called_computations()) {
+        ++caller_counts_[called_comp];
+      }
+    }
+  }
 
   // Before running the propagation pass, we insert copies (kConvert to the same
   // type) of F32 inputs to while loops. This prevents other uses of the same
