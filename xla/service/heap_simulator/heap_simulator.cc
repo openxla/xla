@@ -473,11 +473,21 @@ absl::Status HeapSimulator::RunComputation(
             // from the actual operand, if directly passing the defining
             // instruction into "CanShareOperandBufferWithUser" it creates a
             // check failure. The first condition guards against that case.
+            // The user may also consume other positions of the operand value
+            // (e.g. a bitcast of it). All positions are backed by the same
+            // buffer, so every consumed position has to allow sharing.
             if (value->instruction()->IsUserOf(operand_value->instruction()) &&
                 value->instruction()->opcode() != HloOpcode::kCopy &&
-                dataflow_analysis.CanShareOperandBufferWithUser(
-                    operand_value->instruction(), operand_value->index(),
-                    value->instruction(), value->index(), alias_info)) {
+                absl::c_all_of(
+                    operand_value->positions(),
+                    [&](const HloPosition& position) {
+                      return !value->instruction()->IsUserOf(
+                                 position.instruction) ||
+                             dataflow_analysis.CanShareOperandBufferWithUser(
+                                 position.instruction, position.index,
+                                 value->instruction(), value->index(),
+                                 alias_info);
+                    })) {
               // Remove the operand buffer right before sharing (allocating) a
               // new one.
               Free(operand_value, operand_value->instruction());
