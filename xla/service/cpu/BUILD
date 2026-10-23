@@ -419,6 +419,7 @@ cc_library(
         ":cpu_executable",
         ":executable_proto_cc",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/cpu:buffer_allocation_info",
         "//xla/backends/cpu:buffer_allocation_info_util",
         "//xla/backends/cpu:constant_allocation",
