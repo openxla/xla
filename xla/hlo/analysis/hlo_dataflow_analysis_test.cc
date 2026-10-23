@@ -3174,6 +3174,35 @@ ENTRY main {
 }
 
 TEST_F(CanShareOperandBufferWithUserTest,
+       LoopFusionWithDuplicateOperandNonElementwiseOnSecondParamCantAlias) {
+  std::string hlo_str = R"(
+HloModule LoopFusionWithDuplicateOperandNonElementwiseOnSecondParamCantAlias
+
+fused_computation {
+  p0 = f32[2,2] parameter(0)
+  p1 = f32[2,2] parameter(1)
+  reverse = f32[2,2] reverse(p1), dimensions={0,1}
+  ROOT add = f32[2,2] add(p0, reverse)
+}
+
+ENTRY main {
+  param0 = f32[2,2] parameter(0)
+  ROOT fusion = f32[2,2] fusion(param0, param0), kind=kLoop, calls=fused_computation
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
+                                           hlo_str, GetModuleConfigForTest()));
+
+  HloInstruction* param0 = FindInstruction(module.get(), "param0");
+  HloInstruction* fusion = FindInstruction(module.get(), "fusion");
+
+  auto dataflow_analysis = RunAnalysis(*module);
+
+  EXPECT_FALSE(dataflow_analysis->CanShareOperandBufferWithUser(
+      param0, {}, fusion, {}, &alias_info_));
+}
+
+TEST_F(CanShareOperandBufferWithUserTest,
        MultiOutputFusionCanAliasOperandBuffer) {
   std::string hlo_str = R"(
 HloModule MultiOutputFusionCanAliasOperandBuffer
