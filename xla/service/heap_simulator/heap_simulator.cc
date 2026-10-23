@@ -432,7 +432,8 @@ absl::Status HeapSimulator::RunComputation(
         continue;
       }
       if (options_.may_reuse_operand_buffers &&
-          hlo_buffer->values().size() == 1) {
+          hlo_buffer->values().size() == 1 &&
+          value->instruction()->opcode() != HloOpcode::kCopy) {
         // We don't support sharing an aliased buffer
         // (hlo_buffer->values().size() > 1) with its operand.
         for (const HloInstruction* operand : value->instruction()->operands()) {
@@ -469,15 +470,22 @@ absl::Status HeapSimulator::RunComputation(
               continue;
             }
 
-            // The instruction that defines the operand value can be different
-            // from the actual operand, if directly passing the defining
-            // instruction into "CanShareOperandBufferWithUser" it creates a
-            // check failure. The first condition guards against that case.
-            if (value->instruction()->IsUserOf(operand_value->instruction()) &&
-                value->instruction()->opcode() != HloOpcode::kCopy &&
-                dataflow_analysis.CanShareOperandBufferWithUser(
-                    operand_value->instruction(), operand_value->index(),
-                    value->instruction(), value->index(), alias_info)) {
+            // An HloValue can hold multiple positions (e.g. via bitcast or
+            // tuple views), so check every position consumed by the user rather
+            // than only the defining instruction.
+            bool can_share = false;
+            for (const HloPosition& operand_pos : operand_value->positions()) {
+              if (value->instruction()->IsUserOf(operand_pos.instruction)) {
+                if (!dataflow_analysis.CanShareOperandBufferWithUser(
+                        operand_pos.instruction, operand_pos.index,
+                        value->instruction(), value->index(), alias_info)) {
+                  can_share = false;
+                  break;
+                }
+                can_share = true;
+              }
+            }
+            if (can_share) {
               // Remove the operand buffer right before sharing (allocating) a
               // new one.
               Free(operand_value, operand_value->instruction());
