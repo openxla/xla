@@ -309,6 +309,8 @@ message CublasLtMatmulThunkProto {
   optional ShapedSliceProto d_amax = 15;
   optional ShapedSliceProto workspace = 16;
   int64 autotune_workspace_size = 17;
+  optional xla.BlasLtMatmulAlgorithmProto algorithm_proto = 20;
+  bool require_exact_algorithm = 21;
 }
 
 message NormThunkProto {

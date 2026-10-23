@@ -115,7 +115,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProtoImpl(
         symbol_resolver,
     const std::optional<xla::cpu::TargetMachineOptions>&
         cpu_target_machine_options,
-    const std::optional<GpuTopology>& gpu_topology) {
+    const std::optional<GpuTopology>& gpu_topology,
+    bool require_exact_blas_lt_algorithm) {
   ABSL_ASSIGN_OR_RETURN(Thunk::ThunkInfo thunk_info,
                         Thunk::ThunkInfo::FromProto(thunk_proto.thunk_info()));
   auto deserializer = [&](const ThunkProto& thunk_proto) {
@@ -123,7 +124,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProtoImpl(
         thunk_proto, buffer_allocations, hlo_module, platform_name,
         host_executable_async_events_map, host_send_recv_async_events_map,
         async_execution_map, gpu_compute_capability, symbol_resolver,
-        cpu_target_machine_options, gpu_topology);
+        cpu_target_machine_options, gpu_topology,
+        require_exact_blas_lt_algorithm);
   };
 
   switch (thunk_proto.impl_case()) {
@@ -189,7 +191,7 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProtoImpl(
     case ThunkProto::kCublasLtMatmulThunk:
       return CublasLtMatmulThunk::FromProto(
           std::move(thunk_info), thunk_proto.cublas_lt_matmul_thunk(),
-          buffer_allocations);
+          buffer_allocations, require_exact_blas_lt_algorithm);
     case ThunkProto::kNormThunk:
       return NormThunk::FromProto(
           std::move(thunk_info), thunk_proto.norm_thunk(), buffer_allocations,
@@ -221,7 +223,8 @@ absl::StatusOr<std::unique_ptr<Thunk>> DeserializeThunkProtoImpl(
                 host_executable_async_events_map,
                 host_send_recv_async_events_map, async_execution_map,
                 gpu_compute_capability, symbol_resolver,
-                cpu_target_machine_options, gpu_topology);
+                cpu_target_machine_options, gpu_topology,
+                require_exact_blas_lt_algorithm);
           };
       return DynamicSliceFusionV2Thunk::FromProto(
           std::move(thunk_info), thunk_proto.dynamic_slice_fusion_thunk(),
@@ -377,7 +380,8 @@ absl::StatusOr<ThunkSequence> DeserializeThunkSequenceProto(
     const std::optional<stream_executor::KernelLoaderSpec::SymbolResolver>&
         symbol_resolver,
     const std::optional<xla::cpu::TargetMachineOptions>&
-        cpu_target_machine_options) {
+        cpu_target_machine_options,
+    bool require_exact_blas_lt_algorithm) {
   HostExecuteAsyncEventsMap host_executable_async_events_map;
   HostSendRecvAsyncEventsMap host_send_recv_async_events_map;
   AsyncExecutionMap async_execution_map;
@@ -389,7 +393,8 @@ absl::StatusOr<ThunkSequence> DeserializeThunkSequenceProto(
             thunk_proto, buffer_allocations, hlo_module, platform_name,
             host_executable_async_events_map, host_send_recv_async_events_map,
             async_execution_map, gpu_compute_capability, symbol_resolver,
-            cpu_target_machine_options, gpu_topology));
+            cpu_target_machine_options, gpu_topology,
+            require_exact_blas_lt_algorithm));
     sequence.push_back(std::move(thunk));
   }
   return sequence;

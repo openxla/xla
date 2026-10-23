@@ -52,6 +52,8 @@ limitations under the License.
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
+#include "xla/stream_executor/gpu/gpu_blas_lt.pb.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
@@ -164,6 +166,21 @@ absl::StatusOr<std::optional<absl::Duration>> EstimateTritonDotRuntime(
   return best_exec_time;
 }
 
+absl::StatusOr<std::unique_ptr<BlasLt::MatmulPlan>> GetMatmulPlan(
+    const HloInstruction& instr,
+    const se::GpuComputeCapability& compute_capability,
+    se::StreamExecutor* executor) {
+  ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                        instr.backend_config<GpuBackendConfig>());
+  const GemmBackendConfig& backend_config = gpu_config.gemm_backend_config();
+  ABSL_ASSIGN_OR_RETURN(GemmConfig gemm_config,
+                        GemmConfig::For(&instr, compute_capability));
+  ABSL_ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
+                        AsBlasLtEpilogue(backend_config.epilogue()));
+  ABSL_ASSIGN_OR_RETURN(BlasLt * blas_lt, se::gpu::BlasLt::Get(executor));
+  return blas_lt->GetMatmulPlan(gemm_config, epilogue);
+}
+
 }  // namespace
 
 bool CublasLtBackend::IsSupported(const HloInstruction& instr) {
@@ -181,24 +198,6 @@ CublasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
         "CublasLtBackend cannot enumerate configs in deviceless mode.");
   }
 
-  GpuBackendConfig gpu_config =
-      instr.backend_config<GpuBackendConfig>().value();
-  const GemmBackendConfig& backend_config = gpu_config.gemm_backend_config();
-
-  ABSL_ASSIGN_OR_RETURN(
-      GemmConfig gemm_config,
-      GemmConfig::For(
-          &instr, target_config().device_description.gpu_compute_capability()));
-
-  ABSL_ASSIGN_OR_RETURN(BlasLt::Epilogue epilogue,
-                        AsBlasLtEpilogue(backend_config.epilogue()));
-
-  ABSL_ASSIGN_OR_RETURN(BlasLt * blas_lt,
-                        se::gpu::BlasLt::Get(stream_executor()));
-
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<BlasLt::MatmulPlan> plan,
-                        blas_lt->GetMatmulPlan(gemm_config, epilogue));
-
   const Shape& output_shape = instr.shape();
   if (!output_shape.IsTuple() || output_shape.tuple_shapes().empty()) {
     return Internal(
@@ -213,6 +212,11 @@ CublasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     max_algorithms = GemmConfig::kNumAlgorithms;
   }
 
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<BlasLt::MatmulPlan> plan,
+      GetMatmulPlan(instr,
+                    target_config().device_description.gpu_compute_capability(),
+                    stream_executor()));
   ABSL_ASSIGN_OR_RETURN(std::vector<BlasLt::MatmulAlgorithm> algorithms,
                         plan->GetAlgorithms(max_algorithms, workspace_size));
   int num_algorithms = algorithms.size();
@@ -223,6 +227,13 @@ CublasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     auto* gemm_key = config->mutable_gemm();
     gemm_key->set_algorithm(i);
     gemm_key->set_autotune_workspace_size(workspace_size);
+    absl::StatusOr<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm =
+        plan->GetBlasLtMatmulAlgorithm(algorithms[i]);
+    if (blas_lt_algorithm.ok()) {
+      *gemm_key->mutable_algorithm_proto() = blas_lt_algorithm->ToProto();
+    } else if (!absl::IsUnimplemented(blas_lt_algorithm.status())) {
+      return blas_lt_algorithm.status();
+    }
     configs.push_back(std::move(config));
   }
 
@@ -279,7 +290,30 @@ CublasLtBackend::GetDefaultConfig(const HloInstruction& instr) {
   gemm_key->set_algorithm(0);
   // We don't know the workspace size in advance, so we pick a reasonably large
   // value that is likely to be sufficient.
-  gemm_key->set_autotune_workspace_size(4194304);  // 4MiB
+  constexpr int64_t kDefaultWorkspaceSize = 4194304;  // 4MiB
+  gemm_key->set_autotune_workspace_size(kDefaultWorkspaceSize);
+  if (stream_executor() != nullptr) {
+    absl::StatusOr<std::unique_ptr<BlasLt::MatmulPlan>> plan = GetMatmulPlan(
+        instr, target_config().device_description.gpu_compute_capability(),
+        stream_executor());
+    if (!plan.ok()) {
+      VLOG(2) << "Failed to create plan for default algorithm_proto: "
+              << plan.status();
+    } else {
+      absl::StatusOr<std::vector<BlasLt::MatmulAlgorithm>> algorithms =
+          (*plan)->GetAlgorithms(/*max_algorithm_count=*/1,
+                                 kDefaultWorkspaceSize);
+      if (!algorithms.ok()) {
+        VLOG(2) << "Failed to query default algorithm: " << algorithms.status();
+      } else if (!algorithms->empty()) {
+        absl::StatusOr<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm =
+            (*plan)->GetBlasLtMatmulAlgorithm((*algorithms)[0]);
+        if (blas_lt_algorithm.ok()) {
+          *gemm_key->mutable_algorithm_proto() = blas_lt_algorithm->ToProto();
+        }
+      }
+    }
+  }
   return config;
 }
 
@@ -296,6 +330,11 @@ absl::Status CublasLtBackend::ApplyConfig(HloInstruction& instr,
   backend_config.set_selected_algorithm(gemm_key.algorithm());
   backend_config.set_autotune_workspace_size(
       gemm_key.autotune_workspace_size());
+  if (gemm_key.has_algorithm_proto()) {
+    *backend_config.mutable_algorithm_proto() = gemm_key.algorithm_proto();
+  } else {
+    backend_config.clear_algorithm_proto();
+  }
   ABSL_RETURN_IF_ERROR(instr.set_backend_config(std::move(gpu_config)));
 
   if (instr.shape().IsTuple() && !instr.shape().tuple_shapes().empty()) {

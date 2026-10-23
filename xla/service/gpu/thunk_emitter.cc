@@ -170,6 +170,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
+#include "xla/stream_executor/gpu/gpu_blas_lt.pb.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/tools/hlo_decomposer.h"
@@ -533,6 +534,7 @@ absl::StatusOr<std::string> CanonicalGemmHlo(
 
   // Clear algorithm-specific fields from the cache key
   gemm_config->clear_selected_algorithm();
+  gemm_config->clear_algorithm_proto();
   gemm_config->set_autotune_workspace_size(0);
   return instr->ToString(HloPrintOptions::Fingerprint()) +
          BackendConfigWrapper(gpu_config).GetRawString();
@@ -776,6 +778,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmul(
       config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
           ? config.selected_algorithm()
           : 0;
+  std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm;
+  if (config.has_algorithm_proto()) {
+    ABSL_ASSIGN_OR_RETURN(
+        blas_lt_algorithm,
+        se::gpu::BlasLtMatmulAlgorithm::FromProto(config.algorithm_proto()));
+  }
 
   ABSL_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
                         gpublas_lt::AsBlasLtEpilogue(epilogue));
@@ -787,7 +795,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmul(
       std::move(info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
       /*group_sizes=*/std::nullopt, bias, aux, std::nullopt, std::nullopt,
-      std::nullopt, std::nullopt, std::nullopt, workspace_buffer);
+      std::nullopt, std::nullopt, std::nullopt, workspace_buffer,
+      std::move(blas_lt_algorithm),
+      ir_emitter_context_->debug_options()
+          .xla_gpu_require_exact_blas_lt_algorithm());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulF8(
@@ -870,6 +881,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulF8(
       config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
           ? config.selected_algorithm()
           : 0;
+  std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm;
+  if (config.has_algorithm_proto()) {
+    ABSL_ASSIGN_OR_RETURN(
+        blas_lt_algorithm,
+        se::gpu::BlasLtMatmulAlgorithm::FromProto(config.algorithm_proto()));
+  }
 
   TF_RET_CHECK(!has_aux_output);
   std::optional<ShapedSlice> workspace_buffer;
@@ -890,7 +907,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulF8(
       std::move(info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
       /*group_sizes=*/std::nullopt, bias, std::nullopt, a_scale, b_scale,
-      std::nullopt, d_scale, d_amax, workspace_buffer);
+      std::nullopt, d_scale, d_amax, workspace_buffer,
+      std::move(blas_lt_algorithm),
+      ir_emitter_context_->debug_options()
+          .xla_gpu_require_exact_blas_lt_algorithm());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmul(
@@ -953,6 +973,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmul(
       config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
           ? config.selected_algorithm()
           : 0;
+  std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm;
+  if (config.has_algorithm_proto()) {
+    ABSL_ASSIGN_OR_RETURN(
+        blas_lt_algorithm,
+        se::gpu::BlasLtMatmulAlgorithm::FromProto(config.algorithm_proto()));
+  }
 
   // Extract epilogue from backend config instead of hardcoding to kDefault
   ABSL_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
@@ -966,7 +992,10 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmul(
       std::move(info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
       std::move(group_sizes), bias, std::nullopt, std::nullopt, std::nullopt,
-      std::nullopt, std::nullopt, std::nullopt, workspace_buffer);
+      std::nullopt, std::nullopt, std::nullopt, workspace_buffer,
+      std::move(blas_lt_algorithm),
+      ir_emitter_context_->debug_options()
+          .xla_gpu_require_exact_blas_lt_algorithm());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulMx(
@@ -1000,6 +1029,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulMx(
       config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
           ? config.selected_algorithm()
           : 0;
+  std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm;
+  if (config.has_algorithm_proto()) {
+    ABSL_ASSIGN_OR_RETURN(
+        blas_lt_algorithm,
+        se::gpu::BlasLtMatmulAlgorithm::FromProto(config.algorithm_proto()));
+  }
 
   std::optional<ShapedSlice> workspace_buffer;
   if (instr->shape().tuple_shapes().size() == 2) {
@@ -1021,7 +1056,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulMx(
       /*group_sizes=*/std::nullopt,
       /*bias=*/std::nullopt, /*aux=*/std::nullopt, a_scale, b_scale,
       /*c_scale=*/std::nullopt, /*d_scale=*/std::nullopt,
-      /*d_amax=*/std::nullopt, workspace_buffer);
+      /*d_amax=*/std::nullopt, workspace_buffer, std::move(blas_lt_algorithm),
+      ir_emitter_context_->debug_options()
+          .xla_gpu_require_exact_blas_lt_algorithm());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionReorder(

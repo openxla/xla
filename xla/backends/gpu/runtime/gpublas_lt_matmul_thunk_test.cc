@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
+#include "xla/stream_executor/gpu/gpu_blas_lt.pb.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -80,8 +81,9 @@ limitations under the License.
 namespace xla::gpu {
 
 namespace {
-using absl_testing::IsOkAndHolds;
-using tsl::proto_testing::EqualsProto;
+using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
+using ::tsl::proto_testing::EqualsProto;
 
 class GpuBlasLtMatmulThunkTest : public HloTestBaseLegacy {
  public:
@@ -415,6 +417,20 @@ struct MockMatmulPlan : public se::gpu::BlasLt::MatmulPlan {
   // On a real backend GetAlgorithms is the solution heuristic, which is what
   // the plan caches; tests assert it does not re-run per call.
   mutable int get_algorithms_calls = 0;
+  mutable int get_matmul_algorithm_calls = 0;
+  int set_algorithm_calls = 0;
+  bool fail_get_matmul_algorithm = false;
+
+  absl::StatusOr<se::gpu::BlasLt::MatmulAlgorithm> GetMatmulAlgorithm(
+      const se::gpu::BlasLtMatmulAlgorithm& algorithm,
+      size_t max_workspace_size) const override {
+    ++get_matmul_algorithm_calls;
+    if (fail_get_matmul_algorithm) {
+      return absl::InvalidArgumentError("Invalid algorithm");
+    }
+    return se::gpu::BlasLt::MatmulAlgorithm{/*opaque_algo=*/{},
+                                            /*workspace_size=*/0};
+  }
 
   absl::StatusOr<std::vector<se::gpu::BlasLt::MatmulAlgorithm>> GetAlgorithms(
       size_t max_algorithm_count, size_t max_workspace_size) const override {
@@ -427,6 +443,7 @@ struct MockMatmulPlan : public se::gpu::BlasLt::MatmulPlan {
   }
 
   absl::Status SetAlgorithm(const se::gpu::BlasLt::MatmulAlgorithm&) override {
+    ++set_algorithm_calls;
     return absl::OkStatus();
   }
 
@@ -563,6 +580,66 @@ TEST_F(GpuBlasLtMatmulThunkTest, WorkspaceChangeRefetchesAlgorithms) {
   EXPECT_EQ(blas_lt.GetMatmulPlanCacheSize(), 1);
   // One fetch per distinct workspace size, not one per lookup.
   EXPECT_EQ(static_cast<MockMatmulPlan*>(plan)->get_algorithms_calls, 2);
+}
+
+TEST_F(GpuBlasLtMatmulThunkTest,
+       AlgorithmDescriptorUsedAndCachedWithoutCallingGetAlgorithms) {
+  MockBlasLt blas_lt;
+  auto create_func = [&]() -> absl::StatusOr<se::gpu::BlasLt::MatmulPlanPtr> {
+    return std::make_unique<MockMatmulPlan>();
+  };
+
+  se::gpu::CublasLtMatmulAlgorithm cublaslt_algo;
+  cublaslt_algo.algo_id = 23;
+  cublaslt_algo.tile_id = 15;
+  se::gpu::BlasLtMatmulAlgorithm algorithm{
+      /*library_version=*/120800,
+      /*algorithm=*/cublaslt_algo,
+  };
+
+  se::gpu::BlasLt::MatmulPlan* plan = nullptr;
+  for (int i = 0; i < 5; ++i) {
+    ASSERT_OK_AND_ASSIGN(plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
+                                   "gemm_with_proto", create_func, algorithm,
+                                   /*max_workspace_size=*/4194304));
+  }
+
+  auto* mock_plan = static_cast<MockMatmulPlan*>(plan);
+  EXPECT_EQ(mock_plan->get_matmul_algorithm_calls, 1);
+  EXPECT_EQ(mock_plan->set_algorithm_calls, 1);
+  EXPECT_EQ(mock_plan->get_algorithms_calls, 0);
+
+  // Changing the algorithm descriptor or workspace size must invalidate the
+  // cached algorithm and re-run GetMatmulAlgorithm and SetAlgorithm.
+  cublaslt_algo.tile_id = 16;
+  algorithm.algorithm = cublaslt_algo;
+  ASSERT_OK_AND_ASSIGN(plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
+                                 "gemm_with_proto", create_func, algorithm,
+                                 /*max_workspace_size=*/4194304));
+  EXPECT_EQ(mock_plan->get_matmul_algorithm_calls, 2);
+  EXPECT_EQ(mock_plan->set_algorithm_calls, 2);
+
+  ASSERT_OK_AND_ASSIGN(plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
+                                 "gemm_with_proto", create_func, algorithm,
+                                 /*max_workspace_size=*/8388608));
+  EXPECT_EQ(mock_plan->get_matmul_algorithm_calls, 3);
+  EXPECT_EQ(mock_plan->set_algorithm_calls, 3);
+  EXPECT_EQ(mock_plan->get_algorithms_calls, 0);
+
+  // Switching to the index overload and back on the same cached plan must
+  // re-apply SetAlgorithm in both directions.
+  ASSERT_OK_AND_ASSIGN(
+      plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
+                "gemm_with_proto", create_func, /*algorithm_idx=*/0,
+                /*num_algorithms=*/128, /*max_workspace_size=*/8388608));
+  EXPECT_EQ(mock_plan->get_algorithms_calls, 1);
+  EXPECT_EQ(mock_plan->set_algorithm_calls, 4);
+
+  ASSERT_OK_AND_ASSIGN(plan, blas_lt.GetOrCreateMatmulPlanWithAlgorithm(
+                                 "gemm_with_proto", create_func, algorithm,
+                                 /*max_workspace_size=*/8388608));
+  EXPECT_EQ(mock_plan->get_matmul_algorithm_calls, 4);
+  EXPECT_EQ(mock_plan->set_algorithm_calls, 5);
 }
 
 TEST_F(GpuBlasLtMatmulThunkTest, ThunkProtoSerialization) {
@@ -952,6 +1029,41 @@ TEST_F(CublasLtMatmulThunkCmdBufTest, BufferUses) {
             BufferUse::Scratch(
                 BufferAllocation::Slice(&alloc_workspace_, 0, kWorkspaceLength),
                 ShapeUtil::MakeShape(U8, {1024, 1024})));
+}
+
+TEST_F(CublasLtMatmulThunkCmdBufTest,
+       ExecuteOnStreamRequireExactAlgorithmAndFallback) {
+  ASSERT_OK_AND_ASSIGN(ThunkProto thunk_proto, thunk_->ToProto());
+  std::vector<BufferAllocation> allocations = {alloc_a_, alloc_b_, alloc_c_,
+                                               alloc_d_, alloc_workspace_};
+
+  // Missing algorithm_proto with require_exact_algorithm=true fails.
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Thunk> exact_missing_proto_thunk,
+      CublasLtMatmulThunk::FromProto(
+          Thunk::ThunkInfo(), thunk_proto.cublas_lt_matmul_thunk(), allocations,
+          /*require_exact_algorithm=*/true));
+  EXPECT_THAT(exact_missing_proto_thunk->ExecuteOnStream(*params_),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
+
+  // Invalid algorithm_proto with require_exact_algorithm=true fails.
+  CublasLtMatmulThunkProto invalid_proto = thunk_proto.cublas_lt_matmul_thunk();
+  invalid_proto.mutable_algorithm_proto()->mutable_cublaslt()->set_algo_id(
+      -999999);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Thunk> exact_invalid_proto_thunk,
+                       CublasLtMatmulThunk::FromProto(
+                           Thunk::ThunkInfo(), invalid_proto, allocations,
+                           /*require_exact_algorithm=*/true));
+  EXPECT_THAT(exact_invalid_proto_thunk->ExecuteOnStream(*params_),
+              ::testing::Not(absl_testing::IsOk()));
+
+  // Invalid algorithm_proto with require_exact_algorithm=false falls back to
+  // algorithm_idx and succeeds.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Thunk> fallback_thunk,
+                       CublasLtMatmulThunk::FromProto(
+                           Thunk::ThunkInfo(), invalid_proto, allocations,
+                           /*require_exact_algorithm=*/false));
+  EXPECT_OK(fallback_thunk->ExecuteOnStream(*params_));
 }
 
 }  // namespace

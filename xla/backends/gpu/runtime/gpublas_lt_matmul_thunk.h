@@ -54,7 +54,10 @@ class CublasLtMatmulThunk : public TracedCommand {
       std::optional<ShapedSlice> aux, std::optional<ShapedSlice> a_scale,
       std::optional<ShapedSlice> b_scale, std::optional<ShapedSlice> c_scale,
       std::optional<ShapedSlice> d_scale, std::optional<ShapedSlice> d_amax,
-      std::optional<const ShapedSlice> workspace);
+      std::optional<const ShapedSlice> workspace,
+      std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm =
+          std::nullopt,
+      bool require_exact_algorithm = false);
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override;
 
@@ -70,7 +73,8 @@ class CublasLtMatmulThunk : public TracedCommand {
   absl::StatusOr<ThunkProto> ToProto() const override;
   static absl::StatusOr<std::unique_ptr<Thunk>> FromProto(
       Thunk::ThunkInfo thunk_info, const CublasLtMatmulThunkProto& proto,
-      absl::Span<const BufferAllocation> allocations);
+      absl::Span<const BufferAllocation> allocations,
+      bool require_exact_algorithm = false);
 
  protected:
   absl::StatusOr<se::gpu::BlasLt::MatmulPlan*> GetCachedMatmulPlan(
@@ -94,6 +98,8 @@ class CublasLtMatmulThunk : public TracedCommand {
   std::optional<ShapedSlice> d_scale_;
   std::optional<ShapedSlice> d_amax_;
   std::optional<ShapedSlice> workspace_;
+  std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm_;
+  bool require_exact_algorithm_;
 };
 
 }  // namespace gpu
