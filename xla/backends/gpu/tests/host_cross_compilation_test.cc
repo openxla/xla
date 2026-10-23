@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/target_machine_options.h"
@@ -354,6 +355,151 @@ TEST(HostCrossCompilationTest,
   EXPECT_THAT(compiler->CompileAheadOfTime(std::move(hlo_module), options),
               StatusIs(absl::StatusCode::kInvalidArgument));
   EXPECT_TRUE(passes_cpu_target_machine_options_instantiate_called);
+}
+
+absl::StatusOr<std::unique_ptr<HloModule>> ParseTestModule(
+    absl::string_view hlo_text) {
+  auto hlo_module = std::make_unique<VerifiedHloModule>("m", HloModuleConfig(),
+                                                        false, false, nullptr);
+  ABSL_RETURN_IF_ERROR(hlo_module->ParseHloStringAndVerifyModule(hlo_text));
+  return hlo_module;
+}
+
+TEST(HostCrossCompilationTest, CubSortKeysCustomCallSupportsCrossCompilation) {
+  constexpr absl::string_view kHloText = R"hlo(
+      HloModule m
+
+      ENTRY main {
+        %keys = f32[1024]{0} parameter(0)
+        %sort = (f32[1024]{0}, u8[10240]{0}) custom-call(%keys),
+            custom_call_target="xla.gpu.ext.cub_sort_keys",
+            api_version=API_VERSION_TYPED_FFI,
+            backend_config={descending = false, batch_size = 1 : i64}
+        ROOT %gte = f32[1024]{0} get-tuple-element(%sort), index=0
+      }
+    )hlo";
+
+  ASSERT_OK_AND_ASSIGN(GpuModel gpu_model, GetTestTargetGpuModel());
+  ASSERT_OK_AND_ASSIGN(
+      stream_executor::GpuTargetConfigProto gpu_target_config_proto,
+      GetGpuTargetConfig(gpu_model));
+  ASSERT_OK_AND_ASSIGN(
+      gpu::GpuTargetConfig gpu_target_config,
+      gpu::GpuTargetConfig::FromProto(gpu_target_config_proto));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Compiler> compiler, GetGpuCompiler());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> compile_module,
+                       ParseTestModule(kHloText));
+  Compiler::CompileOptions compile_options;
+  compile_options.gpu_topology =
+      GetSingleDeviceGpuTopology("gpu", gpu_target_config);
+  EXPECT_OK(compiler->Compile(std::move(compile_module),
+                              /*stream_exec=*/{nullptr}, compile_options));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> aot_module,
+                       ParseTestModule(kHloText));
+  AotCompilationOptions aot_options(compiler->PlatformId());
+  aot_options.set_gpu_topology(
+      GetSingleDeviceGpuTopology("gpu", gpu_target_config));
+  EXPECT_OK(compiler->CompileAheadOfTime(std::move(aot_module), aot_options));
+}
+
+TEST(HostCrossCompilationTest, CubSortPairsCustomCallSupportsCrossCompilation) {
+  constexpr absl::string_view kHloText = R"hlo(
+      HloModule m
+
+      ENTRY main {
+        %keys = f32[1024]{0} parameter(0)
+        %values = u32[1024]{0} parameter(1)
+        ROOT %sort = (f32[1024]{0}, u32[1024]{0}, u8[20480]{0})
+            custom-call(%keys, %values),
+            custom_call_target="xla.gpu.ext.cub_sort_pairs",
+            api_version=API_VERSION_TYPED_FFI,
+            backend_config={descending = false, batch_size = 1 : i64}
+      }
+    )hlo";
+
+  ASSERT_OK_AND_ASSIGN(GpuModel gpu_model, GetTestTargetGpuModel());
+  ASSERT_OK_AND_ASSIGN(
+      stream_executor::GpuTargetConfigProto gpu_target_config_proto,
+      GetGpuTargetConfig(gpu_model));
+  ASSERT_OK_AND_ASSIGN(
+      gpu::GpuTargetConfig gpu_target_config,
+      gpu::GpuTargetConfig::FromProto(gpu_target_config_proto));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Compiler> compiler, GetGpuCompiler());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> compile_module,
+                       ParseTestModule(kHloText));
+  Compiler::CompileOptions compile_options;
+  compile_options.gpu_topology =
+      GetSingleDeviceGpuTopology("gpu", gpu_target_config);
+  EXPECT_OK(compiler->Compile(std::move(compile_module),
+                              /*stream_exec=*/{nullptr}, compile_options));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> aot_module,
+                       ParseTestModule(kHloText));
+  AotCompilationOptions aot_options(compiler->PlatformId());
+  aot_options.set_gpu_topology(
+      GetSingleDeviceGpuTopology("gpu", gpu_target_config));
+  EXPECT_OK(compiler->CompileAheadOfTime(std::move(aot_module), aot_options));
+}
+
+TEST(HostCrossCompilationTest, EndToEndDevicelessCubRadixSortCrossCompilation) {
+  ASSERT_OK_AND_ASSIGN(std::string platform_name,
+                       PlatformUtil::CanonicalPlatformName("gpu"));
+  if (platform_name != "cuda") {
+    GTEST_SKIP() << "Deviceless CUB sort lookup table is CUDA-only.";
+  }
+
+  constexpr absl::string_view kSortPairsHlo = R"hlo(
+      HloModule m
+
+      compare {
+        %lhs_key = f32[] parameter(0)
+        %rhs_key = f32[] parameter(1)
+        %lhs_val = s32[] parameter(2)
+        %rhs_val = s32[] parameter(3)
+        ROOT %lt = pred[] compare(%lhs_key, %rhs_key), direction=LT
+      }
+
+      ENTRY main {
+        %keys = f32[65536] parameter(0)
+        %values = s32[65536] parameter(1)
+        ROOT %sorted = (f32[65536], s32[65536]) sort(%keys, %values),
+            dimensions={0}, to_apply=compare
+      }
+    )hlo";
+
+  ASSERT_OK_AND_ASSIGN(
+      stream_executor::GpuTargetConfigProto gpu_target_config_proto,
+      GetGpuTargetConfig(GpuModel::H100_SXM));
+  ASSERT_OK_AND_ASSIGN(
+      gpu::GpuTargetConfig gpu_target_config,
+      gpu::GpuTargetConfig::FromProto(gpu_target_config_proto));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Compiler> compiler, GetGpuCompiler());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseTestModule(kSortPairsHlo));
+  Compiler::CompileOptions compile_options;
+  compile_options.gpu_topology =
+      GetSingleDeviceGpuTopology("gpu", gpu_target_config);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> optimized_module,
+      compiler->RunHloPasses(std::move(hlo_module), /*executor=*/nullptr,
+                             compile_options));
+  EXPECT_TRUE(absl::StrContains(optimized_module->ToString(),
+                                "xla.gpu.ext.cub_sort_pairs"));
+
+  std::unique_ptr<HloModule> aot_module = optimized_module->Clone();
+  EXPECT_OK(compiler->Compile(std::move(optimized_module),
+                              /*stream_exec=*/{nullptr}, compile_options));
+
+  AotCompilationOptions aot_options(compiler->PlatformId());
+  aot_options.set_gpu_topology(
+      GetSingleDeviceGpuTopology("gpu", gpu_target_config));
+  aot_options.set_run_backend_only(true);
+  EXPECT_OK(compiler->CompileAheadOfTime(std::move(aot_module), aot_options));
 }
 
 }  // namespace
