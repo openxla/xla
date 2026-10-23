@@ -723,14 +723,18 @@ class FileStream : public protobuf::io::ZeroCopyInputStream {
     return true;
   }
   int64_t ByteCount() const override { return pos_; }
+  // Returns the first non-EOF (non-OUT_OF_RANGE) read error, if any.
   absl::Status status() const { return status_; }
 
   bool Next(const void** data, int* size) override {
     absl::string_view result;
     absl::Status s =
         file_->Read(pos_, result, absl::MakeSpan(scratch_, kBufSize));
-    if (result.empty()) {
+    if (!s.ok() && !absl::IsOutOfRange(s)) {
       status_ = s;
+      return false;
+    }
+    if (result.empty()) {
       return false;
     }
     pos_ += result.size();
@@ -763,9 +767,10 @@ absl::Status ReadBinaryProto(Env* env, const std::string& fname,
   std::unique_ptr<FileStream> stream(new FileStream(file.get()));
   protobuf::io::CodedInputStream coded_stream(stream.get());
 
-  if (!proto->ParseFromCodedStream(&coded_stream) ||
-      !coded_stream.ConsumedEntireMessage()) {
-    ABSL_RETURN_IF_ERROR(stream->status());
+  const bool parsed = proto->ParseFromCodedStream(&coded_stream) &&
+                      coded_stream.ConsumedEntireMessage();
+  ABSL_RETURN_IF_ERROR(stream->status());
+  if (!parsed) {
     return absl::DataLossError(
         absl::StrCat("Can't parse ", fname, " as binary proto"));
   }
@@ -789,8 +794,9 @@ absl::Status ReadTextProto(Env* env, absl::string_view fname,
   ABSL_RETURN_IF_ERROR(env->NewRandomAccessFile(std::string(fname), &file));
   std::unique_ptr<FileStream> stream(new FileStream(file.get()));
 
-  if (!protobuf::TextFormat::Parse(stream.get(), proto)) {
-    ABSL_RETURN_IF_ERROR(stream->status());
+  const bool parsed = protobuf::TextFormat::Parse(stream.get(), proto);
+  ABSL_RETURN_IF_ERROR(stream->status());
+  if (!parsed) {
     return absl::DataLossError(
         absl::StrCat("Can't parse ", fname, " as text proto"));
   }
