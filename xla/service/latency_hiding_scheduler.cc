@@ -82,6 +82,22 @@ limitations under the License.
 namespace xla {
 namespace {
 
+// Reason strings of the memory-aware scheduling rules. They are compared by
+// address, so every use must go through these constants.
+constexpr char kMemoryCostReason[] = "kMemoryCost";
+constexpr char kMemoryHeldReason[] = "kMemoryHeld";
+constexpr char kMemoryPricedOverlapReason[] = "kMemoryPricedOverlap";
+
+// Counts ready-set comparisons decided by a memory-aware rule so that their
+// number can be reported without enabling VLOG(2).
+void CountMemoryDecision(DefaultSchedulerCore::SchedulingState& sched_state,
+                         const char* reason) {
+  if (reason == kMemoryCostReason || reason == kMemoryHeldReason ||
+      reason == kMemoryPricedOverlapReason) {
+    ++sched_state.memory_decision_counts[reason];
+  }
+}
+
 thread_local bool vlog_filter_match = true;
 
 // RAII Guard: Use this to "activate" the filter in ScheduleComputation.
@@ -1503,6 +1519,110 @@ std::optional<bool> ReadySetLt::MemoryPressurePolicy(
   return std::nullopt;
 }
 
+void ReadySetLt::ComputeMemoryCost(const SchedulingState& sched_state,
+                                   ScheduleCandidate& cand,
+                                   const HloGraphNode* cand_node) const {
+  if (cand.has_memory_cost) {
+    return;
+  }
+  // Time costs can be zero (e.g. bitcasts); keep the score finite.
+  constexpr double kMinCost = 1e-3;
+  // `first` is the net growth of live bytes if the candidate is scheduled, so
+  // its negation is the number of bytes the candidate releases. `second` is the
+  // number of bytes it opens (buffers that become live), before releases.
+  const auto [increase, opened] =
+      GetMemoryPressureChanges(sched_state, cand, cand_node);
+  const int64_t released = -increase;
+  const int64_t min_bytes = sched_state.config.memory_aware_min_bytes;
+  double score = 0.0;
+  double held = 0.0;
+  // Only a candidate that frees a large amount of memory without opening a
+  // large buffer gets a score. Openers are deliberately left at zero: ranking
+  // them by -bytes/cost prefers slow openers over fast ones and makes every
+  // memory-neutral op outrank every opener, which hoists small consumers of
+  // large buffers away from the producers and extends live ranges.
+  // Async starts and dones are left to the overlap rules: bottom-up, a start
+  // looks like a pure releaser of the collective's output, so scoring it would
+  // reorder collectives by bytes-per-cost, which is an overlap decision and
+  // perturbs the simulated timeline without changing the peak.
+  const bool is_async_op =
+      cand_node->IsSupportedAsyncStart() || cand_node->IsSupportedAsyncDone();
+  if (!is_async_op && released >= min_bytes && opened < min_bytes) {
+    score = static_cast<double>(released) /
+            std::max(static_cast<double>(cand_node->GetCost()), kMinCost);
+    held = static_cast<double>(released) *
+           std::max(sched_state.current_time - cand_node->GetReadySince(), 0.0);
+  }
+  cand.set_memory_cost(score, held);
+}
+
+std::optional<bool> ReadySetLt::MemoryCostPolicy(
+    const SchedulingState& sched_state, ScheduleCandidate& a,
+    const HloGraphNode* an, ScheduleCandidate& b, const HloGraphNode* bn,
+    const char** reason) const {
+  // Far below the computation's memory peak a releaser-first choice cannot
+  // lower the high-water mark; stay silent there so the rule does not perturb
+  // the timeline the later tie-breaks (kAvoidWaste, kLessStall) measure.
+  if (sched_state.memory_aware_pressure_threshold > 0 &&
+      sched_state.memory_pressure_tracker.memory_usage() <
+          sched_state.memory_aware_pressure_threshold) {
+    return std::nullopt;
+  }
+  ComputeMemoryCost(sched_state, a, an);
+  ComputeMemoryCost(sched_state, b, bn);
+  // No opinion unless at least one candidate is a releaser; everything else
+  // (openers and neutral ops) is left to the remaining rules.
+  if (a.memory_score <= 0.0 && b.memory_score <= 0.0) {
+    return std::nullopt;
+  }
+  // A candidate that has held a large released buffer for too long jumps the
+  // queue even if its bytes-per-time score is lower. This bounds how long a
+  // deferred producer can keep its buffer live.
+  const double held_budget = sched_state.config.memory_aware_held_budget;
+  if (held_budget > 0.0) {
+    if (auto res = CmpExplicit(a.memory_held_byte_time >= held_budget,
+                               b.memory_held_byte_time >= held_budget,
+                               kMemoryHeldReason, reason)) {
+      return res;
+    }
+  }
+  return CmpExplicit(a.memory_score, b.memory_score, kMemoryCostReason, reason);
+}
+
+std::optional<bool> ReadySetLt::MemoryPricedOverlapPolicy(
+    const SchedulingState& sched_state, ScheduleCandidate& a,
+    const HloGraphNode* an, ScheduleCandidate& b, const HloGraphNode* bn,
+    const char** reason) const {
+  const double ready_a = an->GetReadyTime() - sched_state.current_time;
+  const double ready_b = bn->GetReadyTime() - sched_state.current_time;
+  const bool a_is_stalling_start = an->IsSupportedAsyncStart() && ready_a > 0;
+  const bool b_is_stalling_start = bn->IsSupportedAsyncStart() && ready_b > 0;
+  // Only handle a stalling start against an op that can run without a stall.
+  if (a_is_stalling_start == b_is_stalling_start ||
+      (a_is_stalling_start ? ready_b : ready_a) > 0) {
+    return std::nullopt;
+  }
+  ScheduleCandidate& start_cand = a_is_stalling_start ? a : b;
+  const HloGraphNode* start = a_is_stalling_start ? an : bn;
+  const HloGraphNode* extender = a_is_stalling_start ? bn : an;
+  const double remaining_latency = a_is_stalling_start ? ready_a : ready_b;
+
+  // Scheduling the extender first keeps the buffers released by the start live
+  // for the duration of the extender.
+  const double extender_cost = extender->GetCost();
+  const double stall_saved = std::min(extender_cost, remaining_latency);
+  const int64_t held_bytes = std::max<int64_t>(
+      -GetMemoryPressureChanges(sched_state, start_cand, start).first, 0);
+  const double byte_time = static_cast<double>(held_bytes) * extender_cost;
+  if (stall_saved >= sched_state.config.memory_cost_lambda * byte_time) {
+    // Extending the overlap is worth its memory cost; let the stall rules
+    // choose the extender as usual.
+    return std::nullopt;
+  }
+  return CmpExplicit(a_is_stalling_start, b_is_stalling_start,
+                     kMemoryPricedOverlapReason, reason);
+}
+
 std::optional<bool> ReadySetLt::ReleaseStartPolicy(
     const SchedulingState& sched_state, const HloGraphNode* an,
     const HloGraphNode* bn, const char** reason) const {
@@ -1915,6 +2035,15 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
     }
   }
 
+  if (ABSL_PREDICT_FALSE(config.memory_priced_overlap &&
+                         config.memory_cost_lambda > 0.0 &&
+                         !core_->top_down_scheduling_)) {
+    if (auto res =
+            MemoryPricedOverlapPolicy(sched_state, a, an, b, bn, reason)) {
+      return *res;
+    }
+  }
+
   auto a_readytime = an->GetReadyTime();
   auto b_readytime = bn->GetReadyTime();
   if (a_readytime != b_readytime) {  // Quick test to avoid lots of work
@@ -1991,6 +2120,17 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
               "kAvoidWaste", reason)) {
         return *res;
       }
+    }
+  }
+
+  // Among candidates that the stall, resource and async-depth rules rate as
+  // equal, prefer the one that releases the most live bytes per unit of time.
+  // Placed below kAsyncDepth so that it only reorders within the neighborhood
+  // the depth ordering already picked and cannot pull work across layers.
+  if (ABSL_PREDICT_FALSE(config.memory_aware_scheduling &&
+                         !core_->top_down_scheduling_)) {
+    if (auto res = MemoryCostPolicy(sched_state, a, an, b, bn, reason)) {
+      return *res;
     }
   }
 
@@ -2212,6 +2352,7 @@ DefaultSchedulerCore::FindAndExtractBestNodeAvailable(
       const char* reason;
       bool new_candidate_selected =
           ready_lt->MaybeUpdate(ready_candidate, ready_chosen, &reason);
+      CountMemoryDecision(sched_state, reason);
       if (ABSL_PREDICT_FALSE(vlog_2)) {
         auto print_pressure_change =
             [](const DefaultSchedulerCore::ScheduleCandidate& p) {
@@ -2961,6 +3102,7 @@ absl::StatusOr<HloGraphNode::TimeCost> DefaultSchedulerCore::ScheduleNode(
       }
     }
     edge.Target().SetReadyTime(ready_time);
+    edge.Target().SetReadySince(current_time);
     int64_t annotation = edge.Target().GetAnnotation();
     // We are adding the no-op instructions to a separate set so that we can
     // immediately schedule them when they are ready.
@@ -3968,6 +4110,7 @@ void DefaultSchedulerCore::SchedulingState::Reset() {
   resource_occupiers_in_flight.clear();
   resource_users_in_queue.clear();
   scheduled_count = 0;
+  memory_decision_counts.clear();
   next_ready_stack.clear();
   shareable_resource_occupiers.clear();
   selective_resource_releasers.clear();
@@ -4006,6 +4149,16 @@ DefaultSchedulerCore::ScheduleComputation(
       computation,
       module_pressure_state_->GetPressureStateForComputation(computation)
           .live_ids_at_bottom);
+  sched_state->memory_aware_pressure_threshold = 0;
+  if (sched_state->config.memory_aware_scheduling &&
+      sched_state->config.memory_aware_pressure_fraction > 0.0) {
+    const int64_t pre_scheduling_peak =
+        module_pressure_state_->GetPressureStateForComputation(computation)
+            .memory_peak;
+    sched_state->memory_aware_pressure_threshold = static_cast<int64_t>(
+        sched_state->config.memory_aware_pressure_fraction *
+        static_cast<double>(pre_scheduling_peak));
+  }
 
   if (sched_state->graph_processing_hook) {
     ABSL_RETURN_IF_ERROR(
@@ -4144,6 +4297,10 @@ DefaultSchedulerCore::ScheduleComputation(
               *scheduling_context_->GetLatencyEstimator(),
               sched_state->new_sequence_reversed);
     }
+  }
+  for (const auto& [reason, count] : sched_state->memory_decision_counts) {
+    VLOG(1) << "Memory-aware scheduling decisions in " << computation->name()
+            << ": " << reason << " = " << count;
   }
   return std::move(sched_state->new_sequence_reversed);
 }

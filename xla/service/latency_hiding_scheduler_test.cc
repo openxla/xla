@@ -6488,5 +6488,382 @@ ENTRY main {
   EXPECT_EQ(FindStart(done), pipelined_ctx);
 }
 
+// Gives `negate` a higher cost than every other op, so that bytes released per
+// unit of time differs from bytes released.
+class NegateIsSlowLatencyEstimator : public ApproximateLatencyEstimator {
+ public:
+  TimeCost NodeCost(const HloInstruction* instr) const override {
+    if (instr->opcode() == HloOpcode::kNegate) {
+      return 10.0;
+    }
+    return ApproximateLatencyEstimator::NodeCost(instr);
+  }
+};
+
+class MemoryCostSchedulerTest : public LatencyHidingSchedulerTest {
+ protected:
+  // The test graphs are a handful of instructions whose decisive comparison
+  // happens well below their memory peak, so the pressure gate is disabled
+  // here and exercised by the PressureGate* tests.
+  static SchedulerConfig GetDefaultSchedConfig() {
+    SchedulerConfig sched_config = xla::GetDefaultSchedConfig();
+    sched_config.memory_aware_pressure_fraction = 0.0;
+    return sched_config;
+  }
+
+  // Schedules the entry computation of `hlo_string` bottom-up and returns the
+  // resulting instruction sequence.
+  absl::StatusOr<std::vector<HloInstruction*>> ScheduleEntry(
+      HloModule* module, SchedulerConfig sched_config,
+      std::unique_ptr<LatencyEstimator> latency_estimator =
+          std::make_unique<ApproximateLatencyEstimator>()) {
+    ABSL_ASSIGN_OR_RETURN(
+        auto setup,
+        SetupScheduler(module, sched_config, std::move(latency_estimator)));
+    std::shared_ptr<SchedulerCore> scheduler_core = std::move(setup.second);
+    ABSL_RETURN_IF_ERROR(scheduler_core->InitializeScheduler(module));
+    ABSL_ASSIGN_OR_RETURN(
+        std::shared_ptr<SchedulerCore::SchedulingState> state,
+        scheduler_core->MakeSchedulingState(module->entry_computation()));
+    return scheduler_core->ScheduleComputation(module->entry_computation(),
+                                               state);
+  }
+
+  // Number of instructions with `opcode` scheduled after `after` and before
+  // `before`.
+  static int CountOpcodeBetween(absl::Span<HloInstruction* const> sequence,
+                                HloOpcode opcode, absl::string_view after,
+                                absl::string_view before) {
+    const int begin = GetIndex(sequence, after) + 1;
+    const int end = GetIndex(sequence, before);
+    if (begin >= end) {
+      return 0;
+    }
+    return std::count_if(sequence.begin() + begin, sequence.begin() + end,
+                         [opcode](const HloInstruction* instr) {
+                           return instr->opcode() == opcode;
+                         });
+  }
+
+  // `large` and `small` are both ready once the root is scheduled and tie on
+  // every other rule, so the original order decides unless kMemoryCost is on.
+  static constexpr absl::string_view kLargeSmallHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[100] parameter(0)
+  large = f32[100] negate(p0)
+  small = f32[1] slice(p0), slice={[0:1]}
+  ROOT result = (f32[100], f32[1]) tuple(large, small)
+}
+)";
+};
+
+TEST_F(MemoryCostSchedulerTest, DisabledKeepsOriginalOrder) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kLargeSmallHlo));
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), GetDefaultSchedConfig()));
+  EXPECT_LT(GetIndex(sequence, "large"), GetIndex(sequence, "small"));
+}
+
+TEST_F(MemoryCostSchedulerTest, ReleasesLargerBufferFirst) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kLargeSmallHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  // Scheduling is bottom-up: `large` is picked first, so it ends up last and
+  // its buffer is live for the shortest time.
+  EXPECT_LT(GetIndex(sequence, "small"), GetIndex(sequence, "large"));
+}
+
+TEST_F(MemoryCostSchedulerTest, BelowMinBytesIsIgnored) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kLargeSmallHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 1000;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  EXPECT_LT(GetIndex(sequence, "large"), GetIndex(sequence, "small"));
+}
+
+TEST_F(MemoryCostSchedulerTest, ScoreIsNormalizedByTime) {
+  // `large` releases 2x the bytes of `small` but takes 10x as long, so `small`
+  // has the higher bytes-per-time score and is picked first.
+  constexpr absl::string_view kHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[100] parameter(0)
+  small = f32[50] slice(p0), slice={[0:50]}
+  large = f32[100] negate(p0)
+  ROOT result = (f32[50], f32[100]) tuple(small, large)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<HloInstruction*> sequence,
+      ScheduleEntry(module.get(), sched_config,
+                    std::make_unique<NegateIsSlowLatencyEstimator>()));
+  EXPECT_LT(GetIndex(sequence, "large"), GetIndex(sequence, "small"));
+}
+
+// Diamond: `big` (4 MiB) is produced first in the original order and consumed
+// by `r`; the chain of small negates is independent of both. Scheduling `r`
+// (bottom-up) opens the live range of `big`. kMemoryCost must not rank the
+// opener `r` against the memory-neutral negates: a greedy rule cannot tell how
+// long `big` will stay live once opened, and deferring openers behind neutral
+// ops is what pulls small consumers away from their producers in real models.
+// So the order has to match the disabled schedule.
+constexpr absl::string_view kDiamondHlo = R"(
+HloModule module, is_scheduled=true
+
+add {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT s = f32[] add(x, y)
+}
+
+ENTRY main {
+  p0 = f32[1024] parameter(0)
+  zero = f32[] constant(0)
+  big = f32[1024,1024] broadcast(p0), dimensions={0}
+  n0 = f32[1024] negate(p0)
+  n1 = f32[1024] negate(n0)
+  n2 = f32[1024] negate(n1)
+  r = f32[1024] reduce(big, zero), dimensions={1}, to_apply=add
+  ROOT t = (f32[1024], f32[1024]) tuple(r, n2)
+}
+)";
+
+TEST_F(MemoryCostSchedulerTest, DiamondDisabledHoldsLargeBuffer) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kDiamondHlo));
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), GetDefaultSchedConfig()));
+  EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kNegate, "big", "r"), 3);
+}
+
+TEST_F(MemoryCostSchedulerTest, DiamondOpenerIsNotDeferred) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kDiamondHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 1024 * 1024;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kNegate, "big", "r"), 3);
+}
+
+// `r` releases its 8 MiB output but opens the 4 MiB input `big` at the same
+// time. Its net change (+4 MiB released) is above the threshold, yet it opens a
+// large buffer, so kMemoryCost treats it as neutral and does not prefer it over
+// the neutral `n`; the schedule matches the disabled one.
+TEST_F(MemoryCostSchedulerTest, ReleaserThatOpensLargeBufferIsNeutral) {
+  constexpr absl::string_view kHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[1024] parameter(0)
+  big = f32[1024,1024] broadcast(p0), dimensions={0}
+  r = f32[2048,1024] concatenate(big, big), dimensions={0}
+  n = f32[1024] negate(p0)
+  ROOT t = (f32[2048,1024], f32[1024]) tuple(r, n)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> baseline,
+                       ScheduleEntry(module.get(), GetDefaultSchedConfig()));
+  ASSERT_OK_AND_ASSIGN(auto module2, ParseHloText(kHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 1024 * 1024;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module2.get(), sched_config));
+  std::vector<std::string> baseline_names, names;
+  for (const HloInstruction* instr : baseline) {
+    baseline_names.push_back(instr->name());
+  }
+  for (const HloInstruction* instr : sequence) {
+    names.push_back(instr->name());
+  }
+  // Bottom-up, the original order picks `n` first in both cases, so `r` (and
+  // `big` right before it) precede `n`.
+  EXPECT_LT(GetIndex(sequence, "r"), GetIndex(sequence, "n"));
+  EXPECT_EQ(names, baseline_names);
+}
+
+// `large` has the lowest bytes-per-time score, so it is deferred behind the
+// slices until it has been ready for long enough.
+constexpr absl::string_view kHeldBufferHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[100] parameter(0)
+  large = f32[100] negate(p0)
+  s0 = f32[50] slice(p0), slice={[0:50]}
+  s1 = f32[50] slice(p0), slice={[1:51]}
+  s2 = f32[50] slice(p0), slice={[2:52]}
+  ROOT result = (f32[100], f32[50], f32[50], f32[50]) tuple(large, s0, s1, s2)
+}
+)";
+
+TEST_F(MemoryCostSchedulerTest, WithoutHeldBudgetLowScoreProducerWaits) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kHeldBufferHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<HloInstruction*> sequence,
+      ScheduleEntry(module.get(), sched_config,
+                    std::make_unique<NegateIsSlowLatencyEstimator>()));
+  // All slices are picked before `large`, so it precedes all of them.
+  EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kSlice, "p0", "large"), 0);
+}
+
+TEST_F(MemoryCostSchedulerTest, HeldBudgetBoundsDeferral) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kHeldBufferHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  // `large` releases 400 bytes; after two unit-cost slices it has been ready
+  // for 2 time units, i.e. 800 byte-time.
+  sched_config.memory_aware_held_budget = 500.0;
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<HloInstruction*> sequence,
+      ScheduleEntry(module.get(), sched_config,
+                    std::make_unique<NegateIsSlowLatencyEstimator>()));
+  // Bottom-up: slice, slice, large, slice. Only one slice precedes `large`.
+  EXPECT_EQ(CountOpcodeBetween(sequence, HloOpcode::kSlice, "p0", "large"), 1);
+}
+
+constexpr absl::string_view kPricedOverlapHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[8,256,256] parameter(0)
+  p1 = f32[16,256,256] parameter(1)
+  ag-start = (f32[8,256,256], f32[16,256,256]) all-gather-start(p0),
+    replica_groups={{0,1}}, dimensions={0}
+  ag-done = f32[16,256,256] all-gather-done(ag-start)
+  c0 = f32[16,256,256] negate(p1)
+  ROOT a = f32[16,256,256] add(ag-done, c0)
+}
+)";
+
+TEST_F(MemoryCostSchedulerTest, PricedOverlapOffExtendsOverlap) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kPricedOverlapHlo));
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), GetDefaultSchedConfig()));
+  EXPECT_LT(GetIndex(sequence, "ag-start"), GetIndex(sequence, "c0"));
+  EXPECT_LT(GetIndex(sequence, "c0"), GetIndex(sequence, "ag-done"));
+}
+
+TEST_F(MemoryCostSchedulerTest, PricedOverlapSmallLambdaExtendsOverlap) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kPricedOverlapHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_priced_overlap = true;
+  sched_config.memory_cost_lambda = 1e-12;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  EXPECT_LT(GetIndex(sequence, "ag-start"), GetIndex(sequence, "c0"));
+  EXPECT_LT(GetIndex(sequence, "c0"), GetIndex(sequence, "ag-done"));
+}
+
+TEST_F(MemoryCostSchedulerTest, PricedOverlapLargeLambdaRejectsOverlap) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kPricedOverlapHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_priced_overlap = true;
+  // The all-gather output is ~4 MiB and `c0` hides at most one time unit, so
+  // this lambda makes the extension cost far more than the stall it saves.
+  sched_config.memory_cost_lambda = 1e-3;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  // `ag-start` is picked before `c0` (bottom-up), so `c0` moves above it and
+  // the async op no longer overlaps with it.
+  EXPECT_LT(GetIndex(sequence, "c0"), GetIndex(sequence, "ag-start"));
+  EXPECT_LT(GetIndex(sequence, "ag-start"), GetIndex(sequence, "ag-done"));
+}
+
+// Two independent all-gathers whose starts look like releasers bottom-up (they
+// free the gathered outputs). kMemoryCost must not reorder them: the schedule
+// with the rule on is the one the overlap rules produce with it off.
+constexpr absl::string_view kTwoCollectivesHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[8,256,256] parameter(0)
+  p1 = f32[8,64,64] parameter(1)
+  ag-start.0 = (f32[8,256,256], f32[16,256,256]) all-gather-start(p0),
+    replica_groups={{0,1}}, dimensions={0}
+  ag-done.0 = f32[16,256,256] all-gather-done(ag-start.0)
+  ag-start.1 = (f32[8,64,64], f32[16,64,64]) all-gather-start(p1),
+    replica_groups={{0,1}}, dimensions={0}
+  ag-done.1 = f32[16,64,64] all-gather-done(ag-start.1)
+  c0 = f32[16,256,256] negate(ag-done.0)
+  c1 = f32[16,64,64] negate(ag-done.1)
+  ROOT t = (f32[16,256,256], f32[16,64,64]) tuple(c0, c1)
+}
+)";
+
+TEST_F(MemoryCostSchedulerTest, AsyncStartsAreNotScored) {
+  ASSERT_OK_AND_ASSIGN(auto module_off, ParseHloText(kTwoCollectivesHlo));
+  ASSERT_OK_AND_ASSIGN(auto module_on, ParseHloText(kTwoCollectivesHlo));
+  SchedulerConfig off = GetDefaultSchedConfig();
+  SchedulerConfig on = GetDefaultSchedConfig();
+  on.memory_aware_scheduling = true;
+  on.memory_aware_min_bytes = 1024;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> seq_off,
+                       ScheduleEntry(module_off.get(), off));
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> seq_on,
+                       ScheduleEntry(module_on.get(), on));
+  std::vector<std::string> names_off, names_on;
+  for (const HloInstruction* i : seq_off) names_off.push_back(i->name());
+  for (const HloInstruction* i : seq_on) names_on.push_back(i->name());
+  EXPECT_EQ(names_on, names_off);
+}
+
+// Like kLargeSmallHlo, but the graph's memory peak (`huge`) is far above the
+// live memory at the point where `large` and `small` are compared, so the
+// pressure gate decides whether kMemoryCost gets to speak there.
+constexpr absl::string_view kPeakedLargeSmallHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[100] parameter(0)
+  huge = f32[100,1000] broadcast(p0), dimensions={0}
+  column = f32[100,1] slice(huge), slice={[0:100], [0:1]}
+  base = f32[100] bitcast(column)
+  large = f32[100] negate(base)
+  small = f32[1] slice(base), slice={[0:1]}
+  ROOT result = (f32[100], f32[1]) tuple(large, small)
+}
+)";
+
+TEST_F(MemoryCostSchedulerTest, PressureGateSilencesRuleBelowPeak) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kPeakedLargeSmallHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  sched_config.memory_aware_pressure_fraction = 0.9;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  // The rule stays silent far below the peak and the original order survives.
+  EXPECT_LT(GetIndex(sequence, "large"), GetIndex(sequence, "small"));
+}
+
+TEST_F(MemoryCostSchedulerTest, PressureGateLowFractionKeepsRule) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kPeakedLargeSmallHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  sched_config.memory_aware_pressure_fraction = 0.001;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  EXPECT_LT(GetIndex(sequence, "small"), GetIndex(sequence, "large"));
+}
+
 }  // namespace
 }  // namespace xla

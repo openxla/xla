@@ -1168,6 +1168,36 @@ message DebugOptions {
   optional int32 xla_gpu_experimental_scheduler_memory_fencing_slack_windows =
       527;
 
+  // Memory-cost-aware latency hiding scheduling. When true, among ready
+  // candidates that the stall and resource rules rate as equal, LHS prefers
+  // the one that releases more live bytes per unit of estimated time
+  // (kMemoryCost). This never adds a stall.
+  optional bool xla_gpu_experimental_memory_aware_scheduling = 562;
+
+  // Candidates whose net live-byte change is below this size in bytes are
+  // treated as memory-neutral by kMemoryCost.
+  optional int64 xla_gpu_experimental_memory_aware_min_bytes = 563;
+
+  // If > 0, a ready candidate that releases at least
+  // xla_gpu_experimental_memory_aware_min_bytes and whose `released bytes *
+  // time spent ready` (in cost-model time units) reaches this budget is
+  // prioritized (kMemoryHeld), which bounds how long LHS can defer a large
+  // release.
+  optional float xla_gpu_experimental_memory_aware_held_budget = 564;
+
+  // If > 0, extending the overlap of an async op by one more op is accepted
+  // only if the stall it hides is at least lambda * (bytes held live by the
+  // async op * duration of the op); otherwise the async start is scheduled
+  // (kMemoryPricedOverlap). Unlike the rules above this may trade latency
+  // for memory.
+  optional float xla_gpu_experimental_memory_priced_overlap_lambda = 565;
+
+  // If > 0, memory-aware scheduling only decides while the live memory at the
+  // current scheduling point is at least this fraction of the computation's
+  // memory peak in the pre-scheduling order; elsewhere preferring releasers
+  // cannot lower the high-water mark and only perturbs later tie-breaks.
+  optional float xla_gpu_experimental_memory_aware_pressure_fraction = 566;
+
   // This controls how many in-flight collectives latency hiding scheduler
   // can schedule. Example usage:
   // With xla_gpu_experimental_parallel_collective_overlap_limit = 1:
@@ -1978,7 +2008,7 @@ message DebugOptions {
   // when the cuDNN version changes).
   optional bool xla_autotune_cache_require_strict_codegen_match = 559;
 
-  // Next id: 562
+  // Next id: 567
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

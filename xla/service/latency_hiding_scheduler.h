@@ -214,6 +214,39 @@ struct SchedulerConfig {
   bool enable_cpd_for_sync_collective = true;
   // If set, only log computations that match the given regular expression.
   std::string log_computation_re;
+
+  // Memory-cost-aware scheduling. When enabled, ReadySetLt gets a soft rule
+  // (kMemoryCost) that, among candidates releasing live bytes, prefers the one
+  // releasing more bytes per unit of estimated time. It is evaluated only among
+  // candidates that the stall, resource and async-depth rules rate as equal, so
+  // it never adds a stall. Candidates that would open a large buffer are never
+  // ranked by this rule: a greedy rule cannot know how long a newly opened
+  // buffer stays live, and penalizing openers pulls their small consumers away
+  // from the producers' neighborhood, which extends live ranges instead of
+  // shortening them.
+  bool memory_aware_scheduling = false;
+  // A candidate is a "releaser" for kMemoryCost if it frees at least this many
+  // net live bytes while opening fewer than this many bytes; anything else is
+  // memory-neutral for the rule.
+  int64_t memory_aware_min_bytes = 64 * 1024 * 1024;
+  // If > 0, a ready candidate that releases >= memory_aware_min_bytes and whose
+  // `released bytes * time spent ready` reaches this budget (in byte * cost
+  // model time units) is prioritized by kMemoryCost, which bounds how long a
+  // large buffer can be held by a deferred producer.
+  double memory_aware_held_budget = 0.0;
+  // If > 0, kMemoryCost (and kMemoryHeld) only decide while the live memory at
+  // the current scheduling point is at least this fraction of the
+  // computation's memory peak in the pre-scheduling order. Below that the
+  // high-water mark cannot be lowered by preferring releasers, and the
+  // reorderings only perturb the timeline that later tie-breaks depend on.
+  double memory_aware_pressure_fraction = 0.9;
+  // If true and memory_cost_lambda > 0, extending the overlap of an async op
+  // by one more op is accepted only if the stall it hides is at least
+  // memory_cost_lambda * (bytes held live by the async op * duration of the
+  // extending op). This is the only part of memory-aware scheduling that may
+  // trade latency for memory.
+  bool memory_priced_overlap = false;
+  double memory_cost_lambda = 0.0;
 };
 
 // Class used estimate latency between instructions and cost of HLOs.
@@ -778,6 +811,7 @@ class HloGraphNode {
     indegree_ = predecessors_.size();
     outdegree_ = successors_.size();
     ready_time_ = std::numeric_limits<TimeCost>::max();
+    ready_since_ = 0.0;
     force_delay_after_target_ = false;
     ClearAnnotation();
   }
@@ -823,6 +857,11 @@ class HloGraphNode {
   }
   void SetScheduled() { scheduled_ = true; }
   void SetReadyTime(TimeCost ready_time) { ready_time_ = ready_time; }
+  // Schedule time at which this node entered the ready set. Unlike
+  // GetReadyTime(), it is not affected by latency, so `current_time -
+  // GetReadySince()` is how long the node has been waiting to be picked.
+  TimeCost GetReadySince() const { return ready_since_; }
+  void SetReadySince(TimeCost ready_since) { ready_since_ = ready_since; }
   TimeCost GetCost() const { return cost_; }
   void SetCost(TimeCost cost) { cost_ = cost; }
   TimeCost GetAsyncDepth() const { return async_depth_; }
@@ -1156,6 +1195,8 @@ class HloGraphNode {
   // The node should be added to the ready to be scheduled set when ready_time_
   // is less or equal to the current time in the schedule.
   TimeCost ready_time_ = std::numeric_limits<TimeCost>::max();
+  // Schedule time at which this node was added to the ready set.
+  TimeCost ready_since_ = 0.0;
   // Time cost of the execution of the operation of this nodes represent.
   TimeCost cost_ = 0.0;
   // Accumulated async latency along the path from this node to a node with no
@@ -1794,6 +1835,11 @@ class DefaultSchedulerCore : public SchedulerCore {
       resource_constrained = v;
       has_resource_constrained = true;
     }
+    void set_memory_cost(double score, double held) {
+      memory_score = score;
+      memory_held_byte_time = held;
+      has_memory_cost = true;
+    }
 
     HloGraphNode* node = nullptr;
     const SchedulingState* scheduling_state = nullptr;
@@ -1803,7 +1849,12 @@ class DefaultSchedulerCore : public SchedulerCore {
     bool has_pressure_change = false;
     bool has_estimated_connected_send_ready_time = false;
     bool has_resource_constrained = false;
+    bool has_memory_cost = false;
 
+    // Released live bytes per unit of estimated time (see kMemoryCost).
+    double memory_score;
+    // Released live bytes * time spent in the ready set.
+    double memory_held_byte_time;
     int64_t pressure_change_first;
     int64_t pressure_change_second;
     HloGraphNode::TimeCost estimated_connected_send_ready_time;
@@ -1869,6 +1920,10 @@ class DefaultSchedulerCore : public SchedulerCore {
     ResourceMap resource_users_in_queue;
     // Number of nodes scheduled.
     int64_t scheduled_count = 0;
+    // Number of ready-set comparisons decided by each memory-aware rule
+    // (kMemoryCost, ...), keyed by the rule's reason string. Logged at VLOG(1)
+    // once the computation is scheduled.
+    absl::flat_hash_map<absl::string_view, int64_t> memory_decision_counts;
     // Class returning information about instruction cost and latency between
     // instructions.
     const LatencyEstimator* latency_estimator;
@@ -1879,6 +1934,10 @@ class DefaultSchedulerCore : public SchedulerCore {
     // Tracker of memory pressure for the computation.
     const MemoryPressureMetadata* pressure_metadata;
     MemoryPressureTracker memory_pressure_tracker;
+    // Live bytes below which kMemoryCost stays silent for this computation
+    // (memory_aware_pressure_fraction * pre-scheduling memory peak); 0 = no
+    // gate.
+    int64_t memory_aware_pressure_threshold = 0;
     // Vector containing a list of nodes that aren't ready to schedule yet in
     // order of time when they are going to become ready.
     std::vector<const HloGraphNode*> next_ready_stack;
@@ -2152,6 +2211,33 @@ class ReadySetLt {
       const HloGraphNode* an, std::pair<int64_t, int64_t>& a_increase,
       const HloGraphNode* bn, std::pair<int64_t, int64_t>& b_increase,
       const char** reason) const;
+
+  // Soft memory rule (see SchedulerConfig::memory_aware_scheduling): among
+  // candidates that release live bytes without opening a large buffer, prefers
+  // the one releasing more bytes per unit of estimated time. Returns no opinion
+  // when neither candidate is such a releaser. Only used for bottom-up
+  // scheduling.
+  std::optional<bool> MemoryCostPolicy(
+      const DefaultSchedulerCore::SchedulingState& state,
+      DefaultSchedulerCore::ScheduleCandidate& a, const HloGraphNode* an,
+      DefaultSchedulerCore::ScheduleCandidate& b, const HloGraphNode* bn,
+      const char** reason) const;
+
+  // Memory-priced overlap (see SchedulerConfig::memory_priced_overlap): when
+  // one candidate is an async start that would stall and the other is an op
+  // that could extend its overlap, picks the start if the stall the extension
+  // hides is worth less than the memory it keeps live. Only used for bottom-up
+  // scheduling.
+  std::optional<bool> MemoryPricedOverlapPolicy(
+      const DefaultSchedulerCore::SchedulingState& state,
+      DefaultSchedulerCore::ScheduleCandidate& a, const HloGraphNode* an,
+      DefaultSchedulerCore::ScheduleCandidate& b, const HloGraphNode* bn,
+      const char** reason) const;
+
+  // Fills (and caches in `cand`) the memory score of a candidate.
+  void ComputeMemoryCost(const DefaultSchedulerCore::SchedulingState& state,
+                         DefaultSchedulerCore::ScheduleCandidate& cand,
+                         const HloGraphNode* cand_node) const;
 
   std::optional<bool> ReleaseStartPolicy(
       const DefaultSchedulerCore::SchedulingState& state,
