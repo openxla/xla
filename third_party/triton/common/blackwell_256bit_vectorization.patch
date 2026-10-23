@@ -1,0 +1,154 @@
+Allows 256-bit vectorization on NVIDIA Blackwell (sm_100+) architectures.
+
+Enables 256-bit vectorization in pickDescriptorLoadStoreLayout (Coalesce.cpp)
+and getMaxElementsPerThread (Utility.cpp) when targeting compute capability >= 100.
+
+--- a/lib/Dialect/TritonGPU/Transforms/Coalesce.cpp
++++ b/lib/Dialect/TritonGPU/Transforms/Coalesce.cpp
+@@ -26,15 +26,20 @@
+ // Descriptor load/stores don't need to consider L1 coalescing but the
+ // destination layout will affect the shared memory load/store generated. So we
+ // still want to allow vectorization for the src/destination layout up to
+-// 16bytes.
++// 16bytes (or 32bytes on sm_100+).
+ static Attribute pickDescriptorLoadStoreLayout(int numWarps, int threadsPerWarp,
+-                                               RankedTensorType type) {
++                                               RankedTensorType type,
++                                               int computeCapability = 0) {
+   auto shapePerCTA = triton::gpu::getShapePerCTA(type);
+   int numElems = product<int64_t>(shapePerCTA);
+   int numThreads = numWarps * threadsPerWarp;
+   int numElemsPerThread = std::max(numElems / numThreads, 1);
+ 
+-  int maxVectorSize = 128 / getIntOrFloatOrPtrBitWidth(type.getElementType());
++  // On Blackwell (sm_100+), allow up to 256-bit vectorization for descriptor
++  // load/store layout to support 2D TMA transfers.
++  int maxVectorBits = (computeCapability >= 100) ? 256 : 128;
++  int maxVectorSize =
++      maxVectorBits / getIntOrFloatOrPtrBitWidth(type.getElementType());
+ 
+   int vectorSize = std::min(numElemsPerThread, maxVectorSize);
+   SmallVector<unsigned> sizePerThread(type.getRank(), 1);
+@@ -53,17 +58,26 @@
+ static void pickDescriptorLoadStoreLayout(
+     ModuleOp moduleOp, llvm::MapVector<Operation *, Attribute> &layoutMap) {
+   int threadsPerWarp = TritonGPUDialect::getThreadsPerWarp(moduleOp);
++  int computeCapability = 0;
++  if (auto targetAttr =
++          moduleOp->getAttrOfType<StringAttr>(triton::gpu::AttrTargetName);
++      targetAttr && targetAttr.getValue().starts_with("cuda:")) {
++    computeCapability = getNVIDIAComputeCapability(moduleOp);
++  }
+   moduleOp.walk([&](Operation *op) {
+     int numWarps = lookupNumWarps(op);
+     if (auto load = dyn_cast<DescriptorOpInterface>(op)) {
+-      if (load->getNumResults() == 1)
++      if (load->getNumResults() == 1) {
+         layoutMap[op] = pickDescriptorLoadStoreLayout(
+             numWarps, threadsPerWarp,
+-            cast<RankedTensorType>(load->getResult(0).getType()));
++            cast<RankedTensorType>(load->getResult(0).getType()),
++            computeCapability);
++      }
+     }
+     if (auto store = dyn_cast<DescriptorStoreLikeOpInterface>(op)) {
+-      layoutMap[op] = pickDescriptorLoadStoreLayout(numWarps, threadsPerWarp,
+-                                                    store.getSrc().getType());
++      layoutMap[op] = pickDescriptorLoadStoreLayout(
++          numWarps, threadsPerWarp, store.getSrc().getType(),
++          computeCapability);
+     }
+   });
+ }
+
+--- a/lib/Dialect/TritonGPU/Transforms/Utility.cpp
++++ b/lib/Dialect/TritonGPU/Transforms/Utility.cpp
+@@ -170,8 +170,23 @@
+   // exposes the target architecture but not the PTX version, so we only cap
+   // cases that are unambiguous from the available target metadata and the
+   // current backend lowering.
++  //
++  // On Blackwell (sm_100+), LLVM NVPTX supports 256-bit global ld/st with
++  // PTX 8.8+. Because the PTX version is not queryable from TTGIR module
++  // metadata at this stage, we assume a compatible PTX version (>= 8.8) when
++  // targeting compute capability >= 100.
++  unsigned maxBits = 128;
++  if (auto mod = op->getParentOfType<ModuleOp>()) {
++    if (auto targetAttr =
++            mod->getAttrOfType<StringAttr>(triton::gpu::AttrTargetName);
++        targetAttr && targetAttr.getValue().starts_with("cuda:")) {
++      if (getNVIDIAComputeCapability(mod) >= 100) {
++        maxBits = 256;
++      }
++    }
++  }
+   return getAtomicElementsPerThreadCap(op, elemNumBits)
+-      .value_or(128 / elemNumBits);
++      .value_or(maxBits / elemNumBits);
+ }
+ 
+ unsigned getNumElementsPerThread(Operation *op, SmallVector<unsigned> order,
+
+--- a/test/TritonGPU/coalesce.mlir
++++ b/test/TritonGPU/coalesce.mlir
+@@ -569,3 +569,59 @@
+     tt.return
+   }
+ }
++
++// -----
++
++// CHECK: [[$VEC_GLOBAL_SM90:#.*]] = #ttg.blocked<{sizePerThread = [4], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>
++// CHECK: [[$VEC_DESC_SM90:#.*]] = #ttg.blocked<{sizePerThread = [1, 8], threadsPerWarp = [2, 16], warpsPerCTA = [4, 1], order = [1, 0]}>
++#blocked = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>
++#blocked2d = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [1, 32], warpsPerCTA = [2, 2], order = [1, 0]}>
++module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.target = "cuda:90", "ttg.threads-per-warp" = 32 : i32} {
++  // CHECK-LABEL: @vec256_global_and_desc_sm90
++  tt.func public @vec256_global_and_desc_sm90(%arg0: !tt.ptr<f32> {tt.divisibility = 32 : i32}, %arg1: !tt.tensordesc<16x128xf16>) {
++    %c1024_i32 = arith.constant 1024 : i32
++    %c0_i32 = arith.constant 0 : i32
++    %0 = tt.get_program_id x : i32
++    %1 = arith.muli %0, %c1024_i32 : i32
++    %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32, #blocked>
++    %3 = tt.splat %1 : i32 -> tensor<1024xi32, #blocked>
++    %4 = arith.addi %3, %2 : tensor<1024xi32, #blocked>
++    %5 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>, #blocked>
++    %6 = tt.addptr %5, %4 : tensor<1024x!tt.ptr<f32>, #blocked>, tensor<1024xi32, #blocked>
++    // CHECK: tt.load {{.*}} : tensor<1024x!tt.ptr<f32>, [[$VEC_GLOBAL_SM90]]>
++    %7 = tt.load %6 : tensor<1024x!tt.ptr<f32>, #blocked>
++
++    %cst = arith.constant dense<0.000000e+00> : tensor<16x128xf16, #blocked2d>
++    // CHECK: tt.descriptor_store {{.*}} : !tt.tensordesc<16x128xf16>, tensor<16x128xf16, [[$VEC_DESC_SM90]]>
++    tt.descriptor_store %arg1[%c0_i32, %c0_i32], %cst : !tt.tensordesc<16x128xf16>, tensor<16x128xf16, #blocked2d>
++    tt.return
++  }
++}
++
++// -----
++
++// CHECK: [[$VEC_GLOBAL_SM100:#.*]] = #ttg.blocked<{sizePerThread = [8], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>
++// CHECK: [[$VEC_DESC_SM100:#.*]] = #ttg.blocked<{sizePerThread = [1, 16], threadsPerWarp = [4, 8], warpsPerCTA = [4, 1], order = [1, 0]}>
++#blocked = #ttg.blocked<{sizePerThread = [1], threadsPerWarp = [32], warpsPerCTA = [4], order = [0]}>
++#blocked2d = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [1, 32], warpsPerCTA = [2, 2], order = [1, 0]}>
++module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.target = "cuda:100", "ttg.threads-per-warp" = 32 : i32} {
++  // CHECK-LABEL: @vec256_global_and_desc_sm100
++  tt.func public @vec256_global_and_desc_sm100(%arg0: !tt.ptr<f32> {tt.divisibility = 32 : i32}, %arg1: !tt.tensordesc<16x128xf16>) {
++    %c1024_i32 = arith.constant 1024 : i32
++    %c0_i32 = arith.constant 0 : i32
++    %0 = tt.get_program_id x : i32
++    %1 = arith.muli %0, %c1024_i32 : i32
++    %2 = tt.make_range {end = 1024 : i32, start = 0 : i32} : tensor<1024xi32, #blocked>
++    %3 = tt.splat %1 : i32 -> tensor<1024xi32, #blocked>
++    %4 = arith.addi %3, %2 : tensor<1024xi32, #blocked>
++    %5 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1024x!tt.ptr<f32>, #blocked>
++    %6 = tt.addptr %5, %4 : tensor<1024x!tt.ptr<f32>, #blocked>, tensor<1024xi32, #blocked>
++    // CHECK: tt.load {{.*}} : tensor<1024x!tt.ptr<f32>, [[$VEC_GLOBAL_SM100]]>
++    %7 = tt.load %6 : tensor<1024x!tt.ptr<f32>, #blocked>
++
++    %cst = arith.constant dense<0.000000e+00> : tensor<16x128xf16, #blocked2d>
++    // CHECK: tt.descriptor_store {{.*}} : !tt.tensordesc<16x128xf16>, tensor<16x128xf16, [[$VEC_DESC_SM100]]>
++    tt.descriptor_store %arg1[%c0_i32, %c0_i32], %cst : !tt.tensordesc<16x128xf16>, tensor<16x128xf16, #blocked2d>
++    tt.return
++  }
++}
+
