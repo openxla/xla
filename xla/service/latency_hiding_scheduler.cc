@@ -1560,6 +1560,14 @@ std::optional<bool> ReadySetLt::MemoryCostPolicy(
     const SchedulingState& sched_state, ScheduleCandidate& a,
     const HloGraphNode* an, ScheduleCandidate& b, const HloGraphNode* bn,
     const char** reason) const {
+  // Far below the computation's memory peak a releaser-first choice cannot
+  // lower the high-water mark; stay silent there so the rule does not perturb
+  // the timeline the later tie-breaks (kAvoidWaste, kLessStall) measure.
+  if (sched_state.memory_aware_pressure_threshold > 0 &&
+      sched_state.memory_pressure_tracker.memory_usage() <
+          sched_state.memory_aware_pressure_threshold) {
+    return std::nullopt;
+  }
   ComputeMemoryCost(sched_state, a, an);
   ComputeMemoryCost(sched_state, b, bn);
   // No opinion unless at least one candidate is a releaser; everything else
@@ -4141,6 +4149,16 @@ DefaultSchedulerCore::ScheduleComputation(
       computation,
       module_pressure_state_->GetPressureStateForComputation(computation)
           .live_ids_at_bottom);
+  sched_state->memory_aware_pressure_threshold = 0;
+  if (sched_state->config.memory_aware_scheduling &&
+      sched_state->config.memory_aware_pressure_fraction > 0.0) {
+    const int64_t pre_scheduling_peak =
+        module_pressure_state_->GetPressureStateForComputation(computation)
+            .memory_peak;
+    sched_state->memory_aware_pressure_threshold = static_cast<int64_t>(
+        sched_state->config.memory_aware_pressure_fraction *
+        static_cast<double>(pre_scheduling_peak));
+  }
 
   if (sched_state->graph_processing_hook) {
     ABSL_RETURN_IF_ERROR(

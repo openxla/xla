@@ -549,6 +549,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_memory_aware_min_bytes(64 * 1024 * 1024);
   opts.set_xla_gpu_experimental_memory_aware_held_budget(0.0f);
   opts.set_xla_gpu_experimental_memory_priced_overlap_lambda(0.0f);
+  opts.set_xla_gpu_experimental_memory_aware_pressure_fraction(0.9f);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
@@ -3525,6 +3526,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "If > 0, extending an async op's overlap by one more op is accepted "
       "only if the stall it hides is at least lambda times the bytes the "
       "async op keeps live times the op's duration."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_memory_aware_pressure_fraction",
+      float_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_memory_aware_pressure_fraction),
+      debug_options->xla_gpu_experimental_memory_aware_pressure_fraction(),
+      "If > 0, memory-aware scheduling only decides while the live memory at "
+      "the current scheduling point is at least this fraction of the "
+      "computation's pre-scheduling memory peak."));
   flag_list->push_back(tsl::Flag(
       "xla_pjrt_allow_auto_layout_in_hlo",
       bool_setter_for(&DebugOptions::set_xla_pjrt_allow_auto_layout_in_hlo),

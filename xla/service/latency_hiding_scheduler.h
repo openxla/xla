@@ -234,6 +234,12 @@ struct SchedulerConfig {
   // model time units) is prioritized by kMemoryCost, which bounds how long a
   // large buffer can be held by a deferred producer.
   double memory_aware_held_budget = 0.0;
+  // If > 0, kMemoryCost (and kMemoryHeld) only decide while the live memory at
+  // the current scheduling point is at least this fraction of the
+  // computation's memory peak in the pre-scheduling order. Below that the
+  // high-water mark cannot be lowered by preferring releasers, and the
+  // reorderings only perturb the timeline that later tie-breaks depend on.
+  double memory_aware_pressure_fraction = 0.9;
   // If true and memory_cost_lambda > 0, extending the overlap of an async op
   // by one more op is accepted only if the stall it hides is at least
   // memory_cost_lambda * (bytes held live by the async op * duration of the
@@ -1928,6 +1934,10 @@ class DefaultSchedulerCore : public SchedulerCore {
     // Tracker of memory pressure for the computation.
     const MemoryPressureMetadata* pressure_metadata;
     MemoryPressureTracker memory_pressure_tracker;
+    // Live bytes below which kMemoryCost stays silent for this computation
+    // (memory_aware_pressure_fraction * pre-scheduling memory peak); 0 = no
+    // gate.
+    int64_t memory_aware_pressure_threshold = 0;
     // Vector containing a list of nodes that aren't ready to schedule yet in
     // order of time when they are going to become ready.
     std::vector<const HloGraphNode*> next_ready_stack;

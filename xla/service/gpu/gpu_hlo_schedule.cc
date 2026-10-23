@@ -700,6 +700,8 @@ absl::Status RunLatencyHidingSchedulerPasses(
       options.xla_gpu_experimental_memory_aware_min_bytes();
   config.memory_aware_held_budget =
       options.xla_gpu_experimental_memory_aware_held_budget();
+  config.memory_aware_pressure_fraction =
+      options.xla_gpu_experimental_memory_aware_pressure_fraction();
   if (options.xla_gpu_experimental_memory_priced_overlap_lambda() > 0.0f) {
     config.memory_priced_overlap = true;
     config.memory_cost_lambda =

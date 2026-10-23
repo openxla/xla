@@ -1192,6 +1192,12 @@ message DebugOptions {
   // for memory.
   optional float xla_gpu_experimental_memory_priced_overlap_lambda = 565;
 
+  // If > 0, memory-aware scheduling only decides while the live memory at the
+  // current scheduling point is at least this fraction of the computation's
+  // memory peak in the pre-scheduling order; elsewhere preferring releasers
+  // cannot lower the high-water mark and only perturbs later tie-breaks.
+  optional float xla_gpu_experimental_memory_aware_pressure_fraction = 566;
+
   // This controls how many in-flight collectives latency hiding scheduler
   // can schedule. Example usage:
   // With xla_gpu_experimental_parallel_collective_overlap_limit = 1:
@@ -2002,7 +2008,7 @@ message DebugOptions {
   // when the cuDNN version changes).
   optional bool xla_autotune_cache_require_strict_codegen_match = 559;
 
-  // Next id: 566
+  // Next id: 567
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

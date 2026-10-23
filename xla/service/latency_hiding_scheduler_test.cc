@@ -6502,6 +6502,15 @@ class NegateIsSlowLatencyEstimator : public ApproximateLatencyEstimator {
 
 class MemoryCostSchedulerTest : public LatencyHidingSchedulerTest {
  protected:
+  // The test graphs are a handful of instructions whose decisive comparison
+  // happens well below their memory peak, so the pressure gate is disabled
+  // here and exercised by the PressureGate* tests.
+  static SchedulerConfig GetDefaultSchedConfig() {
+    SchedulerConfig sched_config = xla::GetDefaultSchedConfig();
+    sched_config.memory_aware_pressure_fraction = 0.0;
+    return sched_config;
+  }
+
   // Schedules the entry computation of `hlo_string` bottom-up and returns the
   // resulting instruction sequence.
   absl::StatusOr<std::vector<HloInstruction*>> ScheduleEntry(
@@ -6814,6 +6823,46 @@ TEST_F(MemoryCostSchedulerTest, AsyncStartsAreNotScored) {
   for (const HloInstruction* i : seq_off) names_off.push_back(i->name());
   for (const HloInstruction* i : seq_on) names_on.push_back(i->name());
   EXPECT_EQ(names_on, names_off);
+}
+
+// Like kLargeSmallHlo, but the graph's memory peak (`huge`) is far above the
+// live memory at the point where `large` and `small` are compared, so the
+// pressure gate decides whether kMemoryCost gets to speak there.
+constexpr absl::string_view kPeakedLargeSmallHlo = R"(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[100] parameter(0)
+  huge = f32[100,1000] broadcast(p0), dimensions={0}
+  column = f32[100,1] slice(huge), slice={[0:100], [0:1]}
+  base = f32[100] bitcast(column)
+  large = f32[100] negate(base)
+  small = f32[1] slice(base), slice={[0:1]}
+  ROOT result = (f32[100], f32[1]) tuple(large, small)
+}
+)";
+
+TEST_F(MemoryCostSchedulerTest, PressureGateSilencesRuleBelowPeak) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kPeakedLargeSmallHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  sched_config.memory_aware_pressure_fraction = 0.9;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  // The rule stays silent far below the peak and the original order survives.
+  EXPECT_LT(GetIndex(sequence, "large"), GetIndex(sequence, "small"));
+}
+
+TEST_F(MemoryCostSchedulerTest, PressureGateLowFractionKeepsRule) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(kPeakedLargeSmallHlo));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_aware_scheduling = true;
+  sched_config.memory_aware_min_bytes = 100;
+  sched_config.memory_aware_pressure_fraction = 0.001;
+  ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                       ScheduleEntry(module.get(), sched_config));
+  EXPECT_LT(GetIndex(sequence, "small"), GetIndex(sequence, "large"));
 }
 
 }  // namespace
