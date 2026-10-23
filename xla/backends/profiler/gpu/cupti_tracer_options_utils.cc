@@ -53,6 +53,10 @@ absl::Status UpdateCuptiTracerOptionsFromProfilerOptions(
     input_keys.insert(key);
   }
 
+  // rocm_tracer_options_utils.cc keeps a copy of this key list and reports a
+  // gpu_* key it does not know as an error. Add new keys there as well, so a
+  // configuration shared with ROCm keeps working. A test there fails if one is
+  // missing.
   ABSL_RETURN_IF_ERROR(
       SetValue<int64_t>(profile_options, "gpu_max_callback_api_events",
                         input_keys, [&](int64_t value) {
