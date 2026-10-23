@@ -598,7 +598,7 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
     shape->mutable_layout()->set_minor_to_major(0,
                                                 shape->dimensions().size() - 1);
   }
-  DCHECK_OK(ValidateShape(*shape));
+  DCHECK_OK(ValidateShapeWithOptionalLayout(*shape));
 }
 
 /* static */ Shape ShapeUtil::InsertDimensionAtIndex(Shape shape,
