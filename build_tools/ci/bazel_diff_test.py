@@ -31,6 +31,7 @@ from build_tools.ci import change_detector
 @dataclasses.dataclass(frozen=True)
 class _FakeBuildConfig:
   target_patterns: tuple[str, ...] = ("//xla/...",)
+  build_tag_filters: tuple[str, ...] = ()
   configs: tuple[str, ...] = ()
   repo_env: dict[str, str] = dataclasses.field(default_factory=dict)
   options: dict[str, object] = dataclasses.field(default_factory=dict)
@@ -44,8 +45,9 @@ def _write_impacted_targets(
     base_hashes: str,
     head_hashes: str,
     output_path: str,
+    startup_options: object = None,
 ) -> None:
-  del jar_path, workspace_dir, base_hashes, head_hashes
+  del jar_path, workspace_dir, base_hashes, head_hashes, startup_options
   with open(output_path, "w", encoding="utf-8") as f:
     f.write("//xla/service/cpu:cpu_compiler_test\n")
 
@@ -286,6 +288,13 @@ class BazelDiffTest(parameterized.TestCase):
         "rbe_linux_cuda_nvcc",
         "hermetic_cuda_umd",
     )
+    build_mock.build_tag_filters = ("-no_oss", "requires-gpu-nvidia", "gpu")
+    build_mock.target_patterns = (
+        "//xla/...",
+        "//build_tools/...",
+        "@tsl//tsl/...",
+        "-//xla/stream_executor/sycl/...",
+    )
     build_mock.repo_env = {"TF_CUDA_COMPUTE_CAPABILITIES": "7.5"}
     build_mock.options = {
         "//xla/tsl:ci_build": True,
@@ -299,10 +308,40 @@ class BazelDiffTest(parameterized.TestCase):
             "--config=warnings",
             "--config=rbe_linux_cuda_nvcc",
             "--config=hermetic_cuda_umd",
+            "--build_tag_filters=-no_oss,requires-gpu-nvidia,gpu",
+            "--universe_scope=//xla/...,//build_tools/...,@tsl//tsl/...,-//xla/stream_executor/sycl/...",
             "--repo_env=TF_CUDA_COMPUTE_CAPABILITIES=7.5",
             "--//xla/tsl:ci_build",
             "--@local_config_cuda//cuda:override_include_cuda_libs=False",
         ],
+    )
+
+  def test_build_cquery_expression_default(self):
+    self.assertEqual(
+        bazel_diff.build_cquery_expression(),
+        "deps(//xla/...:all-targets + //build_tools/...:all-targets +"
+        " @tsl//tsl/...:all-targets)",
+    )
+
+  def test_build_cquery_expression_with_exclusions(self):
+    patterns = (
+        "//xla/...",
+        "//build_tools/...",
+        "@tsl//tsl/...",
+        "-//xla/tpu/...",
+        "-//xla/backends/cpu/collectives:gloo_collectives_test",
+        "-//xla/backends/gpu/...",
+        "-//xla/service/gpu/...",
+        "-//xla/stream_executor/sycl/...",
+    )
+    self.assertEqual(
+        bazel_diff.build_cquery_expression(patterns),
+        "deps(//xla/...:all-targets + //build_tools/...:all-targets +"
+        " @tsl//tsl/...:all-targets - //xla/tpu/...:all-targets -"
+        " //xla/backends/cpu/collectives:gloo_collectives_test -"
+        " //xla/backends/gpu/...:all-targets -"
+        " //xla/service/gpu/...:all-targets -"
+        " //xla/stream_executor/sycl/...:all-targets)",
     )
 
   @mock.patch.object(bazel_diff.subprocess, "run")
@@ -317,10 +356,23 @@ class BazelDiffTest(parameterized.TestCase):
             "--repo_env=TF_CUDA_COMPUTE_CAPABILITIES=7.5",
             "--//xla/tsl:ci_build",
         ],
+        target_patterns=(
+            "//xla/...",
+            "//build_tools/...",
+            "@tsl//tsl/...",
+            "-//xla/stream_executor/sycl/...",
+        ),
     )
     args = mock_run.call_args[0][0]
+    self.assertIn("--excludeExternalTargets", args)
     self.assertIn(
         "--fineGrainedHashExternalRepos=@tsl,@@+tsl_extension+tsl",
+        args,
+    )
+    self.assertIn(
+        "--cqueryExpression=deps(//xla/...:all-targets +"
+        " //build_tools/...:all-targets + @tsl//tsl/...:all-targets -"
+        " //xla/stream_executor/sycl/...:all-targets)",
         args,
     )
     self.assertIn(
@@ -328,6 +380,20 @@ class BazelDiffTest(parameterized.TestCase):
         " --repo_env=TF_CUDA_COMPUTE_CAPABILITIES=7.5 --//xla/tsl:ci_build",
         args,
     )
+
+  @mock.patch.object(bazel_diff.subprocess, "run")
+  def test_run_get_impacted_targets_options(self, mock_run):
+    bazel_diff.run_get_impacted_targets(
+        "/tmp/bazel-diff.jar",
+        "/workspace",
+        "/tmp/base.json",
+        "/tmp/head.json",
+        "/tmp/impacted.txt",
+        startup_options=["--output_user_root=C:/x"],
+    )
+    args = mock_run.call_args[0][0]
+    self.assertIn("--excludeExternalTargets", args)
+    self.assertIn("--bazelStartupOptions=--output_user_root=C:/x", args)
 
   @mock.patch.object(
       bazel_diff, "_touches_build_keywords", autospec=True, spec_set=True
@@ -392,7 +458,7 @@ class BazelDiffTest(parameterized.TestCase):
       mock_generate_hashes,
       mock_get_impacted,
   ):
-    del mock_ensure_fetched, mock_generate_hashes
+    del mock_ensure_fetched
     mock_git_best_effort.side_effect = [
         subprocess.CompletedProcess(
             args=["git", "rev-parse", "HEAD"],
@@ -411,7 +477,13 @@ class BazelDiffTest(parameterized.TestCase):
     mock_get_impacted.side_effect = _write_impacted_targets
 
     decision = bazel_diff.compute_impacted_targets(
-        _FakeBuildConfig(), "base_sha", "HEAD", workspace_dir="/workspace"
+        _FakeBuildConfig(
+            target_patterns=("//xla/...", "-//xla/backends/gpu/..."),
+            startup_options={"output_user_root": "C:/x"},
+        ),
+        "base_sha",
+        "HEAD",
+        workspace_dir="/workspace",
     )
 
     self.assertEqual(
@@ -419,6 +491,18 @@ class BazelDiffTest(parameterized.TestCase):
     )
     self.assertEqual(
         decision.impacted_targets, ("//xla/service/cpu:cpu_compiler_test",)
+    )
+    with open(decision.impacted_targets_file, "r", encoding="utf-8") as f:
+      self.assertEqual(f.read(), "//xla/service/cpu:cpu_compiler_test\n")
+    self.assertLen(mock_generate_hashes.call_args_list, 2)
+    for call in mock_generate_hashes.call_args_list:
+      self.assertEqual(
+          call.kwargs["target_patterns"],
+          ("//xla/...", "-//xla/backends/gpu/..."),
+      )
+    self.assertEqual(
+        mock_get_impacted.call_args.kwargs["startup_options"],
+        ["--output_user_root=C:/x"],
     )
     self.assertEqual(
         mock_subprocess_run.call_args_list,
