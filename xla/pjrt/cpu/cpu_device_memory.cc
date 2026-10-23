@@ -1,4 +1,4 @@
-/* Copyright 2021 The OpenXLA Authors.
+/* Copyright 2021, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/pjrt/cpu/cpu_device_memory.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -26,9 +27,11 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
+#include "absl/synchronization/mutex.h"
 #include "tsl/platform/mem.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
+#include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -92,7 +95,36 @@ class CpuDeviceMemoryOwned final : public CpuDeviceMemory {
   void* untyped_data() const final { return mem_->base(); }
   size_t size_bytes() const final { return mem_->size_bytes(); }
 
+  std::shared_ptr<tsl::TiedAny> GetCacheIdentity() final {
+    absl::MutexLock lock(cache_mu_);
+    if (!cache_disabled_ && !cache_identity_) {
+      cache_identity_ = std::make_shared<tsl::TiedAny>();
+      cache_identity_created_.store(true, std::memory_order_release);
+    }
+    return cache_identity_;
+  }
+
+  void InvalidateCacheIdentity() final {
+    if (!cache_identity_created_.load(std::memory_order_acquire)) {
+      return;
+    }
+    absl::MutexLock lock(cache_mu_);
+    cache_identity_.reset();
+  }
+
+  void DisableCacheIdentity() final {
+    absl::MutexLock lock(cache_mu_);
+    cache_disabled_ = true;
+    cache_identity_.reset();
+  }
+
  private:
+  // Once enabled, all managed writes must invalidate, even from executables
+  // that do not use caching. Buffer dependencies still order reads and writes.
+  std::atomic<bool> cache_identity_created_{false};
+  absl::Mutex cache_mu_;
+  std::shared_ptr<tsl::TiedAny> cache_identity_ ABSL_GUARDED_BY(cache_mu_);
+  bool cache_disabled_ ABSL_GUARDED_BY(cache_mu_) = false;
   std::unique_ptr<RawMemory> mem_;
 };
 
@@ -152,6 +184,12 @@ class CpuDeviceMemorySlice final : public CpuDeviceMemory {
     return static_cast<uint8_t*>(base_->untyped_data()) + offset_;
   }
   size_t size_bytes() const final { return size_bytes_; }
+
+  std::shared_ptr<tsl::TiedAny> GetCacheIdentity() final {
+    return base_->GetCacheIdentity();
+  }
+  void InvalidateCacheIdentity() final { base_->InvalidateCacheIdentity(); }
+  void DisableCacheIdentity() final { base_->DisableCacheIdentity(); }
 
  private:
   tsl::AsyncValueRef<CpuDeviceMemory> base_;
