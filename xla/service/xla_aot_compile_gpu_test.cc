@@ -115,11 +115,19 @@ void LoadAndRunConvolution(XlaCompileTest& test,
 
 // Should also cover the case of loading a GPU executable with a GEMM.
 TEST_F(XlaCompileTest, LoadGpuExecutableWithConvolution) {
+  if (!se::gpu::SupportsDevicelessCudnnCompilation()) {
+    GTEST_SKIP() << "Deviceless cuDNN compilation requires cuDNN >= "
+                 << se::gpu::kMinDevicelessCudnnVersion;
+  }
   LoadAndRunConvolution(*this,
                         "xla_aot_compile_test_gpu_executable_convolution");
 }
 
 TEST_F(XlaCompileTest, LoadGpuExecutableWithConvolutionLegacyCache) {
+  if (!se::gpu::SupportsDevicelessCudnnCompilation()) {
+    GTEST_SKIP() << "Deviceless cuDNN compilation requires cuDNN >= "
+                 << se::gpu::kMinDevicelessCudnnVersion;
+  }
   LoadAndRunConvolution(
       *this, "xla_aot_compile_test_gpu_executable_convolution_legacy_cache");
 }
