@@ -442,6 +442,20 @@ TEST_F(WhileLoopAnalysisTest, NegativeAndZeroTripCountNonUnitStep) {
   }
 }
 
+TEST_F(WhileLoopAnalysisTest, NonDivisibleStepDoesNotUndercount) {
+  ASSERT_OK_AND_ASSIGN(
+      int64_t trip_count,
+      MakeWhileLoopAndGetTripCount(0, 1, 2, ComparisonDirection::kLt));
+  EXPECT_EQ(trip_count, 1);
+}
+
+TEST_F(WhileLoopAnalysisTest, EmptyLessEqualLoopHasZeroTrips) {
+  ASSERT_OK_AND_ASSIGN(
+      int64_t trip_count,
+      MakeWhileLoopAndGetTripCount(6, 5, 5, ComparisonDirection::kLe));
+  EXPECT_EQ(trip_count, 0);
+}
+
 TEST_F(WhileLoopAnalysisTest, NoAIVNoConstChain) {
   absl::string_view kHloModule = R"(
     HloModule ModuleWithWhile
