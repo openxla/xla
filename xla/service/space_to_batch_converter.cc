@@ -3946,9 +3946,10 @@ ConvolutionVisitor::ConvDetails ConvolutionVisitor::GetConvolutionDetails(
                                (is_base_dilated ? 0 : inherent_low_padding) +
                                inherent_high_padding;
 
-  const int64_t last_overlap = base_dilation_factor == inherent_low_padding
-                                   ? kernel_spatial_dim_size
-                                   : kernel_spatial_dim_size - 1;
+  const int64_t last_overlap =
+      base_dilation_factor == inherent_low_padding
+          ? kernel_spatial_dim_size + base_dilation_factor - 2
+          : kernel_spatial_dim_size - 1;
   const int64_t halo_size = is_base_dilated
                                 ? last_overlap / base_dilation_factor
                                 : kernel_spatial_dim_size - 1;
