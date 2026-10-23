@@ -3114,6 +3114,39 @@ ENTRY main {
       dataflow_analysis->DoesNotUseOperandBuffer(tuple_param, {0}, fusion));
 }
 
+TEST_F(DoesNotUseOperandBufferTest, LoopFusionDeadAndLiveUsesOfSameValue) {
+  absl::string_view hlo_str = R"hlo(
+HloModule LoopFusionDeadAndLiveUsesOfSameValue
+
+fused_computation {
+  p0 = (f32[8], f32[8]) parameter(0)
+  gte1 = f32[8] get-tuple-element(p0), index=1
+  ROOT neg = f32[8] negate(gte1)
+}
+
+ENTRY main {
+  x = f32[8] parameter(0)
+  tup = (f32[8], f32[8]) tuple(x, x)
+  ROOT fusion = f32[8] fusion(tup), kind=kLoop, calls=fused_computation
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(hlo_str, GetModuleConfigForTest()));
+
+  HloInstruction* x = FindInstruction(module.get(), "x");
+  HloInstruction* tup = FindInstruction(module.get(), "tup");
+  HloInstruction* fusion = FindInstruction(module.get(), "fusion");
+
+  std::unique_ptr<HloDataflowAnalysis> dataflow_analysis = RunAnalysis(*module);
+
+  // Even though element 0 of `p0` inside the loop fusion has no uses, `x` is
+  // still read through element 1 of `p0`.
+  EXPECT_FALSE(dataflow_analysis->DoesNotUseOperandBuffer(x, {}, fusion));
+  EXPECT_FALSE(dataflow_analysis->DoesNotUseOperandBuffer(tup, {0}, fusion));
+  EXPECT_FALSE(dataflow_analysis->DoesNotUseOperandBuffer(tup, {1}, fusion));
+}
+
 class CanShareOperandBufferWithUserTest
     : public HloHardwareIndependentTestBase {
  protected:
@@ -3417,6 +3450,42 @@ ENTRY main {
 
   EXPECT_TRUE(dataflow_analysis->CanShareOperandBufferWithUser(
       gte1, {}, fusion, {}, &alias_info_));
+}
+
+TEST_F(CanShareOperandBufferWithUserTest,
+       FusedDynamicUpdateSliceSecondaryViewCannotShare) {
+  absl::string_view hlo_str = R"hlo(
+HloModule FusedDynamicUpdateSliceSecondaryViewCannotShare
+
+fused_computation {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  rev = f32[8] reverse(p1), dimensions={0}
+  slice = f32[3] slice(rev), slice={[0:3]}
+  c0 = s32[] constant(0)
+  ROOT dus = f32[8] dynamic-update-slice(p0, slice, c0)
+}
+
+ENTRY main {
+  x = f32[8] parameter(0)
+  bc = f32[8] bitcast(x)
+  ROOT fusion = f32[8] fusion(x, bc), kind=kLoop, calls=fused_computation
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(hlo_str, GetModuleConfigForTest()));
+
+  HloInstruction* x = FindInstruction(module.get(), "x");
+  HloInstruction* bc = FindInstruction(module.get(), "bc");
+  HloInstruction* fusion = FindInstruction(module.get(), "fusion");
+
+  std::unique_ptr<HloDataflowAnalysis> dataflow_analysis = RunAnalysis(*module);
+
+  EXPECT_TRUE(dataflow_analysis->CanShareOperandBufferWithUser(
+      x, {}, fusion, {}, &alias_info_));
+  EXPECT_FALSE(dataflow_analysis->CanShareOperandBufferWithUser(
+      bc, {}, fusion, {}, &alias_info_));
 }
 
 TEST_F(CanShareOperandBufferWithUserTest, DynamicUpdateSliceCanShare) {

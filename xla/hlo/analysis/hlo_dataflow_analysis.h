@@ -367,14 +367,11 @@ class HloDataflowAnalysis {
   // An explicit graph holding phi values and edges.
   PhiGraph phi_graph_;
 
-  // Caches for CanShareOperandBufferWithUser.
+  // Cache for CanShareOperandBufferWithUser.
   mutable absl::flat_hash_map<
       HloInstruction*,
       absl::flat_hash_map<ShapeIndex, std::vector<HloOperandIndex>>>
       cache_share_buffer_with_user_;
-  mutable absl::flat_hash_map<std::pair<HloInstruction*, ShapeIndex>,
-                              absl::flat_hash_set<HloUse>>
-      cache_share_buffer_with_operand_;
 };
 
 // Options controlling which computation boundaries are visited by

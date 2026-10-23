@@ -2114,23 +2114,26 @@ bool BufferAssigner::LiveRangeInterferes(
   // schedule order (which may be a tuple instruction inside a loop body).
   // However, a downstream user instruction might directly consume a
   // different position of the value (such as the definition instruction
-  // before the loop). Therefore, we must check all positions of the
-  // HloValue to see if any instruction can share its buffer with the user.
+  // before the loop), or consume multiple positions at once, so every position
+  // consumed by the user must allow buffer sharing.
   auto can_share_as_operand = [&assignment, this](
                                   const HloValue* user_value,
                                   const HloValue* operand_value) {
     if (user_value->instruction()->opcode() == HloOpcode::kCopy) {
       return false;
     }
+    bool shared = false;
     for (const HloPosition& operand_pos : operand_value->positions()) {
-      if (user_value->instruction()->IsUserOf(operand_pos.instruction) &&
-          assignment->dataflow_analysis().CanShareOperandBufferWithUser(
-              operand_pos.instruction, operand_pos.index,
-              user_value->instruction(), user_value->index(), alias_info_)) {
-        return true;
+      if (user_value->instruction()->IsUserOf(operand_pos.instruction)) {
+        if (!assignment->dataflow_analysis().CanShareOperandBufferWithUser(
+                operand_pos.instruction, operand_pos.index,
+                user_value->instruction(), user_value->index(), alias_info_)) {
+          return false;
+        }
+        shared = true;
       }
     }
-    return false;
+    return shared;
   };
 
   bool interferes = false;

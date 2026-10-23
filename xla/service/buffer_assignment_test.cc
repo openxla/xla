@@ -1416,6 +1416,38 @@ ENTRY main {
   EXPECT_EQ(x_inter_buffer.index(), x_final_buffer.index());
 }
 
+TEST_F(BufferAssignmentTest,
+       MultiPositionValueCannotShareWhenBitcastUseIsNonElementwise) {
+  const char* const hlo_text = R"hlo(
+HloModule test, is_scheduled=true
+
+fused_add {
+  p0 = f32[100]{0} parameter(0)
+  p1 = f32[1,100]{1,0} parameter(1)
+  rev = f32[1,100]{1,0} reverse(p1), dimensions={1}
+  bc_rev = f32[100]{0} bitcast(rev)
+  ROOT add = f32[100]{0} add(p0, bc_rev)
+}
+
+ENTRY main {
+  a = f32[100]{0} parameter(0)
+  x = f32[100]{0} negate(a)
+  bc = f32[1,100]{1,0} bitcast(x)
+  ROOT out = f32[100]{0} fusion(x, bc), kind=kLoop, calls=fused_add
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* x = FindInstruction(module.get(), "x");
+  HloInstruction* out = FindInstruction(module.get(), "out");
+
+  std::unique_ptr<BufferAssignment> buffers =
+      RunBufferAssignmentWithSequentialOrdering(module.get());
+  EXPECT_NE(GetAllocation(*buffers, x, {}).index(),
+            GetAllocation(*buffers, out, {}).index());
+}
+
 TEST_F(BufferAssignmentTest, CanUseAllocationDoesNotMixInputOutputColors) {
   // Even when a backend allows S(0) temps to be assigned to S(1) temp
   // allocations, input/output allocations must match raw colors. They are
