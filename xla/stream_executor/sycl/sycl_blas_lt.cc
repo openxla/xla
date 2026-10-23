@@ -20,6 +20,8 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/sycl/onemkl_blas.h"
+#include "xla/stream_executor/sycl/onemkl_util.h"
 #include "xla/stream_executor/sycl/sycl_matmul_utils.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
 
@@ -30,8 +32,18 @@ absl::Status BlasLt::Init() { return absl::OkStatus(); }
 auto BlasLt::GetMatmulPlan(const gpu::GemmConfig& config,
                            Epilogue epilogue) const
     -> absl::StatusOr<MatmulPlanPtr> {
+  TF_RET_CHECK(epilogue == Epilogue::kDefault ||
+               (config.output_layout.dtype != xla::C64 &&
+                config.output_layout.dtype != xla::C128))
+      << "Got epilogue=" << static_cast<int>(epilogue)
+      << " epiloges are not supported for complex type";
   absl::MutexLock lock(&mu_);
-  return std::make_unique<MatmulPlan>(config, epilogue);
+  if (config.output_layout.dtype == xla::C64 ||
+      config.output_layout.dtype == xla::C128) {
+    return std::make_unique<MatmulPlan::OneMklMatmulPlan>(config);
+  } else {
+    return std::make_unique<MatmulPlan>(config, epilogue);
+  }
 }
 
 absl::Status BlasLt::MatmulPlan::ExecuteOnStream(
@@ -62,6 +74,19 @@ auto BlasLt::MatmulPlan::GetAlgorithms(size_t max_algorithm_count,
   std::vector<MatmulAlgorithm> algorithms;
   algorithms.push_back({/*opaque_algo*/ kOneDnnGemm, /*workspace_size*/ 0});
   return std::move(algorithms);
+}
+
+absl::Status BlasLt::MatmulPlan::OneMklMatmulPlan::ExecuteOnStream(
+    Stream* stream, const gpu::BlasLt::MemoryArgs& args,
+    blas::ProfileResult* profile_result) const {
+  gpu::MatrixLayout out = config_.output_layout;
+  ABSL_ASSIGN_OR_RETURN(blas::DataType dtype, gpu::AsBlasDataType(out.dtype));
+  TF_RET_CHECK(dtype == blas::DataType::kComplexDouble ||
+               dtype == blas::DataType::kComplexFloat)
+      << "Invalid type, expecting complex data type.";
+  return (dtype == blas::DataType::kComplexDouble)
+             ? ComplexMatmulImpl<std::complex<double>>(config_, stream, args)
+             : ComplexMatmulImpl<std::complex<float>>(config_, stream, args);
 }
 
 SyclBlasSupport::SyclBlasSupport(StreamExecutor* parent) : blas_lt_(parent) {}
