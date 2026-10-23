@@ -302,6 +302,7 @@ xla_test(
         "@com_google_googletest//:gtest_main",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cupti_headers",
+        "@tsl//tsl/platform:platform_port",
         "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
