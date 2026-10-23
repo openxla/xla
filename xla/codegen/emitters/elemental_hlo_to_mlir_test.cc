@@ -18,6 +18,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -25,6 +26,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/AsmParser/AsmParser.h"
@@ -58,6 +61,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/env.h"
 
 namespace xla {
 namespace emitters {
@@ -1884,6 +1888,36 @@ ENTRY main {
       // CHECK-NOT: power
       // CHECK-NOT: arith.remsi
       )"));
+}
+
+TEST_F(ElementalHloToMlirTest, DeepNonElementwiseChainDoesNotOverflowStack) {
+  std::string hlo = R"(
+HloModule deep_non_elementwise_chain
+
+ENTRY main {
+  v0 = f32[4,8] parameter(0)
+)";
+  constexpr int kChainLength = 500;
+  for (int i = 0; i < kChainLength; ++i) {
+    if (i % 2 == 0) {
+      absl::StrAppendFormat(&hlo, "  v%d = f32[8,4] bitcast(v%d)\n", i + 1, i);
+    } else {
+      absl::StrAppendFormat(
+          &hlo, "  %sv%d = f32[4,8] transpose(v%d), dimensions={1,0}\n",
+          i + 1 == kChainLength ? "ROOT " : "", i + 1, i);
+    }
+  }
+  absl::StrAppend(&hlo, "}\n");
+
+  absl::Status status;
+  tsl::ThreadOptions thread_options;
+  thread_options.stack_size = 512 * 1024;
+  {
+    std::unique_ptr<tsl::Thread> thread(tsl::Env::Default()->StartThread(
+        thread_options, "deep_chain_worker",
+        [&]() { status = Run(hlo, "// CHECK: @main_v500"); }));
+  }
+  EXPECT_THAT(status, absl_testing::IsOk());
 }
 
 }  // namespace
