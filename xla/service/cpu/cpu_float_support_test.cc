@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/cpu/cpu_float_support.h"
 
+// Test bazel-diff target selection on CPU C++ changes.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
