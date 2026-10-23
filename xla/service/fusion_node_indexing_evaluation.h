@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_SERVICE_FUSION_NODE_INDEXING_EVALUATION_H_
 #define XLA_SERVICE_FUSION_NODE_INDEXING_EVALUATION_H_
 
+#include <functional>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -24,8 +26,18 @@ limitations under the License.
 namespace xla {
 class FusionNodeIndexingEvaluation {
  public:
-  explicit FusionNodeIndexingEvaluation(const HloInstruction* fusion,
-                                        int64_t root_usage_count = 1);
+  // Asked whether re-emitting `producer` under `emitted_copies` distinct
+  // index vectors is preferable to materializing its output. Only consulted
+  // for producers that invalidate the emitter's value cache; see
+  // CodeDuplicationTooHigh. A null policy keeps the conservative behaviour of
+  // always preferring materialization, which is what every backend without a
+  // cost model wants.
+  using RematerializationPolicy = std::function<bool(
+      const HloInstruction* producer, int64_t emitted_copies)>;
+
+  explicit FusionNodeIndexingEvaluation(
+      const HloInstruction* fusion, int64_t root_usage_count = 1,
+      RematerializationPolicy rematerialization_policy = nullptr);
 
   // Evaluate the number of times 'producer' would be emitted if it is fused
   // into 'fusion_'. If the duplication is "too high" (some arbitrary chosen
@@ -93,6 +105,10 @@ class FusionNodeIndexingEvaluation {
 
   // The fusion instruction.
   const HloInstruction* fusion_;
+
+  // Backend-supplied override for the cache-invalidating-producer veto. May
+  // be null, in which case the veto always stands.
+  RematerializationPolicy rematerialization_policy_;
 };
 }  // namespace xla
 
