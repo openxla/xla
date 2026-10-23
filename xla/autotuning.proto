@@ -24,6 +24,7 @@ package xla;
 
 import "google/protobuf/any.proto";
 import "google/protobuf/duration.proto";
+import "xla/stream_executor/gpu/gpu_blas_lt.proto";
 import "xla/tsl/protobuf/dnn.proto";
 
 message CudnnVersion {
@@ -84,6 +85,7 @@ message AutotuneResult {
   message GemmKey {
     int64 algorithm = 1;
     int64 autotune_workspace_size = 2;
+    optional xla.BlasLtMatmulAlgorithmProto algorithm_proto = 3;
   }
 
   // Legacy and unused in new data; superseded by AlgorithmProto.
