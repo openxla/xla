@@ -190,7 +190,7 @@ bool ROCMBlas::Init() {
   int dev = 0;
   hipError_t result = hipGetDevice(&dev);
   hipDeviceProp_t props;
-  result = hipGetDeviceProperties(&props, dev);
+  result = hipGetDevicePropertiesR0600(&props, dev);
   if (result == hipSuccess) {
     auto cap = RocmComputeCapability(props.gcnArchName);
     has_mfma_ = cap.has_mfma_instr_support();

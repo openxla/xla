@@ -112,7 +112,7 @@ TEST(RocmTracerTest, GpuAgentDataMatchesHipDeviceProperties) {
   ASSERT_GT(agents.size(), 0u);
 
   hipDeviceProp_t props;
-  ASSERT_EQ(hipGetDeviceProperties(&props, 0), hipSuccess);
+  ASSERT_EQ(hipGetDevicePropertiesR0600(&props, 0), hipSuccess);
   const auto& agent = agents[0];
 
   EXPECT_EQ(agent.cu_count, static_cast<uint32_t>(props.multiProcessorCount));
