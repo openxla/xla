@@ -14672,6 +14672,37 @@ ENTRY main.1 {
             HloOpcode::kParameter);
 }
 
+// A weight dequantized with a broadcast block scale is parameter-like, so
+// MoveDotParamToRhs does not move the activation parameter to the RHS.
+TEST_F(AlgebraicSimplifierTest, DontSwapDotOperandsWithDequantizedWeight) {
+  set_verifier_layout_sensitive(false);
+  set_instruction_can_change_layout_func({});
+  const std::string hlo_string = R"(
+HloModule main
+
+ENTRY main.1 {
+  x = f8e4m3fn[512,256] parameter(0)
+  w = f4e2m1fn[256,128] parameter(1)
+  s = f8e8m0fnu[8,128] parameter(2)
+  wb = bf16[256,128] convert(w)
+  sb = f8e8m0fnu[8,32,128] broadcast(s), dimensions={0,2}
+  sr = f8e8m0fnu[256,128] reshape(sb)
+  sc = bf16[256,128] convert(sr)
+  ws = bf16[256,128] multiply(wb, sc)
+  w8 = f8e5m2[256,128] convert(ws)
+  ROOT dot = f32[512,128] dot(x, w8), lhs_contracting_dims={1},
+      rhs_contracting_dims={0}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  default_options_.set_enable_move_dot_param_to_rhs(true);
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kDot);
+  EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kParameter);
+}
+
 TEST_F(AlgebraicSimplifierTest, ReduceOfConstantBroadcastS32) {
   const std::string hlo_string = R"(
   HloModule test
