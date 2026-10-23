@@ -504,5 +504,41 @@ HloModule OnlyDeduplicateCalledComputations
   EXPECT_EQ(map2->to_apply(), called_computation_2);
 }
 
+// Verify that two identical computations with different metadata are merged.
+TEST_F(UnflattenCallGraphTest, DuplicatesWithDifferentMetadata) {
+  const std::string hlo_string = R"(
+  HloModule DeadCode
+
+  %Duplicate1 (a: f32[], b: f32[]) -> f32[] {
+    %a = f32[] parameter(0)
+    %b = f32[] parameter(1)
+    ROOT %add.1 = f32[] add(f32[] %a, f32[] %b), metadata={op_type="add" op_name="block_0/add"}
+  }
+
+  %Duplicate2 (a: f32[], b: f32[]) -> f32[] {
+    %a = f32[] parameter(0)
+    %b = f32[] parameter(1)
+    ROOT %add.2 = f32[] add(f32[] %a, f32[] %b), metadata={op_type="add" op_name="block_1/add"}
+  }
+
+  ENTRY %main (x: f32[], y: f32[]) -> f32[] {
+    %x = f32[] parameter(0)
+    %y = f32[] parameter(1)
+    %call.1 = f32[] call(f32[] %x, f32[] %y), to_apply=%Duplicate1
+    %call.2 = f32[] call(f32[] %call.1, f32[] %y), to_apply=%Duplicate2
+    ROOT %add.0 = f32[] add(f32[] %call.1, f32[] %call.2)
+  }
+  )";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunUnflattenCallGraph(module.get()));
+  ASSERT_TRUE(changed);
+  ASSERT_EQ(module->computation_count(), 2);
+  const HloInstruction* call1 = FindInstruction(module.get(), "call.1");
+  const HloInstruction* call2 = FindInstruction(module.get(), "call.2");
+  EXPECT_EQ(call1->to_apply(), call2->to_apply());
+}
+
 }  // namespace
 }  // namespace xla

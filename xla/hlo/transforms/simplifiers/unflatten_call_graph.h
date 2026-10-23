@@ -42,7 +42,8 @@ class UnflattenCallGraph : public HloModulePass {
   UnflattenCallGraph()
       : print_options_(HloPrintOptions::Canonical()
                            .set_print_ids(false)
-                           .set_print_metadata(true)
+                           .set_print_metadata(false)
+                           .set_print_original_value(false)
                            .set_print_backend_config(true)) {}
 
   absl::string_view name() const override { return "unflatten-call-graph"; }
