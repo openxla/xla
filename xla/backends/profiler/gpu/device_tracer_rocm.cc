@@ -56,7 +56,6 @@ class GpuTracer : public profiler::ProfilerInterface {
   absl::Status DoStart();
   absl::Status DoStop();
 
-  RocmTracerOptions GetRocmTracerOptions();
   RocmTraceCollectorOptions GetRocmTraceCollectorOptions(uint32_t num_gpus);
 
   enum State {
@@ -72,12 +71,6 @@ class GpuTracer : public profiler::ProfilerInterface {
   std::unique_ptr<RocmTraceCollector> rocm_trace_collector_;
 };
 
-RocmTracerOptions GpuTracer::GetRocmTracerOptions() {
-  RocmTracerOptions options;
-  options.max_annotation_strings = 4 * 1024 * 1024;
-  return options;
-}
-
 RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
     uint32_t num_gpus) {
   RocmTraceCollectorOptions options;
@@ -89,14 +82,14 @@ RocmTraceCollectorOptions GpuTracer::GetRocmTraceCollectorOptions(
   if (max_events <= 0) {
     max_events = 4 * 1024 * 1024;
   }
-  if (max_events > 1'000'000'000LL) {
-    max_events = 1'000'000'000LL;
+  if (max_events > kMaxRocmTraceEvents) {
+    max_events = kMaxRocmTraceEvents;
   }
   VLOG(3) << "maximum number of events to be traced = " << max_events;
 
   options.max_callback_api_events = max_events;
   options.max_activity_api_events = max_events;
-  options.max_annotation_strings = max_events;
+  options.max_annotation_strings = 4 * 1024 * 1024;
   return options;
 }
 
@@ -105,15 +98,13 @@ absl::Status GpuTracer::DoStart() {
   uint64_t start_gputime_ns = RocmTracer::GetTimestamp();
   uint64_t start_walltime_ns = tsl::EnvTime::NowNanos();
 
-  RocmTracerOptions tracer_options = GetRocmTracerOptions();
   RocmTraceCollectorOptions trace_collector_options =
       GetRocmTraceCollectorOptions(rocm_tracer_->NumGpus());
   rocm_trace_collector_ = CreateRocmCollector(
       trace_collector_options, start_walltime_ns, start_gputime_ns);
   rocm_trace_collector_->SetGpuAgents(rocm_tracer_->GpuAgents());
 
-  absl::Status status =
-      rocm_tracer_->Enable(tracer_options, rocm_trace_collector_.get());
+  absl::Status status = rocm_tracer_->Enable(rocm_trace_collector_.get());
   if (!status.ok()) {
     AnnotationStack::Enable(false);
     return status;
