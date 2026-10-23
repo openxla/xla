@@ -63,6 +63,10 @@ enum {
   // `LoadedExecutable::SetDeleteOptions`.
   kLoadedExecutableDeleteOptions = 25,
 
+  // kDeserializeLoadedExecutable adds the `DeserializeLoadedExecutable` RPC,
+  // which loads a serialized executable on the server.
+  kDeserializeLoadedExecutable = 26,
+
   // kSentiel is used to derive kCurrent below. Keep this as the last value of
   // the enum.
   kSentiel,

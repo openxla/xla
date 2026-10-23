@@ -84,6 +84,7 @@ tf_proto_library(
     deps = [
         ":types_proto",
         "//xla:xla_data_proto",
+        "//xla/pjrt/proto:compile_options_proto",
         "//xla/pjrt/proto:executable_metadata_proto",
         "//xla/python/ifrt:array_spec_proto",
         "//xla/python/ifrt:attribute_map_proto",
