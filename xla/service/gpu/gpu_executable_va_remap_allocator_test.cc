@@ -177,9 +177,10 @@ class TestMemoryReservation final : public se::MemoryReservation {
 class TestVmmAllocator final : public se::DeviceAddressVmmAllocator {
  public:
   static absl::StatusOr<std::unique_ptr<TestVmmAllocator>> Create(
-      const se::Platform* platform, absl::Span<const DeviceConfig> devices) {
-    auto allocator =
-        std::unique_ptr<TestVmmAllocator>(new TestVmmAllocator(platform));
+      const se::Platform* platform, absl::Span<const DeviceConfig> devices,
+      std::unique_ptr<se::DeviceAddressAllocator> host_allocator = nullptr) {
+    auto allocator = std::unique_ptr<TestVmmAllocator>(
+        new TestVmmAllocator(platform, std::move(host_allocator)));
     absl::Status status = PopulateDevices(allocator.get(), devices);
     if (!status.ok()) {
       return status;
@@ -241,14 +242,46 @@ class TestVmmAllocator final : public se::DeviceAddressVmmAllocator {
   }
 
  private:
-  explicit TestVmmAllocator(const se::Platform* platform)
-      : DeviceAddressVmmAllocator(platform) {}
+  TestVmmAllocator(const se::Platform* platform,
+                   std::unique_ptr<se::DeviceAddressAllocator> host_allocator)
+      : DeviceAddressVmmAllocator(platform,
+                                  /*reclaim_exempt_memory_space=*/std::nullopt,
+                                  std::move(host_allocator)) {}
 
   TestMemoryReservation* last_reservation_ = nullptr;
   const void* last_created_allocation_address_ = nullptr;
   bool fail_next_deferred_deallocation_ = false;
   std::shared_ptr<std::vector<TestMemoryReservation*>> live_reservations_ =
       std::make_shared<std::vector<TestMemoryReservation*>>();
+};
+
+// MemorySpace::kHost allocator that always hands out the same slot, so a host
+// buffer keeps a stable address across executions.
+class SingleSlotHostAllocator final : public se::DeviceAddressAllocator {
+ public:
+  explicit SingleSlotHostAllocator(const se::Platform* platform)
+      : se::DeviceAddressAllocator(platform), storage_(kSlotSize) {}
+
+  absl::StatusOr<se::ScopedDeviceAddress<uint8_t>> Allocate(
+      int device_ordinal, uint64_t size, bool /*retry_on_failure*/,
+      int64_t /*memory_space*/) override {
+    EXPECT_LE(size, kSlotSize);
+    return se::ScopedDeviceAddress<uint8_t>(
+        se::DeviceAddressBase(storage_.data(), size), device_ordinal, this);
+  }
+
+  absl::Status Deallocate(int /*device_ordinal*/,
+                          se::DeviceAddressBase /*mem*/) override {
+    return absl::OkStatus();
+  }
+
+  absl::StatusOr<se::Stream*> GetStream(int /*device_ordinal*/) override {
+    return absl::UnimplementedError("unused");
+  }
+
+ private:
+  static constexpr uint64_t kSlotSize = 4096;
+  AlignedStorage storage_;
 };
 
 class GpuExecutableVaRemapAllocatorTest : public ::testing::Test {
@@ -261,8 +294,10 @@ class GpuExecutableVaRemapAllocatorTest : public ::testing::Test {
     service_run_options_ = ServiceExecutableRunOptions(run_options_);
   }
 
-  absl::StatusOr<std::unique_ptr<TestVmmAllocator>> CreateAllocator() {
-    return TestVmmAllocator::Create(&platform_, {{&executor_, &stream_}});
+  absl::StatusOr<std::unique_ptr<TestVmmAllocator>> CreateAllocator(
+      std::unique_ptr<se::DeviceAddressAllocator> host_allocator = nullptr) {
+    return TestVmmAllocator::Create(&platform_, {{&executor_, &stream_}},
+                                    std::move(host_allocator));
   }
 
   // Observations from one GenerateBufferAllocations + Execute round trip for
@@ -1488,8 +1523,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
 
 TEST_F(GpuExecutableVaRemapAllocatorTest,
        SkipTempDoesNotRemapHostMemorySpaceTemp) {
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<TestVmmAllocator> vmm_allocator,
-                       CreateAllocator());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<TestVmmAllocator> vmm_allocator,
+      CreateAllocator(std::make_unique<SingleSlotHostAllocator>(&platform_)));
 
   constexpr int64_t kBufferSize = 1024;
   BufferAllocation host_temp(/*index=*/0, kBufferSize, kHostColor);
@@ -1520,8 +1556,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
 
 TEST_F(GpuExecutableVaRemapAllocatorTest,
        SkipTempRemapsDeviceTempButNotHostMemorySpaceTemp) {
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<TestVmmAllocator> vmm_allocator,
-                       CreateAllocator());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<TestVmmAllocator> vmm_allocator,
+      CreateAllocator(std::make_unique<SingleSlotHostAllocator>(&platform_)));
 
   constexpr int64_t kBufferSize = 1024;
   BufferAllocation device_temp(/*index=*/0, kBufferSize, /*color=*/0);
@@ -1591,8 +1628,9 @@ TEST_F(GpuExecutableVaRemapAllocatorTest,
 
 TEST_F(GpuExecutableVaRemapAllocatorTest,
        SkipProfiledDoesNotMapStableHostMemorySpaceOutput) {
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<TestVmmAllocator> vmm_allocator,
-                       CreateAllocator());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<TestVmmAllocator> vmm_allocator,
+      CreateAllocator(std::make_unique<SingleSlotHostAllocator>(&platform_)));
 
   constexpr int64_t kBufferSize = 1024;
   BufferAllocation host_output(/*index=*/0, kBufferSize, kHostColor);
