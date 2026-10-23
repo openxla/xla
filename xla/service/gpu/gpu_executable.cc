@@ -1722,7 +1722,8 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::FromProto(
       DeserializeThunkSequenceProto(
           thunk_sequence_proto, params.allocations, params.debug_module.get(),
           platform_name, gpu_compute_capability, params.gpu_topology,
-          symbol_resolver, params.cpu_target_machine_options));
+          symbol_resolver, params.cpu_target_machine_options,
+          params.debug_options.xla_gpu_require_exact_blas_lt_algorithm()));
 
   params.executable =
       std::make_unique<ThunkExecutor>(std::move(thunk_sequence));

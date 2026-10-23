@@ -19,6 +19,7 @@ package xla.gpu;
 
 import "xla/autotuning.proto";
 import "xla/codegen/xtile/xtile_config.proto";
+import "xla/stream_executor/gpu/gpu_blas_lt.proto";
 import "xla/tsl/protobuf/dnn.proto";
 import "xla/xla.proto";
 import "xla/xla_data.proto";
@@ -136,6 +137,8 @@ message GemmBackendConfig {
   // Whether the last operand of an FP8-output `__cublas$lt$matmul$f8` is the
   // multiplicative F32 D scale. Set by GemmRewriter on ROCm only.
   optional bool has_d_scale = 22;
+
+  optional xla.BlasLtMatmulAlgorithmProto algorithm_proto = 23;
 }
 
 // Backend config for the grouped (ragged-dot) GEMM operation running through

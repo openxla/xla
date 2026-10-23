@@ -53,7 +53,8 @@ absl::StatusOr<ThunkSequence> DeserializeThunkSequenceProto(
     const std::optional<stream_executor::KernelLoaderSpec::SymbolResolver>&
         symbol_resolver = std::nullopt,
     const std::optional<xla::cpu::TargetMachineOptions>&
-        cpu_target_machine_options = std::nullopt);
+        cpu_target_machine_options = std::nullopt,
+    bool require_exact_blas_lt_algorithm = false);
 }  // namespace xla::gpu
 
 #endif  // XLA_BACKENDS_GPU_RUNTIME_THUNK_PROTO_DESERIALIZATION_H_
