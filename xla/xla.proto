@@ -1168,6 +1168,15 @@ message DebugOptions {
   optional int32 xla_gpu_experimental_scheduler_memory_fencing_slack_windows =
       527;
 
+  // If non-negative, SchedulerMemoryFencing also fences the producers of large
+  // buffers: each (non-async) producer is made dependent on the last use of
+  // the (N+1)-th most recent large buffer released before it in the pre-LHS
+  // schedule, so LHS cannot allocate a large buffer much earlier, relative to
+  // other large buffers, than the reference schedule did. Negative values
+  // disable producer fencing.
+  optional int32 xla_gpu_experimental_scheduler_memory_fencing_producer_slack =
+      561;
+
   // This controls how many in-flight collectives latency hiding scheduler
   // can schedule. Example usage:
   // With xla_gpu_experimental_parallel_collective_overlap_limit = 1:
