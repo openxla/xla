@@ -1273,6 +1273,7 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@com_googlesource_code_re2//:re2",
+        "//xla:xla_data_proto_cc",
     ],
 )
 
@@ -1358,6 +1359,7 @@ cc_library(
     hdrs = ["profile_guided_latency_estimator.h"],
     deps = [
         ":latency_hiding_scheduler",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",

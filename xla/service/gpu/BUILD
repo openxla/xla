@@ -2830,6 +2830,7 @@ cc_library(
         ":ir_emission_utils",
         "//xla:shape_util",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:pgle_accuracy_checker",
         "//xla/backends/gpu/transforms:scheduling_instruction_annotator",
@@ -2882,6 +2883,7 @@ xla_test(
     deps = [
         ":alias_info",
         ":gpu_compiler",
+        ":gpu_device_info_for_tests",
         ":gpu_hlo_schedule",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -3646,6 +3648,7 @@ cc_library(
         ":cublas_cudnn",
         "//xla:shape_util",
         "//xla:side_effect_util",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:dynamic_slice_copy",
         "//xla/backends/gpu/transforms/collectives:collective_domain",

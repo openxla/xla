@@ -97,6 +97,9 @@ class InstructionAnnotation {
     tsl::profiler::StringHandle hlo_dump;
     tsl::profiler::StringHandle src_locations;
     tsl::profiler::StringHandle called_hlo_dump;
+    // The scheduler's cost estimate, if recorded (xla_record_cost_estimates).
+    float scheduler_cost_us;
+    tsl::profiler::StringHandle scheduler_cost_source;
   };
 
   struct Detailed {

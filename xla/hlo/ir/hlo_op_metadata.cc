@@ -18,12 +18,39 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
+#include "absl/strings/strip.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+
+namespace {
+constexpr absl::string_view kSchedulerCostSourcePrefix =
+    "SCHEDULER_COST_SOURCE_";
+}  // namespace
+
+std::string SchedulerCostSourceToString(
+    OpMetadata::SchedulerCostSource source) {
+  return std::string(
+      absl::StripPrefix(OpMetadata::SchedulerCostSource_Name(source),
+                        kSchedulerCostSourcePrefix));
+}
+
+absl::StatusOr<OpMetadata::SchedulerCostSource> StringToSchedulerCostSource(
+    absl::string_view name) {
+  OpMetadata::SchedulerCostSource source;
+  if (!OpMetadata::SchedulerCostSource_Parse(
+          absl::StrCat(kSchedulerCostSourcePrefix, name), &source)) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("Unknown scheduler cost source: ", name));
+  }
+  return source;
+}
 
 std::string OpMetadataToString(const OpMetadata& metadata, bool only_op_name) {
   std::vector<std::string> result;
@@ -76,6 +103,18 @@ std::string OpMetadataToString(const OpMetadata& metadata, bool only_op_name) {
   if (metadata.stack_frame_id() != 0) {
     result.push_back(
         absl::StrCat("stack_frame_id=", metadata.stack_frame_id()));
+  }
+  if (metadata.scheduler_cost_us() != 0 ||
+      metadata.scheduler_cost_source() !=
+          OpMetadata::SCHEDULER_COST_SOURCE_UNKNOWN) {
+    result.push_back(
+        absl::StrCat("scheduler_cost_us=", metadata.scheduler_cost_us()));
+  }
+  if (metadata.scheduler_cost_source() !=
+      OpMetadata::SCHEDULER_COST_SOURCE_UNKNOWN) {
+    result.push_back(absl::StrCat(
+        "scheduler_cost_source=",
+        SchedulerCostSourceToString(metadata.scheduler_cost_source())));
   }
   if (metadata.has_metadata_payload() &&
       metadata.metadata_payload().has_value()) {

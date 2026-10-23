@@ -677,6 +677,10 @@ message DebugOptions {
   // backend config after compilation.
   optional bool xla_gpu_collect_cost_model_stats = 240;
 
+  // If true, the cost estimate that the latency hiding scheduler used for each
+  // scheduled instruction and its provenance are recorded.
+  optional bool xla_record_cost_estimates = 562;
+
   // Maximum number of instructions to be combined in collective combiners.
   optional int64 xla_gpu_collective_combine_threshold_count = 461;
 
@@ -1978,7 +1982,7 @@ message DebugOptions {
   // when the cuDNN version changes).
   optional bool xla_autotune_cache_require_strict_codegen_match = 559;
 
-  // Next id: 562
+  // Next id: 563
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

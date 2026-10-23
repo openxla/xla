@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -48,6 +49,13 @@ class AnalyticalLatencyEstimator : public LatencyEstimator {
   int CyclesPerMicrosecond() const override {
     return latency_estimator_->CyclesPerMicrosecond();
   }
+  OpMetadata::SchedulerCostSource Source() const override {
+    return OpMetadata::SCHEDULER_COST_SOURCE_ANALYTICAL;
+  }
+  // Latencies of async pairs are attributed to this estimator, others to the
+  // wrapped estimator that produced them.
+  Estimate EstimateLatencyBetween(const HloGraphNode& from,
+                                  const HloGraphNode& target) const override;
 
   static constexpr TimeCost kLowCost = 1.0;
   static constexpr TimeCost kLowLatency = 1.0;

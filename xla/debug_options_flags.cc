@@ -439,6 +439,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_copy_insertion_use_region_analysis(false);
   opts.set_xla_gpu_collect_cost_model_stats(false);
+  opts.set_xla_record_cost_estimates(false);
   opts.set_xla_gpu_cublas_fallback(true);
   opts.set_xla_gpu_cudnn_gemm_fusion_level(0);
   opts.set_xla_gpu_enable_while_loop_double_buffering(false);
@@ -2876,6 +2877,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_collect_cost_model_stats(),
       "If true, each fusion instruction will have a cost model runtime "
       "estimate in backend config after compilation."));
+  flag_list->push_back(tsl::Flag(
+      "xla_record_cost_estimates",
+      bool_setter_for(&DebugOptions::set_xla_record_cost_estimates),
+      debug_options->xla_record_cost_estimates(),
+      "If true, record the cost estimate used by the latency hiding scheduler "
+      "for each instruction, and the estimator that produced it, in the "
+      "`scheduler_cost_us` and `scheduler_cost_source` fields of its "
+      "metadata."));
 
   flag_list->push_back(tsl::Flag("xla_gpu_enable_nccl_clique_optimization",
                                  noop_flag_setter<bool>, false,
