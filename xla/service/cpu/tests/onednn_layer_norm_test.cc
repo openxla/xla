@@ -350,5 +350,187 @@ TEST_F(LayerNormTest, LayerNormTest1_BF16) {
   MatchOptimizedHlo(layer_norm_module_str, onednn_layer_norm_);
 }
 
+// Max(Mean(D^2) - Mean(D)^2, 0) with
+// D = X - Mean(X), as emitted by tf.nn.moments
+TEST_F(LayerNormTest, LayerNormTest2_FP32) {
+  const char* layer_norm_module_str = R"(
+  HloModule layer_norm.test
+  region_add {
+    Arg_0.7555 = f32[] parameter(0)
+    Arg_1.7556 = f32[] parameter(1)
+    ROOT add.7557 = f32[] add(Arg_0.7555, Arg_1.7556)
+  }
+  ENTRY main {
+    Arg_0.1 = f32[84,197,768]{2,1,0} parameter(0), sharding={replicated}
+    Arg_0.2 = f32[768]{0} parameter(1), sharding={replicated}
+    Arg_0.3 = f32[768]{0} parameter(2), sharding={replicated}
+
+    // mean = Mean(X)
+    convert.290 = f32[84,197,768]{2,1,0} convert(Arg_0.1)
+    constant.291 = f32[] constant(0)
+    convert.292 = f32[] convert(constant.291)
+    reduce.297 = f32[84,197]{1,0} reduce(convert.290, convert.292),
+                 dimensions={2}, to_apply=region_add
+    constant.298 = s32[] constant(768)
+    convert.299 = f32[] convert(constant.298)
+    broadcast.300 = f32[84,197]{1,0} broadcast(convert.299), dimensions={}
+    divide.301 = f32[84,197]{1,0} divide(reduce.297, broadcast.300)
+    convert.302 = f32[84,197]{1,0} convert(divide.301)
+    reshape.303 = f32[84,197,1]{2,1,0} reshape(convert.302)
+
+    // D = X - mean
+    reshape.304 = f32[84,197]{1,0} reshape(reshape.303)
+    broadcast.305 = f32[84,197,768]{2,1,0} broadcast(reshape.304),
+                    dimensions={0,1}
+    subtract.306 = f32[84,197,768]{2,1,0} subtract(Arg_0.1, broadcast.305)
+
+    // Mean(D^2)
+    multiply.307 = f32[84,197,768]{2,1,0} multiply(subtract.306, subtract.306)
+    convert.308 = f32[84,197,768]{2,1,0} convert(multiply.307)
+    constant.309 = f32[] constant(0)
+    convert.310 = f32[] convert(constant.309)
+    reduce.315 = f32[84,197]{1,0} reduce(convert.308, convert.310),
+                 dimensions={2}, to_apply=region_add
+    constant.316 = s32[] constant(768)
+    convert.317 = f32[] convert(constant.316)
+    broadcast.318 = f32[84,197]{1,0} broadcast(convert.317), dimensions={}
+    divide.319 = f32[84,197]{1,0} divide(reduce.315, broadcast.318)
+    convert.320 = f32[84,197]{1,0} convert(divide.319)
+    reshape.321 = f32[84,197,1]{2,1,0} reshape(convert.320)
+
+    // Mean(D)^2
+    convert.340 = f32[84,197,768]{2,1,0} convert(subtract.306)
+    constant.341 = f32[] constant(0)
+    convert.342 = f32[] convert(constant.341)
+    reduce.343 = f32[84,197]{1,0} reduce(convert.340, convert.342),
+                 dimensions={2}, to_apply=region_add
+    constant.344 = s32[] constant(768)
+    convert.345 = f32[] convert(constant.344)
+    broadcast.346 = f32[84,197]{1,0} broadcast(convert.345), dimensions={}
+    divide.347 = f32[84,197]{1,0} divide(reduce.343, broadcast.346)
+    convert.348 = f32[84,197]{1,0} convert(divide.347)
+    reshape.349 = f32[84,197,1]{2,1,0} reshape(convert.348)
+    multiply.350 = f32[84,197,1]{2,1,0} multiply(reshape.349, reshape.349)
+
+    // variance = Max(Mean(D^2) - Mean(D)^2, 0)
+    subtract.351 = f32[84,197,1]{2,1,0} subtract(reshape.321, multiply.350)
+    constant.352 = f32[] constant(0)
+    broadcast.353 = f32[84,197,1]{2,1,0} broadcast(constant.352), dimensions={}
+    maximum.354 = f32[84,197,1]{2,1,0} maximum(subtract.351, broadcast.353)
+
+    constant.322 = f32[] constant(1e-12)
+    broadcast.323 = f32[84,197,1]{2,1,0} broadcast(constant.322), dimensions={}
+    add.324 = f32[84,197,1]{2,1,0} add(broadcast.323, maximum.354)
+    rsqrt.325 = f32[84,197,1]{2,1,0} rsqrt(add.324)
+    reshape.328 = f32[84,197]{1,0} reshape(rsqrt.325)
+    broadcast.329 = f32[84,197,768]{2,1,0} broadcast(reshape.328),
+                    dimensions={0,1}
+    broadcast.327 = f32[84,197,768]{2,1,0} broadcast(Arg_0.2), dimensions={2}
+    multiply.330 = f32[84,197,768]{2,1,0} multiply(broadcast.329, broadcast.327)
+    multiply.331 = f32[84,197,768]{2,1,0} multiply(Arg_0.1, multiply.330)
+    broadcast.336 = f32[84,197,768]{2,1,0} broadcast(Arg_0.3), dimensions={2}
+    reshape.332 = f32[84,197]{1,0} reshape(reshape.303)
+    broadcast.333 = f32[84,197,768]{2,1,0} broadcast(reshape.332),
+                    dimensions={0,1}
+    multiply.334 = f32[84,197,768]{2,1,0} multiply(multiply.330, broadcast.333)
+    subtract.337 = f32[84,197,768]{2,1,0} subtract(broadcast.336, multiply.334)
+    ROOT add.338 = f32[84,197,768]{2,1,0} add(multiply.331, subtract.337)
+  }
+  )";
+
+  EXPECT_TRUE(RunAndCompare(layer_norm_module_str, ErrorSpec{1e-4, 1e-4}));
+  MatchOptimizedHlo(layer_norm_module_str, onednn_layer_norm_);
+}
+
+TEST_F(LayerNormTest, LayerNormTest2_BF16) {
+  if (!xla::cpu::IsSupportedType(PrimitiveType::BF16)) {
+    GTEST_SKIP() << "CPU does not support BF16.";
+  }
+  const char* layer_norm_module_str = R"(
+  HloModule layer_norm.test
+  region_add {
+    Arg_0.7555 = f32[] parameter(0)
+    Arg_1.7556 = f32[] parameter(1)
+    ROOT add.7557 = f32[] add(Arg_0.7555, Arg_1.7556)
+  }
+  ENTRY main {
+    Arg_0.1 = bf16[160,197,768] parameter(0), sharding={replicated}
+    Arg_0.2 = bf16[768] parameter(1), sharding={replicated}
+    Arg_0.3 = bf16[768] parameter(2), sharding={replicated}
+
+    // mean = Mean(X)
+    convert.80 = f32[160,197,768] convert(Arg_0.1)
+    constant.81 = f32[] constant(0)
+    convert.82 = f32[] convert(constant.81)
+    reduce.87 = f32[160,197] reduce(convert.80, convert.82), dimensions={2},
+                to_apply=region_add
+    constant.88 = s32[] constant(768)
+    convert.89 = f32[] convert(constant.88)
+    broadcast.90 = f32[160,197] broadcast(convert.89), dimensions={}
+    divide.91 = f32[160,197] divide(reduce.87, broadcast.90)
+    convert.92 = bf16[160,197] convert(divide.91)
+    reshape.93 = bf16[160,197,1] reshape(convert.92)
+
+    // D = X - mean
+    reshape.94 = bf16[160,197] reshape(reshape.93)
+    broadcast.95 = bf16[160,197,768] broadcast(reshape.94), dimensions={0,1}
+    subtract.96 = bf16[160,197,768] subtract(Arg_0.1, broadcast.95)
+
+    // Mean(D^2)
+    multiply.97 = bf16[160,197,768] multiply(subtract.96, subtract.96)
+    convert.98 = f32[160,197,768] convert(multiply.97)
+    constant.99 = f32[] constant(0)
+    convert.100 = f32[] convert(constant.99)
+    reduce.105 = f32[160,197] reduce(convert.98, convert.100), dimensions={2},
+                 to_apply=region_add
+    constant.106 = s32[] constant(768)
+    convert.107 = f32[] convert(constant.106)
+    broadcast.108 = f32[160,197] broadcast(convert.107), dimensions={}
+    divide.109 = f32[160,197] divide(reduce.105, broadcast.108)
+    convert.110 = bf16[160,197] convert(divide.109)
+    reshape.111 = bf16[160,197,1] reshape(convert.110)
+
+    // Mean(D)^2
+    convert.130 = f32[160,197,768] convert(subtract.96)
+    constant.131 = f32[] constant(0)
+    convert.132 = f32[] convert(constant.131)
+    reduce.133 = f32[160,197] reduce(convert.130, convert.132), dimensions={2},
+                 to_apply=region_add
+    constant.134 = s32[] constant(768)
+    convert.135 = f32[] convert(constant.134)
+    broadcast.136 = f32[160,197] broadcast(convert.135), dimensions={}
+    divide.137 = f32[160,197] divide(reduce.133, broadcast.136)
+    convert.138 = bf16[160,197] convert(divide.137)
+    reshape.139 = bf16[160,197,1] reshape(convert.138)
+    multiply.140 = bf16[160,197,1] multiply(reshape.139, reshape.139)
+
+    // variance = Max(Mean(D^2) - Mean(D)^2, 0)
+    subtract.141 = bf16[160,197,1] subtract(reshape.111, multiply.140)
+    constant.142 = bf16[] constant(0)
+    broadcast.143 = bf16[160,197,1] broadcast(constant.142), dimensions={}
+    maximum.144 = bf16[160,197,1] maximum(subtract.141, broadcast.143)
+
+    constant.112 = bf16[] constant(1.002e-12)
+    broadcast.113 = bf16[160,197,1] broadcast(constant.112), dimensions={}
+    add.114 = bf16[160,197,1] add(maximum.144, broadcast.113)
+    rsqrt.115 = bf16[160,197,1] rsqrt(add.114)
+    reshape.118 = bf16[160,197] reshape(rsqrt.115)
+    broadcast.119 = bf16[160,197,768] broadcast(reshape.118), dimensions={0,1}
+    broadcast.117 = bf16[160,197,768] broadcast(Arg_0.2), dimensions={2}
+    multiply.120 = bf16[160,197,768] multiply(broadcast.119, broadcast.117)
+    multiply.121 = bf16[160,197,768] multiply(Arg_0.1, multiply.120)
+    broadcast.126 = bf16[160,197,768] broadcast(Arg_0.3), dimensions={2}
+    reshape.122 = bf16[160,197] reshape(reshape.93)
+    broadcast.123 = bf16[160,197,768] broadcast(reshape.122), dimensions={0,1}
+    multiply.124 = bf16[160,197,768] multiply(multiply.120, broadcast.123)
+    subtract.127 = bf16[160,197,768] subtract(broadcast.126, multiply.124)
+    ROOT add.128 = bf16[160,197,768] add(multiply.121, subtract.127)
+  }
+ )";
+
+  EXPECT_TRUE(RunAndCompare(layer_norm_module_str, ErrorSpec{1e-2, 1e-2}));
+  MatchOptimizedHlo(layer_norm_module_str, onednn_layer_norm_);
+}
+
 }  // namespace
 }  // namespace xla
