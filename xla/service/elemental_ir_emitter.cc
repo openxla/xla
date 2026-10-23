@@ -3539,10 +3539,18 @@ llvm_ir::ElementGenerator ElementalIrEmitter::MakeElementGenerator(
     case HloOpcode::kBitcast:
       CHECK_EQ(ShapeUtil::ElementsIn(hlo->shape()),
                ShapeUtil::ElementsIn(hlo->operand(0)->shape()));
-      return [this, hlo, &operand_to_generator](const IrArray::Index& index) {
+      return [this, hlo, &operand_to_generator](
+                 const IrArray::Index& index) -> absl::StatusOr<llvm::Value*> {
         const HloInstruction* operand = hlo->operand(0);
         IrArray::Index operand_index = GetSourceIndexOfBitcast(index, hlo);
-        return operand_to_generator.at(operand)(operand_index);
+        ABSL_ASSIGN_OR_RETURN(llvm::Value * value,
+                              operand_to_generator.at(operand)(operand_index));
+        if (hlo->shape().element_type() != operand->shape().element_type()) {
+          return BitCast(
+              value, llvm_ir::PrimitiveTypeToIrType(hlo->shape().element_type(),
+                                                    module_->getContext()));
+        }
+        return value;
       };
     case HloOpcode::kReshape:
       CHECK_EQ(ShapeUtil::ElementsIn(hlo->shape()),

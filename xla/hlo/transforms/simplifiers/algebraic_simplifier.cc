@@ -1482,7 +1482,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcast(
             m::Bitcast(m::Op(&unary_op)
                            .WithPredicate([](const HloInstruction* instr) {
                              return instr->IsElementwise() &&
-                                    HloPredicateIsNotOp<HloOpcode::kFusion>(
+                                    HloPredicateIsNotOp<HloOpcode::kCopy,
+                                                        HloOpcode::kFusion>(
                                         instr) &&
                                     instr->operand_count() == 1 &&
                                     instr->user_count() == 1;

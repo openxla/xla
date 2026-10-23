@@ -13592,8 +13592,9 @@ TEST_F(AlgebraicSimplifierTest, CopyBitcastCopyDimSize1) {
   options.set_is_layout_sensitive(true);
   AlgebraicSimplifier simplifier(options);
   ASSERT_TRUE(simplifier.Run(m.get()).value());
-  EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Bitcast(m::Bitcast(m::Copy(m::Parameter())))));
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(m::Bitcast(m::Bitcast(m::Copy(m::Bitcast(m::Parameter()))))));
 }
 
 TEST_F(AlgebraicSimplifierTest, CopyBitcastCopy2) {
@@ -13757,6 +13758,21 @@ TEST_F(AlgebraicSimplifierTest, BitcastElementwiseFusionBitcast) {
   })"));
   AlgebraicSimplifierOptions options = default_options_;
   options.set_is_layout_sensitive(false);
+  ASSERT_FALSE(AlgebraicSimplifier(options).Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest, BitcastCopyBitcast_LayoutChange) {
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"(
+  HloModule test
+
+  ENTRY main {
+    p0 = f64[2,3,3]{2,1,0} parameter(0)
+    b1 = f64[3,2,3]{2,0,1} bitcast(p0)
+    copy = f64[3,2,3]{2,1,0} copy(b1)
+    ROOT b2 = f64[3,6]{1,0} bitcast(copy)
+  })"));
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_is_layout_sensitive(true);
   ASSERT_FALSE(AlgebraicSimplifier(options).Run(m.get()).value());
 }
 

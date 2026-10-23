@@ -18,15 +18,21 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/string_view.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/test.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/literal_test_util.h"
 #include "xla/tsl/lib/monitoring/collected_metrics.h"
 #include "xla/tsl/lib/monitoring/collection_registry.h"
 
@@ -180,6 +186,110 @@ TEST_F(CpuCompilerTest, CompilesElementalOpsWithFusionWrapperPassDisabled) {
       "fusion-wrapper");
 
   EXPECT_TRUE(Run(std::move(module), /*run_hlo_passes=*/true));
+}
+
+TEST_F(CpuCompilerTest, SimplifiesReshapesAroundCustomCallBeforeFusion) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule module, entry_computation_layout={(f32[13,13]{1,0}, f32[13]{0})->f32[13]{0}}
+
+    ENTRY main {
+      %a = f32[13,13]{1,0} parameter(0)
+      %b = f32[13]{0} parameter(1)
+      %b_col = f32[13,1]{1,0} reshape(%b)
+      %trsm = f32[13,1]{0,1} custom-call(%a, %b_col),
+          custom_call_target="lapack_strsm_ffi",
+          operand_layout_constraints={f32[13,13]{0,1}, f32[13,1]{0,1}},
+          output_to_operand_aliasing={{}: (1, {})},
+          api_version=API_VERSION_TYPED_FFI
+      ROOT %out = f32[13]{0} reshape(%trsm)
+    }
+  )";
+  HloModuleConfig config;
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  debug_options.set_xla_cpu_mock_custom_calls(true);
+  config.set_debug_options(debug_options);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                       GetOptimizedModule(kHlo, config));
+
+  std::vector<const HloInstruction*> fusions;
+  for (const HloComputation* computation : optimized_module->computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      EXPECT_NE(instruction->opcode(), HloOpcode::kReshape)
+          << instruction->ToString();
+      if (instruction->opcode() == HloOpcode::kFusion) {
+        fusions.push_back(instruction);
+      }
+    }
+  }
+  // Only the [13,13]{1,0} -> [13,13]{0,1} transpose of parameter 0 requires a
+  // copy fusion; the reshapes become bitcasts.
+  ASSERT_EQ(fusions.size(), 1) << optimized_module->ToString();
+  const HloInstruction* fusion = fusions[0];
+  EXPECT_EQ(fusion->operand(0),
+            optimized_module->entry_computation()->parameter_instruction(0));
+  EXPECT_EQ(fusion->fused_expression_root()->opcode(), HloOpcode::kCopy);
+}
+
+// Regression test for emitting a fused bitcast that changes element type.
+TEST_F(CpuCompilerTest, CompilesBitcastConvertInSmallWhileLoop) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule module
+
+    body {
+      tuple = (s32[], f32[4]) parameter(0)
+      i = s32[] get-tuple-element(tuple), index=0
+      x = f32[4] get-tuple-element(tuple), index=1
+      one = s32[] constant(1)
+      next_i = s32[] add(i, one)
+      x_bits = s32[4] bitcast-convert(x)
+      zero = s32[] constant(0)
+      zero_bcast = s32[4] broadcast(zero), dimensions={}
+      is_neg = pred[4] compare(x_bits, zero_bcast), direction=LT
+      neg_x = f32[4] negate(x)
+      next_x = f32[4] select(is_neg, neg_x, x)
+      ROOT out = (s32[], f32[4]) tuple(next_i, next_x)
+    }
+
+    cond {
+      tuple = (s32[], f32[4]) parameter(0)
+      i = s32[] get-tuple-element(tuple), index=0
+      limit = s32[] constant(2)
+      ROOT cmp = pred[] compare(i, limit), direction=LT
+    }
+
+    ENTRY main {
+      init_i = s32[] constant(0)
+      init_x = f32[4] parameter(0)
+      init = (s32[], f32[4]) tuple(init_i, init_x)
+      loop = (s32[], f32[4]) while(init), condition=cond, body=body
+      ROOT res = f32[4] get-tuple-element(loop), index=1
+    }
+  )";
+  HloModuleConfig config;
+  config.set_debug_options(GetDebugOptionsForTest());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> optimized_module,
+                       GetOptimizedModule(kHlo, config));
+  bool has_fused_type_changing_bitcast = false;
+  for (const HloComputation* computation : optimized_module->computations()) {
+    if (!computation->IsFusionComputation()) {
+      continue;
+    }
+    for (const HloInstruction* instruction : computation->instructions()) {
+      if (instruction->opcode() == HloOpcode::kBitcast &&
+          instruction->shape().element_type() !=
+              instruction->operand(0)->shape().element_type()) {
+        has_fused_type_changing_bitcast = true;
+      }
+    }
+  }
+  EXPECT_TRUE(has_fused_type_changing_bitcast) << optimized_module->ToString();
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  Literal input = LiteralUtil::CreateR1<float>({-1.5f, 2.0f, -3.0f, 4.0f});
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&input}));
+  EXPECT_TRUE(LiteralTestUtil::Equal(
+      LiteralUtil::CreateR1<float>({1.5f, 2.0f, 3.0f, 4.0f}), result));
 }
 
 }  // namespace
