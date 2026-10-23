@@ -464,7 +464,7 @@ cc_library(
     name = "env_time",
     compatible_with = get_compatible_with_portable(),
     textual_hdrs = ["env_time.h"],
-    deps = tf_windows_aware_platform_deps("env_time") + [":types"],
+    deps = tf_windows_aware_platform_deps("env_time"),
 )
 
 cc_library(
@@ -688,17 +688,10 @@ cc_library(
     name = "statusor",
     hdrs = ["statusor.h"],
     deps = [
-        ":errors",
-        ":logging",
-        ":macros",
         ":status",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/types:span",
-        "@tsl//tsl/platform",
     ],
 )
 
@@ -803,7 +796,6 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//tsl/platform",
         "@tsl//tsl/platform:bfloat16",
         "@tsl//tsl/platform:ml_dtypes",
         "@tsl//tsl/platform:tstring",
@@ -896,8 +888,6 @@ cc_library(
     textual_hdrs = ["resource_loader.h"],
     deps = [
         ":logging",
-        ":test",
-        "@tsl//tsl/platform",
         "@tsl//tsl/platform:path",
     ] + if_oss(["@bazel_tools//tools/cpp/runfiles"]),
 )
