@@ -331,6 +331,24 @@ xla_test(
 )
 
 onednn_cc_test(
+    name = "onednn_float_support_test",
+    srcs = ["onednn_float_support_test.cc"],
+    copts = tsl_copts(),
+    deps = [
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/transforms/simplifiers:float_normalization",
+        "//xla/hlo/transforms/simplifiers:simplify_fp_conversions",
+        "//xla/service/cpu:onednn_float_support",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+onednn_cc_test(
     name = "onednn_memory_util_test",
     srcs = ["onednn_memory_util_test.cc"],
     copts = tsl_copts(),
