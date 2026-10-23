@@ -33,9 +33,12 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
+#include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
@@ -48,6 +51,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
@@ -60,6 +65,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/cuda/cuda_graph_annotation_registry.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
@@ -78,7 +84,11 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
+using ::testing::AnyOf;
+using ::testing::ElementsAreArray;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
+using ::testing::SizeIs;
 
 using MemoryAccess = BufferUse::MemoryAccess;
 using KernelArgsPacking = se::KernelLoaderSpec::KernelArgsPacking;
@@ -660,10 +670,13 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersDisabledDuringProfiling) {
                        CommandExecutor::Create(std::move(commands), serialize));
 
   constexpr bool kProfileCommandBuffersEnabled = false;
+  CommandBufferThunkOptions options;
+  options.enable_command_buffers_during_profiling =
+      kProfileCommandBuffersEnabled;
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo(),
                            /*devices_in_process=*/1, std::move(seq_thunks),
-                           kProfileCommandBuffersEnabled);
+                           options);
 
   ServiceExecutableRunOptions run_options;
   stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
@@ -718,10 +731,13 @@ TEST(CommandBufferThunkTest, Memset32CmdCommandBuffersEnabledDuringProfiling) {
                        CommandExecutor::Create(std::move(commands), serialize));
 
   constexpr bool kProfileCommandBuffersEnabled = true;
+  CommandBufferThunkOptions options;
+  options.enable_command_buffers_during_profiling =
+      kProfileCommandBuffersEnabled;
   // Construct a thunk with command sequence.
   CommandBufferThunk thunk(std::move(executor), Thunk::ThunkInfo(),
                            /*devices_in_process=*/1, std::move(seq_thunks),
-                           kProfileCommandBuffersEnabled);
+                           options);
 
   ServiceExecutableRunOptions run_options;
   stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
@@ -1712,6 +1728,147 @@ TEST(CommandBufferThunkTest, EvictsAndReRecordsCommandBuffer) {
   std::vector<int32_t> result(kLength, 0);
   ASSERT_OK(stream->Memcpy(result.data(), b, kByteLength));
   EXPECT_EQ(result, std::vector<int32_t>(kLength, 42));
+}
+
+namespace {
+
+// Builds a command buffer thunk with a single device-to-device copy annotated
+// as `copy.1`.
+absl::StatusOr<std::unique_ptr<CommandBufferThunk>> MakeTelemetryTestThunk(
+    const BufferAllocation& alloc_a, const BufferAllocation& alloc_b,
+    int64_t byte_length, bool telemetry_enabled) {
+  CommandSequence commands;
+  Thunk::ThunkInfo info;
+  info.profile_annotation = "copy.1";
+  commands.Emplace<DeviceToDeviceCopyThunk>(
+      info,
+      ShapedSlice{BufferAllocation::Slice(&alloc_a, 0, byte_length),
+                  ShapeUtil::MakeShape(S32, {4})},
+      ShapedSlice{BufferAllocation::Slice(&alloc_b, 0, byte_length),
+                  ShapeUtil::MakeShape(S32, {4})},
+      byte_length);
+  ABSL_ASSIGN_OR_RETURN(
+      CommandExecutor executor,
+      CommandExecutor::Create(std::move(commands), serialize));
+  CommandBufferThunkOptions options;
+  options.enable_command_buffer_telemetry = telemetry_enabled;
+  return std::make_unique<CommandBufferThunk>(
+      std::move(executor), Thunk::ThunkInfo{}, /*devices_in_process=*/1,
+      /*thunks=*/nullptr, options);
+}
+
+}  // namespace
+
+TEST(CommandBufferThunkTest, TelemetryRegistersAnnotations) {
+  using Registry = stream_executor::gpu::CudaGraphAnnotationRegistry;
+  se::StreamExecutor* stream_executor = GpuExecutor();
+  const auto& desc = stream_executor->GetDeviceDescription();
+  if (Registry::SelectTelemetryStrategy(
+          desc.compile_time_toolkit_version(), desc.driver_version(),
+          desc.runtime_version()) == Registry::TelemetryStrategy::kDisabled) {
+    GTEST_SKIP() << "Telemetry requires CUDA 13.2+";
+  }
+
+  Registry& registry = Registry::Default();
+  registry.ClearForTesting();
+
+  // Installs module annotations, as `GpuExecutable` does, so the recorded
+  // annotation carries the module's `program_id` and the instruction's
+  // `hlo_op`.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(R"hlo(
+    HloModule telemetry_module
+
+    ENTRY main {
+      p0 = s32[4] parameter(0)
+      ROOT copy.1 = s32[4] copy(p0)
+    }
+  )hlo"));
+  ModuleAnnotations module_annotations(*module);
+  ScopedModuleAnnotations scoped_module_annotations(&module_annotations);
+
+  ASSERT_OK_AND_ASSIGN(auto stream, stream_executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(OwningExecutableSource source, ExecutableSource());
+
+  constexpr int64_t length = 4;
+  constexpr int64_t byte_length = sizeof(int32_t) * length;
+  BufferAllocation alloc_a(/*index=*/0, byte_length, /*color=*/0);
+  BufferAllocation alloc_b(/*index=*/1, byte_length, /*color=*/0);
+
+  se::DeviceAddress<int32_t> a =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  se::DeviceAddress<int32_t> b =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  se::DeviceAddress<int32_t> c =
+      stream_executor->AllocateArray<int32_t>(length, 0);
+  stream_executor::StreamExecutorAddressAllocator allocator(stream_executor);
+  ServiceExecutableRunOptions run_options;
+  BufferAllocations allocations({a, b}, 0, &allocator);
+  Thunk::ExecuteParams params =
+      CreateExecuteParams(run_options, allocations, stream.get());
+  Thunk::InitializeParams initialize_params{
+      stream_executor, static_cast<Thunk::ExecutableSource>(source),
+      &allocations, stream.get()};
+  initialize_params.persistent_alloc_indices =
+      absl::Span<const BufferAllocation::Index>();
+
+  // Records in `Initialize`, then executes, then forces an update by moving
+  // allocation #1 to another buffer.
+  auto initialize_execute_update = [&](CommandBufferThunk& thunk) {
+    allocations = BufferAllocations({a, b}, 0, &allocator);
+    ASSERT_OK(thunk.Initialize(initialize_params));
+    ASSERT_OK(thunk.ExecuteOnStream(params));
+    allocations = BufferAllocations({a, c}, 0, &allocator);
+    ASSERT_OK(thunk.ExecuteOnStream(params));
+    ASSERT_OK(stream->BlockHostUntilDone());
+  };
+
+  // 1. Telemetry off: nothing is registered.
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBufferThunk> thunk,
+                         MakeTelemetryTestThunk(alloc_a, alloc_b, byte_length,
+                                                /*telemetry_enabled=*/false));
+    initialize_execute_update(*thunk);
+    EXPECT_TRUE(registry.empty());
+  }
+
+  // 2. Telemetry on. The thunk, and so its graphs, stay alive while the
+  // registry is checked: their entries are removed asynchronously after the
+  // graphs are destroyed.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBufferThunk> thunk,
+                       MakeTelemetryTestThunk(alloc_a, alloc_b, byte_length,
+                                              /*telemetry_enabled=*/true));
+  allocations = BufferAllocations({a, b}, 0, &allocator);
+  ASSERT_OK(thunk->Initialize(initialize_params));
+  EXPECT_GE(registry.GetStats().live_nodes, 1);
+  const std::vector<std::string> recorded =
+      registry.GetNodeAnnotationsForTesting(Registry::KeySpace::kTemplateGraph);
+  ASSERT_THAT(recorded, SizeIs(1));
+  EXPECT_THAT(recorded[0], HasSubstr("program_id="));
+  EXPECT_THAT(recorded[0], HasSubstr("hlo_op=copy.1"));
+
+  // Executing and then updating the command buffer keeps exactly one
+  // annotation for the node.
+  ASSERT_OK(thunk->ExecuteOnStream(params));
+  allocations = BufferAllocations({a, c}, 0, &allocator);
+  ASSERT_OK(thunk->ExecuteOnStream(params));
+  ASSERT_OK(stream->BlockHostUntilDone());
+  EXPECT_THAT(
+      registry.GetNodeAnnotationsForTesting(Registry::KeySpace::kTemplateGraph),
+      ElementsAreArray(recorded));
+  // On CUDA 13.2-13.3 the executable graph's node has the same annotation.
+  EXPECT_THAT(registry.GetNodeAnnotationsForTesting(
+                  Registry::KeySpace::kPre134ExecGraph),
+              AnyOf(IsEmpty(), ElementsAreArray(recorded)));
+
+  // Destroying the thunk destroys its graphs; CUDA then removes their entries
+  // on a driver thread.
+  thunk.reset();
+  const absl::Time deadline = absl::Now() + absl::Seconds(10);
+  while (!registry.empty() && absl::Now() < deadline) {
+    absl::SleepFor(absl::Milliseconds(10));
+  }
+  EXPECT_TRUE(registry.empty());
 }
 
 }  // namespace xla::gpu
