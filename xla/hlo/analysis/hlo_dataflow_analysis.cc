@@ -2045,18 +2045,24 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
   }
 
   if (user->opcode() == HloOpcode::kFusion) {
-    HloInstruction* fusion_param =
-        user->fused_parameter(user->operand_index(operand));
-    const HloValue& fusion_param_value =
-        GetValueDefinedAt(fusion_param, operand_index);
-
     if (user->IsLoopFusion() || user->IsInputFusion()) {
-      return AreTransitiveUsesElementwiseOrTuple(fusion_param);
+      return absl::c_all_of(user->OperandIndices(operand),
+                            [&](int64_t operand_number) {
+                              return AreTransitiveUsesElementwiseOrTuple(
+                                  user->fused_parameter(operand_number));
+                            });
     }
 
     if (user->IsOutputFusion() &&
         user->fused_expression_root()->opcode() == HloOpcode::kAdd) {
       // Output fusion with kAdd fused root.
+      const auto operand_indices = user->OperandIndices(operand);
+      if (operand_indices.size() != 1) {
+        return false;
+      }
+      HloInstruction* fusion_param = user->fused_parameter(operand_indices[0]);
+      const HloValue& fusion_param_value =
+          GetValueDefinedAt(fusion_param, operand_index);
 
       // Check if one operand of kAdd fused root is kDot or kConvolution.
       auto* add = user->fused_expression_root();
@@ -2153,7 +2159,10 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
 
   // Loop fusions that contain transposing copies won't reach here as they have
   // different layouts, which fails the check in the beginning of this function.
-  return user->IsElementwiseOnOperand(user->operand_index(operand));
+  return absl::c_all_of(user->OperandIndices(operand),
+                        [&](int64_t operand_number) {
+                          return user->IsElementwiseOnOperand(operand_number);
+                        });
 }
 
 absl::Status HloDataflowPropagation::ForEachCallBoundaryWithStatus(
