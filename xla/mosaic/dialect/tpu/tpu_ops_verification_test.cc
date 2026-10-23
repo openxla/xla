@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -2234,6 +2235,72 @@ TEST_F(TpuOpsVerificationTest, ReduceOpReductionKindElementType) {
                                                        ReductionKind::kMaxF))),
       StatusIs(_, HasSubstr("maxf and minf reductions require float element "
                             "type")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetVerificationWorks) {
+  Value src = ConstantI1Vector(/*shape=*/{4, 8}, /*values=*/{true});
+  Type dst = VectorType::get(/*shape=*/{4, 1}, /*type=*/i32());
+
+  ASSERT_OK(VerifyOp(Create<ReduceOp>(dst, src, ArrayRef<int64_t>{1},
+                                      ReductionKind::kFindFirstSet)));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetDimensionOverflowsIndices) {
+  // The not found result equals the dimension size, which must fit in i32.
+  const int64_t max_size = std::numeric_limits<int32_t>::max();
+  Value src_valid =
+      ConstantI1Vector(/*shape=*/{2, max_size}, /*values=*/{true});
+  Type dst = VectorType::get(/*shape=*/{2, 1}, /*type=*/i32());
+
+  ASSERT_OK(VerifyOp(Create<ReduceOp>(dst, src_valid, ArrayRef<int64_t>{1},
+                                      ReductionKind::kFindFirstSet)));
+
+  Value src_overflow =
+      ConstantI1Vector(/*shape=*/{2, max_size + 1}, /*values=*/{true});
+  ASSERT_THAT(
+      VerifyOp(Create<ReduceOp>(dst, src_overflow, ArrayRef<int64_t>{1},
+                                ReductionKind::kFindFirstSet)),
+      StatusIs(
+          _, HasSubstr("Reduction dimension size (2147483648) exceeds the "
+                       "maximum find_first_set result 2147483647 representable "
+                       "in i32")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetInvalidInputType) {
+  Value src = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Type dst = VectorType::get(/*shape=*/{1}, /*type=*/i32());
+
+  ASSERT_THAT(VerifyOp(Create<ReduceOp>(dst, src, ArrayRef<int64_t>{0},
+                                        ReductionKind::kFindFirstSet)),
+              StatusIs(_, HasSubstr("find_first_set requires i1 input and i32 "
+                                    "output element types")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetInvalidOutputType) {
+  Value src = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
+  Type dst = VectorType::get(/*shape=*/{1}, /*type=*/builder().getI1Type());
+
+  ASSERT_THAT(VerifyOp(Create<ReduceOp>(dst, src, ArrayRef<int64_t>{0},
+                                        ReductionKind::kFindFirstSet)),
+              StatusIs(_, HasSubstr("find_first_set requires i1 input and i32 "
+                                    "output element types")));
+}
+
+TEST_F(TpuOpsVerificationTest, ReduceFindFirstSetInvalidDimensionsCount) {
+  Value src = ConstantI1Vector(/*shape=*/{4, 8}, /*values=*/{true});
+
+  ASSERT_THAT(
+      VerifyOp(Create<ReduceOp>(VectorType::get(/*shape=*/{4, 8}, i32()), src,
+                                ArrayRef<int64_t>{},
+                                ReductionKind::kFindFirstSet)),
+      StatusIs(_, HasSubstr("find_first_set requires a single reduction "
+                            "dimension")));
+  ASSERT_THAT(
+      VerifyOp(Create<ReduceOp>(VectorType::get(/*shape=*/{1, 1}, i32()), src,
+                                ArrayRef<int64_t>{0, 1},
+                                ReductionKind::kFindFirstSet)),
+      StatusIs(_, HasSubstr("find_first_set requires a single reduction "
+                            "dimension")));
 }
 
 TEST_F(TpuOpsVerificationTest, ConvOpVerificationWorks) {
