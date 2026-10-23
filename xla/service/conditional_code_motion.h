@@ -242,8 +242,13 @@ class ConditionalCodeMotion : public HloModulePass {
   absl::StatusOr<bool> MoveInstructionOut(
       HloInstruction* conditional, std::vector<Boundary>& to_move_out,
       std::vector<Boundary>& new_boundaries);
-  absl::StatusOr<bool> MoveUserInstructionsIn(
-      HloInstruction* conditional, std::vector<Boundary>& to_move_in);
+  // The pending result of a conditional while groups of its users move into
+  // its branches; defined with MoveUserInstructionsIn.
+  struct PendingRoots;
+  absl::StatusOr<bool> MoveUserInstructionsIn(HloInstruction* conditional,
+                                              std::vector<Boundary>& to_move_in,
+                                              bool last_group,
+                                              PendingRoots& pending);
   absl::StatusOr<bool> MoveOperandInstructionsIn(
       HloInstruction* conditional, std::vector<Boundary>& to_move_in);
   void SetDefaultMoveConfig();

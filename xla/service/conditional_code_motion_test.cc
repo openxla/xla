@@ -2682,6 +2682,358 @@ ENTRY main {
   EXPECT_OK(verifier().Run(module.get()).status());
 }
 
+// Two groups of users move into the same conditional. The elements they
+// replace leave the result, the kept element moves to the front, the moved
+// values follow in group order, and the OriginalValues of the conditional and
+// of its get-tuple-element users describe the new layout. The kept element has
+// a user after the root in its user list; the rebuilt root takes the old
+// root's slot in that list, as when every group rebuilt the roots.
+TEST_F(ConditionalCodeMotionTest, TwoUserGroupsMoveIntoOneConditional) {
+  absl::string_view hlo_string = R"(
+HloModule TestModule
+
+on_true {
+  arg_tuple.1 = (f32[10]) parameter(0)
+  gte.1 = f32[10] get-tuple-element(arg_tuple.1), index=0
+  negate.1 = f32[10] negate(gte.1)
+  exponential.1 = f32[10] exponential(gte.1)
+  abs.1 = f32[10] abs(gte.1)
+  ROOT tuple.1 = (f32[10], f32[10], f32[10]) tuple(negate.1, exponential.1, abs.1)
+}
+
+on_false {
+  arg_tuple.2 = (f32[10]) parameter(0)
+  gte.2 = f32[10] get-tuple-element(arg_tuple.2), index=0
+  abs.2 = f32[10] abs(gte.2)
+  negate.2 = f32[10] negate(gte.2)
+  exponential.2 = f32[10] exponential(gte.2)
+  ROOT tuple.2 = (f32[10], f32[10], f32[10]) tuple(abs.2, negate.2, exponential.2)
+}
+
+ENTRY main {
+  pred.1 = pred[] parameter(0)
+  tuple.1 = (f32[10]) parameter(1)
+  tuple.2 = (f32[10]) parameter(2)
+  conditional = (f32[10], f32[10], f32[10]) conditional(pred.1, tuple.1, tuple.2), true_computation=on_true, false_computation=on_false
+  gte.a = f32[10] get-tuple-element(conditional), index=0
+  mul.a = f32[10] multiply(gte.a, gte.a)
+  gte.b = f32[10] get-tuple-element(conditional), index=1
+  gte.c = f32[10] get-tuple-element(conditional), index=2
+  mul.c = f32[10] multiply(gte.c, gte.c)
+  ROOT result = (f32[10], f32[10], f32[10]) tuple(mul.a, gte.b, mul.c)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  // Element 2 of on_true becomes tanh(exponential.1): the kept element
+  // exponential.1 gets a second user, after the root.
+  HloInstruction* exponential = FindInstruction(module.get(), "exponential.1");
+  ASSERT_NE(exponential, nullptr);
+  HloInstruction* tanh =
+      exponential->parent()->AddInstruction(HloInstruction::CreateUnary(
+          exponential->shape(), HloOpcode::kTanh, exponential));
+  ASSERT_OK(
+      exponential->parent()->root_instruction()->ReplaceOperandWith(2, tanh));
+  for (HloComputation* comp : module->computations()) {
+    for (HloInstruction* inst : comp->instructions()) {
+      inst->set_original_value(OriginalValue::CreateFromInstruction(inst));
+    }
+  }
+
+  ConditionalCodeMotion pass(true, true);
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  const HloInstruction* conditional =
+      FindInstruction(module.get(), "conditional");
+  ASSERT_NE(conditional, nullptr);
+  EXPECT_EQ(conditional->shape().tuple_shapes().size(), 3);
+  const HloInstruction* on_true_root =
+      conditional->branch_computation(0)->root_instruction();
+  EXPECT_THAT(on_true_root,
+              op::Tuple(op::Exp(), op::Multiply(op::Negate(), op::Negate()),
+                        op::Multiply(op::Tanh(), op::Tanh())));
+  EXPECT_THAT(exponential->users(), ::testing::ElementsAre(on_true_root, tanh));
+  EXPECT_THAT(conditional->branch_computation(1)->root_instruction(),
+              op::Tuple(op::Negate(), op::Multiply(op::Abs(), op::Abs()),
+                        op::Multiply(op::Exp(), op::Exp())));
+  EXPECT_EQ(conditional->original_value()->ToString(),
+            R"(({"conditional" {1}}, {"mul.a"}, {"mul.c"}))");
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_THAT(root, op::Tuple(op::GetTupleElement(conditional, 1),
+                              op::GetTupleElement(conditional, 0),
+                              op::GetTupleElement(conditional, 2)));
+  EXPECT_EQ(root->operand(0)->original_value()->ToString(), R"({"mul.a"})");
+  EXPECT_EQ(root->operand(1)->original_value()->ToString(),
+            R"({"conditional" {1}})");
+  EXPECT_EQ(root->operand(2)->original_value()->ToString(), R"({"mul.c"})");
+}
+
+// A value moved in by the first of two groups is used by later clones inside
+// the branches. The branch root stays its first user, whether the branch root
+// was a tuple instruction or a parameter, as when every group rebuilt the
+// roots.
+TEST_F(ConditionalCodeMotionTest, MovedValuesKeepBranchRootAsFirstUser) {
+  absl::string_view hlo_string = R"(
+HloModule TestModule
+
+on_true {
+  arg_tuple.1 = (f32[10]) parameter(0)
+  gte.1 = f32[10] get-tuple-element(arg_tuple.1), index=0
+  negate.1 = f32[10] negate(gte.1)
+  exponential.1 = f32[10] exponential(gte.1)
+  abs.1 = f32[10] abs(gte.1)
+  ROOT tuple.1 = (f32[10], f32[10], f32[10]) tuple(negate.1, exponential.1, abs.1)
+}
+
+on_false {
+  ROOT arg_tuple.2 = (f32[10], f32[10], f32[10]) parameter(0)
+}
+
+ENTRY main {
+  pred.1 = pred[] parameter(0)
+  tuple.1 = (f32[10]) parameter(1)
+  tuple.2 = (f32[10], f32[10], f32[10]) parameter(2)
+  conditional = (f32[10], f32[10], f32[10]) conditional(pred.1, tuple.1, tuple.2), true_computation=on_true, false_computation=on_false
+  gte.a = f32[10] get-tuple-element(conditional), index=0
+  neg.a = f32[10] negate(gte.a)
+  mul.a = f32[10] multiply(neg.a, neg.a)
+  exp.a = f32[10] exponential(neg.a)
+  gte.b = f32[10] get-tuple-element(conditional), index=1
+  gte.c = f32[10] get-tuple-element(conditional), index=2
+  mul.c = f32[10] multiply(gte.c, gte.c)
+  ROOT result = (f32[10], f32[10], f32[10], f32[10]) tuple(mul.a, exp.a, gte.b, mul.c)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ConditionalCodeMotion pass(true, true);
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  const HloInstruction* conditional =
+      FindInstruction(module.get(), "conditional");
+  ASSERT_NE(conditional, nullptr);
+  EXPECT_THAT(conditional->branch_computation(0)->root_instruction(),
+              op::Tuple(op::Exp(), op::Negate(op::Negate()), op::Multiply(),
+                        op::Exp(), op::Multiply(op::Abs(), op::Abs())));
+  EXPECT_THAT(conditional->branch_computation(1)->root_instruction(),
+              op::Tuple(op::GetTupleElement(op::Parameter(), 1),
+                        op::Negate(op::GetTupleElement(op::Parameter(), 0)),
+                        op::Multiply(), op::Exp(),
+                        op::Multiply(op::GetTupleElement(op::Parameter(), 2),
+                                     op::GetTupleElement(op::Parameter(), 2))));
+  for (int i = 0; i < 2; ++i) {
+    const HloInstruction* root =
+        conditional->branch_computation(i)->root_instruction();
+    const HloInstruction* negate = root->operand(1);
+    EXPECT_THAT(negate->users(), ::testing::ElementsAre(root, root->operand(2),
+                                                        root->operand(3)));
+    EXPECT_THAT(root->operand(0)->users(), ::testing::ElementsAre(root));
+  }
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Tuple(op::GetTupleElement(conditional, 2),
+                        op::GetTupleElement(conditional, 3),
+                        op::GetTupleElement(conditional, 0),
+                        op::GetTupleElement(conditional, 4)));
+}
+
+// The conditional and the users the first group moves in have no
+// OriginalValue; a value the second group moves in has one. The
+// get-tuple-element users reset by the first group keep nullptr, since the
+// result was unknown then, and the get-tuple-element of a value moved in by
+// the second group keeps the OriginalValue of that value.
+TEST_F(ConditionalCodeMotionTest, ResetGetTupleElementsKeepUnknownOrigin) {
+  absl::string_view hlo_string = R"(
+HloModule TestModule
+
+on_true {
+  arg_tuple.1 = (f32[10]) parameter(0)
+  gte.1 = f32[10] get-tuple-element(arg_tuple.1), index=0
+  negate.1 = f32[10] negate(gte.1)
+  exponential.1 = f32[10] exponential(gte.1)
+  abs.1 = f32[10] abs(gte.1)
+  ROOT tuple.1 = (f32[10], f32[10], f32[10]) tuple(negate.1, exponential.1, abs.1)
+}
+
+on_false {
+  arg_tuple.2 = (f32[10]) parameter(0)
+  gte.2 = f32[10] get-tuple-element(arg_tuple.2), index=0
+  abs.2 = f32[10] abs(gte.2)
+  negate.2 = f32[10] negate(gte.2)
+  exponential.2 = f32[10] exponential(gte.2)
+  ROOT tuple.2 = (f32[10], f32[10], f32[10]) tuple(abs.2, negate.2, exponential.2)
+}
+
+ENTRY main {
+  pred.1 = pred[] parameter(0)
+  tuple.1 = (f32[10]) parameter(1)
+  tuple.2 = (f32[10]) parameter(2)
+  conditional = (f32[10], f32[10], f32[10]) conditional(pred.1, tuple.1, tuple.2), true_computation=on_true, false_computation=on_false
+  gte.a = f32[10] get-tuple-element(conditional), index=0
+  mul.a = f32[10] multiply(gte.a, gte.a)
+  gte.b = f32[10] get-tuple-element(conditional), index=1
+  gte.c = f32[10] get-tuple-element(conditional), index=2
+  mul.c = f32[10] multiply(gte.c, gte.c)
+  neg.c = f32[10] negate(mul.c)
+  ROOT result = (f32[10], f32[10], f32[10], f32[10], f32[10]) tuple(mul.a, gte.b, mul.c, neg.c, gte.c)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  HloInstruction* mul_c = FindInstruction(module.get(), "mul.c");
+  ASSERT_NE(mul_c, nullptr);
+  mul_c->set_original_value(OriginalValue::CreateFromInstruction(mul_c));
+
+  ConditionalCodeMotion pass(true, true);
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  const HloInstruction* conditional =
+      FindInstruction(module.get(), "conditional");
+  ASSERT_NE(conditional, nullptr);
+  ASSERT_NE(conditional->original_value(), nullptr);
+  EXPECT_EQ(conditional->original_value()->ToString(),
+            R"(({}, {}, {}, {"mul.c"}, {}))");
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_THAT(root, op::Tuple(op::GetTupleElement(conditional, 2),
+                              op::GetTupleElement(conditional, 0),
+                              op::GetTupleElement(conditional, 3),
+                              op::GetTupleElement(conditional, 4),
+                              op::GetTupleElement(conditional, 1)));
+  EXPECT_EQ(root->operand(0)->original_value(), nullptr);
+  EXPECT_EQ(root->operand(1)->original_value(), nullptr);
+  ASSERT_NE(root->operand(2)->original_value(), nullptr);
+  EXPECT_EQ(root->operand(2)->original_value()->ToString(), R"({"mul.c"})");
+  EXPECT_EQ(root->operand(3)->original_value(), nullptr);
+  EXPECT_EQ(root->operand(4)->original_value(), nullptr);
+}
+
+// Both elements of the result are replaced by values without an
+// OriginalValue. The conditional had one, so it keeps one whose elements are
+// unknown, as when every group rebuilt the OriginalValue from the previous
+// one. Its get-tuple-element users are reset from that OriginalValue and get
+// none: since cl/994170931 CreateFromInstruction returns nullptr for a
+// get-tuple-element of an unknown element.
+TEST_F(ConditionalCodeMotionTest, ReplacedElementsKeepUnknownOriginalValue) {
+  absl::string_view hlo_string = R"(
+HloModule TestModule
+
+on_true {
+  arg_tuple.1 = (f32[10]) parameter(0)
+  gte.1 = f32[10] get-tuple-element(arg_tuple.1), index=0
+  negate.1 = f32[10] negate(gte.1)
+  exponential.1 = f32[10] exponential(gte.1)
+  ROOT tuple.1 = (f32[10], f32[10]) tuple(negate.1, exponential.1)
+}
+
+on_false {
+  arg_tuple.2 = (f32[10]) parameter(0)
+  gte.2 = f32[10] get-tuple-element(arg_tuple.2), index=0
+  abs.2 = f32[10] abs(gte.2)
+  negate.2 = f32[10] negate(gte.2)
+  ROOT tuple.2 = (f32[10], f32[10]) tuple(abs.2, negate.2)
+}
+
+ENTRY main {
+  pred.1 = pred[] parameter(0)
+  tuple.1 = (f32[10]) parameter(1)
+  tuple.2 = (f32[10]) parameter(2)
+  conditional = (f32[10], f32[10]) conditional(pred.1, tuple.1, tuple.2), true_computation=on_true, false_computation=on_false
+  gte.a = f32[10] get-tuple-element(conditional), index=0
+  mul.a = f32[10] multiply(gte.a, gte.a)
+  gte.b = f32[10] get-tuple-element(conditional), index=1
+  mul.b = f32[10] multiply(gte.b, gte.b)
+  ROOT result = (f32[10], f32[10]) tuple(mul.b, mul.a)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  for (HloComputation* comp : module->computations()) {
+    for (HloInstruction* inst : comp->instructions()) {
+      if (inst->name() != "mul.a" && inst->name() != "mul.b") {
+        inst->set_original_value(OriginalValue::CreateFromInstruction(inst));
+      }
+    }
+  }
+
+  ConditionalCodeMotion pass(true, true);
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  const HloInstruction* conditional =
+      FindInstruction(module.get(), "conditional");
+  ASSERT_NE(conditional, nullptr);
+  EXPECT_THAT(conditional->branch_computation(0)->root_instruction(),
+              op::Tuple(op::Multiply(op::Negate(), op::Negate()),
+                        op::Multiply(op::Exp(), op::Exp())));
+  ASSERT_NE(conditional->original_value(), nullptr);
+  EXPECT_EQ(conditional->original_value()->ToString(), R"(({}, {}))");
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_THAT(root, op::Tuple(op::GetTupleElement(conditional, 1),
+                              op::GetTupleElement(conditional, 0)));
+  for (const HloInstruction* gte : root->operands()) {
+    EXPECT_EQ(gte->original_value(), nullptr);
+  }
+}
+
+// Two get-tuple-elements read the same element of the conditional and each
+// feeds one user that moves in. Neither replaces the element: the moved values
+// are appended and both users keep reading the original element.
+TEST_F(ConditionalCodeMotionTest, AliasedGetTupleElementsKeepTheElement) {
+  absl::string_view hlo_string = R"(
+HloModule AliasedGetTupleElementsKeepTheElement
+
+on_true {
+  arg.1 = (f32[10]) parameter(0)
+  gte.1 = f32[10] get-tuple-element(arg.1), index=0
+  neg.1 = f32[10] negate(gte.1)
+  exp.1 = f32[10] exponential(gte.1)
+  ROOT tuple.1 = (f32[10], f32[10]) tuple(neg.1, exp.1)
+}
+
+on_false {
+  arg.2 = (f32[10]) parameter(0)
+  gte.2 = f32[10] get-tuple-element(arg.2), index=0
+  abs.2 = f32[10] abs(gte.2)
+  neg.2 = f32[10] negate(gte.2)
+  ROOT tuple.2 = (f32[10], f32[10]) tuple(abs.2, neg.2)
+}
+
+ENTRY main {
+  pred.1 = pred[] parameter(0)
+  p1 = (f32[10]) parameter(1)
+  p2 = (f32[10]) parameter(2)
+  conditional = (f32[10], f32[10]) conditional(pred.1, p1, p2), true_computation=on_true, false_computation=on_false
+  gte.0 = f32[10] get-tuple-element(conditional), index=0
+  gte.1a = f32[10] get-tuple-element(conditional), index=1
+  mul.1a = f32[10] multiply(gte.1a, gte.1a)
+  gte.1b = f32[10] get-tuple-element(conditional), index=1
+  add.1b = f32[10] add(gte.1b, gte.1b)
+  ROOT result = (f32[10], f32[10], f32[10]) tuple(gte.0, mul.1a, add.1b)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ConditionalCodeMotion pass(true, true);
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  const HloInstruction* conditional =
+      FindInstruction(module.get(), "conditional");
+  ASSERT_NE(conditional, nullptr);
+  EXPECT_THAT(conditional->branch_computation(0)->root_instruction(),
+              op::Tuple(op::Negate(), op::Multiply(op::Exp(), op::Exp()),
+                        op::Add(op::Exp(), op::Exp())));
+  EXPECT_THAT(conditional->branch_computation(1)->root_instruction(),
+              op::Tuple(op::Abs(), op::Multiply(op::Negate(), op::Negate()),
+                        op::Add(op::Negate(), op::Negate())));
+  // The result tuple of the three get-tuple-elements folds into the
+  // conditional itself.
+  EXPECT_EQ(module->entry_computation()->root_instruction(), conditional);
+}
+
 TEST_F(ConditionalCodeMotionTest, OriginalValuePreservedOnMoveOperandIn) {
   absl::string_view hlo_string = R"(
 HloModule TestModule
