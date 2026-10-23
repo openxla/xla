@@ -252,20 +252,12 @@ bool IsGuaranteedDivisible(mlir::Value value, int64_t divisor) {
 
 bool IsGuaranteedInBounds(mlir::Value value, int64_t tile_size,
                           int64_t original_shape) {
-  if (auto const_op = value.getDefiningOp<arith::ConstantIndexOp>()) {
-    return const_op.value() >= 0 &&
-           const_op.value() + tile_size <= original_shape;
+  if (auto apply_indexing = value.getDefiningOp<::xla::ApplyIndexingOp>();
+      apply_indexing && apply_indexing.getIndexingMap().GetNumResults() != 1) {
+    return false;
   }
-  if (auto apply_indexing = value.getDefiningOp<::xla::ApplyIndexingOp>()) {
-    IndexingMap indexing_map = apply_indexing.getIndexingMap();
-    if (indexing_map.GetNumResults() != 1) {
-      return false;
-    }
-
-    // Compute the maximum possible offset for the given indexing map.
-    Interval range = indexing_map.GetRangeEvaluator().ComputeExpressionRange(
-        indexing_map.GetSymbolicMap().GetResult(0));
-    return range.lower >= 0 && range.upper + tile_size <= original_shape;
+  if (std::optional<Interval> range = ::xla::GetRange(value)) {
+    return range->lower >= 0 && range->upper + tile_size <= original_shape;
   }
   return false;
 }

@@ -263,7 +263,7 @@ func.func @overflow_constant_offset_unchanged(%arg0: !tt.ptr<f32>) -> tensor<64x
 // CHECK-LABEL:  func.func @apply_indexing_offset
 // CHECK-SAME:  (%[[ARG0:.*]]: !tt.ptr<f32>, %[[PID:.*]]: index) -> tensor<64x2xf32> {
 // CHECK-NOT:   arith.muli
-// CHECK:        %[[OFFSET:.*]] = xla.apply_indexing #[[$MAP]](%[[PID]])
+// CHECK:        %[[OFFSET:.*]] = xla.apply_indexing #[[$MAP]](%[[PID]]) {xla.range = [0 : index, 896 : index]}
 // CHECK:        %[[EXTRACT:.*]] = triton_xla.extract from %[[ARG0]]
 // CHECK-SAME:       as memref<2048xf32, #xtile.layout<[0]>>
 // CHECK-SAME:       [%[[OFFSET]]] [128] [1] : tensor<128xf32>
@@ -271,7 +271,7 @@ func.func @overflow_constant_offset_unchanged(%arg0: !tt.ptr<f32>) -> tensor<64x
 // CHECK:        return %[[RESHAPE]] : tensor<64x2xf32>
 #map = #xla.indexing_map<"(d0) -> (d0 * 64), domain: d0 in [0, 15]">
 func.func @apply_indexing_offset(%arg0: !tt.ptr<f32>, %pid: index) -> tensor<64x2xf32> {
-  %0 = xla.apply_indexing #map(%pid)
+  %0 = xla.apply_indexing #map(%pid) {xla.range = [0 : index, 448 : index]}
   %1 = triton_xla.extract from %arg0
       as memref<1024x2xf32, #xtile.layout<[1, 0]>>
       [%0, 0] [64, 2] [1, 1] : tensor<64x2xf32>
