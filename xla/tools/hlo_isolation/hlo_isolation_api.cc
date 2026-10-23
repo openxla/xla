@@ -98,6 +98,8 @@ namespace {
 constexpr absl::string_view kResultsFilename =
     "hlo_isolation_test_results.pbtxt";
 
+constexpr absl::string_view kSparseCoreThread = "sparsecore";
+
 absl::Status InitIsolatorOptions(ModuleIsolationOptions& options) {
   if (!options.run_module_fn) {
     options.run_module_fn =
@@ -643,6 +645,19 @@ bool RetryWithoutExcessPrecision(const HloModule& module,
 
 }  // namespace
 
+bool IsSparseCoreModule(const HloModule& module) {
+  for (const HloComputation* computation :
+       module.computations({HloInstruction::kMainExecutionThread})) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      if (instruction->opcode() == HloOpcode::kAsyncStart &&
+          instruction->async_execution_thread() == kSparseCoreThread) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 std::vector<HloOutputCallback> CreateDumpHloOutputCallbacks(
     HloModule* module, std::shared_ptr<ExpectedLiteralsMap> expected_literals,
     const std::function<void(absl::string_view, Literal*)>&
@@ -994,11 +1009,17 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
   // the fusion under test. When that (or a timeout) happens the defused
   // reference is simply unavailable for this module; it is not evidence of a
   // miscompile, so fall through to the interpreter reference instead.
-  std::unique_ptr<HloModule> defused_module = module.Clone("defused");
-  ABSL_RETURN_IF_ERROR(DefuseModule(defused_module.get()));
-  defused_output =
-      run_module(std::move(defused_module), test_runner, input_data);
-  if (!defused_output.ok()) {
+  //
+  // SparseCore can not lower arbitrary unfused ops, so a SparseCore module is
+  // never defused; the interpreter is its only reference.
+  const bool is_sc_module = IsSparseCoreModule(module);
+  if (!is_sc_module) {
+    std::unique_ptr<HloModule> defused_module = module.Clone("defused");
+    ABSL_RETURN_IF_ERROR(DefuseModule(defused_module.get()));
+    defused_output =
+        run_module(std::move(defused_module), test_runner, input_data);
+  }
+  if (!is_sc_module && !defused_output.ok()) {
     if (!absl::IsResourceExhausted(defused_output.status()) &&
         !absl::IsDeadlineExceeded(defused_output.status())) {
       return fail_runner("DEFUSED_TEST_RUNNER_FAILURE",
@@ -1068,10 +1089,16 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
   // TODO(b/524252856): with a pre-flight peak-memory estimate for the defused
   // module we could tell "too big for HBM but fine on the host" apart from
   // "too big for anything" and still use the interpreter for the former.
-  if (!defused_output.ok()) {
+  if (!is_sc_module && !defused_output.ok()) {
     LOG(WARNING) << "No usable reference for module: " << module.name();
     result.set_state(State::SKIPPED);
     result.set_reason("DEFUSED_REFERENCE_UNAVAILABLE");
+    return result;
+  }
+  if (is_sc_module && reference_runner == nullptr) {
+    LOG(WARNING) << "No reference for SparseCore module: " << module.name();
+    result.set_state(State::SKIPPED);
+    result.set_reason("REFERENCE_UNAVAILABLE");
     return result;
   }
 
@@ -1102,7 +1129,8 @@ absl::StatusOr<HloIsolationTestResult> RunIsolationTestOnModule(
       return result;
     }
 
-    if (options.enable_fusion_debugger) {
+    // TODO(b/527142533): Enable fusion debugger for SparseCore modules.
+    if (options.enable_fusion_debugger && !is_sc_module) {
       // If there was a mismatch then we should re-run the failing HLO module
       // with the fusion debugger enabled - to isolate the mismatch.
       // Run the reference runner again with despecialization to dump reference
