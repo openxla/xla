@@ -33,16 +33,14 @@ namespace gpu {
 // broadcasted operand if the broadcast operates on all the batch dimensions.
 //
 // This pattern matches the above case and removes the unnecessary broadcast.
-class GemmBroadcastFoldingRewriter : public HloModulePass {
+class GemmBroadcastFoldingRewriter : public HloComputationPass {
  public:
   absl::string_view name() const override {
     return "cublas-gemm-broadcast-folding-rewriter";
   }
 
  protected:
-  absl::StatusOr<bool> RunImpl(
-      HloModule* module,
-      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation) override;
 };
 
 }  // namespace gpu

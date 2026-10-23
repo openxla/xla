@@ -36,7 +36,7 @@ namespace xla::gpu {
 // Updates the scratch size of CUB sort custom calls to match the actual scratch
 // size. Unlike `EstimateCubSortScratchSize` this pass doesn't require the
 // device to be present. It looks up the scratch size in a bundled lookup table.
-class DevicelessEstimateCubSortScratchSize : public HloModulePass {
+class DevicelessEstimateCubSortScratchSize : public HloComputationPass {
  public:
   explicit DevicelessEstimateCubSortScratchSize(
       std::string platform_name, std::string device_name,
@@ -51,11 +51,7 @@ class DevicelessEstimateCubSortScratchSize : public HloModulePass {
 
  protected:
   absl::Status RunOnSortInstruction(HloCustomCallInstruction* custom_call);
-  absl::StatusOr<bool> RunOnComputation(HloComputation* computation);
-
-  absl::StatusOr<bool> RunImpl(
-      HloModule* module,
-      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation) override;
 
  private:
   absl::StatusOr<int64_t> CalculateDevicelessScratchSize(

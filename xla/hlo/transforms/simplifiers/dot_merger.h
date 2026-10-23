@@ -47,7 +47,7 @@ namespace xla {
 // z whose live range is the union of x and y's live ranges, so can lead to
 // increased memory pressure.  You probably only want to do this optimization on
 // "small" dots which cannot saturate your device when run alone.
-class DotMerger : public HloModulePass {
+class DotMerger : public HloComputationPass {
  public:
   explicit DotMerger(
       int64_t max_size_to_merge,
@@ -58,9 +58,7 @@ class DotMerger : public HloModulePass {
   absl::string_view name() const override { return "dot-merger"; }
 
  protected:
-  absl::StatusOr<bool> RunImpl(
-      HloModule* module,
-      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation) override;
 
  private:
   int64_t max_size_to_merge_;
