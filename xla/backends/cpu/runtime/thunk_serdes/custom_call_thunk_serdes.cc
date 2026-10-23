@@ -38,10 +38,26 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
+#if defined(XLA_ONEDNN) && defined(ENABLE_ONEDNN_ASYNC)
+#include "xla/backends/cpu/runtime/onednn/onednn_op_thunk.h"
+#include "xla/backends/cpu/runtime/thunk_serdes/onednn_custom_call_thunk_serdes.h"
+#endif  // XLA_ONEDNN && ENABLE_ONEDNN_ASYNC
+
 namespace xla::cpu {
 namespace {
 
 absl::Status CustomCallThunkToProto(const Thunk& thunk, ThunkProto& proto) {
+#if defined(XLA_ONEDNN) && defined(ENABLE_ONEDNN_ASYNC)
+  // If this is an OneDNN custom call, serialize it into the OneDNN custom call
+  // proto
+  if (const auto* onednn_custom_call_thunk =
+          dynamic_cast<const OneDnnOpThunk*>(&thunk)) {
+    return OneDnnCustomCallToProto(*onednn_custom_call_thunk,
+                                   proto.mutable_onednn_custom_call_thunk());
+  }
+#endif  // XLA_ONEDNN && ENABLE_ONEDNN_ASYNC
+
+  // Handle regular custom calls
   const auto& custom_call_thunk =
       absl::down_cast<const CustomCallThunk&>(thunk);
   CustomCallThunkProto* custom_call_proto = proto.mutable_custom_call_thunk();
@@ -78,6 +94,20 @@ absl::StatusOr<std::unique_ptr<Thunk>> CustomCallThunkFromProto(
     const HloModule* hlo_module,
     const std::vector<std::shared_ptr<Resource>>* resources) {
   ABSL_ASSIGN_OR_RETURN(Thunk::Info info, ThunkInfoFromProto(proto.info()));
+
+  // Check if this is an OneDNN custom call
+  if (proto.has_onednn_custom_call_thunk()) {
+#if defined(XLA_ONEDNN) && defined(ENABLE_ONEDNN_ASYNC)
+    return OneDnnCustomCallFromProto(proto.onednn_custom_call_thunk(),
+                                     std::move(info), buffer_allocations);
+#else
+    return absl::UnimplementedError(
+        "Cannot deserialize a OneDNN custom call thunk: XLA was built without "
+        "oneDNN async runtime support.");
+#endif  // XLA_ONEDNN && ENABLE_ONEDNN_ASYNC
+  }
+
+  // Handle regular custom calls
 
   CustomCallThunk::OpBuffers op_buffers;
   for (const ShapeBufferAllocationSliceProto& arg_buff_shape :
