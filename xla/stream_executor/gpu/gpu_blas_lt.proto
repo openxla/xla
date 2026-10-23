@@ -98,6 +98,26 @@ enum BlasLtEpilogueProto {
   EPILOGUE_BIAS_THEN_SILU_WITH_AUX = 11;
 }
 
+message CublasLtMatmulAlgorithmProto {
+  int32 algo_id = 1;
+  int32 tile_id = 2;
+  int32 split_k = 3;
+  int32 reduction_scheme = 4;
+  int32 cta_swizzling = 5;
+  int32 custom_option = 6;
+  int32 stages_id = 7;
+  int32 inner_shape_id = 8;
+  int32 cluster_shape_id = 9;
+  int64 numerical_impl_flags = 10;
+}
+
+message BlasLtMatmulAlgorithmProto {
+  int64 library_version = 1;
+  oneof algorithm {
+    CublasLtMatmulAlgorithmProto cublaslt = 2;
+  }
+}
+
 enum RaggedDotModeProto {
   RAGGED_NON_CONTRACTING = 0;
   RAGGED_CONTRACTING = 1;
