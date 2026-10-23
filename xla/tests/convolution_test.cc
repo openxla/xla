@@ -1861,10 +1861,6 @@ class ConvolutionHloTest : public HloInterpreterReferenceMixin<HloTestBase> {
   bool IsRocm() {
     return test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuRocm);
   }
-  // Returns true if the test is running on Intel GPU.
-  bool IsOneApi() {
-    return test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuOneAPI);
-  }
 };
 
 TEST_F(ConvolutionHloTest, ConvolveF64Forward) {
@@ -1901,8 +1897,8 @@ ENTRY Test {
 }
 
 TEST_F(ConvolutionHloTest, ConvolveF32ForwardReversed) {
-  if (IsRocm() || IsOneApi()) {
-    GTEST_SKIP() << "Not supported on ROCm or oneAPI";
+  if (IsRocm()) {
+    GTEST_SKIP() << "Not supported on ROCm";
   }
 
   constexpr char kHlo[] = R"(

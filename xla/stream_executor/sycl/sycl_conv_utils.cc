@@ -211,6 +211,10 @@ absl::StatusOr<OneDnnConvPrimitiveDesc> CreateOneDnnConvPrimitiveDesc(
     default:
       return absl::InvalidArgumentError("Unknown convolution kind");
   }
+  if (config.conv_desc.convolution_not_crosscorr()) {
+    return absl::UnimplementedError(
+        "oneDNN only supports cross-correlation convolutions");
+  }
 
   // TODO(intel-tf): depthwise-conv
   const int64_t group_count = config.conv_desc.group_count();
@@ -424,8 +428,9 @@ absl::StatusOr<OneDnnConvPrimitive> CreateOneDnnConvPrimitive(
         onednn_conv_primitive.engine, *sycl_queue);
     dnnl::memory src_memory = CreateDnnlMemory(
         pd.src_md, onednn_conv_primitive.engine, buffer_pointers.input_data);
-    dnnl::memory filter_memory = CreateDnnlMemory(
-        pd.filter_md, onednn_conv_primitive.engine, buffer_pointers.filter_data);
+    dnnl::memory filter_memory =
+        CreateDnnlMemory(pd.filter_md, onednn_conv_primitive.engine,
+                         buffer_pointers.filter_data);
     dnnl::memory dst_memory = CreateDnnlMemory(
         pd.dst_md, onednn_conv_primitive.engine, buffer_pointers.result_data);
 

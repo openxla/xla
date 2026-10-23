@@ -206,6 +206,15 @@ bool CanImplementAsGpuForwardConv(HloInstruction* conv) {
   return true;
 }
 
+bool CanImplementAsGpuForwardConv(HloInstruction* conv,
+                                  const se::GpuComputeCapability& cc) {
+  // oneDNN only supports cross correlation (no reversal).
+  if (cc.IsOneAPI() && window_util::HasWindowReversal(conv->window())) {
+    return false;
+  }
+  return CanImplementAsGpuForwardConv(conv);
+}
+
 // Try to match a backward filter pattern that contains "conv".
 // Precondition: "conv" is a kConvolution.
 ConvolutionMatch MatchBackwardFilter(HloInstruction* conv) {
@@ -849,7 +858,7 @@ static absl::StatusOr<HloInstruction*> CreateCustomCallHelper(
   }
 
   // If all else fails, try a forward convolution.
-  if (CanImplementAsGpuForwardConv(conv)) {
+  if (CanImplementAsGpuForwardConv(conv, cc)) {
     if (conv->batch_group_count() > 1) {
       conv = ConvertBatchGroupedToFeatureGroupedConvolution(conv);
     }
