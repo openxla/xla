@@ -181,7 +181,6 @@ jobs:
         --config=rocm_ci_hermetic
         --config=rocm_rbe_dynamic
         --repository_cache=/bazel-repo-cache/repo
-        --repo_contents_cache=/bazel-repo-cache/contents
         --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}"
         --repo_env=ROCM_PATH=""
         --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}"
