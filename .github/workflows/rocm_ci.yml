@@ -181,7 +181,7 @@ jobs:
       ROCM_COMMON_BAZEL_ARGS: >-
         --config=rocm_ci_hermetic
         --config=rocm_rbe_dynamic
-        --repository_cache=/bazel-repo-cache/repo
+        --config=ci_repo_cache
         --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${DOCKER_IMAGE}"
         --repo_env=ROCM_PATH=""
         --repo_env=ROCM_DISTRO_URL="${ROCM_DISTRO_URL}"
@@ -212,8 +212,8 @@ jobs:
             --build_name="XLA Linux x86 AMD Instinct GPU" \
             --use_cquery \
             --bazelrc="build_tools/rocm/rocm_xla_ci.bazelrc" \
-            ${{ env.ROCM_COMMON_BAZEL_ARGS }} \
             --config=ci_single_gpu \
+            ${{ env.ROCM_COMMON_BAZEL_ARGS }} \
             --target_pattern="//xla/..." \
             --output_target_pattern_file="${RUNNER_TEMP:-/tmp}/rocm_impacted_targets.txt"
 
@@ -228,7 +228,6 @@ jobs:
           XLA_ROCM_TARGET_PATTERN_FILE: ${{ steps.bazel_diff.outputs.target_pattern_file }}
         run: |
           build_tools/rocm/run_xla_ci_build.sh \
-            ${{ env.ROCM_COMMON_BAZEL_ARGS }} \
             --config=ci_single_gpu \
             --test_env=HSA_CO_DMACOPY_SIZE=-1 \
             --config=no_flaky \
@@ -238,6 +237,7 @@ jobs:
             --bes_keywords=gpu \
             --bes_keywords=pull_request \
             --build_event_json_file=xla_single_gpu_build_events.json \
+            ${{ env.ROCM_COMMON_BAZEL_ARGS }} \
             -- \
             //xla/...
 
@@ -248,7 +248,6 @@ jobs:
           XLA_ROCM_TARGET_PATTERN_FILE: ${{ steps.bazel_diff.outputs.target_pattern_file }}
         run: |
           build_tools/rocm/run_xla_ci_build.sh \
-            ${{ env.ROCM_COMMON_BAZEL_ARGS }} \
             --config=ci_rocm_cpu \
             --config=no_flaky \
             --local_test_jobs=200 \
@@ -258,6 +257,7 @@ jobs:
             --bes_keywords=cpu \
             --bes_keywords=pull_request \
             --build_event_json_file=xla_rocm_cpu_build_events.json \
+            ${{ env.ROCM_COMMON_BAZEL_ARGS }} \
             -- \
             //xla/...
 

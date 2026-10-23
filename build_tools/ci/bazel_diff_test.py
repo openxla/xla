@@ -305,62 +305,6 @@ class BazelDiffTest(parameterized.TestCase):
         ],
     )
 
-  def test_get_cquery_command_options_cache_flags(self):
-    build_mock = mock.MagicMock()
-    build_mock.configs = ("warnings",)
-    build_mock.repo_env = {}
-    build_mock.options = {
-        "//xla/tsl:ci_build": True,
-        "repository_cache": "/bazel-repo-cache",
-        "repo_contents_cache": "/bazel-repo-contents-cache",
-    }
-    self.assertEqual(
-        bazel_diff.get_cquery_command_options(build_mock),
-        [
-            "--config=warnings",
-            "--//xla/tsl:ci_build",
-            "--repository_cache=/bazel-repo-cache",
-            "--repo_contents_cache=/bazel-repo-contents-cache",
-        ],
-    )
-
-  def test_get_bazel_cache_options_omits_unset(self):
-    build_mock = mock.MagicMock()
-    build_mock.options = {"repository_cache": "/bazel-repo-cache"}
-    self.assertEqual(
-        bazel_diff.get_bazel_cache_options(build_mock),
-        ["--repository_cache=/bazel-repo-cache"],
-    )
-
-  @mock.patch.object(bazel_diff.subprocess, "run")
-  def test_run_generate_hashes_command_options(self, mock_run):
-    bazel_diff.run_generate_hashes(
-        "/tmp/bazel-diff.jar",
-        "/workspace",
-        "/tmp/hashes.json",
-        use_cquery=False,
-        command_options=[
-            "--repository_cache=/bazel-repo-cache",
-            "--repo_contents_cache=/bazel-repo-contents-cache",
-        ],
-    )
-    args = mock_run.call_args[0][0]
-    self.assertIn(
-        "--bazelCommandOptions=--repository_cache=/bazel-repo-cache"
-        " --repo_contents_cache=/bazel-repo-contents-cache",
-        args,
-    )
-
-  def test_parse_args_cache_flags(self):
-    args = bazel_diff._parse_args([
-        "--repository_cache=/bazel-repo-cache",
-        "--repo_contents_cache=/bazel-repo-contents-cache",
-    ])
-    self.assertEqual(args.repository_cache, "/bazel-repo-cache")
-    self.assertEqual(
-        args.repo_contents_cache, "/bazel-repo-contents-cache"
-    )
-
   @mock.patch.object(bazel_diff.subprocess, "run")
   def test_run_generate_hashes_cquery_options(self, mock_run):
     bazel_diff.run_generate_hashes(
