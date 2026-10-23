@@ -499,28 +499,29 @@ mlir::func::FuncOp CreateSubgraphMlirFunction(
       parameter_types.push_back(TensorShapeToMlirType(param->shape(), b));
       arg_attrs.emplace_back();
     }
-    for (int64_t size : subgraph.index_ranges) {
-      parameter_types.push_back(b.getIndexType());
-      arg_attrs.emplace_back(mlir::DictionaryAttr::get(
-          b.getContext(),
-          {b.getNamedAttr("xla.range", b.getIndexArrayAttr({0, size - 1}))}));
-    }
-
-    // Populate arguments for injected parameters (values that are computed
-    // outside the function and are passed into it).
-    int operand_offset = parameter_types.size();
-    parameter_types.resize(operand_offset + subgraph.num_injected_values);
-    arg_attrs.resize(parameter_types.size());
-
-    for (auto [value, start] : subgraph.injected_value_starts) {
-      for (int index = 0; index < Arity(value->shape()); ++index) {
-        parameter_types[operand_offset + start + index] =
-            element_type(TupleShape(value->shape(), index));
-      }
-    }
   } else {
     for (auto* param : computation->parameter_instructions()) {
       parameter_types.push_back(element_type(param->shape()));
+      arg_attrs.emplace_back();
+    }
+  }
+  for (int64_t size : subgraph.index_ranges) {
+    parameter_types.push_back(b.getIndexType());
+    arg_attrs.emplace_back(mlir::DictionaryAttr::get(
+        b.getContext(),
+        {b.getNamedAttr("xla.range", b.getIndexArrayAttr({0, size - 1}))}));
+  }
+
+  // Populate arguments for injected parameters (values that are computed
+  // outside the function and are passed into it).
+  int operand_offset = parameter_types.size();
+  parameter_types.resize(operand_offset + subgraph.num_injected_values);
+  arg_attrs.resize(parameter_types.size());
+
+  for (auto [value, start] : subgraph.injected_value_starts) {
+    for (int index = 0; index < Arity(value->shape()); ++index) {
+      parameter_types[operand_offset + start + index] =
+          element_type(TupleShape(value->shape(), index));
     }
   }
   auto ty = b.getFunctionType(parameter_types, result_types);
