@@ -1773,6 +1773,11 @@ bool RequiresCollectiveScheduleLinearizer(const HloModule* module,
   return false;
 }
 
+bool IsNonCudaPlatform(const GpuTargetConfig& gpu_target_config) {
+  return gpu_target_config.platform_name == "ROCM" ||
+         gpu_target_config.platform_name == "SYCL";
+}
+
 }  // namespace
 
 bool GpuCompiler::IsScaledDotSupportedByBackend(
@@ -1789,7 +1794,7 @@ bool GpuCompiler::IsScaledDotSupportedByBackend(
 
 AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
     AlgebraicSimplifierMode mode, const DebugOptions& debug_options,
-    bool is_rocm) {
+    bool is_non_cuda_platform) {
   AlgebraicSimplifierOptions opts;
 
   opts.set_enable_dot_strength_reduction(false);
@@ -1803,7 +1808,8 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
   opts.set_enable_conditional_simplification(true);
   opts.set_enable_fold_transpose_into_scatter(true);
 
-  if (!is_rocm && debug_options.xla_gpu_experimental_enable_conv_fusion()) {
+  if (!is_non_cuda_platform &&
+      debug_options.xla_gpu_experimental_enable_conv_fusion()) {
     opts.set_enable_folding_pad_into_convolution(false);
     opts.set_enable_conv_operand_swap(false);
   }
@@ -1822,7 +1828,7 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
       // the transpose.
       opts.set_rewrite_reshape_transpose_as_slice_concatenate(false);
       opts.set_enable_hoist_transpose_of_reshape(true);
-      if (is_rocm) {
+      if (is_non_cuda_platform) {
         opts.set_enable_conv_operand_swap(false);
       }
       break;
@@ -1889,15 +1895,11 @@ absl::Status GpuCompiler::OptimizeHloModule(
       /*default_thread_pool=*/options.thread_pool,
       /*default_parallelism=*/tsl::port::MaxParallelism());
 
-  // Treat SYCL like ROCM here: both route convs through non-cuDNN libraries
-  // (oneDNN for SYCL, MIOpen for ROCM), so they need conv operand swap
-  // disabled and must opt out of the cuDNN-specific conv fusion path.
   AlgebraicSimplifierOptions layout_insensitive_algsimp_opts =
       GetAlgebraicSimplifierOptions(
           AlgebraicSimplifierMode::kLayoutInsensitive,
           hlo_module->config().debug_options(),
-          gpu_topology.gpu_target_config().platform_name == "ROCM" ||
-          gpu_topology.gpu_target_config().platform_name == "SYCL");
+          IsNonCudaPlatform(gpu_topology.gpu_target_config()));
 
   {
     HloPassPipeline pipeline("annotate-host-compute", compilation_stats);
@@ -1967,7 +1969,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
       GetAlgebraicSimplifierOptions(
           AlgebraicSimplifierMode::kLayoutNormalization,
           hlo_module->config().debug_options(),
-          gpu_topology.gpu_target_config().platform_name == "ROCM"),
+          IsNonCudaPlatform(gpu_topology.gpu_target_config())),
       gpu_version, compilation_stats));
 
   // Run target-specific HLO optimization passes after layout assignment.
@@ -1992,7 +1994,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
       GetAlgebraicSimplifierOptions(
           AlgebraicSimplifierMode::kPostFusionSimplification,
           hlo_module->config().debug_options(),
-          gpu_topology.gpu_target_config().platform_name == "ROCM"),
+          IsNonCudaPlatform(gpu_topology.gpu_target_config())),
       gpu_version, gpu_topology.gpu_target_config(), compilation_stats));
 
   ABSL_RETURN_IF_ERROR(RunPostFusionVerificationPasses(
@@ -2098,7 +2100,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
       GetAlgebraicSimplifierOptions(
           AlgebraicSimplifierMode::kPostLayoutAssignment,
           hlo_module->config().debug_options(),
-          gpu_target_config.platform_name == "ROCM");
+          IsNonCudaPlatform(gpu_target_config));
   // Lambdas and related constants:
   const GpuFloatSupport bf16_support(gpu_version, BF16);
   const GpuFloatSupport f8e5m2_support(gpu_version, F8E5M2, F16);
@@ -2319,7 +2321,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
             "remove-no-op-reduce-precision-algebraic-simplifier");
     AlgebraicSimplifierOptions options = GetAlgebraicSimplifierOptions(
         AlgebraicSimplifierMode::kAfterSimplifyFPConversions, debug_options,
-        gpu_target_config.platform_name == "ROCM");
+        IsNonCudaPlatform(gpu_target_config));
     remove_no_op_reduce_precision_pipeline
         .AddPass<HloPassFix<GpuAlgebraicSimplifier>>(options, gpu_version);
   }

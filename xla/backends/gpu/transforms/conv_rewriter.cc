@@ -60,10 +60,11 @@ namespace {
 absl::StatusOr<bool> CheckTypes(HloInstruction* conv,
                                 const se::GpuComputeCapability cc,
                                 const se::dnn::VersionInfo dnn_version) {
-  auto valid_shape = [conv, &cc,
-                      &dnn_version](const Shape& shape) -> absl::StatusOr<bool> {
+  auto valid_shape =
+      [conv, &cc, &dnn_version](const Shape& shape) -> absl::StatusOr<bool> {
     PrimitiveType type = shape.element_type();
-    if (cc.IsOneAPI() && (primitive_util::IsUnsignedIntegralType(type))) {
+    // oneDNN integer convolutions are not supported yet.
+    if (cc.IsOneAPI() && primitive_util::IsIntegralType(type)) {
       return false;
     }
     if (!primitive_util::IsFloatingPointType(type) &&

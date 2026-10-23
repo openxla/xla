@@ -21,7 +21,6 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "xla/primitive_util.h"
 #include "xla/xla_data.pb.h"
-#include "xla/stream_executor/sycl/sycl_dnn.h"
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
 
@@ -52,10 +51,8 @@ TEST_P(ConvSyclTest, Simple2DTest1) {
   ENTRY convolution.test {
     arg.0 = $dtype[1,22,22,1] parameter(0)
     arg.1 = $dtype[8,8,1,1] parameter(1)
-    convolution.0 = $dtype[1,11,11,1] convolution(arg.0, arg.1),
+    ROOT convolution.0 = $dtype[1,11,11,1] convolution(arg.0, arg.1),
           window={size=8x8 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
-    tuple.0 = ($dtype[1,11,11,1]) tuple(convolution.0)
-    ROOT gte.0 = $dtype[1,11,11,1] get-tuple-element(tuple.0), index=0
   })";
 
   const std::string hlo_module =
@@ -71,10 +68,8 @@ TEST_P(ConvSyclTest, SimpleScalarTest) {
     arg.0 = $dtype[1,22,22,1] parameter(0)
     arg.1 = $dtype[1] parameter(1)
     reshape.1 = $dtype[1,1,1,1] reshape(arg.1)
-    convolution.0 = $dtype[1,14,14,1] convolution(arg.0, reshape.1),
+    ROOT convolution.0 = $dtype[1,14,14,1] convolution(arg.0, reshape.1),
           window={size=1x1 stride=2x2 pad=3_3x3_3}, dim_labels=b01f_01io->b01f
-    tuple.0 = ($dtype[1,14,14,1]) tuple(convolution.0)
-    ROOT gte.0 = $dtype[1,14,14,1] get-tuple-element(tuple.0), index=0
   })";
 
   const std::string hlo_module =
@@ -114,8 +109,7 @@ TEST_P(ConvSyclTest, Conv2DWithBiasAndReluTest) {
     bcast.1 = $dtype[1,10,11,11] broadcast(const.0), dimensions={1}
     add.0 = $dtype[1,10,11,11] add(convolution.0, bcast.1)
     const.1 = $dtype[] constant(0)
-    convert.0 = $dtype[] convert(const.1)
-    bcast.2 = $dtype[1,10,11,11] broadcast(convert.0), dimensions={}
+    bcast.2 = $dtype[1,10,11,11] broadcast(const.1), dimensions={}
     ROOT maximum.1 = $dtype[1,10,11,11] maximum(add.0, bcast.2)
   })";
 
@@ -168,8 +162,7 @@ TEST_P(ConvSyclTest, Conv3DReluTest) {
     conv = $dtype[15,4,5,5,64] convolution(arg.0, arg.1),
           window={size=3x3x3 pad=1_1x1_1x1_1}, dim_labels=b012f_012io->b012f
     const.1 = $dtype[] constant(0)
-    convert.0 = $dtype[] convert(const.1)
-    bcast.2 = $dtype[15,4,5,5,64] broadcast(convert.0), dimensions={}
+    bcast.2 = $dtype[15,4,5,5,64] broadcast(const.1), dimensions={}
     ROOT maximum.1 = $dtype[15,4,5,5,64] maximum(conv, bcast.2)
   })";
 
@@ -191,8 +184,7 @@ TEST_P(ConvSyclTest, Conv3DWithBiasAndEluTest) {
     broadcasted_bias = $dtype[15,4,5,5,64] broadcast(bias), dimensions={4}
     add = $dtype[15,4,5,5,64] add(conv, broadcasted_bias)
     const.0 = $dtype[] constant(0)
-    convert.0 = $dtype[] convert(const.0)
-    broadcast.0 = $dtype[15,4,5,5,64] broadcast(convert.0), dimensions={}
+    broadcast.0 = $dtype[15,4,5,5,64] broadcast(const.0), dimensions={}
     compare.0 = pred[15,4,5,5,64] compare(add, broadcast.0), direction=GT
     exp-min-one.0 = $dtype[15,4,5,5,64] exponential-minus-one(add)
     ROOT select.0 = $dtype[15,4,5,5,64] select(compare.0, add, exp-min-one.0)
@@ -216,11 +208,9 @@ TEST_P(ConvSyclTest, Conv3DWithBiasAndRelu6Test) {
     broadcasted_bias = $dtype[15,4,5,5,64] broadcast(bias), dimensions={4}
     add = $dtype[15,4,5,5,64] add(conv, broadcasted_bias)
     const.0 = $dtype[] constant(0)
-    convert.0 = $dtype[] convert(const.0)
-    broadcast.0 = $dtype[15,4,5,5,64] broadcast(convert.0), dimensions={}
+    broadcast.0 = $dtype[15,4,5,5,64] broadcast(const.0), dimensions={}
     const.1 = $dtype[] constant(6)
-    convert.1 = $dtype[] convert(const.1)
-    broadcast.1 = $dtype[15,4,5,5,64] broadcast(convert.1), dimensions={}
+    broadcast.1 = $dtype[15,4,5,5,64] broadcast(const.1), dimensions={}
     ROOT clamp.0 = $dtype[15,4,5,5,64] clamp(broadcast.0, add, broadcast.1)
   })";
 

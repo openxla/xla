@@ -717,6 +717,7 @@ xla_cc_test(
         "//xla/service/gpu:cublas_cudnn",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
+        "//xla/stream_executor/sycl:oneapi_compute_capability",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/log:check",

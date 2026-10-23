@@ -70,7 +70,9 @@ class OnednnConvRunner : public dnn::ConvRunner {
                           DeviceAddressBase input_data,
                           DeviceAddressBase filter_data,
                           DeviceAddressBase output_data) const override {
-    // Create the oneDNN convolution primitive.
+    // TODO(intel-tf): Create the oneDNN primitives once in the runner and
+    // report the scratchpad size via GetWorkspaceSize() to avoid per-call
+    // primitive creation, USM allocation, and host callback.
     ABSL_ASSIGN_OR_RETURN(
         auto onednn_conv_primitive,
         CreateOneDnnConvPrimitive(
@@ -113,7 +115,9 @@ class OnednnFusedConvRunner : public dnn::FusedConvRunner {
                           DeviceAddressBase side_input_data,
                           DeviceAddressBase bias_data,
                           DeviceAddressBase output_data) const override {
-    // Create the oneDNN convolution primitive.
+    // TODO(intel-tf): Create the oneDNN primitives once in the runner and
+    // report the scratchpad size via GetWorkspaceSize() to avoid per-call
+    // primitive creation, USM allocation, and host callback.
     ABSL_ASSIGN_OR_RETURN(
         auto onednn_conv_primitive,
         CreateOneDnnConvPrimitive(

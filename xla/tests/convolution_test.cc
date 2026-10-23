@@ -59,10 +59,7 @@ class ConvolutionTest : public ClientLibraryTestRunnerMixin<
   bool IsRocm() {
     return test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuRocm);
   }
-  // Returns true if the test is running on Intel GPU.
-  bool IsOneApi() {
-    return test_runner().HasProperty(HloRunnerPropertyTag::kUsingGpuOneAPI);
-  }
+
  protected:
   // XLA:GPU sometimes uses FFT convolution which isn't as precise as spatial
   // convolution. So relax the absolute error threshold.

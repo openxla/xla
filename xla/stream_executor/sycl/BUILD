@@ -789,7 +789,6 @@ xla_test(
     deps = [
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
-        "//xla/stream_executor/sycl:sycl_dnn",
         "//xla/tests:hlo_interpreter_reference_mixin",
         "//xla/tests:hlo_test_base",
         "@com_google_absl//absl/strings",

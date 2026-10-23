@@ -1456,7 +1456,9 @@ absl::StatusOr<bool> FuseConvertToF16(HloComputation* comp) {
 
 absl::StatusOr<bool> FuseConvertToS8(HloComputation* comp,
                                      se::GpuComputeCapability cc) {
-  if (cc.IsRocm()) return false;
+  if (cc.IsRocm() || cc.IsOneAPI()) {
+    return false;
+  }
   bool changed = false;
   for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
     HloInstruction* gte = nullptr;
@@ -1698,7 +1700,7 @@ absl::StatusOr<bool> CudnnFusedConvRewriter::RunImpl(
     bool changed = false;
     // Rewrite FP8 convolutions and supported adjacent pointwise ops into a
     // ForwardGraph Custom Call.
-    if (!compute_capability_.IsRocm() && !compute_capability_.IsOneAPI()) {
+    if (compute_capability_.IsCuda()) {
       auto* cc = compute_capability_.cuda_compute_capability();
       ABSL_ASSIGN_OR_RETURN(
           changed, F8GraphConv(comp, *cc, dnn_version_, toolkit_version_));
@@ -1762,14 +1764,10 @@ absl::StatusOr<bool> CudnnFusedConvRewriter::RunImpl(
     ABSL_ASSIGN_OR_RETURN(changed, FuseLeakyRelu(comp, compute_capability_));
     any_changed |= changed;
 
-    // Skip integer conv legality check for oneAPI; the restriction is
-    // cuDNN-specific.
-    if (!compute_capability_.IsOneAPI()) {
-      // Check that we don't have any convs outputting integer types other than
-      // s8 - cudnn does not support these.  They should have been transformed
-      // to int8->int8 or int8->float above.
-      ABSL_RETURN_IF_ERROR(CheckNoIllegalIntegerConvs(comp));
-    }
+    // Check that we don't have any convs outputting integer types other than
+    // s8 - cudnn does not support these.  They should have been transformed to
+    // int8->int8 or int8->float above.
+    ABSL_RETURN_IF_ERROR(CheckNoIllegalIntegerConvs(comp));
   }
 
   VlogStats(module);
