@@ -1243,6 +1243,16 @@ class BufferAssigner {
   int64_t GetMemoryLimit(const BufferAssignment& assignment,
                          LogicalBuffer::Color color) const;
 
+  // Returns true if `hlo_buffer` has any value subject to custom interference
+  // rules.
+  bool HasCustomInterference(const HloBuffer& hlo_buffer) const {
+    if (hlo_buffer.id() >= 0 &&
+        hlo_buffer.id() < has_custom_interference_for_buffer_.size()) {
+      return has_custom_interference_for_buffer_[hlo_buffer.id()];
+    }
+    return false;
+  }
+
  private:
   // Assigns buffers of `colors_to_assign` (all colors if null) in three steps:
   //  1. AssignBuffersForGlobalComputations with `non_sequential_algorithm`,
@@ -1415,8 +1425,17 @@ class BufferAssigner {
   SplitBuffersByColor(
       const absl::flat_hash_set<const HloValue*>& buffers) const;
 
+  // Precomputes whether each HloBuffer in `alias_analysis` has any HloValue
+  // subject to `opts_.live_range_interference_options`.
+  void PrecomputeCustomInterference(const HloAliasAnalysis& alias_analysis);
+
   const AliasInfo* alias_info_;
   Options opts_;
+
+  // Dense table indexed by HloBuffer::Id indicating whether any HloValue in the
+  // buffer has custom interference. Populated once in CreateAssignment when
+  // opts_.live_range_interference_options is set; empty otherwise.
+  std::vector<bool> has_custom_interference_for_buffer_;
 
   BufferAssigner(const BufferAssigner&) = delete;
   BufferAssigner& operator=(const BufferAssigner&) = delete;
