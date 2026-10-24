@@ -30,6 +30,88 @@ limitations under the License.
 namespace stream_executor {
 
 // ==============================================================================
+// Nova Lake P (NVLP) variant codec
+// ==============================================================================
+template <>
+struct OneAPIComputeCapability::OneAPIDeviceVariantOps<
+    OneAPIDeviceType::kNVLP> {
+  static bool IsKnown(uint32_t version) { return version == 0xa; }
+
+  static std::string Decode(uint32_t version) { return "P"; }
+
+  static uint32_t Encode(absl::string_view variant) {
+    return (variant == "P") ? 0xa
+                            : OneAPIComputeCapability::kUnknownVariantValue;
+  }
+};
+
+// ==============================================================================
+// Nova Lake (NVL) variant codec
+// ==============================================================================
+template <>
+struct OneAPIComputeCapability::OneAPIDeviceVariantOps<OneAPIDeviceType::kNVL> {
+  static bool IsKnown(uint32_t version) { return (version & 0xfe) == 0x4; }
+
+  static std::string Decode(uint32_t version) {
+    return (version == 0x5) ? "U" : "S";
+  }
+
+  static uint32_t Encode(absl::string_view variant) {
+    return (variant == "S")   ? 0x4
+           : (variant == "U") ? 0x5
+                              : OneAPIComputeCapability::kUnknownVariantValue;
+  }
+};
+
+// ==============================================================================
+// Wildcat Lake (WCL) variant codec
+// ==============================================================================
+template <>
+struct OneAPIComputeCapability::OneAPIDeviceVariantOps<OneAPIDeviceType::kWCL> {
+  static bool IsKnown(uint32_t version) { return version == 0x3; }
+
+  static std::string Decode(uint32_t version) { return ""; }
+
+  static uint32_t Encode(absl::string_view variant) {
+    return variant.empty() ? 0x3
+                           : OneAPIComputeCapability::kUnknownVariantValue;
+  }
+};
+
+// ==============================================================================
+// Panther Lake (PTL) variant codec
+// ==============================================================================
+template <>
+struct OneAPIComputeCapability::OneAPIDeviceVariantOps<OneAPIDeviceType::kPTL> {
+  static bool IsKnown(uint32_t version) { return (version & 0xfe) == 0x0; }
+
+  static std::string Decode(uint32_t version) {
+    return (version == 0x1) ? "U" : "H";
+  }
+
+  static uint32_t Encode(absl::string_view variant) {
+    return (variant == "H")   ? 0x0
+           : (variant == "U") ? 0x1
+                              : OneAPIComputeCapability::kUnknownVariantValue;
+  }
+};
+
+// ==============================================================================
+// Lunar Lake (LNL) variant codec
+// ==============================================================================
+template <>
+struct OneAPIComputeCapability::OneAPIDeviceVariantOps<OneAPIDeviceType::kLNL> {
+  static bool IsKnown(uint32_t version) { return version == 0x4; }
+
+  static std::string Decode(uint32_t version) { return "M"; }
+
+  static uint32_t Encode(absl::string_view variant) {
+    return (variant == "M") ? 0x4
+                            : OneAPIComputeCapability::kUnknownVariantValue;
+  }
+};
+
+// ==============================================================================
 // Battlemage (BMG) variant codec
 // ==============================================================================
 template <>
@@ -47,6 +129,39 @@ struct OneAPIComputeCapability::OneAPIDeviceVariantOps<OneAPIDeviceType::kBMG> {
       return OneAPIComputeCapability::kUnknownVariantValue;
     }
     return (value - 11) / 10;
+  }
+};
+
+// ==============================================================================
+// Arrow Lake (ARL) variant codec
+// ==============================================================================
+template <>
+struct OneAPIComputeCapability::OneAPIDeviceVariantOps<OneAPIDeviceType::kARL> {
+  static bool IsKnown(uint32_t version) { return version == 0x4a; }
+
+  static std::string Decode(uint32_t version) { return "H"; }
+
+  static uint32_t Encode(absl::string_view variant) {
+    return (variant == "H") ? 0x4a
+                            : OneAPIComputeCapability::kUnknownVariantValue;
+  }
+};
+
+// ==============================================================================
+// Meteor Lake (MTL) variant codec
+// ==============================================================================
+template <>
+struct OneAPIComputeCapability::OneAPIDeviceVariantOps<OneAPIDeviceType::kMTL> {
+  static bool IsKnown(uint32_t version) { return (version & 0xfe) == 0x46; }
+
+  static std::string Decode(uint32_t version) {
+    return (version == 0x47) ? "H" : "U";
+  }
+
+  static uint32_t Encode(absl::string_view variant) {
+    return (variant == "U")   ? 0x46
+           : (variant == "H") ? 0x47
+                              : OneAPIComputeCapability::kUnknownVariantValue;
   }
 };
 
