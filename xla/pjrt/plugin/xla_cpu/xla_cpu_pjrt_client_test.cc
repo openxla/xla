@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 
+#include <gtest/gtest.h>
+
 #include "tsl/platform/statusor.h"
 #include "tsl/platform/test.h"
 #include "xla/pjrt/cpu/cpu_client.h"
