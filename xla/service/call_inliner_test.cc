@@ -442,7 +442,7 @@ TEST_F(CallInlinerTest, PreserveCompositeCall) {
 
   auto module = ParseAndReturnVerifiedModule(hlo_string).value();
   CallInliner call_inliner(
-      /*single_call_site=*/true, /*update_domain=*/false,
+      /*single_call_site=*/true,
       /*composites_to_preserve=*/{"foo.bar"});
   ASSERT_OK_AND_ASSIGN(bool mutated, call_inliner.Run(module.get()));
   ASSERT_FALSE(mutated);
@@ -568,7 +568,7 @@ TEST_F(CallInlinerTest, InlineCallWithOverriddenAttributeInlineableFalse) {
   ASSERT_OK_AND_ASSIGN(
       bool changed,
       CallInliner(
-          /*single_call_site=*/false, /*update_domain=*/false,
+          /*single_call_site=*/false,
           /*composites_to_preserve=*/absl::flat_hash_set<std::string>{},
           /*override_policy=*/
           [](const CallGraph&, const HloInstruction*) {
@@ -1088,7 +1088,7 @@ ENTRY main {
     }
     return policy;
   };
-  CallInliner call_inliner(/*single_call_site=*/false, /*update_domain=*/false,
+  CallInliner call_inliner(/*single_call_site=*/false,
                            /*composites_to_preserve=*/{},
                            /*override_policy=*/inline_trivial_only);
 
@@ -1612,7 +1612,7 @@ TEST_F(CallInlinerTest, InlineDoubleDiamondOverride) {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   CallInliner call_inliner(
-      /*single_call_site=*/false, /*update_domain=*/false,
+      /*single_call_site=*/false,
       /*composites_to_preserve=*/{},
       /*override_policy=*/
       [](const CallGraph&, const HloInstruction* instruction) {
