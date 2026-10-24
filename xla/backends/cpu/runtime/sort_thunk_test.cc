@@ -992,6 +992,241 @@ TEST_P(SortThunkTest, SortKeyValueStridedWithCustomComparator) {
                 {{{2, 3}, {4, 5}, {0, 1}}, {{8, 9}, {10, 11}, {6, 7}}}));
 }
 
+TEST_P(SortThunkTest, SortMultiInputAnd16ByteTypes) {
+  bool is_stable = GetParam();
+
+  // 1. 1-input strided sort with 16-byte complex128 elements and comparator
+  //    ties on real().
+  {
+    auto c128_data =
+        LiteralUtil::CreateR2<complex128>({{{3.0, 1.0}, {4.0, 2.0}},
+                                           {{2.0, 10.0}, {3.0, 20.0}},
+                                           {{1.0, 5.0}, {2.0, 6.0}},
+                                           {{2.0, 3.0}, {3.0, 4.0}}});
+    BufferAllocations allocations = CreateBufferAllocations(c128_data);
+    BufferAllocation alloc = CreateBufferAllocation(0, c128_data);
+    BufferAllocation::Slice slice = CreateBufferAllocationSlice(alloc);
+
+    auto c128_less = [](const void** data) {
+      auto* lhs = reinterpret_cast<const complex128*>(data[0]);
+      auto* rhs = reinterpret_cast<const complex128*>(data[1]);
+      return lhs->real() < rhs->real();
+    };
+
+    ASSERT_OK_AND_ASSIGN(
+        auto thunk, SortThunk::Create({"sort"}, {{slice, c128_data.shape()}},
+                                      /*dimension=*/0, is_stable, c128_less,
+                                      /*direction=*/std::nullopt));
+
+    Thunk::ExecuteParams params;
+    params.buffer_allocations = &allocations;
+    auto execute_event = thunk->Execute(params);
+    tsl::BlockUntilReady(execute_event);
+    ASSERT_FALSE(execute_event.IsError());
+
+    auto sorted = c128_data.data<complex128>();
+    EXPECT_EQ(sorted[0], complex128(1.0, 5.0));
+    EXPECT_EQ(sorted[1], complex128(2.0, 6.0));
+    EXPECT_EQ(sorted[2].real(), 2.0);
+    EXPECT_EQ(sorted[3].real(), 3.0);
+    EXPECT_EQ(sorted[4].real(), 2.0);
+    EXPECT_EQ(sorted[5].real(), 3.0);
+    EXPECT_EQ(sorted[6], complex128(3.0, 1.0));
+    EXPECT_EQ(sorted[7], complex128(4.0, 2.0));
+    if (is_stable) {
+      EXPECT_EQ(c128_data,
+                LiteralUtil::CreateR2<complex128>({{{1.0, 5.0}, {2.0, 6.0}},
+                                                   {{2.0, 10.0}, {3.0, 20.0}},
+                                                   {{2.0, 3.0}, {3.0, 4.0}},
+                                                   {{3.0, 1.0}, {4.0, 2.0}}}));
+    }
+  }
+
+  auto multi_less = [](const void** data) {
+    auto* lhs_k = reinterpret_cast<const float*>(data[0]);
+    auto* rhs_k = reinterpret_cast<const float*>(data[1]);
+    if (*lhs_k != *rhs_k) {
+      return *lhs_k < *rhs_k;
+    }
+    auto* lhs_v = reinterpret_cast<const int64_t*>(data[2]);
+    auto* rhs_v = reinterpret_cast<const int64_t*>(data[3]);
+    return *lhs_v < *rhs_v;
+  };
+
+  // 2. 3-input strided sort with mixed element sizes (4-byte float, 8-byte
+  //    int64_t, 16-byte complex128), secondary key tie-breaking, and full
+  //    comparator ties across (keys, vals64).
+  {
+    auto keys = LiteralUtil::CreateR3<float>(
+        {{{2.0f, 5.0f}, {2.0f, 5.0f}, {1.0f, 4.0f}, {2.0f, 5.0f}},
+         {{8.0f, 9.0f}, {8.0f, 9.0f}, {7.0f, 6.0f}, {8.0f, 9.0f}}});
+    auto vals64 = LiteralUtil::CreateR3<int64_t>(
+        {{{10, 40}, {5, 20}, {30, 15}, {5, 20}},
+         {{50, 80}, {25, 60}, {70, 35}, {25, 60}}});
+    auto vals128 =
+        LiteralUtil::CreateR3<complex128>({{{{1.0, 10.0}, {2.0, 20.0}},
+                                            {{3.0, 30.0}, {4.0, 40.0}},
+                                            {{5.0, 50.0}, {6.0, 60.0}},
+                                            {{7.0, 70.0}, {8.0, 80.0}}},
+                                           {{{9.0, 90.0}, {10.0, 100.0}},
+                                            {{11.0, 110.0}, {12.0, 120.0}},
+                                            {{13.0, 130.0}, {14.0, 140.0}},
+                                            {{15.0, 150.0}, {16.0, 160.0}}}});
+
+    BufferAllocations allocations =
+        CreateBufferAllocations(keys, vals64, vals128);
+    auto [alloc0, alloc1, alloc2] =
+        CreateBufferAllocation(keys, vals64, vals128);
+    auto [slice0, slice1, slice2] =
+        CreateBufferAllocationSlice(alloc0, alloc1, alloc2);
+
+    ASSERT_OK_AND_ASSIGN(
+        auto thunk, SortThunk::Create({"sort"},
+                                      {{slice0, keys.shape()},
+                                       {slice1, vals64.shape()},
+                                       {slice2, vals128.shape()}},
+                                      /*dimension=*/1, is_stable, multi_less,
+                                      /*direction=*/std::nullopt));
+
+    Thunk::ExecuteParams params;
+    params.buffer_allocations = &allocations;
+    auto execute_event = thunk->Execute(params);
+    tsl::BlockUntilReady(execute_event);
+    ASSERT_FALSE(execute_event.IsError());
+
+    EXPECT_EQ(keys,
+              LiteralUtil::CreateR3<float>(
+                  {{{1.0f, 4.0f}, {2.0f, 5.0f}, {2.0f, 5.0f}, {2.0f, 5.0f}},
+                   {{7.0f, 6.0f}, {8.0f, 9.0f}, {8.0f, 9.0f}, {8.0f, 9.0f}}}));
+    EXPECT_EQ(vals64, LiteralUtil::CreateR3<int64_t>(
+                          {{{30, 15}, {5, 20}, {5, 20}, {10, 40}},
+                           {{70, 35}, {25, 60}, {25, 60}, {50, 80}}}));
+    if (is_stable) {
+      EXPECT_EQ(vals128, LiteralUtil::CreateR3<complex128>(
+                             {{{{5.0, 50.0}, {6.0, 60.0}},
+                               {{3.0, 30.0}, {4.0, 40.0}},
+                               {{7.0, 70.0}, {8.0, 80.0}},
+                               {{1.0, 10.0}, {2.0, 20.0}}},
+                              {{{13.0, 130.0}, {14.0, 140.0}},
+                               {{11.0, 110.0}, {12.0, 120.0}},
+                               {{15.0, 150.0}, {16.0, 160.0}},
+                               {{9.0, 90.0}, {10.0, 100.0}}}}));
+    }
+  }
+
+  // 3. Strided slices with n = 1025 (> 1024) and inner_dim_size = 2 to
+  //    exercise heap-allocated buffers in Sort1DSlices and SortNDInplace.
+  {
+    constexpr int64_t kLargeN = 1025;
+    Shape large_f32_shape = ShapeUtil::MakeShape(F32, {kLargeN, 2});
+    Shape large_s64_shape = ShapeUtil::MakeShape(S64, {kLargeN, 2});
+    Shape large_c128_shape = ShapeUtil::MakeShape(C128, {kLargeN, 2});
+
+    Literal large_1d = Literal::CreateFromShape(large_f32_shape);
+    Literal large_keys = Literal::CreateFromShape(large_f32_shape);
+    Literal large_vals64 = Literal::CreateFromShape(large_s64_shape);
+    Literal large_vals128 = Literal::CreateFromShape(large_c128_shape);
+    for (int64_t i = 0; i < kLargeN; ++i) {
+      for (int64_t c = 0; c < 2; ++c) {
+        float key = static_cast<float>((kLargeN - i) * 10 + c);
+        large_1d.Set<float>({i, c}, key);
+        large_keys.Set<float>({i, c}, key);
+        large_vals64.Set<int64_t>({i, c}, i);
+        large_vals128.Set<complex128>(
+            {i, c}, complex128(static_cast<double>(i), static_cast<double>(c)));
+      }
+    }
+
+    {
+      BufferAllocations allocations = CreateBufferAllocations(large_1d);
+      BufferAllocation alloc = CreateBufferAllocation(0, large_1d);
+      BufferAllocation::Slice slice = CreateBufferAllocationSlice(alloc);
+      ASSERT_OK_AND_ASSIGN(
+          auto thunk,
+          SortThunk::Create({"sort"}, {{slice, large_1d.shape()}},
+                            /*dimension=*/0, is_stable, TypedLessThan<float>,
+                            /*direction=*/std::nullopt));
+      Thunk::ExecuteParams params;
+      params.buffer_allocations = &allocations;
+      auto execute_event = thunk->Execute(params);
+      tsl::BlockUntilReady(execute_event);
+      ASSERT_FALSE(execute_event.IsError());
+    }
+
+    {
+      BufferAllocations allocations =
+          CreateBufferAllocations(large_keys, large_vals64, large_vals128);
+      auto [alloc0, alloc1, alloc2] =
+          CreateBufferAllocation(large_keys, large_vals64, large_vals128);
+      auto [slice0, slice1, slice2] =
+          CreateBufferAllocationSlice(alloc0, alloc1, alloc2);
+      ASSERT_OK_AND_ASSIGN(
+          auto thunk, SortThunk::Create({"sort"},
+                                        {{slice0, large_keys.shape()},
+                                         {slice1, large_vals64.shape()},
+                                         {slice2, large_vals128.shape()}},
+                                        /*dimension=*/0, is_stable, multi_less,
+                                        /*direction=*/std::nullopt));
+      Thunk::ExecuteParams params;
+      params.buffer_allocations = &allocations;
+      auto execute_event = thunk->Execute(params);
+      tsl::BlockUntilReady(execute_event);
+      ASSERT_FALSE(execute_event.IsError());
+    }
+
+    for (int64_t i = 0; i < kLargeN; ++i) {
+      int64_t orig_i = kLargeN - 1 - i;
+      for (int64_t c = 0; c < 2; ++c) {
+        float expected_key = static_cast<float>((i + 1) * 10 + c);
+        EXPECT_EQ(large_1d.Get<float>({i, c}), expected_key);
+        EXPECT_EQ(large_keys.Get<float>({i, c}), expected_key);
+        EXPECT_EQ(large_vals64.Get<int64_t>({i, c}), orig_i);
+        EXPECT_EQ(
+            large_vals128.Get<complex128>({i, c}),
+            complex128(static_cast<double>(orig_i), static_cast<double>(c)));
+      }
+    }
+  }
+
+  // 4. Zero-element shapes f32[4, 0] (dim=0, inner_dim_size=0) and
+  //    f32[1, 0, 2] (dim=1, sort_dim_size=0, inner_dim_size=2).
+  for (const auto& [zero_shape, dim] :
+       {std::pair{ShapeUtil::MakeShape(F32, {4, 0}), int64_t{0}},
+        std::pair{ShapeUtil::MakeShape(F32, {1, 0, 2}), int64_t{1}}}) {
+    Literal empty0 = Literal::CreateFromShape(zero_shape);
+    Literal empty1 = Literal::CreateFromShape(zero_shape);
+    Literal empty2 = Literal::CreateFromShape(zero_shape);
+    BufferAllocations allocations =
+        CreateBufferAllocations(empty0, empty1, empty2);
+    auto [alloc0, alloc1, alloc2] =
+        CreateBufferAllocation(empty0, empty1, empty2);
+    auto [slice0, slice1, slice2] =
+        CreateBufferAllocationSlice(alloc0, alloc1, alloc2);
+
+    for (std::optional<SortThunk::SortDirection> direction :
+         {std::optional<SortThunk::SortDirection>{std::nullopt},
+          std::optional<SortThunk::SortDirection>{
+              SortThunk::SortDirection::kAscending}}) {
+      for (const std::vector<SortThunk::Input>& inputs :
+           {std::vector<SortThunk::Input>{{slice0, zero_shape}},
+            std::vector<SortThunk::Input>{{slice0, zero_shape},
+                                          {slice1, zero_shape}},
+            std::vector<SortThunk::Input>{{slice0, zero_shape},
+                                          {slice1, zero_shape},
+                                          {slice2, zero_shape}}}) {
+        ASSERT_OK_AND_ASSIGN(
+            auto thunk, SortThunk::Create({"sort"}, inputs, dim, is_stable,
+                                          TypedLessThan<float>, direction));
+        Thunk::ExecuteParams params;
+        params.buffer_allocations = &allocations;
+        auto execute_event = thunk->Execute(params);
+        tsl::BlockUntilReady(execute_event);
+        ASSERT_FALSE(execute_event.IsError());
+      }
+    }
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(SortThunk, SortThunkTest, testing::Bool(),
                          testing::PrintToStringParamName());
 
@@ -1287,7 +1522,11 @@ BENCHMARK_TEMPLATE(BM_Sort1D, F32)
     // Sort using LessThan comparator callback.
     ->Args({1000, 1, false, false})
     ->Args({10000, 1, false, false})
-    ->Args({100000, 1, false, false});
+    ->Args({100000, 1, false, false})
+    ->Args({1000, 8, false, false})
+    ->Args({10000, 8, false, false})
+    ->Args({1000, 25, false, false})
+    ->Args({10000, 25, false, false});
 
 BENCHMARK_TEMPLATE(BM_Sort1D, BF16)
     ->MeasureProcessCPUTime()
