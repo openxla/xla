@@ -118,7 +118,6 @@ TEST_F(PrngTest, ZeroValuesR2) { UniformTest<float>(0, 1, {0, 20}); }
 TEST_F(PrngTest, LargeU01) { UniformTest<float>(0, 1, {0x100, 0x100}); }
 TEST_F(PrngTest, TwelveValuesU524) { UniformTest<int32_t>(5, 24, {12}); }
 
-// TODO(b/71543667): Fix Rng ops on LLVM backends.
 // TODO(b/122047800): Interpreter does not support BF16 for RNG ops.
 using ScalarBF16TestCase = std::tuple<int64_t, std::pair<float, float>>;
 
@@ -127,7 +126,7 @@ class ScalarBF16Test
       public ::testing::WithParamInterface<ScalarBF16TestCase> {};
 
 TEST_P(ScalarBF16Test, DoIt) {
-  if (test::DeviceTypeIsOneOf({test::kCpu, test::kGpu, test::kInterpreter})) {
+  if (test::DeviceTypeIsOneOf({test::kInterpreter})) {
     GTEST_SKIP();
   }
   const auto [seed, a_b] = GetParam();
@@ -151,10 +150,42 @@ INSTANTIATE_TEST_SUITE_P(
             std::make_pair(-33.00f, -32.75f),
             std::make_pair(-32.75f, -32.50f))));
 
-// TODO(b/71543667): Fix Rng ops on LLVM backends.
+// The interpreter does not support F16 for RNG ops either.
+using ScalarF16TestCase = std::tuple<int64_t, std::pair<float, float>>;
+
+class ScalarF16Test : public PrngTest,
+                      public ::testing::WithParamInterface<ScalarF16TestCase> {
+};
+
+TEST_P(ScalarF16Test, DoIt) {
+  if (test::DeviceTypeIsOneOf({test::kInterpreter})) {
+    GTEST_SKIP();
+  }
+  const auto [seed, a_b] = GetParam();
+  const auto [a, b] = a_b;
+  UniformTest<half>(static_cast<half>(a), static_cast<half>(b), {},
+                    /*seed=*/seed);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ScalarF16TestInstance, ScalarF16Test,
+    ::testing::Combine(
+        ::testing::Range<int64_t>(0, 100),
+        ::testing::Values(
+            // The largest negative number smaller than zero in f16 that's not
+            // denormalized.
+            std::make_pair(
+                static_cast<float>(-std::numeric_limits<Eigen::half>::min()),
+                0.0f),
+            // Test odd and even values. F16 values are 1/32 apart here.
+            std::make_pair(32.96875f, 33.0f),
+            std::make_pair(32.9375f, 32.96875f),
+            std::make_pair(-33.0f, -32.96875f),
+            std::make_pair(-32.96875f, -32.9375f))));
+
 // TODO(b/122047800): Interpreter does not support BF16 for RNG ops.
 TEST_F(PrngTest, ScalarBF16CountTests) {
-  if (test::DeviceTypeIsOneOf({test::kCpu, test::kGpu, test::kInterpreter})) {
+  if (test::DeviceTypeIsOneOf({test::kInterpreter})) {
     GTEST_SKIP();
   }
   // There are 3 BF16 values in the range of [32.25, 33): 32.25, 32.5, 32.75,
