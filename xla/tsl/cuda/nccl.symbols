@@ -1,8 +1,12 @@
 ncclAllGather
+ncclAllGatherConfig
 ncclAllReduce
+ncclAllReduceConfig
 ncclAlltoAll
+ncclAlltoAllConfig
 ncclBcast
 ncclBroadcast
+ncclBroadcastConfig
 ncclCommAbort
 ncclCommCount
 ncclCommCuDevice
@@ -41,6 +45,7 @@ ncclRedOpCreatePreMulSum
 ncclRedOpDestroy
 ncclReduce
 ncclReduceScatter
+ncclReduceScatterConfig
 ncclResetDebugInit
 ncclSend
 ncclSignal

@@ -326,7 +326,7 @@ class GpuExecutable : public Executable {
           persistent_alloc_indices,
       NumAdditionalStreams num_additional_streams,
       CollectiveMemoryCache& collective_memory_cache,
-      bool collective_use_minimal_resource);
+      bool collective_use_minimal_resource, bool explicit_launch_ordering);
 
   // Compare current allocation's address with previous run's address, and
   // report the allocation info if memory addressed changed. Useful for identify
@@ -353,6 +353,8 @@ class GpuExecutable : public Executable {
 
   // Definition plan for the finalized thunk tree.
   ThunkExecutor::DefinitionPlan definition_plan_;
+
+  bool explicit_launch_ordering_;
 
   // Number of additional streams available at run time.
   NumAdditionalStreams num_additional_streams_;

@@ -737,9 +737,11 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
     ABSL_RETURN_IF_ERROR(
         params.stream->Memcpy(plan.copy_dst, plan.copy_src, plan.copy_size));
   }
-  return ExecuteKernelOnStream(*plan.kernel, plan.kernel_args,
-                               launch_dimensions_,
-                               /*cluster_dim=*/std::nullopt, params.stream);
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, params.stream));
+  return ExecuteKernelOnStream(
+      *plan.kernel, plan.kernel_args, launch_dimensions_,
+      /*cluster_dim=*/std::nullopt, params.stream, launch_event);
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*> CollectiveKernelThunk::Record(

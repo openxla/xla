@@ -305,10 +305,12 @@ class Stream {
   }
 
   // Helper method to launch a kernel with optional cluster dimensions.
+  // `launch_completion_event` fires at last-block dispatch, not completion.
   virtual absl::Status LaunchKernel(
       const ThreadDim& thread_dims, const BlockDim& block_dims,
       const std::optional<ClusterDim>& cluster_dims, void* function,
-      absl::string_view name, void** args, int64_t shmem_bytes, bool use_pdl) {
+      absl::string_view name, void** args, int64_t shmem_bytes, bool use_pdl,
+      Event* launch_completion_event = nullptr) {
     return absl::UnimplementedError("Not implemented");
   }
 

@@ -89,19 +89,19 @@ AllReduceConfig GetAllReduceConfigInst(
 absl::Status RunAllReduce(ReductionKind reduction_kind,
                           std::vector<DeviceBufferPair>& buffers,
                           se::Stream& stream, Communicator& comm,
-                          bool use_symmetric_buffer) {
+                          bool use_symmetric_buffer, se::Event* launch_event) {
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal) << "Performing all-reduce";
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
-  Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
-    for (DeviceBufferPair& buffer : buffers) {
-      ABSL_RETURN_IF_ERROR(gpu_comm->LaunchAllReduce(
-          buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
-          buffer.element_count, reduction_kind, GpuCollectives::On(stream)));
-    }
-    return absl::OkStatus();
-  });
-  ABSL_RETURN_IF_ERROR(future.Await());
+  ABSL_RETURN_IF_ERROR(
+      LaunchInGroups(*gpu_comm, buffers, launch_event,
+                     [&](int64_t i, se::Event* event) -> absl::Status {
+                       DeviceBufferPair& buffer = buffers[i];
+                       return gpu_comm->LaunchAllReduce(
+                           buffer.source_buffer, buffer.destination_buffer,
+                           buffer.element_type, buffer.element_count,
+                           reduction_kind, GpuCollectives::On(stream, event));
+                     }));
   XLA_VLOG_DEVICE(3, device_ordinal) << "Done performing all-reduce";
   return absl::OkStatus();
 }
@@ -148,8 +148,10 @@ absl::Status AllReduceThunk::RunCollective(const ExecuteParams& params,
       ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                              config_.config.operand_element_type));
 
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, &stream));
   return RunAllReduce(config_.reduction_kind, device_buffers, stream, comm,
-                      config_.config.use_symmetric_buffer);
+                      config_.config.use_symmetric_buffer, launch_event);
 }
 
 absl::StatusOr<std::unique_ptr<AllReduceThunk>> AllReduceThunk::FromProto(
@@ -266,36 +268,36 @@ absl::Status ReduceScatterThunk::RunCollective(const ExecuteParams& params,
       std::vector<DeviceBufferPair> device_buffers,
       ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                              config_.config.operand_element_type));
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, &stream));
   return RunReduceScatter(config_.reduction_kind, device_buffers, stream, comm,
-                          config_.config.use_symmetric_buffer);
+                          config_.config.use_symmetric_buffer, launch_event);
 }
 
 absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
                               se::Stream& stream, Communicator& comm,
-                              bool use_symmetric_buffer) {
+                              bool use_symmetric_buffer,
+                              se::Event* launch_event) {
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal) << "Performing reduce-scatter";
 
   ABSL_ASSIGN_OR_RETURN(int32_t num_ranks, comm.NumRanks());
 
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
-  Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
-    for (DeviceBufferPair& buffer : buffers) {
-      // buffer.element_count is the source buffers element count. For
-      // ncclReduceScatter, we need the destination buffers element count.
-      TF_RET_CHECK(buffer.element_count % num_ranks == 0)
-          << "Source buffer was not an exact multiple of the number of "
-             "participants.";
-
-      ABSL_RETURN_IF_ERROR(gpu_comm->LaunchReduceScatter(
-          buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
-          buffer.element_count / num_ranks, reduction_kind,
-          GpuCollectives::On(stream)));
-    }
-    return absl::OkStatus();
-  });
-  ABSL_RETURN_IF_ERROR(future.Await());
+  ABSL_RETURN_IF_ERROR(LaunchInGroups(
+      *gpu_comm, buffers, launch_event,
+      [&](int64_t i, se::Event* event) -> absl::Status {
+        DeviceBufferPair& buffer = buffers[i];
+        // ncclReduceScatter takes the element count of the destination buffer.
+        TF_RET_CHECK(buffer.element_count % num_ranks == 0)
+            << "Source buffer was not an exact multiple of the number of "
+               "participants.";
+        return gpu_comm->LaunchReduceScatter(
+            buffer.source_buffer, buffer.destination_buffer,
+            buffer.element_type, buffer.element_count / num_ranks,
+            reduction_kind, GpuCollectives::On(stream, event));
+      }));
   XLA_VLOG_DEVICE(3, device_ordinal) << "Done performing reduce-scatter";
   return absl::OkStatus();
 }

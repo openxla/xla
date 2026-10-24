@@ -78,8 +78,9 @@ se::StreamExecutor* GpuCollectives::Device::stream_executor() const {
   return stream_executor_;
 }
 
-GpuCollectives::Executor::Executor(stream_executor::Stream* stream)
-    : stream_(stream) {}
+GpuCollectives::Executor::Executor(stream_executor::Stream* stream,
+                                   stream_executor::Event* launch_event)
+    : stream_(stream), launch_event_(launch_event) {}
 
 stream_executor::Stream* GpuCollectives::Executor::stream() const {
   return stream_;

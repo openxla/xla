@@ -53,10 +53,13 @@ class CollectiveCliques {
       const GpuCliqueKey& clique_key, GlobalDeviceId global_device_id,
       const GpuDeviceCommunicator::Requirements& reqs) const;
 
+  // Whether every communicator this device holds records launch completion.
+  absl::StatusOr<bool> SupportsLaunchCompletion(
+      GlobalDeviceId global_device_id) const;
+
   // Returns whether peer device memory access is possible between all devices
   // in the clique.
-  absl::StatusOr<bool> peer_access_enabled(
-      const GpuCliqueKey& clique_key) const;
+  absl::StatusOr<bool> PeerAccessEnabled(const GpuCliqueKey& clique_key) const;
 
   // Ties an object to a clique. Clique takes ownership of the object and will
   // destroy it when the clique is destroyed. When TiedRef is destroyed, the

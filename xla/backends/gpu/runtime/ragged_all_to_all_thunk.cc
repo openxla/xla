@@ -40,7 +40,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -84,6 +83,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 
 namespace xla {
 namespace gpu {
@@ -922,7 +922,7 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllThunk::Record(
 
   ABSL_ASSIGN_OR_RETURN(
       bool peer_access_enabled,
-      execute_params.collective_cliques->peer_access_enabled(clique_key));
+      execute_params.collective_cliques->PeerAccessEnabled(clique_key));
   TF_RET_CHECK(peer_access_enabled)
       << "RaggedAllToAllThunk: Peer access must be enabled.";
 
@@ -1117,9 +1117,12 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
       ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                              config_.config.operand_element_type));
 
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, &stream));
+
   ABSL_ASSIGN_OR_RETURN(
       bool peer_access_enabled,
-      params.collective_cliques->peer_access_enabled(clique_key));
+      params.collective_cliques->PeerAccessEnabled(clique_key));
 
   RaggedAllToAllStreamState* state =
       per_device_states_.Find(stream.parent()->device_ordinal());
@@ -1128,6 +1131,9 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
   if (config_.enable_gxl && gpu_comm->gxl_communicator() != nullptr) {
     GxlCommunicator* gxl_nccl_comm = gpu_comm->gxl_communicator();
+    if (launch_event != nullptr) {
+      ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
+    }
     return gxl_nccl_comm->RunRaggedAllToAllGxl(
         &stream, device_buffers[0].element_type,
         device_buffers[0].source_buffer, device_buffers[1].destination_buffer,
@@ -1191,7 +1197,7 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
             device_buffers[4].source_buffer, num_ranks, num_updates_per_replica,
             config_.num_row_elements, cta_count,
             static_cast<int64_t>(input_offset),
-            static_cast<int64_t>(output_offset));
+            static_cast<int64_t>(output_offset), launch_event);
       }
     }
   }
@@ -1216,7 +1222,8 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
       return RunOneShotRaggedAllToAllWithNccl(
           clique_key, stream, state->rank, gpu_comm, state->sym_mem_kernel,
           output_sym_mem, output_sym_offset, config_.num_total_updates,
-          config_.num_input_rows, config_.num_row_elements, device_buffers);
+          config_.num_input_rows, config_.num_row_elements, device_buffers,
+          launch_event);
     }
 
     if (state->participants != nullptr && IsOneShotKernelSupported() &&
@@ -1229,8 +1236,14 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
           state->barrier_signal_value
               ->address(),  // Local monotonic step counter
           config_.num_total_updates, config_.num_input_rows,
-          config_.num_row_elements, device_buffers, *state->participants);
+          config_.num_row_elements, device_buffers, *state->participants,
+          launch_event);
     }
+  }
+
+  // Copies and send/recv have no config to carry the event, so record here.
+  if (launch_event != nullptr) {
+    ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
   }
 
   SymmetricMemory* output_sym_mem = nullptr;
@@ -1359,7 +1372,7 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     GpuCommunicator* comm, RaggedAllToAllWithSymmetricMemoryKernelType& kernel,
     SymmetricMemory* output_sym_mem, size_t output_sym_offset,
     int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
-    absl::Span<DeviceBufferPair const> buffers) {
+    absl::Span<DeviceBufferPair const> buffers, se::Event* launch_event) {
   int device_ordinal = stream.parent()->device_ordinal();
   const int64_t num_ranks = clique_key.num_devices();
 
@@ -1402,7 +1415,7 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
       &stream, kernel, element_type, input_buffer, output_sym_mem,
       output_sym_offset, buffers[2].source_buffer, buffers[3].source_buffer,
       buffers[4].source_buffer, num_ranks, num_updates_per_replica,
-      num_input_rows, num_row_elements));
+      num_input_rows, num_row_elements, launch_event));
 
   // 3. Barrier (Post-Kernel)
   // Global synchronization to ensure data consistency.
@@ -1452,7 +1465,8 @@ absl::Status RunOneShotRaggedAllToAll(
     const se::DeviceAddressBase& barrier_signal_value,
     int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
     absl::Span<DeviceBufferPair const> buffers,
-    const std::vector<RaggedAllToAllRendezvousValue>& participants) {
+    const std::vector<RaggedAllToAllRendezvousValue>& participants,
+    se::Event* launch_event) {
   int device_ordinal = stream.parent()->device_ordinal();
   const int64_t num_ranks = clique_key.num_local_participants();
 
@@ -1482,7 +1496,7 @@ absl::Status RunOneShotRaggedAllToAll(
       &stream, element_type, input_buffer, output_ptrs,
       buffers[2].source_buffer, buffers[3].source_buffer,
       buffers[4].source_buffer, num_ranks, num_updates_per_replica,
-      num_input_rows, num_row_elements));
+      num_input_rows, num_row_elements, launch_event));
 
   // 3. Barrier (Post-Kernel)
   // Global synchronization to ensure data consistency.

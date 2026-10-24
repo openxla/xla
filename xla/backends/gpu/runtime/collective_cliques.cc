@@ -102,6 +102,23 @@ absl::StatusOr<GpuCommunicator*> CollectiveCliques::GetComm(
   return GetComm(clique_key, *rank);
 }
 
+absl::StatusOr<bool> CollectiveCliques::SupportsLaunchCompletion(
+    GlobalDeviceId global_device_id) const {
+  bool found = false;
+  for (const auto& [clique_key, clique] : cliques_map_) {
+    std::optional<RankId> rank = clique_key.rank(global_device_id);
+    if (!rank.has_value()) {
+      continue;
+    }
+    ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm, GetComm(clique_key, *rank));
+    if (!comm->SupportsLaunchCompletion()) {
+      return false;
+    }
+    found = true;
+  }
+  return found;
+}
+
 absl::StatusOr<GpuDeviceCommunicator*> CollectiveCliques::GetDeviceComm(
     const GpuCliqueKey& clique_key, RankId rank,
     const GpuDeviceCommunicator::Requirements& reqs) const {
@@ -132,7 +149,7 @@ absl::StatusOr<GpuDeviceCommunicator*> CollectiveCliques::GetDeviceComm(
   return GetDeviceComm(clique_key, *rank, reqs);
 }
 
-absl::StatusOr<bool> CollectiveCliques::peer_access_enabled(
+absl::StatusOr<bool> CollectiveCliques::PeerAccessEnabled(
     const GpuCliqueKey& clique_key) const {
   // Check that we locked access to a clique for `clique_key`.
   auto clique = cliques_map_.find(clique_key);

@@ -150,14 +150,18 @@ absl::Status CollectiveBroadcastThunk::RunCollective(
   CollectiveBroadcastMetadata* cb_metadata =
       per_device_cb_metadata_.Find(stream.parent()->device_ordinal());
 
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, &stream));
   return ::xla::gpu::RunCollectiveBroadcast(device_buffers, stream, comm,
-                                            cb_metadata, has_dynamic_root_);
+                                            cb_metadata, has_dynamic_root_,
+                                            launch_event);
 }
 
 absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
                                     se::Stream& stream, Communicator& comm,
                                     CollectiveBroadcastMetadata* cb_metadata,
-                                    bool has_dynamic_root) {
+                                    bool has_dynamic_root,
+                                    se::Event* launch_event) {
   if (has_dynamic_root && cb_metadata) {
     DeviceBufferPair& roots_device_buffer = buffers.back();
     CHECK(cb_metadata->bcast_roots != nullptr);
@@ -177,28 +181,23 @@ absl::Status RunCollectiveBroadcast(std::vector<DeviceBufferPair>& buffers,
   const int64_t num_broadcasts =
       (has_dynamic_root && cb_metadata) ? buffers.size() - 1 : buffers.size();
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
-  Future<> future = gpu_comm->GroupExecute([&]() -> absl::Status {
-    RankId root = RankId(0);
-    for (int64_t i = 0; i < num_broadcasts; ++i) {
-      const DeviceBufferPair& buffer = buffers[i];
-      if (has_dynamic_root && cb_metadata) {
-        // If dynamic root is enabled, the actual root rank is read from the
-        // last buffer and can be different for each broadcast.
-        int32_t* roots_ptr = reinterpret_cast<int32_t*>(
-            cb_metadata->bcast_roots->address().opaque());
-        root = RankId(roots_ptr[i]);
-      }
-      se::DeviceAddressBase src_addr = buffer.source_buffer;
-      se::DeviceAddressBase dest_addr = buffer.destination_buffer;
-      ABSL_RETURN_IF_ERROR(gpu_comm->LaunchBroadcast(
-          // Always use rank 0 since we always broadcast from the first id
-          // in replica_groups
-          src_addr, dest_addr, buffer.element_type, buffer.element_count, root,
-          GpuCollectives::On(stream)));
-    }
-    return absl::OkStatus();
-  });
-  return future.Await();
+  return LaunchInGroups(
+      *gpu_comm, absl::MakeConstSpan(buffers.data(), num_broadcasts),
+      launch_event, [&](int64_t i, se::Event* event) -> absl::Status {
+        const DeviceBufferPair& buffer = buffers[i];
+        RankId root = RankId(0);  // the first id of the replica group
+        // With a dynamic root the last buffer holds a root rank per broadcast.
+        if (has_dynamic_root && cb_metadata) {
+          int32_t* roots_ptr = reinterpret_cast<int32_t*>(
+              cb_metadata->bcast_roots->address().opaque());
+          root = RankId(roots_ptr[i]);
+        }
+        se::DeviceAddressBase src_addr = buffer.source_buffer;
+        se::DeviceAddressBase dest_addr = buffer.destination_buffer;
+        return gpu_comm->LaunchBroadcast(
+            src_addr, dest_addr, buffer.element_type, buffer.element_count,
+            root, GpuCollectives::On(stream, event));
+      });
 }
 
 }  // namespace xla::gpu

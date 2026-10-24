@@ -316,7 +316,7 @@ absl::Status CollectivePermuteThunk::RunCollective(
   if (use_peer_memory() && clique_key.is_local()) {
     ABSL_ASSIGN_OR_RETURN(
         bool use_p2p_memcpy,
-        params.collective_cliques->peer_access_enabled(clique_key));
+        params.collective_cliques->PeerAccessEnabled(clique_key));
     if (use_p2p_memcpy) {
       XLA_VLOG_DEVICE(3, device_ordinal)
           << "CollectivePermute: using peer-access mode (D2D memcpy)";

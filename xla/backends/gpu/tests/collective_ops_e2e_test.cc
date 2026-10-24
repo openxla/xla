@@ -1963,6 +1963,75 @@ TEST_P(CollectivesModeOps, CombinedCollectivePermuteInWhileLoop) {
   LiteralTestUtil::ExpectR1Equal<float>({11.0, 11.0}, r1[1]);
 }
 
+// Collectives and compute in a while loop under explicit launch ordering.
+TEST_F(CollectiveOpsTestE2E, ExplicitLaunchOrderingWhileLoopWithCollectives) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+
+  add {
+    x = u32[] parameter(0)
+    y = u32[] parameter(1)
+    ROOT sum = u32[] add(x, y)
+  }
+
+  body {
+    param = (u32[], u32[2]) parameter(0)
+    i = u32[] get-tuple-element(param), index=0
+    data = u32[2] get-tuple-element(param), index=1
+    replica = u32[] replica-id()
+    replica_bcast = u32[2] broadcast(replica), dimensions={}
+    shifted = u32[2] add(data, replica_bcast)
+    reduced = u32[2] all-reduce(shifted), replica_groups={{0,1}}, to_apply=add
+    weighted = u32[2] multiply(data, replica_bcast)
+    weighted_twice = u32[4] concatenate(weighted, weighted), dimensions={0}
+    permuted = u32[2] collective-permute(shifted), source_target_pairs={{0,1},{1,0}}
+    mixed = u32[2] add(permuted, reduced)
+    gathered = u32[4] all-gather(mixed), dimensions={0}, replica_groups={{0,1}}
+    gathered_weighted = u32[8] all-gather(weighted_twice), dimensions={0}, replica_groups={{0,1}}
+    sliced = u32[2] slice(gathered), slice={[1:3]}
+    floor = u32[2] slice(gathered_weighted), slice={[4:6]}
+    next = u32[2] maximum(sliced, floor)
+    one = u32[] constant(1)
+    i_next = u32[] add(i, one)
+    ROOT tuple = (u32[], u32[2]) tuple(i_next, next)
+  }
+
+  cond {
+    param = (u32[], u32[2]) parameter(0)
+    i = u32[] get-tuple-element(param), index=0
+    limit = u32[] constant(4)
+    ROOT lt = pred[] compare(i, limit), direction=LT
+  }
+
+  ENTRY test_computation {
+    zero = u32[] constant(0)
+    init_data = u32[2] broadcast(zero), dimensions={}
+    init = (u32[], u32[2]) tuple(zero, init_data)
+    loop = (u32[], u32[2]) while(init), condition=cond, body=body
+    ROOT result = u32[2] get-tuple-element(loop), index=1
+  }
+  )";
+  const int64_t kNumReplicas = 2;
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices";
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.mutable_debug_options().set_xla_gpu_explicit_launch_ordering(true);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
+  ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                       ExecuteReplicated(std::move(module)));
+
+  // Each iteration adds the replica id to data, all-reduces that, permutes it
+  // to the other replica, adds both, all-gathers, keeps elements 1 and 2 but at
+  // least data times replica id from a larger second all-gather, combined too.
+  const std::vector<Literal>& results = execution_result.results;
+  ASSERT_EQ(results.size(), kNumReplicas);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({50, 70}, results[0]);
+  LiteralTestUtil::ExpectR1Equal<uint32_t>({50, 70}, results[1]);
+}
+
 INSTANTIATE_TEST_SUITE_P(AsyncCollectiveOps, AsyncCollectiveOps,
                          ::testing::Combine(::testing::Bool(),
                                             ::testing::Bool()),

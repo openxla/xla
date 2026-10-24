@@ -1978,7 +1978,10 @@ message DebugOptions {
   // when the cuDNN version changes).
   optional bool xla_autotune_cache_require_strict_codegen_match = 559;
 
-  // Next id: 562
+  // Order launches on dispatch, not completion.
+  optional bool xla_gpu_explicit_launch_ordering = 562;
+
+  // Next id: 563
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

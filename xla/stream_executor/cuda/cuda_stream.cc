@@ -551,7 +551,7 @@ absl::Status LaunchCudaKernel(
     unsigned int grid_dim_z, unsigned int block_dim_x, unsigned int block_dim_y,
     unsigned int block_dim_z, unsigned int shared_mem_bytes, CUstream stream,
     void** kernel_params, void** extra, std::optional<ClusterDim> cluster_dims,
-    bool use_pdl) {
+    bool use_pdl, Event* launch_completion_event) {
   TraceMe trace0([] { return TraceMeEncode("LaunchCudaKernel", {}); },
                  /*level=*/TraceMeLevel::kVerbose);
 
@@ -587,7 +587,8 @@ absl::Status LaunchCudaKernel(
     return cuda::ToStatus(result, msg);
   };
 
-  if (cluster_dims.has_value() || use_pdl) {
+  if (cluster_dims.has_value() || use_pdl ||
+      launch_completion_event != nullptr) {
     CUlaunchConfig launch_config;
     memset(&launch_config, 0, sizeof(launch_config));
     launch_config.blockDimX = block_dim_x;
@@ -599,7 +600,7 @@ absl::Status LaunchCudaKernel(
     launch_config.hStream = stream;
     launch_config.sharedMemBytes = shared_mem_bytes;
 
-    absl::InlinedVector<CUlaunchAttribute, 2> attrs;
+    absl::InlinedVector<CUlaunchAttribute, 3> attrs;
 
     if (cluster_dims.has_value()) {
       CUlaunchAttribute attr{};
@@ -614,6 +615,16 @@ absl::Status LaunchCudaKernel(
       CUlaunchAttribute attr{};
       attr.id = CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION;
       attr.value.programmaticStreamSerializationAllowed = 1;
+      attrs.push_back(attr);
+    }
+
+    // Records once the last block has been dispatched, not on completion.
+    if (launch_completion_event != nullptr) {
+      CUlaunchAttribute attr{};
+      attr.id = CU_LAUNCH_ATTRIBUTE_LAUNCH_COMPLETION_EVENT;
+      attr.value.launchCompletionEvent.event =
+          absl::down_cast<CudaEvent*>(launch_completion_event)->GetHandle();
+      attr.value.launchCompletionEvent.flags = 0;
       attrs.push_back(attr);
     }
 
@@ -640,15 +651,16 @@ absl::Status LaunchCudaKernel(
 absl::Status CudaStream::LaunchKernel(
     const ThreadDim& thread_dims, const BlockDim& block_dims,
     const std::optional<ClusterDim>& cluster_dims, void* function,
-    absl::string_view name, void** args, int64_t shmem_bytes, bool use_pdl) {
+    absl::string_view name, void** args, int64_t shmem_bytes, bool use_pdl,
+    Event* launch_completion_event) {
   TraceMe trace([] { return TraceMeEncode("CudaStream::LaunchKernel", {}); },
                 /*level=*/TraceMeLevel::kVerbose);
 
-  return LaunchCudaKernel(executor_, name, static_cast<CUfunction>(function),
-                          block_dims.x, block_dims.y, block_dims.z,
-                          thread_dims.x, thread_dims.y, thread_dims.z,
-                          shmem_bytes, stream_handle_, args,
-                          /*extra=*/nullptr, cluster_dims, use_pdl);
+  return LaunchCudaKernel(
+      executor_, name, static_cast<CUfunction>(function), block_dims.x,
+      block_dims.y, block_dims.z, thread_dims.x, thread_dims.y, thread_dims.z,
+      shmem_bytes, stream_handle_, args,
+      /*extra=*/nullptr, cluster_dims, use_pdl, launch_completion_event);
 }
 
 void CudaStream::SetName(std::string name) {

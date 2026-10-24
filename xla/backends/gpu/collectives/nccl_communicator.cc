@@ -60,7 +60,9 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
@@ -86,6 +88,29 @@ CUstream AsCudaStream(se::Stream* stream) {
 se::Stream* ToStream(const Communicator::Executor& executor) {
   return absl::down_cast<const GpuCollectives::Executor&>(executor).stream();
 }
+
+#if NCCL_VERSION_CODE >= 23200
+struct CollConfig {
+  explicit CollConfig(const Communicator::Executor& executor) {
+    se::Event* event =
+        absl::down_cast<const GpuCollectives::Executor&>(executor)
+            .launch_event();
+    if (event != nullptr) {
+      value.launchCompletionEvent =
+          absl::down_cast<se::gpu::CudaEvent*>(event)->GetHandle();
+    }
+  }
+  operator const ncclCollConfig_t*() const { return &value; }  // NOLINT
+
+  ncclCollConfig_t value = NCCL_COLLCONFIG_INITIALIZER;
+};
+#define XLA_NCCL_COLL(coll, executor, ...)               \
+  (SupportsLaunchCompletion()                            \
+       ? coll##Config(__VA_ARGS__, CollConfig(executor)) \
+       : coll(__VA_ARGS__))
+#else
+#define XLA_NCCL_COLL(coll, executor, ...) coll(__VA_ARGS__)
+#endif
 
 void SetDevCommGinConnection(ncclDevCommRequirements& reqs, bool use_gin,
                              bool gin_connection_full) {
@@ -225,6 +250,16 @@ bool NcclCommunicator::SupportsDeviceComm() const {
 
 bool NcclCommunicator::SupportsGin() const {
   return capabilities_.supports_gin;
+}
+
+// Headers and the soname-loaded library must both have the 2.32 config calls.
+bool NcclCommunicator::SupportsLaunchCompletion() const {
+  static const bool supported = [] {
+    int version = 0;
+    return NCCL_VERSION_CODE >= 23200 &&
+           ncclGetVersion(&version) == ncclSuccess && version >= 23200;
+  }();
+  return supported;
 }
 
 std::optional<int> NcclCommunicator::LsaSize() const {
@@ -590,10 +625,10 @@ absl::Status NcclCommunicator::LaunchAllReduce(
                                              ->GetDeviceDescription()
                                              .cuda_compute_capability()));
 
-    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclAllReduce(
-        send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
-        nccl_dtype, ToNcclReduction(reduction_kind), comm_->comm,
-        AsCudaStream(stream))));
+    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(XLA_NCCL_COLL(
+        ncclAllReduce, executor, send_buffer.opaque(), recv_buffer.opaque(),
+        ToNcclCount(dtype, count), nccl_dtype, ToNcclReduction(reduction_kind),
+        comm_->comm, AsCudaStream(stream))));
   }
   if (!IsInsideNcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -626,9 +661,10 @@ absl::Status NcclCommunicator::LaunchBroadcast(
                                              ->GetDeviceDescription()
                                              .cuda_compute_capability()));
 
-    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclBroadcast(
-        send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
-        nccl_dtype, root.value(), comm_->comm, AsCudaStream(stream))));
+    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(XLA_NCCL_COLL(
+        ncclBroadcast, executor, send_buffer.opaque(), recv_buffer.opaque(),
+        ToNcclCount(dtype, count), nccl_dtype, root.value(), comm_->comm,
+        AsCudaStream(stream))));
   }
   if (!IsInsideNcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -701,10 +737,10 @@ absl::Status NcclCommunicator::LaunchReduceScatter(
                                              ->GetDeviceDescription()
                                              .cuda_compute_capability()));
 
-    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclReduceScatter(
-        send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
-        nccl_dtype, ToNcclReduction(reduction_kind), comm_->comm,
-        AsCudaStream(stream))));
+    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(XLA_NCCL_COLL(
+        ncclReduceScatter, executor, send_buffer.opaque(), recv_buffer.opaque(),
+        ToNcclCount(dtype, count), nccl_dtype, ToNcclReduction(reduction_kind),
+        comm_->comm, AsCudaStream(stream))));
   }
   if (!IsInsideNcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -736,9 +772,10 @@ absl::Status NcclCommunicator::LaunchAllGather(
                                              ->GetDeviceDescription()
                                              .cuda_compute_capability()));
 
-    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(ncclAllGather(
-        send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
-        nccl_dtype, comm_->comm, AsCudaStream(stream))));
+    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(
+        XLA_NCCL_COLL(ncclAllGather, executor, send_buffer.opaque(),
+                      recv_buffer.opaque(), ToNcclCount(dtype, count),
+                      nccl_dtype, comm_->comm, AsCudaStream(stream))));
   }
   if (!IsInsideNcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -834,9 +871,9 @@ absl::Status NcclCommunicator::LaunchAllToAll(
     {
       absl::MutexLock lock(comm_->mutex);
       XLA_NCCL_RETURN_IF_ERROR(
-          ncclAlltoAll(send_contiguous->opaque(), recv_contiguous->opaque(),
-                       ToNcclCount(dtype, count), nccl_dtype, comm_->comm,
-                       AsCudaStream(stream)));
+          XLA_NCCL_COLL(ncclAlltoAll, executor, send_contiguous->opaque(),
+                        recv_contiguous->opaque(), ToNcclCount(dtype, count),
+                        nccl_dtype, comm_->comm, AsCudaStream(stream)));
     }
     if (!IsInsideNcclGroupLaunch()) {
       ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -844,6 +881,13 @@ absl::Status NcclCommunicator::LaunchAllToAll(
     return absl::OkStatus();
   }
 #endif
+
+  // ncclSend and ncclRecv take no config, so record the edge here instead.
+  if (se::Event* launch_event =
+          absl::down_cast<const GpuCollectives::Executor&>(executor)
+              .launch_event()) {
+    ABSL_RETURN_IF_ERROR(stream->RecordEvent(launch_event));
+  }
 
   auto group = [&] {
     for (size_t i = 0; i < send_buffers.size(); ++i) {

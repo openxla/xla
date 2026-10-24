@@ -133,7 +133,7 @@ absl::Status RunRaggedAllToAllKernel(
     se::DeviceAddressBase send_sizes_buffer,
     se::DeviceAddressBase output_offsets_buffer, int64_t num_outputs,
     int64_t num_updates_per_output, int64_t num_input_rows,
-    int64_t num_row_elements) {
+    int64_t num_row_elements, se::Event* launch_completion_event) {
   ABSL_ASSIGN_OR_RETURN(RaggedAllToAllLaunchParams params,
                         ComputeRaggedAllToAllLaunchParams(
                             element_type, num_outputs, num_updates_per_output,
@@ -146,10 +146,11 @@ absl::Status RunRaggedAllToAllKernel(
                 se::gpu::RaggedAllToAllKernel<decltype(vector_size)::value>>(
                 stream->parent());
       }));
-  return kernel.Launch(
-      params.thread_dims, params.block_dims, stream, input_buffer, output_ptrs,
-      input_offsets_buffer, send_sizes_buffer, output_offsets_buffer,
-      num_updates_per_output, params.num_vectorized_row_elements);
+  return kernel.LaunchWithCompletionEvent(
+      params.thread_dims, params.block_dims, stream, launch_completion_event,
+      input_buffer, output_ptrs, input_offsets_buffer, send_sizes_buffer,
+      output_offsets_buffer, num_updates_per_output,
+      params.num_vectorized_row_elements);
 }
 
 bool IsRaggedAllToAllWithSymmetricMemoryKernelSupported(
@@ -183,16 +184,16 @@ absl::Status RunRaggedAllToAllWithSymmetricMemoryKernel(
     se::DeviceAddressBase send_sizes_buffer,
     se::DeviceAddressBase output_offsets_buffer, int64_t num_outputs,
     int64_t num_updates_per_output, int64_t num_input_rows,
-    int64_t num_row_elements) {
+    int64_t num_row_elements, se::Event* launch_completion_event) {
   ABSL_ASSIGN_OR_RETURN(RaggedAllToAllLaunchParams params,
                         ComputeRaggedAllToAllLaunchParams(
                             element_type, num_outputs, num_updates_per_output,
                             num_input_rows, num_row_elements));
-  return kernel.Launch(
-      params.thread_dims, params.block_dims, stream, input_buffer,
-      output_ptrs_symmetric_memory, output_sym_offset, input_offsets_buffer,
-      send_sizes_buffer, output_offsets_buffer, num_updates_per_output,
-      params.num_vectorized_row_elements);
+  return kernel.LaunchWithCompletionEvent(
+      params.thread_dims, params.block_dims, stream, launch_completion_event,
+      input_buffer, output_ptrs_symmetric_memory, output_sym_offset,
+      input_offsets_buffer, send_sizes_buffer, output_offsets_buffer,
+      num_updates_per_output, params.num_vectorized_row_elements);
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*>
@@ -240,7 +241,8 @@ absl::Status LaunchDeviceKernel(
     se::DeviceAddressBase send_sizes_buffer,
     se::DeviceAddressBase output_offsets_buffer,
     int64_t num_updates_per_replica, int64_t num_row_elements,
-    int64_t input_buffer_offset_bytes, int64_t output_buffer_offset_bytes) {
+    int64_t input_buffer_offset_bytes, int64_t output_buffer_offset_bytes,
+    se::Event* launch_completion_event) {
   using KernelTrait = se::gpu::RaggedAllToAllDeviceKernel<kVectorSize>;
 
   ABSL_ASSIGN_OR_RETURN(
@@ -248,11 +250,11 @@ absl::Status LaunchDeviceKernel(
       se::gpu::GpuKernelRegistry::GetGlobalRegistry().LoadKernel<KernelTrait>(
           executor));
 
-  return kernel.Launch(thread_dims, block_dims, stream, dev_comm, send_win,
-                       recv_win, input_offsets_buffer, send_sizes_buffer,
-                       output_offsets_buffer, num_updates_per_replica,
-                       num_row_elements, input_buffer_offset_bytes,
-                       output_buffer_offset_bytes);
+  return kernel.LaunchWithCompletionEvent(
+      thread_dims, block_dims, stream, launch_completion_event, dev_comm,
+      send_win, recv_win, input_offsets_buffer, send_sizes_buffer,
+      output_offsets_buffer, num_updates_per_replica, num_row_elements,
+      input_buffer_offset_bytes, output_buffer_offset_bytes);
 }
 
 }  // namespace
@@ -265,7 +267,7 @@ absl::Status RunDeviceRaggedAllToAllKernel(
     se::DeviceAddressBase output_offsets_buffer, int64_t num_ranks,
     int64_t num_updates_per_replica, int64_t num_row_elements,
     int64_t cta_count, int64_t input_buffer_offset_bytes,
-    int64_t output_buffer_offset_bytes) {
+    int64_t output_buffer_offset_bytes, se::Event* launch_completion_event) {
   se::StreamExecutor* executor = stream->parent();
   static constexpr size_t kThreadsPerCta = 512;
 
@@ -285,7 +287,8 @@ absl::Status RunDeviceRaggedAllToAllKernel(
         stream, executor, thread_dims, block_dims, dev_comm, send_win, recv_win,
         input_offsets_buffer, send_sizes_buffer, output_offsets_buffer,
         num_updates_per_replica, num_vectorized_row_elements,
-        input_buffer_offset_bytes, output_buffer_offset_bytes);
+        input_buffer_offset_bytes, output_buffer_offset_bytes,
+        launch_completion_event);
   };
 
   switch (vector_size_bytes) {

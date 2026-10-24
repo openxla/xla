@@ -83,7 +83,8 @@ absl::StatusOr<KernelMetadata> RocmKernel::GetKernelMetadata() {
 absl::Status RocmKernel::Launch(const ThreadDim& thread_dims,
                                 const BlockDim& block_dims,
                                 const std::optional<ClusterDim>& cluster_dims,
-                                Stream* stream, const KernelArgs& args) {
+                                Stream* stream, const KernelArgs& args,
+                                Event* launch_completion_event) {
   hipFunction_t function = gpu_function();
 
   // Launch kernels with packed arguments.
