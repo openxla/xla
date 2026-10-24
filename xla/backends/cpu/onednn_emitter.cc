@@ -174,9 +174,8 @@ static absl::StatusOr<dnnl::graph::logical_tensor> DefineMatMul(
   const DotDimensionNumbers& dnums = instr->dot_dimension_numbers();
   const Shape& lhs_shape = instr->operand(0)->shape();
   const Shape& rhs_shape = instr->operand(1)->shape();
-  ABSL_ASSIGN_OR_RETURN(
-      bool is_supported,
-      IsDotSupportedByOneDnn(dnums, lhs_shape, rhs_shape, instr->shape()));
+
+  bool is_supported = ShouldRewriteDot(instr);
 
   if (!is_supported) {
     return InvalidArgument("Unsupported oneDNN Dot op variation: %s",
