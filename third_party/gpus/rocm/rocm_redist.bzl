@@ -19,8 +19,8 @@ rocm_redist = {
     "rocm_latest_multiarch": struct(
         packages = [
             {
-                "url": "https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.0.0.tar.gz",
-                "sha256": "1c5e807875d26a2470ecc7323daa5b5b9009208a55c3290ac255a909cde15fc6",
+                "url": "https://stable.repo.amd.com/rocm/core/tarball/therock-dist-linux-multiarch-10.1.0.tar.gz",
+                "sha256": "a95c72f0052168f2262365dff71c2259331721ad0a65da7957dc7d96ccb77021",
             },
         ],
         required_softlinks = [],
