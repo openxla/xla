@@ -989,6 +989,54 @@ TEST_F(HloCseTest, CustomCallSideEffects) {
   EXPECT_EQ(changed, false);
 }
 
+TEST_F(HloCseTest, DoNotCombinePinsOfEquivalentValues) {
+  // Two independent pinned buffers whose initial values are equivalent. Each
+  // buffer is written in place through a separate aliased operand of
+  // `writer`, so merging the two Pins would make both outputs alias the same
+  // memory.
+  const char* const hlo_string = R"(
+    HloModule m
+
+    ENTRY entry {
+      zero = f32[] constant(0)
+      init0 = f32[32] broadcast(zero), dimensions={}
+      init1 = f32[32] broadcast(zero), dimensions={}
+      pin0 = b(f32[32]) custom-call(init0), custom_call_target="Pin",
+        output_to_operand_aliasing={{}: (0, {})}
+      pin1 = b(f32[32]) custom-call(init1), custom_call_target="Pin",
+        output_to_operand_aliasing={{}: (0, {})}
+      writer = (b(f32[32]), b(f32[32])) custom-call(pin0, pin1),
+        custom_call_target="writer",
+        output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}
+      buf0 = b(f32[32]) get-tuple-element(writer), index=0
+      buf1 = b(f32[32]) get-tuple-element(writer), index=1
+      unpin0 = f32[32] custom-call(buf0), custom_call_target="Unpin",
+        output_to_operand_aliasing={{}: (0, {})}
+      unpin1 = f32[32] custom-call(buf1), custom_call_target="Unpin",
+        output_to_operand_aliasing={{}: (0, {})}
+      ROOT root = tuple(unpin0, unpin1)
+    }
+  )";
+
+  for (bool custom_predicate : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+    // A custom predicate that allows everything must not bypass the check.
+    HloCSE cse = custom_predicate
+                     ? HloCSE(/*is_layout_sensitive=*/false,
+                              /*ignore_control_dependencies=*/false,
+                              /*should_eliminate_computation=*/nullptr,
+                              /*should_eliminate_instruction=*/
+                              [](const HloInstruction*) { return true; })
+                     : HloCSE(/*is_layout_sensitive=*/false);
+    ASSERT_OK(RunHloPass(&cse, m.get()).status());
+
+    SCOPED_TRACE(absl::StrCat("Module after CSE:\n", m->ToString()));
+    const HloInstruction* writer = FindInstruction(m.get(), "writer");
+    ASSERT_NE(writer, nullptr);
+    EXPECT_NE(writer->operand(0), writer->operand(1));
+  }
+}
+
 TEST_F(HloCseTest, IgnoreControlDependencies) {
   const char* const hlo_string = R"(
     HloModule m

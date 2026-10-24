@@ -291,6 +291,15 @@ struct CseKey {
   HloInstruction* hlo;
 };
 
+bool HasBufferSubshape(const Shape& shape) {
+  bool has_buffer = false;
+  ShapeUtil::ForEachSubshape(
+      shape, [&](const Shape& subshape, const ShapeIndex& /*index*/) {
+        has_buffer |= subshape.IsBuffer();
+      });
+  return has_buffer;
+}
+
 }  // namespace
 
 /*static*/
@@ -383,6 +392,12 @@ absl::StatusOr<bool> HloCSE::RunOnComputation(HloComputation* computation) {
     // requested to be removed or not.
     if (!computation->IsSafelyRemovable(instruction,
                                         ignore_control_dependencies_)) {
+      continue;
+    }
+
+    // Each buffer value (e.g. the result of a Pin) is a distinct mutable
+    // storage, so two buffers with equal inputs must never be combined.
+    if (HasBufferSubshape(instruction->shape())) {
       continue;
     }
 
