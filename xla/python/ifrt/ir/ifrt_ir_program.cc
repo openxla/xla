@@ -62,7 +62,8 @@ char DeserializeIfrtIRProgramOptions::ID = 0;
 char IfrtIRCompileOptions::ID = 0;
 
 absl::StatusOr<uint64_t> IfrtIRProgram::Fingerprint() const {
-  absl::StatusOr<uint64_t> fingerprint = FingerprintModuleOp(mlir_module);
+  absl::StatusOr<uint64_t> fingerprint =
+      FingerprintModuleOp(mlir_module, FingerprintOptions());
   if (!fingerprint.ok()) {
     absl::Status status = fingerprint.status();
     tsl::errors::AppendToMessage(

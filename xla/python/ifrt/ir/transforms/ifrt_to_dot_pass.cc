@@ -278,7 +278,8 @@ void IfrtToDotPass::runOnOperation() {
   std::string module_name = module_op.getName().value_or("unknown").str();
   // Include the module fingerprint in the file name to avoid exporting a
   // module multiple times.
-  absl::StatusOr<uint64_t> fingerprint = FingerprintModuleOp(module_op);
+  absl::StatusOr<uint64_t> fingerprint =
+      FingerprintModuleOp(module_op, FingerprintOptions());
   if (!fingerprint.ok()) {
     LOG(WARNING) << "Failed to get fingerprint for module " << module_name
                  << ": " << fingerprint.status();

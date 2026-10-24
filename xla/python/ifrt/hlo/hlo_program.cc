@@ -87,8 +87,10 @@ absl::StatusOr<std::unique_ptr<HloProgram>> HloProgram::FromBytes(
                                                  std::move(module));
 }
 
-absl::StatusOr<uint64_t> HloProgram::Fingerprint() const {
-  absl::StatusOr<uint64_t> fingerprint = FingerprintModuleOp(mlir_module_);
+absl::StatusOr<uint64_t> HloProgram::Fingerprint(
+    const FingerprintOptions& options) const {
+  absl::StatusOr<uint64_t> fingerprint =
+      FingerprintModuleOp(mlir_module_, options);
   if (!fingerprint.ok()) {
     absl::Status status = fingerprint.status();
     tsl::errors::AppendToMessage(

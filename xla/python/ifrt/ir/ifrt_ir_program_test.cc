@@ -231,8 +231,10 @@ module {
   mlir::MLIRContext context;
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
                        support::ParseMlirModuleString(kIfrtModule, context));
-  ASSERT_OK_AND_ASSIGN(uint64_t fp1, FingerprintModuleOp(*module));
-  ASSERT_OK_AND_ASSIGN(uint64_t fp2, FingerprintModuleOp(*module));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp1,
+                       FingerprintModuleOp(*module, FingerprintOptions()));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp2,
+                       FingerprintModuleOp(*module, FingerprintOptions()));
   EXPECT_EQ(fp1, fp2);
 }
 
@@ -276,8 +278,10 @@ module {
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> module1,
       support::ParseMlirModuleString(kIfrtModuleDevice1, context));
-  ASSERT_OK_AND_ASSIGN(uint64_t fp0, FingerprintModuleOp(*module0));
-  ASSERT_OK_AND_ASSIGN(uint64_t fp1, FingerprintModuleOp(*module1));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp0,
+                       FingerprintModuleOp(*module0, FingerprintOptions()));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp1,
+                       FingerprintModuleOp(*module1, FingerprintOptions()));
   EXPECT_NE(fp0, fp1);
 }
 
@@ -321,8 +325,10 @@ module {
   ASSERT_OK_AND_ASSIGN(
       mlir::OwningOpRef<mlir::ModuleOp> module2,
       support::ParseMlirModuleString(kIfrtModuleSharding2, context));
-  ASSERT_OK_AND_ASSIGN(uint64_t fp1, FingerprintModuleOp(*module1));
-  ASSERT_OK_AND_ASSIGN(uint64_t fp2, FingerprintModuleOp(*module2));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp1,
+                       FingerprintModuleOp(*module1, FingerprintOptions()));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp2,
+                       FingerprintModuleOp(*module2, FingerprintOptions()));
   EXPECT_NE(fp1, fp2);
 }
 
@@ -361,8 +367,10 @@ module @ifrt_mod {
                        support::ParseMlirModuleString(kIfrtModule1, context));
   ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module2,
                        support::ParseMlirModuleString(kIfrtModule2, context));
-  ASSERT_OK_AND_ASSIGN(uint64_t fp1, FingerprintModuleOp(*module1));
-  ASSERT_OK_AND_ASSIGN(uint64_t fp2, FingerprintModuleOp(*module2));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp1,
+                       FingerprintModuleOp(*module1, FingerprintOptions()));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp2,
+                       FingerprintModuleOp(*module2, FingerprintOptions()));
   EXPECT_EQ(fp1, fp2);
 }
 

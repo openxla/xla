@@ -30,6 +30,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
+#include "xla/python/ifrt/mlir/fingerprint_utils.h"
 #include "xla/python/ifrt/program.h"
 #include "xla/python/ifrt/rtti.h"
 
@@ -75,8 +76,10 @@ class HloProgram : public RTTIExtends<HloProgram, Program> {
       std::shared_ptr<mlir::MLIRContext> context = nullptr);
 
   // Returns a fingerprint of the HLO program. Two HLO programs are equivalent
-  // if their fingerprints are the same. May ignore debug info.
-  absl::StatusOr<uint64_t> Fingerprint() const;
+  // if their fingerprints are the same, up to the names that `options`
+  // canonicalizes. May ignore debug info.
+  using FingerprintOptions = ::xla::ifrt::FingerprintOptions;
+  absl::StatusOr<uint64_t> Fingerprint(const FingerprintOptions& options) const;
 
   // Destructively converts this HloProgram into a MaybeOwningMlirModule.
   xla::MaybeOwningMlirModule ToMaybeOwningMlirModule() &&;

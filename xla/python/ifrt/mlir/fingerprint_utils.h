@@ -24,9 +24,25 @@ limitations under the License.
 namespace xla {
 namespace ifrt {
 
+// Options for `FingerprintModuleOp`.
+struct FingerprintOptions {
+  // If true, the module name is canonicalized: it is fingerprinted as a fixed
+  // ID, so modules that differ only in their names get the same fingerprint.
+  bool canonicalize_module_name = false;
+
+  // If true, the names of the Shardy meshes (`sdy.mesh`) defined in the module
+  // body are canonicalized: each mesh name is fingerprinted as the rank of the
+  // name among the mesh names, so mesh definitions, mesh uses and the order of
+  // mesh names still contribute. A mesh keeps its name if a nested symbol table
+  // defines a symbol with the same name.
+  bool canonicalize_sdy_mesh_names = false;
+};
+
 // Returns a fingerprint of the given MLIR module. Two MLIR modules are
-// equivalent if their fingerprints are the same. May ignore debug info.
-absl::StatusOr<uint64_t> FingerprintModuleOp(mlir::ModuleOp module_op);
+// equivalent if their fingerprints are the same, up to the names that
+// `options` canonicalizes. May ignore debug info.
+absl::StatusOr<uint64_t> FingerprintModuleOp(mlir::ModuleOp module_op,
+                                             const FingerprintOptions& options);
 
 }  // namespace ifrt
 }  // namespace xla
