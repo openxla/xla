@@ -1650,6 +1650,7 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
   // instructions with no auxiliary fields.
   switch (opcode) {
     case HloOpcode::kClamp:
+    case HloOpcode::kFma:
     case HloOpcode::kSelect:
       break;
     default:
@@ -2972,6 +2973,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
       break;
     // Ternary ops.
     case HloOpcode::kClamp:
+    case HloOpcode::kFma:
     case HloOpcode::kSelect:
       CHECK_EQ(new_operands.size(), 3);
       clone = CreateTernary(shape, opcode_, new_operands[0], new_operands[1],
@@ -3461,6 +3463,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
+    case HloOpcode::kFma:
     case HloOpcode::kImag:
     case HloOpcode::kIsFinite:
     case HloOpcode::kLog:
@@ -4163,6 +4166,7 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
     // Ternary elementwise operations.
     case HloOpcode::kSelect:
     case HloOpcode::kClamp:
+    case HloOpcode::kFma:
       return true;
 
     default:
@@ -5076,6 +5080,8 @@ absl::Status HloInstruction::Visit(
         return visitor->HandleMap(this);
       case HloOpcode::kClamp:
         return visitor->HandleClamp(this);
+      case HloOpcode::kFma:
+        return visitor->HandleFma(this);
       case HloOpcode::kReduce:
         return visitor->HandleReduce(this);
       case HloOpcode::kScan:
