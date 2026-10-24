@@ -3605,6 +3605,28 @@ xla_test(
 )
 
 xla_test(
+    name = "fma_test",
+    srcs = ["fma_test.cc"],
+    deps = [
+        ":hlo_interpreter_reference_mixin",
+        ":hlo_test_base",
+        ":literal_test_util",
+        ":xla_internal_test_main",
+        "//xla:error_spec",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:types",
+        "//xla/hlo/ir:hlo",
+        "//xla/tests:xla_test_backend_predicates",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_test(
     name = "remainder_test",
     srcs = ["remainder_test.cc"],
     deps = [

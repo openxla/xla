@@ -66,6 +66,7 @@ bool OneDnnFloatSupport::IsSupported(const HloInstruction& hlo) const {
     case HloOpcode::kBitcast:
       return true;
     case HloOpcode::kSort:
+    case HloOpcode::kFma:
       return LowPrecisionType() == BF16;
     default:
       return false;

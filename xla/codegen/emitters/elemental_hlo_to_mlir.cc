@@ -1062,6 +1062,8 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
       return MapElementwiseOp<mhlo::Expm1Op>(arg_types, operands, builder);
     case HloOpcode::kFloor:
       return MapElementwiseOp<mhlo::FloorOp>(arg_types, operands, builder);
+    case HloOpcode::kFma:
+      return MapElementwiseOp<mhlo::FmaOp>(arg_types, operands, builder);
     case HloOpcode::kIsFinite:
       return MapHloOp<mhlo::IsFiniteOp>(builder.getI1Type(), arg_types,
                                         operands, /*attributes=*/{}, builder);

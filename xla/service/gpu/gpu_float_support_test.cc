@@ -754,5 +754,27 @@ TEST_F(FloatSupportTest, AllToAllTupleShapeS4IsNormalized) {
       se::GpuComputeCapability{se::CudaComputeCapability::Hopper()}, S4, S8));
 }
 
+TEST_F(FloatSupportTest, BF16FmaIsNotNormalizedOutsideTriton) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule module
+
+ENTRY main {
+  p0 = bf16[4] parameter(0)
+  p1 = bf16[4] parameter(1)
+  p2 = bf16[4] parameter(2)
+  ROOT r = bf16[4] fma(p0, p1, p2)
+})";
+
+  for (se::GpuComputeCapability cc :
+       {se::GpuComputeCapability{se::CudaComputeCapability::Volta()},
+        se::GpuComputeCapability{se::CudaComputeCapability::Ampere()},
+        se::GpuComputeCapability{se::CudaComputeCapability::Hopper()},
+        se::GpuComputeCapability{se::RocmComputeCapability("gfx942")}}) {
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloModule));
+    EXPECT_FALSE(Normalize(module.get(), cc, BF16, F32))
+        << "bf16 fma should not be normalized outside Triton";
+  }
+}
+
 }  // namespace
 }  // namespace xla::gpu
