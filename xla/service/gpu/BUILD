@@ -762,6 +762,7 @@ xla_cc_test(
     deps = [
         ":buffer_allocations",
         ":gpu_executable_buffer_allocator",
+        ":gpu_memory_space_assignment",
         "//xla:executable_run_options",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -786,6 +787,7 @@ xla_cc_test(
         "//xla/tsl/platform:env",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
