@@ -15,10 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/fusion_block_level_rewriter.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
@@ -41,8 +44,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout_util.h"
+#include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -54,6 +59,7 @@ limitations under the License.
 #include "xla/service/instruction_fusion.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla.pb.h"
@@ -76,7 +82,8 @@ bool ShouldRewriteLoopTransposeFusion(
       fusion->fused_instructions_computation()->root_instruction();
 
   bool is_loop_transpose_fusion =
-      fusion->fusion_kind() == HloInstruction::FusionKind::kLoop &&
+      (fusion->fusion_kind() == HloInstruction::FusionKind::kLoop ||
+       fusion->fusion_kind() == HloInstruction::FusionKind::kInput) &&
       root->opcode() == HloOpcode::kTranspose;
 
   if (!is_loop_transpose_fusion) {
@@ -100,15 +107,34 @@ bool ShouldRewriteLoopTransposeFusion(
   }
   auto normalized_dims = normalized_dims_or.value();
   int64_t rank = normalized_dims.size();
+  if (rank < 2) {
+    return false;
+  }
 
   // This only triggers for transposes with major-to-minor layout.
   bool has_major_to_minor_layout =
       LayoutUtil::IsMonotonicWithDim0Major(root->shape().layout());
-  int64_t result_minormost_dim_in_operand = permutation.back();
+  if (!has_major_to_minor_layout) {
+    return false;
+  }
 
-  if (!(has_major_to_minor_layout &&
-        permutation[result_minormost_dim_in_operand] == rank - 1 &&
-        permutation[rank - 1] < rank - 2)) {
+  int64_t result_minormost_dim_in_operand = permutation.back();
+  bool is_slow_unnormalized_transpose =
+      permutation[result_minormost_dim_in_operand] == rank - 1 &&
+      permutation[rank - 1] < rank - 2;
+
+  std::vector<int64_t> normalized_operand_dims(rank);
+  for (int64_t i = 0; i < rank; ++i) {
+    normalized_operand_dims[permutation[i]] = normalized_dims[i];
+  }
+  int64_t operand_minormost_dim = normalized_operand_dims.back();
+
+  bool is_fp8 = primitive_util::IsF8Type(root->shape().element_type());
+  bool is_collapsible = is_fp8 && rank < root->shape().dimensions().size() &&
+                        (operand_minormost_dim % 16 == 0 ||
+                         llvm::isPowerOf2_64(operand_minormost_dim));
+
+  if (!is_slow_unnormalized_transpose && !is_collapsible) {
     return false;
   }
 
@@ -235,6 +261,134 @@ absl::StatusOr<bool> HasStaleSequentialTileSizes(
          (*tiling_space)->num_sequential_dimensions();
 }
 
+// If the loop transpose fusion has contiguous dimensions that can be
+// collapsed, replaces the fusion in its parent computation with a collapsed
+// transpose fusion flanked by outer bitcasts.
+//
+// In XLA GPU, bitcasts outside fusions are zero-cost buffer views. Grouping
+// dimensions outside the fusion allows Triton block-level tiling to operate on
+// clean normalized dimensions (e.g., 2D [151552, 256]) instead of irregular
+// multi-dimensional shapes with non-power-of-2 dimensions.
+//
+// Returns the new collapsed fusion instruction if collapsed, or nullptr if
+// no collapsing was performed.
+absl::StatusOr<HloFusionInstruction*> MaybeCollapseTransposeFusion(
+    HloFusionInstruction* fusion_instruction) {
+  if (fusion_instruction->fusion_kind() != HloInstruction::FusionKind::kLoop &&
+      fusion_instruction->fusion_kind() != HloInstruction::FusionKind::kInput) {
+    return nullptr;
+  }
+  if (fusion_instruction->IsMultiOutputFusion()) {
+    return nullptr;
+  }
+  HloInstruction* root =
+      fusion_instruction->fused_instructions_computation()->root_instruction();
+  if (root->opcode() != HloOpcode::kTranspose) {
+    return nullptr;
+  }
+
+  // Check if root is a pure transpose of parameter or transpose of bitcasted
+  // parameter.
+  HloInstruction* transpose_operand = root->mutable_operand(0);
+  if (transpose_operand->opcode() == HloOpcode::kBitcast) {
+    transpose_operand = transpose_operand->mutable_operand(0);
+  }
+  if (transpose_operand->opcode() != HloOpcode::kParameter) {
+    return nullptr;
+  }
+  HloInstruction* fusion_operand = fusion_instruction->mutable_operand(
+      transpose_operand->parameter_number());
+
+  absl::InlinedVector<int64_t, 3> permutation;
+  auto normalized_dims_or = ShapeUtil::GetNormalizedLogicalTransposeShape(
+      root->operand(0)->shape(), root->shape(), root->dimensions(),
+      permutation);
+  if (!normalized_dims_or.ok()) {
+    return nullptr;
+  }
+  auto normalized_dims = normalized_dims_or.value();
+  int64_t rank = normalized_dims.size();
+  if (rank >= root->shape().dimensions().size() || rank < 2) {
+    return nullptr;
+  }
+
+  std::vector<int64_t> normalized_operand_dims(rank);
+  for (int64_t i = 0; i < rank; ++i) {
+    normalized_operand_dims[permutation[i]] = normalized_dims[i];
+  }
+
+  Shape normalized_operand_shape = ShapeUtil::MakeShapeWithDescendingLayout(
+      root->shape().element_type(), normalized_operand_dims);
+  Shape normalized_output_shape = ShapeUtil::MakeShapeWithDescendingLayout(
+      root->shape().element_type(), normalized_dims);
+
+  if (!ShapeUtil::ReshapeIsBitcast(fusion_operand->shape(),
+                                   normalized_operand_shape) ||
+      !ShapeUtil::ReshapeIsBitcast(normalized_output_shape,
+                                   fusion_instruction->shape())) {
+    return nullptr;
+  }
+
+  HloComputation* parent = fusion_instruction->parent();
+  HloModule* module = fusion_instruction->GetModule();
+
+  // Create input bitcast in parent computation.
+  HloInstruction* input_bitcast = parent->AddInstruction(
+      HloInstruction::CreateBitcast(normalized_operand_shape, fusion_operand));
+
+  // Build new collapsed fusion computation.
+  HloComputation::Builder builder(
+      absl::StrCat(fusion_instruction->name(), "_collapsed"));
+  HloInstruction* p0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, normalized_operand_shape, "p0"));
+  builder.AddInstruction(HloInstruction::CreateTranspose(
+      normalized_output_shape, p0, permutation));
+  HloComputation* new_computation = module->AddComputationAndUnifyNamesAndIds(
+      builder.Build(), /*is_entry=*/false);
+
+  // Create new collapsed fusion instruction.
+  HloInstruction* new_fusion =
+      parent->AddInstruction(HloInstruction::CreateFusion(
+          normalized_output_shape, fusion_instruction->fusion_kind(),
+          {input_bitcast}, new_computation));
+  new_fusion->set_metadata(fusion_instruction->metadata());
+  if (fusion_instruction->has_backend_config()) {
+    ABSL_ASSIGN_OR_RETURN(
+        GpuBackendConfig gpu_config,
+        fusion_instruction->backend_config<GpuBackendConfig>());
+    ABSL_RETURN_IF_ERROR(new_fusion->set_backend_config(gpu_config));
+  }
+
+  // Create output bitcast to original fusion output shape.
+  HloInstruction* output_bitcast = parent->AddInstruction(
+      HloInstruction::CreateBitcast(fusion_instruction->shape(), new_fusion));
+  output_bitcast->set_metadata(fusion_instruction->metadata());
+
+  // Update schedule if module has schedule.
+  if (module->has_schedule() &&
+      module->schedule().is_computation_scheduled(parent)) {
+    HloInstructionSequence& seq =
+        module->schedule().GetOrCreateSequence(parent);
+    auto it = std::find(seq.instructions().begin(), seq.instructions().end(),
+                        fusion_instruction);
+    if (it != seq.instructions().end()) {
+      int64_t index = std::distance(seq.instructions().begin(), it);
+      seq.replace_instruction(fusion_instruction, output_bitcast);
+      seq.insert_instruction(new_fusion, index);
+      seq.insert_instruction(input_bitcast, index);
+    }
+  }
+
+  // Replace original fusion with output_bitcast and remove old computation.
+  HloComputation* old_computation =
+      fusion_instruction->fused_instructions_computation();
+  ABSL_RETURN_IF_ERROR(
+      parent->ReplaceInstruction(fusion_instruction, output_bitcast));
+  ABSL_RETURN_IF_ERROR(module->RemoveEmbeddedComputation(old_computation));
+
+  return Cast<HloFusionInstruction>(new_fusion);
+}
+
 absl::StatusOr<bool> ProcessFusionInstruction(
     HloFusionInstruction* fusion_instruction,
     const se::DeviceDescription& device_info,
@@ -307,6 +461,13 @@ absl::StatusOr<bool> ProcessFusionInstruction(
     return false;
   }
 
+  ABSL_ASSIGN_OR_RETURN(HloFusionInstruction * collapsed_fusion,
+                        MaybeCollapseTransposeFusion(fusion_instruction));
+  if (collapsed_fusion != nullptr) {
+    fusion_instruction = collapsed_fusion;
+    fusion_computation = fusion_instruction->fused_instructions_computation();
+  }
+
   HloFusionAnalysisCache fusion_analysis_cache(device_info);
   GpuPerformanceModelWithIndexingAnalysis indexing_performance_model(
       &device_info, &fusion_analysis_cache, shape_size, mlir_context,
@@ -339,7 +500,7 @@ absl::StatusOr<bool> ProcessFusionInstruction(
                        "|: tiling search failed: ", fusion_decision->Explain()),
           *fusion_instruction);
     }
-    return false;
+    return collapsed_fusion != nullptr;
   }
 
   TiledRunTimeData tiled_runtime_data =

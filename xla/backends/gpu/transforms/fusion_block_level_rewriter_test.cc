@@ -311,9 +311,46 @@ ENTRY entry {
           .Run(module.get()),
       IsOkAndHolds(true));
   const HloInstruction* root = module->entry_computation()->root_instruction();
-  EXPECT_EQ(root->opcode(), HloOpcode::kFusion);
-  EXPECT_EQ(root->fusion_kind(), HloInstruction::FusionKind::kCustom);
-  EXPECT_TRUE(HasTritonBlockLevelFusionConfig(root));
+  EXPECT_EQ(root->opcode(), HloOpcode::kBitcast);
+  const HloInstruction* fusion = root->operand(0);
+  EXPECT_EQ(fusion->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(fusion->fusion_kind(), HloInstruction::FusionKind::kCustom);
+  EXPECT_TRUE(HasTritonBlockLevelFusionConfig(fusion));
+  EXPECT_THAT(fusion->shape().dimensions(),
+              testing::ElementsAre(300, 200, 100));
+}
+
+TEST_P(FusionBlockLevelRewriterTest,
+       RewritesLoopTransposeFusionWithCollapsedDimensions) {
+  // Test 3D -> 2D transpose where two contiguous dimensions are collapsed.
+  // [4096, 37, 256] -> [256, 4096, 37] with dimensions={2,0,1}.
+  // Collapses to [151552, 256] -> [256, 151552] with dimensions={1,0}.
+  const absl::string_view hlo_text = R"(
+fusion_computation {
+  p0 = f8e4m3fn[4096,37,256] parameter(0)
+  ROOT transpose = f8e4m3fn[256,4096,37] transpose(p0), dimensions={2,0,1}
+}
+
+ENTRY entry {
+  p0 = f8e4m3fn[4096,37,256] parameter(0)
+  ROOT fusion = f8e4m3fn[256,4096,37] fusion(p0), kind=kLoop,
+    calls=fusion_computation
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  EXPECT_THAT(
+      FusionBlockLevelRewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                               &mlir_context_)
+          .Run(module.get()),
+      IsOkAndHolds(true));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kBitcast);
+  const HloInstruction* fusion = root->operand(0);
+  EXPECT_EQ(fusion->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(fusion->fusion_kind(), HloInstruction::FusionKind::kCustom);
+  EXPECT_TRUE(HasTritonBlockLevelFusionConfig(fusion));
+  EXPECT_THAT(fusion->shape().dimensions(), testing::ElementsAre(256, 151552));
 }
 
 TEST_P(FusionBlockLevelRewriterTest,
@@ -581,6 +618,29 @@ ENTRY entry {
   EXPECT_EQ(root->opcode(), HloOpcode::kFusion);
   EXPECT_EQ(root->fusion_kind(), HloInstruction::FusionKind::kCustom);
   EXPECT_TRUE(HasTritonBlockLevelFusionConfig(root));
+}
+
+TEST_F(FusionBlockLevelRewriterTestBase,
+       DoesNotRewriteCollapsibleBf16TransposeByDefault) {
+  const absl::string_view hlo_text = R"(
+fusion_computation {
+  p0 = bf16[4096,127,256] parameter(0)
+  ROOT transpose = bf16[256,4096,127] transpose(p0), dimensions={2,0,1}
+}
+
+ENTRY entry {
+  p0 = bf16[4096,127,256] parameter(0)
+  ROOT fusion = bf16[256,4096,127] fusion(p0), kind=kLoop,
+    calls=fusion_computation
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  EXPECT_THAT(
+      FusionBlockLevelRewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                               &mlir_context_)
+          .Run(module.get()),
+      absl_testing::IsOkAndHolds(false));
 }
 
 }  // namespace
