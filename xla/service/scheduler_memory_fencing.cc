@@ -17,10 +17,12 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
@@ -106,6 +108,8 @@ struct FencedUsers {
   // buffer stays live until every user has executed, so constraining only
   // one of them would not bound the buffer's live range.
   std::vector<HloInstruction*> users;
+  // The user scheduled last in the reference schedule; it releases the buffer.
+  HloInstruction* last_user = nullptr;
   int64_t last_use_position = -1;
 };
 
@@ -148,10 +152,56 @@ FencedUsers FindFencedUsers(const HloBuffer& buffer,
       if (seen_users.insert(use.instruction).second) {
         result.users.push_back(use.instruction);
       }
-      result.last_use_position = std::max(result.last_use_position, it->second);
+      if (it->second > result.last_use_position) {
+        result.last_use_position = it->second;
+        result.last_user = use.instruction;
+      }
     }
   }
   return result;
+}
+
+// A large buffer's allocation and release events in the reference schedule.
+struct LargeBuffer {
+  const HloBuffer* buffer;
+  int64_t size;
+  // The instruction defining the buffer's earliest value, i.e. the point at
+  // which the buffer becomes live.
+  HloInstruction* producer;
+  int64_t producer_position;
+  // Whether `producer` is an async operation: such buffers are never given a
+  // producer fence, so collective overlap stays unconstrained.
+  bool async_producer;
+  // The last user, i.e. the point at which the buffer is released.
+  HloInstruction* last_user;
+  int64_t last_use_position;
+};
+
+// Returns the producer of `buffer`, or nullptr if any defining instruction is
+// not in the reference schedule of `info`.
+HloInstruction* FindProducer(const HloBuffer& buffer,
+                             const ComputationFencingInfo& info,
+                             int64_t* position) {
+  HloInstruction* producer = nullptr;
+  *position = std::numeric_limits<int64_t>::max();
+  for (const HloValue* value : buffer.values()) {
+    auto it = info.position.find(value->defining_instruction());
+    if (it == info.position.end()) {
+      return nullptr;
+    }
+    if (it->second < *position) {
+      *position = it->second;
+      producer = value->defining_instruction();
+    }
+  }
+  return producer;
+}
+
+bool IsAsyncProducer(const HloInstruction* instruction) {
+  return HloDataflowAnalysis::IsAsynchronousOperationStart(
+             instruction->opcode()) ||
+         HloDataflowAnalysis::IsAsynchronousOperationDone(
+             instruction->opcode());
 }
 
 }  // namespace
@@ -182,6 +232,113 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
   int64_t buffers_considered = 0;
   int64_t edges_added = 0;
 
+  // Adds `from` -> `to` unless it is redundant or already added.
+  auto add_edge = [&](HloInstruction* from, HloInstruction* to,
+                      const ComputationFencingInfo& info,
+                      const HloBuffer& buffer, int64_t buffer_size,
+                      absl::string_view kind) -> absl::Status {
+    if (from == to || !added_edges.insert({from, to}).second) {
+      return absl::OkStatus();
+    }
+    // Skip edges that are already implied by the dependency graph. The
+    // reachability map is not updated for added edges; a stale map can only
+    // let a redundant (but still forward and acyclic) edge through.
+    if (info.reachability->IsReachable(from, to)) {
+      return absl::OkStatus();
+    }
+    ABSL_RETURN_IF_ERROR(from->AddControlDependencyTo(to));
+    ++edges_added;
+    VLOG(2) << "Fenced buffer " << buffer.ToString() << " (" << buffer_size
+            << " bytes): " << kind << " control edge " << from->name() << " -> "
+            << to->name();
+    return absl::OkStatus();
+  };
+
+  // Bounds how long the users of a buffer may be deferred: every user must
+  // run before the async start `slack_windows_` windows after the buffer's
+  // last-use window in the reference schedule.
+  auto fence_users = [&](const HloBuffer& buffer, int64_t buffer_size,
+                         const FencedUsers& fenced,
+                         const ComputationFencingInfo& info) -> absl::Status {
+    const int64_t last_use_position = fenced.last_use_position;
+
+    // Window index of the last use: the first window (in start order) that is
+    // still open at, or opens after, the last use.
+    int64_t window_index = 0;
+    while (window_index < info.windows.size() &&
+           info.windows[window_index].done_position <= last_use_position) {
+      ++window_index;
+    }
+
+    int64_t target_index = window_index + slack_windows_;
+    // Never fence backwards: the target start must come after the last use in
+    // the reference schedule, otherwise the edge could contradict existing
+    // dependencies. This keeps every edge forward in the schedule order and
+    // therefore acyclic.
+    while (target_index < info.windows.size() &&
+           info.windows[target_index].start_position <= last_use_position) {
+      ++target_index;
+    }
+    if (target_index >= info.windows.size()) {
+      return absl::OkStatus();
+    }
+    HloInstruction* target = info.windows[target_index].start;
+
+    // Fence every user: the buffer stays live until all of its users have
+    // executed, so a single fenced user would not bound the live range — an
+    // unfenced sibling could still be deferred arbitrarily far.
+    for (HloInstruction* user : fenced.users) {
+      ABSL_RETURN_IF_ERROR(
+          add_edge(user, target, info, buffer, buffer_size, "user"));
+    }
+    return absl::OkStatus();
+  };
+
+  // Bounds how much earlier than in the reference schedule a large buffer may
+  // be allocated: its producer must run after the release (last use) of the
+  // `producer_slack_ + 1`-th most recent large buffer released before the
+  // producer in the reference schedule. This keeps the relative order of
+  // large allocation/release events close to the reference schedule, which
+  // is what bounds their simultaneous liveness. Async windows are not used as
+  // anchors because the scheduler is free to move async starts.
+  auto fence_producers =
+      [&](const std::vector<LargeBuffer>& buffers,
+          const ComputationFencingInfo& info) -> absl::Status {
+    std::vector<const LargeBuffer*> releases;
+    releases.reserve(buffers.size());
+    for (const LargeBuffer& large : buffers) {
+      releases.push_back(&large);
+    }
+    absl::c_sort(releases, [](const LargeBuffer* a, const LargeBuffer* b) {
+      return a->last_use_position < b->last_use_position;
+    });
+    for (const LargeBuffer& large : buffers) {
+      if (large.async_producer) {
+        continue;
+      }
+      // Releases strictly before the producer in the reference schedule; the
+      // buffer's own release is after its producer and never qualifies.
+      auto end =
+          absl::c_lower_bound(releases, large.producer_position,
+                              [](const LargeBuffer* release, int64_t position) {
+                                return release->last_use_position < position;
+                              });
+      const int64_t anchor_index =
+          static_cast<int64_t>(end - releases.begin()) - 1 - producer_slack_;
+      if (anchor_index < 0) {
+        continue;
+      }
+      const LargeBuffer* anchor = releases[anchor_index];
+      // The anchor's last use precedes the producer in the reference
+      // schedule, so the edge points forward and cannot create a cycle.
+      ABSL_RETURN_IF_ERROR(add_edge(anchor->last_user, large.producer, info,
+                                    *large.buffer, large.size, "producer"));
+    }
+    return absl::OkStatus();
+  };
+
+  absl::flat_hash_map<const HloComputation*, std::vector<LargeBuffer>>
+      large_buffers;
   for (const HloBuffer& buffer : alias_analysis->buffers()) {
     const int64_t buffer_size = shape_size_bytes_(buffer.values()[0]->shape());
     if (buffer_size < size_threshold_bytes_) {
@@ -203,63 +360,34 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
                     .first;
     }
     const ComputationFencingInfo& info = info_it->second;
-    if (info.windows.empty()) {
-      continue;
-    }
 
     FencedUsers fenced = FindFencedUsers(buffer, computation, info);
     if (fenced.users.empty()) {
       continue;
     }
-    const int64_t last_use_position = fenced.last_use_position;
-
-    // Window index of the last use: the first window (in start order) that is
-    // still open at, or opens after, the last use.
-    int64_t window_index = 0;
-    while (window_index < info.windows.size() &&
-           info.windows[window_index].done_position <= last_use_position) {
-      ++window_index;
+    if (!info.windows.empty()) {
+      ABSL_RETURN_IF_ERROR(fence_users(buffer, buffer_size, fenced, info));
     }
-
-    int64_t target_index = window_index + slack_windows_;
-    // Never fence backwards: the target start must come after the last use in
-    // the reference schedule, otherwise the edge could contradict existing
-    // dependencies. This keeps every edge forward in the schedule order and
-    // therefore acyclic.
-    while (target_index < info.windows.size() &&
-           info.windows[target_index].start_position <= last_use_position) {
-      ++target_index;
-    }
-    if (target_index >= info.windows.size()) {
-      continue;
-    }
-    HloInstruction* target = info.windows[target_index].start;
-
-    // Fence every user: the buffer stays live until all of its users have
-    // executed, so a single fenced user would not bound the live range — an
-    // unfenced sibling could still be deferred arbitrarily far.
-    for (HloInstruction* user : fenced.users) {
-      if (user == target || !added_edges.insert({user, target}).second) {
-        continue;
+    if (producer_slack_ >= 0) {
+      int64_t producer_position;
+      HloInstruction* producer = FindProducer(buffer, info, &producer_position);
+      if (producer != nullptr) {
+        large_buffers[computation].push_back(
+            {&buffer, buffer_size, producer, producer_position,
+             IsAsyncProducer(producer), fenced.last_user,
+             fenced.last_use_position});
       }
-      // Skip edges that are already implied by the dependency graph. The
-      // reachability map is not updated for added edges; a stale map can only
-      // let a redundant (but still forward and acyclic) edge through.
-      if (info.reachability->IsReachable(user, target)) {
-        continue;
-      }
-      ABSL_RETURN_IF_ERROR(user->AddControlDependencyTo(target));
-      ++edges_added;
-      VLOG(2) << "Fenced buffer " << buffer.ToString() << " (" << buffer_size
-              << " bytes): control edge " << user->name() << " -> "
-              << target->name();
     }
+  }
+  for (const auto& [computation, buffers] : large_buffers) {
+    ABSL_RETURN_IF_ERROR(
+        fence_producers(buffers, computation_infos.at(computation)));
   }
 
   VLOG(1) << "SchedulerMemoryFencing: considered " << buffers_considered
           << " buffers >= " << size_threshold_bytes_ << " bytes, added "
           << edges_added << " control edges (slack_windows=" << slack_windows_
-          << ").";
+          << ", producer_slack=" << producer_slack_ << ").";
   return edges_added > 0;
 }
 

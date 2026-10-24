@@ -48,9 +48,10 @@ class SchedulerMemoryFencingTest : public HloHardwareIndependentTestBase {
  protected:
   absl::StatusOr<bool> RunFencing(HloModule* module,
                                   int64_t size_threshold_bytes,
-                                  int32_t slack_windows) {
+                                  int32_t slack_windows,
+                                  int32_t producer_slack = -1) {
     SchedulerMemoryFencing pass(&ShapeSize, size_threshold_bytes, slack_windows,
-                                &alias_info_);
+                                &alias_info_, producer_slack);
     return pass.Run(module);
   }
 
@@ -81,6 +82,107 @@ ENTRY entry {
   cp2d = f32[16]{0} collective-permute-done(cp2s)
   ROOT r = f32[16]{0} add(cp2d, cp2d)
 })";
+
+// Three large buffers `a`, `b`, `c` are allocated and released in order in
+// the reference schedule; each release (`ra`, `rb`, `rc`) is a small slice.
+// There are no async windows, so consumer fencing is a no-op here.
+constexpr absl::string_view kReleaseChainHlo = R"(
+HloModule m, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[1024,1024]{1,0} parameter(0)
+  a = f32[1024,1024]{1,0} add(p0, p0)
+  ra = f32[1,1]{1,0} slice(a), slice={[0:1], [0:1]}
+  b = f32[1024,1024]{1,0} multiply(p0, p0)
+  rb = f32[1,1]{1,0} slice(b), slice={[0:1], [0:1]}
+  c = f32[1024,1024]{1,0} subtract(p0, p0)
+  rc = f32[1,1]{1,0} slice(c), slice={[0:1], [0:1]}
+  ROOT r = (f32[1,1]{1,0}, f32[1,1]{1,0}, f32[1,1]{1,0}) tuple(ra, rb, rc)
+})";
+
+TEST_F(SchedulerMemoryFencingTest, ProducerFencingDisabledByDefault) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kReleaseChainHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/0));
+  EXPECT_FALSE(changed);
+  EXPECT_THAT(Instr(module.get(), "b")->control_predecessors(), IsEmpty());
+  EXPECT_THAT(Instr(module.get(), "c")->control_predecessors(), IsEmpty());
+}
+
+TEST_F(SchedulerMemoryFencingTest, ProducerSlackZeroFollowsPreviousRelease) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kReleaseChainHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/0, /*producer_slack=*/0));
+  EXPECT_TRUE(changed);
+  // Each producer waits for the release of the most recently released large
+  // buffer before it: ra -> b and rb -> c. `a` has no earlier release.
+  EXPECT_THAT(Instr(module.get(), "a")->control_predecessors(), IsEmpty());
+  EXPECT_THAT(Instr(module.get(), "b")->control_predecessors(),
+              UnorderedElementsAre(Instr(module.get(), "ra")));
+  EXPECT_THAT(Instr(module.get(), "c")->control_predecessors(),
+              UnorderedElementsAre(Instr(module.get(), "rb")));
+  EXPECT_OK(module->schedule().Verify());
+}
+
+TEST_F(SchedulerMemoryFencingTest, ProducerSlackOneSkipsOneRelease) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kReleaseChainHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/0, /*producer_slack=*/1));
+  EXPECT_TRUE(changed);
+  // `c` may skip the release of `b` but must follow the release of `a`; `b`
+  // has only one earlier release and is left unconstrained.
+  EXPECT_THAT(Instr(module.get(), "b")->control_predecessors(), IsEmpty());
+  EXPECT_THAT(Instr(module.get(), "c")->control_predecessors(),
+              UnorderedElementsAre(Instr(module.get(), "ra")));
+  EXPECT_OK(module->schedule().Verify());
+}
+
+TEST_F(SchedulerMemoryFencingTest, ProducerSlackBeyondReleasesIsNoOp) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kReleaseChainHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/0, /*producer_slack=*/2));
+  EXPECT_FALSE(changed);
+}
+
+// The large all-gather result is allocated after the release of `a`, so it
+// would receive a producer edge from `ra` if async producers were fenced.
+// The later non-async producer `c` is fenced to the most recent release.
+TEST_F(SchedulerMemoryFencingTest, ProducerFencingSkipsAsyncProducers) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m, is_scheduled=true
+
+ENTRY entry {
+  p0 = f32[1024,1024]{1,0} parameter(0)
+  a = f32[1024,1024]{1,0} add(p0, p0)
+  ra = f32[1,1]{1,0} slice(a), slice={[0:1], [0:1]}
+  ags = (f32[1024,1024]{1,0}, f32[2048,1024]{1,0}) all-gather-start(p0), replica_groups={{0,1}}, dimensions={0}
+  agd = f32[2048,1024]{1,0} all-gather-done(ags)
+  rag = f32[1,1]{1,0} slice(agd), slice={[0:1], [0:1]}
+  c = f32[1024,1024]{1,0} subtract(p0, p0)
+  rc = f32[1,1]{1,0} slice(c), slice={[0:1], [0:1]}
+  ROOT r = (f32[1,1]{1,0}, f32[1,1]{1,0}, f32[1,1]{1,0}) tuple(ra, rag, rc)
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  // slack_windows=1 has no second window to target, so no user edges here.
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, RunFencing(module.get(), /*size_threshold_bytes=*/kMebibyte,
+                               /*slack_windows=*/1, /*producer_slack=*/0));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(Instr(module.get(), "ags")->control_predecessors(), IsEmpty());
+  EXPECT_THAT(Instr(module.get(), "agd")->control_predecessors(), IsEmpty());
+  EXPECT_THAT(Instr(module.get(), "c")->control_predecessors(),
+              UnorderedElementsAre(Instr(module.get(), "rag")));
+  EXPECT_OK(module->schedule().Verify());
+}
 
 TEST_F(SchedulerMemoryFencingTest, FencesLastUserToSlackShiftedStart) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
