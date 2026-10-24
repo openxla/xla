@@ -311,6 +311,11 @@ struct CollectiveKernelRecordState : public CommandState {
 };
 }  // namespace
 
+std::string CollectiveKernelThunk::ToString(int indent) const {
+  return absl::StrCat(TracedCommand::ToString(indent),
+                      use_pdl_ ? ", use_pdl=true" : "");
+}
+
 absl::Status CollectiveKernelThunk::IsSupported(
     const GpuCliqueKey& clique_key, se::StreamExecutor& executor,
     const CollectiveParams& collective_params) const {
