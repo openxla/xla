@@ -22,6 +22,30 @@ def rocm_version_number():
     """Returns a list of supported GPU architectures."""
     return %{rocm_version_number}
 
+def rocm_info():
+    """Returns information about the configured ROCm installation.
+
+    Returns:
+      A struct with the following fields:
+        rocm_root: The ROCm root directory, relative to the `rocm` directory of
+          the `local_config_rocm` repository. Use it to build file labels.
+        rocm_version: The ROCm version number (e.g. 60400 for ROCm 6.4.0).
+        rocm_toolkit_path: The absolute path to the ROCm toolkit installation.
+        rocm_execroot_path: The path to the ROCm toolkit installation, relative
+          to the execroot. Note that runfiles paths differ: they have no
+          `external/` prefix.
+    """
+    _rocm_root = "%{rocm_root}"
+    return struct(
+        rocm_root = _rocm_root,
+        rocm_version = %{rocm_version_number},
+        rocm_toolkit_path = "%{rocm_toolkit_path}",
+        rocm_execroot_path = "{}/rocm/{}".format(
+            Label("//rocm:build_defs.bzl").workspace_root,
+            _rocm_root,
+        ),
+    )
+
 def if_gpu_is_configured(if_true, if_false = []):
     """Tests if ROCm or CUDA or SYCL was enabled during the configure process."""
     return select({"//conditions:default": %{gpu_is_configured}})
