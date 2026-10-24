@@ -82,6 +82,20 @@ struct ModuleIsolationOptions {
   // intermediate instructions inside the fusion against the reference runner.
   bool enable_fusion_debugger = true;
 
+  // When true, an expected subnormal that the device flushed to signed zero
+  // fails verification on all ops even when the difference falls within
+  // `abs_error_bound` / `rel_error_bound`. When false (the default), subnormal
+  // flush trapping is scoped to bit-preserving ops (such as `copy`, `reshape`,
+  // `bitcast-convert`, `transpose`, `slice`, `pad`) so compute instructions
+  // that architecturally flush subnormals to zero do not report false-positive
+  // mismatches.
+  //
+  // Example:
+  //   ModuleIsolationOptions options;
+  //   // Default (`false`): bit-preserving ops trap subnormal flushes
+  //   // automatically; set `true` to also trap on compute ops.\n  //
+  //   options.trap_subnormal_flush = true;
+  bool trap_subnormal_flush = false;
   std::function<absl::StatusOr<Literal>(
       std::unique_ptr<HloModule> module, HloRunnerInterface* runner,
       absl::Span<const Literal> input_data, const RunModuleOptions& options)>
