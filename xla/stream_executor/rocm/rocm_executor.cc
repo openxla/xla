@@ -662,6 +662,42 @@ absl::Status RocmExecutor::Init() {
     peer_access_cache_[i] = CanEnablePeerAccess(device_, peer_device);
   }
 
+  // Eagerly initialize ROCR's lazy BlitKernel shaders ("FillMemory",
+  // "CopyAligned", "CopyMisaligned") before any dynamic HSACO module is loaded
+  // and unloaded. In libhsa-runtime64.so, RegionMemory::Free() (called by
+  // hipModuleUnload) unmaps a code object's VMA without flushing the GPU's
+  // virtually-indexed SQ K-cache / I-cache, and GpuAgent::AssembleShader()
+  // (called by BlitKernel::Initialize on the first >1 MB code object load or
+  // hsa_memory_copy) populates its 4 KB shader page via CPU memcpy without
+  // calling GpuAgent::InvalidateCodeCaches(). Initializing BlitKernel upfront
+  // ensures its permanent shader pages are allocated before any module VMA is
+  // freed and recycled.
+  using HsaMemoryCopyFn = int (*)(void*, const void*, size_t);
+  static const HsaMemoryCopyFn kHsaMemoryCopy = []() -> HsaMemoryCopyFn {
+    void* hsa_handle = nullptr;
+    void* sym = nullptr;
+    if (tsl::Env::Default()
+            ->LoadDynamicLibrary("libhsa-runtime64.so.1", &hsa_handle)
+            .ok() &&
+        tsl::Env::Default()
+            ->GetSymbolFromLibrary(hsa_handle, "hsa_memory_copy", &sym)
+            .ok()) {
+      return reinterpret_cast<HsaMemoryCopyFn>(sym);
+    }
+    return nullptr;
+  }();
+  if (kHsaMemoryCopy != nullptr) {
+    ABSL_ASSIGN_OR_RETURN(void* blit_warmup_buf,
+                          DeviceAllocate(&rocm_context_, 8));
+    int hsa_status = kHsaMemoryCopy(
+        blit_warmup_buf, static_cast<const char*>(blit_warmup_buf) + 4, 4);
+    if (hsa_status != 0) {
+      LOG(WARNING) << "hsa_memory_copy warmup failed with status: "
+                   << hsa_status;
+    }
+    DeviceDeallocate(&rocm_context_, blit_warmup_buf);
+  }
+
   // We initialize BLAS interfaces early here since otherwise it might create
   // us problems during hipBlasLt initialization under graph capture.
   // There is no real advantage of explicitly using 'lazy initialization' on
