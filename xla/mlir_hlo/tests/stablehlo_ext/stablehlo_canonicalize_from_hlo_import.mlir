@@ -196,6 +196,7 @@ func.func @while_op_original_value_index_shifting(
 
   // CHECK: stablehlo.while
   // CHECK-SAME: mhlo.original_value = #mhlo.original_value<false, [<[0], <"first", []>>, <[1, 0], <"third_0", []>>, <[1, 1], <"third_1", []>>]>
+  // CHECK-SAME: mhlo.sharding = "{{\{\{}}replicated}, {devices=[2]<=[2]}, {replicated}}"
   %1:4 = stablehlo.while(%iterArg = %arg0, %iterArg_2 = %arg1, %iterArg_3 = %arg2, %iterArg_4 = %arg3)
       : tensor<10xf32>, tensor<i32>, tensor<10xf32>, tensor<10xf32>
       attributes {mhlo.original_value = #mhlo.original_value<false, [
@@ -203,7 +204,7 @@ func.func @while_op_original_value_index_shifting(
         <[1], <"second", []>>,
         <[2, 0], <"third_0", []>>,
         <[2, 1], <"third_1", []>>
-      ]>}
+      ]>, mhlo.sharding = "{{replicated}, {maximal device=0}, {devices=[2]<=[2]}, {replicated}}"}
     cond {
     %cond_compare = stablehlo.compare LT, %iterArg_2, %c_0, SIGNED : (tensor<i32>, tensor<i32>) -> tensor<i1>
     stablehlo.return %cond_compare : tensor<i1>
