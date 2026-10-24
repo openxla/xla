@@ -3685,10 +3685,10 @@ TEST_F(CollectiveOpsTestE2E, AllGatherOnChangedDimensionIsCorrect) {
                        test_runner().HloModuleFromWrapped(executable.get()));
   const HloInstruction* root = module->entry_computation()->root_instruction();
 
-  EXPECT_THAT(root,
-              GmockMatch(m::Fusion(m::AllGather(m::Bitcast(m::Constant())))));
+  EXPECT_THAT(root, GmockMatch(m::Fusion(
+                        m::Bitcast(m::AllGather(m::Bitcast(m::Constant()))))));
   EXPECT_THAT(root->fused_expression_root(),
-              GmockMatch(m::Transpose(m::Bitcast(m::Parameter()))));
+              GmockMatch(m::Transpose(m::Parameter())));
 
   ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
                        ExecuteReplicated(executable.get(), {{}, {}}));

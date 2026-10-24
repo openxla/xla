@@ -1704,13 +1704,13 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:conv_canonicalizer",
         "//xla/backends/gpu/transforms:conv_fusion_rewriter",
+        "//xla/backends/gpu/transforms:hoist_fusion_boundary_bitcasts",
         "//xla/backends/gpu/transforms:multi_output_fusion",
         "//xla/backends/gpu/transforms:priority_fusion",
         "//xla/backends/gpu/transforms:ragged_dot_fusion_rewriter",
         "//xla/backends/gpu/transforms:sort_iota_fusion",
         "//xla/backends/gpu/transforms:variadic_op_splitter",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/transforms/simplifiers:hlo_constant_folding",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
@@ -1724,7 +1724,6 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:env",
         "@llvm-project//mlir:IR",
-        "@tsl//tsl/platform:env",
     ],
 )
 

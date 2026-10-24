@@ -30,7 +30,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
-#include "llvm/Support/MathExtras.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/codegen/tiling/experimental/tiling_space.h"
@@ -112,23 +111,7 @@ bool ShouldRewriteLoopTransposeFusion(
     return false;
   }
 
-  // Because of Triton's power-of-two restriction, we're only guaranteed to
-  // handle the bitcast case when the bitcast's minor dimension is a power of
-  // two. This ensures that we can tile it reasonably even if the bitcast's
-  // input has that dimension collapsed. (See comments in `symbolic_tile.cc`
-  // around destructuring summations to understand why this is important.)
-  auto can_bitcast_input_be_tiled_efficiently =
-      [](const HloInstruction* bitcast) {
-        return llvm::isPowerOf2_64(bitcast->shape().dimensions_minor(0));
-      };
-
-  bool is_pure_transpose = ::xla::Match(root, m::Transpose(m::Parameter()));
-  bool is_bitcasted_transpose_with_power_of_two_minor_dim = ::xla::Match(
-      root,
-      m::Transpose(m::Bitcast(m::Parameter())
-                       .WithPredicate(can_bitcast_input_be_tiled_efficiently)));
-  return is_pure_transpose ||
-         is_bitcasted_transpose_with_power_of_two_minor_dim;
+  return ::xla::Match(root, m::Transpose(m::Parameter()));
 }
 
 // Pattern matches reduction fusions that can likely be handled better by
