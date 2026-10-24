@@ -196,11 +196,13 @@ IfrtIrLoadedExecutable::GetMpmdCompiledMemoryStats() const {
 
 absl::StatusOr<IfrtIrProgramMemoryStats>
 IfrtIrLoadedExecutable::GetIfrtIrProgramMemoryStats() const {
+  absl::MutexLock lock(memory_tracer_mu_);
   return memory_tracer_->GetMemoryStats();
 }
 
 absl::StatusOr<std::string> IfrtIrLoadedExecutable::GetIfrtIrProgramXprofUrl()
     const {
+  absl::MutexLock lock(memory_tracer_mu_);
   return memory_tracer_->GetXprofUrl();
 }
 

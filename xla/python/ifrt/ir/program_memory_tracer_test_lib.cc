@@ -20,7 +20,9 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <thread>  // NOLINT(build/c++11)
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
@@ -130,6 +132,51 @@ module {
   EXPECT_EQ(memory_stats
                 .device_to_peak_bytes_used[devices->devices()[0]->Id().value()],
             6 * kGiB);
+}
+
+TEST_F(ProgramMemoryTracerTest, ConcurrentIfrtIrProgramMemoryStats) {
+  std::string source = R"mlir(
+!array0 = !ifrt.array<tensor<1024x1024x768xi32>,
+                      #ifrt.sharding_param<1x1x1 to [0] on 1>, [0]>
+!array1 = !ifrt.array<tensor<1024x1024x768xi32>,
+                      #ifrt.sharding_param<1x1x1 to [0] on 1>, [1]>
+module {
+  func.func @main(%arg0: !array0 {ifrt.donated}) -> (!array0, !array0)
+      attributes {ifrt.function} {
+    %out_0, %ctrl_0 = ifrt.CopyArrays(%arg0) : (!array0) -> !array1
+    %out_1, %ctrl_1 = ifrt.CopyArrays(%out_0) <donated=true>
+      : (!array1) -> !array0
+    return %arg0, %out_1 : !array0, !array0
+  }
+}
+  )mlir";
+  ASSERT_OK_AND_ASSIGN(DeviceListRef devices, PickDevices(2));
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<IfrtIrLoadedExecutable> executable,
+                       GetIfrtIrExecutable(source, devices));
+
+  // The first calls race to build the cached memory trace.
+  constexpr int kNumThreads = 8;
+  std::vector<absl::StatusOr<IfrtIrProgramMemoryStats>> results(kNumThreads);
+  {
+    std::vector<std::thread> threads;
+    threads.reserve(kNumThreads);
+    for (int i = 0; i < kNumThreads; ++i) {
+      threads.emplace_back([&executable, &results, i] {
+        results[i] = executable->GetIfrtIrProgramMemoryStats();
+      });
+    }
+    for (std::thread& thread : threads) {
+      thread.join();
+    }
+  }
+  for (const absl::StatusOr<IfrtIrProgramMemoryStats>& result : results) {
+    ASSERT_TRUE(result.ok()) << result.status();
+    EXPECT_EQ(result->argument_size_in_bytes, 3 * kGiB);
+    EXPECT_EQ(result->output_size_in_bytes, 6 * kGiB);
+    EXPECT_EQ(result->device_to_peak_bytes_used.at(
+                  devices->devices()[0]->Id().value()),
+              6 * kGiB);
+  }
 }
 
 TEST_F(ProgramMemoryTracerTest, IfrtIrProgramMemoryStatsWithCallOps) {
