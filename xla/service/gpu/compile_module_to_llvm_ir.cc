@@ -214,8 +214,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     const HloModule* hlo_module, llvm::LLVMContext* llvm_context,
     const std::string& target_triple, const std::string& data_layout,
     se::Platform::Id platform_id, const GpuTopology& gpu_topology,
-    const GpuAliasInfo* alias_info,
-    BufferValue::SizeFunction buffer_size_bytes_function,
+    std::unique_ptr<BufferAssignment> buffer_assignment,
     llvm_ir::LLVMCommandLineOptionsReleasableLock& llvm_options_lock,
     KernelCompiler* compiler,
     xla::cpu::TargetMachineOptions cpu_target_machine_options,
@@ -227,10 +226,9 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
 
   CompileModuleResults results = InitializeResults(hlo_module);
 
-  ABSL_ASSIGN_OR_RETURN(
-      results.buffer_assignment,
-      RunBufferAssignment(hlo_module, alias_info,
-                          std::move(buffer_size_bytes_function)));
+  TF_RET_CHECK(buffer_assignment != nullptr);
+  TF_RET_CHECK(&buffer_assignment->module() == hlo_module);
+  results.buffer_assignment = std::move(buffer_assignment);
   ABSL_ASSIGN_OR_RETURN(results.output_info,
                         GetOutputInfo(*hlo_module, *results.buffer_assignment));
 
