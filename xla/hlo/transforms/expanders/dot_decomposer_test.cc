@@ -133,6 +133,44 @@ TEST_F(DotDecomposerTest, DontCanonicalizeIfNoNoncontractingDims) {
   EXPECT_FALSE(canonicalized);
 }
 
+TEST_F(DotDecomposerTest, DontCanonicalizeBlockScaledDot) {
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = bf16[2,32,64] parameter(0)
+    p1 = bf16[64,16] parameter(1)
+    lhs_scale = f8e8m0fnu[2,32,2] parameter(2)
+    ROOT dot = bf16[2,32,16] dot(p0, p1, lhs_scale), lhs_contracting_dims={2},
+      rhs_contracting_dims={0},
+      block_scaling_config={lhs={scale_idx=2 strides=1x1x32 steps=1x1x1}}
+  })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool canonicalized, DotDecomposer().Run(module.get()));
+  EXPECT_FALSE(canonicalized);
+}
+
+TEST_F(DotDecomposerTest, DontCanonicalizeSparseDot) {
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = bf16[2,32,32] parameter(0)
+    p1 = bf16[64,16] parameter(1)
+    lhs_indices = s8[2,32,8] parameter(2)
+    ROOT dot = bf16[2,32,16] dot(p0, p1, lhs_indices), lhs_contracting_dims={2},
+      rhs_contracting_dims={0},
+      sparsity_config={lhs={sparsity=2x4 dimension=2 stride=1 idx=2}}
+  })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool canonicalized, DotDecomposer().Run(module.get()));
+  EXPECT_FALSE(canonicalized);
+}
+
 TEST_F(DotDecomposerTest, DontAddLhsNonContractingDimIfOne) {
   absl::string_view module_string = R"(
   HloModule module
