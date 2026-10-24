@@ -86,6 +86,103 @@ TEST_F(HloCseTest, CombineTwoConstants) {
   EXPECT_TRUE(LiteralTestUtil::Near(expected, result, ErrorSpec(1e-4)));
 }
 
+TEST_F(HloCseTest, ConstantsWithControlSuccessorsAreNotCombined) {
+  const char* const hlo_string = R"(
+    HloModule m
+    ENTRY e {
+      a = f32[] constant(2)
+      b = f32[] constant(2)
+      p = f32[] parameter(0)
+      c = f32[] negate(p), control-predecessors={b}
+      ROOT t = (f32[], f32[], f32[]) tuple(a, b, c)
+    })";
+  for (bool is_layout_sensitive : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    HloCSE cse(is_layout_sensitive);
+    EXPECT_THAT(RunHloPass(&cse, module.get()),
+                absl_testing::IsOkAndHolds(false));
+    const HloInstruction* root =
+        module->entry_computation()->root_instruction();
+    EXPECT_NE(root->operand(0), root->operand(1));
+    EXPECT_THAT(root->operand(2)->control_predecessors(),
+                ::testing::ElementsAre(root->operand(1)));
+    EXPECT_THAT(root->operand(1)->control_successors(),
+                ::testing::ElementsAre(root->operand(2)));
+  }
+}
+
+TEST_F(HloCseTest, ConstantsWithControlPredecessorsAreNotCombined) {
+  const char* const hlo_string = R"(
+    HloModule m
+    ENTRY e {
+      p = f32[] parameter(0)
+      a = f32[] constant(2)
+      b = f32[] constant(2), control-predecessors={p}
+      ROOT t = (f32[], f32[], f32[]) tuple(a, b, p)
+    })";
+  for (bool is_layout_sensitive : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    HloCSE cse(is_layout_sensitive);
+    EXPECT_THAT(RunHloPass(&cse, module.get()),
+                absl_testing::IsOkAndHolds(false));
+    const HloInstruction* root =
+        module->entry_computation()->root_instruction();
+    EXPECT_NE(root->operand(0), root->operand(1));
+    EXPECT_THAT(root->operand(1)->control_predecessors(),
+                ::testing::ElementsAre(root->operand(2)));
+  }
+}
+
+TEST_F(HloCseTest, ControlledConstantsAreNotRepresentatives) {
+  for (bool is_layout_sensitive : {false, true}) {
+    auto builder = HloComputation::Builder(TestName());
+    HloInstruction* controlled = builder.AddInstruction(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(2.0f)));
+    HloInstruction* unconstrained = builder.AddInstruction(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(2.0f)));
+    HloInstruction* negate = builder.AddInstruction(HloInstruction::CreateUnary(
+        unconstrained->shape(), HloOpcode::kNegate, unconstrained));
+    builder.AddInstruction(
+        HloInstruction::CreateTuple({controlled, unconstrained, negate}));
+    auto module = CreateNewVerifiedModule();
+    module->AddEntryComputation(builder.Build());
+    ASSERT_OK(negate->AddControlDependencyTo(controlled));
+
+    // Replacing unconstrained with controlled would introduce a cycle.
+    HloCSE cse(is_layout_sensitive);
+    EXPECT_THAT(RunHloPass(&cse, module.get()),
+                absl_testing::IsOkAndHolds(false));
+    EXPECT_EQ(negate->operand(0), unconstrained);
+    EXPECT_THAT(controlled->control_predecessors(),
+                ::testing::ElementsAre(negate));
+  }
+}
+
+TEST_F(HloCseTest, CombineConstantsAlongsideControlledConstant) {
+  const char* const hlo_string = R"(
+    HloModule m
+    ENTRY e {
+      a = f32[] constant(2)
+      b = f32[] constant(2)
+      c = f32[] constant(2)
+      p = f32[] parameter(0)
+      n = f32[] negate(p), control-predecessors={a}
+      ROOT t = (f32[], f32[], f32[], f32[]) tuple(a, b, c, n)
+    })";
+  for (bool is_layout_sensitive : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    HloCSE cse(is_layout_sensitive);
+    EXPECT_THAT(RunHloPass(&cse, module.get()),
+                absl_testing::IsOkAndHolds(true));
+    const HloInstruction* root =
+        module->entry_computation()->root_instruction();
+    EXPECT_NE(root->operand(0), root->operand(1));
+    EXPECT_EQ(root->operand(1), root->operand(2));
+    EXPECT_THAT(root->operand(3)->control_predecessors(),
+                ::testing::ElementsAre(root->operand(0)));
+  }
+}
+
 TEST_F(HloCseTest, CombineTwoConstantsDifferentLayouts) {
   // Test that two identical constants with different layouts are *not*
   // combined.
