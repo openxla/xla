@@ -168,7 +168,11 @@ class IfrtIrLoadedExecutable
   Client* client_;
   std::shared_ptr<CompiledIfrtIrProgram> program_;
   DeviceListRef devices_;
-  std::unique_ptr<ProgramMemoryTracer> memory_tracer_;
+  // ProgramMemoryTracer lazily builds and caches its trace, so the const
+  // methods that use it must not run concurrently.
+  mutable absl::Mutex memory_tracer_mu_;
+  std::unique_ptr<ProgramMemoryTracer> memory_tracer_
+      ABSL_PT_GUARDED_BY(memory_tracer_mu_);
   const UserContextRef user_context_;
 
   mutable absl::once_flag version_once_;
