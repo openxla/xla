@@ -1152,19 +1152,20 @@ message DebugOptions {
   optional int32 xla_gpu_experimental_parallel_async_compute_limit = 465;
 
   // Controls SchedulerMemoryFencing before the latency-hiding scheduler.
-  // Negative values disable the pass. 0 derives the threshold automatically
-  // as 1% of the scheduler memory limit. Positive values fence buffers of at
-  // least the specified size in bytes, capped at the scheduler memory limit.
+  // Negative values disable the pass. 0 searches at most eight candidate fence
+  // sets for the lowest estimated peak memory, with latency breaking ties.
+  // Search includes unfenced LHS and replays the winner once. Slack is fixed at
+  // one async window. Positive values fence buffers of at least the specified
+  // size in bytes, capped at the scheduler memory limit.
   // The pass adds control dependencies from every user of a large buffer to a
   // later async operation start so LHS cannot defer those users across many
   // async windows and inflate peak memory.
   optional int64 xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes =
       526;
 
-  // How many async operation windows a fenced buffer's users may be deferred
-  // past the buffer's last-use window in the pre-LHS schedule. Larger values
-  // give the latency-hiding scheduler more reordering freedom at the cost of a
-  // higher peak-memory bound.
+  // Deprecated: GPU scheduler memory fencing uses fixed slack 1. When fencing
+  // is enabled, explicitly setting any other value is an error. This field is
+  // retained for compatibility with configurations that explicitly set 1.
   optional int32 xla_gpu_experimental_scheduler_memory_fencing_slack_windows =
       527;
 

@@ -15,18 +15,19 @@ limitations under the License.
 
 #include "xla/service/scheduler_memory_fencing.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <memory>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -81,6 +82,20 @@ ENTRY entry {
   cp2d = f32[16]{0} collective-permute-done(cp2s)
   ROOT r = f32[16]{0} add(cp2d, cp2d)
 })";
+
+TEST_F(SchedulerMemoryFencingTest, PlanningDoesNotMutateAndKeepsBufferSizes) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kLayeredHlo));
+  const auto original = module->ToString();
+  SchedulerMemoryFencing planner(&ShapeSize, /*size_threshold_bytes=*/1,
+                                 /*slack_windows=*/1, &alias_info_);
+  ASSERT_OK_AND_ASSIGN(auto buffers, planner.GetFences(module.get()));
+  ASSERT_EQ(buffers.size(), 1);
+  EXPECT_EQ(buffers[0].size_bytes, 4 * kMebibyte);
+  ASSERT_EQ(buffers[0].edges.size(), 1);
+  EXPECT_EQ(buffers[0].edges[0].first, Instr(module.get(), "wg"));
+  EXPECT_EQ(buffers[0].edges[0].second, Instr(module.get(), "cp2s"));
+  EXPECT_EQ(module->ToString(), original);
+}
 
 TEST_F(SchedulerMemoryFencingTest, FencesLastUserToSlackShiftedStart) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
