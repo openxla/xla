@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/permutation_util.h"
+#include "xla/service/async_computation_utils.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/shape_inference.h"
 #include "xla/shape.h"
@@ -960,8 +961,12 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
 absl::StatusOr<bool> LayoutNormalization::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  return LayoutNormalizationVisitor{this, custom_call_transformer_}.RunOnModule(
-      module, execution_threads);
+  LayoutNormalizationVisitor visitor(this, custom_call_transformer_);
+  ABSL_ASSIGN_OR_RETURN(bool changed,
+                        visitor.RunOnModule(module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(bool legalized,
+                        LegalizeAsyncComputations(module, execution_threads));
+  return changed || legalized;
 }
 
 }  // end namespace xla

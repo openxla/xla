@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
+#include "xla/service/async_computation_utils.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/matmul_indexing_utils.h"
@@ -4023,25 +4024,6 @@ absl::Status CheckElementwiseInstruction(HloInstruction* instruction) {
   return absl::OkStatus();
 }
 
-bool IsCollectivesGroupComputation(HloComputation* computation) {
-  auto maybe_caller = computation->GetUniqueCaller(HloOpcode::kAsyncStart);
-  if (!maybe_caller.has_value()) {
-    return false;
-  }
-  return (*maybe_caller)
-      ->get_frontend_attribute(kCollectiveGroupMarkerAttr)
-      .has_value();
-}
-
-bool IsAsyncBarrierComputation(HloComputation* computation) {
-  return absl::c_all_of(
-      computation->instructions(),
-      [root = computation->root_instruction()](const HloInstruction* instr) {
-        return root == instr || instr->opcode() == HloOpcode::kParameter ||
-               instr->opcode() == HloOpcode::kGetTupleElement;
-      });
-}
-
 int64_t CountWriters(const HloInstruction* inst,
                      absl::Span<const int64_t> shape_index);
 
@@ -4921,13 +4903,7 @@ absl::StatusOr<bool> HloVerifier::RunImpl(
           << computation->name();
       ABSL_RETURN_IF_ERROR(computation->Accept(shape_verifier.get()));
       ABSL_RETURN_IF_ERROR(computation->Accept(&instruction_verifier));
-      // Verify that async computations contain a single instruction unless
-      // they are explicitly marked as a collectives group or async barrier.
-      if (computation->IsAsyncComputation() &&
-          computation->execution_thread() ==
-              HloInstruction::kMainExecutionThread &&
-          !IsCollectivesGroupComputation(computation) &&
-          !IsAsyncBarrierComputation(computation)) {
+      if (AsyncComputationRequiresSingleInstruction(*computation)) {
         ABSL_RETURN_IF_ERROR(VerifyAsyncComputation(computation));
       }
     }

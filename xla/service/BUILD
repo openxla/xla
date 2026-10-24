@@ -3600,6 +3600,7 @@ cc_library(
         "layout_assignment.h",
     ],
     deps = [
+        ":async_computation_utils",
         ":computation_layout",
         ":hlo_graph_dumper",
         ":hlo_value",
@@ -3816,6 +3817,7 @@ cc_library(
     srcs = ["hlo_verifier.cc"],
     hdrs = ["hlo_verifier.h"],
     deps = [
+        ":async_computation_utils",
         ":collective_ops_utils",
         ":hlo_module_config",
         ":matmul_indexing_utils",
@@ -5671,6 +5673,7 @@ cc_library(
     srcs = ["layout_normalization.cc"],
     hdrs = ["layout_normalization.h"],
     deps = [
+        ":async_computation_utils",
         ":hlo_creation_utils",
         ":shape_inference",
         "//xla:literal",
@@ -5777,6 +5780,7 @@ xla_cc_test(
         ":layout_normalization",
         ":scatter_simplifier",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings:string_view",
@@ -6804,6 +6808,35 @@ xla_cc_test(
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "async_computation_utils",
+    srcs = ["async_computation_utils.cc"],
+    hdrs = ["async_computation_utils.h"],
+    deps = [
+        "//xla:side_effect_util",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_cc_test(
+    name = "async_computation_utils_test",
+    srcs = ["async_computation_utils_test.cc"],
+    deps = [
+        ":async_computation_utils",
+        ":hlo_verifier",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
     ],
 )
