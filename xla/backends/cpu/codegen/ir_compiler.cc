@@ -487,6 +487,23 @@ llvm::Error IrCompiler::RunIrPasses(llvm::Module& module,
   // separate basic blocks.
   llvm_ir::SinkContractableFMulToFAddFSub(module);
 
+  // Without `min-legal-vector-width` the X86 backend treats every vector type
+  // in the IR as legal, so `prefer-vector-width` only limits the vectorizers
+  // and explicit 512-bit vectors still use zmm registers. Functions without
+  // `prefer-vector-width`, such as intrinsic definitions, also need it on CPUs
+  // without a 256-bit tuning preference (e.g. znver4). Set both after the last
+  // inlining, which raises or drops the caller's value, and use one value for
+  // all functions so that non-inlined calls agree on vector argument passing.
+  if (prefer_vector_width > 0) {
+    const std::string vector_width = absl::StrCat(prefer_vector_width);
+    for (llvm::Function& func : module) {
+      if (!func.isDeclaration()) {
+        func.addFnAttr("prefer-vector-width", vector_width);
+        func.addFnAttr("min-legal-vector-width", vector_width);
+      }
+    }
+  }
+
   // Sanitizer instrumentation must be the last IR transformation.
   if (options_.dfsan_enabled) {
     // The transformations immediately above are not visible to the analysis
