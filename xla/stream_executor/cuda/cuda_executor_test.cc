@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_executor.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -25,10 +22,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/strings/match.h"
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/debug_options_flags.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"
@@ -174,6 +174,78 @@ TEST(CudaExecutorTest, CreateCollectiveMemoryAllocatorWorks) {
   EXPECT_NE(allocation->address().opaque(), nullptr);
   EXPECT_GE(allocation->address().size(), 1024);
 }
+
+TEST(CudaExecutorTest, CreateLocalityDomainMemoryAllocatorWorks) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  const int domain_count =
+      executor->GetDeviceDescription().locality_domain_count();
+  if (domain_count < 2) {
+    EXPECT_THAT(executor->CreateLocalityDomainMemoryAllocator(0),
+                Not(absl_testing::IsOk()));
+    return;
+  }
+  for (int locality_domain_id = 0; locality_domain_id < domain_count;
+       ++locality_domain_id) {
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<MemoryAllocator> allocator,
+        executor->CreateLocalityDomainMemoryAllocator(locality_domain_id));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<MemoryAllocation> allocation,
+                         allocator->Allocate(1024));
+    EXPECT_NE(allocation->address().opaque(), nullptr);
+    EXPECT_GE(allocation->address().size(), 1024);
+  }
+}
+
+TEST(CudaExecutorTest, CreateLocalityDomainMemoryAllocatorRejectsInvalidId) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  const int domain_count =
+      executor->GetDeviceDescription().locality_domain_count();
+  if (domain_count < 2) {
+    GTEST_SKIP() << "Requires a GPU with at least two locality domains";
+  }
+  EXPECT_THAT(executor->CreateLocalityDomainMemoryAllocator(-1),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(executor->CreateLocalityDomainMemoryAllocator(domain_count),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+#if CUDA_VERSION >= 13040
+TEST(CudaExecutorTest, DisabledVmmRejectsLocalityDomainAllocator) {
+  const bool was_disabled =
+      xla::GetDebugOptionsFromFlags().xla_gpu_experimental_vmm_disabled();
+  std::vector<tsl::Flag> flags;
+  xla::AppendDebugOptionsFlags(&flags);
+  auto set_vmm_disabled = [&](bool disabled) {
+    std::vector<std::string> args = {
+        disabled ? "--xla_gpu_experimental_vmm_disabled=true"
+                 : "--xla_gpu_experimental_vmm_disabled=false"};
+    EXPECT_TRUE(tsl::Flags::Parse(args, flags));
+    EXPECT_TRUE(args.empty());
+  };
+  absl::Cleanup restore_flag = [&] { set_vmm_disabled(was_disabled); };
+  set_vmm_disabled(true);
+
+  // Use a fresh executor: cached executors retain the options from Init().
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_GT(platform->VisibleDeviceCount(), 0);
+  CudaExecutor executor(platform, /*device_ordinal=*/0);
+  ASSERT_OK(executor.Init());
+  if (executor.GetDeviceDescription().locality_domain_count() < 2) {
+    GTEST_SKIP() << "Requires a GPU with at least two locality domains";
+  }
+  // Locality-domain placement needs VMM; the allocator must be rejected at
+  // creation rather than silently falling back to whole-device memory.
+  EXPECT_THAT(executor.CreateLocalityDomainMemoryAllocator(0),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+}
+#endif  // CUDA_VERSION >= 13040
 
 TEST(CudaExecutorTest, AllocateArrayReturnsRequestedSize) {
   ASSERT_OK_AND_ASSIGN(Platform * platform,
