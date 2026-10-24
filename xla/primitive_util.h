@@ -259,6 +259,16 @@ constexpr PrimitiveType NativeToPrimitiveType<complex128>() {
   return C128;
 }
 
+template <>
+constexpr PrimitiveType NativeToPrimitiveType<complex32>() {
+  return C32;
+}
+
+template <>
+constexpr PrimitiveType NativeToPrimitiveType<bcomplex32>() {
+  return BC32;
+}
+
 // PrimitiveTypeToNative<k>::type is an alias for the native type of the given
 // primitive type, and is undefined for primitive types that do not
 // have a corresponding native type. E.g. PrimitiveTypeToNative<F32>::type is
@@ -430,6 +440,16 @@ struct PrimitiveTypeToNative<C128> {
   using type = complex128;
 };
 
+template <>
+struct PrimitiveTypeToNative<C32> {
+  using type = complex32;
+};
+
+template <>
+struct PrimitiveTypeToNative<BC32> {
+  using type = bcomplex32;
+};
+
 template <PrimitiveType kType>
 using NativeTypeOf =
     typename primitive_util::PrimitiveTypeToNative<kType>::type;
@@ -468,7 +488,7 @@ constexpr bool IsFloatingPointType(PrimitiveType type) {
 
 // Returns true if the given primitive type is a complex type.
 constexpr bool IsComplexType(PrimitiveType type) {
-  return type == C64 || type == C128;
+  return type == C32 || type == BC32 || type == C64 || type == C128;
 }
 
 // Returns true if the given primitive type is a signed integral type.
@@ -628,6 +648,10 @@ template <typename F>
 constexpr decltype(auto) ComplexTypeSwitch(F&& f, PrimitiveType type) {
   if (ABSL_PREDICT_TRUE(IsComplexType(type))) {
     switch (type) {
+      case C32:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::C32>());
+      case BC32:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::BC32>());
       case C64:
         return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::C64>());
       case C128:
@@ -877,6 +901,10 @@ PrimitiveType SignedIntegralTypeForBitWidth(int64_t src_bitwidth);
 // Crashes if complex_type is not complex.
 constexpr PrimitiveType ComplexComponentType(PrimitiveType complex_type) {
   switch (complex_type) {
+    case C32:
+      return F16;
+    case BC32:
+      return BF16;
     case C64:
       return F32;
     case C128:
@@ -890,6 +918,12 @@ constexpr PrimitiveType ComplexComponentType(PrimitiveType complex_type) {
 // Returns the complex type for the given real, imag component type.
 // Crashes if there's no complex type for the given component type.
 constexpr PrimitiveType ComplexType(PrimitiveType base_type) {
+  if (base_type == F16) {
+    return C32;
+  }
+  if (base_type == BF16) {
+    return BC32;
+  }
   if (base_type == F32) {
     return C64;
   }

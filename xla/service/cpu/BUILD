@@ -1329,6 +1329,22 @@ xla_cc_test(
 )
 
 xla_cc_test(
+    name = "cpu_aot_c32_bc32_test",
+    srcs = ["cpu_aot_c32_bc32_test.cc"],
+    deps = [
+        ":cpu_compiler",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:compiler",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_cc_test(
     name = "scoped_ir_builder_test",
     srcs = ["scoped_ir_builder_test.cc"],
     deps = [

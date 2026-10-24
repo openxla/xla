@@ -29,6 +29,47 @@ limitations under the License.
 
 namespace xla {
 
+namespace {
+
+// ShapeUtil::ForEachSubshape* only descend into tuples, so this check walks
+// buffer-wrapped and tuple-nested sub-shapes itself. The storage complex type
+// check is applied at the leaves, where it reduces to an element type check.
+absl::Status VerifyShapeHasNoUnsupportedStorageComplexTypes(
+    const Shape& shape, absl::string_view backend_name) {
+  if (shape.IsBuffer()) {
+    return VerifyShapeHasNoUnsupportedStorageComplexTypes(shape.buffer_shape(),
+                                                          backend_name);
+  }
+  if (shape.IsTuple()) {
+    for (const Shape& subshape : shape.tuple_shapes()) {
+      ABSL_RETURN_IF_ERROR(
+          VerifyShapeHasNoUnsupportedStorageComplexTypes(subshape,
+                                                         backend_name));
+    }
+    return absl::OkStatus();
+  }
+  if (!ShapeUtil::TouchesStorageComplexTypes(shape)) {
+    return absl::OkStatus();
+  }
+  return absl::UnimplementedError(absl::StrFormat(
+      "The XLA %s backend does not support element type %s yet.", backend_name,
+      primitive_util::LowercasePrimitiveTypeName(shape.element_type())));
+}
+
+}  // namespace
+
+absl::Status VerifyNoUnsupportedStorageComplexTypes(
+    const HloModule& module, absl::string_view backend_name) {
+  for (const HloComputation* computation : module.computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      ABSL_RETURN_IF_ERROR(
+          VerifyShapeHasNoUnsupportedStorageComplexTypes(
+              instruction->shape(), backend_name));
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::Status CpuGpuShapeVerifier::Preprocess(HloInstruction* hlo) {
   ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
       hlo->shape(), [&](const Shape& shape, const ShapeIndex&) {

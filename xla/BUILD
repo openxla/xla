@@ -655,6 +655,25 @@ xla_cc_test(
 )
 
 xla_cc_test(
+    name = "c32_bc32_test",
+    srcs = ["c32_bc32_test.cc"],
+    deps = [
+        ":literal",
+        ":shape_util",
+        ":types",
+        ":xla_data_proto_cc",
+        "//xla/hlo/evaluator:hlo_evaluator",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/tsl/platform:test_main",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_cc_test(
     name = "layout_util_test",
     srcs = ["layout_util_test.cc"],
     deps = [

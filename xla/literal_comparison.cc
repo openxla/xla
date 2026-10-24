@@ -930,14 +930,21 @@ absl::Status NearHelper(const LiteralSlice& expected,
     return return_status;
   }
 
-  if (ShapeUtil::ElementIsFloating(expected.shape()) ||
-      ShapeUtil::ElementIsComplex(expected.shape())) {
+  // Storage-only carriers: compare exactly, not by tolerance.
+  if ((ShapeUtil::ElementIsFloating(expected.shape()) ||
+       ShapeUtil::ElementIsComplex(expected.shape())) &&
+      expected.shape().element_type() != C32 &&
+      expected.shape().element_type() != BC32) {
     bool use_detailed_message = detailed_message.value_or(
         ShapeUtil::ElementsIn(expected.shape()) >= 64);
     return primitive_util::PrimitiveTypeSwitch<absl::Status>(
         [&](auto primitive_type) -> absl::Status {
-          if constexpr (primitive_util::IsFloatingPointType(primitive_type) ||
-                        primitive_util::IsComplexType(primitive_type)) {
+          if constexpr (primitive_type == C32 || primitive_type == BC32) {
+            return Unimplemented(
+                "Near comparisons for C32/BC32 are not implemented.");
+          } else if constexpr (primitive_util::IsFloatingPointType(
+                                   primitive_type) ||
+                               primitive_util::IsComplexType(primitive_type)) {
             using NativeT = primitive_util::NativeTypeOf<primitive_type>;
             return NearComparator<NativeT>::Compare(
                 expected, actual, shape_index, error, use_detailed_message,

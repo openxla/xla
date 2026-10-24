@@ -19,9 +19,16 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/hlo_verifier.h"
 
 namespace xla {
+
+// Returns Unimplemented if the module still contains C32 or BC32 array
+// elements. Must run after optional legalization and before codegen.
+absl::Status VerifyNoUnsupportedStorageComplexTypes(
+    const HloModule& module, absl::string_view backend_name);
 
 // Verifies that HLO Shapes are supported by the XLA-CPU and XLA-GPU compilers.
 class CpuGpuShapeVerifier : public ShapeVerifier {
