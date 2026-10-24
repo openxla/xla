@@ -1601,7 +1601,9 @@ def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
 
 def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
   let arguments = (ins);
-  let results = (outs MemRefOf<[TPU_SomeSemaphoreType]>:$result);
+  // The allocation is scoped to the enclosing function, like memref.alloca.
+  let results = (outs Res<MemRefOf<[TPU_SomeSemaphoreType]>, "",
+                          [MemAlloc<AutomaticAllocationScopeResource>]>:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
 }
 
