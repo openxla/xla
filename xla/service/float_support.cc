@@ -28,6 +28,18 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+namespace {
+
+bool IsPrecisionPreservingTypeTransition(PrimitiveType in_type,
+                                         PrimitiveType out_type,
+                                         PrimitiveType low_precision_type,
+                                         PrimitiveType high_precision_type) {
+  return in_type == out_type ||
+         (in_type == high_precision_type && out_type == low_precision_type) ||
+         (in_type == low_precision_type && out_type == high_precision_type);
+}
+
+}  // namespace
 
 bool FloatSupport::SupportsLowPrecisionOperand(const HloInstruction& hlo,
                                                int64_t operand_index) const {
@@ -138,23 +150,17 @@ bool FloatSupport::EffectiveOperandPrecisionIsOutputPrecision(
     case HloOpcode::kReverse:
     case HloOpcode::kShuffle:
     case HloOpcode::kSlice:
-    case HloOpcode::kSort:
     case HloOpcode::kTranspose:
     case HloOpcode::kTuple:
     case HloOpcode::kOptimizationBarrier:
       return true;
-    case HloOpcode::kConvert: {
+    case HloOpcode::kConvert:
       if (operand_index != 0) {
         return false;
       }
-      const PrimitiveType in_type = hlo.operand(0)->shape().element_type();
-      const PrimitiveType out_type = hlo.shape().element_type();
-      return in_type == out_type ||
-             (in_type == high_precision_type_ &&
-              out_type == low_precision_type_) ||
-             (in_type == low_precision_type_ &&
-              out_type == high_precision_type_);
-    }
+      return IsPrecisionPreservingTypeTransition(
+          hlo.operand(0)->shape().element_type(), hlo.shape().element_type(),
+          low_precision_type_, high_precision_type_);
     case HloOpcode::kBitcast:
       return hlo.shape().element_type() ==
              hlo.operand(0)->shape().element_type();
@@ -167,11 +173,52 @@ bool FloatSupport::EffectiveOperandPrecisionIsOutputPrecision(
     case HloOpcode::kSelect:
       return operand_index == 1 || operand_index == 2;
     case HloOpcode::kReduce:
-    case HloOpcode::kReduceWindow: {
-      HloComputation* reduce_comp = hlo.called_computations()[0];
-      for (HloInstruction* inst : reduce_comp->instructions()) {
-        if (inst->opcode() == HloOpcode::kParameter) {
+    case HloOpcode::kReduceWindow:
+    case HloOpcode::kSort: {
+      const PrimitiveType op_type =
+          hlo.operand(operand_index)->shape().element_type();
+      const int64_t branch_index =
+          hlo.opcode() == HloOpcode::kSort
+              ? operand_index
+              : operand_index % (hlo.operand_count() / 2);
+      const int64_t lhs_param_index =
+          hlo.opcode() == HloOpcode::kSort ? 2 * operand_index : branch_index;
+      const int64_t rhs_param_index =
+          hlo.opcode() == HloOpcode::kSort
+              ? 2 * operand_index + 1
+              : hlo.operand_count() / 2 + branch_index;
+      const Shape& out_subshape = hlo.shape().IsTuple()
+                                      ? hlo.shape().tuple_shapes(branch_index)
+                                      : hlo.shape();
+      const HloComputation* to_apply = hlo.called_computations()[0];
+      if (!IsPrecisionPreservingTypeTransition(
+              op_type, out_subshape.element_type(), low_precision_type_,
+              high_precision_type_) ||
+          !IsPrecisionPreservingTypeTransition(
+              op_type,
+              to_apply->parameter_instruction(lhs_param_index)
+                  ->shape()
+                  .element_type(),
+              low_precision_type_, high_precision_type_) ||
+          !IsPrecisionPreservingTypeTransition(
+              op_type,
+              to_apply->parameter_instruction(rhs_param_index)
+                  ->shape()
+                  .element_type(),
+              low_precision_type_, high_precision_type_)) {
+        return false;
+      }
+      for (const HloInstruction* inst : to_apply->instructions()) {
+        if (inst->opcode() == HloOpcode::kParameter ||
+            (hlo.opcode() == HloOpcode::kSort &&
+             inst->opcode() == HloOpcode::kCompare)) {
           continue;
+        }
+        if (inst->opcode() == HloOpcode::kConvert &&
+            !IsPrecisionPreservingTypeTransition(
+                op_type, inst->shape().element_type(), low_precision_type_,
+                high_precision_type_)) {
+          return false;
         }
         for (int64_t i = 0; i < inst->operand_count(); ++i) {
           if (!EffectiveOperandPrecisionIsOutputPrecision(*inst, i)) {
