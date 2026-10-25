@@ -20,12 +20,16 @@ limitations under the License.
 #include <utility>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -40,6 +44,112 @@ constexpr HloCallBoundaryOptions kFusionBoundaryOptions(
     /*include_calls_in=*/false, /*include_control_flow_in=*/false,
     /*include_fusions_in=*/true);
 
+// Returns true if every fusion computation of module on the given execution
+// threads (all threads when empty) forwards values only through
+// get-tuple-element, tuple, add-dependency, domain, optimization-barrier and
+// the nested elements of copy, so that DefiningPosition and Positions below
+// give the answers of HloDataflowAnalysis with ssa_form=false and
+// bitcast_defines_value=true. A call, control flow or an asynchronous
+// operation inside a fusion computation needs the analysis.
+bool HasLocalFusionDataflow(
+    const HloModule& module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  for (const HloComputation* computation :
+       module.computations(execution_threads)) {
+    if (!computation->IsFusionComputation()) {
+      continue;
+    }
+    for (const HloInstruction* instruction : computation->instructions()) {
+      const HloOpcode opcode = instruction->opcode();
+      if (HloDataflowAnalysis::IsAsynchronousOperationStart(opcode) ||
+          HloDataflowAnalysis::IsAsynchronousOperationDone(opcode) ||
+          opcode == HloOpcode::kAsyncUpdate || opcode == HloOpcode::kCall ||
+          opcode == HloOpcode::kConditional || opcode == HloOpcode::kWhile) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Returns the position defining the value at position, inside a fusion
+// computation with local dataflow (see HasLocalFusionDataflow).
+HloPosition DefiningPosition(HloPosition position) {
+  while (true) {
+    HloInstruction* instruction = position.instruction;
+    switch (instruction->opcode()) {
+      case HloOpcode::kGetTupleElement:
+        position.instruction = instruction->mutable_operand(0);
+        position.index.push_front(instruction->tuple_index());
+        break;
+      case HloOpcode::kTuple:
+        if (position.index.empty()) {
+          return position;
+        }
+        position.instruction =
+            instruction->mutable_operand(position.index.front());
+        position.index.pop_front();
+        break;
+      case HloOpcode::kCopy:
+        if (position.index.empty()) {
+          return position;
+        }
+        [[fallthrough]];
+      case HloOpcode::kAddDependency:
+      case HloOpcode::kDomain:
+      case HloOpcode::kOptimizationBarrier:
+        position.instruction = instruction->mutable_operand(0);
+        break;
+      default:
+        return position;
+    }
+  }
+}
+
+// Returns every position holding the value defined at defining, that position
+// first. Every position has one forwarding predecessor, so the walk over the
+// users of each position reaches each position once.
+absl::InlinedVector<HloPosition, 4> Positions(const HloPosition& defining) {
+  absl::InlinedVector<HloPosition, 4> positions = {defining};
+  for (int64_t i = 0; i < positions.size(); ++i) {
+    // A copy: the pushes below may reallocate positions.
+    const HloPosition position = positions[i];
+    for (HloInstruction* user : position.instruction->users()) {
+      switch (user->opcode()) {
+        case HloOpcode::kGetTupleElement:
+          if (!position.index.empty() &&
+              position.index.front() == user->tuple_index()) {
+            positions.push_back(HloPosition{user, position.index});
+            positions.back().index.pop_front();
+          }
+          break;
+        case HloOpcode::kTuple:
+          for (int64_t operand_number :
+               user->OperandIndices(position.instruction)) {
+            positions.push_back(HloPosition{user, position.index});
+            positions.back().index.push_front(operand_number);
+          }
+          break;
+        case HloOpcode::kCopy:
+          if (!position.index.empty()) {
+            positions.push_back(HloPosition{user, position.index});
+          }
+          break;
+        case HloOpcode::kAddDependency:
+        case HloOpcode::kDomain:
+        case HloOpcode::kOptimizationBarrier:
+          if (user->operand(0) == position.instruction) {
+            positions.push_back(HloPosition{user, position.index});
+          }
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  return positions;
+}
+
 }  // namespace
 
 bool MemorySpacePropagation::RunOnComputation(HloComputation* computation) {
@@ -51,7 +161,7 @@ bool MemorySpacePropagation::RunOnComputation(HloComputation* computation) {
     ShapeUtil::ForEachLeafShape(
         computation->parameter_instruction(parameter_idx)->shape(),
         [&](const Shape& sub_shape, const ShapeIndex& index) {
-          absl::flat_hash_set<const HloValue*> visited;
+          absl::flat_hash_set<HloPosition> visited;
           modified |= Propagate(
               index, computation->parameter_instruction(parameter_idx),
               sub_shape, visited);
@@ -61,7 +171,7 @@ bool MemorySpacePropagation::RunOnComputation(HloComputation* computation) {
   ShapeUtil::ForEachLeafShape(
       computation->root_instruction()->shape(),
       [&](const Shape& sub_shape, const ShapeIndex& index) {
-        absl::flat_hash_set<const HloValue*> visited;
+        absl::flat_hash_set<HloPosition> visited;
         modified |= Propagate(index, computation->root_instruction(), sub_shape,
                               visited);
       });
@@ -76,11 +186,15 @@ absl::StatusOr<bool> MemorySpacePropagation::RunImpl(
   // between a fusion input and output and these two values are in different
   // memory spaces, we can get inconsistent memory spaces between the parameter
   // and fusion operand or root and fusion output.
-  ABSL_ASSIGN_OR_RETURN(
-      auto dataflow_analysis,
-      HloDataflowAnalysis::Run(*module, /*ssa_form=*/false,
-                               /*bitcast_defines_value=*/true));
-  dataflow_analysis_ = std::move(dataflow_analysis);
+  if (HasLocalFusionDataflow(*module, execution_threads)) {
+    dataflow_analysis_ = nullptr;
+  } else {
+    ABSL_ASSIGN_OR_RETURN(
+        auto dataflow_analysis,
+        HloDataflowAnalysis::Run(*module, /*ssa_form=*/false,
+                                 /*bitcast_defines_value=*/true));
+    dataflow_analysis_ = std::move(dataflow_analysis);
+  }
 
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
@@ -94,7 +208,7 @@ absl::StatusOr<bool> MemorySpacePropagation::RunImpl(
               ShapeUtil::ForEachLeafShape(
                   boundary.caller_operand(operand_idx)->shape(),
                   [&](const Shape& sub_shape, const ShapeIndex& index) {
-                    absl::flat_hash_set<const HloValue*> visited;
+                    absl::flat_hash_set<HloPosition> visited;
                     modified |=
                         Propagate(index, boundary.callee_parameter(operand_idx),
                                   sub_shape, visited);
@@ -105,7 +219,7 @@ absl::StatusOr<bool> MemorySpacePropagation::RunImpl(
             ShapeUtil::ForEachLeafShape(
                 instruction->shape(),
                 [&](const Shape& sub_shape, const ShapeIndex& index) {
-                  absl::flat_hash_set<const HloValue*> visited;
+                  absl::flat_hash_set<HloPosition> visited;
                   modified |= Propagate(index, boundary.callee_root(),
                                         sub_shape, visited);
                 });
@@ -118,18 +232,34 @@ absl::StatusOr<bool> MemorySpacePropagation::RunImpl(
 
 bool MemorySpacePropagation::Propagate(
     ShapeIndexView index, const HloInstruction* callee_instruction,
-    const Shape& src_shape,
-    absl::flat_hash_set<const HloValue*>& visited) const {
+    const Shape& src_shape, absl::flat_hash_set<HloPosition>& visited) const {
   bool modified = false;
-  const HloValue& value = dataflow_analysis_->GetUniqueValueAt(
-      callee_instruction, ShapeIndex(index));
-
-  if (visited.contains(&value)) {
+  // The positions of the value at (callee_instruction, index), from the
+  // analysis when RunImpl built one and from the fusion computation otherwise.
+  const HloValue* value = nullptr;
+  HloPosition defining;
+  if (dataflow_analysis_ != nullptr) {
+    value = &dataflow_analysis_->GetUniqueValueAt(callee_instruction,
+                                                  ShapeIndex(index));
+    defining = value->defining_position();
+  } else {
+    // HloPosition holds the mutable pointer the shape updates below need, as
+    // the positions of the analysis do.
+    defining = DefiningPosition(HloPosition{
+        const_cast<HloInstruction*>(callee_instruction), ShapeIndex(index)});
+  }
+  if (!visited.insert(defining).second) {
     return false;
   }
-  visited.insert(&value);
+  absl::InlinedVector<HloPosition, 4> local_positions;
+  if (value == nullptr) {
+    local_positions = Positions(defining);
+  }
+  const absl::Span<const HloPosition> positions =
+      value != nullptr ? absl::MakeConstSpan(value->positions())
+                       : absl::MakeConstSpan(local_positions);
 
-  for (const HloPosition& position : value.positions()) {
+  for (const HloPosition& position : positions) {
     HloInstruction* instruction = position.instruction;
     Shape* shape = ShapeUtil::GetMutableSubshape(instruction->mutable_shape(),
                                                  position.index);
@@ -187,14 +317,21 @@ bool MemorySpacePropagation::Propagate(
         kFusionBoundaryOptions);
   }
 
-  for (const HloUse& use : value.GetUses()) {
-    // For fusion uses, propagate the memory space to the fusion parameter.
-    HloDataflowPropagation::ForEachCalledParameter(
-        use.instruction, use.operand_number,
-        [&](HloInstruction* param) {
-          modified |= Propagate(use.operand_index, param, src_shape, visited);
-        },
-        kFusionBoundaryOptions);
+  // For fusion uses, propagate the memory space to the fusion parameter. A
+  // fusion user of a position is a use of the value there
+  // (HloValue::ComputeUses), so this visits the uses of the analysis.
+  for (const HloPosition& position : positions) {
+    for (HloInstruction* user : position.instruction->users()) {
+      if (user->opcode() != HloOpcode::kFusion) {
+        continue;
+      }
+      for (int64_t operand_number :
+           user->OperandIndices(position.instruction)) {
+        modified |=
+            Propagate(position.index, user->fused_parameter(operand_number),
+                      src_shape, visited);
+      }
+    }
   }
   return modified;
 }
