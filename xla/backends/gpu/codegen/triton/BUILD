@@ -762,6 +762,7 @@ cc_library(
         "//xla/codegen/xtile:xtile_config_proto_cc",
         "//xla/codegen/xtile/codegen:emitter_helpers",
         "//xla/codegen/xtile/ir:xtile",
+        "//xla/hlo/analysis:interval",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/transforms/simplifiers:tuple_simplifier",
         "//xla/hlo/translate/mhlo_to_hlo:attribute_exporter",
