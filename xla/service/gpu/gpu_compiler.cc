@@ -149,6 +149,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/sanitize_constant_names.h"
 #include "xla/backends/gpu/transforms/scalar_constant_sinker.h"
 #include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
+#include "xla/backends/gpu/transforms/scan_rewriter_triton.h"
 #include "xla/backends/gpu/transforms/scatter_determinism_expander.h"
 #include "xla/backends/gpu/transforms/scatter_expander.h"
 #include "xla/backends/gpu/transforms/scatter_slice_simplifier.h"
@@ -930,19 +931,6 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<LogisticExpander>();
   pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<DynamicDimensionSimplifier>();
-
-  int64_t rw_length = debug_options.xla_reduce_window_rewrite_base_length();
-  pipeline.AddPass<HloPassFix<AssociativeScanRewriter>>(rw_length);
-  if (rw_length != 0) {
-    pipeline.AddPass<HloPassFix<ReduceWindowRewriter>>(rw_length);
-    pipeline.AddPass<ReduceWindowResizer>();
-  }
-  pipeline.AddPass<ScanExpander>();
-
-  // AssociativeScanRewriter generates call instructions for scan bodies and the
-  // emitter cannot compute indexing maps for the Call opcode. Inline the calls
-  // so the emitter can compute indexing maps.
-  pipeline.AddPass<CallInliner>();
 
   DynamicPadderOptions dynamic_padder_options;
 
@@ -2222,7 +2210,24 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
           gpu_target_config.device_description, ShapeSizeBytesFunction(),
           alias_info, mlir_context,
           /*only_fuse_if_profitable=*/true, thread_pool, &mlir_context_pool_);
+      if (debug_options.xla_gpu_experimental_enable_triton_scan()) {
+        pipeline.AddPass<ScanRewriterTriton>(
+            gpu_target_config.device_description);
+      }
     }
+
+    int64_t rw_length = debug_options.xla_reduce_window_rewrite_base_length();
+    pipeline.AddPass<HloPassFix<AssociativeScanRewriter>>(rw_length);
+    if (rw_length != 0) {
+      pipeline.AddPass<HloPassFix<ReduceWindowRewriter>>(rw_length);
+      pipeline.AddPass<ReduceWindowResizer>();
+    }
+    pipeline.AddPass<ScanExpander>();
+
+    // AssociativeScanRewriter generates call instructions for scan bodies and
+    // the emitter cannot compute indexing maps for the Call opcode. Inline the
+    // calls so the emitter can compute indexing maps.
+    pipeline.AddPass<CallInliner>();
 
     pipeline.AddPass<ReductionDimensionGrouper>();
     pipeline.AddPass<HloPassFix<ReductionSplitter>>(

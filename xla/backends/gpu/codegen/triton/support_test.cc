@@ -114,6 +114,7 @@ bool DoesOpSupportType(HloOpcode opcode, PrimitiveType type) {
     case HloOpcode::kErf:
     case HloOpcode::kFloor:
     case HloOpcode::kCeil:
+    case HloOpcode::kFma:
     case HloOpcode::kIsFinite:
     case HloOpcode::kRoundNearestAfz:
     case HloOpcode::kRoundNearestEven:
@@ -873,8 +874,8 @@ ENTRY triton_computation {
                                                     : ExpectedFailMode::kFail);
 }
 
-constexpr std::array kTestedOpsTernaryElementwise = {HloOpcode::kSelect,
-                                                     HloOpcode::kClamp};
+constexpr std::array kTestedOpsTernaryElementwise = {
+    HloOpcode::kSelect, HloOpcode::kClamp, HloOpcode::kFma};
 
 INSTANTIATE_TEST_SUITE_P(
     TernaryElementwiseTestSuite, TernaryElementwiseTest,
@@ -1273,6 +1274,23 @@ TEST_F(ScanSupportTest, NonAssociativeScanNotSupported) {
   })");
 }
 
+TEST_F(ScanSupportTest, ScanOverNonLastDimensionNotSupported) {
+  ExpectScanNotSupported(R"(
+  ENTRY main {
+    param = f32[16,8] parameter(0)
+    init = f32[8] parameter(1)
+    scan = (f32[16,8], f32[8]) scan(param, init), dimensions={0}, to_apply=add,
+      num_carries=1, is_associative=true
+    ROOT gte = f32[16,8] get-tuple-element(scan), index=0
+  })",
+                         R"(
+  add {
+    Arg_0 = f32[8] parameter(0)
+    Arg_1 = f32[8] parameter(1)
+    ROOT add = f32[8] add(Arg_0, Arg_1)
+  })");
+}
+
 using TransposeTest = SupportTestWithTypeAndOpcodeAndDeviceParam;
 
 TEST_P(TransposeTest, LoadTranspose3D) {
@@ -1374,7 +1392,7 @@ ENTRY triton_computation {
 
 TEST_P(ConcatenateDeviceTest, TritonDoesNotSupportUnalignedConcatenate) {
   auto cc = GetParam();
-  // Operand 0 has size 63 along concat dim (1), which is not divisible by 64.
+  // Operand 0 has size 63 along concat dim (1), which is not divisible by 8.
   // Operand 1 has size 128 (aligned).
   const std::string kHloTestTemplate = R"(
 ENTRY triton_computation {
@@ -1386,6 +1404,22 @@ ENTRY triton_computation {
                        ParseTemplateAndGetInstruction(kHloTestTemplate, F32,
                                                       HloOpcode::kConcatenate));
   RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 64, 1}, cc);
+}
+
+TEST_P(ConcatenateDeviceTest, TritonSupportsSub64AlignedConcatenate) {
+  auto cc = GetParam();
+  // Operand 0 has size 24 along concat dim (1), which is divisible by 8 (though
+  // not 64). With a compatible tile size (8 along concat dim), tiling succeeds.
+  const std::string kHloTestTemplate = R"(
+ENTRY triton_computation {
+  p0 = $0[18,24,20] parameter(0)
+  p1 = $0[18,128,20] parameter(1)
+  ROOT concatenate = $0[18,152,20] concatenate(p0, p1), dimensions={1}
+})";
+  ASSERT_OK_AND_ASSIGN(TestedInstruction ti,
+                       ParseTemplateAndGetInstruction(kHloTestTemplate, F32,
+                                                      HloOpcode::kConcatenate));
+  RunSupportTest(std::move(ti), /*output_tile_sizes=*/{1, 8, 1}, cc);
 }
 
 INSTANTIATE_TEST_SUITE_P(ConcatenateTestSuite, ConcatenateDeviceTest,
