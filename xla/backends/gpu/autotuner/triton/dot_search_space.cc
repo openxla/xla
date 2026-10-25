@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/triton/dot_search_space.h"
 
+// Test bazel-diff target selection on GPU C++ changes.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
