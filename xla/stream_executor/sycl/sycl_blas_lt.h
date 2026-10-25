@@ -58,7 +58,7 @@ class BlasLt : public gpu::BlasLt {
 
     absl::Status SetAlgorithm(const MatmulAlgorithm& algorithm) override {
       // TODO(intel-tf): Do we need a lock here?
-      absl::MutexLock lock(&mu_);
+      absl::MutexLock lock(mu_);
       algorithm_ = algorithm;
       return absl::OkStatus();
     }
