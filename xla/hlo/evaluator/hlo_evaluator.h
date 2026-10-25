@@ -568,6 +568,7 @@ class HloEvaluator : public ConstDfsHloVisitorWithDefault,
   absl::Status HandleReal(const HloInstruction* real) override;
   absl::Status HandleImag(const HloInstruction* imag) override;
   absl::Status HandleComplex(const HloInstruction* complex) override;
+  absl::Status HandleAbs(const HloInstruction* abs) override;
   absl::Status HandleReduce(const HloInstruction* hlo) override;
   absl::Status HandleReduceWindow(const HloInstruction* hlo) override;
   absl::Status HandleMap(const HloInstruction* map) override;

@@ -132,6 +132,8 @@ enum PrimitiveType {
   F8E8M0FNU,
   F6E3M2FN,
   F6E2M3FN,
+  C32,
+  BC32,
 };
 
 const std::vector<std::string>& primitive_strings() {
@@ -143,7 +145,8 @@ const std::vector<std::string>& primitive_strings() {
        "f32",       "f64",        "c64",     "c128",
        "f4e2m1fn",  "f8e3m4",     "f8e4m3",  "f8e4m3b11fnuz",
        "f8e4m3fn",  "f8e4m3fnuz", "f8e5m2",  "f8e5m2fnuz",
-       "f8e8m0fnu", "f6e3m2fn",   "f6e2m3fn"});
+       "f8e8m0fnu", "f6e3m2fn",   "f6e2m3fn",
+       "c32",       "bc32"});
   return *vec;
 }
 
@@ -157,8 +160,9 @@ PrimitiveType PrimitiveTypeFromString(const std::string& s) {
 
 int ByteSize(PrimitiveType type) {
   std::string s = ToString(type);
-  s = s.substr(1, s.size());
-  return std::stoi(s) / 8;
+  // Parse from the first digit: names like "bf16" have multi-letter prefixes.
+  size_t first_digit = s.find_first_of("0123456789");
+  return std::stoi(s.substr(first_digit)) / 8;
 }
 
 struct ArrayShape {
@@ -433,6 +437,8 @@ void Fill(void* buffer, const ArrayShape& shape) {
     case F6E2M3FN:
     case F16:
     case BF16:
+    case C32:
+    case BC32:
     case C64:
     case C128:
     case S1:
@@ -497,6 +503,8 @@ void Display(const void* buffer, const ArrayShape& shape) {
     case F6E2M3FN:
     case F16:
     case BF16:
+    case C32:
+    case BC32:
     case C64:
     case C128:
     case S1:

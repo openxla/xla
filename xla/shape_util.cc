@@ -700,6 +700,24 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
   return primitive_util::IsComplexType(shape.element_type());
 }
 
+/* static */ bool ShapeUtil::TouchesStorageComplexTypes(const Shape& shape) {
+  if (shape.IsBuffer()) {
+    return TouchesStorageComplexTypes(shape.buffer_shape());
+  }
+  if (shape.IsArrayExcludingBuffer()) {
+    return shape.element_type() == C32 || shape.element_type() == BC32;
+  }
+  if (!shape.IsTuple()) {
+    return false;
+  }
+  for (const Shape& subshape : shape.tuple_shapes()) {
+    if (TouchesStorageComplexTypes(subshape)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /* static */ bool ShapeUtil::ElementIsFloating(const Shape& shape) {
   return primitive_util::IsFloatingPointType(shape.element_type());
 }

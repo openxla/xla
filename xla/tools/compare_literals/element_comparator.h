@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "xla/tools/compare_literals/compare_literals.h"
+#include "xla/types.h"
 
 namespace xla::compare_literals {
 
@@ -40,6 +41,10 @@ template <typename T>
 struct IsComplex : std::false_type {};
 template <typename T>
 struct IsComplex<std::complex<T>> : std::true_type {};
+template <>
+struct IsComplex<complex32> : std::true_type {};
+template <>
+struct IsComplex<bcomplex32> : std::true_type {};
 template <typename T>
 inline constexpr bool is_complex_v = IsComplex<T>::value;
 }  // namespace internal
@@ -103,6 +108,38 @@ struct ValueTraits<std::complex<U>> {
                            absl::StrCat(val.imag()));
   }
 };
+
+template <typename CarrierT>
+struct ComplexStorageValueTraits {
+  static bool IsNan(const CarrierT& val) {
+    return std::isnan(static_cast<double>(val.real())) ||
+           std::isnan(static_cast<double>(val.imag()));
+  }
+  static bool IsInf(const CarrierT& val) {
+    return std::isinf(static_cast<double>(val.real())) ||
+           std::isinf(static_cast<double>(val.imag()));
+  }
+  static double AbsDiff(const CarrierT& a, const CarrierT& b) {
+    return std::abs(std::complex<double>(
+        static_cast<double>(a.real()) - static_cast<double>(b.real()),
+        static_cast<double>(a.imag()) - static_cast<double>(b.imag())));
+  }
+  static double Magnitude(const CarrierT& val) {
+    return std::abs(std::complex<double>(static_cast<double>(val.real()),
+                                         static_cast<double>(val.imag())));
+  }
+  static std::string Format(const CarrierT& val) {
+    return absl::StrFormat("(%s, %s)",
+                           absl::StrCat(static_cast<float>(val.real())),
+                           absl::StrCat(static_cast<float>(val.imag())));
+  }
+};
+
+template <>
+struct ValueTraits<complex32> : ComplexStorageValueTraits<complex32> {};
+
+template <>
+struct ValueTraits<bcomplex32> : ComplexStorageValueTraits<bcomplex32> {};
 
 // Element-level comparator and metric accumulator.
 template <typename NativeT>

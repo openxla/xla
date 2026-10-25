@@ -2605,10 +2605,12 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
     Literal new_literal(result_shape);
     return primitive_util::PrimitiveTypeSwitch<absl::Status>(
         [&](auto primitive_type_constant) -> absl::Status {
-          if constexpr (primitive_util::IsFloatingPointType(
-                            primitive_type_constant) ||
-                        primitive_util::IsComplexType(
-                            primitive_type_constant)) {
+          if constexpr ((primitive_util::IsFloatingPointType(
+                             primitive_type_constant) ||
+                         primitive_util::IsComplexType(
+                             primitive_type_constant)) &&
+                        primitive_type_constant != C32 &&
+                        primitive_type_constant != BC32) {
             using NativeT = NativeTypeOf<primitive_type_constant>;
             ABSL_RETURN_IF_ERROR(InvertConstant<NativeT>(*c, &new_literal));
 

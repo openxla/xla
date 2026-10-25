@@ -2868,6 +2868,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
     return absl::StrFormat("XlaCompileBackend:#module=%s,program_id=%d#",
                            module->name(), module->unique_id());
   }};
+  ABSL_RETURN_IF_ERROR(VerifyNoUnsupportedStorageComplexTypes(*module, "GPU"));
 
   if (module->config().has_static_device_assignment()) {
     const DeviceAssignment& da = module->config().static_device_assignment();

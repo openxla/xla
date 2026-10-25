@@ -282,9 +282,14 @@ static absl::Status AllReduceOp(
   void* output = chunk_ptr(participants[0].dest);
 
   ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
-      [&](const auto type_tag) {
-        return ReduceScatter<type_tag>(reduction_kind, inputs, output,
-                                       chunk_count);
+      [&](const auto type_tag) -> absl::Status {
+        if constexpr (type_tag == C32 || type_tag == BC32) {
+          return Unimplemented(
+              "In-process collectives do not support C32/BC32 yet.");
+        } else {
+          return ReduceScatter<type_tag>(reduction_kind, inputs, output,
+                                         chunk_count);
+        }
       },
       primitive_type));
 
@@ -333,8 +338,13 @@ static absl::Status ReduceScatterOp(
   void* output = participants[rank].dest.opaque();
 
   ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
-      [&](const auto type_tag) {
-        return ReduceScatter<type_tag>(reduction_kind, inputs, output, count);
+      [&](const auto type_tag) -> absl::Status {
+        if constexpr (type_tag == C32 || type_tag == BC32) {
+          return Unimplemented(
+              "In-process collectives do not support C32/BC32 yet.");
+        } else {
+          return ReduceScatter<type_tag>(reduction_kind, inputs, output, count);
+        }
       },
       primitive_type));
 

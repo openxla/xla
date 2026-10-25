@@ -221,19 +221,9 @@ class HloEvaluatorTypedVisitor : public ConstDfsHloVisitorWithDefault {
     return absl::OkStatus();
   }
 
+  // Complex operands are dispatched by HloEvaluator::HandleAbs on the operand
+  // type; this override only sees real-valued operands.
   absl::Status HandleAbs(const HloInstruction* abs) override {
-    // If the operand is of C64 type, the return type of abs will be F32.
-    // However, ElementwiseT would still be the return type, F32, and thus
-    // specifying the ElementwiseT explicitly as C64 is needed below.
-    if constexpr (std::is_same_v<ReturnT, float>) {
-      if (abs->operand(0)->shape().element_type() == C64) {
-        return HandleAbs<complex64>(abs);
-      }
-    } else if constexpr (std::is_same_v<ReturnT, double>) {
-      if (abs->operand(0)->shape().element_type() == C128) {
-        return HandleAbs<complex128>(abs);
-      }
-    }
     return HandleAbs<ElementwiseT>(abs);
   }
 

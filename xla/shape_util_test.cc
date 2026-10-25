@@ -286,6 +286,29 @@ TEST(ShapeUtilTest, IsPrefix) {
   EXPECT_TRUE(ShapeUtil::IsPrefix(nested_tuple1, nested_tuple2));
 }
 
+TEST(ShapeUtilTest, TouchesStorageComplexTypes) {
+  EXPECT_FALSE(ShapeUtil::TouchesStorageComplexTypes(
+      ShapeUtil::MakeShape(F32, {2})));
+  EXPECT_TRUE(ShapeUtil::TouchesStorageComplexTypes(
+      ShapeUtil::MakeShape(C32, {2})));
+  // Rank-0 scalars are arrays too.
+  EXPECT_TRUE(ShapeUtil::TouchesStorageComplexTypes(
+      ShapeUtil::MakeShape(BC32, {})));
+
+  Shape tuple = ShapeUtil::MakeTupleShape(
+      {ShapeUtil::MakeShape(F32, {2}), ShapeUtil::MakeShape(BC32, {3})});
+  EXPECT_TRUE(ShapeUtil::TouchesStorageComplexTypes(tuple));
+
+  ASSERT_OK_AND_ASSIGN(Shape f32_buffer,
+                       ShapeUtil::MakeValidatedBufferShape(F32, {2}));
+  ASSERT_OK_AND_ASSIGN(Shape c32_buffer,
+                       ShapeUtil::MakeValidatedBufferShape(C32, {2}));
+  EXPECT_FALSE(ShapeUtil::TouchesStorageComplexTypes(f32_buffer));
+  EXPECT_TRUE(ShapeUtil::TouchesStorageComplexTypes(c32_buffer));
+  EXPECT_TRUE(ShapeUtil::TouchesStorageComplexTypes(
+      ShapeUtil::MakeTupleShape({f32_buffer, c32_buffer})));
+}
+
 TEST(ShapeUtilTest, MakeMaybeTupleShape) {
   Shape s1 = ShapeUtil::MakeValidatedMaybeTupleShape(
                  {ShapeUtil::MakeValidatedShape(F32, {3, 2}).value()})

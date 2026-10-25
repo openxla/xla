@@ -5254,7 +5254,8 @@ bool HloParserImpl::ParseInstructionNames(
 template <typename T>
 std::string StringifyValue(T val) {
   if constexpr (is_complex_v<T>) {
-    return StrFormat("(%f, %f)", val.real(), val.imag());
+    return StrFormat("(%f, %f)", static_cast<double>(val.real()),
+                     static_cast<double>(val.imag()));
   } else {
     return StrCat(val);
   }
@@ -5278,8 +5279,7 @@ uint64_t GetNanPayload(T val) {
 template <typename LiteralNativeT, typename LiteralComponentT>
 LiteralNativeT LiteralNativeFromRealImag(LiteralComponentT real,
                                          LiteralComponentT imag) {
-  if constexpr (std::is_same_v<LiteralNativeT,
-                               std::complex<LiteralComponentT>>) {
+  if constexpr (is_complex_v<LiteralNativeT>) {
     return LiteralNativeT(real, imag);
   } else {
     return real;
@@ -5296,6 +5296,16 @@ struct ComponentType<std::complex<T>> {
   using Type = T;
 };
 
+template <>
+struct ComponentType<complex32> {
+  using Type = half;
+};
+
+template <>
+struct ComponentType<bcomplex32> {
+  using Type = bfloat16;
+};
+
 template <typename T>
 T GetReal(T value) {
   return value;
@@ -5306,6 +5316,14 @@ T GetReal(std::complex<T> value) {
   return value.real();
 }
 
+half GetReal(complex32 value) {
+  return value.real();
+}
+
+bfloat16 GetReal(bcomplex32 value) {
+  return value.real();
+}
+
 template <typename T>
 T GetImag(T value) {
   return 0;
@@ -5313,6 +5331,14 @@ T GetImag(T value) {
 
 template <typename T>
 T GetImag(std::complex<T> value) {
+  return value.imag();
+}
+
+half GetImag(complex32 value) {
+  return value.imag();
+}
+
+bfloat16 GetImag(bcomplex32 value) {
   return value.imag();
 }
 
@@ -5386,7 +5412,7 @@ bool HloParserImpl::CheckParsedValueIsInRange(LocTy loc,
                                               std::complex<double> value) {
   // e.g. `float` for std::complex<float>
   using LiteralComplexComponentT =
-      decltype(std::real(std::declval<LiteralNativeT>()));
+      typename ComponentType<LiteralNativeT>::Type;
 
   // We could do simply
   //
