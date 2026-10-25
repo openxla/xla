@@ -422,11 +422,12 @@ absl::Status LocalDeviceState::AllocateAndRecordEvent(
 
 absl::StatusOr<BufferSequencingEventRef>
 LocalDeviceState::GetEventForComputeStreamSyncPoint(
-    size_t sync_point, AsyncWorkRunner* async_work_runner,
-    bool nullptr_if_past) {
+    size_t sync_point, AsyncWorkRunner* async_work_runner, bool nullptr_if_past,
+    absl::AnyInvocable<void() &&> cleanup) {
   mu_.lock();
   size_t cur_sync_point = next_compute_stream_sync_point_.load();
-  if (sync_point < base_compute_event_sequence_id_ + compute_events_.size()) {
+  if (!cleanup &&
+      sync_point < base_compute_event_sequence_id_ + compute_events_.size()) {
     BufferSequencingEventRef event;
     if (sync_point < base_compute_event_sequence_id_) {
       if (!nullptr_if_past) {
@@ -442,7 +443,8 @@ LocalDeviceState::GetEventForComputeStreamSyncPoint(
   next_compute_stream_sync_point_.store(cur_sync_point + 1);
   auto event = BufferSequencingEvent::Create(async_work_runner);
   auto status = AllocateAndRecordEvent(event, compute_stream(),
-                                       "GetEventForComputeStreamSyncPoint");
+                                       "GetEventForComputeStreamSyncPoint",
+                                       std::move(cleanup));
   if (!status.ok()) {
     mu_.unlock();
     return status;
