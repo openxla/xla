@@ -1846,6 +1846,23 @@ def TPU_TraceOp : TPU_Op<"trace", [RecursiveMemoryEffects, SingleBlockImplicitTe
   let regions = (region AnyRegion:$region);
 }
 
+def TPU_IndirectSwitchOp : TPU_Op<"indirect_switch", [
+    RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
+  let summary = "Multiway branch on a runtime index";
+  let description = [{
+    Runs case `min_u32(index, N - 1)`, where N is the number of case regions:
+    an index at or above N, or a negative index, runs the last case. The cases
+    yield no values.
+
+    It lowers to one indirect branch through a jump table instead of a chain
+    of conditional branches.
+  }];
+  let arguments = (ins I32:$index);
+  let results = (outs);
+  let regions = (region VariadicRegion<SizedRegion<1>>:$cases);
+  let hasVerifier = 1;
+}
+
 def TPU_TraceStartOp : TPU_Op<"trace_start", []> {
   let arguments = (ins StrAttr:$message, I32Attr:$level);
   let results = (outs);
