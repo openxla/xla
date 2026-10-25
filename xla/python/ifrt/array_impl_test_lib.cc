@@ -2426,6 +2426,39 @@ TEST(ArrayImplTest, CopyArraysExhaustive) {
                           StatusIs(absl::StatusCode::kFailedPrecondition));
             }
           }
+
+          ASSERT_OK_AND_ASSIGN(
+              ArrayRef array3,
+              client->MakeArrayFromHostBuffer(
+                  data.data(), dtype, shape,
+                  /*byte_strides=*/std::nullopt, sharding,
+                  /*layout=*/nullptr,
+                  Client::HostBufferSemantics::kImmutableOnlyDuringCall,
+                  /*on_done_with_host_buffer=*/{}));
+          ASSERT_OK_AND_ASSIGN(DeviceListRef dst_device_list2,
+                               client->MakeDeviceList({dst_device}));
+          ASSERT_OK_AND_ASSIGN(
+              std::vector<ArrayRef> donated_copied,
+              client->CopyArrays(absl::MakeSpan(&array3, 1), dst_device_list2,
+                                 dst_memory->Kind(),
+                                 ArrayCopySemantics::kDonateInput));
+          EXPECT_TRUE(array3->IsDeleted());
+          ASSERT_THAT(donated_copied, SizeIs(1));
+          EXPECT_THAT(donated_copied[0]->sharding().devices()->devices(),
+                      ElementsAre(dst_device));
+          EXPECT_EQ(donated_copied[0]->sharding().memory_kind(),
+                    dst_memory->Kind());
+          ASSERT_OK(donated_copied[0]
+                        ->CopyToHostBuffer(out_data.data(),
+                                           /*byte_strides=*/std::nullopt,
+                                           ArrayCopySemantics::kAlwaysCopy)
+                        .Await());
+          EXPECT_THAT(out_data, ElementsAreArray(data));
+          EXPECT_THAT(client->CopyArrays(absl::MakeSpan(&array3, 1),
+                                         std::move(dst_device_list2),
+                                         dst_memory->Kind(),
+                                         ArrayCopySemantics::kAlwaysCopy),
+                      StatusIs(absl::StatusCode::kFailedPrecondition));
         }
       }
     }
