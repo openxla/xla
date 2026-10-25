@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_context.h"
@@ -40,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier_options.pb.h"
+#include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/pattern_matcher.h"
@@ -54,6 +56,19 @@ namespace xla::gpu {
 namespace m = ::xla::match;
 
 namespace {
+
+bool IsUnaryElementwise(const HloInstruction* instr) {
+  return instr->IsElementwise() && instr->operand_count() == 1 &&
+         !instr->HasSideEffect() &&
+         HloPredicateIsNotOp<HloOpcode::kFusion, HloOpcode::kCopy,
+                             HloOpcode::kBitcastConvert>(instr) &&
+         ShapeUtil::SameDimensions(instr->shape(), instr->operand(0)->shape());
+}
+
+bool HasNonReplicatedSharding(const HloInstruction* instr) {
+  return instr->has_sharding() &&
+         !instr->sharding().IsReplicatedOrSingleDevice();
+}
 
 bool IsScalarConstantZero(const HloInstruction* hlo) {
   if (!hlo->IsConstant() || !ShapeUtil::IsScalar(hlo->shape())) {
@@ -320,6 +335,135 @@ absl::Status GpuAlgebraicSimplifierVisitor::HandleReduce(
   }
 
   return AlgebraicSimplifierVisitor::HandleReduce(reduce);
+}
+
+absl::StatusOr<bool> GpuAlgebraicSimplifierVisitor::TryToSinkReduceThroughSlice(
+    HloInstruction* slice) {
+  if (!hlo_instruction_utils::IsUnstridedSlice(slice) ||
+      ShapeUtil::SameDimensions(slice->shape(), slice->operand(0)->shape()) ||
+      slice->HasControlDependencies() || HasNonReplicatedSharding(slice) ||
+      !slice->shape().is_static()) {
+    return false;
+  }
+
+  HloInstruction* operand = slice->mutable_operand(0);
+  HloInstruction* unary = nullptr;
+  HloInstruction* reduce = nullptr;
+  if (operand->opcode() == HloOpcode::kReduce) {
+    reduce = operand;
+  } else if (IsUnaryElementwise(operand) &&
+             operand->operand(0)->opcode() == HloOpcode::kReduce) {
+    unary = operand;
+    reduce = operand->mutable_operand(0);
+  } else {
+    return false;
+  }
+
+  const HloInstruction* root = slice->parent()->root_instruction();
+  if (!reduce->shape().IsArray() || reduce->HasControlDependencies() ||
+      HasNonReplicatedSharding(reduce) || reduce == root || unary == root) {
+    return false;
+  }
+  HloInstruction* reduce_input = reduce->mutable_operand(0);
+  if (!reduce_input->shape().is_static()) {
+    return false;
+  }
+
+  std::vector<const HloInstruction*> leaf_slices;
+  for (const HloInstruction* user : reduce->users()) {
+    if (hlo_instruction_utils::IsUnstridedSlice(user)) {
+      if (user->HasControlDependencies() || HasNonReplicatedSharding(user) ||
+          (options_.is_layout_sensitive() &&
+           !LayoutUtil::Equal(user->shape().layout(),
+                              reduce->shape().layout()))) {
+        return false;
+      }
+      leaf_slices.push_back(user);
+    } else if (IsUnaryElementwise(user) && !user->HasControlDependencies() &&
+               !HasNonReplicatedSharding(user) && user->user_count() > 0 &&
+               user != root &&
+               (!options_.is_layout_sensitive() ||
+                LayoutUtil::Equal(user->shape().layout(),
+                                  reduce->shape().layout()))) {
+      for (const HloInstruction* s : user->users()) {
+        if (!hlo_instruction_utils::IsUnstridedSlice(s) ||
+            s->HasControlDependencies() || HasNonReplicatedSharding(s) ||
+            (options_.is_layout_sensitive() &&
+             !LayoutUtil::Equal(s->shape().layout(), user->shape().layout()))) {
+          return false;
+        }
+        leaf_slices.push_back(s);
+      }
+    } else {
+      return false;
+    }
+  }
+
+  int64_t total_sliced_elements = 0;
+  for (const HloInstruction* s : leaf_slices) {
+    total_sliced_elements += ShapeUtil::ElementsIn(s->shape());
+  }
+  if (total_sliced_elements > ShapeUtil::ElementsIn(reduce->shape())) {
+    return false;
+  }
+
+  const int64_t input_rank = reduce_input->shape().dimensions().size();
+  std::vector<int64_t> new_starts;
+  std::vector<int64_t> new_limits;
+  std::vector<int64_t> new_strides;
+  new_starts.reserve(input_rank);
+  new_limits.reserve(input_rank);
+  new_strides.reserve(input_rank);
+
+  Shape new_slice_shape = reduce_input->shape();
+  int64_t out_dim = 0;
+  for (int64_t in_dim = 0; in_dim < input_rank; ++in_dim) {
+    if (absl::c_linear_search(reduce->dimensions(), in_dim)) {
+      new_starts.push_back(0);
+      new_limits.push_back(reduce_input->shape().dimensions(in_dim));
+      new_strides.push_back(1);
+    } else {
+      new_starts.push_back(slice->slice_starts(out_dim));
+      new_limits.push_back(slice->slice_limits(out_dim));
+      new_strides.push_back(1);
+      new_slice_shape.set_dimensions(
+          in_dim, slice->slice_limits(out_dim) - slice->slice_starts(out_dim));
+      ++out_dim;
+    }
+  }
+
+  HloComputation* computation = slice->parent();
+  HloInstruction* new_slice =
+      computation->AddInstruction(HloInstruction::CreateSlice(
+          new_slice_shape, reduce_input, new_starts, new_limits, new_strides));
+  new_slice->set_metadata(slice->metadata());
+
+  Shape new_reduce_shape = ShapeUtil::ChangeElementType(
+      slice->shape(), reduce->shape().element_type());
+  HloInstruction* new_reduce =
+      computation->AddInstruction(HloInstruction::CreateReduce(
+          new_reduce_shape, new_slice, reduce->mutable_operand(1),
+          reduce->dimensions(), reduce->to_apply()));
+  reduce->SetupDerivedInstruction(new_reduce);
+  new_reduce->clear_sharding();
+
+  HloInstruction* replacement = new_reduce;
+  if (unary != nullptr) {
+    replacement = computation->AddInstruction(
+        unary->CloneWithNewOperands(slice->shape(), {new_reduce}));
+    replacement->clear_sharding();
+  }
+  ABSL_RETURN_IF_ERROR(ReplaceInstruction(slice, replacement));
+  return true;
+}
+
+absl::Status GpuAlgebraicSimplifierVisitor::HandleSlice(HloInstruction* slice) {
+  ABSL_ASSIGN_OR_RETURN(bool replaced, TryToSinkReduceThroughSlice(slice));
+  if (replaced) {
+    return absl::OkStatus();
+  }
+
+  return AlgebraicSimplifierVisitor::HandleSlice(slice);
 }
 
 bool GpuAlgebraicSimplifierVisitor::SupportedDotPrecisionConfig(
