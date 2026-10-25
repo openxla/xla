@@ -724,7 +724,7 @@ ENTRY entry_computation {
   filter_t = f32[2,3] transpose(filter), dimensions={1,0}
   meta = s32[2,3] parameter(2)
   ROOT conv = f32[1,3] convolution(input, filter_t, meta), dim_labels=bf_io->bf,
-      sparsity_config={rhs={sparsity=1x4 dimension=0 stride=1 idx=2}}
+      sparsity_config={rhs={sparsity=1x4 dimension=0 idx=2}}
 }
 )";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -748,7 +748,7 @@ ENTRY entry_computation {
   meta_input = s32[3,2] parameter(2)
   meta = s32[2,3] transpose(meta_input), dimensions={1,0}
   ROOT conv = f32[1,3] convolution(input, filter, meta), dim_labels=bf_io->bf,
-      sparsity_config={rhs={sparsity=1x4 dimension=0 stride=1 idx=2}}
+      sparsity_config={rhs={sparsity=1x4 dimension=0 idx=2}}
 }
 )";
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -797,7 +797,7 @@ ENTRY entry_computation {
   filter = f32[2,3] parameter(1)
   meta = s32[2,3] parameter(2)
   ROOT conv = f32[1,3] convolution(input_t, filter, meta), dim_labels=bf_io->bf,
-      sparsity_config={rhs={sparsity=1x4 dimension=0 stride=1 idx=2}},
+      sparsity_config={rhs={sparsity=1x4 dimension=0 idx=2}},
       convolution_kind=fprop
 }
 )";
@@ -816,7 +816,7 @@ ENTRY entry_computation {
   EXPECT_EQ(conv->sparsity_config().rhs().num_non_zero(), 1);
   EXPECT_EQ(conv->sparsity_config().rhs().block_size(), 4);
   EXPECT_EQ(conv->sparsity_config().rhs().dimension(), 0);
-  EXPECT_EQ(conv->sparsity_config().rhs().stride(), 1);
+  EXPECT_EQ(conv->sparsity_config().rhs().stride(), 0);
   EXPECT_EQ(conv->sparsity_config().rhs().idx(), 2);
   EXPECT_EQ(conv->convolution_kind(), CONVOLUTION_KIND_FPROP);
   const ConvolutionDimensionNumbers& dnums =
