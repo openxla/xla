@@ -1923,16 +1923,18 @@ absl::Status HloDataflowAnalysis::Verify() const {
 bool HloDataflowAnalysis::DoesNotUseOperandBuffer(
     const HloInstruction* operand, const ShapeIndex& index,
     const HloInstruction* user) const {
-  // Return false if no value at 'operand' and 'index' is used at 'user'.
+  // Return false if any value at 'operand' and 'index' is used at 'user'.
   for (const HloValue* value : GetValueSet(operand, index).values()) {
     for (const HloUse& use : value->GetUses()) {
       if (use.instruction == user) {
         if (user->IsLoopFusion()) {
           HloInstruction* fusion_param =
               user->fused_parameter(use.operand_number);
-          const HloValue& value =
-              GetValueDefinedAt(fusion_param, use.operand_index);
-          return value.GetUses().empty();
+          if (GetValueDefinedAt(fusion_param, use.operand_index)
+                  .GetUses()
+                  .empty()) {
+            continue;
+          }
         }
         return false;
       }
@@ -1997,21 +1999,10 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
   // Check that operand and user emit the same shape and layout.
   if (shapes_equal) {
     // Must-alias relationship returns true for in-place operations (DUS and DUS
-    // fusions), regardless of the backend.
-    // Cache uses of value and alias_info->GetInPlaceInputOutputPairs to speed
-    // up repeated calls.
-    auto [operand_it, operand_inserted] =
-        cache_share_buffer_with_operand_.try_emplace(
-            std::make_pair(operand, operand_index),
-            absl::flat_hash_set<HloUse>());
-    if (operand_inserted) {
-      // Iterate over all values in the value set since pipelining or loop
-      // crossing can introduce multiple values.
-      for (const HloValue* val : GetValueSet(operand, operand_index).values()) {
-        auto uses = val->GetUses();
-        operand_it->second.insert(uses.begin(), uses.end());
-      }
-    }
+    // fusions), regardless of the backend. Match `operand` and `operand_index`
+    // directly against `user`'s in-place input/output pairs so a secondary view
+    // (such as a bitcast) sharing the same HloValue is not treated as
+    // must-aliasing the output.
     auto [user_it, user_inserted] = cache_share_buffer_with_user_.try_emplace(
         user, absl::flat_hash_map<ShapeIndex, std::vector<HloOperandIndex>>());
     if (user_inserted) {
@@ -2022,13 +2013,12 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
             operand_and_output_index.first);
       }
     }
-    auto& uses = operand_it->second;
-    auto& user_pairs = user_it->second;
+    const auto& user_pairs = user_it->second;
     auto pairs_it = user_pairs.find(user_index);
     if (pairs_it != user_pairs.end()) {
-      for (const auto& operand_index : pairs_it->second) {
-        if (uses.contains(HloUse{user, operand_index.operand_number,
-                                 operand_index.operand_index})) {
+      for (const HloOperandIndex& in_place_op_idx : pairs_it->second) {
+        if (user->operand(in_place_op_idx.operand_number) == operand &&
+            in_place_op_idx.operand_index == operand_index) {
           return true;
         }
       }

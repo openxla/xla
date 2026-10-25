@@ -533,6 +533,72 @@ TEST_F(HeapSimulatorTest, MultiplyAdd) {
   tracker.ExpectSharedBuffers(add, {}, mul, {});
 }
 
+TEST_F(HeapSimulatorTest,
+       CannotShareOperandWhenSecondaryBitcastPositionCannotShare) {
+  const char* const hlo_text = R"hlo(
+HloModule CannotShareOperandWhenSecondaryBitcastPositionCannotShare
+
+fused_add {
+  p0 = f32[4] parameter(0)
+  p1 = f32[1,4] parameter(1)
+  rev = f32[1,4] reverse(p1), dimensions={1}
+  bc_rev = f32[4] bitcast(rev)
+  ROOT add = f32[4] add(p0, bc_rev)
+}
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  mul = f32[4] negate(param)
+  bc = f32[1,4] bitcast(mul)
+  fusion = f32[4] fusion(mul, bc), kind=kLoop, calls=fused_add
+  ROOT out = f32[4] exponential(fusion)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* param = FindInstruction(module.get(), "param");
+  HloInstruction* mul = FindInstruction(module.get(), "mul");
+  HloInstruction* bc = FindInstruction(module.get(), "bc");
+  HloInstruction* fusion = FindInstruction(module.get(), "fusion");
+  HloInstruction* out = FindInstruction(module.get(), "out");
+
+  HeapSimulatorTracker tracker(std::move(module),
+                               {param, mul, bc, fusion, out});
+  EXPECT_NE(tracker.OffsetAt(mul, {}), tracker.OffsetAt(fusion, {}));
+  EXPECT_EQ(tracker.OffsetAt(fusion, {}), tracker.OffsetAt(out, {}));
+}
+
+TEST_F(HeapSimulatorTest, CanShareOperandThroughSingleBitcastPosition) {
+  const char* const hlo_text = R"hlo(
+HloModule CanShareOperandThroughSingleBitcastPosition
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  mul = f32[4] negate(param)
+  bc = f32[4] bitcast(mul)
+  ROOT out = f32[4] exponential(bc)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* param = FindInstruction(module.get(), "param");
+  HloInstruction* mul = FindInstruction(module.get(), "mul");
+  HloInstruction* bc = FindInstruction(module.get(), "bc");
+  HloInstruction* out = FindInstruction(module.get(), "out");
+
+  HeapSimulatorTracker tracker(std::move(module), {param, mul, bc, out});
+  tracker.ExpectCallSequence({
+      {kAlloc, tracker.BufferAt(param, {})},
+      {kAlloc, tracker.BufferAt(mul, {})},
+      {kFree, tracker.BufferAt(mul, {})},
+      {kShare, tracker.BufferAt(out, {})},
+      {kFree, tracker.BufferAt(param, {})},
+      {kFree, tracker.BufferAt(out, {})},
+      {kFinish, nullptr},
+  });
+  tracker.ExpectSharedBuffers(out, {}, mul, {});
+}
+
 class CanShareWithSameShapeAliasInfo : public AliasInfo {
  public:
   std::optional<bool> MayAlias(const HloInstruction* operand, const ShapeIndex&,
