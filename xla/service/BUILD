@@ -1281,6 +1281,7 @@ xla_cc_test(
     srcs = ["latency_hiding_scheduler_test.cc"],
     deps = [
         ":device_assignment",
+        ":hlo_buffer",
         ":hlo_cost_analysis",
         ":hlo_module_config",
         ":latency_hiding_scheduler",
@@ -1290,6 +1291,7 @@ xla_cc_test(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:alias_info",
+        "//xla/hlo/analysis:hlo_alias_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:verified_hlo_module",
