@@ -803,8 +803,10 @@ std::string FilenameFor(int unique_id, string_view module_name,
     absl::StrAppend(&filename, prefix, ".");
   }
   absl::StrAppendFormat(&filename, "module_%04d", unique_id);
-  if (!module_name.empty()) {
-    absl::StrAppend(&filename, ".", module_name);
+  std::string sanitized_module_name =
+      SanitizeFileName(std::string(module_name));
+  if (!sanitized_module_name.empty()) {
+    absl::StrAppend(&filename, ".", sanitized_module_name);
   }
 
 #if !TSL_IS_IN_OSS
@@ -816,7 +818,7 @@ std::string FilenameFor(int unique_id, string_view module_name,
 
   absl::StrAppend(&filename, ".", suffix);
   // Skip the module name if the resulting length is too long.
-  if (!module_name.empty() && filename.size() > 255) {
+  if (!sanitized_module_name.empty() && filename.size() > 255) {
     return FilenameFor(unique_id, "", prefix, suffix);
   }
 
