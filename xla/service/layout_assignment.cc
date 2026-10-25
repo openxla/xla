@@ -2197,6 +2197,8 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
               /*dfs=*/true, priority_for_operand(operand_no)));
         } else if (instruction->opcode() == HloOpcode::kBitcastConvert) {
           Shape shape = instruction->shape();
+          *shape.mutable_layout() = LayoutUtil::MakeLayout(
+              buffer_constraint.layout().minor_to_major());
           if (operand->shape().dimensions().size() <
               instruction->shape().dimensions().size()) {
             shape = ShapeUtil::DeleteDimension(shape.dimensions().size() - 1,

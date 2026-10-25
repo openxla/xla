@@ -940,31 +940,62 @@ TEST_F(LayoutAssignmentTest, CopySliceOperandToAvoidImplicitLayoutChange) {
 }
 
 TEST_F(LayoutAssignmentTest, BitcastConvertAddingDimensionDoesNotChangeLayout) {
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                       ParseAndReturnVerifiedModule(R"(
-e {
-  a = f32[2,64]{0,1} parameter(0)
-  b = u4[2,64,8]{1,2,0:E(4)} bitcast-convert(a)
-})"));
-  ASSERT_OK(AssignLayoutsToComputation(module.get()));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(
+          R"(
+HloModule test, entry_computation_layout={(f32[2,64]{0,1})->u4[2,64,8]{1,2,0:E(4)}}
+
+ENTRY main {
+  a = f32[2,64] parameter(0)
+  ROOT b = u4[2,64,8] bitcast-convert(a)
+})",
+          /*config=*/{}, HloParserOptions().set_fill_missing_layouts(false)));
+  EXPECT_OK(AssignLayoutsToComputation(module.get()));
+  Shape expected_copy =
+      ShapeUtil::MakeShapeWithDenseLayout(F32, {2, 64}, {1, 0});
   EXPECT_THAT(module->entry_computation()->root_instruction(),
               GmockMatch(m::BitcastConvert(
-                  m::Copy(m::Parameter()).WithShape(F32, {2, 64}, {1, 0}))));
+                  m::Copy(m::Parameter()).WithShapeEqualTo(&expected_copy))));
 }
 
 TEST_F(LayoutAssignmentTest,
        BitcastConvertRemovingDimensionDoesNotChangeLayout) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(
+          R"(
+HloModule test, entry_computation_layout={(s8[16,3,2]{2,1,0})->u16[16,3]{0,1:T(8,128)(2,1)}}
+
+ENTRY main {
+  a = s8[16,3,2] parameter(0)
+  ROOT b = u16[16,3] bitcast-convert(a)
+})",
+          /*config=*/{}, HloParserOptions().set_fill_missing_layouts(false)));
+  EXPECT_OK(AssignLayoutsToComputation(module.get()));
+  Shape expected_copy =
+      ShapeUtil::MakeShapeWithDenseLayout(S8, {16, 3, 2}, {2, 0, 1});
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::BitcastConvert(
+                  m::Copy(m::Parameter()).WithShapeEqualTo(&expected_copy))));
+}
+
+TEST_F(LayoutAssignmentTest,
+       BitcastConvertPropagatesBufferConstraintOverInstructionLayout) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(R"(
-e {
+HloModule test, entry_computation_layout={(s8[16,3,2]{2,1,0})->u16[16,3]{0,1}}
+
+ENTRY main {
   a = s8[16,3,2]{2,1,0} parameter(0)
-  b = u16[16,3]{0,1} bitcast-convert(a)
+  ROOT b = u16[16,3]{1,0} bitcast-convert(a)
 })"));
-  ASSERT_OK(AssignLayoutsToComputation(module.get()));
-  EXPECT_THAT(
-      module->entry_computation()->root_instruction(),
-      GmockMatch(m::BitcastConvert(
-          m::Copy(m::Parameter()).WithShape(S8, {16, 3, 2}, {2, 0, 1}))));
+  EXPECT_OK(AssignLayoutsToComputation(module.get()));
+  Shape expected_copy =
+      ShapeUtil::MakeShapeWithDenseLayout(S8, {16, 3, 2}, {2, 0, 1});
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::BitcastConvert(
+                  m::Copy(m::Parameter()).WithShapeEqualTo(&expected_copy))));
 }
 
 TEST_F(LayoutAssignmentTest, CopyDSliceOperandToAvoidImplicitLayoutChange) {
