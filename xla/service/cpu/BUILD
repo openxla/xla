@@ -137,6 +137,34 @@ cc_library(
 )
 
 cc_library(
+    name = "aarch64_sve_tanh_rewriter",
+    srcs = ["aarch64_sve_tanh_rewriter.cc"],
+    hdrs = ["aarch64_sve_tanh_rewriter.h"],
+    deps = [
+        ":cpu_runtime",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:hlo_proto_cc",
+        "//xla:literal_util",
+        "//xla:shape_util",
+    ],
+)
+
+cc_library(
+    name = "runtime_tanh",
+    srcs = ["runtime_tanh.cc"],
+    hdrs = ["runtime_tanh.h"],
+    copts = runtime_copts(),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//xla/service:custom_call_target_registry",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:dynamic_annotations",
+    ],
+)
+
+cc_library(
     name = "cpu_compiler_pure",
     srcs = [
         "cpu_compiler.cc",
@@ -146,6 +174,7 @@ cc_library(
     ],
     copts = tsl_copts(),
     deps = [
+        ":aarch64_sve_tanh_rewriter",
         ":conv_canonicalization",
         ":cpu_aot_compilation_result",
         ":cpu_aot_loader",
