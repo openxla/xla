@@ -874,8 +874,12 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireClique(
               ranks.emplace_back(*r);
             }
 
-            // Returns nullptr if we do not have a clique for `clique_key`.
-            auto lockable_clique = [&]() -> LockableGpuClique* {
+            // Returns nullptr if we do not have a clique for `clique_key`. We
+            // return a shared pointer to keep the clique alive until we lock
+            // it below: once we release `state.mu`, a concurrent run can
+            // abandon and destroy the clique before we call `Acquire()`.
+            std::shared_ptr<LockableGpuClique> lockable_clique =
+                [&]() -> std::shared_ptr<LockableGpuClique> {
               absl::MutexLock lock(state.mu);
               CliqueCacheKey cache_key(collectives, clique_key);
               auto it = state.cliques.find(cache_key);
@@ -950,7 +954,7 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireClique(
               // died), we return a nullptr, as the clique will have to be
               // re-created.
               absl::Status stale = CheckCliqueIsNotStaleImpl(state, clique_key);
-              return stale.ok() ? to_lock.get() : nullptr;
+              return stale.ok() ? std::move(to_lock) : nullptr;
             }();
 
             return lockable_clique ? lockable_clique->Acquire()
