@@ -332,6 +332,15 @@ PjRtStreamExecutorRawClient::~PjRtStreamExecutorRawClient() {
       local_device_state->async_dispatch_thread()->Drain();
     }
   }
+  // Stop async_work_runner_ before destroying streams so in-flight staged
+  // transfer tasks finish enqueueing onto device streams.
+  async_work_runner_.reset();
+  // Destroy streams and worker threads on all local devices so all in-flight
+  // host staging buffers are released before host_memory_allocator_ is
+  // destroyed.
+  for (const auto& local_device_state : local_device_states_) {
+    local_device_state->Destroy();
+  }
 }
 
 namespace {

@@ -127,6 +127,11 @@ class LocalDeviceState {
                    DeviceErrorCallback device_error_callback = nullptr);
   virtual ~LocalDeviceState();
 
+  // Synchronizes all stream activity, destroys all streams and events, and
+  // joins all worker threads. Safe to call before ~LocalDeviceState();
+  // subsequent calls (including from ~LocalDeviceState()) are no-ops.
+  void Destroy();
+
   se::StreamExecutor* executor() const { return executor_; }
 
   LocalDeviceId local_device_id() { return local_device_id_; }
