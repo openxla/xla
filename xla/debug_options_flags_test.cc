@@ -19,7 +19,9 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -544,6 +546,121 @@ TEST(DebugOptions, AutotuneCacheRequireStrictCodegenMatchFlagsParsing) {
       "--xla_autotune_cache_require_strict_codegen_match=true"};
   EXPECT_TRUE(tsl::Flags::Parse(flag_args, flags));
   EXPECT_TRUE(opts.xla_autotune_cache_require_strict_codegen_match());
+}
+
+class ScopedEnvVar {
+ public:
+  ScopedEnvVar(const char* name, const char* value) : name_(name) {
+    if (const char* existing = std::getenv(name); existing != nullptr) {
+      original_value_ = existing;
+    }
+    Set(value);
+  }
+
+  ~ScopedEnvVar() {
+    Set(original_value_.has_value() ? original_value_->c_str() : nullptr);
+    ResetFlagValues();
+  }
+
+  ScopedEnvVar(const ScopedEnvVar&) = delete;
+  ScopedEnvVar& operator=(const ScopedEnvVar&) = delete;
+
+ private:
+  void Set(const char* value) {
+    if (value != nullptr) {
+      tsl::setenv(name_.c_str(), value, 1);
+    } else {
+      tsl::unsetenv(name_.c_str());
+    }
+  }
+
+  std::string name_;
+  std::optional<std::string> original_value_;
+};
+
+DebugOptions ReparseDebugOptionsFromEnv(const char* xla_flags) {
+  int* pargc;
+  std::vector<char*>* pargv;
+  ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+  if (xla_flags != nullptr) {
+    tsl::setenv("XLA_FLAGS", xla_flags, 1);
+  } else {
+    tsl::unsetenv("XLA_FLAGS");
+  }
+  (void)GetDebugOptionsFromFlags();
+  ResetFlagValues();
+  ParseDebugOptionFlagsFromEnv(/*reset_envvar=*/true);
+  return GetDebugOptionsFromFlags();
+}
+
+TEST(DebugOptions, CommandBufferDefaultsWhenNsightSystemsInactive) {
+  ScopedEnvVar nsys_session("NSYS_PROFILING_SESSION_ID", nullptr);
+  ScopedEnvVar nsys_nvtx("NSYS_NVTX_PROFILER_REGISTER_ONLY", nullptr);
+  ScopedEnvVar xla_flags("XLA_FLAGS", nullptr);
+
+  DebugOptions defaults = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_THAT(
+      defaults.xla_gpu_enable_command_buffer(),
+      ElementsAre(DebugOptions::COLLECTIVES_KERNEL, DebugOptions::CONDITIONAL,
+                  DebugOptions::CUBLAS, DebugOptions::CUBLASLT,
+                  DebugOptions::CUDNN, DebugOptions::CUSTOM_CALL,
+                  DebugOptions::DYNAMIC_SLICE_FUSION, DebugOptions::FUSION));
+
+  DebugOptions parsed = ReparseDebugOptionsFromEnv(nullptr);
+  EXPECT_THAT(
+      parsed.xla_gpu_enable_command_buffer(),
+      ElementsAre(DebugOptions::COLLECTIVES_KERNEL, DebugOptions::CONDITIONAL,
+                  DebugOptions::CUBLAS, DebugOptions::CUBLASLT,
+                  DebugOptions::CUDNN, DebugOptions::CUSTOM_CALL,
+                  DebugOptions::DYNAMIC_SLICE_FUSION, DebugOptions::FUSION));
+}
+
+TEST(DebugOptions,
+     CommandBufferDefaultsExcludeChildGraphsWhenNsightSystemsActive) {
+  ScopedEnvVar nsys_session("NSYS_PROFILING_SESSION_ID", "1");
+  ScopedEnvVar nsys_nvtx("NSYS_NVTX_PROFILER_REGISTER_ONLY", nullptr);
+  ScopedEnvVar xla_flags("XLA_FLAGS", nullptr);
+
+  DebugOptions defaults = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_THAT(
+      defaults.xla_gpu_enable_command_buffer(),
+      ElementsAre(DebugOptions::COLLECTIVES_KERNEL, DebugOptions::FUSION));
+
+  DebugOptions parsed = ReparseDebugOptionsFromEnv(nullptr);
+  EXPECT_THAT(
+      parsed.xla_gpu_enable_command_buffer(),
+      ElementsAre(DebugOptions::COLLECTIVES_KERNEL, DebugOptions::FUSION));
+}
+
+TEST(DebugOptions,
+     CommandBufferDefaultsExcludeChildGraphsWhenNsightNvtxVarSet) {
+  ScopedEnvVar nsys_session("NSYS_PROFILING_SESSION_ID", nullptr);
+  ScopedEnvVar nsys_nvtx("NSYS_NVTX_PROFILER_REGISTER_ONLY", "0");
+  ScopedEnvVar xla_flags("XLA_FLAGS", nullptr);
+
+  DebugOptions defaults = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_THAT(
+      defaults.xla_gpu_enable_command_buffer(),
+      ElementsAre(DebugOptions::COLLECTIVES_KERNEL, DebugOptions::FUSION));
+}
+
+TEST(DebugOptions,
+     CommandBufferExplicitOverrideHonoredWhenNsightSystemsActive) {
+  ScopedEnvVar nsys_session("NSYS_PROFILING_SESSION_ID", "1");
+  ScopedEnvVar nsys_nvtx("NSYS_NVTX_PROFILER_REGISTER_ONLY", nullptr);
+  ScopedEnvVar xla_flags("XLA_FLAGS", nullptr);
+
+  DebugOptions parsed_add =
+      ReparseDebugOptionsFromEnv("--xla_gpu_enable_command_buffer=+CUBLAS");
+  EXPECT_THAT(parsed_add.xla_gpu_enable_command_buffer(),
+              ElementsAre(DebugOptions::COLLECTIVES_KERNEL,
+                          DebugOptions::FUSION, DebugOptions::CUBLAS));
+
+  DebugOptions parsed_replace = ReparseDebugOptionsFromEnv(
+      "--xla_gpu_enable_command_buffer=FUSION,CUBLAS,CONDITIONAL");
+  EXPECT_THAT(parsed_replace.xla_gpu_enable_command_buffer(),
+              ElementsAre(DebugOptions::FUSION, DebugOptions::CUBLAS,
+                          DebugOptions::CONDITIONAL));
 }
 }  // namespace
 }  // namespace xla

@@ -151,6 +151,16 @@ void AbslStringify(Sink& sink, DebugOptions::CollectivePipeliningMode mode) {
 
 namespace {
 
+bool HasNonEmptyEnvVar(const char* name) {
+  const char* value = std::getenv(name);
+  return value != nullptr && value[0] != '\0';
+}
+
+bool IsNsightSystemsActive() {
+  return HasNonEmptyEnvVar("NSYS_PROFILING_SESSION_ID") ||
+         HasNonEmptyEnvVar("NSYS_NVTX_PROFILER_REGISTER_ONLY");
+}
+
 template <typename T>
 static auto FindRepeatedFieldValue(google::protobuf::RepeatedField<int>* list,
                                    T value) {
@@ -305,12 +315,19 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_cupti_multi_subscriber(true);
 
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES_KERNEL);
-  opts.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
-  opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
-  opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
-  opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
-  opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
-  opts.add_xla_gpu_enable_command_buffer(DebugOptions::DYNAMIC_SLICE_FUSION);
+  // Nsight Systems (--cuda-graph-trace=node) projects build-time NVTX ranges
+  // onto top-level graph kernel nodes, but not onto child graphs or
+  // conditional body graphs. Exclude child-graph and conditional command types
+  // by default when Nsight Systems is active unless explicitly overridden via
+  // --xla_gpu_enable_command_buffer.
+  if (!IsNsightSystemsActive()) {
+    opts.add_xla_gpu_enable_command_buffer(DebugOptions::CONDITIONAL);
+    opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLAS);
+    opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUBLASLT);
+    opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUDNN);
+    opts.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
+    opts.add_xla_gpu_enable_command_buffer(DebugOptions::DYNAMIC_SLICE_FUSION);
+  }
   opts.add_xla_gpu_enable_command_buffer(DebugOptions::FUSION);
   opts.add_xla_gpu_enable_collectives_command_buffer_filter(
       DebugOptions::ALLCOLLECTIVES);
