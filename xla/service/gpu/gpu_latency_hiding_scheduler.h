@@ -61,6 +61,25 @@ std::optional<DefaultSchedulerCore::CandidateResult>
 GpuD2DOverlapSchedulingRule(DefaultSchedulerCore::ScheduleCandidate& a,
                             DefaultSchedulerCore::ScheduleCandidate& b);
 
+// Bytes of live buffers of at least `min_buffer_bytes` whose release the node
+// advances: buffers the node releases when scheduled, and (bottom-up only)
+// live operand buffers whose defining instruction cannot become ready until
+// this consumer is scheduled.
+int64_t GpuLargeLiveBufferBytesReleasedBy(
+    const DefaultSchedulerCore::SchedulingState& sched_state,
+    const HloGraphNode& node, int64_t min_buffer_bytes);
+
+// GPU scheduling rule that prefers the candidate advancing the release of
+// more large live buffer bytes. It only applies while an async operation is in
+// flight, to candidates that neither occupy nor release an async resource,
+// when the preferred candidate is ready without a stall and does not push the
+// transient memory peak over the configured limit. The rule returns nullopt
+// when `min_buffer_bytes` is not positive.
+std::optional<DefaultSchedulerCore::CandidateResult>
+GpuLargeBufferReleaseSchedulingRule(DefaultSchedulerCore::ScheduleCandidate& a,
+                                    DefaultSchedulerCore::ScheduleCandidate& b,
+                                    int64_t min_buffer_bytes);
+
 // GPU specific resources for latency hiding scheduler.
 //
 // Separate resources model asynchronous collective communication domains,

@@ -519,6 +519,102 @@ GpuD2DOverlapSchedulingRule(DefaultSchedulerCore::ScheduleCandidate& a,
       "kPreferComputeForD2DMemcpyOverlap");
 }
 
+int64_t GpuLargeLiveBufferBytesReleasedBy(
+    const DefaultSchedulerCore::SchedulingState& sched_state,
+    const HloGraphNode& node, int64_t min_buffer_bytes) {
+  const MemoryPressureMetadata* metadata = sched_state.pressure_metadata;
+  if (metadata == nullptr) {
+    return 0;
+  }
+  const MemoryPressureTracker& tracker = sched_state.memory_pressure_tracker;
+  const HloInstruction* instruction = &node.GetInstr();
+  int64_t bytes = 0;
+  auto accumulate = [&](absl::Span<const HloBuffer::Id> buffer_ids) {
+    for (HloBuffer::Id id : buffer_ids) {
+      if (!tracker.BufferIsLive(id)) {
+        continue;
+      }
+      const int64_t size =
+          metadata->buffer_tracker().GetBufferInfo(id).buffer_size;
+      if (size >= min_buffer_bytes) {
+        bytes += size;
+      }
+    }
+  };
+  // Buffers that die once this node is scheduled.
+  accumulate(metadata->released_buffer_ids(instruction));
+  // Scheduling bottom-up, a live operand buffer is released by its defining
+  // instruction, which becomes ready only after all of its users, including
+  // this node, are scheduled.
+  if (!sched_state.config.top_down_scheduling) {
+    accumulate(metadata->allocated_buffer_ids(instruction));
+  }
+  return bytes;
+}
+
+std::optional<DefaultSchedulerCore::CandidateResult>
+GpuLargeBufferReleaseSchedulingRule(DefaultSchedulerCore::ScheduleCandidate& a,
+                                    DefaultSchedulerCore::ScheduleCandidate& b,
+                                    int64_t min_buffer_bytes) {
+  if (min_buffer_bytes <= 0 || a.node == nullptr || b.node == nullptr ||
+      a.scheduling_state == nullptr ||
+      a.scheduling_state != b.scheduling_state) {
+    return std::nullopt;
+  }
+  const DefaultSchedulerCore::SchedulingState& sched_state =
+      *a.scheduling_state;
+  if (sched_state.pressure_metadata == nullptr) {
+    return std::nullopt;
+  }
+  // Only reorder compute that would be overlapped with an in-flight async
+  // operation anyway, so the rule never takes work away from a later overlap
+  // window.
+  const bool async_in_flight = absl::c_any_of(
+      sched_state.resource_occupiers_in_flight,
+      [](const auto& occupiers) { return !occupiers.second.empty(); });
+  if (!async_in_flight) {
+    return std::nullopt;
+  }
+  // Leave async start and done placement to the generic rules.
+  auto touches_async_resource = [](const HloGraphNode& node) {
+    return node.DoesOccupyAnyResource() || node.DoesReleaseAnyResource();
+  };
+  if (touches_async_resource(*a.node) || touches_async_resource(*b.node)) {
+    return std::nullopt;
+  }
+
+  const int64_t a_bytes =
+      GpuLargeLiveBufferBytesReleasedBy(sched_state, *a.node, min_buffer_bytes);
+  const int64_t b_bytes =
+      GpuLargeLiveBufferBytesReleasedBy(sched_state, *b.node, min_buffer_bytes);
+  if (a_bytes == b_bytes) {
+    return std::nullopt;
+  }
+  DefaultSchedulerCore::ScheduleCandidate& preferred =
+      a_bytes > b_bytes ? a : b;
+  // Do not introduce a stall to release memory.
+  if (preferred.node->GetReadyTime() > sched_state.current_time) {
+    return std::nullopt;
+  }
+  // Do not push the transient peak over the memory limit.
+  if (sched_state.config.memory_limit != std::numeric_limits<uint64_t>::max()) {
+    if (!preferred.has_pressure_change) {
+      preferred.set_pressure_change(
+          sched_state.memory_pressure_tracker.MemoryPressureDifference(
+              &preferred.node->GetInstr()));
+    }
+    const int64_t projected_peak =
+        preferred.pressure_change_second +
+        sched_state.memory_pressure_tracker.memory_usage();
+    if (projected_peak > 0 && static_cast<uint64_t>(projected_peak) >
+                                  sched_state.config.memory_limit) {
+      return std::nullopt;
+    }
+  }
+  return DefaultSchedulerCore::CandidateResult{preferred,
+                                               "kReleaseLargeBuffer"};
+}
+
 //===----------------------------------------------------------------------===//
 // GpuAsyncTrackerBase
 //===----------------------------------------------------------------------===//

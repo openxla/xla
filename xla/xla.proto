@@ -1168,6 +1168,15 @@ message DebugOptions {
   optional int32 xla_gpu_experimental_scheduler_memory_fencing_slack_windows =
       527;
 
+  // Latency-hiding scheduler rule that, while an async operation is in flight,
+  // prefers compute that advances the release of a live buffer of at least
+  // this many bytes over the generic latency heuristics. Negative values
+  // disable the rule. 0 derives the threshold automatically as 1% of the
+  // scheduler memory limit. Positive values are capped at the scheduler memory
+  // limit.
+  optional int64
+      xla_gpu_experimental_scheduler_large_buffer_release_threshold_bytes = 563;
+
   // This controls how many in-flight collectives latency hiding scheduler
   // can schedule. Example usage:
   // With xla_gpu_experimental_parallel_collective_overlap_limit = 1:
@@ -1982,7 +1991,7 @@ message DebugOptions {
   // (ScanRewriterTriton).
   optional bool xla_gpu_experimental_enable_triton_scan = 562;
 
-  // Next id: 563
+  // Next id: 564
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
