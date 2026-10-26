@@ -2447,8 +2447,23 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     return true;
   }
 
+  if (user->opcode() == HloOpcode::kScatter) {
+    if (!operand_index.empty()) {
+      return false;
+    }
+    const auto* scatter = Cast<HloScatterInstruction>(user);
+    const auto operand_indices = user->OperandIndices(operand);
+    if (operand_indices.size() != 1) {
+      return false;
+    }
+    if (scatter->shape().IsTuple()) {
+      return user_index.size() == 1 &&
+             user_index[0] < scatter->scatter_operand_count() &&
+             operand_indices[0] == user_index[0];
+    }
+    return user_index.empty() && operand_indices[0] == 0;
+  }
   if (user->opcode() == HloOpcode::kDynamicUpdateSlice ||
-      user->opcode() == HloOpcode::kScatter ||
       user->opcode() == HloOpcode::kTriangularSolve ||
       user->opcode() == HloOpcode::kSetDimensionSize) {
     // We eliminated other users in HloOrdering::LiveRangeStrictlyBefore
