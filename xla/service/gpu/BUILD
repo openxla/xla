@@ -3537,12 +3537,15 @@ xla_cc_test(
     deps = [
         ":kernel_reuse_cache",
         ":kernel_reuse_cache_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/concurrency:future",
         "//xla/tsl/platform:env",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
 )

@@ -40,6 +40,8 @@ limitations under the License.
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
@@ -56,10 +58,12 @@ limitations under the License.
 #include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/LLVMIR/ROCDLDialect.h"
 #include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
+#include "mlir/Dialect/LLVMIR/Transforms/Passes.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -498,13 +502,59 @@ xla::Future<LlvmKernelSource> MlirKernelFusion::CreateLLVMModule(
       std::move(borrowed_context));
 }
 
+namespace {
+
+mlir::Location GetFusionLocation(MLIRContext& mlir_context,
+                                 const HloFusionInstruction& fusion) {
+  mlir::OpBuilder builder(&mlir_context);
+  mlir::StringAttr name_attr = builder.getStringAttr(fusion.name());
+  if (fusion.GetModule() == nullptr) {
+    return mlir::NameLoc::get(name_attr);
+  }
+  const DebugOptions& debug_options =
+      fusion.GetModule()->config().debug_options();
+  if (!debug_options.xla_gpu_generate_debug_info() &&
+      !debug_options.xla_gpu_generate_line_info()) {
+    return mlir::NameLoc::get(name_attr);
+  }
+  const OpMetadata* metadata = &fusion.metadata();
+  if (metadata->source_file().empty() &&
+      fusion.fused_instructions_computation() != nullptr) {
+    const HloInstruction* root = fusion.fused_expression_root();
+    if (root != nullptr && !root->metadata().source_file().empty()) {
+      metadata = &root->metadata();
+    } else {
+      for (const HloInstruction* instr :
+           fusion.fused_instructions_computation()->instructions()) {
+        if (!instr->metadata().source_file().empty()) {
+          metadata = &instr->metadata();
+          break;
+        }
+      }
+    }
+  }
+  if (metadata->source_file().empty()) {
+    return mlir::NameLoc::get(name_attr);
+  }
+  uint32_t line = metadata->source_line() > 0
+                      ? static_cast<uint32_t>(metadata->source_line())
+                      : 1;
+  uint32_t col = metadata->source_column() > 0
+                     ? static_cast<uint32_t>(metadata->source_column())
+                     : 1;
+  return mlir::NameLoc::get(
+      name_attr, mlir::FileLineColLoc::get(&mlir_context,
+                                           metadata->source_file(), line, col));
+}
+
+}  // namespace
+
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>>
 MlirKernelEmitter::CreateMLIRModule(
     MLIRContext& mlir_context, const HloFusionInstruction& fusion,
     const std::string& entry_function_name,
     const BufferAssignment* buffer_assignment) const {
-  mlir::OpBuilder builder(&mlir_context);
-  auto loc = mlir::NameLoc::get(builder.getStringAttr(fusion.name()));
+  mlir::Location loc = GetFusionLocation(mlir_context, fusion);
   mlir::OwningOpRef<mlir::ModuleOp> module = llvm_ir::CreateMlirModuleOp(loc);
 
   ABSL_ASSIGN_OR_RETURN(mlir::func::FuncOp entry_func,
@@ -730,6 +780,13 @@ absl::StatusOr<LlvmKernelSource> CompileMlirToLlvm(
     pm.addPass(createInsertPDLPass());
   }
   AddLoweringPasses(pm, device);
+  const DebugOptions& debug_options = hlo_module.config().debug_options();
+  if (debug_options.xla_gpu_generate_debug_info() ||
+      debug_options.xla_gpu_generate_line_info()) {
+    mlir::LLVM::DIScopeForLLVMFuncOpPassOptions di_options;
+    di_options.emissionKind = mlir::LLVM::DIEmissionKind::DebugDirectivesOnly;
+    pm.addPass(mlir::LLVM::createDIScopeForLLVMFuncOpPass(di_options));
+  }
 
   ABSL_RETURN_IF_ERROR(
       RunPassPipeline(module.get(), hlo_module, pm, entry_function_name));
@@ -737,6 +794,17 @@ absl::StatusOr<LlvmKernelSource> CompileMlirToLlvm(
   auto llvm_module = mlir::translateModuleToLLVMIR(module.get(), *llvm_context);
   TF_RET_CHECK(llvm_module != nullptr)
       << "Failed to translate module to LLVM IR.";
+  if ((debug_options.xla_gpu_generate_debug_info() ||
+       debug_options.xla_gpu_generate_line_info()) &&
+      llvm_module->getNamedMetadata("llvm.dbg.cu") != nullptr) {
+    if (llvm_module->getModuleFlag("Dwarf Version") == nullptr) {
+      llvm_module->addModuleFlag(llvm::Module::Warning, "Dwarf Version", 2);
+    }
+    if (llvm_module->getModuleFlag("Debug Info Version") == nullptr) {
+      llvm_module->addModuleFlag(llvm::Module::Warning, "Debug Info Version",
+                                 llvm::DEBUG_METADATA_VERSION);
+    }
+  }
 
   return LlvmKernelSource{std::move(llvm_context), std::move(llvm_module)};
 }

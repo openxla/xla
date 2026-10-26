@@ -56,6 +56,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -81,6 +82,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/simplifiers/gather_simplifier.h"
 #include "xla/hlo/translate/hlo_to_mhlo/hlo_utils.h"
@@ -1297,6 +1299,42 @@ SmallVector<Value, 2> ProvideParameterRange(
 
 namespace {
 
+class ScopedInstructionLocation {
+ public:
+  ScopedInstructionLocation(const HloInstruction* instr,
+                            ImplicitLocOpBuilder& builder,
+                            MLIRContext* mlir_context)
+      : builder_(builder), prev_loc_(builder.getLoc()) {
+    if (instr == nullptr || instr->GetModule() == nullptr ||
+        instr->metadata().source_file().empty()) {
+      return;
+    }
+    const DebugOptions& debug_options =
+        instr->GetModule()->config().debug_options();
+    if (!debug_options.xla_gpu_generate_debug_info() &&
+        !debug_options.xla_gpu_generate_line_info()) {
+      return;
+    }
+    uint32_t line = instr->metadata().source_line() > 0
+                        ? static_cast<uint32_t>(instr->metadata().source_line())
+                        : 1;
+    uint32_t col =
+        instr->metadata().source_column() > 0
+            ? static_cast<uint32_t>(instr->metadata().source_column())
+            : 1;
+    builder_.setLoc(mlir::NameLoc::get(
+        builder_.getStringAttr(instr->name()),
+        mlir::FileLineColLoc::get(mlir_context, instr->metadata().source_file(),
+                                  line, col)));
+  }
+
+  ~ScopedInstructionLocation() { builder_.setLoc(prev_loc_); }
+
+ private:
+  ImplicitLocOpBuilder& builder_;
+  mlir::Location prev_loc_;
+};
+
 class SubgraphConverter {
  public:
   SubgraphConverter(const PartitionedComputation& computation,
@@ -1404,6 +1442,7 @@ absl::StatusOr<SmallVector<Value>> SubgraphConverter::EmitInstruction(
     return EmitElementwiseInstruction(instr, indices);
   }
 
+  ScopedInstructionLocation scoped_loc(instr, builder_, mlir_context_);
   ABSL_ASSIGN_OR_RETURN(
       auto entry, HloToMlir(instr, this_fn_, indices, provide_operand_fn_,
                             call_target_provider_, builder_, mlir_context_));
@@ -1441,6 +1480,7 @@ SubgraphConverter::EmitElementwiseInstruction(const HloInstruction* root,
   }
 
   for (auto* instr : llvm::reverse(pre_order)) {
+    ScopedInstructionLocation scoped_loc(instr, builder_, mlir_context_);
     ABSL_ASSIGN_OR_RETURN(
         auto entry, HloToMlir(instr, this_fn_, indices, provide_operand_fn_,
                               call_target_provider_, builder_, mlir_context_));

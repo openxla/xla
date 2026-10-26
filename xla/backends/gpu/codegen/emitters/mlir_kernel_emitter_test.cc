@@ -195,6 +195,120 @@ TEST_F(MlirKernelFusionTest, CreateLLVMModule) {
   EXPECT_TRUE(filecheck_result);
 }
 
+TEST_F(MlirKernelFusionTest, CreateLLVMModuleEmitsDebugInfoWhenEnabled) {
+  constexpr absl::string_view kModuleWithMetadata = R"(
+    fused_computation {
+      ROOT %p0 = f32[100] parameter(0), metadata={op_name="op1" source_file="dir/model.py" source_line=42}
+    }
+
+    ENTRY main {
+      %p0 = f32[100] parameter(0)
+      ROOT fusion = f32[100] fusion(%p0), kind=kLoop, calls=fused_computation,
+        metadata={op_name="op1" source_file="dir/model.py" source_line=42}
+    })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleWithMetadata));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_generate_debug_info(true);
+
+  GpuTopology gpu_topology(
+      /*platform_version=*/"", /*num_partitions=*/1,
+      /*num_hosts_per_partition=*/1, /*num_devices_per_host=*/1);
+  CubinCustomKernelCompiler kernel_compiler(
+      [](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+         const DebugOptions& opts) { return std::vector<uint8_t>{}; },
+      device_info_, module->config().debug_options(), gpu_topology);
+
+  MlirContextPool mlir_context_pool([]() { return CreateMlirContext(); });
+  MlirKernelFusion emitter(std::make_unique<DummyCopyEmitter>());
+  ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
+                       mlir_context_pool.GetOrCreate());
+  ASSERT_OK_AND_ASSIGN(
+      LlvmKernelSource source,
+      emitter
+          .CreateLLVMModule(
+              device_info_,
+              *Cast<HloFusionInstruction>(
+                  module->entry_computation()->root_instruction()),
+              "fusion",
+              /*buffer_assignment=*/nullptr, &kernel_compiler,
+              std::move(borrowed_context))
+          .Await());
+  auto llvm_module = std::move(source).thread_safe_module();
+
+  std::string out;
+  llvm::raw_string_ostream stream(out);
+  stream << *llvm_module.getModuleUnlocked();
+
+  ASSERT_OK_AND_ASSIGN(auto filecheck_result, RunFileCheck(out, R"(
+    // CHECK: define void @fusion({{.*}}) {{.*}}!dbg
+    // CHECK-DAG: !"Dwarf Version", i32 2
+    // CHECK-DAG: !DIFile(filename: "model.py", directory: "dir")
+    // CHECK-DAG: !DICompileUnit({{.*}}emissionKind: DebugDirectivesOnly
+    // CHECK-DAG: !DISubprogram(name: "fusion"{{.*}}line: 42
+    // CHECK-DAG: !DILocation(line: 42
+  )"));
+  EXPECT_TRUE(filecheck_result);
+}
+
+TEST_F(MlirKernelFusionTest, CreateLLVMModuleEmitsLineInfoWhenEnabled) {
+  constexpr absl::string_view kModuleWithMetadata = R"(
+    fused_computation {
+      ROOT %p0 = f32[100] parameter(0), metadata={op_name="op1" source_file="dir/model.py" source_line=42}
+    }
+
+    ENTRY main {
+      %p0 = f32[100] parameter(0)
+      ROOT fusion = f32[100] fusion(%p0), kind=kLoop, calls=fused_computation,
+        metadata={op_name="op1" source_file="dir/model.py" source_line=42}
+    })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleWithMetadata));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_generate_line_info(true);
+
+  GpuTopology gpu_topology(
+      /*platform_version=*/"", /*num_partitions=*/1,
+      /*num_hosts_per_partition=*/1, /*num_devices_per_host=*/1);
+  CubinCustomKernelCompiler kernel_compiler(
+      [](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+         const DebugOptions& opts) { return std::vector<uint8_t>{}; },
+      device_info_, module->config().debug_options(), gpu_topology);
+
+  MlirContextPool mlir_context_pool([]() { return CreateMlirContext(); });
+  MlirKernelFusion emitter(std::make_unique<DummyCopyEmitter>());
+  ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
+                       mlir_context_pool.GetOrCreate());
+  ASSERT_OK_AND_ASSIGN(
+      LlvmKernelSource source,
+      emitter
+          .CreateLLVMModule(
+              device_info_,
+              *Cast<HloFusionInstruction>(
+                  module->entry_computation()->root_instruction()),
+              "fusion",
+              /*buffer_assignment=*/nullptr, &kernel_compiler,
+              std::move(borrowed_context))
+          .Await());
+  auto llvm_module = std::move(source).thread_safe_module();
+
+  std::string out;
+  llvm::raw_string_ostream stream(out);
+  stream << *llvm_module.getModuleUnlocked();
+
+  ASSERT_OK_AND_ASSIGN(auto filecheck_result, RunFileCheck(out, R"(
+    // CHECK: define void @fusion({{.*}}) {{.*}}!dbg
+    // CHECK-DAG: !"Dwarf Version", i32 2
+    // CHECK-DAG: !DIFile(filename: "model.py", directory: "dir")
+    // CHECK-DAG: !DICompileUnit({{.*}}emissionKind: DebugDirectivesOnly
+    // CHECK-DAG: !DISubprogram(name: "fusion"{{.*}}line: 42
+    // CHECK-DAG: !DILocation(line: 42
+  )"));
+  EXPECT_TRUE(filecheck_result);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
