@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -57,6 +58,14 @@ absl::StatusOr<std::string> BackendConfigToRawString(
 // nullptr.
 std::unique_ptr<tsl::protobuf::Message> CloneBackendConfigProto(
     const tsl::protobuf::Message* proto);
+
+// Raw strings of backend config protos, keyed by descriptor and serialized
+// bytes, so that instructions holding copies of the same large config (a
+// kernel body cloned per layer) encode it once per HloModule::ToProto call
+// instead of once per instruction. One instance serves one call and holds
+// O(distinct config bytes). Not thread safe.
+using BackendConfigRawStringCache = absl::flat_hash_map<
+    std::pair<const tsl::protobuf::Descriptor*, std::string>, std::string>;
 
 // A wrapper around the BackendConfig proto. It can be initialized either with
 // a proto object or a string representing the JSON encoding of a proto. Once
@@ -91,6 +100,11 @@ class BackendConfigWrapper {
   // Returns a reference to the raw string that corresponds to this backend
   // config.
   //
+  // When only the proto is set, the string is computed first, through cache
+  // when one is given, so equal protos of different wrappers are encoded once
+  // per cache. Types whose JSON depends on more than the serialized bytes (a
+  // map field, google.protobuf.Any, an extension range) bypass the cache.
+  //
   // WARNING: This function returns a reference which is valid at the time the
   //          call terminates. If the BackendConfig is reassigned the reference
   //          becomes invalid, which could lead to subtle and hard to detect
@@ -98,10 +112,8 @@ class BackendConfigWrapper {
   //          for ensuring the lifetime of the referenced string.
   //
   //          Prefer to use the safer (but potentially slower) GetProto().
-  const std::string& GetRawString() const {
-    absl::WriterMutexLock lock{mutex_};
-    return GetRawStringWithoutMutex();
-  }
+  const std::string& GetRawString(
+      BackendConfigRawStringCache* cache = nullptr) const;
   absl::Status GetProto(tsl::protobuf::Message* output_proto) const;
 
   // Type trait to check if a type has the mutable_custom_call_metadata method.
