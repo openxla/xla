@@ -31,6 +31,7 @@ limitations under the License.
 #include "llvm-c/Target.h"
 #include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
+#include "xla/backends/cpu/target_machine_options.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -282,7 +283,13 @@ TEST_F(DefaultMaxIsaTest, NeonForOssAArch64) {
   }
   DebugOptions debug_options =
       HloHardwareIndependentTestBase::GetDebugOptionsForTest();
-  EXPECT_EQ(debug_options.xla_cpu_max_isa(), "NEON");
+  EXPECT_EQ(debug_options.xla_cpu_max_isa(), "");
+
+  TargetMachineOptions target_machine_options(debug_options);
+  EXPECT_FALSE(
+      absl::c_linear_search(target_machine_options.enabled_features(), "sve"));
+  EXPECT_FALSE(
+      absl::c_linear_search(target_machine_options.enabled_features(), "sve2"));
 }
 
 struct JitVectorizationTestSpec {

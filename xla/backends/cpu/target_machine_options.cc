@@ -33,6 +33,7 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"  // IWYU pragma: keep
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/codegen/cpu_features.h"
 #include "xla/service/cpu/executable.pb.h"
 #include "xla/util.h"
@@ -121,7 +122,15 @@ TargetMachineOptions::TargetMachineOptions() {
 
 TargetMachineOptions::TargetMachineOptions(const DebugOptions& debug_options) {
   triple_ = NormalizeTriple(llvm::sys::getDefaultTargetTriple());
-  auto xla_cpu_max_isa = CpuFeatureFromString(debug_options.xla_cpu_max_isa());
+  absl::string_view max_isa = debug_options.xla_cpu_max_isa();
+  if (max_isa.empty() && tsl::port::IsAarch64CPU()) {
+    // There are many missing SVE lowerings in LLVM. Limit features to NEON for
+    // now. There shouldn't be significant performance impact as most AArch64
+    // CPUs still use 128-bit registers.
+    // TODO(penporn): Remove this once SVE is fully supported.
+    max_isa = "NEON";
+  }
+  auto xla_cpu_max_isa = CpuFeatureFromString(max_isa);
   auto detected_machine_attributes = DetectMachineAttributes(xla_cpu_max_isa);
 
   std::tie(enabled_features_, disabled_features_) =
