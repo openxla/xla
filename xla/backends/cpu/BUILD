@@ -237,6 +237,7 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 
@@ -250,10 +251,12 @@ xla_cc_test(
         "//xla/service/cpu:executable_proto_cc",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
+        "@tsl//tsl/platform:platform_port",
     ],
 )
 

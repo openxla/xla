@@ -545,5 +545,11 @@ TEST(DebugOptions, AutotuneCacheRequireStrictCodegenMatchFlagsParsing) {
   EXPECT_TRUE(tsl::Flags::Parse(flag_args, flags));
   EXPECT_TRUE(opts.xla_autotune_cache_require_strict_codegen_match());
 }
+
+TEST(DebugOptions, CpuMaxIsaDefaultsToEmptyString) {
+  DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_TRUE(opts.has_xla_cpu_max_isa());
+  EXPECT_EQ(opts.xla_cpu_max_isa(), "");
+}
 }  // namespace
 }  // namespace xla
