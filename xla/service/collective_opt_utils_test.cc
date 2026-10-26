@@ -1041,5 +1041,84 @@ TEST_F(MatchWithDynamicSliceClampReshapeTest, ClampWithNonConstantBounds) {
   EXPECT_FALSE(spec.has_value());
 }
 
+TEST_F(MatchWithDynamicSliceClampReshapeTest,
+       MultiSplitDimsRejectsStridedAndOutOfBoundsOffsets) {
+  constexpr absl::string_view kStridedHlo = R"(
+    HloModule module
+
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+
+    ENTRY entry {
+      param = f32[4,2,16,128] parameter(0)
+      ar = f32[4,2,16,128] all-reduce(param),
+        replica_groups={{0,1,2,3}}, to_apply=sum,
+        channel_id=1, use_global_device_ids=true
+      pid = u32[] partition-id()
+      t0 = s32[4] constant({0, 1, 1, 2})
+      t1 = s32[4] constant({0, 0, 2, 2})
+      ds0 = s32[1] dynamic-slice(t0, pid), dynamic_slice_sizes={1}
+      ds1 = s32[1] dynamic-slice(t1, pid), dynamic_slice_sizes={1}
+      off0 = s32[] reshape(ds0)
+      off1 = s32[] reshape(ds1)
+      zero = s32[] constant(0)
+      ROOT ds = f32[2,1,16,128] dynamic-slice(ar, off0, off1, zero, zero),
+        dynamic_slice_sizes={2,1,16,128}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> strided_module,
+                       ParseAndReturnUnverifiedModule(kStridedHlo));
+  const auto* strided_ar = Cast<HloAllReduceInstructionBase>(
+      strided_module->entry_computation()->GetInstructionWithName("ar"));
+  EXPECT_FALSE(
+      MatchReduceScatter(strided_ar, /*num_partitions=*/4, /*num_replicas=*/1,
+                         /*allow_multiple_split_dims=*/true,
+                         /*allow_intervening_reshape=*/false, /*min_rank=*/2,
+                         HloPredicateIsOp<HloOpcode::kPartitionId>,
+                         HloPredicateIsOp<HloOpcode::kReplicaId>)
+          .has_value());
+
+  constexpr absl::string_view kOutOfBoundsHlo = R"(
+    HloModule module
+
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+
+    ENTRY entry {
+      param = f32[2,2,16,128] parameter(0)
+      ar = f32[2,2,16,128] all-reduce(param),
+        replica_groups={{0,1,2,3}}, to_apply=sum,
+        channel_id=1, use_global_device_ids=true
+      pid = u32[] partition-id()
+      t0 = s32[4] constant({0, 0, 0, 1})
+      t1 = s32[4] constant({0, 1, 2, 1})
+      ds0 = s32[1] dynamic-slice(t0, pid), dynamic_slice_sizes={1}
+      ds1 = s32[1] dynamic-slice(t1, pid), dynamic_slice_sizes={1}
+      off0 = s32[] reshape(ds0)
+      off1 = s32[] reshape(ds1)
+      zero = s32[] constant(0)
+      ROOT ds = f32[1,1,16,128] dynamic-slice(ar, off0, off1, zero, zero),
+        dynamic_slice_sizes={1,1,16,128}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> oob_module,
+                       ParseAndReturnUnverifiedModule(kOutOfBoundsHlo));
+  const auto* oob_ar = Cast<HloAllReduceInstructionBase>(
+      oob_module->entry_computation()->GetInstructionWithName("ar"));
+  EXPECT_FALSE(
+      MatchReduceScatter(oob_ar, /*num_partitions=*/4, /*num_replicas=*/1,
+                         /*allow_multiple_split_dims=*/true,
+                         /*allow_intervening_reshape=*/false, /*min_rank=*/2,
+                         HloPredicateIsOp<HloOpcode::kPartitionId>,
+                         HloPredicateIsOp<HloOpcode::kReplicaId>)
+          .has_value());
+}
+
 }  // namespace
 }  // namespace xla
