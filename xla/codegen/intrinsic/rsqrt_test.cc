@@ -27,6 +27,7 @@ limitations under the License.
 
 #include "absl/base/no_destructor.h"
 #include "absl/log/log.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/IR/BasicBlock.h"
@@ -37,6 +38,7 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Host.h"
 #include "xla/codegen/intrinsic/intrinsic.h"
 #include "xla/codegen/intrinsic/simple_jit_runner.h"
@@ -48,6 +50,9 @@ limitations under the License.
 namespace xla::codegen::intrinsics {
 namespace {
 
+using ::testing::AllOf;
+using ::testing::HasSubstr;
+using ::testing::Not;
 using ::xla::codegen::intrinsic::JitRunner;
 using ::xla::codegen::intrinsic::NearUlps;
 
@@ -85,7 +90,8 @@ bool isAmd() { return GetHostCPUFeatures().lookup("sse4a"); }
 JitRunner CreateJitRunnerWithRsqrt(
     Type type, bool disable_platform_dependent_math = false,
     std::optional<DeviceType> override_device_type = std::nullopt,
-    std::optional<std::string> features_override = std::nullopt) {
+    std::optional<std::string> features_override = std::nullopt,
+    int prefer_vector_width = 0) {
   auto context = std::make_unique<llvm::LLVMContext>();
   auto module = std::make_unique<llvm::Module>("test_module", *context);
 
@@ -98,7 +104,9 @@ JitRunner CreateJitRunnerWithRsqrt(
   llvm::Function* rsqrt_func =
       Rsqrt::CreateDefinition(
           module.get(),
-          {features, device_type, disable_platform_dependent_math}, type)
+          {features, device_type, disable_platform_dependent_math,
+           prefer_vector_width},
+          type)
           .value();
   rsqrt_func->setLinkage(llvm::Function::ExternalLinkage);
   EXPECT_FALSE(llvm::verifyFunction(*rsqrt_func));
@@ -193,6 +201,77 @@ TEST(RsqrtTest, EmitRsqrtF64_Vectors) {
     TestRsqrt_Vectors<2, F64>();
     TestRsqrt_Vectors<4, F64>();
     TestRsqrt_Vectors<8, F64>();
+  }
+}
+
+template <size_t kN, PrimitiveType prim_type>
+void TestRsqrtSplitMatchesUnsplit() {
+  using NativeType = primitive_util::NativeTypeOf<prim_type>;
+  Type type = Type::V(prim_type, kN);
+  JitRunner unsplit_jit = CreateJitRunnerWithRsqrt(type);
+  JitRunner split_jit = CreateJitRunnerWithRsqrt(
+      type, /*disable_platform_dependent_math=*/false,
+      /*override_device_type=*/std::nullopt,
+      /*features_override=*/std::nullopt, /*prefer_vector_width=*/256);
+  auto unsplit = unsplit_jit.GetVectorizedFn<kN, NativeType, NativeType>(
+      Rsqrt::Name(type));
+  auto split =
+      split_jit.GetVectorizedFn<kN, NativeType, NativeType>(Rsqrt::Name(type));
+  std::array<NativeType, kN> vals;
+  for (NativeType start = 1e-30; start < 1e30; start *= 1.37) {
+    for (size_t i = 0; i < kN; ++i) {
+      vals[i] = start * (1 + i * 0.01);
+    }
+    std::array<NativeType, kN> expected = unsplit(vals);
+    std::array<NativeType, kN> actual = split(vals);
+    for (size_t i = 0; i < kN; ++i) {
+      // Inputs are positive and finite, so == compares bits.
+      EXPECT_EQ(actual[i], expected[i]) << "val = " << vals[i];
+    }
+  }
+}
+
+TEST(RsqrtTest, SplitAtPreferredWidthMatchesUnsplit) {
+  if (!hasAvx512Support() || !GetHostCPUFeatures().lookup("avx512vl")) {
+    GTEST_SKIP() << "Requires AVX-512 with AVX512VL.";
+  }
+  TestRsqrtSplitMatchesUnsplit<16, F32>();
+  TestRsqrtSplitMatchesUnsplit<8, F64>();
+}
+
+// Returns the IR of the rsqrt definition for `type` with the given options.
+std::string RsqrtIr(Type type, absl::string_view features,
+                    int prefer_vector_width) {
+  llvm::LLVMContext context;
+  llvm::Module module("test_module", context);
+  llvm::Function* func =
+      Rsqrt::CreateDefinition(
+          &module,
+          {std::string(features), DeviceType::kIntelCpu,
+           /*disable_platform_dependent_math=*/false, prefer_vector_width},
+          type)
+          .value();
+  EXPECT_FALSE(llvm::verifyFunction(*func));
+  std::string ir;
+  llvm::raw_string_ostream os(ir);
+  module.print(os, nullptr);
+  return ir;
+}
+
+TEST(RsqrtTest, SplitsOnlyWhen512BitVectorsAreNotLegal) {
+  constexpr absl::string_view kVl = "+avx,+avx2,+fma,+avx512f,+avx512vl";
+  constexpr absl::string_view kNoVl = "+avx,+avx2,+fma,+avx512f";
+  for (Type type : {Type::V(F32, 16), Type::V(F64, 8)}) {
+    std::string suffix = type.element_type() == F32 ? "ps" : "pd";
+    EXPECT_THAT(RsqrtIr(type, kVl, 256),
+                AllOf(HasSubstr("rsqrt14." + suffix + ".256"),
+                      Not(HasSubstr("rsqrt14." + suffix + ".512"))));
+    EXPECT_THAT(RsqrtIr(type, kVl, 512),
+                HasSubstr("rsqrt14." + suffix + ".512"));
+    // Without AVX512VL, 512-bit vectors stay legal and there is no 256-bit
+    // rsqrt14.
+    EXPECT_THAT(RsqrtIr(type, kNoVl, 256),
+                HasSubstr("rsqrt14." + suffix + ".512"));
   }
 }
 
