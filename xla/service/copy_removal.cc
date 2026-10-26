@@ -143,6 +143,21 @@ Relation ComputeRelativeLocation::ComputeBetweenInstructionEntries(
     }
   }
   bool intercept = AlwaysForceInterception(entry2.first);
+  // A value returned by a computation stays live until the computation ends.
+  // An instruction of that computation that runs after the root and may modify
+  // the buffer therefore lies within the live range, even though it is after
+  // the last explicit use. This is in particular the case for a parameter that
+  // is returned as is and modified in place by a later side effecting op.
+  if (entry1.second.is_root && instr2_can_modify &&
+      order == Relation::kAfterEnd &&
+      ordering_->call_graph().InstructionIsNestedIn(entry2.first,
+                                                    entry1.first->parent())) {
+    VLOG(3) << "ComputeBetweenInstructionEntries: " << entry2.first->name()
+            << " runs within the live range of the value returned by "
+            << entry1.first->name();
+    return Relation(Relation::kBeforeStartOrAfterEnd,
+                    /*intercept_def_use=*/true);
+  }
   if (def == nullptr || !instr2_can_modify) {
     return Relation(order, intercept);
   }
@@ -946,6 +961,16 @@ LiveRangeRegions CopyRemover::ComputeLiveRangeRegions(const ValueNode* head) {
       auto* use_op = use->instruction;
       HloComputation* use_parent = use_op->parent();
       live_range[use_parent][use_op].value_definition = def_op;
+    }
+    // A value held by the root of a computation is returned by it and stays
+    // live until the computation ends. The root is not necessarily a user of
+    // the value (the value may be defined by the root itself, e.g. a parameter
+    // that is returned as is), so record it separately from the uses.
+    for (const HloPosition& position : node->value->positions()) {
+      HloInstruction* root = position.instruction->parent()->root_instruction();
+      if (position.instruction == root) {
+        live_range[root->parent()][root].is_root = true;
+      }
     }
   };
   ForEachValueInRange(head, VisitValueNode);
