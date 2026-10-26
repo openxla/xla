@@ -1462,6 +1462,13 @@ GetStreamExecutorGpuDeviceAllocator(
     effective_kind = GpuAllocatorConfig::Kind::kVmm;
   }
 
+  std::vector<tsl::SubAllocator::Visitor> free_visitors =
+      allocator_config.sub_allocator_free_visitors;
+  free_visitors.push_back([](void* ptr, int device_ordinal, size_t num_bytes) {
+    gpu::ReleaseSymmetricMemory(LocalDeviceId(device_ordinal),
+                                se::DeviceAddressBase(ptr, num_bytes));
+  });
+
   // Set when a single preallocated BFC allocator serves both default and
   // collective memory via spatial partitioning; suppresses the separate
   // collective allocator below.
@@ -1515,8 +1522,7 @@ GetStreamExecutorGpuDeviceAllocator(
                 ordinal_and_device.second->executor(), memory_fraction,
                 allocator_config.preallocate,
                 allocator_config.gpu_system_memory_size,
-                allocator_config.sub_allocator_alloc_visitors,
-                allocator_config.sub_allocator_free_visitors,
+                allocator_config.sub_allocator_alloc_visitors, free_visitors,
                 /*enable_spatial_partitioning=*/shared_collective_pool));
         allocators.push_back(
             {bfc_allocator, ordinal_and_device.second->compute_stream(),
@@ -1635,7 +1641,7 @@ GetStreamExecutorGpuDeviceAllocator(
           CreateCollectiveBFCAllocator(
               ordinal_and_device.second->executor(),
               /*memory_fraction=*/1.0 - MemFractionStart(memory_fraction),
-              allocator_config.collective_memory_size));
+              allocator_config.collective_memory_size, free_visitors));
       allocators.push_back(
           {std::move(collective_bfc_allocator),
            ordinal_and_device.second->compute_stream(),

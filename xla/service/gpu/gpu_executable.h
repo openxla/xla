@@ -35,7 +35,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/runtime/annotation.h"
-#include "xla/backends/gpu/runtime/collective_memory_cache.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
@@ -325,7 +324,6 @@ class GpuExecutable : public Executable {
       std::optional<absl::Span<const BufferAllocation::Index>>
           persistent_alloc_indices,
       NumAdditionalStreams num_additional_streams,
-      CollectiveMemoryCache& collective_memory_cache,
       bool collective_use_minimal_resource);
 
   // Compare current allocation's address with previous run's address, and
@@ -422,8 +420,6 @@ class GpuExecutable : public Executable {
   se::ExecutableAbiVersion executable_abi_version_;
 
   std::optional<xla::cpu::TargetMachineOptions> cpu_target_machine_options_;
-
-  CollectiveMemoryCache collective_memory_cache_;
 
   // Human readable summary of the buffer allocations. Tailored to debugging
   // OOMs, includes the Hlo op metadata for every buffer associated with each

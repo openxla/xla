@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/lockable.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"  // IWYU pragma: keep
 
@@ -112,6 +113,11 @@ absl::Status AbortAllCliques();
 // cliques that include its incarnation. No-op if the global task state is not
 // known yet.
 absl::Status AbortTaskCliques(int failed_task_id, absl::Status error);
+
+// Releases any cached symmetric memory associated with the given device
+// address range across all active GPU cliques on `device_id`.
+void ReleaseSymmetricMemory(LocalDeviceId device_id,
+                            se::DeviceAddressBase addr);
 
 namespace internal {
 // Destroys all cliques that were acquired for the given process. This is

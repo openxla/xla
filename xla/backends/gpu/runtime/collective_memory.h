@@ -26,7 +26,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
-#include "xla/backends/gpu/runtime/collective_memory_cache.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/core/collectives/rank_id.h"
@@ -105,8 +104,7 @@ class CollectiveMemory {
 // lead to a deadlock.
 absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
     const CollectiveParams& params, CollectiveCliques& cliques,
-    const CollectiveMemoryRequests& requests,
-    CollectiveMemoryCache& memory_cache);
+    const CollectiveMemoryRequests& requests);
 
 //===----------------------------------------------------------------------===//
 // CollectiveMemory templates implementation.

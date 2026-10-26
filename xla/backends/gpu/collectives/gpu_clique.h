@@ -33,7 +33,9 @@ limitations under the License.
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/lockable.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/tsl/util/tied_ref.h"
 
 namespace xla::gpu {
@@ -86,6 +88,11 @@ class GpuClique : public Clique {
 
   // Returns true if the clique was cancelled.
   bool IsCancelled() const;
+
+  // Releases any cached symmetric memory associated with the given device
+  // address range on communicators belonging to `device_id`.
+  void ReleaseSymmetricMemory(LocalDeviceId device_id,
+                              se::DeviceAddressBase addr);
 
   // Returns a parent clique iff *this one was created by clique splitting.
   const GpuClique* parent() const { return parent_; }
@@ -156,6 +163,11 @@ class LockableGpuClique : public Lockable<GpuClique, GpuClique::LockableName> {
 
   // Cancels all communicators in the clique without taking the lock.
   void Cancel();
+
+  // Releases any cached symmetric memory associated with the given device
+  // address range on communicators belonging to `device_id`.
+  void ReleaseSymmetricMemory(LocalDeviceId device_id,
+                              se::DeviceAddressBase addr);
 };
 
 }  // namespace xla::gpu

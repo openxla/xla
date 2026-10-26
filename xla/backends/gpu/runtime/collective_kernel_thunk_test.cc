@@ -46,7 +46,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
-#include "xla/backends/gpu/runtime/collective_memory_cache.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -419,7 +418,6 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
                                       &buffer_allocations};
 
   ABSL_RETURN_IF_ERROR(metadata.thunk->Prepare(prepare_params));
-  CollectiveMemoryCache collective_memory_cache(/*num_devices=*/2);
   CollectiveCliques collective_cliques;
   ABSL_ASSIGN_OR_RETURN(
       collective_cliques,
@@ -427,7 +425,7 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   ABSL_ASSIGN_OR_RETURN(
       CollectiveMemory collective_memory,
       AcquireCollectiveMemory(collective_params, collective_cliques,
-                              memory_requests, collective_memory_cache));
+                              memory_requests));
 
   Thunk::InitializeParams initialize_params;
   initialize_params.executor = executor;
@@ -685,14 +683,13 @@ TEST(CollectiveKernelThunkTest, RecordCommandBufferCreateUpdate) {
                                       &allocations1};
   ASSERT_OK(collective_kernel_thunk->Prepare(prepare_params));
 
-  CollectiveMemoryCache collective_memory_cache(/*num_devices=*/2);
   ASSERT_OK_AND_ASSIGN(
       CollectiveCliques collective_cliques,
       AcquireCollectiveCliques(collective_params, clique_requests));
   ASSERT_OK_AND_ASSIGN(
       CollectiveMemory collective_memory,
       AcquireCollectiveMemory(collective_params, collective_cliques,
-                              memory_requests, collective_memory_cache));
+                              memory_requests));
 
   Thunk::InitializeParams initialize_params;
   initialize_params.executor = executor;

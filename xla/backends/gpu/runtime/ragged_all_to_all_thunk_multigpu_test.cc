@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
-#include "xla/backends/gpu/runtime/collective_memory_cache.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -139,7 +138,6 @@ static RaggedAllToAllThunk MakeThunk(
 struct DeviceTestSlot : CollectiveThunkMultiGpuTestState {
   std::unique_ptr<BufferAllocations> create_allocs;
   std::unique_ptr<BufferAllocations> update_allocs;
-  CollectiveMemoryCache memory_cache{kNumDevices};
   std::optional<CollectiveMemory> create_collective_memory;
   std::optional<CollectiveMemory> update_collective_memory;
 };
@@ -311,15 +309,13 @@ static absl::Status SetupDeviceSlot(int device_ordinal, DeviceTestSlot& slot,
   init_params.local_device_count = kNumDevices;
   ABSL_RETURN_IF_ERROR(thunk.Initialize(init_params));
 
-  ABSL_ASSIGN_OR_RETURN(
-      CollectiveMemory create_collective_memory,
-      AcquireCollectiveMemory(params, slot.collective_cliques,
-                              create_memory_requests, slot.memory_cache));
+  ABSL_ASSIGN_OR_RETURN(CollectiveMemory create_collective_memory,
+                        AcquireCollectiveMemory(params, slot.collective_cliques,
+                                                create_memory_requests));
   slot.create_collective_memory.emplace(std::move(create_collective_memory));
-  ABSL_ASSIGN_OR_RETURN(
-      CollectiveMemory update_collective_memory,
-      AcquireCollectiveMemory(params, slot.collective_cliques,
-                              update_memory_requests, slot.memory_cache));
+  ABSL_ASSIGN_OR_RETURN(CollectiveMemory update_collective_memory,
+                        AcquireCollectiveMemory(params, slot.collective_cliques,
+                                                update_memory_requests));
   slot.update_collective_memory.emplace(std::move(update_collective_memory));
 
   slot.collective_params = std::move(params);

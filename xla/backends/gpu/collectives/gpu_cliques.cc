@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/service/lockable.h"
 #include "xla/service/rendezvous.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
@@ -1192,6 +1193,15 @@ absl::Status AbortTaskCliques(int failed_task_id, absl::Status error) {
   absl::Status s = AbortOnFailure(state, updated);
   state.task_state_infos = std::move(updated);
   return s;
+}
+
+void ReleaseSymmetricMemory(LocalDeviceId device_id,
+                            se::DeviceAddressBase addr) {
+  ProcessGpuCliques& state = GetProcessGpuCliques();
+  absl::MutexLock lock(state.mu);
+  for (const auto& [cache_key, clique] : tsl::KeySortedRange(state.cliques)) {
+    clique->ReleaseSymmetricMemory(device_id, addr);
+  }
 }
 
 }  // namespace xla::gpu

@@ -219,14 +219,34 @@ class GpuCommunicator : public Communicator {
     return Unimplemented("Registered memory is not implemented");
   }
 
-  // Creates a symmetric memory from the existing device address range. This is
-  // a collective operation, and all ranks in a clique must call this operation
-  // in order to make a progress.
+  // Creates an uncached symmetric memory registration from the existing device
+  // address range with exclusive RAII ownership; destroying the returned handle
+  // immediately deregisters `addr`. Needed for standalone or scoped buffers
+  // (e.g., scratch, barrier, or custom-call allocations) whose deallocation
+  // does not call `ReleaseSymmetricMemory`. This is a collective operation, and
+  // all ranks in a clique must call this operation in order to make progress.
   virtual absl::StatusOr<std::unique_ptr<SymmetricMemory>>
   CreateSymmetricMemory(se::DeviceAddressBase addr,
                         bool symmetric_window = false) {
     return Unimplemented("Symmetric memory is not implemented");
   }
+
+  // Acquires a symmetric memory registration from the existing device address
+  // range with shared ownership, returning or populating a cached instance on
+  // this communicator. Unlike `CreateSymmetricMemory`, the registration stays
+  // cached until `ReleaseSymmetricMemory` is called (or communicator teardown).
+  // Needed for allocator-managed arenas/slabs where sub-allocations reuse a
+  // registration across executions and free callbacks release it. This is a
+  // collective operation, and all ranks in a clique must call this operation in
+  // order to make progress.
+  virtual absl::StatusOr<std::shared_ptr<SymmetricMemory>>
+  AcquireSymmetricMemory(se::DeviceAddressBase addr, bool symmetric_window) {
+    return CreateSymmetricMemory(addr, symmetric_window);
+  }
+
+  // Releases any cached symmetric memory associated with the given device
+  // address range.
+  virtual void ReleaseSymmetricMemory(se::DeviceAddressBase addr) {}
 
   //===--------------------------------------------------------------------===//
   // Host-side collective communication APIs

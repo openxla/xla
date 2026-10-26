@@ -1964,7 +1964,6 @@ xla_test(
         ":collective_execution",
         ":collective_kernel_thunk",
         ":collective_memory",
-        ":collective_memory_cache",
         ":collective_memory_requests",
         ":collective_params",
         ":collective_thunk",
@@ -2484,7 +2483,6 @@ xla_test(
         ":collective_clique_requests",
         ":collective_cliques",
         ":collective_memory",
-        ":collective_memory_cache",
         ":collective_memory_requests",
         ":collective_params",
         ":collective_thunk",
@@ -2888,7 +2886,6 @@ cc_library(
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     deps = [
         ":collective_cliques",
-        ":collective_memory_cache",
         ":collective_memory_requests",
         ":collective_params",
         "//xla:util",
@@ -2899,10 +2896,10 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service:rendezvous",
         "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:activate_context",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/util:safe_reinterpret_cast",
-        "//xla/tsl/util:tied_ref",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -2914,6 +2911,43 @@ cc_library(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+xla_test(
+    name = "collective_memory_multigpu_test",
+    srcs = ["collective_memory_multigpu_test.cc"],
+    backend_tags = {
+        "gpu": [
+            "multi_gpu",
+            # peer-to-peer access is unreliable/flaky before ampere.
+            "requires-gpu-sm80",
+        ],
+    },
+    backends = ["gpu"],
+    deps = [
+        ":collective_clique_requests",
+        ":collective_cliques",
+        ":collective_memory",
+        ":collective_memory_requests",
+        ":collective_params",
+        ":collective_thunk_multigpu_test_utils",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/core/collectives:symmetric_memory",
+        "//xla/runtime:device_id",
+        "//xla/service:buffer_assignment",
+        "//xla/service:device_assignment",
+        "//xla/service:service_executable_run_options",
+        "//xla/service/gpu:buffer_allocations",
+        "//xla/service/gpu:gpu_executable_run_options",
+        "//xla/stream_executor:device_address",
+        "//xla/stream_executor:memory_space",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_address_allocator",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -2942,41 +2976,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
-    ],
-)
-
-cc_library(
-    name = "collective_memory_cache",
-    srcs = ["collective_memory_cache.cc"],
-    hdrs = ["collective_memory_cache.h"],
-    compatible_with = get_compatible_with_portable(),
-    deps = [
-        ":per_device_state",
-        "//xla/backends/gpu/collectives:gpu_clique_key",
-        "//xla/core/collectives:symmetric_memory",
-        "//xla/stream_executor:device_address",
-        "//xla/tsl/util:tied_ref",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
-    ],
-)
-
-xla_cc_test(
-    name = "collective_memory_cache_test",
-    srcs = ["collective_memory_cache_test.cc"],
-    deps = [
-        ":collective_memory_cache",
-        "//xla/backends/gpu/collectives:gpu_clique_key",
-        "//xla/core/collectives:symmetric_memory",
-        "//xla/runtime:device_id",
-        "//xla/stream_executor:device_address",
-        "//xla/tsl/platform:env",
-        "//xla/tsl/util:tied_ref",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_googletest//:gtest_main",
     ],
 )
 
