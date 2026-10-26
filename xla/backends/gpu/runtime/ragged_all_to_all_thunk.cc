@@ -331,14 +331,14 @@ absl::Status CheckRaggedAllToAllBounds(
       static_cast<size_t>(max_read_index) * num_row_elements * element_width;
 
   size_t max_write_bytes =
-      output_sym_offset +
-      (static_cast<size_t>(max_write_index) * num_row_elements * element_width);
+      static_cast<size_t>(max_write_index) * num_row_elements * element_width;
 
   size_t min_expected_recv_bytes = static_cast<size_t>(total_recv_elements) *
                                    num_row_elements * element_width;
 
   size_t actual_input_size = input_buffer.size();
-  size_t actual_output_size = output_sym_mem->addr().size();
+  size_t actual_output_size = buffers[1].destination_buffer.size();
+  size_t sym_mem_size = output_sym_mem->addr().size();
 
   // Check Out-of-Bounds Reads
   TF_RET_CHECK(max_read_bytes <= actual_input_size)
@@ -348,11 +348,15 @@ absl::Status CheckRaggedAllToAllBounds(
       << " bytes. Kernel launch aborted to prevent "
          "CUDA_ERROR_ILLEGAL_ADDRESS.";
 
-  // Check Out-of-Bounds Writes
-  TF_RET_CHECK(max_write_bytes <= actual_output_size)
+  // Check Out-of-Bounds Writes against both the destination buffer slice and
+  // the enclosing symmetric memory window.
+  TF_RET_CHECK(max_write_bytes <= actual_output_size &&
+               output_sym_offset + max_write_bytes <= sym_mem_size)
       << "RaggedAllToAll: WRITE violation detected! "
       << "Output writes require " << max_write_bytes
-      << " bytes, but the symmetric memory slice is only " << actual_output_size
+      << " bytes at symmetric window offset " << output_sym_offset
+      << ", but the destination buffer is " << actual_output_size
+      << " bytes and the symmetric memory window is " << sym_mem_size
       << " bytes. Kernel launch aborted to prevent "
          "CUDA_ERROR_ILLEGAL_ADDRESS.";
 

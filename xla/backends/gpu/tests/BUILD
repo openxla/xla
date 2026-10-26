@@ -1480,6 +1480,7 @@ xla_test(
         "//xla/ffi/api:collectives_api",
         "//xla/runtime:device_id",
         "//xla/service:hlo_module_config",
+        "//xla/service:hlo_runner_interface",
         "//xla/service:rendezvous",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:launch_dim",

@@ -15,6 +15,7 @@ limitations under the License.*/
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_KERNEL_THUNK_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_KERNEL_THUNK_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -167,10 +168,11 @@ class CollectiveKernelThunk : public TracedCommand {
     // `kernel_spec_.scratch_buffers` entry.
     std::vector<se::DeviceAddressBase> scratch_slices;
     tsl::TiedRef<SymmetricMemory> scratch_symmetric_memory;
-    // Symmetric memory of the kLoadStoreAccessible IO parameters from the last
-    // initialization, by row. Used to skip rebuilding the peer pointer table
-    // when the IO buffers did not move.
-    std::vector<std::weak_ptr<SymmetricMemory>> io_symmetric_memories;
+    // Symmetric memory and arena byte offset of the kLoadStoreAccessible IO
+    // parameters from the last initialization, by row. Used to skip rebuilding
+    // the peer pointer table when the IO buffers did not move.
+    std::vector<std::pair<std::weak_ptr<SymmetricMemory>, size_t>>
+        io_symmetric_memories;
 
     // Constructor to make OSS builds happy.
     StreamState() = default;

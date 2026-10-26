@@ -62,6 +62,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_runner_interface.h"
 #include "xla/service/rendezvous.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
@@ -1268,6 +1269,8 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "__xla_test_multi_gpu_barrier",
 struct CmdBufferSymPeerState {
   absl::Mutex mu;
   std::array<int, kNumReplicas> record_calls ABSL_GUARDED_BY(mu) = {};
+  // Symmetric window that the last recording on each device captured.
+  std::array<se::DeviceAddressBase, kNumReplicas> windows ABSL_GUARDED_BY(mu);
 };
 
 CmdBufferSymPeerState& GetCmdBufferSymPeerState() {
@@ -1295,6 +1298,7 @@ static absl::Status CmdBufferSymPeerAllReduce(
     TF_RET_CHECK(d >= 0 && d < kNumReplicas);
     absl::MutexLock lock(state.mu);
     ++state.record_calls[d];
+    state.windows[d] = peers.sym_memory->addr();
   }
 
   ABSL_ASSIGN_OR_RETURN(
@@ -1905,22 +1909,45 @@ TEST_F(CollectiveOpsTestFFI, MultiGpuBarrier) {
   }
 }
 
-// Checks that a recorded command buffer is re-recorded after the GPU clique is
-// destroyed and the symmetric window it captured is re-created over the same
-// buffers.
-using StaleSymmetricWindowTest = CollectiveOpsTestFFI;
+// Fixture for tests that check that a command buffer which recorded
+// `__xla_test_cmd_buffer_sym_peer_all_reduce` is re-recorded after the
+// symmetric window it captured is invalidated while the buffer addresses stay
+// the same.
+class StaleSymmetricWindowTest : public CollectiveOpsTestFFI {
+ protected:
+  // An executable whose custom call was recorded into a command buffer and then
+  // replayed, together with the per-device handler calls at that point.
+  struct RecordedExecutable {
+    std::unique_ptr<OpaqueExecutable> executable;
+    std::array<int, kNumReplicas> record_calls;
+  };
 
-TEST_F(StaleSymmetricWindowTest, CommandBufferRerecordsAfterCliqueDestroyed) {
-  if (device_count() < kNumReplicas) {
-    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
-                 << device_count() << " available)";
-  }
-  if (!IsHopperAndHigher()) {
-    GTEST_SKIP() << "Test requires Hopper+ since on a previous platforms there "
-                    "are no guarantees that GPUs have direct peer access";
+  // sum [0, num_devices)
+  static constexpr uint32_t kExpected = kNumReplicas * (kNumReplicas - 1) / 2;
+
+  void SetUp() override {
+    CollectiveOpsTestFFI::SetUp();
+    if (device_count() < kNumReplicas) {
+      GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                   << device_count() << " available)";
+    }
+    if (!IsHopperAndHigher()) {
+      GTEST_SKIP()
+          << "Test requires Hopper+ since on a previous platforms there "
+             "are no guarantees that GPUs have direct peer access";
+    }
   }
 
-  constexpr absl::string_view kHloString = R"(
+  static std::array<int, kNumReplicas> RecordCalls() {
+    CmdBufferSymPeerState& state = GetCmdBufferSymPeerState();
+    absl::MutexLock lock(state.mu);
+    return state.record_calls;
+  }
+
+  // Compiles the custom call with command buffers enabled and runs it until a
+  // run replays the recorded command buffer.
+  absl::StatusOr<RecordedExecutable> CompileAndReplay() {
+    constexpr absl::string_view kHloString = R"(
       HloModule m, replica_count=2
 
       ENTRY test_computation {
@@ -1933,95 +1960,136 @@ TEST_F(StaleSymmetricWindowTest, CommandBufferRerecordsAfterCliqueDestroyed) {
       }
     )";
 
-  ASSERT_OK_AND_ASSIGN(auto module,
-                       ParseAndReturnVerifiedModule(kHloString, kNumReplicas));
-  DebugOptions& debug_options =
-      module->mutable_config().mutable_debug_options();
-  debug_options.clear_xla_gpu_enable_command_buffer();
-  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
-  debug_options.set_xla_gpu_graph_min_graph_size(1);
+    const std::vector<std::vector<Literal*>> no_args(kNumReplicas);
+    ABSL_ASSIGN_OR_RETURN(
+        auto module, ParseAndReturnVerifiedModule(kHloString, kNumReplicas));
+    DebugOptions& debug_options =
+        module->mutable_config().mutable_debug_options();
+    debug_options.clear_xla_gpu_enable_command_buffer();
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::CUSTOM_CALL);
+    debug_options.set_xla_gpu_graph_min_graph_size(1);
 
-  CmdBufferSymPeerState& state = GetCmdBufferSymPeerState();
-  auto record_calls = [&] {
-    absl::MutexLock lock(state.mu);
-    return state.record_calls;
-  };
-  const std::vector<std::vector<Literal*>> no_args(kNumReplicas);
-  // sum [0, num_devices)
-  const uint32_t expected = kNumReplicas * (kNumReplicas - 1) / 2;
-
-  // The first runs may execute the custom call op-by-op (command buffer warm
-  // up) and then record it. Their results are not checked: there is no
-  // cross-device synchronization inside the graph, so a rank may read the
-  // peer's `in` before the peer has written it for the first time. Keep
-  // running until a run replays the recorded command buffer, i.e. does not
-  // invoke the handler again.
-  ASSERT_OK_AND_ASSIGN(ExecutionResult first,
-                       ExecuteReplicated(std::move(module), no_args,
-                                         /*run_hlo_passes=*/false));
-  std::array<int, kNumReplicas> calls_after_record = record_calls();
-  for (int d = 0; d < kNumReplicas; ++d) {
-    ASSERT_GE(calls_after_record[d], 1)
-        << "custom call never ran on device " << d;
+    // The first runs may execute the custom call op-by-op (command buffer warm
+    // up) and then record it. Their results are not checked: there is no
+    // cross-device synchronization inside the graph, so a rank may read the
+    // peer's `in` before the peer has written it for the first time. Keep
+    // running until a run replays the recorded command buffer, i.e. does not
+    // invoke the handler again.
+    ABSL_ASSIGN_OR_RETURN(ExecutionResult first,
+                          ExecuteReplicated(std::move(module), no_args,
+                                            /*run_hlo_passes=*/false));
+    std::array<int, kNumReplicas> calls_after_record = RecordCalls();
+    for (int d = 0; d < kNumReplicas; ++d) {
+      if (calls_after_record[d] < 1) {
+        return absl::InternalError(
+            absl::Substitute("custom call never ran on device $0", d));
+      }
+    }
+    constexpr int kMaxWarmupRuns = 4;
+    bool replayed = false;
+    std::vector<Literal> replay;
+    for (int run = 0; run < kMaxWarmupRuns && !replayed; ++run) {
+      ABSL_ASSIGN_OR_RETURN(replay,
+                            ExecuteReplicated(first.executable.get(), no_args,
+                                              /*run_hlo_passes=*/false));
+      std::array<int, kNumReplicas> calls = RecordCalls();
+      replayed = calls == calls_after_record;
+      calls_after_record = calls;
+    }
+    if (!replayed) {
+      return absl::InternalError(
+          "custom call was never replayed from a recorded command buffer");
+    }
+    for (int i = 0; i < kNumReplicas; ++i) {
+      LiteralTestUtil::ExpectR0Equal<uint32_t>(kExpected, replay[i]);
+    }
+    return RecordedExecutable{std::move(first.executable), calls_after_record};
   }
-  constexpr int kMaxWarmupRuns = 4;
-  bool replayed = false;
-  std::vector<Literal> replay;
-  for (int run = 0; run < kMaxWarmupRuns && !replayed; ++run) {
+
+  // Same executable, same buffer addresses, new window: the command buffer
+  // must warm up, re-record with the new window, and then replay from the
+  // recorded command buffer.
+  // `invalidation` describes what happened to the window, for error messages.
+  void RerunAndExpectRerecorded(const RecordedExecutable& recorded,
+                                absl::string_view invalidation) {
+    const std::vector<std::vector<Literal*>> no_args(kNumReplicas);
+    constexpr int kMaxWarmupRuns = 4;
+    bool replayed = false;
+    std::vector<Literal> replay;
+    std::array<int, kNumReplicas> calls_after_record = recorded.record_calls;
+    for (int run = 0; run < kMaxWarmupRuns && !replayed; ++run) {
+      ASSERT_OK_AND_ASSIGN(replay,
+                           ExecuteReplicated(recorded.executable.get(), no_args,
+                                             /*run_hlo_passes=*/false));
+      std::array<int, kNumReplicas> calls = RecordCalls();
+      replayed = calls == calls_after_record;
+      calls_after_record = calls;
+    }
+    ASSERT_TRUE(replayed)
+        << "custom call was never replayed from a recorded command buffer "
+           "after "
+        << invalidation;
+    for (int d = 0; d < kNumReplicas; ++d) {
+      EXPECT_GT(calls_after_record[d], recorded.record_calls[d])
+          << "device " << d << ": command buffer was not re-recorded after "
+          << invalidation;
+    }
+    for (int i = 0; i < kNumReplicas; ++i) {
+      LiteralTestUtil::ExpectR0Equal<uint32_t>(kExpected, replay[i]);
+    }
+
+    // Subsequent runs must replay the newly recorded command buffer without
+    // invoking the handler again.
     ASSERT_OK_AND_ASSIGN(replay,
-                         ExecuteReplicated(first.executable.get(), no_args,
+                         ExecuteReplicated(recorded.executable.get(), no_args,
                                            /*run_hlo_passes=*/false));
-    std::array<int, kNumReplicas> calls = record_calls();
-    replayed = calls == calls_after_record;
-    calls_after_record = calls;
+    for (int d = 0; d < kNumReplicas; ++d) {
+      EXPECT_EQ(RecordCalls()[d], calls_after_record[d])
+          << "device " << d
+          << ": command buffer was unexpectedly re-recorded on subsequent "
+             "replay";
+      LiteralTestUtil::ExpectR0Equal<uint32_t>(kExpected, replay[d]);
+    }
   }
-  ASSERT_TRUE(replayed)
-      << "custom call was never replayed from a recorded command buffer";
-  for (int i = 0; i < kNumReplicas; ++i) {
-    LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, replay[i]);
-  }
+};
+
+// Checks that a recorded command buffer is re-recorded after the GPU clique is
+// destroyed and the symmetric window it captured is re-created over the same
+// buffers.
+TEST_F(StaleSymmetricWindowTest, CommandBufferRerecordsAfterCliqueDestroyed) {
+  ASSERT_OK_AND_ASSIGN(RecordedExecutable recorded, CompileAndReplay());
 
   // Destroy all acquired cliques, which destroys the symmetric windows tied to
   // them. The next run acquires a new clique and creates new windows over the
   // same buffers.
   internal::DestroyAcquiredCliques();
 
-  // Same executable, same buffer addresses, new window: the command buffer
-  // must warm up, re-record with the new window, and then replay from the
-  // recorded command buffer.
-  const std::array<int, kNumReplicas> calls_before_destroy = calls_after_record;
-  replayed = false;
-  for (int run = 0; run < kMaxWarmupRuns && !replayed; ++run) {
-    ASSERT_OK_AND_ASSIGN(replay,
-                         ExecuteReplicated(first.executable.get(), no_args,
-                                           /*run_hlo_passes=*/false));
-    std::array<int, kNumReplicas> calls = record_calls();
-    replayed = calls == calls_after_record;
-    calls_after_record = calls;
-  }
-  ASSERT_TRUE(replayed)
-      << "custom call was never replayed from a recorded command buffer after "
-         "clique destruction";
+  RerunAndExpectRerecorded(
+      recorded,
+      "the clique and the symmetric window it captured were destroyed");
+}
+
+// Checks that a recorded command buffer is re-recorded after the symmetric
+// window it captured is released and re-registered over the same buffers.
+TEST_F(StaleSymmetricWindowTest, CommandBufferReplaysStaleSymmetricWindow) {
+  ASSERT_OK_AND_ASSIGN(RecordedExecutable recorded, CompileAndReplay());
+
+  // Release the captured window on every rank, as the allocator free visitor
+  // does. Deregistration is local, so no synchronization between ranks is
+  // needed; the next run re-registers the window collectively on all ranks.
+  CmdBufferSymPeerState& state = GetCmdBufferSymPeerState();
   for (int d = 0; d < kNumReplicas; ++d) {
-    EXPECT_GT(calls_after_record[d], calls_before_destroy[d])
-        << "device " << d
-        << ": command buffer was not re-recorded after clique destruction";
-  }
-  for (int i = 0; i < kNumReplicas; ++i) {
-    LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, replay[i]);
+    se::DeviceAddressBase window;
+    {
+      absl::MutexLock lock(state.mu);
+      window = state.windows[d];
+    }
+    ASSERT_FALSE(window.is_null()) << "device " << d;
+    ReleaseSymmetricMemory(LocalDeviceId(d), window);
   }
 
-  // Subsequent runs must replay the newly recorded command buffer without
-  // invoking the handler again.
-  ASSERT_OK_AND_ASSIGN(replay,
-                       ExecuteReplicated(first.executable.get(), no_args,
-                                         /*run_hlo_passes=*/false));
-  for (int d = 0; d < kNumReplicas; ++d) {
-    EXPECT_EQ(record_calls()[d], calls_after_record[d])
-        << "device " << d
-        << ": command buffer was unexpectedly re-recorded on subsequent replay";
-    LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, replay[d]);
-  }
+  RerunAndExpectRerecorded(recorded,
+                           "the symmetric window it captured was released");
 }
 
 }  // namespace xla::gpu

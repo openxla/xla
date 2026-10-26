@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/functional/function_ref.h"
@@ -143,6 +144,11 @@ class NcclCommunicator : public GpuCommunicator {
   absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
       se::DeviceAddressBase addr, bool symmetric_window) final;
 
+  absl::StatusOr<std::shared_ptr<SymmetricMemory>> AcquireSymmetricMemory(
+      se::DeviceAddressBase addr, bool symmetric_window) final;
+
+  void ReleaseSymmetricMemory(se::DeviceAddressBase addr) final;
+
   Future<> GroupExecute(absl::AnyInvocable<absl::Status() &&> group) final;
 
   Future<> AllReduce(se::DeviceAddressBase send_buffer,
@@ -213,6 +219,8 @@ class NcclCommunicator : public GpuCommunicator {
                    std::shared_ptr<NcclCommState> comm,
                    std::unique_ptr<tsl::Executor> executor,
                    std::shared_ptr<CancellationToken> cancel);
+
+  void ClearCachedSymmetricMemories();
 
   absl::Status GroupLaunch(absl::FunctionRef<absl::Status()> group);
 
@@ -390,6 +398,20 @@ class NcclCommunicator : public GpuCommunicator {
       ABSL_GUARDED_BY(semaphore_mu_);
   tsl::TiedRef<SymmetricMemory> tied_clique_symmetric_memory_
       ABSL_GUARDED_BY(semaphore_mu_);
+
+  absl::Mutex cached_symm_mutex_;
+
+  // Symmetric memory registrations cached on this communicator, keyed by the
+  // base address of the underlying device allocation (as returned by
+  // `StreamExecutor::GetMemoryRange`) that backs the collective buffers.
+  //
+  // In preallocated BFC mode the collective allocator owns a single
+  // pre-allocated arena, so the map holds at most one element, corresponding
+  // to that entire BFC arena. Several elements can only appear in the
+  // kPlatform or kVmm allocator modes, where each collective buffer is backed
+  // by its own device allocation.
+  absl::flat_hash_map<void*, std::shared_ptr<SymmetricMemory>>
+      cached_symmetric_memories_ ABSL_GUARDED_BY(cached_symm_mutex_);
 };
 
 //===----------------------------------------------------------------------===//

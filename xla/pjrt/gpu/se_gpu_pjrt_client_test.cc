@@ -3537,6 +3537,55 @@ TEST(StreamExecutorGpuClientTest, PlatformAllocatorIsSynchronousPassthrough) {
             nullptr);
 }
 
+// The "platform" allocator runs the sub-allocator free visitors (which include
+// gpu::ReleaseSymmetricMemory) when a collective memory buffer is freed, so
+// that symmetric memory registrations cached on communicators never outlive
+// the buffer. Default memory buffers do not run them.
+TEST(StreamExecutorGpuClientTest,
+     PlatformAllocatorRunsFreeVisitorsForCollectiveMemory) {
+  struct FreedBuffer {
+    void* ptr;
+    int device_ordinal;
+  };
+  std::vector<FreedBuffer> freed;
+
+  GpuClientOptions options;
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kPlatform;
+  options.allocator_config.sub_allocator_free_visitors.push_back(
+      [&freed](void* ptr, int device_ordinal, size_t) {
+        freed.push_back({ptr, device_ordinal});
+      });
+  options.allowed_devices = {0};
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+
+  auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+  se::DeviceAddressAllocator* allocator = raw_client->allocator();
+  ASSERT_NE(allocator, nullptr);
+
+  constexpr int kDefault = static_cast<int>(gpu::MemorySpaceColor::kDefault);
+  constexpr int kCollective =
+      static_cast<int>(gpu::MemorySpaceColor::kCollective);
+  constexpr uint64_t kBytes = uint64_t{1} << 20;
+
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> default_memory,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  ASSERT_OK(default_memory.Free());
+  EXPECT_TRUE(freed.empty());
+
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> collective_memory,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kCollective));
+  void* collective_ptr = collective_memory->opaque();
+  ASSERT_OK(collective_memory.Free());
+  ASSERT_EQ(freed.size(), 1);
+  EXPECT_EQ(freed[0].ptr, collective_ptr);
+  EXPECT_EQ(freed[0].device_ordinal, 0);
+}
+
 // With a preallocated, spatially partitioned BFC allocator, one shared arena
 // serves collective memory from its lower end and default memory from its
 // upper end. Anchoring collective memory at the base keeps its offsets
