@@ -26,6 +26,11 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/service/gpu/kernel_reuse_cache.pb.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/platform/env.h"
@@ -203,6 +208,167 @@ TEST_F(KernelReuseTest, MovingFromReturnedEntryDoesNotMutateCachedEntry) {
                        second_future.Await());
   EXPECT_EQ(second_result.kernel_name, "shared_kernel");
   EXPECT_EQ(second_result.binary.get(), first_moved.second.get());
+}
+
+constexpr absl::string_view kDuplicateFusionsHlo = R"(
+HloModule duplicate_fusions
+
+fused_computation.1 {
+  p0 = f32[16] parameter(0)
+  p1 = f32[16] parameter(1)
+  ROOT sub = f32[16] subtract(p0, p1)
+}
+
+fused_computation.2 {
+  p0 = f32[16] parameter(0)
+  p1 = f32[16] parameter(1)
+  ROOT sub = f32[16] subtract(p0, p1)
+}
+
+ENTRY main {
+  p0 = f32[16] parameter(0)
+  p1 = f32[16] parameter(1)
+  fusion.1 = f32[16] fusion(p0, p1), kind=kLoop, calls=fused_computation.1
+  ROOT fusion.2 = f32[16] fusion(fusion.1, p1), kind=kLoop, calls=fused_computation.2
+}
+)";
+
+TEST_F(KernelReuseTest, IdenticalFusionsShareEntryByDefault) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kDuplicateFusionsHlo));
+  const HloInstruction* fusion1 =
+      module->entry_computation()->GetInstructionWithName("fusion.1");
+  const HloInstruction* fusion2 =
+      module->entry_computation()->GetInstructionWithName("fusion.2");
+  ASSERT_NE(fusion1, nullptr);
+  ASSERT_NE(fusion2, nullptr);
+
+  KernelReuseCache cache;
+  auto [first_future, first_cached] = cache.GetWithStatus(
+      fusion1->fused_instructions_computation(), /*kernel_arguments=*/{},
+      /*discriminator=*/"", []() -> tsl::Future<KernelReuseCache::Entry> {
+        return KernelReuseCache::Entry{"loop_subtract_fusion_1"};
+      });
+  EXPECT_FALSE(first_cached);
+
+  auto [second_future, second_cached] = cache.GetWithStatus(
+      fusion2->fused_instructions_computation(), /*kernel_arguments=*/{},
+      /*discriminator=*/"", []() -> tsl::Future<KernelReuseCache::Entry> {
+        return KernelReuseCache::Entry{"loop_subtract_fusion_2"};
+      });
+  EXPECT_TRUE(second_cached);
+  ASSERT_OK_AND_ASSIGN(const KernelReuseCache::Entry& second_entry,
+                       second_future.Await());
+  EXPECT_EQ(second_entry.kernel_name, "loop_subtract_fusion_1");
+}
+
+TEST_F(KernelReuseTest,
+       IdenticalFusionsGetUniqueKernelsWhenGenerateDebugInfoEnabled) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kDuplicateFusionsHlo));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_generate_debug_info(true);
+
+  const HloInstruction* fusion1 =
+      module->entry_computation()->GetInstructionWithName("fusion.1");
+  const HloInstruction* fusion2 =
+      module->entry_computation()->GetInstructionWithName("fusion.2");
+  ASSERT_NE(fusion1, nullptr);
+  ASSERT_NE(fusion2, nullptr);
+
+  KernelReuseCache cache;
+  auto [first_future, first_cached] = cache.GetWithStatus(
+      fusion1->fused_instructions_computation(), /*kernel_arguments=*/{},
+      /*discriminator=*/"", []() -> tsl::Future<KernelReuseCache::Entry> {
+        return KernelReuseCache::Entry{"loop_subtract_fusion_1"};
+      });
+  EXPECT_FALSE(first_cached);
+
+  auto [second_future, second_cached] = cache.GetWithStatus(
+      fusion2->fused_instructions_computation(), /*kernel_arguments=*/{},
+      /*discriminator=*/"", []() -> tsl::Future<KernelReuseCache::Entry> {
+        return KernelReuseCache::Entry{"loop_subtract_fusion_2"};
+      });
+  EXPECT_FALSE(second_cached);
+  ASSERT_OK_AND_ASSIGN(const KernelReuseCache::Entry& first_entry,
+                       first_future.Await());
+  ASSERT_OK_AND_ASSIGN(const KernelReuseCache::Entry& second_entry,
+                       second_future.Await());
+  EXPECT_EQ(first_entry.kernel_name, "loop_subtract_fusion_1");
+  EXPECT_EQ(second_entry.kernel_name, "loop_subtract_fusion_2");
+}
+
+TEST_F(KernelReuseTest,
+       IdenticalFusionsGetUniqueKernelsWhenGenerateLineInfoEnabled) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kDuplicateFusionsHlo));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_generate_line_info(true);
+
+  const HloInstruction* fusion1 =
+      module->entry_computation()->GetInstructionWithName("fusion.1");
+  const HloInstruction* fusion2 =
+      module->entry_computation()->GetInstructionWithName("fusion.2");
+  ASSERT_NE(fusion1, nullptr);
+  ASSERT_NE(fusion2, nullptr);
+
+  KernelReuseCache cache;
+  auto [first_future, first_cached] = cache.GetWithStatus(
+      fusion1->fused_instructions_computation(), /*kernel_arguments=*/{},
+      /*discriminator=*/"", []() -> tsl::Future<KernelReuseCache::Entry> {
+        return KernelReuseCache::Entry{"loop_subtract_fusion_1"};
+      });
+  EXPECT_FALSE(first_cached);
+
+  auto [second_future, second_cached] = cache.GetWithStatus(
+      fusion2->fused_instructions_computation(), /*kernel_arguments=*/{},
+      /*discriminator=*/"", []() -> tsl::Future<KernelReuseCache::Entry> {
+        return KernelReuseCache::Entry{"loop_subtract_fusion_2"};
+      });
+  EXPECT_FALSE(second_cached);
+  ASSERT_OK_AND_ASSIGN(const KernelReuseCache::Entry& first_entry,
+                       first_future.Await());
+  ASSERT_OK_AND_ASSIGN(const KernelReuseCache::Entry& second_entry,
+                       second_future.Await());
+  EXPECT_EQ(first_entry.kernel_name, "loop_subtract_fusion_1");
+  EXPECT_EQ(second_entry.kernel_name, "loop_subtract_fusion_2");
+}
+
+TEST_F(KernelReuseTest,
+       IdenticalFusionsGetUniqueKernelsWhenNsightComputeEnvSet) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kDuplicateFusionsHlo));
+  const HloInstruction* fusion1 =
+      module->entry_computation()->GetInstructionWithName("fusion.1");
+  const HloInstruction* fusion2 =
+      module->entry_computation()->GetInstructionWithName("fusion.2");
+  ASSERT_NE(fusion1, nullptr);
+  ASSERT_NE(fusion2, nullptr);
+
+  setenv("NV_COMPUTE_PROFILER_LOCAL_CONNECTION_OVERRIDE", "1", /*overwrite=*/1);
+  KernelReuseCache cache;
+  auto [first_future, first_cached] = cache.GetWithStatus(
+      fusion1->fused_instructions_computation(), /*kernel_arguments=*/{},
+      /*discriminator=*/"", []() -> tsl::Future<KernelReuseCache::Entry> {
+        return KernelReuseCache::Entry{"loop_subtract_fusion_1"};
+      });
+  auto [second_future, second_cached] = cache.GetWithStatus(
+      fusion2->fused_instructions_computation(), /*kernel_arguments=*/{},
+      /*discriminator=*/"", []() -> tsl::Future<KernelReuseCache::Entry> {
+        return KernelReuseCache::Entry{"loop_subtract_fusion_2"};
+      });
+  unsetenv("NV_COMPUTE_PROFILER_LOCAL_CONNECTION_OVERRIDE");
+
+  EXPECT_FALSE(first_cached);
+  EXPECT_FALSE(second_cached);
+  ASSERT_OK_AND_ASSIGN(const KernelReuseCache::Entry& first_entry,
+                       first_future.Await());
+  ASSERT_OK_AND_ASSIGN(const KernelReuseCache::Entry& second_entry,
+                       second_future.Await());
+  EXPECT_EQ(first_entry.kernel_name, "loop_subtract_fusion_1");
+  EXPECT_EQ(second_entry.kernel_name, "loop_subtract_fusion_2");
 }
 
 }  // namespace
