@@ -34,10 +34,10 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/codegen/tiling/experimental/test_utils.h"
-#include "xla/codegen/tiling/experimental/tile.h"
-#include "xla/codegen/tiling/experimental/tile_propagation.h"
-#include "xla/codegen/tiling/experimental/tiling_space.h"
+#include "xla/codegen/tiling/test_utils.h"
+#include "xla/codegen/tiling/tile.h"
+#include "xla/codegen/tiling/tile_propagation.h"
+#include "xla/codegen/tiling/tiling_space.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/analysis/symbolic_map_serialization.h"
@@ -50,7 +50,7 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
 
-namespace xla::gpu::experimental {
+namespace xla::gpu {
 namespace {
 
 using ::llvm::SmallVector;
@@ -508,4 +508,4 @@ TEST_F(ReshapeTilePropagationTest, UnsupportedReshapeErrorFormat) {
 }
 
 }  // namespace
-}  // namespace xla::gpu::experimental
+}  // namespace xla::gpu

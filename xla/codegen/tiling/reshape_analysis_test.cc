@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/codegen/tiling/experimental/reshape_analysis.h"
+#include "xla/codegen/tiling/reshape_analysis.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -26,7 +26,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
 
-namespace xla::gpu::experimental {
+namespace xla::gpu {
 namespace {
 
 using ::testing::Eq;
@@ -119,4 +119,4 @@ INSTANTIATE_TEST_SUITE_P(
     });
 
 }  // namespace
-}  // namespace xla::gpu::experimental
+}  // namespace xla::gpu

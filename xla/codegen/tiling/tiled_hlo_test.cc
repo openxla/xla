@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/codegen/tiling/experimental/tiled_hlo.h"
+#include "xla/codegen/tiling/tiled_hlo.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -33,10 +33,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/IR/MLIRContext.h"
-#include "xla/codegen/tiling/experimental/test_utils.h"
-#include "xla/codegen/tiling/experimental/tile.h"
-#include "xla/codegen/tiling/experimental/tile_propagation.h"
-#include "xla/codegen/tiling/experimental/tiling_space.h"
+#include "xla/codegen/tiling/test_utils.h"
+#include "xla/codegen/tiling/tile.h"
+#include "xla/codegen/tiling/tile_propagation.h"
+#include "xla/codegen/tiling/tiling_space.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -48,7 +48,7 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 
-namespace xla::gpu::experimental {
+namespace xla::gpu {
 namespace {
 
 using ::absl_testing::IsOkAndHolds;
@@ -1668,4 +1668,4 @@ TEST_F(SameShapeMultiOutputFusionTileAnalysisTest,
 // TODO(b/422676780): Port the remaining tests.
 
 }  // namespace
-}  // namespace xla::gpu::experimental
+}  // namespace xla::gpu
