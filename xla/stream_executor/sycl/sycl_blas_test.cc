@@ -13,13 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
+#include <complex>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/cleanup/cleanup.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/platform.h"
@@ -27,37 +32,89 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
-#include "xla/tsl/platform/status_matchers.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace stream_executor::sycl {
 namespace {
 
-using ::testing::ElementsAre;
+using ::testing::ElementsAreArray;
 
-TEST(SyclBlasTest, DoBlasScalFloat) {
-  ASSERT_OK_AND_ASSIGN(Platform * platform,
-                       PlatformManager::PlatformWithId(kSyclPlatformId));
-  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
-                       platform->ExecutorForDevice(0));
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
-                       executor->CreateStream());
-  blas::BlasSupport* blas = executor->AsBlas();
-  ASSERT_NE(blas, nullptr);
+class SyclBlasTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    ASSERT_OK_AND_ASSIGN(Platform * platform,
+                         PlatformManager::PlatformWithId(kSyclPlatformId));
+    ASSERT_OK_AND_ASSIGN(executor_, platform->ExecutorForDevice(0));
+    ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream());
+    blas_ = executor_->AsBlas();
+    ASSERT_NE(blas_, nullptr);
+  }
 
-  std::vector<float> host = {1.0f, 2.0f, 3.0f, 4.0f};
-  const uint64_t size_bytes = host.size() * sizeof(float);
-  DeviceAddress<float> device = executor->AllocateArray<float>(host.size());
-  ASSERT_THAT(stream->Memcpy(&device, host.data(), size_bytes),
-              absl_testing::IsOk());
+  // Scales a vector of 4 elements with stride incx and checks that only the
+  // strided elements change.
+  template <typename ScalarT, typename T>
+  void TestScal(ScalarT alpha, T base, int incx) {
+    constexpr uint64_t kElemCount = 4;
+    std::vector<T> host(1 + (kElemCount - 1) * incx);
+    for (size_t i = 0; i < host.size(); ++i) {
+      host[i] = base * static_cast<T>(i + 1);
+    }
+    std::vector<T> expected = host;
+    for (size_t i = 0; i < host.size(); i += incx) {
+      expected[i] = alpha * host[i];
+    }
 
-  EXPECT_TRUE(blas->DoBlasScal(stream.get(), host.size(), 0.5f, &device, 1));
+    const uint64_t size_bytes = host.size() * sizeof(T);
+    DeviceAddress<T> device = executor_->AllocateArray<T>(host.size());
+    absl::Cleanup cleanup = [&] { executor_->Deallocate(&device); };
+    ASSERT_THAT(stream_->Memcpy(&device, host.data(), size_bytes),
+                absl_testing::IsOk());
 
-  ASSERT_THAT(stream->Memcpy(host.data(), device, size_bytes),
-              absl_testing::IsOk());
-  ASSERT_THAT(stream->BlockHostUntilDone(), absl_testing::IsOk());
-  EXPECT_THAT(host, ElementsAre(0.5f, 1.0f, 1.5f, 2.0f));
-  executor->Deallocate(&device);
+    EXPECT_TRUE(
+        blas_->DoBlasScal(stream_.get(), kElemCount, alpha, &device, incx));
+
+    ASSERT_THAT(stream_->Memcpy(host.data(), device, size_bytes),
+                absl_testing::IsOk());
+    ASSERT_THAT(stream_->BlockHostUntilDone(), absl_testing::IsOk());
+    EXPECT_THAT(host, ElementsAreArray(expected));
+  }
+
+  StreamExecutor* executor_ = nullptr;
+  std::unique_ptr<Stream> stream_;
+  blas::BlasSupport* blas_ = nullptr;
+};
+
+TEST_F(SyclBlasTest, DoBlasScalFloat) {
+  TestScal<float, float>(0.5f, 1.0f, /*incx=*/1);
+  TestScal<float, float>(0.5f, 1.0f, /*incx=*/2);
+}
+
+TEST_F(SyclBlasTest, DoBlasScalDouble) {
+  TestScal<double, double>(0.5, 1.0, /*incx=*/1);
+  TestScal<double, double>(0.5, 1.0, /*incx=*/2);
+}
+
+TEST_F(SyclBlasTest, DoBlasScalComplexFloatByFloat) {
+  using C = std::complex<float>;
+  TestScal<float, C>(0.5f, C(1.0f, -2.0f), /*incx=*/1);
+  TestScal<float, C>(0.5f, C(1.0f, -2.0f), /*incx=*/2);
+}
+
+TEST_F(SyclBlasTest, DoBlasScalComplexDoubleByDouble) {
+  using C = std::complex<double>;
+  TestScal<double, C>(0.5, C(1.0, -2.0), /*incx=*/1);
+  TestScal<double, C>(0.5, C(1.0, -2.0), /*incx=*/2);
+}
+
+TEST_F(SyclBlasTest, DoBlasScalComplexFloat) {
+  using C = std::complex<float>;
+  TestScal<C, C>(C(0.5f, 2.0f), C(1.0f, -2.0f), /*incx=*/1);
+  TestScal<C, C>(C(0.5f, 2.0f), C(1.0f, -2.0f), /*incx=*/2);
+}
+
+TEST_F(SyclBlasTest, DoBlasScalComplexDouble) {
+  using C = std::complex<double>;
+  TestScal<C, C>(C(0.5, 2.0), C(1.0, -2.0), /*incx=*/1);
+  TestScal<C, C>(C(0.5, 2.0), C(1.0, -2.0), /*incx=*/2);
 }
 
 }  // namespace

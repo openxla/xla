@@ -15,13 +15,21 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/sycl_blas_lt.h"
 
+#include <complex>
+#include <cstdint>
+#include <limits>
+
+#include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "oneapi/mkl.hpp"
+#include <sycl/sycl.hpp>  // NOLINT
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/gpu_helpers.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/sycl/onemkl_util.h"
 #include "xla/stream_executor/sycl/sycl_matmul_utils.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
@@ -71,12 +79,25 @@ SyclBlasSupport::SyclBlasSupport(StreamExecutor* parent) : blas_lt_(parent) {}
 
 SyclBlasSupport::~SyclBlasSupport() {}
 
+namespace {
+
 // Multiplies every element of the vector x by alpha on the stream's SYCL
 // queue. The scaling factor has its own template parameter because a complex
 // vector can be scaled by either a complex or a real number.
 template <typename ScalarT, typename T>
-inline bool ScalImpl(Stream* stream, uint64_t elem_count, ScalarT alpha,
-                     DeviceAddress<T>* x, int incx) {
+bool ScalImpl(Stream* stream, uint64_t elem_count, ScalarT alpha,
+              DeviceAddress<T>* x, int incx) {
+  if (stream == nullptr || x == nullptr) {
+    LOG(ERROR) << "DoBlasScal: stream and x must not be null";
+    return false;
+  }
+  // oneMKL takes the element count as a signed 64-bit integer.
+  if (elem_count >
+      static_cast<uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    LOG(ERROR) << "DoBlasScal: elem_count " << elem_count
+               << " does not fit in int64_t";
+    return false;
+  }
   auto* stream_queue =
       static_cast<::sycl::queue*>(stream->platform_specific_handle().stream);
   absl::StatusOr<::sycl::event> status = ExecMklFunc([&] {
@@ -90,6 +111,8 @@ inline bool ScalImpl(Stream* stream, uint64_t elem_count, ScalarT alpha,
   LOG(ERROR) << status.status();
   return false;
 }
+
+}  // namespace
 
 bool SyclBlasSupport::DoBlasScal(Stream* stream, uint64_t elem_count,
                                  float alpha, DeviceAddress<float>* x,
@@ -156,3 +179,4 @@ static void RegisterSyclBlasSupport() {
 
 STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(
     syclblas, stream_executor::sycl::RegisterSyclBlasSupport());
+
