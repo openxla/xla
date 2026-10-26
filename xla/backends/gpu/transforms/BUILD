@@ -488,6 +488,7 @@ xla_cc_test(
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:test_helpers",
+        "//xla/hlo/testlib:verified_hlo_module",
         "//xla/stream_executor:dnn",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",

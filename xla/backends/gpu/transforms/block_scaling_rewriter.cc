@@ -95,15 +95,24 @@ absl::StatusOr<HloInstruction*> ExpandInstructionUsingBuilder(
       old_instruction->shape(), old_instruction->operands(), computation));
 }
 
-// Determine block size from the shapes.
+// Determine block size from the shapes along `contracting_dim`.
 absl::StatusOr<int> GetBlockSize(const Shape& quant_shape,
-                                 const Shape& scale_shape) {
+                                 const Shape& scale_shape,
+                                 int64_t contracting_dim) {
   int rank = quant_shape.dimensions().size();
   TF_RET_CHECK(rank >= 1 && rank == scale_shape.dimensions().size());
-  int m = quant_shape.dimensions(rank - 1);
-  int n = scale_shape.dimensions(rank - 1);
+  TF_RET_CHECK(contracting_dim >= 0 && contracting_dim < rank);
+  int m = quant_shape.dimensions(contracting_dim);
+  int n = scale_shape.dimensions(contracting_dim);
   TF_RET_CHECK(m > 0 && n > 0 && m % n == 0);
   return m / n;
+}
+
+// Determine block size from the shapes (assuming contracting_dim is rank - 1).
+absl::StatusOr<int> GetBlockSize(const Shape& quant_shape,
+                                 const Shape& scale_shape) {
+  return GetBlockSize(quant_shape, scale_shape,
+                      quant_shape.dimensions().size() - 1);
 }
 
 // ----- Quantization
@@ -265,22 +274,40 @@ enum class CudnnMxType {
   NVFP4,
 };
 
-CudnnMxType GetCudnnMxType(const Shape& input_shape, const Shape& scale_shape,
-                           std::optional<int64_t> block_size) {
-  // Non-default layout is not supported.
-  if (!LayoutUtil::IsMonotonicWithDim0Major(input_shape.layout()) ||
-      !LayoutUtil::IsMonotonicWithDim0Major(scale_shape.layout())) {
+CudnnMxType GetCudnnMxType(
+    const Shape& input_shape, const Shape& scale_shape,
+    std::optional<int64_t> block_size,
+    std::optional<int64_t> contracting_dim = std::nullopt,
+    bool require_default_layout = true) {
+  // Non-default layout is not supported when checking fused cuDNN operands.
+  if (require_default_layout &&
+      (!LayoutUtil::IsMonotonicWithDim0Major(input_shape.layout()) ||
+       !LayoutUtil::IsMonotonicWithDim0Major(scale_shape.layout()))) {
     VLOG(3) << "Non-default layout: input=" << input_shape.layout().ToString()
             << ", scale=" << scale_shape.layout().ToString();
     return CudnnMxType::UNSUPPORTED_TYPE;
+  }
+
+  int64_t rank = input_shape.dimensions().size();
+  if (rank < 2 || scale_shape.dimensions().size() != rank) {
+    return CudnnMxType::UNSUPPORTED_TYPE;
+  }
+  int64_t c_dim = contracting_dim.value_or(rank - 1);
+  if (c_dim < 0 || c_dim >= rank) {
+    return CudnnMxType::UNSUPPORTED_TYPE;
+  }
+  for (int64_t d = 0; d < rank; ++d) {
+    if (d != c_dim && input_shape.dimensions(d) > scale_shape.dimensions(d)) {
+      return CudnnMxType::UNSUPPORTED_TYPE;
+    }
   }
 
   // Determine the block size from shapes, unless explicitly given.
   int64_t actual_block_size =
       block_size.has_value()
           ? block_size.value()
-          : GetBlockSize(input_shape, scale_shape).value_or(0);
-  int64_t contracting_size = input_shape.dimensions().back();
+          : GetBlockSize(input_shape, scale_shape, c_dim).value_or(0);
+  int64_t contracting_size = input_shape.dimensions(c_dim);
 
   // MXFP8: the input could be either E4M3FN or E5M2.
   if (input_shape.element_type() == PrimitiveType::F8E4M3FN &&
@@ -334,7 +361,7 @@ bool IsSupportedByCudnn(CudnnMxType lhs, CudnnMxType rhs) {
 // Reshape inputs to shapes compatible with cuDNN.
 absl::StatusOr<std::tuple<XlaOp, XlaOp, int64_t>> BuildCudnnScaledDotInput(
     XlaOp input_op, XlaOp scale_op, std::optional<int64_t> block_size,
-    bool pad_input) {
+    bool pad_input, bool transpose_scale = false) {
   // Get shapes from the inputs.
   XlaBuilder& builder = *input_op.builder();
   ABSL_ASSIGN_OR_RETURN(Shape input_shape, builder.GetShape(input_op));
@@ -346,13 +373,18 @@ absl::StatusOr<std::tuple<XlaOp, XlaOp, int64_t>> BuildCudnnScaledDotInput(
   int64_t batch_size = rank == 3 ? input_shape.dimensions(0) : 1;
   int64_t size_contracting = input_shape.dimensions().back();
   int64_t size_noncontracting = input_shape.dimensions(rank - 2);
-  int64_t scale_contracting = scale_shape.dimensions().back();
-  int64_t scale_noncontracting = scale_shape.dimensions(rank - 2);
+  int64_t scale_contracting = transpose_scale ? scale_shape.dimensions(rank - 2)
+                                              : scale_shape.dimensions().back();
+  int64_t scale_noncontracting = transpose_scale
+                                     ? scale_shape.dimensions().back()
+                                     : scale_shape.dimensions(rank - 2);
 
   // Validate input/shape dimensions.
-  int64_t actual_block_size =
-      block_size.has_value() ? block_size.value()
-                             : GetBlockSize(input_shape, scale_shape).value();
+  TF_RET_CHECK(scale_contracting > 0 &&
+               size_contracting % scale_contracting == 0);
+  int64_t actual_block_size = block_size.has_value()
+                                  ? block_size.value()
+                                  : (size_contracting / scale_contracting);
   TF_RET_CHECK(size_contracting <= scale_contracting * actual_block_size);
   TF_RET_CHECK(size_noncontracting <= scale_noncontracting);
   TF_RET_CHECK(rank == 2 || scale_shape.dimensions(0) == batch_size);
@@ -383,10 +415,12 @@ absl::StatusOr<std::tuple<XlaOp, XlaOp, int64_t>> BuildCudnnScaledDotInput(
     if (scale_noncontracting != padded_noncontracting ||
         scale_contracting != padded_contracting) {
       PaddingConfig scale_padding_config = MakeNoPaddingConfig(rank);
-      scale_padding_config.mutable_dimensions(rank - 2)->set_edge_padding_high(
-          padded_noncontracting - scale_noncontracting);
-      scale_padding_config.mutable_dimensions(rank - 1)->set_edge_padding_high(
-          padded_contracting - scale_contracting);
+      int64_t noncontracting_dim = transpose_scale ? rank - 1 : rank - 2;
+      int64_t contracting_dim = transpose_scale ? rank - 2 : rank - 1;
+      scale_padding_config.mutable_dimensions(noncontracting_dim)
+          ->set_edge_padding_high(padded_noncontracting - scale_noncontracting);
+      scale_padding_config.mutable_dimensions(contracting_dim)
+          ->set_edge_padding_high(padded_contracting - scale_contracting);
       scale_op = Pad(scale_op, Zero(&builder, scale_shape.element_type()),
                      scale_padding_config);
     }
@@ -399,14 +433,27 @@ absl::StatusOr<std::tuple<XlaOp, XlaOp, int64_t>> BuildCudnnScaledDotInput(
   // using non-vectorized loads or using an extra shared memory buffer).
   // https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-mma-scale-factor-a-layout-1x
   ABSL_ASSIGN_OR_RETURN(Shape scale_valid_shape, builder.GetShape(scale_op));
-  int64_t scale_rows = scale_valid_shape.dimensions(rank - 2);
-  int64_t scale_cols = scale_valid_shape.dimensions(rank - 1);
-  scale_op =
-      Reshape(scale_op, {batch_size, scale_rows / kInputNonContractingTileSize,
-                         4, 32, scale_cols / kScaleContractingTileSize,
-                         kScaleContractingTileSize});
-  scale_op = Transpose(scale_op, {0, 1, 4, 3, 2, 5});
-  scale_op = Reshape(scale_op, scale_valid_shape.dimensions());
+  int64_t scale_rows = transpose_scale ? scale_valid_shape.dimensions(rank - 1)
+                                       : scale_valid_shape.dimensions(rank - 2);
+  int64_t scale_cols = transpose_scale ? scale_valid_shape.dimensions(rank - 2)
+                                       : scale_valid_shape.dimensions(rank - 1);
+  if (transpose_scale) {
+    scale_op =
+        Reshape(scale_op, {batch_size, scale_cols / kScaleContractingTileSize,
+                           kScaleContractingTileSize,
+                           scale_rows / kInputNonContractingTileSize, 4, 32});
+    scale_op = Transpose(scale_op, {0, 3, 1, 5, 4, 2});
+  } else {
+    scale_op = Reshape(
+        scale_op,
+        {batch_size, scale_rows / kInputNonContractingTileSize, 4, 32,
+         scale_cols / kScaleContractingTileSize, kScaleContractingTileSize});
+    scale_op = Transpose(scale_op, {0, 1, 4, 3, 2, 5});
+  }
+  std::vector<int64_t> output_scale_dims =
+      rank == 3 ? std::vector<int64_t>{batch_size, scale_rows, scale_cols}
+                : std::vector<int64_t>{scale_rows, scale_cols};
+  scale_op = Reshape(scale_op, output_scale_dims);
 
   return std::make_tuple(input_op, scale_op, size_noncontracting);
 }
@@ -650,8 +697,35 @@ absl::StatusOr<HloInstruction*> ExpandBlockScaledDotCustomCall(
 
 // ----- cuDNN scale swizzling
 
+HloInstruction* UnwrapScaleTranspose(HloInstruction* scale) {
+  int rank = scale->shape().dimensions().size();
+  std::vector<int64_t> expected_perm =
+      rank == 3 ? std::vector<int64_t>{0, 2, 1} : std::vector<int64_t>{1, 0};
+  if (scale->opcode() == HloOpcode::kTranspose &&
+      scale->dimensions() == expected_perm &&
+      LayoutUtil::IsMonotonicWithDim0Major(
+          scale->operand(0)->shape().layout())) {
+    return scale->mutable_operand(0);
+  }
+  if (scale->opcode() == HloOpcode::kFusion && scale->operand_count() == 1) {
+    const HloInstruction* root = scale->fused_expression_root();
+    if (root->opcode() == HloOpcode::kTranspose &&
+        root->operand(0)->opcode() == HloOpcode::kParameter &&
+        root->dimensions() == expected_perm &&
+        LayoutUtil::IsMonotonicWithDim0Major(root->shape().layout()) &&
+        LayoutUtil::IsMonotonicWithDim0Major(
+            root->operand(0)->shape().layout()) &&
+        LayoutUtil::IsMonotonicWithDim0Major(
+            scale->operand(0)->shape().layout())) {
+      return scale->mutable_operand(0);
+    }
+  }
+  return nullptr;
+}
+
 absl::StatusOr<HloComputation*> CreateScaleSwizzleComputation(
-    const HloInstruction* input, const HloInstruction* scale) {
+    const HloInstruction* input, const HloInstruction* scale,
+    bool transpose_scale = false) {
   // Create XLA builder and parameters.
   std::string name = absl::StrCat(scale->name(), "_swizzle");
   XlaBuilder builder(name);
@@ -662,7 +736,7 @@ absl::StatusOr<HloComputation*> CreateScaleSwizzleComputation(
   ABSL_ASSIGN_OR_RETURN(
       auto ops_and_size,
       BuildCudnnScaledDotInput(input_op, scale_op, /*block_size=*/std::nullopt,
-                               /*pad_input=*/false));
+                               /*pad_input=*/false, transpose_scale));
   auto [result_input_op, result_scale_op, _] = ops_and_size;
   Tuple(&builder, {result_input_op, result_scale_op});
 
@@ -743,7 +817,10 @@ absl::StatusOr<HloInstruction*> BlockScalingRewriter::ExpandInstruction(
 }
 
 bool CudnnScaledDotHelper::IsSupported(
-    const HloScaledDotInstruction* scaled_dot) {
+    const HloScaledDotInstruction* scaled_dot, bool is_fused) {
+  if (scaled_dot->operand_count() != 4) {
+    return false;
+  }
   const HloInstruction* lhs_input = scaled_dot->operand(0);
   const HloInstruction* rhs_input = scaled_dot->operand(1);
   const HloInstruction* lhs_scale = scaled_dot->operand(2);
@@ -765,20 +842,35 @@ bool CudnnScaledDotHelper::IsSupported(
     }
     return is_param;
   };
-  if (!is_parameter(lhs_input, 0) || !is_parameter(rhs_input, 1) ||
-      !is_parameter(lhs_scale, 2) || !is_parameter(rhs_scale, 3)) {
+  if (is_fused &&
+      (!is_parameter(lhs_input, 0) || !is_parameter(rhs_input, 1) ||
+       !is_parameter(lhs_scale, 2) || !is_parameter(rhs_scale, 3))) {
     VLOG(3) << "Operands are not parameters meeting criteria";
     return false;
   }
 
-  // The dot dimension numbers must have fixed order: batch dimension first
-  // (if present) and contracting dimension last.
   const DotDimensionNumbers& dnums = scaled_dot->dot_dimension_numbers();
   int rank = lhs_input->shape().dimensions().size();
-  if (dnums.lhs_contracting_dimensions()[0] != rank - 1 ||
-      dnums.rhs_contracting_dimensions()[0] != rank - 1 ||
-      (rank == 3 && (dnums.lhs_batch_dimensions()[0] != 0 ||
-                     dnums.rhs_batch_dimensions()[0] != 0))) {
+  if ((rank != 2 && rank != 3) ||
+      rhs_input->shape().dimensions().size() != rank ||
+      dnums.lhs_contracting_dimensions_size() != 1 ||
+      dnums.rhs_contracting_dimensions_size() != 1) {
+    return false;
+  }
+  if (rank == 2 && (!dnums.lhs_batch_dimensions().empty() ||
+                    !dnums.rhs_batch_dimensions().empty())) {
+    return false;
+  }
+  if (rank == 3 && (dnums.lhs_batch_dimensions_size() != 1 ||
+                    dnums.rhs_batch_dimensions_size() != 1 ||
+                    dnums.lhs_batch_dimensions()[0] != 0 ||
+                    dnums.rhs_batch_dimensions()[0] != 0)) {
+    return false;
+  }
+
+  int64_t lhs_c_dim = dnums.lhs_contracting_dimensions()[0];
+  int64_t rhs_c_dim = dnums.rhs_contracting_dimensions()[0];
+  if (is_fused && (lhs_c_dim != rank - 1 || rhs_c_dim != rank - 1)) {
     VLOG(3) << "Unsupported dimension numbers: " << dnums.DebugString()
             << ", rank: " << rank;
     return false;
@@ -786,8 +878,10 @@ bool CudnnScaledDotHelper::IsSupported(
 
   // cuDNN kernel supports a subset of block scaled types.
   bool supported = IsSupportedByCudnn(
-      GetCudnnMxType(lhs_input->shape(), lhs_scale->shape(), std::nullopt),
-      GetCudnnMxType(rhs_input->shape(), rhs_scale->shape(), std::nullopt));
+      GetCudnnMxType(lhs_input->shape(), lhs_scale->shape(), std::nullopt,
+                     lhs_c_dim, /*require_default_layout=*/is_fused),
+      GetCudnnMxType(rhs_input->shape(), rhs_scale->shape(), std::nullopt,
+                     rhs_c_dim, /*require_default_layout=*/is_fused));
 
   if (!supported) {
     VLOG(3) << "Type combination not supported by cuDNN";
@@ -803,13 +897,19 @@ absl::StatusOr<HloInstruction*> CudnnScaledDotHelper::AddScaleSwizzle(
   // Add swizzling to LHS/RHS.
   std::vector<HloInstruction*> swizzled_operands(4);
   for (int i = 0; i < 2; ++i) {
-    ABSL_ASSIGN_OR_RETURN(HloComputation * swizzle_computation,
-                          CreateScaleSwizzleComputation(
-                              fusion->operand(i), fusion->operand(i + 2)));
+    HloInstruction* scale_operand = fusion->mutable_operand(i + 2);
+    HloInstruction* unwrapped_scale = UnwrapScaleTranspose(scale_operand);
+    bool transpose_scale = unwrapped_scale != nullptr;
+    if (transpose_scale) {
+      scale_operand = unwrapped_scale;
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        HloComputation * swizzle_computation,
+        CreateScaleSwizzleComputation(fusion->operand(i), scale_operand,
+                                      transpose_scale));
     HloInstruction* call = parent->AddInstruction(HloInstruction::CreateCall(
         swizzle_computation->root_instruction()->shape(),
-        {fusion->mutable_operand(i), fusion->mutable_operand(i + 2)},
-        swizzle_computation));
+        {fusion->mutable_operand(i), scale_operand}, swizzle_computation));
     for (int j = 0; j < 2; ++j) {
       swizzled_operands[i + j * 2] =
           parent->AddInstruction(HloInstruction::CreateGetTupleElement(

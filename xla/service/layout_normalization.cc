@@ -45,8 +45,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -775,6 +773,65 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
 
     ABSL_RETURN_IF_ERROR(
         ReplaceInstruction(hlo, MaybeBitcast(normalized_hlo, hlo->shape())));
+    return absl::OkStatus();
+  }
+
+  absl::Status HandleScaledDot(HloInstruction* hlo) override {
+    if (!HasDefaultLayout(hlo)) {
+      return DefaultAction(hlo);
+    }
+    for (const auto& [op_idx, scale_idx] :
+         {std::make_pair(0, 2), std::make_pair(1, 3)}) {
+      const Shape& op_shape = hlo->operand(op_idx)->shape();
+      const Shape& scale_shape = hlo->operand(scale_idx)->shape();
+      if (!ShapeUtil::IsScalar(scale_shape) &&
+          (op_shape.dimensions().size() != scale_shape.dimensions().size() ||
+           op_shape.layout().minor_to_major() !=
+               scale_shape.layout().minor_to_major())) {
+        return DefaultAction(hlo);
+      }
+    }
+
+    std::vector<HloInstruction*> normalized_operands;
+    normalized_operands.reserve(hlo->operand_count());
+    for (HloInstruction* operand : hlo->mutable_operands()) {
+      ABSL_ASSIGN_OR_RETURN(normalized_operands.emplace_back(),
+                            GetNormalizedInput(operand));
+    }
+
+    if (absl::c_equal(normalized_operands, hlo->operands())) {
+      return absl::OkStatus();
+    }
+
+    DotDimensionNumbers new_dnums = hlo->dot_dimension_numbers();
+    auto update_dnums =
+        [this](const Shape& shape,
+               tsl::protobuf::RepeatedField<int64_t>* batch_dims,
+               tsl::protobuf::RepeatedField<int64_t>* contracting_dims) {
+          std::vector<int64_t> p =
+              InversePermutation(ToTransposeDimensions(shape.layout()));
+          for (int64_t& dim : *batch_dims) {
+            dim = p[dim];
+          }
+          for (int64_t& dim : *contracting_dims) {
+            dim = p[dim];
+          }
+        };
+    update_dnums(hlo->operand(0)->shape(),
+                 new_dnums.mutable_lhs_batch_dimensions(),
+                 new_dnums.mutable_lhs_contracting_dimensions());
+    update_dnums(hlo->operand(1)->shape(),
+                 new_dnums.mutable_rhs_batch_dimensions(),
+                 new_dnums.mutable_rhs_contracting_dimensions());
+
+    HloInstruction* normalized_hlo =
+        hlo->parent()->AddInstruction(HloInstruction::CreateScaledDot(
+            hlo->shape(), normalized_operands[0], normalized_operands[1],
+            normalized_operands[2], normalized_operands[3], new_dnums,
+            hlo->precision_config()));
+    hlo->SetupDerivedInstruction(normalized_hlo);
+    SetVisited(*normalized_hlo);
+    ABSL_RETURN_IF_ERROR(ReplaceInstruction(hlo, normalized_hlo));
     return absl::OkStatus();
   }
 

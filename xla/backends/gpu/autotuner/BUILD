@@ -11,6 +11,7 @@ package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
     default_visibility = [
         "//xla/backends/autotuner:__subpackages__",
+        "//xla/backends/gpu/codegen:__subpackages__",
         "//xla/backends/gpu/transforms:__subpackages__",
         "//xla/service/gpu:__subpackages__",
     ],
@@ -1094,7 +1095,7 @@ xla_cc_binary(
 xla_test(
     name = "autotuner_main_test",
     srcs = ["autotuner_main.cc"],
-    args = ["--hlo_files=$(location test.hlo)"],
+    args = ["--hlo_files=$(rootpath test.hlo)"],
     backends = ["gpu"],
     data = ["test.hlo"],
     fail_if_no_test_linked = False,  # NOLINT=not based on gtest and thus doesn't support --gunit_fail_if_no_test_linked.

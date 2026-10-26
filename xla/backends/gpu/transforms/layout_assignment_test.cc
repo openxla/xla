@@ -1512,6 +1512,89 @@ TEST_F(LayoutAssignmentTest,
               ::testing::ElementsAre(3, 2, 0, 1));
 }
 
+TEST_F(LayoutAssignmentTest,
+       ScaledDotAutoLayoutSetsMinorContractingOnAllOperands) {
+  const char* hlo = R"(
+  HloModule ScaledDotAutoLayout
+
+  ENTRY main {
+    lhs = f8e4m3fn[256,128] parameter(0)
+    rhs = f8e4m3fn[256,128] parameter(1)
+    lhs_scale = f8e8m0fnu[8,128] parameter(2)
+    rhs_scale = f8e8m0fnu[8,128] parameter(3)
+    ROOT dot = bf16[128,128] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+      lhs_contracting_dims={0}, rhs_contracting_dims={0}
+  })";
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options()
+      .set_xla_gpu_experimental_scaled_dot_with_triton(false);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> m,
+      ParseAndReturnUnverifiedModule(
+          hlo, config, HloParserOptions().set_fill_missing_layouts(false)));
+  ComputationLayout computation_layout(
+      m->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(m.get()), absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(
+      m->entry_computation()->parameter_instruction(0),
+      GmockMatch(m::Parameter(0).WithShape(F8E4M3FN, {256, 128}, {0, 1})));
+  EXPECT_THAT(
+      m->entry_computation()->parameter_instruction(1),
+      GmockMatch(m::Parameter(1).WithShape(F8E4M3FN, {256, 128}, {0, 1})));
+  EXPECT_THAT(
+      m->entry_computation()->parameter_instruction(2),
+      GmockMatch(m::Parameter(2).WithShape(F8E8M0FNU, {8, 128}, {0, 1})));
+  EXPECT_THAT(
+      m->entry_computation()->parameter_instruction(3),
+      GmockMatch(m::Parameter(3).WithShape(F8E8M0FNU, {8, 128}, {0, 1})));
+  EXPECT_EQ(FindInstruction(m.get(), HloOpcode::kCopy), nullptr);
+}
+
+TEST_F(LayoutAssignmentTest,
+       ScaledDotFixedLayoutInsertsCopyToMinorContracting) {
+  const char* hlo = R"(
+  HloModule ScaledDotFixedLayout
+
+  ENTRY main {
+    lhs = f8e4m3fn[256,128]{1,0} parameter(0)
+    rhs = f8e4m3fn[256,128]{1,0} parameter(1)
+    lhs_scale = f8e8m0fnu[8,128]{1,0} parameter(2)
+    rhs_scale = f8e8m0fnu[8,128]{1,0} parameter(3)
+    ROOT dot = bf16[128,128]{1,0} scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+      lhs_contracting_dims={0}, rhs_contracting_dims={0}
+  })";
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options()
+      .set_xla_gpu_experimental_scaled_dot_with_triton(false);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> m,
+                       ParseAndReturnVerifiedModule(hlo, config));
+  ComputationLayout computation_layout(
+      m->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(m.get()), absl_testing::IsOkAndHolds(true));
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_THAT(
+      root->operand(0),
+      GmockMatch(
+          m::Copy(m::Parameter(0)).WithShape(F8E4M3FN, {256, 128}, {0, 1})));
+  EXPECT_THAT(
+      root->operand(1),
+      GmockMatch(
+          m::Copy(m::Parameter(1)).WithShape(F8E4M3FN, {256, 128}, {0, 1})));
+  EXPECT_THAT(
+      root->operand(2),
+      GmockMatch(
+          m::Copy(m::Parameter(2)).WithShape(F8E8M0FNU, {8, 128}, {0, 1})));
+  EXPECT_THAT(
+      root->operand(3),
+      GmockMatch(
+          m::Copy(m::Parameter(3)).WithShape(F8E8M0FNU, {8, 128}, {0, 1})));
+}
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

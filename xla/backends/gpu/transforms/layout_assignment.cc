@@ -550,6 +550,48 @@ absl::Status GpuLayoutAssignment::AddDotBackendConstraints(
   return absl::OkStatus();
 }
 
+absl::Status GpuLayoutAssignment::AddScaledDotBackendConstraints(
+    LayoutConstraints* constraints, HloScaledDotInstruction* instruction) {
+  const DotDimensionNumbers& dnums = instruction->dot_dimension_numbers();
+  const HloInstruction* lhs = instruction->operand(0);
+  const HloInstruction* rhs = instruction->operand(1);
+  const HloInstruction* lhs_scale = instruction->operand(2);
+  const HloInstruction* rhs_scale = instruction->operand(3);
+
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<int64_t> lhs_non_contracting_dims,
+      GetNonContractingDims(lhs->shape(), dnums.lhs_batch_dimensions(),
+                            dnums.lhs_contracting_dimensions()));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<int64_t> rhs_non_contracting_dims,
+      GetNonContractingDims(rhs->shape(), dnums.rhs_batch_dimensions(),
+                            dnums.rhs_contracting_dimensions()));
+
+  ABSL_RETURN_IF_ERROR(SetDotOperandLayoutToMinorContracting(
+      instruction, 0, dnums.lhs_batch_dimensions(),
+      dnums.lhs_contracting_dimensions(), lhs_non_contracting_dims));
+  if (lhs_scale->shape().dimensions().size() ==
+      lhs->shape().dimensions().size()) {
+    ABSL_RETURN_IF_ERROR(SetDotOperandLayoutToMinorContracting(
+        instruction, 2, dnums.lhs_batch_dimensions(),
+        dnums.lhs_contracting_dimensions(), lhs_non_contracting_dims));
+  }
+
+  ABSL_RETURN_IF_ERROR(SetDotOperandLayoutToMinorContracting(
+      instruction, 1, dnums.rhs_batch_dimensions(),
+      dnums.rhs_contracting_dimensions(), rhs_non_contracting_dims));
+  if (rhs_scale->shape().dimensions().size() ==
+      rhs->shape().dimensions().size()) {
+    ABSL_RETURN_IF_ERROR(SetDotOperandLayoutToMinorContracting(
+        instruction, 3, dnums.rhs_batch_dimensions(),
+        dnums.rhs_contracting_dimensions(), rhs_non_contracting_dims));
+  }
+
+  ABSL_RETURN_IF_ERROR(SetInstructionLayout(
+      LayoutUtil::GetWithDefaultLayout(instruction->shape()), instruction));
+  return absl::OkStatus();
+}
+
 absl::Status GpuLayoutAssignment::AddBackendConstraints(
     LayoutConstraints* constraints) {
   // Add convolution constraints in reverse postorder that the earliest
@@ -576,6 +618,10 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
     } else if (HloPredicateIsOp<HloOpcode::kDot>(instruction)) {
       ABSL_RETURN_IF_ERROR(AddDotBackendConstraints(
           constraints, Cast<HloDotInstruction>(instruction)));
+    } else if (!debug_options.xla_gpu_experimental_scaled_dot_with_triton() &&
+               HloPredicateIsOp<HloOpcode::kScaledDot>(instruction)) {
+      ABSL_RETURN_IF_ERROR(AddScaledDotBackendConstraints(
+          constraints, Cast<HloScaledDotInstruction>(instruction)));
     } else if (HloPredicateIsOp<HloOpcode::kRaggedDot>(instruction)) {
       Shape op0_shape = instruction->operand(0)->shape();
       Shape op1_shape = instruction->operand(1)->shape();

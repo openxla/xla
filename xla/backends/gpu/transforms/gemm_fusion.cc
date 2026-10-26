@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/map_util.h"
 #include "xla/primitive_util.h"
@@ -383,8 +384,8 @@ FusionPlanAndRequirements BuildFusionPlanTowardOperands(
     HloInstruction& root_hlo, const DimensionOrder& root_dim_order,
     const std::optional<int>& max_params,
     const se::GpuComputeCapability& gpu_version,
-    const DotProperties& properties,
-    const DotRequirements& requirements_so_far) {
+    const DotProperties& properties, const DotRequirements& requirements_so_far,
+    bool is_scaled_dot = false) {
   CHECK(!max_params.has_value() || max_params.value() >= 1);
 
   FusionPlanBuilder fusion_builder;
@@ -426,6 +427,14 @@ FusionPlanAndRequirements BuildFusionPlanTowardOperands(
     num_requeued = 0;
 
     if (original_hlo.opcode() == HloOpcode::kParameter) {
+      fusion_builder.SetShouldFuseNode(node_id, false);
+      continue;
+    }
+
+    if (is_scaled_dot && (original_hlo.opcode() == HloOpcode::kTranspose ||
+                          (original_hlo.opcode() == HloOpcode::kBitcast &&
+                           !LayoutUtil::IsMonotonicWithDim0Major(
+                               original_hlo.operand(0)->shape().layout())))) {
       fusion_builder.SetShouldFuseNode(node_id, false);
       continue;
     }
@@ -543,13 +552,13 @@ HlosAndRequirements FuseTowardOperands(
     const std::optional<int>& max_params,
     const se::GpuComputeCapability& gpu_version,
     const DotProperties& properties, const DotRequirements& requirements_so_far,
-    HloComputation::Builder& builder,            // append
-    std::vector<HloInstruction*>& fusion_params  // append
-) {
+    HloComputation::Builder& builder,             // append
+    std::vector<HloInstruction*>& fusion_params,  // append
+    bool is_scaled_dot = false) {
   FusionPlanAndRequirements fusion_plan_and_reqs =
       BuildFusionPlanTowardOperands(root_hlo, root_dim_order, max_params,
                                     gpu_version, properties,
-                                    requirements_so_far);
+                                    requirements_so_far, is_scaled_dot);
   HloInstruction& fused_hlo_or_param = BuildFusionTowardOperands(
       fusion_plan_and_reqs.fusion_plan, builder, fusion_params);
   return HlosAndRequirements{&root_hlo, &fused_hlo_or_param,
@@ -578,10 +587,15 @@ absl::StatusOr<HlosAndRequirements> FuseDotOperand(
   ABSL_ASSIGN_OR_RETURN(const FusionContext context,
                         FusionContext::FromDotOperand(dot, operand_index));
   HloInstruction& operand = *dot.mutable_operand(operand_index);
-  return FuseTowardOperands(operand, context.dim_orders().at(&operand),
-                            TritonFusionAnalysis::kMaxParameterPerDotOperand,
-                            gpu_version, context.dot_properties(),
-                            context.requirements(), builder, fusion_params);
+  return FuseTowardOperands(
+      operand, context.dim_orders().at(&operand),
+      TritonFusionAnalysis::kMaxParameterPerDotOperand, gpu_version,
+      context.dot_properties(), context.requirements(), builder, fusion_params,
+      dot.opcode() == HloOpcode::kScaledDot &&
+          !dot.GetModule()
+               ->config()
+               .debug_options()
+               .xla_gpu_experimental_scaled_dot_with_triton());
 }
 
 // Grows the fusion toward the users.

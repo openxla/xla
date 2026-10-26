@@ -103,8 +103,11 @@ class BlockScalingRewriter : public OpExpanderPass {
 // Helper class for building cuDNN scaled dot operations.
 class CudnnScaledDotHelper {
  public:
-  // Check if the scaled dot fusion is supported by cuDNN.
-  static bool IsSupported(const HloScaledDotInstruction* scaled_dot);
+  // Check if the scaled dot is supported by cuDNN. When `is_fused` is true,
+  // also requires that all operands are single-use fusion parameters with
+  // contracting dimension at rank - 1 and default layout.
+  static bool IsSupported(const HloScaledDotInstruction* scaled_dot,
+                          bool is_fused = true);
 
   // Extract scale tensor swizzling from the block scaled dot fusion into
   // separate computations.

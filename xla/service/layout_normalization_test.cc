@@ -1103,5 +1103,27 @@ ENTRY main {
 )");
 }
 
+TEST_F(LayoutNormalizationTest, ScaledDotNormalizesNonDefaultOperandLayouts) {
+  const char* hlo = R"(
+HloModule m
+
+ENTRY main {
+  lhs = f8e4m3fn[256,128]{0,1} parameter(0)
+  rhs = f8e4m3fn[256,128]{0,1} parameter(1)
+  lhs_scale = f8e8m0fnu[8,128]{0,1} parameter(2)
+  rhs_scale = f8e8m0fnu[8,128]{0,1} parameter(3)
+  ROOT dot = bf16[128,128]{1,0} scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+    lhs_contracting_dims={0}, rhs_contracting_dims={0}
+}
+)";
+  CheckLayoutNormalization(hlo, R"(
+// CHECK-DAG: %[[LHS:.*]] = f8e4m3fn[128,256]{1,0} bitcast
+// CHECK-DAG: %[[RHS:.*]] = f8e4m3fn[128,256]{1,0} bitcast
+// CHECK-DAG: %[[LHS_SCALE:.*]] = f8e8m0fnu[128,8]{1,0} bitcast
+// CHECK-DAG: %[[RHS_SCALE:.*]] = f8e8m0fnu[128,8]{1,0} bitcast
+// CHECK: ROOT %{{.*}} = bf16[128,128]{1,0} scaled-dot(%[[LHS]], %[[RHS]], %[[LHS_SCALE]], %[[RHS_SCALE]]), lhs_contracting_dims={1}, rhs_contracting_dims={1}
+)");
+}
+
 }  // namespace
 }  // namespace xla

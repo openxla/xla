@@ -281,8 +281,20 @@ bool NVPTXCompiler::IsScaledDotSupportedByBackend(
   if (GpuCompiler::IsScaledDotSupportedByBackend(instr, gpu_target_config)) {
     return true;
   }
+  const DebugOptions& debug_options =
+      instr->GetModule()->config().debug_options();
+  const se::CudaComputeCapability* cuda_cc =
+      gpu_target_config.device_description.gpu_compute_capability()
+          .cuda_compute_capability();
+  if (cuda_cc == nullptr || !cuda_cc->IsAtLeastBlackwell() ||
+      se::dnn::VersionInfo(gpu_target_config.device_description.dnn_version()) <
+          kCudnnSupportsBlockScaledDot ||
+      debug_options.xla_gpu_experimental_disable_binary_libraries() ||
+      debug_options.xla_gpu_cudnn_gemm_fusion_level() <= 0) {
+    return false;
+  }
   if (const auto* scaled_dot = DynCast<HloScaledDotInstruction>(instr)) {
-    return CudnnScaledDotHelper::IsSupported(scaled_dot);
+    return CudnnScaledDotHelper::IsSupported(scaled_dot, /*is_fused=*/false);
   }
   return false;
 }
