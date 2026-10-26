@@ -31,6 +31,37 @@ limitations under the License.
 
 // C++ wrapper for the XLA FFI Kernel Registry API.
 namespace xla::ffi {
+
+// Bitmask of hardware or runtime features required by a registered kernel.
+// Registration fails if the target device does not support a requested feature.
+struct RequiredFeatures {
+  XLA_FFI_KernelFeatures bits = 0;
+
+  static constexpr RequiredFeatures None() { return {0}; }
+  static constexpr RequiredFeatures Multimem() {
+    return {XLA_FFI_KERNEL_FEATURE_MULTIMEM};
+  }
+
+  constexpr RequiredFeatures operator|(RequiredFeatures other) const {
+    return {bits | other.bits};
+  }
+  constexpr RequiredFeatures& operator|=(RequiredFeatures other) {
+    bits |= other.bits;
+    return *this;
+  }
+  constexpr bool Empty() const { return bits == 0; }
+};
+
+// Result of registering a device kernel with `KernelRegistry::Register`.
+struct RegisterResult {
+  const XLA_FFI_Kernel* kernel = nullptr;
+  // False for the single call that loads the kernel on the current device
+  // (across executable-wide deduplication); true if another call already loaded
+  // it or finished loading it concurrently. Does not synchronize caller side
+  // effects performed after `Register` returns.
+  bool already_cached = false;
+};
+
 namespace internal {
 
 // C++ wrapper for the XLA FFI KernelRegistry extension API.
@@ -50,27 +81,30 @@ class KernelRegistryBase {
       : api_(api), extension_(extension) {}
 
   // Registers a device kernel (PTX or CUBIN) for the current device and returns
-  // an opaque `XLA_FFI_Kernel*` handle owned by the executable. Pass a
-  // previously returned `cached_kernel` from the same executable to ensure it
-  // is loaded on the current device without rehashing `data`.
-  // Enabled only in `ExecutionStage::kPrepare` and
-  // `ExecutionStage::kInitialize`.
+  // an opaque `XLA_FFI_Kernel*` handle owned by the executable along with
+  // whether it was already cached on this device. Pass a previously returned
+  // `cached_kernel` from the same executable to ensure it is loaded on the
+  // current device without rehashing `data`. Enabled only in
+  // `ExecutionStage::kPrepare` and `ExecutionStage::kInitialize`.
   template <ExecutionStage s = stage,
             std::enable_if_t<s == ExecutionStage::kPrepare ||
                              s == ExecutionStage::kInitialize>* = nullptr>
-  StatusOr<const XLA_FFI_Kernel*> Register(std::string_view name,
-                                           const void* data, size_t size,
-                                           SourceFormat format, bool uses_pdl) {
-    return Register(name, data, size, format, uses_pdl,
+  StatusOr<RegisterResult> Register(std::string_view name, const void* data,
+                                    size_t size, SourceFormat format,
+                                    bool uses_pdl,
+                                    RequiredFeatures required_features) {
+    return Register(name, data, size, format, uses_pdl, required_features,
                     /*cached_kernel=*/nullptr);
   }
 
   template <ExecutionStage s = stage,
             std::enable_if_t<s == ExecutionStage::kPrepare ||
                              s == ExecutionStage::kInitialize>* = nullptr>
-  StatusOr<const XLA_FFI_Kernel*> Register(
-      std::string_view name, const void* data, size_t size, SourceFormat format,
-      bool uses_pdl, const XLA_FFI_Kernel* cached_kernel) {
+  StatusOr<RegisterResult> Register(std::string_view name, const void* data,
+                                    size_t size, SourceFormat format,
+                                    bool uses_pdl,
+                                    RequiredFeatures required_features,
+                                    const XLA_FFI_Kernel* cached_kernel) {
     if (data == nullptr) {
       return ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_INVALID_ARGUMENT,
@@ -91,23 +125,28 @@ class KernelRegistryBase {
         size,
         static_cast<XLA_FFI_SourceFormat>(format),
     };
+    XLA_FFI_KernelRegistry_Register_Result result{};
+    result.struct_size = XLA_FFI_KernelRegistry_Register_Result_STRUCT_SIZE;
+
     XLA_FFI_KernelRegistry_Register_Args args{};
     args.struct_size = XLA_FFI_KernelRegistry_Register_Args_STRUCT_SIZE;
     args.state = extension_->state;
     args.kernel_spec = &kernel_spec;
     args.uses_pdl = static_cast<int32_t>(uses_pdl);
     args.cached_kernel = cached_kernel;
+    args.result = &result;
+    args.required_features = required_features.bits;
 
     if (XLA_FFI_Error* err = extension_->api->register_kernel(&args)) {
       return ErrorPolicy::TakeError(api_, err);
     }
-    if (args.kernel == nullptr) {
+    if (result.kernel == nullptr) {
       return ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_INTERNAL,
           "Kernel handle is null but no error was returned during "
           "kernel registration.");
     }
-    return args.kernel;
+    return RegisterResult{result.kernel, result.already_cached != 0};
   }
 
   // Launches a previously registered `XLA_FFI_Kernel*` on the execution stream.
