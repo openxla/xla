@@ -33,6 +33,7 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/ThreadPool.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -92,11 +93,15 @@ class IfrtCompileAtomProgramPass
           compile_options_overrides,
       std::shared_ptr<AtomExecutableFutureMap> atom_executable_future_map)
       : atom_program_compiler_(std::move(compiler)),
+        hlo_program_thread_pool_(
+            std::make_shared<llvm::SingleThreadExecutor>()),
         hlo_program_context_(std::make_shared<mlir::MLIRContext>(
             mlir::MLIRContext::Threading::DISABLED)),
         compile_options_overrides_(std::move(compile_options_overrides)),
         atom_executable_future_map_(std::move(atom_executable_future_map)),
-        user_context_(UserContextScope::current()) {}
+        user_context_(UserContextScope::current()) {
+    hlo_program_context_->setThreadPool(*hlo_program_thread_pool_);
+  }
 
   llvm::StringRef getArgument() const override {
     return "ifrt-compile-atom-program";
@@ -157,6 +162,7 @@ class IfrtCompileAtomProgramPass
 
   std::shared_ptr<AtomProgramCompiler> atom_program_compiler_;
 
+  std::shared_ptr<llvm::SingleThreadExecutor> hlo_program_thread_pool_;
   std::shared_ptr<mlir::MLIRContext> hlo_program_context_;
 
   std::shared_ptr<

@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/ThreadPool.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -342,12 +343,14 @@ CompiledIfrtIrProgram::Create(
   // host memory usage since the new context does not need to store the interned
   // attributes from the deserialized StableHLO programs.
   if (ifrt_ir_program->OwnsMlirContext()) {
+    auto executor = std::make_unique<llvm::SingleThreadExecutor>();
     auto context = std::make_unique<mlir::MLIRContext>(
         mlir::MLIRContext::Threading::DISABLED);
+    context->setThreadPool(*executor);
     ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> cloned_module,
                           CloneModuleIntoContext(mlir_module, *context));
     ifrt_ir_program = std::make_unique<xla::ifrt::IfrtIRProgram>(
-        std::move(context), std::move(cloned_module));
+        std::move(executor), std::move(context), std::move(cloned_module));
   }
 
   // Extract input and output specs from the modified `mlir_module`, which has
