@@ -1132,9 +1132,8 @@ cc_library(
 xla_test(
     name = "gpu_client_stream_error_test",
     srcs = ["gpu_client_stream_error_test.cc"],
-    # TODO(b/570474829): Switch back to "nvgpu_any" once the test passes on H100.
     backends = [
-        "v100",
+        "nvgpu_any",
     ],
     # Each test case is a separate process since cuda stream errors are sticky.
     shard_count = 4,
@@ -1142,6 +1141,8 @@ xla_test(
         "gpu",
     ],
     deps = [
+        "//xla:literal",
+        "//xla:shape_util",
         "//xla/backends/gpu:ffi",
         "//xla/ffi",
         "//xla/hlo/builder:xla_computation",
@@ -1158,6 +1159,7 @@ xla_test(
         "//xla/stream_executor:stream",
         "//xla/tsl/lib/core:status_test_util",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
