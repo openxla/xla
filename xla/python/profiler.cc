@@ -20,9 +20,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/const_init.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"         // IWYU pragma: keep
@@ -31,6 +34,7 @@ limitations under the License.
 #include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
 #include "nanobind/stl/vector.h"       // IWYU pragma: keep
 #include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/nvtx_utils.h"
 #include "tsl/profiler/lib/profiler_session.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "tsl/profiler/protobuf/profiled_instructions.pb.h"
@@ -55,6 +59,20 @@ namespace nb = nanobind;
 
 namespace {
 
+// Returns a cached NVTX string handle for `label` in `domain`.
+tsl::profiler::StringHandle GetRegisteredNvtxString(
+    tsl::profiler::ProfilerDomainHandle domain, absl::string_view label) {
+  static absl::Mutex mu(absl::kConstInit);
+  static auto* const cache =
+      new absl::flat_hash_map<std::string, tsl::profiler::StringHandle>();
+  absl::MutexLock lock(mu);
+  auto [it, inserted] = cache->try_emplace(label, nullptr);
+  if (inserted) {
+    it->second = tsl::profiler::RegisterString(domain, it->first);
+  }
+  return it->second;
+}
+
 // Wraps TraceMe with an interface that takes python types.
 class TraceMeWrapper {
  public:
@@ -69,7 +87,20 @@ class TraceMeWrapper {
               }
               return name_and_metadata;
             },
-            /*level=*/1) {}
+            /*level=*/1),
+        nvtx_domain_(tsl::profiler::DefaultProfilerDomain()) {
+    if (TF_PREDICT_FALSE(nvtx_domain_ != nullptr)) {
+      tsl::profiler::StringHandle handle = GetRegisteredNvtxString(
+          nvtx_domain_, nb::cast<absl::string_view>(name));
+      tsl::profiler::detail::RangePush(nvtx_domain_, handle, /*schema_id=*/0,
+                                       /*payload=*/nullptr, /*payload_size=*/0);
+    }
+  }
+
+  TraceMeWrapper(const TraceMeWrapper&) = delete;
+  TraceMeWrapper& operator=(const TraceMeWrapper&) = delete;
+
+  ~TraceMeWrapper() { Stop(); }
 
   // nb::kwargs is taken by const reference to avoid python
   // reference-counting overhead.
@@ -83,9 +114,18 @@ class TraceMeWrapper {
     }
   }
 
-  void Stop() { traceme_.Stop(); }
+  void Stop() {
+    traceme_.Stop();
+    if (TF_PREDICT_FALSE(nvtx_domain_ != nullptr)) {
+      tsl::profiler::RangePop(nvtx_domain_);
+      nvtx_domain_ = nullptr;
+    }
+  }
 
-  static bool IsEnabled() { return tsl::profiler::TraceMe::Active(); }
+  static bool IsEnabled() {
+    return tsl::profiler::TraceMe::Active() ||
+           tsl::profiler::DefaultProfilerDomain() != nullptr;
+  }
 
  private:
   // Converts kwargs to strings and appends them to name encoded as TraceMe
@@ -107,6 +147,7 @@ class TraceMeWrapper {
   }
 
   tsl::profiler::TraceMe traceme_;
+  tsl::profiler::ProfilerDomainHandle nvtx_domain_ = nullptr;
 };
 
 tensorflow::ProfileOptions DefaultPythonProfileOptions() {
