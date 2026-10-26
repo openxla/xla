@@ -332,6 +332,17 @@ PjRtStreamExecutorRawClient::~PjRtStreamExecutorRawClient() {
       local_device_state->async_dispatch_thread()->Drain();
     }
   }
+  // Join async_work_runner_ so that tasks already scheduled on it (e.g. staged
+  // transfers) finish enqueueing onto device streams.
+  async_work_runner_.reset();
+  // Wait for all device work and callbacks so that all in-flight host staging
+  // buffers are released before host_memory_allocator_ is destroyed.
+  for (const auto& local_device_state : local_device_states_) {
+    absl::Status status = local_device_state->SynchronizeAllActivity();
+    if (!status.ok()) {
+      LOG(ERROR) << "Error when synchronizing device: " << status;
+    }
+  }
 }
 
 namespace {
