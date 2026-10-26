@@ -65,7 +65,7 @@ FusionCompiler::Options CreateDefaultOptions() {
   return options;
 }
 
-class BlockingThreadPool final : public tsl::thread::ThreadPoolInterface {
+class BlockingThreadPool final : public tsl::ThreadPoolInterface {
  public:
   void Schedule(std::function<void()> fn) override { fn(); }
   int NumThreads() const override { return 1; }
