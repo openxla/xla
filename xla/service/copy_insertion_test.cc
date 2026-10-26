@@ -3628,6 +3628,37 @@ ENTRY main {
                   op::Fusion(), op::Iota(), op::Iota(), op::Iota()));
 }
 
+// An entry parameter that is the root is modified in place by a side effecting
+// custom call whose aliased output is otherwise dead. The parameter value has
+// no explicit use at the root, but it is live until the end of the computation,
+// so the custom call must operate on a copy that is distinct from the root
+// buffer.
+TEST_F(CopyInsertionTest, InPlaceOperationOnParameterRootRegionAnalysis) {
+  const std::string& hlo_string = R"(
+HloModule TestModule
+
+ENTRY main {
+  ROOT p0 = f32[8,128] parameter(0)
+  cc = (f32[8,128]) custom-call(p0), custom_call_target="foo", custom_call_has_side_effect=true, output_to_operand_aliasing={{0}: (0, {})}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  CopyInsertion copy_insertion(&alias_info_,
+                               /*use_region_based_live_range_analysis=*/-1);
+  ASSERT_IS_OK(copy_insertion.Run(module.get()));
+  VLOG(2) << module->ToString();
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  HloInstruction* cc = FindInstruction(module.get(), "cc");
+  ASSERT_NE(cc, nullptr);
+  EXPECT_THAT(root, op::Copy(op::Parameter(0)));
+  EXPECT_NE(&alias_analysis->GetUniqueBufferAt(root),
+            &alias_analysis->GetUniqueBufferAt(cc, {0}));
+}
+
 TEST_F(CopyInsertionTest, NestedWhileAndConditional3) {
   const std::string& hlo_string = R"(
 HloModule TestModule
