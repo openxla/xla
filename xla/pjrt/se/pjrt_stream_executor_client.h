@@ -147,7 +147,6 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
       std::unique_ptr<HostMemoryAllocator> host_memory_allocator,
       bool should_stage_host_to_device_transfers,
       std::unique_ptr<AsyncWorkRunner> async_work_runner,
-      se::StreamExecutor* absl_nonnull executor,
       std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options = nullptr,
       bool confidential_computing_enabled = false);
   ~PjRtStreamExecutorRawClient() override;
@@ -205,14 +204,11 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
 
   void RecordMemoryStats() override;
 
-  se::StreamExecutor* executor() const { return executor_; }
-
   se::DeviceAddressAllocator* allocator() const { return allocator_; }
   LocalClient* client() const { return client_; }
 
   bool IsDmaMapped(const void* data, int64_t transfer_size) const override {
-    return executor_ != nullptr &&
-           executor_->IsHostMemoryPinned(data, transfer_size);
+    return IsHostMemoryPinned(data, transfer_size);
   }
 
   bool ShouldStageHostToDeviceTransfers(const void* data, int64_t size) const {
@@ -382,7 +378,10 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
   std::unique_ptr<se::DeviceAddressAllocator> owned_allocator_;
   LocalClient* client_ = nullptr;
 
-  // Allocator to be used for staging memory transfers to devices.
+  // Allocator to be used for staging memory transfers to devices. Explicitly
+  // destroyed in ~PjRtStreamExecutorRawClient() after all local devices are
+  // synchronized but before local_device_states_, because cached buffers may be
+  // unmapped via LocalDeviceState::HostMemoryUnregister().
   std::unique_ptr<HostMemoryAllocator> host_memory_allocator_;
   bool has_custom_host_memory_allocator_ = false;
 
@@ -392,7 +391,6 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
   bool should_stage_host_to_device_transfers_;
   bool confidential_computing_enabled_ = false;
 
-  se::StreamExecutor* absl_nonnull executor_;
   std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options_;
   tsl::thread::ThreadPool compile_thread_pool_;
 
