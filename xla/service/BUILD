@@ -1958,6 +1958,33 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "buffer_allocation",
+    srcs = [
+        "buffer_allocation.cc",
+    ],
+    hdrs = [
+        "buffer_allocation.h",
+    ],
+    visibility = internal_visibility([
+        ":friends",
+        "//xla:native_custom_call_handler_allowlist",
+    ]),
+    deps = [
+        ":buffer_assignment_proto_cc",
+        ":hlo_proto_cc",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:numbers",
+    ],
+)
+
+cc_library(
     name = "buffer_assignment",
     srcs = [
         "buffer_assignment.cc",
@@ -1970,6 +1997,7 @@ cc_library(
         "//xla:native_custom_call_handler_allowlist",
     ]),
     deps = [
+        ":buffer_allocation",
         ":buffer_assignment_proto_cc",
         ":buffer_value",
         ":call_graph",
@@ -1993,7 +2021,6 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:sorted_range",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -3584,6 +3611,7 @@ cc_library(
     srcs = ["buffer_value.cc"],
     hdrs = ["buffer_value.h"],
     deps = [
+        ":buffer_allocation",
         ":hlo_proto_cc",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
