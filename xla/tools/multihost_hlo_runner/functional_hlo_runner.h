@@ -238,7 +238,6 @@ struct RunningOptions {
   bool recreate_buffers_between_repeats = false;
   // This indicates whether we log the inputs and outputs to stderr.
   LogOutputMode log_input_output_mode = LogOutputMode::kNotLogOutput;
-  const MultiSliceConfig* multi_slice_config = nullptr;
   bool multipass_profiling = false;
   ProfilerInterface* profiler = nullptr;
   // If not null, profiles will be stored for this run, one per repeat.
