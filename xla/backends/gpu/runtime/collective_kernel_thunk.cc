@@ -625,6 +625,9 @@ absl::Status CollectiveKernelThunk::Initialize(const InitializeParams& params) {
   StreamState* state =
       per_device_state_.Find(params.executor->device_ordinal());
   TF_RET_CHECK(state != nullptr);
+  if (!state->scratch_symmetric_memory.Expired()) {
+    return absl::OkStatus();
+  }
 
   SymmetricParameters symmetric_parameters = GetSymmetricParameters(
       kernel_spec_, params.buffer_allocations, buffers_, state->scratch_slices);
