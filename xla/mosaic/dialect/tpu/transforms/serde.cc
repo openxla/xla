@@ -43,7 +43,8 @@ namespace {
 constexpr StringRef kMangledDialect = "stable_mosaic.";
 constexpr StringRef kVersionAttrName = "stable_mosaic.version";
 
-using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
+using UpgradeRuleType = jaxlib::mosaic::UpgradeRuleType;
+using DowngradeRuleType = jaxlib::mosaic::DowngradeRuleType;
 
 LogicalResult store_upgrade(Operation* op, int version, bool&) {
   if (version < 11) {
@@ -52,7 +53,7 @@ LogicalResult store_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult store_downgrade(Operation* op, int version, bool&) {
+LogicalResult store_downgrade(Operation* op, int version) {
   if (version < 11) {
     auto add_attr = op->getAttrOfType<BoolAttr>("add");
     if (!add_attr) {
@@ -81,7 +82,7 @@ LogicalResult dynamic_gather_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult dynamic_gather_downgrade(Operation* op, int version, bool&) {
+LogicalResult dynamic_gather_downgrade(Operation* op, int version) {
   if (version < 5) {
     auto dimensions_attr = op->getAttrOfType<DenseI32ArrayAttr>("dimensions");
     if (!dimensions_attr) {
@@ -191,7 +192,7 @@ LogicalResult scan_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult scan_downgrade(Operation* op, int version, bool&) {
+LogicalResult scan_downgrade(Operation* op, int version) {
   if (version < 18) {
     if (failed(downgrade_reduction_kind(op, ReductionKind::kMaxUI,
                                         ReductionKind::kMinUI))) {
@@ -229,12 +230,69 @@ LogicalResult reduce_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult reduce_downgrade(Operation* op, int version, bool&) {
+LogicalResult reduce_downgrade(Operation* op, int version) {
   if (version < 18) {
     return downgrade_reduction_kind(op, ReductionKind::kMaxSI,
                                     ReductionKind::kMinSI);
   }
   return success();
+}
+
+// Before version 20, tpu.reduce_index dropped the reduced dimension instead of
+// keeping it with size 1. Retypes the result of `op` to the other convention
+// and routes its uses through a reshape back to the original type.
+LogicalResult migrate_reduce_index(Operation* op, int version, bool upgrade) {
+  if (version >= 20) {
+    return success();
+  }
+  if (op->getNumOperands() != 1 || op->getNumResults() != 1) {
+    return op->emitError("Unexpected operand/result count in tpu.reduce_index");
+  }
+  auto in_ty = dyn_cast<VectorType>(op->getOperand(0).getType());
+  auto reduce_index_out_ty = dyn_cast<VectorType>(op->getResult(0).getType());
+  auto axis_attr = op->getAttrOfType<IntegerAttr>("axis");
+  if (in_ty == nullptr || reduce_index_out_ty == nullptr ||
+      axis_attr == nullptr) {
+    return op->emitError(
+        "Missing or invalid operand/result types or attributes in "
+        "tpu.reduce_index");
+  }
+  const int64_t axis = axis_attr.getInt();
+  if (axis < 0 || axis >= in_ty.getRank()) {
+    return op->emitError("Invalid axis in tpu.reduce_index");
+  }
+  SmallVector<int64_t> shape(in_ty.getShape());
+  if (upgrade) {
+    shape[axis] = 1;
+  } else {
+    shape.erase(shape.begin() + axis);
+  }
+  Value reduce_index_result = op->getResult(0);
+  OpBuilder builder(op->getContext());
+  builder.setInsertionPointAfter(op);
+  // RunSerde does not visit ops that rules insert, and it runs upgrade rules
+  // only when deserializing and downgrade rules only when serializing. So the
+  // reshape gets its final name here: plain after an upgrade, mangled after a
+  // downgrade.
+  OperationState state(op->getLoc(),
+                       ((upgrade ? StringRef() : kMangledDialect) +
+                        ReshapeOp::getOperationName())
+                           .str());
+  state.addTypes(reduce_index_out_ty);
+  state.addOperands(reduce_index_result);
+  Operation* reshape = builder.create(state);
+  reduce_index_result.setType(
+      VectorType::get(shape, reduce_index_out_ty.getElementType()));
+  reduce_index_result.replaceAllUsesExcept(reshape->getResult(0), reshape);
+  return success();
+}
+
+LogicalResult reduce_index_upgrade(Operation* op, int version, bool&) {
+  return migrate_reduce_index(op, version, /*upgrade=*/true);
+}
+
+LogicalResult reduce_index_downgrade(Operation* op, int version) {
+  return migrate_reduce_index(op, version, /*upgrade=*/false);
 }
 
 // Upgrades an operation from a version without subcore_id (v13) to HEAD (v14+)
@@ -409,7 +467,7 @@ LogicalResult enqueue_dma_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult enqueue_dma_downgrade(Operation* op, int version, bool&) {
+LogicalResult enqueue_dma_downgrade(Operation* op, int version) {
   if (version < 14) {
     auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
         OpTrait::AttrSizedOperandSegments<
@@ -484,7 +542,7 @@ LogicalResult iota_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult iota_downgrade(Operation* op, int version, bool&) {
+LogicalResult iota_downgrade(Operation* op, int version) {
   if (version < 6) {
     auto dimensions_attr = op->getAttrOfType<DenseI32ArrayAttr>("dimensions");
     if (!dimensions_attr) {
@@ -519,7 +577,7 @@ LogicalResult wait_dma2_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult wait_dma2_downgrade(Operation* op, int version, bool&) {
+LogicalResult wait_dma2_downgrade(Operation* op, int version) {
   if (version < 7) {
     auto operands = op->getAttrOfType<mlir::DenseI32ArrayAttr>(
         OpTrait::AttrSizedOperandSegments<
@@ -562,7 +620,7 @@ LogicalResult wait_dma_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult wait_dma_downgrade(Operation* op, int version, bool&) {
+LogicalResult wait_dma_downgrade(Operation* op, int version) {
   if (version < 14) {
     auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
         OpTrait::AttrSizedOperandSegments<
@@ -624,7 +682,7 @@ LogicalResult semaphore_signal_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult semaphore_signal_downgrade(Operation* op, int version, bool&) {
+LogicalResult semaphore_signal_downgrade(Operation* op, int version) {
   if (version < 14) {
     auto segment_attr = op->getAttrOfType<DenseI32ArrayAttr>(
         OpTrait::AttrSizedOperandSegments<
@@ -693,8 +751,7 @@ LogicalResult vector_multi_dim_reduce_upgrade(Operation* op, int version,
   return success();
 }
 
-LogicalResult vector_multi_dim_reduce_downgrade(Operation* op, int version,
-                                                bool&) {
+LogicalResult vector_multi_dim_reduce_downgrade(Operation* op, int version) {
   if (version < 3) {
     return op->emitOpError("Downgrade to version ")
            << version << " unsupported";
@@ -706,7 +763,7 @@ LogicalResult arith_constant_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult arith_constant_downgrade(Operation* op, int version, bool&) {
+LogicalResult arith_constant_downgrade(Operation* op, int version) {
   // The encoding of the boolean dense elements attr changed in version 10.
   // Before, it used to be a bitpacked value, but a splat true was represented
   // by a single byte with all bits set to 1. After the change, a splat true is
@@ -748,7 +805,7 @@ LogicalResult reinterpret_cast_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult reinterpret_cast_downgrade(Operation* op, int version, bool&) {
+LogicalResult reinterpret_cast_downgrade(Operation* op, int version) {
   if (version < 16) {
     auto operand_segment_sizes =
         op->getAttrOfType<DenseI32ArrayAttr>("operandSegmentSizes");
@@ -794,7 +851,7 @@ LogicalResult matmul_upgrade(Operation* op, int version, bool&) {
   return success();
 }
 
-LogicalResult matmul_downgrade(Operation* op, int version, bool&) {
+LogicalResult matmul_downgrade(Operation* op, int version) {
   if (version < 13) {
     auto transpose_lhs_hint_attr =
         op->getAttrOfType<BoolAttr>("transpose_lhs_hint");
@@ -837,14 +894,15 @@ LogicalResult repeat_upgrade(Operation* op, int version, bool& erased) {
   return success();
 }
 
-const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
-  static auto rules = new llvm::StringMap<SerdeRuleType>{
+const llvm::StringMap<UpgradeRuleType>& upgrade_rules() {
+  static auto rules = new llvm::StringMap<UpgradeRuleType>{
       {EnqueueDMAOp::getOperationName(), enqueue_dma_upgrade},
       {WaitDMA2Op::getOperationName(), wait_dma2_upgrade},
       {WaitDMAOp::getOperationName(), wait_dma_upgrade},
       {DynamicGatherOp::getOperationName(), dynamic_gather_upgrade},
       {ScanOp::getOperationName(), scan_upgrade},
       {ReduceOp::getOperationName(), reduce_upgrade},
+      {ReduceIndexOp::getOperationName(), reduce_index_upgrade},
       {IotaOp::getOperationName(), iota_upgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_upgrade},
       {vector::MultiDimReductionOp::getOperationName(),
@@ -858,14 +916,15 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   return *rules;
 }
 
-const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
-  static auto rules = new llvm::StringMap<SerdeRuleType>{
+const llvm::StringMap<DowngradeRuleType>& downgrade_rules() {
+  static auto rules = new llvm::StringMap<DowngradeRuleType>{
       {EnqueueDMAOp::getOperationName(), enqueue_dma_downgrade},
       {WaitDMA2Op::getOperationName(), wait_dma2_downgrade},
       {WaitDMAOp::getOperationName(), wait_dma_downgrade},
       {DynamicGatherOp::getOperationName(), dynamic_gather_downgrade},
       {ScanOp::getOperationName(), scan_downgrade},
       {ReduceOp::getOperationName(), reduce_downgrade},
+      {ReduceIndexOp::getOperationName(), reduce_index_downgrade},
       {IotaOp::getOperationName(), iota_downgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_downgrade},
       {StoreOp::getOperationName(), store_downgrade},
