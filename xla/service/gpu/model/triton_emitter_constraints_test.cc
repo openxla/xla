@@ -20,9 +20,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <utility>
-#include <variant>
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
