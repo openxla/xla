@@ -363,9 +363,6 @@ message DebugOptions {
   // Sets XLA:CPU's scheduler type.
   optional CpuSchedulerType xla_cpu_scheduler_type = 448;
 
-  // If true, XLA:CPU uses the new xtile lowering.
-  optional bool xla_cpu_use_new_xtile_lowering = 529;
-
   // When true, XLA:CPU uses XNNPACK to execute supported operations.
   optional bool xla_cpu_use_xnnpack = 359;
 
@@ -2007,6 +2004,7 @@ message DebugOptions {
   reserved "xla_cpu_matmul_tiling_n_dim";
   reserved "xla_cpu_sparse_cuda_threads";
   reserved "xla_cpu_use_fusion_emitters";
+  reserved "xla_cpu_use_new_xtile_lowering";
   reserved "xla_cpu_use_thunk_runtime";
   reserved "xla_cpu_use_xla_runtime";
   reserved "xla_detailed_logging_and_dumping";
@@ -2124,7 +2122,7 @@ message DebugOptions {
       278, 279, 281, 282, 286, 298, 299, 300, 302, 303, 309, 313, 314, 319, 320,
       325, 326, 332, 346, 352, 354, 355, 358, 361, 367, 369, 371, 376, 385, 388,
       389, 394, 396, 398, 402, 413, 420, 423, 430, 435, 443, 446, 450, 458, 464,
-      477, 480;
+      477, 480, 529;
 }
 
 // Contains flags which affects the GPU compilation result.
