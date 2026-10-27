@@ -56,7 +56,7 @@ limitations under the License.*/
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/buffer_assignment.h"
+#include "xla/service/buffer_allocation.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/launch_dimensions.h"

@@ -42,7 +42,7 @@ limitations under the License.
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/runtime/resource_use.h"
-#include "xla/service/buffer_assignment.h"
+#include "xla/service/buffer_allocation.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"

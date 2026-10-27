@@ -1888,6 +1888,33 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "buffer_allocation",
+    srcs = [
+        "buffer_allocation.cc",
+    ],
+    hdrs = [
+        "buffer_allocation.h",
+    ],
+    visibility = internal_visibility([
+        ":friends",
+        "//xla:native_custom_call_handler_allowlist",
+    ]),
+    deps = [
+        ":buffer_assignment_proto_cc",
+        ":hlo_proto_cc",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:numbers",
+    ],
+)
+
+cc_library(
     name = "buffer_assignment",
     srcs = [
         "buffer_assignment.cc",
@@ -1900,6 +1927,7 @@ cc_library(
         "//xla:native_custom_call_handler_allowlist",
     ]),
     deps = [
+        ":buffer_allocation",
         ":buffer_assignment_proto_cc",
         ":buffer_value",
         ":call_graph",
@@ -3479,6 +3507,7 @@ cc_library(
     srcs = ["buffer_value.cc"],
     hdrs = ["buffer_value.h"],
     deps = [
+        ":buffer_allocation",
         ":hlo_proto_cc",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -6604,7 +6633,7 @@ cc_library(
     srcs = ["shaped_slice.cc"],
     hdrs = ["shaped_slice.h"],
     deps = [
-        ":buffer_assignment",
+        ":buffer_allocation",
         ":shaped_slice_proto_cc",
         "//xla:shape_util",
         "//xla/tsl/platform:statusor",
@@ -6619,7 +6648,7 @@ xla_cc_test(
     name = "shaped_slice_test",
     srcs = ["shaped_slice_test.cc"],
     deps = [
-        ":buffer_assignment",
+        ":buffer_allocation",
         ":shaped_slice",
         ":shaped_slice_proto_cc",
         "//xla:shape_util",
