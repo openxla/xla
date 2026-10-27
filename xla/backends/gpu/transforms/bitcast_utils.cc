@@ -32,7 +32,9 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/shape.h"
 #include "xla/tsl/platform/statusor.h"
@@ -47,6 +49,13 @@ void CopyElementType(const Shape& source, Shape* destination) {
   destination->set_element_type(source.element_type());
   destination->mutable_layout()->set_element_size_in_bits(
       source.layout().element_size_in_bits());
+}
+
+bool IsLayoutChangingCopy(const HloInstruction* instr) {
+  return instr->opcode() == HloOpcode::kCopy &&
+         instr->operand_count() == 1 &&
+         !LayoutUtil::LayoutsInShapesEqual(instr->shape(),
+                                           instr->operand(0)->shape());
 }
 
 llvm::SmallVector<int64_t> GetInversePermutation(

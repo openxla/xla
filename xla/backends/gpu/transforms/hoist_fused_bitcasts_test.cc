@@ -592,6 +592,73 @@ ENTRY entry_computation {
   RunHoistFusedBitcasts(absl::Substitute(hlo, HloOpcodeString(opcode)));
 }
 
+TEST_P(HoistFusedBitcastsReshapeTest,
+       DoesNotHoistBitcastPastLayoutChangingCopy) {
+  HloOpcode opcode = GetParam();
+  absl::string_view hlo = R"(
+dot {
+  p0 = f32[2,2]{1,0} parameter(0)
+  copy = f32[2,2]{0,1} copy(p0)
+  b = f32[4,1]{1,0} $0(copy)
+  p1 = f32[1,1]{1,0} parameter(1)
+  ROOT d = f32[4,1]{1,0} dot(b, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = f32[2,2]{1,0} parameter(0)
+  p1 = f32[1,1]{1,0} parameter(1)
+  ROOT result = f32[4,1]{1,0} fusion(p0, p1), kind=kCustom, calls=dot,
+    backend_config={"fusion_backend_config": {"kind":"__triton_gemm",
+      "triton_gemm_config": {"block_m":"4","block_n":"1","block_k":"4",
+      "split_k":"1","num_stages":"1","num_warps":"1","num_ctas":"1"}}}
+})";
+  std::unique_ptr<VerifiedHloModule> module =
+      RunHoistFusedBitcasts(absl::Substitute(hlo, HloOpcodeString(opcode)),
+                            /*expect_change=*/false);
+  EXPECT_THAT(
+      RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
+                   absl::Substitute(R"(
+; CHECK-NOT: f32[4,1]{1,0} parameter
+; CHECK: f32[2,2]{0,1} copy(
+; CHECK: f32[4,1]{1,0} $0(
+)", HloOpcodeString(opcode))),
+      IsOkAndHolds(true));
+}
+
+TEST_P(HoistFusedBitcastsReshapeTest,
+       DoesNotHoistRootBitcastPastLayoutChangingCopy) {
+  HloOpcode opcode = GetParam();
+  absl::string_view hlo = R"(
+dot {
+  p0 = f32[2,2]{1,0} parameter(0)
+  p1 = f32[2,2]{1,0} parameter(1)
+  d = f32[2,2]{1,0} dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  copy = f32[2,2]{0,1} copy(d)
+  ROOT b = f32[4,1]{1,0} $0(copy)
+}
+
+ENTRY e {
+  p0 = f32[2,2]{1,0} parameter(0)
+  p1 = f32[2,2]{1,0} parameter(1)
+  ROOT result = f32[4,1]{1,0} fusion(p0, p1), kind=kCustom, calls=dot,
+    backend_config={"fusion_backend_config": {"kind":"__triton_gemm",
+      "triton_gemm_config": {"block_m":"4","block_n":"1","block_k":"4",
+      "split_k":"1","num_stages":"1","num_warps":"1","num_ctas":"1"}}}
+})";
+  std::unique_ptr<VerifiedHloModule> module =
+      RunHoistFusedBitcasts(absl::Substitute(hlo, HloOpcodeString(opcode)),
+                            /*expect_change=*/false);
+  EXPECT_THAT(
+      RunFileCheck(module->ToString(HloPrintOptions::ShortParsable()),
+                   absl::Substitute(R"(
+; CHECK: f32[2,2]{0,1} copy(
+; CHECK: f32[4,1]{1,0} $0(
+)", HloOpcodeString(opcode))),
+      IsOkAndHolds(true));
+}
+
 TEST_P(HoistFusedBitcastsReshapeTest, BitcastsAreHoistedPastCompare) {
   HloOpcode opcode = GetParam();
   absl::string_view hlo = R"(

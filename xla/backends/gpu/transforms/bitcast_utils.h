@@ -54,6 +54,11 @@ absl::StatusOr<BitcastParams> CalculateTransposeOfBitcast(
 // Copies the element type and size from `source` to `destination`.
 void CopyElementType(const Shape& source, Shape* destination);
 
+// Returns whether `instr` is a copy whose result layout differs from its
+// operand layout. Such a copy reorders bytes, so bitcasts cannot move across
+// it.
+bool IsLayoutChangingCopy(const HloInstruction* instr);
+
 namespace detail {
 
 // Returns the start indices of consecutive non-overlapping subsequences of `a`

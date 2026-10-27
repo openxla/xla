@@ -260,6 +260,100 @@ ENTRY e {
 )");
 }
 
+TEST_F(GemmFusionTestV2, BitcastDoesNotCrossLayoutChangingCopy) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  lhs = f64[] parameter(0)
+  rhs = f64[] parameter(1)
+  ROOT sum = f64[] add(lhs, rhs)
+}
+
+ENTRY e {
+  p0 = f64[192,4,3,4]{3,2,1,0} parameter(0)
+  c0 = f64[] constant(0)
+  reduce = f64[192,4,4]{2,1,0} reduce(p0, c0), dimensions={2},
+    to_apply=add
+  copy = f64[192,4,4]{1,2,0} copy(reduce)
+  b = f64[768,4]{1,0} bitcast(copy)
+  bt = f64[192,4,4]{2,1,0} bitcast(copy)
+  c = f64[4,4]{1,0} constant({
+      {1.0, 2.0, 3.0, 4.0},
+      {5.0, 6.0, 7.0, 8.0},
+      {9.0, 10.0, 11.0, 12.0},
+      {13.0, 14.0, 15.0, 16.0}})
+  d = f64[768,4]{1,0} dot(b, c),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  db = f64[192,4,4]{2,1,0} bitcast(d)
+  ROOT t = (f64[192,4,4], f64[192,4,4]) tuple(bt, db)
+})"));
+  ASSERT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(true));
+  MatchHloModule(*module, R"(
+; CHECK: %[[PARAM:.*]] = f64[192,4,4]{2,1,0} parameter(
+; CHECK: %[[COPY:.*]] = f64[192,4,4]{1,2,0} copy(%[[PARAM]])
+; CHECK: %[[BITCAST:.*]] = f64[768,4]{1,0} bitcast(%[[COPY]])
+)");
+}
+
+TEST_F(GemmFusionTestV2, BitcastDoesNotSinkPastLayoutChangingCopy) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+ENTRY e {
+  p0 = f64[4,4]{1,0} parameter(0)
+  p1 = f64[4,4]{1,0} parameter(1)
+  d = f64[4,4]{1,0} dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  b = f64[2,8]{1,0} bitcast(d)
+  copy = f64[2,8]{0,1} copy(b)
+  ROOT t = (f64[2,8]{0,1}) tuple(copy)
+})"));
+  ASSERT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(true));
+  MatchHloModule(*module, R"(
+; CHECK: %[[FUSION:.*]] = f64[4,4]{1,0} fusion(
+; CHECK: %[[BITCAST:.*]] = f64[2,8]{1,0} bitcast(%[[FUSION]])
+; CHECK: %[[COPY:.*]] = f64[2,8]{0,1} copy(%[[BITCAST]])
+)");
+}
+
+TEST_F(GemmFusionTestV2, SameLayoutCopyStillCommutesWithBitcast) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  lhs = f64[] parameter(0)
+  rhs = f64[] parameter(1)
+  ROOT sum = f64[] add(lhs, rhs)
+}
+
+ENTRY e {
+  p0 = f64[192,4,3,4]{3,2,1,0} parameter(0)
+  c0 = f64[] constant(0)
+  reduce = f64[192,4,4]{2,1,0} reduce(p0, c0), dimensions={2},
+    to_apply=add
+  copy = f64[192,4,4]{2,1,0} copy(reduce)
+  b = f64[768,4]{1,0} bitcast(copy)
+  bt = f64[192,4,4]{2,1,0} bitcast(copy)
+  c = f64[4,4]{1,0} constant({
+      {1.0, 2.0, 3.0, 4.0},
+      {5.0, 6.0, 7.0, 8.0},
+      {9.0, 10.0, 11.0, 12.0},
+      {13.0, 14.0, 15.0, 16.0}})
+  d = f64[768,4]{1,0} dot(b, c),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  db = f64[192,4,4]{2,1,0} bitcast(d)
+  ROOT t = (f64[192,4,4], f64[192,4,4]) tuple(bt, db)
+})"));
+  ASSERT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(true));
+  MatchHloModule(*module, R"(
+; CHECK: %[[REDUCE:.*]] = f64[192,4,4]{2,1,0} reduce(
+; CHECK: %[[COPY:.*]] = f64[192,4,4]{2,1,0} copy(%[[REDUCE]])
+; CHECK: %[[BITCAST:.*]] = f64[768,4]{1,0} bitcast(%[[REDUCE]])
+; CHECK: %[[FUSION:.*]] = f64[768,4]{1,0} fusion({{.*}}%[[BITCAST]])
+)");
+}
+
 TEST_F(GemmFusionTestV2, BitcastSinksPastBroadcast) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
