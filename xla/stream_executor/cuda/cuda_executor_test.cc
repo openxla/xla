@@ -148,6 +148,14 @@ TEST(CudaExecutorTest, CreateUnifiedMemoryAllocatorWorks) {
   EXPECT_EQ(allocation->address().size(), 1024);
 }
 
+TEST(CudaExecutorTest, HostMemoryUnregisterMaySynchronize) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  EXPECT_TRUE(executor->HostMemoryUnregisterMaySynchronize());
+}
+
 TEST(CudaExecutorTest, CreateHostMemoryAllocatorWorks) {
   ASSERT_OK_AND_ASSIGN(Platform * platform,
                        PlatformManager::PlatformWithName("CUDA"));

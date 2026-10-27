@@ -160,16 +160,23 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
       tsl::Env::Default(), thread_options, "py_xla_cleanup");
 }
 
-LocalDeviceState::~LocalDeviceState() {
+void LocalDeviceState::Destroy() {
+  if (compute_stream_ == nullptr) {
+    return;
+  }
+
+  // 1. Join scheduling threads first to ensure all previously scheduled work
+  // has been enqueued onto the streams before synchronizing activity, and to
+  // prevent any new work from being enqueued. Join execute_thread_ before
+  // async_dispatch_thread_ because tasks on execute_thread_ may schedule work
+  // onto async_dispatch_thread_.
+  execute_thread_.reset();
+  async_dispatch_thread_.reset();
+
   absl::Status status = SynchronizeAllActivity();
   if (!status.ok()) {
     LOG(ERROR) << "Error when closing device: " << status;
   }
-
-  // 1. Join scheduling threads first to prevent any new work from being
-  // enqueued.
-  execute_thread_.reset();
-  async_dispatch_thread_.reset();
 
   // 2. Clear streams and stream pools to trigger all pending
   // callbacks/finalizations.
@@ -216,7 +223,40 @@ LocalDeviceState::~LocalDeviceState() {
   cleanup_thread_.reset();
 
   // 4. Finally, clear compute events.
-  compute_events_.clear();
+  {
+    absl::MutexLock lock(mu_);
+    compute_events_.clear();
+  }
+}
+
+LocalDeviceState::~LocalDeviceState() { Destroy(); }
+
+void LocalDeviceState::DrainDispatchThreads() {
+  // Drain execute_thread_ before async_dispatch_thread_ because tasks on
+  // execute_thread_ (e.g. PjRtStreamExecutorRawLoadedExecutable::Execute) may
+  // schedule work onto async_dispatch_thread_.
+  if (execute_thread_ != nullptr) {
+    execute_thread_->Drain();
+  }
+  if (async_dispatch_thread_ != nullptr) {
+    async_dispatch_thread_->Drain();
+  }
+}
+
+absl::Status LocalDeviceState::HostMemoryRegister(void* data, size_t size) {
+  if (!executor_->HostMemoryRegister(data, size)) {
+    return absl::InternalError(absl::StrFormat(
+        "Failed to register host memory at address: %ps", data));
+  }
+  return absl::OkStatus();
+}
+
+absl::Status LocalDeviceState::HostMemoryUnregister(void* data) {
+  if (!executor_->HostMemoryUnregister(data)) {
+    return absl::InternalError(absl::StrFormat(
+        "Failed to unregister host memory at address: %ps", data));
+  }
+  return absl::OkStatus();
 }
 
 absl::Status LocalDeviceState::SynchronizeAllActivity() {
