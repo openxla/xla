@@ -1647,6 +1647,11 @@ class MemoryPressureTracker {
     CHECK_LT(buffer->id(), live_buffers_.size());
     return live_buffers_[buffer->id()];
   }
+  // Returns true if the buffer with the given id is live at the current state.
+  bool BufferIsLive(HloBuffer::Id id) const {
+    CHECK_LT(id, live_buffers_.size());
+    return live_buffers_[id];
+  }
   // Returns the actual memory usage at the current state. It is initial memory
   // + current memory usage inside of the computation.
   int64_t memory_usage() const {
