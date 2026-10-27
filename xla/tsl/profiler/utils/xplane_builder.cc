@@ -21,6 +21,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
@@ -32,9 +33,9 @@ limitations under the License.
 namespace tsl {
 namespace profiler {
 
-XPlaneBuilder::XPlaneBuilder(XPlane* plane)
+XPlaneBuilder::XPlaneBuilder(XPlane* absl_nonnull plane)
     : XStatsBuilder<XPlane>(plane, this), plane_(plane) {
-  for (auto& id_and_metadata : *plane->mutable_event_metadata()) {
+  for (auto& id_and_metadata : *plane_->mutable_event_metadata()) {
     auto& metadata = id_and_metadata.second;
     last_event_metadata_id_ =
         std::max<int64_t>(last_event_metadata_id_, metadata.id());
@@ -42,7 +43,7 @@ XPlaneBuilder::XPlaneBuilder(XPlane* plane)
       event_metadata_by_name_.try_emplace(metadata.name(), &metadata);
     }
   }
-  for (auto& id_and_metadata : *plane->mutable_stat_metadata()) {
+  for (auto& id_and_metadata : *plane_->mutable_stat_metadata()) {
     auto& metadata = id_and_metadata.second;
     last_stat_metadata_id_ =
         std::max<int64_t>(last_stat_metadata_id_, metadata.id());
@@ -50,7 +51,7 @@ XPlaneBuilder::XPlaneBuilder(XPlane* plane)
       stat_metadata_by_name_.try_emplace(metadata.name(), &metadata);
     }
   }
-  for (XLine& line : *plane->mutable_lines()) {
+  for (XLine& line : *plane_->mutable_lines()) {
     lines_by_id_.try_emplace(line.id(), &line);
   }
 }
