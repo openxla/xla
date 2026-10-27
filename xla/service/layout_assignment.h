@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
@@ -655,6 +656,19 @@ class LayoutAssignment : public HloModulePass, public HloDataflowPropagation {
   // in subclasses.
   virtual bool InstructionCanChangeLayoutInstance(
       const HloInstruction* instruction);
+
+  // Returns true if the layout constraints of `custom_call` may be ignored
+  // because it does not depend on the layouts of its operands and results.
+  // Layout assignment then neither copies its aliased operands nor constrains
+  // its operands, and afterwards sets its operand_shapes_with_layout to the
+  // assigned operand layouts. A backend that returns true for a custom call
+  // whose operands alias its results should also return false from
+  // InstructionCanChangeLayoutInstance for it, so that aliased operands and
+  // results get the same layout.
+  virtual bool IgnoreCustomCallLayoutConstraints(
+      const HloCustomCallInstruction* custom_call) {
+    return false;
+  }
 
   // The shapes in caller can be different from the shapes in callee. For
   // example, a shape (1024, 128) of an array can be distributed to four threads

@@ -2908,6 +2908,9 @@ absl::Status LayoutAssignment::AddCustomCallConstraints(
     }
     const HloCustomCallInstruction* custom_call =
         DynCast<HloCustomCallInstruction>(instruction);
+    if (IgnoreCustomCallLayoutConstraints(custom_call)) {
+      continue;
+    }
 
     ABSL_RETURN_IF_ERROR(SetInstructionLayout(custom_call->shape(), custom_call,
                                               /*mandatory=*/true, /*dfs=*/true,
@@ -3068,7 +3071,9 @@ absl::Status LayoutAssignment::PrepareHloForLayoutAssignment(
       // the operand buffers that aliases with the output.
       if (instruction->opcode() == HloOpcode::kSend) {
         operands_to_copy.emplace_back(instruction, 0);
-      } else if (IsLayoutConstrainedCustomCall(instruction)) {
+      } else if (IsLayoutConstrainedCustomCall(instruction) &&
+                 !IgnoreCustomCallLayoutConstraints(
+                     Cast<HloCustomCallInstruction>(instruction))) {
         // If there is both a layout constraint on operands of a custom call,
         // and aliasing constraint between output and operand, then it is
         // simpler and safer to copy the operand before we assign layouts.
@@ -3329,6 +3334,24 @@ absl::StatusOr<bool> LayoutAssignment::RunImpl(
   }
   ABSL_RETURN_IF_ERROR(PropagateComputationLayouts(module->entry_computation(),
                                                    entry_computation_layout_));
+
+  // Custom calls whose constraints were ignored now take the assigned layouts
+  // as their constraints.
+  for (HloComputation* computation : computations_to_work) {
+    for (HloInstruction* instruction : computation->instructions()) {
+      auto* custom_call = DynCast<HloCustomCallInstruction>(instruction);
+      if (custom_call == nullptr || !custom_call->layout_constrained() ||
+          !IgnoreCustomCallLayoutConstraints(custom_call)) {
+        continue;
+      }
+      std::vector<Shape> operand_shapes;
+      operand_shapes.reserve(custom_call->operand_count());
+      for (const HloInstruction* operand : custom_call->operands()) {
+        operand_shapes.push_back(operand->shape());
+      }
+      custom_call->set_operand_shapes_with_layout(std::move(operand_shapes));
+    }
+  }
 
   if constexpr (tsl::kIsDebugBuild) {
     // Before validation, update computation_layouts_ with the entry computation
