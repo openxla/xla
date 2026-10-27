@@ -619,6 +619,21 @@ bool IsDisjointInPlaceWhileTupleIndex(const HloInstruction* while_instr,
         return false;
       }
       next = async_start->operand(0);
+    } else if (IsUnpinViewCustomCall(curr) || IsPinViewCustomCall(curr)) {
+      next = curr->operand(0);
+    } else if ((curr->opcode() == HloOpcode::kCustomCall ||
+                curr->opcode() == HloOpcode::kFusion) &&
+               !curr->output_operand_aliasing().empty()) {
+      for (const auto& [output_idx, operand_pair] :
+           curr->output_operand_aliasing()) {
+        if (output_idx.empty() && operand_pair.second.empty()) {
+          next = curr->operand(operand_pair.first);
+          break;
+        }
+      }
+      if (next == nullptr) {
+        return false;
+      }
     } else if (is_transparent_wrapper(curr)) {
       next = curr->operand(0);
     } else {
@@ -763,6 +778,92 @@ absl::Status AddCopiesForWhile(const HloDataflowAnalysis& dataflow,
 
   body->set_root_instruction(root_copy);
   return absl::OkStatus();
+}
+
+// Returns true if (instruction, index) is produced by an active pinned
+// subbuffer view chain (rooted at a tpu_get_view / PinView custom call with
+// output_to_operand_aliasing) that has not yet been unpinned by
+// tpu_unpin_view / UnpinView. Interior values in a pinned view chain are
+// sub-slices of the underlying base buffer and cannot be copied in isolation;
+// interference is resolved by copying the base operand entering the head
+// tpu_get_view.
+bool IsInPinnedViewChain(const HloInstruction* instruction, ShapeIndex index,
+                         const AliasInfo* alias_info) {
+  const HloInstruction* curr = instruction;
+  ShapeIndex curr_index = std::move(index);
+  while (curr != nullptr) {
+    if (curr->opcode() == HloOpcode::kTuple && !curr_index.empty()) {
+      curr = curr->operand(curr_index.front());
+      curr_index.pop_front();
+      continue;
+    }
+    if (curr->opcode() == HloOpcode::kGetTupleElement) {
+      curr_index.push_front(curr->tuple_index());
+      curr = curr->operand(0);
+      continue;
+    }
+    if (curr->opcode() == HloOpcode::kBitcast && curr_index.empty()) {
+      curr = curr->operand(0);
+      continue;
+    }
+    if (curr->opcode() == HloOpcode::kAsyncStart && curr_index.size() >= 2 &&
+        curr_index[0] == 0 && curr_index[1] >= 0 &&
+        curr_index[1] < curr->operand_count()) {
+      int64_t op_num = curr_index[1];
+      curr_index.pop_front();
+      curr_index.pop_front();
+      curr = curr->operand(op_num);
+      continue;
+    }
+    if (IsUnpinViewCustomCall(curr)) {
+      return false;
+    }
+    if (IsPinViewCustomCall(curr) && !curr->output_operand_aliasing().empty()) {
+      return true;
+    }
+    std::optional<HloOperandIndex> aliased_operand;
+    for (const auto& [op_idx, out_idx] :
+         alias_info->GetInPlaceInputOutputPairs(curr)) {
+      if (out_idx == curr_index) {
+        aliased_operand = op_idx;
+        break;
+      }
+    }
+    if (!aliased_operand.has_value()) {
+      return false;
+    }
+    curr = curr->operand(aliased_operand->operand_number);
+    curr_index = aliased_operand->operand_index;
+  }
+  return false;
+}
+
+bool PinnedViewHasInPlaceWriter(const HloInstruction* instruction,
+                                const AliasInfo* alias_info) {
+  absl::InlinedVector<const HloInstruction*, 4> stack = {instruction};
+  absl::flat_hash_set<const HloInstruction*> visited = {instruction};
+  while (!stack.empty()) {
+    const HloInstruction* curr = stack.back();
+    stack.pop_back();
+    for (const HloInstruction* user : curr->users()) {
+      if (user->opcode() == HloOpcode::kBitcast) {
+        if (visited.insert(user).second) {
+          stack.push_back(user);
+        }
+        continue;
+      }
+      if (IsPinViewCustomCall(user) || IsUnpinViewCustomCall(user)) {
+        continue;
+      }
+      for (const auto& [op_idx, out_idx] :
+           alias_info->GetInPlaceInputOutputPairs(user)) {
+        if (user->operand(op_idx.operand_number) == curr) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 // Add copies for the operands of in-place operations. RemoveUnnecessaryCopies
@@ -1622,6 +1723,14 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
               operand_index.operand_number == 0) {
             continue;
           }
+          if (IsUnpinViewCustomCall(instruction) ||
+              (IsPinViewCustomCall(instruction) &&
+               !PinnedViewHasInPlaceWriter(instruction, alias_info_)) ||
+              IsInPinnedViewChain(
+                  instruction->operand(operand_index_in_this_intr),
+                  operand_index.operand_index, alias_info_)) {
+            continue;
+          }
           copied_operands.insert(operand_index_in_this_intr);
           ABSL_RETURN_IF_ERROR(AddCopiesForInPlaceOperation(
               instruction, operand_index_in_this_intr));
@@ -1704,7 +1813,13 @@ CopyInsertion::ComputeSpecialCaseCopies(
   // removed too aggressively by CopyRemoval.
   for (const HloValue* value : alias_analysis.dataflow_analysis().values()) {
     const HloBuffer& buffer = alias_analysis.GetBufferContainingValue(*value);
-    if (buffer.values().size() > 1 && ValueIsReadOnly(*value)) {
+    const bool has_modifying_alias =
+        absl::c_any_of(buffer.values(), [value](const HloValue* other) {
+          return other != value &&
+                 !IsPinViewCustomCall(other->defining_instruction()) &&
+                 !IsUnpinViewCustomCall(other->defining_instruction());
+        });
+    if (has_modifying_alias && ValueIsReadOnly(*value)) {
       VLOG(2) << "Value " << value->ToShortString()
               << " is read only, but its buffer contains more than one value. "
                  "Copying.";

@@ -1442,7 +1442,9 @@ class BufferInfoTracker {
         /*value=*/value,
         /*first_definition=*/first_definition,
         /*last_use=*/last_use,
-        /*buffer_size=*/shape_size_bytes(shape),
+        /*buffer_size=*/
+        value->ComputeSize(
+            [&](const BufferValue& v) { return shape_size_bytes(v.shape()); }),
         /*non_default_memory_space_layout=*/non_default_memory_space_layout,
     };
   }

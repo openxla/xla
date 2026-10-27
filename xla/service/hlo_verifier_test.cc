@@ -7579,5 +7579,46 @@ TEST_F(HloVerifierTest, FmaValidAndInvalid) {
                                  "floating for fma operation; got S32.")));
 }
 
+TEST_F(HloVerifierTest, ViewPinUnpinAliasingValidAndInvalid) {
+  const char* const kValidHlo = R"(
+  HloModule ViewPinUnpinValid
+  ENTRY Entry {
+    base = f32[8,128]{1,0:S(1)} parameter(0)
+    idx = s32[]{:S(2)} parameter(1)
+    c0 = s32[]{:S(2)} constant(0)
+    v0 = f32[1,128]{1,0:S(1)} custom-call(base, idx, c0),
+      custom_call_target="tpu_get_view",
+      output_to_operand_aliasing={{}: (0, {})}
+    ROOT base1 = f32[8,128]{1,0:S(1)} custom-call(v0),
+      custom_call_target="tpu_unpin_view",
+      output_to_operand_aliasing={{}: (0, {})}
+  })";
+  ASSERT_OK_AND_ASSIGN(auto valid_module,
+                       ParseAndReturnUnverifiedModule(kValidHlo));
+  EXPECT_OK(HloVerifier(/*layout_sensitive=*/true,
+                        /*allow_mixed_precision=*/false)
+                .Run(valid_module.get())
+                .status());
+
+  const char* const kInvalidSliceExceedsBaseHlo = R"(
+  HloModule ViewPinUnpinInvalidDim
+  ENTRY Entry {
+    base = f32[8,128]{1,0:S(1)} parameter(0)
+    idx = s32[]{:S(2)} parameter(1)
+    c0 = s32[]{:S(2)} constant(0)
+    ROOT v0 = f32[16,128]{1,0:S(1)} custom-call(base, idx, c0),
+      custom_call_target="tpu_get_view",
+      output_to_operand_aliasing={{}: (0, {})}
+  })";
+  ASSERT_OK_AND_ASSIGN(
+      auto invalid_dim_module,
+      ParseAndReturnUnverifiedModule(kInvalidSliceExceedsBaseHlo));
+  EXPECT_THAT(
+      HloVerifier(/*layout_sensitive=*/true, /*allow_mixed_precision=*/false)
+          .Run(invalid_dim_module.get()),
+      StatusIs(absl::StatusCode::kInternal,
+               HasSubstr("View slice dimension exceeds base dimension")));
+}
+
 }  // namespace
 }  // namespace xla

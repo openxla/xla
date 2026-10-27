@@ -86,8 +86,87 @@ using RematAlgorithm = HloRematerialization::RematAlgorithm;
 // . Cache IsRematerializable in HloRematItem?  Only correct if control
 //   predecessors and successors don't change.
 
+bool IsInPinnedViewChain(const HloInstruction* instruction, ShapeIndex index) {
+  const HloInstruction* curr = instruction;
+  ShapeIndex curr_index = std::move(index);
+  while (curr != nullptr) {
+    if (curr->opcode() == HloOpcode::kTuple && !curr_index.empty()) {
+      curr = curr->operand(curr_index.front());
+      curr_index.pop_front();
+      continue;
+    }
+    if (curr->opcode() == HloOpcode::kGetTupleElement) {
+      curr_index.push_front(curr->tuple_index());
+      curr = curr->operand(0);
+      continue;
+    }
+    if (curr->opcode() == HloOpcode::kBitcast && curr_index.empty()) {
+      curr = curr->operand(0);
+      continue;
+    }
+    if (IsUnpinViewCustomCall(curr)) {
+      return false;
+    }
+    if (IsPinViewCustomCall(curr) && !curr->output_operand_aliasing().empty()) {
+      return true;
+    }
+    std::optional<HloOperandIndex> aliased_operand;
+    for (const auto& [op_idx, out_idx] :
+         HloDataflowAnalysis::GetInPlaceInputOutputPairs(curr)) {
+      if (out_idx == curr_index) {
+        aliased_operand = op_idx;
+        break;
+      }
+    }
+    if (!aliased_operand.has_value()) {
+      return false;
+    }
+    curr = curr->operand(aliased_operand->operand_number);
+    curr_index = aliased_operand->operand_index;
+  }
+  return false;
+}
+
+bool FeedsPinnedViewChain(const HloInstruction* instruction) {
+  absl::InlinedVector<const HloInstruction*, 4> stack = {instruction};
+  absl::flat_hash_set<const HloInstruction*> visited = {instruction};
+  while (!stack.empty()) {
+    const HloInstruction* curr = stack.back();
+    stack.pop_back();
+    for (const HloInstruction* user : curr->users()) {
+      if ((IsPinViewCustomCall(user) &&
+           !user->output_operand_aliasing().empty()) ||
+          IsUnpinViewCustomCall(user)) {
+        return true;
+      }
+      if (user->opcode() == HloOpcode::kBitcast ||
+          user->opcode() == HloOpcode::kGetTupleElement) {
+        if (visited.insert(user).second) {
+          stack.push_back(user);
+        }
+      }
+    }
+  }
+  return false;
+}
+
+bool HasPinnedViewSubshape(const HloInstruction* instruction) {
+  bool found = false;
+  ShapeUtil::ForEachSubshape(
+      instruction->shape(), [&](const Shape&, const ShapeIndex& index) {
+        if (!found && IsInPinnedViewChain(instruction, index)) {
+          found = true;
+        }
+      });
+  return found;
+}
+
 // Returns true if the given instruction is rematerializable.
 bool IsRematerializable(const HloInstruction* instruction) {
+  if (HasPinnedViewSubshape(instruction) || FeedsPinnedViewChain(instruction) ||
+      absl::c_any_of(instruction->operands(), HasPinnedViewSubshape)) {
+    return false;
+  }
   if (instruction->opcode() == HloOpcode::kCopy) {
     if (LayoutUtil::Equal(instruction->shape().layout(),
                           instruction->operand(0)->shape().layout())) {
@@ -364,6 +443,28 @@ const HloValue* FindPassthroughSourceValue(
   if (instruction->opcode() == HloOpcode::kWhile) {
     return &dataflow_analysis.GetUniqueValueAt(instruction->operand(0), index);
   }
+  if (((IsPinViewCustomCall(instruction) &&
+        !instruction->output_operand_aliasing().empty()) ||
+       IsUnpinViewCustomCall(instruction)) &&
+      index.empty() && instruction->operand_count() > 0) {
+    const HloValueSet& values =
+        dataflow_analysis.GetValueSet(instruction->operand(0), {});
+    if (values.values().size() == 1) {
+      return &values.GetUniqueValue();
+    }
+  }
+  for (const auto& [op_idx, out_idx] :
+       HloDataflowAnalysis::GetInPlaceInputOutputPairs(instruction)) {
+    if (out_idx == index &&
+        IsInPinnedViewChain(instruction->operand(op_idx.operand_number),
+                            op_idx.operand_index)) {
+      const HloValueSet& values = dataflow_analysis.GetValueSet(
+          instruction->operand(op_idx.operand_number), op_idx.operand_index);
+      if (values.values().size() == 1) {
+        return &values.GetUniqueValue();
+      }
+    }
+  }
   if (instruction->opcode() != HloOpcode::kCall &&
       instruction->opcode() != HloOpcode::kConditional) {
     return nullptr;
@@ -478,6 +579,77 @@ UsesList GetUsers(const HloRematInstructionList& instruction_list,
     }
   }
   return users;
+}
+
+// Denylists instructions in `computation` that define, forward, or read a
+// buffer viewed by a `tpu_get_view` custom call, or read/write through a pinned
+// view chain. Rematerializing a view reader can move it past a subsequent write
+// to the base buffer, and rematerializing a direct base reader can move it past
+// an in-place write through a view.
+void DenylistViewAccesses(
+    const HloComputation* computation,
+    const HloDataflowAnalysis& dataflow_analysis,
+    const absl::flat_hash_set<absl::string_view>& execution_threads,
+    HloRematInstructionList* instruction_list) {
+  absl::flat_hash_set<const HloValue*> viewed_values;
+  for (const HloComputation* comp :
+       computation->parent()->MakeNonfusionComputations(execution_threads)) {
+    for (const HloInstruction* inst : comp->instructions()) {
+      if (!IsPinViewCustomCall(inst) ||
+          inst->output_operand_aliasing().empty() ||
+          inst->operand_count() == 0) {
+        continue;
+      }
+      const HloInstruction* curr = inst->operand(0);
+      ShapeIndex index;
+      while (curr != nullptr) {
+        for (const HloValue* value :
+             dataflow_analysis.GetValueSet(curr, index).values()) {
+          viewed_values.insert(value);
+        }
+        if (curr->opcode() == HloOpcode::kGetTupleElement) {
+          index.push_front(curr->tuple_index());
+          curr = curr->operand(0);
+        } else if (curr->opcode() == HloOpcode::kTuple && !index.empty()) {
+          curr = curr->operand(index.front());
+          index.pop_front();
+        } else if (curr->opcode() == HloOpcode::kBitcast ||
+                   curr->opcode() == HloOpcode::kOptimizationBarrier ||
+                   curr->opcode() == HloOpcode::kAddDependency) {
+          curr = curr->operand(0);
+        } else {
+          break;
+        }
+      }
+    }
+  }
+  if (viewed_values.empty()) {
+    return;
+  }
+  absl::flat_hash_set<const HloInstruction*> viewed_positions;
+  for (const HloValue* value : viewed_values) {
+    for (const HloPosition& pos : value->positions()) {
+      if (pos.instruction->parent() == computation) {
+        viewed_positions.insert(pos.instruction);
+      }
+    }
+  }
+  for (HloRematItem* item = instruction_list->first(); item != nullptr;
+       item = instruction_list->next(item)) {
+    if (HasPinnedViewSubshape(item->instruction)) {
+      viewed_positions.insert(item->instruction);
+    }
+  }
+  for (HloRematItem* item = instruction_list->first(); item != nullptr;
+       item = instruction_list->next(item)) {
+    const HloInstruction* inst = item->instruction;
+    if (viewed_positions.contains(inst) ||
+        absl::c_any_of(inst->operands(), [&](const HloInstruction* operand) {
+          return viewed_positions.contains(operand);
+        })) {
+      instruction_list->Denylist(inst);
+    }
+  }
 }
 
 // Class for tracking memory usage of a computation as the instructions are
@@ -850,7 +1022,8 @@ MemoryUsageTracker::MemoryUsageTracker(
         bool unused = false;
         UsesList passthrough_users =
             GetUsers(instruction_list_, value, dataflow_analysis, &unused);
-        if (!passthrough_users.empty() ||
+        if (!passthrough_users.empty() || IsPinViewCustomCall(instruction) ||
+            IsUnpinViewCustomCall(instruction) ||
             (instruction->opcode() == HloOpcode::kWhile &&
              InstructionOperandUsesBuffer(instruction, 0, value->index(),
                                           dataflow_analysis))) {
@@ -2823,6 +2996,8 @@ HloRematerialization::PeakPrioritySubPass(
   ABSL_RETURN_IF_ERROR(UpdateDataflowAnalysis(computation->parent()));
   MemoryUsageTracker memory_tracker(options_, computation, *dataflow_analysis_,
                                     *state.instruction_list);
+  DenylistViewAccesses(computation, *dataflow_analysis_, execution_threads,
+                       state.instruction_list);
   state.instruction_list->PromoteNodesToSkip([&](HloRematItem* item) {
     return memory_tracker.AllocatedSize(item) >= min_remat_size;
   });
@@ -3118,6 +3293,8 @@ absl::StatusOr<bool> HloRematerialization::RematerializeComputation(
   HloRematInstructionList instruction_list(schedule->sequence(computation));
   MemoryUsageTracker memory_tracker(options_, computation, *dataflow_analysis_,
                                     instruction_list);
+  DenylistViewAccesses(computation, *dataflow_analysis_, execution_threads,
+                       &instruction_list);
 
   instruction_list.PromoteNodesToSkip([&](HloRematItem* item) {
     return memory_tracker.AllocatedSize(item) >= min_remat_size;

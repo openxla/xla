@@ -1994,8 +1994,10 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     return true;
   }
   const bool shapes_equal = ShapeUtil::Equal(operand_subshape, user_subshape);
-  // Check that operand and user emit the same shape and layout.
-  if (shapes_equal) {
+  // Check that operand and user emit the same shape and layout, or that user is
+  // a subbuffer view pin/unpin operation aliasing operand into output.
+  if (shapes_equal || IsPinViewCustomCall(user) ||
+      IsUnpinViewCustomCall(user)) {
     // Must-alias relationship returns true for in-place operations (DUS and DUS
     // fusions), regardless of the backend.
     // Cache uses of value and alias_info->GetInPlaceInputOutputPairs to speed

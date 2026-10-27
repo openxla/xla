@@ -2764,5 +2764,388 @@ ENTRY %entry {
   EXPECT_FALSE(changed);
   EXPECT_LE(sizes.before_bytes, kMemoryLimitBytes);
 }
+
+TEST_F(RecomputeAndCompressHloRematerializationTest,
+       ViewPinUnpinChainReusesBaseBufferAndIsNotRematerialized) {
+  const std::string& hlo_string = R"hlo(
+HloModule ViewPinUnpinChainReusesBaseBuffer, is_scheduled=true
+
+ENTRY %entry {
+  %p0 = f32[] parameter(0)
+  %update = f32[1,1024]{1,0} parameter(1)
+  %idx = s32[] parameter(2)
+  %c0 = s32[] constant(0)
+  %base = f32[16,1024]{1,0} broadcast(%p0), dimensions={}
+  %v0 = f32[1,1024]{1,0} custom-call(%base, %idx, %c0),
+    custom_call_target="tpu_get_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  %v1 = f32[1,1024]{1,0} custom-call(%v0, %update),
+    custom_call_target="slice_writer",
+    output_to_operand_aliasing={{}: (0, {})}
+  %base1 = f32[16,1024]{1,0} custom-call(%v1),
+    custom_call_target="tpu_unpin_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  ROOT %out = f32[16,1024]{1,0} negate(%base1)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  HloRematerialization::RematerializationSizes sizes;
+  // %base, %v0, %v1, and %base1 all share a single 64KB buffer; together with
+  // the 64KB output of %out, peak memory is 128KB (plus small scalar/parameter
+  // overhead). Without passthrough tracking across the view chain, %base1 would
+  // be counted as a second 64KB allocation or %base would appear rematable.
+  constexpr int64_t kMemoryLimitBytes = 132 * 1024;
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       RunHloRematerialization(
+                           kMemoryLimitBytes, module.get(),
+                           /*min_remat_size=*/0,
+                           HloRematerialization::RematAlgorithm::kAlwaysRemat,
+                           /*block_size_limit=*/1,
+                           /*on_rematerialized=*/nullptr, &sizes));
+  EXPECT_FALSE(changed);
+  EXPECT_LE(sizes.before_bytes, kMemoryLimitBytes);
+  EXPECT_EQ(module->entry_computation()->GetInstructionWithName("base.remat"),
+            nullptr);
+}
+
+class ViewRematerializationTest
+    : public RecomputeAndCompressHloRematerializationTest,
+      public ::testing::WithParamInterface<
+          HloRematerialization::RematAlgorithm> {};
+
+// A reader of a tpu_get_view must not be rematerialized across a subsequent
+// dynamic update slice on the underlying base buffer.
+TEST_P(ViewRematerializationTest, ViewReaderNotRematerializedAcrossBaseDus) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule ViewReaderNotRematerializedAcrossBaseDus, is_scheduled=true
+
+ENTRY %entry {
+  %src = f32[4,8,128]{2,1,0} parameter(0)
+  %w = f32[128,1024]{1,0} parameter(1)
+  %upd = f32[1,8,128]{2,1,0} parameter(2)
+  %idx = s32[] parameter(3)
+  %p_scalar = f32[] parameter(4)
+  %c0 = s32[] constant(0)
+  %view = f32[1,8,128]{2,1,0} custom-call(%src, %idx, %c0, %c0),
+    custom_call_target="tpu_get_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  %slab = f32[8,128]{1,0} bitcast(%view)
+  %reader = f32[8,1024]{1,0} dot(%slab, %w),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %early_reader = f32[8,1024]{1,0} negate(%reader)
+  %early_slice = f32[1,1]{1,0} slice(%early_reader), slice={[0:1], [0:1]}
+  %bcast = f32[8,1024]{1,0} broadcast(%p_scalar), dimensions={}
+  %early_bcast = f32[8,1024]{1,0} negate(%bcast)
+  %dus = f32[4,8,128]{2,1,0} dynamic-update-slice(%src, %upd, %idx, %c0, %c0)
+  %peak = f32[8,1024]{1,0} add(%early_bcast, %early_bcast)
+  %late_use = f32[8,1024]{1,0} add(%reader, %bcast)
+  %late_combine = f32[8,1024]{1,0} add(%late_use, %peak)
+  ROOT %out = (f32[4,8,128]{2,1,0}, f32[8,1024]{1,0}, f32[1,1]{1,0})
+    tuple(%dus, %late_combine, %early_slice)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  HloRematerialization::RematerializationSizes sizes;
+  constexpr int64_t kMemoryLimitBytes = 64 * 1024;
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloRematerialization(kMemoryLimitBytes, module.get(),
+                              /*min_remat_size=*/0, GetParam(),
+                              /*block_size_limit=*/2,
+                              /*on_rematerialized=*/nullptr, &sizes));
+  EXPECT_TRUE(changed);
+  EXPECT_GT(sizes.before_bytes, kMemoryLimitBytes);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  HloComputation* entry = module->entry_computation();
+  EXPECT_NE(entry->GetInstructionWithName("bcast.remat"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("reader.remat"), nullptr);
+  const HloInstruction* reader = entry->GetInstructionWithName("reader");
+  const HloInstruction* dus = entry->GetInstructionWithName("dus");
+  const HloInstruction* late_use = entry->GetInstructionWithName("late_use");
+  ASSERT_NE(reader, nullptr);
+  ASSERT_NE(dus, nullptr);
+  ASSERT_NE(late_use, nullptr);
+  EXPECT_EQ(late_use->operand(0), reader);
+
+  const auto& seq = module->schedule().sequence(entry).instructions();
+  EXPECT_LT(absl::c_find(seq, reader) - seq.begin(),
+            absl::c_find(seq, dus) - seq.begin());
+}
+
+// A direct reader of the base buffer must not be rematerialized across a
+// subsequent write in place through a tpu_get_view.
+TEST_P(ViewRematerializationTest,
+       DirectBaseReaderNotRematerializedAcrossInPlaceViewWrite) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule DirectBaseReaderNotRematerialized, is_scheduled=true
+
+%writer_comp {
+  %p_view = f32[8,128]{1,0} parameter(0)
+  %p_upd = f32[1,128]{1,0} parameter(1)
+  %p_pos = s32[] parameter(2)
+  %zero = s32[] constant(0)
+  ROOT %dus = f32[8,128]{1,0} dynamic-update-slice(%p_view, %p_upd, %p_pos, %zero)
+}
+
+ENTRY %entry {
+  %src = f32[64,128]{1,0} parameter(0)
+  %w = f32[128,1024]{1,0} parameter(1)
+  %upd = f32[1,128]{1,0} parameter(2)
+  %idx = s32[] parameter(3)
+  %pos = s32[] parameter(4)
+  %p_scalar = f32[] parameter(5)
+  %c0 = s32[] constant(0)
+  %reader = f32[64,1024]{1,0} dot(%src, %w),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %early_reader = f32[64,1024]{1,0} negate(%reader)
+  %early_slice = f32[1,1]{1,0} slice(%early_reader), slice={[0:1], [0:1]}
+  %bcast = f32[64,1024]{1,0} broadcast(%p_scalar), dimensions={}
+  %early_bcast = f32[64,1024]{1,0} negate(%bcast)
+  %view = f32[8,128]{1,0} custom-call(%src, %idx, %c0),
+    custom_call_target="tpu_get_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  %writer = f32[8,128]{1,0} fusion(%view, %upd, %pos),
+    kind=kLoop, calls=%writer_comp,
+    output_to_operand_aliasing={{}: (0, {})}
+  %peak = f32[64,1024]{1,0} add(%early_bcast, %early_bcast)
+  %late_use = f32[64,1024]{1,0} add(%reader, %bcast)
+  %late_combine = f32[64,1024]{1,0} add(%late_use, %peak)
+  ROOT %out = (f32[8,128]{1,0}, f32[64,1024]{1,0}, f32[1,1]{1,0})
+    tuple(%writer, %late_combine, %early_slice)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  HloRematerialization::RematerializationSizes sizes;
+  constexpr int64_t kMemoryLimitBytes = 600 * 1024;
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloRematerialization(kMemoryLimitBytes, module.get(),
+                              /*min_remat_size=*/0, GetParam(),
+                              /*block_size_limit=*/2,
+                              /*on_rematerialized=*/nullptr, &sizes));
+  EXPECT_TRUE(changed);
+  EXPECT_GT(sizes.before_bytes, kMemoryLimitBytes);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  HloComputation* entry = module->entry_computation();
+  EXPECT_NE(entry->GetInstructionWithName("bcast.remat"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("reader.remat"), nullptr);
+  const HloInstruction* reader = entry->GetInstructionWithName("reader");
+  const HloInstruction* writer = entry->GetInstructionWithName("writer");
+  const HloInstruction* late_use = entry->GetInstructionWithName("late_use");
+  ASSERT_NE(reader, nullptr);
+  ASSERT_NE(writer, nullptr);
+  ASSERT_NE(late_use, nullptr);
+  EXPECT_EQ(late_use->operand(0), reader);
+
+  const auto& seq = module->schedule().sequence(entry).instructions();
+  EXPECT_LT(absl::c_find(seq, reader) - seq.begin(),
+            absl::c_find(seq, writer) - seq.begin());
+}
+
+// Neither the base definer nor a reader of a forwarded base value may be
+// rematerialized when the base reaches tpu_get_view through tuple,
+// optimization barrier, get tuple element, and add dependency.
+TEST_P(ViewRematerializationTest,
+       BaseDefinerAndForwardedReaderNotRematerializedAcrossForwardedView) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule ForwardedViewNotRematerialized, is_scheduled=true
+
+%writer_comp {
+  %p_view = f32[8,128]{1,0} parameter(0)
+  %p_upd = f32[1,128]{1,0} parameter(1)
+  %p_pos = s32[] parameter(2)
+  %zero = s32[] constant(0)
+  ROOT %dus = f32[8,128]{1,0} dynamic-update-slice(%p_view, %p_upd, %p_pos, %zero)
+}
+
+ENTRY %entry {
+  %p0 = f32[] parameter(0)
+  %p_aux = f32[1]{0} parameter(1)
+  %w = f32[128,1024]{1,0} parameter(2)
+  %upd = f32[1,128]{1,0} parameter(3)
+  %idx = s32[] parameter(4)
+  %pos = s32[] parameter(5)
+  %p_scalar = f32[] parameter(6)
+  %c0 = s32[] constant(0)
+  %base = f32[64,128]{1,0} broadcast(%p0), dimensions={}
+  %tup = (f32[64,128]{1,0}, f32[1]{0}) tuple(%base, %p_aux)
+  %bar = (f32[64,128]{1,0}, f32[1]{0}) opt-barrier(%tup)
+  %gte = f32[64,128]{1,0} get-tuple-element(%bar), index=0
+  %tok = token[] after-all()
+  %dep = f32[64,128]{1,0} add-dependency(%gte, %tok)
+  %forwarded_reader = f32[64,1024]{1,0} dot(%dep, %w),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %early_reader = f32[64,1024]{1,0} negate(%forwarded_reader)
+  %early_slice = f32[1,1]{1,0} slice(%early_reader), slice={[0:1], [0:1]}
+  %view = f32[8,128]{1,0} custom-call(%dep, %idx, %c0),
+    custom_call_target="tpu_get_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  %writer = f32[8,128]{1,0} fusion(%view, %upd, %pos),
+    kind=kLoop, calls=%writer_comp,
+    output_to_operand_aliasing={{}: (0, {})}
+  %bcast = f32[64,1024]{1,0} broadcast(%p_scalar), dimensions={}
+  %early_bcast = f32[64,1024]{1,0} negate(%bcast)
+  %peak = f32[64,1024]{1,0} add(%early_bcast, %early_bcast)
+  %late_base_use = f32[64,128]{1,0} negate(%base)
+  %late_reader_use = f32[64,1024]{1,0} add(%forwarded_reader, %bcast)
+  %late_combine = f32[64,1024]{1,0} add(%late_reader_use, %peak)
+  ROOT %out = (f32[8,128]{1,0}, f32[64,128]{1,0}, f32[64,1024]{1,0}, f32[1,1]{1,0})
+    tuple(%writer, %late_base_use, %late_combine, %early_slice)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  HloRematerialization::RematerializationSizes sizes;
+  constexpr int64_t kMemoryLimitBytes = 600 * 1024;
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloRematerialization(kMemoryLimitBytes, module.get(),
+                              /*min_remat_size=*/0, GetParam(),
+                              /*block_size_limit=*/2,
+                              /*on_rematerialized=*/nullptr, &sizes));
+  EXPECT_TRUE(changed);
+  EXPECT_GT(sizes.before_bytes, kMemoryLimitBytes);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  HloComputation* entry = module->entry_computation();
+  EXPECT_NE(entry->GetInstructionWithName("bcast.remat"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("base.remat"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("forwarded_reader.remat"), nullptr);
+  const HloInstruction* base = entry->GetInstructionWithName("base");
+  const HloInstruction* forwarded_reader =
+      entry->GetInstructionWithName("forwarded_reader");
+  const HloInstruction* writer = entry->GetInstructionWithName("writer");
+  const HloInstruction* late_base_use =
+      entry->GetInstructionWithName("late_base_use");
+  const HloInstruction* late_reader_use =
+      entry->GetInstructionWithName("late_reader_use");
+  ASSERT_NE(base, nullptr);
+  ASSERT_NE(forwarded_reader, nullptr);
+  ASSERT_NE(writer, nullptr);
+  ASSERT_NE(late_base_use, nullptr);
+  ASSERT_NE(late_reader_use, nullptr);
+  EXPECT_EQ(late_base_use->operand(0), base);
+  EXPECT_EQ(late_reader_use->operand(0), forwarded_reader);
+
+  const auto& seq = module->schedule().sequence(entry).instructions();
+  EXPECT_LT(absl::c_find(seq, forwarded_reader) - seq.begin(),
+            absl::c_find(seq, writer) - seq.begin());
+}
+
+// Neither a tuple output view writer (with output aliasing at {0}) nor a
+// reader of its aliased tuple element may be rematerialized.
+TEST_P(ViewRematerializationTest,
+       TupleViewWriterAndGteReaderNotRematerialized) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule TupleViewWriterAndGteReaderNotRematerialized, is_scheduled=true
+
+%tuple_writer_comp {
+  %p_view = f32[8,128]{1,0} parameter(0)
+  %p_upd = f32[1,128]{1,0} parameter(1)
+  %p_pos = s32[] parameter(2)
+  %p_scalar = f32[] parameter(3)
+  %zero = s32[] constant(0)
+  %dus = f32[8,128]{1,0} dynamic-update-slice(%p_view, %p_upd, %p_pos, %zero)
+  %aux = f32[64,1024]{1,0} broadcast(%p_scalar), dimensions={}
+  ROOT %t = (f32[8,128]{1,0}, f32[64,1024]{1,0}) tuple(%dus, %aux)
+}
+
+ENTRY %entry {
+  %src = f32[64,128]{1,0} parameter(0)
+  %upd = f32[1,128]{1,0} parameter(1)
+  %w = f32[128,1024]{1,0} parameter(2)
+  %idx = s32[] parameter(3)
+  %pos = s32[] parameter(4)
+  %p_scalar = f32[] parameter(5)
+  %c0 = s32[] constant(0)
+  %view = f32[8,128]{1,0} custom-call(%src, %idx, %c0),
+    custom_call_target="tpu_get_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  %tuple_writer = (f32[8,128]{1,0}, f32[64,1024]{1,0})
+    fusion(%view, %upd, %pos, %p_scalar),
+    kind=kLoop, calls=%tuple_writer_comp,
+    output_to_operand_aliasing={{0}: (0, {})}
+  %gte0 = f32[8,128]{1,0} get-tuple-element(%tuple_writer), index=0
+  %gte1 = f32[64,1024]{1,0} get-tuple-element(%tuple_writer), index=1
+  %gte_reader = f32[8,1024]{1,0} dot(%gte0, %w),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %unpin = f32[64,128]{1,0} custom-call(%gte0),
+    custom_call_target="tpu_unpin_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  %dus_base = f32[64,128]{1,0} dynamic-update-slice(%unpin, %upd, %idx, %c0)
+  %early_use = f32[64,1024]{1,0} negate(%gte1)
+  %early_reader_use = f32[8,1024]{1,0} negate(%gte_reader)
+  %early_slice0 = f32[1,1]{1,0} slice(%early_use), slice={[0:1], [0:1]}
+  %early_slice1 = f32[1,1]{1,0} slice(%early_reader_use), slice={[0:1], [0:1]}
+  %bcast = f32[64,1024]{1,0} broadcast(%p_scalar), dimensions={}
+  %early_bcast = f32[64,1024]{1,0} negate(%bcast)
+  %peak = f32[64,1024]{1,0} add(%early_bcast, %early_bcast)
+  %late_writer_use = f32[64,1024]{1,0} add(%gte1, %bcast)
+  %late_combine = f32[64,1024]{1,0} add(%late_writer_use, %peak)
+  %late_reader_use = f32[8,1024]{1,0} negate(%gte_reader)
+  ROOT %out = (f32[64,128]{1,0}, f32[64,1024]{1,0}, f32[8,1024]{1,0},
+               f32[1,1]{1,0}, f32[1,1]{1,0})
+    tuple(%dus_base, %late_combine, %late_reader_use,
+          %early_slice0, %early_slice1)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  HloRematerialization::RematerializationSizes sizes;
+  constexpr int64_t kMemoryLimitBytes = 600 * 1024;
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloRematerialization(kMemoryLimitBytes, module.get(),
+                              /*min_remat_size=*/0, GetParam(),
+                              /*block_size_limit=*/2,
+                              /*on_rematerialized=*/nullptr, &sizes));
+  EXPECT_TRUE(changed);
+  EXPECT_GT(sizes.before_bytes, kMemoryLimitBytes);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  HloComputation* entry = module->entry_computation();
+  EXPECT_NE(entry->GetInstructionWithName("bcast.remat"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("tuple_writer.remat"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("gte0.remat"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("gte_reader.remat"), nullptr);
+  const HloInstruction* tuple_writer =
+      entry->GetInstructionWithName("tuple_writer");
+  const HloInstruction* gte1 = entry->GetInstructionWithName("gte1");
+  const HloInstruction* gte_reader =
+      entry->GetInstructionWithName("gte_reader");
+  const HloInstruction* unpin = entry->GetInstructionWithName("unpin");
+  const HloInstruction* dus_base = entry->GetInstructionWithName("dus_base");
+  const HloInstruction* late_writer_use =
+      entry->GetInstructionWithName("late_writer_use");
+  const HloInstruction* late_reader_use =
+      entry->GetInstructionWithName("late_reader_use");
+  ASSERT_NE(tuple_writer, nullptr);
+  ASSERT_NE(gte1, nullptr);
+  ASSERT_NE(gte_reader, nullptr);
+  ASSERT_NE(unpin, nullptr);
+  ASSERT_NE(dus_base, nullptr);
+  ASSERT_NE(late_writer_use, nullptr);
+  ASSERT_NE(late_reader_use, nullptr);
+  EXPECT_EQ(gte1->operand(0), tuple_writer);
+  EXPECT_EQ(late_writer_use->operand(0), gte1);
+  EXPECT_EQ(late_reader_use->operand(0), gte_reader);
+
+  const auto& seq = module->schedule().sequence(entry).instructions();
+  EXPECT_LT(absl::c_find(seq, gte_reader) - seq.begin(),
+            absl::c_find(seq, unpin) - seq.begin());
+  EXPECT_LT(absl::c_find(seq, gte_reader) - seq.begin(),
+            absl::c_find(seq, dus_base) - seq.begin());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ViewRematerializationTestInstantiation, ViewRematerializationTest,
+    ::testing::Values(HloRematerialization::RematAlgorithm::kAlwaysRemat,
+                      HloRematerialization::RematAlgorithm::kPeakPriority));
+
 }  // namespace
 }  // namespace xla

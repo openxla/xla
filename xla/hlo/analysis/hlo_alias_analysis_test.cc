@@ -1506,5 +1506,45 @@ ENTRY main {
   EXPECT_EQ(analysis.GetUniqueBufferAt(body_root, {0}), while_buffer);
 }
 
+TEST_F(HloAliasAnalysisTest, ViewPinUnpinHeterogeneousBuffer) {
+  absl::string_view hlo_string = R"(
+HloModule ViewPinUnpinHeterogeneousBuffer
+
+ENTRY main {
+  p0 = f32[8,128] parameter(0)
+  update = f32[1,128] parameter(1)
+  idx = s32[] parameter(2)
+  c0 = s32[] constant(0)
+  base = f32[8,128] negate(p0)
+  v0 = f32[1,128] custom-call(base, idx, c0),
+    custom_call_target="tpu_get_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  v1 = f32[1,128] custom-call(v0, update),
+    custom_call_target="slice_writer",
+    output_to_operand_aliasing={{}: (0, {})}
+  ROOT base1 = f32[8,128] custom-call(v1),
+    custom_call_target="tpu_unpin_view",
+    output_to_operand_aliasing={{}: (0, {})}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  const HloAliasAnalysis& analysis = RunAnalysis();
+
+  const HloInstruction* base = FindInstruction(module_.get(), "base");
+  const HloInstruction* v0 = FindInstruction(module_.get(), "v0");
+  const HloInstruction* v1 = FindInstruction(module_.get(), "v1");
+  const HloInstruction* base1 = FindInstruction(module_.get(), "base1");
+
+  const HloBuffer& buffer = analysis.GetUniqueBufferAt(base);
+  EXPECT_EQ(analysis.GetUniqueBufferAt(v0), buffer);
+  EXPECT_EQ(analysis.GetUniqueBufferAt(v1), buffer);
+  EXPECT_EQ(analysis.GetUniqueBufferAt(base1), buffer);
+  EXPECT_EQ(buffer.ComputeSize([](const BufferValue& v) {
+    return ShapeUtil::ByteSizeOf(v.shape(), 8);
+  }),
+            8 * 128 * sizeof(float));
+  EXPECT_FALSE(AnyValuesInSameBufferInterfere());
+}
+
 }  // namespace
 }  // namespace xla

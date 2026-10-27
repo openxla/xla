@@ -3233,6 +3233,19 @@ class HloRngBitGeneratorInstruction : public HloInstruction {
 
 inline constexpr absl::string_view kPinCustomCallTarget = "Pin";
 inline constexpr absl::string_view kUnpinCustomCallTarget = "Unpin";
+inline constexpr absl::string_view kPinViewCustomCallTarget = "tpu_get_view";
+inline constexpr absl::string_view kUnpinViewCustomCallTarget =
+    "tpu_unpin_view";
+
+inline bool IsPinViewCustomCall(const HloInstruction* hlo) {
+  return hlo->IsCustomCall(kPinViewCustomCallTarget) ||
+         hlo->IsCustomCall("PinView");
+}
+
+inline bool IsUnpinViewCustomCall(const HloInstruction* hlo) {
+  return hlo->IsCustomCall(kUnpinViewCustomCallTarget) ||
+         hlo->IsCustomCall("UnpinView");
+}
 // Target name of the custom call that fans out a buffer into concurrent stream
 // views.
 inline constexpr absl::string_view kFanOutCustomCallTarget = "FanOut";

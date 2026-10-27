@@ -6242,6 +6242,119 @@ ENTRY main {
             &alias_analysis->GetUniqueBufferAt(cond, {0}));
 }
 
+TEST_F(CopyInsertionTest, ViewPinUnpinInPlaceElidesCopyWhenNoInterference) {
+  absl::string_view hlo_string = R"(
+HloModule ViewPinUnpinInPlaceElidesCopy
+
+ENTRY main {
+  p0 = f32[8,128] parameter(0)
+  update = f32[1,128] parameter(1)
+  idx = s32[] parameter(2)
+  c0 = s32[] constant(0)
+  base = f32[8,128] negate(p0)
+  v0 = f32[1,128] custom-call(base, idx, c0),
+    custom_call_target="tpu_get_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  v1 = f32[1,128] custom-call(v0, update),
+    custom_call_target="slice_writer",
+    output_to_operand_aliasing={{}: (0, {})}
+  ROOT base1 = f32[8,128] custom-call(v1),
+    custom_call_target="tpu_unpin_view",
+    output_to_operand_aliasing={{}: (0, {})}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  InsertCopies(module.get());
+  EXPECT_EQ(CountCopies(*module), 0);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  const HloInstruction* base = FindInstruction(module.get(), "base");
+  const HloInstruction* v0 = FindInstruction(module.get(), "v0");
+  const HloInstruction* v1 = FindInstruction(module.get(), "v1");
+  const HloInstruction* base1 = FindInstruction(module.get(), "base1");
+  EXPECT_EQ(&alias_analysis->GetUniqueBufferAt(base),
+            &alias_analysis->GetUniqueBufferAt(v0));
+  EXPECT_EQ(&alias_analysis->GetUniqueBufferAt(base),
+            &alias_analysis->GetUniqueBufferAt(v1));
+  EXPECT_EQ(&alias_analysis->GetUniqueBufferAt(base),
+            &alias_analysis->GetUniqueBufferAt(base1));
+}
+
+TEST_F(CopyInsertionTest, ViewPinUnpinInsertsBaseCopyWhenBaseReadAfterWrite) {
+  absl::string_view hlo_string = R"(
+HloModule ViewPinUnpinBaseCopyWhenReadAfter
+
+ENTRY main {
+  p0 = f32[8,128] parameter(0)
+  update = f32[1,128] parameter(1)
+  idx = s32[] parameter(2)
+  c0 = s32[] constant(0)
+  base = f32[8,128] negate(p0)
+  v0 = f32[1,128] custom-call(base, idx, c0),
+    custom_call_target="tpu_get_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  v1 = f32[1,128] custom-call(v0, update),
+    custom_call_target="slice_writer",
+    output_to_operand_aliasing={{}: (0, {})}
+  base1 = f32[8,128] custom-call(v1),
+    custom_call_target="tpu_unpin_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  ROOT out = f32[8,128] add(base, base1)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  InsertCopies(module.get());
+  EXPECT_EQ(CountCopies(*module), 1);
+
+  const HloInstruction* base = FindInstruction(module.get(), "base");
+  const HloInstruction* v0 = FindInstruction(module.get(), "v0");
+  const HloInstruction* v1 = FindInstruction(module.get(), "v1");
+  const HloInstruction* base1 = FindInstruction(module.get(), "base1");
+  ASSERT_EQ(v0->operand(0)->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(v0->operand(0)->operand(0), base);
+  EXPECT_TRUE(ShapeUtil::Equal(v0->operand(0)->shape(), base->shape()));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  EXPECT_NE(&alias_analysis->GetUniqueBufferAt(base),
+            &alias_analysis->GetUniqueBufferAt(v0));
+  EXPECT_EQ(&alias_analysis->GetUniqueBufferAt(v0->operand(0)),
+            &alias_analysis->GetUniqueBufferAt(v0));
+  EXPECT_EQ(&alias_analysis->GetUniqueBufferAt(v0),
+            &alias_analysis->GetUniqueBufferAt(v1));
+  EXPECT_EQ(&alias_analysis->GetUniqueBufferAt(v0),
+            &alias_analysis->GetUniqueBufferAt(base1));
+}
+
+TEST_F(CopyInsertionTest, ViewPinUnpinReadOnlyEntryParamNoCopy) {
+  absl::string_view hlo_string = R"(
+HloModule ViewPinUnpinReadOnlyEntryParamNoCopy
+
+ENTRY main {
+  p0 = f32[8,128] parameter(0)
+  idx = s32[] parameter(1)
+  c0 = s32[] constant(0)
+  v0 = f32[1,128] custom-call(p0, idx, c0),
+    custom_call_target="tpu_get_view",
+    output_to_operand_aliasing={{}: (0, {})}
+  reader = f32[1,128] negate(v0)
+  base1 = f32[8,128] custom-call(v0),
+    custom_call_target="tpu_unpin_view",
+    custom_call_has_side_effect=true,
+    output_to_operand_aliasing={{}: (0, {})},
+    control-predecessors={reader}
+  ROOT out = f32[1,128] add(reader, reader)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  InsertCopies(module.get());
+  EXPECT_EQ(CountCopies(*module), 0);
+}
+
 INSTANTIATE_TEST_SUITE_P(CondOrder, CopyInsertionCondOrderTest,
                          ::testing::Combine(::testing::Bool(),
                                             ::testing::Values(int64_t{0},

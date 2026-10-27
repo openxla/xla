@@ -1480,5 +1480,61 @@ TEST_F(HloLiveRangeTest, NestedAsyncViaCall) {
   EXPECT_LE(z_range.start, z_range.end);
 }
 
+TEST_F(HloLiveRangeTest, ViewPinUnpinHeterogeneousBufferLiveRange) {
+  const std::string hlo_string = R"hlo(
+  HloModule ViewPinUnpinHeterogeneousBufferLiveRange, is_scheduled=true
+
+  ENTRY %main {
+    %p0 = f32[8,128] parameter(0)
+    %update = f32[1,128] parameter(1)
+    %idx = s32[] parameter(2)
+    %c0 = s32[] constant(0)
+    %base = f32[8,128] negate(%p0)
+    %v0 = f32[1,128] custom-call(%base, %idx, %c0),
+      custom_call_target="tpu_get_view",
+      output_to_operand_aliasing={{}: (0, {})}
+    %v1 = f32[1,128] custom-call(%v0, %update),
+      custom_call_target="slice_writer",
+      output_to_operand_aliasing={{}: (0, {})}
+    %extra = f32[1,128] negate(%update)
+    %base1 = f32[8,128] custom-call(%v1),
+      custom_call_target="tpu_unpin_view",
+      output_to_operand_aliasing={{}: (0, {})}
+    ROOT %out = (f32[8,128], f32[1,128]) tuple(%base1, %extra)
+  }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(alias_analysis_,
+                       HloAliasAnalysis::Run(module_.get(), &alias_info_));
+  ASSERT_OK_AND_ASSIGN(hlo_live_range_,
+                       HloLiveRange::Run(module_->schedule(), *alias_analysis_,
+                                         module_->entry_computation()));
+
+  HloComputation* entry = module_->entry_computation();
+  const HloInstruction* base = entry->GetInstructionWithName("base");
+  const HloInstruction* v0 = entry->GetInstructionWithName("v0");
+  const HloInstruction* v1 = entry->GetInstructionWithName("v1");
+  const HloInstruction* base1 = entry->GetInstructionWithName("base1");
+  auto size_fn = [](const BufferValue& buffer) {
+    return ShapeUtil::ByteSizeOf(buffer.shape(), 8);
+  };
+
+  EXPECT_EQ(HloLiveRange::GetBuffersDefined(base, *alias_analysis_).size(), 1);
+  EXPECT_TRUE(HloLiveRange::GetBuffersDefined(v0, *alias_analysis_).empty());
+  EXPECT_TRUE(HloLiveRange::GetBuffersDefined(v1, *alias_analysis_).empty());
+  EXPECT_TRUE(HloLiveRange::GetBuffersDefined(base1, *alias_analysis_).empty());
+
+  EXPECT_EQ(HloLiveRange::GetBytesDefined(base, *alias_analysis_, size_fn),
+            8 * 128 * sizeof(float));
+  EXPECT_EQ(HloLiveRange::GetBytesDefined(v0, *alias_analysis_, size_fn), 0);
+  EXPECT_EQ(HloLiveRange::GetBytesDefined(v1, *alias_analysis_, size_fn), 0);
+  EXPECT_EQ(HloLiveRange::GetBytesDefined(base1, *alias_analysis_, size_fn), 0);
+
+  std::string live_range_str = hlo_live_range_->ToString();
+  EXPECT_TRUE(absl::StrContains(live_range_str, "v1{}: 4096 bytes"))
+      << live_range_str;
+}
+
 }  // namespace
 }  // namespace xla
