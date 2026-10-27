@@ -92,3 +92,17 @@ tt.func @test_scalar_with_mask(%ptr: !tt.ptr<i32>, %value: i32, %mask: i1) {
   // CHECK-NEXT: tt.return
   tt.return
 }
+
+// Check that a 64-rank mask is forwarded alongside the splat value.
+// CHECK-LABEL: tt.func @masked_64_ranks_kernel
+// CHECK-SAME: (%[[ARG0:.+]]: tensor<64x!tt.ptr<i32>>, %[[ARG1:.+]]: i32, %[[ARG2:.+]]: tensor<64xi1>)
+tt.func @masked_64_ranks_kernel(%ptr : tensor<64x!tt.ptr<i32>>, %value : i32, %mask : tensor<64xi1>) {
+  // CHECK-NEXT: %[[SPLAT:.+]] = tt.splat %[[ARG1]] : i32 -> tensor<64xi32>
+  // CHECK-NEXT: %[[RES:.+]] = tt.extern_elementwise %[[ARG0]], %[[SPLAT]], %[[ARG2]]
+  // CHECK-SAME: {libname = "", libpath = "", pure = false, symbol = "xla_atomicwrite_release_system_mask"}
+  // CHECK-SAME: : (tensor<64x!tt.ptr<i32>>, tensor<64xi32>, tensor<64xi1>) -> tensor<64xi32>
+  triton_xla.atomic_write sys, release, %ptr,  %value, %mask:
+    (tensor<64x!tt.ptr<i32>>, i32, tensor<64xi1>) -> ()
+  // CHECK-NEXT: tt.return
+  tt.return
+}

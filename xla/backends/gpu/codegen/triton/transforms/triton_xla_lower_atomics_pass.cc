@@ -57,7 +57,7 @@ mlir::Type GetResultType(mlir::Type ptr_type, PatternRewriter& rewriter) {
 // scalar operand contributes only one element. Splat scalar operands to the
 // pointer tensor shape so that every thread gets one value per pointer.
 mlir::Value SplatToPtrShape(mlir::ImplicitLocOpBuilder& builder,
-                          mlir::Value scalar, mlir::Type ptr_type) {
+                            mlir::Value scalar, mlir::Type ptr_type) {
   auto ptr_tensor_type = mlir::dyn_cast<mlir::RankedTensorType>(ptr_type);
   if (!ptr_tensor_type || mlir::isa<mlir::RankedTensorType>(scalar.getType())) {
     return scalar;

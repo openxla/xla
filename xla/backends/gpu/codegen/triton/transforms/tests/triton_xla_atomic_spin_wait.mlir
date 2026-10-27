@@ -68,3 +68,22 @@ tt.func @test_vectorized_eq(%ptr: tensor<4x!tt.ptr<i32>>, %expected: i32) {
   triton_xla.atomic_spin_wait sys, acquire, %ptr, equal_to, %expected : (tensor<4x!tt.ptr<i32>>, i32) -> ()
   tt.return
 }
+
+// Check that a 64-rank mask is forwarded alongside the splat value.
+// CHECK-LABEL: tt.func @masked_64_ranks_kernel
+// CHECK-SAME:    %[[ARG0:.*]]: tensor<64x!tt.ptr<i32>>
+// CHECK-SAME:    %[[ARG1:.*]]: tensor<64xi1>
+// CHECK-SAME:    %[[ARG2:.*]]: i32
+tt.func @masked_64_ranks_kernel(
+  %ptr: tensor<64x!tt.ptr<i32>>,
+  %mask: tensor<64xi1>,
+  %expected: i32
+) {
+// CHECK:         %[[SPLAT:.+]] = tt.splat %[[ARG2]] : i32 -> tensor<64xi32>
+// CHECK:         %[[RES:.+]] = tt.extern_elementwise %[[ARG0]], %[[SPLAT]], %[[ARG1]]
+// CHECK-SAME:    {libname = "", libpath = "", pure = false, symbol = "xla_atomicspinwait_acquire_gpu_lt_mask"}
+// CHECK-SAME:    : (tensor<64x!tt.ptr<i32>>, tensor<64xi32>, tensor<64xi1>) -> tensor<64xi32>
+  triton_xla.atomic_spin_wait gpu, acquire, %ptr, less_than, %expected, %mask
+      : (tensor<64x!tt.ptr<i32>>, i32, tensor<64xi1>) -> ()
+  tt.return
+}
