@@ -673,8 +673,14 @@ message DebugOptions {
   // Default: 0 (use library default).
   optional int64 xla_gpu_blas_max_algorithms = 523;
 
-  // If true, each fusion instruction will have a cost model runtime estimate in
-  // backend config after compilation.
+  // If true, record cost model estimates in the compiled HLO:
+  // - each fusion instruction gets cost model runtime estimates in the
+  //   `reification_cost` field of its backend config;
+  // - each instruction scheduled by the latency hiding scheduler gets the cost
+  //   estimate that the scheduler used, and the estimator that produced it, in
+  //   the `scheduler_cost_us` and `scheduler_cost_source` fields of its
+  //   metadata (which, unlike the backend config, every instruction has and
+  //   fingerprints ignore).
   optional bool xla_gpu_collect_cost_model_stats = 240;
 
   // Maximum number of instructions to be combined in collective combiners.
