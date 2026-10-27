@@ -26,6 +26,7 @@ limitations under the License.
 namespace xla::gpu {
 
 // Launches a Top-K selection on GPU for a batch of matrices.
+// Dispatches to the configured GPU Select-K implementation.
 //
 // Args:
 //   device_ordinal: GPU device index to run the operation on.

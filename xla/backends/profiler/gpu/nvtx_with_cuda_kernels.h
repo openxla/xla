@@ -23,6 +23,7 @@ namespace profiler {
 namespace test {
 
 // If runs correctly, the returned vector will only contain num_elements of 0.
+// Used by GPU profiler tests to exercise NVTX ranges around CUDA kernels.
 std::vector<int> SimpleAddSubWithNvtxTag(int num_elements);
 
 }  // namespace test

@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/stream_executor/kernel_spec.h"
 
 namespace stream_executor::gpu {
+// Number of threads per CUDA warp.
 __device__ static constexpr uint64_t kWarpSize = 32;
 }  // namespace stream_executor::gpu
 
