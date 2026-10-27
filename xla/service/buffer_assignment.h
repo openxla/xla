@@ -579,6 +579,33 @@ class BufferAssignment {
   const BufferAllocation& GetAssignedAllocation(
       const HloBuffer& hlo_buffer) const;
 
+  // Access to the logical buffers assigned to `allocation`, and their
+  // associated logical offsets and sizes.
+  const absl::flat_hash_map<const HloValue*, BufferAllocation::OffsetSize>&
+  assigned_buffers(const BufferAllocation& allocation) const {
+    return allocation.assigned_buffers();
+  }
+
+  // Returns the Slice of contiguous memory assigned to `value`.
+  // REQUIRES: `value` must be assigned an allocation.
+  BufferAllocation::Slice GetAssignedSlice(const HloValue& value) const {
+    return GetAssignedAllocation(value).GetSlice(value);
+  }
+
+  // Returns the LogicalBuffers which are live at the point of peak memory usage
+  // for `allocation`.
+  const std::vector<const HloValue*>& PeakMemoryLogicalBuffers(
+      const BufferAllocation& allocation) const {
+    return allocation.PeakMemoryLogicalBuffers();
+  }
+
+  // Returns the buffers placed in `allocation` whose own color differs from the
+  // allocation color.
+  const std::vector<const HloValue*>& CrossColorBuffers(
+      const BufferAllocation& allocation) const {
+    return allocation.CrossColorBuffers();
+  }
+
   // Returns the allocation with the given index. CHECKs if no allocation exists
   // with the given index.
   const BufferAllocation& GetAllocation(BufferAllocation::Index index) const;
@@ -680,6 +707,14 @@ class BufferAssignment {
   std::string MemoryUsageReport(float percentile = 0.05,
                                 int64_t more_than_k = 50,
                                 bool print_shape_layout = false) const;
+  std::string MemoryUsageReport(const BufferAllocation& allocation,
+                                const std::string& prefix,
+                                float percentile = 0.05,
+                                int64_t more_than_k = 50,
+                                bool print_shape_layout = false) const {
+    return allocation.MemoryUsageReport(prefix, percentile, more_than_k,
+                                        print_shape_layout);
+  }
   // Verbose string tailored to debugging OOMs, includes the Hlo op metadata for
   // every buffer associated with each allocation.
   std::string ToVerboseString(const AliasInfo* alias_info,

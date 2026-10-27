@@ -37,10 +37,14 @@ std::string ConstantNameToGlobalName(absl::string_view name);
 // Returns the Literal corresponding to `allocation`, which must be a constant
 // allocation.
 const Literal& LiteralForConstantAllocation(const BufferAllocation& allocation);
+const Literal& LiteralForConstantAllocation(const BufferAssignment& assignment,
+                                            const BufferAllocation& allocation);
 // Returns the constant HloInstruction corresponding to `allocation`, which must
 // be a constant allocation.
 const HloInstruction& InstrForConstantBufferAllocation(
     const BufferAllocation& allocation);
+const HloInstruction& InstrForConstantBufferAllocation(
+    const BufferAssignment& assignment, const BufferAllocation& allocation);
 }  // namespace llvm_ir
 }  // namespace xla
 
