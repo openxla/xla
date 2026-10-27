@@ -20,6 +20,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -202,6 +203,65 @@ static constexpr absl::string_view kKernelSource = R"(
   }
   )";
 
+static constexpr absl::string_view kThreeArgumentKernelName =
+    "three_argument_kernel";
+// Test kernel was compiled using following CUDA source:
+// __global__ void three_argument_kernel(int64_t* input_buffer,
+//                                       int64_t* output_buffer,
+//                                       int64_t rank) {
+//   int64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+//   for (int i = idx; i < kNumElements; i += gridDim.x * blockDim.x) {
+//     if (i < kNumElements) {
+//       output_buffer[i] = input_buffer[i] + rank + 1;
+//     }
+//   }
+// }
+static constexpr absl::string_view kThreeArgumentKernelSource = R"(
+  .version 8.7
+  .target sm_90
+  .address_size 64
+
+  .visible .entry three_argument_kernel(
+  .param .u64 .ptr .align 1 input_buffer,
+  .param .u64 .ptr .align 1 output_buffer,
+  .param .u64 rank
+  )
+  {
+  .reg .pred %p<3>;
+  .reg .b32 %r<8>;
+  .reg .b64 %rd<14>;
+
+  ld.param.b64 %rd4, [input_buffer];
+  cvta.to.global.u64 %rd1, %rd4;
+  ld.param.b64 %rd5, [output_buffer];
+  cvta.to.global.u64 %rd2, %rd5;
+  ld.param.u32 %r7, [rank];
+  add.s32 %r7, %r7, 1;
+  cvt.s64.s32 %rd3, %r7;
+  mov.u32 %r3, %ctaid.x;
+  mov.u32 %r1, %ntid.x;
+  mov.u32 %r4, %tid.x;
+  mad.lo.s32 %r6, %r3, %r1, %r4;
+  setp.gt.s32 %p1, %r6, 127;
+  @%p1 bra $L__BB0_3;
+
+  mov.u32 %r5, %nctaid.x;
+  mul.lo.s32 %r2, %r5, %r1;
+  $L__BB0_2:
+  mul.wide.s32 %rd6, %r6, 8;
+  add.s64 %rd7, %rd1, %rd6;
+  ld.global.b64 %rd8, [%rd7];
+  add.s64 %rd9, %rd8, %rd3;
+  add.s64 %rd10, %rd2, %rd6;
+  st.global.b64 [%rd10], %rd9;
+  add.s32 %r6, %r6, %r2;
+  setp.lt.s32 %p2, %r6, 128;
+  @%p2 bra $L__BB0_2;
+  $L__BB0_3:
+  ret;
+  }
+  )";
+
 se::StreamExecutor* GetGpuExecutor(int64_t device_ordinal) {
   auto* platform =
       se::PlatformManager::PlatformWithName(se::GpuPlatformName()).value();
@@ -219,41 +279,52 @@ struct CollectiveKernelThunkMetadata {
   // a string.
   bool use_ptx;
   std::vector<CollectiveThunk::Buffer> buffers;
+  std::string kernel_source;
 };
 
 CollectiveKernelSpec CreateCollectiveKernelSpec(
     int64_t num_elements, int64_t signal_size, int64_t remote_size,
     bool is_multimem_enabled,
-    SymmetricMemoryType scratch_memory_type =
+    SymmetricMemoryType input_memory_type = SymmetricMemoryType::kNone,
+    std::optional<SymmetricMemoryType> scratch_memory_type =
         SymmetricMemoryType::kLoadStoreAccessible) {
+  std::vector<KernelArgDescriptor> argument_descriptors = {
+      {KernelArgType::kInputBuffer, 0},
+      {KernelArgType::kOutputBuffer, 0},
+      {KernelArgType::kRuntimeRank},
+  };
+  std::vector<ScratchBufferSpec> scratch_buffers;
+
+  if (scratch_memory_type.has_value()) {
+    argument_descriptors.push_back({KernelArgType::kScratchBuffer, 0});
+    argument_descriptors.push_back({KernelArgType::kScratchBuffer, 1});
+    scratch_buffers = {
+        {signal_size, /*requires_multimem=*/false, *scratch_memory_type,
+         /*should_memzero=*/true,
+         /*should_double_buffer=*/true},
+        {remote_size,
+         /*requires_multimem=*/is_multimem_enabled, *scratch_memory_type,
+         /*should_memzero=*/false,
+         /*should_double_buffer=*/true}};
+  }
+
   return {
       /*codegen_config=*/{
           /*copy_input_to_scratch=*/false,
           /*input_buffer_specs=*/
-          {{/*requires_multimem=*/false, SymmetricMemoryType::kNone}},
+          {{/*requires_multimem=*/false, input_memory_type}},
           /*output_buffer_specs=*/
           {{/*requires_multimem=*/false, SymmetricMemoryType::kNone}},
-          /*argument_descriptors=*/
-          {{KernelArgType::kInputBuffer, 0},
-           {KernelArgType::kOutputBuffer, 0},
-           {KernelArgType::kRuntimeRank},
-           {KernelArgType::kScratchBuffer, 0},
-           {KernelArgType::kScratchBuffer, 1}},
+          /*argument_descriptors=*/std::move(argument_descriptors),
       },
-      /*scratch_buffers=*/
-      {{signal_size, /*requires_multimem=*/false, scratch_memory_type,
-        /*should_memzero=*/true,
-        /*should_double_buffer=*/true},
-       {remote_size,
-        /*requires_multimem=*/is_multimem_enabled, scratch_memory_type,
-        /*should_memzero=*/false,
-        /*should_double_buffer=*/true}},
+      /*scratch_buffers=*/std::move(scratch_buffers),
   };
 }
 
 CollectiveKernelThunkMetadata CreateCollectiveKernelThunk(
     int num_devices, int num_elements, bool is_multimem_enabled, bool use_ptx,
-    SymmetricMemoryType scratch_memory_type =
+    SymmetricMemoryType input_memory_type = SymmetricMemoryType::kNone,
+    std::optional<SymmetricMemoryType> scratch_memory_type =
         SymmetricMemoryType::kLoadStoreAccessible) {
   const int64_t input_size_bytes = num_elements * sizeof(uint64_t);
   Shape input_shape = ShapeUtil::MakeShape(U64, {num_elements});
@@ -289,15 +360,18 @@ CollectiveKernelThunkMetadata CreateCollectiveKernelThunk(
   Thunk::ThunkInfo thunk_info;
   thunk_info.profile_annotation = kProfileName;
   const LaunchDimensions launch_dimensions(
-      /*block_x_count=*/1, /*thread_x_count_per_block=*/kNumElements);
+      /*block_x_count=*/1, /*thread_x_count_per_block=*/num_elements);
   const int64_t signal_size = 1024;
   const int64_t remote_size = aligned_input_size_bytes;
   result.thunk = std::make_unique<CollectiveKernelThunk>(
       std::move(thunk_info), collective_config,
       CreateCollectiveKernelSpec(num_elements, signal_size, remote_size,
-                                 is_multimem_enabled, scratch_memory_type),
+                                 is_multimem_enabled, input_memory_type,
+                                 scratch_memory_type),
       result.buffers, /*is_collective_kernel_enabled=*/true,
-      /*kernel_name=*/kKernelName,
+      /*kernel_name=*/
+      scratch_memory_type.has_value() ? std::string(kKernelName)
+                                      : std::string(kThreeArgumentKernelName),
       /*launch_dimensions=*/launch_dimensions,
       /*devices_in_process=*/num_devices,
       /*shmem_bytes=*/0);
@@ -306,6 +380,9 @@ CollectiveKernelThunkMetadata CreateCollectiveKernelThunk(
   result.aligned_input_size_bytes = aligned_input_size_bytes;
   result.input_data_size_bytes = input_size_bytes;
   result.use_ptx = use_ptx;
+  result.kernel_source = scratch_memory_type.has_value()
+                             ? std::string(kKernelSource)
+                             : std::string(kThreeArgumentKernelSource);
   return result;
 }
 
@@ -435,7 +512,7 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   initialize_params.buffer_allocations = &buffer_allocations;
   initialize_params.collective_params = &collective_params;
   initialize_params.collective_cliques = &collective_cliques;
-  initialize_params.src = {kKernelSource};
+  initialize_params.src = {metadata.kernel_source};
   initialize_params.collective_memory = &collective_memory;
 
   GpuExecutableRunOptions::DeviceIdMap global_device_id_map = {
@@ -449,8 +526,8 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   if (!metadata.use_ptx) {
     ABSL_ASSIGN_OR_RETURN(
         cubin,
-        CompilePtxToCubin(kKernelSource, executor->GetDeviceDescription(),
-                          DebugOptions()));
+        CompilePtxToCubin(metadata.kernel_source,
+                          executor->GetDeviceDescription(), DebugOptions()));
     initialize_params.src.binary = cubin;
   }
   ABSL_RETURN_IF_ERROR(metadata.thunk->Initialize(initialize_params));
@@ -836,6 +913,111 @@ TEST(CollectiveKernelThunkTest, ReinitializesSymmetricMemoryAfterCliqueSplit) {
   }
 }
 
+// ProcessGpuCliques caches cliques in an absl::NoDestructor map keyed by
+// (Collectives*, GpuCliqueKey) without destroying them at process exit. Keep
+// mock collectives and wrapped communicators alive for the process lifetime,
+// mark the mocks leak-allowed for gMock's exit check, and verify all
+// expectations explicitly via VerifyAndClearExpectations.
+class MockCollectivesContext {
+ public:
+  struct WrappedComm {
+    std::unique_ptr<GpuCommunicator> inner;
+    StrictMock<MockGpuCommunicator>* mock;
+  };
+
+  using OnCreateSymmetricMemory = std::function<void(se::DeviceAddressBase)>;
+
+  explicit MockCollectivesContext(
+      se::StreamExecutor* executor,
+      OnCreateSymmetricMemory on_create_symmetric_memory =
+          [](se::DeviceAddressBase addr) { EXPECT_FALSE(addr.is_null()); }) {
+    default_collectives_ =
+        GpuCollectives::Default(executor->GetPlatform()->Name());
+
+    auto mock_collectives = std::make_unique<StrictMock<MockGpuCollectives>>();
+    collectives_ = mock_collectives.get();
+    ::testing::Mock::AllowLeak(collectives_);
+    leaked_mocks_->collectives.push_back(std::move(mock_collectives));
+
+    EXPECT_CALL(*collectives_, CreateUniqueCliqueId()).WillOnce([this]() {
+      return default_collectives_->CreateUniqueCliqueId();
+    });
+    EXPECT_CALL(*collectives_, CreateCommunicatorsWithCancel(_, _, _, _, _))
+        .WillOnce(
+            [this, on_create_sym = std::move(on_create_symmetric_memory)](
+                const CliqueKey& clique_key,
+                const std::optional<CliqueIds>& clique_ids,
+                absl::Span<const Collectives::DeviceRank> ranks,
+                const Collectives::Config& config,
+                std::shared_ptr<CancellationToken> cancel)
+                -> absl::StatusOr<std::vector<std::unique_ptr<Communicator>>> {
+              ABSL_ASSIGN_OR_RETURN(
+                  std::vector<std::unique_ptr<Communicator>> comms,
+                  default_collectives_->CreateCommunicatorsWithCancel(
+                      clique_key, clique_ids, ranks, config, cancel));
+              std::vector<std::unique_ptr<Communicator>> result;
+              result.reserve(comms.size());
+              for (std::unique_ptr<Communicator>& comm : comms) {
+                std::unique_ptr<GpuCommunicator> inner_comm = absl::WrapUnique(
+                    absl::down_cast<GpuCommunicator*>(comm.release()));
+                GpuCommunicator* inner_ptr = inner_comm.get();
+
+                auto mock_comm =
+                    std::make_unique<StrictMock<MockGpuCommunicator>>();
+                ::testing::Mock::AllowLeak(mock_comm.get());
+                EXPECT_CALL(*mock_comm, CreateSymmetricMemory(_, _))
+                    .Times(1)
+                    .WillOnce(
+                        [inner_ptr, on_create_sym](se::DeviceAddressBase addr,
+                                                   bool symmetric_window) {
+                          if (on_create_sym) {
+                            on_create_sym(addr);
+                          }
+                          return inner_ptr->CreateSymmetricMemory(
+                              addr, symmetric_window);
+                        });
+                EXPECT_CALL(*mock_comm, HealthCheck())
+                    .Times(AnyNumber())
+                    .WillRepeatedly(
+                        [inner_ptr]() { return inner_ptr->HealthCheck(); });
+                wrapped_comms_.push_back(
+                    {std::move(inner_comm), mock_comm.get()});
+                result.push_back(std::move(mock_comm));
+              }
+              return result;
+            });
+  }
+
+  StrictMock<MockGpuCollectives>* collectives() { return collectives_; }
+  const std::vector<WrappedComm>& wrapped_comms() const {
+    return wrapped_comms_;
+  }
+
+  void VerifyAndClearExpectations(int expected_device_count) {
+    EXPECT_TRUE(::testing::Mock::VerifyAndClearExpectations(collectives_));
+    ASSERT_EQ(wrapped_comms_.size(), expected_device_count);
+    for (WrappedComm& comm : wrapped_comms_) {
+      EXPECT_TRUE(::testing::Mock::VerifyAndClearExpectations(comm.mock));
+      GpuCommunicator* inner_ptr = comm.inner.get();
+      EXPECT_CALL(*comm.mock, HealthCheck())
+          .Times(AnyNumber())
+          .WillRepeatedly([inner_ptr]() { return inner_ptr->HealthCheck(); });
+      leaked_mocks_->comms.push_back(std::move(comm));
+    }
+  }
+
+ private:
+  struct LeakedMocks {
+    std::vector<std::unique_ptr<StrictMock<MockGpuCollectives>>> collectives;
+    std::vector<WrappedComm> comms;
+  };
+  static inline absl::NoDestructor<LeakedMocks> leaked_mocks_;
+
+  GpuCollectives* default_collectives_;
+  StrictMock<MockGpuCollectives>* collectives_;
+  std::vector<WrappedComm> wrapped_comms_;
+};
+
 TEST(CollectiveKernelThunkTest,
      DoesNotRecreateSymmetricMemoryWithoutCommSplit) {
   static constexpr int kDevicesCount = 2;
@@ -853,84 +1035,19 @@ TEST(CollectiveKernelThunkTest,
   }
 
   se::StreamExecutor* executor0 = GetGpuExecutor(0);
-  GpuCollectives* default_collectives =
-      GpuCollectives::Default(executor0->GetPlatform()->Name());
-
-  // ProcessGpuCliques caches cliques in an absl::NoDestructor map keyed by
-  // (Collectives*, GpuCliqueKey) without destroying them at process exit. Keep
-  // mock collectives and wrapped communicators alive for the process lifetime,
-  // mark the mocks leak-allowed for gMock's exit check, and verify all
-  // expectations explicitly via Mock::VerifyAndClearExpectations below.
-  struct WrappedComm {
-    std::unique_ptr<GpuCommunicator> inner;
-    StrictMock<MockGpuCommunicator>* mock;
-  };
-  struct LeakedMocks {
-    std::vector<std::unique_ptr<StrictMock<MockGpuCollectives>>> collectives;
-    std::vector<WrappedComm> comms;
-  };
-  static absl::NoDestructor<LeakedMocks> leaked_mocks;
-
-  auto mock_collectives = std::make_unique<StrictMock<MockGpuCollectives>>();
-  StrictMock<MockGpuCollectives>* collectives = mock_collectives.get();
-  ::testing::Mock::AllowLeak(collectives);
-  leaked_mocks->collectives.push_back(std::move(mock_collectives));
-
-  std::vector<WrappedComm> wrapped_comms;
-  EXPECT_CALL(*collectives, CreateUniqueCliqueId())
-      .WillOnce([default_collectives]() {
-        return default_collectives->CreateUniqueCliqueId();
-      });
-  EXPECT_CALL(*collectives, CreateCommunicatorsWithCancel(_, _, _, _, _))
-      .WillOnce(
-          [default_collectives, &wrapped_comms](
-              const CliqueKey& clique_key,
-              const std::optional<CliqueIds>& clique_ids,
-              absl::Span<const Collectives::DeviceRank> ranks,
-              const Collectives::Config& config,
-              std::shared_ptr<CancellationToken> cancel)
-              -> absl::StatusOr<std::vector<std::unique_ptr<Communicator>>> {
-            ABSL_ASSIGN_OR_RETURN(
-                std::vector<std::unique_ptr<Communicator>> comms,
-                default_collectives->CreateCommunicatorsWithCancel(
-                    clique_key, clique_ids, ranks, config, cancel));
-            std::vector<std::unique_ptr<Communicator>> result;
-            result.reserve(comms.size());
-            for (std::unique_ptr<Communicator>& comm : comms) {
-              std::unique_ptr<GpuCommunicator> inner_comm = absl::WrapUnique(
-                  absl::down_cast<GpuCommunicator*>(comm.release()));
-              GpuCommunicator* inner_ptr = inner_comm.get();
-
-              auto mock_comm =
-                  std::make_unique<StrictMock<MockGpuCommunicator>>();
-              ::testing::Mock::AllowLeak(mock_comm.get());
-              EXPECT_CALL(*mock_comm, CreateSymmetricMemory(_, _))
-                  .Times(1)
-                  .WillOnce([inner_ptr](se::DeviceAddressBase addr,
-                                        bool symmetric_window) {
-                    return inner_ptr->CreateSymmetricMemory(addr,
-                                                            symmetric_window);
-                  });
-              EXPECT_CALL(*mock_comm, HealthCheck())
-                  .Times(AnyNumber())
-                  .WillRepeatedly(
-                      [inner_ptr]() { return inner_ptr->HealthCheck(); });
-              wrapped_comms.push_back({std::move(inner_comm), mock_comm.get()});
-              result.push_back(std::move(mock_comm));
-            }
-            return result;
-          });
+  MockCollectivesContext mock_context(executor0);
 
   CollectiveKernelThunkMetadata metadata = CreateCollectiveKernelThunk(
       /*num_devices=*/kDevicesCount, /*num_elements=*/kNumElements,
       /*is_multimem_enabled=*/false, /*use_ptx=*/true,
+      /*input_memory_type=*/SymmetricMemoryType::kNone,
       /*scratch_memory_type=*/SymmetricMemoryType::kLoadStoreAccessible);
 
   // First execution creates SymmetricMemory once per participating device.
-  ASSERT_OK_AND_ASSIGN(
-      std::vector<se::DeviceAddressBase> result_buffers1,
-      RunCollectiveKernelThunkOnDevices(
-          metadata, /*emulate_multiprocess=*/false, input_data1, collectives));
+  ASSERT_OK_AND_ASSIGN(std::vector<se::DeviceAddressBase> result_buffers1,
+                       RunCollectiveKernelThunkOnDevices(
+                           metadata, /*emulate_multiprocess=*/false,
+                           input_data1, mock_context.collectives()));
   for (int d = 0; d < kDevicesCount; ++d) {
     se::StreamExecutor* executor = GetGpuExecutor(d);
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
@@ -944,10 +1061,10 @@ TEST(CollectiveKernelThunkTest,
 
   // Re-executing the same thunk without communicator splitting must reuse the
   // existing SymmetricMemory instead of recreating it.
-  ASSERT_OK_AND_ASSIGN(
-      std::vector<se::DeviceAddressBase> result_buffers2,
-      RunCollectiveKernelThunkOnDevices(
-          metadata, /*emulate_multiprocess=*/false, input_data2, collectives));
+  ASSERT_OK_AND_ASSIGN(std::vector<se::DeviceAddressBase> result_buffers2,
+                       RunCollectiveKernelThunkOnDevices(
+                           metadata, /*emulate_multiprocess=*/false,
+                           input_data2, mock_context.collectives()));
   for (int d = 0; d < kDevicesCount; ++d) {
     se::StreamExecutor* executor = GetGpuExecutor(d);
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
@@ -959,16 +1076,48 @@ TEST(CollectiveKernelThunkTest,
     EXPECT_EQ(output_data, expected_output_data2);
   }
 
-  EXPECT_TRUE(::testing::Mock::VerifyAndClearExpectations(collectives));
-  ASSERT_EQ(wrapped_comms.size(), kDevicesCount);
-  for (WrappedComm& comm : wrapped_comms) {
-    EXPECT_TRUE(::testing::Mock::VerifyAndClearExpectations(comm.mock));
-    GpuCommunicator* inner_ptr = comm.inner.get();
-    EXPECT_CALL(*comm.mock, HealthCheck())
-        .Times(AnyNumber())
-        .WillRepeatedly([inner_ptr]() { return inner_ptr->HealthCheck(); });
-    leaked_mocks->comms.push_back(std::move(comm));
+  mock_context.VerifyAndClearExpectations(kDevicesCount);
+}
+
+TEST(CollectiveKernelThunkTest,
+     DoesNotRegisterSymmetricMemoryForScratchBufferWhenNotRequired) {
+  static constexpr int kDevicesCount = 2;
+
+  std::vector<uint64_t> input_data(kNumElements);
+  std::vector<std::vector<uint64_t>> expected_output_data(kDevicesCount);
+  for (int d = 0; d < kDevicesCount; ++d) {
+    expected_output_data[d].resize(kNumElements);
+    for (int i = 0; i < kNumElements; ++i) {
+      input_data[i] = i;
+      expected_output_data[d][i] = input_data[i] + d + 1;
+    }
   }
+
+  se::StreamExecutor* executor0 = GetGpuExecutor(0);
+  MockCollectivesContext mock_context(executor0);
+
+  CollectiveKernelThunkMetadata metadata = CreateCollectiveKernelThunk(
+      /*num_devices=*/kDevicesCount, /*num_elements=*/kNumElements,
+      /*is_multimem_enabled=*/false, /*use_ptx=*/true,
+      /*input_memory_type=*/SymmetricMemoryType::kLoadStoreAccessible,
+      /*scratch_memory_type=*/std::nullopt);
+
+  ASSERT_OK_AND_ASSIGN(std::vector<se::DeviceAddressBase> result_buffers,
+                       RunCollectiveKernelThunkOnDevices(
+                           metadata, /*emulate_multiprocess=*/false, input_data,
+                           mock_context.collectives()));
+  for (int d = 0; d < kDevicesCount; ++d) {
+    se::StreamExecutor* executor = GetGpuExecutor(d);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
+                         executor->CreateStream());
+    std::vector<uint64_t> output_data(kNumElements);
+    ASSERT_OK(stream->Memcpy(output_data.data(), result_buffers[d],
+                             metadata.input_data_size_bytes));
+    ASSERT_OK(stream->BlockHostUntilDone());
+    EXPECT_EQ(output_data, expected_output_data[d]);
+  }
+
+  mock_context.VerifyAndClearExpectations(kDevicesCount);
 }
 
 }  // namespace
