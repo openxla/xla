@@ -59,8 +59,12 @@ struct CompiledMemoryStats {
 
   static CompiledMemoryStats FromProto(const CompiledMemoryStatsProto& proto);
 
+  // Populates memory stats from `allocs`. If `assignment` is set, it is used
+  // for determining whether each allocation is host or device memory (otherwise
+  // `alloc->color()` is used).
   void PopulateBufferStatsFromAllocations(
-      absl::Span<const BufferAllocation* const> allocs);
+      absl::Span<const BufferAllocation* const> allocs,
+      const BufferAssignment* assignment);
 };
 
 }  // namespace xla
