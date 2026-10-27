@@ -45,3 +45,5 @@ build --config=warnings
 common:rbe_linux_cpu --features=layering_check
 
 try-import %workspace%/xla_configure.bazelrc
+
+# Temporary comment to exercise bazel-diff global config fallback in presubmit.

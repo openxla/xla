@@ -471,6 +471,279 @@ class BazelDiffTest(parameterized.TestCase):
         ],
     )
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="bazelversion_updated_on_main",
+          diff_vs_merge_base=".bazelversion\nxla/service/gpu/foo.cc\n",
+          diff_vs_pr_head=".bazelversion\n",
+      ),
+      dict(
+          testcase_name="bazelrc_updated_on_main",
+          diff_vs_merge_base=(
+              "build_tools/rocm/rocm_xla.bazelrc\nxla/service/gpu/foo.cc\n"
+          ),
+          diff_vs_pr_head="build_tools/rocm/rocm_xla.bazelrc\n",
+      ),
+      dict(
+          testcase_name="module_bazel_skew_on_pr_head",
+          diff_vs_merge_base="xla/service/gpu/foo.cc\n",
+          diff_vs_pr_head="MODULE.bazel\n",
+      ),
+  )
+  @mock.patch.object(
+      bazel_diff, "run_generate_hashes", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      bazel_diff, "download_and_verify_jar", autospec=True, spec_set=True
+  )
+  @mock.patch.object(bazel_diff.subprocess, "run", autospec=True, spec_set=True)
+  @mock.patch.object(
+      change_detector, "get_diff_base", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "get_changed_files", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "ensure_base_fetched", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "run_git_best_effort", autospec=True, spec_set=True
+  )
+  def test_compute_impacted_targets_global_config_skew_against_checked_out_head(
+      self,
+      mock_git_best_effort,
+      mock_ensure_fetched,
+      mock_changed_files,
+      mock_diff_base,
+      mock_subprocess_run,
+      mock_download_jar,
+      mock_generate_hashes,
+      diff_vs_merge_base,
+      diff_vs_pr_head,
+  ):
+    del mock_ensure_fetched
+    mock_git_best_effort.return_value = subprocess.CompletedProcess(
+        args=["git", "rev-parse", "HEAD"],
+        returncode=0,
+        stdout="merge_commit_sha\n",
+    )
+    mock_changed_files.return_value = ["xla/service/gpu/foo.cc"]
+    mock_diff_base.return_value = "merge_base_sha"
+    mock_subprocess_run.side_effect = [
+        subprocess.CompletedProcess(
+            args=["git", "diff"], returncode=0, stdout=diff_vs_merge_base
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "diff"], returncode=0, stdout=diff_vs_pr_head
+        ),
+    ]
+
+    decision = bazel_diff.compute_impacted_targets(
+        _FakeBuildConfig(),
+        "base_sha",
+        "pr_head_sha",
+        workspace_dir="/workspace",
+    )
+
+    self.assertEqual(decision.decision, bazel_diff.BazelDiffDecisionType.FULL)
+    self.assertIn(
+        "Global Bazel configuration differs from checked-out HEAD",
+        decision.reason,
+    )
+    self.assertEqual(decision.changed_files_count, 1)
+    mock_download_jar.assert_not_called()
+    mock_generate_hashes.assert_not_called()
+
+  @mock.patch.object(
+      bazel_diff, "run_generate_hashes", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      bazel_diff, "download_and_verify_jar", autospec=True, spec_set=True
+  )
+  @mock.patch.object(bazel_diff.subprocess, "run", autospec=True, spec_set=True)
+  @mock.patch.object(
+      change_detector, "get_diff_base", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "get_changed_files", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "ensure_base_fetched", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "run_git_best_effort", autospec=True, spec_set=True
+  )
+  def test_compute_impacted_targets_skew_check_git_error_fails_open(
+      self,
+      mock_git_best_effort,
+      mock_ensure_fetched,
+      mock_changed_files,
+      mock_diff_base,
+      mock_subprocess_run,
+      mock_download_jar,
+      mock_generate_hashes,
+  ):
+    del mock_ensure_fetched
+    mock_git_best_effort.return_value = subprocess.CompletedProcess(
+        args=["git", "rev-parse", "HEAD"],
+        returncode=0,
+        stdout="merge_commit_sha\n",
+    )
+    mock_changed_files.return_value = ["xla/service/gpu/foo.cc"]
+    mock_diff_base.return_value = "merge_base_sha"
+    mock_subprocess_run.side_effect = subprocess.CalledProcessError(
+        128, ["git", "diff"]
+    )
+
+    decision = bazel_diff.compute_impacted_targets(
+        _FakeBuildConfig(),
+        "base_sha",
+        "pr_head_sha",
+        workspace_dir="/workspace",
+    )
+
+    self.assertEqual(decision.decision, bazel_diff.BazelDiffDecisionType.FULL)
+    self.assertIn(
+        "Global Bazel configuration differs from checked-out HEAD",
+        decision.reason,
+    )
+    mock_download_jar.assert_not_called()
+    mock_generate_hashes.assert_not_called()
+
+  @mock.patch.object(
+      bazel_diff, "run_get_impacted_targets", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      bazel_diff, "run_generate_hashes", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      bazel_diff, "download_and_verify_jar", autospec=True, spec_set=True
+  )
+  @mock.patch.object(bazel_diff.subprocess, "run", autospec=True, spec_set=True)
+  @mock.patch.object(
+      change_detector, "get_diff_base", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "get_changed_files", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "ensure_base_fetched", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "run_git_best_effort", autospec=True, spec_set=True
+  )
+  def test_compute_impacted_targets_merge_commit_without_config_skew_proceeds(
+      self,
+      mock_git_best_effort,
+      mock_ensure_fetched,
+      mock_changed_files,
+      mock_diff_base,
+      mock_subprocess_run,
+      mock_download_jar,
+      mock_generate_hashes,
+      mock_get_impacted,
+  ):
+    del mock_ensure_fetched, mock_generate_hashes
+    mock_git_best_effort.side_effect = [
+        subprocess.CompletedProcess(
+            args=["git", "rev-parse", "HEAD"],
+            returncode=0,
+            stdout="merge_commit_sha\n",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "checkout", "-f", "merge_commit_sha"],
+            returncode=0,
+            stdout="",
+        ),
+    ]
+    mock_changed_files.return_value = ["xla/service/cpu/cpu_compiler.cc"]
+    mock_diff_base.return_value = "merge_base_sha"
+    mock_subprocess_run.side_effect = [
+        subprocess.CompletedProcess(
+            args=["git", "diff"],
+            returncode=0,
+            stdout="xla/service/cpu/cpu_compiler.cc\nxla/hlo/ir/hlo.cc\n",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "diff"],
+            returncode=0,
+            stdout="xla/hlo/ir/hlo.cc\n",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "checkout", "-f", "merge_base_sha"],
+            returncode=0,
+            stdout="",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "checkout", "-f", "pr_head_sha"],
+            returncode=0,
+            stdout="",
+        ),
+    ]
+    mock_download_jar.return_value = "/tmp/bazel-diff.jar"
+    mock_get_impacted.side_effect = _write_impacted_targets
+
+    decision = bazel_diff.compute_impacted_targets(
+        _FakeBuildConfig(),
+        "base_sha",
+        "pr_head_sha",
+        workspace_dir="/workspace",
+    )
+
+    self.assertEqual(
+        decision.decision, bazel_diff.BazelDiffDecisionType.IMPACTED
+    )
+    self.assertEqual(
+        decision.impacted_targets, ("//xla/service/cpu:cpu_compiler_test",)
+    )
+    self.assertEqual(
+        mock_subprocess_run.call_args_list,
+        [
+            mock.call(
+                [
+                    "git",
+                    "diff",
+                    "--name-only",
+                    "--end-of-options",
+                    "merge_base_sha",
+                    "merge_commit_sha",
+                    "--",
+                ],
+                cwd="/workspace",
+                capture_output=True,
+                text=True,
+                check=True,
+            ),
+            mock.call(
+                [
+                    "git",
+                    "diff",
+                    "--name-only",
+                    "--end-of-options",
+                    "pr_head_sha",
+                    "merge_commit_sha",
+                    "--",
+                ],
+                cwd="/workspace",
+                capture_output=True,
+                text=True,
+                check=True,
+            ),
+            mock.call(
+                ["git", "checkout", "-f", "merge_base_sha"],
+                cwd="/workspace",
+                check=True,
+                capture_output=True,
+            ),
+            mock.call(
+                ["git", "checkout", "-f", "pr_head_sha"],
+                cwd="/workspace",
+                check=True,
+                capture_output=True,
+            ),
+        ],
+    )
+
   @mock.patch.object(
       bazel_diff, "compute_impacted_targets", autospec=True, spec_set=True
   )
