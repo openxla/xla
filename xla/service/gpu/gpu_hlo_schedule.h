@@ -52,7 +52,7 @@ SchedulerConfig MakeGPUSchedulerConfig(uint64_t memory_limit,
                                        int64_t async_compute_limit);
 
 // Resolves the configured SchedulerMemoryFencing threshold. A negative value
-// disables the pass, zero selects 1% of the scheduler memory limit, and a
+// disables the pass, zero requests bounded automatic threshold search, and a
 // positive value selects an explicit threshold capped at the memory limit.
 std::optional<int64_t> GetSchedulerMemoryFencingThresholdBytes(
     int64_t configured_threshold_bytes, uint64_t memory_limit);

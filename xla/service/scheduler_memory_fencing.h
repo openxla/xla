@@ -18,11 +18,13 @@ limitations under the License.
 
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -60,6 +62,22 @@ class SchedulerMemoryFencing : public HloModulePass {
         size_threshold_bytes_(size_threshold_bytes),
         slack_windows_(slack_windows),
         alias_info_(alias_info) {}
+
+  // A buffer's candidate edges, before threshold-independent deduplication.
+  // Keeping the size with each buffer lets automatic tuning reuse alias and
+  // reachability analysis across thresholds. Pointers belong to the input
+  // module.
+  struct BufferFences {
+    int64_t size_bytes;
+    std::vector<std::pair<HloInstruction*, HloInstruction*>> edges;
+  };
+
+  // Computes fences without changing the module. Only buffers at or above this
+  // pass's threshold are considered; use threshold 1 to collect all candidates.
+  absl::StatusOr<std::vector<BufferFences>> GetFences(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads = {})
+      const;
 
   absl::string_view name() const override { return "scheduler-memory-fencing"; }
 
