@@ -222,10 +222,32 @@ std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   return left_producer;
 }
 
+// Matches Mean(input) over the last dimension, i.e. an add reduction with zero
+// init over {rank - 1} divided by the size of that dimension. oneDNN layer
+// normalization only normalizes over the last dimension. The divisor must be
+// constant scalar.
 auto MeanPattern(HloInstruction** input) {
+  auto sum =
+      m::Reduce(m::Convert(m::Op(input)),
+                pu::OptionalConvert(m::ConstantScalar(0)))
+          .WithPredicate([](const HloInstruction* reduce) {
+            HloComputation* reducer = reduce->to_apply();
+            return (reducer->root_instruction()->opcode() == HloOpcode::kAdd &&
+                    reduce->dimensions().size() == 1 &&
+                    reduce->dimensions()[0] ==
+                        reduce->shape().dimensions().size());
+          });
   return m::Reshape(
-      m::Convert(m::Divide(m::Reduce(m::Convert(m::Op(input)), m::Op()),
-                           m::Broadcast(m::Convert()))));
+      m::Convert(m::Divide(sum, m::Broadcast(m::Convert(m::ConstantScalar())))
+                     .WithPredicate([](const HloInstruction* divide) {
+                       const Shape& reduce_in_shape =
+                           divide->operand(0)->operand(0)->shape();
+                       const HloInstruction* divisor =
+                           divide->operand(1)->operand(0)->operand(0);
+                       return divisor->literal().IsEqualAt(
+                           {}, reduce_in_shape.dimensions(
+                                   reduce_in_shape.dimensions().size() - 1));
+                     })));
 }
 
 template <typename Pattern>
@@ -234,6 +256,18 @@ auto Square(Pattern pattern) {
       .WithBinaryOperandsAnyOrder(pattern, pattern)
       .WithPredicate([](const HloInstruction* instr) {
         return instr->unique_operands().size() == 1;
+      });
+}
+
+// Matches a 1D [C] tensor broadcast along the last dimension, the only
+// scale/shift layout oneDNN layer normalization supports.
+auto LastDimBroadcast(HloInstruction** operand) {
+  return m::Broadcast(m::Op(operand))
+      .WithPredicate([](const HloInstruction* broadcast) {
+        return broadcast->operand(0)->shape().dimensions().size() == 1 &&
+               broadcast->dimensions().size() == 1 &&
+               broadcast->dimensions()[0] ==
+                   broadcast->shape().dimensions().size() - 1;
       });
 }
 
@@ -283,8 +317,13 @@ std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
     return std::nullopt;
   }
 
+  // OneDNN only supports 2 <= rank <= 5
+  if (src_shape.dimensions().size() < 2 || src_shape.dimensions().size() > 5) {
+    return std::nullopt;
+  }
+
   // Get bias
-  if (!Match(bias_node, m::Broadcast(m::Op(bias)))) {
+  if (!Match(bias_node, LastDimBroadcast(bias))) {
     return std::nullopt;
   }
 
@@ -305,7 +344,7 @@ std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
     *eps = static_cast<float>(epsilon->literal().GetAsDouble({}).value());
   }
   // get scale
-  if (!Match(scale_node, m::Broadcast(m::Op(scale)))) return std::nullopt;
+  if (!Match(scale_node, LastDimBroadcast(scale))) return std::nullopt;
 
   // Match variance. tf.nn.moments emits one of two forms for variance
   //   (a) variance = Mean(D^2)
@@ -313,24 +352,18 @@ std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
   //   (b) variance = Max(Mean(D^2) - Mean(D)^2, 0)
   //   (https://github.com/tensorflow/tensorflow/commit/b14991de0ee209b0cc4546e80fd81f6d71927d00)
 
-  // Strip the Max(., 0) clamp that only form (b) carries.
-  HloInstruction* clamped_variance = nullptr;
-  if (Match(sqrd_diff_mean, m::Maximum().WithBinaryOperandsAnyOrder(
-                                pu::OptionalBroadcast(m::ConstantScalar(0)),
-                                m::Op(&clamped_variance)))) {
-    sqrd_diff_mean = clamped_variance;
-  }
-
   if (Match(sqrd_diff_mean, MeanPattern(&sqrd_diff))) {
     // (a) Mean(D^2).
     if (!Match(sqrd_diff, Square(CenteredInput(&src_a, &src_b)))) {
       return std::nullopt;
     }
   } else {
-    // (b) Mean(D^2) - Mean(D)^2.
+    // (b) Max(Mean(D^2) - Mean(D)^2, 0)
     HloInstruction *mean_sqrd_diff, *sqrd_mean_diff;
-    if (!Match(sqrd_diff_mean,
-               m::Subtract(m::Op(&mean_sqrd_diff), m::Op(&sqrd_mean_diff)))) {
+    if (!Match(sqrd_diff_mean, m::Maximum().WithBinaryOperandsAnyOrder(
+                                   pu::OptionalBroadcast(m::ConstantScalar(0)),
+                                   m::Subtract(m::Op(&mean_sqrd_diff),
+                                               m::Op(&sqrd_mean_diff))))) {
       return std::nullopt;
     }
     HloInstruction *diff_a, *diff_b;
@@ -345,7 +378,7 @@ std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
     if (!Match(diff_a, CenteredInput(&src_a, &src_b))) return std::nullopt;
   }
 
-  if (src_a != src_b && src_a != *src) {
+  if (src_a != *src || src_b != *src) {
     return std::nullopt;
   }
 
