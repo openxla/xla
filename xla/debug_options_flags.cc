@@ -2875,8 +2875,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_collect_cost_model_stats",
       bool_setter_for(&DebugOptions::set_xla_gpu_collect_cost_model_stats),
       debug_options->xla_gpu_collect_cost_model_stats(),
-      "If true, each fusion instruction will have a cost model runtime "
-      "estimate in backend config after compilation."));
+      "If true, each fusion instruction will have cost model runtime "
+      "estimates in its backend config after compilation, and each "
+      "instruction scheduled by the latency hiding scheduler will have the "
+      "cost estimate that the scheduler used, and the estimator that "
+      "produced it, in the `scheduler_cost_us` and `scheduler_cost_source` "
+      "fields of its metadata."));
 
   flag_list->push_back(tsl::Flag("xla_gpu_enable_nccl_clique_optimization",
                                  noop_flag_setter<bool>, false,

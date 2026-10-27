@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -488,12 +489,17 @@ SolLatencyEstimator::Create(
 
 LatencyEstimator::TimeCost SolLatencyEstimator::GetLatencyBetween(
     const HloGraphNode& from, const HloGraphNode& target) const {
+  return EstimateLatencyBetween(from, target).value;
+}
+
+LatencyEstimator::Estimate SolLatencyEstimator::EstimateLatencyBetween(
+    const HloGraphNode& from, const HloGraphNode& target) const {
   const HloOpcode from_op = from.GetInstr().opcode();
   if (!config_.schedule_send_recvs &&
       (from_op == HloOpcode::kSend || from_op == HloOpcode::kRecv)) {
     VLOG(10) << "GetLatencyBetween: Returning kLowLatency for Send/Recv op "
              << from.GetInstr().name();
-    return kLowLatency;
+    return {kLowLatency, Source()};
   }
 
   // For sync intra-node AllReduce (Triton collective fusion) the kernel runs on
@@ -506,15 +512,16 @@ LatencyEstimator::TimeCost SolLatencyEstimator::GetLatencyBetween(
     VLOG(10) << "GetLatencyBetween: Returning kLowLatency for sync "
                 "intra-node AllReduce (cost already in NodeCost): "
              << from.GetInstr().name();
-    return kLowLatency;
+    return {kLowLatency, Source()};
   }
 
   if (!IsAsyncPair(from, target) && !IsSupportedCollectiveOp(from.GetInstr())) {
-    TimeCost latency = latency_estimator_->GetLatencyBetween(from, target);
+    const Estimate latency =
+        latency_estimator_->EstimateLatencyBetween(from, target);
     VLOG(10)
         << "GetLatencyBetween: Not an async pair or unsupported collective "
         << from.GetInstr().name() << ", returning latency from wrapped "
-        << "estimator: " << latency;
+        << "estimator: " << latency.value;
     return latency;
   }
 
@@ -524,22 +531,29 @@ LatencyEstimator::TimeCost SolLatencyEstimator::GetLatencyBetween(
   if (!coll_time.ok()) {
     VLOG(1) << "Failed to compute collective time: " << coll_time.status()
             << " for " << from.GetInstr().name();
-    TimeCost latency = latency_estimator_->GetLatencyBetween(from, target);
+    const Estimate latency =
+        latency_estimator_->EstimateLatencyBetween(from, target);
     VLOG(10) << "GetLatencyBetween: Fallback to wrapped estimator due to "
                 "ComputeCollectiveTime failure for "
-             << from.GetInstr().name() << ", returning latency: " << latency;
+             << from.GetInstr().name()
+             << ", returning latency: " << latency.value;
     return latency;
   }
   TimeCost latency = absl::ToDoubleMicroseconds(*coll_time);
   VLOG(10) << "GetLatencyBetween: Computed collective time for "
            << from.GetInstr().name() << ": " << latency << " us";
-  return latency;
+  return {latency, Source()};
 }
 
 LatencyEstimator::TimeCost SolLatencyEstimator::NodeCost(
     const HloInstruction* instr) const {
+  return EstimateNodeCost(instr).value;
+}
+
+LatencyEstimator::Estimate SolLatencyEstimator::EstimateNodeCost(
+    const HloInstruction* instr) const {
   if (const std::optional<TimeCost> latency = GetLatencyFromMetadata(*instr)) {
-    return *latency;
+    return {*latency, Source()};
   }
   // Sync intra-node AllReduce kernels (Triton collective fusions) run on the
   // compute stream and block compute entirely. Their full latency is on the
@@ -554,7 +568,7 @@ LatencyEstimator::TimeCost SolLatencyEstimator::NodeCost(
       VLOG(10) << "NodeCost: Sync intra-node AllReduce cost for "
                << instr->name() << ": " << absl::ToDoubleMicroseconds(*t)
                << " us";
-      return absl::ToDoubleMicroseconds(*t);
+      return {absl::ToDoubleMicroseconds(*t), Source()};
     }
   }
 
@@ -564,7 +578,7 @@ LatencyEstimator::TimeCost SolLatencyEstimator::NodeCost(
       IsAsyncTritonCollectiveFusionDone(*instr)) {
     VLOG(10) << "NodeCost: Returning kLowCost for async start/done op "
              << instr->name();
-    return kLowCost;
+    return {kLowCost, Source()};
   }
 
   if (std::optional<absl::Duration> matmul_duration =
@@ -573,10 +587,11 @@ LatencyEstimator::TimeCost SolLatencyEstimator::NodeCost(
     TimeCost cost = absl::ToDoubleMicroseconds(*matmul_duration);
     VLOG(10) << "NodeCost: Matmul cost from matmul_interpolator for "
              << instr->name() << ": " << cost << " us";
-    return cost;
+    return {cost, Source()};
   }
 
   LatencyEstimator::TimeCost cost_in_us;
+  OpMetadata::SchedulerCostSource source = Source();
   // Custom fusion ops are hard to estimate, so we only use the performance
   // model for loop and input fusions. Otherwise we return a small cost to make
   // sure we can achieve overlap (even at the cost of overextension).
@@ -589,13 +604,15 @@ LatencyEstimator::TimeCost SolLatencyEstimator::NodeCost(
     VLOG(10) << "NodeCost: Fusion cost from gpu_performance_model for "
              << instr->name() << ": " << cost_in_us << " us";
   } else {
-    cost_in_us = 0.01 * latency_estimator_->NodeCost(instr);
+    const Estimate fallback = latency_estimator_->EstimateNodeCost(instr);
+    cost_in_us = 0.01 * fallback.value;
+    source = fallback.source;
     VLOG(10) << "NodeCost: Fallback cost for " << instr->name() << ": "
              << cost_in_us << " us";
   }
   VLOG(10) << "Analytical estimator calculated cost for: " << instr->name()
            << ". Cost: " << cost_in_us;
-  return cost_in_us;
+  return {cost_in_us, source};
 }
 
 SolLatencyEstimator::SolLatencyEstimator(

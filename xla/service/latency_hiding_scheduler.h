@@ -60,6 +60,7 @@ limitations under the License.
 #include "xla/side_effect_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -228,6 +229,24 @@ class LatencyEstimator {
   virtual TimeCost NodeCost(const HloInstruction* node) const = 0;
   // Returns the core frequency used in latency estimation.
   virtual int CyclesPerMicrosecond() const = 0;
+  // Identifies the estimator, for recording where the scheduler's cost
+  // estimates came from (OpMetadata.scheduler_cost_source).
+  virtual OpMetadata::SchedulerCostSource Source() const {
+    return OpMetadata::SCHEDULER_COST_SOURCE_UNKNOWN;
+  }
+  // An estimate and the estimator that produced it: this one, or the one it
+  // delegates to for the given instruction or pair of nodes.
+  struct Estimate {
+    TimeCost value;
+    OpMetadata::SchedulerCostSource source;
+  };
+  virtual Estimate EstimateNodeCost(const HloInstruction* node) const {
+    return {NodeCost(node), Source()};
+  }
+  virtual Estimate EstimateLatencyBetween(const HloGraphNode& from,
+                                          const HloGraphNode& target) const {
+    return {GetLatencyBetween(from, target), Source()};
+  }
 
   // Returns the latency cycles of the instruction if it is specified in the
   // frontend attributes. Otherwise, returns std::nullopt.
@@ -265,6 +284,9 @@ class ApproximateLatencyEstimator : public LatencyEstimator {
   TimeCost NodeCost(const HloInstruction* instr) const override;
   // ApproximateLatencyEstimator uses abstract units so this returns 1.
   int CyclesPerMicrosecond() const override { return 1; }
+  OpMetadata::SchedulerCostSource Source() const override {
+    return OpMetadata::SCHEDULER_COST_SOURCE_APPROXIMATE;
+  }
 
  public:
   static constexpr TimeCost kLowCost = 1.0;
@@ -660,9 +682,18 @@ class HloEdge {
   // Nullptr is not a valid value for 'target'.
   HloEdge(LatencyEstimator::TimeCost latency, HloGraphNode* target)
       : latency_(latency), original_latency_(latency), target_(target) {}
+  HloEdge(const LatencyEstimator::Estimate& latency, HloGraphNode* target)
+      : latency_(latency.value),
+        original_latency_(latency.value),
+        target_(target),
+        original_latency_source_(latency.source) {}
   LatencyEstimator::TimeCost Latency() const { return latency_; }
   LatencyEstimator::TimeCost OriginalLatency() const {
     return original_latency_;
+  }
+  // The estimator that produced the original latency.
+  OpMetadata::SchedulerCostSource OriginalLatencySource() const {
+    return original_latency_source_;
   }
   void SetLatency(LatencyEstimator::TimeCost latency) { latency_ = latency; }
   void SetOriginalLatency(LatencyEstimator::TimeCost original_latency) {
@@ -706,6 +737,8 @@ class HloEdge {
   // > 0 points to an entry containing an edge-specific vector in the
   // HloScheduleGraph holding the sharable_resources_ for this edge.
   int sharable_resources_index_ = -1;
+  OpMetadata::SchedulerCostSource original_latency_source_ =
+      OpMetadata::SCHEDULER_COST_SOURCE_UNKNOWN;
 };
 
 // Node in the schedule graph, plus information used for scheduling.
@@ -759,7 +792,7 @@ class HloGraphNode {
   }
 
   static void AddDependency(HloGraphNode* from, HloGraphNode* to,
-                            LatencyEstimator::TimeCost latency) {
+                            const LatencyEstimator::Estimate& latency) {
     to->AddPredecessor(HloEdge(latency, from));
     to->indegree_++;
     from->AddSuccessor(HloEdge(latency, to));
@@ -768,7 +801,8 @@ class HloGraphNode {
 
   static void AddDependency(HloGraphNode* from, HloGraphNode* to,
                             const LatencyEstimator* latency_estimator) {
-    AddDependency(from, to, latency_estimator->GetLatencyBetween(*from, *to));
+    AddDependency(from, to,
+                  latency_estimator->EstimateLatencyBetween(*from, *to));
   }
   // Reset the node to a state where it's ready to be scheduled again.
   void ResetScheduling() {
@@ -825,6 +859,8 @@ class HloGraphNode {
   void SetReadyTime(TimeCost ready_time) { ready_time_ = ready_time; }
   TimeCost GetCost() const { return cost_; }
   void SetCost(TimeCost cost) { cost_ = cost; }
+  // The estimator that produced the cost.
+  OpMetadata::SchedulerCostSource GetCostSource() const { return cost_source_; }
   TimeCost GetAsyncDepth() const { return async_depth_; }
   TimeCost GetAsyncHeight() const { return async_height_; }
   TimeCost GetDepth() const { return depth_; }
@@ -1158,6 +1194,8 @@ class HloGraphNode {
   TimeCost ready_time_ = std::numeric_limits<TimeCost>::max();
   // Time cost of the execution of the operation of this nodes represent.
   TimeCost cost_ = 0.0;
+  OpMetadata::SchedulerCostSource cost_source_ =
+      OpMetadata::SCHEDULER_COST_SOURCE_UNKNOWN;
   // Accumulated async latency along the path from this node to a node with no
   // predecessors, e.g., parameters. Used in the bottom-up scheduling.
   TimeCost async_depth_ = 0.0;

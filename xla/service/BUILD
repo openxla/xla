@@ -1240,6 +1240,7 @@ cc_library(
         "//xla:side_effect_util",
         "//xla:status_macros",
         "//xla:util",
+        "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
         "//xla/hlo/analysis:alias_info",
         "//xla/hlo/analysis:hlo_alias_analysis",
@@ -1353,6 +1354,7 @@ cc_library(
     hdrs = ["profile_guided_latency_estimator.h"],
     deps = [
         ":latency_hiding_scheduler",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
