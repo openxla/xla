@@ -92,7 +92,7 @@ TEST(KernelThunkTest, CreateWithDefaultValues) {
   EXPECT_EQ(thunk.ToString(0),
             "kernel=, profile_annotation=, launch dimensions="
             "blocks: {1, 1, 1}, threads/block: {1, 1, 1}, "
-            "cluster_dim=ClusterDim{1, 1, 1}");
+            "cluster_dim=ClusterDim{1, 1, 1}, shmem_bytes=0");
 }
 
 TEST(KernelThunkTest, CreateAndGettersAndToString) {
@@ -140,7 +140,7 @@ TEST(KernelThunkTest, CreateAndGettersAndToString) {
       thunk.ToString(0),
       "kernel=kernel123, profile_annotation=DotGeneral, "
       "launch dimensions=blocks: {32, 31, 30}, threads/block: {256, 255, 254}, "
-      "cluster_dim=ClusterDim{1, 1, 1}, use_pdl=true");
+      "cluster_dim=ClusterDim{1, 1, 1}, shmem_bytes=1024, use_pdl=true");
 }
 
 TEST(KernelThunkTest, ToProto) {

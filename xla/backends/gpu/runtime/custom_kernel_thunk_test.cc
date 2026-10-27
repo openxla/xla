@@ -66,22 +66,33 @@ using tsl::proto_testing::EqualsProto;
 using tsl::proto_testing::ParseTextProtoOrDie;
 
 TEST(CustomKernelThunkTest, ToStringIncludesPdlOnlyWhenEnabled) {
+  Thunk::ThunkInfo thunk_info;
+  thunk_info.profile_annotation = "test_kernel_profiler";
   CustomKernel kernel("name",
                       se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
                           /*ptx=*/"", /*kernel_name=*/"name", /*arity=*/0),
                       se::BlockDim(3, 2, 1), se::ThreadDim(4, 5, 6),
                       /*shared_memory_bytes=*/42);
   emitters::KernelArguments kernel_arguments({});
-  CustomKernelThunk thunk(Thunk::ThunkInfo{}, kernel, kernel_arguments,
+  CustomKernelThunk thunk(thunk_info, kernel, kernel_arguments,
                           /*devices_in_process=*/1);
   EXPECT_EQ(thunk.ToString(0),
-            "name grid: [3, 2, 1] threads: [4, 5, 6]  shared_memory: 42 bytes");
+            "kernel=name, profile_annotation=test_kernel_profiler, "
+            "launch dimensions=blocks: {3, 2, 1}, threads/block: {4, 5, 6}, "
+            "cluster_dim=nullopt, shmem_bytes=42");
 
-  CustomKernelThunk pdl_thunk(Thunk::ThunkInfo{}, kernel, kernel_arguments,
+  CustomKernel clustered_kernel(
+      "clustered_name",
+      se::KernelLoaderSpec::CreateCudaPtxInMemorySpec(
+          /*ptx=*/"", /*kernel_name=*/"clustered_name", /*arity=*/0),
+      se::BlockDim(6, 4, 2), se::ThreadDim(8, 10, 12), se::ClusterDim(2, 2, 2),
+      /*shared_memory_bytes=*/84);
+  CustomKernelThunk pdl_thunk(thunk_info, clustered_kernel, kernel_arguments,
                               /*devices_in_process=*/1, /*use_pdl=*/true);
   EXPECT_EQ(pdl_thunk.ToString(0),
-            "name grid: [3, 2, 1] threads: [4, 5, 6]  shared_memory: 42 bytes "
-            "use_pdl: true");
+            "kernel=clustered_name, profile_annotation=test_kernel_profiler, "
+            "launch dimensions=blocks: {6, 4, 2}, threads/block: {8, 10, 12}, "
+            "cluster_dim=ClusterDim{2, 2, 2}, shmem_bytes=84, use_pdl=true");
 }
 
 TEST(CustomKernelThunkTest, BufferUsesReturnsCorrectBuffers) {
