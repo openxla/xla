@@ -83,6 +83,10 @@ std::vector<const HloBuffer*> HloLiveRange::GetBuffersDefined(
     const HloInstruction* instruction, const HloAliasAnalysis& alias_analysis) {
   std::vector<const HloBuffer*> buffers;
   absl::flat_hash_set<const HloBuffer*> seen;
+  for (const HloBuffer* used_buffer :
+       GetBuffersUsed(instruction, alias_analysis)) {
+    seen.insert(used_buffer);
+  }
   for (const HloValue* value :
        GetValuesDefined(instruction, alias_analysis.dataflow_analysis())) {
     const HloBuffer* buffer = &alias_analysis.GetBufferContainingValue(*value);
@@ -483,13 +487,13 @@ void HloLiveRange::CalculateBufferStartEndMap() {
 }
 
 int64_t HloLiveRange::ComputePeakMemoryMoment() const {
-  std::vector<std::tuple<int64_t /*time*/, bool /*is_end*/, const HloValue*>>
+  std::vector<std::tuple<int64_t /*time*/, bool /*is_start*/, const HloValue*>>
       events;
   for (const HloValue* value : alias_analysis_.dataflow_analysis().values()) {
     auto it = buffer_live_ranges_.find(value);
     if (it != buffer_live_ranges_.end()) {
-      events.emplace_back(it->second.start, false, value);
-      events.emplace_back(it->second.end + 1, true, value);
+      events.emplace_back(it->second.start, true, value);
+      events.emplace_back(it->second.end + 1, false, value);
     }
   }
   std::sort(events.begin(), events.end());
@@ -499,15 +503,19 @@ int64_t HloLiveRange::ComputePeakMemoryMoment() const {
   std::optional<int64_t> peak_time;
   for (const auto& event : events) {
     int64_t time;
-    bool is_end;
+    bool is_start;
     const HloValue* value;
-    std::tie(time, is_end, value) = event;
-    const Shape& shape = value->instruction()->shape();
-    if (shape.is_unbounded_dynamic()) {
-      return -1;
+    std::tie(time, is_start, value) = event;
+    const HloBuffer& buffer = alias_analysis_.GetBufferContainingValue(*value);
+    int64_t buffer_size = 0;
+    for (const HloValue* buffer_value : buffer.values()) {
+      if (buffer_value->shape().is_unbounded_dynamic()) {
+        return -1;
+      }
+      buffer_size = std::max(buffer_size,
+                             ShapeUtil::ByteSizeOf(buffer_value->shape(), 8));
     }
-    auto buffer_size = ShapeUtil::ByteSizeOf(shape, 8);
-    if (is_end) {
+    if (!is_start) {
       memory_usage -= buffer_size;
     } else {
       memory_usage += buffer_size;
@@ -558,7 +566,11 @@ std::string HloLiveRange::ToString() const {
     auto it = buffer_live_ranges_.find(value);
     if (it != buffer_live_ranges_.end()) {
       if (it->second.start <= peak_moment && peak_moment <= it->second.end) {
-        int64_t bytes = ShapeUtil::ByteSizeOf(value->shape(), 8);
+        const HloBuffer& buffer =
+            alias_analysis_.GetBufferContainingValue(*value);
+        int64_t bytes = buffer.ComputeSize([](const BufferValue& v) {
+          return ShapeUtil::ByteSizeOf(v.shape(), 8);
+        });
         sized_buffers.push_back({bytes, value});
       }
     }

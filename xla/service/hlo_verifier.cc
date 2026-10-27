@@ -1861,6 +1861,37 @@ absl::Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
         ShapeUtil::GetSubshape(custom_call->shape(), pair.first);
     const Shape& operand_subshape = ShapeUtil::GetSubshape(
         custom_call->operand(pair.second.first)->shape(), pair.second.second);
+    if ((IsPinViewCustomCall(custom_call) ||
+         IsUnpinViewCustomCall(custom_call)) &&
+        pair.first.empty() && pair.second.first == 0 &&
+        pair.second.second.empty()) {
+      const Shape& slice_shape =
+          IsPinViewCustomCall(custom_call) ? output_subshape : operand_subshape;
+      const Shape& base_shape =
+          IsPinViewCustomCall(custom_call) ? operand_subshape : output_subshape;
+      TF_RET_CHECK(slice_shape.IsArray() && base_shape.IsArray() &&
+                   slice_shape.element_type() == base_shape.element_type() &&
+                   slice_shape.dimensions().size() ==
+                       base_shape.dimensions().size())
+          << "Invalid view aliasing shapes: "
+          << operand_subshape.ToString(/*print_layout=*/true) << " vs "
+          << output_subshape.ToString(/*print_layout=*/true);
+      if (opts_.layout_sensitive && slice_shape.has_layout() &&
+          base_shape.has_layout()) {
+        TF_RET_CHECK(slice_shape.layout().memory_space() ==
+                     base_shape.layout().memory_space())
+            << "Different view aliasing memory spaces: "
+            << operand_subshape.ToString(/*print_layout=*/true) << " vs "
+            << output_subshape.ToString(/*print_layout=*/true);
+      }
+      for (int64_t d = 0; d < slice_shape.dimensions().size(); ++d) {
+        TF_RET_CHECK(slice_shape.dimensions(d) <= base_shape.dimensions(d))
+            << "View slice dimension exceeds base dimension: "
+            << operand_subshape.ToString(/*print_layout=*/true) << " vs "
+            << output_subshape.ToString(/*print_layout=*/true);
+      }
+      continue;
+    }
     if (opts_.layout_sensitive) {
       bool operand_is_scalar = ShapeUtil::IsEffectiveScalar(operand_subshape);
       auto shape_equal_checker = Shape::Equal().IgnoreBuffer(ignore_buffer);

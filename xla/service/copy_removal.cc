@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/layout.h"
@@ -446,6 +447,9 @@ bool ComputeRelativeLocation::AlwaysForceInterception(HloInstruction* instr) {
 bool ComputeRelativeLocation::InstructionCanIntercept(
     const InstructionEntry& entry, const LiveRangeRegions& region) {
   auto instr = entry.first;
+  if (IsPinViewCustomCall(instr) || IsUnpinViewCustomCall(instr)) {
+    return false;
+  }
   if (!entry.second.is_definition) {
     // If the instruction only uses the value, it can intercept only if it
     // modifies the buffer in place.

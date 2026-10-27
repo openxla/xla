@@ -183,7 +183,8 @@ absl::StatusOr<bool> SchedulerMemoryFencing::RunImpl(
   int64_t edges_added = 0;
 
   for (const HloBuffer& buffer : alias_analysis->buffers()) {
-    const int64_t buffer_size = shape_size_bytes_(buffer.values()[0]->shape());
+    const int64_t buffer_size = buffer.ComputeSize(
+        [&](const BufferValue& v) { return shape_size_bytes_(v.shape()); });
     if (buffer_size < size_threshold_bytes_) {
       continue;
     }
