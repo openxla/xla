@@ -1641,7 +1641,7 @@ TEST(PjRtCpuClientTest, PjRtBufferCopySliceSingleChunk) {
     EXPECT_EQ(sliced_buffer->memory_space(), memory_space);
 
     ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
-                         sliced_buffer->ToLiteralSync());
+                         sliced_buffer->ToLiteral().Await());
     EXPECT_THAT(result_literal->data<int32_t>(),
                 ::testing::ElementsAre(12, 13, 14, 15));
   }
@@ -1687,7 +1687,7 @@ TEST(PjRtCpuClientTest, PjRtBufferCopySliceMultiChunkWithTranspose) {
     EXPECT_EQ(sliced_buffer->memory_space(), memory_space);
 
     ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
-                         sliced_buffer->ToLiteralSync());
+                         sliced_buffer->ToLiteral().Await());
     EXPECT_THAT(result_literal->data<int32_t>(),
                 ::testing::ElementsAre(11, 21, 12, 22));
   }
@@ -1722,7 +1722,7 @@ TEST(PjRtCpuClientTest, PjRtBufferCopySliceZeroSizedGather) {
                        src_buffer->CopySlice(gather, dst_shape));
   EXPECT_EQ(sliced_buffer->on_device_shape(), dst_shape);
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
-                       sliced_buffer->ToLiteralSync());
+                       sliced_buffer->ToLiteral().Await());
   EXPECT_EQ(result_literal->element_count(), 0);
 }
 
@@ -1764,7 +1764,7 @@ TEST(PjRtCpuClientTest, PjRtBufferCopySliceDelayedReadiness) {
   EXPECT_THAT(ready_future.Await(), ::absl_testing::IsOk());
 
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result_literal,
-                       sliced_buffer->ToLiteralSync());
+                       sliced_buffer->ToLiteral().Await());
   EXPECT_THAT(result_literal->data<int32_t>(), ::testing::ElementsAre(11, 12));
 }
 
@@ -1923,11 +1923,11 @@ TEST(PjRtCpuClientTest, PjRtBufferUpdateSliceSingleChunk) {
   EXPECT_FALSE(slice_buffer->IsDeleted());
 
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> out_literal,
-                       updated_buffer->ToLiteralSync());
+                       updated_buffer->ToLiteral().Await());
   EXPECT_EQ(*out_literal, LiteralUtil::CreateR1<int32_t>({10, 99, 100, 40}));
 
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> slice_out_literal,
-                       slice_buffer->ToLiteralSync());
+                       slice_buffer->ToLiteral().Await());
   EXPECT_EQ(*slice_out_literal, LiteralUtil::CreateR1<int32_t>({99, 100}));
 }
 
@@ -1975,7 +1975,7 @@ TEST(PjRtCpuClientTest, PjRtBufferUpdateSliceMultiChunk) {
   EXPECT_FALSE(slice_buffer->IsDeleted());
 
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> out_literal,
-                       updated_buffer->ToLiteralSync());
+                       updated_buffer->ToLiteral().Await());
   Literal expected_literal = LiteralUtil::CreateR2<int32_t>({
       {1, 2, 3, 4},
       {5, 60, 70, 8},
@@ -2021,7 +2021,7 @@ TEST(PjRtCpuClientTest, PjRtBufferUpdateSliceZeroSizedGather) {
   EXPECT_FALSE(slice_buffer->IsDeleted());
 
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> out_literal,
-                       updated_buffer->ToLiteralSync());
+                       updated_buffer->ToLiteral().Await());
   EXPECT_EQ(*out_literal, LiteralUtil::CreateR1<int32_t>({1, 2, 3}));
 }
 
@@ -2077,7 +2077,7 @@ TEST(PjRtCpuClientTest, PjRtBufferUpdateSliceDelayedReadiness) {
   EXPECT_THAT(ready_future.Await(), ::absl_testing::IsOk());
 
   ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> out_literal,
-                       updated_buffer->ToLiteralSync());
+                       updated_buffer->ToLiteral().Await());
   EXPECT_EQ(*out_literal, LiteralUtil::CreateR1<int32_t>({10, 77, 88, 40}));
 }
 
@@ -2250,7 +2250,7 @@ TEST(PjRtCpuClientTest, PjRtBufferUpdateSliceInvalidArgument) {
     EXPECT_FALSE(target_buffer->IsDeleted());
 
     ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> out_literal,
-                         target_buffer->ToLiteralSync());
+                         target_buffer->ToLiteral().Await());
     EXPECT_EQ(*out_literal, LiteralUtil::CreateR1<int32_t>({1, 2, 3, 4}));
   }
 
