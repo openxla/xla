@@ -102,6 +102,7 @@ class PjRtCApiRawBuffer : public PjRtRawBuffer {
 
   PjRtDeviceEventPtr GetRawBufferAsyncValue() override;
   bool is_mutable() const override;
+  absl::StatusOr<ExternalDmaInfo> GetExternalDmaInfo() const override;
 
  private:
   PJRT_RawBuffer* c_buffer_;

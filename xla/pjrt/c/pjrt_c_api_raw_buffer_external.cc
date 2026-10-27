@@ -259,6 +259,12 @@ bool PjRtCApiRawBuffer::is_mutable() const {
   return static_cast<const PjRtRawBufferInterface*>(c_buffer_)->is_mutable();
 }
 
+absl::StatusOr<PjRtRawBuffer::ExternalDmaInfo>
+PjRtCApiRawBuffer::GetExternalDmaInfo() const {
+  return static_cast<const PjRtRawBufferInterface*>(c_buffer_)
+      ->GetExternalDmaInfo();
+}
+
 static std::optional<absl::StatusOr<PjRtRawBufferRef>>
 PjRtCApiBuffer_CreateRawAliasOfBuffer_Factory(PjRtBuffer* buffer) {
   if (auto* c_api_buffer = dynamic_cast<xla::PjRtCApiBuffer*>(buffer)) {
