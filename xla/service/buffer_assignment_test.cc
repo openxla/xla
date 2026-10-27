@@ -650,14 +650,15 @@ TEST_F(BufferAssignmentTest, TakeAllocations) {
 
   // Verify that we have some allocations and they have assigned buffers and
   // peak memory logical buffers.
-  ASSERT_FALSE(buffers->Allocations().empty());
+  const size_t num_allocations = buffers->Allocations().size();
+  ASSERT_GT(num_allocations, 0);
   bool has_assigned_buffers = false;
   bool has_peak_buffers = false;
   for (const auto& allocation : buffers->Allocations()) {
-    if (!allocation.assigned_buffers().empty()) {
+    if (!buffers->assigned_buffers(allocation).empty()) {
       has_assigned_buffers = true;
     }
-    if (!allocation.PeakMemoryLogicalBuffers().empty()) {
+    if (!buffers->PeakMemoryLogicalBuffers(allocation).empty()) {
       has_peak_buffers = true;
     }
   }
@@ -668,12 +669,8 @@ TEST_F(BufferAssignmentTest, TakeAllocations) {
   std::vector<BufferAllocation> allocations =
       std::move(*buffers).TakeAllocations();
 
-  // Verify that the moved allocations have their buffer collections cleared.
-  for (const auto& allocation : allocations) {
-    EXPECT_TRUE(allocation.assigned_buffers().empty());
-    EXPECT_TRUE(allocation.PeakMemoryLogicalBuffers().empty());
-    EXPECT_TRUE(allocation.CrossColorBuffers().empty());
-  }
+  EXPECT_EQ(allocations.size(), num_allocations);
+  EXPECT_TRUE(buffers->Allocations().empty());
 }
 
 // Verifies the fallback mechanism for FAST_MERGE on potential OOM.
@@ -1259,7 +1256,8 @@ TEST_F(BufferAssignmentTest, RestoreStateForColorsOnlyReplacesGivenColors) {
     const BufferAllocation& allocation = assignment->GetAllocation(index);
     EXPECT_EQ(allocation.index(), index);
     // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
-    for (const auto& [value, offset_size] : allocation.assigned_buffers()) {
+    for (const auto& [value, offset_size] :
+         assignment->assigned_buffers(allocation)) {
       EXPECT_EQ(assignment->GetAssignedAllocation(*value).index(), index);
     }
   }
@@ -1419,9 +1417,10 @@ TEST_F(BufferAssignmentTest, BasicToFromProto) {
       EXPECT_EQ(alloc_orig.index(), alloc_from_proto.index());
 
       // Ensure peak buffers survived the round-trip.
-      auto& peak_buffers_orig = alloc_orig.PeakMemoryLogicalBuffers();
+      auto& peak_buffers_orig =
+          buffers_orig->PeakMemoryLogicalBuffers(alloc_orig);
       auto& peak_buffers_from_proto =
-          alloc_from_proto.PeakMemoryLogicalBuffers();
+          buffers_from_proto->PeakMemoryLogicalBuffers(alloc_from_proto);
       EXPECT_THAT(peak_buffers_from_proto,
                   Pointwise(IdEq(), peak_buffers_orig));
     }
@@ -1534,7 +1533,7 @@ ENTRY main {
       EXPECT_NE(p0_buffer.index(), neg1_buffer.index());
       EXPECT_NE(p0_buffer.index(), temp_p1_buffer.index());
       EXPECT_NE(p0_buffer.index(), sum_buffer.index());
-      EXPECT_EQ(p0_buffer.assigned_buffers().size(), 2);
+      EXPECT_EQ(buffers->assigned_buffers(p0_buffer).size(), 2);
       EXPECT_TRUE(neg1_buffer.IsPreallocatedTempBuffer());
     }
   }
@@ -1695,13 +1694,14 @@ ENTRY main {
   EXPECT_EQ(neg0_allocation.color(), 1);
   EXPECT_TRUE(neg0_allocation.IsPreallocatedTempBuffer());
   EXPECT_EQ(neg0_allocation.size(), BufferSizeBytes(neg0_value));
-  EXPECT_TRUE(neg0_allocation.assigned_buffers().contains(&neg1_value));
+  EXPECT_TRUE(
+      assignment->assigned_buffers(neg0_allocation).contains(&neg1_value));
 
   // The S(0) buffer is reported as a cross-color reuse on the S(1) allocation
   // (informational only); the allocation's own S(1) buffer is not.
-  EXPECT_THAT(neg0_allocation.CrossColorBuffers(),
+  EXPECT_THAT(assignment->CrossColorBuffers(neg0_allocation),
               ::testing::Contains(&neg1_value));
-  EXPECT_THAT(neg0_allocation.CrossColorBuffers(),
+  EXPECT_THAT(assignment->CrossColorBuffers(neg0_allocation),
               ::testing::Not(::testing::Contains(&neg0_value)));
 }
 
@@ -1791,9 +1791,9 @@ ENTRY main {
   EXPECT_EQ(a_slice.size(), 4096);
   EXPECT_EQ(b_slice.size(), 4096);
   EXPECT_FALSE(a_slice.OverlapsWith(b_slice));
-  EXPECT_THAT(d_slice.allocation()->CrossColorBuffers(),
+  EXPECT_THAT(assignment->CrossColorBuffers(*d_slice.allocation()),
               ::testing::Contains(&a_value));
-  EXPECT_THAT(d_slice.allocation()->CrossColorBuffers(),
+  EXPECT_THAT(assignment->CrossColorBuffers(*d_slice.allocation()),
               ::testing::Contains(&b_value));
 }
 
@@ -2110,8 +2110,9 @@ TEST_F(BufferAssignmentTest, PresetAssignments) {
   EXPECT_NE(mul_buffer.index(), param0_buffer.index());
   EXPECT_EQ(mul_buffer.color(), LogicalBuffer::Color(1));
 
-  EXPECT_EQ(mul_buffer.assigned_buffers().size(), 2);
-  for (const auto& value_and_offsetsize : mul_buffer.assigned_buffers()) {
+  EXPECT_EQ(buffers->assigned_buffers(mul_buffer).size(), 2);
+  for (const auto& value_and_offsetsize :
+       buffers->assigned_buffers(mul_buffer)) {
     if (value_and_offsetsize.first->instruction() == mul) {
       EXPECT_EQ(value_and_offsetsize.second.offset, 100);
       EXPECT_EQ(value_and_offsetsize.second.size, 400);
@@ -2206,8 +2207,9 @@ TEST_F(BufferAssignmentTest, PresetAssignmentsWhile) {
   // All assigned buffers are aliased so they should have the same offset and
   // size.
   const BufferAllocation& data_buffer = GetTopLevelAllocation(*buffers, negate);
-  EXPECT_EQ(data_buffer.assigned_buffers().size(), 5);
-  for (const auto& value_and_offsetsize : data_buffer.assigned_buffers()) {
+  EXPECT_EQ(buffers->assigned_buffers(data_buffer).size(), 5);
+  for (const auto& value_and_offsetsize :
+       buffers->assigned_buffers(data_buffer)) {
     EXPECT_EQ(value_and_offsetsize.second.offset, 100);
     EXPECT_EQ(value_and_offsetsize.second.size, 40);
     EXPECT_EQ(value_and_offsetsize.first->color(), LogicalBuffer::Color(1));
@@ -3430,7 +3432,7 @@ TEST_F(BufferAssignmentTest, TrivialPeakBuffers) {
 
   const BufferAllocation& mul_buffer = GetTopLevelAllocation(*buffers, mul);
   const std::vector<const HloValue*>& peak_buffers =
-      mul_buffer.PeakMemoryLogicalBuffers();
+      buffers->PeakMemoryLogicalBuffers(mul_buffer);
   ASSERT_EQ(peak_buffers.size(), 1);
   EXPECT_EQ(peak_buffers[0]->instruction(), sub);
 }
@@ -3507,16 +3509,18 @@ TEST_F(BufferAssignmentTest, PeakBuffers) {
     const BufferAllocation& buffer = GetTopLevelAllocation(*assignment, concat);
     EXPECT_FALSE(buffer.IsInputOrOutput());
     EXPECT_TRUE(buffer.IsPreallocatedTempBuffer());
-    ASSERT_EQ(buffer.assigned_buffers().size(), 4);
+    ASSERT_EQ(assignment->assigned_buffers(buffer).size(), 4);
 
     if (algorithm ==
         buffer_assignment::BufferAssignmentAlgorithmProto::TEMPORAL) {
-      EXPECT_EQ(buffer.MemoryUsageReport(""), kExpectedTemporalReport);
+      EXPECT_EQ(assignment->MemoryUsageReport(buffer, ""),
+                kExpectedTemporalReport);
     } else {
-      EXPECT_EQ(buffer.MemoryUsageReport(""), kExpectedSpatialReport);
+      EXPECT_EQ(assignment->MemoryUsageReport(buffer, ""),
+                kExpectedSpatialReport);
     }
     const std::vector<const HloValue*>& peak_buffers =
-        buffer.PeakMemoryLogicalBuffers();
+        assignment->PeakMemoryLogicalBuffers(buffer);
 
     // The peak live set should be concat and its inputs.
     ASSERT_EQ(peak_buffers.size(), 3);
@@ -3591,7 +3595,7 @@ ENTRY test_module {
   const BufferAllocation& buffer =
       GetTopLevelAllocation(*assignment, FindInstruction(module.get(), "copy"));
   const std::vector<const HloValue*>& peak_buffers =
-      buffer.PeakMemoryLogicalBuffers();
+      assignment->PeakMemoryLogicalBuffers(buffer);
 
   // Since the same aliased buffer (copy) is passed into while, we expect the
   // number of peak array buffers to be one.
@@ -3680,7 +3684,7 @@ ENTRY main {
         GetTopLevelAllocation(*buffers, constant_1);
     EXPECT_TRUE(allocation_for_const_1.is_constant());
     for (const auto& buffer_offset_pair :
-         allocation_for_const_1.assigned_buffers()) {
+         buffers->assigned_buffers(allocation_for_const_1)) {
       EXPECT_NE(buffer_offset_pair.first->instruction()->opcode(),
                 HloOpcode::kCopy);
       EXPECT_NE(buffer_offset_pair.first->instruction()->opcode(),
@@ -3693,7 +3697,7 @@ ENTRY main {
         GetTopLevelAllocation(*buffers, constant_2);
     EXPECT_TRUE(allocation_for_const_2.is_constant());
     for (const auto& buffer_offset_pair :
-         allocation_for_const_2.assigned_buffers()) {
+         buffers->assigned_buffers(allocation_for_const_2)) {
       EXPECT_NE(buffer_offset_pair.first->instruction()->opcode(),
                 HloOpcode::kCopy);
       EXPECT_NE(buffer_offset_pair.first->instruction()->opcode(),
@@ -4503,7 +4507,7 @@ ENTRY %test_module {
             nonisolation_assignment->Allocations().end());
   LOG(INFO) << "Non-isolation buffers";
   for (const auto& [value, offset_size] :
-       nonisolation_allocation->assigned_buffers()) {
+       nonisolation_assignment->assigned_buffers(*nonisolation_allocation)) {
     LOG(INFO) << value->ToShortString() << ": off: " << offset_size.offset
               << ", size: " << offset_size.size;
   }
@@ -4528,7 +4532,8 @@ ENTRY %test_module {
   // The buffer isolation uses the provided comparison function to sort the
   // values. Create these values in this order.
   std::vector<const HloValue*> ordered_values;
-  for (const auto& [value, _] : isolation_allocation->assigned_buffers()) {
+  for (const auto& [value, _] :
+       isolation_assignment->assigned_buffers(*isolation_allocation)) {
     ordered_values.push_back(value);
   }
   absl::c_sort(ordered_values, isolation_options.hlo_value_compare);
@@ -4545,7 +4550,8 @@ ENTRY %test_module {
   // isolated are determined by the fuel.
   for (i = 0; i < isolation_options.config.isolation_fuel(); ++i) {
     const HloValue* value = ordered_values[i];
-    auto offset_size = isolation_allocation->assigned_buffers().at(value);
+    auto offset_size =
+        isolation_assignment->assigned_buffers(*isolation_allocation).at(value);
     LOG(INFO) << value->ToShortString() << ": off: " << offset_size.offset
               << ", size: " << offset_size.size;
     EXPECT_EQ(offset_size.offset, expected_offset);
@@ -4559,15 +4565,17 @@ ENTRY %test_module {
   // use the old heap-packed offsets plus the isolation base offset.
   for (; i < ordered_values.size(); ++i) {
     const HloValue* value = ordered_values[i];
-    auto offset_size = isolation_allocation->assigned_buffers().at(value);
+    auto offset_size =
+        isolation_assignment->assigned_buffers(*isolation_allocation).at(value);
     // We can't simply look up the HloValue in the nonisolation buffers because
     // those are different HloValue objects.
-    auto nonisolation_offset_size = absl::c_find_if(
-        nonisolation_allocation->assigned_buffers(), [&](const auto& pair) {
+    const auto& noniso_assigned =
+        nonisolation_assignment->assigned_buffers(*nonisolation_allocation);
+    auto nonisolation_offset_size =
+        absl::c_find_if(noniso_assigned, [&](const auto& pair) {
           return pair.first->defining_position() == value->defining_position();
         });
-    ASSERT_NE(nonisolation_offset_size,
-              nonisolation_allocation->assigned_buffers().end());
+    ASSERT_NE(nonisolation_offset_size, noniso_assigned.end());
     LOG(INFO) << value->ToShortString() << ": off: " << offset_size.offset
               << ", size: " << offset_size.size;
     EXPECT_EQ(offset_size.offset,
@@ -6440,7 +6448,8 @@ void BM_MaybeAssignBufferStress(::testing::benchmark::State& state) {
             assigner.MaybeAssignBuffer(alloc, *buffer, base_assignment.get());
         if (status_or.ok() && status_or.value()) {
           assigned = true;
-          if (alloc->assigned_buffers().size() >= kMaxAssignedPerAlloc) {
+          if (base_assignment->assigned_buffers(*alloc).size() >=
+              kMaxAssignedPerAlloc) {
             BufferAllocation* new_alloc = base_assignment->NewEmptyAllocation(
                 ((i + k) % 2 == 0) ? 64 : 128, LogicalBuffer::Color(0));
             if (((i + k) % kWindowSize) < kWindowSize / 2) {
@@ -7142,6 +7151,44 @@ ENTRY main {
   EXPECT_EQ(slice0.index(), buffer0_slice.index());
   EXPECT_EQ(slice0.offset(), 0);
   EXPECT_GE(buffer0_slice.offset(), slice0.size());
+}
+
+TEST_F(BufferAssignmentTest, PerAllocationHloAccessors) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule PerAllocationHloAccessors, is_scheduled=true
+    ENTRY main {
+      p0 = f32[100] parameter(0)
+      c0 = f32[100] constant(0)
+      add = f32[100] add(p0, c0)
+      log = f32[100] log(add)
+      ROOT slice = f32[1] slice(log), slice={[0:1]}
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  const HloInstruction* add =
+      module->entry_computation()->GetInstructionWithName("add");
+  const HloValue& add_value =
+      assignment->dataflow_analysis().GetUniqueValueAt(add);
+  const BufferAllocation& alloc = assignment->GetAssignedAllocation(add_value);
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice expected_slice,
+                       assignment->GetUniqueTopLevelSlice(add));
+
+  EXPECT_TRUE(assignment->assigned_buffers(alloc).contains(&add_value));
+  EXPECT_EQ(assignment->GetAssignedSlice(add_value), expected_slice);
+  EXPECT_FALSE(assignment->PeakMemoryLogicalBuffers(alloc).empty());
+  EXPECT_TRUE(assignment->CrossColorBuffers(alloc).empty());
+  EXPECT_FALSE(assignment->MemoryUsageReport(alloc, "").empty());
 }
 }  // namespace
 }  // namespace xla
