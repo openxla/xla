@@ -25,6 +25,9 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 
 namespace xla {
+namespace {
+thread_local const WorkerThread* current_worker_thread = nullptr;
+}  // namespace
 
 WorkerThread::WorkerThread(tsl::Env* env, const std::string& name)
     : WorkerThread(env, tsl::ThreadOptions(), name) {}
@@ -53,9 +56,14 @@ void WorkerThread::Drain() {
   done.WaitForNotification();
 }
 
+bool WorkerThread::IsCurrentThread() const {
+  return current_worker_thread == this;
+}
+
 bool WorkerThread::WorkAvailable() { return !work_queue_.empty(); }
 
 void WorkerThread::WorkLoop() {
+  current_worker_thread = this;
   absl::MutexLock lock(mu_);
   while (true) {
     mu_.Await(absl::Condition(this, &WorkerThread::WorkAvailable));
