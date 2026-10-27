@@ -1636,6 +1636,51 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatBinaryOp(
   }
 }
 
+namespace {
+
+// Handles IEEE 754 / ISO C99 Annex G special cases for complex magnitude
+// (and rsqrt of magnitude when is_rsqrt is true):
+// - If either component is infinite, returns +inf (or 0 for rsqrt), even
+//   if the other component is NaN.
+// - Otherwise, if either component is NaN, returns NaN.
+// - If both components are zero, returns 0 (or +inf for rsqrt).
+// - Otherwise, returns result.
+llvm::Value* EmitComplexAbsSpecialCases(llvm::IRBuilderBase* b,
+                                        llvm::Value* abs_real,
+                                        llvm::Value* abs_imag,
+                                        llvm::Value* result, bool is_rsqrt) {
+  const bool no_nans_and_infs =
+      b->getFastMathFlags().noNaNs() && b->getFastMathFlags().noInfs();
+  llvm::IRBuilderBase::FastMathFlagGuard guard(*b);
+  llvm::FastMathFlags fmf = b->getFastMathFlags();
+  fmf.setNoNaNs(false);
+  fmf.setNoInfs(false);
+  b->setFastMathFlags(fmf);
+
+  llvm::Type* type = abs_real->getType();
+  llvm::Value* zero = llvm::ConstantFP::get(type, 0);
+  llvm::Value* zero_val = is_rsqrt ? llvm::ConstantFP::getInfinity(type) : zero;
+  llvm::Value* is_zero = b->CreateAnd(b->CreateFCmpOEQ(abs_real, zero),
+                                      b->CreateFCmpOEQ(abs_imag, zero));
+
+  if (no_nans_and_infs) {
+    return b->CreateSelect(is_zero, zero_val, result);
+  }
+
+  llvm::Value* inf = llvm::ConstantFP::getInfinity(type);
+  llvm::Value* nan = llvm::ConstantFP::getNaN(type);
+  llvm::Value* is_inf = b->CreateOr(b->CreateFCmpOEQ(abs_real, inf),
+                                    b->CreateFCmpOEQ(abs_imag, inf));
+  llvm::Value* is_nan = b->CreateFCmpUNO(abs_real, abs_imag);
+  llvm::Value* inf_val = is_rsqrt ? zero : inf;
+
+  return b->CreateSelect(
+      is_inf, inf_val,
+      b->CreateSelect(is_nan, nan, b->CreateSelect(is_zero, zero_val, result)));
+}
+
+}  // namespace
+
 // Using sqrt(a^2 + b^2) can cause overflow errors. Therefore we can use
 // sqrt(a^2 + b^2) = sqrt(a^2 * (1 + b^2/a^2))
 //                 = |a| * sqrt(1 + (b/a)^2)
@@ -1643,18 +1688,19 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitFloatBinaryOp(
 // a and b during the computation if necessary, since the final result is the
 // same.
 //
-// This method returns the min, max, and sqrt term for this calculation. This is
-// done to prevent potential overflow errors that can occur from multiplying the
-// max with the sqrt term. (i.e. when calculating the sqrt of the absolute
-// value, we can take the sqrt of the max and the sqrt term before multiplying
-// them together.) If return_sqrt is false, it returns 1 + (min/max)^2 instead
-// of sqrt(1 + (min/max)^2).
+// This method returns the abs(real), abs(imag), min, max, and sqrt term for
+// this calculation. This is done to prevent potential overflow errors that can
+// occur from multiplying the max with the sqrt term. (i.e. when calculating the
+// sqrt of the absolute value, we can take the sqrt of the max and the sqrt term
+// before multiplying them together.) If return_sqrt is false, it returns
+// 1 + (min/max)^2 instead of sqrt(1 + (min/max)^2).
 //
 // Note that the precision of this computation can be improved by implementing
 // another algorithm:
 //   Carlos F. Borges - An Improved Algorithm for hypot(a,b):
 //   https://arxiv.org/pdf/1904.09481.pdf
-absl::StatusOr<std::tuple<llvm::Value*, llvm::Value*, llvm::Value*>>
+absl::StatusOr<std::tuple<llvm::Value*, llvm::Value*, llvm::Value*,
+                          llvm::Value*, llvm::Value*>>
 ElementalIrEmitter::EmitComplexAbsHelper(PrimitiveType prim_type,
                                          llvm::Value* real, llvm::Value* imag,
                                          bool return_sqrt) {
@@ -1670,36 +1716,41 @@ ElementalIrEmitter::EmitComplexAbsHelper(PrimitiveType prim_type,
   llvm::Value* one = llvm::ConstantFP::get(max->getType(), 1);
   llvm::Value* one_p_div_sq = FAdd(one, div_sq);
   ABSL_ASSIGN_OR_RETURN(llvm::Value * sqrt, EmitSqrt(prim_type, one_p_div_sq));
-  return std::make_tuple(min, max, return_sqrt ? sqrt : one_p_div_sq);
+  return std::make_tuple(abs_real, abs_imag, min, max,
+                         return_sqrt ? sqrt : one_p_div_sq);
 }
 
 absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexAbs(
     PrimitiveType prim_type, llvm::Value* operand_value) {
+  llvm::Value* abs_real;
+  llvm::Value* abs_imag;
   llvm::Value* min;
   llvm::Value* max;
   llvm::Value* sqrt;
   llvm::Value* real = EmitExtractReal(operand_value);
   llvm::Value* imag = EmitExtractImag(operand_value);
   ABSL_ASSIGN_OR_RETURN(
-      std::tie(min, max, sqrt),
+      std::tie(abs_real, abs_imag, min, max, sqrt),
       EmitComplexAbsHelper(prim_type, real, imag, /*return_sqrt=*/true));
   llvm::Value* result = FMul(max, sqrt);
-  // When (min, max) are (0, 0), (inf, inf), or (NaN, ...), `result` is NaN.
-  // In such cases, we return `min` instead of `result`.
-  return Select(FCmpUNO(result, result), min, result);
+  llvm::Value* fallback = Select(FCmpUNO(result, result), min, result);
+  return EmitComplexAbsSpecialCases(b_, abs_real, abs_imag, fallback,
+                                    /*is_rsqrt=*/false);
 }
 
 // Calculates ComplexAbs in the same way, except using:
 // sqrt(|a| * sqrt(1 + (b/a)^2)) = sqrt(|a|) * pow(1 + (b/a)^2, .25)
 absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitSqrtComplexAbs(
     PrimitiveType prim_type, llvm::Value* operand_value) {
+  llvm::Value* abs_real;
+  llvm::Value* abs_imag;
   llvm::Value* min;
   llvm::Value* max;
   llvm::Value* one_p_div_sq;
   llvm::Value* real = EmitExtractReal(operand_value);
   llvm::Value* imag = EmitExtractImag(operand_value);
   ABSL_ASSIGN_OR_RETURN(
-      std::tie(min, max, one_p_div_sq),
+      std::tie(abs_real, abs_imag, min, max, one_p_div_sq),
       EmitComplexAbsHelper(prim_type, real, imag, /*return_sqrt=*/false));
   ABSL_ASSIGN_OR_RETURN(llvm::Value * sqrt_max, EmitSqrt(prim_type, max));
   ABSL_ASSIGN_OR_RETURN(
@@ -1707,30 +1758,32 @@ absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitSqrtComplexAbs(
       EmitPow(prim_type, one_p_div_sq,
               llvm::ConstantFP::get(max->getType(), .25), ""));
   llvm::Value* result = FMul(sqrt_max, pow);
-  // When (min, max) are (0, 0), (inf, inf), or (NaN, ...), `result` is NaN.
-  // In such cases, we return `min` instead of `result`.
-  return Select(FCmpUNO(result, result), min, result);
+  llvm::Value* fallback = Select(FCmpUNO(result, result), min, result);
+  return EmitComplexAbsSpecialCases(b_, abs_real, abs_imag, fallback,
+                                    /*is_rsqrt=*/false);
 }
 
 // Calculates ComplexAbs in the same way, except using:
 // rsqrt(|a| * sqrt(1 + (b/a)^2)) = rsqrt(|a|) * rsqrt(sqrt(1 + (b/a)^2))
 absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitRsqrtComplexAbs(
     PrimitiveType prim_type, llvm::Value* operand_value) {
+  llvm::Value* abs_real;
+  llvm::Value* abs_imag;
   llvm::Value* min;
   llvm::Value* max;
   llvm::Value* sqrt;
   llvm::Value* real = EmitExtractReal(operand_value);
   llvm::Value* imag = EmitExtractImag(operand_value);
   ABSL_ASSIGN_OR_RETURN(
-      std::tie(min, max, sqrt),
+      std::tie(abs_real, abs_imag, min, max, sqrt),
       EmitComplexAbsHelper(prim_type, real, imag, /*return_sqrt=*/true));
   ABSL_ASSIGN_OR_RETURN(llvm::Value * rsqrt_max, EmitRsqrt(prim_type, max));
   ABSL_ASSIGN_OR_RETURN(llvm::Value * rsqrt_sqrt, EmitRsqrt(prim_type, sqrt));
   llvm::Value* result = FMul(rsqrt_max, rsqrt_sqrt);
   ABSL_ASSIGN_OR_RETURN(llvm::Value * rsqrt_min, EmitRsqrt(prim_type, min));
-  // When (min, max) are (0, 0), (inf, inf), or (NaN, ...), `result` is NaN.
-  // In such cases, we return rsqrt(min) instead of `result`.
-  return Select(FCmpUNO(result, result), rsqrt_min, result);
+  llvm::Value* fallback = Select(FCmpUNO(result, result), rsqrt_min, result);
+  return EmitComplexAbsSpecialCases(b_, abs_real, abs_imag, fallback,
+                                    /*is_rsqrt=*/true);
 }
 
 absl::StatusOr<llvm::Value*> ElementalIrEmitter::EmitComplexAdd(
