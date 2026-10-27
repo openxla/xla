@@ -1248,7 +1248,7 @@ struct ScanPartitioningOpInterface
     : public mlir::sdy::PartitioningOpInterface::ExternalModel<
           ScanPartitioningOpInterface, mhlo::ScanOp> {
   std::optional<mlir::LogicalResult> resolvePermutationFactors(
-      mlir::Operation* op, mlir::sdy::OpShardingRuleAttr shardingRule,
+      mlir::Operation* op, mlir::sdy::OpShardingRuleAttr /*shardingRule*/,
       mlir::IRRewriter& rewriter, const mlir::SymbolTable& symbolTable) const {
     rewriter.setInsertionPoint(op);
     auto scan = llvm::cast<mhlo::ScanOp>(op);
@@ -1257,7 +1257,14 @@ struct ScanPartitioningOpInterface
     }
     std::optional<ScanLoweringContext> scanContext =
         createScanLoweringContext(scan, symbolTable);
-    if (!scanContext) {
+    // When an uneven reverse scan is sharded across only 2 partitions, the
+    // 3-phase algorithm with three `shiftLastShardValidSlice` passes accesses
+    // more memory than replicating the scan dimension and running a single
+    // scan. For >2 partitions, the 3-phase algorithm reduces local scan size by
+    // 1/P and outperforms replication.
+    if (!scanContext ||
+        (scanContext->needsScanPadding && scanContext->isReverse &&
+         scanContext->numPartitions == 2)) {
       // Fall back to default replication behavior if not eligible for lowering.
       return std::nullopt;
     }
