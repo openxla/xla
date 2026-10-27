@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/service/backend.h"
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/shape.h"
@@ -83,9 +84,14 @@ class GpuHloScheduleTest : public HloTestBaseLegacy {
   // Pre-canned shapes.
   Shape f32_2x2_ = ShapeUtil::MakeShape(F32, {2, 2});
 
-  absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(HloModule* module) {
+  // Schedules `module` for `device_info`, by default the test's own GPU.
+  absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
+      HloModule* module,
+      std::optional<se::DeviceDescription> device_info = std::nullopt) {
     const se::DeviceDescription& gpu_device_info =
-        backend().default_stream_executor()->GetDeviceDescription();
+        device_info.has_value()
+            ? *device_info
+            : backend().default_stream_executor()->GetDeviceDescription();
     auto* gpu_compiler = dynamic_cast<GpuCompiler*>(backend().compiler());
     std::unique_ptr<GpuAliasInfo> alias_info =
         gpu_compiler->GetAliasInfo(gpu_device_info);
@@ -104,6 +110,7 @@ class GpuHloScheduleTest : public HloTestBaseLegacy {
     bool enable_latency_hiding_scheduler = false;
     bool enable_pipelined_p2p = false;
     bool enable_sol_latency_estimator = false;
+    bool collect_cost_model_stats = false;
     std::string fdo_profile = "";
   };
 
@@ -116,6 +123,8 @@ class GpuHloScheduleTest : public HloTestBaseLegacy {
         test_config.enable_pipelined_p2p);
     debug_options.set_xla_gpu_enable_analytical_sol_latency_estimator(
         test_config.enable_sol_latency_estimator);
+    debug_options.set_xla_gpu_collect_cost_model_stats(
+        test_config.collect_cost_model_stats);
     config.set_debug_options(debug_options);
     config.set_fdo_profile(test_config.fdo_profile);
     return config;
@@ -2037,6 +2046,347 @@ TEST_F(GpuHloScheduleTest, ReportsUnprofiledWorkInsideAsyncCalls) {
   EXPECT_THAT(ScheduleGpuModule(module.get()).status(),
               absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
                                      ::testing::HasSubstr("1 missing")));
+}
+
+namespace {
+
+struct SchedulerCost {
+  double us;
+  OpMetadata::SchedulerCostSource source;
+};
+
+// Returns the scheduler cost estimate recorded on `instr`, if any.
+std::optional<SchedulerCost> SchedulerCostEstimate(
+    const HloInstruction* instr) {
+  const OpMetadata& metadata = instr->metadata();
+  if (metadata.scheduler_cost_source() ==
+      OpMetadata::SCHEDULER_COST_SOURCE_UNKNOWN) {
+    return std::nullopt;
+  }
+  return SchedulerCost{metadata.scheduler_cost_us(),
+                       metadata.scheduler_cost_source()};
+}
+
+// Returns the scheduler cost estimate recorded on the instruction `name` of
+// `computation`, which must have one.
+SchedulerCost SchedulerCostEstimateOf(HloComputation* computation,
+                                      absl::string_view name) {
+  std::optional<SchedulerCost> cost =
+      SchedulerCostEstimate(computation->GetInstructionWithName(name));
+  CHECK(cost.has_value()) << "No scheduler cost estimate for " << name;
+  return *cost;
+}
+
+}  // namespace
+
+TEST_F(GpuHloScheduleTest, RecordsSchedulerCostEstimatesWithProvenance) {
+  const absl::string_view kHloString = R"(
+  HloModule m
+
+  apply_op {
+    x = f32[] parameter(0)
+    y = f32[] parameter(1)
+    ROOT apply_op = f32[] add(x, y)
+  }
+
+  ENTRY ar {
+    p0 = f32[32] parameter(0)
+    p1 = f32[32,32] parameter(1)
+    p2 = f32[32,32] parameter(2)
+    p3 = f32[32] parameter(3)
+
+    dot0 = f32[32,32]{1,0} custom-call(p1, p2), custom_call_target="__cublas$gemm"
+    dot1 = f32[32,32]{1,0} custom-call(p1, p2), custom_call_target="__cublas$gemm"
+    add0 = f32[32,32] add(dot0, dot1)
+
+    ar-start = f32[32] all-reduce-start(p0), to_apply=apply_op
+    ar-done = f32[32] all-reduce-done(ar-start)
+
+    ar-start1 = f32[32] all-reduce-start(p3), to_apply=apply_op
+    ar-done1 = f32[32] all-reduce-done(ar-start1)
+
+    ROOT t = (f32[32],f32[32],f32[32,32]) tuple(ar-done, ar-done1, add0)
+  })";
+
+  // `dot1` and `ar-start1` are deliberately missing from the profile.
+  const absl::string_view kProfile = R"pb(
+    costs { name: "dot0" cost_us: 100.0 }
+    costs { name: "add0" cost_us: 10.0 }
+    costs { name: "ar-start" cost_us: 1000.0 }
+  )pb";
+
+  TestConfig test_config;
+  test_config.enable_latency_hiding_scheduler = true;
+  test_config.fdo_profile = kProfile;
+  test_config.collect_cost_model_stats = true;
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      ParseAndReturnVerifiedModule(kHloString, GetModuleConfig(test_config)));
+  module->mutable_config().mutable_debug_options().add_xla_disable_hlo_passes(
+      "pgle-accuracy-checker");
+  ASSERT_OK(ScheduleGpuModule(module.get()).status());
+
+  HloComputation* entry = module->entry_computation();
+  auto estimate = [&](absl::string_view name) {
+    return SchedulerCostEstimateOf(entry, name);
+  };
+
+  // Profiled instructions carry the profile value and the PGLE source.
+  EXPECT_EQ(estimate("dot0").source, OpMetadata::SCHEDULER_COST_SOURCE_PGLE);
+  EXPECT_DOUBLE_EQ(estimate("dot0").us, 100.0);
+  EXPECT_EQ(estimate("add0").source, OpMetadata::SCHEDULER_COST_SOURCE_PGLE);
+  EXPECT_DOUBLE_EQ(estimate("add0").us, 10.0);
+
+  // For an async pair, the profiled cost is the start->done latency and is
+  // recorded on both instructions.
+  EXPECT_EQ(estimate("ar-start").source,
+            OpMetadata::SCHEDULER_COST_SOURCE_PGLE);
+  EXPECT_DOUBLE_EQ(estimate("ar-start").us, 1000.0);
+  EXPECT_EQ(estimate("ar-done").source, OpMetadata::SCHEDULER_COST_SOURCE_PGLE);
+  EXPECT_DOUBLE_EQ(estimate("ar-done").us, 1000.0);
+
+  // Instructions missing from the profile are attributed to the fallback
+  // estimator and get a value from it.
+  EXPECT_EQ(estimate("dot1").source,
+            OpMetadata::SCHEDULER_COST_SOURCE_APPROXIMATE);
+  EXPECT_GT(estimate("dot1").us, 0.0);
+  EXPECT_EQ(estimate("ar-start1").source,
+            OpMetadata::SCHEDULER_COST_SOURCE_APPROXIMATE);
+  EXPECT_EQ(estimate("ar-start1").us, estimate("ar-done1").us);
+
+  // Every instruction the scheduler costs gets an estimate, and only those:
+  // none on instructions it treats as no-ops (parameters).
+  for (const HloInstruction* instr : entry->instructions()) {
+    const bool is_costed = instr->opcode() != HloOpcode::kParameter;
+    EXPECT_EQ(SchedulerCostEstimate(instr).has_value(), is_costed)
+        << instr->name();
+  }
+
+  // Recording must not change any fingerprint: neither the one taken before
+  // LHS, which is used to look up PGLE profiles, nor the module fingerprint,
+  // since metadata is not part of it.
+  test_config.collect_cost_model_stats = false;
+  ASSERT_OK_AND_ASSIGN(
+      auto reference,
+      ParseAndReturnVerifiedModule(kHloString, GetModuleConfig(test_config)));
+  reference->mutable_config()
+      .mutable_debug_options()
+      .add_xla_disable_hlo_passes("pgle-accuracy-checker");
+  ASSERT_OK(ScheduleGpuModule(reference.get()).status());
+  EXPECT_FALSE(
+      SchedulerCostEstimate(
+          reference->entry_computation()->GetInstructionWithName("dot0"))
+          .has_value());
+  EXPECT_EQ(ValidFingerprint(module.get()), ValidFingerprint(reference.get()));
+  EXPECT_EQ(module->GetFingerprint128(), reference->GetFingerprint128());
+}
+
+TEST_F(GpuHloScheduleTest,
+       RecordsSchedulerCostEstimateSourcesOfDelegatingEstimators) {
+  // The SOL estimator models collective latencies itself but delegates the
+  // cost of instructions it has no model for to the GPU estimator it wraps.
+  const absl::string_view kHloString = R"(
+  HloModule m
+
+  apply_op {
+    x = f32[] parameter(0)
+    y = f32[] parameter(1)
+    ROOT apply_op = f32[] add(x, y)
+  }
+
+  ENTRY ar {
+    p0 = f32[32] parameter(0)
+    p1 = f32[32,32] parameter(1)
+    p2 = f32[32,32] parameter(2)
+    add0 = f32[32,32] add(p1, p2)
+    ar-start = f32[32] all-reduce-start(p0), to_apply=apply_op
+    ar-done = f32[32] all-reduce-done(ar-start)
+    ROOT t = (f32[32],f32[32,32]) tuple(ar-done, add0)
+  })";
+
+  TestConfig test_config;
+  test_config.enable_latency_hiding_scheduler = true;
+  test_config.enable_sol_latency_estimator = true;
+  test_config.collect_cost_model_stats = true;
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      ParseAndReturnVerifiedModule(kHloString, GetModuleConfig(test_config)));
+  // The SOL model has parameters only for some GPUs, and delegates collectives
+  // to the wrapped estimator on others: schedule for one it models.
+  ASSERT_OK(
+      ScheduleGpuModule(module.get(), TestGpuDeviceInfo::B200SXMDeviceInfo())
+          .status());
+
+  HloComputation* entry = module->entry_computation();
+  auto estimate = [&](absl::string_view name) {
+    return SchedulerCostEstimateOf(entry, name);
+  };
+  EXPECT_EQ(estimate("ar-start").source, OpMetadata::SCHEDULER_COST_SOURCE_SOL);
+  EXPECT_EQ(estimate("ar-done").source, OpMetadata::SCHEDULER_COST_SOURCE_SOL);
+  // An unfused elementwise op has no SOL model.
+  EXPECT_EQ(estimate("add0").source,
+            OpMetadata::SCHEDULER_COST_SOURCE_APPROXIMATE);
+}
+
+TEST_F(GpuHloScheduleTest, RecordsSchedulerCostEstimatesForSendRecvPairs) {
+  // The profiled latency of a send/recv pair is looked up like that of an
+  // async pair, and is recorded on both instructions of the pair.
+  const absl::string_view kHloString = R"(
+  HloModule m
+
+  ENTRY entry {
+    p0 = f32[16,64,256]{2,1,0} parameter(0)
+    after-all.1 = token[] after-all()
+    send.7.0 = (f32[16,64,256]{2,1,0}, u32[], token[]) send(p0, after-all.1), channel_id=1, frontend_attributes={_xla_send_recv_source_target_pairs="{{0,1}}"}
+    send-done.7.0 = token[] send-done(send.7.0), channel_id=1
+    recv.7.0 = (f32[16,64,256]{2,1,0}, u32[], token[]) recv(after-all.1), channel_id=1, frontend_attributes={_xla_send_recv_source_target_pairs="{{0,1}}"}
+    recv-done.7.0 = (f32[16,64,256]{2,1,0}, token[]) recv-done(recv.7.0), channel_id=1
+    ROOT recv-data = f32[16,64,256]{2,1,0} get-tuple-element(recv-done.7.0), index=0
+  })";
+  const absl::string_view kProfile = R"pb(
+    costs { name: "send.7.0" cost_us: 110.0 }
+    costs { name: "recv.7.0" cost_us: 100.0 }
+  )pb";
+
+  TestConfig test_config;
+  test_config.enable_latency_hiding_scheduler = true;
+  test_config.fdo_profile = kProfile;
+  test_config.collect_cost_model_stats = true;
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      ParseAndReturnVerifiedModule(kHloString, GetModuleConfig(test_config)));
+  module->mutable_config().mutable_debug_options().add_xla_disable_hlo_passes(
+      "pgle-accuracy-checker");
+  ASSERT_OK(ScheduleGpuModule(module.get()).status());
+
+  HloComputation* entry = module->entry_computation();
+  for (const auto& [name, us] :
+       std::vector<std::pair<std::string, double>>{{"send.7.0", 110.0},
+                                                   {"send-done.7.0", 110.0},
+                                                   {"recv.7.0", 100.0},
+                                                   {"recv-done.7.0", 100.0}}) {
+    std::optional<SchedulerCost> cost =
+        SchedulerCostEstimate(entry->GetInstructionWithName(name));
+    ASSERT_TRUE(cost.has_value()) << name;
+    EXPECT_EQ(cost->source, OpMetadata::SCHEDULER_COST_SOURCE_PGLE) << name;
+    EXPECT_DOUBLE_EQ(cost->us, us) << name;
+  }
+}
+
+TEST_F(GpuHloScheduleTest, RecordsSchedulerCostEstimatesOfTheRightPair) {
+  // send.7.0 has two send-done successors: its own and, through a control
+  // dependency, that of another send. Each start and done must get the latency
+  // of its own pair.
+  const absl::string_view kHloString = R"(
+  HloModule m
+
+  ENTRY entry {
+    p0 = f32[16,64,256]{2,1,0} parameter(0)
+    after-all.1 = token[] after-all()
+    send.7.0 = (f32[16,64,256]{2,1,0}, u32[], token[]) send(p0, after-all.1), channel_id=1, frontend_attributes={_xla_send_recv_source_target_pairs="{{0,1}}"}
+    send-done.7.0 = token[] send-done(send.7.0), channel_id=1
+    send.8.0 = (f32[16,64,256]{2,1,0}, u32[], token[]) send(p0, after-all.1), channel_id=2, frontend_attributes={_xla_send_recv_source_target_pairs="{{0,1}}"}
+    send-done.8.0 = token[] send-done(send.8.0), channel_id=2, control-predecessors={send.7.0}
+    ROOT t = (token[], token[]) tuple(send-done.7.0, send-done.8.0)
+  })";
+  const absl::string_view kProfile = R"pb(
+    costs { name: "send.7.0" cost_us: 110.0 }
+    costs { name: "send.8.0" cost_us: 50.0 }
+  )pb";
+
+  TestConfig test_config;
+  test_config.enable_latency_hiding_scheduler = true;
+  test_config.fdo_profile = kProfile;
+  test_config.collect_cost_model_stats = true;
+  ASSERT_OK_AND_ASSIGN(
+      auto module,
+      ParseAndReturnVerifiedModule(kHloString, GetModuleConfig(test_config)));
+  module->mutable_config().mutable_debug_options().add_xla_disable_hlo_passes(
+      "pgle-accuracy-checker");
+  ASSERT_OK(ScheduleGpuModule(module.get()).status());
+
+  HloComputation* entry = module->entry_computation();
+  EXPECT_DOUBLE_EQ(SchedulerCostEstimateOf(entry, "send.7.0").us, 110.0);
+  EXPECT_DOUBLE_EQ(SchedulerCostEstimateOf(entry, "send-done.7.0").us, 110.0);
+  EXPECT_DOUBLE_EQ(SchedulerCostEstimateOf(entry, "send.8.0").us, 50.0);
+  EXPECT_DOUBLE_EQ(SchedulerCostEstimateOf(entry, "send-done.8.0").us, 50.0);
+}
+
+TEST_F(GpuHloScheduleTest,
+       RecordsSchedulerCostEstimatesOfPipelinedCollectives) {
+  // A collective pipelined through a while loop: the body's done consumes the
+  // previous iteration's start through the loop parameter, and the entry's
+  // done consumes the last iteration's start through the while result.
+  // FindStart() then returns the get-tuple-element feeding the done, which is
+  // not a start: no-ops must get no estimate, and the dones must get their
+  // own node cost, not the latency of the edge from the get-tuple-element.
+  constexpr absl::string_view kHloString = R"(
+  HloModule m
+
+  while_cond {
+    p = (s32[], (f32[8], f32[16]), f32[16]) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    ub = s32[] constant(4)
+    ROOT lt = pred[] compare(i, ub), direction=LT
+  }
+
+  while_body {
+    p = (s32[], (f32[8], f32[16]), f32[16]) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    ag-in-flight = (f32[8], f32[16]) get-tuple-element(p), index=1
+    acc = f32[16] get-tuple-element(p), index=2
+    ag-done = f32[16] all-gather-done(ag-in-flight)
+    acc1 = f32[16] add(acc, ag-done)
+    one = s32[] constant(1)
+    i1 = s32[] add(i, one)
+    x = f32[8] slice(acc1), slice={[0:8]}
+    nx = f32[8] negate(x)
+    ag-start = (f32[8], f32[16]) all-gather-start(nx), dimensions={0},
+      replica_groups={{0,1}}
+    ROOT t = (s32[], (f32[8], f32[16]), f32[16]) tuple(i1, ag-start, acc1)
+  }
+
+  ENTRY e {
+    p0 = f32[8] parameter(0)
+    zero = s32[] constant(0)
+    fzero = f32[] constant(0)
+    zeros = f32[16] broadcast(fzero), dimensions={}
+    init-ag = (f32[8], f32[16]) all-gather-start(p0), dimensions={0},
+      replica_groups={{0,1}}
+    init = (s32[], (f32[8], f32[16]), f32[16]) tuple(zero, init-ag, zeros)
+    w = (s32[], (f32[8], f32[16]), f32[16]) while(init),
+      condition=while_cond, body=while_body
+    last = (f32[8], f32[16]) get-tuple-element(w), index=1
+    final-done = f32[16] all-gather-done(last)
+    final-acc = f32[16] get-tuple-element(w), index=2
+    ROOT out = f32[16] add(final-done, final-acc)
+  })";
+
+  TestConfig test_config;
+  test_config.enable_latency_hiding_scheduler = true;
+  test_config.collect_cost_model_stats = true;
+  HloModuleConfig config = GetModuleConfig(test_config);
+  config.set_replica_count(2);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kHloString, config));
+  ASSERT_OK(ScheduleGpuModule(module.get()).status());
+
+  HloComputation* body = module->GetComputationWithName("while_body");
+  HloComputation* entry = module->entry_computation();
+  for (HloComputation* computation : {body, entry}) {
+    for (const HloInstruction* instr : computation->instructions()) {
+      // What the scheduler treats as a no-op, including the loop's init tuple.
+      const bool is_nop =
+          instr->opcode() == HloOpcode::kParameter ||
+          instr->opcode() == HloOpcode::kGetTupleElement ||
+          instr->opcode() == HloOpcode::kConstant ||
+          instr->opcode() == HloOpcode::kBroadcast ||
+          (instr->opcode() == HloOpcode::kTuple && instr->user_count() == 1 &&
+           instr->users()[0]->opcode() == HloOpcode::kWhile);
+      EXPECT_NE(SchedulerCostEstimate(instr).has_value(), is_nop)
+          << instr->name();
+    }
+  }
 }
 
 TEST_F(GpuHloScheduleTest, MetadataIgnoredInFingerprint) {

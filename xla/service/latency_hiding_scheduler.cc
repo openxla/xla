@@ -78,6 +78,7 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {
@@ -3113,7 +3114,10 @@ HloScheduleGraph::HloScheduleGraph(
     n->original_position_ = current_pos;
     current_pos++;
 
-    n->cost_ = latency_estimator->NodeCost(instr);
+    const LatencyEstimator::Estimate cost =
+        latency_estimator->EstimateNodeCost(instr);
+    n->cost_ = cost.value;
+    n->cost_source_ = cost.source;
     auto resources_span = async_tracker->GetResourcesFromInstruction(*instr);
     ResourcesVector resources(resources_span.begin(), resources_span.end());
     HloGraphNode::Rare r;
@@ -3230,7 +3234,8 @@ HloScheduleGraph::HloScheduleGraph(
           } else {
             // Use overload of AddDependency that explicitly specifies latency
             // value
-            HloGraphNode::AddDependency(from, to, 1);
+            HloGraphNode::AddDependency(
+                from, to, {1, OpMetadata::SCHEDULER_COST_SOURCE_UNKNOWN});
           }
         }
       };
