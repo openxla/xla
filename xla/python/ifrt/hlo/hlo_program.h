@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/ThreadPool.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -51,6 +52,15 @@ class HloProgram : public RTTIExtends<HloProgram, Program> {
   HloProgram(std::shared_ptr<mlir::MLIRContext> context,
              mlir::OwningOpRef<mlir::ModuleOp> module)
       : mlir_context_(std::move(context)),
+        owning_mlir_module_(std::move(module)),
+        mlir_module_(*owning_mlir_module_),
+        module_name_(GetModuleName(mlir_module_)) {}
+
+  HloProgram(std::unique_ptr<llvm::ThreadPoolInterface> thread_pool,
+             std::shared_ptr<mlir::MLIRContext> context,
+             mlir::OwningOpRef<mlir::ModuleOp> module)
+      : thread_pool_(std::move(thread_pool)),
+        mlir_context_(std::move(context)),
         owning_mlir_module_(std::move(module)),
         mlir_module_(*owning_mlir_module_),
         module_name_(GetModuleName(mlir_module_)) {}
@@ -98,6 +108,7 @@ class HloProgram : public RTTIExtends<HloProgram, Program> {
                            reinterpret_cast<uintptr_t>(module.getOperation()));
   }
 
+  std::unique_ptr<llvm::ThreadPoolInterface> thread_pool_;
   std::shared_ptr<mlir::MLIRContext> mlir_context_;
   mlir::OwningOpRef<mlir::ModuleOp> owning_mlir_module_;
   mlir::ModuleOp mlir_module_;

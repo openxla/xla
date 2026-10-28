@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -61,6 +62,13 @@ struct IfrtIRProgram : RTTIExtends<IfrtIRProgram, Program> {
       : mlir_module(*module),
         mlir_context(std::move(context)),
         owning_mlir_module(std::move(module)) {}
+  IfrtIRProgram(std::unique_ptr<llvm::ThreadPoolInterface> thread_pool,
+                std::unique_ptr<mlir::MLIRContext> context,
+                mlir::OwningOpRef<mlir::ModuleOp> module)
+      : mlir_module(*module),
+        thread_pool(std::move(thread_pool)),
+        mlir_context(std::move(context)),
+        owning_mlir_module(std::move(module)) {}
 
   static absl::string_view type_name() { return "xla::ifrt::IfrtIRProgram"; }
 
@@ -82,6 +90,7 @@ struct IfrtIRProgram : RTTIExtends<IfrtIRProgram, Program> {
   static char ID;  // NOLINT
 
  private:
+  std::unique_ptr<llvm::ThreadPoolInterface> thread_pool;
   std::unique_ptr<mlir::MLIRContext> mlir_context;
   mlir::OwningOpRef<mlir::ModuleOp> owning_mlir_module;
 };

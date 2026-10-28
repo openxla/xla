@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Bytecode/BytecodeWriter.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -159,10 +160,13 @@ class IfrtIRProgramSerDes : public RTTIExtends<IfrtIRProgramSerDes, SerDes> {
     const auto* deserialize_options =
         dyn_cast_or_null<DeserializeIfrtIRProgramOptions>(options.get());
     bool use_existing_context = false;
+    std::unique_ptr<llvm::SingleThreadExecutor> executor;
     std::unique_ptr<mlir::MLIRContext> context;
     if (!deserialize_options || !deserialize_options->context) {
+      executor = std::make_unique<llvm::SingleThreadExecutor>();
       context = std::make_unique<mlir::MLIRContext>(
           mlir::MLIRContext::Threading::DISABLED);
+      context->setThreadPool(*executor);
     } else {
       use_existing_context = true;
       context =
@@ -193,8 +197,8 @@ class IfrtIRProgramSerDes : public RTTIExtends<IfrtIRProgramSerDes, SerDes> {
       if (use_existing_context) {
         return std::make_unique<IfrtIRProgram>(module.release());
       }
-      return std::make_unique<IfrtIRProgram>(std::move(context),
-                                             std::move(module));
+      return std::make_unique<IfrtIRProgram>(
+          std::move(executor), std::move(context), std::move(module));
     }
     // Run the pipeline to convert a versioned IFRT IR program artifact to
     // an IFRT IR program.
@@ -210,8 +214,8 @@ class IfrtIRProgramSerDes : public RTTIExtends<IfrtIRProgramSerDes, SerDes> {
     if (use_existing_context) {
       return std::make_unique<IfrtIRProgram>(module.release());
     }
-    return std::make_unique<IfrtIRProgram>(std::move(context),
-                                           std::move(module));
+    return std::make_unique<IfrtIRProgram>(
+        std::move(executor), std::move(context), std::move(module));
   }
 
   static char ID;  // NOLINT
