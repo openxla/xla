@@ -74,6 +74,18 @@ limitations under the License.
 namespace xla {
 namespace {
 
+// Legacy targets omit memory bus width. Preserve their existing JIT selection
+// without weakening exact metadata equality or ignoring a known target width.
+bool MatchesTargetConfig(const gpu::GpuTargetConfig& local,
+                         const gpu::GpuTargetConfig& target) {
+  if (target.device_description.memory_bus_width().has_value()) {
+    return local == target;
+  }
+  gpu::GpuTargetConfig legacy_local = local;
+  legacy_local.device_description.set_memory_bus_width(std::nullopt);
+  return legacy_local == target;
+}
+
 bool IsGpuClient(const PjRtClient& client) {
   return IsGpuId(client.platform_id());
 }
@@ -272,8 +284,9 @@ StreamExecutorGpuCompiler::Compile(
                           GetStreamExecutor(client));
     gpu::GpuTargetConfig local_gpu_target_config(stream_executor);
 
-    if (local_gpu_target_config ==
-        topology_with_target_config->gpu_target_config()) {
+    if (MatchesTargetConfig(
+            local_gpu_target_config,
+            topology_with_target_config->gpu_target_config())) {
       LOG_EVERY_N(INFO, 60)
           << "Found GPU target config and a PjRtClient with matching "
              "configuration. Performing a JIT compilation.";
@@ -417,8 +430,9 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
     ABSL_ASSIGN_OR_RETURN(stream_executor::StreamExecutor * stream_executor,
                           GetStreamExecutor(client));
     gpu::GpuTargetConfig local_gpu_target_config(stream_executor);
-    if (local_gpu_target_config ==
-        topology_with_target_config->gpu_target_config()) {
+    if (MatchesTargetConfig(
+            local_gpu_target_config,
+            topology_with_target_config->gpu_target_config())) {
       LOG_EVERY_N(INFO, 60)
           << "Found GPU target config and a PjRtClient with matching "
              "configuration. Performing a JIT compilation.";

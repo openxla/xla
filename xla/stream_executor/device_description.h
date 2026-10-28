@@ -355,6 +355,10 @@ class DeviceDescription {
   // host and device.)
   int64_t memory_bandwidth() const { return memory_bandwidth_; }
 
+  // Returns the memory bus width in bits. Absent when it was not discovered or
+  // is missing from an older target description. A reported zero is preserved.
+  std::optional<int64_t> memory_bus_width() const { return memory_bus_width_; }
+
   // Returns the device's memory clock rate in GHz.
   float mem_clock_ghz() const { return mem_clock_ghz_; }
 
@@ -551,6 +555,9 @@ class DeviceDescription {
   void set_device_memory_size(int64_t value) { device_memory_size_ = value; }
   void set_l2_cache_size(int64_t value) { l2_cache_size_ = value; }
   void set_memory_bandwidth(int64_t value) { memory_bandwidth_ = value; }
+  void set_memory_bus_width(std::optional<int64_t> value) {
+    memory_bus_width_ = value;
+  }
   void set_pcie_bandwidth(int64_t value) { pcie_bandwidth_ = value; }
   void set_mem_clock_ghz(float value) { mem_clock_ghz_ = value; }
 
@@ -660,6 +667,7 @@ class DeviceDescription {
   int64_t l2_cache_size_ = kUninitialized<int64_t>;
 
   int64_t memory_bandwidth_ = kUninitialized<int64_t>;
+  std::optional<int64_t> memory_bus_width_;
   int64_t pcie_bandwidth_ = kUninitialized<int64_t>;
   float mem_clock_ghz_ = kUninitialized<float>;
 

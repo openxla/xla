@@ -17,6 +17,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
 #include "absl/status/status_matchers.h"
@@ -211,6 +213,34 @@ TEST(DeviceDescription, OversizedSharedMemoryPerBlockProtoConversion) {
 
   EXPECT_EQ(from_proto.oversized_shared_memory_per_block(),
             desc.oversized_shared_memory_per_block());
+}
+
+TEST(DeviceDescription, MemoryBusWidthPresenceAndProtoConversion) {
+  for (std::optional<int64_t> width :
+       {std::optional<int64_t>(), std::optional<int64_t>(0),
+        std::optional<int64_t>(5120)}) {
+    DeviceDescription desc;
+    desc.set_memory_bus_width(width);
+    GpuDeviceInfoProto proto = desc.ToProto();
+    EXPECT_EQ(proto.has_memory_bus_width(), width.has_value());
+    ASSERT_OK_AND_ASSIGN(DeviceDescription decoded,
+                         DeviceDescription::FromProto(proto));
+    EXPECT_EQ(decoded.memory_bus_width(), width);
+    EXPECT_EQ(decoded, desc);
+    EXPECT_EQ(desc.DeviceSpecificFieldsCleared().memory_bus_width(), width);
+  }
+}
+
+TEST(DeviceDescription, MemoryBusWidthEqualityIsExact) {
+  DeviceDescription absent;
+  DeviceDescription zero;
+  zero.set_memory_bus_width(0);
+  DeviceDescription known;
+  known.set_memory_bus_width(5120);
+  EXPECT_NE(absent, zero);
+  EXPECT_NE(absent, known);
+  EXPECT_NE(zero, known);
+  EXPECT_EQ(known, known);
 }
 
 TEST(DeviceDescription, ProtoConversion) {

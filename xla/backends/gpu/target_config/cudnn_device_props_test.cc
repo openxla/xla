@@ -16,14 +16,23 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
+#include "json/json.h"
+#include "third_party/cudnn_frontend/include/cudnn_frontend.h"  // IWYU pragma: keep - cudnn frontend headers are not hermetic
+#include "third_party/cudnn_frontend/include/cudnn_frontend/backend/device_properties.h"
+#include "third_party/cudnn_frontend/include/cudnn_frontend/graph_helpers.h"
+#include "third_party/cudnn_frontend/include/cudnn_frontend_shim.h"
+#include "xla/backends/gpu/target_config/cudnn_device_props.h"
 #include "xla/backends/gpu/target_config/cudnn_device_props_test_util.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/service/platform_util.h"
@@ -38,6 +47,54 @@ namespace xla::gpu {
 namespace {
 
 namespace se = ::stream_executor;
+
+Json::Value ParseProps(
+    const std::shared_ptr<cudnn_frontend::DeviceProperties>& props) {
+  std::vector<uint8_t> buf;
+  auto err = props->serialize(buf);
+  EXPECT_FALSE(err.is_bad()) << err.get_message();
+  std::string str(buf.begin(), buf.end());
+  Json::Value value;
+  Json::CharReaderBuilder builder;
+  std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
+  std::string errors;
+  EXPECT_TRUE(
+      reader->parse(str.data(), str.data() + str.size(), &value, &errors))
+      << errors;
+  return value;
+}
+
+TEST(CudnnDevicePropsTest, PreservesMemoryBusWidth) {
+  if (cudnn_frontend::detail::get_backend_version() < 90800) {
+    GTEST_SKIP() << "cuDNN runtime does not support DeviceProperties.";
+  }
+  // Query the backend's live serializer independently of the synthesized JSON.
+  // Major/minor/patch alone cannot distinguish the first 9.27 builds.
+  std::string name =
+      absl::AsciiStrToUpper(PlatformUtil::CanonicalPlatformName("gpu").value());
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       se::PlatformManager::PlatformWithName(name));
+  if (platform->VisibleDeviceCount() == 0) {
+    GTEST_SKIP() << "No visible GPU devices.";
+  }
+  auto live = std::make_shared<cudnn_frontend::DeviceProperties>();
+  auto err = live->set_device_id(0).build();
+  ASSERT_FALSE(err.is_bad()) << err.get_message();
+  if (!ParseProps(live).isMember("memoryBusWidth")) {
+    GTEST_SKIP() << "cuDNN runtime does not serialize memoryBusWidth.";
+  }
+  ASSERT_OK_AND_ASSIGN(auto proto, GetGpuTargetConfig(GpuModel::H100_SXM));
+  ASSERT_OK_AND_ASSIGN(auto config, GpuTargetConfig::FromProto(proto));
+  for (int64_t width : {int64_t{0}, int64_t{5120}}) {
+    SCOPED_TRACE(width);
+    config.device_description.set_memory_bus_width(width);
+    ASSERT_OK_AND_ASSIGN(auto props,
+                         BuildDeviceProperties(config.device_description));
+    Json::Value json = ParseProps(props);
+    ASSERT_TRUE(json.isMember("memoryBusWidth"));
+    EXPECT_EQ(json["memoryBusWidth"].asInt64(), width);
+  }
+}
 
 TEST(CudnnDevicePropsTest, MatchesLiveDevice) {
   ASSERT_OK_AND_ASSIGN(std::string platform_name,
