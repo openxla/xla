@@ -38,14 +38,12 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
-#include "xla/backends/gpu/transforms/gemm_fusion.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
@@ -874,57 +872,38 @@ ENTRY r {
   EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
-TEST_P(TritonGemmTest, BitcastIsNotHoistedAboveLayoutChangingCopy) {
-  if (!GetParam()) {
-    GTEST_SKIP() << "Bitcast hoisting is specific to GemmFusionV2.";
-  }
+TEST_P(TritonGemmTest, TransposeReductionReshapeBeforeDot) {
+  // Layout assignment inserts a layout-changing copy between the reduction
+  // and the bitcast feeding the dot. Hoisting that bitcast across the copy
+  // must preserve the permutation of the reduction's output.
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
-ENTRY e {
-  p0 = f32[2,3]{0,1} parameter(0)
-  p1 = f32[2,2]{1,0} parameter(1)
-  copy = f32[2,3]{1,0} copy(p0)
-  bitcast = f32[3,2]{1,0} bitcast(copy)
-  ROOT dot = f32[3,2]{1,0} dot(bitcast, p1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-})";
-
-  // Run GemmFusion before other passes can simplify the copy/bitcast pair.
-  // The interpreter receives the original module, before this preprocessing.
-  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3},
-                            /*reference_preprocessor=*/nullptr,
-                            /*test_preprocessor=*/[&](HloModule* module) {
-                              ASSERT_THAT(
-                                  GemmFusion(device_description()).Run(module),
-                                  absl_testing::IsOkAndHolds(true));
-                            }));
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
 }
 
-TEST_P(TritonGemmTest, BitcastDoesNotSinkPastLayoutChangingCopy) {
-  if (!GetParam()) {
-    GTEST_SKIP() << "Bitcast sinking is specific to GemmFusionV2.";
-  }
-  constexpr absl::string_view kHloText = R"(
-HloModule m
-
 ENTRY e {
-  p0 = f32[3,2]{1,0} parameter(0)
-  p1 = f32[2,2]{1,0} parameter(1)
-  dot = f32[3,2]{1,0} dot(p0, p1),
+  p0 = f32[16,16,3]{2,1,0} parameter(0)
+  p1 = f32[16,32]{1,0} parameter(1)
+  transpose = f32[3,16,16]{0,2,1} transpose(p0), dimensions={2,0,1}
+  reshape = f32[3,4,4,4,4]{4,3,2,1,0} reshape(transpose)
+  zero = f32[] constant(0)
+  reduce = f32[3,4,4]{2,1,0} reduce(reshape, zero),
+    dimensions={2,4}, to_apply=add
+  lhs = f32[3,16]{1,0} reshape(reduce)
+  ROOT dot = f32[3,32]{1,0} dot(lhs, p1),
     lhs_contracting_dims={1}, rhs_contracting_dims={0}
-  bitcast = f32[2,3]{1,0} bitcast(dot)
-  ROOT copy = f32[2,3]{0,1} copy(bitcast)
 })";
 
-  // Preserve the bitcast/copy pair until GemmFusion, as in the prologue test.
-  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3},
-                            /*reference_preprocessor=*/nullptr,
-                            /*test_preprocessor=*/[&](HloModule* module) {
-                              ASSERT_THAT(
-                                  GemmFusion(device_description()).Run(module),
-                                  absl_testing::IsOkAndHolds(true));
-                            }));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       GetOptimizedModule(kHloText));
+  EXPECT_THAT(GetNonBitcastRoot(module->entry_computation()),
+              GmockMatch(m::Fusion().WithFusionKind(
+                  HloInstruction::FusionKind::kCustom)));
+  EXPECT_TRUE(RunAndCompare(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 // TODO(b/393299275): this is a pure test of fusion logic. It should be moved to
