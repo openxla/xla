@@ -179,8 +179,19 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
   absl::flat_hash_set<HloInstruction*> mth_custom_calls_to_remove;
   absl::flat_hash_set<HloInstruction*> slices_to_dynamify;
   absl::flat_hash_set<HloInstruction*> custom_calls_to_insert_copies_before;
+  absl::flat_hash_set<std::pair<HloInstruction*, int64_t>>
+      fusions_to_insert_copies_before;
   absl::flat_hash_set<HloInstruction*> x64_split_instructions;
   std::vector<InstructionAndShapeIndex> buffers_to_set_to_host_memory;
+  absl::flat_hash_set<InstructionAndShapeIndex>
+      buffers_to_set_to_host_memory_set;
+  auto add_buffer_to_set_to_host_memory =
+      [&buffers_to_set_to_host_memory, &buffers_to_set_to_host_memory_set](
+          const InstructionAndShapeIndex& item) {
+        if (buffers_to_set_to_host_memory_set.insert(item).second) {
+          buffers_to_set_to_host_memory.push_back(item);
+        }
+      };
   // std::vector<HloInstruction*> move_to_host_dynamic_update_slices;
   HloInstruction* starting_instruction =
       starting_instruction_and_index.instruction;
@@ -232,7 +243,8 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
       } else if (instruction->opcode() == HloOpcode::kAsyncDone) {
         // Also set host memory space for the output in the async-start's shape.
         HloInstruction* async_start = instruction->mutable_operand(0);
-        buffers_to_set_to_host_memory.emplace_back(async_start, ShapeIndex{1});
+        add_buffer_to_set_to_host_memory(
+            InstructionAndShapeIndex(async_start, ShapeIndex{1}));
       } else if (instruction->opcode() == HloOpcode::kParameter) {
         // When setting the memory space of a parameter, also set the memory
         // space of the call site of the computation with this parameter if that
@@ -246,7 +258,8 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
             tmp_index.push_front(
                 0);  // Index 0 for the inputs of the async-start. The shape of
                      // async-start is ((inputs, ...), output, context).
-            buffers_to_set_to_host_memory.emplace_back(caller, tmp_index);
+            add_buffer_to_set_to_host_memory(
+                InstructionAndShapeIndex(caller, tmp_index));
           }
         }
       }
@@ -321,6 +334,108 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
       }
       host_offload_utils::SetHostComputeFrontendAttribute(*instruction);
     }
+    bool is_while_body_root_to_device = false;
+    if (instruction->IsRoot() && !instruction->parent()->IsEntryComputation()) {
+      const std::vector<HloInstruction*> callers =
+          call_graph.GetComputationCallers(instruction->parent());
+      for (HloInstruction* caller : callers) {
+        if (caller->opcode() == HloOpcode::kWhile &&
+            caller->while_body() == instruction->parent()) {
+          auto is_in_or_moving_to_host =
+              [&buffers_to_set_to_host_memory_set, starting_instruction](
+                  const HloInstruction* instr, const ShapeIndex& s_idx) {
+                const Shape& subshape =
+                    ShapeUtil::GetSubshape(instr->shape(), s_idx);
+                if (subshape.has_layout() && subshape.layout().memory_space() ==
+                                                 Layout::kHostMemorySpace) {
+                  return true;
+                }
+                if (instr->IsCustomCall(
+                        memory_annotations::kMoveToHostCustomCallTarget) ||
+                    instr->IsCustomCall("AllocateBuffer") ||
+                    instr == starting_instruction) {
+                  return true;
+                }
+                return buffers_to_set_to_host_memory_set.contains(
+                    InstructionAndShapeIndex(const_cast<HloInstruction*>(instr),
+                                             s_idx));
+              };
+          bool init_in_host_memory = false;
+          if (caller->operand(0)->opcode() == HloOpcode::kTuple &&
+              instruction_and_shape_index.shape_index.size() == 1) {
+            const int64_t idx = instruction_and_shape_index.shape_index[0];
+            const HloInstruction* init_op = caller->operand(0)->operand(idx);
+            init_in_host_memory = is_in_or_moving_to_host(init_op, {});
+          } else {
+            init_in_host_memory = is_in_or_moving_to_host(
+                caller->operand(0), instruction_and_shape_index.shape_index);
+          }
+          if (!init_in_host_memory) {
+            if (instruction->opcode() == HloOpcode::kTuple &&
+                instruction_and_shape_index.shape_index.size() == 1) {
+              const int64_t idx = instruction_and_shape_index.shape_index[0];
+              HloInstruction* data_to_copy = instruction->mutable_operand(idx);
+              bool data_in_host =
+                  (data_to_copy->shape().has_layout() &&
+                   data_to_copy->shape().layout().memory_space() ==
+                       Layout::kHostMemorySpace) ||
+                  buffers_to_set_to_host_memory_set.contains(
+                      InstructionAndShapeIndex(data_to_copy));
+              if (data_to_copy->opcode() != HloOpcode::kDynamicUpdateSlice &&
+                  data_to_copy->opcode() != HloOpcode::kParameter &&
+                  data_to_copy->opcode() != HloOpcode::kGetTupleElement &&
+                  data_in_host) {
+                is_while_body_root_to_device = true;
+                HloInstruction* copy_to_device =
+                    instruction->parent()->AddInstruction(
+                        HloInstruction::CreateUnary(data_to_copy->shape(),
+                                                    HloOpcode::kCopy,
+                                                    data_to_copy));
+                SetMemorySpace(copy_to_device->mutable_shape(),
+                               Layout::kDefaultMemorySpace);
+                ABSL_RETURN_IF_ERROR(
+                    instruction->ReplaceOperandWith(idx, copy_to_device));
+                changed = true;
+              }
+            } else if (instruction_and_shape_index.shape_index.empty() &&
+                       instruction->opcode() !=
+                           HloOpcode::kDynamicUpdateSlice &&
+                       instruction->opcode() != HloOpcode::kParameter &&
+                       ((instruction->shape().has_layout() &&
+                         instruction->shape().layout().memory_space() ==
+                             Layout::kHostMemorySpace) ||
+                        buffers_to_set_to_host_memory_set.contains(
+                            instruction_and_shape_index))) {
+              is_while_body_root_to_device = true;
+              HloInstruction* copy_to_device =
+                  instruction->parent()->AddInstruction(
+                      HloInstruction::CreateUnary(
+                          instruction->shape(), HloOpcode::kCopy, instruction));
+              SetMemorySpace(copy_to_device->mutable_shape(),
+                             Layout::kDefaultMemorySpace);
+              instruction->parent()->set_root_instruction(copy_to_device);
+              changed = true;
+            }
+          } else {
+            HloInstruction* body_param =
+                caller->while_body()->parameter_instruction(0);
+            HloInstruction* cond_param =
+                caller->while_condition()->parameter_instruction(0);
+            add_buffer_to_set_to_host_memory(InstructionAndShapeIndex(
+                body_param, instruction_and_shape_index.shape_index));
+            add_buffer_to_set_to_host_memory(InstructionAndShapeIndex(
+                cond_param, instruction_and_shape_index.shape_index));
+            add_buffer_to_set_to_host_memory(InstructionAndShapeIndex(
+                caller->mutable_operand(0),
+                instruction_and_shape_index.shape_index));
+          }
+        }
+      }
+    }
+    if (is_while_body_root_to_device) {
+      continue;
+    }
+
     if (!already_saved_buffer) {
       const HloInstruction* instruction =
           instruction_and_shape_index.instruction;
@@ -334,7 +449,7 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
         // Save buffer to be set to host memory.
         VLOG(5) << "Saving " << instruction_and_shape_index.ToString()
                 << " to be set to host memory.";
-        buffers_to_set_to_host_memory.push_back(instruction_and_shape_index);
+        add_buffer_to_set_to_host_memory(instruction_and_shape_index);
       }
     }
 
@@ -376,6 +491,15 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
         host_offload_utils::GetSuccessors(instruction_and_shape_index,
                                           call_graph));
     for (const InstructionAndShapeIndex& successor : successors) {
+      if (successor.instruction->opcode() == HloOpcode::kFusion) {
+        auto operand_indices = successor.instruction->OperandIndices(
+            instruction_and_shape_index.instruction);
+        for (int64_t op_idx : operand_indices) {
+          fusions_to_insert_copies_before.insert(
+              {successor.instruction, op_idx});
+        }
+        continue;
+      }
       if (VLOG_IS_ON(1)) {
         previous.emplace(successor, instruction_and_shape_index);
       }
@@ -396,6 +520,17 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
   const bool set_buffers_changed = SetBuffersToMemorySpaceColor(
       buffers_to_set_to_host_memory, Layout::kHostMemorySpace);
   changed = changed || set_buffers_changed;
+
+  for (const auto& [fusion, op_idx] : fusions_to_insert_copies_before) {
+    HloInstruction* data_to_copy = fusion->mutable_operand(op_idx);
+    HloInstruction* copy_to_device =
+        data_to_copy->parent()->AddInstruction(HloInstruction::CreateUnary(
+            data_to_copy->shape(), HloOpcode::kCopy, data_to_copy));
+    SetMemorySpace(copy_to_device->mutable_shape(),
+                   Layout::kDefaultMemorySpace);
+    ABSL_RETURN_IF_ERROR(fusion->ReplaceOperandWith(op_idx, copy_to_device));
+    changed = true;
+  }
 
   if (insert_copy_before) {
     const std::vector<InstructionAndShapeIndex> predecessors =
