@@ -527,10 +527,12 @@ TEST(ParseIndexMemorySpacePairsTest, InvalidMemorySpace) {
 
 // Helper to find the HloValue color for a given instruction name.
 static int FindColorByName(const HloAliasAnalysis& alias_analysis,
-                           absl::string_view name) {
+                           absl::string_view name,
+                           const ShapeIndex& index = {}) {
   for (const auto& buffer : alias_analysis.buffers()) {
     for (const HloValue* value : buffer.values()) {
-      if (value->instruction()->name() == name) {
+      if (value->instruction()->name() == name &&
+          value->defining_index() == index) {
         return value->color();
       }
     }
@@ -705,14 +707,11 @@ TEST_F(GpuMemorySpaceAssignmentTest,
   ASSERT_OK(CreateColorer(module->config().debug_options())(
       alias_analysis.get(), ordering));
 
-  const HloInstruction* fusion =
-      module->entry_computation()->root_instruction();
-  const auto& dataflow = alias_analysis->dataflow_analysis();
-  EXPECT_EQ(dataflow.GetUniqueValueAt(fusion, {}).color(),
+  EXPECT_EQ(FindColorByName(*alias_analysis, "fusion"),
             static_cast<int>(MemorySpaceColor::kDefault));
-  EXPECT_EQ(dataflow.GetUniqueValueAt(fusion, {0}).color(),
+  EXPECT_EQ(FindColorByName(*alias_analysis, "fusion", {0}),
             static_cast<int>(MemorySpaceColor::kDefault));
-  EXPECT_EQ(dataflow.GetUniqueValueAt(fusion, {1}).color(),
+  EXPECT_EQ(FindColorByName(*alias_analysis, "fusion", {1}),
             static_cast<int>(MemorySpaceColor::kCollective));
 }
 

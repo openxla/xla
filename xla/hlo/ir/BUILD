@@ -69,7 +69,7 @@ cc_library(
     deps = [
         ":backend_config",
         ":hlo_payload_deduplicator",
-        ":hlo_sharding",
+        ":hlo_sharding",  # keep: provides implementations for re-exported hlo_sharding.h.
         ":mesh_and_axis",
         ":named_sharding",
         ":ptrvec",
