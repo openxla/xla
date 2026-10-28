@@ -302,6 +302,78 @@ INSTANTIATE_TEST_SUITE_P(
                           PrimitiveType_Name(info.param.scale_type));
     });
 
+struct KeepsFrontendAttributesTestCase {
+  PrimitiveType output_type;
+  // The instruction that replaces the scaled dot: the new dot, or a convert of
+  // it if the dot is computed in a wider type.
+  HloOpcode replacement_opcode;
+};
+
+class ScaledDotRewriterKeepsFrontendAttributesTest
+    : public HloHardwareIndependentTestBase,
+      public ::testing::WithParamInterface<KeepsFrontendAttributesTestCase> {};
+
+TEST_P(ScaledDotRewriterKeepsFrontendAttributesTest, RewrittenDot) {
+  const KeepsFrontendAttributesTestCase& test_case = GetParam();
+  const std::string hlo_string = absl::Substitute(
+      R"hlo(
+    HloModule module
+
+    ENTRY main {
+      lhs = f8e4m3fn[1024,512] parameter(0)
+      rhs = f8e4m3fn[64,512] parameter(1)
+      lhs_scale = f8e8m0fnu[1024,16] parameter(2)
+      rhs_scale = f8e8m0fnu[64,16] parameter(3)
+      ROOT dot = $0[1024,64] scaled-dot(f8e4m3fn[1024,512] lhs,
+          f8e4m3fn[64,512] rhs, f8e8m0fnu[1024,16] lhs_scale,
+          f8e8m0fnu[64,16] rhs_scale),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={1},
+        frontend_attributes={_scheduling_group_id="1"},
+        metadata={op_name="scaled_dot"}
+    }
+  )hlo",
+      primitive_util::LowercasePrimitiveTypeName(test_case.output_type));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  ScaledDotRewriter rewriter;
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  // The instruction that replaces the scaled dot keeps its frontend attributes
+  // and metadata.
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), test_case.replacement_opcode) << root->ToString();
+  EXPECT_EQ(root->shape().element_type(), test_case.output_type);
+  EXPECT_EQ(root->get_frontend_attribute("_scheduling_group_id"), "1")
+      << root->ToString();
+  EXPECT_EQ(root->metadata().op_name(), "scaled_dot") << root->ToString();
+
+  int num_dots = 0;
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    if (instruction->opcode() != HloOpcode::kDot) {
+      continue;
+    }
+    ++num_dots;
+    EXPECT_EQ(instruction->get_frontend_attribute("_scheduling_group_id"), "1")
+        << instruction->ToString();
+  }
+  EXPECT_EQ(num_dots, 1);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ScaledDotRewriterTests, ScaledDotRewriterKeepsFrontendAttributesTest,
+    ::testing::ValuesIn<KeepsFrontendAttributesTestCase>({
+        {PrimitiveType::F32, HloOpcode::kDot},
+        {PrimitiveType::BF16, HloOpcode::kDot},
+        // f8 operands with an f16 output are computed in f32.
+        {PrimitiveType::F16, HloOpcode::kConvert},
+    }),
+    [](const ::testing::TestParamInfo<KeepsFrontendAttributesTestCase>& info) {
+      return PrimitiveType_Name(info.param.output_type);
+    });
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

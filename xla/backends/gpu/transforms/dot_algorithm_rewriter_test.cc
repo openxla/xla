@@ -15,15 +15,15 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/dot_algorithm_rewriter.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <memory>
 #include <random>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -546,6 +546,70 @@ TEST_F(DotAlgorithmRewriterTest, Fp8xNAccuracyAgainstF64Reference) {
         << tag;
   }
 }
+
+// Returns every dot algorithm except ALG_UNSET.
+std::vector<PrecisionConfig::Algorithm> AllDotAlgorithms() {
+  std::vector<PrecisionConfig::Algorithm> algorithms;
+  for (int i = PrecisionConfig::Algorithm_MIN;
+       i <= PrecisionConfig::Algorithm_MAX; ++i) {
+    if (PrecisionConfig::Algorithm_IsValid(i) &&
+        i != PrecisionConfig::ALG_UNSET) {
+      algorithms.push_back(static_cast<PrecisionConfig::Algorithm>(i));
+    }
+  }
+  return algorithms;
+}
+
+// Whatever the pass does with a dot's algorithm, the dots it creates and the
+// instruction that replaces the dot keep the dot's frontend attributes. This
+// runs for every algorithm, so a new decomposition is covered automatically.
+class DotAlgorithmRewriterKeepsFrontendAttributesTest
+    : public DotAlgorithmRewriterTest,
+      public ::testing::WithParamInterface<PrecisionConfig::Algorithm> {};
+
+TEST_P(DotAlgorithmRewriterKeepsFrontendAttributesTest,
+       KeepsFrontendAttributes) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(
+                           absl::Substitute(R"hlo(
+    HloModule test
+
+    ENTRY test {
+      p0 = f32[32,32] parameter(0)
+      p1 = f32[32,32] parameter(1)
+      ROOT dot = f32[32,32] dot(p0, p1),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0},
+        algorithm=$0,
+        frontend_attributes={_scheduling_group_id="1"}
+    }
+  )hlo",
+                                            AlgorithmToString(GetParam()))));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloPass(DotAlgorithmRewriter(
+                     stream_executor::CudaComputeCapability::Hopper()),
+                 module.get()));
+  SCOPED_TRACE(changed ? "rewritten" : "unchanged");
+  for (const HloInstruction* instr :
+       module->entry_computation()->instructions()) {
+    if (instr->opcode() == HloOpcode::kDot) {
+      EXPECT_EQ(instr->get_frontend_attribute("_scheduling_group_id"), "1")
+          << instr->ToString();
+    }
+  }
+  EXPECT_EQ(
+      module->entry_computation()->root_instruction()->get_frontend_attribute(
+          "_scheduling_group_id"),
+      "1");
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AllAlgorithms, DotAlgorithmRewriterKeepsFrontendAttributesTest,
+    ::testing::ValuesIn(AllDotAlgorithms()),
+    [](const ::testing::TestParamInfo<PrecisionConfig::Algorithm>& info) {
+      return PrecisionConfig::Algorithm_Name(info.param);
+    });
 
 }  // namespace
 }  // namespace xla::gpu
