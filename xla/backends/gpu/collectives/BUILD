@@ -698,6 +698,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/cuda:nccl",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
     ],
@@ -719,6 +720,7 @@ xla_cc_test(
         "//xla/tsl/cuda:nccl",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
     ],
@@ -779,10 +781,30 @@ cc_library(
         "//xla:util",
         "//xla/tsl/cuda:nccl",
         "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/time",
+    ],
+)
+
+xla_cc_test(
+    name = "nccl_errors_test",
+    srcs = ["nccl_errors_test.cc"],
+    tags = [
+        "cuda-only",
+        "gpu",
+        "no-oneapi",
+    ],
+    deps = [
+        ":cancellation_token",
+        ":nccl_errors",
+        "//xla/tsl/cuda:nccl",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

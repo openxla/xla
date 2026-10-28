@@ -111,6 +111,19 @@ class NcclCommunicator : public GpuCommunicator {
   NcclCommunicator& operator=(const NcclCommunicator&) = delete;
   NcclCommunicator& operator=(NcclCommunicator&&) = delete;
 
+  // Creates a child communicator and waits for the parent to publish its
+  // handle. Create() must still wait for the child's readiness before use.
+  // All parent ranks, including excluded ranks using NCCL_SPLIT_NOCOLOR,
+  // must call concurrently and outside an NCCL group.
+  //
+  // Once launched, this wait has no cancellation or deadline. The parent mutex
+  // is held until completion or error, so Abort() also waits for it. If an
+  // error leaves completion uncertain, output storage stays with the parent
+  // until successful teardown. Interrupting an in-flight split requires a
+  // separate cancellation and teardown protocol.
+  absl::StatusOr<ncclComm_t> Split(int color, int key,
+                                   ncclConfig_t config) const;
+
   absl::Status Abort() final;
   absl::Status HealthCheck() const final;
   absl::StatusOr<size_t> NumRanks() const final;
