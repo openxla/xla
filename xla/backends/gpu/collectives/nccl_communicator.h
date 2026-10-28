@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/base/nullability.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/functional/function_ref.h"
@@ -141,6 +142,11 @@ class NcclCommunicator : public GpuCommunicator {
 
   absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
       se::DeviceAddressBase addr, bool symmetric_window = false) final;
+
+  absl::StatusOr<std::shared_ptr<SymmetricMemory>> AcquireSymmetricMemory(
+      se::DeviceAddressBase addr, bool symmetric_window) final;
+
+  void ReleaseSymmetricMemory(se::DeviceAddressBase addr) final;
 
   Future<> GroupExecute(absl::AnyInvocable<absl::Status() &&> group) final;
 
@@ -389,6 +395,10 @@ class NcclCommunicator : public GpuCommunicator {
       ABSL_GUARDED_BY(semaphore_mu_);
   tsl::TiedRef<SymmetricMemory> tied_clique_symmetric_memory_
       ABSL_GUARDED_BY(semaphore_mu_);
+
+  absl::Mutex cached_symm_mutex_;
+  absl::flat_hash_map<void*, std::shared_ptr<SymmetricMemory>>
+      cached_symmetric_memories_ ABSL_GUARDED_BY(cached_symm_mutex_);
 };
 
 //===----------------------------------------------------------------------===//

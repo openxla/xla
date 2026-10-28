@@ -53,7 +53,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
-#include "xla/backends/gpu/runtime/collective_memory_cache.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
@@ -519,8 +518,6 @@ GpuExecutable::GpuExecutable(
       thunk_sequence_proto_(std::move(thunk_sequence_proto)),
       executable_abi_version_(std::move(executable_abi_version)),
       cpu_target_machine_options_(std::move(cpu_target_machine_options)),
-      collective_memory_cache_(
-          gpu_topology.has_value() ? gpu_topology->num_devices_per_host() : 0),
       buffer_allocations_debug_summary_(
           std::move(buffer_allocations_debug_summary)),
       collective_use_minimal_resource_(collective_use_minimal_resource),
@@ -617,7 +614,6 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
     std::optional<absl::Span<const BufferAllocation::Index>>
         persistent_alloc_indices,
     GpuExecutable::NumAdditionalStreams num_additional_streams,
-    CollectiveMemoryCache& collective_memory_cache,
     bool collective_use_minimal_resource) {
   const GpuExecutableRunOptions* gpu_run_options =
       run_options->run_options().gpu_executable_run_options();
@@ -854,8 +850,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
   ABSL_ASSIGN_OR_RETURN(
       CollectiveMemory collective_memory,
       AcquireCollectiveMemory(collective_params, collective_cliques,
-                              collective_memory_requests,
-                              collective_memory_cache));
+                              collective_memory_requests));
   {  // Initialize thunks using prepared resources before execution.
     Thunk::InitializeParams initialize_params{
         executor,
@@ -1458,8 +1453,7 @@ absl::Status GpuExecutable::ExecuteThunks(
       has_module() ? &module_config().debug_options() : nullptr, module_name_,
       unique_id, *thunk_executor_, executable_source, run_options,
       buffer_allocations, block_host_until_done, persistent_alloc_indices,
-      num_additional_streams_, collective_memory_cache_,
-      collective_use_minimal_resource_);
+      num_additional_streams_, collective_use_minimal_resource_);
 }
 
 int64_t GpuExecutable::SizeOfGeneratedCodeInBytes() const {

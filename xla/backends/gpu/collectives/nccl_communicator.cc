@@ -27,6 +27,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/base/nullability.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/functional/function_ref.h"
@@ -398,6 +399,44 @@ NcclCommunicator::CreateSymmetricMemory(se::DeviceAddressBase addr,
       });
 }
 
+absl::StatusOr<std::shared_ptr<SymmetricMemory>>
+NcclCommunicator::AcquireSymmetricMemory(se::DeviceAddressBase addr,
+                                         bool symmetric_window) {
+  {
+    absl::MutexLock lock(cached_symm_mutex_);
+    auto it = cached_symmetric_memories_.find(addr.opaque());
+    if (it != cached_symmetric_memories_.end() && it->second->addr() == addr) {
+      return it->second;
+    }
+  }
+
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<SymmetricMemory> symm,
+                        CreateSymmetricMemory(addr, symmetric_window));
+  std::shared_ptr<SymmetricMemory> shared_symm = std::move(symm);
+  std::shared_ptr<SymmetricMemory> old_symm;
+  {
+    absl::MutexLock lock(cached_symm_mutex_);
+    auto& entry = cached_symmetric_memories_[addr.opaque()];
+    old_symm = std::move(entry);
+    entry = shared_symm;
+  }
+  old_symm.reset();
+  return shared_symm;
+}
+
+void NcclCommunicator::ReleaseSymmetricMemory(se::DeviceAddressBase addr) {
+  std::shared_ptr<SymmetricMemory> released;
+  {
+    absl::MutexLock lock(cached_symm_mutex_);
+    if (auto it = cached_symmetric_memories_.find(addr.opaque());
+        it != cached_symmetric_memories_.end()) {
+      released = std::move(it->second);
+      cached_symmetric_memories_.erase(it);
+    }
+  }
+  released.reset();
+}
+
 absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
     se::StreamExecutor* stream_executor,
     absl::AnyInvocable<absl::StatusOr<ncclComm_t>()> make_comm,
@@ -437,6 +476,8 @@ absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
 }
 
 NcclCommunicator::~NcclCommunicator() {
+  cached_symmetric_memories_.clear();
+
   auto f = [this]() -> absl::Status {
     if (comm_ == nullptr) {
       XLA_VLOG_DEVICE(1, stream_executor_->device_ordinal())
@@ -480,7 +521,7 @@ absl::Status NcclCommunicator::Abort() {
   // executor_ will cancel. This will allow the aborting lambda below to run.
   cancel_->Cancel();
 
-  return ExecuteAwait([this]() -> absl::Status {
+  absl::Status status = ExecuteAwait([this]() -> absl::Status {
     XLA_VLOG_DEVICE(1, stream_executor_->device_ordinal())
         << "Abort NCCL communicator: " << *this;
     if (aborted_) {
@@ -490,8 +531,19 @@ absl::Status NcclCommunicator::Abort() {
     // Note that we intentionally don't call PollUntilDone. Once comm_
     // has been aborted, we can no longer safely touch it.
     absl::MutexLock lock(comm_->mutex);
-    return XLA_NCCL_STATUS(ncclCommAbort(comm_->comm));
+    ncclComm_t comm = comm_->comm;
+    comm_->comm = nullptr;
+    return XLA_NCCL_STATUS(ncclCommAbort(comm));
   });
+
+  absl::flat_hash_map<void*, std::shared_ptr<SymmetricMemory>> cached_symm;
+  {
+    absl::MutexLock lock(cached_symm_mutex_);
+    cached_symm = std::move(cached_symmetric_memories_);
+  }
+  cached_symm.clear();
+
+  return status;
 }
 
 absl::Status NcclCommunicator::HealthCheck() const {

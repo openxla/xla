@@ -39,7 +39,6 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
-#include "xla/backends/gpu/runtime/collective_memory_cache.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/core/collectives/rank_id.h"
@@ -47,10 +46,10 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/rendezvous.h"
+#include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/util/safe_reinterpret_cast.h"
-#include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
 
 namespace xla::gpu {
@@ -69,7 +68,14 @@ std::pair<SymmetricMemory*, size_t> CollectiveMemory::FindSymmetricMemory(
   if (it == sym_memories_.end()) {
     return std::make_pair(nullptr, 0);
   }
-  return std::make_pair(it->second.get(), 0);
+  // sym_memories_ stores an address of the pre-allocated memory range
+  // within which buffers_ is allocated.
+  SymmetricMemory* sym = it->second.get();
+  se::DeviceAddressBase alloc_base = buffers_.GetDeviceAddress(allocation);
+  size_t alloc_offset =
+      tsl::safe_reinterpret_cast<uintptr_t>(alloc_base.opaque()) -
+      tsl::safe_reinterpret_cast<uintptr_t>(sym->addr().opaque());
+  return std::make_pair(sym, alloc_offset);
 }
 
 std::pair<SymmetricMemory*, size_t> CollectiveMemory::FindSymmetricMemory(
@@ -199,10 +205,10 @@ static absl::StatusOr<absl::flat_hash_map<CollectiveMemory::Key,
 AcquireSymmetricMemory(
     const CollectiveParams& params, CollectiveCliques& cliques,
     const BufferAllocations& buffers,
-    absl::Span<const CollectiveMemoryRequests::CollectiveAllocations> allocs,
-    CollectiveMemoryCache& memory_cache) {
+    absl::Span<const CollectiveMemoryRequests::CollectiveAllocations> allocs) {
   absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
       sym_memories;
+  std::unique_ptr<se::ActivateContext> activation = params.executor->Activate();
 
   for (const CollectiveMemoryRequests::CollectiveAllocations& r : allocs) {
     std::optional<RankId> rank = r.clique.rank(params.global_device_id);
@@ -212,37 +218,19 @@ AcquireSymmetricMemory(
                       params.global_device_id, r.clique);
     }
 
-    // TODO(ezhulenev): All of the buffer allocations that we make symmetric
-    // are created from the same underlying memory allocator. We can
-    // significantly improve performance with a few tricks:
-    //
-    // 1. Coalesce adjacent allocations and create one large symmetric region.
-    // 2. Create one big symmetric region from [start, end] addresses, we might
-    //    have unused gaps in the middle, but it doesn't matter, we will ignore
-    //    them.
-    // 3. Cache symmetric memories in a process-level cache.
-    //
-    // Currently it's very simple proof of concept.
-
     ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm,
                           cliques.GetComm(r.clique, *rank));
     for (BufferAllocation::Index i : r.allocations) {
       se::DeviceAddressBase addr = buffers.GetDeviceAddress(i);
-      CollectiveMemory::Key mem_key = std::make_pair(r.clique, i);
-      // Check cache first to avoid redundant collective window registration.
-      if (auto cached = memory_cache.FindSymmetricMemory(
-              params.executor->device_ordinal(), r.clique, addr)) {
-        sym_memories[mem_key] = std::move(cached);
+      if (addr.is_null() || addr.size() == 0) {
         continue;
       }
-      ABSL_ASSIGN_OR_RETURN(
-          std::unique_ptr<SymmetricMemory> symm,
-          comm->CreateSymmetricMemory(addr, params.nccl_window_symmetric));
-      ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<SymmetricMemory> tied_symm,
-                            cliques.Tie(r.clique, std::move(symm)));
-      sym_memories[mem_key] =
-          memory_cache.AddSymmetricMemory(params.executor->device_ordinal(),
-                                          r.clique, addr, std::move(tied_symm));
+      ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase base_range,
+                            params.executor->GetMemoryRange(addr));
+
+      ABSL_ASSIGN_OR_RETURN(sym_memories[std::make_pair(r.clique, i)],
+                            comm->AcquireSymmetricMemory(
+                                base_range, params.nccl_window_symmetric));
     }
   }
 
@@ -340,8 +328,7 @@ absl::StatusOr<PeerMemoryMap> AcquirePeerMemory(
 
 absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
     const CollectiveParams& params, CollectiveCliques& cliques,
-    const CollectiveMemoryRequests& requests,
-    CollectiveMemoryCache& memory_cache) {
+    const CollectiveMemoryRequests& requests) {
   // We rely on deterministic order of memory requests, to guarantee that all
   // ranks create collective memory in identical order, otherwise we can get
   // a deadlock.
@@ -389,8 +376,7 @@ absl::StatusOr<CollectiveMemory> AcquireCollectiveMemory(
 
   ABSL_ASSIGN_OR_RETURN(
       auto sym_memories,
-      AcquireSymmetricMemory(params, cliques, requests.buffers(), sym_allocs,
-                             memory_cache));
+      AcquireSymmetricMemory(params, cliques, requests.buffers(), sym_allocs));
 
   ABSL_ASSIGN_OR_RETURN(
       auto peer_memories,
