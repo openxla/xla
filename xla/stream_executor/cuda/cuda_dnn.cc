@@ -7008,15 +7008,17 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
     // (via CudnnHandle's RAII) always activates the correct context on its
     // own. See the deviceless branch below for a different, unrelated reason
     // ScopedDeactivateContext is used there.
-    std::unique_ptr<ActivateContext> context =
-        force_tensor_ir_
-            ? std::unique_ptr<ActivateContext>(
-                  std::make_unique<
-                      stream_executor::gpu::ScopedDeactivateContext>())
-            : cudnn_support.GetParent()->Activate();
+    //
+    // The handle must be acquired first: CudnnHandle's constructor activates
+    // the executor's context, which would undo an earlier deactivation.
     ABSL_ASSIGN_OR_RETURN(
         auto cudnn,
         cudnn_support.cudnn_->GetCompilationHandle(cudnn_support.parent_));
+    std::unique_ptr<ActivateContext> deactivate;
+    if (force_tensor_ir_) {
+      deactivate =
+          std::make_unique<stream_executor::gpu::ScopedDeactivateContext>();
+    }
     RETURN_IF_CUDNN_FRONTEND_ERROR(graph_.validate());
     RETURN_IF_CUDNN_FRONTEND_ERROR(
         graph_.build_operation_graph(cudnn.handle()));
@@ -7034,11 +7036,16 @@ absl::Status CudnnGraph::Prepare(dnn::DnnSupport* dnn_support,
     }
     // Deviceless mode. No cuDNN version guard needed: DeviceProperties
     // deserialization inside BuildDeviceProperties rejects runtimes < 9.8.
-    // Explicitly clear any CUDA context left active by unrelated prior work
-    // on this thread, so cuDNN's internal "is a context current?" checks
-    // reliably see this compile as truly deviceless rather than incidentally
-    // picking up a leftover context.
-    stream_executor::gpu::ScopedDeactivateContext deactivate;
+    // For the TensorIR path, explicitly clear any CUDA context left active by
+    // unrelated prior work on this thread, so cuDNN's internal "is a context
+    // current?" checks reliably see this compile as truly deviceless. Other
+    // paths must keep the ambient context or cuDNN's precompiled engines
+    // segfault.
+    std::unique_ptr<ActivateContext> deactivate;
+    if (force_tensor_ir_) {
+      deactivate =
+          std::make_unique<stream_executor::gpu::ScopedDeactivateContext>();
+    }
     ABSL_ASSIGN_OR_RETURN(auto device_props,
                           xla::gpu::BuildDeviceProperties(gpu_device_info));
     graph_.set_device_properties(device_props);
@@ -7059,15 +7066,14 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport* dnn_support,
     // See the comment in Prepare()'s device branch: only the TensorIR path
     // needs the context cleared, everything else needs it activated as
     // usual or cuDNN's precompiled engines segfault.
-    std::unique_ptr<ActivateContext> context =
-        force_tensor_ir_
-            ? std::unique_ptr<ActivateContext>(
-                  std::make_unique<
-                      stream_executor::gpu::ScopedDeactivateContext>())
-            : cudnn_support.GetParent()->Activate();
     ABSL_ASSIGN_OR_RETURN(
         auto cudnn,
         cudnn_support.cudnn_->GetCompilationHandle(cudnn_support.parent_));
+    std::unique_ptr<ActivateContext> deactivate;
+    if (force_tensor_ir_) {
+      deactivate =
+          std::make_unique<stream_executor::gpu::ScopedDeactivateContext>();
+    }
     if (plan_id.has_value()) {
       RETURN_CUDNN_FRONTEND_STATUS(
           graph_.build_plan_at_index(cudnn.handle(), *plan_id));
@@ -7076,8 +7082,12 @@ absl::Status CudnnGraph::Build(dnn::DnnSupport* dnn_support,
   } else {
     // no need to set_device_properties, it is done in Prepare()
     // See the comment in Prepare()'s deviceless branch for why this is
-    // cleared explicitly rather than relying on no context being ambient.
-    stream_executor::gpu::ScopedDeactivateContext deactivate;
+    // cleared only for the TensorIR path.
+    std::unique_ptr<ActivateContext> deactivate;
+    if (force_tensor_ir_) {
+      deactivate =
+          std::make_unique<stream_executor::gpu::ScopedDeactivateContext>();
+    }
     if (plan_id.has_value()) {
       RETURN_CUDNN_FRONTEND_STATUS(graph_.build_plan_at_index(*plan_id));
     }
