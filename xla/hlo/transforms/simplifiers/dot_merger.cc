@@ -81,9 +81,9 @@ bool HasSubByteUpcast(const HloInstruction* instr) {
 using ReplacementMap = HloInstructionMap<HloInstruction*>;
 
 // In order to be mergeable, the shared operand should have the same dimension
-// categories for non-degenerate dimensions, have the same operand and output
-// types, and same algorithm/precision config. And same queue_id, whatever it
-// is.
+// categories for non-degenerate dimensions, the same operand and output
+// types, and the same algorithm/precision config, queue_id, and frontend
+// attributes.
 struct EquivalenceKey {
   const HloInstruction* source;
   std::vector<DotOperandDims::Category> dim_categories;
@@ -92,12 +92,15 @@ struct EquivalenceKey {
   PrimitiveType concat_op_type;
   PrimitiveType dot_type;
   std::string precision_config_bytes;
+  // Sorted (key, value) pairs. Kept as pairs, not a joined string, so that
+  // different attribute maps can never produce equal keys.
+  std::vector<std::pair<std::string, std::string>> frontend_attributes;
 
   template <typename H>
   friend H AbslHashValue(H h, const EquivalenceKey& k) {
     return H::combine(std::move(h), k.source, k.dim_categories, k.queue_id,
                       k.shared_op_type, k.concat_op_type, k.dot_type,
-                      k.precision_config_bytes);
+                      k.precision_config_bytes, k.frontend_attributes);
   }
 
   bool operator==(const EquivalenceKey& other) const {
@@ -106,20 +109,33 @@ struct EquivalenceKey {
            shared_op_type == other.shared_op_type &&
            concat_op_type == other.concat_op_type &&
            dot_type == other.dot_type &&
-           precision_config_bytes == other.precision_config_bytes;
+           precision_config_bytes == other.precision_config_bytes &&
+           frontend_attributes == other.frontend_attributes;
   }
 
   bool operator<(const EquivalenceKey& other) const {
     int64_t id1 = source->unique_id();
     int64_t id2 = other.source->unique_id();
-    auto t1 = std::tie(id1, queue_id, dim_categories, shared_op_type,
-                       concat_op_type, dot_type, precision_config_bytes);
-    auto t2 = std::tie(id2, other.queue_id, other.dim_categories,
-                       other.shared_op_type, other.concat_op_type,
-                       other.dot_type, other.precision_config_bytes);
+    auto t1 =
+        std::tie(id1, queue_id, dim_categories, shared_op_type, concat_op_type,
+                 dot_type, precision_config_bytes, frontend_attributes);
+    auto t2 =
+        std::tie(id2, other.queue_id, other.dim_categories,
+                 other.shared_op_type, other.concat_op_type, other.dot_type,
+                 other.precision_config_bytes, other.frontend_attributes);
     return t1 < t2;
   }
 };
+
+// Returns the (key, value) pairs of `attrs` sorted by key, used as part of the
+// equivalence key.
+std::vector<std::pair<std::string, std::string>> SortedFrontendAttributes(
+    const FrontendAttributes& attrs) {
+  std::vector<std::pair<std::string, std::string>> sorted(attrs.map().begin(),
+                                                          attrs.map().end());
+  absl::c_sort(sorted);
+  return sorted;
+}
 
 struct DotOperandUsage {
   HloInstruction* dot;
@@ -148,6 +164,8 @@ absl::StatusOr<EquivalenceKey> GetEquivalenceKey(
   PrimitiveType dot_type = dot->shape().element_type();
   std::string precision_config_bytes =
       dot->precision_config().SerializeAsString();
+  std::vector<std::pair<std::string, std::string>> frontend_attributes =
+      SortedFrontendAttributes(dot->frontend_attributes());
 
   return EquivalenceKey{source,
                         dim_categories,
@@ -155,7 +173,8 @@ absl::StatusOr<EquivalenceKey> GetEquivalenceKey(
                         shared_op_type,
                         concat_op_type,
                         dot_type,
-                        std::move(precision_config_bytes)};
+                        std::move(precision_config_bytes),
+                        std::move(frontend_attributes)};
 }
 
 // Traverses backward from the operand of a dot instruction to find its source,
@@ -566,6 +585,12 @@ absl::StatusOr<HloInstruction*> CreateNewDot(
   });
   if (it != dots_to_merge.end()) {
     new_dot->set_metadata(it->dot->metadata());
+  }
+  // Every dot in a merge cluster has the same EquivalenceKey, which includes
+  // the frontend attributes, so the merged dot carries them unchanged.
+  if (dots_to_merge[0].dot->has_frontend_attributes()) {
+    new_dot->set_frontend_attributes(
+        dots_to_merge[0].dot->frontend_attributes());
   }
 
   return new_dot;
