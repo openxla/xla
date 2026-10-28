@@ -18,6 +18,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -276,13 +277,27 @@ TEST_P(CuptiV2ActivityConfigurationErrorTest, DoesNotDisableCupti) {
   const CUptiResult result = GetParam();
   auto* const v2_subscriber =
       reinterpret_cast<CUpti_SubscriberHandle>(uintptr_t{1});
+  uint8_t attr_value = 1;
+  size_t attr_size = sizeof(attr_value);
+  constexpr CUpti_ActivityAttribute
+      kCuptiActivityAttrEnableMultiSubscriberGraphTrace =
+          static_cast<CUpti_ActivityAttribute>(20);
   EXPECT_CALL(*mock_, ActivityUseSystemThreadIdV2(v2_subscriber))
       .WillOnce(Return(result));
   EXPECT_CALL(*mock_, ActivityUsePerThreadBufferV2()).WillOnce(Return(result));
+  EXPECT_CALL(*mock_,
+              ActivitySetAttributeV2(
+                  nullptr, kCuptiActivityAttrEnableMultiSubscriberGraphTrace,
+                  &attr_size, &attr_value))
+      .WillOnce(Return(result));
 
   EXPECT_EQ(cupti_error_manager_->ActivityUseSystemThreadIdV2(v2_subscriber),
             result);
   EXPECT_EQ(cupti_error_manager_->ActivityUsePerThreadBufferV2(), result);
+  EXPECT_EQ(cupti_error_manager_->ActivitySetAttributeV2(
+                nullptr, kCuptiActivityAttrEnableMultiSubscriberGraphTrace,
+                &attr_size, &attr_value),
+            result);
   EXPECT_FALSE(CuptiDisabled());
 }
 
