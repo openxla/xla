@@ -22,5 +22,5 @@ option java_multiple_files = true;
 
 message OneAPIComputeCapabilityProto {
   string architecture = 1;
-  string variant = 2;
+  reserved 2; // was variant
 }

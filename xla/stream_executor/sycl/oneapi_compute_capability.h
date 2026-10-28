@@ -16,78 +16,111 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_SYCL_ONEAPI_COMPUTE_CAPABILITY_H_
 #define XLA_STREAM_EXECUTOR_SYCL_ONEAPI_COMPUTE_CAPABILITY_H_
 
-#include <cassert>
-#include <cstddef>
 #include <cstdint>
 #include <string>
-#include <utility>
 
-#include "absl/strings/match.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/sycl/oneapi_compute_capability.pb.h"
 
 namespace stream_executor {
 
-#define FOR_KNOWN_ONEAPI_DEVICES(EMIT)                               \
-  EMIT(/*device=*/PVC, /*idx=*/0, /*gen=*/0xc, /*default_ver=*/0x3c) \
-  EMIT(/*device=*/BMG, /*idx=*/1, /*gen=*/0x14, /*default_ver=*/0x1) \
-  EMIT(/*device=*/DG2, /*idx=*/2, /*gen=*/0xc, /*default_ver=*/0x37)
+enum class XeGeneration : uint32_t {
+  kUnknown = 0,
+  kXe = 12,
+  kXe2 = 20,
+  kXe3 = 30,
+  kXe3P = 35
+};
 
-#define DEVICE_INFO(HW, ...) {#HW, OneAPIDeviceType::k##HW},
-#define DEVICE_ENTRIES(HW, I, G, V) k##HW = ((G << 22) | (V << 14) | (I)),
+// Known Xe architectures as (architecture, generation, min_version,
+// max_version) rows. A row matches a device of the given generation whose
+// release version lies in the inclusive range [min_version, max_version]. The
+// architecture name is the string used by architecture(), ToString() and the
+// proto.
+//
+// Use EMIT_ARCH_DEFINE once per arch (it defines the XeArch enumerator) and
+// EMIT_ARCH_EXTEND for additional version ranges of the same arch. When
+// inferring the arch, the first row whose generation matches and whose range
+// contains the version is selected.
+#define FOR_KNOWN_ONEAPI_ARCHS(EMIT_ARCH_DEFINE, EMIT_ARCH_EXTEND) \
+  EMIT_ARCH_DEFINE(XeLP, Xe, 0, 4)        /* TGL, RKL, ADL */      \
+  EMIT_ARCH_EXTEND(XeLP, Xe, 10, 10)      /* DG1 */                \
+  EMIT_ARCH_DEFINE(XeHPG, Xe, 55, 57)     /* DG2 */                \
+  EMIT_ARCH_DEFINE(XeHPC, Xe, 60, 61)     /* PVC */                \
+  EMIT_ARCH_DEFINE(XeLPG, Xe, 70, 71)     /* MTL */                \
+  EMIT_ARCH_DEFINE(XeLPGPlus, Xe, 74, 74) /* ARL-H */              \
+  /* Add new Xe rows above this. */                                \
+  EMIT_ARCH_DEFINE(XeOther, Xe, 0, 0xff) /* Other Xe */            \
+  EMIT_ARCH_DEFINE(Xe2LPG, Xe2, 4, 4)    /* LNL */                 \
+  EMIT_ARCH_DEFINE(Xe2HPG, Xe2, 1, 2)    /* BMG */                 \
+  /* Add new Xe2 rows above this. */                               \
+  EMIT_ARCH_DEFINE(Xe2Other, Xe2, 0, 0xff) /* Other Xe2 */         \
+  EMIT_ARCH_DEFINE(Xe3, Xe3, 0, 0xff)      /* PTL, WCL, NVL-S/U */ \
+  EMIT_ARCH_DEFINE(Xe3PLPG, Xe3P, 10, 10)  /* NVL-P */             \
+  EMIT_ARCH_DEFINE(Xe3PXPC, Xe3P, 11, 11)  /* CRI */               \
+  /* Add new Xe3P rows above this. */                              \
+  EMIT_ARCH_DEFINE(Xe3POther, Xe3P, 0, 0xff) /* Other Xe3P */
 
-// Convenience utilities for each known device family. For example, PVC()
-// returns the compute capability for PVC variants and IsPVC() checks whether
-// this capability corresponds to a PVC variant.
-#define DEVICE_UTILITIES(HW, ...)                                              \
-  static OneAPIComputeCapability HW() { return OneAPIComputeCapability{#HW}; } \
-  bool Is##HW() const { return device_ == OneAPIDeviceType::k##HW; }
+#define ARCH_SKIP(...)
+#define ARCH_ENTRIES(ARCH, ...) k##ARCH,
+#define ARCH_INFO(ARCH, GEN, MIN, MAX) \
+  {#ARCH, XeArch::k##ARCH, XeGeneration::k##GEN, MIN, MAX},
 
-// Each enum entry encodes the generation, version, and index of a given device
-enum class OneAPIDeviceType : uint32_t {
-  FOR_KNOWN_ONEAPI_DEVICES(DEVICE_ENTRIES) kUnknown
+// Convenience utilities for each known arch. For example, IsXeLPG()
+// checks whether this capability corresponds to an XeLPG device.
+#define ARCH_UTILITIES(ARCH, ...) \
+  bool Is##ARCH() const { return arch_ == XeArch::k##ARCH; }
+
+// Only EMIT_ARCH_DEFINE rows become enumerators, so each name appears once.
+enum class XeArch : uint8_t {
+  FOR_KNOWN_ONEAPI_ARCHS(ARCH_ENTRIES, ARCH_SKIP) kUnknown
 };
 
 class OneAPIComputeCapability {
  public:
   OneAPIComputeCapability() = default;
 
-  explicit OneAPIComputeCapability(uint32_t generation, uint32_t version);
+  explicit OneAPIComputeCapability(XeGeneration generation, uint8_t version);
 
   explicit OneAPIComputeCapability(const OneAPIComputeCapabilityProto& proto)
       : OneAPIComputeCapability(FromProto(proto)) {}
 
-  // Device's architecture and variant are encoded in an IP version. The 10 most
-  // significant bits represent the architecture, the next 8 bits represent the
-  // architecture variant, and the 14 least significant bits hold the
-  // architecture family index. The IP version can be queried via Level Zero
-  // calls.
+  // The IP version can be queried via Level Zero. Its 10 most significant bits
+  // hold the Xe generation and the next 8 bits hold the release version. The
+  // pair selects the Xe architecture from the FOR_KNOWN_ONEAPI_ARCHS table.
   explicit OneAPIComputeCapability(const uint32_t ip_version)
-      : OneAPIComputeCapability((ip_version >> 22) & 0x3ff,
-                                (ip_version >> 14) & 0xff) {}
+      : OneAPIComputeCapability(
+            static_cast<XeGeneration>((ip_version >> 22) & 0x3ff),
+            static_cast<uint8_t>((ip_version >> 14) & 0xff)) {}
 
-  explicit OneAPIComputeCapability(absl::string_view arch,
-                                   absl::string_view variant = "");
-
-  uint32_t generation() const { return generation_; }
-  uint32_t version() const { return version_; }
+  explicit OneAPIComputeCapability(absl::string_view arch);
 
   std::string architecture() const;
 
-  std::string variant() const;
-
   std::string ToString() const;
-
-  FOR_KNOWN_ONEAPI_DEVICES(DEVICE_UTILITIES)
 
   OneAPIComputeCapabilityProto ToProto() const;
 
   static OneAPIComputeCapability FromProto(
       const OneAPIComputeCapabilityProto& proto);
 
+  FOR_KNOWN_ONEAPI_ARCHS(ARCH_UTILITIES, ARCH_SKIP)
+
+  static OneAPIComputeCapability BMG() {
+    return OneAPIComputeCapability("Xe2HPG");
+  }
+  static OneAPIComputeCapability PVC() {
+    return OneAPIComputeCapability("XeHPC");
+  }
+  static OneAPIComputeCapability DG2() {
+    return OneAPIComputeCapability("XeHPG");
+  }
+  static OneAPIComputeCapability CRI() {
+    return OneAPIComputeCapability("Xe3PXPC");
+  }
+
   bool operator==(const OneAPIComputeCapability& other) const {
-    return generation_ == other.generation_ && version_ == other.version_;
+    return arch_ == other.arch_;
   }
 
   bool operator!=(const OneAPIComputeCapability& other) const {
@@ -95,58 +128,29 @@ class OneAPIComputeCapability {
   }
 
  private:
-  struct OneAPIDeviceInfo {
+  struct OneAPIArchInfo {
     const char* name;
-    OneAPIDeviceType type;
+    XeArch arch;
+    XeGeneration generation;
+    uint8_t min_version;
+    uint8_t max_version;
   };
 
-  // Device-specific variant codec operations (encode, decode, validate).
-  template <OneAPIDeviceType device>
-  struct OneAPIDeviceVariantOps {
-    static bool IsKnown(uint32_t /*version*/) { return false; }
-    static std::string Decode(uint32_t /*version*/) { return ""; }
-    static uint32_t Encode(absl::string_view /*variant*/) { return 0; }
-  };
+  static constexpr OneAPIArchInfo kXeArchs[]{
+      FOR_KNOWN_ONEAPI_ARCHS(ARCH_INFO, ARCH_INFO)};
 
-  static constexpr uint32_t kUnknownVariantValue = 0xff;
-  static constexpr OneAPIDeviceInfo kKnownDevices[]{
-      FOR_KNOWN_ONEAPI_DEVICES(DEVICE_INFO)};
+  // Maps a (generation, version) pair to an XeArch.
+  static XeArch InferDeviceArch(XeGeneration generation, uint8_t version);
 
-  uint32_t generation_ = 0;
-  uint32_t version_ = 0;
-  OneAPIDeviceType device_ = OneAPIDeviceType::kUnknown;
-
-  // Helpers to dispatch over kKnownDevices using index_sequence.
-  // TODO(intel-tf): These private helpers can be abstracted into templated
-  // lambdas once C++20 is available.
-  template <std::size_t... I>
-  OneAPIDeviceType InferDeviceType(uint32_t generation, uint32_t version,
-                                   std::index_sequence<I...>);
-
-  template <std::size_t... I>
-  static uint32_t ApplyVariantToIpVersion(absl::string_view variant,
-                                          uint32_t ip_version,
-                                          OneAPIDeviceType type,
-                                          std::index_sequence<I...>);
-
-  template <std::size_t... I>
-  std::string VariantStringForDevice(std::index_sequence<I...>) const;
-
-  // Maps a device name string to its corresponding OneAPIDeviceType.
-  static OneAPIDeviceType NameToDeviceType(absl::string_view name) {
-    for (const auto& info : kKnownDevices) {
-      if (absl::EqualsIgnoreCase(name, info.name)) {
-        return info.type;
-      }
-    }
-    return OneAPIDeviceType::kUnknown;
-  }
+  XeGeneration generation_ = XeGeneration::kUnknown;
+  XeArch arch_ = XeArch::kUnknown;
 };
 
-#undef DEVICE_UTILITIES
-#undef DEVICE_ENTRIES
-#undef DEVICE_INFO
-#undef FOR_KNOWN_ONEAPI_DEVICES
+#undef ARCH_UTILITIES
+#undef ARCH_SKIP
+#undef ARCH_ENTRIES
+#undef ARCH_INFO
+#undef FOR_KNOWN_ONEAPI_ARCHS
 
 }  // namespace stream_executor
 
