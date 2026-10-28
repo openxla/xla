@@ -92,42 +92,42 @@ namespace m = match;
 
 using primitive_util::NativeTypeOf;
 
-// Unwraps broadcasts hunting for a constant.  If we find one, checks if the
-// constant contains only the given value.
-bool IsAll(const HloInstruction* op, int8_t value) {
-  switch (op->opcode()) {
-    case HloOpcode::kBroadcast:
-      return IsAll(op->operand(0), value);
-    case HloOpcode::kConstant:
-      return op->literal().IsAll(value);
-    default:
-      return false;
+// Unwraps ops whose output elements are all taken from operand(0), hunting for
+// a constant.
+const HloInstruction* UnwrapToConstant(const HloInstruction* op) {
+  while (true) {
+    switch (op->opcode()) {
+      case HloOpcode::kBroadcast:
+      case HloOpcode::kCopy:
+      case HloOpcode::kDynamicSlice:
+      case HloOpcode::kReshape:
+      case HloOpcode::kReverse:
+      case HloOpcode::kSlice:
+      case HloOpcode::kTranspose:
+        op = op->operand(0);
+        break;
+      case HloOpcode::kConstant:
+        return op;
+      default:
+        return nullptr;
+    }
   }
 }
 
-// Unwraps broadcasts hunting for a constant.  If we find one, checks if the
-// constant contains only the given value.
+bool IsAll(const HloInstruction* op, int8_t value) {
+  const HloInstruction* constant = UnwrapToConstant(op);
+  return constant != nullptr && constant->literal().IsAll(value);
+}
+
 bool IsAllFloat(const HloInstruction* op, float value) {
-  switch (op->opcode()) {
-    case HloOpcode::kBroadcast:
-      return IsAllFloat(op->operand(0), value);
-    case HloOpcode::kConstant:
-      return op->literal().IsAllFloat(value);
-    default:
-      return false;
-  }
+  const HloInstruction* constant = UnwrapToConstant(op);
+  return constant != nullptr && constant->literal().IsAllFloat(value);
 }
 
 bool IsAll(const HloInstruction* op, const Literal& scalar) {
   CHECK(ShapeUtil::IsScalar(scalar.shape()));
-  switch (op->opcode()) {
-    case HloOpcode::kBroadcast:
-      return IsAll(op->operand(0), scalar);
-    case HloOpcode::kConstant:
-      return op->literal().IsAll(scalar);
-    default:
-      return false;
-  }
+  const HloInstruction* constant = UnwrapToConstant(op);
+  return constant != nullptr && constant->literal().IsAll(scalar);
 }
 
 bool IsAnyOperandComplex(const HloInstruction* hlo) {
@@ -1383,7 +1383,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleAllReduceOrReduceScatter(
                           primitive_util::IsFloatingPointType(type_constant)) {
               T val = literal.Get<T>({});
               T result = val * static_cast<T>(group_size);
-              new_literal = LiteralUtil::CreateR0(element_type, result);
+              new_literal = LiteralUtil::CreateR0<T>(result);
             }
           },
           element_type);
@@ -1465,8 +1465,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcast(
   // it should remove the op when control deps are present. I.e.
   // control deps might be added to preserve a certain order.
   // It's better to not process in that case.
-  if (!bitcast->control_predecessors().empty()) {
-    VLOG(3) << bitcast->ToString() << " has control predecessors, skipping.";
+  if (bitcast->HasControlDependencies()) {
+    VLOG(3) << bitcast->ToString() << " has control dependencies, skipping.";
     return absl::OkStatus();
   }
 
@@ -10007,16 +10007,24 @@ absl::Status AlgebraicSimplifierVisitor::HandleSelect(HloInstruction* select) {
   }
   // select(PRED, PRED, PRED)
   if (ShapeUtil::HasPrimitiveType(select->shape(), xla::PRED)) {
+    HloInstruction* pred = select->mutable_operand(0);
+    HloInstruction* replacement = nullptr;
     // select(a, true, false) -> a
     if (IsAll(select->operand(1), true) && IsAll(select->operand(2), false)) {
-      return ReplaceInstruction(select, select->mutable_operand(0));
+      replacement = pred;
+    } else if (IsAll(select->operand(1), false) &&
+               IsAll(select->operand(2), true)) {
+      // select(a, false, true) -> not(a)
+      replacement = computation_->AddInstruction(
+          HloInstruction::CreateUnary(pred->shape(), HloOpcode::kNot, pred));
     }
-    // select(a, false, true) -> not(a)
-    if (IsAll(select->operand(1), false) && IsAll(select->operand(2), true)) {
-      return ReplaceWithNewInstruction(
-          select, HloInstruction::CreateUnary(
-                      select->mutable_operand(0)->shape(), HloOpcode::kNot,
-                      select->mutable_operand(0)));
+    if (replacement != nullptr) {
+      // Select permits a scalar predicate even when its result is a tensor.
+      if (ShapeUtil::IsScalar(replacement->shape()) &&
+          !ShapeUtil::IsScalar(select->shape())) {
+        replacement = MakeBroadcastHlo(replacement, {}, select->shape());
+      }
+      return ReplaceInstruction(select, replacement);
     }
     // select(compare(a, b, GT/GE), a, b) => or(a, b)
     // select(compare(a, b, LT/LE), a, b) => and(a, b)
@@ -10986,10 +10994,11 @@ absl::StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToMultiply(
     }
   }
 
-  // Stride ignores part of the output, which matrix multiplication does not do,
-  // so require no stride. Padding and dilation both implicitly extend the data,
-  // which matrix multiplication also does not do, so require no padding and no
-  // dilation.
+  // Stride ignores part of the output, which multiplication does not do, so
+  // require no stride. Padding and dilation both implicitly extend the data,
+  // which multiplication also does not do, so require no padding and no
+  // dilation. Window reversal is handled below by reversing the kernel along
+  // contracted spatial dimensions.
   if (window_util::HasStride(window) || window_util::HasPadding(window) ||
       window_util::HasDilation(window)) {
     return false;
@@ -11019,14 +11028,19 @@ absl::StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToMultiply(
       dnums.kernel_output_feature_dimension();
 
   // Set reduction dimensions for spatial dimensions where the kernel size is
-  // not equal to one.
+  // not equal to one, and record contracted spatial dimensions with window
+  // reversal. Window reversal on a spatial dimension of size one is a no-op.
   DimensionVector reduction_dimensions;
+  DimensionVector kernel_reverse_dimensions;
   for (int64_t i = 0; i < dnums.output_spatial_dimensions_size(); ++i) {
     int64_t dim = dnums.output_spatial_dimensions(i);
     input_permutation[dim] = dnums.input_spatial_dimensions(i);
     kernel_permutation[dim] = dnums.kernel_spatial_dimensions(i);
     if (kernel_shape.dimensions(dnums.kernel_spatial_dimensions(i)) != 1) {
       reduction_dimensions.push_back(dim);
+      if (window.dimensions(i).window_reversal()) {
+        kernel_reverse_dimensions.push_back(dnums.kernel_spatial_dimensions(i));
+      }
     }
   }
 
@@ -11038,6 +11052,10 @@ absl::StatusOr<bool> AlgebraicSimplifierVisitor::SimplifyConvToMultiply(
     input = MakeConvertToHlo(input, convolution_shape.element_type());
   }
 
+  if (!kernel_reverse_dimensions.empty()) {
+    ABSL_ASSIGN_OR_RETURN(kernel,
+                          MakeReverseHlo(kernel, kernel_reverse_dimensions));
+  }
   if (!absl::c_is_sorted(kernel_permutation)) {
     ABSL_ASSIGN_OR_RETURN(kernel, MakeTransposeHlo(kernel, kernel_permutation));
   }

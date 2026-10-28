@@ -291,6 +291,9 @@ class PjRtCApiTopologyDescription : public PjRtTopologyDescription {
       const PjRtDeviceDimensions& chips_per_host_bounds,
       const PjRtDeviceDimensions& host_bounds) const override;
 
+  absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>> Subslice(
+      const PjRtDeviceDimensions& chip_bounds) const override;
+
   bool is_subslice_topology() const override;
 
   absl::StatusOr<PjRtTopologyDescriptionProto> ToProto() const override;
@@ -827,11 +830,6 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
     return *device_assignment_;
   }
 
-  absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
-      const override {
-    return addressable_device_logical_ids_;
-  }
-
   absl::Span<PjRtDevice* const> addressable_devices() const override {
     return addressable_devices_;
   }
@@ -938,7 +936,6 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
   }
 
  private:
-  std::vector<LogicalDeviceIds> addressable_device_logical_ids_;
   // Groups data needed to support send/recv execution callbacks.
   struct HloOutputCallbackState {
     // Key is {replica_id, partition_id}.
@@ -1017,7 +1014,6 @@ class PjRtCApiLoadedExecutable : public PjRtLoadedExecutable {
   std::vector<PjRtDevice*> addressable_devices_;
   std::unique_ptr<const DeviceAssignment> device_assignment_;
 
-  void InitAddressableDeviceLogicalIds();
   void InitDevices();
   void InitDeviceAssignment();
 };

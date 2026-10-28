@@ -1262,6 +1262,36 @@ TEST_F(AlgebraicSimplifierTest, SelectFalseMixedPrecision) {
   ASSERT_FALSE(simplifier.Run(module.get()).value());
 }
 
+// The degenerate broadcast becomes a reshape before the select is visited, so
+// the select must see through the reshape (and other element-subset ops) to
+// simplify in a single pass.
+TEST_F(AlgebraicSimplifierTest, SelectTrueDegenerateBroadcastInSinglePass) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+
+    ENTRY main {
+      p0 = f32[1,2] parameter(0)
+      p1 = f32[1,2] parameter(1)
+      idx = s32[] parameter(2)
+      zero = s32[] constant(0)
+      c_true = pred[] constant(true)
+      b_true = pred[] broadcast(c_true), dimensions={}
+      r_true = pred[3,2] broadcast(b_true), dimensions={}
+      t_true = pred[2,3] transpose(r_true), dimensions={1,0}
+      rev_true = pred[2,3] reverse(t_true), dimensions={0}
+      cp_true = pred[2,3] copy(rev_true)
+      sl_true = pred[2,2] slice(cp_true), slice={[0:2], [0:2]}
+      ds_true = pred[1,2] dynamic-slice(sl_true, idx, zero), dynamic_slice_sizes={1,2}
+      ROOT sel = f32[1,2] select(ds_true, p0, p1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  EXPECT_THAT(AlgebraicSimplifier(default_options_).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::Parameter(0)));
+}
+
 // Test that select(a, b, b) is simplified to b
 TEST_F(AlgebraicSimplifierTest, SelectIdentical) {
   Shape r0s32 = ShapeUtil::MakeShape(S32, {});
@@ -1375,6 +1405,51 @@ TEST_F(AlgebraicSimplifierTest, SelectPredPred2) {
   ASSERT_TRUE(simplifier.Run(module.get()).value());
   EXPECT_THAT(computation->root_instruction(),
               GmockMatch(m::Not(m::Parameter(0))));
+}
+
+TEST_F(AlgebraicSimplifierTest, SelectPredPredScalarCondition) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+ENTRY main {
+  p = pred[] parameter(0)
+  on_true = pred[2,3] constant({{true, true, true}, {true, true, true}})
+  on_false = pred[2,3] constant({{false, false, false}, {false, false, false}})
+  ROOT select = pred[2,3] select(p, on_true, on_false)
+})"));
+  const Shape result_shape =
+      module->entry_computation()->root_instruction()->shape();
+
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloPass(AlgebraicSimplifier(default_options_), module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(
+          m::Broadcast(m::Parameter(0)).WithShapeEqualTo(&result_shape)));
+  EXPECT_THAT(verifier().Run(module.get()), absl_testing::IsOk());
+}
+
+TEST_F(AlgebraicSimplifierTest, SelectPredPredScalarConditionInverted) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+ENTRY main {
+  p = pred[] parameter(0)
+  on_true = pred[2,3] constant({{false, false, false}, {false, false, false}})
+  on_false = pred[2,3] constant({{true, true, true}, {true, true, true}})
+  ROOT select = pred[2,3] select(p, on_true, on_false)
+})"));
+  const Shape result_shape =
+      module->entry_computation()->root_instruction()->shape();
+
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloPass(AlgebraicSimplifier(default_options_), module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Broadcast(m::Not(m::Parameter(0)))
+                             .WithShapeEqualTo(&result_shape)));
+  EXPECT_THAT(verifier().Run(module.get()), absl_testing::IsOk());
 }
 
 // select(compare(a, b, GT/GE), a, b) => or(a, b),   a,b ∈ PRED
@@ -7283,14 +7358,16 @@ struct ConvTestOptions {
     int col_stride = 1;
     int col_padding = 0;
     int col_dilation = 1;
+    bool col_reversal = false;
     int row_stride = 1;
     int row_padding = 0;
     int row_dilation = 1;
+    bool row_reversal = false;
   } window_options;
 
   std::unique_ptr<HloComputation> Build(const std::string& test_name) const {
-    auto create_dimension = [](int size, int stride, int padding,
-                               int dilation) {
+    auto create_dimension = [](int size, int stride, int padding, int dilation,
+                               bool reversal) {
       WindowDimension dim;
       dim.set_size(size);
       dim.set_stride(stride);
@@ -7298,14 +7375,15 @@ struct ConvTestOptions {
       dim.set_padding_high(padding);
       dim.set_window_dilation(dilation);
       dim.set_base_dilation(dilation);
+      dim.set_window_reversal(reversal);
       return dim;
     };
-    auto vertical = create_dimension(kernel_height, window_options.row_stride,
-                                     window_options.row_padding,
-                                     window_options.row_dilation);
-    auto horizontal = create_dimension(kernel_width, window_options.col_stride,
-                                       window_options.col_padding,
-                                       window_options.col_dilation);
+    auto vertical = create_dimension(
+        kernel_height, window_options.row_stride, window_options.row_padding,
+        window_options.row_dilation, window_options.row_reversal);
+    auto horizontal = create_dimension(
+        kernel_width, window_options.col_stride, window_options.col_padding,
+        window_options.col_dilation, window_options.col_reversal);
     bool width_first = kernel_order.find('0') < kernel_order.find('1');
     Window window;
     *window.add_dimensions() = width_first ? horizontal : vertical;
@@ -7404,6 +7482,28 @@ TEST_F(ConvTestBase, ContractedDimension) {
       ConvTestOptions{.kernel_height = 2},
       m::Reshape(m::Reduce(m::Multiply(m::Parameter(0), m::Broadcast()),
                            m::Convert(m::Constant()))));
+}
+
+TEST_F(ConvTestBase, ContractedDimensionWithWindowReversal) {
+  ExpectSimplifyMatch(
+      ConvTestOptions{.kernel_height = 2,
+                      .window_options = {.row_reversal = true}},
+      m::Reshape(m::Reduce(
+          m::Multiply(m::Parameter(0),
+                      m::Broadcast(m::Reshape(
+                          m::Reverse(m::Parameter(1))
+                              .WithPredicate([](const HloInstruction* inst) {
+                                return inst->dimensions() ==
+                                       std::vector<int64_t>{3};
+                              })))),
+          m::Convert(m::Constant()))));
+}
+
+TEST_F(ConvTestBase, TrivialDimensionWithWindowReversal) {
+  ExpectSimplifyMatch(
+      ConvTestOptions{
+          .window_options = {.col_reversal = true, .row_reversal = true}},
+      m::Multiply(m::Parameter(0), m::Broadcast(m::Reshape(m::Parameter(1)))));
 }
 
 TEST_F(ConvTestBase, InputConvert) {
@@ -13336,6 +13436,35 @@ TEST_F(AlgebraicSimplifierTest,
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   // b1 has a control dep, we don't expect the graph to change.
   ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       DoNotSimplifyRedundantBitcastWithControlSuccessor) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+
+    ENTRY test {
+      p0 = s32[10] parameter(0)
+      p1 = s32[10] parameter(1)
+      p2 = s32[10] parameter(2)
+      b0 = s32[1, 10] bitcast(p0)
+      b1 = s32[1, 1, 10] bitcast(b0)
+      add0 = s32[10] add(p1, p2), control-predecessors={b1}
+      ROOT t = (s32[1, 1, 10], s32[10]) tuple(b1, add0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  // Folding b1 into b0 would drop the b1 -> add0 ordering edge.
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       AlgebraicSimplifier(default_options_).Run(m.get()));
+  EXPECT_FALSE(changed);
+  ASSERT_OK(verifier().Run(m.get()).status());
+  HloInstruction* b1 = FindInstruction(m.get(), "b1");
+  HloInstruction* add0 = FindInstruction(m.get(), "add0");
+  ASSERT_NE(b1, nullptr);
+  EXPECT_THAT(b1, GmockMatch(m::Bitcast(m::Bitcast(m::Parameter(0)))));
+  EXPECT_THAT(b1->control_successors(), ElementsAre(add0));
+  EXPECT_EQ(m->entry_computation()->root_instruction()->operand(0), b1);
 }
 
 TEST_F(AlgebraicSimplifierTest, SimplifyOptimizationBarrier) {

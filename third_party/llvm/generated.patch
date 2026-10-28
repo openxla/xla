@@ -1,28 +1,33 @@
 Auto generated patch. Do not edit or delete it, even if empty.
-diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp b/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp
---- a/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp
-+++ b/llvm/lib/Transforms/Vectorize/VPlanTransforms.cpp
-@@ -6275,11 +6275,6 @@
-       if (VPI.getOpcode() != Instruction::Trunc)
-         continue;
+diff -ruN --strip-trailing-cr a/mlir/lib/IR/MLIRContext.cpp b/mlir/lib/IR/MLIRContext.cpp
+--- a/mlir/lib/IR/MLIRContext.cpp
++++ b/mlir/lib/IR/MLIRContext.cpp
+@@ -286,16 +286,8 @@
+     if (threadingIsEnabled) {
+       ownedThreadPool = std::make_unique<llvm::DefaultThreadPool>();
+       threadPool = ownedThreadPool.get();
+-    } else {
+-      disableUniquerMultithreading(true);
+     }
+   }
+-  /// Update the threading mode for each of the uniquers.
+-  void disableUniquerMultithreading(bool disable) {
+-    affineUniquer.disableMultithreading(disable);
+-    attributeUniquer.disableMultithreading(disable);
+-    typeUniquer.disableMultithreading(disable);
+-  }
+   ~MLIRContextImpl() {
+     for (auto typeMapping : registeredTypes)
+       typeMapping.second->~AbstractType();
+@@ -632,7 +624,10 @@
  
--      // A truncate that is not widened is left to the scalarization decisions
--      // made earlier.
--      if (vputils::onlyFirstLaneUsed(&VPI))
--        continue;
--
-       VPValue *Op = VPI.getOperand(0);
-       auto *WideIV = getOptimizableIVOf(Op, PSE);
-       if (!WideIV)
-@@ -6291,6 +6286,11 @@
-       if (Op != WideIV)
-         continue;
+   impl->threadingIsEnabled = !disable;
  
-+      // A truncate that is not widened is left to the scalarization decisions
-+      // made earlier.
-+      if (vputils::onlyFirstLaneUsed(&VPI))
-+        continue;
-+
-       // Replacing a free truncate would add an induction update instruction to
-       // each iteration of the loop. The canonical induction is exempt, as it
-       // needs an update instruction regardless.
+-  impl->disableUniquerMultithreading(disable);
++  // Update the threading mode for each of the uniquers.
++  impl->affineUniquer.disableMultithreading(disable);
++  impl->attributeUniquer.disableMultithreading(disable);
++  impl->typeUniquer.disableMultithreading(disable);
+ 
+   // Destroy thread pool (stop all threads) if it is no longer needed, or create
+   // a new one if multithreading was re-enabled.

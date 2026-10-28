@@ -2,8 +2,8 @@
 # verify the IR emitted.
 
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
-
-# copybara:uncomment load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite_for_gpus")
 load("//xla:xla.default.bzl", "xla_cc_test")
@@ -1450,7 +1450,6 @@ xla_test(
         "//xla/stream_executor/gpu:gpu_kernel_registry",
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
-        "//xla/tsl/platform:errors",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/status",
@@ -1977,6 +1976,7 @@ xla_cc_test(
         "//xla/ffi",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:compiled_module",
         "//xla/service:compiler",
         "//xla/service:gpu_plugin",
         "//xla/service:gpu_topology",
@@ -1992,7 +1992,11 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
-    ],
+    ] + if_cuda_is_configured([
+        "//xla/stream_executor/cuda:all_runtime",  # buildcleaner: keep
+    ]) + if_rocm_is_configured([
+        "//xla/stream_executor/rocm:all_runtime",  # buildcleaner: keep
+    ]),
 )
 
 xla_test(

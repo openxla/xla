@@ -1952,10 +1952,12 @@ PJRT_Error* PJRT_LoadedExecutable_AddressableDeviceLogicalIds(
       PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args_STRUCT_SIZE,
       args->struct_size));
 
+  PJRT_RETURN_IF_ERROR(
+      args->executable->addressable_device_logical_ids.status());
   args->num_addressable_device_logical_ids =
-      args->executable->addressable_device_logical_ids.size();
+      args->executable->addressable_device_logical_ids->size();
   args->addressable_device_logical_ids =
-      args->executable->addressable_device_logical_ids.data();
+      args->executable->addressable_device_logical_ids->data();
   return nullptr;
 }
 
@@ -3022,6 +3024,7 @@ PJRT_Error* PJRT_Buffer_IncreaseExternalReferenceCount(
   PJRT_ASSIGN_OR_RETURN(
       std::unique_ptr<xla::PjRtBuffer::ExternalReference> external_reference,
       args->buffer->buffer->AcquireExternalReference());
+  absl::MutexLock lock(args->buffer->mu);
   args->buffer->external_references.push_back(std::move(external_reference));
   return nullptr;
 }
@@ -3033,14 +3036,21 @@ PJRT_Error* PJRT_Buffer_DecreaseExternalReferenceCount(
       PJRT_Buffer_DecreaseExternalReferenceCount_Args_STRUCT_SIZE,
       args->struct_size));
 
-  if (!args->buffer->external_references.empty()) {
+  // Destroy external_reference outside args->buffer->mu to avoid holding it
+  // while acquiring the underlying buffer lock.
+  std::unique_ptr<xla::PjRtBuffer::ExternalReference> external_reference;
+  {
+    absl::MutexLock lock(args->buffer->mu);
+    if (args->buffer->external_references.empty()) {
+      absl::Status status = xla::InvalidArgument(
+          "Attempting to decrease reference on a buffer with zero reference "
+          "count.");
+      return StatusToPjRtError(std::move(status));
+    }
+    external_reference = std::move(args->buffer->external_references.back());
     args->buffer->external_references.pop_back();
-    return nullptr;
   }
-  absl::Status status = xla::InvalidArgument(
-      "Attempting to decrease reference on a buffer with zero reference "
-      "count.");
-  return StatusToPjRtError(std::move(status));
+  return nullptr;
 }
 
 PJRT_Error* PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
@@ -3787,15 +3797,19 @@ PJRT_Executable::PJRT_Executable(xla::PjRtExecutable* unowned_executable)
 static void PopulatePjrtExecutableAddressableDeviceLogicalIds(
     PJRT_LoadedExecutable* executable) {
   CHECK(executable->client != nullptr) << ": client was null";
-  absl::Span<const xla::PjRtLoadedExecutable::LogicalDeviceIds> cpp_ids =
-      executable->get()->addressable_device_logical_ids();
+  absl::StatusOr<absl::Span<const xla::PjRtLoadedExecutable::LogicalDeviceIds>>
+      cpp_ids = executable->get()->addressable_device_logical_ids();
+  if (!cpp_ids.ok()) {
+    executable->addressable_device_logical_ids = cpp_ids.status();
+    return;
+  }
 
-  std::vector<PJRT_LogicalDeviceIds>& exec_ids =
-      executable->addressable_device_logical_ids;
-  exec_ids.reserve(cpp_ids.size());
-  for (const auto& id : cpp_ids) {
+  std::vector<PJRT_LogicalDeviceIds> exec_ids;
+  exec_ids.reserve(cpp_ids->size());
+  for (const auto& id : *cpp_ids) {
     exec_ids.push_back(PJRT_LogicalDeviceIds{id.replica, id.partition});
   }
+  executable->addressable_device_logical_ids = std::move(exec_ids);
 }
 
 PJRT_LoadedExecutable::PJRT_LoadedExecutable(

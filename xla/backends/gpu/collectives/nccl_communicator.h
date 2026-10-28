@@ -141,7 +141,7 @@ class NcclCommunicator : public GpuCommunicator {
       se::DeviceAddressBase addr) final;
 
   absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
-      se::DeviceAddressBase addr) final;
+      se::DeviceAddressBase addr, bool symmetric_window) final;
 
   Future<> GroupExecute(absl::AnyInvocable<absl::Status() &&> group) final;
 
@@ -220,34 +220,35 @@ class NcclCommunicator : public GpuCommunicator {
                                se::DeviceAddressBase recv_buffer,
                                PrimitiveType dtype, size_t count,
                                ReductionKind reduction_kind,
-                               const Executor& executor) final;
+                               const Executor& executor, bool is_rma) final;
 
   absl::Status LaunchBroadcast(se::DeviceAddressBase send_buffer,
                                se::DeviceAddressBase recv_buffer,
                                PrimitiveType dtype, size_t count, RankId root,
-                               const Executor& executor) final;
+                               const Executor& executor, bool is_rma) final;
 
   absl::Status LaunchReduce(se::DeviceAddressBase send_buffer,
                             se::DeviceAddressBase recv_buffer,
                             PrimitiveType dtype, size_t count,
                             ReductionKind reduction_kind, RankId root,
-                            const Executor& executor) final;
+                            const Executor& executor, bool is_rma) final;
 
   absl::Status LaunchReduceScatter(se::DeviceAddressBase send_buffer,
                                    se::DeviceAddressBase recv_buffer,
                                    PrimitiveType dtype, size_t count,
                                    ReductionKind reduction_kind,
-                                   const Executor& executor) final;
+                                   const Executor& executor, bool is_rma) final;
 
   absl::Status LaunchAllGather(se::DeviceAddressBase send_buffer,
                                se::DeviceAddressBase recv_buffer,
                                PrimitiveType dtype, size_t count,
-                               const Executor& executor) final;
+                               const Executor& executor, bool is_rma) final;
 
   absl::Status LaunchAllToAll(
       absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers,
       absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,
-      PrimitiveType dtype, size_t count, const Executor& executor) final;
+      PrimitiveType dtype, size_t count, const Executor& executor,
+      bool is_rma) final;
 
   absl::Status LaunchCollectivePermute(se::DeviceAddressBase send_buffer,
                                        se::DeviceAddressBase recv_buffer,

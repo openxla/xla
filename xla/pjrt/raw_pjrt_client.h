@@ -295,6 +295,8 @@ class PjRtRawClient {
 
   virtual void RecordMemoryStats() {}
 
+  virtual void RecordLinearizeBytes(bool is_h2d, size_t bytes) {}
+
   // Imports foreign memory as a raw buffer.
   virtual absl::StatusOr<PjRtRawBufferRef> ImportForeignMemory(
       PjRtMemorySpace* memory_space, void* device_ptr, size_t size,
@@ -345,6 +347,10 @@ class PjRtRawClient {
                                                int32_t launch_id,
                                                absl::Status error) {
     return absl::UnimplementedError("PoisonExecution is not supported");
+  }
+
+  virtual bool CanRecoverDonation(const absl::Status& status) const {
+    return false;
   }
 
   virtual absl::Status TransferToInfeed(LocalDeviceId local_device_id,

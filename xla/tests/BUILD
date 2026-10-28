@@ -23,7 +23,13 @@ load(
 )
 load("//xla:package_groups.bzl", "xla_test_friend_package_group")
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
-load("//xla/tests:build_defs.bzl", "ALL_HARDWARE_BACKENDS", "generate_backend_suites", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "ALL_HARDWARE_BACKENDS",
+    "generate_backend_suites",
+    "get_sc_offload_backend_args",
+    "xla_test",
+)
 load("//xla/tsl:tsl.bzl", "if_google", "if_oss", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -620,6 +626,8 @@ xla_test(
 xla_test(
     name = "conv_depthwise_backprop_filter_test",
     srcs = ["conv_depthwise_backprop_filter_test.cc"],
+    # TODO(b/577275792): Times out with SparseCore fusion offloading.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_fusion_offloading = False),
     shard_count = 50,
     tags = ["nozapfhahn"],  # TODO: b/445492433 - Re-enable when it doesn't time out.
     deps = [
@@ -637,6 +645,8 @@ xla_test(
 xla_test(
     name = "grouped_convolution_test",
     srcs = ["grouped_convolution_test.cc"],
+    # TODO(b/577275792): Times out with SparseCore fusion offloading.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_fusion_offloading = False),
     shard_count = 23,
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -1091,6 +1101,8 @@ xla_test(
     name = "dot_operation_test",
     srcs = ["dot_operation_test.cc"],
     aot_compile_test = False,
+    # TODO(b/577274669): The SparseCore mismatch detector does not support F16/F8 outputs.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_mismatch_detector = False),
     backend_tags = {
         # TODO(b/445172709): Re-enable once fixed.
         "b200": ["broken"],
@@ -1104,45 +1116,29 @@ xla_test(
         ":xla_internal_test_main",
         "//xla:array2d",
         "//xla:array3d",
-        "//xla:array4d",
         "//xla:error_spec",
-        "//xla:executable_run_options",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:reference_util",
         "//xla:shape_util",
-        "//xla:types",
         "//xla/client:client_library",
-        "//xla/client:executable_build_options",
-        "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder/lib:arithmetic",
         "//xla/hlo/builder/lib:matrix",
-        "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/hlo/testlib:test_helpers",
         "//xla/service",
-        "//xla/service:executable",
         "//xla/service:hlo_runner_interface",
         "//xla/service:platform_util",
-        "//xla/service:shaped_buffer",
-        "//xla/stream_executor:device_description",
-        "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/tests:xla_test_backend_predicates",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@com_google_googletest//:gtest",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:ml_dtypes",
-        "@tsl//tsl/platform:statusor",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
     ] + if_rocm_is_configured([
         # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
@@ -1174,40 +1170,28 @@ xla_test(
         ":xla_internal_test_main",
         "//xla:array2d",
         "//xla:array3d",
-        "//xla:array4d",
         "//xla:error_spec",
-        "//xla:executable_run_options",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:reference_util",
         "//xla:shape_util",
-        "//xla:types",
         "//xla/client:client_library",
-        "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder/lib:arithmetic",
         "//xla/hlo/builder/lib:matrix",
-        "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/hlo/testlib:test_helpers",
         "//xla/service:hlo_runner_interface",
         "//xla/service:platform_util",
-        "//xla/service:shaped_buffer",
-        "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_address_allocator",
-        "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/tests:xla_test_backend_predicates",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:ml_dtypes",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
     ] + if_rocm_is_configured([
         # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
@@ -1220,9 +1204,11 @@ xla_test(
     timeout = "long",
     srcs = ["dot_operation_test.cc"],
     aot_compile_test = False,
+    # TODO(b/577274669): The SparseCore mismatch detector does not support F16/F8 outputs.
     args = [
         "--xla_tpu_order_dot_after_layout=true",
     ],
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_mismatch_detector = False),
     # placeholder for extra args for dot_operation_test_canonicalization_after_layout
     disabled_backends = [
         "cpu",
@@ -1241,32 +1227,23 @@ xla_test(
         ":xla_internal_test_main",
         "//xla:array2d",
         "//xla:array3d",
-        "//xla:array4d",
         "//xla:error_spec",
-        "//xla:executable_run_options",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:reference_util",
         "//xla:shape_util",
-        "//xla:types",
         "//xla/client:client_library",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder/lib:arithmetic",
         "//xla/hlo/builder/lib:matrix",
-        "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/hlo/testlib:test_helpers",
         "//xla/service:hlo_runner_interface",
         "//xla/service:platform_util",
-        "//xla/service:shaped_buffer",
-        "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_address_allocator",
-        "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/tests:xla_test_backend_predicates",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
@@ -1294,40 +1271,28 @@ xla_test(
         ":xla_internal_test_main",
         "//xla:array2d",
         "//xla:array3d",
-        "//xla:array4d",
         "//xla:error_spec",
-        "//xla:executable_run_options",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:reference_util",
         "//xla:shape_util",
-        "//xla:types",
         "//xla/client:client_library",
-        "//xla/client:local_client",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/builder/lib:arithmetic",
         "//xla/hlo/builder/lib:matrix",
-        "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
-        "//xla/hlo/testlib:test_helpers",
         "//xla/service:hlo_runner_interface",
         "//xla/service:platform_util",
-        "//xla/service:shaped_buffer",
-        "//xla/stream_executor:platform",
         "//xla/stream_executor:stream_executor_address_allocator",
-        "//xla/stream_executor:stream_executor_memory_allocator",
         "//xla/tests:xla_test_backend_predicates",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@eigen_archive//:eigen3",
         "@tsl//tsl/platform:ml_dtypes",
-        "@tsl//tsl/platform:test",
-        "@tsl//tsl/platform:test_benchmark",
     ] + if_rocm_is_configured([
         # keep sorted
         "@local_config_rocm//rocm:rocm_headers",
@@ -1380,6 +1345,8 @@ xla_test(
 xla_test(
     name = "scatter_test",
     srcs = ["scatter_test.cc"],
+    # TODO(b/577281374): The SparseCore mismatch detector fails on SparseCore scatter offloads.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_mismatch_detector = False),
     deps = [
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
@@ -1485,6 +1452,8 @@ xla_test(
 xla_test(
     name = "convolution_test",
     srcs = ["convolution_test.cc"],
+    # TODO(b/577274669): The SparseCore mismatch detector does not support F16/F8 outputs.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_mismatch_detector = False),
     shard_count = 50,
     tags = [
         "optonly",
@@ -1801,6 +1770,8 @@ xla_test(
 xla_test(
     name = "float8_test",
     srcs = ["float8_test.cc"],
+    # TODO(b/577274669): The SparseCore mismatch detector does not support F16/F8 outputs.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_mismatch_detector = False),
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2043,6 +2014,8 @@ xla_test(
 xla_test(
     name = "reduce_window_test",
     srcs = ["reduce_window_test.cc"],
+    # TODO(b/577275792): Times out with SparseCore fusion offloading.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_fusion_offloading = False),
     shard_count = 50,
     tags = ["optonly"],
     deps = [
@@ -2227,18 +2200,17 @@ xla_test(
         "cpu",
         "gpu",
     ],
-    disabled_backends = ["amdgpu_any"],
     deps = [
         ":hlo_interpreter_reference_mixin",
         ":hlo_test_base",
         ":literal_test_util",
         ":xla_internal_test_main",
-        ":xla_test_backend_predicates",
         "//xla:array2d",
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:types",
+        "//xla/tests:xla_test_backend_predicates",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/strings:str_format",
@@ -2419,6 +2391,8 @@ xla_test(
 xla_test(
     name = "pad_test",
     srcs = ["pad_test.cc"],
+    # TODO(b/577274669): The SparseCore mismatch detector does not support F16/F8 outputs.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_mismatch_detector = False),
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2477,6 +2451,8 @@ xla_test(
 xla_test(
     name = "matrix_ops_simple_test",
     srcs = ["matrix_ops_simple_test.cc"],
+    # TODO(b/577274669): The SparseCore mismatch detector does not support F16/F8 outputs.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_mismatch_detector = False),
     deps = [
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
@@ -2562,6 +2538,8 @@ xla_test(
 xla_test(
     name = "reshape_test",
     srcs = ["reshape_test.cc"],
+    # TODO(b/577274669): The SparseCore mismatch detector does not support F16/F8 outputs.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_mismatch_detector = False),
     shard_count = 30,
     deps = [
         ":client_library_test_runner_mixin",
@@ -3215,7 +3193,6 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:path",
-        "@tsl//tsl/platform:test",
     ],
 )
 
@@ -3719,6 +3696,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/gpu/runtime:collective_kernel_thunk_proto_cc",
         "//xla/hlo/builder:xla_computation",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_common",

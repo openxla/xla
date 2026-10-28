@@ -48,9 +48,9 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/backends/gpu/transforms/bitcast_utils.h"
 #include "xla/backends/gpu/transforms/convert_triton_gemm_config.h"
-#include "xla/codegen/tiling/experimental/tile.h"
-#include "xla/codegen/tiling/experimental/tiled_hlo.h"
-#include "xla/codegen/tiling/experimental/tiling_space.h"
+#include "xla/codegen/tiling/tile.h"
+#include "xla/codegen/tiling/tiled_hlo.h"
+#include "xla/codegen/tiling/tiling_space.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/hlo/analysis/shape_tracker.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -720,6 +720,15 @@ bool AllowedInGemmFusion(const HloInstruction& instr) {
   if (hlo_query::IsCollectiveCommunicationOp(instr.opcode())) {
     return false;
   }
+  // Triton emitter requires concatenate operands to be aligned to the tile size
+  // to avoid tiles straddling operand boundaries. Since we don't know the
+  // concrete tile size yet, we enforce divisibility by a minimum reasonable
+  // tile size (64).
+  if (const auto* concat = DynCast<HloConcatenateInstruction>(&instr);
+      concat != nullptr &&
+      !IsConcatenateAligned(*concat, /*min_fragment_size=*/64)) {
+    return false;
+  }
   return HloPredicateIsNotOp<HloOpcode::kDot, HloOpcode::kScaledDot,
                              HloOpcode::kParameter, HloOpcode::kAllGatherDone>(
       &instr);
@@ -1297,7 +1306,7 @@ FusionDecision CanUnpackS4ParametersInFusion(
 FusionDecision CanTile(mlir::MLIRContext& mlir_context,
                        const HloFusionAdaptor& fusion,
                        const se::DeviceDescription& device_description) {
-  namespace ge = ::xla::gpu::experimental;
+  namespace ge = ::xla::gpu;
   auto ts = ge::TilingSpace::Create(fusion, &mlir_context);
   if (!ts.ok()) {
     return FusionDecision::Forbid(
@@ -1544,6 +1553,8 @@ FusionDecision ShouldFuseOperand(HloInstruction* operand,
             "Not fusing power op with multiple users.");
       }
       break;
+    case HloOpcode::kDynamicSlice:
+      return FusionDecision::Allow();
     default:
       break;
   }
