@@ -42,8 +42,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/compiler.h"
+#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
@@ -331,7 +333,16 @@ absl::StatusOr<absl::Duration> FissionBackend::EstimateFissionPrologueEpilogue(
 }
 
 bool FissionBackend::IsSupported(const HloInstruction& instr) {
-  return instr.opcode() == HloOpcode::kFusion;
+  if (instr.opcode() != HloOpcode::kFusion) {
+    return false;
+  }
+  if (hlo_query::ContainsInstrWithOpcode(instr.fused_instructions_computation(),
+                                         {HloOpcode::kScaledDot})) {
+    // The scale operands of a cuDNN scaled dot fusion are already padded and
+    // swizzled, so its computation is not a plain kScaledDot to rewrite.
+    return !IsCudnnFusion(instr);
+  }
+  return true;
 }
 
 absl::StatusOr<std::unique_ptr<HloModule>>

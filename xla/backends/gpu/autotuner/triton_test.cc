@@ -47,7 +47,9 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/platform_util.h"
@@ -139,21 +141,21 @@ const char kSimpleGemmFusionHlo[] = R"(
   })";
 
 const char kScaledDotHlo[] = R"hlo(
-HloModule ScaledDotIsFused, entry_computation_layout={(bf16[4,4]{1,0}, bf16[4,4]{1,0}, bf16[1,1]{1,0}, bf16[1,1]{1,0})->bf16[4,4]{1,0}}
+HloModule ScaledDotIsFused, entry_computation_layout={(f8e5m2[4,32]{1,0}, f8e5m2[4,32]{1,0}, f8e8m0fnu[4,1]{1,0}, f8e8m0fnu[4,1]{1,0})->bf16[4,4]{1,0}}
 
-%fusion_dot (parameter_0: bf16[4,4], parameter_1: bf16[4,4], parameter_2: bf16[1,1], parameter_3: bf16[1,1]) -> bf16[4,4] {
-  %parameter_0 = bf16[4,4]{1,0} parameter(0)
-  %parameter_1 = bf16[4,4]{1,0} parameter(1)
-  %parameter_2 = bf16[1,1]{1,0} parameter(2)
-  %parameter_3 = bf16[1,1]{1,0} parameter(3)
+%fusion_dot (parameter_0: f8e5m2[4,32], parameter_1: f8e5m2[4,32], parameter_2: f8e8m0fnu[4,1], parameter_3: f8e8m0fnu[4,1]) -> bf16[4,4] {
+  %parameter_0 = f8e5m2[4,32]{1,0} parameter(0)
+  %parameter_1 = f8e5m2[4,32]{1,0} parameter(1)
+  %parameter_2 = f8e8m0fnu[4,1]{1,0} parameter(2)
+  %parameter_3 = f8e8m0fnu[4,1]{1,0} parameter(3)
   ROOT %dot.1 = bf16[4,4]{1,0} scaled-dot(%parameter_0, %parameter_1, %parameter_2, %parameter_3), lhs_contracting_dims={1}, rhs_contracting_dims={1}, metadata={op_name="foo"}
 }
 
-ENTRY %entry (lhs: bf16[4,4], rhs: bf16[4,4], lhs_scale: bf16[1,1], rhs_scale: bf16[1,1]) -> bf16[4,4] {
-  %lhs = bf16[4,4]{1,0} parameter(0)
-  %rhs = bf16[4,4]{1,0} parameter(1)
-  %lhs_scale = bf16[1,1]{1,0} parameter(2)
-  %rhs_scale = bf16[1,1]{1,0} parameter(3)
+ENTRY %entry (lhs: f8e5m2[4,32], rhs: f8e5m2[4,32], lhs_scale: f8e8m0fnu[4,1], rhs_scale: f8e8m0fnu[4,1]) -> bf16[4,4] {
+  %lhs = f8e5m2[4,32]{1,0} parameter(0)
+  %rhs = f8e5m2[4,32]{1,0} parameter(1)
+  %lhs_scale = f8e8m0fnu[4,1]{1,0} parameter(2)
+  %rhs_scale = f8e8m0fnu[4,1]{1,0} parameter(3)
   ROOT %fusion = bf16[4,4]{1,0} fusion(%lhs, %rhs, %lhs_scale, %rhs_scale), kind=kCustom, calls=%fusion_dot, metadata={op_name="foo"}, backend_config={"operation_queue_id":"0","fusion_backend_config":{"kind":"__triton_gemm"},"force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID"}
 })hlo";
 
@@ -299,6 +301,16 @@ TEST_F(TritonBackendTest, GetAndApplyConfigForScaledDot) {
                        backend_.GetSupportedConfigs(*fusion_instr));
   ASSERT_THAT(configs, Not(IsEmpty()));
   EXPECT_THAT(backend_.ApplyConfig(*fusion_instr, *configs[0]), IsOk());
+}
+
+TEST_F(TritonBackendTest, CudnnScaledDotFusionIsUnsupported) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kScaledDotHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  GpuBackendConfig gpu_config;
+  gpu_config.mutable_fusion_backend_config()->set_kind(kCuDnnFusionKind);
+  ASSERT_OK(fusion->set_backend_config(gpu_config));
+  EXPECT_THAT(backend_.GetSupportedConfigs(*fusion), IsOkAndHolds(IsEmpty()));
 }
 
 TEST_F(TritonBackendTest, GetSupportedConfigsRestrictedDefaultSearch) {

@@ -2203,6 +2203,18 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleScaledDot(HloInstruction* scaled_dot) override {
     CHECK_EQ(scaled_dot->opcode(), HloOpcode::kScaledDot);
+    if (!scaled_dot->GetModule()
+             ->config()
+             .debug_options()
+             .xla_gpu_experimental_scaled_dot_with_triton()) {
+      return absl::OkStatus();
+    }
+    if (CodegenDecision is_supported = IsTritonSupportedInstruction(
+            *scaled_dot, device_description_.gpu_compute_capability());
+        !is_supported) {
+      VLOG(3) << "Not fusing: " << is_supported.Explain();
+      return absl::OkStatus();
+    }
     std::string fusion_name = absl::StrCat("gemm_fusion_", scaled_dot->name());
     ABSL_ASSIGN_OR_RETURN(
         auto fusion_or_decision,

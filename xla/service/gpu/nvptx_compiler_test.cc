@@ -16,27 +16,33 @@ limitations under the License.
 #include "xla/service/gpu/nvptx_compiler.h"
 
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 #include <cstdint>
 #include <memory>
 
+#include "absl/algorithm/container.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
+#include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/gpu/alias_info.h"
+#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/gpu_constants.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu_topology.h"
+#include "xla/service/hlo_module_config.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -107,6 +113,66 @@ class NVPTXCompilerTestTriton : public NVPTXCompilerTest {
     return debug_options;
   }
 };
+
+class NVPTXCompilerScaledDotTest : public NVPTXCompilerTest {
+ public:
+  void SetUp() override {
+    NVPTXCompilerTest::SetUp();
+    if (!CudnnScaledDotHelper::IsAvailable(device_description())) {
+      GTEST_SKIP() << "cuDNN scaled dot requires Blackwell and cuDNN 9.10+.";
+    }
+  }
+
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions debug_options = NVPTXCompilerTest::GetDebugOptionsForTest();
+    debug_options.set_xla_gpu_experimental_scaled_dot_with_triton(false);
+    return debug_options;
+  }
+
+  absl::StatusOr<std::unique_ptr<HloModule>> CompileScaledDot(
+      bool disable_binary_libraries) {
+    constexpr absl::string_view kHlo = R"(
+      ENTRY e {
+        lhs = f8e4m3fn[256,128] parameter(0)
+        rhs = f8e4m3fn[256,128] parameter(1)
+        lhs_scale = f8e8m0fnu[8,128] parameter(2)
+        rhs_scale = f8e8m0fnu[8,128] parameter(3)
+        ROOT dot = bf16[128,128] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+            lhs_contracting_dims={0}, rhs_contracting_dims={0}
+      })";
+    HloModuleConfig config = GetModuleConfigForTest();
+    config.mutable_debug_options()
+        .set_xla_gpu_experimental_disable_binary_libraries(
+            disable_binary_libraries);
+    return GetOptimizedModule(kHlo, config);
+  }
+};
+
+bool HasUnfusedScaledDot(const HloModule& module) {
+  return absl::c_any_of(module.entry_computation()->instructions(),
+                        HloPredicateIsOp<HloOpcode::kScaledDot>);
+}
+
+bool HasCudnnFusion(const HloModule& module) {
+  return absl::c_any_of(
+      module.entry_computation()->instructions(),
+      [](const HloInstruction* instr) { return IsCudnnFusion(*instr); });
+}
+
+TEST_F(NVPTXCompilerScaledDotTest, UnfusedScaledDotIsRewrittenToCudnnFusion) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       CompileScaledDot(/*disable_binary_libraries=*/false));
+  EXPECT_TRUE(HasCudnnFusion(*module));
+  EXPECT_FALSE(HasUnfusedScaledDot(*module));
+}
+
+TEST_F(NVPTXCompilerScaledDotTest,
+       UnfusedScaledDotIsDecomposedWithoutBinaryLibraries) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       CompileScaledDot(/*disable_binary_libraries=*/true));
+  EXPECT_FALSE(HasCudnnFusion(*module));
+  EXPECT_FALSE(HasUnfusedScaledDot(*module));
+}
 
 TEST_F(NVPTXCompilerTest, AllReducePerformedInplace) {
   const absl::string_view hlo_string = R"(

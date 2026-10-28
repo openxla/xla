@@ -66,8 +66,12 @@ se::StreamExecutor* GetDefaultStreamExecutor() {
 using CudnnBackendConfig = stream_executor::dnn::AlgorithmProto;
 
 using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
+using ::testing::Each;
 using ::testing::Gt;
+using ::testing::HasSubstr;
 using ::testing::IsEmpty;
+using ::testing::Property;
 using ::testing::SizeIs;
 using ::tsl::proto_testing::EqualsProto;
 
@@ -175,6 +179,27 @@ absl::string_view kScaledDotGemmFusionHlo = R"hlo(
         backend_config={"fusion_backend_config":{kind:"__triton_gemm"}}
   })hlo";
 
+// The scales are already swizzled, as emitted by CudnnScaledDotRewriter.
+absl::string_view kScaledDotCudnnFusionHlo = R"hlo(
+  block_scaled_dot {
+    lhs = f8e4m3fn[256,128] parameter(0)
+    rhs = f8e4m3fn[384,128] parameter(1)
+    lhs_scale = f8e8m0fnu[256,4] parameter(2)
+    rhs_scale = f8e8m0fnu[384,4] parameter(3)
+    ROOT result = f32[256,384] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+        lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  }
+
+  ENTRY main {
+    lhs = f8e4m3fn[256,128] parameter(0)
+    rhs = f8e4m3fn[384,128] parameter(1)
+    lhs_scale = f8e8m0fnu[256,4] parameter(2)
+    rhs_scale = f8e8m0fnu[384,4] parameter(3)
+    ROOT result = f32[256,384] fusion(lhs, rhs, lhs_scale, rhs_scale),
+        kind=kCustom, calls=block_scaled_dot,
+        backend_config={"fusion_backend_config":{kind:"__cudnn$fusion"}}
+  })hlo";
+
 absl::string_view kCudnnCustomCallHlo = R"hlo(
   HloModule module
 
@@ -272,7 +297,7 @@ TEST_F(CudnnBackendTest, GetSupportedConfigsFromF64GemmFusionReturnsEmpty) {
   EXPECT_THAT(configs, IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(CudnnBackendTest, GetSupportedConfigsFromScaledDotGemmFusion) {
+TEST_F(CudnnBackendTest, GetSupportedConfigsFromScaledDotCudnnFusion) {
   se::CudaComputeCapability cc =
       stream_executor_->GetDeviceDescription().cuda_compute_capability();
   if (!cc.IsAtLeastBlackwell()) {
@@ -280,7 +305,7 @@ TEST_F(CudnnBackendTest, GetSupportedConfigsFromScaledDotGemmFusion) {
   }
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                       ParseAndReturnVerifiedModule(kScaledDotGemmFusionHlo));
+                       ParseAndReturnVerifiedModule(kScaledDotCudnnFusionHlo));
   // Test with cudnn_gemm_fusion_level = 0 to ensure it is permanently enabled.
   DebugOptions debug_options = debug_options_;
   debug_options.set_xla_gpu_cudnn_gemm_fusion_level(0);
@@ -290,6 +315,14 @@ TEST_F(CudnnBackendTest, GetSupportedConfigsFromScaledDotGemmFusion) {
       backend.GetSupportedConfigs(
           (*hlo_module->entry_computation()->root_instruction()));
   EXPECT_THAT(configs, absl_testing::IsOkAndHolds(SizeIs(Gt(0))));
+}
+
+TEST_F(CudnnBackendTest, GetSupportedConfigsFromScaledDotGemmFusionIsEmpty) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kScaledDotGemmFusionHlo));
+  EXPECT_THAT(backend_->GetSupportedConfigs(
+                  *hlo_module->entry_computation()->root_instruction()),
+              IsOkAndHolds(IsEmpty()));
 }
 
 TEST_F(CudnnBackendTest, GetSupportedConfigsFromCudnnCustomCall) {
@@ -444,28 +477,33 @@ TEST_F(CudnnBackendTest, ApplyConfigToLoopFusionSetsCustomFusionKind) {
             1);
 }
 
-TEST_F(CudnnBackendTest, ApplyConfigToScaledDotGemmFusionAddsScaleSwizzle) {
+TEST_F(CudnnBackendTest, ApplyConfigToScaledDotCudnnFusionKeepsOperands) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                       ParseAndReturnVerifiedModule(kScaledDotGemmFusionHlo));
-  CudnnBackendConfig config;
-  config.set_algo_id(1);
+                       ParseAndReturnVerifiedModule(kScaledDotCudnnFusionHlo));
+  BackendConfig backend_config;
+  backend_config.mutable_algorithm()->set_algo_id(1);
   HloInstruction* fusion_instr =
       hlo_module->entry_computation()->root_instruction();
-  BackendConfig backend_config;
-  *backend_config.mutable_algorithm() = config;
   ASSERT_OK(backend_->ApplyConfig(*fusion_instr, backend_config));
-  HloInstruction* root_instr =
-      hlo_module->entry_computation()->root_instruction();
-  ASSERT_EQ(root_instr->opcode(), HloOpcode::kFusion);
+  ASSERT_EQ(hlo_module->entry_computation()->root_instruction(), fusion_instr);
   ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
-                       root_instr->backend_config<GpuBackendConfig>());
-  EXPECT_EQ(gpu_config.fusion_backend_config().kind(), kCuDnnFusionKind);
+                       fusion_instr->backend_config<GpuBackendConfig>());
   EXPECT_EQ(gpu_config.fusion_backend_config().cudnn_fusion_config().plan_id(),
             1);
-  EXPECT_EQ(root_instr->operand(2)->opcode(), HloOpcode::kGetTupleElement);
-  EXPECT_EQ(root_instr->operand(2)->operand(0)->opcode(), HloOpcode::kCall);
-  EXPECT_EQ(root_instr->operand(3)->opcode(), HloOpcode::kGetTupleElement);
-  EXPECT_EQ(root_instr->operand(3)->operand(0)->opcode(), HloOpcode::kCall);
+  EXPECT_THAT(fusion_instr->operands(),
+              Each(Property(&HloInstruction::opcode, HloOpcode::kParameter)));
+}
+
+TEST_F(CudnnBackendTest, ApplyConfigToScaledDotGemmFusionFails) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kScaledDotGemmFusionHlo));
+  BackendConfig backend_config;
+  backend_config.mutable_algorithm()->set_algo_id(1);
+  EXPECT_THAT(
+      backend_->ApplyConfig(
+          *hlo_module->entry_computation()->root_instruction(), backend_config),
+      StatusIs(absl::StatusCode::kInternal,
+               HasSubstr("CudnnScaledDotRewriter")));
 }
 
 TEST_F(CudnnBackendTest, ApplyConfigToCudnnCustomCall) {

@@ -372,6 +372,14 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
   const FusionBackendConfig& backend_config =
       gpu_config->fusion_backend_config();
 
+  // GemmFusion only wraps Triton-compatible scaled dots into __triton_gemm;
+  // cuDNN scaled dot fusions take pre-swizzled scales and must not be retuned.
+  if (backend_config.kind() != kTritonGemmFusionKind &&
+      hlo_query::ContainsInstrWithOpcode(instr.fused_instructions_computation(),
+                                         {HloOpcode::kScaledDot})) {
+    return false;
+  }
+
   // TODO: b/487920266 - sometimes we create fusions that can't be tiled.
   // Bail out here if that's the case.
   if (backend_config.kind() == kTritonGemmFusionKind) {
