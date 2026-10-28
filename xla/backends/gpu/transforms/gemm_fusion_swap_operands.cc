@@ -98,11 +98,14 @@ absl::StatusOr<HloDotInstruction*> MakeDotWithSwappedOperands(
     new_precision_config.mutable_operand_precision()->SwapElements(0, 1);
   }
 
-  return DynCast<HloDotInstruction>(computation->AddInstruction(
-      HloInstruction::CreateDot(new_dot_shape, dot->mutable_operand(1),
-                                dot->mutable_operand(0), new_dot_dims,
-                                new_precision_config),
-      &dot->metadata()));
+  HloInstruction* new_dot =
+      computation->AddInstruction(HloInstruction::CreateDot(
+          new_dot_shape, dot->mutable_operand(1), dot->mutable_operand(0),
+          new_dot_dims, new_precision_config));
+  // Carry over the original dot's metadata and other attributes to the
+  // swapped dot.
+  dot->SetupDerivedInstruction(new_dot);
+  return DynCast<HloDotInstruction>(new_dot);
 }
 
 // Swaps operands of a dot instruction in a fusion. This is done by swapping the
