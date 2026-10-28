@@ -110,6 +110,18 @@ class NcclCommunicator : public GpuCommunicator {
   NcclCommunicator& operator=(const NcclCommunicator&) = delete;
   NcclCommunicator& operator=(NcclCommunicator&&) = delete;
 
+  // Creates a child communicator and waits for NCCL to finish initializing it.
+  // Call outside an NCCL group: grouped work can be deferred until the group
+  // ends, but this method waits for completion before returning.
+  // All participating ranks must call concurrently because completing the split
+  // requires their participation.
+  // Holds the parent's mutex while waiting, so other operations on the parent
+  // block until the split completes. If another thread calls Abort(), stops
+  // waiting and releases the mutex so the abort can proceed.
+  absl::StatusOr<ncclComm_t> Split(int color, int key, ncclConfig_t config,
+                                   const CancellationToken& cancel,
+                                   tsl::Env& env = *tsl::Env::Default()) const;
+
   absl::Status Abort() final;
   absl::Status HealthCheck() const final;
   absl::StatusOr<size_t> NumRanks() const final;

@@ -17,8 +17,11 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_COLLECTIVES_NCCL_TYPES_H_
 
 #include <cstddef>
+#include <memory>
+#include <vector>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "third_party/nccl/nccl.h"
@@ -30,6 +33,22 @@ namespace xla::gpu {
 
 struct NcclCommState {
   explicit NcclCommState(ncclComm_t comm) : comm(comm) {}
+  ~NcclCommState();
+
+  // Call only after the parent has been successfully aborted or destroyed.
+  // Then abort any children produced by interrupted splits and free the memory
+  // that held their handles. A child whose abort fails stays in
+  // pending_split_comms (its handle is never freed, see the destructor) and the
+  // first failure is returned. `abort_fn` exists so tests can fake NCCL.
+  absl::Status AbortPendingSplits(
+      ncclResult_t (*abort_fn)(ncclComm_t) = ncclCommAbort)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
+
+  // Keeps the memory holding child communicator handles alive after a split
+  // is interrupted, because NCCL may still write to it.
+  // AbortPendingSplits() then cleans up the children and frees this memory.
+  std::vector<std::unique_ptr<ncclComm_t>> pending_split_comms
+      ABSL_GUARDED_BY(mutex);
 
   bool has_symmetric_window() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
     return num_symmetric_windows > 0;

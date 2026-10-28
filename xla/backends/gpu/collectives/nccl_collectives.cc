@@ -510,6 +510,9 @@ NcclCollectives::SplitCommunicatorsWithCancel(
 
   const auto& gpu_config =
       absl::down_cast<const GpuCollectives::Config&>(config);
+  if (cancel == nullptr) {
+    cancel = std::make_shared<CancellationToken>();
+  }
 
   auto make_comm = [&](int i) -> absl::StatusOr<ncclComm_t> {
     int32_t device_ordinal = DeviceOrdinal(ranks[i]);
@@ -533,9 +536,10 @@ NcclCollectives::SplitCommunicatorsWithCancel(
     ABSL_ASSIGN_OR_RETURN(ncclConfig_t comm_config,
                           AsNcclConfig(gpu_config, stream_executors[i]));
 
-    ncclComm_t split_comm;
-    XLA_NCCL_RETURN_IF_ERROR(ncclCommSplit(parent_comm, color, key.value(),
-                                           &split_comm, &comm_config));
+    const auto* parent = absl::down_cast<const NcclCommunicator*>(comms[i]);
+    ABSL_ASSIGN_OR_RETURN(
+        ncclComm_t split_comm,
+        parent->Split(color, key.value(), comm_config, *cancel));
 
     absl::Time split_done = absl::Now();
     VLOG(1) << absl::StreamFormat(

@@ -466,13 +466,71 @@ NcclCommunicator::~NcclCommunicator() {
 
     XLA_VLOG_DEVICE(1, stream_executor_->device_ordinal())
         << "Destroy " << description;
-    return XLA_NCCL_STATUS(ncclCommDestroy(comm_->comm));
+    absl::Status status = XLA_NCCL_STATUS(ncclCommDestroy(comm_->comm));
+    if (status.ok()) {
+      if (absl::Status s = comm_->AbortPendingSplits(); !s.ok()) {
+        XLA_LOG_DEVICE(ERROR, stream_executor_->device_ordinal()) << s;
+      }
+    }
+    return status;
   };
 
   if (absl::Status s = Execute(f).Await(); !s.ok()) {
     XLA_LOG_DEVICE(ERROR, stream_executor_->device_ordinal())
         << "NcclCommunicator::~NcclCommunicator: " << s;
   }
+}
+
+absl::StatusOr<ncclComm_t> NcclCommunicator::Split(
+    int color, int key, ncclConfig_t config, const CancellationToken& cancel,
+    tsl::Env& env) const {
+  absl::MutexLock lock(comm_->mutex);
+  if (cancel_->IsCancelled() || cancel.IsCancelled()) {
+    return Cancelled("NCCL communicator split cancelled");
+  }
+  if (comm_->comm == nullptr) {
+    return FailedPrecondition("Cannot split a null NCCL communicator");
+  }
+
+  // In nonblocking mode, ncclCommSplit can return ncclSuccess before writing
+  // the child handle. Cancellation stops the XLA runtime from waiting,
+  // but NCCL may still write the handle. In that case, keep its storage until
+  // parent abort/destroy completes successfully.
+  auto child = std::make_unique<ncclComm_t>(nullptr);
+  absl::Status status = XLA_NCCL_STATUS(
+      ncclCommSplit(comm_->comm, color, key, child.get(), &config));
+  if (status.ok()) {
+    // Completion is reported on the parent; the child may still be NULL.
+    // Polling stops on either token so a parent Abort() can take the mutex.
+    ncclResult_t state = ncclInProgress;
+    while (state == ncclInProgress && !cancel_->IsCancelled() &&
+           !cancel.IsCancelled()) {
+      status = XLA_NCCL_STATUS(ncclCommGetAsyncError(comm_->comm, &state));
+      if (!status.ok()) {
+        break;
+      }
+      if (state == ncclInProgress) {
+        env.SleepForMicroseconds(50);
+      }
+    }
+    if (status.ok()) {
+      status = cancel_->IsCancelled() || cancel.IsCancelled()
+                   ? Cancelled("NCCL communicator split cancelled")
+                   : XLA_NCCL_STATUS(state);
+    }
+  }
+  if (!status.ok()) {
+    // NCCL may still write the child handle, so retain its storage in the
+    // parent. Returning releases the mutex so parent abort/destroy can proceed.
+    comm_->pending_split_comms.push_back(std::move(child));
+    return status;
+  }
+  if (*child == nullptr && color != NCCL_SPLIT_NOCOLOR) {
+    return Internal("NCCL split completed with a null child communicator");
+  }
+  // Return a copy of the handle. Freeing its storage does not destroy the
+  // child communicator.
+  return *child;
 }
 
 absl::Status NcclCommunicator::Abort() {
@@ -490,7 +548,13 @@ absl::Status NcclCommunicator::Abort() {
     // Note that we intentionally don't call PollUntilDone. Once comm_
     // has been aborted, we can no longer safely touch it.
     absl::MutexLock lock(comm_->mutex);
-    return XLA_NCCL_STATUS(ncclCommAbort(comm_->comm));
+    absl::Status status = XLA_NCCL_STATUS(ncclCommAbort(comm_->comm));
+    if (status.ok()) {
+      if (absl::Status s = comm_->AbortPendingSplits(); !s.ok()) {
+        XLA_LOG_DEVICE(ERROR, stream_executor_->device_ordinal()) << s;
+      }
+    }
+    return status;
   });
 }
 

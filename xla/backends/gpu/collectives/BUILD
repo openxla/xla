@@ -458,9 +458,11 @@ xla_test(
         "multi_gpu",
     ],
     deps = [
+        ":cancellation_token",
         ":collectives_test_util",
         ":gpu_collectives",
         ":gpu_communicator",
+        ":nccl_communicator",
         ":nccl_or_rccl_collectives",  # buildcleaner: keep
         "//xla:debug_options_flags",
         "//xla:future",
@@ -697,6 +699,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/cuda:nccl",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
     ],
@@ -718,6 +721,7 @@ xla_cc_test(
         "//xla/tsl/cuda:nccl",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
     ],
