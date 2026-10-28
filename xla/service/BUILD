@@ -4939,11 +4939,17 @@ xla_cc_test(
     deps = [
         ":hlo_verifier",
         ":while_loop_fusible_sinking",
+        ":while_loop_simplifier",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/transforms/simplifiers:flatten_call_graph",
+        "//xla/hlo/transforms/simplifiers:hlo_dce",
+        "//xla/hlo/transforms/simplifiers:tuple_simplifier",
         "//xla/hlo/utils:hlo_matchers",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )

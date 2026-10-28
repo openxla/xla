@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -60,6 +61,70 @@ bool IsFusionCandidate(const HloInstruction* instr) {
   return instr->opcode() != HloOpcode::kRng &&
          (instr->IsElementwise() || instr->opcode() == HloOpcode::kReshape ||
           instr->opcode() == HloOpcode::kTranspose);
+}
+
+// Returns true if every use of `value` in a loop body is the update operand of
+// a dynamic-update-slice, possibly through single use reshapes or bitcasts, or
+// the body root passing `value` through at `index`.
+bool OnlyFeedsUpdates(const HloInstruction* value, const HloInstruction* root,
+                      std::optional<int64_t> index) {
+  for (const HloInstruction* user : value->users()) {
+    if (user == root) {
+      if (!index.has_value() || root->OperandIndices(value) !=
+                                    absl::InlinedVector<int64_t, 4>{*index}) {
+        return false;
+      }
+      continue;
+    }
+    if (user->opcode() == HloOpcode::kDynamicUpdateSlice) {
+      if (user->OperandIndices(value) != absl::InlinedVector<int64_t, 4>{1}) {
+        return false;
+      }
+      continue;
+    }
+    if ((user->opcode() == HloOpcode::kReshape ||
+         user->opcode() == HloOpcode::kBitcast) &&
+        user->user_count() == 1 &&
+        OnlyFeedsUpdates(user, root, /*index=*/std::nullopt)) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+// Collects into `loops` the while loops that read `value` as an element of
+// their init tuple, directly or through such a loop's output at that element.
+// Returns false if anything else reads `value` or those outputs.
+bool CollectSliceReaders(
+    const HloInstruction* value,
+    std::vector<std::pair<HloInstruction*, int64_t>>& loops) {
+  if (value->IsRoot()) {
+    return false;
+  }
+  for (const HloInstruction* user : value->users()) {
+    if (user->opcode() != HloOpcode::kTuple || user->IsRoot() ||
+        user->user_count() != 1 ||
+        user->users()[0]->opcode() != HloOpcode::kWhile) {
+      return false;
+    }
+    absl::InlinedVector<int64_t, 4> indices = user->OperandIndices(value);
+    HloInstruction* while_instr = user->users()[0];
+    if (indices.size() != 1 || while_instr->IsRoot()) {
+      return false;
+    }
+    loops.push_back({while_instr, indices[0]});
+    for (const HloInstruction* output : while_instr->users()) {
+      if (output->opcode() != HloOpcode::kGetTupleElement) {
+        return false;
+      }
+      if (output->tuple_index() == indices[0] &&
+          !CollectSliceReaders(output, loops)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 // For element-wise op 'instr' we have:
@@ -289,9 +354,10 @@ WhileLoopFusibleSinking::TryRewritingBroadcastAsAllocateBuffer(
   return changed;
 }
 
-bool WhileLoopFusibleSinking::IsSinkableFusion(HloInstruction* while_operand) {
+bool WhileLoopFusibleSinking::IsSinkableFusion(
+    HloInstruction* while_operand,
+    absl::flat_hash_set<const HloInstruction*>& nodes, bool& has_slice) {
   absl::InlinedVector<HloInstruction*, 8> worklist;
-  absl::flat_hash_set<int> visited;
   worklist.push_back(while_operand);
   while (!worklist.empty()) {
     HloInstruction* to_process = worklist.back();
@@ -299,10 +365,10 @@ bool WhileLoopFusibleSinking::IsSinkableFusion(HloInstruction* while_operand) {
     if (!to_process->IsFusible()) {
       return false;
     }
-    if (!visited.insert(to_process->unique_id()).second) {
+    if (!nodes.insert(to_process).second) {
       // Do not sink extremely large subgraphs as they will be expensive to
       // recompute in the loop.
-      if (visited.size() > 100) {
+      if (nodes.size() > 100) {
         return false;
       }
       continue;
@@ -316,13 +382,111 @@ bool WhileLoopFusibleSinking::IsSinkableFusion(HloInstruction* while_operand) {
       }
       continue;
     }
+    if (sink_dynamic_slices_into_updates_ &&
+        to_process->opcode() == HloOpcode::kDynamicSlice) {
+      // The sliced operand and computed start indices become loop state.
+      has_slice = true;
+      for (int64_t i = 1; i < to_process->operand_count(); ++i) {
+        if (IsPurelyExpanding(to_process->operand(i))) {
+          worklist.push_back(to_process->mutable_operand(i));
+        }
+      }
+      continue;
+    }
     return false;
   }
   return true;
 }
 
+// A sunk slice only pays off once no loop needs the slice materialized, so
+// every loop that reads it must take it: each passes it through unchanged,
+// reads it only as dynamic-update-slice updates and does not update the
+// sliced buffer, and
+// outside those loops nothing reads it or the rest of its graph. The loops
+// that read it through a loop's output get the slice itself once that loop
+// is rewired, and sink it in turn (RunImpl visits producers first). The
+// sliced buffer must already be materialized (a
+// parameter or a tuple element), or making it loop state would materialize
+// more than the slice. Loop invariant code motion would hoist the slice back
+// out of a loop that allows hoisting and leave the sliced buffer behind as
+// dead loop state, so each loop must disable hoisting.
+bool WhileLoopFusibleSinking::CanSinkSlice(
+    const HloInstruction* value,
+    const absl::flat_hash_set<const HloInstruction*>& nodes,
+    std::vector<std::pair<HloInstruction*, int64_t>>& loops) {
+  absl::InlinedVector<const HloInstruction*, 2> sliced;
+  std::vector<const HloInstruction*> sorted(nodes.begin(), nodes.end());
+  absl::c_sort(sorted, [](const HloInstruction* a, const HloInstruction* b) {
+    return a->unique_id() < b->unique_id();
+  });
+  for (const HloInstruction* node : sorted) {
+    if (node != value && !IsPurelyExpanding(node) &&
+        !absl::c_all_of(node->users(), [&](const HloInstruction* user) {
+          return nodes.contains(user);
+        })) {
+      return false;
+    }
+    if (node->opcode() == HloOpcode::kDynamicSlice) {
+      const HloInstruction* buffer = node->operand(0);
+      if (buffer->opcode() != HloOpcode::kParameter &&
+          buffer->opcode() != HloOpcode::kGetTupleElement) {
+        return false;
+      }
+      sliced.push_back(buffer);
+    }
+  }
+  if (!CollectSliceReaders(value, loops)) {
+    return false;
+  }
+  for (const auto& [loop, index] : loops) {
+    HloComputation* body = loop->while_body();
+    HloComputation* cond = loop->while_condition();
+    if (call_counts_[body] > 1 || call_counts_[cond] > 1 ||
+        !loop->frontend_attributes().map().contains(
+            "_xla_disable_loop_instr_hoisting")) {
+      return false;
+    }
+    if (sunk_slices_.contains({loop, index})) {
+      continue;
+    }
+    const HloInstruction* gte = nullptr;
+    for (const HloInstruction* param :
+         {body->parameter_instruction(0), cond->parameter_instruction(0)}) {
+      for (const HloInstruction* user : param->users()) {
+        if (user->opcode() != HloOpcode::kGetTupleElement) {
+          return false;
+        }
+        if (user->tuple_index() == index) {
+          if (gte != nullptr || user->parent() != body) {
+            return false;
+          }
+          gte = user;
+        }
+      }
+    }
+    const HloInstruction* root = body->root_instruction();
+    if (gte == nullptr || root->opcode() != HloOpcode::kTuple ||
+        root->operand(index) != gte || !OnlyFeedsUpdates(gte, root, index)) {
+      return false;
+    }
+    // The loop must not update the sliced buffer; carrying it read only (as
+    // an earlier sunk slice leaves it) forces no copy.
+    const HloInstruction* init = loop->while_init();
+    for (int64_t i = 0; i < init->operand_count(); ++i) {
+      if (absl::c_linear_search(sliced, init->operand(i)) &&
+          !(root->operand(i)->opcode() == HloOpcode::kGetTupleElement &&
+            root->operand(i)->operand(0) == body->parameter_instruction(0) &&
+            root->operand(i)->tuple_index() == i)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 HloInstruction* WhileLoopFusibleSinking::CreateSinkableFusion(
-    HloInstruction* while_operand) {
+    HloInstruction* while_operand,
+    const absl::flat_hash_set<const HloInstruction*>* sliced_graph) {
   HloInstruction* fusion =
       while_operand->AddInstruction(while_operand->CreateFusion(
           while_operand->shape(), HloInstruction::FusionKind::kLoop,
@@ -334,7 +498,8 @@ HloInstruction* WhileLoopFusibleSinking::CreateSinkableFusion(
     did_fuse = false;
     for (int64_t i = fusion->operand_count() - 1; i >= 0; --i) {
       HloInstruction* op = fusion->mutable_operand(i);
-      if (IsPurelyExpanding(op)) {
+      if (IsPurelyExpanding(op) ||
+          (sliced_graph != nullptr && !sliced_graph->contains(op))) {
         continue;
       }
       fusion->FuseInstruction(op);
@@ -414,10 +579,26 @@ absl::StatusOr<bool> WhileLoopFusibleSinking::TrySinkingFusiblesIntoWhileLoop(
       ABSL_RETURN_IF_ERROR(while_instr->ReplaceOperandWith(0, init_value));
     }
     // Original value should be a fusible subgraph.
-    if (!IsSinkableFusion(invariant_value)) {
+    absl::flat_hash_set<const HloInstruction*> nodes;
+    bool has_slice = false;
+    if (!IsSinkableFusion(invariant_value, nodes, has_slice)) {
       continue;
     }
-    HloInstruction* fusion = CreateSinkableFusion(invariant_value);
+    if (has_slice) {
+      std::vector<std::pair<HloInstruction*, int64_t>> readers;
+      if (!CanSinkSlice(invariant_value, nodes, readers)) {
+        continue;
+      }
+      for (const auto& [reader, reader_index] : readers) {
+        if (reader != while_instr &&
+            !sunk_slices_.contains({reader, reader_index})) {
+          slice_readers_.push_back(reader);
+        }
+      }
+      sunk_slices_.insert({while_instr, index});
+    }
+    HloInstruction* fusion =
+        CreateSinkableFusion(invariant_value, has_slice ? &nodes : nullptr);
     changed = true;
     if (fusion->operand_count() > 0 &&
         (while_instr->IsRoot() ||
@@ -527,7 +708,18 @@ absl::StatusOr<bool> WhileLoopFusibleSinking::RunImpl(
     call_counts_[while_instr->while_condition()]++;
   }
 
+  slice_readers_.clear();
+  sunk_slices_.clear();
   for (HloInstruction* while_instr : while_instrs) {
+    ABSL_ASSIGN_OR_RETURN(bool result,
+                          TrySinkingFusiblesIntoWhileLoop(while_instr));
+    changed |= result;
+  }
+  // A loop that read a sunk slice through another loop's output reads the
+  // slice itself now; it may come first in `while_instrs`, so visit it again.
+  while (!slice_readers_.empty()) {
+    HloInstruction* while_instr = slice_readers_.back();
+    slice_readers_.pop_back();
     ABSL_ASSIGN_OR_RETURN(bool result,
                           TrySinkingFusiblesIntoWhileLoop(while_instr));
     changed |= result;
