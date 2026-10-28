@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // ==============================================================================
-// RUN: xla-opt %s --triton-xla-pipeline='target=10.0 num-warps=1' \
+// RUN: xla-opt %s --split-input-file --triton-xla-pipeline='target=10.0 num-warps=1' \
 // RUN:   | FileCheck %s
 
 // With one warp and 64 ranks, every thread owns two signal pointers. The scalar
@@ -28,6 +28,8 @@ tt.func @block_barrier_64_ranks(
   tt.return
 }
 
+// -----
+
 // CHECK-LABEL: llvm.func @atomic_write_64_ranks
 tt.func @atomic_write_64_ranks(%base : !tt.ptr<i32>, %value : i32) {
   %range = tt.make_range {end = 64 : i32, start = 0 : i32} : tensor<64xi32>
@@ -37,6 +39,8 @@ tt.func @atomic_write_64_ranks(%base : !tt.ptr<i32>, %value : i32) {
     (tensor<64x!tt.ptr<i32>>, i32) -> ()
   tt.return
 }
+
+// -----
 
 // CHECK-LABEL: llvm.func @atomic_spin_wait_64_ranks
 tt.func @atomic_spin_wait_64_ranks(%base : !tt.ptr<i32>, %expected : i32) {
