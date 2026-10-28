@@ -91,6 +91,9 @@ bool ScalImpl(Stream* stream, uint64_t elem_count, ScalarT alpha,
     LOG(ERROR) << "DoBlasScal: stream and x must not be null";
     return false;
   }
+  if (elem_count == 0) {
+    return true;
+  }
   // oneMKL takes the element count as a signed 64-bit integer.
   if (elem_count >
       static_cast<uint64_t>(std::numeric_limits<std::int64_t>::max())) {
@@ -100,6 +103,10 @@ bool ScalImpl(Stream* stream, uint64_t elem_count, ScalarT alpha,
   }
   auto* stream_queue =
       static_cast<::sycl::queue*>(stream->platform_specific_handle().stream);
+  if (stream_queue == nullptr) {
+    LOG(ERROR) << "DoBlasScal: stream has no SYCL queue";
+    return false;
+  }
   absl::StatusOr<::sycl::event> status = ExecMklFunc([&] {
     return oneapi::mkl::blas::scal(*stream_queue,
                                    static_cast<std::int64_t>(elem_count), alpha,
@@ -179,4 +186,3 @@ static void RegisterSyclBlasSupport() {
 
 STREAM_EXECUTOR_REGISTER_MODULE_INITIALIZER(
     syclblas, stream_executor::sycl::RegisterSyclBlasSupport());
-

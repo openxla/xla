@@ -22,7 +22,6 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
-#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "xla/stream_executor/blas.h"
@@ -65,6 +64,7 @@ class SyclBlasTest : public ::testing::Test {
 
     const uint64_t size_bytes = host.size() * sizeof(T);
     DeviceAddress<T> device = executor_->AllocateArray<T>(host.size());
+    ASSERT_FALSE(device.is_null());
     absl::Cleanup cleanup = [&] { executor_->Deallocate(&device); };
     ASSERT_THAT(stream_->Memcpy(&device, host.data(), size_bytes),
                 absl_testing::IsOk());
@@ -119,4 +119,3 @@ TEST_F(SyclBlasTest, DoBlasScalComplexDouble) {
 
 }  // namespace
 }  // namespace stream_executor::sycl
-
