@@ -3150,6 +3150,8 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       // optional here and checked against the mode afterwards.
       optional<std::vector<int64_t>> shifts;
       attrs["shifts"] = {/*required=*/false, AttrTy::kBracedInt64List, &shifts};
+      optional<Literal> indices;
+      attrs["indices"] = {/*required=*/false, AttrTy::kLiteral, &indices};
       if ((!preset_operands &&
            !ParseOperands(&operands, builder, /*expected_size=*/1)) ||
           !ParseAttributes(attrs, allow_attributes, shape)) {
@@ -3157,9 +3159,16 @@ HloInstruction* HloParserImpl::CreateInstruction(  // NOLINT
       }
       ShuffleMode shuffle_mode;
       switch (*mode) {
+        case ShuffleMode::kPermute:
+          if (!indices || shifts) {
+            TokenError("expects only indices for permute mode");
+            return nullptr;
+          }
+          shuffle_mode = shuffle::Permute(*indices);
+          break;
         case ShuffleMode::kRotate:
-          if (!shifts.has_value()) {
-            TokenError("expects shifts for a shuffle in rotate mode");
+          if (!shifts || indices) {
+            TokenError("expects only shifts for rotate mode");
             return nullptr;
           }
           shuffle_mode = shuffle::Rotate(*shifts);
