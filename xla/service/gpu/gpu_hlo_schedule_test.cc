@@ -34,7 +34,9 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "google/protobuf/text_format.h"
@@ -247,11 +249,11 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingDisabledOmitsFence) {
 
 namespace {
 
-// `big` is a large buffer with two consumers. The chain feeding `w` from the
-// collective-permute result is favored by the generic latency-hiding
-// heuristics and is placed between the two consumers, which keeps `big` live
-// across it. The buffer release rule prefers finishing the consumers
-// and the producer first while the collective is in flight.
+// `big` is a shared buffer with two consumers. Control dependencies keep the
+// producer, consumers, and independent chain feeding `w` inside the same async
+// interval, where the buffer release rule can compare them. In particular, `w`
+// must not depend on the collective result: that would put it outside the
+// interval and make consumer adjacency an invalid expectation for this rule.
 constexpr absl::string_view kBufferReleaseHloText = R"(
 HloModule m
 
@@ -259,16 +261,16 @@ ENTRY entry {
   p0 = f32[$0,$0]{1,0} parameter(0)
   p1 = f32[$0]{0} parameter(1)
   p2 = f32[$0]{0} parameter(2)
-  big = f32[$0,$0]{1,0} add(p0, p0)
-  a = f32[$0,$0]{1,0} multiply(big, big)
   cps = (f32[$0]{0}, f32[$0]{0}) collective-permute-start(p1), source_target_pairs={{0,1},{1,0}}
-  cpd = f32[$0]{0} collective-permute-done(cps)
-  c = f32[$0]{0} add(cpd, p1)
-  y0 = f32[$0]{0} add(cpd, p2)
+  big = f32[$0,$0]{1,0} add(p0, p0), control-predecessors={cps}
+  a = f32[$0,$0]{1,0} multiply(big, big)
+  y0 = f32[$0]{0} add(p1, p2), control-predecessors={cps}
   y1 = f32[$0]{0} negate(y0)
   y2 = f32[$0]{0} negate(y1)
   ym = f32[$0,16]{1,0} broadcast(y2), dimensions={0}
   w = f32[$0,16]{1,0} dot(big, ym), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  cpd = f32[$0]{0} collective-permute-done(cps), control-predecessors={a,w}
+  c = f32[$0]{0} add(cpd, p1)
   ROOT r = (f32[$0,$0]{1,0}, f32[$0,16]{1,0}, f32[$0]{0}) tuple(a, w, c)
 })";
 
@@ -291,12 +293,13 @@ class GpuHloScheduleBufferReleaseTest
     return config;
   }
 
-  // Returns the schedule positions of `big`, `a`, and `w` in the entry
-  // computation.
+  // Schedule positions of the shared buffer, its consumers, and async bounds.
   struct Positions {
     int64_t big;
     int64_t a;
     int64_t w;
+    int64_t async_start;
+    int64_t async_done;
   };
   absl::StatusOr<Positions> SchedulePositions(
       std::optional<bool> enable_buffer_release) {
@@ -306,6 +309,11 @@ class GpuHloScheduleBufferReleaseTest
             absl::Substitute(kBufferReleaseHloText, GetParam()),
             GetReleaseModuleConfig(enable_buffer_release)));
     ABSL_RETURN_IF_ERROR(ScheduleGpuModule(module.get()).status());
+    std::string variant = "default";
+    if (enable_buffer_release.has_value()) {
+      variant = *enable_buffer_release ? "enabled" : "disabled";
+    }
+    RecordProperty(variant + "_schedule", module->schedule().ToString());
     HloComputation* entry = module->entry_computation();
     const std::vector<HloInstruction*>& sequence =
         module->schedule().sequence(entry).instructions();
@@ -315,18 +323,27 @@ class GpuHloScheduleBufferReleaseTest
           sequence.begin(),
           std::find(sequence.begin(), sequence.end(), instruction));
     };
-    return Positions{position("big"), position("a"), position("w")};
+    return Positions{position("big"), position("a"), position("w"),
+                     position("cps"), position("cpd")};
   }
 };
 
 TEST_P(GpuHloScheduleBufferReleaseTest,
-       ReleaseRuleSchedulesConsumersRightAfterProducer) {
+       ReleaseRuleClustersConsumersInsideAsyncRegion) {
+  ASSERT_OK_AND_ASSIGN(Positions baseline,
+                       SchedulePositions(/*enable_buffer_release=*/false));
   ASSERT_OK_AND_ASSIGN(Positions positions,
                        SchedulePositions(/*enable_buffer_release=*/true));
-  // Both consumers immediately follow the producer, so `big` dies as soon as
-  // possible.
-  EXPECT_EQ(std::min(positions.a, positions.w), positions.big + 1);
-  EXPECT_EQ(std::max(positions.a, positions.w), positions.big + 2);
+  EXPECT_LT(positions.async_start, positions.big);
+  EXPECT_LT(std::max(positions.a, positions.w), positions.async_done);
+  // Check the scheduling preference, not an overall memory improvement. The
+  // rule groups these consumers but does not guarantee producer adjacency or
+  // a shorter buffer lifetime: other ready instructions may precede them.
+  EXPECT_EQ(std::max(positions.a, positions.w),
+            std::min(positions.a, positions.w) + 1);
+  EXPECT_LT(std::max(positions.a, positions.w) -
+                std::min(positions.a, positions.w),
+            std::max(baseline.a, baseline.w) - std::min(baseline.a, baseline.w));
 }
 
 TEST_P(GpuHloScheduleBufferReleaseTest, ReleaseRuleDisabledKeepsGenericOrder) {
