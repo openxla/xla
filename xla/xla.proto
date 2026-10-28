@@ -1983,7 +1983,14 @@ message DebugOptions {
   // (ScanRewriterTriton).
   optional bool xla_gpu_experimental_enable_triton_scan = 562;
 
-  // Next id: 563
+  // Weight applied to the (hbm_bw / fabric_bw) ratio when the
+  // ragged-all-to-all device kernel scores remote-peer copies for per-CTA
+  // work assignment (0.0-1.0). Higher value => remote writes score higher
+  // cost => more CTAs are routed to remote work. Default 0.22 was fitted
+  // empirically on GB200; values outside (0, 1] fall back to the default.
+  optional float xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight = 563;
+
+  // Next id: 564
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

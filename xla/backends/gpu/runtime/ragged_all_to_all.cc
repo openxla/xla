@@ -240,7 +240,8 @@ absl::Status LaunchDeviceKernel(
     se::DeviceAddressBase send_sizes_buffer,
     se::DeviceAddressBase output_offsets_buffer,
     int64_t num_updates_per_replica, int64_t num_row_elements,
-    int64_t input_buffer_offset_bytes, int64_t output_buffer_offset_bytes) {
+    int64_t input_buffer_offset_bytes, int64_t output_buffer_offset_bytes,
+    int32_t remote_cost) {
   using KernelTrait = se::gpu::RaggedAllToAllDeviceKernel<kVectorSize>;
 
   ABSL_ASSIGN_OR_RETURN(
@@ -252,7 +253,7 @@ absl::Status LaunchDeviceKernel(
                        recv_win, input_offsets_buffer, send_sizes_buffer,
                        output_offsets_buffer, num_updates_per_replica,
                        num_row_elements, input_buffer_offset_bytes,
-                       output_buffer_offset_bytes);
+                       output_buffer_offset_bytes, remote_cost);
 }
 
 }  // namespace
@@ -265,7 +266,7 @@ absl::Status RunDeviceRaggedAllToAllKernel(
     se::DeviceAddressBase output_offsets_buffer, int64_t num_ranks,
     int64_t num_updates_per_replica, int64_t num_row_elements,
     int64_t cta_count, int64_t input_buffer_offset_bytes,
-    int64_t output_buffer_offset_bytes) {
+    int64_t output_buffer_offset_bytes, int32_t remote_cost) {
   se::StreamExecutor* executor = stream->parent();
   static constexpr size_t kThreadsPerCta = 512;
 
@@ -285,7 +286,7 @@ absl::Status RunDeviceRaggedAllToAllKernel(
         stream, executor, thread_dims, block_dims, dev_comm, send_win, recv_win,
         input_offsets_buffer, send_sizes_buffer, output_offsets_buffer,
         num_updates_per_replica, num_vectorized_row_elements,
-        input_buffer_offset_bytes, output_buffer_offset_bytes);
+        input_buffer_offset_bytes, output_buffer_offset_bytes, remote_cost);
   };
 
   switch (vector_size_bytes) {
