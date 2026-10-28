@@ -845,7 +845,8 @@ absl::Status RunOptimizationPasses(
       return false;
     }
     return !gpu::IsCublasSupportedMatMul(
-                *instr, /*allow_matrix_vector_multiplication=*/false)
+                *instr, /*allow_matrix_vector_multiplication=*/false,
+                /*is_normalized=*/false)
                 .value_or(false);
   };
   pipeline.AddPass<ResultCaster>(upcaster_filter);
