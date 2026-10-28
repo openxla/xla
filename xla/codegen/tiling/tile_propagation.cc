@@ -1677,51 +1677,50 @@ std::string ToString(const Tiles& tiles) {
 
 namespace {
 
-// One-shot all-gather: every output tile lies inside exactly one peer's shard,
-// so the peer is `offset / local_size`. It is attached to the input tile as a
-// replica id so the emitter reads the tile from that peer.
-Tiles PropagateOneShotAllGatherTile(const Tile& output_tile, int64_t gather_dim,
-                                    int64_t local_size, int64_t output_dim_size,
-                                    int64_t num_replicas) {
+// For one-shot all-gather (`!selects_peer_buffer`), every output tile lies
+// inside one peer's shard, so `offset / local_size` is attached as a replica id
+// on the input tile. For two-shot all-gather (`selects_peer_buffer`), the root
+// already selects a peer output buffer, so `output_tile.offset` is the
+// intra-shard input offset and `replica_ids` is cleared for the local extract.
+Tiles PropagateAllGatherTile(const Tile& output_tile, int64_t gather_dim,
+                             int64_t local_size, int64_t output_dim_size,
+                             int64_t num_replicas, bool selects_peer_buffer) {
   const DimTile& output_dim_tile = output_tile.dim_tiles()[gather_dim];
-  SymbolicExpr replica_id = output_dim_tile.offset / local_size;
-  // `offset % local_size` maps an output offset into `[0, local_size)`.
-  // However, if the variadic schedule padded this tile past `output_dim_size`
-  // (e.g., offset = 5 when local_size = 2 and output_dim_size = 4), `5 % 2 = 1`
-  // would wrap it back in-bounds. Adding
-  // `(offset / output_dim_size) * local_size` is 0 for valid tiles and pushes
-  // padded tiles to `>= local_size` so they get masked out.
-  SymbolicExpr input_offset =
-      (output_dim_tile.offset % local_size) +
-      (output_dim_tile.offset / output_dim_size) * local_size;
+  mlir::MLIRContext* ctx = output_tile.mlir_context();
+  SymbolicExpr input_offset = output_dim_tile.offset;
+  llvm::SmallVector<DimTile> replica_id_dim_tiles;
+  if (!selects_peer_buffer) {
+    // `offset % local_size` maps an output offset into `[0, local_size)`.
+    // However, if the variadic schedule padded this tile past `output_dim_size`
+    // (e.g., offset = 5 when local_size = 2 and output_dim_size = 4), `5 % 2 =
+    // 1` would wrap it back in-bounds. Adding `(offset / output_dim_size) *
+    // local_size` is 0 for valid tiles and pushes padded tiles to `>=
+    // local_size` so they get masked out.
+    input_offset = (output_dim_tile.offset % local_size) +
+                   (output_dim_tile.offset / output_dim_size) * local_size;
+    replica_id_dim_tiles = llvm::to_vector(output_tile.replica_ids());
+    replica_id_dim_tiles.push_back(DimTile{
+        /*offset=*/output_dim_tile.offset / local_size,
+        /*size=*/CreateSymbolicConstant(1, ctx),
+        /*stride=*/CreateSymbolicConstant(1, ctx),
+        /*upper_bound=*/CreateSymbolicConstant(num_replicas, ctx),
+    });
+  }
 
   llvm::SmallVector<DimTile> input_dim_tiles;
   input_dim_tiles.reserve(output_tile.num_dim_tiles());
-
   for (int64_t i = 0; i < output_tile.num_dim_tiles(); ++i) {
     if (i == gather_dim) {
-      input_dim_tiles.push_back(DimTile{
-          input_offset, output_dim_tile.size, output_dim_tile.stride,
-          CreateSymbolicConstant(local_size, output_tile.mlir_context())});
+      input_dim_tiles.push_back(
+          DimTile{input_offset, output_dim_tile.size, output_dim_tile.stride,
+                  CreateSymbolicConstant(local_size, ctx)});
     } else {
       input_dim_tiles.push_back(output_tile.dim_tiles()[i]);
     }
   }
 
-  mlir::MLIRContext* ctx = output_tile.mlir_context();
-  llvm::SmallVector<DimTile> replica_id_dim_tiles =
-      llvm::to_vector(output_tile.replica_ids());
-  replica_id_dim_tiles.push_back(DimTile{
-      /*offset=*/replica_id,
-      /*size=*/CreateSymbolicConstant(1, ctx),
-      /*stride=*/CreateSymbolicConstant(1, ctx),
-      /*upper_bound=*/
-      CreateSymbolicConstant(num_replicas, ctx),
-  });
-
   Tile input_tile(output_tile.tiling_space(), std::move(input_dim_tiles),
                   std::move(replica_id_dim_tiles), output_tile.constraints());
-
   return Tiles{input_tile};
 }
 
@@ -1761,8 +1760,11 @@ absl::StatusOr<Tiles> PropagateTileToInputForAllGatherOp(
     }
   }
 
-  return PropagateOneShotAllGatherTile(output_tile, gather_dim, local_size,
-                                       output_dim_size, num_replicas);
+  const bool selects_peer_buffer = tiling_space.SelectsPeerBuffer(
+      hlo, GetResultDimensionOffset(hlo, output_index) + gather_dim);
+  return PropagateAllGatherTile(output_tile, gather_dim, local_size,
+                                output_dim_size, num_replicas,
+                                selects_peer_buffer);
 }
 
 absl::StatusOr<Tiles> PropagateTileToInputForAllToAllOp(

@@ -104,6 +104,10 @@ class TilingSpace {
     // * R)` tiles) and a peer index (`*replica_dim`, with `R` values).
     std::optional<TiledDimId> replica_dim;
 
+    // True for a `kReplica` dimension that selects a peer's output buffer on
+    // the root rather than striding across the root dimension.
+    bool selects_peer_buffer = false;
+
     std::string ToString() const;
   };
 
@@ -172,6 +176,10 @@ class TilingSpace {
   // exist.
   const DimensionInfo& GetDimensionInfo(const HloInstruction& hlo,
                                         int64_t dim_position) const;
+
+  // Returns true if (`hlo`, `dim_position`) has a linked `kReplica` dimension
+  // that selects a peer output buffer on the root.
+  bool SelectsPeerBuffer(const HloInstruction& hlo, int64_t dim_position) const;
 
   // Returns the number of tiles along `dim` after tile sizes have been
   // assigned. For a dimension associated with a `replica_dim`, this is the
@@ -272,7 +280,9 @@ class TilingSpace {
 
   void ProcessDotLike(const HloInstruction& hlo);
   void ProcessReduce(const HloInstruction& hlo);
-  void ProcessReduceScatter(const HloInstruction& hlo);
+  // Registers a `kReplica` dimension per output and links it to `peer_dim`.
+  void AddReplicaDimensions(const HloInstruction& hlo, int64_t peer_dim,
+                            bool selects_peer_buffer);
   // Marks the scan dimension as sequential; fails if it cannot be located.
   absl::Status ProcessScan(const HloInstruction& hlo);
   void ProcessDynamicSlice(const HloInstruction& hlo);
