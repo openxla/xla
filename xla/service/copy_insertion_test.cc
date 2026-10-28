@@ -6247,5 +6247,58 @@ INSTANTIATE_TEST_SUITE_P(CondOrder, CopyInsertionCondOrderTest,
                                             ::testing::Values(int64_t{0},
                                                               int64_t{-1})));
 
+// One AllocateBuffer initializes two loop state elements that the body updates
+// in place, so they need distinct buffers. The second buffer must be a new
+// AllocateBuffer, not a copy of the first: copying undefined data costs a full
+// read and write of the buffer on every execution.
+TEST_F(CopyInsertionTest, SharedAllocateBufferInWhileInitIsNotCopied) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+
+cond {
+  p = (s32[], f32[1024], f32[1024]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  n = s32[] constant(1024)
+  ROOT lt = pred[] compare(i, n), direction=LT
+}
+
+body {
+  p = (s32[], f32[1024], f32[1024]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  a = f32[1024] get-tuple-element(p), index=1
+  b = f32[1024] get-tuple-element(p), index=2
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  x = f32[1] constant({1})
+  y = f32[1] constant({2})
+  a2 = f32[1024] dynamic-update-slice(a, x, i)
+  b2 = f32[1024] dynamic-update-slice(b, y, i)
+  ROOT t = (s32[], f32[1024], f32[1024]) tuple(next, a2, b2)
+}
+
+ENTRY main {
+  zero = s32[] constant(0)
+  buf = f32[1024] custom-call(), custom_call_target="AllocateBuffer"
+  init = (s32[], f32[1024], f32[1024]) tuple(zero, buf, buf)
+  ROOT w = (s32[], f32[1024], f32[1024]) while(init), condition=cond, body=body
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  InsertCopies(module.get());
+
+  const HloInstruction* w = FindInstruction(module.get(), "w");
+  ASSERT_NE(w, nullptr);
+  const HloInstruction* init = w->operand(0);
+  ASSERT_EQ(init->opcode(), HloOpcode::kTuple);
+  EXPECT_TRUE(init->operand(1)->IsCustomCall("AllocateBuffer"));
+  EXPECT_TRUE(init->operand(2)->IsCustomCall("AllocateBuffer"));
+  EXPECT_NE(init->operand(1), init->operand(2));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  EXPECT_NE(&alias_analysis->GetUniqueBufferAt(w, {1}),
+            &alias_analysis->GetUniqueBufferAt(w, {2}));
+}
+
 }  // namespace
 }  // namespace xla

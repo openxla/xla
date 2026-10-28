@@ -1857,6 +1857,36 @@ static int64_t GetNumExistingCopies(
   return num_existing_copies;
 }
 
+// Replaces each copy of an AllocateBuffer custom call with a new AllocateBuffer
+// of the copy's shape. An AllocateBuffer has undefined contents, so such a copy
+// moves undefined data; a fresh buffer serves the copy's users just as well.
+// These copies appear when one AllocateBuffer reaches two places that need
+// distinct buffers, for example two elements of a while loop state.
+static absl::Status ReplaceCopiesOfAllocateBuffers(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  for (HloComputation* computation : module->computations(execution_threads)) {
+    std::vector<HloInstruction*> copies;
+    for (HloInstruction* instruction : computation->instructions()) {
+      if (instruction->opcode() == HloOpcode::kCopy &&
+          !instruction->HasControlDependencies() &&
+          instruction->operand(0)->IsCustomCall("AllocateBuffer") &&
+          instruction->operand(0)->operand_count() == 0 &&
+          !instruction->operand(0)->HasSideEffect()) {
+        copies.push_back(instruction);
+      }
+    }
+    for (HloInstruction* copy : copies) {
+      HloInstruction* fresh_buffer = computation->AddInstruction(
+          copy->operand(0)->CloneWithNewOperands(copy->shape(), {}));
+      VLOG(2) << "Replacing " << copy->name() << " of an AllocateBuffer with "
+              << fresh_buffer->name();
+      ABSL_RETURN_IF_ERROR(computation->ReplaceInstruction(copy, fresh_buffer));
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::Status CopyInsertion::RemoveUnnecessaryCopies(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads,
@@ -1997,6 +2027,8 @@ absl::StatusOr<bool> CopyInsertion::RunImpl(
                            /*custom_buffer_analysis=*/nullptr));
   DumpHloModuleDuringPassIfEnabled(name(), "after adding special-case copies",
                                    *module);
+  ABSL_RETURN_IF_ERROR(
+      ReplaceCopiesOfAllocateBuffers(module, execution_threads));
 
   ABSL_RETURN_IF_ERROR(
       tuple_simplifier.Run(module, execution_threads).status());
