@@ -980,15 +980,24 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
 }
 
 TEST_F(DynamicSliceFusionRewriterV2Test,
-       UpdateSliceWithControlDependenciesIsRejected) {
+       UpdateSliceWithControlDependenciesNotFused) {
   constexpr absl::string_view kHlo = R"(
     HloModule test
+
+    callee {
+      ROOT input = f32[1,8,8]{2,1,0} parameter(0)
+    }
+
     ENTRY main {
-      input = f32[1,8,8]{2,1,0} parameter(0)
+      input = f32[2,8,8]{2,1,0} parameter(0)
       destination = f32[4,8,8]{2,1,0} parameter(1)
       zero = s32[] constant(0)
-      call = f32[1,8,8]{2,1,0} custom-call(input),
-        custom_call_target="fake_target"
+      slice = f32[1,8,8]{2,1,0} slice(input), slice={[0:1],[0:8],[0:8]}
+      tuple = (f32[1,8,8]{2,1,0}) tuple(slice)
+      barrier = (f32[1,8,8]{2,1,0}) opt-barrier(tuple)
+      operand = f32[1,8,8]{2,1,0} get-tuple-element(barrier), index=0
+      call = f32[1,8,8]{2,1,0} custom-call(operand),
+        custom_call_target="fake_target", called_computations={callee}
       ROOT update = f32[4,8,8]{2,1,0} dynamic-update-slice(destination, call, zero, zero, zero)
     }
   )";
@@ -996,9 +1005,14 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
   HloComputation* entry = module->entry_computation();
   ASSERT_OK(entry->parameter_instruction(0)->AddControlDependencyTo(
       entry->root_instruction()));
+  ASSERT_OK(DynamicSliceAnnotator().Run(module.get()).status());
+  const std::string original = module->ToString();
 
-  EXPECT_THAT(MakePipeline().Run(module.get()),
-              StatusIs(absl::StatusCode::kFailedPrecondition));
+  DynamicSliceFusionRewriterV2 rewriter(platform_id(),
+                                        DefaultOptions(OptLevel::kO2));
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->ToString(), original);
 }
 
 TEST_F(DynamicSliceFusionRewriterV2Test, PropagatesTupleResultMemorySpaces) {

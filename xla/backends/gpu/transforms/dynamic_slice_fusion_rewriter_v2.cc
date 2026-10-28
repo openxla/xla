@@ -972,6 +972,16 @@ absl::StatusOr<bool> RewriteHero(
     HloModule* module, HloInstruction* hero,
     absl::Span<const SlicedParameter> sliced_params,
     absl::Span<const SlicedResult> sliced_results) {
+  for (const SlicedResult& result : sliced_results) {
+    const HloInstruction* replaced = result.update_slice;
+    if (replaced == nullptr && !result.noops.empty()) {
+      replaced = result.noops.back();
+    }
+    if (replaced != nullptr && replaced->HasControlDependencies()) {
+      return false;
+    }
+  }
+
   std::vector<HloInstruction*> original_operands(hero->operands().begin(),
                                                  hero->operands().end());
   auto restore_operands = [&]() -> absl::Status {
@@ -993,18 +1003,6 @@ absl::StatusOr<bool> RewriteHero(
   if (!memory_spaces.has_value()) {
     ABSL_RETURN_IF_ERROR(restore_operands());
     return false;
-  }
-  for (const SlicedResult& result : sliced_results) {
-    const HloInstruction* replaced = result.update_slice;
-    if (replaced == nullptr && !result.noops.empty()) {
-      replaced = result.noops.back();
-    }
-    if (replaced != nullptr && replaced->HasControlDependencies()) {
-      ABSL_RETURN_IF_ERROR(restore_operands());
-      return absl::FailedPreconditionError(absl::StrCat(
-          "Cannot replace fusion result with control dependencies: ",
-          replaced->name()));
-    }
   }
   HloComputation* fusion_body =
       module->AddComputationAndUnifyNamesAndIds(std::move(body), false);

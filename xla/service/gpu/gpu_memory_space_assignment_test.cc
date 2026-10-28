@@ -670,6 +670,14 @@ TEST_F(GpuMemorySpaceAssignmentTest,
             static_cast<int>(MemorySpaceColor::kDefault));
   EXPECT_EQ(FindColorByName(*alias_analysis, "fusion"),
             static_cast<int>(MemorySpaceColor::kCollective));
+
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  const DebugOptions& options = module->config().debug_options();
+  EXPECT_TRUE(RequiresCollectiveInput(HloUse(fusion, 0), options));
+  EXPECT_FALSE(RequiresCollectiveInput(HloUse(fusion, 1), options));
+  EXPECT_TRUE(RequiresCollectiveOutput(
+      alias_analysis->dataflow_analysis().GetUniqueValueAt(fusion, {}),
+      options));
 }
 
 TEST_F(GpuMemorySpaceAssignmentTest,
@@ -744,6 +752,13 @@ TEST_F(GpuMemorySpaceAssignmentTest, UnrelatedFusionMemorySpacesIgnored) {
               static_cast<int>(MemorySpaceColor::kDefault));
     EXPECT_EQ(FindColorByName(*alias_analysis, "fusion"),
               static_cast<int>(MemorySpaceColor::kDefault));
+
+    HloInstruction* fusion = module->entry_computation()->root_instruction();
+    const DebugOptions& options = module->config().debug_options();
+    EXPECT_FALSE(RequiresCollectiveInput(HloUse(fusion, 0), options));
+    EXPECT_FALSE(RequiresCollectiveOutput(
+        alias_analysis->dataflow_analysis().GetUniqueValueAt(fusion, {}),
+        options));
   }
 }
 
