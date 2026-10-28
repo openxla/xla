@@ -25,7 +25,7 @@ limitations under the License.
 #include "google/protobuf/text_format.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
-#include "xla/service/buffer_assignment.h"
+#include "xla/service/buffer_allocation.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 
 namespace xla::gpu {
