@@ -5562,8 +5562,10 @@ cc_library(
     srcs = ["custom_call_sharding_helper.cc"],
     hdrs = ["custom_call_sharding_helper.h"],
     deps = [
+        "//xla:util",
         "//xla/hlo/ir:hlo",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:logging",
