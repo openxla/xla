@@ -373,10 +373,11 @@ absl::StatusOr<HloInstruction*> SplitKDimensionOfDot(HloDotInstruction* src_dot,
 
   ABSL_ASSIGN_OR_RETURN(DotDimensionNumbers new_dnums,
                         DotOperandDims::CreateDotDimensionNumbers(dims));
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * new_dot,
-                        MakeDotHlo(operands[0], operands[1], new_dnums,
-                                   src_dot->precision_config(),
-                                   accumulator_type, &src_dot->metadata()));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * new_dot,
+      MakeDotHlo(operands[0], operands[1], new_dnums,
+                 src_dot->precision_config(), accumulator_type));
+  src_dot->SetupDerivedInstruction(new_dot);
 
   // Reduce along the new batch dimension. Batch dimensions are first in the dot
   // result, so we use index within the batch category to get it.
