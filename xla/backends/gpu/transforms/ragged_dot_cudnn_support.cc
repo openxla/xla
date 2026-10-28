@@ -58,7 +58,8 @@ Decision IsRaggedDotSupportedByCuDnn(
   if (!changed.ok()) {
     VLOG(1) << "Ragged dot cuDNN probe: fusion rewrite failed: "
             << changed.status();
-    return Decision::Forbid("fusion rewrite failed: ") << changed.status().message();
+    return Decision::Forbid("fusion rewrite failed: ")
+           << changed.status().message();
   }
   for (const HloInstruction* instr :
        probe_module.entry_computation()->instructions()) {

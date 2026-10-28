@@ -17,17 +17,17 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_TRANSFORMS_RAGGED_DOT_CUDNN_SUPPORT_H_
 
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/stream_executor/device_description.h"
 #include "xla/service/decision.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream_executor.h"
 
 namespace xla {
 namespace gpu {
 
-// Returns an allowed Decision iff cuDNN positively reports an execution plan for the cuDNN
-// fusion that RaggedDotFusionRewriter would build for `ragged_dot` on
-// `device_description`. The ragged dot is cloned into a scratch module and
-// RaggedDotFusionRewriter is run on it, then cuDNN is probed:
+// Returns an allowed Decision iff cuDNN positively reports an execution plan
+// for the cuDNN fusion that RaggedDotFusionRewriter would build for
+// `ragged_dot` on `device_description`. The ragged dot is cloned into a scratch
+// module and RaggedDotFusionRewriter is run on it, then cuDNN is probed:
 //  - with a `stream_exec`, against its live cuDNN handle
 //    (CuDnnFusionCompiler::GetAvailablePlanCount);
 //  - without one (deviceless/AOT) and if the loaded cuDNN supports deviceless
