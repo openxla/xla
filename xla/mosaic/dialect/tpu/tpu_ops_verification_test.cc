@@ -1516,7 +1516,7 @@ TEST_F(TpuOpsVerificationTest, DmaTargetSemaphoreRequiredOnTc) {
               StatusIs(_, HasSubstr("DMA target semaphore must be specified")));
 }
 
-TEST_F(TpuOpsVerificationTest, DmaLocalSourceSemaphoreRejectedOnTc) {
+TEST_F(TpuOpsVerificationTest, DmaLocalSourceSemaphoreAllowedOnTc) {
   auto func_op =
       Create<func::FuncOp>("tc_kernel", builder().getFunctionType({}, {}));
   func_op->setAttr(TPUDialect::GetCoreTypeKey(),
@@ -1525,24 +1525,41 @@ TEST_F(TpuOpsVerificationTest, DmaLocalSourceSemaphoreRejectedOnTc) {
 
   auto src = AllocaI32({1024, 256, 128}, MemorySpace::kHbm);
   auto dst = AllocaI32({1024, 256, 128}, MemorySpace::kVmem);
-  auto sem = AllocaSemaphore();
+  auto src_sem = AllocaSemaphore();
+  auto dst_sem = AllocaSemaphore();
 
-  auto dma = Create<EnqueueDMAOp>(src, /*source_semaphore=*/sem, dst,
-                                  /*target_semaphore=*/sem,
+  auto dma = Create<EnqueueDMAOp>(src, /*source_semaphore=*/src_sem, dst,
+                                  /*target_semaphore=*/dst_sem,
                                   /*device_id=*/nullptr, /*core_id=*/nullptr);
-  ASSERT_THAT(
-      VerifyOp(dma),
-      StatusIs(_, HasSubstr("DMA destination device_id or core_id must be "
-                            "specified when source semaphore is specified")));
+  ASSERT_OK(VerifyOp(dma));
 
-  auto wait = Create<WaitDMAOp>(
-      src, /*source_semaphore=*/sem, dst, /*target_semaphore=*/sem,
+  auto wait_target = Create<WaitDMAOp>(
+      src, /*source_semaphore=*/src_sem, dst, /*target_semaphore=*/dst_sem,
       /*device_id=*/nullptr, /*core_id=*/nullptr, /*subcore_id=*/nullptr,
       /*priority=*/0, /*strict_ordering=*/false, /*wait_target=*/true);
-  ASSERT_THAT(
-      VerifyOp(wait),
-      StatusIs(_, HasSubstr("DMA destination device_id or core_id must be "
-                            "specified when source semaphore is specified")));
+  ASSERT_OK(VerifyOp(wait_target));
+
+  auto wait_source = Create<WaitDMAOp>(
+      src, /*source_semaphore=*/src_sem, dst, /*target_semaphore=*/dst_sem,
+      /*device_id=*/nullptr, /*core_id=*/nullptr, /*subcore_id=*/nullptr,
+      /*priority=*/0, /*strict_ordering=*/false, /*wait_target=*/false);
+  ASSERT_OK(VerifyOp(wait_source));
+
+  auto wait_source_missing_sem = Create<WaitDMAOp>(
+      src, /*source_semaphore=*/nullptr, dst, /*target_semaphore=*/dst_sem,
+      /*device_id=*/nullptr, /*core_id=*/nullptr, /*subcore_id=*/nullptr,
+      /*priority=*/0, /*strict_ordering=*/false, /*wait_target=*/false);
+  ASSERT_THAT(VerifyOp(wait_source_missing_sem),
+              StatusIs(_, HasSubstr("The awaited semaphore must be provided")));
+
+  auto device_id = Create<arith::ConstantIntOp>(0, 32).getResult();
+  auto core_id = Create<arith::ConstantIntOp>(0, 32).getResult();
+  auto remote_dma_missing_src_sem = Create<EnqueueDMAOp>(
+      src, /*source_semaphore=*/nullptr, dst, /*target_semaphore=*/dst_sem,
+      /*device_id=*/device_id, /*core_id=*/core_id);
+  ASSERT_THAT(VerifyOp(remote_dma_missing_src_sem),
+              StatusIs(_, HasSubstr("DMA source semaphore must be specified "
+                                    "when device_id or core_id is specified")));
 }
 
 TEST_F(TpuOpsVerificationTest, DmaRemoteTargetWaitAllowsNullSourceSemaphore) {
