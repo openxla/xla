@@ -54,6 +54,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
@@ -62,6 +64,7 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/stream_executor_util.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/matmul_indexing_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -72,8 +75,10 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/engine_options.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -141,15 +146,21 @@ inline std::optional<fe::PointwiseMode_t> GetElementwiseMode(
       return m::NEG;
     case HloOpcode::kNot:
       // Skip bitwise not
-      if (instruction.shape().element_type() == PRED) return m::LOGICAL_NOT;
+      if (instruction.shape().element_type() == PRED) {
+        return m::LOGICAL_NOT;
+      }
       return std::nullopt;
     case HloOpcode::kOr:
       // Skip bitwise or
-      if (instruction.shape().element_type() == PRED) return m::LOGICAL_OR;
+      if (instruction.shape().element_type() == PRED) {
+        return m::LOGICAL_OR;
+      }
       return std::nullopt;
     case HloOpcode::kAnd:
       // Skip bitwise and
-      if (instruction.shape().element_type() == PRED) return m::LOGICAL_AND;
+      if (instruction.shape().element_type() == PRED) {
+        return m::LOGICAL_AND;
+      }
       return std::nullopt;
     case HloOpcode::kPower:
       return m::POW;
@@ -1790,8 +1801,12 @@ absl::StatusOr<bool> CuDnnFusionCompiler::IsSupportedNonGemmFusion(
     return false;
   }
 
+  ABSL_ASSIGN_OR_RETURN(
+      se::dnn::DnnSupport * dnn_support,
+      ResolveCudnnSupport(hlo.GetModule()->config().debug_options(),
+                          stream_exec, gpu_device_info.dnn_version()));
   absl::StatusOr<int> plan_count_or =
-      GetAvailablePlanCount(stream_exec, gpu_device_info, hlo);
+      GetAvailablePlanCount(dnn_support, gpu_device_info, hlo);
   if (!plan_count_or.ok()) {
     VLOG(3) << "IsSupportedNonGemmFusion: " << hlo.name()
             << " is not eligible for a cuDNN fusion: "
