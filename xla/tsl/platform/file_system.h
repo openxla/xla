@@ -483,7 +483,7 @@ class RandomAccessFile {
   void operator=(const RandomAccessFile&) = delete;
 };
 
-/// \brief A file abstraction for sequential writing.
+/// \brief A file abstraction for writing, with optional seeking.
 ///
 /// The implementation must provide buffering since callers may append
 /// small fragments at a time to the file.
@@ -550,6 +550,18 @@ class WritableFile {
   virtual absl::Status Tell(int64_t* position) {
     *position = -1;
     return absl::UnimplementedError("This filesystem does not support Tell()");
+  }
+
+  /// \brief Seeks to the given non-negative byte position in the file.
+  ///
+  /// Subsequent writes start at `position`, allowing previously written data
+  /// to be overwritten. Seeking is not supported for files opened in append
+  /// mode.
+  ///
+  /// This is an optional operation, subclasses may choose to return
+  /// absl::UnimplementedError. The default implementation does so.
+  virtual absl::Status Seek(int64_t position) {
+    return absl::UnimplementedError("This filesystem does not support Seek()");
   }
 
  private:
