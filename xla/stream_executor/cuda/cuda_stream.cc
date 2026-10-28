@@ -187,6 +187,33 @@ absl::Status AsynchronousMemcpyD2D(StreamExecutor* executor,
   return absl::OkStatus();
 }
 
+absl::Status AsynchronousMemcpy2DD2D(StreamExecutor* executor,
+                                     CUdeviceptr gpu_dst, uint64_t dst_pitch,
+                                     CUdeviceptr gpu_src, uint64_t src_pitch,
+                                     uint64_t width, uint64_t height,
+                                     CUstream stream) {
+  if (width == 0 || height == 0) {
+    return absl::OkStatus();
+  }
+  std::unique_ptr<ActivateContext> activation = executor->Activate();
+  CUDA_MEMCPY2D copy = {};
+  copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+  copy.srcDevice = gpu_src;
+  copy.srcPitch = src_pitch;
+  copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+  copy.dstDevice = gpu_dst;
+  copy.dstPitch = dst_pitch;
+  copy.WidthInBytes = width;
+  copy.Height = height;
+  ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuMemcpy2DAsync(&copy, stream)));
+  VLOG(2) << "Successfully enqueued async 2D memcpy D2D of " << width << "x"
+          << height << " bytes (src_pitch=" << src_pitch
+          << ", dst_pitch=" << dst_pitch << ") from "
+          << absl::bit_cast<void*>(gpu_src) << " to "
+          << absl::bit_cast<void*>(gpu_dst) << " on stream " << stream;
+  return absl::OkStatus();
+}
+
 absl::Status SynchronizeStream(StreamExecutor* executor, CUstream stream) {
   TraceMe trace(
       [] { return TraceMeEncode("CudaStream::SynchronizeStream", {}); },
@@ -457,6 +484,17 @@ absl::Status CudaStream::Memcpy(DeviceAddressBase* gpu_dst,
   return AsynchronousMemcpyD2D(
       executor_, absl::bit_cast<CUdeviceptr>(gpu_dst->opaque()),
       absl::bit_cast<CUdeviceptr>(gpu_src.opaque()), size, stream_handle_);
+}
+
+absl::Status CudaStream::Memcpy2D(DeviceAddressBase* gpu_dst,
+                                  uint64_t dst_pitch,
+                                  const DeviceAddressBase& gpu_src,
+                                  uint64_t src_pitch, uint64_t width,
+                                  uint64_t height) {
+  return AsynchronousMemcpy2DD2D(
+      executor_, absl::bit_cast<CUdeviceptr>(gpu_dst->opaque()), dst_pitch,
+      absl::bit_cast<CUdeviceptr>(gpu_src.opaque()), src_pitch, width, height,
+      stream_handle_);
 }
 
 absl::Status CudaStream::Memcpy(DeviceAddressBase* gpu_dst,
