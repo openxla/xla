@@ -16,6 +16,10 @@ limitations under the License.
 #ifndef XLA_SERVICE_WHILE_LOOP_FUSIBLE_SINKING_H_
 #define XLA_SERVICE_WHILE_LOOP_FUSIBLE_SINKING_H_
 
+#include <cstdint>
+#include <utility>
+#include <vector>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/statusor.h"
@@ -54,6 +58,32 @@ namespace xla {
 // tuple trivially loop invariant.  WhileLoopSimplifier will later get rid of
 // `v`.
 //
+// With `sink_dynamic_slices_into_updates`, the sunk graph may also contain
+// dynamic slices whose sliced operand stays outside the loop (it becomes loop
+// state). This is done only when the body uses `v` solely as the update of
+// dynamic-update-slices (through reshapes or bitcasts), nothing else reads
+// `v`, and the loop disables hoisting (frontend attribute
+// `_xla_disable_loop_instr_hoisting`; loop invariant code motion would hoist
+// the slice back out of other loops). The slice then fuses into the update
+// instead of being materialized before the loop, which matters most for loops
+// that often run zero times. Other sunk graphs only add the operands of their
+// broadcasts to the loop state; this keeps the whole sliced operand live
+// through the loop instead of the slice, so it is opt in:
+//
+//   state = (..., dynamic-slice(big, i), ...)
+//   while (pred(state)) {
+//     (..., buf, v, ...) = state
+//     state = (..., dynamic-update-slice(buf, v, j), v, ...)
+//   }
+//
+// =>
+//
+//   state = (..., dynamic-slice(big, i), ..., big, i)
+//   while (pred(state)) {
+//     (..., buf, v, ..., big', i') = state
+//     state = (..., dynamic-update-slice(buf, dynamic-slice(big', i'), j), ...)
+//   }
+//
 // 2. Sinks constant-initialized value, i.e., broadcast(constant) into the while
 // body. The high level idea is that we don't want to leave any element of the
 // buffer after loop execution as undefined. Therefore, all the elements of the
@@ -87,8 +117,11 @@ namespace xla {
 //   will be fused.
 class WhileLoopFusibleSinking : public HloModulePass {
  public:
-  explicit WhileLoopFusibleSinking(bool sink_broadcast_of_constant = true)
-      : sink_broadcast_of_constant_(sink_broadcast_of_constant) {}
+  explicit WhileLoopFusibleSinking(
+      bool sink_broadcast_of_constant = true,
+      bool sink_dynamic_slices_into_updates = false)
+      : sink_broadcast_of_constant_(sink_broadcast_of_constant),
+        sink_dynamic_slices_into_updates_(sink_dynamic_slices_into_updates) {}
 
   ~WhileLoopFusibleSinking() override = default;
 
@@ -123,12 +156,30 @@ class WhileLoopFusibleSinking : public HloModulePass {
 
   // Creates a loop fusion instruction containing the computation to move into
   // the while loop to avoid conflicts with actual instruction fusion, the loop
-  // fusion will be defused.
-  bool IsSinkableFusion(HloInstruction* while_operand);
-  HloInstruction* CreateSinkableFusion(HloInstruction* while_operand);
+  // fusion will be defused. `IsSinkableFusion` collects the instructions to
+  // fuse in `nodes` and sets `has_slice` if one of them is a dynamic slice.
+  // For such a graph, pass `nodes` as `sliced_graph` to `CreateSinkableFusion`
+  // so that the sliced operand and computed start indices stay outside.
+  bool IsSinkableFusion(HloInstruction* while_operand,
+                        absl::flat_hash_set<const HloInstruction*>& nodes,
+                        bool& has_slice);
+  HloInstruction* CreateSinkableFusion(
+      HloInstruction* while_operand,
+      const absl::flat_hash_set<const HloInstruction*>* sliced_graph);
+  // Returns true if the graph `nodes` rooted at `value`, which has a dynamic
+  // slice, may sink into every loop that reads `value`; those loops, with the
+  // element each reads, go to `loops`.
+  bool CanSinkSlice(const HloInstruction* value,
+                    const absl::flat_hash_set<const HloInstruction*>& nodes,
+                    std::vector<std::pair<HloInstruction*, int64_t>>& loops);
 
   absl::flat_hash_map<HloComputation*, int> call_counts_;
+  // Loops that read a sunk dynamic slice through another loop's output, and
+  // the (loop, element) pairs that already sank one.
+  std::vector<HloInstruction*> slice_readers_;
+  absl::flat_hash_set<std::pair<const HloInstruction*, int64_t>> sunk_slices_;
   const bool sink_broadcast_of_constant_;
+  const bool sink_dynamic_slices_into_updates_;
 };
 }  // namespace xla
 

@@ -1345,6 +1345,83 @@ TEST_F(WhileTest, WhileWithWrappingS32InductionVarCompareAndTripCount) {
   EXPECT_TRUE(RunAndCompare(kHloString, ErrorSpec{0.0, 0.0}));
 }
 
+// Two loops that run zero or one times (one each, whatever `write` is) and
+// write the same slice of `ring` into `buf`. They disable hoisting, as JAX does
+// for such loops, so backends may sink the slice into them
+// (WhileLoopFusibleSinking).
+TEST_F(WhileTest, WhileWritesLoopInvariantSlice) {
+  static constexpr absl::string_view kHloString = R"hlo(
+  HloModule WhileWritesLoopInvariantSlice
+
+  body {
+    p = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    buf = f32[8,4,16] get-tuple-element(p), index=1
+    n = s32[] get-tuple-element(p), index=2
+    v = f32[4,16] get-tuple-element(p), index=3
+    slot = s32[] get-tuple-element(p), index=4
+    one = s32[] constant(1)
+    i1 = s32[] add(i, one)
+    update = f32[1,4,16] reshape(v)
+    zero = s32[] constant(0)
+    dus = f32[8,4,16] dynamic-update-slice(buf, update, slot, zero, zero)
+    ROOT t = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) tuple(i1, dus, n, v, slot)
+  }
+
+  cond {
+    p = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    n = s32[] get-tuple-element(p), index=2
+    ROOT lt = pred[] compare(i, n), direction=LT
+  }
+
+  body2 {
+    p = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    buf = f32[8,4,16] get-tuple-element(p), index=1
+    n = s32[] get-tuple-element(p), index=2
+    v = f32[4,16] get-tuple-element(p), index=3
+    slot = s32[] get-tuple-element(p), index=4
+    one = s32[] constant(1)
+    i1 = s32[] add(i, one)
+    update = f32[1,4,16] reshape(v)
+    zero = s32[] constant(0)
+    dus = f32[8,4,16] dynamic-update-slice(buf, update, slot, zero, zero)
+    ROOT t = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) tuple(i1, dus, n, v, slot)
+  }
+
+  cond2 {
+    p = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    n = s32[] get-tuple-element(p), index=2
+    ROOT lt = pred[] compare(i, n), direction=LT
+  }
+
+  ENTRY main {
+    ring = f32[2,4,16] parameter(0)
+    j = s32[] parameter(1)
+    buf = f32[8,4,16] parameter(2)
+    write = pred[] parameter(3)
+    slot = s32[] parameter(4)
+    zero = s32[] constant(0)
+    one = s32[] constant(1)
+    n = s32[] select(write, one, zero)
+    not_n = s32[] select(write, zero, one)
+    ds = f32[1,4,16] dynamic-slice(ring, j, zero, zero), dynamic_slice_sizes={1,4,16}
+    v = f32[4,16] reshape(ds)
+    init = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) tuple(zero, buf, n, v, slot)
+    w = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) while(init), condition=cond, body=body, frontend_attributes={_xla_disable_loop_instr_hoisting="true"}
+    init2 = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) tuple(zero, buf, not_n, v, slot)
+    w2 = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) while(init2), condition=cond2, body=body2, frontend_attributes={_xla_disable_loop_instr_hoisting="true"}
+    out = f32[8,4,16] get-tuple-element(w), index=1
+    out2 = f32[8,4,16] get-tuple-element(w2), index=1
+    ROOT r = (f32[8,4,16], f32[8,4,16]) tuple(out, out2)
+  }
+  )hlo";
+
+  EXPECT_TRUE(RunAndCompare(kHloString, ErrorSpec{0.0, 0.0}));
+}
+
 std::unique_ptr<PjRtClient> GetPjRtClientForTest() {
   CHECK(ShouldUsePjRt()) << "PjRt is required for while_test.";
   absl::StatusOr<std::unique_ptr<PjRtClient>> client =

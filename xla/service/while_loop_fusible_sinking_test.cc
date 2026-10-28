@@ -21,13 +21,22 @@ limitations under the License.
 #include <memory>
 #include <string>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_replace.h"
+#include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
+#include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/hlo_verifier.h"
+#include "xla/service/while_loop_simplifier.h"
 
 namespace xla {
 namespace {
@@ -568,6 +577,297 @@ ENTRY entry {
   xla::HloVerifier verifier(/*layout_sensitive=*/false,
                             /*allow_mixed_precision=*/false);
   EXPECT_OK(verifier.Run(module.get()).status());
+}
+
+// A loop that runs zero or one times and writes a slice of `ring` into `buf`,
+// as a conditional in place update is written in JAX, which disables hoisting
+// from such loops. The `$` placeholders vary per test.
+constexpr absl::string_view kSliceUpdateLoop = R"(
+HloModule SliceUpdateLoop
+
+body {
+  p = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  buf = f32[8,4,16] get-tuple-element(p), index=1
+  n = s32[] get-tuple-element(p), index=2
+  v = f32[4,16] get-tuple-element(p), index=3
+  slot = s32[] get-tuple-element(p), index=4
+  one = s32[] constant(1)
+  i1 = s32[] add(i, one)
+  $body_update
+  zero = s32[] constant(0)
+  dus = f32[8,4,16] dynamic-update-slice(buf, update, slot, zero, zero)
+  ROOT t = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) tuple(i1, dus, n, v, slot)
+}
+
+cond {
+  p = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  n = s32[] get-tuple-element(p), index=2
+  ROOT lt = pred[] compare(i, n), direction=LT
+}
+
+ENTRY entry {
+  ring = f32[2,4,16] parameter(0)
+  j = s32[] parameter(1)
+  buf = f32[8,4,16] parameter(2)
+  write = pred[] parameter(3)
+  slot = s32[] parameter(4)
+  zero = s32[] constant(0)
+  one = s32[] constant(1)
+  n = s32[] select(write, one, zero)
+  $prelude
+  ds = f32[1,4,16] dynamic-slice($sliced, j, zero, zero), dynamic_slice_sizes={1,4,16}
+  v = f32[4,16] reshape(ds)
+  init = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) tuple(zero, buf, n, v, slot)
+  w = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) while(init), condition=cond, body=body$attrs
+  $entry_root
+}
+)";
+
+constexpr absl::string_view kUpdateFromSlice =
+    "update = f32[1,4,16] reshape(v)";
+constexpr absl::string_view kReturnBuffer =
+    "ROOT out = f32[8,4,16] get-tuple-element(w), index=1";
+constexpr absl::string_view kNoHoisting =
+    ", frontend_attributes={_xla_disable_loop_instr_hoisting=\"true\"}";
+std::string SliceUpdateLoop(absl::string_view body_update,
+                            absl::string_view entry_root,
+                            absl::string_view attrs = kNoHoisting,
+                            absl::string_view sliced = "ring",
+                            absl::string_view prelude = "") {
+  return absl::StrReplaceAll(kSliceUpdateLoop, {{"$body_update", body_update},
+                                                {"$entry_root", entry_root},
+                                                {"$attrs", attrs},
+                                                {"$sliced", sliced},
+                                                {"$prelude", prelude}});
+}
+
+TEST_F(WhileLoopFusibleSinkingTest, SinkDynamicSliceIntoUpdate) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(
+                           SliceUpdateLoop(kUpdateFromSlice, kReturnBuffer)));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      WhileLoopFusibleSinking(/*sink_broadcast_of_constant=*/true,
+                              /*sink_dynamic_slices_into_updates=*/true)
+          .Run(module.get()));
+  ASSERT_TRUE(changed);
+
+  // The update now slices the ring buffer, which the loop carries.
+  HloComputation* body = module->GetComputationWithName("body");
+  EXPECT_THAT(body->root_instruction()->operand(1),
+              op::DynamicUpdateSlice(_,
+                                     op::Reshape(op::Reshape(op::DynamicSlice(
+                                         op::GetTupleElement(op::Parameter(0)),
+                                         op::GetTupleElement(op::Parameter(0)),
+                                         op::Constant(), op::Constant()))),
+                                     _, _, _));
+
+  // Once the old loop element is dead, nothing slices outside the loop.
+  ASSERT_OK(WhileLoopSimplifier().Run(module.get()).status());
+  ASSERT_OK(TupleSimplifier().Run(module.get()).status());
+  ASSERT_OK(HloDCE().Run(module.get()).status());
+  EXPECT_FALSE(absl::c_any_of(module->entry_computation()->instructions(),
+                              HloPredicateIsOp<HloOpcode::kDynamicSlice>));
+  EXPECT_OK(HloVerifier(/*layout_sensitive=*/false,
+                        /*allow_mixed_precision=*/false)
+                .Run(module.get())
+                .status());
+}
+
+// Two such loops write the same slice into two buffers; the second gets it
+// through the first loop's output.
+TEST_F(WhileLoopFusibleSinkingTest, SinkDynamicSliceIntoChainedUpdates) {
+  constexpr absl::string_view kLoop = R"(
+body$n {
+  p = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  buf = f32[8,4,16] get-tuple-element(p), index=1
+  n = s32[] get-tuple-element(p), index=2
+  v = f32[4,16] get-tuple-element(p), index=3
+  slot = s32[] get-tuple-element(p), index=4
+  one = s32[] constant(1)
+  i1 = s32[] add(i, one)
+  update = f32[1,4,16] reshape(v)
+  zero = s32[] constant(0)
+  dus = f32[8,4,16] dynamic-update-slice(buf, update, slot, zero, zero)
+  ROOT t = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) tuple(i1, dus, n, v, slot)
+}
+
+cond$n {
+  p = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  n = s32[] get-tuple-element(p), index=2
+  ROOT lt = pred[] compare(i, n), direction=LT
+}
+)";
+  const std::string hlo =
+      absl::StrCat("HloModule ChainedSliceUpdateLoops\n",
+                   absl::StrReplaceAll(kLoop, {{"$n", ""}}),
+                   absl::StrReplaceAll(kLoop, {{"$n", "2"}}),
+                   R"(
+ENTRY entry {
+  ring = f32[2,4,16] parameter(0)
+  j = s32[] parameter(1)
+  buf = f32[8,4,16] parameter(2)
+  write = pred[] parameter(3)
+  slot = s32[] parameter(4)
+  buf2 = f32[8,4,16] parameter(5)
+  zero = s32[] constant(0)
+  one = s32[] constant(1)
+  n = s32[] select(write, one, zero)
+  ds = f32[1,4,16] dynamic-slice(ring, j, zero, zero), dynamic_slice_sizes={1,4,16}
+  v = f32[4,16] reshape(ds)
+  init = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) tuple(zero, buf, n, v, slot)
+  w = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) while(init), condition=cond, body=body, frontend_attributes={_xla_disable_loop_instr_hoisting="true"}
+  v_out = f32[4,16] get-tuple-element(w), index=3
+  init2 = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) tuple(zero, buf2, n, v_out, slot)
+  w2 = (s32[], f32[8,4,16], s32[], f32[4,16], s32[]) while(init2), condition=cond2, body=body2, frontend_attributes={_xla_disable_loop_instr_hoisting="true"}
+  out = f32[8,4,16] get-tuple-element(w), index=1
+  out2 = f32[8,4,16] get-tuple-element(w2), index=1
+  ROOT r = (f32[8,4,16], f32[8,4,16]) tuple(out, out2)
+}
+)");
+  // Also with the first loop last in the instruction list, as after a pass
+  // rebuilt it, so the pass meets the reading loop first.
+  for (bool producer_last : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+    if (producer_last) {
+      HloComputation* entry = module->entry_computation();
+      HloInstruction* w = FindInstruction(module.get(), "w");
+      HloInstruction* rebuilt = entry->AddInstruction(w->Clone());
+      ASSERT_OK(w->ReplaceAllUsesWith(rebuilt));
+      ASSERT_OK(entry->RemoveInstruction(w));
+    }
+    ASSERT_OK_AND_ASSIGN(
+        bool changed,
+        WhileLoopFusibleSinking(/*sink_broadcast_of_constant=*/true,
+                                /*sink_dynamic_slices_into_updates=*/true)
+            .Run(module.get()));
+    ASSERT_TRUE(changed);
+    for (absl::string_view body : {"body", "body2"}) {
+      EXPECT_THAT(module->GetComputationWithName(body)
+                      ->root_instruction()
+                      ->operand(1)
+                      ->operand(1),
+                  op::Reshape(op::Reshape(op::DynamicSlice())))
+          << body << " " << producer_last;
+    }
+    ASSERT_OK(WhileLoopSimplifier().Run(module.get()).status());
+    ASSERT_OK(TupleSimplifier().Run(module.get()).status());
+    ASSERT_OK(HloDCE().Run(module.get()).status());
+    EXPECT_FALSE(absl::c_any_of(module->entry_computation()->instructions(),
+                                HloPredicateIsOp<HloOpcode::kDynamicSlice>))
+        << producer_last;
+  }
+}
+
+// The slice stays outside when a loop that reads it through the first loop's
+// output cannot take it: it computes on the value, or it uses the value only
+// as an update but writes another value in its place.
+TEST_F(WhileLoopFusibleSinkingTest, NoSinkDynamicSliceIfAReaderLoopCannot) {
+  for (absl::string_view body2 : {
+           R"(
+  neg = f32[4,16] negate(v)
+  ROOT t = (f32[4,16], f32[8,4,16]) tuple(neg, b))",
+           R"(
+  u = f32[1,4,16] reshape(v)
+  zero = s32[] constant(0)
+  dus = f32[8,4,16] dynamic-update-slice(b, u, zero, zero, zero)
+  fzero = f32[] constant(0)
+  other = f32[4,16] broadcast(fzero), dimensions={}
+  ROOT t = (f32[4,16], f32[8,4,16]) tuple(other, dus))",
+       }) {
+    const std::string hlo = absl::StrReplaceAll(
+        SliceUpdateLoop(
+            kUpdateFromSlice,
+            "v_out = f32[4,16] get-tuple-element(w), index=3\n"
+            "  init2 = (f32[4,16], f32[8,4,16]) tuple(v_out, buf)\n"
+            "  w2 = (f32[4,16], f32[8,4,16]) while(init2), condition=cond2, "
+            "body=body2, "
+            "frontend_attributes={_xla_disable_loop_instr_hoisting=\"true\"}\n"
+            "  out = f32[8,4,16] get-tuple-element(w), index=1\n"
+            "  out2 = f32[8,4,16] get-tuple-element(w2), index=1\n"
+            "  ROOT r = (f32[8,4,16], f32[8,4,16]) tuple(out, out2)"),
+        {{"HloModule SliceUpdateLoop\n",
+          absl::StrCat(R"(HloModule SliceUpdateLoop
+
+body2 {
+  p = (f32[4,16], f32[8,4,16]) parameter(0)
+  v = f32[4,16] get-tuple-element(p), index=0
+  b = f32[8,4,16] get-tuple-element(p), index=1)",
+                       body2, R"(
+}
+
+cond2 {
+  p = (f32[4,16], f32[8,4,16]) parameter(0)
+  ROOT f = pred[] constant(false)
+}
+)")}});
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+    ASSERT_OK_AND_ASSIGN(
+        bool changed,
+        WhileLoopFusibleSinking(/*sink_broadcast_of_constant=*/true,
+                                /*sink_dynamic_slices_into_updates=*/true)
+            .Run(module.get()));
+    EXPECT_FALSE(changed) << body2;
+  }
+}
+
+// The slice stays outside when something besides the update needs it (code
+// outside the loop reading the slice or its reshape, a computation in the
+// body, code after the loop), when the loop allows hoisting, which would move
+// the slice back out, or when sinking would make the loop carry more than the
+// slice: a sliced operand that is computed (not yet materialized) or that the
+// loop itself updates. The first case is the same loop where only the update
+// reads the slice.
+TEST_F(WhileLoopFusibleSinkingTest, SinkDynamicSliceOnlyIntoUpdates) {
+  struct Case {
+    absl::string_view body_update;
+    absl::string_view entry_root;
+    absl::string_view attrs;
+    absl::string_view sliced;
+    absl::string_view prelude;
+    bool sinks;
+  };
+  for (const Case& c : {
+           Case{kUpdateFromSlice, kReturnBuffer, kNoHoisting, "ring", "", true},
+           Case{kUpdateFromSlice,
+                "out = f32[8,4,16] get-tuple-element(w), index=1\n"
+                "  ROOT r = (f32[8,4,16], f32[4,16]) tuple(out, v)",
+                kNoHoisting, "ring", "", false},
+           Case{kUpdateFromSlice,
+                "out = f32[8,4,16] get-tuple-element(w), index=1\n"
+                "  ROOT r = (f32[8,4,16], f32[1,4,16]) tuple(out, ds)",
+                kNoHoisting, "ring", "", false},
+           Case{"doubled = f32[4,16] add(v, v)\n"
+                "  update = f32[1,4,16] reshape(doubled)",
+                kReturnBuffer, kNoHoisting, "ring", "", false},
+           Case{kUpdateFromSlice,
+                "out = f32[8,4,16] get-tuple-element(w), index=1\n"
+                "  last = f32[4,16] get-tuple-element(w), index=3\n"
+                "  ROOT r = (f32[8,4,16], f32[4,16]) tuple(out, last)",
+                kNoHoisting, "ring", "", false},
+           Case{kUpdateFromSlice, kReturnBuffer, "", "ring", "", false},
+           Case{kUpdateFromSlice, kReturnBuffer, kNoHoisting, "neg",
+                "neg = f32[2,4,16] negate(ring)", false},
+           Case{kUpdateFromSlice, kReturnBuffer, kNoHoisting, "buf", "", false},
+       }) {
+    ASSERT_OK_AND_ASSIGN(
+        auto module,
+        ParseAndReturnVerifiedModule(SliceUpdateLoop(
+            c.body_update, c.entry_root, c.attrs, c.sliced, c.prelude)));
+    ASSERT_OK_AND_ASSIGN(
+        bool changed,
+        WhileLoopFusibleSinking(/*sink_broadcast_of_constant=*/true,
+                                /*sink_dynamic_slices_into_updates=*/true)
+            .Run(module.get()));
+    EXPECT_EQ(changed, c.sinks) << c.body_update << "\n"
+                                << c.entry_root << "\n"
+                                << c.attrs << "\n"
+                                << c.prelude << " " << c.sliced;
+  }
 }
 
 }  // namespace
