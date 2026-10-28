@@ -1168,14 +1168,10 @@ message DebugOptions {
   optional int32 xla_gpu_experimental_scheduler_memory_fencing_slack_windows =
       527;
 
-  // Latency-hiding scheduler rule that, while an async operation is in flight,
-  // prefers compute that advances the release of a live buffer of at least
-  // this many bytes over the generic latency heuristics. Negative values
-  // disable the rule. 0 derives the threshold automatically as 1% of the
-  // scheduler memory limit. Positive values are capped at the scheduler memory
-  // limit.
-  optional int64
-      xla_gpu_experimental_scheduler_large_buffer_release_threshold_bytes = 563;
+  // Enables a latency-hiding scheduler preference for compute that advances
+  // the release of more live buffer bytes while an async operation is in
+  // flight. Considers buffers of all sizes. Disabled by default.
+  optional bool xla_gpu_experimental_enable_scheduler_buffer_release = 563;
 
   // This controls how many in-flight collectives latency hiding scheduler
   // can schedule. Example usage:

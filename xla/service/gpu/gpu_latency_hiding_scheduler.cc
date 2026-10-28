@@ -519,9 +519,9 @@ GpuD2DOverlapSchedulingRule(DefaultSchedulerCore::ScheduleCandidate& a,
       "kPreferComputeForD2DMemcpyOverlap");
 }
 
-int64_t GpuLargeLiveBufferBytesReleasedBy(
+int64_t GpuLiveBufferBytesReleasedBy(
     const DefaultSchedulerCore::SchedulingState& sched_state,
-    const HloGraphNode& node, int64_t min_buffer_bytes) {
+    const HloGraphNode& node) {
   const MemoryPressureMetadata* metadata = sched_state.pressure_metadata;
   if (metadata == nullptr) {
     return 0;
@@ -534,11 +534,7 @@ int64_t GpuLargeLiveBufferBytesReleasedBy(
       if (!tracker.BufferIsLive(id)) {
         continue;
       }
-      const int64_t size =
-          metadata->buffer_tracker().GetBufferInfo(id).buffer_size;
-      if (size >= min_buffer_bytes) {
-        bytes += size;
-      }
+      bytes += metadata->buffer_tracker().GetBufferInfo(id).buffer_size;
     }
   };
   // Buffers that die once this node is scheduled.
@@ -553,11 +549,9 @@ int64_t GpuLargeLiveBufferBytesReleasedBy(
 }
 
 std::optional<DefaultSchedulerCore::CandidateResult>
-GpuLargeBufferReleaseSchedulingRule(DefaultSchedulerCore::ScheduleCandidate& a,
-                                    DefaultSchedulerCore::ScheduleCandidate& b,
-                                    int64_t min_buffer_bytes) {
-  if (min_buffer_bytes <= 0 || a.node == nullptr || b.node == nullptr ||
-      a.scheduling_state == nullptr ||
+GpuBufferReleaseSchedulingRule(DefaultSchedulerCore::ScheduleCandidate& a,
+                               DefaultSchedulerCore::ScheduleCandidate& b) {
+  if (a.node == nullptr || b.node == nullptr || a.scheduling_state == nullptr ||
       a.scheduling_state != b.scheduling_state) {
     return std::nullopt;
   }
@@ -566,9 +560,8 @@ GpuLargeBufferReleaseSchedulingRule(DefaultSchedulerCore::ScheduleCandidate& a,
   if (sched_state.pressure_metadata == nullptr) {
     return std::nullopt;
   }
-  // Only reorder compute that would be overlapped with an in-flight async
-  // operation anyway, so the rule never takes work away from a later overlap
-  // window.
+  // Restrict the preference to compute selected while an async operation is
+  // in flight. This does not guarantee unchanged overlap in later intervals.
   const bool async_in_flight = absl::c_any_of(
       sched_state.resource_occupiers_in_flight,
       [](const auto& occupiers) { return !occupiers.second.empty(); });
@@ -583,10 +576,8 @@ GpuLargeBufferReleaseSchedulingRule(DefaultSchedulerCore::ScheduleCandidate& a,
     return std::nullopt;
   }
 
-  const int64_t a_bytes =
-      GpuLargeLiveBufferBytesReleasedBy(sched_state, *a.node, min_buffer_bytes);
-  const int64_t b_bytes =
-      GpuLargeLiveBufferBytesReleasedBy(sched_state, *b.node, min_buffer_bytes);
+  const int64_t a_bytes = GpuLiveBufferBytesReleasedBy(sched_state, *a.node);
+  const int64_t b_bytes = GpuLiveBufferBytesReleasedBy(sched_state, *b.node);
   if (a_bytes == b_bytes) {
     return std::nullopt;
   }
@@ -611,8 +602,7 @@ GpuLargeBufferReleaseSchedulingRule(DefaultSchedulerCore::ScheduleCandidate& a,
       return std::nullopt;
     }
   }
-  return DefaultSchedulerCore::CandidateResult{preferred,
-                                               "kReleaseLargeBuffer"};
+  return DefaultSchedulerCore::CandidateResult{preferred, "kReleaseBuffer"};
 }
 
 //===----------------------------------------------------------------------===//

@@ -245,41 +245,47 @@ TEST_F(GpuHloScheduleFencingTest, MemoryFencingDisabledOmitsFence) {
   EXPECT_THAT(wg->control_successors(), Not(Contains(cp2s)));
 }
 
+namespace {
+
 // `big` is a large buffer with two consumers. The chain feeding `w` from the
 // collective-permute result is favored by the generic latency-hiding
 // heuristics and is placed between the two consumers, which keeps `big` live
-// across it. The large-buffer release rule prefers finishing the consumers
+// across it. The buffer release rule prefers finishing the consumers
 // and the producer first while the collective is in flight.
-constexpr absl::string_view kLargeBufferReleaseHloText = R"(
+constexpr absl::string_view kBufferReleaseHloText = R"(
 HloModule m
 
 ENTRY entry {
-  p0 = f32[1024,1024]{1,0} parameter(0)
-  p1 = f32[1024]{0} parameter(1)
-  p2 = f32[1024]{0} parameter(2)
-  big = f32[1024,1024]{1,0} add(p0, p0)
-  a = f32[1024,1024]{1,0} multiply(big, big)
-  cps = (f32[1024]{0}, f32[1024]{0}) collective-permute-start(p1), source_target_pairs={{0,1},{1,0}}
-  cpd = f32[1024]{0} collective-permute-done(cps)
-  c = f32[1024]{0} add(cpd, p1)
-  y0 = f32[1024]{0} add(cpd, p2)
-  y1 = f32[1024]{0} negate(y0)
-  y2 = f32[1024]{0} negate(y1)
-  ym = f32[1024,16]{1,0} broadcast(y2), dimensions={0}
-  w = f32[1024,16]{1,0} dot(big, ym), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-  ROOT r = (f32[1024,1024]{1,0}, f32[1024,16]{1,0}, f32[1024]{0}) tuple(a, w, c)
+  p0 = f32[$0,$0]{1,0} parameter(0)
+  p1 = f32[$0]{0} parameter(1)
+  p2 = f32[$0]{0} parameter(2)
+  big = f32[$0,$0]{1,0} add(p0, p0)
+  a = f32[$0,$0]{1,0} multiply(big, big)
+  cps = (f32[$0]{0}, f32[$0]{0}) collective-permute-start(p1), source_target_pairs={{0,1},{1,0}}
+  cpd = f32[$0]{0} collective-permute-done(cps)
+  c = f32[$0]{0} add(cpd, p1)
+  y0 = f32[$0]{0} add(cpd, p2)
+  y1 = f32[$0]{0} negate(y0)
+  y2 = f32[$0]{0} negate(y1)
+  ym = f32[$0,16]{1,0} broadcast(y2), dimensions={0}
+  w = f32[$0,16]{1,0} dot(big, ym), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT r = (f32[$0,$0]{1,0}, f32[$0,16]{1,0}, f32[$0]{0}) tuple(a, w, c)
 })";
 
-class GpuHloScheduleLargeBufferReleaseTest : public GpuHloScheduleTest {
+class GpuHloScheduleBufferReleaseTest
+    : public GpuHloScheduleTest,
+      public ::testing::WithParamInterface<int64_t> {
  protected:
-  HloModuleConfig GetReleaseModuleConfig(int64_t release_threshold_bytes) {
+  HloModuleConfig GetReleaseModuleConfig(
+      std::optional<bool> enable_buffer_release) {
     TestConfig test_config;
     test_config.enable_latency_hiding_scheduler = true;
     HloModuleConfig config = GetModuleConfig(test_config);
     DebugOptions options = config.debug_options();
-    options
-        .set_xla_gpu_experimental_scheduler_large_buffer_release_threshold_bytes(
-            release_threshold_bytes);
+    if (enable_buffer_release.has_value()) {
+      options.set_xla_gpu_experimental_enable_scheduler_buffer_release(
+          *enable_buffer_release);
+    }
     config.set_debug_options(options);
     config.set_replica_count(2);
     return config;
@@ -292,19 +298,19 @@ class GpuHloScheduleLargeBufferReleaseTest : public GpuHloScheduleTest {
     int64_t a;
     int64_t w;
   };
-  absl::StatusOr<Positions> SchedulePositions(int64_t release_threshold_bytes) {
+  absl::StatusOr<Positions> SchedulePositions(
+      std::optional<bool> enable_buffer_release) {
     ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<HloModule> module,
         ParseAndReturnVerifiedModule(
-            kLargeBufferReleaseHloText,
-            GetReleaseModuleConfig(release_threshold_bytes)));
+            absl::Substitute(kBufferReleaseHloText, GetParam()),
+            GetReleaseModuleConfig(enable_buffer_release)));
     ABSL_RETURN_IF_ERROR(ScheduleGpuModule(module.get()).status());
     HloComputation* entry = module->entry_computation();
     const std::vector<HloInstruction*>& sequence =
         module->schedule().sequence(entry).instructions();
     auto position = [&](absl::string_view name) -> int64_t {
-      const HloInstruction* instruction =
-          entry->GetInstructionWithName(name);
+      const HloInstruction* instruction = entry->GetInstructionWithName(name);
       return std::distance(
           sequence.begin(),
           std::find(sequence.begin(), sequence.end(), instruction));
@@ -313,26 +319,42 @@ class GpuHloScheduleLargeBufferReleaseTest : public GpuHloScheduleTest {
   }
 };
 
-TEST_F(GpuHloScheduleLargeBufferReleaseTest,
+TEST_P(GpuHloScheduleBufferReleaseTest,
        ReleaseRuleSchedulesConsumersRightAfterProducer) {
   ASSERT_OK_AND_ASSIGN(Positions positions,
-                       SchedulePositions(/*release_threshold_bytes=*/1 << 20));
+                       SchedulePositions(/*enable_buffer_release=*/true));
   // Both consumers immediately follow the producer, so `big` dies as soon as
   // possible.
   EXPECT_EQ(std::min(positions.a, positions.w), positions.big + 1);
   EXPECT_EQ(std::max(positions.a, positions.w), positions.big + 2);
 }
 
-TEST_F(GpuHloScheduleLargeBufferReleaseTest,
-       ReleaseRuleDisabledKeepsGenericOrder) {
+TEST_P(GpuHloScheduleBufferReleaseTest, ReleaseRuleDisabledKeepsGenericOrder) {
   ASSERT_OK_AND_ASSIGN(Positions positions,
-                       SchedulePositions(/*release_threshold_bytes=*/-1));
+                       SchedulePositions(/*enable_buffer_release=*/false));
   // Without the rule the generic heuristics place the `y` chain between the
   // two consumers of `big`.
-  EXPECT_GT(std::max(positions.a, positions.w) -
-                std::min(positions.a, positions.w),
-            1);
+  EXPECT_GT(
+      std::max(positions.a, positions.w) - std::min(positions.a, positions.w),
+      1);
 }
+
+TEST_P(GpuHloScheduleBufferReleaseTest,
+       ReleaseRuleDisabledByDefaultKeepsGenericOrder) {
+  ASSERT_OK_AND_ASSIGN(
+      Positions positions,
+      SchedulePositions(/*enable_buffer_release=*/std::nullopt));
+  EXPECT_GT(
+      std::max(positions.a, positions.w) - std::min(positions.a, positions.w),
+      1);
+}
+
+// Cover a 16 KiB buffer, below the former 1 MiB benchmark threshold, and the
+// original 4 MiB buffer. The enabled rule must consider both sizes.
+INSTANTIATE_TEST_SUITE_P(BufferSizes, GpuHloScheduleBufferReleaseTest,
+                         ::testing::Values(64, 1024));
+
+}  // namespace
 
 // Test of a single stream, where data dependencies fully determine the
 // execution order.

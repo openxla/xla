@@ -544,8 +544,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_selective_memcpy_overlap(false);
   opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(-1);
-  opts.set_xla_gpu_experimental_scheduler_large_buffer_release_threshold_bytes(
-      -1);
+  opts.set_xla_gpu_experimental_enable_scheduler_buffer_release(false);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows(1);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
@@ -3485,18 +3484,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "scheduler memory limit, and positive values are capped at the scheduler "
       "memory limit."));
   flag_list->push_back(tsl::Flag(
-      "xla_gpu_experimental_scheduler_large_buffer_release_threshold_bytes",
-      int64_setter_for(
+      "xla_gpu_experimental_enable_scheduler_buffer_release",
+      bool_setter_for(
           &DebugOptions::
-              // NOLINTNEXTLINE
-          set_xla_gpu_experimental_scheduler_large_buffer_release_threshold_bytes),
-      debug_options
-          ->xla_gpu_experimental_scheduler_large_buffer_release_threshold_bytes(),
+              set_xla_gpu_experimental_enable_scheduler_buffer_release),
+      debug_options->xla_gpu_experimental_enable_scheduler_buffer_release(),
       "While an async operation is in flight, the latency hiding scheduler "
-      "prefers compute that advances the release of a live buffer of at least "
-      "this size in bytes. -1 disables the rule, 0 uses 1% of the scheduler "
-      "memory limit, and positive values are capped at the scheduler memory "
-      "limit."));
+      "prefers compute that advances the release of more live buffer bytes, "
+      "considering buffers of all sizes. Disabled by default."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_scheduler_memory_fencing_slack_windows",
       int32_setter_for(

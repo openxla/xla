@@ -724,20 +724,11 @@ absl::Status RunLatencyHidingSchedulerPasses(
           module, std::move(estimator), std::move(async_tracker), alias_info,
           shape_size_in_bytes);
 
-  const int64_t configured_release_threshold_bytes =
-      // NOLINTNEXTLINE
-      options.has_xla_gpu_experimental_scheduler_large_buffer_release_threshold_bytes()
-          ? options
-                .xla_gpu_experimental_scheduler_large_buffer_release_threshold_bytes()
-          : -1;
-  const int64_t large_buffer_release_threshold_bytes =
-      GetSchedulerMemoryFencingThresholdBytes(
-          configured_release_threshold_bytes, memory_limit)
-          .value_or(-1);
+  const bool enable_buffer_release =
+      options.xla_gpu_experimental_enable_scheduler_buffer_release();
 
   auto gpu_early_scheduling_rule =
-      [&prioritize_compute_over_async_start, &config,
-       large_buffer_release_threshold_bytes](
+      [&prioritize_compute_over_async_start, &config, enable_buffer_release](
           DefaultSchedulerCore::ScheduleCandidate& a,
           DefaultSchedulerCore::ScheduleCandidate& b)
       -> std::optional<DefaultSchedulerCore::CandidateResult> {
@@ -795,10 +786,12 @@ absl::Status RunLatencyHidingSchedulerPasses(
       }
     }
 
-    // Shorten the lifetime of large buffers with compute that is overlapped
-    // with an in-flight async operation anyway. Disabled unless configured.
-    return GpuLargeBufferReleaseSchedulingRule(
-        a, b, large_buffer_release_threshold_bytes);
+    // Prefer compute that advances buffer release inside an open async
+    // interval. Disabled unless configured.
+    if (enable_buffer_release) {
+      return GpuBufferReleaseSchedulingRule(a, b);
+    }
+    return std::nullopt;
   };
 
   DefaultSchedulerCore::OverlapLimitRule overlap_limit_rule;
