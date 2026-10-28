@@ -6630,6 +6630,79 @@ TEST_F(HloVerifierTest, VerifyFanInDuplicateOperands) {
               HasSubstr("custom-call to FanIn must have distinct operands"));
 }
 
+TEST_F(HloVerifierTest, VerifyCrossBufferSliceCustomFusionOnStreamsValid) {
+  // Verifies that HloVerifier accepts a valid two-level cross-buffer slice
+  // custom fusion (wrapping an inner dynamic-update-slice custom fusion)
+  // operating in-place on a FanOut stream buffer before joining at FanIn.
+  const char* const hlo = R"(
+  HloModule module
+
+  inner_dus_comp {
+    dst_p = b(s32[4]) parameter(0)
+    src_p = s32[2] parameter(1)
+    zero = s32[] constant(0)
+    slice = s32[2] dynamic-slice(src_p, zero), dynamic_slice_sizes={2}
+    ROOT dus = b(s32[4]) dynamic-update-slice(dst_p, slice, zero)
+  }
+
+  outer_scatter_comp {
+    outer_dst = b(s32[4]) parameter(0)
+    outer_src = s32[2] parameter(1)
+    ROOT inner_fusion = b(s32[4]) fusion(outer_dst, outer_src), kind=kCustom,
+      calls=inner_dus_comp
+  }
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    p1 = s32[2] parameter(1)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    fan_out = (b(s32[4]), b(s32[4])) custom-call(b0),
+      custom_call_target="FanOut", output_to_operand_aliasing={{0}: (0, {})}
+    anchor = b(s32[4]) get-tuple-element(fan_out), index=0
+    stream1 = b(s32[4]) get-tuple-element(fan_out), index=1
+    scatter_fusion = b(s32[4]) fusion(stream1, p1), kind=kCustom,
+      calls=outer_scatter_comp, output_to_operand_aliasing={{}: (0, {})}
+    fan_in = b(s32[4]) custom-call(anchor, scatter_fusion),
+      custom_call_target="FanIn", output_to_operand_aliasing={{}: (0, {})}
+    ROOT v = s32[4] custom-call(fan_in), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()), StatusIs(absl::StatusCode::kOk));
+}
+
+TEST_F(HloVerifierTest, VerifyNonCrossBufferSliceFusionWithBuffersRejected) {
+  // Verifies that HloVerifier rejects a custom fusion operating on buffer
+  // shapes when it is not a recognized cross-buffer slice custom fusion.
+  const char* const hlo = R"(
+  HloModule module
+
+  bad_fusion_comp {
+    dst_p = b(s32[4]) parameter(0)
+    ROOT copy_b = b(s32[4]) custom-call(dst_p), custom_call_target="AddOne",
+      output_to_operand_aliasing={{}: (0, {})}
+  }
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    bad_fusion = b(s32[4]) fusion(b0), kind=kCustom,
+      calls=bad_fusion_comp, output_to_operand_aliasing={{}: (0, {})}
+    ROOT v = s32[4] custom-call(bad_fusion), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(
+      status.message(),
+      HasSubstr("Seen buffers while buffers aren't allowed in this context"));
+}
+
 TEST_F(HloVerifierTest, Scan) {
   const char* const hlo_string = R"(
   HloModule scan_module
@@ -7473,6 +7546,37 @@ ENTRY Entry (p0: f32[100], update: f32[10], idx: s32[]) -> f32[100] {
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
   EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HloVerifierTest, FmaValidAndInvalid) {
+  const char* const kValidHlo = R"(
+  HloModule FmaValid
+  ENTRY Entry {
+    a = f32[4] parameter(0)
+    b = f32[4] parameter(1)
+    c = f32[4] parameter(2)
+    ROOT f = f32[4] fma(a, b, c)
+  })";
+  ASSERT_OK_AND_ASSIGN(auto valid_module,
+                       ParseAndReturnUnverifiedModule(kValidHlo));
+  EXPECT_OK(verifier().Run(valid_module.get()).status());
+
+  auto invalid_module = CreateUnverifiedModule();
+  HloComputation::Builder builder("FmaInvalidInt");
+  Shape s32_shape = ShapeUtil::MakeShape(S32, {4});
+  auto p0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, s32_shape, "p0"));
+  auto p1 = builder.AddInstruction(
+      HloInstruction::CreateParameter(1, s32_shape, "p1"));
+  auto p2 = builder.AddInstruction(
+      HloInstruction::CreateParameter(2, s32_shape, "p2"));
+  builder.AddInstruction(
+      HloInstruction::CreateTernary(s32_shape, HloOpcode::kFma, p0, p1, p2));
+  invalid_module->AddEntryComputation(builder.Build());
+  EXPECT_THAT(verifier().Run(invalid_module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Expected element type in shape to be "
+                                 "floating for fma operation; got S32.")));
 }
 
 }  // namespace

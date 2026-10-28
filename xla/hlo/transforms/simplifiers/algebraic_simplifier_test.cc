@@ -1407,6 +1407,51 @@ TEST_F(AlgebraicSimplifierTest, SelectPredPred2) {
               GmockMatch(m::Not(m::Parameter(0))));
 }
 
+TEST_F(AlgebraicSimplifierTest, SelectPredPredScalarCondition) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+ENTRY main {
+  p = pred[] parameter(0)
+  on_true = pred[2,3] constant({{true, true, true}, {true, true, true}})
+  on_false = pred[2,3] constant({{false, false, false}, {false, false, false}})
+  ROOT select = pred[2,3] select(p, on_true, on_false)
+})"));
+  const Shape result_shape =
+      module->entry_computation()->root_instruction()->shape();
+
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloPass(AlgebraicSimplifier(default_options_), module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(
+          m::Broadcast(m::Parameter(0)).WithShapeEqualTo(&result_shape)));
+  EXPECT_THAT(verifier().Run(module.get()), absl_testing::IsOk());
+}
+
+TEST_F(AlgebraicSimplifierTest, SelectPredPredScalarConditionInverted) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+ENTRY main {
+  p = pred[] parameter(0)
+  on_true = pred[2,3] constant({{false, false, false}, {false, false, false}})
+  on_false = pred[2,3] constant({{true, true, true}, {true, true, true}})
+  ROOT select = pred[2,3] select(p, on_true, on_false)
+})"));
+  const Shape result_shape =
+      module->entry_computation()->root_instruction()->shape();
+
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloPass(AlgebraicSimplifier(default_options_), module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Broadcast(m::Not(m::Parameter(0)))
+                             .WithShapeEqualTo(&result_shape)));
+  EXPECT_THAT(verifier().Run(module.get()), absl_testing::IsOk());
+}
+
 // select(compare(a, b, GT/GE), a, b) => or(a, b),   a,b ∈ PRED
 TEST_F(AlgebraicSimplifierTest, SelectGtCompare) {
   for (const auto cmp_dir : {"GT", "GE"}) {
@@ -13391,6 +13436,35 @@ TEST_F(AlgebraicSimplifierTest,
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   // b1 has a control dep, we don't expect the graph to change.
   ASSERT_FALSE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       DoNotSimplifyRedundantBitcastWithControlSuccessor) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule m
+
+    ENTRY test {
+      p0 = s32[10] parameter(0)
+      p1 = s32[10] parameter(1)
+      p2 = s32[10] parameter(2)
+      b0 = s32[1, 10] bitcast(p0)
+      b1 = s32[1, 1, 10] bitcast(b0)
+      add0 = s32[10] add(p1, p2), control-predecessors={b1}
+      ROOT t = (s32[1, 1, 10], s32[10]) tuple(b1, add0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  // Folding b1 into b0 would drop the b1 -> add0 ordering edge.
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       AlgebraicSimplifier(default_options_).Run(m.get()));
+  EXPECT_FALSE(changed);
+  ASSERT_OK(verifier().Run(m.get()).status());
+  HloInstruction* b1 = FindInstruction(m.get(), "b1");
+  HloInstruction* add0 = FindInstruction(m.get(), "add0");
+  ASSERT_NE(b1, nullptr);
+  EXPECT_THAT(b1, GmockMatch(m::Bitcast(m::Bitcast(m::Parameter(0)))));
+  EXPECT_THAT(b1->control_successors(), ElementsAre(add0));
+  EXPECT_EQ(m->entry_computation()->root_instruction()->operand(0), b1);
 }
 
 TEST_F(AlgebraicSimplifierTest, SimplifyOptimizationBarrier) {

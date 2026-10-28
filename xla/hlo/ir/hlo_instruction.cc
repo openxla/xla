@@ -67,7 +67,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_payload_deduplicator.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-#include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/ir/ptrvec.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/parser/hlo_lexer.h"
@@ -713,6 +712,14 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
             << instruction->shape().ToString(true) << " vs "
             << shape.ToString(true);
         *instruction->mutable_shape() = shape;
+      } else if (prohibit_empty_literal) {
+        // A constant instruction with no literal is only valid when the
+        // caller explicitly opts out of this check (e.g. tooling that
+        // intentionally dumps a module with oversized constants dropped).
+        // Without this, HloEvaluator::GetEvaluatedLiteralFor() would later
+        // dereference a null literal_ and crash (b/110214922).
+        return absl::InvalidArgumentError(
+            "Constant instruction proto has no literal");
       } else {
         instruction = std::make_unique<HloConstantInstruction>(shape);
       }
@@ -1258,24 +1265,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       break;
     }
     case HloOpcode::kDomain: {
-      std::shared_ptr<const HloSharding> entry_hlo_sharding;
-      std::shared_ptr<const HloSharding> exit_hlo_sharding;
-      if (proto.has_domain_entry_sharding()) {
-        ABSL_ASSIGN_OR_RETURN(
-            HloSharding sharding,
-            HloSharding::FromProto(proto.domain_entry_sharding()));
-        entry_hlo_sharding = std::make_shared<const HloSharding>(sharding);
-      }
-      if (proto.has_domain_exit_sharding()) {
-        ABSL_ASSIGN_OR_RETURN(
-            HloSharding sharding,
-            HloSharding::FromProto(proto.domain_exit_sharding()));
-        exit_hlo_sharding = std::make_shared<const HloSharding>(sharding);
-      }
-      instruction = std::make_unique<HloDomainInstruction>(
-          shape, operands(0),
-          std::make_unique<ShardingMetadata>(entry_hlo_sharding),
-          std::make_unique<ShardingMetadata>(exit_hlo_sharding));
+      instruction = std::make_unique<HloDomainInstruction>(shape, operands(0),
+                                                           nullptr, nullptr);
       break;
     }
     case HloOpcode::kGetDimensionSize:
@@ -1650,6 +1641,7 @@ HloInstruction::CreateRngBitGenerator(const Shape& shape, HloInstruction* state,
   // instructions with no auxiliary fields.
   switch (opcode) {
     case HloOpcode::kClamp:
+    case HloOpcode::kFma:
     case HloOpcode::kSelect:
       break;
     default:
@@ -2972,6 +2964,7 @@ std::unique_ptr<HloInstruction> HloInstruction::CloneWithNewOperands(
       break;
     // Ternary ops.
     case HloOpcode::kClamp:
+    case HloOpcode::kFma:
     case HloOpcode::kSelect:
       CHECK_EQ(new_operands.size(), 3);
       clone = CreateTernary(shape, opcode_, new_operands[0], new_operands[1],
@@ -3461,6 +3454,7 @@ bool HloInstruction::IdenticalSlowPath(
     case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
+    case HloOpcode::kFma:
     case HloOpcode::kImag:
     case HloOpcode::kIsFinite:
     case HloOpcode::kLog:
@@ -4163,6 +4157,7 @@ bool HloInstruction::IsOpElementwise(HloOpcode opcode) {
     // Ternary elementwise operations.
     case HloOpcode::kSelect:
     case HloOpcode::kClamp:
+    case HloOpcode::kFma:
       return true;
 
     default:
@@ -5076,6 +5071,8 @@ absl::Status HloInstruction::Visit(
         return visitor->HandleMap(this);
       case HloOpcode::kClamp:
         return visitor->HandleClamp(this);
+      case HloOpcode::kFma:
+        return visitor->HandleFma(this);
       case HloOpcode::kReduce:
         return visitor->HandleReduce(this);
       case HloOpcode::kScan:

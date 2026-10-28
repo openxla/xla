@@ -1129,7 +1129,8 @@ message DebugOptions {
   optional int32 xla_gpu_experimental_force_split_k = 472;
 
   // Enable GEMM fusion v2 pass for building Triton fusions.
-  optional bool xla_gpu_experimental_gemm_fusion_v2 = 475;
+  // TODO(b/487920266): Remove this flag entirely.
+  optional bool xla_gpu_experimental_gemm_fusion_v2 = 475 [deprecated = true];
 
   // Controls max unroll factor on Blackwell architectures. This is also
   // guarded with a heuristic, but the heuristic is not perfect, so changing
@@ -1978,14 +1979,18 @@ message DebugOptions {
   // when the cuDNN version changes).
   optional bool xla_autotune_cache_require_strict_codegen_match = 559;
 
+  // Lowers eligible associative kScan instructions to Triton fusions
+  // (ScanRewriterTriton).
+  optional bool xla_gpu_experimental_enable_triton_scan = 562;
+
   // Weight applied to the (hbm_bw / fabric_bw) ratio when the
   // ragged-all-to-all device kernel scores remote-peer copies for per-CTA
   // work assignment (0.0-1.0). Higher value => remote writes score higher
   // cost => more CTAs are routed to remote work. Default 0.22 was fitted
   // empirically on GB200; values outside (0, 1] fall back to the default.
-  optional float xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight = 562;
+  optional float xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight = 563;
 
-  // Next id: 563
+  // Next id: 564
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

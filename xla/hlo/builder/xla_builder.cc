@@ -400,19 +400,6 @@ XlaOp XlaBuilderFriend::BuildBitcast(XlaBuilder* builder, XlaOp operand,
   });
 }
 
-XlaOp XlaBuilderFriend::BuildDomain(XlaBuilder* builder, XlaOp operand,
-                                    const OpSharding entry,
-                                    const OpSharding exit, const Shape& shape) {
-  return builder->ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
-    HloInstructionProto instr;
-    *instr.mutable_domain_entry_sharding() = entry;
-    *instr.mutable_domain_exit_sharding() = exit;
-    *instr.mutable_shape() = shape.ToProto();
-    return builder->AddInstruction(std::move(instr), HloOpcode::kDomain,
-                                   {operand});
-  });
-}
-
 XlaOp XlaBuilderFriend::BuildPartitionId(XlaBuilder* builder,
                                          const Shape& shape) {
   return builder->ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
@@ -2750,6 +2737,10 @@ absl::StatusOr<XlaOp> XlaBuilder::CholeskyInternal(const Shape& shape, XlaOp a,
   *instr.mutable_shape() = shape.ToProto();
 
   return AddInstruction(std::move(instr), HloOpcode::kCholesky, {a});
+}
+
+XlaOp XlaBuilder::Fma(XlaOp a, XlaOp b, XlaOp c) {
+  return TernaryOp(HloOpcode::kFma, a, b, c);
 }
 
 XlaOp XlaBuilder::Infeed(const Shape& shape, const std::string& config) {
@@ -6901,6 +6892,8 @@ XlaOp TopK(XlaOp operand, int64_t k, bool largest, bool is_stable) {
 XlaOp Clamp(const XlaOp min, const XlaOp operand, const XlaOp max) {
   return min.builder()->Clamp(min, operand, max);
 }
+
+XlaOp Fma(XlaOp a, XlaOp b, XlaOp c) { return a.builder()->Fma(a, b, c); }
 
 XlaOp Map(XlaBuilder* builder, absl::Span<const XlaOp> operands,
           XlaComputationId computation, absl::Span<const int64_t> dimensions,

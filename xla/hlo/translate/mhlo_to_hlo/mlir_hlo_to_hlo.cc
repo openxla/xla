@@ -1509,10 +1509,6 @@ LogicalResult ExportXlaOp(DynamicBroadcastInDimOp op, OpLoweringContext ctx) {
   return failure();
 }
 
-// TODO(phawkins): Remove this temporary stub once HloOpcode::kFma is added to
-// XLA.
-LogicalResult ExportXlaOp(FmaOp op, OpLoweringContext ctx) { return failure(); }
-
 LogicalResult ExportXlaOp(mlir::stablehlo::ConvolutionOp op,
                           OpLoweringContext ctx) {
   auto& value_map = *ctx.values;
@@ -4183,29 +4179,6 @@ LogicalResult ExportXlaOp(RaggedDotOp op, OpLoweringContext ctx) {
 
   value_map[op] = xlaOp;
   return mlir::success();
-}
-
-LogicalResult ExportXlaOp(DomainOp op, OpLoweringContext ctx) {
-  auto& valueMap = *ctx.values;
-
-  xla::Shape shape = xla::TypeToShape(op.getResult().getType());
-  xla::XlaOp operand;
-  if (failed(GetXlaOp(op.getOperand(), valueMap, &operand, op))) {
-    return failure();
-  }
-
-  auto entry = xla::ConvertSharding(op.getEntryMetadata());
-  if (!entry) {
-    return failure();
-  }
-  auto exit = xla::ConvertSharding(op.getExitMetadata());
-  if (!exit) {
-    return failure();
-  }
-
-  valueMap[op] = xla::internal::XlaBuilderFriend::BuildDomain(
-      ctx.builder, operand, *exit, *entry, shape);
-  return success();
 }
 
 LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {

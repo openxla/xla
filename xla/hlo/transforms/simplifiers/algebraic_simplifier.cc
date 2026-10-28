@@ -1383,7 +1383,7 @@ absl::Status AlgebraicSimplifierVisitor::HandleAllReduceOrReduceScatter(
                           primitive_util::IsFloatingPointType(type_constant)) {
               T val = literal.Get<T>({});
               T result = val * static_cast<T>(group_size);
-              new_literal = LiteralUtil::CreateR0(element_type, result);
+              new_literal = LiteralUtil::CreateR0<T>(result);
             }
           },
           element_type);
@@ -1465,8 +1465,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleBitcast(
   // it should remove the op when control deps are present. I.e.
   // control deps might be added to preserve a certain order.
   // It's better to not process in that case.
-  if (!bitcast->control_predecessors().empty()) {
-    VLOG(3) << bitcast->ToString() << " has control predecessors, skipping.";
+  if (bitcast->HasControlDependencies()) {
+    VLOG(3) << bitcast->ToString() << " has control dependencies, skipping.";
     return absl::OkStatus();
   }
 
@@ -10007,16 +10007,24 @@ absl::Status AlgebraicSimplifierVisitor::HandleSelect(HloInstruction* select) {
   }
   // select(PRED, PRED, PRED)
   if (ShapeUtil::HasPrimitiveType(select->shape(), xla::PRED)) {
+    HloInstruction* pred = select->mutable_operand(0);
+    HloInstruction* replacement = nullptr;
     // select(a, true, false) -> a
     if (IsAll(select->operand(1), true) && IsAll(select->operand(2), false)) {
-      return ReplaceInstruction(select, select->mutable_operand(0));
+      replacement = pred;
+    } else if (IsAll(select->operand(1), false) &&
+               IsAll(select->operand(2), true)) {
+      // select(a, false, true) -> not(a)
+      replacement = computation_->AddInstruction(
+          HloInstruction::CreateUnary(pred->shape(), HloOpcode::kNot, pred));
     }
-    // select(a, false, true) -> not(a)
-    if (IsAll(select->operand(1), false) && IsAll(select->operand(2), true)) {
-      return ReplaceWithNewInstruction(
-          select, HloInstruction::CreateUnary(
-                      select->mutable_operand(0)->shape(), HloOpcode::kNot,
-                      select->mutable_operand(0)));
+    if (replacement != nullptr) {
+      // Select permits a scalar predicate even when its result is a tensor.
+      if (ShapeUtil::IsScalar(replacement->shape()) &&
+          !ShapeUtil::IsScalar(select->shape())) {
+        replacement = MakeBroadcastHlo(replacement, {}, select->shape());
+      }
+      return ReplaceInstruction(select, replacement);
     }
     // select(compare(a, b, GT/GE), a, b) => or(a, b)
     // select(compare(a, b, LT/LE), a, b) => and(a, b)

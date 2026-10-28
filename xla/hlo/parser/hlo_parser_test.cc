@@ -373,17 +373,6 @@ ENTRY %ShardedTupleCreate.v4 (v1: f32[], v2: f32[3], v3: f32[2,3]) -> (f32[], f3
 
 )"
 },
-{
-"DomainParsing",
-R"(HloModule DomainParsing_module, entry_computation_layout={(f32[])->f32[]}
-
-ENTRY %DomainParsing (v1: f32[]) -> f32[] {
-  %v1 = f32[] parameter(0)
-  ROOT %dom = f32[] domain(f32[] %v1), domain={kind="sharding", entry={maximal device=0}, exit={maximal device=1}}
-}
-
-)"
-},
 // int32_t result = 0;
 // while (result < 5) { result = result + 1; }
 {
@@ -5453,6 +5442,21 @@ TEST(HloParserSingleOpTest, SingleOpNoNames) {
               GmockMatch(m::Multiply(m::Parameter(0), m::Parameter(1))));
 }
 
+TEST(HloParserSingleOpTest, SingleOpWithControlPredecessors) {
+  const std::string text =
+      "%multiply = f32[2,4]{1,0} multiply(f32[2,4]{1,0} %broadcast, "
+      "f32[2,4]{1,0} %x), control-predecessors={%control_pred, %x}";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(text));
+  const HloComputation* computation = module->entry_computation();
+  ASSERT_NE(computation, nullptr);
+  const HloInstruction* root = computation->root_instruction();
+  EXPECT_THAT(root, GmockMatch(m::Multiply(m::Parameter(0), m::Parameter(1))));
+  ASSERT_EQ(root->control_predecessors().size(), 2);
+  EXPECT_EQ(root->control_predecessors()[0]->name(), "control_pred");
+  EXPECT_EQ(root->control_predecessors()[1]->name(), "x");
+}
+
 TEST(HloParserSingleOpTest, SkipStackFrameIndex) {
   const std::string text = R"(HloModule m, entry_computation_layout={()->pred[]}
 
@@ -9094,6 +9098,25 @@ ENTRY %entry (p: f32[4,3]) -> (f32[4,3]) {
   EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "Expected array argument for operand of shuffle");
+}
+
+TEST_F(HloParserTest, Fma) {
+  const std::string original =
+      R"(HloModule fma_test, entry_computation_layout={(f32[4]{0}, f32[4]{0}, f32[4]{0})->f32[4]{0}}
+
+ENTRY %entry (a: f32[4], b: f32[4], c: f32[4]) -> f32[4] {
+  %a = f32[4]{0} parameter(0)
+  %b = f32[4]{0} parameter(1)
+  %c = f32[4]{0} parameter(2)
+  ROOT %fma_op = f32[4]{0} fma(%a, %b, %c)
+}
+
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(original));
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kFma);
+  EXPECT_EQ(module->ToString(HloPrintOptions().set_print_operand_shape(false)),
+            original);
 }
 
 }  // namespace

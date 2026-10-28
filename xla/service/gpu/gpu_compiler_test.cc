@@ -130,6 +130,14 @@ class GpuCompilerTest
   se::CudaComputeCapability get_cuda_cc() const {
     return device_description().cuda_compute_capability();
   }
+
+  se::RocmComputeCapability get_rocm_cc() const {
+    return device_description().rocm_compute_capability();
+  }
+
+  bool RunsFusionDispatchPipeline() const {
+    return get_cuda_cc().IsAtLeastAmpere() || get_rocm_cc().gfx9_mi300_series();
+  }
 };
 
 absl::StatusOr<std::string> ReadNonEmptyFile(absl::string_view file_path) {
@@ -979,7 +987,7 @@ ENTRY main {
       GetOptimizedModuleForExecutable(transpose_fusion_module, config));
   const HloModule* optimized_module = optimized_module_and_executable.first;
 
-  if (get_cuda_cc().IsAtLeastAmpere()) {
+  if (RunsFusionDispatchPipeline()) {
     EXPECT_TRUE(HasBlockLevelFusionConfig(
         optimized_module->entry_computation()->root_instruction()));
   } else {
@@ -991,8 +999,9 @@ ENTRY main {
 TEST_F(
     GpuCompilerTest,
     FusionBlockLevelRewriterRewritesKLoopTransposeWithBitcastIfTheSmallMinorDimIsAPowerOfTwo) {  // NOLINT(whitespace/line_length)
-  if (!get_cuda_cc().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "FusionBlockLevelRewriter requires Ampere+ to run.";
+  if (!RunsFusionDispatchPipeline()) {
+    GTEST_SKIP() << "FusionBlockLevelRewriter requires Ampere+ or MI300+ to "
+                    "run.";
   }
 
   // If this test starts failing, then it's likely that this no longer generates
@@ -1326,25 +1335,6 @@ class PassOrderTest : public GpuCompilerTest {
     return {first_pass_latest_run, last_pass_earliest_run};
   }
 
-  // Checks that no pass that matches `pass_regex` runs strictly in between
-  // `pass_range.first_pass_run_index` and `pass_range.second_pass_run_index`.
-  void VerifyNotRunInBetween(const PassRange& pass_range,
-                             absl::string_view pass_regex) {
-    CHECK(optimized_module_);
-    int run_index = 0;
-    for (const HloPassMetadata& pass_metadata :
-         optimized_module_->metadata().proto().pass_metadata()) {
-      if (run_index >= pass_range.second_pass_run_index) {
-        break;
-      }
-      if (run_index++ <= pass_range.first_pass_run_index) {
-        continue;
-      }
-      EXPECT_FALSE(RE2::FullMatch(pass_metadata.pass_name(), pass_regex))
-          << "Ran " << pass_metadata.pass_name() << " in the given range";
-    }
-  }
-
  protected:
   // Compiles a dummy module with the given configuration, running all passes,
   // including the ones in RunBackend. This is important because otherwise, we
@@ -1380,8 +1370,8 @@ TEST_F(PassOrderTest, OffloadingPassesAreRunInCorrectOrder) {
 }
 
 TEST_F(PassOrderTest, FusionDispatchRunsAfterAllFusionPasses) {
-  if (!get_cuda_cc().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "fusion-dispatch requires Ampere+ to run.";
+  if (!RunsFusionDispatchPipeline()) {
+    GTEST_SKIP() << "fusion-dispatch requires Ampere+ or MI300+ to run.";
   }
 
   DebugOptions debug_options = GetDebugOptionsForTest();
@@ -1464,26 +1454,6 @@ TEST_F(PassOrderTest, LHSRunsIfProfileDataIsAvailable) {
   CompileModule(config);
 
   EXPECT_THAT(optimized_module_, HasExpectedPasses(kExpectedPasses));
-}
-
-TEST_F(PassOrderTest, GemmFusionRunsAfterDotNormalizer) {
-  if (!get_cuda_cc().IsAtLeastAmpere()) {
-    GTEST_SKIP() << "GemmFusion requires Ampere+ to run.";
-  }
-  DebugOptions options = GetDebugOptionsForTest();
-  options.set_xla_gpu_enable_triton_gemm(true);
-  SetDebugOptions(options);
-  PassRange pass_range = VerifyPassOrder(
-      /*first_pass_regex=*/"dot_normalizer",
-      /*last_pass_regex=*/"triton-gemm-rewriter");
-  VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
-}
-
-TEST_F(PassOrderTest, GemmRewriterRunsAfterDotNormalizer) {
-  PassRange pass_range = VerifyPassOrder(
-      /*first_pass_regex=*/"dot_normalizer",
-      /*last_pass_regex=*/"cublas-gemm-rewriter");
-  VerifyNotRunInBetween(pass_range, /*pass_regex=*/"algsimp");
 }
 
 TEST_F(PassOrderTest, HoistFusedBitcastsRunsAfterGemmFusion) {
@@ -3593,6 +3563,131 @@ TEST_F(GpuCompilerTest, DevicelessCollectiveFusionWithTopologyFlag) {
   )";
   EXPECT_THAT(RunFileCheck(optimized_module->ToString(), kExpected),
               absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(GpuCompilerTest, InlinesXlaLateCallsOnGpu) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule InlinesXlaLateCallsOnGpu
+
+%callee (x: f32[]) -> f32[] {
+  %x = f32[] parameter(0)
+  ROOT %mul = f32[] multiply(%x, %x)
+}
+
+ENTRY %main (a: f32[]) -> f32[] {
+  %a = f32[] parameter(0)
+  ROOT %call = f32[] call(%a), to_apply=%callee, frontend_attributes={inlineable="xla_late"}
+}
+  )hlo";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText, config));
+
+  Compiler::CompileOptions compile_options;
+  compile_options.gpu_topology =
+      GetSingleDeviceGpuTopology(/*platform_version=*/"", gpu_target_config());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> optimized_module,
+      compiler()->RunHloPasses(std::move(module), /*executor=*/nullptr,
+                               compile_options));
+
+  for (const HloComputation* computation :
+       optimized_module->MakeNonfusionComputations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      EXPECT_NE(instruction->opcode(), HloOpcode::kCall);
+      EXPECT_FALSE(
+          instruction->has_frontend_attributes() &&
+          instruction->frontend_attributes().map().contains("inlineable"));
+    }
+  }
+}
+
+TEST_F(GpuCompilerTest, InlinesSingleShardShardyManualComputationOnGpu) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule InlinesSingleShardShardyManualComputationOnGpu
+
+%xla.sdy.manual_computation_body (x: f32[4]) -> f32[4] {
+  %x = f32[4] parameter(0)
+  ROOT %mul = f32[4] multiply(%x, %x)
+}
+
+ENTRY %main (a: f32[4]) -> f32[4] {
+  %a = f32[4] parameter(0)
+  %global_to_local = f32[4] custom-call(%a), custom_call_target="xla.sdy.GlobalToLocalShape", custom_call_has_side_effect=true
+  %call = f32[4] call(%global_to_local), to_apply=%xla.sdy.manual_computation_body, frontend_attributes={inlineable="xla_late"}
+  ROOT %local_to_global = f32[4] custom-call(%call), custom_call_target="xla.sdy.LocalToGlobalShape", custom_call_has_side_effect=true
+}
+  )hlo";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.set_use_shardy_partitioner(true);
+  config.set_num_partitions(1);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText, config));
+
+  Compiler::CompileOptions compile_options;
+  compile_options.gpu_topology =
+      GetSingleDeviceGpuTopology(/*platform_version=*/"", gpu_target_config());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> optimized_module,
+      compiler()->RunHloPasses(std::move(module), /*executor=*/nullptr,
+                               compile_options));
+
+  for (const HloComputation* computation :
+       optimized_module->MakeNonfusionComputations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      EXPECT_NE(instruction->opcode(), HloOpcode::kCall);
+      EXPECT_FALSE(
+          instruction->has_frontend_attributes() &&
+          instruction->frontend_attributes().map().contains("inlineable"));
+    }
+  }
+}
+
+TEST_F(GpuCompilerTest, InlinesMultiShardShardyManualComputationOnGpu) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule InlinesMultiShardShardyManualComputationOnGpu, frontend_attributes={xla.sdy.meshes={mesh = #sdy.mesh<["x"=2]>}}
+
+%xla.sdy.manual_computation_body (x: f32[2]) -> f32[2] {
+  %x = f32[2] parameter(0)
+  ROOT %mul = f32[2] multiply(%x, %x)
+}
+
+ENTRY %main (a: f32[4]) -> f32[4] {
+  %a = f32[4] parameter(0), frontend_attributes={xla.sdy.sharding="#sdy.sharding<@mesh, [{\"x\"}]>"}
+  %global_to_local = f32[2] custom-call(%a), custom_call_target="xla.sdy.GlobalToLocalShape", custom_call_has_side_effect=true, frontend_attributes={xla.sdy.in_shardings="#sdy.sharding_per_value<[<@mesh, [{\"x\"}]>]>", xla.sdy.manual_axes="#sdy<manual_axes{\"x\"}>"}
+  %call = f32[2] call(%global_to_local), to_apply=%xla.sdy.manual_computation_body, frontend_attributes={inlineable="xla_late"}
+  ROOT %local_to_global = f32[4] custom-call(%call), custom_call_target="xla.sdy.LocalToGlobalShape", custom_call_has_side_effect=true, frontend_attributes={xla.sdy.manual_axes="#sdy<manual_axes{\"x\"}>", xla.sdy.out_shardings="#sdy.sharding_per_value<[<@mesh, [{\"x\"}]>]>"}
+}
+  )hlo";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.set_use_spmd_partitioning(true);
+  config.set_use_shardy_partitioner(true);
+  config.set_num_partitions(2);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText, config));
+
+  Compiler::CompileOptions compile_options;
+  compile_options.gpu_topology =
+      GpuTopology(/*platform_version=*/"", /*num_partitions=*/2,
+                  /*num_hosts_per_partition=*/1, /*num_devices_per_host=*/1,
+                  gpu_target_config());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> optimized_module,
+      compiler()->RunHloPasses(std::move(module), /*executor=*/nullptr,
+                               compile_options));
+
+  for (const HloComputation* computation :
+       optimized_module->MakeNonfusionComputations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      EXPECT_NE(instruction->opcode(), HloOpcode::kCall);
+      EXPECT_FALSE(
+          instruction->has_frontend_attributes() &&
+          instruction->frontend_attributes().map().contains("inlineable"));
+    }
+  }
 }
 
 }  // namespace gpu
