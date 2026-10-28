@@ -565,8 +565,6 @@ llvm::Value* EmitComposeComplex(const HloInstruction* op, llvm::Value* real,
   return complex;
 }
 
-}  // namespace
-
 absl::StatusOr<llvm::Value*> EmitIota(const HloInstruction* hlo,
                                       const IrArray::Index& target_index,
                                       llvm::Module* module,
@@ -624,6 +622,8 @@ absl::StatusOr<llvm::Value*> EmitIota(const HloInstruction* hlo,
   }
   return iota_result;
 }
+
+}  // namespace
 
 /*static*/ bool ElementalIrEmitter::OpInvalidatesCache(
     const HloInstruction* hlo) {
@@ -2516,6 +2516,11 @@ llvm::Value* ElementalIrEmitter::EmitIntegerPow(llvm::Value* lhs,
     base = b_->CreateMul(base, base);
     exponent = b_->CreateLShr(exponent, 1);
   }
+  accumulator = b_->CreateSelect(
+      b_->CreateAnd(
+          b_->CreateICmpNE(exponent, exp_zero),
+          b_->CreateICmpEQ(b_->CreateAnd(original_base, base_one), base_zero)),
+      base_zero, accumulator);
   if (!is_signed) {
     return accumulator;
   }

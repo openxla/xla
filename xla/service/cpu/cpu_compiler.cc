@@ -128,6 +128,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/dot_decomposer.h"
 #include "xla/hlo/transforms/expanders/dynamic_index_splitter.h"
 #include "xla/hlo/transforms/expanders/eigh_expander.h"
+#include "xla/hlo/transforms/expanders/elementary_function_expander.h"
 #include "xla/hlo/transforms/expanders/logistic_expander.h"
 #include "xla/hlo/transforms/expanders/optimization_barrier_expander.h"
 #include "xla/hlo/transforms/expanders/permutation_sort_expander.h"
@@ -654,7 +655,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     }
     spmd_pipeline.AddPass<xla::CallInliner>(
         /*single_call_site=*/false,
-        /*update_domain=*/false,
         /*composites_to_preserve=*/absl::flat_hash_set<std::string>{},
         /*override_policy=*/
         [](const xla::CallGraph& call_graph,
@@ -897,6 +897,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
       /*rewrite_inference_op=*/true,
       /*rewrite_grad_op=*/true);
   pipeline.AddPass<LogisticExpander>();
+  pipeline.AddPass<ElementaryFunctionExpander>();
   pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<DynamicDimensionSimplifier>();
 

@@ -21,18 +21,25 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/log/check.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "absl/types/span.h"
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/MLIRContext.h"
 #include "tsl/platform/path.h"
-#include "xla/codegen/tiling/experimental/tiled_hlo.h"
-#include "xla/codegen/tiling/experimental/tiling_space.h"
-#include "xla/codegen/tiling/experimental/tiling_space_utils.h"
+#include "xla/codegen/tiling/tiled_hlo.h"
+#include "xla/codegen/tiling/tiling_space.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -45,6 +52,7 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_dot_fusion_cost_model.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
@@ -66,6 +74,8 @@ namespace {
 namespace dot_model = ::xla::gpu::gpu_dot_fusion_cost_model::detail;
 
 using ::testing::ElementsAre;
+using ::testing::IsEmpty;
+using ::testing::SizeIs;
 using ::xla::xtile::BlockLevelParameters;
 
 class GpuIndexingPerformanceModelTest : public HloHardwareIndependentTestBase {
@@ -91,7 +101,6 @@ class GpuIndexingPerformanceModelTest : public HloHardwareIndependentTestBase {
       &fusion_analysis_cache_,
       HloCostAnalysis::DefaultShapeSize,
       &mlir_context_,
-      /*use_experimental_tiling=*/true,
       /*enable_same_shape_multi_output_fusion=*/false,
       &mlir_context_pool_};
 
@@ -813,6 +822,205 @@ ENTRY main {
 }
 
 TEST_F(GpuIndexingPerformanceModelTest,
+       EstimateRunTimeForTiledFusion_ScanWithEpilogue) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  p0 = f32[64] parameter(0)
+  p1 = f32[64] parameter(1)
+  add = f32[64] add(p0, p1)
+  ROOT tuple = (f32[64], f32[64]) tuple(add, add)
+}
+
+scan_fusion {
+  p0 = f32[64,1024] parameter(0)
+  p1 = f32[64,1024] parameter(1)
+  init = f32[64] parameter(2)
+  scan = (f32[64,1024], f32[64]) scan(p0, init), dimensions={1},
+    num_carries=1, is_associative=true, to_apply=add
+  gte = f32[64,1024] get-tuple-element(scan), index=0
+  ROOT add = f32[64,1024] add(gte, p1)
+}
+
+ENTRY main {
+  p0 = f32[64,1024] parameter(0)
+  p1 = f32[64,1024] parameter(1)
+  init = f32[64] parameter(2)
+  ROOT fusion = f32[64,1024] fusion(p0, p1, init), kind=kCustom, calls=scan_fusion
+})"));
+
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{1}};
+  block_level_parameters.sequential_tile_sizes = {128};
+  block_level_parameters.num_warps = 4;
+  ASSERT_OK_AND_ASSIGN(auto result,
+                       indexing_cost_model_.EstimateRunTimeForTiledFusion(
+                           *fusion_adaptor, block_level_parameters));
+
+  // One block per row, each block loops 1024 / 128 = 8 times over the scan
+  // dimension. The scan and its epilogue are executed on every iteration.
+  int64_t num_blocks = 64;
+  int64_t num_root_tile_executions = num_blocks * 8;
+
+  // The flops contribution for a single instruction is calculated as:
+  // flops_per_element * padded_tile_size * num_blocks_cur_hlo
+  EXPECT_EQ(result.flops,
+            3 * 128 * num_root_tile_executions        // ==> %scan
+                + 3 * 128 * num_root_tile_executions  // ==> %add
+  );
+  // The bytes read contribution for a single instruction is calculated as:
+  // element_type_size * tile_size * num_blocks_cur_hlo
+  EXPECT_EQ(result.bytes_read,
+            4 * 128 * num_root_tile_executions        // ==> %p0
+                + 4 * 128 * num_root_tile_executions  // ==> %p1
+                + 4 * 1 * num_root_tile_executions    // ==> %init
+  );
+  EXPECT_EQ(result.bytes_written, 4 * 64 * 1024);
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       EstimateRunTimeForTriton_ScanFusionWithoutBlockLevelConfig) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  p0 = f32[64] parameter(0)
+  p1 = f32[64] parameter(1)
+  add = f32[64] add(p0, p1)
+  ROOT tuple = (f32[64], f32[64]) tuple(add, add)
+}
+
+scan_fusion {
+  p0 = f32[64,131072] parameter(0)
+  init = f32[64] parameter(1)
+  scan = (f32[64,131072], f32[64]) scan(p0, init), dimensions={1},
+    num_carries=1, is_associative=true, to_apply=add
+  ROOT gte = f32[64,131072] get-tuple-element(scan), index=0
+}
+
+ENTRY main {
+  p0 = f32[64,131072] parameter(0)
+  init = f32[64] parameter(1)
+  ROOT fusion = f32[64,131072] fusion(p0, init), kind=kCustom, calls=scan_fusion,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+})"));
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+
+  // Estimated with the tiling that FusionBlockLevelRewriter would pick.
+  ASSERT_OK_AND_ASSIGN(EstimateRunTimeData runtime,
+                       indexing_cost_model_.EstimateRunTimeForTriton(root));
+  EXPECT_FALSE(runtime.IsInfinite());
+
+  ASSERT_OK_AND_ASSIGN(auto tiled_runtime_data_or_error,
+                       indexing_cost_model_
+                           .TryFindBestTilingForFusionAsync(
+                               *HloFusionAdaptor::ForInstruction(root))
+                           .Await());
+  ASSERT_TRUE(
+      std::holds_alternative<TiledRunTimeData>(tiled_runtime_data_or_error));
+  const TiledRunTimeData& tiled_runtime_data =
+      std::get<TiledRunTimeData>(tiled_runtime_data_or_error);
+  EXPECT_EQ(runtime.exec_time, tiled_runtime_data.runtime_data.exec_time);
+  EXPECT_THAT(tiled_runtime_data.block_level_parameters.output_tile_sizes,
+              ElementsAre(SizeIs(1)));
+  EXPECT_THAT(tiled_runtime_data.block_level_parameters.sequential_tile_sizes,
+              SizeIs(1));
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       TryFindBestTilingForFusionAsync_RowLocalScanGetsSingleTileOnB200) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  p0 = f16[2,3] parameter(0)
+  p1 = f16[2,3] parameter(1)
+  sum = f16[2,3] add(p0, p1)
+  ROOT tuple = (f16[2,3], f16[2,3]) tuple(sum, sum)
+}
+
+scan_fusion {
+  p0 = f16[2,3,3] parameter(0)
+  c0 = f16[] constant(0)
+  init = f16[2,3] broadcast(c0), dimensions={}
+  scan = (f16[2,3,3], f16[2,3]) scan(p0, init), dimensions={2},
+    num_carries=1, is_associative=true, to_apply=add
+  ROOT gte = f16[2,3,3] get-tuple-element(scan), index=0
+}
+
+ENTRY main {
+  p0 = f16[2,3,3] parameter(0)
+  ROOT fusion = f16[2,3,3] fusion(p0), kind=kCustom, calls=scan_fusion,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+})"));
+
+  se::DeviceDescription b200_device_info =
+      TestGpuDeviceInfo::B200SXMDeviceInfo();
+  HloFusionAnalysisCache b200_analysis_cache(b200_device_info);
+  GpuPerformanceModelWithIndexingAnalysis b200_cost_model(
+      &b200_device_info, &b200_analysis_cache,
+      HloCostAnalysis::DefaultShapeSize, &mlir_context_,
+      /*enable_same_shape_multi_output_fusion=*/false, &mlir_context_pool_);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(auto tiled_runtime_data_or_error,
+                       b200_cost_model
+                           .TryFindBestTilingForFusionAsync(
+                               *HloFusionAdaptor::ForInstruction(root))
+                           .Await());
+  ASSERT_TRUE(
+      std::holds_alternative<TiledRunTimeData>(tiled_runtime_data_or_error));
+  const TiledRunTimeData& tiled_runtime_data =
+      std::get<TiledRunTimeData>(tiled_runtime_data_or_error);
+  EXPECT_THAT(tiled_runtime_data.block_level_parameters.sequential_tile_sizes,
+              ElementsAre(4));
+}
+
+TEST_F(
+    GpuIndexingPerformanceModelTest,
+    TryFindBestTilingForFusionAsync_UntiledReduceHasEmptySequentialTileSizes) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+
+reduce_fusion {
+  p0 = f32[64,1024] parameter(0)
+  init = f32[] constant(0)
+  ROOT reduce = f32[64] reduce(p0, init), dimensions={1}, to_apply=add
+}
+
+ENTRY main {
+  p0 = f32[64,1024] parameter(0)
+  ROOT fusion = f32[64] fusion(p0), kind=kCustom, calls=reduce_fusion,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+})"));
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+
+  ASSERT_OK_AND_ASSIGN(auto tiled_runtime_data_or_error,
+                       indexing_cost_model_
+                           .TryFindBestTilingForFusionAsync(
+                               *HloFusionAdaptor::ForInstruction(root))
+                           .Await());
+  ASSERT_TRUE(
+      std::holds_alternative<TiledRunTimeData>(tiled_runtime_data_or_error));
+  const TiledRunTimeData& tiled_runtime_data =
+      std::get<TiledRunTimeData>(tiled_runtime_data_or_error);
+  EXPECT_THAT(tiled_runtime_data.block_level_parameters.sequential_tile_sizes,
+              IsEmpty());
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
        EstimateRunTimeForTiledFusion_Softmax_RegisterSpill_ReturnsInfinite) {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 HloModule m
@@ -1229,6 +1437,61 @@ ENTRY entry_computation {
   EXPECT_EQ(indexing_cost_model_.FlopsPerElement(instr), 765);
 }
 
+TEST_F(FlopsPerElementTest, Scan) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  param_0 = f32[] parameter(0)
+  param_1 = f32[] parameter(1)
+  add.0 = f32[] add(param_0, param_1)
+  ROOT tuple.0 = (f32[], f32[]) tuple(add.0, add.0)
+}
+
+ENTRY entry_computation {
+  param_0.3 = f32[64] parameter(0)
+  constant = f32[] constant(0)
+  ROOT scan = (f32[64], f32[]) scan(param_0.3, constant), dimensions={0},
+    num_carries=1, is_associative=true, to_apply=add
+}
+)"));
+  auto* instr = module->entry_computation()->root_instruction();
+
+  // The combiner is applied once per element: an f32 add, 3 FLOPs.
+  EXPECT_EQ(indexing_cost_model_.FlopsPerElement(instr), 3);
+}
+
+TEST_F(FlopsPerElementTest, GetTupleElementIsThreadSafe) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  param_0 = f32[] parameter(0)
+  param_1 = f32[] parameter(1)
+  add.0 = f32[] add(param_0, param_1)
+  ROOT tuple.0 = (f32[], f32[]) tuple(add.0, add.0)
+}
+
+ENTRY entry_computation {
+  param_0.3 = f32[64] parameter(0)
+  constant = f32[] constant(0)
+  scan = (f32[64], f32[]) scan(param_0.3, constant), dimensions={0},
+    num_carries=1, is_associative=true, to_apply=add
+  ROOT gte = f32[64] get-tuple-element(scan), index=0
+}
+)"));
+  auto* gte = module->entry_computation()->root_instruction();
+
+  // PriorityFusion estimates overlapping fusions concurrently.
+  {
+    tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "test", 8);
+    for (int i = 0; i < 200; ++i) {
+      thread_pool.Schedule(
+          [&]() { EXPECT_EQ(indexing_cost_model_.FlopsPerElement(gte), 0); });
+    }
+  }
+}
+
 TEST_F(FlopsPerElementTest, MatchesGpuHloCostAnalysis_Elementwise_Cosine) {
   CompareFlopsModels(R"(
 HloModule m
@@ -1419,6 +1682,245 @@ ENTRY entry_computation {
   EXPECT_EQ(indexing_cost_model_.FlopsPerElement(instr), 0);
 }
 
+struct RegisterFitTestCase {
+  std::string name;
+  std::string hlo;
+};
+
+class RegisterFitConsistencyTest
+    : public GpuIndexingPerformanceModelTest,
+      public ::testing::WithParamInterface<RegisterFitTestCase> {};
+
+TEST_P(RegisterFitConsistencyTest, PreFilterMatchesExactFitCheck) {
+  const RegisterFitTestCase& test_case = GetParam();
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(test_case.hlo));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<experimental::TilingSpace> tiling_space,
+      experimental::TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+
+  ASSERT_OK_AND_ASSIGN(experimental::TiledHloComputation symbolic,
+                       experimental::TiledHloComputation::Tile(
+                           *fusion_adaptor, tiling_space->Clone()));
+  std::vector<const experimental::TiledHloInstruction*>
+      register_resident_instructions =
+          internal::GetRegisterResidentInstructions(*fusion_adaptor, symbolic);
+
+  auto tile = [&](absl::Span<const int64_t> tile_sizes)
+      -> absl::StatusOr<experimental::TiledHloComputation> {
+    std::unique_ptr<experimental::TilingSpace> concrete_space =
+        tiling_space->Clone();
+    ABSL_RETURN_IF_ERROR(concrete_space->AssignTileSizes(tile_sizes));
+    return experimental::TiledHloComputation::Tile(*fusion_adaptor,
+                                                   std::move(concrete_space));
+  };
+  auto passes_precheck = [&](absl::Span<const int64_t> tile_sizes) {
+    return internal::DoesTilingFitInRegisters(*tiling_space,
+                                              register_resident_instructions,
+                                              tile_sizes, device_info_);
+  };
+  auto passes_check = [&](absl::Span<const int64_t> tile_sizes) {
+    absl::StatusOr<experimental::TiledHloComputation> concrete =
+        tile(tile_sizes);
+    CHECK_OK(concrete);
+    return internal::DoesComputationFitInRegisters(*fusion_adaptor, *concrete,
+                                                   device_info_);
+  };
+
+  ASSERT_OK_AND_ASSIGN(auto tilings, tiling_space->GetValidTilings(
+                                         /*tile_reduction_dimensions=*/true));
+  const int64_t rank = tilings.front().size();
+  const llvm::SmallVector<int64_t, 4> fitting_tile_sizes(rank, 1);
+  EXPECT_TRUE(passes_precheck(fitting_tile_sizes));
+  EXPECT_TRUE(passes_check(fitting_tile_sizes));
+
+  const llvm::SmallVector<int64_t, 4> too_large_tile_sizes(rank, 1024);
+  EXPECT_FALSE(passes_precheck(too_large_tile_sizes));
+  EXPECT_FALSE(passes_check(too_large_tile_sizes));
+
+  for (const llvm::SmallVector<int64_t, 4>& tiling : tilings) {
+    llvm::SmallVector<int64_t, 4> tile_sizes =
+        xla::xtile::GetPaddedTileSizes(tiling);
+    if (!tile(tile_sizes).ok()) {
+      // Not all tilings from `GetValidTilings` can be tiled.
+      continue;
+    }
+    EXPECT_EQ(passes_check(tile_sizes), passes_precheck(tile_sizes))
+        << absl::StrJoin(tile_sizes, ",");
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    RegisterFitConsistencyTests, RegisterFitConsistencyTest,
+    ::testing::Values(RegisterFitTestCase{/*name=*/"SoftmaxLike",
+                                          /*hlo=*/R"(
+HloModule m
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+fused {
+  p0 = f32[64,4096] parameter(0)
+  c0 = f32[] constant(0)
+  reduce = f32[64] reduce(p0, c0), dimensions={1}, to_apply=add
+  broadcast = f32[64,4096] broadcast(reduce), dimensions={0}
+  ROOT sub = f32[64,4096] subtract(p0, broadcast)
+}
+ENTRY entry {
+  p0 = f32[64,4096] parameter(0)
+  ROOT fusion = f32[64,4096] fusion(p0), kind=kCustom, calls=fused,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)"},
+                      RegisterFitTestCase{/*name=*/"Dot",
+                                          /*hlo=*/R"(
+HloModule m
+triton_dot {
+  p0 = bf16[1024,1024] parameter(0)
+  p1 = bf16[1024,1024] parameter(1)
+  ROOT dot = bf16[1024,1024] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    backend_config={"sizes":["32"]}
+}
+ENTRY e {
+  p0 = bf16[1024,1024] parameter(0)
+  p1 = bf16[1024,1024] parameter(1)
+  ROOT fusion = bf16[1024,1024] fusion(p0, p1),
+    kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {"kind": "__triton_nested_gemm_fusion"}}
+}
+)"},
+                      RegisterFitTestCase{/*name=*/"Concatenate",
+                                          /*hlo=*/R"(
+HloModule m
+fused {
+  p0 = f32[64,2048] parameter(0)
+  p1 = f32[64,2048] parameter(1)
+  c0 = f32[64,4096] concatenate(p0, p1), dimensions={1}
+  ROOT neg = f32[64,4096] negate(c0)
+}
+ENTRY entry {
+  p0 = f32[64,2048] parameter(0)
+  p1 = f32[64,2048] parameter(1)
+  ROOT fusion = f32[64,4096] fusion(p0, p1), kind=kCustom, calls=fused,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)"},
+                      RegisterFitTestCase{/*name=*/"Iota",
+                                          /*hlo=*/R"(
+HloModule m
+fused {
+  p0 = s32[64,4096] parameter(0)
+  iota = s32[64] iota(), iota_dimension=0
+  broadcast = s32[64,4096] broadcast(iota), dimensions={0}
+  ROOT add = s32[64,4096] add(p0, broadcast)
+}
+ENTRY entry {
+  p0 = s32[64,4096] parameter(0)
+  ROOT fusion = s32[64,4096] fusion(p0), kind=kCustom, calls=fused,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)"},
+                      RegisterFitTestCase{/*name=*/"Transpose",
+                                          /*hlo=*/R"(
+HloModule m
+fused {
+  p0 = f32[4096,64] parameter(0)
+  transpose = f32[64,4096] transpose(p0), dimensions={1,0}
+  ROOT neg = f32[64,4096] negate(transpose)
+}
+ENTRY entry {
+  p0 = f32[4096,64] parameter(0)
+  ROOT fusion = f32[64,4096] fusion(p0), kind=kCustom, calls=fused,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)"},
+                      RegisterFitTestCase{/*name=*/"ExpandReshape",
+                                          /*hlo=*/R"(
+HloModule m
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+fused {
+  p0 = f32[4,1024,1024] parameter(0)
+  reshape = f32[4096,1024] reshape(p0)
+  c0 = f32[] constant(0)
+  ROOT reduce = f32[4096] reduce(reshape, c0), dimensions={1}, to_apply=add
+}
+ENTRY entry {
+  p0 = f32[4,1024,1024] parameter(0)
+  ROOT fusion = f32[4096] fusion(p0), kind=kCustom, calls=fused,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)"},
+                      RegisterFitTestCase{/*name=*/"Reshape",
+                                          /*hlo=*/R"(
+HloModule m
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+fused {
+  p0 = f32[4096,1024] parameter(0)
+  reshape = f32[4,1024,1024] reshape(p0)
+  c0 = f32[] constant(0)
+  ROOT reduce = f32[4,1024] reduce(reshape, c0), dimensions={2}, to_apply=add
+}
+ENTRY entry {
+  p0 = f32[4096,1024] parameter(0)
+  ROOT fusion = f32[4,1024] fusion(p0), kind=kCustom, calls=fused,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)"},
+                      RegisterFitTestCase{/*name=*/"DynamicSlice",
+                                          /*hlo=*/R"(
+HloModule m
+fused {
+  p0 = f32[64,4096] parameter(0)
+  offset0 = s32[] parameter(1)
+  offset1 = s32[] parameter(2)
+  ROOT ds = f32[32,2048] dynamic-slice(p0, offset0, offset1), dynamic_slice_sizes={32,2048}
+}
+ENTRY entry {
+  p0 = f32[64,4096] parameter(0)
+  offset0 = s32[] parameter(1)
+  offset1 = s32[] parameter(2)
+  ROOT fusion = f32[32,2048] fusion(p0, offset0, offset1), kind=kCustom, calls=fused,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)"},
+                      RegisterFitTestCase{/*name=*/"ReduceScatter",
+                                          /*hlo=*/R"(
+HloModule m
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+fused {
+  p0 = f32[4096,1024] parameter(0)
+  p1 = f32[1024,2048] parameter(1)
+  dot = f32[4096,2048] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT rs = f32[2048,2048] reduce-scatter(dot), replica_groups={{0,1}},
+    dimensions={0}, to_apply=add
+}
+ENTRY entry {
+  p0 = f32[4096,1024] parameter(0)
+  p1 = f32[1024,2048] parameter(1)
+  ROOT fusion = f32[2048,2048] fusion(p0, p1), kind=kCustom, calls=fused
+}
+)"}),
+    [](const ::testing::TestParamInfo<RegisterFitTestCase>& info) {
+      return info.param.name;
+    });
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

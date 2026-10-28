@@ -17,20 +17,19 @@ limitations under the License.
 #define XLA_SERVICE_GPU_MODEL_GPU_INDEXING_PERFORMANCE_MODEL_H_
 
 #include <cstdint>
-#include <functional>
-#include <memory>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
-#include "mlir/Support/StorageUniquer.h"
-#include "xla/codegen/tiling/experimental/tiled_hlo.h"
-#include "xla/codegen/tiling/tiled_hlo_computation.h"
+#include "xla/codegen/tiling/tiled_hlo.h"
+#include "xla/codegen/tiling/tiling_space.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/utils/hlo_traversal.h"
@@ -77,7 +76,7 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
       const se::DeviceDescription* device_info,
       HloFusionAnalysisCache* fusion_analysis_cache,
       HloCostAnalysis::ShapeSizeFunction shape_size,
-      mlir::MLIRContext* mlir_context, bool use_experimental_tiling,
+      mlir::MLIRContext* mlir_context,
       bool enable_same_shape_multi_output_fusion,
       MlirContextPool* mlir_context_pool = nullptr)
       : hlo_op_profile_(&HloOpProfiles::Singleton().GetProfile(*device_info)),
@@ -92,19 +91,8 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
             *device_info_),
         mlir_context_(mlir_context),
         mlir_context_pool_(mlir_context_pool),
-        use_experimental_tiling_(use_experimental_tiling),
         enable_same_shape_multi_output_fusion_(
-            enable_same_shape_multi_output_fusion) {
-    // TODO(b/514293537): Delete this condition once SymbolicTileAnalysis is
-    // deleted.
-    if (!use_experimental_tiling_ && mlir_context_ != nullptr) {
-      mlir_context_->getAffineUniquer().disableMultithreading(false);
-    }
-  }
-
-  // Returns the number of warps for the given tiled HLO computation.
-  static int64_t EstimateNumWarps(
-      const TiledHloComputation& tiled_hlo_computation);
+            enable_same_shape_multi_output_fusion) {}
 
   // Returns the number of warps for the given tiled HLO computation.
   static int64_t EstimateNumWarps(
@@ -112,15 +100,15 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
 
   absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputation(
       const HloFusionAdaptor& fusion_adaptor,
-      const TiledHloComputation& tiled_hlo_computation,
+      const experimental::TiledHloComputation& tiled_hlo_computation,
       const xla::xtile::BlockLevelParameters& block_level_parameters);
 
   // Estimate the run time of the fusion with the given launch dimensions and
   // output tile sizes.
   //
-  // The model uses SymbolicTileAnalysis to build a TiledHloComputation with the
-  // given tile sizes. This way it can better estimate the amount of memory
-  // access and computation.
+  // The model uses TilingSpace to build a TiledHloComputation with the given
+  // tile sizes. This way it can better estimate the amount of memory access and
+  // computation.
   absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledFusion(
       const HloFusionAdaptor& fusion_adaptor,
       const xla::xtile::BlockLevelParameters& block_level_parameters);
@@ -132,8 +120,8 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
       const xla::xtile::BlockLevelParameters* block_level_parameters = nullptr);
 
   // Estimates the best tile sizes for the given fusion. Iterates over all the
-  // good tile sizes provided by SymbolicTileAnalysis, estimates the run time
-  // for each of them.
+  // good tile sizes provided by TilingSpace, estimates the run time for each of
+  // them.
   //
   // Returns status if there is an error that we can't recover from.
   // Returns FusionDecision if the fusion can't be tiled or there are no valid
@@ -172,11 +160,38 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
   GpuHloCostAnalysis cost_analysis_;
   mlir::MLIRContext* mlir_context_;
   MlirContextPool* mlir_context_pool_;
-  bool use_experimental_tiling_;
   bool enable_same_shape_multi_output_fusion_;
 };
 
 namespace internal {
+
+// Returns the tiled HLOs whose tiles will likely be materialized fully in
+// registers and can not be reordered with other tiles: roots, fusion operands
+// and iotas.
+std::vector<const experimental::TiledHloInstruction*>
+GetRegisterResidentInstructions(
+    const HloFusionAdaptor& fusion_adaptor,
+    const experimental::TiledHloComputation& tiled_hlo_computation);
+
+// Checks if all tiles in the computation fit in registers.
+//
+// There is no way to know for sure if emitted computation will not spill
+// registers, so we use a heuristic based on the tile sizes of register-resident
+// instructions. The heuristic can give both false positives and false
+// negatives.
+bool DoesComputationFitInRegisters(
+    const HloFusionAdaptor& fusion_adaptor,
+    const experimental::TiledHloComputation& tiled_hlo_computation,
+    const se::DeviceDescription& device_info);
+
+// Checks if the tiles of the register-resident instructions of a symbolic tiled
+// computation fit in registers for the given tiling space and tile sizes.
+bool DoesTilingFitInRegisters(
+    const experimental::TilingSpace& tiling_space,
+    absl::Span<const experimental::TiledHloInstruction* const>
+        symbolic_register_resident_instructions,
+    absl::Span<const int64_t> tile_sizes,
+    const se::DeviceDescription& device_info);
 
 // Precomputes FLOPs per element for all instructions in the fusion adaptor.
 absl::flat_hash_map<const HloInstruction*, int64_t> PrecomputeFlopsMap(

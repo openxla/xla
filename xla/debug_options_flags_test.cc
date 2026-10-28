@@ -89,11 +89,15 @@ TEST(DebugOptions, CommandBufferUpdateModeDefaultsToAlwaysUpdate) {
       DebugOptions::ALWAYS_UPDATE);
 }
 
-TEST(DebugOptions, SchedulerMemoryFencingDefaultsToDisabled) {
+TEST(DebugOptions,
+     SchedulerMemoryFencingDefaultsToAutomaticWithOneSlackWindow) {
   EXPECT_EQ(
       DefaultDebugOptionsIgnoringFlags()
           .xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(),
-      -1);
+      0);
+  EXPECT_EQ(DefaultDebugOptionsIgnoringFlags()
+                .xla_gpu_experimental_scheduler_memory_fencing_slack_windows(),
+            1);
 }
 
 TEST(DebugOptions, CommandBufferUpdateModesParseFromFlags) {
@@ -243,6 +247,12 @@ TEST(DebugOptions, CollectiveKernelsFlagUnderscoreAllGather) {
   DebugOptions opts = ParseCollectiveKernelsFlag("all_gather");
   EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
               ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_GATHER));
+}
+
+TEST(DebugOptions, CollectiveKernelsFlagAllToAll) {
+  DebugOptions opts = ParseCollectiveKernelsFlag("ALL_TO_ALL");
+  EXPECT_THAT(opts.xla_gpu_experimental_use_collective_kernels(),
+              ElementsAre(DebugOptions::COLLECTIVE_KERNEL_ALL_TO_ALL));
 }
 
 TEST(DebugOptions, CollectiveKernelsFlagBothHyphenated) {
@@ -525,5 +535,19 @@ TEST(DebugOptions, DeterministicOpsTriton) {
   EXPECT_FALSE(parse("invalid"));
 }
 
+TEST(DebugOptions, AutotuneCacheRequireStrictCodegenMatchDefaultIsFalse) {
+  DebugOptions opts = DefaultDebugOptionsIgnoringFlags();
+  EXPECT_FALSE(opts.xla_autotune_cache_require_strict_codegen_match());
+}
+
+TEST(DebugOptions, AutotuneCacheRequireStrictCodegenMatchFlagsParsing) {
+  DebugOptions opts;
+  std::vector<tsl::Flag> flags;
+  MakeDebugOptionsFlags(&flags, &opts);
+  std::vector<std::string> flag_args = {
+      "--xla_autotune_cache_require_strict_codegen_match=true"};
+  EXPECT_TRUE(tsl::Flags::Parse(flag_args, flags));
+  EXPECT_TRUE(opts.xla_autotune_cache_require_strict_codegen_match());
+}
 }  // namespace
 }  // namespace xla

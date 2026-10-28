@@ -26,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/base/no_destructor.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
@@ -37,8 +38,6 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/xfeed_manager.h"
-#include "xla/backends/cpu/runtime/ynnpack/ynn_interop.h"
-#include "xla/backends/cpu/runtime/ynnpack/ynn_threadpool.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/runtime/buffer_use.h"
@@ -48,6 +47,8 @@ limitations under the License.
 #include "xla/tsl/concurrency/chain.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
+
+struct ynn_threadpool;
 
 namespace Eigen {
 struct ThreadPoolDevice;
@@ -275,7 +276,9 @@ class Thunk {
     YnnThreadpool threadpool = nullptr;
     Allocator allocator;
 
-    explicit YnnParams(YnnThreadpool threadpool);
+   private:
+    mutable absl::once_flag once_;
+    mutable Threadpool threadpool_ = {nullptr, nullptr};
   };
 
   //===--------------------------------------------------------------------===//
@@ -292,7 +295,6 @@ class Thunk {
     TaskRunner* task_runner = nullptr;
     CollectiveExecuteParams* collective_params = nullptr;
     CustomCallExecuteParams* custom_call_params = nullptr;
-    YnnParams* ynn_params = nullptr;
     int64_t run_id = -1;          // -1 means no run id is set.
     int64_t device_ordinal = -1;  // -1 means no device ordinal is set.
     ExecuteSession session = ExecuteSession(ExecuteSession::kMaxWorkers,
@@ -301,6 +303,8 @@ class Thunk {
 
     // Per-execution custom options.
     const CustomOptions* custom_options = nullptr;
+
+    YnnParams ynn_params;
   };
 
   // An execute event that becomes ready when all tasks are completed.

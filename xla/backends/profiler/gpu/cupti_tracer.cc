@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler_factory.h"
 #include "xla/backends/profiler/gpu/cupti_utils.h"
+#include "xla/stream_executor/cuda/cuda_graph_annotation_registry.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
@@ -736,6 +737,14 @@ void SetCudaGraphEventUponApiExit(
         static_cast<const cuGraphLaunch_params*>(cbdata->functionParams);
     cupti_interface->GetGraphExecId(params->hGraph, &graph_id_info.graph_id);
     graph_id_info.orig_graph_id = 0;
+    uint32_t stream_id = 0;
+    const uint8_t per_thread_stream =
+        (cbid == CUPTI_DRIVER_TRACE_CBID_cuGraphLaunch_ptsz) ? 1 : 0;
+    if (cupti_interface->GetStreamIdEx(cbdata->context, params->hStream,
+                                       per_thread_stream,
+                                       &stream_id) == CUPTI_SUCCESS) {
+      event.stream_id = stream_id;
+    }
   }
   // Create multiple events for cuGraphClone/cuGraphInstantiateWithFlags.
   // The multiple events are created for each node in the graph.
@@ -1115,6 +1124,26 @@ const char* GetCuptiErrorString(CuptiInterface* cupti_interface,
   return err_str;
 }
 
+// Warns once per process if a session selects graph-level tracing while
+// command buffer telemetry has recorded node annotations. CUPTI then reports
+// one record per graph launch instead of one per graph node, so the collector
+// has no node records to resolve the annotations for.
+void WarnIfGraphTraceHidesNodeAnnotations(
+    absl::Span<const CUpti_ActivityKind> activities) {
+  // Only graphs recorded before the session starts are registered at this
+  // point. That covers the usual flow, where command buffers are recorded
+  // during warmup and a profiler attaches later, but not graphs that are first
+  // recorded during the session.
+  if (absl::c_contains(activities, CUPTI_ACTIVITY_KIND_GRAPH_TRACE) &&
+      !::stream_executor::gpu::CudaGraphAnnotationRegistry::Default().empty()) {
+    LOG_FIRST_N(WARNING, 1)
+        << "CUPTI graph-level tracing (CUPTI_ACTIVITY_KIND_GRAPH_TRACE) "
+           "reports one record per CUDA graph launch, so the per-node HLO "
+           "annotations recorded by --xla_gpu_enable_command_buffer_telemetry "
+           "can't be used.";
+  }
+}
+
 }  // namespace
 
 CuptiTracer::CuptiTracer(CuptiInterface* cupti_interface)
@@ -1150,6 +1179,20 @@ absl::Status CuptiTracer::Enable(
     const std::vector<std::unique_ptr<tensorflow::profiler::XPlane>>& xplanes) {
   option_ = option;
   collector_ = collector;
+
+  // Take the harvest hold before any tracing is enabled, so that it covers
+  // every record of the session. If an earlier Enable() left a hold behind,
+  // emplace() releases it only after the new one is taken, so the registry
+  // never purges in between.
+  annotation_harvest_hold_.emplace(
+      ::stream_executor::gpu::CudaGraphAnnotationRegistry::Default()
+          .AcquireHarvestHold());
+  // Callers don't call Disable() after a failed Enable(), so release the hold
+  // on every error return. Declared first, this runs last, after the cleanups
+  // below have disabled tracing.
+  absl::Cleanup harvest_hold_cleanup = [this] {
+    annotation_harvest_hold_.reset();
+  };
 
   // For nvtx tracking, utilize CUPTI activity marker and marker_data.
   if (option_->enable_nvtx_tracking) {
@@ -1240,9 +1283,12 @@ absl::Status CuptiTracer::Enable(
     std::move(pm_sampler_cleanup).Cancel();
   }
 
+  WarnIfGraphTraceHidesNodeAnnotations(option_->activities_selected);
+
   std::move(annotation_cleanup).Cancel();
   std::move(activity_tracing_cleanup).Cancel();
   std::move(api_tracing_cleanup).Cancel();
+  std::move(harvest_hold_cleanup).Cancel();
   return absl::OkStatus();
 }
 
@@ -1349,6 +1395,12 @@ void CuptiTracer::Disable() {
   }
 
   collector_->Flush();
+  // The collector has resolved every record of the session, so the registry
+  // can purge the annotations it kept for graphs destroyed during the session.
+  VLOG(1) << "Command buffer annotation registry at the end of the session: "
+          << ::stream_executor::gpu::CudaGraphAnnotationRegistry::Default()
+                 .GetStats();
+  annotation_harvest_hold_.reset();
   collector_ = nullptr;
   option_.reset();
   cupti_driver_api_hook_.reset();
@@ -1714,7 +1766,7 @@ absl::Status CuptiTracer::DisableActivityTracing() {
       // bug (https://partners.nvidia.com/Bug/ViewBug/5350647). Re-enable after
       // the fix. CUDA 13.0 has the fix, so no longer skip.
       if (activity == CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL &&
-          cuda_versions::GetSafeCudaVersion() < 13000) {
+          !CanDisableConcurrentKernelActivity()) {
         VLOG(1) << "Skip disabling activity tracing for: " << activity
                 << " due to deadlock";
         continue;
@@ -2035,6 +2087,10 @@ absl::Status CuptiTracer::ProcessActivityBuffer(CUcontext context,
         "Insufficient privilege to run libcupti (you need root permission).");
   }
   return "";
+}
+
+/*static*/ bool CuptiTracer::CanDisableConcurrentKernelActivity() {
+  return cuda_versions::GetSafeCudaVersion() >= 13000;
 }
 
 /*static*/ absl::Status CuptiTracer::EnableHES() {

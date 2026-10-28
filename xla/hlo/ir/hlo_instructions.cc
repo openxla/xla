@@ -49,7 +49,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-#include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -129,9 +128,7 @@ void SetThreadName(HloComputation* called_computation,
   called_computation->SetExecutionThread(execution_thread);
   for (HloInstruction* instr : called_computation->instructions()) {
     if (instr->IsAsynchronous()) {
-      // Set async instruction thread name and also recursively set async
-      // computations.
-      instr->set_async_execution_thread(execution_thread);
+      continue;
     }
     for (HloComputation* nested_called_computation :
          instr->called_computations()) {
@@ -365,24 +362,31 @@ HloAsyncInstruction* FindAsyncChainDataflow(
     }
     case HloOpcode::kParameter: {
       auto* comp = instr->parent();
-      if (comp != nullptr) {
-        auto callers = comp->caller_instructions(HloOpcode::kWhile);
-        if (callers.size() == 1) {
-          auto* while_op = callers.front();
-          if (while_op->while_body() == comp) {
-            HloAsyncInstruction* res = FindAsyncChainDataflow(
-                while_op->mutable_operand(0), is_target, index, visited);
-            if (res != nullptr) {
-              return res;
-            }
-            if (comp->root_instruction() != nullptr) {
-              HloAsyncInstruction* root_res = FindAsyncChainDataflow(
-                  comp->root_instruction(), is_target, index, visited);
-              if (root_res != nullptr) {
-                return root_res;
-              }
-            }
-          }
+      if (comp == nullptr) {
+        revert_step();
+        return nullptr;
+      }
+      // A body can have several while callers while a pass holds a widened
+      // clone of an enclosing loop next to the not yet removed original. The
+      // clones carry the same chain, so any caller resolves it.
+      bool is_while_body = false;
+      for (HloInstruction* while_op :
+           comp->caller_instructions(HloOpcode::kWhile)) {
+        if (while_op->while_body() != comp) {
+          continue;
+        }
+        is_while_body = true;
+        HloAsyncInstruction* res = FindAsyncChainDataflow(
+            while_op->mutable_operand(0), is_target, index, visited);
+        if (res != nullptr) {
+          return res;
+        }
+      }
+      if (is_while_body && comp->root_instruction() != nullptr) {
+        HloAsyncInstruction* root_res = FindAsyncChainDataflow(
+            comp->root_instruction(), is_target, index, visited);
+        if (root_res != nullptr) {
+          return root_res;
         }
       }
       revert_step();
@@ -4780,19 +4784,6 @@ std::unique_ptr<HloInstruction> HloDomainInstruction::CloneWithNewOperandsImpl(
 
 void HloDomainInstruction::ToProto(HloInstructionProto* proto) const {
   HloInstruction::ToProto(proto);
-  auto operand_side_sharding =
-      dynamic_cast<const ShardingMetadata*>(operand_side_metadata_.get());
-  if (operand_side_sharding && operand_side_sharding->sharding() != nullptr) {
-    *proto->mutable_domain_entry_sharding() =
-        operand_side_sharding->sharding()->ToProto();
-  }
-
-  auto user_side_sharding =
-      dynamic_cast<const ShardingMetadata*>(user_side_metadata_.get());
-  if (user_side_sharding && user_side_sharding->sharding() != nullptr) {
-    *proto->mutable_domain_exit_sharding() =
-        user_side_sharding->sharding()->ToProto();
-  }
 }
 
 HloGetDimensionSizeInstruction::HloGetDimensionSizeInstruction(
