@@ -21,6 +21,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -393,6 +394,133 @@ std::vector<std::unique_ptr<CompiledModule>> MakeMockCompiledModule(
   aot_results.push_back(std::move(mock_compiled_module));
   return aot_results;
 }
+
+enum class TargetWidthCase {
+  kNoTargetConfig,
+  kLegacyAbsent,
+  kMatching,
+  kDifferent,
+  kZero,
+  kUnrelatedMismatch,
+};
+
+class MemoryBusWidthDispatchTest
+    : public ::testing::TestWithParam<std::tuple<bool, TargetWidthCase>> {};
+
+TEST_P(MemoryBusWidthDispatchTest, SelectsCompilationPathWithoutMutatingMetadata) {
+  const bool use_mlir = std::get<0>(GetParam());
+  const TargetWidthCase width_case = std::get<1>(GetParam());
+  SCOPED_TRACE(use_mlir ? "MLIR" : "XlaComputation");
+  SCOPED_TRACE(static_cast<int>(width_case));
+  GpuClientOptions client_options;
+  client_options.allowed_devices = {0};
+  client_options.allocator_config.preallocate = false;
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(client_options));
+  if (client->platform_id() != CudaId()) {
+    GTEST_SKIP() << "Test requires a CUDA GPU client";
+  }
+  auto* common_client = dynamic_cast<CommonPjRtClient*>(client.get());
+  ASSERT_NE(common_client, nullptr);
+  auto* raw_client =
+      dynamic_cast<PjRtStreamExecutorRawClient*>(common_client->raw_client());
+  ASSERT_NE(raw_client, nullptr);
+  auto* executor = raw_client->client()->backend().default_stream_executor();
+  const gpu::GpuTargetConfig local(executor);
+  ASSERT_TRUE(local.device_description.memory_bus_width().has_value());
+  const auto live_width = *local.device_description.memory_bus_width();
+  std::optional<gpu::GpuTargetConfig> target = local;
+  bool expect_jit = true;
+  switch (width_case) {
+    case TargetWidthCase::kNoTargetConfig:
+      target.reset();
+      break;
+    case TargetWidthCase::kLegacyAbsent:
+      target->device_description.set_memory_bus_width(std::nullopt);
+      break;
+    case TargetWidthCase::kMatching:
+      break;
+    case TargetWidthCase::kDifferent:
+      target->device_description.set_memory_bus_width(live_width + 1);
+      expect_jit = false;
+      break;
+    case TargetWidthCase::kZero:
+      target->device_description.set_memory_bus_width(0);
+      expect_jit = live_width == 0;
+      break;
+    case TargetWidthCase::kUnrelatedMismatch:
+      target->device_description.set_memory_bus_width(std::nullopt);
+      target->device_description.set_core_count(
+          local.device_description.core_count() + 1);
+      expect_jit = false;
+      break;
+  }
+  auto gpu_topology = std::make_shared<GpuTopology>(CudaName(), 1, 1, 1, target);
+  StreamExecutorGpuTopologyDescription topology(
+      CudaId(), CudaName(), kFakePlatformVersion, gpu_topology);
+  const auto topology_before = gpu_topology->ToProto();
+
+  auto mock_compiler = std::make_unique<MockCompiler>();
+  auto& mock = *mock_compiler;
+  EXPECT_CALL(mock, PlatformId)
+      .WillRepeatedly(Return(stream_executor::cuda::kCudaPlatformId));
+  EXPECT_CALL(mock, Compile).Times(0);
+  if (expect_jit) {
+    // JIT selection delegates to the client's local compiler instead.
+    EXPECT_CALL(mock, CompileAheadOfTime).Times(0);
+  } else {
+    EXPECT_CALL(mock, CompileAheadOfTime)
+        .WillOnce(Return(absl::FailedPreconditionError(
+            "selected cross-compilation for mismatched target")));
+  }
+  StreamExecutorGpuCompiler compiler(CudaId(), std::move(mock_compiler));
+  CompileOptions options;
+  options.executable_build_options.mutable_debug_options()
+      ->set_xla_pjrt_allow_auto_layout_in_hlo(false);
+  auto compile = [&]() -> absl::StatusOr<std::unique_ptr<PjRtExecutable>> {
+    if (!use_mlir) {
+      ABSL_ASSIGN_OR_RETURN(auto computation, GetXlaComputation(kProgram));
+      return compiler.Compile(options, computation, topology, client.get());
+    }
+    auto context = std::make_unique<mlir::MLIRContext>();
+    context->loadDialect<mlir::mhlo::MhloDialect, mlir::func::FuncDialect>();
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(mlir_str, context.get());
+    if (!module) {
+      return absl::InvalidArgumentError("Failed to parse test MLIR");
+    }
+    return compiler.Compile(
+        options, MaybeOwningMlirModule(std::move(context), std::move(module)),
+        topology,
+        client.get());
+  };
+  auto result = compile();
+  if (expect_jit) {
+    ASSERT_OK(result);
+    if (use_mlir) {
+      // The wrapper's MLIR fallback sets this flag before calling the HLO
+      // overload. Check the retained options to distinguish the direct MLIR
+      // path from a fallback that subsequently selects JIT in the HLO overload.
+      ASSERT_OK_AND_ASSIGN(auto returned_options, (*result)->GetCompileOptions());
+      EXPECT_FALSE(returned_options.executable_build_options.debug_options()
+                       .xla_pjrt_allow_auto_layout_in_hlo());
+    }
+  } else {
+    EXPECT_THAT(result, absl_testing::StatusIs(
+                            absl::StatusCode::kFailedPrecondition,
+                            ::testing::HasSubstr("selected cross-compilation")));
+  }
+  EXPECT_THAT(gpu_topology->ToProto(), EqualsProto(topology_before));
+  EXPECT_EQ(gpu::GpuTargetConfig(executor), local);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    BothInputs, MemoryBusWidthDispatchTest,
+    ::testing::Combine(
+        ::testing::Bool(),
+        ::testing::Values(TargetWidthCase::kNoTargetConfig,
+                          TargetWidthCase::kLegacyAbsent,
+                          TargetWidthCase::kMatching, TargetWidthCase::kDifferent,
+                          TargetWidthCase::kZero,
+                          TargetWidthCase::kUnrelatedMismatch)));
 
 TEST(StreamExecutorGpuCompilerTest, DevicelessCompilation) {
   auto mock_compiler = std::make_unique<MockCompiler>();

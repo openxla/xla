@@ -16,6 +16,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
 #include "absl/container/flat_hash_map.h"
@@ -36,6 +38,74 @@ limitations under the License.
 
 namespace stream_executor {
 namespace {
+
+// Older stored profiles do not supply memory bus width. Compare only that
+// field's known values without weakening DeviceDescription equality globally.
+DeviceDescription ForStoredSpecComparison(DeviceDescription physical,
+                                         const GpuDeviceInfoProto& stored) {
+  if (!stored.has_memory_bus_width()) {
+    physical.set_memory_bus_width(std::nullopt);
+  }
+  return physical;
+}
+
+TEST(EmbeddedTargetConfigTest, LegacySpecMemoryBusWidth) {
+  DeviceDescription physical;
+  physical.set_memory_bus_width(7680);
+  GpuDeviceInfoProto stored = physical.ToProto();
+  stored.clear_memory_bus_width();
+  const DeviceDescription compared = ForStoredSpecComparison(physical, stored);
+  EXPECT_TRUE(tsl::protobuf::util::MessageDifferencer::Equals(compared.ToProto(),
+                                                           stored));
+  ASSERT_OK_AND_ASSIGN(DeviceDescription stored_description,
+                       DeviceDescription::FromProto(stored));
+  EXPECT_TRUE(compared.EqualsTo(stored_description));
+  EXPECT_EQ(physical.memory_bus_width(), 7680);
+}
+
+TEST(EmbeddedTargetConfigTest, KnownMemoryBusWidthIsCompared) {
+  DeviceDescription physical;
+  physical.set_memory_bus_width(7680);
+  for (int64_t width : {int64_t{0}, int64_t{5120}, int64_t{7680}}) {
+    SCOPED_TRACE(width);
+    GpuDeviceInfoProto stored = physical.ToProto();
+    stored.set_memory_bus_width(width);
+    const DeviceDescription compared = ForStoredSpecComparison(physical, stored);
+    EXPECT_EQ(tsl::protobuf::util::MessageDifferencer::Equals(compared.ToProto(),
+                                                           stored),
+              width == 7680);
+    ASSERT_OK_AND_ASSIGN(DeviceDescription stored_description,
+                         DeviceDescription::FromProto(stored));
+    EXPECT_EQ(compared.EqualsTo(stored_description), width == 7680);
+  }
+}
+
+TEST(EmbeddedTargetConfigTest, LegacySpecRetainsOtherFields) {
+  DeviceDescription physical;
+  physical.set_memory_bus_width(7680);
+  physical.set_core_count(148);
+  GpuDeviceInfoProto stored = physical.ToProto();
+  stored.clear_memory_bus_width();
+  stored.set_core_count(149);
+  const DeviceDescription compared = ForStoredSpecComparison(physical, stored);
+  EXPECT_FALSE(tsl::protobuf::util::MessageDifferencer::Equals(compared.ToProto(),
+                                                            stored));
+  ASSERT_OK_AND_ASSIGN(DeviceDescription stored_description,
+                       DeviceDescription::FromProto(stored));
+  EXPECT_FALSE(compared.EqualsTo(stored_description));
+}
+
+TEST(EmbeddedTargetConfigTest, MissingLiveWidthDoesNotMatchKnownSpec) {
+  DeviceDescription physical;
+  GpuDeviceInfoProto stored = physical.ToProto();
+  stored.set_memory_bus_width(0);
+  const DeviceDescription compared = ForStoredSpecComparison(physical, stored);
+  EXPECT_FALSE(tsl::protobuf::util::MessageDifferencer::Equals(compared.ToProto(),
+                                                            stored));
+  ASSERT_OK_AND_ASSIGN(DeviceDescription stored_description,
+                       DeviceDescription::FromProto(stored));
+  EXPECT_FALSE(compared.EqualsTo(stored_description));
+}
 
 TEST(EmbeddedTargetConfigTest, DeviceInfoMatches) {
   absl::flat_hash_map<std::string, GpuDeviceInfoProto> gpu_specs;
@@ -75,10 +145,6 @@ TEST(EmbeddedTargetConfigTest, DeviceInfoMatches) {
     }
 
     auto it = gpu_specs.find(physical_device_description.name());
-    const GpuDeviceInfoProto physical_device_info =
-        physical_device_description.ToProto();
-    VLOG(1) << physical_device_description.name();
-    VLOG(1) << physical_device_info.DebugString();
     if (it == gpu_specs.end()) {
       if (!tsl::kIsOpenSource) {
         FAIL() << "No spec file for " << physical_device_description.name();
@@ -88,6 +154,12 @@ TEST(EmbeddedTargetConfigTest, DeviceInfoMatches) {
     }
     all_skipped = false;
     const GpuDeviceInfoProto& stored_device_info = it->second;
+    const DeviceDescription compared_device_description =
+        ForStoredSpecComparison(physical_device_description, stored_device_info);
+    const GpuDeviceInfoProto physical_device_info =
+        compared_device_description.ToProto();
+    VLOG(1) << physical_device_description.name();
+    VLOG(1) << physical_device_info.DebugString();
     tsl::protobuf::util::MessageDifferencer diff;
     diff.IgnoreField(
         GpuDeviceInfoProto::GetDescriptor()->FindFieldByName("pci_bus_id"));
@@ -125,7 +197,7 @@ TEST(EmbeddedTargetConfigTest, DeviceInfoMatches) {
                 stored_device_info.device_memory_size(), 1024 * 1024 * 1024);
     ASSERT_OK_AND_ASSIGN(DeviceDescription stored_device_description,
                          DeviceDescription::FromProto(stored_device_info));
-    EXPECT_TRUE(physical_device_description.EqualsTo(
+    EXPECT_TRUE(compared_device_description.EqualsTo(
         stored_device_description,
         {DeviceDescription::CompareOptions::kIgnoreVersionNumbers,
          DeviceDescription::CompareOptions::kPortable}));

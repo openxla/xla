@@ -130,6 +130,12 @@ void ExpectPropsMatch(Json::Value live_json, Json::Value synth_json,
   live_json.removeMember(kOversizedSharedMemoryField);
   synth_json.removeMember(kOversizedSharedMemoryField);
 
+  // Older runtimes retain this supplied JSON member but do not report it for
+  // live devices. Compare it only when the backend's live serializer knows it.
+  if (!live_json.isMember("memoryBusWidth")) {
+    synth_json.removeMember("memoryBusWidth");
+  }
+
   StripIgnoredFields(live_json);
   StripIgnoredFields(synth_json);
   ExpectClockFieldsClose(live_json, synth_json);
