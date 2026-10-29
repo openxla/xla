@@ -19,6 +19,7 @@
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/log_entry.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -179,6 +180,9 @@ absl::StatusOr<std::unique_ptr<Client>> CreateGrpcClient(
     last_status = result.status();
     CONN_UPDATE_LOG(absl::StrCat("Connection to IFRT proxy server attempt #", i,
                                  "failed: ", last_status.ToString()));
+    if (absl::IsResourceExhausted(last_status)) {
+      break;
+    }
     absl::SleepFor(absl::Seconds(1));
   }
 

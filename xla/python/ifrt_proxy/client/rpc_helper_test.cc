@@ -22,6 +22,7 @@
 
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "tsl/platform/test.h"
@@ -36,6 +37,8 @@
 #include "xla/tsl/concurrency/future.h"
 
 using ::testing::_;
+using ::testing::HasSubstr;
+using ::testing::Return;
 using ::testing::UnorderedElementsAre;
 
 namespace xla {
@@ -151,6 +154,22 @@ TEST_F(RpcHelperTest, BatchedNoPeriodicFlush) {
               UnorderedElementsAre(1, 3, 9, 7));
   EXPECT_THAT(delete_req->delete_array_request().array_handle(),
               UnorderedElementsAre(2, 4, 8, 6));
+}
+
+TEST_F(RpcHelperTest, PreservesResourceExhaustedError) {
+  EXPECT_CALL(*session_, Enqueue(_))
+      .WillOnce(Return(
+          tsl::Future<ClientSession::Response>(absl::ResourceExhaustedError(
+              "Only one client can connect via the proxy server at a time."))));
+
+  EXPECT_THAT(
+      rpc_helper_->Init(std::make_unique<InitRequest>()).Await(),
+      absl_testing::StatusIs(
+          absl::StatusCode::kResourceExhausted,
+          HasSubstr(
+              "Connection to IFRT proxy server was terminated: "
+              "RESOURCE_EXHAUSTED: Only one client can connect via the proxy "
+              "server at a time.")));
 }
 
 }  // namespace
