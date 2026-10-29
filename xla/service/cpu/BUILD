@@ -462,10 +462,13 @@ xla_test(
     ],
     test_cpu_fast_compile = True,
     deps = [
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:verified_hlo_module",
         "//xla/service:hlo_module_config",
         "//xla/tests:hlo_pjrt_test_base",
+        "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/monitoring:collected_metrics",
         "//xla/tsl/lib/monitoring:collection_registry",

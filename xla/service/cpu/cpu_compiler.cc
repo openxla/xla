@@ -1119,6 +1119,34 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     ABSL_RETURN_IF_ERROR(lib_pipeline.Run(module).status());
   }
 
+  // The LayoutAssignment pass may leave behind kCopy instructions which are
+  // duplicate or NOPs, so remove them with algebraic simplification and CSE.
+  // Run this to a fixed point before fusion so that bitcast-equivalent copies,
+  // reshapes, and transposes are simplified into bitcasts instead of being
+  // wrapped into loop fusions.
+  [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
+       "simplification after layout assignment"),
+   &module, use_onednn_custom_call] {
+    AddHloVerifier(
+        &pipeline,
+        HloVerifierOpts{}.MakeLayoutSensitive().WithInstructionCanChangeLayout(
+            LayoutAssignment::InstructionCanChangeLayout),
+        /*debug_only=*/true);
+    AlgebraicSimplifierOptions options;
+    options.set_is_layout_sensitive(true);
+    options.set_supports_non_canonical_dots(false);
+    options.set_enable_dot_strength_reduction(true);
+    // "slow" minmax means we propagate nan.
+    options.set_minmax_propagate_nan(
+        !module->config().debug_options().xla_cpu_enable_fast_min_max());
+    options.set_executing_on_cpu(true);
+    options.set_enable_onednn_support(use_onednn_custom_call);
+    options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
+    pipeline.AddPass<AlgebraicSimplifier>(options);
+    pipeline.AddPass<HloDCE>();
+    pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
+  }();
+
   AliasInfo alias_info;
   bool use_multi_output_fusion =
       options::UseMultiOutputFusion(module->config());
@@ -1143,36 +1171,6 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
   constexpr int64_t kCombineCount = 256;
   pipeline.AddPass<CpuAllReduceCombiner>(kCombineBytes, kCombineCount);
   pipeline.AddPass<TupleSimplifier>();
-
-  // The LayoutAssignment pass may leave behind kCopy instructions which are
-  // duplicate or NOPs, so remove them with algebraic simplification and CSE.
-  // Run this to a fixed point.
-  [&pipeline = pipeline.AddPass<HloPassFix<HloPassPipeline>>(
-       "simplification after layout assignment"),
-   &module, use_onednn_custom_call] {
-    AddHloVerifier(
-        &pipeline,
-        HloVerifierOpts{}.MakeLayoutSensitive().WithInstructionCanChangeLayout(
-            LayoutAssignment::InstructionCanChangeLayout),
-        /*debug_only=*/true);
-    AlgebraicSimplifierOptions options;
-    options.set_is_layout_sensitive(true);
-    options.set_supports_non_canonical_dots(false);
-    options.set_enable_dot_strength_reduction(true);
-    // "slow" minmax means we propagate nan.
-    options.set_minmax_propagate_nan(
-        !module->config().debug_options().xla_cpu_enable_fast_min_max());
-    options.set_executing_on_cpu(true);
-    options.set_enable_onednn_support(use_onednn_custom_call);
-    options.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
-    pipeline.AddPass<AlgebraicSimplifier>(options);
-    pipeline.AddPass<HloDCE>();
-    pipeline.AddPass<HloCSE>(/*is_layout_sensitive=*/true);
-  }();
-
-  // Safeguard for late elemental instructions created during post-layout
-  // simplification.
-  pipeline.AddPass<FusionWrapper>(target_machine_features);
 
   // Outline ops in the entry computation into calls to subcomputations.
   if (!is_aot_compile) {
