@@ -2876,6 +2876,80 @@ ENTRY entry_computation {
 })";
   RunAndCompareScan(kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3});
 }
+
+TEST_F(TritonEmitterTest, PadHandlesLarge64BitInputDimension) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule m
+
+triton_computation {
+  p0 = f32[] parameter(0)
+  bcast = f32[2147483650]{0} broadcast(p0), dimensions={}
+  c_pad = f32[] constant(-1)
+  pad = f32[2147483680]{0} pad(bcast, c_pad), padding=0_30
+  ROOT slice = f32[16]{0} slice(pad), slice={[0:16]}
+}
+
+ENTRY main {
+  p0 = f32[] parameter(0)
+  ROOT triton_fusion = f32[16]{0} fusion(p0), kind=kCustom,
+    calls=triton_computation, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["16"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})hlo";
+
+  EXPECT_THAT(
+      CreateTritonIrFromHloTextAndFileCheck(kHloText, "triton_computation", R"(
+CHECK: arith.constant dense<2147483650> : tensor<16xi64>
+CHECK: arith.cmpi slt, {{.*}} : tensor<16xi64>
+)"),
+      IsOk());
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  Literal arg = LiteralUtil::CreateR0<float>(7.0f);
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&arg},
+                                               /*run_hlo_passes=*/false));
+  EXPECT_EQ(result, LiteralUtil::CreateR1<float>(std::vector<float>(16, 7.0f)));
+}
+
+TEST_F(TritonEmitterTest, PadHandlesLarge64BitTileOffset) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule m
+
+triton_computation {
+  p0 = f32[] parameter(0)
+  bcast = f32[10]{0} broadcast(p0), dimensions={}
+  c_pad = f32[] constant(-1)
+  pad = f32[4294967328]{0} pad(bcast, c_pad), padding=0_4294967318
+  ROOT slice = f32[16]{0} slice(pad), slice={[4294967296:4294967312]}
+}
+
+ENTRY main {
+  p0 = f32[] parameter(0)
+  ROOT triton_fusion = f32[16]{0} fusion(p0), kind=kCustom,
+    calls=triton_computation, backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton_nested_gemm_fusion",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["16"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+})hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  Literal arg = LiteralUtil::CreateR0<float>(7.0f);
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&arg},
+                                               /*run_hlo_passes=*/false));
+  EXPECT_EQ(result,
+            LiteralUtil::CreateR1<float>(std::vector<float>(16, -1.0f)));
+}
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
