@@ -66,9 +66,9 @@ module {
 }
 
 // CHECK-LABEL: @intr_f64_to_f8
-// CHECK: arith.truncf %{{.+}} : f64 to f32
-// CHECK: llvm.nvvm.ff.to.e4m3x2.rn
-// CHECK: llvm.nvvm.ff.to.e5m2x2.rn
+// CHECK-NOT: llvm.nvvm.ff.to.
+// CHECK: arith.truncf %{{.+}} : f64 to f8E4M3FN
+// CHECK: arith.truncf %{{.+}} : f64 to f8E5M2
 
 // -----
 
