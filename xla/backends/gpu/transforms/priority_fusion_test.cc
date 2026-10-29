@@ -2194,5 +2194,225 @@ ENTRY main {
   EXPECT_THAT(priority_fusion_.Run(module.get()),
               absl_testing::IsOkAndHolds(false));
 }
+
+TEST_F(PriorityFusionTest,
+       DoesNotFuseSmallSoftmaxIntoLargeBroadcastingSlicedLoopConsumer) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule test_module
+
+max_bf16 {
+  lhs = bf16[] parameter(0)
+  rhs = bf16[] parameter(1)
+  ROOT out = bf16[] maximum(lhs, rhs)
+}
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT out = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  alpha = bf16[4,10240]{1,0} parameter(0)
+  streams = f32[2,64,4,10240]{3,2,1,0} parameter(1)
+
+  neg_inf = bf16[] constant(-inf)
+  max_val = bf16[10240]{0} reduce(alpha, neg_inf), dimensions={0}, to_apply=max_bf16
+  bcast_max = bf16[4,10240]{1,0} broadcast(max_val), dimensions={1}
+  shifted = bf16[4,10240]{1,0} subtract(alpha, bcast_max)
+  exp_shifted = bf16[4,10240]{1,0} exponential(shifted)
+  exp_f32 = f32[4,10240]{1,0} convert(exp_shifted)
+  zero = f32[] constant(0)
+  sum_exp = f32[10240]{0} reduce(exp_f32, zero), dimensions={0}, to_apply=add_f32
+  sum_bf16 = bf16[10240]{0} convert(sum_exp)
+  log_sum = bf16[10240]{0} log(sum_bf16)
+  bcast_log = bf16[4,10240]{1,0} broadcast(log_sum), dimensions={1}
+  log_probs = bf16[4,10240]{1,0} subtract(shifted, bcast_log)
+  probs_bf16 = bf16[4,10240]{1,0} exponential(log_probs)
+
+  probs_f32 = f32[4,10240]{1,0} convert(probs_bf16)
+  bcast_probs = f32[2,64,4,10240]{3,2,1,0} broadcast(probs_f32), dimensions={2,3}
+  weighted = f32[2,64,4,10240]{3,2,1,0} multiply(bcast_probs, streams)
+  slice0 = f32[2,64,1,10240]{3,2,1,0} slice(weighted), slice={[0:2], [0:64], [0:1], [0:10240]}
+  slice1 = f32[2,64,1,10240]{3,2,1,0} slice(weighted), slice={[0:2], [0:64], [1:2], [0:10240]}
+  add01 = f32[2,64,1,10240]{3,2,1,0} add(slice0, slice1)
+  slice2 = f32[2,64,1,10240]{3,2,1,0} slice(weighted), slice={[0:2], [0:64], [2:3], [0:10240]}
+  add012 = f32[2,64,1,10240]{3,2,1,0} add(add01, slice2)
+  slice3 = f32[2,64,1,10240]{3,2,1,0} slice(weighted), slice={[0:2], [0:64], [3:4], [0:10240]}
+  ROOT out = f32[2,64,1,10240]{3,2,1,0} add(add012, slice3)
+})hlo";
+
+  se::DeviceDescription b200_device_info =
+      TestGpuDeviceInfo::B200SXMDeviceInfo();
+  GpuHloCostAnalysis::Options options;
+  options.count_multiple_input_accesses = true;
+  PriorityFusion priority_fusion(nullptr, b200_device_info, &alias_info_,
+                                 options, &mlir_context_);
+  RunAndFilecheckHloRewrite(kHloText, std::move(priority_fusion), R"(
+CHECK: ENTRY %main
+CHECK-DAG: %[[ALPHA:.*]] = bf16[4,10240]{1,0} parameter(0)
+CHECK-DAG: %[[STREAMS:.*]] = f32[2,64,4,10240]{3,2,1,0} parameter(1)
+CHECK: %[[SOFTMAX:.*]] = {{bf16|f32}}[4,10240]{1,0} fusion(%[[ALPHA]]), kind=kLoop
+CHECK-NOT: fusion(
+CHECK: ROOT %{{.*}} = f32[2,64,1,10240]{3,2,1,0} fusion(%[[STREAMS]], %[[SOFTMAX]]), kind=kLoop
+  )");
+}
+
+TEST_F(PriorityFusionTest,
+       FusesSmallSoftmaxIntoSmallBatchSlicedLoopConsumerOnB200) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule test_module
+
+max_bf16 {
+  lhs = bf16[] parameter(0)
+  rhs = bf16[] parameter(1)
+  ROOT out = bf16[] maximum(lhs, rhs)
+}
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT out = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  alpha = bf16[4,10240]{1,0} parameter(0)
+  streams = f32[2,8,4,10240]{3,2,1,0} parameter(1)
+
+  neg_inf = bf16[] constant(-inf)
+  max_val = bf16[10240]{0} reduce(alpha, neg_inf), dimensions={0}, to_apply=max_bf16
+  bcast_max = bf16[4,10240]{1,0} broadcast(max_val), dimensions={1}
+  shifted = bf16[4,10240]{1,0} subtract(alpha, bcast_max)
+  exp_shifted = bf16[4,10240]{1,0} exponential(shifted)
+  exp_f32 = f32[4,10240]{1,0} convert(exp_shifted)
+  zero = f32[] constant(0)
+  sum_exp = f32[10240]{0} reduce(exp_f32, zero), dimensions={0}, to_apply=add_f32
+  sum_bf16 = bf16[10240]{0} convert(sum_exp)
+  log_sum = bf16[10240]{0} log(sum_bf16)
+  bcast_log = bf16[4,10240]{1,0} broadcast(log_sum), dimensions={1}
+  log_probs = bf16[4,10240]{1,0} subtract(shifted, bcast_log)
+  probs_bf16 = bf16[4,10240]{1,0} exponential(log_probs)
+
+  probs_f32 = f32[4,10240]{1,0} convert(probs_bf16)
+  bcast_probs = f32[2,8,4,10240]{3,2,1,0} broadcast(probs_f32), dimensions={2,3}
+  weighted = f32[2,8,4,10240]{3,2,1,0} multiply(bcast_probs, streams)
+  slice0 = f32[2,8,1,10240]{3,2,1,0} slice(weighted), slice={[0:2], [0:8], [0:1], [0:10240]}
+  slice1 = f32[2,8,1,10240]{3,2,1,0} slice(weighted), slice={[0:2], [0:8], [1:2], [0:10240]}
+  add01 = f32[2,8,1,10240]{3,2,1,0} add(slice0, slice1)
+  slice2 = f32[2,8,1,10240]{3,2,1,0} slice(weighted), slice={[0:2], [0:8], [2:3], [0:10240]}
+  add012 = f32[2,8,1,10240]{3,2,1,0} add(add01, slice2)
+  slice3 = f32[2,8,1,10240]{3,2,1,0} slice(weighted), slice={[0:2], [0:8], [3:4], [0:10240]}
+  ROOT out = f32[2,8,1,10240]{3,2,1,0} add(add012, slice3)
+})hlo";
+
+  se::DeviceDescription b200_device_info =
+      TestGpuDeviceInfo::B200SXMDeviceInfo();
+  GpuHloCostAnalysis::Options options;
+  options.count_multiple_input_accesses = true;
+  PriorityFusion priority_fusion(nullptr, b200_device_info, &alias_info_,
+                                 options, &mlir_context_);
+  RunAndFilecheckHloRewrite(kHloText, std::move(priority_fusion), R"(
+CHECK: ENTRY %main
+CHECK-DAG: %[[ALPHA:.*]] = bf16[4,10240]{1,0} parameter(0)
+CHECK-DAG: %[[STREAMS:.*]] = f32[2,8,4,10240]{3,2,1,0} parameter(1)
+CHECK-NOT: fusion(
+CHECK: ROOT %{{.*}} = f32[2,8,1,10240]{3,2,1,0} fusion(%[[STREAMS]], %[[ALPHA]]), kind=kLoop
+  )");
+}
+
+TEST_F(PriorityFusionTest,
+       DoesNotFuseSmallReductionAcrossLargeOrthogonalBroadcastInLoopFusion) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule test_module
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT out = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  x = f32[4,10240]{1,0} parameter(0)
+  y = f32[2,16,4,10240]{3,2,1,0} parameter(1)
+  zero = f32[] constant(0)
+  sum = f32[10240]{0} reduce(x, zero), dimensions={0}, to_apply=add_f32
+  bcast_sum = f32[4,10240]{1,0} broadcast(sum), dimensions={1}
+  norm = f32[4,10240]{1,0} divide(x, bcast_sum)
+  bcast_norm = f32[2,16,4,10240]{3,2,1,0} broadcast(norm), dimensions={2,3}
+  ROOT out = f32[2,16,4,10240]{3,2,1,0} multiply(bcast_norm, y)
+})hlo";
+
+  RunAndFilecheckHloRewrite(kHloText, std::move(priority_fusion_), R"(
+CHECK: ENTRY %main
+CHECK-DAG: %[[X:.*]] = f32[4,10240]{1,0} parameter(0)
+CHECK-DAG: %[[Y:.*]] = f32[2,16,4,10240]{3,2,1,0} parameter(1)
+CHECK: %[[NORM:.*]] = f32[4,10240]{1,0} fusion(%[[X]]), kind=kLoop
+CHECK-NOT: fusion(
+CHECK: ROOT %{{.*}} = f32[2,16,4,10240]{3,2,1,0} fusion(%[[Y]], %[[NORM]]), kind=kLoop
+  )");
+}
+
+TEST_F(PriorityFusionTest,
+       FusesSmallReductionAcrossSmallBatchOrthogonalBroadcastInLoopFusion) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule test_module
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT out = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  x = f32[4,10240]{1,0} parameter(0)
+  y = f32[2,4,4,10240]{3,2,1,0} parameter(1)
+  zero = f32[] constant(0)
+  sum = f32[10240]{0} reduce(x, zero), dimensions={0}, to_apply=add_f32
+  bcast_sum = f32[4,10240]{1,0} broadcast(sum), dimensions={1}
+  norm = f32[4,10240]{1,0} divide(x, bcast_sum)
+  bcast_norm = f32[2,4,4,10240]{3,2,1,0} broadcast(norm), dimensions={2,3}
+  ROOT out = f32[2,4,4,10240]{3,2,1,0} multiply(bcast_norm, y)
+})hlo";
+
+  RunAndFilecheckHloRewrite(kHloText, std::move(priority_fusion_), R"(
+CHECK: ENTRY %main
+CHECK-DAG: %[[X:.*]] = f32[4,10240]{1,0} parameter(0)
+CHECK-DAG: %[[Y:.*]] = f32[2,4,4,10240]{3,2,1,0} parameter(1)
+CHECK-NOT: fusion(
+CHECK: ROOT %{{.*}} = f32[2,4,4,10240]{3,2,1,0} fusion(%[[Y]], %[[X]]), kind=kLoop
+  )");
+}
+
+TEST_F(PriorityFusionTest,
+       DoesNotFuseTinyScalarReductionIntoLargeLoopConsumer) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule test_module
+
+or_pred {
+  lhs = pred[] parameter(0)
+  rhs = pred[] parameter(1)
+  ROOT out = pred[] or(lhs, rhs)
+}
+
+ENTRY main {
+  flags = pred[3]{0} parameter(0)
+  logits = f32[8,65536]{1,0} parameter(1)
+  fallback = f32[8,65536]{1,0} parameter(2)
+  false_cst = pred[] constant(false)
+  any_flag = pred[] reduce(flags, false_cst), dimensions={0}, to_apply=or_pred
+  mask = pred[8,65536]{1,0} broadcast(any_flag), dimensions={}
+  ROOT out = f32[8,65536]{1,0} select(mask, logits, fallback)
+})hlo";
+
+  RunAndFilecheckHloRewrite(kHloText, std::move(priority_fusion_), R"(
+CHECK: ENTRY %main
+CHECK-DAG: %[[FLAGS:.*]] = pred[3]{0} parameter(0)
+CHECK-DAG: %[[LOGITS:.*]] = f32[8,65536]{1,0} parameter(1)
+CHECK-DAG: %[[FALLBACK:.*]] = f32[8,65536]{1,0} parameter(2)
+CHECK: %[[ANY:.*]] = pred[] fusion(%[[FLAGS]]), kind=kLoop
+CHECK-NOT: fusion(
+CHECK: ROOT %{{.*}} = f32[8,65536]{1,0} fusion(%[[LOGITS]], %[[FALLBACK]], %[[ANY]]), kind=kLoop
+  )");
+}
 }  // namespace gpu
 }  // namespace xla

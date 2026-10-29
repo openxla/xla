@@ -1115,6 +1115,73 @@ class PriorityFusionQueue {
           "the fusion would result in an overly large code duplication");
     }
 
+    float utilization_by_this_consumer = 0;
+    int64_t producer_replication = 0;
+    for (int64_t i = 0; i < consumer->operand_count(); ++i) {
+      if (consumer->operand(i) == producer ||
+          (consumer->operand(i)->opcode() == HloOpcode::kGetTupleElement &&
+           consumer->operand(i)->operand(0) == producer)) {
+        utilization_by_this_consumer +=
+            cost_analysis_->operand_utilization(*consumer, i);
+        if (consumer->opcode() == HloOpcode::kFusion) {
+          producer_replication += static_cast<int64_t>(
+              cost_analysis_->IrSize(*consumer->fused_parameter(i)));
+        }
+      }
+    }
+
+    if (producer_replication > 1 || utilization_by_this_consumer > 1.0f) {
+      // Forbid fusing a producer containing a reduction into a `kLoop` consumer
+      // when the consumer would re-evaluate that reduction across a much larger
+      // iteration domain (at least 16x the reduction's input elements and at
+      // least 256K excess output elements). Below this threshold (e.g.
+      // same-shape softmax stages or small-batch consumers), keeping the
+      // computation fused avoids extra kernel launch and memory traffic
+      // overhead.
+      constexpr int64_t kMinOverBroadcastRatio = 16;
+      constexpr int64_t kMinOverBroadcastExcessElements = 256 * 1024;
+
+      const Shape& consumer_shape =
+          consumer->shape().IsTuple() &&
+                  !consumer->shape().tuple_shapes().empty()
+              ? consumer->shape().tuple_shapes(0)
+              : consumer->shape();
+      if (consumer_shape.IsArray() && !consumer_shape.is_unbounded_dynamic()) {
+        int64_t consumer_elements = ShapeUtil::ElementsIn(consumer_shape);
+        if (consumer_elements > kMinOverBroadcastExcessElements) {
+          auto should_forbid_reduce = [&](const HloInstruction* instr) {
+            if (instr->opcode() != HloOpcode::kReduce ||
+                !instr->operand(0)->shape().IsArray() ||
+                instr->operand(0)->shape().is_unbounded_dynamic()) {
+              return false;
+            }
+            int64_t reduce_input_elements =
+                ShapeUtil::ElementsIn(instr->operand(0)->shape());
+            return reduce_input_elements > 0 &&
+                   consumer_elements / kMinOverBroadcastRatio >=
+                       reduce_input_elements &&
+                   consumer_elements - reduce_input_elements >=
+                       kMinOverBroadcastExcessElements;
+          };
+
+          bool has_overbroadcast_reduce =
+              producer->opcode() == HloOpcode::kFusion
+                  ? absl::c_any_of(producer->fused_instructions_computation()
+                                       ->instructions(),
+                                   should_forbid_reduce)
+                  : should_forbid_reduce(producer);
+          if (has_overbroadcast_reduce &&
+              fusion_analysis_cache_.Get(*producer, *consumer)
+                      .emitter_fusion_kind() ==
+                  HloFusionAnalysis::EmitterFusionKind::kLoop) {
+            return FusionDecision::Forbid(
+                "not fusing a reduction into a loop fusion that replicates or "
+                "broadcasts it across a much larger output domain");
+          }
+        }
+      }
+    }
+
     return InstructionFusion::ShouldFuseInPlaceOp(producer, consumer,
                                                   alias_info_, std::nullopt);
   }
