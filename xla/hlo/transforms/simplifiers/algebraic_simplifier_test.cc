@@ -16084,5 +16084,278 @@ TEST(AlgebraicSimplifierOptionsTest, FromHloPassOptionsUnknownKeyIsUnconsumed) {
               absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
+TEST_F(AlgebraicSimplifierTest, SimplifyCompareLogisticMidpoint) {
+  // logistic(x) > 0.5 -> x > 0.0 and commuted 0.5 >= logistic(y) -> y <= 0.0.
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m
+    ENTRY main {
+      x = f32[4,8] parameter(0)
+      y = bf16[4,8] parameter(1)
+      sig_x = f32[4,8] logistic(x)
+      half_f32 = f32[] constant(0.5)
+      bcast_half_f32 = f32[4,8] broadcast(half_f32), dimensions={}
+      cmp_x = pred[4,8] compare(sig_x, bcast_half_f32), direction=GT
+
+      sig_y = bf16[4,8] logistic(y)
+      half_bf16 = bf16[] constant(0.5)
+      bcast_half_bf16 = bf16[4,8] broadcast(half_bf16), dimensions={}
+      cmp_y = pred[4,8] compare(bcast_half_bf16, sig_y), direction=GE
+
+      ROOT out = (pred[4,8], pred[4,8]) tuple(cmp_x, cmp_y)
+    }
+  )hlo"));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       AlgebraicSimplifier(default_options_).Run(m.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(absl::c_count_if(m->entry_computation()->instructions(),
+                             HloPredicateIsOp<HloOpcode::kLogistic>),
+            0);
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_THAT(
+      root->operand(0),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kGt)));
+  EXPECT_THAT(
+      root->operand(1),
+      GmockMatch(m::Compare(m::Parameter(1), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kLe)));
+}
+
+TEST_F(AlgebraicSimplifierTest, SimplifyCompareExpandedLogistic) {
+  // LogisticExpander lowers logistic(x) to 1.0 / (1.0 + exp(-x)) on GPU/CPU
+  // before AlgebraicSimplifier runs, with optional FloatNormalization
+  // BF16<->F32 Convert wrappers (including around the 1.0 operands). Verify
+  // single-pass simplification for both.
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m
+    ENTRY main {
+      x = f32[16] parameter(0)
+      xb = bf16[16] parameter(1)
+
+      neg_x = f32[16] negate(x)
+      exp_neg_x = f32[16] exponential(neg_x)
+      one = f32[] constant(1.0)
+      one_b = f32[16] broadcast(one), dimensions={}
+      denom = f32[16] add(one_b, exp_neg_x)
+      sig = f32[16] divide(one_b, denom)
+      half = f32[] constant(0.5)
+      half_b = f32[16] broadcast(half), dimensions={}
+      cmp_f32 = pred[16] compare(sig, half_b), direction=GT
+
+      neg_xb = bf16[16] negate(xb)
+      neg_xb_f32 = f32[16] convert(neg_xb)
+      exp_b_f32 = f32[16] exponential(neg_xb_f32)
+      exp_b = bf16[16] convert(exp_b_f32)
+      exp_b_w = f32[16] convert(exp_b)
+      one_bf16 = bf16[] constant(1.0)
+      one_bf16_b = bf16[16] broadcast(one_bf16), dimensions={}
+      one_bf16_w = f32[16] convert(one_bf16_b)
+      add_b_f32 = f32[16] add(exp_b_w, one_bf16_w)
+      add_b = bf16[16] convert(add_b_f32)
+      add_b_w = f32[16] convert(add_b)
+      div_b_f32 = f32[16] divide(one_bf16_w, add_b_w)
+      sig_b = bf16[16] convert(div_b_f32)
+      half_bf16 = bf16[] constant(0.5)
+      half_bf16_b = bf16[16] broadcast(half_bf16), dimensions={}
+      cmp_bf16 = pred[16] compare(sig_b, half_bf16_b), direction=GT
+
+      ROOT out = (pred[16], pred[16]) tuple(cmp_f32, cmp_bf16)
+    }
+  )hlo"));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       AlgebraicSimplifier(default_options_).Run(m.get()));
+  EXPECT_TRUE(changed);
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_THAT(
+      root->operand(0),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kGt)));
+  EXPECT_THAT(
+      root->operand(1),
+      GmockMatch(m::Compare(m::Parameter(1), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kGt)));
+}
+
+TEST_F(AlgebraicSimplifierTest, SimplifyCompareZeroCrossingAndExactMidpoints) {
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m
+    ENTRY main {
+      x = f32[8] parameter(0)
+      zero = f32[] constant(0.0)
+      zero_b = f32[8] broadcast(zero), dimensions={}
+      one = f32[] constant(1.0)
+      one_b = f32[8] broadcast(one), dimensions={}
+
+      t = f32[8] tanh(x)
+      c_tanh = pred[8] compare(t, zero_b), direction=GT
+
+      er = f32[8] erf(x)
+      c_erf = pred[8] compare(er, zero_b), direction=LE
+
+      em1 = f32[8] exponential-minus-one(x)
+      c_expm1 = pred[8] compare(em1, zero_b), direction=EQ
+
+      cb = f32[8] cbrt(x)
+      c_cbrt = pred[8] compare(cb, zero_b), direction=NE
+
+      nx = f32[8] negate(x)
+      c_neg = pred[8] compare(nx, zero_b), direction=LT
+
+      ex = f32[8] exponential(x)
+      c_exp = pred[8] compare(ex, one_b), direction=GE
+
+      lx = f32[8] log(x)
+      c_log = pred[8] compare(lx, zero_b), direction=GT
+
+      sx = f32[8] sqrt(x)
+      c_sqrt = pred[8] compare(sx, zero_b), direction=GT
+
+      ROOT out = (pred[8], pred[8], pred[8], pred[8], pred[8], pred[8], pred[8], pred[8])
+          tuple(c_tanh, c_erf, c_expm1, c_cbrt, c_neg, c_exp, c_log, c_sqrt)
+    }
+  )hlo"));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       AlgebraicSimplifier(default_options_).Run(m.get()));
+  EXPECT_TRUE(changed);
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_THAT(
+      root->operand(0),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kGt)));
+  EXPECT_THAT(
+      root->operand(1),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kLe)));
+  EXPECT_THAT(
+      root->operand(2),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kEq)));
+  EXPECT_THAT(
+      root->operand(3),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kNe)));
+  EXPECT_THAT(
+      root->operand(4),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kGt)));
+  EXPECT_THAT(
+      root->operand(5),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kGe)));
+  EXPECT_THAT(
+      root->operand(6),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(1)))
+                     .WithComparisonDirection(ComparisonDirection::kGt)));
+  EXPECT_THAT(
+      root->operand(7),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kGt)));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       SimplifyCompareMonotonicPreservesSafetyBoundaries) {
+  // Must NOT rewrite:
+  // 1. TOTALORDER comparisons (-0.0 vs +0.0 and signed NaNs).
+  // 2. logistic(x) > 0.0 or logistic(x) < 1.0 (float saturation at 0 and 1).
+  // 3. log(x) < 0.0 and sqrt(x) < 0.0 when x can be negative (NaN -> false).
+  // 4. Lossy narrowing f32 -> f8e4m3fn -> f32 fake-quantization inside
+  //    expanded logistic.
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m
+    ENTRY main {
+      x = f32[] parameter(0)
+      zero = f32[] constant(0.0)
+      half = f32[] constant(0.5)
+      one = f32[] constant(1.0)
+
+      sig = f32[] logistic(x)
+      cmp_total = pred[] compare(sig, half), direction=GT, type=TOTALORDER
+      cmp_sat_lo = pred[] compare(sig, zero), direction=GT
+      cmp_sat_hi = pred[] compare(sig, one), direction=LT
+
+      lx = f32[] log(x)
+      cmp_log_neg = pred[] compare(lx, zero), direction=LT
+
+      sx = f32[] sqrt(x)
+      cmp_sqrt_neg = pred[] compare(sx, zero), direction=LE
+
+      x_fp8 = f8e4m3fn[] convert(x)
+      x_deq = f32[] convert(x_fp8)
+      nx_deq = f32[] negate(x_deq)
+      ex_deq = f32[] exponential(nx_deq)
+      denom_deq = f32[] add(one, ex_deq)
+      sig_deq = f32[] divide(one, denom_deq)
+      cmp_fp8_deq = pred[] compare(sig_deq, half), direction=GT
+
+      ROOT out = (pred[], pred[], pred[], pred[], pred[], pred[])
+          tuple(cmp_total, cmp_sat_lo, cmp_sat_hi, cmp_log_neg, cmp_sqrt_neg,
+                cmp_fp8_deq)
+    }
+  )hlo"));
+  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(m.get()).status());
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  for (int i = 0; i < 5; ++i) {
+    EXPECT_THAT(
+        root->operand(i),
+        ::testing::Not(GmockMatch(m::Compare(m::Parameter(0), m::Constant()))));
+  }
+  // Fake-quantized expanded logistic folds to `x_deq > 0.0`, NOT `x > 0.0`.
+  EXPECT_THAT(
+      root->operand(5),
+      GmockMatch(m::Compare(m::Convert(m::Convert(m::Parameter(0))),
+                            m::ConstantScalar(0))
+                     .WithComparisonDirection(ComparisonDirection::kGt)));
+
+  // Effective-scalar constants such as f32[1] are left alone rather than being
+  // replaced with a broadcast.
+  ASSERT_OK_AND_ASSIGN(auto m_r1, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m_r1
+    ENTRY main {
+      x = f32[1] parameter(0)
+      sig = f32[1] logistic(x)
+      half = f32[1] constant({0.5})
+      ROOT cmp = pred[1] compare(sig, half), direction=GT
+    }
+  )hlo"));
+  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(m_r1.get()).status());
+  EXPECT_THAT(m_r1->entry_computation()->root_instruction(),
+              GmockMatch(m::Compare(m::Logistic(), m::Constant())));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       SimplifyCompareLogisticLayoutSensitiveSubwordTiling) {
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m
+    ENTRY main {
+      x = bf16[8,128]{1,0:T(8,128)(2,1)} parameter(0)
+      s = bf16[]{:T(256)} parameter(1)
+      sig = bf16[8,128]{1,0:T(8,128)(2,1)} logistic(x)
+      sig_s = bf16[]{:T(256)} logistic(s)
+      half = bf16[]{:T(256)} constant(0.5)
+      half_b = bf16[8,128]{1,0:T(8,128)(2,1)} broadcast(half), dimensions={}
+      cmp_arr = pred[8,128]{1,0:T(8,128)(4,1)} compare(sig, half_b),
+          direction=GT
+      cmp_scalar = pred[]{:T(256)} compare(sig_s, half), direction=GT
+      ROOT out = (pred[8,128]{1,0:T(8,128)(4,1)}, pred[]{:T(256)})
+          tuple(cmp_arr, cmp_scalar)
+    }
+  )hlo"));
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_is_layout_sensitive(true);
+  ASSERT_OK_AND_ASSIGN(bool changed, AlgebraicSimplifier(options).Run(m.get()));
+  EXPECT_TRUE(changed);
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_THAT(
+      root->operand(0),
+      GmockMatch(m::Compare(m::Parameter(0), m::Broadcast(m::ConstantScalar(0)))
+                     .WithComparisonDirection(ComparisonDirection::kGt)));
+  EXPECT_THAT(
+      root->operand(1),
+      GmockMatch(m::Compare(m::Parameter(1), m::ConstantScalar(0))
+                     .WithComparisonDirection(ComparisonDirection::kGt)));
+  EXPECT_EQ(root->operand(1)->operand(1)->shape(),
+            m->entry_computation()->parameter_instruction(1)->shape());
+}
+
 }  // namespace
 }  // namespace xla
