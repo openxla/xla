@@ -215,6 +215,14 @@ def MemRefBitcastOp : XTile_Op<"memref_bitcast",
 def ExtractTileOp : XTile_Op<"extract", [TiledBufferInterface]> {
   let summary = "Extract a tile from a memref.";
   let description = [{
+    Reads the elements `source[offsets[d] + i_d * strides[d]]` for every
+    `i_d` in `[0, full_tile_shape[d])`.
+
+    Offsets are not required to be in bounds: tiling may produce offsets past
+    the end of a dimension (e.g. for tiles of a high-padded operand) or tiles
+    that extend past it. Lowerings must never access memory outside the
+    `source` buffer. Elements whose index lies outside `[0, dim_size)` in any
+    dimension are not read and have an unspecified value in the result.
   }];
 
   let arguments = (ins
@@ -243,6 +251,12 @@ def ExtractTileOp : XTile_Op<"extract", [TiledBufferInterface]> {
 def InsertTileOp : XTile_Op<"insert", [TiledBufferInterface]> {
   let summary = "Insert a tile into a memref.";
   let description = [{
+    Writes the tile to `destination[offsets[d] + i_d * strides[d]]` for every
+    `i_d` in `[0, full_tile_shape[d])`.
+
+    As for `xtile.extract`, offsets are not required to be in bounds. Lowerings
+    must never access memory outside the `destination` buffer. Elements whose
+    index lies outside `[0, dim_size)` in any dimension are not written.
   }];
 
   let arguments = (ins
