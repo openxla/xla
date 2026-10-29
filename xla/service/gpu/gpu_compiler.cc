@@ -19,6 +19,7 @@ limitations under the License.
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -37,6 +38,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -1596,6 +1598,24 @@ absl::Status RunPostFusionPasses(
       .status();
 }
 
+namespace {
+bool IsNsightComputeActive() {
+  if (std::getenv("NV_COMPUTE_PROFILER_LOCAL_CONNECTION_OVERRIDE") != nullptr ||
+      std::getenv("NV_COMPUTE_PROFILER_LOCAL_CONNECTION_ID") != nullptr ||
+      std::getenv("NCU_PROFILE_SESSION") != nullptr ||
+      std::getenv("NV_COMPUTE_PROFILER_PERFWORKS_DIR") != nullptr) {
+    return true;
+  }
+  if (const char* injection_path = std::getenv("CUDA_INJECTION64_PATH")) {
+    if (absl::StrContains(injection_path, "nsight-compute") ||
+        absl::StrContains(injection_path, "libcuda-injection.so")) {
+      return true;
+    }
+  }
+  return false;
+}
+}  // namespace
+
 absl::Status RunPostFusionSimplificationPasses(
     HloModule* hlo_module, const AlgebraicSimplifierOptions& algsimp_options,
     se::GpuComputeCapability gpu_version,
@@ -1608,8 +1628,14 @@ absl::Status RunPostFusionSimplificationPasses(
   // This invocation is used to populate deduplicated_name for fusions that
   // are considered duplicates according to the comparator in this pass.
   // Currently, the pass doesn't actually deduplicate the fusions.
-  pipeline.AddPass<HloComputationDeduplicator>(
-      /*mark_fusion_duplications=*/true);
+  // Skip marking fusion duplications when debug/line info or Nsight Compute is
+  // active so each fusion keeps its own unique kernel name for targeting.
+  if (!hlo_module->config().debug_options().xla_gpu_generate_debug_info() &&
+      !hlo_module->config().debug_options().xla_gpu_generate_line_info() &&
+      !IsNsightComputeActive()) {
+    pipeline.AddPass<HloComputationDeduplicator>(
+        /*mark_fusion_duplications=*/true);
+  }
 
   if (hlo_module->config()
           .debug_options()

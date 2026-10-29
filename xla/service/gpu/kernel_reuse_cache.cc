@@ -15,6 +15,7 @@ limitations under the License.
 #include "xla/service/gpu/kernel_reuse_cache.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -31,6 +32,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -39,6 +41,7 @@ limitations under the License.
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/gpu/kernel_reuse_cache.pb.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/status_macros.h"
@@ -197,6 +200,41 @@ absl::Status UpdateDiskKernelCache(absl::string_view path, const bool do_append,
   return absl::OkStatus();
 }
 
+namespace {
+
+bool IsNsightComputeActive() {
+  if (std::getenv("NV_COMPUTE_PROFILER_LOCAL_CONNECTION_OVERRIDE") != nullptr ||
+      std::getenv("NV_COMPUTE_PROFILER_LOCAL_CONNECTION_ID") != nullptr ||
+      std::getenv("NCU_PROFILE_SESSION") != nullptr ||
+      std::getenv("NV_COMPUTE_PROFILER_PERFWORKS_DIR") != nullptr) {
+    return true;
+  }
+  if (const char* injection_path = std::getenv("CUDA_INJECTION64_PATH")) {
+    if (absl::StrContains(injection_path, "nsight-compute") ||
+        absl::StrContains(injection_path, "libcuda-injection.so")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ShouldEmitUniqueKernelPerFusion(const HloComputation* fused_computation) {
+  if (fused_computation == nullptr) {
+    return false;
+  }
+  if (fused_computation->parent() != nullptr) {
+    const DebugOptions& debug_options =
+        fused_computation->parent()->config().debug_options();
+    if (debug_options.xla_gpu_generate_debug_info() ||
+        debug_options.xla_gpu_generate_line_info()) {
+      return true;
+    }
+  }
+  return IsNsightComputeActive();
+}
+
+}  // namespace
+
 std::pair<tsl::Future<KernelReuseCache::Entry>, bool>
 KernelReuseCache::GetWithStatus(
     const HloComputation* fused_computation,
@@ -205,6 +243,13 @@ KernelReuseCache::GetWithStatus(
     absl::FunctionRef<tsl::Future<KernelReuseCache::Entry>()> generator) {
   std::string fingerprint = emitters::GetComputationFingerprint(
       fused_computation, kernel_arguments, discriminator);
+  if (ShouldEmitUniqueKernelPerFusion(fused_computation)) {
+    absl::StrAppend(&fingerprint, "::", fused_computation->name());
+    if (fused_computation->FusionInstruction() != nullptr) {
+      absl::StrAppend(&fingerprint,
+                      "::", fused_computation->FusionInstruction()->name());
+    }
+  }
   VLOG(4) << "Fingerprint: ";
   XLA_VLOG_LINES(4, fingerprint);
   return GetWithStatus(std::move(fingerprint), generator);
