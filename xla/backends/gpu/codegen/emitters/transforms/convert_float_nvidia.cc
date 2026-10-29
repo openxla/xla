@@ -59,10 +59,8 @@ Value ConvertToF32(Value v, mlir::ImplicitLocOpBuilder& b) {
   if (v.getType() == f32_ty) {
     return v;
   }
-  if (v.getType().getIntOrFloatBitWidth() < f32_ty.getWidth()) {
-    return ma::ExtFOp::create(b, f32_ty, v);
-  }
-  return ma::TruncFOp::create(b, f32_ty, v);
+  assert(v.getType().getIntOrFloatBitWidth() < f32_ty.getWidth());
+  return ma::ExtFOp::create(b, f32_ty, v);
 }
 
 struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
