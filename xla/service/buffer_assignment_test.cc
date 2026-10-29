@@ -7353,5 +7353,154 @@ ENTRY main {
   EXPECT_EQ(slice0.offset(), 0);
   EXPECT_GE(buffer0_slice.offset(), slice0.size());
 }
+
+TEST_F(BufferAssignmentTest, FixedOffsetPrecomputedOncePerValue) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  buffer.0 = s32[4096]{0} custom-call(), custom_call_target="AllocateBuffer"
+  call-start.0 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.0 = () call-done(call-start.0)
+  call-start.1 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.1 = tuple()
+  }
+  call-done.1 = () call-done(call-start.1)
+  ROOT copy.0 = s32[4096]{0} copy(buffer.0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  int64_t fixed_offset_call_count = 0;
+  absl::flat_hash_set<std::pair<const HloInstruction*, ShapeIndex>>
+      queried_positions;
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.must_not_live_out = [](const HloAliasAnalysis& alias_analysis,
+                              const HloInstruction* instruction,
+                              const ShapeIndex& index) -> bool {
+    return absl::StartsWith(instruction->name(), "call-start");
+  };
+  opts.fixed_offset = [&fixed_offset_call_count, &queried_positions](
+                          const HloAliasAnalysis& alias_analysis,
+                          const HloInstruction* instruction,
+                          const ShapeIndex& index) -> std::optional<int64_t> {
+    ++fixed_offset_call_count;
+    queried_positions.emplace(instruction, index);
+    if (absl::StartsWith(instruction->name(), "call-start") &&
+        index == ShapeIndex{2, 0}) {
+      return 0;
+    }
+    return std::nullopt;
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  EXPECT_EQ(fixed_offset_call_count,
+            buffers->dataflow_analysis().values().size());
+  EXPECT_EQ(queried_positions.size(), fixed_offset_call_count);
+}
+TEST_F(BufferAssignmentTest, FixedOffsetAllocationCachedStateAndReuse) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  buffer.0 = s32[4096]{0} custom-call(), custom_call_target="AllocateBuffer"
+  call-start.0 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.0 = () call-done(call-start.0)
+  call-start.1 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.1 = tuple()
+  }
+  call-done.1 = () call-done(call-start.1)
+  call-start.2 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.2 = tuple()
+  }
+  call-done.2 = () call-done(call-start.2)
+  ROOT copy.0 = s32[4096]{0} copy(buffer.0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  constexpr int64_t kNonZeroOffset = 1024;
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.must_not_live_out = [](const HloAliasAnalysis& alias_analysis,
+                              const HloInstruction* instruction,
+                              const ShapeIndex& index) -> bool {
+    return absl::StartsWith(instruction->name(), "call-start");
+  };
+  opts.fixed_offset = [kNonZeroOffset](
+                          const HloAliasAnalysis& alias_analysis,
+                          const HloInstruction* instruction,
+                          const ShapeIndex& index) -> std::optional<int64_t> {
+    if ((instruction->name() == "call-start.0" ||
+         instruction->name() == "call-start.1") &&
+        index == ShapeIndex{2, 0}) {
+      return 0;
+    }
+    if (instruction->name() == "call-start.2" && index == ShapeIndex{2, 0}) {
+      return kNonZeroOffset;
+    }
+    return std::nullopt;
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  const HloInstruction* cs0 =
+      module->entry_computation()->GetInstructionWithName("call-start.0");
+  const HloInstruction* cs1 =
+      module->entry_computation()->GetInstructionWithName("call-start.1");
+  const HloInstruction* cs2 =
+      module->entry_computation()->GetInstructionWithName("call-start.2");
+  const HloInstruction* buf0 =
+      module->entry_computation()->GetInstructionWithName("buffer.0");
+
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice s0,
+                       buffers->GetUniqueSlice(cs0, ShapeIndex{2, 0}));
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice s1,
+                       buffers->GetUniqueSlice(cs1, ShapeIndex{2, 0}));
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice s2,
+                       buffers->GetUniqueSlice(cs2, ShapeIndex{2, 0}));
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice sb,
+                       buffers->GetUniqueTopLevelSlice(buf0));
+
+  EXPECT_EQ(s0.offset(), 0);
+  EXPECT_EQ(s1.offset(), 0);
+  EXPECT_EQ(s0.index(), s1.index());
+
+  const BufferAllocation& zero_alloc = buffers->GetAllocation(s0.index());
+  EXPECT_TRUE(zero_alloc.has_fixed_offset_buffer());
+  EXPECT_TRUE(zero_alloc.has_zero_fixed_offset_buffer());
+  EXPECT_EQ(sb.index(), s0.index());
+  EXPECT_GT(sb.offset(), 0);
+  EXPECT_FALSE(zero_alloc.all_buffers_at_same_offset());
+
+  EXPECT_EQ(s2.offset(), kNonZeroOffset);
+  EXPECT_NE(s2.index(), s0.index());
+  const BufferAllocation& nonzero_alloc = buffers->GetAllocation(s2.index());
+  EXPECT_TRUE(nonzero_alloc.has_fixed_offset_buffer());
+  EXPECT_FALSE(nonzero_alloc.has_zero_fixed_offset_buffer());
+  EXPECT_TRUE(nonzero_alloc.has_nonzero_fixed_offset_buffer());
+  EXPECT_TRUE(nonzero_alloc.all_buffers_at_same_offset());
+  EXPECT_EQ(nonzero_alloc.common_offset(), kNonZeroOffset);
+}
 }  // namespace
 }  // namespace xla

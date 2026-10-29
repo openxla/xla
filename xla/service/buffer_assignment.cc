@@ -709,6 +709,12 @@ absl::Status BufferAllocation::AddAssignment(const HloValue& buffer,
         << " does not match input/output allocation color " << color()
         << ". This could be caused by an unusable donated buffer.";
   }
+  if (assigned_buffers_.empty()) {
+    common_offset_ = offset;
+    all_buffers_at_same_offset_ = true;
+  } else if (offset != common_offset_) {
+    all_buffers_at_same_offset_ = false;
+  }
   OffsetSize offset_size;
   offset_size.offset = offset;
   offset_size.size = size;
@@ -1210,10 +1216,7 @@ absl::Status BufferAssignment::AddAssignment(BufferAllocation* allocation,
 // Combines allocations of temporary buffers of the same color into one big
 // BufferAllocation.
 absl::Status BufferAssignment::CombineTempAllocations(
-    std::optional<BufferValue::Color> temp_buffer_color,
-    std::optional<std::function<std::optional<int64_t>(
-        const HloAliasAnalysis&, const HloInstruction*, const ShapeIndex&)>>
-        fixed_offset) {
+    std::optional<BufferValue::Color> temp_buffer_color) {
   VLOG(1) << "CombineTempAllocations()";
   // All temp allocations, including the ones combined by an earlier call, are
   // processed below, so the total is recomputed from scratch.
@@ -1233,31 +1236,10 @@ absl::Status BufferAssignment::CombineTempAllocations(
   // Prioritize temp allocations requiring a fixed offset of zero so that they
   // are placed first at offset 0 within the combined allocation, allowing other
   // temp allocations of the same color to be placed on top.
-  auto has_zero_fixed_offset_fn = [&](const BufferAllocation& alloc) {
-    if (!fixed_offset.has_value()) {
-      return false;
-    }
-    // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
-    for (const auto& buffer_offset_size : alloc.assigned_buffers()) {
-      const HloValue* val = buffer_offset_size.first;
-      std::optional<int64_t> req_offset =
-          (*fixed_offset)(alias_analysis(), val->instruction(), val->index());
-      if (req_offset.has_value() && *req_offset == 0 &&
-          buffer_offset_size.second.offset == 0) {
-        return true;
-      }
-    }
-    return false;
-  };
-
   std::stable_sort(first_temp_it, allocations_.end(),
-                   [&](const BufferAllocation& a, const BufferAllocation& b) {
-                     bool a_zero = has_zero_fixed_offset_fn(a);
-                     bool b_zero = has_zero_fixed_offset_fn(b);
-                     if (a_zero != b_zero) {
-                       return a_zero > b_zero;
-                     }
-                     return false;
+                   [](const BufferAllocation& a, const BufferAllocation& b) {
+                     return a.has_zero_fixed_offset_buffer() >
+                            b.has_zero_fixed_offset_buffer();
                    });
 
   // Holds the pointer to a combined allocation of each (color, page), if any.
@@ -1270,21 +1252,9 @@ absl::Status BufferAssignment::CombineTempAllocations(
     BufferAllocation& temp_allocation = *it;
     BufferValue::Color color = temp_allocation.color();
     int64_t page = temp_allocation.page_id();
-    bool has_fixed_offset = false;
-    bool all_fixed_offsets_are_zero = true;
-    if (fixed_offset.has_value()) {
-      // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
-      for (const auto& [val, slice] : temp_allocation.assigned_buffers()) {
-        std::optional<int64_t> offset =
-            (*fixed_offset)(alias_analysis(), val->instruction(), val->index());
-        if (offset.has_value()) {
-          has_fixed_offset = true;
-          if (*offset != 0 || slice.offset != 0) {
-            all_fixed_offsets_are_zero = false;
-          }
-        }
-      }
-    }
+    const bool has_fixed_offset = temp_allocation.has_fixed_offset_buffer();
+    const bool all_fixed_offsets_are_zero =
+        !temp_allocation.has_nonzero_fixed_offset_buffer();
     // Allocations with non-zero fixed offset requirements cannot be safely
     // merged into a combined allocation at base 0.
     if (has_fixed_offset && !all_fixed_offsets_are_zero) {
@@ -1339,6 +1309,18 @@ absl::Status BufferAssignment::CombineTempAllocations(
       const int64_t size = buffer_offset_size.second.size;
       ABSL_RETURN_IF_ERROR(combined_allocation->AddAssignment(
           *value, base + offset, size, GetValueLiveRange(value->id())));
+    }
+    if (temp_allocation.has_fixed_offset_buffer()) {
+      if (base == 0) {
+        if (temp_allocation.has_zero_fixed_offset_buffer()) {
+          combined_allocation->has_zero_fixed_offset_buffer_ = true;
+        }
+        if (temp_allocation.has_nonzero_fixed_offset_buffer()) {
+          combined_allocation->has_nonzero_fixed_offset_buffer_ = true;
+        }
+      } else {
+        combined_allocation->has_nonzero_fixed_offset_buffer_ = true;
+      }
     }
     if (!temp_allocation.HeapTraces().empty()) {
       CHECK_EQ(temp_allocation.HeapTraces().size(), 1);
@@ -2102,6 +2084,41 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssigner::Run(
                                    std::move(color_alignment));
 }
 
+absl::Status BufferAssigner::PrecomputeFixedOffsets(
+    const HloAliasAnalysis& alias_analysis) {
+  fixed_offset_for_buffer_.clear();
+  if (!opts_.fixed_offset.has_value()) {
+    return absl::OkStatus();
+  }
+
+  const auto& buffers = alias_analysis.buffers();
+  fixed_offset_for_buffer_.assign(buffers.size(), std::nullopt);
+
+  for (const HloBuffer& buffer : buffers) {
+    std::optional<int64_t> req_offset;
+    for (const HloValue* val : buffer.values()) {
+      std::optional<int64_t> offset = (*opts_.fixed_offset)(
+          alias_analysis, val->instruction(), val->index());
+      if (offset.has_value()) {
+        if (*offset < 0) {
+          return Internal("Negative fixed offset %d for buffer %s", *offset,
+                          buffer.ToString());
+        }
+        if (req_offset.has_value() && *req_offset != *offset) {
+          return Internal(
+              "Conflicting fixed offset requirements for buffer %s: %d vs %d",
+              buffer.ToString(), *req_offset, *offset);
+        }
+        req_offset = offset;
+      }
+    }
+    if (req_offset.has_value()) {
+      fixed_offset_for_buffer_[buffer.id()] = req_offset;
+    }
+  }
+  return absl::OkStatus();
+}
+
 bool BufferAssigner::LiveRangeInterferes(
     const HloValue* buffer1, BufferAllocation::ValueLiveRange live_range1,
     const HloValue* buffer2, BufferAllocation::ValueLiveRange live_range2,
@@ -2295,6 +2312,39 @@ absl::StatusOr<bool> BufferAssigner::MaybeAssignBuffer(
     }
   }
 
+  int64_t target_offset = 0;
+  std::optional<int64_t> req_offset;
+  if (opts_.fixed_offset.has_value()) {
+    req_offset = GetRequiredFixedOffset(hlo_buffer);
+    if (req_offset.has_value()) {
+      target_offset = *req_offset;
+      if (target_offset + buffer_size > allocation->size()) {
+        VLOG(4) << "Can't assign: buffer at fixed offset " << target_offset
+                << " of size " << buffer_size << " exceeds allocation size "
+                << allocation->size();
+        return false;
+      }
+      if (!allocation->assigned_buffers().empty()) {
+        if (!allocation->has_fixed_offset_buffer()) {
+          VLOG(4) << "Can't assign: allocation contains non-fixed offset "
+                  << "buffer, fixed offset buffer " << hlo_buffer
+                  << " cannot reuse it.";
+          return false;
+        }
+        if (!allocation->all_buffers_at_same_offset() ||
+            allocation->common_offset() != target_offset) {
+          VLOG(4) << "Can't assign: allocation has buffer at offset different "
+                  << "from required fixed offset " << target_offset;
+          return false;
+        }
+      }
+    } else if (allocation->has_fixed_offset_buffer()) {
+      VLOG(4) << "Can't assign: allocation contains fixed offset buffer, "
+              << "non-fixed buffer " << hlo_buffer << " cannot reuse it.";
+      return false;
+    }
+  }
+
   if (assignment->hlo_live_range().total_order_scheduled()) {
     if (HasLiveRangeInterference(*allocation, hlo_buffer, assignment)) {
       return false;
@@ -2346,68 +2396,11 @@ absl::StatusOr<bool> BufferAssigner::MaybeAssignBuffer(
     }
   }
 
-  int64_t target_offset = 0;
-  if (opts_.fixed_offset.has_value()) {
-    std::optional<int64_t> req_offset;
-    for (const HloValue* val : hlo_buffer.values()) {
-      std::optional<int64_t> offset = (*opts_.fixed_offset)(
-          assignment->alias_analysis(), val->instruction(), val->index());
-      if (offset.has_value()) {
-        if (req_offset.has_value() && *req_offset != *offset) {
-          return Internal(
-              "Conflicting fixed offset requirements for buffer %s: %d vs %d",
-              hlo_buffer.ToString(), *req_offset, *offset);
-        }
-        req_offset = offset;
-      }
-    }
-    if (req_offset.has_value()) {
-      target_offset = *req_offset;
-      if (target_offset < 0 ||
-          target_offset + buffer_size > allocation->size()) {
-        return false;
-      }
-      // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
-      for (const auto& buffer_offset_size : allocation->assigned_buffers()) {
-        const HloValue* val = buffer_offset_size.first;
-        const HloBuffer& exist_buffer =
-            assignment->alias_analysis().GetBufferContainingValue(*val);
-        bool exist_has_fixed_offset = absl::c_any_of(
-            exist_buffer.values(), [&](const HloValue* exist_val) {
-              return (*opts_.fixed_offset)(assignment->alias_analysis(),
-                                           exist_val->instruction(),
-                                           exist_val->index())
-                  .has_value();
-            });
-        if (!exist_has_fixed_offset) {
-          VLOG(4) << "Can't assign: allocation contains non-fixed offset "
-                  << "buffer, fixed offset buffer " << hlo_buffer
-                  << " cannot reuse it.";
-          return false;
-        }
-        int64_t exist_offset = buffer_offset_size.second.offset;
-        if (exist_offset != target_offset) {
-          VLOG(4) << "Can't assign: allocation has buffer at offset "
-                  << exist_offset << ", but required fixed offset is "
-                  << target_offset;
-          return false;
-        }
-      }
-    } else {
-      for (const HloValue* val : allocation->assigned_values_) {
-        if ((*opts_.fixed_offset)(assignment->alias_analysis(),
-                                  val->instruction(), val->index())
-                .has_value()) {
-          VLOG(4) << "Can't assign: allocation contains fixed offset buffer, "
-                  << "non-fixed buffer " << hlo_buffer << " cannot reuse it.";
-          return false;
-        }
-      }
-    }
-  }
-
   ABSL_RETURN_IF_ERROR(assignment->AddAssignment(allocation, hlo_buffer,
                                                  target_offset, buffer_size));
+  if (req_offset.has_value()) {
+    allocation->RecordFixedOffsetAssignment(*req_offset, target_offset);
+  }
   return true;
 }
 
@@ -2469,6 +2462,12 @@ absl::StatusOr<bool> BufferAssigner::AssignSpecialHloBuffer(
           BufferAllocation * allocation,
           assignment->NewAllocation(*hlo_buffer,
                                     assignment->HloBufferSize(*hlo_buffer)));
+      if (std::optional<int64_t> req_offset =
+              GetRequiredFixedOffset(*hlo_buffer);
+          req_offset.has_value()) {
+        allocation->RecordFixedOffsetAssignment(*req_offset,
+                                                /*actual_offset=*/0);
+      }
 
       allocation->set_entry_computation_parameter(
           instruction->parameter_number(), value->index(), parameter_has_alias);
@@ -2527,14 +2526,8 @@ bool BufferAssigner::DelayTemporaryBufferAssignment(
   // Buffers requiring a fixed offset must not be delayed to heap simulation
   // because the heap simulator packs temporary buffers into dynamic offsets
   // based on live-range intervals without honoring fixed offset requirements.
-  if (opts_.fixed_offset.has_value()) {
-    for (const HloValue* hlo_value : hlo_buffer->values()) {
-      if ((*opts_.fixed_offset)(assignment->alias_analysis(),
-                                hlo_value->instruction(), hlo_value->index())
-              .has_value()) {
-        return false;
-      }
-    }
+  if (GetRequiredFixedOffset(*hlo_buffer).has_value()) {
+    return false;
   }
 
   bool all_computations_have_sequential_order = true;
@@ -2573,6 +2566,8 @@ absl::Status BufferAssigner::AssignSingleHloBuffer(
     BufferAllocationsManagerForComputationsWithoutOrdering* allocation_manager,
     BufferAssignment* assignment) {
   const int64_t buffer_size = assignment->HloBufferSize(*hlo_buffer);
+  const std::optional<int64_t> req_offset = GetRequiredFixedOffset(*hlo_buffer);
+  const int64_t target_offset = req_offset.value_or(0);
 
   // Attempt to reuse an existing allocation from an operand.
   for (const HloValue* value : hlo_buffer->values()) {
@@ -2599,7 +2594,7 @@ absl::Status BufferAssigner::AssignSingleHloBuffer(
   // Attempt to reuse existing buffer according to the chosen algorithm.
   ABSL_ASSIGN_OR_RETURN(bool success,
                         allocation_manager->TryAssignToExistingAllocation(
-                            hlo_buffer, buffer_size));
+                            hlo_buffer, target_offset + buffer_size));
   if (success) {
     return absl::OkStatus();
   }
@@ -2610,28 +2605,12 @@ absl::Status BufferAssigner::AssignSingleHloBuffer(
   }
 
   if (!assignment->HasAllocation(*hlo_buffer)) {
-    int64_t target_offset = 0;
-    if (opts_.fixed_offset.has_value()) {
-      std::optional<int64_t> req_offset;
-      for (const HloValue* val : hlo_buffer->values()) {
-        std::optional<int64_t> offset = (*opts_.fixed_offset)(
-            assignment->alias_analysis(), val->instruction(), val->index());
-        if (offset.has_value()) {
-          if (req_offset.has_value() && *req_offset != *offset) {
-            return Internal(
-                "Conflicting fixed offset requirements for buffer %s: %d vs %d",
-                hlo_buffer->ToString(), *req_offset, *offset);
-          }
-          req_offset = offset;
-        }
-      }
-      if (req_offset.has_value()) {
-        target_offset = *req_offset;
-      }
-    }
     ABSL_ASSIGN_OR_RETURN(
         BufferAllocation * allocation,
         assignment->NewAllocation(*hlo_buffer, buffer_size, target_offset));
+    if (req_offset.has_value()) {
+      allocation->RecordFixedOffsetAssignment(*req_offset, target_offset);
+    }
     allocation_manager->RegisterNewAllocation(hlo_buffer, allocation->index());
     VLOG(3) << "New allocation #" << allocation->index()
             << " for: " << *hlo_buffer;
@@ -2775,14 +2754,7 @@ absl::Status BufferAssigner::AssignBuffersForGlobalComputations(
   }
 
   auto has_fixed_offset = [&](const HloBuffer* buffer) {
-    if (!opts_.fixed_offset.has_value()) {
-      return false;
-    }
-    return absl::c_any_of(buffer->values(), [&](const HloValue* val) {
-      return (*opts_.fixed_offset)(alias_analysis, val->instruction(),
-                                   val->index())
-          .has_value();
-    });
+    return GetRequiredFixedOffset(*buffer).has_value();
   };
 
   std::vector<Comparator> comparators;
@@ -2990,13 +2962,7 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
     if (allocation.color() != buffer_color &&
         allocation.IsPreallocatedTempBuffer() &&
         opts_.can_use_allocation(buffer_color, allocation.color())) {
-      if (opts_.fixed_offset.has_value() &&
-          absl::c_any_of(allocation.assigned_buffers(), [&](const auto& entry) {
-            const HloValue* val = entry.first;
-            return (*opts_.fixed_offset)(assignment->alias_analysis(),
-                                         val->instruction(), val->index())
-                .has_value();
-          })) {
+      if (allocation.has_fixed_offset_buffer()) {
         continue;
       }
       destinations.push_back(&allocation);
@@ -3018,6 +2984,9 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
     if (!inserted) {
       continue;
     }
+    if (GetRequiredFixedOffset(hlo_buffer).has_value()) {
+      continue;
+    }
 
     // We can only move a buffer as a whole (all its aliased values together),
     // because the values share storage by construction. A buffer is movable
@@ -3033,13 +3002,6 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
       if (opts_.live_range_interference_options.has_value() &&
           opts_.live_range_interference_options->has_custom_interference(
               assignment->alias_analysis(), *buffer_value)) {
-        return false;
-      }
-      if (opts_.fixed_offset.has_value() &&
-          (*opts_.fixed_offset)(assignment->alias_analysis(),
-                                buffer_value->instruction(),
-                                buffer_value->index())
-              .has_value()) {
         return false;
       }
       return values->contains(buffer_value) &&
@@ -3169,6 +3131,7 @@ absl::Status BufferAssigner::AssignPresetBuffers(
     if (colors_to_assign != nullptr && !colors_to_assign->contains(color)) {
       continue;
     }
+    const std::optional<int64_t> req_offset = GetRequiredFixedOffset(buffer);
     for (const HloValue* value : buffer.values()) {
       VLOG(3) << "Preset allocation for value: " << value->ToShortString();
       const HeapSimulator::Chunk& chunk = position_and_chunk.second;
@@ -3179,6 +3142,10 @@ absl::Status BufferAssigner::AssignPresetBuffers(
       ABSL_RETURN_IF_ERROR(preset_allocations_iter->second->AddAssignment(
           *value, chunk.offset, chunk.size,
           assignment->GetValueLiveRange(value->id())));
+      if (req_offset.has_value()) {
+        preset_allocations_iter->second->RecordFixedOffsetAssignment(
+            *req_offset, chunk.offset);
+      }
     }
 
     assigned_buffers->insert(&buffer);
@@ -3657,6 +3624,7 @@ BufferAssigner::CreateAssignment(
 
   ABSL_RETURN_IF_ERROR(
       opts_.colorer(&assignment->alias_analysis(), assignment->hlo_ordering()));
+  ABSL_RETURN_IF_ERROR(PrecomputeFixedOffsets(assignment->alias_analysis()));
   VLOG(3) << "After coloring:";
   XLA_VLOG_LINES(3,
                  assignment->alias_analysis().dataflow_analysis().ToString());
@@ -4007,8 +3975,8 @@ absl::Status BufferAssigner::RunAssignBuffers(
   // performed after all buffers have been assigned, and after maybe_live_out
   // is marked, since it is used to determine whether an allocation contains
   // temporary buffers or not.
-  ABSL_RETURN_IF_ERROR(assignment->CombineTempAllocations(
-      opts_.temp_buffer_color, opts_.fixed_offset));
+  ABSL_RETURN_IF_ERROR(
+      assignment->CombineTempAllocations(opts_.temp_buffer_color));
   return absl::OkStatus();
 }
 
