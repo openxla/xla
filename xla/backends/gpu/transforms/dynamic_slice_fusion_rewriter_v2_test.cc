@@ -3211,5 +3211,175 @@ TEST_F(DynamicSliceFusionRewriterV2Test,
   RunAndFilecheckHloRewrite(hlo, MakePipeline(), std::nullopt);
 }
 
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       SlicedOperandsAndResultsPropagateMemorySpaceAttributes) {
+  const char* hlo = R"(
+    HloModule test
+
+    ENTRY main {
+      %p0 = f32[2,8,8]{2,1,0} parameter(0)
+      %p1 = f32[2,8,8]{2,1,0} parameter(1)
+      %slice0 = f32[1,8,8]{2,1,0} slice(%p0), slice={[0:1], [0:8], [0:8]}
+      %slice1 = f32[1,8,8]{2,1,0} slice(%p1), slice={[0:1], [0:8], [0:8]}
+      %bitcast0 = f32[8,8]{1,0} bitcast(%slice0)
+      %bitcast1 = f32[8,8]{1,0} bitcast(%slice1)
+      ROOT %hero = f32[8,8]{1,0} custom-call(%bitcast0, %bitcast1),
+        custom_call_target="fake_target",
+        frontend_attributes={operands_memory_spaces="{0:7}", results_memory_spaces="{0:7}"}
+    }
+  )";
+
+  auto fusion_checks = [&](HloModule* module) {
+    HloComputation* entry = module->entry_computation();
+    HloInstruction* root = entry->root_instruction();
+    ASSERT_EQ(root->opcode(), HloOpcode::kFusion);
+    auto operands_attr = root->get_frontend_attribute("operands_memory_spaces");
+    ASSERT_TRUE(operands_attr.has_value());
+    EXPECT_EQ(*operands_attr, "{0:7}");
+    auto results_attr = root->get_frontend_attribute("results_memory_spaces");
+    ASSERT_TRUE(results_attr.has_value());
+    EXPECT_EQ(*results_attr, "{0:7}");
+  };
+
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(),
+                            "; CHECK: dynamic_slice_fusion", fusion_checks);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test, NonIdentityOperandMemorySpaceMapping) {
+  const char* hlo = R"(
+    HloModule test
+
+    ENTRY main {
+      %p0 = f32[8,8]{1,0} parameter(0)
+      %p1 = f32[2,8,8]{2,1,0} parameter(1)
+      %slice1 = f32[1,8,8]{2,1,0} slice(%p1), slice={[0:1], [0:8], [0:8]}
+      %bitcast1 = f32[8,8]{1,0} bitcast(%slice1)
+      ROOT %hero = f32[8,8]{1,0} custom-call(%p0, %bitcast1),
+        custom_call_target="fake_target",
+        frontend_attributes={operands_memory_spaces="{0:7}"}
+    }
+  )";
+
+  auto fusion_checks = [&](HloModule* module) {
+    HloInstruction* fusion = module->entry_computation()->root_instruction();
+    ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+    auto operands_attr =
+        fusion->get_frontend_attribute("operands_memory_spaces");
+    ASSERT_TRUE(operands_attr.has_value());
+    // Sliced operand p1 is captured first, so unsliced hero operand p0 maps to
+    // fusion parameter 1.
+    EXPECT_EQ(*operands_attr, "{1:7}");
+    EXPECT_FALSE(
+        fusion->get_frontend_attribute("results_memory_spaces").has_value());
+  };
+
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(),
+                            "; CHECK: dynamic_slice_fusion", fusion_checks);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       AliasedTupleResultMemorySpaceAttributes) {
+  const char* hlo = R"(
+    HloModule test
+
+    ENTRY main {
+      p0 = f32[2,8,8]{2,1,0} parameter(0)
+      p1 = f32[2,8,8]{2,1,0} parameter(1)
+      c0 = s32[] constant(0)
+      sliced = f32[1,8,8]{2,1,0} slice(p0), slice={[0:1], [0:8], [0:8]}
+      bitcast = f32[8,8]{1,0} bitcast(sliced)
+      hero = (f32[8,8]{1,0}, f32[8,8]{1,0}) custom-call(bitcast),
+        custom_call_target="fake_target",
+        output_to_operand_aliasing={{1}: (0, {})},
+        frontend_attributes={operands_memory_spaces="{0:7}",
+                             results_memory_spaces="{1:7}"}
+      first = f32[8,8]{1,0} get-tuple-element(hero), index=0
+      second = f32[8,8]{1,0} get-tuple-element(hero), index=1
+      update = f32[1,8,8]{2,1,0} bitcast(second)
+      dus = f32[2,8,8]{2,1,0} dynamic-update-slice(p1, update, c0, c0, c0)
+      ROOT result = (f32[8,8]{1,0}, f32[2,8,8]{2,1,0}) tuple(first, dus)
+    }
+  )";
+  auto fusion_checks = [&](HloModule* module) {
+    HloInstruction* root = module->entry_computation()->root_instruction();
+    ASSERT_EQ(root->opcode(), HloOpcode::kTuple);
+    HloInstruction* gte = root->mutable_operand(0);
+    ASSERT_EQ(gte->opcode(), HloOpcode::kGetTupleElement);
+    HloInstruction* fusion = gte->mutable_operand(0);
+    ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+    auto operands_attr =
+        fusion->get_frontend_attribute("operands_memory_spaces");
+    auto results_attr = fusion->get_frontend_attribute("results_memory_spaces");
+    ASSERT_TRUE(operands_attr.has_value());
+    ASSERT_TRUE(results_attr.has_value());
+    EXPECT_EQ(*operands_attr, "{0:7}");
+    EXPECT_EQ(*results_attr, "{1:7}");
+    EXPECT_EQ(fusion->shape().tuple_shapes(1).dimensions(0), 2);
+  };
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(),
+                            "; CHECK: dynamic_slice_fusion", fusion_checks);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       DeduplicatedOperandMemorySpaceAttributes) {
+  const char* hlo = R"(
+    HloModule test
+
+    ENTRY main {
+      p0 = f32[2,8,8]{2,1,0} parameter(0)
+      slice0 = f32[1,8,8]{2,1,0} slice(p0), slice={[0:1], [0:8], [0:8]}
+      slice1 = f32[1,8,8]{2,1,0} slice(p0), slice={[1:2], [0:8], [0:8]}
+      bitcast0 = f32[8,8]{1,0} bitcast(slice0)
+      bitcast1 = f32[8,8]{1,0} bitcast(slice1)
+      ROOT hero = f32[8,8]{1,0} custom-call(bitcast0, bitcast1),
+        custom_call_target="fake_target",
+        frontend_attributes={operands_memory_spaces="{0:0,1:7}"}
+    }
+  )";
+  auto fusion_checks = [&](HloModule* module) {
+    HloInstruction* fusion = module->entry_computation()->root_instruction();
+    ASSERT_EQ(fusion->opcode(), HloOpcode::kFusion);
+    ASSERT_EQ(fusion->operand_count(), 1);
+    auto attr = fusion->get_frontend_attribute("operands_memory_spaces");
+    ASSERT_TRUE(attr.has_value());
+    // Default memory does not constrain the shared allocation. The collective
+    // requirement from the other slice must survive parameter deduplication.
+    EXPECT_EQ(*attr, "{0:7}");
+  };
+  RunAndFilecheckHloRewrite(hlo, MakePipeline(),
+                            "; CHECK: dynamic_slice_fusion", fusion_checks);
+}
+
+TEST_F(DynamicSliceFusionRewriterV2Test,
+       ConflictingDeduplicatedOperandMemorySpacesSkipped) {
+  const char* hlo = R"(
+    HloModule test
+
+    ENTRY main {
+      p0 = f32[2,8,8]{2,1,0} parameter(0)
+      slice0 = f32[1,8,8]{2,1,0} slice(p0), slice={[0:1], [0:8], [0:8]}
+      slice1 = f32[1,8,8]{2,1,0} slice(p0), slice={[1:2], [0:8], [0:8]}
+      bitcast0 = f32[8,8]{1,0} bitcast(slice0)
+      bitcast1 = f32[8,8]{1,0} bitcast(slice1)
+      packed = (f32[8,8]{1,0}) tuple(bitcast1)
+      unpacked = f32[8,8]{1,0} get-tuple-element(packed), index=0
+      ROOT hero = f32[8,8]{1,0} custom-call(bitcast0, unpacked),
+        custom_call_target="fake_target",
+        frontend_attributes={operands_memory_spaces="{0:2,1:7}"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HloInstruction* hero = module->entry_computation()->root_instruction();
+  const HloInstruction* original_operand = hero->operand(1);
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       RunHloPass(MakePipeline(OptLevel::kO2), module.get()));
+  ASSERT_FALSE(changed) << module->ToString();
+  ASSERT_EQ(module->entry_computation()->root_instruction(), hero);
+  // O2 planning reconnects the tuple/GTE path; declining the fusion must
+  // restore the original operand and remove the unused fusion computation.
+  EXPECT_EQ(hero->operand(1), original_operand);
+  EXPECT_EQ(module->computation_count(), 1);
+}
+
 }  // namespace
 }  // namespace xla::gpu
