@@ -176,6 +176,15 @@ bool ModuleContainsLargeKeyValueSort(const HloModule& module);
 bool ModuleTestsFloatsForEquality(const HloModule& module);
 bool ComputationHasRng(const HloComputation* computation);
 
+// Returns whether a main thread computation of `module` starts an async chain
+// on the `sparsecore` thread, that is, whether it offloads to SparseCore.
+bool IsSparseCoreModule(const HloModule& module);
+
+// Returns a skip reason (`CONTAINS_RNG`, `CONTAINS_MOSAIC_KERNEL`, or
+// `NO_WORK_IN_SPARSECORE_OFFLOAD`) when `module` cannot be meaningfully
+// evaluated in isolation, or `std::nullopt` otherwise.
+std::optional<std::string> SparseCoreOffloadSkipReason(const HloModule& module);
+
 }  // namespace hlo_isolation
 }  // namespace xla
 
