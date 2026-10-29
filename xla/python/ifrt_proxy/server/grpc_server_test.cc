@@ -24,6 +24,8 @@
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
+#include "xla/python/ifrt/attribute_map.h"
+#include "xla/python/ifrt_proxy/client/registry.h"
 #include "xla/python/ifrt_proxy/common/grpc_ifrt_service.grpc.pb.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
@@ -33,6 +35,7 @@ namespace ifrt {
 namespace proxy {
 namespace {
 
+using ::testing::HasSubstr;
 using ::testing::Not;
 
 // A fake IFRT service that fails all the Session creation attempts.
@@ -69,6 +72,24 @@ TEST(GrpcServerTest, RetrievingServerAddressWorks) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto grpc_server, GrpcServer::Create(addr, std::move(grpc_service_impl)));
   EXPECT_EQ(grpc_server->address(), addr);
+}
+
+TEST(GrpcServerTest,
+     ClientCreationFailsFastWhenServerReturnsResourceExhausted) {
+  auto addr = MakeServerAddress();
+  ASSERT_OK_AND_ASSIGN(
+      auto grpc_server,
+      GrpcServer::CreateFromIfrtClientFactory(
+          addr, [](AttributeMap initialization_data) {
+            return absl::ResourceExhaustedError(
+                "Only one client can connect via the proxy server at a time.");
+          }));
+  EXPECT_THAT(
+      CreateClient(absl::StrCat("grpc://", addr)),
+      absl_testing::StatusIs(
+          absl::StatusCode::kResourceExhausted,
+          HasSubstr(
+              "Only one client can connect via the proxy server at a time.")));
 }
 
 }  // namespace

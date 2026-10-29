@@ -368,9 +368,12 @@ tsl::Future<std::shared_ptr<Resp>> DoRpc(RpcHelper::Batcher* batcher,
       VLOG(3) << profiling_name << " response: " << r.status();
       LOG_EVERY_N_SEC(ERROR, 10)
           << "Connection to IFRT proxy server was terminated: " << r.status();
-      promise.Set(absl::UnavailableError(
-          absl::StrCat("Connection to IFRT proxy server was terminated: ",
-                       r.status().ToString())));
+      const absl::StatusCode code = absl::IsResourceExhausted(r.status())
+                                        ? absl::StatusCode::kResourceExhausted
+                                        : absl::StatusCode::kUnavailable;
+      promise.Set(absl::Status(
+          code, absl::StrCat("Connection to IFRT proxy server was terminated: ",
+                             r.status().ToString())));
       return;
     }
     VLOG(3) << "Got response: " << r.value()->ShortDebugString();

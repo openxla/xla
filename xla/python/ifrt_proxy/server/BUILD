@@ -50,6 +50,9 @@ ifrt_proxy_cc_test(
     srcs = ["grpc_server_test.cc"],
     deps = [
         ":grpc_server",
+        "//xla/python/ifrt:attribute_map",
+        "//xla/python/ifrt_proxy/client:grpc_client",
+        "//xla/python/ifrt_proxy/client:registry",
         "//xla/python/ifrt_proxy/common:grpc_ifrt_service_cc_grpc_proto",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/platform:test",
