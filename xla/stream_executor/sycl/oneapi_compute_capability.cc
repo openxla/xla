@@ -15,61 +15,70 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/oneapi_compute_capability.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
 #include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/sycl/oneapi_compute_capability.pb.h"
 
 namespace stream_executor {
 
-XeArch OneAPIComputeCapability::InferDeviceArch(XeGeneration generation,
-                                                uint8_t version) {
-  for (const OneAPIArchInfo& info : kXeArchs) {
-    if (info.generation == generation && version >= info.min_version &&
-        version <= info.max_version) {
-      return info.arch;
-    }
-  }
-  // Unknown or not-yet-supported generation.
-  return XeArch::kUnknown;
-}
-
 OneAPIComputeCapability::OneAPIComputeCapability(XeGeneration generation,
                                                  uint8_t version)
-    : generation_(generation), arch_(InferDeviceArch(generation, version)) {}
+    : generation_(generation) {
+  // The first range that matches selects the arch. If none does, the arch
+  // stays kUnknown but the generation is kept.
+  for (const ArchRange& range : kXeArchRanges) {
+    if (GetArchInfo(range.arch).generation == generation &&
+        version >= range.min_version && version <= range.max_version) {
+      arch_ = range.arch;
+      return;
+    }
+  }
+}
 
 OneAPIComputeCapability::OneAPIComputeCapability(absl::string_view arch) {
-  for (const OneAPIArchInfo& info : kXeArchs) {
-    if (absl::EqualsIgnoreCase(info.name, arch)) {
-      generation_ = info.generation;
-      arch_ = info.arch;
+  for (size_t i = 0; i < static_cast<size_t>(XeArch::kUnknown); ++i) {
+    if (absl::EqualsIgnoreCase(kXeArchInfos[i].name, arch)) {
+      *this = OneAPIComputeCapability(static_cast<XeArch>(i));
       return;
     }
   }
 }
 
 std::string OneAPIComputeCapability::architecture() const {
-  for (const OneAPIArchInfo& info : kXeArchs) {
-    if (arch_ == info.arch) {
-      return info.name;
-    }
-  }
-  return "Unknown";
+  return std::string(GetArchInfo(arch_).name);
 }
 
 OneAPIComputeCapability OneAPIComputeCapability::FromProto(
     const OneAPIComputeCapabilityProto& proto) {
-  return OneAPIComputeCapability{proto.architecture()};
+  OneAPIComputeCapability cc{proto.architecture()};
+  // A known architecture name takes precedence; the generation is only needed
+  // to identify devices whose architecture is unknown.
+  if (cc.arch_ == XeArch::kUnknown && proto.has_generation()) {
+    cc.generation_ = static_cast<XeGeneration>(proto.generation());
+  }
+  return cc;
 }
 
 OneAPIComputeCapabilityProto OneAPIComputeCapability::ToProto() const {
   OneAPIComputeCapabilityProto proto;
   proto.set_architecture(architecture());
+  if (IsSpecified()) {
+    proto.set_generation(static_cast<uint32_t>(generation_));
+  }
   return proto;
 }
 
-std::string OneAPIComputeCapability::ToString() const { return architecture(); }
+std::string OneAPIComputeCapability::ToString() const {
+  if (arch_ == XeArch::kUnknown && IsSpecified()) {
+    return absl::StrCat(architecture(),
+                        "(gen=", static_cast<uint32_t>(generation_), ")");
+  }
+  return architecture();
+}
 
 }  // namespace stream_executor
