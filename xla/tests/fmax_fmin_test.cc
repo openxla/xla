@@ -16,12 +16,14 @@ limitations under the License.
 #include <cmath>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/literal.h"
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 
 namespace xla {
@@ -84,6 +86,50 @@ TEST_F(FmaxSimpleTest, FminEdgeCases) {
                                  -INFINITY, NAN,       7,   -INFINITY, NAN};
   ComputeAndCompareR1<float>(&builder, expected, {&param0_data, &param1_data},
                              ErrorSpec(0.0001));
+}
+
+TEST_F(FmaxSimpleTest, FminSignedZeroDefault) {
+  if (!test::DeviceTypeIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
+  XlaBuilder builder(TestName());
+  XlaOp x, y;
+  const Literal x_data = CreateR1Parameter<float>(
+      {0.0f, -0.0f, 0.0f, -0.0f}, /*parameter_number=*/0, /*name=*/"x",
+      /*builder=*/&builder, /*data_handle=*/&x);
+  const Literal y_data = CreateR1Parameter<float>(
+      {-0.0f, 0.0f, 0.0f, -0.0f}, /*parameter_number=*/1, /*name=*/"y",
+      /*builder=*/&builder, /*data_handle=*/&y);
+  Min(x, y);
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&x_data, &y_data}));
+  EXPECT_TRUE(std::signbit(result.Get<float>({0})));
+  EXPECT_TRUE(std::signbit(result.Get<float>({1})));
+  EXPECT_FALSE(std::signbit(result.Get<float>({2})));
+  EXPECT_TRUE(std::signbit(result.Get<float>({3})));
+}
+
+TEST_F(FmaxSimpleTest, FmaxSignedZeroDefault) {
+  if (!test::DeviceTypeIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
+  XlaBuilder builder(TestName());
+  XlaOp x, y;
+  const Literal x_data = CreateR1Parameter<float>(
+      {0.0f, -0.0f, 0.0f, -0.0f}, /*parameter_number=*/0, /*name=*/"x",
+      /*builder=*/&builder, /*data_handle=*/&x);
+  const Literal y_data = CreateR1Parameter<float>(
+      {-0.0f, 0.0f, 0.0f, -0.0f}, /*parameter_number=*/1, /*name=*/"y",
+      /*builder=*/&builder, /*data_handle=*/&y);
+  Max(x, y);
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&x_data, &y_data}));
+  EXPECT_FALSE(std::signbit(result.Get<float>({0})));
+  EXPECT_FALSE(std::signbit(result.Get<float>({1})));
+  EXPECT_FALSE(std::signbit(result.Get<float>({2})));
+  EXPECT_TRUE(std::signbit(result.Get<float>({3})));
 }
 
 }  // namespace
