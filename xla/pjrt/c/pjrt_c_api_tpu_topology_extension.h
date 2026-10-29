@@ -514,9 +514,11 @@ struct PJRT_TpuTopology_GetDefaultPlatformConfig_Args {
   size_t platform_type_name_len;
   int64_t num_chips_per_tray;  // out
   int64_t num_trays;           // out
+  int64_t num_compute_nodes;   // out
+  int32_t host_dimensions[3];  // out
 };
 PJRT_DEFINE_STRUCT_TRAITS(PJRT_TpuTopology_GetDefaultPlatformConfig_Args,
-                          num_trays);
+                          host_dimensions);
 
 // Returns the default platform config for the given platform.
 typedef PJRT_Error* PJRT_TpuTopology_GetDefaultPlatformConfig(
