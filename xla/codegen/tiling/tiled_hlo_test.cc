@@ -1665,5 +1665,68 @@ TEST_F(SameShapeMultiOutputFusionTileAnalysisTest,
   EXPECT_EQ(reduces[0]->operands().size(), 4);
 }
 
+TEST_F(SingleOutputFusionTileAnalysisTest,
+       DiamondWithUnitOuterCollapseDeduplicatesOperandInSymbolicMode) {
+  HloInstruction* root = ParseAndGetRoot(R"hlo(
+    HloModule m
+    f {
+      p0 = f32[2,32] parameter(0)
+      collapse1 = f32[64] reshape(p0)
+      expand1 = f32[2,32] reshape(collapse1)
+      slice1 = f32[1,32] slice(expand1), slice={[0:1], [0:32]}
+      drop1 = f32[32] reshape(slice1)
+      collapse2 = f32[64] reshape(p0)
+      slice2 = f32[32] slice(collapse2), slice={[0:32]}
+      ROOT add = f32[32] add(drop1, slice2)
+    }
+    ENTRY e {
+      p0 = f32[2,32] parameter(0)
+      ROOT fusion = f32[32] fusion(p0), kind=kCustom, calls=f
+    })hlo");
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(root);
+  ASSERT_OK_AND_ASSIGN(auto tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+  ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation tiled_computation,
+      TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space)));
+  EXPECT_EQ(tiled_computation.instructions().size(), 8);
+}
+
+TEST_F(SingleOutputFusionTileAnalysisTest,
+       ScaledDotScaleCollapseSimplifiesConcreteStride) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"hlo(
+    f {
+      lhs = f32[192,4,128] parameter(0)
+      rhs = f32[4,64,128] parameter(1)
+      lhs_scale = f32[12,2] parameter(2)
+      rhs_scale = f32[4,1,2] parameter(3)
+      other = f32[4,6,16,64] parameter(4)
+      lhs_scale_3d = f32[3,4,2] reshape(lhs_scale)
+      dot = f32[4,192,64] scaled-dot(lhs, rhs, lhs_scale_3d, rhs_scale),
+        lhs_batch_dims={1}, rhs_batch_dims={0},
+        lhs_contracting_dims={2}, rhs_contracting_dims={2}
+      r1 = f32[4,6,32,64] reshape(dot)
+      s = f32[4,6,16,64] slice(r1), slice={[0:4], [0:6], [1:17], [0:64]}
+      ROOT c = f32[4,6,32,64] concatenate(other, s), dimensions={2}
+    }
+    ENTRY e {
+      p0 = f32[192,4,128] parameter(0)
+      p1 = f32[4,64,128] parameter(1)
+      p_lhs_scale = f32[12,2] parameter(2)
+      p3 = f32[4,1,2] parameter(3)
+      p4 = f32[4,6,16,64] parameter(4)
+      ROOT fusion = f32[4,6,32,64] fusion(p0, p1, p_lhs_scale, p3, p4),
+        kind=kCustom, calls=f
+    })hlo",
+                                    {1, 1, 16, 64, 64}));
+  const TiledHloRegion& concat_branch =
+      FindByName(tiled_computation.tiled_root_region(), "c")->hlo_regions()[1];
+  const TiledHloRegion& dot_loop =
+      FindByName(concat_branch, "dot")->hlo_regions()[0];
+  EXPECT_THAT(
+      FindByName(dot_loop, "p_lhs_scale")->tile().GetStaticTileStrides(),
+      IsOkAndHolds(ElementsAre(1, 1)));
+}
 }  // namespace
 }  // namespace xla::gpu

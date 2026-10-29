@@ -1967,7 +1967,30 @@ ENTRY entry {
   ROOT fusion = s32[4096,32] fusion(p0), kind=kCustom, calls=fused,
     backend_config={"fusion_backend_config": {"kind":"__triton"}}
 }
-)"}),
+)"},
+                      RegisterFitTestCase{
+                          /*name=*/"CollapseExpandReshapeAcceptsValid",
+                          /*hlo=*/R"hlo(
+HloModule m
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+fused {
+  p0 = f32[64,1024] parameter(0)
+  bcast = f32[64,512,1024,2] broadcast(p0), dimensions={0,2}
+  r0 = f32[64,524288,2] reshape(bcast)
+  r1 = f32[64,512,1024,2] reshape(r0)
+  c0 = f32[] constant(0)
+  ROOT red = f32[64,1024] reduce(r1, c0), dimensions={1,3}, to_apply=add
+}
+ENTRY entry {
+  p0 = f32[64,1024] parameter(0)
+  ROOT fusion = f32[64,1024] fusion(p0), kind=kCustom, calls=fused,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)hlo"}),
     [](const ::testing::TestParamInfo<RegisterFitTestCase>& info) {
       return info.param.name;
     });
