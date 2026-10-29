@@ -937,9 +937,7 @@ class BufferAssignment {
   // Combines allocations of temporary buffers into one big BufferAllocation.
   absl::Status CombineTempAllocations(
       std::optional<BufferValue::Color> temp_buffer_color,
-      std::optional<std::function<std::optional<int64_t>(
-          const HloAliasAnalysis&, const HloInstruction*, const ShapeIndex&)>>
-          fixed_offset = std::nullopt);
+      absl::Span<const std::optional<int64_t>> fixed_offset_for_value = {});
 
   // Computes stats for the assignment, to be retrieved by GetStats.
   void ComputeSummaryStats();
@@ -1438,8 +1436,38 @@ class BufferAssigner {
   SplitBuffersByColor(
       const absl::flat_hash_set<const HloValue*>& buffers) const;
 
+  // Precomputes required fixed offsets for all HloBuffers and HloValues in
+  // `alias_analysis` when `opts_.fixed_offset` is set. Validates that aliased
+  // HloValues in the same HloBuffer do not have conflicting fixed-offset
+  // requirements.
+  absl::Status PrecomputeFixedOffsets(const HloAliasAnalysis& alias_analysis);
+
+  std::optional<int64_t> GetRequiredFixedOffset(
+      const HloBuffer& hlo_buffer) const {
+    if (hlo_buffer.id() >= 0 &&
+        hlo_buffer.id() < fixed_offset_for_buffer_.size()) {
+      return fixed_offset_for_buffer_[hlo_buffer.id()];
+    }
+    return std::nullopt;
+  }
+
+  std::optional<int64_t> GetRequiredFixedOffset(
+      const HloValue& hlo_value) const {
+    if (hlo_value.id() >= 0 &&
+        hlo_value.id() < fixed_offset_for_value_.size()) {
+      return fixed_offset_for_value_[hlo_value.id()];
+    }
+    return std::nullopt;
+  }
+
   const AliasInfo* alias_info_;
   Options opts_;
+
+  // Dense tables of precomputed fixed offsets indexed by HloBuffer::Id and
+  // HloValue::Id, respectively. Populated once in CreateAssignment when
+  // opts_.fixed_offset is set; empty otherwise.
+  std::vector<std::optional<int64_t>> fixed_offset_for_buffer_;
+  std::vector<std::optional<int64_t>> fixed_offset_for_value_;
 
   BufferAssigner(const BufferAssigner&) = delete;
   BufferAssigner& operator=(const BufferAssigner&) = delete;

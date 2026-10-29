@@ -7353,5 +7353,61 @@ ENTRY main {
   EXPECT_EQ(slice0.offset(), 0);
   EXPECT_GE(buffer0_slice.offset(), slice0.size());
 }
+
+TEST_F(BufferAssignmentTest, FixedOffsetPrecomputedOncePerValue) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  buffer.0 = s32[4096]{0} custom-call(), custom_call_target="AllocateBuffer"
+  call-start.0 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.0 = () call-done(call-start.0)
+  call-start.1 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.1 = tuple()
+  }
+  call-done.1 = () call-done(call-start.1)
+  ROOT copy.0 = s32[4096]{0} copy(buffer.0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  int64_t fixed_offset_call_count = 0;
+  absl::flat_hash_set<std::pair<const HloInstruction*, ShapeIndex>>
+      queried_positions;
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.must_not_live_out = [](const HloAliasAnalysis& alias_analysis,
+                              const HloInstruction* instruction,
+                              const ShapeIndex& index) -> bool {
+    return absl::StartsWith(instruction->name(), "call-start");
+  };
+  opts.fixed_offset = [&fixed_offset_call_count, &queried_positions](
+                          const HloAliasAnalysis& alias_analysis,
+                          const HloInstruction* instruction,
+                          const ShapeIndex& index) -> std::optional<int64_t> {
+    ++fixed_offset_call_count;
+    queried_positions.emplace(instruction, index);
+    if (absl::StartsWith(instruction->name(), "call-start") &&
+        index == ShapeIndex{2, 0}) {
+      return 0;
+    }
+    return std::nullopt;
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  EXPECT_EQ(fixed_offset_call_count,
+            buffers->dataflow_analysis().values().size());
+  EXPECT_EQ(queried_positions.size(), fixed_offset_call_count);
+}
 }  // namespace
 }  // namespace xla
