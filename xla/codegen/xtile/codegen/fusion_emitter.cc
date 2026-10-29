@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -2766,6 +2767,193 @@ EmitFullyTiledSequentialDimensions(
   return bindings;
 }
 
+// Applies 2-D L2 cache tile swizzling to single-dot / scaled-dot fusions with
+// BlockLevelFusionConfig.group_size > 1.
+Value ApplyDotGroupSizeTileIdRemapping(
+    ImplicitLocOpBuilder& b, const gpu::TiledHloComputation& tiled_computation,
+    const gpu::Schedule& schedule, int gs, Value raw_tile_id) {
+  const gpu::TiledHloInstruction* single_tiled_dot = nullptr;
+  for (const gpu::TiledHloInstruction* instr :
+       tiled_computation.instructions()) {
+    if (instr->hlo()->opcode() == HloOpcode::kDot ||
+        instr->hlo()->opcode() == HloOpcode::kScaledDot) {
+      if (single_tiled_dot != nullptr) {
+        return raw_tile_id;
+      }
+      single_tiled_dot = instr;
+    }
+  }
+  if (single_tiled_dot == nullptr) {
+    return raw_tile_id;
+  }
+
+  const HloInstruction* dot_hlo = single_tiled_dot->hlo();
+  const DotDimensionNumbers& dnums = dot_hlo->dot_dimension_numbers();
+  const int64_t num_batch = dnums.lhs_batch_dimensions_size();
+  const int64_t lhs_rank = dot_hlo->operand(0)->shape().dimensions().size();
+  const int64_t rhs_rank = dot_hlo->operand(1)->shape().dimensions().size();
+  const int64_t num_lhs_nc =
+      lhs_rank - num_batch - dnums.lhs_contracting_dimensions_size();
+  const int64_t num_rhs_nc =
+      rhs_rank - num_batch - dnums.rhs_contracting_dimensions_size();
+  if (num_lhs_nc != 1 || num_rhs_nc != 1) {
+    return raw_tile_id;
+  }
+
+  const gpu::TilingSpace& tiling_space = tiled_computation.tiling_space();
+  if (tiling_space.num_parallel_dimensions() != num_batch + 2) {
+    return raw_tile_id;
+  }
+  const llvm::SmallVector<gpu::TilingSpace::DimensionInfo, 4> dims =
+      tiling_space.dimensions();
+  for (const auto& dim : dims) {
+    if (dim.type == gpu::TilingSpace::DimensionSemantics::kReplica) {
+      return raw_tile_id;
+    }
+  }
+
+  if (single_tiled_dot->tile().dim_tiles().size() < num_batch + 2) {
+    return raw_tile_id;
+  }
+
+  const SymbolicExpr& m_offset =
+      single_tiled_dot->tile().dim_tiles()[num_batch].offset;
+  const SymbolicExpr& n_offset =
+      single_tiled_dot->tile().dim_tiles()[num_batch + 1].offset;
+
+  const gpu::TilingSpace::DimensionInfo* m_dim_info = nullptr;
+  const gpu::TilingSpace::DimensionInfo* n_dim_info = nullptr;
+
+  for (const gpu::TilingSpace::DimensionInfo& dim_info : dims) {
+    if (dim_info.type != gpu::TilingSpace::DimensionSemantics::kParallel) {
+      continue;
+    }
+    if (m_offset.IsFunctionOfVariable(dim_info.id.value())) {
+      if (m_dim_info != nullptr) {
+        return raw_tile_id;
+      }
+      m_dim_info = &dim_info;
+    }
+    if (n_offset.IsFunctionOfVariable(dim_info.id.value())) {
+      if (n_dim_info != nullptr) {
+        return raw_tile_id;
+      }
+      n_dim_info = &dim_info;
+    }
+  }
+
+  if (m_dim_info == nullptr || n_dim_info == nullptr ||
+      m_dim_info->id == n_dim_info->id) {
+    return raw_tile_id;
+  }
+
+  const int64_t m_tiles = tiling_space.GetNumTiles(*m_dim_info);
+  const int64_t n_tiles = tiling_space.GetNumTiles(*n_dim_info);
+  if (m_tiles <= 1 || n_tiles <= 1) {
+    return raw_tile_id;
+  }
+  const int64_t mn_tiles = m_tiles * n_tiles;
+  if (schedule.num_tiles < mn_tiles || schedule.num_tiles % mn_tiles != 0) {
+    return raw_tile_id;
+  }
+
+  const int64_t pid_0 = 0, tid_0 = 0;
+  const int64_t pid_1 = (schedule.GetNumTilesPerPid() == 1) ? 1 : 0;
+  const int64_t tid_1 = (schedule.GetNumTilesPerPid() == 1) ? 0 : 1;
+
+  const SymbolicExpr m_expr = schedule.GetPidExpr(m_dim_info->id.value());
+  const SymbolicExpr n_expr = schedule.GetPidExpr(n_dim_info->id.value());
+
+  const int64_t m_at_0 = m_expr.Evaluate({pid_0, tid_0});
+  const int64_t m_at_1 = m_expr.Evaluate({pid_1, tid_1});
+  const int64_t n_at_0 = n_expr.Evaluate({pid_0, tid_0});
+  const int64_t n_at_1 = n_expr.Evaluate({pid_1, tid_1});
+
+  const int64_t m_step = m_at_1 - m_at_0;
+  const int64_t n_step = n_at_1 - n_at_0;
+
+  int64_t num_pid_outer = 0;
+  int64_t num_pid_inner = 0;
+  if (m_step == 0 && n_step == 1) {
+    num_pid_outer = m_tiles;
+    num_pid_inner = n_tiles;
+  } else if (n_step == 0 && m_step == 1) {
+    num_pid_outer = n_tiles;
+    num_pid_inner = m_tiles;
+  } else {
+    return raw_tile_id;
+  }
+
+  if (schedule.GetNumTilesPerPid() != 1 ||
+      schedule.num_tiles > std::numeric_limits<int32_t>::max() ||
+      num_pid_outer <= gs || num_pid_inner < 4) {
+    return raw_tile_id;
+  }
+  const int64_t group_width = gs;
+
+  mlir::Type orig_type = raw_tile_id.getType();
+  Value tile_id = Cast(b, raw_tile_id, b.getI32Type());
+  auto ci = [&](int64_t v) { return CreateConst(b, b.getI32Type(), v); };
+
+  Value mn_pid = tile_id;
+  Value batch_offset = nullptr;
+  if (schedule.num_tiles > mn_tiles) {
+    Value mn_tiles_val = ci(mn_tiles);
+    Value batch_idx = arith::DivUIOp::create(b, tile_id, mn_tiles_val);
+    batch_offset = arith::MulIOp::create(b, batch_idx, mn_tiles_val);
+    mn_pid = arith::RemUIOp::create(b, tile_id, mn_tiles_val);
+  }
+
+  Value width = ci(group_width);
+  Value num_inner = ci(num_pid_inner);
+  Value num_pid_in_group = ci(group_width * num_pid_inner);
+
+  Value group_id = arith::DivUIOp::create(b, mn_pid, num_pid_in_group);
+  Value first_pid_outer = arith::MulIOp::create(b, group_id, width);
+  Value in_group_idx = arith::RemUIOp::create(b, mn_pid, num_pid_in_group);
+
+  const int64_t tail_width = num_pid_outer % group_width;
+  const int64_t full_outer = num_pid_outer - tail_width;
+  Value full_pid_outer = arith::AddIOp::create(
+      b, first_pid_outer, arith::RemUIOp::create(b, in_group_idx, width));
+  Value full_pid_inner = arith::DivUIOp::create(b, in_group_idx, width);
+
+  Value pid_outer = full_pid_outer;
+  Value pid_inner = full_pid_inner;
+  if (tail_width != 0) {
+    // Handle the single partial tail group with compile-time constant divisor
+    // `tail_width` so NVPTX avoids lowering dynamic integer division routines.
+    Value full_pids_val = ci(full_outer * num_pid_inner);
+    Value is_full = arith::CmpIOp::create(b, arith::CmpIPredicate::ult, mn_pid,
+                                          full_pids_val);
+    Value tail_idx = arith::SubIOp::create(b, mn_pid, full_pids_val);
+    Value tail_w = ci(tail_width);
+    Value tail_pid_outer = arith::AddIOp::create(
+        b, ci(full_outer), arith::RemUIOp::create(b, tail_idx, tail_w));
+    Value tail_pid_inner = arith::DivUIOp::create(b, tail_idx, tail_w);
+    pid_outer =
+        arith::SelectOp::create(b, is_full, full_pid_outer, tail_pid_outer);
+    pid_inner =
+        arith::SelectOp::create(b, is_full, full_pid_inner, tail_pid_inner);
+  }
+
+  Value remapped_mn = arith::AddIOp::create(
+      b, arith::MulIOp::create(b, pid_outer, num_inner), pid_inner);
+
+  Value result = batch_offset
+                     ? arith::AddIOp::create(b, batch_offset, remapped_mn)
+                     : remapped_mn;
+
+  if (result.getType() != orig_type) {
+    result = arith::IndexCastOp::create(b, orig_type, result);
+  }
+  if (mlir::Operation* def_op = result.getDefiningOp()) {
+    def_op->setAttr("xla.range",
+                    b.getIndexArrayAttr({0, schedule.num_tiles - 1}));
+  }
+  return result;
+}
+
 // Applies L2 tile reordering to the flat tile_id for kRaggedNonContracting and
 // kRaggedContracting ragged-dot fusions that set
 // BlockLevelFusionConfig.group_size > 1.
@@ -2798,9 +2986,10 @@ EmitFullyTiledSequentialDimensions(
 //
 // Returns `raw_tile_id` unchanged when the fusion does not qualify (batch dims
 // present, group_size <= 1, or non-3D kRaggedContracting output tile).
-Value ApplyGroupSizeTileIdRemapping(ImplicitLocOpBuilder& b,
-                                    const HloFusionInstruction& fusion,
-                                    Value raw_tile_id) {
+Value ApplyGroupSizeTileIdRemapping(
+    ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
+    const gpu::TiledHloComputation& tiled_computation,
+    const gpu::Schedule& schedule, Value raw_tile_id) {
   // Read group_size from the fusion backend config.
   auto gpu_config_or = fusion.backend_config<xla::gpu::GpuBackendConfig>();
   if (!gpu_config_or.ok()) {
@@ -2827,7 +3016,8 @@ Value ApplyGroupSizeTileIdRemapping(ImplicitLocOpBuilder& b,
     }
   }
   if (rd == nullptr) {
-    return raw_tile_id;
+    return ApplyDotGroupSizeTileIdRemapping(b, tiled_computation, schedule, gs,
+                                            raw_tile_id);
   }
 
   const auto& rdims = rd->ragged_dot_dimension_numbers();
@@ -2966,7 +3156,11 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
   // If there are more than one tile per pid, we need to add a scf.for loop to
   // iterate through the tiles.
   int64_t num_tiles_per_pid = schedule.GetNumTilesPerPid();
-  if (num_tiles_per_pid > 1) {
+  if (num_tiles_per_pid == 1) {
+    program_id = ApplyGroupSizeTileIdRemapping(b, fusion, tiled_computation,
+                                               schedule, program_id);
+    tile_id = program_id;
+  } else {
     Value zero = arith::ConstantIndexOp::create(b, 0);
     Value one = arith::ConstantIndexOp::create(b, 1);
     SymbolicExpr pid_dim = CreateDimExpr(0, mlir_context);
@@ -2987,14 +3181,9 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
 
     tile_id = for_op.getInductionVar();
     b.setInsertionPointToStart(for_op.getBody());
+    tile_id = ApplyGroupSizeTileIdRemapping(b, fusion, tiled_computation,
+                                            schedule, tile_id);
   }
-  // Apply GROUP_SIZE L2 tile reordering for kRaggedNonContracting and
-  // kRaggedContracting ragged-dot fusions where
-  // BlockLevelFusionConfig.group_size > 1.  The remapping transforms the flat
-  // tile id to an L2-friendly tile coordinate before EmitterContext is
-  // constructed, so that all EvaluateTilingParameters calls automatically yield
-  // the reordered tile coordinates.
-  tile_id = ApplyGroupSizeTileIdRemapping(b, fusion, tile_id);
   EmitterContext emitter_ctx{b,        &fusion, program_id,       tile_id,
                              schedule, fn,      tiled_computation};
 
