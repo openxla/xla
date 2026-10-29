@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/ADT/STLExtras.h"
@@ -1956,6 +1957,7 @@ LogicalResult MatmulOp::verify() {
       if (!seen_dims_rhs[dim]) {
         emitOpError("Illegal: Dim ")
             << dim << " is not seen in rhs dimension numbers";
+        return failure();
       }
     }
 
@@ -2003,6 +2005,21 @@ LogicalResult MatmulOp::verify() {
           "lhs_batch_dims, 0, lhs_non_contracting_dims, 1, "
           "rhs_non_contracting_dims]");
       return failure();
+    }
+
+    llvm::SmallVector<int64_t> expected_output_shape;
+    expected_output_shape.reserve(output_dim_order.size() / 2);
+    for (size_t i = 0; i < output_dim_order.size(); i += 2) {
+      const VectorType operand_ty = output_dim_order[i] == 0 ? lhs_ty : rhs_ty;
+      expected_output_shape.push_back(
+          operand_ty.getDimSize(output_dim_order[i + 1]));
+    }
+    if (res_ty.getShape() != ArrayRef<int64_t>(expected_output_shape)) {
+      return emitOpError(
+          absl::StrFormat("Illegal: matmul result shape [%s] does not match "
+                          "expected shape [%s]",
+                          absl::StrJoin(res_ty.getShape(), ", "),
+                          absl::StrJoin(expected_output_shape, ", ")));
     }
   }
   return success();
