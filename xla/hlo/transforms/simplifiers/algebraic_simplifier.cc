@@ -9034,6 +9034,12 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
     }
   }
 
+  ABSL_ASSIGN_OR_RETURN(bool argminmax_simplified,
+                        TrySimplifyMonotonicArgMinMax(reduce));
+  if (argminmax_simplified) {
+    return absl::OkStatus();
+  }
+
   // Try to reorder reduce(dot(A, B)) to dot(A, reduce(B))
   if (ReorderReduceDotToDotReduce(arg, init_value, function, reduce)) {
     return absl::OkStatus();
@@ -9445,6 +9451,209 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduce(HloInstruction* hlo) {
   }
 
   return absl::OkStatus();
+}
+
+absl::StatusOr<bool> AlgebraicSimplifierVisitor::TrySimplifyMonotonicArgMinMax(
+    HloReduceInstruction* reduce) {
+  if (!reduce->control_predecessors().empty()) {
+    return false;
+  }
+  const bool is_argmax = MatchArgMax(reduce);
+  const bool is_argmin = !is_argmax && MatchArgMin(reduce);
+  if (!is_argmax && !is_argmin) {
+    return false;
+  }
+
+  if (reduce->dimensions().size() != 1) {
+    return false;
+  }
+  const int64_t reduce_dim = reduce->dimensions()[0];
+  const auto* iota = Cast<HloIotaInstruction>(reduce->operand(1));
+  if (iota->iota_dimension() != reduce_dim) {
+    return false;
+  }
+
+  // Transforming operand 0 changes tuple element 0 (the reduced max/min value)
+  // while preserving tuple element 1 (the argmax/argmin index). Only rewrite
+  // when tuple element 0 has no uses.
+  if (reduce == computation_->root_instruction() || reduce->user_count() == 0) {
+    return false;
+  }
+  for (const HloInstruction* user : reduce->users()) {
+    if (user->opcode() != HloOpcode::kGetTupleElement ||
+        user->tuple_index() != 1) {
+      return false;
+    }
+  }
+
+  HloInstruction* arg = reduce->mutable_operand(0);
+  const PrimitiveType elem_type = arg->shape().element_type();
+  if (elem_type != BF16 && elem_type != F16 && elem_type != F32 &&
+      elem_type != F64) {
+    return false;
+  }
+
+  auto unwrap_reshapes_and_copies =
+      [](const HloInstruction* inst) -> const HloInstruction* {
+    while (inst->opcode() == HloOpcode::kReshape ||
+           inst->opcode() == HloOpcode::kCopy) {
+      inst = inst->operand(0);
+    }
+    return inst;
+  };
+
+  auto unwrap_widening_converts =
+      [elem_type](const HloInstruction* inst) -> const HloInstruction* {
+    while (inst->opcode() == HloOpcode::kCopy ||
+           (inst->opcode() == HloOpcode::kConvert &&
+            primitive_util::CastPreservesValues(elem_type,
+                                                inst->shape().element_type()) &&
+            primitive_util::CastPreservesValues(
+                elem_type, inst->operand(0)->shape().element_type()))) {
+      inst = inst->operand(0);
+    }
+    return inst;
+  };
+
+  auto unwrap_slice_broadcast =
+      [&](const HloInstruction* inst) -> const HloInstruction* {
+    inst = unwrap_widening_converts(inst);
+    if (inst->opcode() != HloOpcode::kBroadcast ||
+        !absl::c_is_sorted(inst->dimensions()) ||
+        absl::c_linear_search(inst->dimensions(), reduce_dim)) {
+      return nullptr;
+    }
+    return unwrap_widening_converts(
+        unwrap_reshapes_and_copies(inst->operand(0)));
+  };
+
+  auto is_max_reduce_of = [&](const HloInstruction* bcast,
+                              const HloInstruction* x) -> bool {
+    const HloInstruction* red = unwrap_slice_broadcast(bcast);
+    if (red == nullptr) {
+      return false;
+    }
+    if (red->opcode() == HloOpcode::kGetTupleElement &&
+        red->tuple_index() == 0) {
+      const HloInstruction* am = red->operand(0);
+      return MatchArgMax(am) && am->dimensions().size() == 1 &&
+             am->dimensions()[0] == reduce_dim && am->operand(0) == x;
+    }
+    return red->opcode() == HloOpcode::kReduce && !red->shape().IsTuple() &&
+           red->operand_count() == 2 && red->dimensions().size() == 1 &&
+           red->dimensions()[0] == reduce_dim &&
+           IsScalarConstantNegInf(red->operand(1)) &&
+           Match(red->to_apply()->root_instruction(),
+                 m::MaximumAnyOrder(m::Parameter(0), m::Parameter(1))) &&
+           red->operand(0) == x;
+  };
+
+  auto unwrap_sum_reduce_input =
+      [&](const HloInstruction* candidate_red) -> const HloInstruction* {
+    const HloInstruction* red = unwrap_reshapes_and_copies(
+        unwrap_widening_converts(unwrap_reshapes_and_copies(candidate_red)));
+    if (red->opcode() != HloOpcode::kReduce || red->shape().IsTuple() ||
+        red->operand_count() != 2 || red->dimensions().size() != 1 ||
+        red->dimensions()[0] != reduce_dim ||
+        !IsScalarConstantZero(red->operand(1)) ||
+        !Match(red->to_apply()->root_instruction(),
+               m::AddAnyOrder(m::Parameter(0), m::Parameter(1)))) {
+      return nullptr;
+    }
+    return unwrap_widening_converts(red->operand(0));
+  };
+
+  HloInstruction* candidate = nullptr;
+
+  // Pattern 1 (ArgMax only): Max-stabilized Softmax along `reduce_dim`:
+  //   exp(x - max(x)) / broadcast(sum(exp(x - max(x))))
+  // or its broadcast-sunk reciprocal form:
+  //   exp(x - max(x)) * broadcast(1 / sum(exp(x - max(x))))
+  // Never apply this to ArgMin because exp() underflows negative values to 0.0,
+  // collapsing distinct negative elements into ties.
+  if (is_argmax) {
+    HloInstruction* exps = nullptr;
+    HloInstruction* scale_or_denom = nullptr;
+    bool denom_valid = false;
+    if (Match(arg, m::Divide(m::Op(&exps), m::Op(&scale_or_denom)))) {
+      if (const HloInstruction* bcast_op =
+              unwrap_slice_broadcast(scale_or_denom)) {
+        denom_valid = unwrap_sum_reduce_input(bcast_op) == exps;
+      }
+    } else if (Match(arg, m::MultiplyAnyOrder(
+                              m::Op(&exps).WithOpcode(HloOpcode::kExp),
+                              m::Op(&scale_or_denom)))) {
+      const HloInstruction* sum_red = nullptr;
+      if (const HloInstruction* bcast_op =
+              unwrap_slice_broadcast(scale_or_denom);
+          bcast_op != nullptr &&
+          Match(bcast_op,
+                m::Divide(m::Op().WithPredicate([](const HloInstruction* op) {
+                  return IsAllFloat(op, 1.0f);
+                }),
+                          m::Op(&sum_red)))) {
+        denom_valid = unwrap_sum_reduce_input(sum_red) == exps;
+      }
+    }
+    HloInstruction* shifted = nullptr;
+    HloInstruction* x = nullptr;
+    HloInstruction* max_bcast = nullptr;
+    if (denom_valid && Match(exps, m::Exp(m::Op(&shifted))) &&
+        Match(shifted, m::Subtract(m::Op(&x), m::Op(&max_bcast))) &&
+        is_max_reduce_of(max_bcast, x)) {
+      candidate = x;
+    }
+  }
+
+  // Pattern 2 (ArgMax and ArgMin): Max-stabilized LogSoftmax along
+  // `reduce_dim`: (x - max(x)) - broadcast(log(sum(exp(x - max(x))))).
+  if (candidate == nullptr) {
+    HloInstruction* shifted = nullptr;
+    HloInstruction* lse_bcast = nullptr;
+    if (Match(arg, m::Subtract(m::Op(&shifted), m::Op(&lse_bcast))) ||
+        Match(arg,
+              m::AddAnyOrder(m::Op(&shifted), m::Negate(m::Op(&lse_bcast))))) {
+      const HloInstruction* lse_expr = unwrap_widening_converts(lse_bcast);
+      const HloInstruction* log_arg = nullptr;
+      const HloInstruction* inner_bcast = nullptr;
+      if (Match(lse_expr, m::Log(m::Op(&inner_bcast)))) {
+        log_arg = unwrap_slice_broadcast(inner_bcast);
+      } else if (const HloInstruction* bcast_op =
+                     unwrap_slice_broadcast(lse_expr)) {
+        Match(bcast_op, m::Log(m::Op(&log_arg)));
+      }
+      const HloInstruction* exps =
+          log_arg != nullptr ? unwrap_sum_reduce_input(log_arg) : nullptr;
+      HloInstruction* x = nullptr;
+      HloInstruction* max_bcast = nullptr;
+      if (exps != nullptr && exps->opcode() == HloOpcode::kExp &&
+          exps->operand(0) == shifted &&
+          Match(shifted, m::Subtract(m::Op(&x), m::Op(&max_bcast))) &&
+          is_max_reduce_of(max_bcast, x)) {
+        candidate = x;
+      }
+    }
+  }
+
+  if (candidate == nullptr || !SameShape(candidate, arg)) {
+    return false;
+  }
+
+  ABSL_RETURN_IF_ERROR(reduce->ReplaceOperandWith(0, candidate));
+  if (arg->IsDead()) {
+    ABSL_RETURN_IF_ERROR(computation_->RemoveInstructionAndUnusedOperands(arg));
+  }
+  // Tuple element 0 now computes max(x)/min(x) rather than
+  // max(softmax(x))/min(log_softmax(x)), so clear its OriginalArray while
+  // preserving tuple element 1 (the semantically identical argmax/argmin).
+  if (std::shared_ptr<OriginalValue> ov = reduce->original_value();
+      ov != nullptr && ov->IsTuple()) {
+    auto updated_ov = std::make_shared<OriginalValue>(*ov);
+    *updated_ov->mutable_original_array({0}) = std::nullopt;
+    reduce->set_original_value(std::move(updated_ov));
+  }
+  MarkAsChanged();
+  return true;
 }
 
 absl::Status AlgebraicSimplifierVisitor::HandleReducePrecision(

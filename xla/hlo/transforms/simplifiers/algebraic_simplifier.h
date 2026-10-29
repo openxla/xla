@@ -490,6 +490,12 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   absl::StatusOr<bool> TrySimplifyTautologicalCompare(
       HloInstruction* conjunction);
 
+  // Tries to simplify ArgMax/ArgMin variadic reductions whose value tuple
+  // output is unused and whose input is a max-stabilized Softmax or LogSoftmax
+  // along the reduction dimension.
+  absl::StatusOr<bool> TrySimplifyMonotonicArgMinMax(
+      HloReduceInstruction* reduce);
+
   // Tries to simplify (bitcast-convert (concat (bitcast-convert A) ...)) where
   // the types of inner and outer bitcast-convert cancel out.
   absl::StatusOr<bool> TrySimplifyTautologicalBitcastConvert(
