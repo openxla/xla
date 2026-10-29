@@ -5949,7 +5949,235 @@ absl::Status AlgebraicSimplifierVisitor::HandleCompare(
     }
   }
 
-  return absl::OkStatus();
+  return TrySimplifyMonotonicCompare(compare);
+}
+
+absl::Status AlgebraicSimplifierVisitor::TrySimplifyMonotonicCompare(
+    HloInstruction* compare) {
+  // Only rewrite partial-order comparisons on standard IEEE-like binary floats
+  // without control predecessors. TotalOrder distinguishes -0.0 < +0.0 and
+  // orders signed NaNs, while narrow FP8/FP4 formats may lack zero, negative
+  // values, or infinity.
+  if (!compare->control_predecessors().empty() ||
+      compare->comparison_order() != ComparisonOrder::kPartial) {
+    return absl::OkStatus();
+  }
+  HloInstruction* lhs = compare->mutable_operand(0);
+  HloInstruction* rhs = compare->mutable_operand(1);
+  const PrimitiveType elem_type = lhs->shape().element_type();
+  if (elem_type != BF16 && elem_type != F16 && elem_type != F32 &&
+      elem_type != F64) {
+    return absl::OkStatus();
+  }
+
+  // Only match rank-0 constants (or broadcasts of them), so the rewrite never
+  // replaces an effective-scalar constant such as f32[1] with a broadcast.
+  auto get_scalar_const = [](const HloInstruction* op) {
+    const HloInstruction* c = nullptr;
+    return (Match(op, m::ConstantScalar(&c)) ||
+            Match(op, m::Broadcast(m::ConstantScalar(&c))))
+               ? c
+               : nullptr;
+  };
+
+  HloInstruction* expr_side = lhs;
+  HloInstruction* const_side = rhs;
+  ComparisonDirection dir = compare->comparison_direction();
+  const HloInstruction* scalar_const = get_scalar_const(rhs);
+  if (scalar_const == nullptr) {
+    scalar_const = get_scalar_const(lhs);
+    if (scalar_const == nullptr) {
+      return absl::OkStatus();
+    }
+    expr_side = rhs;
+    const_side = lhs;
+    dir = Comparison(dir, elem_type).Converse().GetDirection();
+  }
+
+  std::optional<double> c_opt = GetConstantValue(scalar_const);
+  if (!c_opt.has_value() || std::isnan(*c_opt)) {
+    return absl::OkStatus();
+  }
+  const double c_val = *c_opt;
+
+  const ComparisonDirection converse_dir =
+      Comparison(dir, elem_type).Converse().GetDirection();
+  const bool is_inequality =
+      dir == ComparisonDirection::kLt || dir == ComparisonDirection::kLe ||
+      dir == ComparisonDirection::kGt || dir == ComparisonDirection::kGe;
+
+  HloInstruction* x = nullptr;
+  ComparisonDirection new_dir = dir;
+  double new_c_val = 0.0;
+
+  // Peel value-preserving Convert round-trips introduced by FloatNormalization
+  // (e.g. BF16 -> F32 -> BF16 on CPU/GPU) without stripping lossy narrower
+  // casts (such as F32 -> F8E4M3FN/BF16 -> F32 fake-quantization).
+  auto unwrap_float_convert_to =
+      [elem_type](HloInstruction* inst,
+                  PrimitiveType target_type) -> HloInstruction* {
+    HloInstruction* cur = inst;
+    while (cur->opcode() == HloOpcode::kConvert &&
+           primitive_util::CastPreservesValues(
+               elem_type, cur->operand(0)->shape().element_type())) {
+      cur = cur->mutable_operand(0);
+      if (cur->shape().element_type() == target_type) {
+        return cur;
+      }
+    }
+    return inst;
+  };
+  auto match_expanded_logistic = [&](HloInstruction* root) -> bool {
+    if (!is_inequality || c_val != 0.5) {
+      return false;
+    }
+    HloInstruction* div_op = root;
+    if (div_op->opcode() == HloOpcode::kConvert) {
+      if (!primitive_util::CastPreservesValues(
+              elem_type, div_op->operand(0)->shape().element_type())) {
+        return false;
+      }
+      div_op = div_op->mutable_operand(0);
+    }
+    // FloatNormalization may also wrap the 1.0 operands in a Convert, which
+    // broadcast sinking then moves below the Broadcast. 1.0 is exact in every
+    // floating-point type, so look through both.
+    auto is_one = [](const HloInstruction* op) {
+      if (op->opcode() == HloOpcode::kBroadcast) {
+        op = op->operand(0);
+      }
+      if (op->opcode() == HloOpcode::kConvert) {
+        op = op->operand(0);
+      }
+      return IsAllFloat(op, 1.0f);
+    };
+    HloInstruction* denom = nullptr;
+    if (!Match(div_op,
+               m::Divide(m::Op().WithPredicate(is_one), m::Op(&denom)))) {
+      return false;
+    }
+    denom = unwrap_float_convert_to(denom, div_op->shape().element_type());
+    HloInstruction* exp_term = nullptr;
+    if (!Match(denom, m::AddAnyOrder(m::Op().WithPredicate(is_one),
+                                     m::Op(&exp_term)))) {
+      return false;
+    }
+    exp_term =
+        unwrap_float_convert_to(exp_term, div_op->shape().element_type());
+    HloInstruction* exp_arg = nullptr;
+    if (!Match(exp_term, m::Exp(m::Op(&exp_arg)))) {
+      return false;
+    }
+    HloInstruction* inner = unwrap_float_convert_to(exp_arg, elem_type);
+    HloInstruction* neg_arg = nullptr;
+    if (Match(inner, m::Negate(m::Op(&neg_arg)))) {
+      x = unwrap_float_convert_to(neg_arg, elem_type);
+      new_dir = dir;
+      new_c_val = 0.0;
+      return true;
+    }
+    if (inner->shape().element_type() == elem_type) {
+      x = inner;
+      new_dir = converse_dir;
+      new_c_val = 0.0;
+      return true;
+    }
+    return false;
+  };
+
+  switch (expr_side->opcode()) {
+    case HloOpcode::kNegate:
+      // (-x) op 0.0 -> x converse(op) 0.0 (exact across +/-0.0, +/-Inf, NaN).
+      if (c_val == 0.0) {
+        x = expr_side->mutable_operand(0);
+        new_dir = converse_dir;
+        new_c_val = 0.0;
+      }
+      break;
+    case HloOpcode::kCbrt:
+    case HloOpcode::kErf:
+    case HloOpcode::kExpm1:
+    case HloOpcode::kSinh:
+    case HloOpcode::kTanh:
+      // Zero-crossing strictly increasing functions with unit-or-greater slope
+      // at 0: f(x) op 0.0 -> x op 0.0 for all partial-order directions.
+      if (c_val == 0.0) {
+        x = expr_side->mutable_operand(0);
+        new_dir = dir;
+        new_c_val = 0.0;
+      }
+      break;
+    case HloOpcode::kLogistic:
+      // logistic(x) dir 0.5 -> x dir 0.0 for inequalities. Unlike the
+      // zero-crossing cases above, this (and exp(x) dir 1.0 below) folds by
+      // real-valued monotonicity: tiny nonzero x for which logistic(x) rounds
+      // to exactly 0.5 are now ordered by the sign of x.
+      if (is_inequality && c_val == 0.5) {
+        x = expr_side->mutable_operand(0);
+        new_dir = dir;
+        new_c_val = 0.0;
+      }
+      break;
+    case HloOpcode::kConvert:
+    case HloOpcode::kDivide:
+      // LogisticExpander lowers logistic(x) on GPU/CPU to
+      // 1.0 / (1.0 + exp(-x)) before AlgebraicSimplifier runs (with optional
+      // FloatNormalization BF16<->F32 Convert wrappers), and users also write
+      // this form directly.
+      match_expanded_logistic(expr_side);
+      break;
+    case HloOpcode::kExp:
+      // exp(x) dir 1.0 -> x dir 0.0 for inequalities (by real-valued
+      // monotonicity, as for logistic above).
+      if (is_inequality && c_val == 1.0) {
+        x = expr_side->mutable_operand(0);
+        new_dir = dir;
+        new_c_val = 0.0;
+      }
+      break;
+    case HloOpcode::kLog:
+      // For x < 0, log(x) = NaN (false for GT/GE), and for x == +/-0.0,
+      // log(x) = -Inf (false for GT/GE against 0.0). Thus log(x) > / >= 0.0 ->
+      // x > / >= 1.0 holds unconditionally for all x.
+      if (c_val == 0.0 && (dir == ComparisonDirection::kGt ||
+                           dir == ComparisonDirection::kGe)) {
+        x = expr_side->mutable_operand(0);
+        new_dir = dir;
+        new_c_val = 1.0;
+      }
+      break;
+    case HloOpcode::kLog1p:
+    case HloOpcode::kSqrt:
+      // For out-of-domain negative inputs, log1p/sqrt produce NaN (or -Inf at
+      // boundary), so GT/GE against 0.0 hold unconditionally for all x.
+      if (c_val == 0.0 && (dir == ComparisonDirection::kGt ||
+                           dir == ComparisonDirection::kGe)) {
+        x = expr_side->mutable_operand(0);
+        new_dir = dir;
+        new_c_val = 0.0;
+      }
+      break;
+    default:
+      break;
+  }
+
+  if (x == nullptr || !SameShape(x, expr_side) ||
+      !SameShape(x->shape(), const_side->shape())) {
+    return absl::OkStatus();
+  }
+
+  // MakeScalarLike keeps const_side's shape (and layout) for rank-0 constants;
+  // for broadcasts, also keep the original scalar's layout (e.g. TPU tiling).
+  HloInstruction* new_const = MakeScalarLike(const_side, new_c_val);
+  if (!ShapeUtil::IsScalar(const_side->shape())) {
+    *new_const->mutable_operand(0)->mutable_shape() = scalar_const->shape();
+  }
+  const_side->SetupDerivedInstruction(new_const);
+
+  HloInstruction* new_compare = computation_->AddInstruction(
+      HloInstruction::CreateCompare(compare->shape(), x, new_const, new_dir));
+  compare->SetupDerivedInstruction(new_compare);
+  return ReplaceInstruction(compare, new_compare);
 }
 
 absl::Status AlgebraicSimplifierVisitor::HandleConvert(
