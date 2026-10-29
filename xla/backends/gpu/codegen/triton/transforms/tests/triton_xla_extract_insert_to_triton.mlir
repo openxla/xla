@@ -655,3 +655,40 @@ func.func @extract_with_transposing_layout(
 // CHECK-TMA:         %[[TRANS:.*]] = tt.trans %[[LOAD]]
 // CHECK-TMA-SAME:        tensor<64x2x128xbf16> -> tensor<2x64x128xbf16>
 // CHECK-TMA:         tt.descriptor_store %arg1[{{.*}}], %[[TRANS]]
+
+// -----
+
+#indexing_map_strided_oob = #xla.indexing_map<"(pid) -> (pid * 16), domain: pid in [0, 3]">
+module {
+  func.func @apply_mask_to_strided_tile_with_out_of_bounds_reads_at_end(
+      %arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>) {
+    %0 = tt.get_program_id x : i32
+    %1 = arith.index_cast %0 : i32 to index
+    %2 = xla.apply_indexing #indexing_map_strided_oob(%1)
+    // This models the operand tile of a strided slice
+    //   p = f32[56] parameter(0)
+    //   ROOT s = f32[28] slice(p), slice={[0:56:2]}
+    // tiled with an output tile of 8, so the operand tile reads 8 elements
+    // with a stride of 2 starting at pid * 8 * 2.
+    //
+    // The total size 56 is divisible by the tile size 8, and the offset
+    // stride 16 is also divisible by 8. The tile spans
+    // (8 - 1) * 2 + 1 = 15 elements though, so for pid 3 it reaches
+    // 48 + 7 * 2 = 62 > 55 and a bounds mask is required.
+    %extracted_tile = triton_xla.extract from %arg0
+        as memref<56xf32, #xtile.layout<[0]>>
+        [%2] [8] [2] : tensor<8xf32>
+    // The destination is comfortably in bounds (48 + 8 <= 64 with stride 1),
+    // so only the load above must be masked.
+    triton_xla.insert %extracted_tile into %arg1
+        as memref<64xf32, #xtile.layout<[0]>>
+        [%2] [8] [1] : tensor<8xf32>
+    func.return
+  }
+}
+
+// CHECK-LABEL: tt.func @apply_mask_to_strided_tile_with_out_of_bounds_reads_at_end
+// CHECK: %[[RIGHT_MASK:.*]] = arith.cmpi slt
+// CHECK: %[[LEFT_MASK:.*]] = arith.cmpi sge
+// CHECK: %[[MASK:.*]] = arith.andi %[[LEFT_MASK]], %[[RIGHT_MASK]]
+// CHECK: tt.load {{.*}}, %[[MASK]], {{.*}}
