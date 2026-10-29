@@ -186,19 +186,12 @@ MakeTestPjRtStreamExecutorClient(
     bool should_stage_host_to_device_transfers,
     std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options = nullptr,
     std::shared_ptr<KeyValueStoreInterface> kv_store = nullptr) {
-  se::StreamExecutor* first_executor = nullptr;
-  for (const auto& state : local_device_states) {
-    if (state != nullptr && state->compute_stream() != nullptr) {
-      first_executor = state->compute_stream()->parent();
-      break;
-    }
-  }
   auto raw_client = std::make_unique<PjRtStreamExecutorRawClient>(
       std::move(local_device_states), std::move(allocator), client,
       std::move(host_memory_allocator), should_stage_host_to_device_transfers,
       MakeUnboundedAsyncWorkRunner("pjrt_async_work_runner",
                                    {/*stack_size=*/512 * 1024}),
-      first_executor, std::move(gpu_run_options));
+      std::move(gpu_run_options));
   auto platform_id = tsl::Fingerprint64(platform_name);
   PjRtPluginAttributes attrs;
   attrs.pjrt_c_api_major_version = 0;
