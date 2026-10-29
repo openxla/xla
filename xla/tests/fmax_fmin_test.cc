@@ -23,6 +23,7 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/types.h"
 
 namespace xla {
 namespace {
@@ -84,6 +85,102 @@ TEST_F(FmaxSimpleTest, FminEdgeCases) {
                                  -INFINITY, NAN,       7,   -INFINITY, NAN};
   ComputeAndCompareR1<float>(&builder, expected, {&param0_data, &param1_data},
                              ErrorSpec(0.0001));
+}
+
+TEST_F(FmaxSimpleTest, FminSignedZeroDefault) {
+  XlaBuilder builder(TestName());
+  XlaOp x, y;
+  const Literal x_data = CreateR1Parameter<float>(
+      {0.0f, -0.0f, 0.0f, -0.0f}, /*parameter_number=*/0, /*name=*/"x",
+      /*builder=*/&builder, /*data_handle=*/&x);
+  const Literal y_data = CreateR1Parameter<float>(
+      {-0.0f, 0.0f, 0.0f, -0.0f}, /*parameter_number=*/1, /*name=*/"y",
+      /*builder=*/&builder, /*data_handle=*/&y);
+  Min(x, y);
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&x_data, &y_data}));
+  EXPECT_EQ(result.Get<float>({0}), 0.0f);
+  EXPECT_TRUE(std::signbit(result.Get<float>({0})));
+  EXPECT_EQ(result.Get<float>({1}), 0.0f);
+  EXPECT_TRUE(std::signbit(result.Get<float>({1})));
+  EXPECT_EQ(result.Get<float>({2}), 0.0f);
+  EXPECT_FALSE(std::signbit(result.Get<float>({2})));
+  EXPECT_EQ(result.Get<float>({3}), 0.0f);
+  EXPECT_TRUE(std::signbit(result.Get<float>({3})));
+}
+
+TEST_F(FmaxSimpleTest, FminSignedZeroBfloat16) {
+  XlaBuilder builder(TestName());
+  XlaOp x, y;
+  const Literal x_data = CreateR1Parameter<bfloat16>(
+      {bfloat16(0.0f), bfloat16(-0.0f), bfloat16(0.0f), bfloat16(-0.0f)},
+      /*parameter_number=*/0, /*name=*/"x",
+      /*builder=*/&builder, /*data_handle=*/&x);
+  const Literal y_data = CreateR1Parameter<bfloat16>(
+      {bfloat16(-0.0f), bfloat16(0.0f), bfloat16(0.0f), bfloat16(-0.0f)},
+      /*parameter_number=*/1, /*name=*/"y",
+      /*builder=*/&builder, /*data_handle=*/&y);
+  Min(x, y);
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&x_data, &y_data}));
+  EXPECT_EQ(result.Get<bfloat16>({0}), bfloat16(0.0f));
+  EXPECT_TRUE(std::signbit(static_cast<float>(result.Get<bfloat16>({0}))));
+  EXPECT_EQ(result.Get<bfloat16>({1}), bfloat16(0.0f));
+  EXPECT_TRUE(std::signbit(static_cast<float>(result.Get<bfloat16>({1}))));
+  EXPECT_EQ(result.Get<bfloat16>({2}), bfloat16(0.0f));
+  EXPECT_FALSE(std::signbit(static_cast<float>(result.Get<bfloat16>({2}))));
+  EXPECT_EQ(result.Get<bfloat16>({3}), bfloat16(0.0f));
+  EXPECT_TRUE(std::signbit(static_cast<float>(result.Get<bfloat16>({3}))));
+}
+
+TEST_F(FmaxSimpleTest, FmaxSignedZeroDefault) {
+  XlaBuilder builder(TestName());
+  XlaOp x, y;
+  const Literal x_data = CreateR1Parameter<float>(
+      {0.0f, -0.0f, 0.0f, -0.0f}, /*parameter_number=*/0, /*name=*/"x",
+      /*builder=*/&builder, /*data_handle=*/&x);
+  const Literal y_data = CreateR1Parameter<float>(
+      {-0.0f, 0.0f, 0.0f, -0.0f}, /*parameter_number=*/1, /*name=*/"y",
+      /*builder=*/&builder, /*data_handle=*/&y);
+  Max(x, y);
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&x_data, &y_data}));
+  EXPECT_EQ(result.Get<float>({0}), 0.0f);
+  EXPECT_FALSE(std::signbit(result.Get<float>({0})));
+  EXPECT_EQ(result.Get<float>({1}), 0.0f);
+  EXPECT_FALSE(std::signbit(result.Get<float>({1})));
+  EXPECT_EQ(result.Get<float>({2}), 0.0f);
+  EXPECT_FALSE(std::signbit(result.Get<float>({2})));
+  EXPECT_EQ(result.Get<float>({3}), 0.0f);
+  EXPECT_TRUE(std::signbit(result.Get<float>({3})));
+}
+
+TEST_F(FmaxSimpleTest, FmaxSignedZeroBfloat16) {
+  XlaBuilder builder(TestName());
+  XlaOp x, y;
+  const Literal x_data = CreateR1Parameter<bfloat16>(
+      {bfloat16(0.0f), bfloat16(-0.0f), bfloat16(0.0f), bfloat16(-0.0f)},
+      /*parameter_number=*/0, /*name=*/"x",
+      /*builder=*/&builder, /*data_handle=*/&x);
+  const Literal y_data = CreateR1Parameter<bfloat16>(
+      {bfloat16(-0.0f), bfloat16(0.0f), bfloat16(0.0f), bfloat16(-0.0f)},
+      /*parameter_number=*/1, /*name=*/"y",
+      /*builder=*/&builder, /*data_handle=*/&y);
+  Max(x, y);
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&x_data, &y_data}));
+  EXPECT_EQ(result.Get<bfloat16>({0}), bfloat16(0.0f));
+  EXPECT_FALSE(std::signbit(static_cast<float>(result.Get<bfloat16>({0}))));
+  EXPECT_EQ(result.Get<bfloat16>({1}), bfloat16(0.0f));
+  EXPECT_FALSE(std::signbit(static_cast<float>(result.Get<bfloat16>({1}))));
+  EXPECT_EQ(result.Get<bfloat16>({2}), bfloat16(0.0f));
+  EXPECT_FALSE(std::signbit(static_cast<float>(result.Get<bfloat16>({2}))));
+  EXPECT_EQ(result.Get<bfloat16>({3}), bfloat16(0.0f));
+  EXPECT_TRUE(std::signbit(static_cast<float>(result.Get<bfloat16>({3}))));
 }
 
 }  // namespace

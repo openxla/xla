@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/types.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -600,6 +601,80 @@ TEST_F(ReduceTest, MinReduce2DToR0) {
   input.Each(
       [&](int64_t, int64_t, float* v) { input_min = std::min(input_min, *v); });
   ComputeAndCompareR0<float>(&builder, input_min, {}, ErrorSpec(0.0001));
+}
+
+TEST_F(ReduceTest, MinReduceSignedZero) {
+  XlaBuilder builder(TestName());
+  auto min = CreateScalarMinComputation(F32, &builder);
+  XlaOp input;
+  const Literal input_data = CreateR1Parameter<float>(
+      {0.0f, -0.0f, 0.0f}, /*parameter_number=*/0, /*name=*/"input",
+      /*builder=*/&builder, /*data_handle=*/&input);
+  Reduce(input,
+         ConstantR0<float>(&builder,
+                           std::numeric_limits<float>::infinity()),
+         min, {0});
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&input_data}));
+  EXPECT_EQ(result.Get<float>({}), 0.0f);
+  EXPECT_TRUE(std::signbit(result.Get<float>({})));
+}
+
+TEST_F(ReduceTest, MinReduceSignedZeroBfloat16) {
+  XlaBuilder builder(TestName());
+  auto min = CreateScalarMinComputation(BF16, &builder);
+  XlaOp input;
+  const Literal input_data = CreateR1Parameter<bfloat16>(
+      {bfloat16(0.0f), bfloat16(-0.0f), bfloat16(0.0f)},
+      /*parameter_number=*/0, /*name=*/"input",
+      /*builder=*/&builder, /*data_handle=*/&input);
+  Reduce(input,
+         ConstantR0<bfloat16>(&builder,
+                              std::numeric_limits<bfloat16>::infinity()),
+         min, {0});
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&input_data}));
+  EXPECT_EQ(result.Get<bfloat16>({}), bfloat16(0.0f));
+  EXPECT_TRUE(std::signbit(static_cast<float>(result.Get<bfloat16>({}))));
+}
+
+TEST_F(ReduceTest, MaxReduceSignedZero) {
+  XlaBuilder builder(TestName());
+  auto max = CreateScalarMaxComputation(F32, &builder);
+  XlaOp input;
+  const Literal input_data = CreateR1Parameter<float>(
+      {-0.0f, 0.0f, -0.0f}, /*parameter_number=*/0, /*name=*/"input",
+      /*builder=*/&builder, /*data_handle=*/&input);
+  Reduce(input,
+         ConstantR0<float>(&builder,
+                           -std::numeric_limits<float>::infinity()),
+         max, {0});
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&input_data}));
+  EXPECT_EQ(result.Get<float>({}), 0.0f);
+  EXPECT_FALSE(std::signbit(result.Get<float>({})));
+}
+
+TEST_F(ReduceTest, MaxReduceSignedZeroBfloat16) {
+  XlaBuilder builder(TestName());
+  auto max = CreateScalarMaxComputation(BF16, &builder);
+  XlaOp input;
+  const Literal input_data = CreateR1Parameter<bfloat16>(
+      {bfloat16(-0.0f), bfloat16(0.0f), bfloat16(-0.0f)},
+      /*parameter_number=*/0, /*name=*/"input",
+      /*builder=*/&builder, /*data_handle=*/&input);
+  Reduce(input,
+         ConstantR0<bfloat16>(&builder,
+                              -std::numeric_limits<bfloat16>::infinity()),
+         max, {0});
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&input_data}));
+  EXPECT_EQ(result.Get<bfloat16>({}), bfloat16(0.0f));
+  EXPECT_FALSE(std::signbit(static_cast<float>(result.Get<bfloat16>({}))));
 }
 
 TEST_F(ReduceTest, UnsignedInt_MinReduce) {
