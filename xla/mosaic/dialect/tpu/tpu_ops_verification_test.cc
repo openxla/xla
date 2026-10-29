@@ -2810,5 +2810,130 @@ TEST_F(TpuOpsVerificationTest, ConcatenateOpRankMismatch) {
       inferred)));
 }
 
+TEST_F(TpuOpsVerificationTest, MatmulOpValid) {
+  Value lhs_2d = ConstantBF16Vector(/*shape=*/{8, 128}, /*value=*/1.0f);
+  Value rhs_2d = ConstantBF16Vector(/*shape=*/{128, 64}, /*value=*/1.0f);
+  Value rhs_2d_t = ConstantBF16Vector(/*shape=*/{64, 128}, /*value=*/1.0f);
+  Value acc_2d = ConstantF32Vector(/*shape=*/{8, 64}, /*values=*/{0.0f});
+
+  // Explicit dimension_numbers (2D).
+  auto dnums_2d = DotDimensionNumbersAttr::get(
+      builder().getContext(),
+      /*lhs_contracting_dims=*/{1}, /*rhs_contracting_dims=*/{0},
+      /*lhs_non_contracting_dims=*/{0}, /*rhs_non_contracting_dims=*/{1},
+      /*output_dim_order=*/{0, 0, 1, 1},
+      /*lhs_batch_dims=*/{}, /*rhs_batch_dims=*/{});
+  EXPECT_THAT(
+      VerifyOp(Create<MatmulOp>(acc_2d.getType(), lhs_2d, rhs_2d, acc_2d,
+                                /*transpose_lhs=*/false,
+                                /*transpose_rhs=*/false,
+                                /*precision=*/ContractPrecisionAttr(), dnums_2d,
+                                /*transpose_lhs_hint=*/false)),
+      absl_testing::IsOk());
+
+  // Explicit dimension_numbers (batched 3D with transposed LHS and RHS).
+  Value lhs_3d_t = ConstantBF16Vector(/*shape=*/{4, 128, 8}, /*value=*/1.0f);
+  Value rhs_3d_t = ConstantBF16Vector(/*shape=*/{4, 64, 128}, /*value=*/1.0f);
+  Value acc_3d = ConstantF32Vector(/*shape=*/{4, 8, 64}, /*values=*/{0.0f});
+  auto dnums_3d = DotDimensionNumbersAttr::get(
+      builder().getContext(),
+      /*lhs_contracting_dims=*/{1}, /*rhs_contracting_dims=*/{2},
+      /*lhs_non_contracting_dims=*/{2}, /*rhs_non_contracting_dims=*/{1},
+      /*output_dim_order=*/{0, 0, 0, 2, 1, 1},
+      /*lhs_batch_dims=*/{0}, /*rhs_batch_dims=*/{0});
+  EXPECT_THAT(VerifyOp(Create<MatmulOp>(
+                  acc_3d.getType(), lhs_3d_t, rhs_3d_t, acc_3d,
+                  /*transpose_lhs=*/false, /*transpose_rhs=*/false,
+                  /*precision=*/ContractPrecisionAttr(), dnums_3d,
+                  /*transpose_lhs_hint=*/false)),
+              absl_testing::IsOk());
+
+  // Legacy path without dimension_numbers (with and without transpose_rhs).
+  EXPECT_THAT(VerifyOp(Create<MatmulOp>(
+                  acc_2d.getType(), lhs_2d, rhs_2d, acc_2d,
+                  /*transpose_lhs=*/false, /*transpose_rhs=*/false,
+                  /*precision=*/ContractPrecisionAttr(),
+                  /*dimension_numbers=*/DotDimensionNumbersAttr(),
+                  /*transpose_lhs_hint=*/false)),
+              absl_testing::IsOk());
+  EXPECT_THAT(
+      VerifyOp(Create<MatmulOp>(acc_2d.getType(), lhs_2d, rhs_2d_t, acc_2d,
+                                /*transpose_lhs=*/false, /*transpose_rhs=*/true,
+                                /*precision=*/ContractPrecisionAttr(),
+                                /*dimension_numbers=*/DotDimensionNumbersAttr(),
+                                /*transpose_lhs_hint=*/false)),
+      absl_testing::IsOk());
+}
+
+TEST_F(TpuOpsVerificationTest, MatmulOpResultShapeMismatch) {
+  Value lhs = ConstantBF16Vector(/*shape=*/{256, 256}, /*value=*/1.0f);
+  Value rhs = ConstantBF16Vector(/*shape=*/{256, 256}, /*value=*/1.0f);
+  Value bad_acc = ConstantF32Vector(/*shape=*/{7, 13}, /*values=*/{0.0f});
+  auto dnums_2d = DotDimensionNumbersAttr::get(
+      builder().getContext(),
+      /*lhs_contracting_dims=*/{1}, /*rhs_contracting_dims=*/{0},
+      /*lhs_non_contracting_dims=*/{0}, /*rhs_non_contracting_dims=*/{1},
+      /*output_dim_order=*/{0, 0, 1, 1},
+      /*lhs_batch_dims=*/{}, /*rhs_batch_dims=*/{});
+
+  // Explicit dimension_numbers: wrong 2D shape.
+  EXPECT_THAT(
+      VerifyOp(Create<MatmulOp>(bad_acc.getType(), lhs, rhs, bad_acc,
+                                /*transpose_lhs=*/false,
+                                /*transpose_rhs=*/false,
+                                /*precision=*/ContractPrecisionAttr(), dnums_2d,
+                                /*transpose_lhs_hint=*/false)),
+      StatusIs(_, HasSubstr("matmul result shape [7, 13] does not match "
+                            "expected shape [256, 256]")));
+
+  // Explicit dimension_numbers: wrong rank.
+  Value bad_rank_acc =
+      ConstantF32Vector(/*shape=*/{1, 256, 256}, /*values=*/{0.0f});
+  EXPECT_THAT(
+      VerifyOp(Create<MatmulOp>(bad_rank_acc.getType(), lhs, rhs, bad_rank_acc,
+                                /*transpose_lhs=*/false,
+                                /*transpose_rhs=*/false,
+                                /*precision=*/ContractPrecisionAttr(), dnums_2d,
+                                /*transpose_lhs_hint=*/false)),
+      StatusIs(_, HasSubstr("matmul result shape [1, 256, 256] does not match "
+                            "expected shape [256, 256]")));
+
+  // Batched dimension_numbers: wrong batch/output shape.
+  Value lhs_3d = ConstantBF16Vector(/*shape=*/{4, 8, 128}, /*value=*/1.0f);
+  Value rhs_3d = ConstantBF16Vector(/*shape=*/{4, 128, 64}, /*value=*/1.0f);
+  Value bad_batch_acc =
+      ConstantF32Vector(/*shape=*/{2, 8, 64}, /*values=*/{0.0f});
+  auto dnums_3d = DotDimensionNumbersAttr::get(
+      builder().getContext(),
+      /*lhs_contracting_dims=*/{2}, /*rhs_contracting_dims=*/{1},
+      /*lhs_non_contracting_dims=*/{1}, /*rhs_non_contracting_dims=*/{2},
+      /*output_dim_order=*/{0, 0, 0, 1, 1, 2},
+      /*lhs_batch_dims=*/{0}, /*rhs_batch_dims=*/{0});
+  EXPECT_THAT(
+      VerifyOp(Create<MatmulOp>(bad_batch_acc.getType(), lhs_3d, rhs_3d,
+                                bad_batch_acc, /*transpose_lhs=*/false,
+                                /*transpose_rhs=*/false,
+                                /*precision=*/ContractPrecisionAttr(), dnums_3d,
+                                /*transpose_lhs_hint=*/false)),
+      StatusIs(_, HasSubstr("matmul result shape [2, 8, 64] does not match "
+                            "expected shape [4, 8, 64]")));
+
+  // Duplicate RHS dimension in dimension_numbers.
+  Value acc_256 = ConstantF32Vector(/*shape=*/{256, 256}, /*values=*/{0.0f});
+  auto dnums_dup_rhs = DotDimensionNumbersAttr::get(
+      builder().getContext(),
+      /*lhs_contracting_dims=*/{1}, /*rhs_contracting_dims=*/{0},
+      /*lhs_non_contracting_dims=*/{0}, /*rhs_non_contracting_dims=*/{0},
+      /*output_dim_order=*/{0, 0, 1, 0},
+      /*lhs_batch_dims=*/{}, /*rhs_batch_dims=*/{});
+  EXPECT_THAT(
+      VerifyOp(Create<MatmulOp>(acc_256.getType(), lhs, rhs, acc_256,
+                                /*transpose_lhs=*/false,
+                                /*transpose_rhs=*/false,
+                                /*precision=*/ContractPrecisionAttr(),
+                                dnums_dup_rhs, /*transpose_lhs_hint=*/false)),
+      StatusIs(_, HasSubstr("Dim 0 repeats in dimension numbers of rhs")));
+}
+
 }  // namespace
 }  // namespace mlir::tpu
