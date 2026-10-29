@@ -231,7 +231,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_autotune_level(4);
   opts.set_xla_gpu_autotune_max_solutions(0);
   opts.set_xla_gpu_blas_max_algorithms(0);
-  opts.set_xla_gpu_fusion_autotune_top_k_configs(1);
+  opts.set_xla_gpu_fusion_autotune_top_k_configs(10);
   opts.set_xla_cpu_multi_thread_eigen(true);
   opts.set_xla_enable_hlo_modules_upload(true);
   opts.set_xla_gpu_cuda_data_dir("./cuda_sdk_lib");
