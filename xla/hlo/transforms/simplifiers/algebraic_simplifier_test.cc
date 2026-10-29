@@ -16084,5 +16084,205 @@ TEST(AlgebraicSimplifierOptionsTest, FromHloPassOptionsUnknownKeyIsUnconsumed) {
               absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
+constexpr absl::string_view kArgMinMaxTestPreamble = R"hlo(
+    HloModule m
+    max_fn {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT r = f32[] maximum(a, b)
+    }
+    add_fn {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT r = f32[] add(a, b)
+    }
+    argmax_fn {
+      p0 = f32[] parameter(0)
+      p1 = s32[] parameter(1)
+      p2 = f32[] parameter(2)
+      p3 = s32[] parameter(3)
+      gt = pred[] compare(p0, p2), direction=GT
+      is_nan = pred[] compare(p0, p0), direction=NE
+      pick_val = pred[] or(gt, is_nan)
+      val = f32[] select(pick_val, p0, p2)
+      eq = pred[] compare(p0, p2), direction=EQ
+      lt_idx = pred[] compare(p1, p3), direction=LT
+      tie = pred[] and(eq, lt_idx)
+      pick_idx = pred[] or(pick_val, tie)
+      idx = s32[] select(pick_idx, p1, p3)
+      ROOT out = (f32[], s32[]) tuple(val, idx)
+    }
+    argmin_fn {
+      p0 = f32[] parameter(0)
+      p1 = s32[] parameter(1)
+      p2 = f32[] parameter(2)
+      p3 = s32[] parameter(3)
+      lt = pred[] compare(p0, p2), direction=LT
+      is_nan = pred[] compare(p0, p0), direction=NE
+      pick_val = pred[] or(lt, is_nan)
+      val = f32[] select(pick_val, p0, p2)
+      eq = pred[] compare(p0, p2), direction=EQ
+      lt_idx = pred[] compare(p1, p3), direction=LT
+      tie = pred[] and(eq, lt_idx)
+      pick_idx = pred[] or(pick_val, tie)
+      idx = s32[] select(pick_idx, p1, p3)
+      ROOT out = (f32[], s32[]) tuple(val, idx)
+    }
+)hlo";
+
+TEST_F(AlgebraicSimplifierTest, SimplifyArgMaxOfSoftmaxAndLogSoftmax) {
+  ASSERT_OK_AND_ASSIGN(
+      auto m, ParseAndReturnVerifiedModule(absl::StrCat(kArgMinMaxTestPreamble,
+                                                        R"hlo(
+    ENTRY main {
+      x = f32[4,16] parameter(0)
+      neg_inf = f32[] constant(-inf)
+      pos_inf = f32[] constant(inf)
+      zero = f32[] constant(0.0)
+      zero_idx = s32[] constant(0)
+      iota = s32[4,16] iota(), iota_dimension=1
+
+      // Softmax along dim 1 -> ArgMax
+      row_max = f32[4] reduce(x, neg_inf), dimensions={1}, to_apply=max_fn
+      bcast_max = f32[4,16] broadcast(row_max), dimensions={0}
+      shifted = f32[4,16] subtract(x, bcast_max)
+      exps = f32[4,16] exponential(shifted)
+      sum_exp = f32[4] reduce(exps, zero), dimensions={1}, to_apply=add_fn
+      bcast_sum = f32[4,16] broadcast(sum_exp), dimensions={0}
+      probs = f32[4,16] divide(exps, bcast_sum)
+      am_soft = (f32[4], s32[4]) reduce(probs, iota, neg_inf, zero_idx),
+          dimensions={1}, to_apply=argmax_fn,
+          origin={({"am_soft" {0}}, {"am_soft" {1}})}
+      idx_soft = s32[4] get-tuple-element(am_soft), index=1
+
+      // LogSoftmax with keepdims reshapes along dim 1 -> ArgMin
+      row_max2 = f32[4] reduce(x, neg_inf), dimensions={1}, to_apply=max_fn
+      bcast_max2 = f32[4,16] broadcast(row_max2), dimensions={0}
+      shifted2 = f32[4,16] subtract(x, bcast_max2)
+      exps2 = f32[4,16] exponential(shifted2)
+      sum_exp2 = f32[4] reduce(exps2, zero), dimensions={1}, to_apply=add_fn
+      keep2 = f32[4,1] reshape(sum_exp2)
+      lse_keep2 = f32[4,1] log(keep2)
+      lse2 = f32[4] reshape(lse_keep2)
+      bcast_lse2 = f32[4,16] broadcast(lse2), dimensions={0}
+      log_probs = f32[4,16] subtract(shifted2, bcast_lse2)
+      amin_lsoft = (f32[4], s32[4]) reduce(log_probs, iota, pos_inf, zero_idx),
+          dimensions={1}, to_apply=argmin_fn
+      idx_lsoft = s32[4] get-tuple-element(amin_lsoft), index=1
+
+      ROOT out = (s32[4], s32[4]) tuple(idx_soft, idx_lsoft)
+    }
+  )hlo")));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       AlgebraicSimplifier(default_options_).Run(m.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(absl::c_count_if(m->entry_computation()->instructions(),
+                             HloPredicateIsOp<HloOpcode::kExp>),
+            0);
+  EXPECT_EQ(absl::c_count_if(m->entry_computation()->instructions(),
+                             HloPredicateIsOp<HloOpcode::kLog>),
+            0);
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  ASSERT_THAT(
+      root->operand(0),
+      GmockMatch(m::GetTupleElement(
+          m::Reduce(m::Parameter(0), m::Iota(), m::Constant(), m::Constant()),
+          1)));
+  ASSERT_THAT(
+      root->operand(1),
+      GmockMatch(m::GetTupleElement(
+          m::Reduce(m::Parameter(0), m::Iota(), m::Constant(), m::Constant()),
+          1)));
+  // Verify OriginalValue cleared tuple index 0 while preserving tuple index 1.
+  const HloInstruction* new_am = root->operand(0)->operand(0);
+  ASSERT_NE(new_am->original_value(), nullptr);
+  EXPECT_FALSE(new_am->original_value()->original_array({0}).has_value());
+  ASSERT_TRUE(new_am->original_value()->original_array({1}).has_value());
+  EXPECT_EQ(new_am->original_value()->original_array({1})->instruction_name,
+            "am_soft");
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       DoNotSimplifyArgMinOfSoftmaxOrUsedMaxValueOrMismatchedAxis) {
+  // 1. ArgMin(Softmax(x)) must NOT fold because exp() underflows negative
+  //    values (e.g. [-500, -1000, 0]) to 0.0, changing tie-breaking.
+  // 2. ArgMax(Softmax(x)) when tuple output 0 (max probability) is used must
+  //    NOT fold.
+  // 3. ArgMax(Softmax(x, axis=1), axis=0) must NOT fold.
+  // 4. Lossy narrowing converts (f32 -> bf16 -> f32) and unsorted batch
+  //    broadcast dimensions must NOT fold.
+  ASSERT_OK_AND_ASSIGN(
+      auto m, ParseAndReturnVerifiedModule(absl::StrCat(kArgMinMaxTestPreamble,
+                                                        R"hlo(
+    ENTRY main {
+      x = f32[4,16] parameter(0)
+      x3 = f32[4,4,8] parameter(1)
+      neg_inf = f32[] constant(-inf)
+      pos_inf = f32[] constant(inf)
+      zero = f32[] constant(0.0)
+      zero_idx = s32[] constant(0)
+      iota1 = s32[4,16] iota(), iota_dimension=1
+      iota0 = s32[4,16] iota(), iota_dimension=0
+      iota2 = s32[4,4,8] iota(), iota_dimension=2
+
+      row_max = f32[4] reduce(x, neg_inf), dimensions={1}, to_apply=max_fn
+      bcast_max = f32[4,16] broadcast(row_max), dimensions={0}
+      shifted = f32[4,16] subtract(x, bcast_max)
+      exps = f32[4,16] exponential(shifted)
+      sum_exp = f32[4] reduce(exps, zero), dimensions={1}, to_apply=add_fn
+      bcast_sum = f32[4,16] broadcast(sum_exp), dimensions={0}
+      probs = f32[4,16] divide(exps, bcast_sum)
+
+      amin_soft = (f32[4], s32[4]) reduce(probs, iota1, pos_inf, zero_idx),
+          dimensions={1}, to_apply=argmin_fn
+      idx_amin = s32[4] get-tuple-element(amin_soft), index=1
+
+      am_used_val = (f32[4], s32[4]) reduce(probs, iota1, neg_inf, zero_idx),
+          dimensions={1}, to_apply=argmax_fn
+      max_prob = f32[4] get-tuple-element(am_used_val), index=0
+      idx_used = s32[4] get-tuple-element(am_used_val), index=1
+
+      am_wrong_dim = (f32[16], s32[16]) reduce(probs, iota0, neg_inf, zero_idx),
+          dimensions={0}, to_apply=argmax_fn
+      idx_wrong_dim = s32[16] get-tuple-element(am_wrong_dim), index=1
+
+      // Lossy narrowing f32 -> bf16 -> f32 LSE in LogSoftmax
+      sum_bf16 = bf16[4] convert(sum_exp)
+      lse_bf16 = bf16[4] log(sum_bf16)
+      bcast_bf16 = bf16[4,16] broadcast(lse_bf16), dimensions={0}
+      lse_f32 = f32[4,16] convert(bcast_bf16)
+      log_probs_narrow = f32[4,16] subtract(shifted, lse_f32)
+      am_narrow = (f32[4], s32[4]) reduce(log_probs_narrow, iota1, neg_inf, zero_idx),
+          dimensions={1}, to_apply=argmax_fn
+      idx_narrow = s32[4] get-tuple-element(am_narrow), index=1
+
+      // Unsorted batch broadcast dimensions={1,0}
+      rm3 = f32[4,4] reduce(x3, neg_inf), dimensions={2}, to_apply=max_fn
+      bm3 = f32[4,4,8] broadcast(rm3), dimensions={1,0}
+      sh3 = f32[4,4,8] subtract(x3, bm3)
+      ex3 = f32[4,4,8] exponential(sh3)
+      se3 = f32[4,4] reduce(ex3, zero), dimensions={2}, to_apply=add_fn
+      bs3 = f32[4,4,8] broadcast(se3), dimensions={0,1}
+      pr3 = f32[4,4,8] divide(ex3, bs3)
+      am_unsorted = (f32[4,4], s32[4,4]) reduce(pr3, iota2, neg_inf, zero_idx),
+          dimensions={2}, to_apply=argmax_fn
+      idx_unsorted = s32[4,4] get-tuple-element(am_unsorted), index=1
+
+      ROOT out = (s32[4], f32[4], s32[4], s32[16], s32[4], s32[4,4])
+          tuple(idx_amin, max_prob, idx_used, idx_wrong_dim, idx_narrow, idx_unsorted)
+    }
+  )hlo")));
+  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(m.get()).status());
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  // None of the 5 negative ArgMin/ArgMax cases may collapse to Parameter(0/1).
+  for (int i : {0, 2, 3, 4, 5}) {
+    EXPECT_THAT(
+        root->operand(i),
+        ::testing::Not(GmockMatch(m::GetTupleElement(
+            m::Reduce(m::Parameter(), m::Iota(), m::Constant(), m::Constant()),
+            1))));
+  }
+}
+
 }  // namespace
 }  // namespace xla
