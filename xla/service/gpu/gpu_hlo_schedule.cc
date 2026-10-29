@@ -77,6 +77,7 @@ limitations under the License.
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/service/legalize_scheduling_annotations.h"
 #include "xla/service/p2p_schedule_preparation.h"
+#include "xla/service/post_lhs_memory_scheduler.h"
 #include "xla/service/profile_guided_latency_estimator.h"
 #include "xla/service/scheduler_memory_fencing.h"
 #include "xla/shape.h"
@@ -814,6 +815,9 @@ absl::Status RunLatencyHidingSchedulerPasses(
   }
   pipeline.AddPass<LatencyHidingScheduler>(scheduling_context,
                                            std::move(scheduler_core));
+  if (options.xla_gpu_experimental_enable_post_lhs_memory_scheduler()) {
+    pipeline.AddPass<PostLhsMemoryScheduler>(scheduling_context);
+  }
   pipeline.AddPass<SchedulingInstructionAnnotator>();
 
   return pipeline.Run(module).status();

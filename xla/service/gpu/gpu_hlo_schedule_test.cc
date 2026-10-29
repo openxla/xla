@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_module_metadata.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/replica_group.h"
@@ -172,6 +173,71 @@ ENTRY entry {
   cp2d = f32[16]{0} collective-permute-done(cp2s)
   ROOT r = f32[16]{0} add(cp2d, wg_small)
 })";
+
+// Exercise the pipeline gate and compare overlap identities to the LHS
+// baseline. Parent siblings can move, so instruction positions need not match.
+TEST_F(GpuHloScheduleTest, PostLhsMemorySchedulingPreservesOverlap) {
+  using Membership =
+      std::vector<std::pair<std::string, std::vector<std::string>>>;
+  using Signature = std::pair<Membership, std::vector<std::string>>;
+  auto signature = [](const HloModule& module) {
+    Signature result;
+    std::vector<std::string> active;
+    for (const HloInstruction* instruction :
+         module.schedule()
+             .sequence(module.entry_computation())
+             .instructions()) {
+      if (hlo_query::IsAsyncCollectiveDoneOp(instruction)) {
+        const std::string start(instruction->operand(0)->name());
+        active.erase(std::remove(active.begin(), active.end(), start),
+                     active.end());
+      }
+      result.first.emplace_back(std::string(instruction->name()), active);
+      if (hlo_query::IsAsyncCollectiveStartOp(instruction) ||
+          hlo_query::IsAsyncCollectiveDoneOp(instruction)) {
+        result.second.emplace_back(instruction->name());
+      }
+      if (hlo_query::IsAsyncCollectiveStartOp(instruction)) {
+        active.emplace_back(instruction->name());
+      }
+    }
+    std::sort(result.first.begin(), result.first.end());
+    return result;
+  };
+  Signature baseline;
+  for (bool enabled : {false, true}) {
+    TestConfig test_config;
+    test_config.enable_latency_hiding_scheduler = true;
+    HloModuleConfig config = GetModuleConfig(test_config);
+    config.set_replica_count(2);
+    config.mutable_debug_options()
+        .set_xla_gpu_experimental_enable_post_lhs_memory_scheduler(enabled);
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseAndReturnVerifiedModule(kFencingHloText, config));
+    ASSERT_OK(ScheduleGpuModule(module.get()).status());
+    EXPECT_OK(module->schedule().Verify());
+    std::vector<std::string> passes;
+    for (const HloPassMetadata& metadata :
+         module->metadata()->proto().pass_metadata()) {
+      passes.push_back(metadata.pass_name());
+    }
+    if (enabled) {
+      EXPECT_THAT(passes, Contains("post-lhs-memory-scheduler"));
+      EXPECT_EQ(signature(*module), baseline);
+      auto lhs =
+          std::find(passes.begin(), passes.end(), "latency-hiding-scheduler");
+      auto post =
+          std::find(passes.begin(), passes.end(), "post-lhs-memory-scheduler");
+      EXPECT_LT(lhs, post);
+      EXPECT_THAT(passes, Contains("scheduling-instruction-annotator"));
+      EXPECT_LT(post, std::find(passes.begin(), passes.end(),
+                                "scheduling-instruction-annotator"));
+    } else {
+      EXPECT_THAT(passes, Not(Contains("post-lhs-memory-scheduler")));
+      baseline = signature(*module);
+    }
+  }
+}
 
 class GpuHloScheduleFencingTest : public GpuHloScheduleTest {
  protected:

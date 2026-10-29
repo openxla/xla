@@ -6338,6 +6338,59 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "post_lhs_memory_scheduler",
+    srcs = ["post_lhs_memory_scheduler.cc"],
+    hdrs = ["post_lhs_memory_scheduler.h"],
+    deps = [
+        ":buffer_value",
+        ":decision",
+        ":hlo_buffer",
+        ":hlo_cost_analysis",
+        ":hlo_proto_cc",
+        ":hlo_value",
+        ":latency_hiding_scheduler",
+        ":scheduling_annotations_util",
+        "//xla:shape_util",
+        "//xla/hlo/analysis:hlo_alias_analysis",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:hlo_query",
+        "//xla/service/heap_simulator",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "post_lhs_memory_scheduler_test",
+    srcs = ["post_lhs_memory_scheduler_test.cc"],
+    deps = [
+        ":buffer_value",
+        ":latency_hiding_scheduler",
+        ":post_lhs_memory_scheduler",
+        "//xla:shape_util",
+        "//xla/hlo/analysis:alias_info",
+        "//xla/hlo/analysis:hlo_alias_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service/heap_simulator",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "scheduler_memory_fencing",
     srcs = ["scheduler_memory_fencing.cc"],
     hdrs = ["scheduler_memory_fencing.h"],
