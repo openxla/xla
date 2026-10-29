@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_TRANSFORMS_BLOCK_SCALING_REWRITER_H_
 #define XLA_BACKENDS_GPU_TRANSFORMS_BLOCK_SCALING_REWRITER_H_
 
+#include <cstdint>
+
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -95,6 +97,11 @@ class BlockScalingRewriter : public OpExpanderPass {
   static constexpr int kBlockSizeMXFP8 = 32;
   static constexpr int kBlockSizeMXFP4 = 32;
   static constexpr int kBlockSizeNVFP4 = 16;
+
+  // cuDNN F8_128x4 scale tile sizes: scales are padded to multiples of these
+  // along the non-contracting and contracting dimensions, respectively.
+  static constexpr int64_t kInputNonContractingTileSize = 128;
+  static constexpr int64_t kScaleContractingTileSize = 4;
 
  private:
   se::dnn::VersionInfo cudnn_version_;
