@@ -40,7 +40,6 @@ limitations under the License.
 #include "third_party/cudnn_frontend/include/cudnn_frontend_utils.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_version.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
-#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_utils.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"
@@ -75,10 +74,11 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/engine_options.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 
 namespace xla {
 namespace gpu {
