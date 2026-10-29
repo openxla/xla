@@ -442,6 +442,53 @@ TEST_P(HloEvaluatorBf16Test, DoesSelect) {
 
 // Verifies that HloEvaluator evaluates a HLO instruction that performs
 // element-wise addition with 2 operands.
+TEST_F(HloEvaluatorTest, DoesMinimumSignedZero) {
+  auto lhs = LiteralUtil::CreateR1<float>({0.0f, -0.0f, 0.0f, -0.0f});
+  auto rhs = LiteralUtil::CreateR1<float>({-0.0f, 0.0f, 0.0f, -0.0f});
+  auto expected = LiteralUtil::CreateR1<float>({-0.0f, -0.0f, 0.0f, -0.0f});
+  TestBinaryOp(HloOpcode::kMinimum, std::move(expected), std::move(lhs),
+               std::move(rhs));
+}
+
+TEST_F(HloEvaluatorTest, DoesMaximumSignedZero) {
+  auto lhs = LiteralUtil::CreateR1<float>({0.0f, -0.0f, 0.0f, -0.0f});
+  auto rhs = LiteralUtil::CreateR1<float>({-0.0f, 0.0f, 0.0f, -0.0f});
+  auto expected = LiteralUtil::CreateR1<float>({0.0f, 0.0f, 0.0f, -0.0f});
+  TestBinaryOp(HloOpcode::kMaximum, std::move(expected), std::move(lhs),
+               std::move(rhs));
+}
+
+TEST_F(HloEvaluatorTest, DoesClampSignedZero) {
+  auto low = LiteralUtil::CreateR1<float>({-0.0f, 0.0f, -1.0f});
+  auto value = LiteralUtil::CreateR1<float>({0.0f, -0.0f, 0.0f});
+  auto high = LiteralUtil::CreateR1<float>({1.0f, 1.0f, -0.0f});
+  auto expected = LiteralUtil::CreateR1<float>({0.0f, 0.0f, -0.0f});
+  TestTernaryOp(HloOpcode::kClamp, std::move(expected), std::move(low),
+                std::move(value), std::move(high));
+}
+
+TEST_P(HloEvaluatorBf16Test, DoesMinimumSignedZeroBf16) {
+  auto lhs = LiteralUtil::CreateR1<bfloat16>(
+      {bfloat16(0.0f), bfloat16(-0.0f), bfloat16(0.0f), bfloat16(-0.0f)});
+  auto rhs = LiteralUtil::CreateR1<bfloat16>(
+      {bfloat16(-0.0f), bfloat16(0.0f), bfloat16(0.0f), bfloat16(-0.0f)});
+  auto expected = LiteralUtil::CreateR1<bfloat16>(
+      {bfloat16(-0.0f), bfloat16(-0.0f), bfloat16(0.0f), bfloat16(-0.0f)});
+  TestBinaryOp(HloOpcode::kMinimum, std::move(expected), std::move(lhs),
+               std::move(rhs));
+}
+
+TEST_P(HloEvaluatorBf16Test, DoesMaximumSignedZeroBf16) {
+  auto lhs = LiteralUtil::CreateR1<bfloat16>(
+      {bfloat16(0.0f), bfloat16(-0.0f), bfloat16(0.0f), bfloat16(-0.0f)});
+  auto rhs = LiteralUtil::CreateR1<bfloat16>(
+      {bfloat16(-0.0f), bfloat16(0.0f), bfloat16(0.0f), bfloat16(-0.0f)});
+  auto expected = LiteralUtil::CreateR1<bfloat16>(
+      {bfloat16(0.0f), bfloat16(0.0f), bfloat16(0.0f), bfloat16(-0.0f)});
+  TestBinaryOp(HloOpcode::kMaximum, std::move(expected), std::move(lhs),
+               std::move(rhs));
+}
+
 TEST_F(HloEvaluatorTest, DoesAdd) {
   auto lhs = LiteralUtil::CreateR2<int64_t>({{1, 0}, {-100, 4}});
   auto rhs = LiteralUtil::CreateR2<int64_t>({{2, 4}, {4, 4}});
