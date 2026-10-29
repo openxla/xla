@@ -490,6 +490,11 @@ class AlgebraicSimplifierVisitor : public DfsHloRewriteVisitor {
   absl::StatusOr<bool> TrySimplifyTautologicalCompare(
       HloInstruction* conjunction);
 
+  // Tries to simplify floating-point partial-order comparisons of monotonic
+  // functions against scalar/broadcast constants (e.g. logistic(x) > 0.5 ->
+  // x > 0.0, tanh(x) > 0.0 -> x > 0.0, exp(x) > 1.0 -> x > 0.0).
+  absl::Status TrySimplifyMonotonicCompare(HloInstruction* compare);
+
   // Tries to simplify (bitcast-convert (concat (bitcast-convert A) ...)) where
   // the types of inner and outer bitcast-convert cancel out.
   absl::StatusOr<bool> TrySimplifyTautologicalBitcastConvert(
