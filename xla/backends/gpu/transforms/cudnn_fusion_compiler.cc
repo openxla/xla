@@ -469,6 +469,17 @@ class GemmDimensionAdapter {
           {spec->front().slice_start,
            spec->front().slice_start + spec->front().sliced_count});
       if (spec->front().count != spec->front().sliced_count) {
+        if (scope == TritonFusionAnalysis::Scope::LHS_SCALE ||
+            scope == TritonFusionAnalysis::Scope::RHS_SCALE) {
+          // Block-scale inputs use F8_128x4 reordering and must be unsliced
+          // graph entrance tensors with 128x4-padded extents; HLO slices them
+          // only to match the unpadded scaled-dot operand shape.
+          if (!IsValidScaleTilePadding(scope, result.sizes.size() - 1,
+                                       spec->front())) {
+            return std::nullopt;
+          }
+          continue;
+        }
         slicing_is_present = true;
       }
     }
@@ -516,6 +527,24 @@ class GemmDimensionAdapter {
   }
 
  private:
+  // Returns true if `fragment` at position `dim_pos` of the canonical
+  // dimension order built in DimensionsAndStrides ({batch, nc, k} for LHS,
+  // {batch, k, nc} for RHS) is a zero-based slice of an F8_128x4 tile-padded
+  // scale.
+  static bool IsValidScaleTilePadding(
+      TritonFusionAnalysis::Scope scope, int dim_pos,
+      const TensorIterationSpec::IterationSpecFragment& fragment) {
+    const int nc_pos = scope == TritonFusionAnalysis::Scope::LHS_SCALE ? 1 : 2;
+    int64_t tile_size = 1;
+    if (dim_pos == nc_pos) {
+      tile_size = BlockScalingRewriter::kInputNonContractingTileSize;
+    } else if (dim_pos != 0) {
+      tile_size = BlockScalingRewriter::kScaleContractingTileSize;
+    }
+    return fragment.slice_start == 0 &&
+           fragment.count == RoundUpTo(fragment.sliced_count, tile_size);
+  }
+
   int64_t lhs_noncontracting_split_ = 1;
   const HloInstruction& dot_;
 };

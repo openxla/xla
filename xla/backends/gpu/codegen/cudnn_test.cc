@@ -1682,6 +1682,53 @@ CHECK: "uid": {{[0-9]+}}
 )"));
 }
 
+TEST_F(CuDnnFusionFileCheckTest, BlockScaledDotLoweringWithTilePaddedScales) {
+  const std::string kHloText = R"(
+block_scaled_dot {
+  %lhs = f8e4m3fn[100,64]{1,0} parameter(0)
+  %rhs = f8e4m3fn[64,200]{0,1} parameter(1)
+  %lhs_scale_pad = f8e8m0fnu[128,4]{1,0} parameter(2)
+  %lhs_scale = f8e8m0fnu[100,4]{1,0} slice(%lhs_scale_pad), slice={[0:100], [0:4]}
+  %rhs_scale_pad = f8e8m0fnu[4,256]{0,1} parameter(3)
+  %rhs_scale = f8e8m0fnu[4,200]{0,1} slice(%rhs_scale_pad), slice={[0:4], [0:200]}
+  ROOT %result = bf16[100,200]{1,0} scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY main {
+  %lhs = f8e4m3fn[100,64]{1,0} parameter(0)
+  %rhs = f8e4m3fn[64,200]{0,1} parameter(1)
+  %lhs_scale = f8e8m0fnu[128,4]{1,0} parameter(2)
+  %rhs_scale = f8e8m0fnu[4,256]{0,1} parameter(3)
+  ROOT %result = bf16[100,200]{1,0} fusion(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      kind=kCustom, calls=block_scaled_dot,
+      backend_config={"fusion_backend_config":{kind:"__cudnn$fusion"}}
+})";
+  EXPECT_TRUE(*RunCuDnnFileCheck(kHloText, R"(
+CHECK: "nodes"
+CHECK-NOT: "tag": "SLICE"
+CHECK: "tag": "BLOCK_SCALE_DEQUANTIZE"
+CHECK-NOT: "tag": "SLICE"
+CHECK: "tag": "BLOCK_SCALE_DEQUANTIZE"
+CHECK-NOT: "tag": "SLICE"
+CHECK: "tag": "MATMUL"
+CHECK-NOT: "tag": "SLICE"
+CHECK: "tensors"
+CHECK: "dim": [{{[[:space:]]*1,[[:space:]]*100,[[:space:]]*64[[:space:]]*}}]
+CHECK: "name": "lhs"
+CHECK: "dim": [{{[[:space:]]*1,[[:space:]]*64,[[:space:]]*200[[:space:]]*}}]
+CHECK: "name": "rhs"
+CHECK: "dim": [{{[[:space:]]*1,[[:space:]]*128,[[:space:]]*4[[:space:]]*}}]
+CHECK: "name": "lhs_scale"
+CHECK: "reordering_type": "F8_128x4"
+CHECK: "dim": [{{[[:space:]]*1,[[:space:]]*4,[[:space:]]*256[[:space:]]*}}]
+CHECK: "name": "rhs_scale"
+CHECK: "reordering_type": "F8_128x4"
+CHECK: "dim": [{{[[:space:]]*1,[[:space:]]*100,[[:space:]]*200[[:space:]]*}}]
+CHECK: "name": "result"
+)"));
+}
+
 TEST_F(CuDnnFusionFileCheckTest, ConvFpropGraphConvertedCorrectly) {
   // Crashes on CUDA 12 + cuDNN 9.10. Works on CUDA 13 + cuDNN 9.23. It's
   // unclear at which point between it got fixed. Conservatively skip on
