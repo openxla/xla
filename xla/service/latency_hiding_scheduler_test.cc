@@ -433,6 +433,70 @@ ENTRY main {
   EXPECT_LT(GetIndex(sequence, "small"), GetIndex(sequence, "large"));
 }
 
+TEST_F(LatencyHidingSchedulerTest,
+       NoIncreaseMemoryPeakOverLimitPrefersNonIncreasingCandidate) {
+  constexpr absl::string_view hlo_string = R"hlo(
+HloModule module, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[10] parameter(0)
+  p1 = f32[10] parameter(1)
+  p2 = f32[10] parameter(2)
+  a0 = f32[10] negate(p0)
+  b0 = f32[10] negate(p1)
+  b1 = f32[10] negate(p2)
+  non_increasing = f32[10] negate(a0)
+  increasing = f32[10] add(b0, b1)
+  ROOT result = (f32[10], f32[10]) tuple(non_increasing, increasing)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(hlo_string));
+
+  bool target_rule_saw_candidates = false;
+  auto target_rule = [&](DefaultSchedulerCore::ScheduleCandidate& a,
+                         DefaultSchedulerCore::ScheduleCandidate& b)
+      -> std::optional<DefaultSchedulerCore::CandidateResult> {
+    const bool a_is_increasing = a.node->GetInstr().name() == "increasing";
+    const bool b_is_increasing = b.node->GetInstr().name() == "increasing";
+    const bool compares_candidates =
+        (a_is_increasing && b.node->GetInstr().name() == "non_increasing") ||
+        (b_is_increasing && a.node->GetInstr().name() == "non_increasing");
+    if (!compares_candidates) {
+      return std::nullopt;
+    }
+    target_rule_saw_candidates = true;
+    return DefaultSchedulerCore::ChooseBestCandidate(
+        a_is_increasing, a, b_is_increasing, b, "kPreferIncreasingForTest");
+  };
+
+  // After scheduling `result` bottom-up, live memory is 80B (above
+  // `memory_limit / 2 = 45B` and below `memory_limit = 90B`). Both ready
+  // candidates exceed `memory_limit` in transient peak (`non_increasing`: +0B
+  // net / +40B peak -> 120B; `increasing`: +40B net / +80B peak -> 160B).
+  // `kNoIncreaseMemoryPeakOverLimit` must pick `non_increasing` in bottom-up
+  // scheduling before falling through to `target_rule` or
+  // `kCreatesMoreReadyNodes` (which would pick `increasing` since it unlocks 2
+  // nodes vs 1), keeping peak memory at 120B instead of 160B.
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_limit = 90;
+  sched_config.aggressive_scheduling_policies = true;
+  ASSERT_OK_AND_ASSIGN(
+      auto setup,
+      SetupScheduler(module.get(), sched_config,
+                     std::make_unique<ApproximateLatencyEstimator>(), nullptr,
+                     std::move(target_rule)));
+  std::shared_ptr<SchedulerCore> scheduler_core = std::move(setup.second);
+  ASSERT_OK(scheduler_core->InitializeScheduler(module.get()));
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<HloInstruction*> sequence,
+      scheduler_core->ScheduleComputation(module->entry_computation()));
+
+  EXPECT_FALSE(target_rule_saw_candidates);
+  EXPECT_LT(GetIndex(sequence, "increasing"),
+            GetIndex(sequence, "non_increasing"));
+  EXPECT_EQ(scheduler_core->GetMemoryPeak(), 120);
+}
+
 TEST_F(LatencyHidingSchedulerTest, AllGatherAsyncSimple) {
   absl::string_view hlo_string = R"(
 HloModule module, is_scheduled=true

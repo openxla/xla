@@ -1474,16 +1474,14 @@ std::optional<bool> ReadySetLt::MemoryPressurePolicy(
               "kNoIncreaseMemoryOverLimit", reason)) {
         return res;
       }
-      // If there's none than prefer a node that is the deepest. That
-      // matches well with unlocking pressure-reducing nodes for typical
-      // ML graphs.
+      // If there's none than prefer a node that is the deepest. That matches
+      // well with unlocking pressure-reducing nodes for typical ML graphs.
       if (auto res = CmpExplicit(an->GetGraphDepth(), bn->GetGraphDepth(),
                                  "kDepthOverLimit", reason)) {
         return res;
       }
     }
-    // Otherwise pick a node that increases the pressure the least from
-    // the list.
+    // Otherwise pick a node increasing the pressure the least from the list.
     if (a_increase.first != b_increase.first) {
       if (auto res = CmpExplicit(a_increase.first < b_increase.first,
                                  b_increase.first < a_increase.first,
@@ -1492,13 +1490,22 @@ std::optional<bool> ReadySetLt::MemoryPressurePolicy(
       }
     }
   }
-  // Avoid to bring peak beyond limit. Choose instruction that doesn't do
-  // so.
-  if (auto res =
-          CmpExplicit(a_increase.second + memory_usage <= config_memory_limit,
-                      b_increase.second + memory_usage <= config_memory_limit,
-                      "kMemoryPeakOverLimit", reason)) {
+  // Avoid to bring peak beyond limit. Choose instruction that doesn't do so.
+  const bool a_peak_within_limit =
+      a_increase.second + memory_usage <= config_memory_limit;
+  const bool b_peak_within_limit =
+      b_increase.second + memory_usage <= config_memory_limit;
+  if (auto res = CmpExplicit(a_peak_within_limit, b_peak_within_limit,
+                             "kMemoryPeakOverLimit", reason)) {
     return res;
+  }
+  if (!a_peak_within_limit && !b_peak_within_limit) {
+    if (auto res = CmpExplicit(
+            a_increase.first <= 0 && a_increase.first < b_increase.first,
+            b_increase.first <= 0 && b_increase.first < a_increase.first,
+            "kNoIncreaseMemoryPeakOverLimit", reason)) {
+      return res;
+    }
   }
   return std::nullopt;
 }
