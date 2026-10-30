@@ -66,6 +66,8 @@ class CustomOptions;
 
 namespace xla::gpu {
 
+class FfiKernelRegistry;
+
 // Thunk acts as the bridge between IrEmitter and GpuExecutable. It stores the
 // metadata IrEmitter generates for GpuExecutable to invoke an HloInstruction.
 //
@@ -256,6 +258,9 @@ class Thunk {
 
     // Command buffer execution requests configured during prepare.
     CommandBufferRequests* absl_nonnull command_buffer_requests;
+
+    // Executable-scoped registry of FFI device kernels.
+    FfiKernelRegistry* ffi_kernel_registry = nullptr;
   };
 
   //===--------------------------------------------------------------------===//
@@ -346,6 +351,9 @@ class Thunk {
 
     // Execution scoped state shared between prepare, initialize and execute.
     ExecutionScopedState* execution_scoped_state = nullptr;
+
+    // Executable-scoped registry of FFI device kernels.
+    FfiKernelRegistry* ffi_kernel_registry = nullptr;
 
     // Optional allocation indices whose device addresses are stable for this
     // execution. The value is absent only while the allocation address policy
