@@ -3806,8 +3806,12 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
   // fits the limit for all colors, or the best per color if none fits.
   for (const BufferAssigner::AssignmentStrategy& strategy :
        assignment_strategies) {
-    LOG(INFO) << "Trying strategy: " << strategy.non_sequential_algorithm
-              << ", " << strategy.sequential_algorithm;
+    const std::string non_sequential_name(
+        NonSequentialAlgorithm::Value_Name(strategy.non_sequential_algorithm));
+    const std::string sequential_name(
+        SequentialAlgorithm::Value_Name(strategy.sequential_algorithm));
+    LOG(INFO) << "Trying strategy: " << non_sequential_name << ", "
+              << sequential_name;
     const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign =
         active_colors.has_value() ? &*active_colors : nullptr;
 
@@ -3878,23 +3882,20 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
         if (total_allocated_bytes > adjusted_limit) {
           fallback_colors.insert(color);
           VLOG(1) << "BufferAssignment strategy (non_sequential: "
-                  << strategy.non_sequential_algorithm
-                  << ", sequential: " << strategy.sequential_algorithm
+                  << non_sequential_name << ", sequential: " << sequential_name
                   << ") exceeded memory limit for color " << color << " ("
                   << total_allocated_bytes << " bytes vs limit of "
                   << adjusted_limit << " bytes).";
         } else {
           VLOG(1) << "BufferAssignment strategy (non_sequential: "
-                  << strategy.non_sequential_algorithm
-                  << ", sequential: " << strategy.sequential_algorithm
+                  << non_sequential_name << ", sequential: " << sequential_name
                   << ") did not exceed memory limit for color " << color << " ("
                   << total_allocated_bytes << " bytes vs limit of "
                   << adjusted_limit << " bytes).";
         }
       } else {
         VLOG(1) << "BufferAssignment strategy (non_sequential: "
-                << strategy.non_sequential_algorithm
-                << ", sequential: " << strategy.sequential_algorithm
+                << non_sequential_name << ", sequential: " << sequential_name
                 << ") did not set memory limit for color " << color
                 << ". Fallback not triggered.";
       }
