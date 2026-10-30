@@ -46,6 +46,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/codegen:ir_emission_utils",
         "//xla/codegen/emitters:elemental_hlo_to_mlir",
+        "//xla/codegen/emitters/ir:xla",
         "//xla/codegen/tiling:reshape_analysis",
         "//xla/codegen/tiling:scheduling",
         "//xla/codegen/tiling:tile",

@@ -52,6 +52,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
+#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/tiling/reshape_analysis.h"
 #include "xla/codegen/tiling/tile.h"
 #include "xla/codegen/tiling/tiled_hlo.h"
@@ -78,7 +79,6 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::xtile {
@@ -382,7 +382,8 @@ Value EmitClampedRTVar(mlir::ImplicitLocOpBuilder& b,
 
 // Evaluates tiling parameters for the given affine expressions, e.g. offsets.
 absl::StatusOr<SmallVector<Value>> EmitterContext::EvaluateTilingParameters(
-    ArrayRef<SymbolicExpr> exprs) {
+    ArrayRef<SymbolicExpr> exprs,
+    ArrayRef<std::pair<SymbolicExpr, Interval>> tile_constraints) {
   // We expect expressions to use:
   // - some parallel and sequential dimensions of tiling space d0, d1, ..
   // - some runtime variables s0, s1, .., represented as symbols.
@@ -396,8 +397,14 @@ absl::StatusOr<SmallVector<Value>> EmitterContext::EvaluateTilingParameters(
   const gpu::TilingSpace& tiling_space = tiled_computation_.tiling_space();
   int64_t num_dimensions = tiling_space.num_dimensions();
   int64_t num_parallel_dimensions = tiling_space.num_parallel_dimensions();
-  // Get all dimension and symbol IDs from all of the expressions.
-  UsedParameters used_parameters = GetUsedParameters(exprs, num_dimensions);
+  // Get all dimension and symbol IDs from all of the expressions and
+  // constraints.
+  SmallVector<SymbolicExpr> all_exprs(exprs.begin(), exprs.end());
+  all_exprs.reserve(exprs.size() + tile_constraints.size());
+  for (const auto& [constraint_expr, interval] : tile_constraints) {
+    all_exprs.push_back(constraint_expr);
+  }
+  UsedParameters used_parameters = GetUsedParameters(all_exprs, num_dimensions);
   const llvm::SmallVector<int64_t>& dim_ids = used_parameters.dimension_ids;
   const llvm::SmallVector<int64_t>& symbol_ids = used_parameters.symbol_ids;
 
@@ -481,9 +488,53 @@ absl::StatusOr<SmallVector<Value>> EmitterContext::EvaluateTilingParameters(
                        updated_exprs),
       std::move(dim_variables), std::move(symbol_variables), /*rt_vars=*/{},
       constraints);
+  if (!tile_constraints.empty()) {
+    for (const auto& [constraint_expr, interval] : tile_constraints) {
+      offset_indexing_map.AddConstraint(
+          constraint_expr.ReplaceDimsAndSymbols(dim_replacements,
+                                                symbol_replacements),
+          interval);
+    }
+    offset_indexing_map.Simplify();
+  }
 
-  return emitters::ApplyIndexing(offset_indexing_map, dim_values, symbol_values,
-                                 b_);
+  if (tile_constraints.empty() || offset_indexing_map.IsKnownEmpty()) {
+    return emitters::ApplyIndexing(offset_indexing_map, dim_values,
+                                   symbol_values, b_);
+  }
+
+  SmallVector<Value> operands;
+  operands.reserve(dim_values.size() + symbol_values.size());
+  operands.append(dim_values.begin(), dim_values.end());
+  operands.append(symbol_values.begin(), symbol_values.end());
+
+  SmallVector<Interval> result_ranges =
+      offset_indexing_map.ComputeResultRanges();
+  SmallVector<Value> results;
+  results.reserve(offset_indexing_map.GetNumResults());
+  for (unsigned int i = 0; i < offset_indexing_map.GetNumResults(); ++i) {
+    IndexingMap sub_map = offset_indexing_map.GetSubMap(i);
+    SymbolicExpr result_expr = sub_map.GetSymbolicMap().GetResult(0);
+    const Interval& range = result_ranges[i];
+    if (result_expr.GetType() == SymbolicExprType::kVariable &&
+        range.IsFeasible() && !range.IsUnconstrained()) {
+      Value operand = operands[result_expr.GetValue()];
+      std::optional<Interval> operand_range = GetRange(operand);
+      if (!operand_range.has_value() || !range.Contains(*operand_range)) {
+        auto apply_op = ApplyIndexingOp::create(b_, dim_values, symbol_values,
+                                                std::move(sub_map));
+        apply_op->setAttr("xla.range",
+                          b_.getIndexArrayAttr({range.lower, range.upper}));
+        results.push_back(apply_op.getResult(0));
+        continue;
+      }
+    }
+    SmallVector<Value, 1> folded_result;
+    b_.createOrFold<ApplyIndexingOp>(folded_result, dim_values, symbol_values,
+                                     std::move(sub_map));
+    results.append(folded_result);
+  }
+  return results;
 }
 
 absl::StatusOr<Type> PrimitiveTypeToMlirType(
@@ -857,7 +908,8 @@ Value Bitcast(mlir::ImplicitLocOpBuilder& b, Value value, Type type) {
       GetStorageTileStrides(logical_tile_strides, logical_shape));
   ABSL_ASSIGN_OR_RETURN(
       SmallVector<Value> logical_offsets,
-      emitter_ctx.EvaluateTilingParameters(tiled_hlo.tile().offsets()));
+      emitter_ctx.EvaluateTilingParameters(tiled_hlo.tile().offsets(),
+                                           tiled_hlo.tile().constraints()));
   ABSL_ASSIGN_OR_RETURN(SmallVector<Value> storage_offsets,
                         GetStorageOffsets(emitter_ctx.b(), logical_shape,
                                           tiled_hlo.tile().offsets(),
