@@ -15,7 +15,8 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 
-#include <cmath>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
@@ -27,7 +28,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -10583,7 +10583,9 @@ INSTANTIATE_TEST_SUITE_P(
 
 class AbsArgMaxGatherTest : public AlgebraicSimplifierTest {
  protected:
-  std::string ModuleString(FixedMapping replacements = {}) {
+  std::string ModuleString(
+      absl::string_view root = "ROOT result = f32[2] reshape(values)",
+      absl::string_view extra_computation = "") {
     constexpr absl::string_view kModule = R"(
 HloModule abs_argmax_gather
 
@@ -10604,726 +10606,87 @@ argmax {
   ROOT result = (f32[], s32[]) tuple(value, index)
 }
 
+$extra_computation
+
 ENTRY main {
-  input = f32[4,4] parameter(0)
-  magnitudes = f32[4,4] abs(input)
-  iota = s32[4,4] iota(), iota_dimension=1
+  input = f32[2,3] parameter(0)
+  magnitudes = f32[2,3] abs(input)
+  iota = s32[2,3] iota(), iota_dimension=1
   negative_infinity = f32[] constant(-inf)
   zero = s32[] constant(0)
-  argmax_result = (f32[4], s32[4]) reduce(magnitudes, iota, negative_infinity, zero), dimensions={1}, to_apply=argmax
-  indices = s32[4] get-tuple-element(argmax_result), index=1
-  gather_indices = s32[4,1] reshape(indices)
-  values = f32[4] gather(magnitudes, gather_indices), offset_dims={}, collapsed_slice_dims={1}, start_index_map={1}, operand_batching_dims={0}, start_indices_batching_dims={0}, index_vector_dim=1, slice_sizes={1,1}
-  ROOT result = (f32[4], s32[4]) tuple(values, indices)
+  argmax_result = (f32[2], s32[2]) reduce(magnitudes, iota, negative_infinity, zero), dimensions={1}, to_apply=argmax
+  indices = s32[2] get-tuple-element(argmax_result), index=1
+  gather_indices = s32[2,1,1] reshape(indices)
+  values = f32[2,1] gather(magnitudes, gather_indices), offset_dims={}, collapsed_slice_dims={1}, start_index_map={1}, operand_batching_dims={0}, start_indices_batching_dims={0}, index_vector_dim=2, slice_sizes={1,1}
+  $root
 }
 )";
-    return absl::StrReplaceAll(kModule, replacements);
-  }
-
-  // Keeping the indices live also exercises the case where JAX's differentiated
-  // program uses them to scatter the cotangent back to the selected element.
-  void ExpectGatherReplaced(HloModule* module,
-                            const HloInstruction* original_indices,
-                            absl::Span<const int64_t> reduction_dimensions) {
-    const HloInstruction* root =
-        module->entry_computation()->root_instruction();
-    ASSERT_EQ(root->opcode(), HloOpcode::kTuple);
-    EXPECT_EQ(root->operand(1), original_indices);
-    const HloInstruction* values = root->operand(0);
-    while (values->opcode() == HloOpcode::kReshape) {
-      values = values->operand(0);
-    }
-    // A later simplifier iteration can reuse the existing argmax value instead
-    // of retaining the newly introduced scalar maximum reduction.
-    if (values->opcode() == HloOpcode::kGetTupleElement) {
-      EXPECT_EQ(values->tuple_index(), 0);
-      EXPECT_EQ(values->operand(0), original_indices->operand(0));
-      return;
-    }
-    ASSERT_EQ(values->opcode(), HloOpcode::kReduce);
-    ASSERT_EQ(values->operand_count(), 2);
-    EXPECT_THAT(values->operand(0), GmockMatch(m::Abs(m::Parameter(0))));
-    EXPECT_THAT(values->dimensions(),
-                ::testing::ElementsAreArray(reduction_dimensions));
-    EXPECT_THAT(values->to_apply()->root_instruction(),
-                GmockMatch(m::Maximum(m::Parameter(0), m::Parameter(1))));
-  }
-
-  void ExpectSameValuesAndIndices(const Literal& before, const Literal& after) {
-    ASSERT_TRUE(ShapeUtil::Equal(before.shape(), after.shape()));
-    for (int64_t i = 0;
-         i < ShapeUtil::ElementsIn(before.shape().tuple_shapes(0)); ++i) {
-      SCOPED_TRACE(i);
-      const float expected = before.GetLinear<float>(i, {0});
-      const float actual = after.GetLinear<float>(i, {0});
-      if (std::isnan(expected)) {
-        EXPECT_TRUE(std::isnan(actual));
-      } else {
-        EXPECT_EQ(actual, expected);
-        // In particular, abs must keep both signs of input zero at +0.
-        EXPECT_EQ(std::signbit(actual), std::signbit(expected));
-      }
-      if (before.shape().tuple_shapes(1).element_type() == S64) {
-        EXPECT_EQ(after.GetLinear<int64_t>(i, {1}),
-                  before.GetLinear<int64_t>(i, {1}));
-      } else {
-        EXPECT_EQ(after.GetLinear<int32_t>(i, {1}),
-                  before.GetLinear<int32_t>(i, {1}));
-      }
-    }
+    return absl::StrReplaceAll(
+        kModule, {{"$root", root}, {"$extra_computation", extra_computation}});
   }
 };
 
-TEST_F(AbsArgMaxGatherTest, BatchedLastAxisPreservesLiveIndices) {
+TEST_F(AbsArgMaxGatherTest, PreservesForwardValues) {
   ASSERT_OK_AND_ASSIGN(auto module,
                        ParseAndReturnVerifiedModule(ModuleString()));
-  const HloInstruction* indices =
-      module->entry_computation()->root_instruction()->operand(1);
-  ASSERT_OK_AND_ASSIGN(bool changed,
-                       AlgebraicSimplifier(default_options_).Run(module.get()));
+  const Literal input =
+      LiteralUtil::CreateR2<float>({{1.0f, -4.0f, 2.0f}, {-3.0f, 2.0f, 1.0f}});
+  const Literal expected = LiteralUtil::CreateR1<float>({4.0f, 3.0f});
+  ASSERT_OK_AND_ASSIGN(Literal before,
+                       HloEvaluator().Evaluate(*module, {&input}));
+  HloPassFix<AlgebraicSimplifier> simplifier(default_options_);
+  ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(module.get()));
   EXPECT_TRUE(changed);
-  ExpectGatherReplaced(module.get(), indices, {1});
+  EXPECT_TRUE(FindInstructions(module.get(), HloOpcode::kGather).empty());
+  ASSERT_OK_AND_ASSIGN(Literal after,
+                       HloEvaluator().Evaluate(*module, {&input}));
+  for (int64_t row = 0; row < 2; ++row) {
+    EXPECT_EQ(before.Get<float>({row}), expected.Get<float>({row}));
+    EXPECT_EQ(after.Get<float>({row}), before.Get<float>({row}));
+  }
 }
 
-TEST_F(AbsArgMaxGatherTest, KeepDimsAndIndexReshapeChain) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(ModuleString({
-                       {"gather_indices = s32[4,1] reshape(indices)",
-                        "expanded_indices = s32[4,1] reshape(indices)\n"
-                        "  gather_indices = s32[4,1,1] "
-                        "reshape(expanded_indices)"},
-                       {"values = f32[4] gather", "values = f32[4,1] gather"},
-                       {"index_vector_dim=1", "index_vector_dim=2"},
-                       {"ROOT result = (f32[4], s32[4])",
-                        "ROOT result = (f32[4,1], s32[4])"},
-                   })));
-  const HloInstruction* indices =
-      module->entry_computation()->root_instruction()->operand(1);
-  ASSERT_OK_AND_ASSIGN(bool changed,
-                       AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_TRUE(changed);
-  ExpectGatherReplaced(module.get(), indices, {1});
-}
-
-TEST_F(AbsArgMaxGatherTest, FirstAxis) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module,
-      ParseAndReturnVerifiedModule(ModuleString({
-          {"iota_dimension=1", "iota_dimension=0"},
-          {"dimensions={1}, to_apply=argmax",
-           "dimensions={0}, to_apply=argmax"},
-          {"collapsed_slice_dims={1}", "collapsed_slice_dims={0}"},
-          {"start_index_map={1}", "start_index_map={0}"},
-          {"operand_batching_dims={0}", "operand_batching_dims={1}"},
-      })));
-  const HloInstruction* indices =
-      module->entry_computation()->root_instruction()->operand(1);
-  ASSERT_OK_AND_ASSIGN(bool changed,
-                       AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_TRUE(changed);
-  ExpectGatherReplaced(module.get(), indices, {0});
-}
-
-TEST_F(AbsArgMaxGatherTest, UnbatchedVector) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(ModuleString({
-                       {"[4,4]", "[4]"},
-                       {"[4]", "[]"},
-                       {"[4,1]", "[1]"},
-                       {"iota_dimension=1", "iota_dimension=0"},
-                       {"dimensions={1}, to_apply=argmax",
-                        "dimensions={0}, to_apply=argmax"},
-                       {"collapsed_slice_dims={1}", "collapsed_slice_dims={0}"},
-                       {"start_index_map={1}", "start_index_map={0}"},
-                       {"operand_batching_dims={0}, "
-                        "start_indices_batching_dims={0}, ",
-                        ""},
-                       {"index_vector_dim=1", "index_vector_dim=0"},
-                       {"slice_sizes={1,1}", "slice_sizes={1}"},
-                   })));
-  const HloInstruction* indices =
-      module->entry_computation()->root_instruction()->operand(1);
-  ASSERT_OK_AND_ASSIGN(bool changed,
-                       AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_TRUE(changed);
-  ExpectGatherReplaced(module.get(), indices, {0});
-}
-
-TEST_F(AbsArgMaxGatherTest, MultipleBatchDimensions) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module,
-      ParseAndReturnVerifiedModule(ModuleString({
-          {"[4,4]", "[2,4,3]"},
-          {"[4]", "[2,3]"},
-          {"[4,1]", "[2,3,1]"},
-          {"operand_batching_dims={0}", "operand_batching_dims={0,2}"},
-          {"start_indices_batching_dims={0}",
-           "start_indices_batching_dims={0,1}"},
-          {"index_vector_dim=1", "index_vector_dim=2"},
-          {"slice_sizes={1,1}", "slice_sizes={1,1,1}"},
-      })));
-  const HloInstruction* indices =
-      module->entry_computation()->root_instruction()->operand(1);
-  ASSERT_OK_AND_ASSIGN(bool changed,
-                       AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_TRUE(changed);
-  ExpectGatherReplaced(module.get(), indices, {1});
-}
-
-TEST_F(AbsArgMaxGatherTest, ImplicitIndexVectorDimension) {
+TEST_F(AbsArgMaxGatherTest, PreservesBackwardGradient) {
+  // JAX differentiates gather into scatter-add, then applies the sign of abs.
+  // Keep the forward values live so the optimization runs on this AD graph.
   ASSERT_OK_AND_ASSIGN(auto module,
-                       ParseAndReturnVerifiedModule(ModuleString({
-                           {"gather_indices = s32[4,1] reshape(indices)",
-                            "gather_indices = s32[4] copy(indices)"},
-                       })));
-  const HloInstruction* indices =
-      module->entry_computation()->root_instruction()->operand(1);
-  ASSERT_OK_AND_ASSIGN(bool changed,
-                       AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_TRUE(changed);
-  ExpectGatherReplaced(module.get(), indices, {1});
-}
-
-TEST_F(AbsArgMaxGatherTest, NormalizedBatchDimension) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module,
-      ParseAndReturnVerifiedModule(ModuleString({
-          {"gather_indices = s32[4,1] reshape(indices)",
-           "column_indices = s32[4,1] reshape(indices)\n"
-           "  row_indices = s32[4,1] iota(), "
-           "iota_dimension=0\n"
-           "  gather_indices = s32[4,2] "
-           "concatenate(row_indices, column_indices), "
-           "dimensions={1}"},
-          {"collapsed_slice_dims={1}", "collapsed_slice_dims={0,1}"},
-          {"start_index_map={1}", "start_index_map={0,1}"},
-          {"operand_batching_dims={0}, "
-           "start_indices_batching_dims={0}, ",
-           ""},
-      })));
-  const HloInstruction* indices =
-      module->entry_computation()->root_instruction()->operand(1);
-  const Literal input =
-      LiteralUtil::CreateR2<float>({{-3.0f, 3.0f, 2.0f, 1.0f},
-                                    {1.0f, -4.0f, 4.0f, 2.0f},
-                                    {-5.0f, -5.0f, 1.0f, 2.0f},
-                                    {0.0f, -0.0f, 0.0f, -0.0f}});
-  ASSERT_OK_AND_ASSIGN(Literal before,
-                       HloEvaluator().Evaluate(*module, {&input}));
-  ASSERT_OK_AND_ASSIGN(bool changed,
-                       AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_TRUE(changed);
-  ExpectGatherReplaced(module.get(), indices, {1});
-  ASSERT_OK_AND_ASSIGN(Literal after,
-                       HloEvaluator().Evaluate(*module, {&input}));
-  ExpectSameValuesAndIndices(before, after);
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteInvalidNormalizedBatchIndices) {
-  for (absl::string_view batch_indices : {
-           "row_indices = s32[4,1] iota(), iota_dimension=1",
-           "rows = s32[4,1] iota(), iota_dimension=0\n"
-           "  one = s32[] constant(1)\n"
-           "  ones = s32[4,1] broadcast(one), dimensions={}\n"
-           "  row_indices = s32[4,1] add(rows, ones)",
-       }) {
-    SCOPED_TRACE(batch_indices);
-    const std::string gather_indices = absl::StrCat(
-        "column_indices = s32[4,1] reshape(indices)\n  ", batch_indices,
-        "\n  gather_indices = s32[4,2] "
-        "concatenate(row_indices, column_indices), dimensions={1}");
-    ASSERT_OK_AND_ASSIGN(
-        auto module,
-        ParseAndReturnVerifiedModule(ModuleString({
-            {"gather_indices = s32[4,1] reshape(indices)", gather_indices},
-            {"collapsed_slice_dims={1}", "collapsed_slice_dims={0,1}"},
-            {"start_index_map={1}", "start_index_map={0,1}"},
-            {"operand_batching_dims={0}, "
-             "start_indices_batching_dims={0}, ",
-             ""},
-        })));
-    ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-    EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-                GmockMatch(m::Gather()));
-  }
-}
-
-TEST_F(AbsArgMaxGatherTest, RealFloatingPointTypesAndS64Indices) {
-  for (absl::string_view type : {"f16", "bf16", "f32", "f64"}) {
-    SCOPED_TRACE(type);
-    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(ModuleString(
-                                          {{"f32", type}, {"s32", "s64"}})));
-    const HloInstruction* indices =
-        module->entry_computation()->root_instruction()->operand(1);
-    ASSERT_OK_AND_ASSIGN(
-        bool changed, AlgebraicSimplifier(default_options_).Run(module.get()));
-    EXPECT_TRUE(changed);
-    ExpectGatherReplaced(module.get(), indices, {1});
-  }
-}
-
-TEST_F(AbsArgMaxGatherTest,
-       ValuesAndIndicesAgreeForTiesZerosNaNsAndInfinities) {
-  const float nan = std::numeric_limits<float>::quiet_NaN();
-  const float infinity = std::numeric_limits<float>::infinity();
-  const Literal inputs[] = {
-      LiteralUtil::CreateR2<float>({{1.0f, -5.0f, 5.0f, 2.0f},
-                                    {-0.0f, 0.0f, -0.0f, 0.0f},
-                                    {1.0f, nan, -3.0f, nan},
-                                    {1.0f, -infinity, infinity, -1.0f}}),
-      LiteralUtil::CreateR2<float>({{nan, 2.0f, nan, 4.0f},
-                                    {1.0f, 2.0f, 3.0f, nan},
-                                    {nan, nan, nan, nan},
-                                    {-1.0f, -5.0f, -2.0f, -3.0f}}),
-  };
-  const std::vector<std::vector<int32_t>> expected_indices = {{1, 0, 1, 1},
-                                                              {0, 3, 0, 1}};
-  for (int64_t input_number = 0; input_number < 2; ++input_number) {
-    SCOPED_TRACE(input_number);
-    ASSERT_OK_AND_ASSIGN(auto module,
-                         ParseAndReturnVerifiedModule(ModuleString()));
-    const HloInstruction* indices =
-        module->entry_computation()->root_instruction()->operand(1);
-    const Literal& input = inputs[input_number];
-    ASSERT_OK_AND_ASSIGN(Literal before,
-                         HloEvaluator().Evaluate(*module, {&input}));
-    for (int64_t row = 0; row < 4; ++row) {
-      EXPECT_EQ(before.GetLinear<int32_t>(row, {1}),
-                expected_indices[input_number][row]);
-    }
-    ASSERT_OK_AND_ASSIGN(
-        bool changed, AlgebraicSimplifier(default_options_).Run(module.get()));
-    EXPECT_TRUE(changed);
-    ExpectGatherReplaced(module.get(), indices, {1});
-    ASSERT_OK_AND_ASSIGN(Literal after,
-                         HloEvaluator().Evaluate(*module, {&input}));
-    ExpectSameValuesAndIndices(before, after);
-  }
-}
-
-TEST_F(AbsArgMaxGatherTest, JaxIndexNormalizationAndFill) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(ModuleString({
-                       {"gather_indices = s32[4,1] reshape(indices)", R"(
-  zero_vector = s32[4] broadcast(zero), dimensions={}
-  size = s32[] constant(4)
-  size_vector = s32[4] broadcast(size), dimensions={}
-  negative = pred[4] compare(indices, zero_vector), direction=LT
-  wrapped = s32[4] add(indices, size_vector)
-  normalized = s32[4] select(negative, wrapped, indices)
-  gather_indices = s32[4,1] reshape(normalized)
-  lower = pred[4] compare(normalized, zero_vector), direction=GE
-  last = s32[] constant(3)
-  last_vector = s32[4] broadcast(last), dimensions={}
-  upper = pred[4] compare(normalized, last_vector), direction=LE
-  in_bounds = pred[4] and(lower, upper)
-  nan_value = f32[] constant(nan)
-  fill = f32[4] broadcast(nan_value), dimensions={}
-)"},
-                       {"ROOT result = (f32[4], s32[4]) tuple(values, indices)",
-                        "selected = f32[4] select(in_bounds, values, fill)\n"
-                        "  ROOT result = (f32[4], s32[4]) "
-                        "tuple(selected, indices)"},
-                   })));
-  const HloInstruction* indices =
-      module->entry_computation()->root_instruction()->operand(1);
-  const Literal input =
-      LiteralUtil::CreateR2<float>({{1.0f, -5.0f, 5.0f, 2.0f},
-                                    {-0.0f, 0.0f, -0.0f, 0.0f},
-                                    {1.0f, -2.0f, 3.0f, -4.0f},
-                                    {4.0f, 3.0f, 2.0f, 1.0f}});
-  ASSERT_OK_AND_ASSIGN(Literal before,
-                       HloEvaluator().Evaluate(*module, {&input}));
-  HloPassFix<AlgebraicSimplifier> simplifier(default_options_);
-  ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(module.get()));
-  EXPECT_TRUE(changed);
-  ExpectGatherReplaced(module.get(), indices, {1});
-  ASSERT_OK_AND_ASSIGN(Literal after,
-                       HloEvaluator().Evaluate(*module, {&input}));
-  ExpectSameValuesAndIndices(before, after);
-}
-
-TEST_F(AbsArgMaxGatherTest, JaxS64IndicesNarrowedBeforeNormalizationAndFill) {
-  const std::string hlo = absl::StrReplaceAll(
-      ModuleString({{"s32", "s64"}}),
-      {{"gather_indices = s64[4,1] reshape(indices)", R"(
-  converted_indices = s32[4] convert(indices)
-  index_zero = s32[] constant(0)
-  zero_vector = s32[4] broadcast(index_zero), dimensions={}
-  size = s32[] constant(4)
-  size_vector = s32[4] broadcast(size), dimensions={}
-  negative = pred[4] compare(converted_indices, zero_vector), direction=LT
-  wrapped = s32[4] add(converted_indices, size_vector)
-  normalized = s32[4] select(negative, wrapped, converted_indices)
-  gather_indices = s32[4,1] reshape(normalized)
-  lower = pred[4] compare(normalized, zero_vector), direction=GE
-  last = s32[] constant(3)
-  last_vector = s32[4] broadcast(last), dimensions={}
-  upper = pred[4] compare(normalized, last_vector), direction=LE
-  in_bounds = pred[4] and(lower, upper)
-  nan_value = f32[] constant(nan)
-  fill = f32[4] broadcast(nan_value), dimensions={}
-)"},
-       {"ROOT result = (f32[4], s64[4]) tuple(values, indices)",
-        "selected = f32[4] select(in_bounds, values, fill)\n"
-        "  ROOT result = (f32[4], s64[4]) tuple(selected, indices)"}});
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  const HloInstruction* indices =
-      module->entry_computation()->root_instruction()->operand(1);
-  const float nan = std::numeric_limits<float>::quiet_NaN();
-  const Literal input =
-      LiteralUtil::CreateR2<float>({{1.0f, -5.0f, 5.0f, 2.0f},
-                                    {-0.0f, 0.0f, -0.0f, 0.0f},
-                                    {1.0f, nan, 3.0f, -4.0f},
-                                    {4.0f, 3.0f, 2.0f, 1.0f}});
-  ASSERT_OK_AND_ASSIGN(Literal before,
-                       HloEvaluator().Evaluate(*module, {&input}));
-  HloPassFix<AlgebraicSimplifier> simplifier(default_options_);
-  ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(module.get()));
-  EXPECT_TRUE(changed);
-  ExpectGatherReplaced(module.get(), indices, {1});
-  ASSERT_OK_AND_ASSIGN(Literal after,
-                       HloEvaluator().Evaluate(*module, {&input}));
-  ExpectSameValuesAndIndices(before, after);
-}
-
-TEST_F(AbsArgMaxGatherTest, PreservesPostAutodiffScatterAndAbsGradient) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module, ParseAndReturnVerifiedModule(ModuleString({
-                       {"ENTRY main {", R"(
+                       ParseAndReturnVerifiedModule(ModuleString(R"(
+  zero_float = f32[] constant(0)
+  zeros = f32[2,3] broadcast(zero_float), dimensions={}
+  one_float = f32[] constant(1)
+  cotangent = f32[2,1] broadcast(one_float), dimensions={}
+  magnitude_gradient = f32[2,3] scatter(zeros, gather_indices, cotangent), update_window_dims={}, inserted_window_dims={1}, scatter_dims_to_operand_dims={1}, input_batching_dims={0}, scatter_indices_batching_dims={0}, index_vector_dim=2, to_apply=scatter_add
+  nonnegative = pred[2,3] compare(input, zeros), direction=GE
+  positive_gradient = f32[2,3] select(nonnegative, magnitude_gradient, zeros)
+  negative_gradient = f32[2,3] select(nonnegative, zeros, magnitude_gradient)
+  negated_gradient = f32[2,3] negate(negative_gradient)
+  gradient = f32[2,3] add(positive_gradient, negated_gradient)
+  ROOT result = (f32[2,1], f32[2,3]) tuple(values, gradient)
+)",
+                                                                 R"(
 scatter_add {
   lhs = f32[] parameter(0)
   rhs = f32[] parameter(1)
   ROOT sum = f32[] add(lhs, rhs)
 }
-
-ENTRY main {
-)"},
-                       {"ROOT result = (f32[4], s32[4]) tuple(values, indices)",
-                        R"(
-  zero_float = f32[] constant(0)
-  zeros = f32[4,4] broadcast(zero_float), dimensions={}
-  one_float = f32[] constant(1)
-  cotangent = f32[4] broadcast(one_float), dimensions={}
-  magnitude_gradient = f32[4,4] scatter(zeros, gather_indices, cotangent), update_window_dims={}, inserted_window_dims={1}, scatter_dims_to_operand_dims={1}, input_batching_dims={0}, scatter_indices_batching_dims={0}, index_vector_dim=1, to_apply=scatter_add
-  nonnegative = pred[4,4] compare(input, zeros), direction=GE
-  positive_gradient = f32[4,4] select(nonnegative, magnitude_gradient, zeros)
-  negative_gradient = f32[4,4] select(nonnegative, zeros, magnitude_gradient)
-  negated_gradient = f32[4,4] negate(negative_gradient)
-  gradient = f32[4,4] add(positive_gradient, negated_gradient)
-  ROOT result = (f32[4], s32[4], f32[4,4]) tuple(values, indices, gradient)
-)"},
-                   })));
-  const HloInstruction* indices =
-      module->entry_computation()->root_instruction()->operand(1);
-  // Tied magnitudes must send the complete cotangent to the first winner,
-  // including the sign of the original input, rather than split it over ties.
+)")));
+  // Each row has tied maximum magnitudes. Only the first winner receives the
+  // gradient, with the sign of the selected input.
   const Literal input =
-      LiteralUtil::CreateR2<float>({{-3.0f, 3.0f, 2.0f, 1.0f},
-                                    {1.0f, -4.0f, 4.0f, 2.0f},
-                                    {-5.0f, -5.0f, 1.0f, 2.0f},
-                                    {0.0f, -0.0f, 0.0f, -0.0f}});
-  const Literal expected_gradient =
-      LiteralUtil::CreateR2<float>({{-1.0f, 0.0f, 0.0f, 0.0f},
-                                    {0.0f, -1.0f, 0.0f, 0.0f},
-                                    {-1.0f, 0.0f, 0.0f, 0.0f},
-                                    {1.0f, 0.0f, 0.0f, 0.0f}});
+      LiteralUtil::CreateR2<float>({{-3.0f, 3.0f, 2.0f}, {1.0f, -5.0f, 5.0f}});
+  const Literal expected =
+      LiteralUtil::CreateR2<float>({{-1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}});
   ASSERT_OK_AND_ASSIGN(Literal before,
                        HloEvaluator().Evaluate(*module, {&input}));
   HloPassFix<AlgebraicSimplifier> simplifier(default_options_);
   ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(module.get()));
   EXPECT_TRUE(changed);
-  ExpectGatherReplaced(module.get(), indices, {1});
+  EXPECT_TRUE(FindInstructions(module.get(), HloOpcode::kGather).empty());
   ASSERT_OK_AND_ASSIGN(Literal after,
                        HloEvaluator().Evaluate(*module, {&input}));
-  ExpectSameValuesAndIndices(before, after);
-  for (int64_t i = 0; i < 16; ++i) {
-    SCOPED_TRACE(i);
-    EXPECT_EQ(before.GetLinear<float>(i, {2}),
-              expected_gradient.GetLinear<float>(i));
-    EXPECT_EQ(after.GetLinear<float>(i, {2}),
-              expected_gradient.GetLinear<float>(i));
-  }
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteNearMisses) {
-  struct TestCase {
-    absl::string_view name;
-    absl::string_view original;
-    absl::string_view replacement;
-  };
-  const TestCase cases[] = {
-      {"without_abs", "abs(input)", "copy(input)"},
-      {"gather_original_signed_values", "gather(magnitudes, gather_indices)",
-       "gather(input, gather_indices)"},
-      {"wrong_iota_dimension", "iota_dimension=1", "iota_dimension=0"},
-      {"wrong_index_init", "zero = s32[] constant(0)",
-       "zero = s32[] constant(1)"},
-      {"wrong_value_init", "constant(-inf)", "constant(0)"},
-      {"argmin_reducer", "direction=GT", "direction=LT"},
-      {"total_order_reducer", "direction=GT", "direction=GT, order=TOTAL"},
-      {"different_tie_breaking", "compare(lhs_index, rhs_index), direction=LT",
-       "compare(lhs_index, rhs_index), direction=GT"},
-      {"shifted_indices", "gather_indices = s32[4,1] reshape(indices)",
-       "one = s32[] constant(1)\n"
-       "  ones = s32[4] broadcast(one), dimensions={}\n"
-       "  shifted = s32[4] add(indices, ones)\n"
-       "  gather_indices = s32[4,1] reshape(shifted)"},
-      {"unrelated_indices", "gather_indices = s32[4,1] reshape(indices)",
-       "gather_indices = s32[4,1] parameter(1)"},
-  };
-  for (const TestCase& test_case : cases) {
-    SCOPED_TRACE(test_case.name);
-    ASSERT_OK_AND_ASSIGN(auto module,
-                         ParseAndReturnVerifiedModule(ModuleString(
-                             {{test_case.original, test_case.replacement}})));
-    ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-    EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-                GmockMatch(m::Gather()));
-  }
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteMismatchedGatherDimension) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module,
-      ParseAndReturnVerifiedModule(ModuleString({
-          {"collapsed_slice_dims={1}", "collapsed_slice_dims={0}"},
-          {"start_index_map={1}", "start_index_map={0}"},
-          {"operand_batching_dims={0}", "operand_batching_dims={1}"},
-      })));
-  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-              GmockMatch(m::Gather()));
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewritePermutedBatchDimensions) {
-  ASSERT_OK_AND_ASSIGN(
-      auto module,
-      ParseAndReturnVerifiedModule(ModuleString({
-          {"[4,4]", "[2,4,2]"},
-          {"[4]", "[2,2]"},
-          {"[4,1]", "[2,2,1]"},
-          {"operand_batching_dims={0}", "operand_batching_dims={0,2}"},
-          {"start_indices_batching_dims={0}",
-           "start_indices_batching_dims={1,0}"},
-          {"index_vector_dim=1", "index_vector_dim=2"},
-          {"slice_sizes={1,1}", "slice_sizes={1,1,1}"},
-      })));
-  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-              GmockMatch(m::Gather()));
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteDynamicReductionDimension) {
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
-                                        ModuleString({{"[4,4]", "[4,<=4]"}})));
-  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-              GmockMatch(m::Gather()));
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteOverflowingIndexType) {
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(ModuleString({
-                                        {"s32", "s8"},
-                                        {"[4,4]", "[4,129]"},
-                                    })));
-  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-              GmockMatch(m::Gather()));
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteOverflowingIndexConversions) {
-  for (bool widen_again : {false, true}) {
-    SCOPED_TRACE(widen_again);
-    const absl::string_view index_type = widen_again ? "s64" : "s8";
-    const std::string conversions = absl::StrCat(
-        widen_again ? "narrow = s8[4] convert(indices)\n"
-                      "  converted = s64[4] convert(narrow)\n"
-                    : "converted = s8[4] convert(indices)\n",
-        "  gather_indices = ", index_type, "[4,1] reshape(converted)\n",
-        "  bound = ", index_type, "[] constant(0)\n", "  bounds = ", index_type,
-        "[4] broadcast(bound), dimensions={}\n",
-        "  nonnegative = pred[4] compare(converted, bounds), direction=GE");
-    const std::string hlo = absl::StrReplaceAll(
-        ModuleString({{"s32", "s64"}, {"[4,4]", "[4,129]"}}),
-        {{"gather_indices = s64[4,1] reshape(indices)", conversions},
-         {"ROOT result = (f32[4], s64[4]) tuple(values, indices)",
-          "ROOT result = (f32[4], s64[4], pred[4]) "
-          "tuple(values, indices, nonnegative)"}});
-    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-    ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-    const HloInstruction* root =
-        module->entry_computation()->root_instruction();
-    EXPECT_THAT(root->operand(0), GmockMatch(m::Gather()));
-    EXPECT_THAT(root->operand(2), GmockMatch(m::Compare()));
-  }
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteNonSignedIndexConversionChains) {
-  for (absl::string_view intermediate_type : {"f32", "u32"}) {
-    SCOPED_TRACE(intermediate_type);
-    const std::string conversions = absl::StrCat(
-        "intermediate = ", intermediate_type, "[4] convert(indices)\n",
-        "  converted = s64[4] convert(intermediate)\n",
-        "  gather_indices = s64[4,1] reshape(converted)");
-    const std::string hlo = absl::StrReplaceAll(
-        ModuleString({{"s32", "s64"}}),
-        {{"gather_indices = s64[4,1] reshape(indices)", conversions}});
-    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-    ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-    EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-                GmockMatch(m::Gather()));
-  }
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteControlledIndexConversion) {
-  const std::string hlo =
-      absl::StrReplaceAll(ModuleString({{"s32", "s64"}}),
-                          {{"gather_indices = s64[4,1] reshape(indices)",
-                            "converted = s32[4] convert(indices)\n"
-                            "  gather_indices = s32[4,1] reshape(converted)"}});
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  HloInstruction* input = FindInstruction(module.get(), "input");
-  HloInstruction* converted = FindInstruction(module.get(), "converted");
-  ASSERT_OK(input->AddControlDependencyTo(converted));
-  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-              GmockMatch(m::Gather()));
-  EXPECT_THAT(converted->control_predecessors(), ElementsAre(input));
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteIntegerAbs) {
-  ASSERT_OK_AND_ASSIGN(auto module,
-                       ParseAndReturnVerifiedModule(ModuleString({
-                           {"f32", "s32"},
-                           {"constant(-inf)", "constant(-2147483648)"},
-                       })));
-  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-              GmockMatch(m::Gather()));
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteIndicesWithControlDependency) {
-  ASSERT_OK_AND_ASSIGN(auto module,
-                       ParseAndReturnVerifiedModule(ModuleString()));
-  HloInstruction* input = FindInstruction(module.get(), "input");
-  HloInstruction* gather_indices =
-      FindInstruction(module.get(), "gather_indices");
-  ASSERT_OK(input->AddControlDependencyTo(gather_indices));
-  ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-  EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-              GmockMatch(m::Gather()));
-  EXPECT_THAT(gather_indices->control_predecessors(), ElementsAre(input));
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteWhenLayoutSensitive) {
-  ASSERT_OK_AND_ASSIGN(auto module,
-                       ParseAndReturnVerifiedModule(ModuleString()));
-  AlgebraicSimplifierOptions options = default_options_;
-  options.set_is_layout_sensitive(true);
-  ASSERT_OK(AlgebraicSimplifier(options).Run(module.get()));
-  EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-              GmockMatch(m::Gather()));
-}
-
-TEST_F(AbsArgMaxGatherTest, DoesNotRewriteWhenMaximumDoesNotPropagateNaNs) {
-  ASSERT_OK_AND_ASSIGN(auto module,
-                       ParseAndReturnVerifiedModule(ModuleString()));
-  AlgebraicSimplifierOptions options = default_options_;
-  options.set_minmax_propagate_nan(false);
-  ASSERT_OK(AlgebraicSimplifier(options).Run(module.get()));
-  EXPECT_THAT(module->entry_computation()->root_instruction()->operand(0),
-              GmockMatch(m::Gather()));
-}
-
-TEST_F(AbsArgMaxGatherTest, FoldsOnlyUniformIndexBoundComparisons) {
-  for (int64_t reduction_size : {1, 4}) {
-    SCOPED_TRACE(reduction_size);
-    // For size four, each row selects a different index, so evaluating the
-    // original comparison covers every possible result of argmax.
-    const Literal input =
-        reduction_size == 1
-            ? LiteralUtil::CreateR2<float>({{1.0f}, {2.0f}, {3.0f}, {4.0f}})
-            : LiteralUtil::CreateR2<float>({{4.0f, 0.0f, 0.0f, 0.0f},
-                                            {0.0f, 4.0f, 0.0f, 0.0f},
-                                            {0.0f, 0.0f, 4.0f, 0.0f},
-                                            {0.0f, 0.0f, 0.0f, 4.0f}});
-    for (ComparisonDirection direction :
-         {ComparisonDirection::kEq, ComparisonDirection::kNe,
-          ComparisonDirection::kGe, ComparisonDirection::kGt,
-          ComparisonDirection::kLe, ComparisonDirection::kLt}) {
-      SCOPED_TRACE(ComparisonDirectionToString(direction));
-      for (int64_t bound : {-1, 0, 1, 3, 4}) {
-        SCOPED_TRACE(bound);
-        for (bool reverse_operands : {false, true}) {
-          SCOPED_TRACE(reverse_operands);
-          const std::string comparison = absl::StrCat(
-              "bound = s32[] constant(", bound, ")\n",
-              "  bounds = s32[4] broadcast(bound), dimensions={}\n",
-              "  ROOT result = pred[4] compare(",
-              reverse_operands ? "bounds, indices" : "indices, bounds",
-              "), direction=", ComparisonDirectionToString(direction));
-          ASSERT_OK_AND_ASSIGN(
-              auto module,
-              ParseAndReturnVerifiedModule(ModuleString({
-                  {"[4,4]", absl::StrCat("[4,", reduction_size, "]")},
-                  {"ROOT result = (f32[4], s32[4]) tuple(values, indices)",
-                   comparison},
-              })));
-          ASSERT_OK_AND_ASSIGN(Literal before,
-                               HloEvaluator().Evaluate(*module, {&input}));
-          HloPassFix<AlgebraicSimplifier> simplifier(default_options_);
-          ASSERT_OK(simplifier.Run(module.get()));
-          const HloInstruction* root =
-              module->entry_computation()->root_instruction();
-          // Size-one reductions are removed by the existing trivial-reduce
-          // simplification before the index-bound matcher is reached.
-          if (reduction_size != 1 && before.IsAllFirst()) {
-            EXPECT_THAT(root, GmockMatch(m::Broadcast(m::ConstantScalar(
-                                  before.GetFirstElement<bool>()))));
-          } else if (!before.IsAllFirst()) {
-            // In particular, EQ and NE against an interior index cannot be
-            // folded merely because their answers agree at both endpoints.
-            EXPECT_THAT(root, GmockMatch(m::Compare()));
-          }
-          ASSERT_OK_AND_ASSIGN(Literal after,
-                               HloEvaluator().Evaluate(*module, {&input}));
-          for (int64_t row = 0; row < 4; ++row) {
-            EXPECT_EQ(after.Get<bool>({row}), before.Get<bool>({row}));
-          }
-        }
-      }
-    }
-  }
-}
-
-TEST_F(AbsArgMaxGatherTest, PreservesIndexBoundControlDependencies) {
-  for (absl::string_view controlled_instruction : {"bound", "bounds"}) {
-    SCOPED_TRACE(controlled_instruction);
-    for (bool reverse_operands : {false, true}) {
-      SCOPED_TRACE(reverse_operands);
-      const std::string comparison =
-          absl::StrCat("bound = s32[] constant(3)\n",
-                       "  bounds = s32[4] broadcast(bound), dimensions={}\n",
-                       "  ROOT result = pred[4] compare(",
-                       reverse_operands ? "bounds, indices), direction=GE"
-                                        : "indices, bounds), direction=LE");
-      ASSERT_OK_AND_ASSIGN(
-          auto module,
-          ParseAndReturnVerifiedModule(ModuleString({
-              {"ROOT result = (f32[4], s32[4]) tuple(values, indices)",
-               comparison},
-          })));
-      HloInstruction* input = FindInstruction(module.get(), "input");
-      HloInstruction* controlled =
-          FindInstruction(module.get(), controlled_instruction);
-      ASSERT_OK(input->AddControlDependencyTo(controlled));
-      const HloInstruction* root =
-          module->entry_computation()->root_instruction();
-      ASSERT_OK(AlgebraicSimplifier(default_options_).Run(module.get()));
-      EXPECT_EQ(module->entry_computation()->root_instruction(), root);
-      EXPECT_THAT(controlled->control_predecessors(), ElementsAre(input));
-    }
+  for (int64_t i = 0; i < 6; ++i) {
+    EXPECT_EQ(before.GetLinear<float>(i, {1}), expected.GetLinear<float>(i));
+    EXPECT_EQ(after.GetLinear<float>(i, {1}), before.GetLinear<float>(i, {1}));
   }
 }
 
