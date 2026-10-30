@@ -17,11 +17,11 @@ limitations under the License.
 #define XLA_BACKENDS_CPU_RUNTIME_THUNK_SERDES_ONEDNN_CUSTOM_CALL_THUNK_SERDES_H_
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "xla/backends/cpu/runtime/onednn/onednn_op_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
 #include "xla/service/buffer_assignment.h"
@@ -30,13 +30,18 @@ namespace xla::cpu {
 
 // SerDes for oneDNN custom call thunks (`OneDnnOpThunk`).
 //
-// Serializes `thunk` into `onednn_proto`. Returns an error if the thunk's
-// custom call target is not a oneDNN target known to the thunk runtime, or if
-// its backend config does not match the target.
-absl::Status OneDnnCustomCallToProto(const OneDnnOpThunk& thunk,
-                                     OneDnnCustomCallProto* onednn_proto);
+// This header has two implementations: `onednn_custom_call_thunk_serdes.cc`
+// used when XLA is built with the oneDNN async runtime, and
+// `onednn_custom_call_thunk_serdes_stub.cc` used otherwise.
 
-// Deserializes a thunk previously serialized by `OneDnnCustomCallToProto`.
+// Serializes `thunk` into `proto` if it is a `OneDnnOpThunk` and returns
+// `std::nullopt` otherwise. Returns an error if the thunk's custom call target
+// is not a oneDNN target known to the thunk runtime, or if its backend config
+// does not match the target.
+std::optional<absl::Status> TrySerializeOneDnnCustomCall(const Thunk& thunk,
+                                                         ThunkProto& proto);
+
+// Deserializes a thunk previously serialized by `TrySerializeOneDnnCustomCall`.
 absl::StatusOr<std::unique_ptr<Thunk>> OneDnnCustomCallFromProto(
     const OneDnnCustomCallProto& onednn_proto, Thunk::Info info,
     const std::vector<BufferAllocation>& buffer_allocations);

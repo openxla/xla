@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -26,7 +27,6 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/strip.h"
 #include "xla/backends/cpu/runtime/onednn/onednn_op_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
@@ -133,31 +133,41 @@ absl::Status SerializeOneDnnTargetIntoProto(const OneDnnOpThunk& thunk,
                                            target_proto->mutable_op_buffers());
 }
 
-}  // namespace
-
 absl::Status OneDnnCustomCallToProto(const OneDnnOpThunk& thunk,
-                                     OneDnnCustomCallProto* onednn_proto) {
+                                     OneDnnCustomCallProto& onednn_proto) {
   const std::string& target = thunk.target();
 
   if (target == kOneDnnMatmulTarget) {
     return SerializeOneDnnTargetIntoProto<OneDnnMatMulConfig>(
-        thunk, onednn_proto->mutable_onednn_matmul_thunk());
+        thunk, onednn_proto.mutable_onednn_matmul_thunk());
   }
   if (target == kOneDnnConvolutionTarget) {
     return SerializeOneDnnTargetIntoProto<OneDnnConvolutionConfig>(
-        thunk, onednn_proto->mutable_onednn_convolution_thunk());
+        thunk, onednn_proto.mutable_onednn_convolution_thunk());
   }
   if (target == kOneDnnLayerNormTarget) {
     return SerializeOneDnnTargetIntoProto<OneDnnNormConfig>(
-        thunk, onednn_proto->mutable_onednn_layernorm_thunk());
+        thunk, onednn_proto.mutable_onednn_layernorm_thunk());
   }
   if (target == kOneDnnSoftmaxTarget) {
     return SerializeOneDnnTargetIntoProto<OneDnnSoftmaxConfig>(
-        thunk, onednn_proto->mutable_onednn_softmax_thunk());
+        thunk, onednn_proto.mutable_onednn_softmax_thunk());
   }
 
   return absl::InvalidArgumentError(
       absl::StrCat("Unsupported OneDNN operation target: ", target));
+}
+
+}  // namespace
+
+std::optional<absl::Status> TrySerializeOneDnnCustomCall(const Thunk& thunk,
+                                                         ThunkProto& proto) {
+  const auto* onednn_thunk = dynamic_cast<const OneDnnOpThunk*>(&thunk);
+  if (onednn_thunk == nullptr) {
+    return std::nullopt;
+  }
+  return OneDnnCustomCallToProto(*onednn_thunk,
+                                 *proto.mutable_onednn_custom_call_thunk());
 }
 
 absl::StatusOr<std::unique_ptr<Thunk>> OneDnnCustomCallFromProto(
@@ -196,12 +206,11 @@ absl::StatusOr<std::unique_ptr<Thunk>> OneDnnCustomCallFromProto(
                         DeserializeOneDnnOpBuffersFromProto(
                             *op_buffers_proto, buffer_allocations));
 
-  // `OneDnnOpThunk::Create` appends the target to `op_name`, so drop the suffix
-  // added before serialization to keep the round trip idempotent.
-  info.op_name = std::string(absl::StripSuffix(info.op_name, target));
-
-  return OneDnnOpThunk::Create(target, std::move(info), std::move(op_buffers),
-                               std::move(onednn_op_config));
+  // The serialized `op_name` already carries the target suffix added by
+  // `OneDnnOpThunk::Create`, so restore `info` verbatim.
+  return OneDnnOpThunk::CreateFromSerialized(target, std::move(info),
+                                             std::move(op_buffers),
+                                             std::move(onednn_op_config));
 }
 
 }  // namespace xla::cpu

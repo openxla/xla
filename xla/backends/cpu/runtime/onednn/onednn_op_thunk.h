@@ -54,6 +54,13 @@ class OneDnnOpThunk : public Thunk {
       const std::string& custom_call_target, Info info, OpBuffers buffers,
       OneDnnOpConfig config);
 
+  // Same as `Create`, but keeps `info` verbatim instead of appending the target
+  // to `info.op_name`. Used to restore a thunk from its serialized form, whose
+  // `op_name` was already updated by `Create`.
+  static absl::StatusOr<std::unique_ptr<OneDnnOpThunk>> CreateFromSerialized(
+      const std::string& custom_call_target, Info info, OpBuffers buffers,
+      OneDnnOpConfig config);
+
   tsl::AsyncValueRef<ExecuteEvent> Execute(const ExecuteParams& params) final;
 
   BufferUses buffer_uses() const final;

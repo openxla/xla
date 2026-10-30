@@ -201,6 +201,31 @@ TEST_F(OneDnnOpThunkSerdesTest, Softmax) {
             config.SerializeAsString());
 }
 
+TEST_F(OneDnnOpThunkSerdesTest, PreservesThunkInfo) {
+  OneDnnOpThunk::OpBuffers op_buffers = CreateOpBuffers();
+
+  Thunk::Info info;
+  info.op_name = "custom-call.1";
+  info.module_name = "test_module";
+  info.module_id = 42;
+
+  ASSERT_OK_AND_ASSIGN(
+      auto thunk, OneDnnOpThunk::Create("__onednn$matmul", info, op_buffers,
+                                        OneDnnMatMulConfig()));
+  EXPECT_EQ(thunk->info().op_name, "custom-call.1__onednn$matmul");
+
+  // Round trip twice to make sure the target suffix is not accumulated.
+  ASSERT_OK_AND_ASSIGN(auto round_tripped,
+                       RoundTrip(std::move(thunk), buffer_allocations_));
+  ASSERT_OK_AND_ASSIGN(
+      round_tripped, RoundTrip(std::move(round_tripped), buffer_allocations_));
+
+  EXPECT_EQ(round_tripped->target(), "__onednn$matmul");
+  EXPECT_EQ(round_tripped->info().op_name, "custom-call.1__onednn$matmul");
+  EXPECT_EQ(round_tripped->info().module_name, "test_module");
+  EXPECT_EQ(round_tripped->info().module_id, 42);
+}
+
 TEST_F(OneDnnOpThunkSerdesTest, UnsupportedTargetFailsToSerialize) {
   OneDnnOpThunk::OpBuffers op_buffers = CreateOpBuffers();
 

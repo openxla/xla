@@ -15,7 +15,7 @@
 
 load("//xla/tsl:tsl.bzl", "internal_visibility", "tsl_copts")
 load("//xla/tsl/mkl:build_defs.bzl", "if_onednn_async")
-load("//xla/tsl/mkl:graph.bzl", "onednn_cc_library", "onednn_cc_test")
+load("//xla/tsl/mkl:graph.bzl", "onednn_cc_test")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
@@ -196,17 +196,18 @@ cc_library(
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@tsl//tsl/platform:casts",
-    ] + if_onednn_async([
-        ":onednn_custom_call_thunk_serdes",
-        "//xla/backends/cpu/runtime/onednn:onednn_op_thunk",
-    ]),
+    ] + if_onednn_async(
+        [":onednn_custom_call_thunk_serdes_impl"],
+        [":onednn_custom_call_thunk_serdes_stub"],
+    ),
     alwayslink = 1,
 )
 
-onednn_cc_library(
-    name = "onednn_custom_call_thunk_serdes",
+cc_library(
+    name = "onednn_custom_call_thunk_serdes_impl",
     srcs = ["onednn_custom_call_thunk_serdes.cc"],
     hdrs = ["onednn_custom_call_thunk_serdes.h"],
+    tags = ["manual"],
     deps = [
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_proto_cc",
@@ -218,6 +219,20 @@ onednn_cc_library(
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
+    name = "onednn_custom_call_thunk_serdes_stub",
+    srcs = ["onednn_custom_call_thunk_serdes_stub.cc"],
+    hdrs = ["onednn_custom_call_thunk_serdes.h"],
+    tags = ["manual"],
+    deps = [
+        "//xla/backends/cpu/runtime:thunk",
+        "//xla/backends/cpu/runtime:thunk_proto_cc",
+        "//xla/service:buffer_assignment",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 
