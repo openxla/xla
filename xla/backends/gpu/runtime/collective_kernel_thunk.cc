@@ -36,10 +36,12 @@ limitations under the License.*/
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_clique_rendezvous.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/all_reduce.h"
+#include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_kernel_thunk.pb.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
@@ -777,6 +779,10 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectiveKernelThunk::Record(
     return se::TraceCommandBufferFactory::Create(
         execute_params.stream->parent(),
         execute_params.command_buffer_trace_stream, [&](se::Stream* stream) {
+          std::optional<tsl::profiler::ScopedAnnotation> annotation =
+              std::holds_alternative<RecordUpdate>(record_action)
+                  ? GetInstructionAnnotation(profile_annotation())
+                  : std::nullopt;
           return stream->Memcpy(plan.copy_dst, plan.copy_src, plan.copy_size);
         });
   };
