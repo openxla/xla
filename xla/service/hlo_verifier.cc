@@ -4296,7 +4296,7 @@ absl::Status VerifyFanOut(const HloCustomCallInstruction* inst,
         "custom-call to FanOut must have one buffer operand");
   }
 
-  if (!inst->shape().IsTuple() || inst->shape().tuple_shapes_size() < 2) {
+  if (!inst->shape().IsTuple() || inst->shape().tuple_shapes().size() < 2) {
     return InvalidArgument(
         "custom-call to FanOut must have a tuple result with >= 2 elements");
   }
@@ -4326,7 +4326,7 @@ absl::Status VerifyFanOut(const HloCustomCallInstruction* inst,
         FormatOutputToOperandAliasing(inst));
   }
 
-  for (int64_t i = 0; i < inst->shape().tuple_shapes_size(); ++i) {
+  for (int64_t i = 0; i < inst->shape().tuple_shapes().size(); ++i) {
     ABSL_RETURN_IF_ERROR(CheckBufferHasUniqueWriter(inst, {i}));
   }
 
