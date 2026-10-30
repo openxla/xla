@@ -581,6 +581,36 @@ TEST_F(CublasFissionBackendTest, ApplyConfigReplacesFusionWithControlDeps) {
   EXPECT_THAT(module->ToString(), testing::Not(HasSubstr("__triton_gemm")));
 }
 
+// The scales of a cuDNN scaled dot fusion are pre-swizzled, so decomposing it
+// would be wrong.
+TEST_F(CublasFissionBackendTest, ScaledDotCudnnFusionIsNotSupported) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+  c {
+    lhs = f8e4m3fn[256,128] parameter(0)
+    rhs = f8e4m3fn[384,128] parameter(1)
+    lhs_scale = f8e8m0fnu[256,4] parameter(2)
+    rhs_scale = f8e8m0fnu[384,4] parameter(3)
+    ROOT dot = f32[256,384] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+        lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  }
+
+  main {
+    lhs = f8e4m3fn[256,128] parameter(0)
+    rhs = f8e4m3fn[384,128] parameter(1)
+    lhs_scale = f8e8m0fnu[256,4] parameter(2)
+    rhs_scale = f8e8m0fnu[384,4] parameter(3)
+    ROOT f = f32[256,384] fusion(lhs, rhs, lhs_scale, rhs_scale),
+      kind=kCustom, calls=c,
+      backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion"}}
+  })"));
+  const HloInstruction& fusion =
+      *module->entry_computation()->root_instruction();
+  EXPECT_FALSE(fission_backend_->IsSupported(fusion));
+  EXPECT_THAT(fission_backend_->GetSupportedConfigs(fusion),
+              IsOkAndHolds(IsEmpty()));
+}
+
 TEST_F(CublasFissionBackendTest, ApplyConfigRemovesComputation) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                        ParseAndReturnVerifiedModule(kTritonFusionHlo));

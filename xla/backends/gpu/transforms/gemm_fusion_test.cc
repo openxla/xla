@@ -2111,10 +2111,10 @@ TEST_F(GemmFusionTest, ScaledDotIsFused) {
     HloModule ScaledDotIsFused
 
     ENTRY entry {
-     lhs = bf16[4,4] parameter(0)
-     rhs = bf16[4,4] parameter(1)
-     lhs_scale = bf16[1,1] parameter(2)
-     rhs_scale = bf16[1,1] parameter(3)
+     lhs = f8e4m3fn[4,32] parameter(0)
+     rhs = f8e4m3fn[4,32] parameter(1)
+     lhs_scale = f8e8m0fnu[4,1] parameter(2)
+     rhs_scale = f8e8m0fnu[4,1] parameter(3)
      ROOT dot = bf16[4,4] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
          lhs_contracting_dims={1},
          rhs_contracting_dims={1},
@@ -2128,10 +2128,10 @@ TEST_F(GemmFusionTest, ScaledDotIsFused) {
 
   constexpr absl::string_view kExpectedHloText = R"(
     CHECK: %[[FUSION_DOT:.*]] (
-    CHECK:   %[[LHS:.*]] = bf16[4,4]{1,0} parameter(0)
-    CHECK:   %[[RHS:.*]] = bf16[4,4]{1,0} parameter(1)
-    CHECK:   %[[LHS_SCALE:.*]] = bf16[1,1]{1,0} parameter(2)
-    CHECK:   %[[RHS_SCALE:.*]] = bf16[1,1]{1,0} parameter(3)
+    CHECK:   %[[LHS:.*]] = f8e4m3fn[4,32]{1,0} parameter(0)
+    CHECK:   %[[RHS:.*]] = f8e4m3fn[4,32]{1,0} parameter(1)
+    CHECK:   %[[LHS_SCALE:.*]] = f8e8m0fnu[4,1]{1,0} parameter(2)
+    CHECK:   %[[RHS_SCALE:.*]] = f8e8m0fnu[4,1]{1,0} parameter(3)
     CHECK:   ROOT %dot.1 = bf16[4,4]{1,0} scaled-dot(
     CHECK:       %[[LHS]], %[[RHS]], %[[LHS_SCALE]], %[[RHS_SCALE]]),
     CHECK:     lhs_contracting_dims={1},
@@ -2145,6 +2145,43 @@ TEST_F(GemmFusionTest, ScaledDotIsFused) {
     CHECK:     {"kind":"__triton_gemm"}
   )";
   MatchHloModule(*module, kExpectedHloText);
+}
+
+TEST_F(GemmFusionTest, ScaledDotIsNotFusedWhenScaledDotWithTritonDisabled) {
+  constexpr absl::string_view kHloText = R"(
+    HloModule m
+
+    ENTRY entry {
+     lhs = f8e4m3fn[4,32] parameter(0)
+     rhs = f8e4m3fn[4,32] parameter(1)
+     lhs_scale = f8e8m0fnu[4,1] parameter(2)
+     rhs_scale = f8e8m0fnu[4,1] parameter(3)
+     ROOT dot = bf16[4,4] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+         lhs_contracting_dims={1}, rhs_contracting_dims={1}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_scaled_dot_with_triton(false);
+  EXPECT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(false));
+}
+
+TEST_F(GemmFusionTest, ScaledDotUnsupportedByTritonIsNotFused) {
+  constexpr absl::string_view kHloText = R"(
+    HloModule m
+
+    ENTRY entry {
+     lhs = s8[4,32] parameter(0)
+     rhs = f8e4m3fn[4,32] parameter(1)
+     lhs_scale = f8e8m0fnu[4,1] parameter(2)
+     rhs_scale = f8e8m0fnu[4,1] parameter(3)
+     ROOT dot = bf16[4,4] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+         lhs_contracting_dims={1}, rhs_contracting_dims={1}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(GemmFusion(device_info_).Run(module.get()), IsOkAndHolds(false));
 }
 
 TEST_P(GemmFusionTestVersioned, ScaledDotScaleBroadcastsAreFusedOnRocm) {

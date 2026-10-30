@@ -85,6 +85,7 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 #include "xla/backends/gpu/transforms/algorithm_checker.h"
 #include "xla/backends/gpu/transforms/async_wrapper.h"
+#include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/backends/gpu/transforms/collectives/all_gather_combiner.h"
 #include "xla/backends/gpu/transforms/collectives/all_gather_dynamic_slice_simplifier.h"
 #include "xla/backends/gpu/transforms/collectives/all_gather_major_dimension_rewriter.h"
@@ -799,9 +800,26 @@ bool BackendConfigDeviceTypeIsHost(HloInstruction* instr) {
   return backend_config->device_type() == DEVICE_TYPE_HOST;
 }
 
+bool IsScaledDotSupportedByBackend(const HloInstruction* instr,
+                                   const GpuTargetConfig& gpu_target_config) {
+  const DebugOptions& debug_options =
+      instr->GetModule()->config().debug_options();
+  const se::GpuComputeCapability& gpu_version =
+      gpu_target_config.device_description.gpu_compute_capability();
+  if (debug_options.xla_gpu_experimental_scaled_dot_with_triton() &&
+      IsTritonGemmEnabled(debug_options, gpu_version) &&
+      IsTritonSupportedInstruction(*instr, gpu_version).IsAllowed()) {
+    return true;
+  }
+  return !debug_options.xla_gpu_experimental_disable_binary_libraries() &&
+         CudnnScaledDotHelper::IsAvailable(
+             gpu_target_config.device_description) &&
+         CudnnScaledDotHelper::IsSupportedPreLayout(
+             Cast<HloScaledDotInstruction>(instr));
+}
+
 absl::Status RunOptimizationPasses(
-    const GpuCompiler& compiler, HloModule* hlo_module,
-    const GpuTargetConfig& gpu_target_config,
+    HloModule* hlo_module, const GpuTargetConfig& gpu_target_config,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
     bool is_deviceless, bool is_early_exit_with_layouts,
     CompilationStats* compilation_stats) {
@@ -818,10 +836,10 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<RaggedDotRewriter>(
       gpu_version,
       se::dnn::VersionInfo(gpu_target_config.device_description.dnn_version()));
-  pipeline.AddPass<ScaledDotRewriter>([&compiler, &gpu_target_config](
-                                          const HloInstruction* instr) {
-    return !compiler.IsScaledDotSupportedByBackend(instr, gpu_target_config);
-  });
+  pipeline.AddPass<ScaledDotRewriter>(
+      [&gpu_target_config](const HloInstruction* instr) {
+        return !IsScaledDotSupportedByBackend(instr, gpu_target_config);
+      });
   pipeline.AddPass<BatchedGatherScatterNormalizer>();
   if (debug_options.xla_gpu_multi_streamed_windowed_einsum()) {
     pipeline.AddPass<WindowedEinsumHandler>();
@@ -1777,18 +1795,6 @@ bool IsNonCudaPlatform(const GpuTargetConfig& gpu_target_config) {
 
 }  // namespace
 
-bool GpuCompiler::IsScaledDotSupportedByBackend(
-    const HloInstruction* instr,
-    const GpuTargetConfig& gpu_target_config) const {
-  const DebugOptions& debug_options =
-      instr->GetModule()->config().debug_options();
-  const se::GpuComputeCapability& gpu_version =
-      gpu_target_config.device_description.gpu_compute_capability();
-  return debug_options.xla_gpu_experimental_scaled_dot_with_triton() &&
-         IsTritonGemmEnabled(debug_options, gpu_version) &&
-         IsTritonSupportedInstruction(*instr, gpu_version).IsAllowed();
-}
-
 AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
     AlgebraicSimplifierMode mode, const DebugOptions& debug_options,
     bool is_non_cuda_platform) {
@@ -1925,7 +1931,7 @@ absl::Status GpuCompiler::OptimizeHloModule(
   DumpHloModuleIfEnabled(*hlo_module, "after_spmd_partitioner");
 
   ABSL_RETURN_IF_ERROR(RunOptimizationPasses(
-      *this, hlo_module, gpu_topology.gpu_target_config(),
+      hlo_module, gpu_topology.gpu_target_config(),
       layout_insensitive_algsimp_opts,
       /*is_deviceless=*/stream_exec == nullptr, options.early_exit_with_layouts,
       compilation_stats));
@@ -2174,6 +2180,14 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
       pipeline.AddPass<HoistFusedBitcasts>();
       pipeline.AddPass<GemmFusionSwapOperands>();
     }
+
+    if (!debug_options.xla_gpu_experimental_disable_binary_libraries() &&
+        CudnnScaledDotHelper::IsAvailable(
+            gpu_target_config.device_description)) {
+      pipeline.AddPass<CudnnScaledDotRewriter>();
+    }
+    // Decompose the remaining kScaledDot instructions into kDot.
+    pipeline.AddPass<ScaledDotRewriter>();
 
     // Rewrite GEMMs into custom calls.
     AddGemmRewriterPasses(

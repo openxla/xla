@@ -275,18 +275,6 @@ absl::Status NVPTXCompiler::OptimizeHloConvolutionCanonicalization(
   return absl::OkStatus();
 }
 
-bool NVPTXCompiler::IsScaledDotSupportedByBackend(
-    const HloInstruction* instr,
-    const GpuTargetConfig& gpu_target_config) const {
-  if (GpuCompiler::IsScaledDotSupportedByBackend(instr, gpu_target_config)) {
-    return true;
-  }
-  if (const auto* scaled_dot = DynCast<HloScaledDotInstruction>(instr)) {
-    return CudnnScaledDotHelper::IsSupported(scaled_dot);
-  }
-  return false;
-}
-
 absl::Status NVPTXCompiler::OptimizeHloPostLayoutAssignment(
     HloModule* hlo_module, se::StreamExecutor* stream_exec,
     const CompileOptions& options, const GpuTopology& gpu_topology,
