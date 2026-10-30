@@ -189,14 +189,29 @@ struct RoctxFrame {
   uint64_t generation;
 };
 
+// Largest value for the limits below. --xla_gpu_rocm_max_trace_events and the
+// gpu_max_* keys of ProfileOptions are clamped to it.
+//
+// For the two event limits in RocmTraceCollectorOptions it must not exceed
+// INT_MAX: RocmTraceCollectorImpl counts events in std::atomic<int>, which
+// would wrap before reaching a larger limit and then drop every event.
+// max_annotation_strings is clamped to it too, but has no int counter, so the
+// INT_MAX bound does not apply to it.
+inline constexpr int64_t kMaxRocmTraceEvents = 1'000'000'000;
+static_assert(kMaxRocmTraceEvents <= std::numeric_limits<int>::max(),
+              "RocmTraceCollectorImpl counts events in std::atomic<int>");
+
 // Callers set every field. The defaults only keep a forgotten field from being
 // indeterminate.
 struct RocmTraceCollectorOptions {
-  // Maximum number of events to collect from callback API; if -1, no limit.
-  // if 0, the callback API is enabled to build a correlation map, but no
-  // events are collected.
+  // Maximum number of events to collect from the callback API, at most
+  // kMaxRocmTraceEvents. There is no "no limit" value. 0 empties the whole
+  // trace, because activity events are dropped unless they match a recorded
+  // API event.
   uint64_t max_callback_api_events = 0;
-  // Maximum number of events to collect from activity API; if -1, no limit.
+  // Maximum number of events to collect from the activity API, at most
+  // kMaxRocmTraceEvents. Not enforced yet: RocmTraceCollectorImpl only counts
+  // HIP_API-domain activity events, and every activity record is HIP_OPS.
   uint64_t max_activity_api_events = 0;
   // Maximum number of distinct annotation strings the tracer's AnnotationMap
   // retains per session. 0 retains none; it does not mean "unlimited".
