@@ -9696,6 +9696,25 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
                 m::AddAnyOrder(m::Parameter(0), m::Parameter(1)),
                 m::MinimumAnyOrder(m::Parameter(0), m::Parameter(1)),
                 m::MaximumAnyOrder(m::Parameter(0), m::Parameter(1))))) {
+    // A negative window padding that crops more elements than the dimension
+    // has leaves no operand element in the output: every output element lies
+    // in the padding and equals the init value.
+    bool operand_fully_cropped = false;
+    for (int64_t i = 0; i < window.dimensions_size(); ++i) {
+      if (operand->shape().is_unbounded_dynamic_dimension(i)) {
+        continue;
+      }
+      const WindowDimension& window_dim = window.dimensions(i);
+      const int64_t dim_size = operand->shape().dimensions(i);
+      operand_fully_cropped |= -window_dim.padding_low() > dim_size ||
+                               -window_dim.padding_high() > dim_size;
+    }
+    if (operand_fully_cropped) {
+      return ReplaceWithNewInstruction(
+          reduce_window, HloInstruction::CreateBroadcast(reduce_window->shape(),
+                                                         init_value, {}));
+    }
+
     const HloInstruction* nested_root = function->root_instruction();
     DimensionVector broadcast_dims(nested_root->shape().dimensions().size());
     absl::c_iota(broadcast_dims, 0);
@@ -9706,7 +9725,9 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
 
     // Negative window padding crops the operand: apply the negative amounts
     // with a slice and the positive amounts with a pad. The slice goes first
-    // so that later passes can sink it into the elementwise op.
+    // so that later passes can sink it into the elementwise op. The slice is
+    // well-formed because no dimension is cropped beyond its size (see above)
+    // and the output shape is non-negative.
     PaddingConfig padding_config;
     bool has_positive_padding = false;
     bool has_negative_padding = false;

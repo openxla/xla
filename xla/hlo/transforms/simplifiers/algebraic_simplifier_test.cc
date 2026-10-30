@@ -4462,6 +4462,64 @@ ENTRY test {
 }
 
 TEST_F(AlgebraicSimplifierTest,
+       TrivialReduceWindowWithNegativePadExceedingDimension) {
+  // The low crop removes more elements than the dimension has, so the whole
+  // output lies in the (high) padding and equals the init value.
+  constexpr absl::string_view hlo_string = R"(
+HloModule test
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+
+ENTRY test {
+  p = f32[2] parameter(0)
+  constant = f32[] constant(0)
+  ROOT reduce-window = f32[1] reduce-window(p, constant), window={size=1 pad=-3_2}, to_apply=add
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(
+          m::Broadcast(m::ConstantEffectiveScalar(0)).WithShape(F32, {1})));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       TrivialReduceWindowWithNegativeHighPadExceedingDimension) {
+  // Same with the high crop, in a dimension of a multi-dimensional operand.
+  constexpr absl::string_view hlo_string = R"(
+HloModule test
+
+max {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT max = f32[] maximum(p0, p1)
+}
+
+ENTRY test {
+  p = f32[2,4] parameter(0)
+  constant = f32[] constant(-inf)
+  ROOT reduce-window = f32[1,4] reduce-window(p, constant), window={size=1x1 pad=2_-3x0_0}, to_apply=max
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(
+      m->entry_computation()->root_instruction(),
+      GmockMatch(m::Broadcast(m::ConstantEffectiveScalar(
+                                  -std::numeric_limits<float>::infinity()))
+                     .WithShape(F32, {1, 4})));
+}
+
+TEST_F(AlgebraicSimplifierTest,
        TrivialReduceWindowWithNegativePadFeedingPaddedReduceWindow) {
   // The crop must not be folded into the padding of the consumer.
   constexpr absl::string_view hlo_string = R"(
