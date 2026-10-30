@@ -626,6 +626,8 @@ PJRT_Error* PJRT_Gpu_Register_Custom_Call(
       PJRT_STRUCT_SIZE(PJRT_Gpu_Register_Custom_Call_Args, traits)) {
     traits = args->traits;
   }
+  // `handler_record` was appended in extension v4; honor it when the caller's
+  // struct covers it, otherwise default to nullptr (pre-v4 callers omit it).
   XLA_FFI_Handler* record = nullptr;
   if (args->struct_size >=
       PJRT_STRUCT_SIZE(PJRT_Gpu_Register_Custom_Call_Args, handler_record)) {
