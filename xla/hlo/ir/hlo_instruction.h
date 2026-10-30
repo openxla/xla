@@ -2102,6 +2102,14 @@ class HloInstruction {
   }
   void set_raw_backend_config_string(std::string config_str);
 
+  // Returns an id of the current backend config contents. Every change of the
+  // backend config, including in place by MutateBackendConfig, yields a new id,
+  // so equal ids imply equal backend configs. See
+  // BackendConfigWrapper::content_id().
+  uint64_t backend_config_content_id() const {
+    return backend_config_->content_id();
+  }
+
   bool is_default_config() const { return is_default_config_; }
   void set_default_config() { is_default_config_ = true; }
 

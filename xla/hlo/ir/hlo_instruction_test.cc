@@ -553,6 +553,68 @@ TEST_F(HloInstructionTest, DeriveComputeTypeAttribute) {
   EXPECT_FALSE(instr1.has_frontend_attributes());
 }
 
+TEST_F(HloInstructionTest, BackendConfigContentIdChangesWithBackendConfig) {
+  auto set_algorithm = [](HloInstruction& instr,
+                          PrecisionConfig::Algorithm algorithm) {
+    return instr.MutateBackendConfig<PrecisionConfig>(
+        [algorithm](PrecisionConfig* config) {
+          config->set_algorithm(algorithm);
+          return absl::OkStatus();
+        });
+  };
+  HloConstantInstruction instr(ShapeUtil::MakeShape(U32, {3, 2}));
+  PrecisionConfig config;
+  config.set_algorithm(PrecisionConfig::ALG_DOT_F16_F16_F32);
+  ASSERT_OK(instr.set_backend_config(config));
+  const uint64_t initial_id = instr.backend_config_content_id();
+  EXPECT_EQ(instr.backend_config_content_id(), initial_id);
+
+  HloConstantInstruction sharing(ShapeUtil::MakeShape(U32, {3, 2}));
+  sharing.CopyBackendConfigFrom(&instr);
+  EXPECT_EQ(sharing.backend_config_content_id(), initial_id);
+
+  // A shared backend config is copied before it is mutated.
+  ASSERT_OK(set_algorithm(instr, PrecisionConfig::ALG_DOT_BF16_BF16_F32));
+  const uint64_t copied_id = instr.backend_config_content_id();
+  EXPECT_NE(copied_id, initial_id);
+  EXPECT_EQ(sharing.backend_config_content_id(), initial_id);
+
+  // An unshared backend config is mutated in place.
+  ASSERT_OK(set_algorithm(instr, PrecisionConfig::ALG_DOT_F16_F16_F16));
+  const uint64_t in_place_id = instr.backend_config_content_id();
+  EXPECT_NE(in_place_id, copied_id);
+
+  instr.set_raw_backend_config_string("{}");
+  EXPECT_NE(instr.backend_config_content_id(), in_place_id);
+}
+
+TEST_F(HloInstructionTest, BackendConfigContentIdsAreUniqueAcrossModules) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+ENTRY e {
+  p = f32[2] parameter(0)
+  ROOT c = f32[2] custom-call(p), custom_call_target="t", backend_config="a"
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> other_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  const HloInstruction* call = module->entry_computation()->root_instruction();
+  const HloInstruction* other_call =
+      other_module->entry_computation()->root_instruction();
+  // Ids are not drawn per module: memos keyed by them stay correct when
+  // instructions move between modules.
+  EXPECT_NE(call->backend_config_content_id(),
+            other_call->backend_config_content_id());
+
+  // A clone in another module shares the backend config, and with it the id.
+  std::unique_ptr<HloModule> clone = module->Clone();
+  EXPECT_EQ(clone->entry_computation()
+                ->root_instruction()
+                ->backend_config_content_id(),
+            call->backend_config_content_id());
+}
+
 TEST_F(HloInstructionTest, CloneImplScheduledAsyncOp) {
   constexpr absl::string_view kHlo = R"(
 HloModule main, is_scheduled=true
