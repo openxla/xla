@@ -181,6 +181,9 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
       const std::optional<ClusterDim>& cluster_dims, const NativeKernel& kernel,
       const KernelArgsPackedArrayBase& args) override;
 
+  absl::Status SetPreferredClusterDimensions(GraphNodeHandle node_handle,
+                                             const ClusterDim& dimensions);
+
   absl::Status UpdateKernelNode(GraphNodeHandle node_handle,
                                 const ThreadDim& threads,
                                 const BlockDim& blocks,
