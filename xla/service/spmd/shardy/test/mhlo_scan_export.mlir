@@ -811,3 +811,40 @@ func.func private @scan_dim_sharded_indivisible_multi_input_2d(
       -> (tensor<7x7xf32>, tensor<7x7xi32>, tensor<7xf32>, tensor<7xi32>)
   return %0#0, %0#1, %0#2, %0#3 : tensor<7x7xf32>, tensor<7x7xi32>, tensor<7xf32>, tensor<7xi32>
 }
+
+// -----
+
+sdy.mesh @mesh_x = <["x"=2]>
+
+// Falls back to replicating the scan dimension ("x") when a reverse scan is
+// sharded across 2 partitions along an indivisible scan dimension (size 5 on 2
+// shards).
+// CHECK-LABEL: func private @scan_dim_sharded_indivisible_reverse_2_shards_fallback
+// CHECK-SAME: (%arg0: tensor<3x6xf32> {sdy.sharding = #sdy.sharding<@mesh_x, [{"x"}, {}]>},
+// CHECK-SAME:  %arg1: tensor<6xf32> {sdy.sharding = #sdy.sharding<@mesh_x, [{}]>})
+// CHECK-SAME: -> (tensor<3x6xf32> {sdy.sharding = #sdy.sharding<@mesh_x, [{"x"}, {}]>},
+// CHECK-SAME:     tensor<6xf32> {sdy.sharding = #sdy.sharding<@mesh_x, [{}]>})
+func.func private @scan_dim_sharded_indivisible_reverse_2_shards_fallback(
+    %arg0: tensor<5x6xf32> {sdy.sharding = #sdy.sharding<@mesh_x, [{"x"}, {}]>},
+    %arg1: tensor<6xf32> {sdy.sharding = #sdy.sharding<@mesh_x, [{}]>})
+    -> (tensor<5x6xf32> {sdy.sharding = #sdy.sharding<@mesh_x, [{"x"}, {}]>},
+        tensor<6xf32> {sdy.sharding = #sdy.sharding<@mesh_x, [{}]>}) {
+  // CHECK-NEXT: %[[GATHERED:.*]] = "stablehlo.all_gather"(%arg0) <{all_gather_dim = 0 : i64, {{.*}}}> : (tensor<3x6xf32>) -> tensor<6x6xf32>
+  // CHECK-NEXT: %[[SLICED_IN:.*]] = stablehlo.slice %[[GATHERED]] [0:5, 0:6] {{.*}}: (tensor<6x6xf32>) -> tensor<5x6xf32>
+  // CHECK-NEXT: %[[SCAN:.*]]:2 = mhlo.scan(%[[SLICED_IN]]) inits (%arg1) dimension=0
+  // CHECK-SAME:   is_associative = true
+  // CHECK-SAME:   is_reverse = true
+  // CHECK:      } : (tensor<5x6xf32>, tensor<6xf32>) -> (tensor<5x6xf32>, tensor<6xf32>)
+  // CHECK:      %[[SLICED_OUT:.*]] = stablehlo.dynamic_slice {{.*}}, sizes = [3, 6] : (tensor<6x6xf32>, tensor<i32>, tensor<i32>) -> tensor<3x6xf32>
+  // CHECK-NEXT: return %[[SLICED_OUT]], %[[SCAN]]#1 : tensor<3x6xf32>, tensor<6xf32>
+  %0:2 = mhlo.scan (%arg0) inits (%arg1) dimension=0 attributes {
+      is_associative = true,
+      is_reverse = true,
+      sdy.sharding = #sdy.sharding_per_value<[<@mesh_x, [{"x"}, {}]>, <@mesh_x, [{}]>]>
+  } {
+  ^bb0(%input0: tensor<6xf32>, %carry0: tensor<6xf32>):
+    %1 = stablehlo.add %input0, %carry0 : tensor<6xf32>
+    stablehlo.return %1, %1 : tensor<6xf32>, tensor<6xf32>
+  } : (tensor<5x6xf32>, tensor<6xf32>) -> (tensor<5x6xf32>, tensor<6xf32>)
+  return %0#0, %0#1 : tensor<5x6xf32>, tensor<6xf32>
+}
