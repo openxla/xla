@@ -650,7 +650,7 @@ ENTRY main {
                                                 /*num_warps=*/1}));
 
   EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.read_time), 2932, 2);
-  EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.compute_time), 4, 1);
+  EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.compute_time), 14, 1);
   EXPECT_NEAR(absl::ToDoubleSeconds(runtime_data.exec_time), 2932, 2);
 }
 
@@ -1113,6 +1113,30 @@ ENTRY main {
           *fusion_adaptor, BlockLevelParameters{/*output_tile_sizes=*/{{4, 8}},
                                                 /*num_warps=*/4}));
   EXPECT_TRUE(res3.IsInfinite());
+
+  // With a tiled reduction dimension of size 512, output tile [16, 8] gives a
+  // 3D intermediate broadcast/multiply tile of size 16 * 8 * 512 = 65536, which
+  // fits within the full register limit (65536).
+  BlockLevelParameters tiled_reduction_fits;
+  tiled_reduction_fits.output_tile_sizes = {{16, 8}};
+  tiled_reduction_fits.num_warps = 8;
+  tiled_reduction_fits.sequential_tile_sizes = {512};
+  ASSERT_OK_AND_ASSIGN(auto res4,
+                       indexing_cost_model_.EstimateRunTimeForTiledFusion(
+                           *fusion_adaptor, tiled_reduction_fits));
+  EXPECT_FALSE(res4.IsInfinite());
+
+  // Output tile [16, 16] with reduction tile 512 keeps all boundary and iota
+  // tiles at <= 8192 elements (within 0.4 * 65536), but the 3D intermediate
+  // broadcast/multiply tile is 16 * 16 * 512 = 131072 > 65536 and spills.
+  BlockLevelParameters tiled_reduction_spills;
+  tiled_reduction_spills.output_tile_sizes = {{16, 16}};
+  tiled_reduction_spills.num_warps = 8;
+  tiled_reduction_spills.sequential_tile_sizes = {512};
+  ASSERT_OK_AND_ASSIGN(auto res5,
+                       indexing_cost_model_.EstimateRunTimeForTiledFusion(
+                           *fusion_adaptor, tiled_reduction_spills));
+  EXPECT_TRUE(res5.IsInfinite());
 }
 
 TEST_F(
@@ -1281,7 +1305,7 @@ ENTRY main {
                            *fusion_adaptor, std::move(tiling_space)));
 
   int64_t num_warps = GpuPerformanceModelWithIndexingAnalysis::EstimateNumWarps(
-      *fusion_adaptor, tiled_hlo_computation);
+      tiled_hlo_computation);
 
   // Tile size is 9 * 9 * 9 = 729 that corresponds to 2 warps. But we estimate
   // the number of warps for padded tile that has size of 16 * 16 * 16 = 4096
@@ -1333,83 +1357,11 @@ ENTRY main {
                            *fusion_adaptor, std::move(tiling_space)));
 
   int64_t num_warps = GpuPerformanceModelWithIndexingAnalysis::EstimateNumWarps(
-      *fusion_adaptor, tiled_hlo_computation);
+      tiled_hlo_computation);
 
   // The largest tile size is 1 * 4096, for which our implementation recommends
   // using 4 warps.
   EXPECT_EQ(num_warps, 4);
-}
-
-TEST_F(GpuIndexingPerformanceModelTest,
-       EstimateNumWarps_ScalesIntermediateTilesByByteSizeAndIgnoresBroadcast) {
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
-HloModule m
-
-or_region {
-  lhs = pred[] parameter(0)
-  rhs = pred[] parameter(1)
-  ROOT out = pred[] or(lhs, rhs)
-}
-
-fusion_computation {
-  p0 = s32[64,256] parameter(0)
-  bcast = s32[64,32000,256] broadcast(p0), dimensions={0,2}
-  iota = s32[64,32000,256] iota(), iota_dimension=1
-  cmp = pred[64,32000,256] compare(bcast, iota), direction=EQ
-  c0 = pred[] constant(false)
-  ROOT reduce = pred[64,32000] reduce(cmp, c0), dimensions={2},
-    to_apply=or_region
-}
-
-ENTRY main {
-  p0 = s32[64,256] parameter(0)
-  ROOT fusion = pred[64,32000] fusion(p0), kind=kCustom,
-    calls=fusion_computation,
-    backend_config={"fusion_backend_config": {"kind":"__triton"}}
-}
-)"));
-  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
-      module->entry_computation()->root_instruction());
-
-  auto check_warps_for_tile = [&](absl::Span<const int64_t> tile_sizes,
-                                  int64_t expected_num_warps) {
-    ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<experimental::TilingSpace> tiling_space,
-        experimental::TilingSpace::Create(*fusion_adaptor, &mlir_context_));
-    EXPECT_OK(tiling_space->AssignTileSizes(
-        xla::xtile::GetPaddedTileSizes(tile_sizes)));
-    ASSERT_OK_AND_ASSIGN(
-        experimental::TiledHloComputation tiled_hlo_computation,
-        experimental::TiledHloComputation::Tile(*fusion_adaptor,
-                                                std::move(tiling_space)));
-    EXPECT_EQ(GpuPerformanceModelWithIndexingAnalysis::EstimateNumWarps(
-                  *fusion_adaptor, tiled_hlo_computation),
-              expected_num_warps);
-  };
-
-  // For output tile [1, 64] and reduction tile 256, `bcast` is ignored, `iota`
-  // materializes 64 elements along dim 1, and `cmp` has 16384 1-byte `pred`
-  // elements (4096 4-byte words), yielding 4 warps instead of 8.
-  check_warps_for_tile({1, 64, 256}, /*expected_num_warps=*/4);
-
-  // For output tile [1, 16] and reduction tile 256, `cmp` has 4096 1-byte
-  // `pred` elements (1024 4-byte words), yielding 2 warps instead of 4.
-  check_warps_for_tile({1, 16, 256}, /*expected_num_warps=*/2);
-
-  ASSERT_OK_AND_ASSIGN(
-      auto top_k_or_err,
-      indexing_cost_model_
-          .TryFindTopKBestTilingsForFusionAsync(*fusion_adaptor, /*top_k=*/4)
-          .Await());
-  const auto& top_k =
-      std::get<absl::InlinedVector<TiledRunTimeData, 4>>(top_k_or_err);
-  ASSERT_EQ(top_k.size(), 4);
-  EXPECT_THAT(top_k[0].block_level_parameters.output_tile_sizes,
-              ElementsAre(ElementsAre(1, 64)));
-  EXPECT_EQ(top_k[0].block_level_parameters.num_warps, 4);
-  EXPECT_THAT(top_k[3].block_level_parameters.output_tile_sizes,
-              ElementsAre(ElementsAre(1, 16)));
-  EXPECT_EQ(top_k[3].block_level_parameters.num_warps, 2);
 }
 
 class FlopsPerElementTest : public GpuIndexingPerformanceModelTest {
@@ -1776,9 +1728,6 @@ TEST_P(RegisterFitConsistencyTest, PreFilterMatchesExactFitCheck) {
   ASSERT_OK_AND_ASSIGN(experimental::TiledHloComputation symbolic,
                        experimental::TiledHloComputation::Tile(
                            *fusion_adaptor, tiling_space->Clone()));
-  std::vector<const experimental::TiledHloInstruction*>
-      register_resident_instructions =
-          internal::GetRegisterResidentInstructions(*fusion_adaptor, symbolic);
 
   auto tile = [&](absl::Span<const int64_t> tile_sizes)
       -> absl::StatusOr<experimental::TiledHloComputation> {
@@ -1789,8 +1738,7 @@ TEST_P(RegisterFitConsistencyTest, PreFilterMatchesExactFitCheck) {
                                                    std::move(concrete_space));
   };
   auto passes_precheck = [&](absl::Span<const int64_t> tile_sizes) {
-    return internal::DoesTilingFitInRegisters(*tiling_space,
-                                              register_resident_instructions,
+    return internal::DoesTilingFitInRegisters(*fusion_adaptor, symbolic,
                                               tile_sizes, device_info_);
   };
   auto passes_check = [&](absl::Span<const int64_t> tile_sizes) {
@@ -1987,6 +1935,32 @@ ENTRY entry {
   p0 = f32[4096,1024] parameter(0)
   p1 = f32[1024,2048] parameter(1)
   ROOT fusion = f32[2048,2048] fusion(p0, p1), kind=kCustom, calls=fused
+}
+)"},
+                      RegisterFitTestCase{/*name=*/"BroadcastReduce",
+                                          /*hlo=*/R"(
+HloModule m
+add {
+  p0 = s32[] parameter(0)
+  p1 = s32[] parameter(1)
+  ROOT add = s32[] add(p0, p1)
+}
+fused {
+  p0 = s32[32,4096] parameter(0)
+  b0 = s32[4096,32,4096] broadcast(p0), dimensions={1,2}
+  iota0 = s32[4096,4096] iota(), iota_dimension=0
+  iota1 = s32[4096,4096] iota(), iota_dimension=1
+  cmp = pred[4096,4096] compare(iota0, iota1), direction=GE
+  conv = s32[4096,4096] convert(cmp)
+  b1 = s32[4096,32,4096] broadcast(conv), dimensions={0,2}
+  mul = s32[4096,32,4096] multiply(b0, b1)
+  c0 = s32[] constant(0)
+  ROOT reduce = s32[4096,32] reduce(mul, c0), dimensions={2}, to_apply=add
+}
+ENTRY entry {
+  p0 = s32[32,4096] parameter(0)
+  ROOT fusion = s32[4096,32] fusion(p0), kind=kCustom, calls=fused,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
 }
 )"}),
     [](const ::testing::TestParamInfo<RegisterFitTestCase>& info) {

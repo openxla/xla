@@ -45,6 +45,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/comparison_util.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
@@ -57,6 +58,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_original_value_util.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/pass/hlo_pass_options.h"
 #include "xla/hlo/transforms/simplifiers/conv_operand_swapper.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout.h"
@@ -11244,6 +11247,33 @@ bool AlgebraicSimplifierVisitor::ShouldStrengthReduceDotToReduce(
            rhs_has_only_batch_and_contracting;
   }
   return true;
+}
+
+AlgebraicSimplifierOptions AlgebraicSimplifierOptionsFromHloPassOptions(
+    const HloPassOptions& options, AlgebraicSimplifierOptions base) {
+  using FieldDescriptor = tsl::protobuf::FieldDescriptor;
+  const tsl::protobuf::Descriptor* descriptor = base.GetDescriptor();
+  const tsl::protobuf::Reflection* reflection = base.GetReflection();
+  for (int i = 0; i < descriptor->field_count(); ++i) {
+    const FieldDescriptor* field = descriptor->field(i);
+    switch (field->cpp_type()) {
+      case FieldDescriptor::CPPTYPE_BOOL:
+        if (std::optional<bool> value = options.Get<bool>(field->name())) {
+          reflection->SetBool(&base, field, *value);
+        }
+        break;
+      case FieldDescriptor::CPPTYPE_INT64:
+        if (std::optional<int64_t> value =
+                options.Get<int64_t>(field->name())) {
+          reflection->SetInt64(&base, field, *value);
+        }
+        break;
+      default:
+        // Not representable in HloPassOptions.
+        break;
+    }
+  }
+  return base;
 }
 
 }  // namespace xla

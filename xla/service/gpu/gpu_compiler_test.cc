@@ -1761,6 +1761,7 @@ m {
   HloModuleConfig config;
   DebugOptions debug_options = GetDebugOptionsForTest();
   debug_options.add_xla_disable_hlo_passes("algsimp");
+  debug_options.add_xla_disable_hlo_passes("gpu-algebraic-simplifier");
   config.set_debug_options(debug_options);
   ASSERT_OK_AND_ASSIGN(auto ref_module_and_ref_executable,
                        GetOptimizedModuleForExecutable(kHloText, config));
