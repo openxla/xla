@@ -94,8 +94,9 @@ arguments. Cluster shapes, cooperative mode, and PDL must match creation; the
 kernel and dependencies remain fixed. The caller owns the native function and
 must configure its shared-memory opt-in limit before recording. Backends that
 do not support cooperative or preferred-cluster launches return an error for
-those requests. Launch events and other CUDA launch attributes are not exposed
-by this configuration.
+those requests. Preferred clusters require driver support for graph-node
+attributes; support for direct launches alone is insufficient. Launch events and
+other CUDA launch attributes are not exposed by this configuration.
 
 The original C callbacks retain their signatures and offsets. Raw C clients
 must check the RECORD extension version before accessing the appended callbacks.

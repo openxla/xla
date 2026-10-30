@@ -30,11 +30,23 @@ absl::Status CudaCommandBuffer::SetPreferredClusterDimensions(
   value.preferredClusterDim.x = static_cast<uint32_t>(dimensions.x);
   value.preferredClusterDim.y = static_cast<uint32_t>(dimensions.y);
   value.preferredClusterDim.z = static_cast<uint32_t>(dimensions.z);
+  CUgraphNode node = absl::bit_cast<CUgraphNode>(node_handle);
+  CUresult result = cuGraphKernelNodeSetAttribute(
+      node, CU_LAUNCH_ATTRIBUTE_PREFERRED_CLUSTER_DIMENSION, &value);
+  if (result == CUDA_ERROR_INVALID_VALUE) {
+    // Some drivers support preferred clusters for launches but not graph nodes.
+    // Distinguish an unsupported attribute from an invalid launch
+    // configuration.
+    CUlaunchAttributeValue current{};
+    if (cuGraphKernelNodeGetAttribute(
+            node, CU_LAUNCH_ATTRIBUTE_PREFERRED_CLUSTER_DIMENSION, &current) ==
+        CUDA_ERROR_INVALID_VALUE) {
+      return absl::UnimplementedError(
+          "CUDA driver does not support preferred cluster graph attributes");
+    }
+  }
   return cuda::ToStatus(
-      cuGraphKernelNodeSetAttribute(
-          absl::bit_cast<CUgraphNode>(node_handle),
-          CU_LAUNCH_ATTRIBUTE_PREFERRED_CLUSTER_DIMENSION, &value),
-      "Failed to set kernel node preferred cluster dimensions");
+      result, "Failed to set kernel node preferred cluster dimensions");
 }
 
 }  // namespace stream_executor::gpu

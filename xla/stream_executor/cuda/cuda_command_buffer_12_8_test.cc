@@ -19,6 +19,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/base/casts.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -53,24 +55,27 @@ TEST(CudaCommandBuffer128Test,
         << "Preferred cluster dimensions require at least a Blackwell GPU.";
   }
 
-  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec spec,
-                       gpu::GetAddI32TestKernelSpec(platform->id()));
+  KernelLoaderSpec spec = gpu::GetMinimalClusterKernelSpec();
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> kernel,
                        executor->LoadKernel(spec));
-  DeviceAddress<int32_t> a = executor->AllocateArray<int32_t>(4);
+  DeviceAddress<uint8_t> dummy = executor->AllocateArray<uint8_t>(256);
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<CommandBuffer> command_buffer,
       executor->CreateCommandBuffer(CommandBuffer::Mode::kPrimary));
-  NativeKernel native{kernel->platform_specific_handle().kernel, "add",
+  NativeKernel native{kernel->platform_specific_handle().kernel, "cluster",
                       /*pdl=*/false, /*cooperative=*/false,
                       ClusterDim(2, 1, 1)};
-  ASSERT_OK_AND_ASSIGN(
-      const CommandBuffer::Command* command,
-      command_buffer->CreateLaunch(ThreadDim(1, 1, 1), BlockDim(4, 1, 1),
+  absl::StatusOr<const CommandBuffer::Command*> command =
+      command_buffer->CreateLaunch(ThreadDim(128, 1, 1), BlockDim(4, 1, 1),
                                    ClusterDim(1, 1, 1), native,
-                                   *PackKernelArgs(0, a, a, a), {}));
+                                   *PackKernelArgs(0, dummy), {});
+  if (absl::IsUnimplemented(command.status())) {
+    executor->Deallocate(&dummy);
+    GTEST_SKIP() << command.status();
+  }
+  ASSERT_OK(command.status());
   const auto* gpu_command =
-      dynamic_cast<const gpu::GpuCommandBuffer::GpuCommand*>(command);
+      dynamic_cast<const gpu::GpuCommandBuffer::GpuCommand*>(*command);
   ASSERT_NE(gpu_command, nullptr);
   CUlaunchAttributeValue value{};
   ASSERT_EQ(cuGraphKernelNodeGetAttribute(
@@ -81,7 +86,7 @@ TEST(CudaCommandBuffer128Test,
   EXPECT_EQ(value.preferredClusterDim.y, 1);
   EXPECT_EQ(value.preferredClusterDim.z, 1);
   ASSERT_OK(command_buffer->Finalize());
-  executor->Deallocate(&a);
+  executor->Deallocate(&dummy);
 }
 
 }  // namespace
