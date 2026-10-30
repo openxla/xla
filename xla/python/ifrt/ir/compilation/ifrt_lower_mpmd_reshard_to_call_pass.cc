@@ -37,17 +37,17 @@ limitations under the License.
 #include "mlir/IR/Visitors.h"
 #include "mlir/Support/LLVM.h"
 #include "tsl/platform/fingerprint.h"
+#include "xla/python/ifrt/ir/compilation/passes.h"
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
-#include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
 
 namespace xla {
 namespace ifrt {
 
 #define GEN_PASS_DEF_IFRTLOWERMPMDRESHARDTOCALLPASS
-#include "xla/python/ifrt/ir/transforms/passes.h.inc"
+#include "xla/python/ifrt/ir/compilation/passes.h.inc"
 
 namespace {
 

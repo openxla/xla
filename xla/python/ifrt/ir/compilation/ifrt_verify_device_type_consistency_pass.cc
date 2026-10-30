@@ -37,15 +37,15 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/python/ifrt/ir/compilation/passes.h"  // IWYU pragma: keep
 #include "xla/python/ifrt/ir/ifrt_ops.h"
-#include "xla/python/ifrt/ir/transforms/passes.h"  // IWYU pragma: keep
 #include "xla/python/ifrt/ir/transforms/utils.h"
 
 namespace xla {
 namespace ifrt {
 
 #define GEN_PASS_DEF_IFRTVERIFYDEVICETYPECONSISTENCYPASS
-#include "xla/python/ifrt/ir/transforms/passes.h.inc"
+#include "xla/python/ifrt/ir/compilation/passes.h.inc"
 
 namespace {
 
