@@ -5901,11 +5901,9 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     visibility = ["//visibility:public"],
     deps = [
-        "//xla:util",
         "//xla/ffi",
         "//xla/ffi:ffi_interop",
         "//xla/ffi/api:c_api",
-        "//xla/service/gpu:launch_dimensions",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
@@ -5913,15 +5911,33 @@ cc_library(
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/debugging:symbolize",
-        "@com_google_absl//absl/functional:overload",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:platform_port",
+    ],
+)
+
+xla_cc_test(
+    name = "record_ffi_launch_test",
+    srcs = ["record_ffi_launch_test.cc"],
+    deps = [
+        ":record_ffi",
+        "//xla/ffi:ffi_interop",
+        "//xla/ffi/api:c_api",
+        "//xla/stream_executor:command_buffer",
+        "//xla/stream_executor:kernel",
+        "//xla/stream_executor:kernel_args",
+        "//xla/stream_executor:launch_dim",
+        "//xla/stream_executor:mock_command_buffer",
+        "//xla/stream_executor:mock_stream_executor",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 

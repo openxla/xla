@@ -98,6 +98,8 @@ struct NativeKernel {
   void* device_fn = nullptr;
   std::string kernel_name;
   bool pdl = false;
+  bool cooperative = false;
+  std::optional<ClusterDim> preferred_cluster_dims = std::nullopt;
 
   absl::string_view name() const { return kernel_name; }
   bool use_pdl() const { return pdl; }

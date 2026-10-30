@@ -41,7 +41,7 @@ extern "C" {
 //==============================================================================
 #define XLA_FFI_Extension_Record 128
 #define XLA_FFI_Extension_Record_MajorVersion 0
-#define XLA_FFI_Extension_Record_MinorVersion 3
+#define XLA_FFI_Extension_Record_MinorVersion 4
 
 //===----------------------------------------------------------------------===//
 // Command Buffer Recording API (FFI Record)
@@ -77,6 +77,25 @@ typedef struct XLA_FFI_LaunchDims {
   // Cluster dims are optional, 0, 0, 0 is considered as no cluster dims.
   XLA_FFI_Dim3 cluster;
 } XLA_FFI_LaunchDims;
+
+// Launch settings for the configuration-based callbacks added in RECORD 0.4.
+// Initialize struct_size to XLA_FFI_LaunchConfig_STRUCT_SIZE. The caller owns
+// the native function and must configure its dynamic shared-memory limit before
+// recording. Unsupported cooperative or preferred-cluster requests return
+// errors.
+typedef struct XLA_FFI_LaunchConfig {
+  size_t struct_size;
+  XLA_FFI_LaunchDims launch_dims;
+  uint32_t shared_mem_bytes;
+  int32_t uses_pdl;     // 0 or 1; also subject to XLA's PDL policy.
+  int32_t cooperative;  // 0 or 1.
+  // Optional preferred cluster shape. All zeros means absent. Otherwise x/y
+  // must be positive multiples of launch_dims.cluster.x/y and divide the grid;
+  // z must equal launch_dims.cluster.z. launch_dims.cluster is the fallback.
+  XLA_FFI_Dim3 preferred_cluster;
+} XLA_FFI_LaunchConfig;
+
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_LaunchConfig, preferred_cluster);
 
 typedef enum XLA_FFI_KernelArgType {
   XLA_FFI_KernelArgType_DevicePtr = 0,
@@ -195,6 +214,24 @@ typedef struct XLA_FFI_RecordApi {
   XLA_FFI_Error* (*create_empty_command)(
       XLA_FFI_RecordContext* ctx, const XLA_FFI_Command* const* dependencies,
       uint32_t num_dependencies, const XLA_FFI_Command** out_command);
+
+  // Added in RECORD 0.4. Check the extension version before accessing these
+  // callbacks. The preceding callbacks retain their layout and signatures.
+  // Ownership and argument-copying rules are the same as for create_launch.
+  // The configuration is copied before this call returns.
+  XLA_FFI_Error* (*create_launch_with_config)(
+      XLA_FFI_RecordContext* ctx, const char* kernel_name,
+      const void* kernel_data, int64_t kernel_size, XLA_FFI_SourceFormat format,
+      const XLA_FFI_LaunchConfig* config, const XLA_FFI_KernelArgs* args,
+      const XLA_FFI_Command* const* dependencies, uint32_t num_dependencies,
+      const XLA_FFI_Command** out_command);
+
+  // Updates grid/block dimensions, dynamic shared memory, and arguments.
+  // Cluster and preferred-cluster dimensions, cooperative mode, and uses_pdl
+  // must match creation. The kernel and dependencies cannot be changed.
+  XLA_FFI_Error* (*update_launch_with_config)(
+      XLA_FFI_RecordContext* ctx, const XLA_FFI_Command* command,
+      const XLA_FFI_LaunchConfig* config, const XLA_FFI_KernelArgs* args);
 } XLA_FFI_RecordApi;
 
 // A record frame struct that wraps all record related data for the record

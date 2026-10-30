@@ -2162,6 +2162,9 @@ cc_library(
     srcs = [
         "cuda_command_buffer.cc",
     ] + if_cuda_newer_than(
+        "12_8",
+        ["cuda_command_buffer_12_8.cc"],
+    ) + if_cuda_newer_than(
         "12_9",
         ["cuda_command_buffer_12_9.cc"],
     ),
@@ -2176,6 +2179,7 @@ cc_library(
         ":command_buffer_kernels",
         ":cuda_command_buffer_telemetry",
         ":cuda_command_buffer_telemetry_pre_13_4",
+        ":cuda_compute_capability",
         ":cuda_context",
         ":cuda_kernel",
         ":cuda_status",
@@ -2220,7 +2224,9 @@ cc_library(
 
 xla_test(
     name = "cuda_command_buffer_test",
-    srcs = ["cuda_command_buffer_test.cc"],
+    srcs = ["cuda_command_buffer_test.cc"] + if_cuda_newer_than("12_8", [
+        "cuda_command_buffer_12_8_test.cc",
+    ]),
     backends = ["gpu"],
     tags = ["cuda-only"],
     deps = [
@@ -2230,10 +2236,12 @@ xla_test(
         "//xla/service:platform_util",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_description",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:engine_options",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_args",
+        "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",

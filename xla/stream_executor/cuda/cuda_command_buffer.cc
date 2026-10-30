@@ -40,12 +40,12 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "tsl/platform/path.h"
 #include "xla/stream_executor/bit_pattern.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/command_buffer_kernels.h"
 #include "xla/stream_executor/cuda/cuda_command_buffer_telemetry.h"
 #include "xla/stream_executor/cuda/cuda_command_buffer_telemetry_pre_13_4.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_context.h"
 #include "xla/stream_executor/cuda/cuda_graph_annotation_registry.h"
 #include "xla/stream_executor/cuda/cuda_kernel.h"
@@ -53,6 +53,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_stream.h"
 #include "xla/stream_executor/cuda/cuda_user_object.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
 #include "xla/stream_executor/gpu/scoped_command_buffer_annotation.h"
@@ -65,9 +66,11 @@ limitations under the License.
 #include "xla/stream_executor/typed_kernel_factory.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
+#include "tsl/platform/path.h"
 
 namespace stream_executor::gpu {
 namespace {
+constexpr bool kHasCuda12080 = CUDA_VERSION >= 12080;
 constexpr bool kHasCuda12090 = CUDA_VERSION >= 12090;
 
 void HostCallbackTrampoline(void* user_data) {
@@ -928,6 +931,40 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
     const ThreadDim& threads, const BlockDim& blocks,
     const std::optional<ClusterDim>& cluster_dims, const NativeKernel& kernel,
     const KernelArgsPackedArrayBase& args) {
+  if (kernel.preferred_cluster_dims.has_value()) {
+    if (!kHasCuda12080 ||
+        stream_exec_->GetDeviceDescription().driver_version() <
+            SemanticVersion{12, 8, 0}) {
+      return absl::UnimplementedError(
+          "Preferred cluster dimensions require CUDA toolkit and driver >= "
+          "12.8");
+    }
+    if (!stream_exec_->GetDeviceDescription()
+             .cuda_compute_capability()
+             .IsAtLeastBlackwell()) {
+      return absl::UnimplementedError(
+          "Preferred cluster dimensions require compute capability >= 10.0");
+    }
+    if (!cluster_dims.has_value()) {
+      return absl::InvalidArgumentError(
+          "Preferred cluster dimensions require regular cluster dimensions");
+    }
+  }
+  if (kernel.cooperative) {
+    CUdevice device;
+    ABSL_RETURN_IF_ERROR(
+        cuda::ToStatus(cuDeviceGet(&device, stream_exec_->device_ordinal()),
+                       "Failed to get CUDA device for cooperative launch"));
+    int supported;
+    ABSL_RETURN_IF_ERROR(cuda::ToStatus(
+        cuDeviceGetAttribute(&supported, CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH,
+                             device),
+        "Failed to query CUDA cooperative launch support"));
+    if (supported == 0) {
+      return absl::UnimplementedError(
+          "CUDA device does not support cooperative launches");
+    }
+  }
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
 
   XLA_VLOG_DEVICE(2, stream_exec_->device_ordinal())
@@ -993,6 +1030,21 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
         cuGraphKernelNodeSetAttribute(
             node_handle, CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION, &value),
         "Failed to set kernel node cluster dimensions"));
+  }
+
+  if (kernel.cooperative) {
+    CUlaunchAttributeValue value{};
+    value.cooperative = 1;
+    ABSL_RETURN_IF_ERROR(cuda::ToStatus(
+        cuGraphKernelNodeSetAttribute(node_handle,
+                                      CU_LAUNCH_ATTRIBUTE_COOPERATIVE, &value),
+        "Failed to set cooperative kernel node attribute"));
+  }
+  if constexpr (kHasCuda12080) {
+    if (kernel.preferred_cluster_dims.has_value()) {
+      ABSL_RETURN_IF_ERROR(SetPreferredClusterDimensions(
+          FromCudaGraphHandle(node_handle), *kernel.preferred_cluster_dims));
+    }
   }
 
   LogAppend(log_msg,
