@@ -1,0 +1,38 @@
+// RUN: fusion_to_tensorir --hlo-to-tensorir --split-input-file %s | FileCheck %s
+
+
+// Variadic (value, index) argmax-style reduction. The body is not a built-in
+// reduction mode, so it must be lowered to `reduce_ud` with a user-defined
+// region.
+// CHECK-LABEL: @fused_convert_reduce
+// CHECK-SAME:    %[[IN:[[:alnum:]_]+]]: tensor<32x256x400xf32>
+// CHECK:         %[[RED:.*]]:2 = reduce_ud(%[[IN]], %{{.*}}) <dimensions = [2], identity = [0xFF800000 : f32, 0 : si32]>
+// CHECK:           nv_tensor_ir.yield
+// CHECK:         } : tensor<32x256x400xf32>, tensor<32x256x400xsi32> -> tensor<32x256x1xf32>, tensor<32x256x1xsi32>
+// CHECK:         results
+
+redude_body {
+  %lhs_value = f32[] parameter(0)
+  %rhs_value = f32[] parameter(2)
+  %gt = pred[] compare(%lhs_value, %rhs_value), direction=GT
+  %lhs_is_nan = pred[] compare(%lhs_value, %lhs_value), direction=NE
+  %lhs_wins = pred[] or(%gt, %lhs_is_nan)
+  %selected_value = f32[] select(%lhs_wins, %lhs_value, %rhs_value)
+  %eq = pred[] compare(%lhs_value, %rhs_value), direction=EQ
+  %lhs_index = s32[] parameter(1)
+  %rhs_index = s32[] parameter(3)
+  %index_lt = pred[] compare(%lhs_index, %rhs_index), direction=LT
+  %tie_and_lower_index = pred[] and(%eq, %index_lt)
+  %lhs_selected = pred[] or(%lhs_wins, %tie_and_lower_index)
+  %selected_index = s32[] select(%lhs_selected, %lhs_index, %rhs_index)
+  ROOT %result = (f32[], s32[]) tuple(%selected_value, %selected_index)
+}
+
+fused_convert_reduce {
+  %param_0 = f32[32,256,400]{2,1,0} parameter(0)
+  %iota = s32[32,1,102400]{2,1,0} iota(), iota_dimension=2
+  %indices = s32[32,256,400]{2,1,0} bitcast(%iota)
+  %neg_inf = f32[] constant(-inf)
+  %zero = s32[] constant(0)
+  ROOT %reduce = (f32[32,256]{1,0}, s32[32,256]{1,0}) reduce(%param_0, %indices, %neg_inf, %zero), dimensions={2}, to_apply=redude_body
+}

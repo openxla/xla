@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -1033,44 +1034,55 @@ struct ReduceOpConversion
   mlir::LogicalResult matchAndRewrite(
       mlir::stablehlo::ReduceOp op, OpAdaptor adaptor,
       mlir::ConversionPatternRewriter& rewriter) const override {
-    if (adaptor.getInputs().size() != 1 || op->getNumResults() != 1) {
-      // nv_tensor_ir.reduce_ud is variadic and could express a multi-output
-      // reduction, but nothing upstream produces one yet, so the extra
-      // bookkeeping is not carried here.
-      return rewriter.notifyMatchFailure(
-          op, "only single-input, single-result reductions are supported");
-    }
-    auto result_type = mlir::dyn_cast_or_null<mlir::RankedTensorType>(
-        this->getTypeConverter()->convertType(op->getResult(0).getType()));
-    if (!result_type) {
-      return rewriter.notifyMatchFailure(op, "failed to convert result type");
-    }
-    auto input_type = mlir::dyn_cast<mlir::RankedTensorType>(
-        adaptor.getInputs()[0].getType());
-    if (!input_type) {
-      return rewriter.notifyMatchFailure(op, "expected a ranked tensor input");
-    }
-    if (input_type.getElementType() != result_type.getElementType()) {
-      return rewriter.notifyMatchFailure(
-          op, "expected the input and result element types to match");
+    llvm::SmallVector<RankedTensorType> result_types;
+    for (auto result : op->getResults()) {
+      auto result_type = mlir::dyn_cast_or_null<mlir::RankedTensorType>(
+          this->getTypeConverter()->convertType(result.getType()));
+      if (!result_type) {
+        return rewriter.notifyMatchFailure(op, "failed to convert result type");
+      }
+      result_types.push_back(result_type);
     }
 
-    mlir::DenseElementsAttr init_value;
-    if (!mlir::matchPattern(adaptor.getInitValues()[0],
-                            mlir::m_Constant(&init_value)) ||
-        !init_value.isSplat()) {
-      return rewriter.notifyMatchFailure(
-          op, "expected a splat constant reduction init value");
+    if (adaptor.getInputs().size() != result_types.size()) {
+      return rewriter.notifyMatchFailure(op,
+                                         "inputs/result_types count mismatch");
+    }
+
+    llvm::SmallVector<RankedTensorType> input_types;
+    for (auto [idx, input] : llvm::enumerate(adaptor.getInputs())) {
+      auto input_type = mlir::dyn_cast<mlir::RankedTensorType>(input.getType());
+      if (!input_type) {
+        return rewriter.notifyMatchFailure(op,
+                                           "expected a ranked tensor input");
+      }
+      if (input_type.getElementType() != result_types[idx].getElementType()) {
+        return rewriter.notifyMatchFailure(
+            op, "expected the input and result element types to match");
+      }
+      input_types.push_back(input_type);
+    }
+    llvm::SmallVector<mlir::DenseElementsAttr> init_values;
+    for (auto value : adaptor.getInitValues()) {
+      DenseElementsAttr init_value;
+      if (!mlir::matchPattern(value, mlir::m_Constant(&init_value)) ||
+          !init_value.isSplat()) {
+        return rewriter.notifyMatchFailure(
+            op, "expected a splat constant reduction init value");
+      }
+      init_values.push_back(init_value);
     }
 
     llvm::SmallVector<int32_t> dimensions;
     dimensions.reserve(op.getDimensions().size());
     for (int64_t dimension : op.getDimensions()) {
-      // nv_tensor_ir.reduce takes an i32 dense array. Bounding the dimension
-      // by the tensor rank also makes the narrowing below lossless.
-      if (dimension < 0 || dimension >= input_type.getRank()) {
-        return rewriter.notifyMatchFailure(
-            op, "reduction dimension is out of range");
+      for (auto input_type : input_types) {
+        // nv_tensor_ir.reduce takes an i32 dense array. Bounding the dimension
+        // by the tensor rank also makes the narrowing below lossless.
+        if (dimension < 0 || dimension >= input_type.getRank()) {
+          return rewriter.notifyMatchFailure(
+              op, "reduction dimension is out of range");
+        }
       }
       dimensions.push_back(static_cast<int32_t>(dimension));
     }
@@ -1082,25 +1094,60 @@ struct ReduceOpConversion
     // Both nv_tensor_ir.reduce and nv_tensor_ir.reduce_ud preserve the rank
     // and contract the reduced dimensions to 1, while stablehlo.reduce drops
     // them, so a reshape is needed to recover the stablehlo result shape.
-    llvm::SmallVector<int64_t> reduced_shape(input_type.getShape());
-    for (int32_t dimension : dimensions) {
-      reduced_shape[dimension] = 1;
+    llvm::SmallVector<llvm::SmallVector<int64_t>> reduced_shapes;
+    for (auto input_type : input_types) {
+      llvm::SmallVector<int64_t> reduced_shape(input_type.getShape());
+      for (int32_t dimension : dimensions) {
+        reduced_shape[dimension] = 1;
+      }
+      reduced_shapes.emplace_back(reduced_shape);
     }
-    auto reduced_type =
-        mlir::RankedTensorType::get(reduced_shape, input_type.getElementType());
 
-    mlir::Value reduced = BuildReduce(op, adaptor, reduced_type, dimensions,
-                                      init_value, rewriter);
-    if (!reduced) {
+    if (input_types.size() != reduced_shapes.size()) {
+      return rewriter.notifyMatchFailure(
+          op, "input_types/reduced_shapes count mismatch");
+    }
+
+    SmallVector<RankedTensorType> reduced_types;
+    for (auto [idx, input_type] : enumerate(input_types)) {
+      auto reduced_type = mlir::RankedTensorType::get(
+          reduced_shapes[idx], input_type.getElementType());
+      reduced_types.push_back(reduced_type);
+    }
+    mlir::Operation* reducedOp = BuildReduce(op, adaptor, reduced_types,
+                                             dimensions, init_values, rewriter);
+    if (!reducedOp) {
       return rewriter.notifyMatchFailure(
           op, "reduction body has no nv_tensor_ir equivalent");
     }
-    if (reduced_type != result_type) {
-      reduced = mlir::nv_tensor_ir::ReshapeOp::create(
-          rewriter, op.getLoc(), result_type, reduced,
-          /*dynamic_sizes=*/mlir::ValueRange{});
+
+    if (reduced_types.size() != result_types.size()) {
+      return rewriter.notifyMatchFailure(op,
+                                         "reduced/result type count mismatch");
     }
-    rewriter.replaceOp(op, reduced);
+
+    if (reduced_types.size() != reducedOp->getNumResults()) {
+      return rewriter.notifyMatchFailure(
+          op, "reduced_types/resultOp results count mismatch");
+    }
+
+    SmallVector<Value> reducedOpResults(reducedOp->getNumResults());
+    for (size_t idx = 0; idx < result_types.size(); ++idx) {
+      if (reduced_types[idx] != result_types[idx]) {
+        reducedOpResults[idx] = mlir::nv_tensor_ir::ReshapeOp::create(
+            rewriter, op.getLoc(), result_types[idx], reducedOp->getResult(idx),
+            /*dynamic_sizes=*/mlir::ValueRange{});
+      } else {
+        reducedOpResults[idx] = reducedOp->getResult(idx);
+      }
+    }
+
+    if (op.getNumResults() != reducedOp->getNumResults()) {
+      return rewriter.notifyMatchFailure(
+          op, "op/reducedOp results count  mismatch");
+    }
+
+    rewriter.replaceOp(op, reducedOpResults);
     return mlir::success();
   }
 
@@ -1108,20 +1155,23 @@ struct ReduceOpConversion
   // Emits the reduction itself, preferring the built-in nv_tensor_ir.reduce
   // over nv_tensor_ir.reduce_ud because the tiling pipeline understands the
   // built-in modes best. Returns a null Value if neither applies.
-  static mlir::Value BuildReduce(mlir::stablehlo::ReduceOp op,
-                                 OpAdaptor adaptor,
-                                 mlir::RankedTensorType reduced_type,
-                                 llvm::ArrayRef<int32_t> dimensions,
-                                 mlir::DenseElementsAttr init_value,
-                                 mlir::ConversionPatternRewriter& rewriter) {
-    if (std::optional<mlir::nv_tensor_ir::ReductionMode> mode =
-            GetBuiltinReductionMode(op, init_value)) {
-      return mlir::nv_tensor_ir::ReduceOp::create(
-          rewriter, op.getLoc(), reduced_type, adaptor.getInputs()[0],
-          rewriter.getDenseI32ArrayAttr(dimensions), *mode);
+  static mlir::Operation* BuildReduce(
+      mlir::stablehlo::ReduceOp op, OpAdaptor adaptor,
+      llvm::ArrayRef<mlir::RankedTensorType> reduced_types,
+      llvm::ArrayRef<int32_t> dimensions,
+      llvm::ArrayRef<mlir::DenseElementsAttr> init_values,
+      mlir::ConversionPatternRewriter& rewriter) {
+    if (reduced_types.size() == 1) {
+      if (std::optional<mlir::nv_tensor_ir::ReductionMode> mode =
+              GetBuiltinReductionMode(op, *init_values.begin())) {
+        return mlir::nv_tensor_ir::ReduceOp::create(
+            rewriter, op.getLoc(), *reduced_types.begin(),
+            adaptor.getInputs()[0], rewriter.getDenseI32ArrayAttr(dimensions),
+            *mode);
+      }
     }
-    return BuildUserDefinedReduce(op, adaptor, reduced_type, dimensions,
-                                  init_value, rewriter);
+    return BuildUserDefinedReduce(op, adaptor, reduced_types, dimensions,
+                                  init_values, rewriter);
   }
 
   // Returns the built-in reduction mode this reduction can use, if any. The
@@ -1166,26 +1216,39 @@ struct ReduceOpConversion
   // Emits nv_tensor_ir.reduce_ud, whose explicit identity and combiner region
   // can express any reduction body, and translates the stablehlo body into
   // that region. Returns a null Value if the body cannot be translated.
-  static mlir::Value BuildUserDefinedReduce(
+  static mlir::Operation* BuildUserDefinedReduce(
       mlir::stablehlo::ReduceOp op, OpAdaptor adaptor,
-      mlir::RankedTensorType reduced_type, llvm::ArrayRef<int32_t> dimensions,
-      mlir::DenseElementsAttr init_value,
+      ArrayRef<mlir::RankedTensorType> reduced_types,
+      llvm::ArrayRef<int32_t> dimensions,
+      ArrayRef<mlir::DenseElementsAttr> init_values,
       mlir::ConversionPatternRewriter& rewriter) {
     mlir::Location loc = op.getLoc();
-    // The identity keeps the converted (signed or unsigned) element type: the
-    // op verifier compares it against the result element type as is.
-    mlir::TypedAttr identity =
-        GetScalarAttribute(init_value, reduced_type.getElementType());
+    // The identities keep the converted (signed or unsigned) element types: the
+    // op verifier compares them against the result element types as they are.
+    llvm::SmallVector<mlir::Attribute> identities;
+    for (auto [init_value, reduced_type] :
+         llvm::zip(init_values, reduced_types)) {
+      identities.push_back(
+          GetScalarAttribute(init_value, reduced_type.getElementType()));
+    }
     auto reduce_op = mlir::nv_tensor_ir::ReduceUDOp::create(
-        rewriter, loc, mlir::TypeRange{reduced_type}, adaptor.getInputs(),
-        rewriter.getDenseI32ArrayAttr(dimensions),
-        rewriter.getArrayAttr({identity}));
+        rewriter, loc, llvm::to_vector_of<mlir::Type>(reduced_types),
+        adaptor.getInputs(), rewriter.getDenseI32ArrayAttr(dimensions),
+        rewriter.getArrayAttr(identities));
 
     // The region takes (prev_result, curr_operand) over *signless* scalars.
-    mlir::Type scalar_type = ToSignlessType(reduced_type.getElementType());
+    llvm::SmallVector<mlir::Type> scalar_types;
+    for (auto reduce_type : reduced_types) {
+      scalar_types.push_back(ToSignlessType(reduce_type.getElementType()));
+    }
+
     mlir::Block* body = rewriter.createBlock(&reduce_op.getBody());
-    body->addArgument(scalar_type, loc);
-    body->addArgument(scalar_type, loc);
+    // all left hand sides follows all right hand sides
+    for (int i = 0; i < 2; ++i) {
+      for (auto scalar_type : scalar_types) {
+        body->addArgument(scalar_type, loc);
+      }
+    }
 
     mlir::Block& source_body = op.getBody().front();
     if (source_body.getNumArguments() != body->getNumArguments()) {
@@ -1217,14 +1280,14 @@ struct ReduceOpConversion
     for (mlir::Value operand : source_body.getTerminator()->getOperands()) {
       yielded.push_back(mapping.lookupOrNull(operand));
     }
-    if (yielded.size() != 1 || llvm::is_contained(yielded, mlir::Value())) {
+    if (llvm::is_contained(yielded, mlir::Value())) {
       rewriter.eraseOp(reduce_op);
       return nullptr;
     }
     mlir::nv_tensor_ir::YieldOp::create(rewriter, loc, yielded);
 
     rewriter.setInsertionPointAfter(reduce_op);
-    return reduce_op.getResult(0);
+    return reduce_op;
   }
 };
 
