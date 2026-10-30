@@ -2144,10 +2144,15 @@ absl::StatusOr<std::vector<TensorValue>> EmitScan(
         "in Triton emission.");
   }
 
+  auto is_additive_combiner_output = [](const HloInstruction* instr) {
+    if (instr->opcode() == HloOpcode::kConvert) {
+      instr = instr->operand(0);
+    }
+    return instr->opcode() == HloOpcode::kAdd;
+  };
   const HloInstruction* scan_root = hlo_scan.to_apply()->root_instruction();
   if (!HloPredicateIsOp<HloOpcode::kTuple>(scan_root) ||
-      !absl::c_all_of(scan_root->operands(),
-                      HloPredicateIsOp<HloOpcode::kAdd>)) {
+      !absl::c_all_of(scan_root->operands(), is_additive_combiner_output)) {
     // Non-additive scans (e.g. min, max, product) require their respective
     // identity elements for out-of-bounds padding, which is not yet supported.
     return absl::UnimplementedError(
