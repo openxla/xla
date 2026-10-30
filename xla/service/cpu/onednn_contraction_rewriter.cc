@@ -910,6 +910,57 @@ class OneDnnContractionRewriteVisitor : public DfsHloRewriteVisitor {
             addend));
       }
 
+      // Fuse addend as BIAS through a bitcast when the broadcast maps it onto
+      // the trailing dims of the bitcast shape (the N-axis) and their product
+      // equals the matmul's last dimension.
+      //
+      // Example:
+      //   contraction: [50432, 768]
+      //   bitcast:     [256, 197, 12, 64]
+      //   addend:      [12, 64] broadcast dims={2,3} -> reshape to [1, 768]
+      //
+      if (IsOneDnnMatmulInstr(contraction) && optional_contraction_bitcast &&
+          optional_addend_broadcast && !IsOperandFusible(addend, contraction)) {
+        auto contraction_dims = contraction->shape().dimensions();
+        auto bitcast_dims = optional_contraction_bitcast->shape().dimensions();
+        auto addend_dims = addend->shape().dimensions();
+        int contraction_rank = contraction_dims.size();
+        int bitcast_rank = bitcast_dims.size();
+        int addend_rank = addend_dims.size();
+
+        if (contraction_rank >= 2 && bitcast_rank > contraction_rank &&
+            addend_rank <= bitcast_rank) {
+          int64_t matmul_last_dim = contraction_dims[contraction_rank - 1];
+          auto broadcast_dims = optional_addend_broadcast->dimensions();
+
+          int64_t product = 1;
+          bool can_fuse = true;
+          for (int i = 0; i < addend_rank; ++i) {
+            int trailing_idx = bitcast_rank - addend_rank + i;
+            if (broadcast_dims[i] != trailing_idx ||
+                addend_dims[i] != bitcast_dims[trailing_idx]) {
+              can_fuse = false;
+              break;
+            }
+            product *= addend_dims[i];
+          }
+
+          if (can_fuse && product == matmul_last_dim) {
+            std::vector<int64_t> new_dims(contraction_rank, 1);
+            new_dims[contraction_rank - 1] = matmul_last_dim;
+            auto target_shape = ShapeUtil::MakeShapeWithDenseLayout(
+                addend->shape().element_type(), new_dims,
+                contraction->shape().layout().minor_to_major());
+            // Only reinterpret when the reshape is genuinely a bitcast under
+            // the addend's layout; otherwise skip fusion.
+            if (ShapeUtil::ReshapeIsBitcast(addend->shape(), target_shape)) {
+              addend = addend->AddInstruction(
+                  HloInstruction::CreateBitcast(target_shape, addend));
+            }
+          }
+        }
+      }
+
       // For cases where the dot is followed by a reshape, the binary operands
       // shape can be adjusted, making sure the number of elements match, to
       // enable the fusion. For example:
