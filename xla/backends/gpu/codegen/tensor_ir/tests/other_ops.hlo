@@ -43,3 +43,40 @@ test_concat_3 {
   %p0 = f32[8,8] parameter(0)
   %out = f32[8,24] concatenate(%p0, %p0, %p0), dimensions={1}
 }
+
+// -----
+
+// CHECK-LABEL: @test_get_tuple_element
+// CHECK-SAME: %[[ARG0:.*]]: tensor<8x8xf32>, 
+// CHECK-SAME: %[[ARG1:.*]]: tensor<8x8xsi32>,
+// CHECK-SAME: %[[ARG2:.*]]: tensor<8x8xsi32>
+// CHECK:   %[[ADD:.*]] = add %[[ARG2]], %[[ARG1]]
+// CHECK:   results %[[ADD]]
+
+test_get_tuple_element {
+  %p0 = (f32[8,8], s32[8,8]) parameter(0)
+  %p1 = s32[8,8] parameter(1)
+  %extract = s32[8,8] get-tuple-element ((f32[8,8], s32[8,8]) %p0), index=1
+  ROOT %sum = s32[8,8] add(s32[8,8] %p1, s32[8,8] %extract)
+}
+
+// -----
+
+// CHECK-LABEL: @test_intermediate_tuple
+// CHECK-SAME: %[[ARG0:.*]]: tensor<8x16xf32>, %[[ARG1:.*]]: tensor<8x16xf32>
+// CHECK: %[[ADD:.*]] = add %[[ARG0]], %[[ARG1]] : tensor<8x16xf32>
+// CHECK: %[[MUL:.*]] = mul %[[ARG0]], %[[ARG1]] : tensor<8x16xf32>
+// CHECK: %[[NEG:.*]] = neg %[[MUL]] : tensor<8x16xf32>
+// CHECK: results %[[ADD]], %[[NEG]]
+
+test_intermediate_tuple {
+  %p0 = f32[8,16] parameter(0)
+  %p1 = f32[8,16] parameter(1)
+  %add = f32[8,16] add(%p0, %p1)
+  %mul = f32[8,16] multiply(%p0, %p1)
+  %pair = (f32[8,16], f32[8,16]) tuple(%add, %mul)
+  %gte0 = f32[8,16] get-tuple-element(%pair), index=0
+  %gte1 = f32[8,16] get-tuple-element(%pair), index=1
+  %neg = f32[8,16] negate(%gte1)
+  ROOT %out = (f32[8,16], f32[8,16]) tuple(%gte0, %neg)
+}

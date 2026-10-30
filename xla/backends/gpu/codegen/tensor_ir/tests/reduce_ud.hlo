@@ -1,0 +1,42 @@
+// RUN: fusion_to_tensorir --hlo-to-tensorir --split-input-file %s | FileCheck %s
+
+// CHECK-LABEL: @fused_computation
+// CHECK-SAME:    (%[[IN0:[[:alnum:]_]+]]: tensor<16x64xf32>, %[[IN1:[[:alnum:]_]+]]: tensor<16x64xf32>)
+// CHECK-SAME:    -> (tensor<16xf32>, tensor<16xf32>, tensor<1024xf32>)
+// CHECK:         %[[RED:.*]]:2 = reduce_ud(%[[IN0]], %[[IN1]]) <dimensions = [1], identity = [0xFF800000 : f32, 0x7F800000 : f32]>
+// CHECK-SAME:      (%[[LHS0:.*]]: f32, %[[LHS1:.*]]: f32, %[[RHS0:.*]]: f32, %[[RHS1:.*]]: f32) {
+// CHECK:           %[[MAX:.*]] = arith.maximumf %[[RHS0]], %[[LHS0]] : f32
+// CHECK:           %[[MIN:.*]] = arith.minimumf %[[RHS1]], %[[LHS1]] : f32
+// CHECK:           nv_tensor_ir.yield %[[MAX]], %[[MIN]] : f32, f32
+// CHECK:         } : tensor<16x64xf32>, tensor<16x64xf32> -> tensor<16x1xf32>, tensor<16x1xf32>
+// CHECK:         %[[OUT0:.*]] = reshape %[[RED]]#0 : tensor<16x1xf32> -> tensor<16xf32>
+// CHECK:         %[[OUT1:.*]] = reshape %[[RED]]#1 : tensor<16x1xf32> -> tensor<16xf32>
+// CHECK:         %[[OUT2:.*]] = reshape %[[IN0]] : tensor<16x64xf32> -> tensor<1024xf32>
+// CHECK:         results %[[OUT0]], %[[OUT1]], %[[OUT2]] : tensor<16xf32>, tensor<16xf32>, tensor<1024xf32>
+
+reduce_body {
+  %lhs0 = f32[] parameter(0)
+  %lhs1 = f32[] parameter(1)
+  %rhs0 = f32[] parameter(2)
+  %rhs1 = f32[] parameter(3)
+  %max = f32[] maximum(%rhs0, %lhs0)
+  %min = f32[] minimum(%rhs1, %lhs1)
+  ROOT %result = (f32[], f32[]) tuple(%max, %min)
+}
+
+fused_computation {
+  %p0 = f32[16,64] parameter(0)
+  %p1 = f32[16,64] parameter(1)
+  %bitcast = f32[1024] bitcast(f32[16,64] %p0)
+  %c0 = f32[] constant(-inf)
+  %c1 = f32[] constant(inf)
+  %reduce = (f32[16], f32[16]) reduce(%p0, %p1, %c0, %c1), dimensions={1}, to_apply=reduce_body
+  ROOT %result = ((f32[16], f32[16]), f32[1024]) tuple(%reduce, %bitcast)
+}
+
+ENTRY main {
+  %p0 = f32[16,64] parameter(0)
+  %p1 = f32[16,64] parameter(1)
+  ROOT %fusion = ((f32[16], f32[16]), f32[1024]) fusion(%p0, %p1), kind=kCustom, calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__tensorir","tensor_ir_fusion_config":{}}}
+}

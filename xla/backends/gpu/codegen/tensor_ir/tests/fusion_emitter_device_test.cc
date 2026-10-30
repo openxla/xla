@@ -457,6 +457,35 @@ ENTRY main {
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
 }
 
+TEST_F(TensorIrEmitterTest, ReduceUserDefinedMultipleOutputs) {
+  constexpr absl::string_view kHloText = R"(
+reduce_body {
+  lhs0 = f32[] parameter(0)
+  lhs1 = f32[] parameter(1)
+  rhs0 = f32[] parameter(2)
+  rhs1 = f32[] parameter(3)
+  max = f32[] maximum(%rhs0, %lhs0)
+  min = f32[] minimum(%rhs1, %lhs1)
+  ROOT result = (f32[], f32[]) tuple(max, min)
+}
+
+fused_computation {
+  p0 = f32[16,64] parameter(0)
+  p1 = f32[16,64] parameter(1)
+  c0 = f32[] constant(-inf)
+  c1 = f32[] constant(inf)
+  ROOT reduce = (f32[16], f32[16]) reduce(p0, p1, c0, c1), dimensions={1}, to_apply=reduce_body
+}
+
+ENTRY main {
+  p0 = f32[16,64] parameter(0)
+  p1 = f32[16,64] parameter(1)
+  ROOT %fusion = (f32[16], f32[16]) fusion(p0, p1), kind=kCustom, calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__tensorir","tensor_ir_fusion_config":{}}}
+})";
+  EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, ErrorSpec{1e-5, 1e-5}));
+}
+
 TEST_F(TensorIrEmitterTest, DotF32) {
   constexpr absl::string_view kHloText = R"(
 fused_computation {

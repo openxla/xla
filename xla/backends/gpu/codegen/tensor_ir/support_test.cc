@@ -115,7 +115,7 @@ TEST_F(IsSupportedFusionComputationTest, ForbidsTupleShapedNonTupleRoot) {
   CodegenDecision decision = IsSupportedFusionComputation(
       *module->GetComputationWithName("fused_computation"));
   EXPECT_FALSE(decision.IsAllowed());
-  EXPECT_THAT(decision.Explain(), HasSubstr("non-array shape"));
+  EXPECT_THAT(decision.Explain(), HasSubstr("Unsupported instruction: sort"));
 }
 
 }  // namespace
