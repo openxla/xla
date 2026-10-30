@@ -250,11 +250,20 @@ bool IsGuaranteedDivisible(mlir::Value value, int64_t divisor) {
   return false;
 }
 
+// Returns true if every element of a tile of `tile_size` elements taken with a
+// step of `tile_stride` starting at `value` is guaranteed to lie within
+// [0, original_shape).
+//
+// The tile spans `(tile_size - 1) * tile_stride + 1` elements, which is more
+// than `tile_size` whenever the stride is not unit. Ignoring the stride here
+// would classify an out-of-bounds tile as in bounds and skip the mask, leaving
+// an unmasked out-of-bounds access.
 bool IsGuaranteedInBounds(mlir::Value value, int64_t tile_size,
-                          int64_t original_shape) {
+                          int64_t tile_stride, int64_t original_shape) {
+  const int64_t tile_span = (tile_size - 1) * tile_stride + 1;
   if (auto const_op = value.getDefiningOp<arith::ConstantIndexOp>()) {
     return const_op.value() >= 0 &&
-           const_op.value() + tile_size <= original_shape;
+           const_op.value() + tile_span <= original_shape;
   }
   if (auto apply_indexing = value.getDefiningOp<::xla::ApplyIndexingOp>()) {
     IndexingMap indexing_map = apply_indexing.getIndexingMap();
@@ -265,7 +274,7 @@ bool IsGuaranteedInBounds(mlir::Value value, int64_t tile_size,
     // Compute the maximum possible offset for the given indexing map.
     Interval range = indexing_map.GetRangeEvaluator().ComputeExpressionRange(
         indexing_map.GetSymbolicMap().GetResult(0));
-    return range.lower >= 0 && range.upper + tile_size <= original_shape;
+    return range.lower >= 0 && range.upper + tile_span <= original_shape;
   }
   return false;
 }
@@ -324,7 +333,8 @@ std::pair<mlir::Value, mlir::Value> CreateTensorOfPointersAndMask(
     // if the original shape is divisible by the tile size.
     if (original_shape[dim] % sizes[dim] != 0 ||
         !IsGuaranteedDivisible(offsets[dim], sizes[dim]) ||
-        !IsGuaranteedInBounds(offsets[dim], sizes[dim], original_shape[dim])) {
+        !IsGuaranteedInBounds(offsets[dim], sizes[dim], strides[dim],
+                              original_shape[dim])) {
       mlir::Value upper_bound =
           arith::ConstantIntOp::create(builder, i64_type, original_shape[dim]);
       upper_bound =
@@ -358,7 +368,8 @@ std::pair<mlir::Value, mlir::Value> CreateTensorOfPointersAndMask(
 
   mlir::Value reduced_mask;
   for (unsigned dim : reduced_dims) {
-    if (!IsGuaranteedInBounds(offsets[dim], sizes[dim], original_shape[dim])) {
+    if (!IsGuaranteedInBounds(offsets[dim], sizes[dim], strides[dim],
+                              original_shape[dim])) {
       mlir::Value upper_bound =
           arith::ConstantIntOp::create(builder, i64_type, original_shape[dim]);
       mlir::Value mask_right = arith::CmpIOp::create(

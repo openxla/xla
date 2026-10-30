@@ -394,5 +394,70 @@ TEST_F(EmitterHelpersTest,
   EXPECT_TRUE(and_op.getLhs().getDefiningOp<mlir::triton::SplatOp>() ||
               and_op.getRhs().getDefiningOp<mlir::triton::SplatOp>());
 }
+
+// A tile with a non-unit stride spans (size - 1) * stride + 1 elements, not
+// `size` elements.
+//
+// This models the operand tile of a strided slice
+//   p = f32[56] parameter(0)
+//   ROOT s = f32[28] slice(p), slice={[0:56:2]}
+// tiled with an output tile of 8: the operand tile reads 8 elements with a
+// stride of 2 starting at tile_index * 8 * 2. For the last tile index (3) the
+// offset is 48 and the tile reaches index 48 + 7 * 2 = 62, which is past the
+// end of the 56-element dimension.
+//
+// All three conditions that gate mask creation look benign here: 56 % 8 == 0,
+// 48 is a multiple of 8, and 48 + 8 <= 56. The last one is the stride-blind
+// `IsGuaranteedInBounds` check, which compares `offset + size` instead of
+// `offset + (size - 1) * stride + 1` against the dimension size.
+TEST_F(EmitterHelpersTest,
+       CreateTensorOfPointersAndMaskStridedTileOutOfBoundsAtEndIsMasked) {
+  auto [entry_block, mlir_module] = CreateModuleAndEntryBlock(
+      {mlir::LLVM::LLVMPointerType::get(&context_, 1)});
+  mlir::ImplicitLocOpBuilder builder(mlir_module->getLoc(), entry_block,
+                                     entry_block->begin());
+
+  mlir::Value base_ptr = entry_block->getArgument(0);
+  mlir::Value offset =
+      mlir::arith::ConstantIndexOp::create(builder, 48).getResult();
+
+  auto [tile, mask_tile] = xgt::CreateTensorOfPointersAndMask(
+      builder, base_ptr, /*original_shape=*/{56}, /*layout=*/{0},
+      /*offsets=*/{offset}, /*sizes=*/{8}, /*strides=*/{2},
+      /*reduced_dims=*/{}, /*tile_shape=*/{8});
+
+  ASSERT_TRUE(tile);
+  ASSERT_TRUE(mask_tile)
+      << "the tile reads up to index 48 + 7 * 2 = 62, which is out of bounds "
+         "for a dimension of size 56, so a bounds mask is required";
+  const auto mask_tile_type =
+      mlir::cast<mlir::RankedTensorType>(mask_tile.getType());
+  EXPECT_THAT(mask_tile_type.getShape(), ElementsAre(8));
+  EXPECT_TRUE(mask_tile_type.getElementType().isInteger(1));
+}
+
+// The same strided tile against a dimension that is large enough to hold it:
+// 48 + 7 * 2 = 62 < 64. No mask is needed and none must be emitted, so that
+// teaching `IsGuaranteedInBounds` about strides does not degenerate into
+// masking every strided tile.
+TEST_F(EmitterHelpersTest,
+       CreateTensorOfPointersAndMaskStridedTileInBoundsHasNoMask) {
+  auto [entry_block, mlir_module] = CreateModuleAndEntryBlock(
+      {mlir::LLVM::LLVMPointerType::get(&context_, 1)});
+  mlir::ImplicitLocOpBuilder builder(mlir_module->getLoc(), entry_block,
+                                     entry_block->begin());
+
+  mlir::Value base_ptr = entry_block->getArgument(0);
+  mlir::Value offset =
+      mlir::arith::ConstantIndexOp::create(builder, 48).getResult();
+
+  auto [tile, mask_tile] = xgt::CreateTensorOfPointersAndMask(
+      builder, base_ptr, /*original_shape=*/{64}, /*layout=*/{0},
+      /*offsets=*/{offset}, /*sizes=*/{8}, /*strides=*/{2},
+      /*reduced_dims=*/{}, /*tile_shape=*/{8});
+
+  ASSERT_TRUE(tile);
+  EXPECT_FALSE(mask_tile);
+}
 }  // namespace
 }  // namespace xla::gpu
