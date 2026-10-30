@@ -65,7 +65,13 @@ class TestBFloat16Support : public FloatSupport {
   }
 
   bool SupportsLowPrecisionOutput(const HloInstruction& hlo) const override {
+    ++low_precision_output_query_counts_[hlo.name()];
     return true;
+  }
+
+  int64_t LowPrecisionOutputQueryCount(absl::string_view name) const {
+    auto it = low_precision_output_query_counts_.find(name);
+    return it == low_precision_output_query_counts_.end() ? 0 : it->second;
   }
 
   bool SupportsMixedPrecisions(const HloInstruction& hlo) const override {
@@ -100,6 +106,8 @@ class TestBFloat16Support : public FloatSupport {
  private:
   absl::flat_hash_set<HloOpcode> non_mixed_precision_opcodes_;
   absl::flat_hash_set<std::string> non_mixed_precision_names_;
+  mutable absl::flat_hash_map<std::string, int64_t>
+      low_precision_output_query_counts_;
 };
 
 // Records the forward pass candidate decision of every instruction by name.
@@ -4558,6 +4566,484 @@ ENTRY main {
         *variadic_red, i))
         << "operand " << i;
   }
+}
+
+// One caller wants BF16 and the other needs F32: the shared callee root and
+// both call sites must stay F32 regardless of caller order, while internal
+// ops inside the callee (add -> dot) can still use BF16.
+TEST_F(BFloat16PropagationTest, CallMultipleCallersOrderIndependent) {
+  constexpr absl::string_view kHloOrderA = R"hlo(
+HloModule CallMultipleCallersOrderA
+
+callee {
+  lhs = f32[2,2] parameter(0)
+  rhs = f32[2,2] parameter(1)
+  add = f32[2,2] add(lhs, rhs)
+  ROOT dot = f32[2,2] dot(add, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry {
+  p0 = f32[2,2] parameter(0)
+  p1 = f32[2,2] parameter(1)
+  p2 = f32[2,2] parameter(2)
+  p3 = f32[2,2] parameter(3)
+  call_bf16 = f32[2,2] call(p0, p1), to_apply=callee
+  converted = bf16[2,2] convert(call_bf16)
+  call_f32 = f32[2,2] call(p2, p3), to_apply=callee
+  add_f32 = f32[2,2] add(call_f32, p3)
+  ROOT root = (bf16[2,2], f32[2,2]) tuple(converted, add_f32)
+}
+)hlo";
+
+  constexpr absl::string_view kHloOrderB = R"hlo(
+HloModule CallMultipleCallersOrderB
+
+callee {
+  lhs = f32[2,2] parameter(0)
+  rhs = f32[2,2] parameter(1)
+  add = f32[2,2] add(lhs, rhs)
+  ROOT dot = f32[2,2] dot(add, rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry {
+  p0 = f32[2,2] parameter(0)
+  p1 = f32[2,2] parameter(1)
+  p2 = f32[2,2] parameter(2)
+  p3 = f32[2,2] parameter(3)
+  call_f32 = f32[2,2] call(p2, p3), to_apply=callee
+  add_f32 = f32[2,2] add(call_f32, p3)
+  call_bf16 = f32[2,2] call(p0, p1), to_apply=callee
+  converted = bf16[2,2] convert(call_bf16)
+  ROOT root = (bf16[2,2], f32[2,2]) tuple(converted, add_f32)
+}
+)hlo";
+
+  for (absl::string_view hlo_text : {kHloOrderA, kHloOrderB}) {
+    TF_ASSERT_OK_AND_ASSIGN(auto module,
+                            ParseAndReturnVerifiedModule(hlo_text));
+    SCOPED_TRACE(module->name());
+    TestBFloat16Support bfloat16_support;
+    EXPECT_TRUE(PropagatePrecision(module.get(), &bfloat16_support));
+    EXPECT_EQ(bfloat16_support.LowPrecisionOutputQueryCount("add"), 1);
+
+    HloComputation* callee = module->GetComputationWithName("callee");
+    ASSERT_NE(callee, nullptr);
+    EXPECT_EQ(callee->root_instruction()->shape().element_type(), F32);
+
+    HloInstruction* add = FindInstruction(module.get(), "add");
+    ASSERT_NE(add, nullptr);
+    EXPECT_EQ(add->shape().element_type(), BF16);
+
+    HloInstruction* call_f32 = FindInstruction(module.get(), "call_f32");
+    HloInstruction* call_bf16 = FindInstruction(module.get(), "call_bf16");
+    ASSERT_NE(call_f32, nullptr);
+    ASSERT_NE(call_bf16, nullptr);
+    EXPECT_EQ(call_f32->shape().element_type(), F32);
+    EXPECT_EQ(call_bf16->shape().element_type(), F32);
+    EXPECT_TRUE(OutputsBF16(call_bf16));
+    EXPECT_FALSE(OutputsBF16(call_f32));
+
+    EXPECT_OK(HloVerifier(/*layout_sensitive=*/false,
+                          /*allow_mixed_precision=*/true)
+                  .Run(module.get())
+                  .status());
+  }
+}
+
+// Both callers consume BF16, so BF16 propagates through the shared callee's
+// root (smax), parameter (sp), and caller operands (op0, op1), visiting the
+// callee once.
+TEST_F(BFloat16PropagationTest, SharedCallAllCallersConsumeBF16) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule SharedCallAllCallersConsumeBF16
+
+shared_callee {
+  sp = f32[4,4] parameter(0)
+  ROOT smax = f32[4,4] maximum(sp, sp)
+}
+
+ENTRY main {
+  p0 = f32[4,4] parameter(0)
+  p1 = f32[4,4] parameter(1)
+  op0 = f32[4,4] maximum(p0, p0)
+  call0 = f32[4,4] call(op0), to_apply=shared_callee
+  dot0 = f32[4,4] dot(call0, call0), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  op1 = f32[4,4] maximum(p1, p1)
+  call1 = f32[4,4] call(op1), to_apply=shared_callee
+  dot1 = f32[4,4] dot(call1, call1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT out = (f32[4,4], f32[4,4]) tuple(dot0, dot1)
+}
+)hlo";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  TestBFloat16Support bfloat16_support;
+  EXPECT_TRUE(PropagatePrecision(module.get(), &bfloat16_support));
+  EXPECT_EQ(bfloat16_support.LowPrecisionOutputQueryCount("sp"), 1);
+
+  for (absl::string_view name :
+       {"call0", "call1", "op0", "op1", "sp", "smax"}) {
+    HloInstruction* inst = FindInstruction(module.get(), name);
+    ASSERT_NE(inst, nullptr) << name;
+    EXPECT_EQ(inst->shape().element_type(), BF16) << name;
+    EXPECT_TRUE(OutputsBF16(inst)) << name;
+  }
+
+  EXPECT_OK(HloVerifier(/*layout_sensitive=*/false,
+                        /*allow_mixed_precision=*/true)
+                .Run(module.get())
+                .status());
+}
+
+// Mixed callers where the BF16 caller (call_bf16) is visited first in the
+// backward pass: we wait for call_f32 before entering shared_callee, so
+// neither op_bf16 nor the fusion's internal fmax is lowered to BF16.
+TEST_F(BFloat16PropagationTest, SharedCallMixedCallersBF16VisitedFirst) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule SharedCallMixedCallersBF16VisitedFirst
+
+fused_comp {
+  fp0 = f32[4,4] parameter(0)
+  fadd = f32[4,4] add(fp0, fp0)
+  fmax = f32[4,4] maximum(fadd, fadd)
+  fdot = f32[4,4] dot(fmax, fmax), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT fout = (f32[4,4], f32[4,4]) tuple(fadd, fdot)
+}
+
+shared_callee {
+  sp = f32[4,4] parameter(0)
+  ROOT fus = (f32[4,4], f32[4,4]) fusion(sp), kind=kLoop, calls=fused_comp
+}
+
+ENTRY main {
+  p0 = f32[4,4] parameter(0)
+  p1 = f32[4,4] parameter(1)
+  op_f32 = f32[4,4] maximum(p0, p0)
+  call_f32 = (f32[4,4], f32[4,4]) call(op_f32), to_apply=shared_callee
+  f32_gte0 = f32[4,4] get-tuple-element(call_f32), index=0
+  f32_gte1 = f32[4,4] get-tuple-element(call_f32), index=1
+  add_f32 = f32[4,4] add(f32_gte0, f32_gte0)
+  op_bf16 = f32[4,4] maximum(p1, p1)
+  call_bf16 = (f32[4,4], f32[4,4]) call(op_bf16), to_apply=shared_callee
+  bf16_gte0 = f32[4,4] get-tuple-element(call_bf16), index=0
+  bf16_gte1 = f32[4,4] get-tuple-element(call_bf16), index=1
+  dot_bf16 = f32[4,4] dot(bf16_gte0, bf16_gte0), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  q = f32[4,4] maximum(p0, p0)
+  dot_q = f32[4,4] dot(q, q), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT out = (f32[4,4], f32[4,4], f32[4,4], f32[4,4], f32[4,4]) tuple(add_f32, f32_gte1, dot_bf16, bf16_gte1, dot_q)
+}
+)hlo";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  TestBFloat16Support bfloat16_support;
+  EXPECT_TRUE(PropagatePrecision(module.get(), &bfloat16_support));
+  EXPECT_EQ(bfloat16_support.LowPrecisionOutputQueryCount("sp"), 1);
+
+  for (absl::string_view name : {"op_f32", "op_bf16", "sp", "fp0", "fadd",
+                                 "fmax", "fdot", "f32_gte0", "bf16_gte0"}) {
+    HloInstruction* inst = FindInstruction(module.get(), name);
+    ASSERT_NE(inst, nullptr) << name;
+    EXPECT_EQ(inst->shape().element_type(), F32) << name;
+    EXPECT_FALSE(OutputsBF16(inst)) << name;
+  }
+  for (absl::string_view name : {"call_f32", "call_bf16", "fus", "fout"}) {
+    HloInstruction* inst = FindInstruction(module.get(), name);
+    ASSERT_NE(inst, nullptr) << name;
+    EXPECT_EQ(inst->shape().tuple_shapes(0).element_type(), F32) << name;
+    EXPECT_EQ(inst->shape().tuple_shapes(1).element_type(), F32) << name;
+  }
+  HloInstruction* q = FindInstruction(module.get(), "q");
+  ASSERT_NE(q, nullptr);
+  EXPECT_TRUE(OutputsBF16(q));
+
+  EXPECT_OK(HloVerifier(/*layout_sensitive=*/false,
+                        /*allow_mixed_precision=*/true)
+                .Run(module.get())
+                .status());
+}
+
+// Same as SharedCallMixedCallersBF16VisitedFirst, but with call_f32 visited
+// first in the backward pass.
+TEST_F(BFloat16PropagationTest, SharedCallMixedCallersF32VisitedFirst) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule SharedCallMixedCallersF32VisitedFirst
+
+fused_comp {
+  fp0 = f32[4,4] parameter(0)
+  fadd = f32[4,4] add(fp0, fp0)
+  fmax = f32[4,4] maximum(fadd, fadd)
+  fdot = f32[4,4] dot(fmax, fmax), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT fout = (f32[4,4], f32[4,4]) tuple(fadd, fdot)
+}
+
+shared_callee {
+  sp = f32[4,4] parameter(0)
+  ROOT fus = (f32[4,4], f32[4,4]) fusion(sp), kind=kLoop, calls=fused_comp
+}
+
+ENTRY main {
+  p0 = f32[4,4] parameter(0)
+  p1 = f32[4,4] parameter(1)
+  op_bf16 = f32[4,4] maximum(p1, p1)
+  call_bf16 = (f32[4,4], f32[4,4]) call(op_bf16), to_apply=shared_callee
+  bf16_gte0 = f32[4,4] get-tuple-element(call_bf16), index=0
+  bf16_gte1 = f32[4,4] get-tuple-element(call_bf16), index=1
+  dot_bf16 = f32[4,4] dot(bf16_gte0, bf16_gte0), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  op_f32 = f32[4,4] maximum(p0, p0)
+  call_f32 = (f32[4,4], f32[4,4]) call(op_f32), to_apply=shared_callee
+  f32_gte0 = f32[4,4] get-tuple-element(call_f32), index=0
+  f32_gte1 = f32[4,4] get-tuple-element(call_f32), index=1
+  add_f32 = f32[4,4] add(f32_gte0, f32_gte0)
+  q = f32[4,4] maximum(p0, p0)
+  dot_q = f32[4,4] dot(q, q), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT out = (f32[4,4], f32[4,4], f32[4,4], f32[4,4], f32[4,4]) tuple(add_f32, f32_gte1, dot_bf16, bf16_gte1, dot_q)
+}
+)hlo";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  TestBFloat16Support bfloat16_support;
+  EXPECT_TRUE(PropagatePrecision(module.get(), &bfloat16_support));
+  EXPECT_EQ(bfloat16_support.LowPrecisionOutputQueryCount("sp"), 1);
+
+  for (absl::string_view name : {"op_f32", "op_bf16", "sp", "fp0", "fadd",
+                                 "fmax", "fdot", "f32_gte0", "bf16_gte0"}) {
+    HloInstruction* inst = FindInstruction(module.get(), name);
+    ASSERT_NE(inst, nullptr) << name;
+    EXPECT_EQ(inst->shape().element_type(), F32) << name;
+    EXPECT_FALSE(OutputsBF16(inst)) << name;
+  }
+  for (absl::string_view name : {"call_f32", "call_bf16", "fus", "fout"}) {
+    HloInstruction* inst = FindInstruction(module.get(), name);
+    ASSERT_NE(inst, nullptr) << name;
+    EXPECT_EQ(inst->shape().tuple_shapes(0).element_type(), F32) << name;
+    EXPECT_EQ(inst->shape().tuple_shapes(1).element_type(), F32) << name;
+  }
+  HloInstruction* q = FindInstruction(module.get(), "q");
+  ASSERT_NE(q, nullptr);
+  EXPECT_TRUE(OutputsBF16(q));
+
+  EXPECT_OK(HloVerifier(/*layout_sensitive=*/false,
+                        /*allow_mixed_precision=*/true)
+                .Run(module.get())
+                .status());
+}
+
+// A caller-side fusion (fus_1) feeds one call to shared_callee, whose
+// parameter needs F32. Regardless of call order, fus_1's internal fmax must
+// stay F32 once fus_1's output is resolved back to F32.
+TEST_F(BFloat16PropagationTest, SharedCallCallerSideFusionOrderIndependent) {
+  constexpr absl::string_view kHloOrderA = R"hlo(
+HloModule SharedCallCallerSideFusionOrderA
+
+fused_comp {
+  fp0 = f32[4,4] parameter(0)
+  fadd = f32[4,4] add(fp0, fp0)
+  fmax = f32[4,4] maximum(fadd, fadd)
+  fdot = f32[4,4] dot(fmax, fmax), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT fout = (f32[4,4], f32[4,4]) tuple(fadd, fdot)
+}
+
+shared_callee {
+  sp = f32[4,4] parameter(0)
+  ROOT sadd = f32[4,4] add(sp, sp)
+}
+
+ENTRY main {
+  p0 = f32[4,4] parameter(0)
+  p1 = f32[4,4] parameter(1)
+  call_0 = f32[4,4] call(p0), to_apply=shared_callee
+  fus_1 = (f32[4,4], f32[4,4]) fusion(p1), kind=kLoop, calls=fused_comp
+  gte0 = f32[4,4] get-tuple-element(fus_1), index=0
+  gte1 = f32[4,4] get-tuple-element(fus_1), index=1
+  call_1 = f32[4,4] call(gte0), to_apply=shared_callee
+  ROOT out = (f32[4,4], f32[4,4], f32[4,4]) tuple(call_0, call_1, gte1)
+}
+)hlo";
+
+  constexpr absl::string_view kHloOrderB = R"hlo(
+HloModule SharedCallCallerSideFusionOrderB
+
+fused_comp {
+  fp0 = f32[4,4] parameter(0)
+  fadd = f32[4,4] add(fp0, fp0)
+  fmax = f32[4,4] maximum(fadd, fadd)
+  fdot = f32[4,4] dot(fmax, fmax), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT fout = (f32[4,4], f32[4,4]) tuple(fadd, fdot)
+}
+
+shared_callee {
+  sp = f32[4,4] parameter(0)
+  ROOT sadd = f32[4,4] add(sp, sp)
+}
+
+ENTRY main {
+  p0 = f32[4,4] parameter(0)
+  p1 = f32[4,4] parameter(1)
+  fus_1 = (f32[4,4], f32[4,4]) fusion(p1), kind=kLoop, calls=fused_comp
+  gte0 = f32[4,4] get-tuple-element(fus_1), index=0
+  gte1 = f32[4,4] get-tuple-element(fus_1), index=1
+  call_1 = f32[4,4] call(gte0), to_apply=shared_callee
+  call_0 = f32[4,4] call(p0), to_apply=shared_callee
+  ROOT out = (f32[4,4], f32[4,4], f32[4,4]) tuple(call_1, call_0, gte1)
+}
+)hlo";
+
+  for (absl::string_view hlo : {kHloOrderA, kHloOrderB}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(hlo));
+    SCOPED_TRACE(module->name());
+    TestBFloat16Support bfloat16_support;
+    PropagatePrecision(module.get(), &bfloat16_support);
+
+    for (absl::string_view name :
+         {"sp", "sadd", "fp0", "fadd", "fmax", "fdot", "gte0", "gte1"}) {
+      HloInstruction* inst = FindInstruction(module.get(), name);
+      ASSERT_NE(inst, nullptr) << name;
+      EXPECT_EQ(inst->shape().element_type(), F32) << name;
+      EXPECT_FALSE(OutputsBF16(inst)) << name;
+    }
+    EXPECT_OK(HloVerifier(/*layout_sensitive=*/false,
+                          /*allow_mixed_precision=*/true)
+                  .Run(module.get())
+                  .status());
+  }
+}
+
+// Chained calls to the same callee (call_0 feeds call_1): call_1's output
+// feeds dot_1, but call_0's output feeds sp -> fadd (which needs F32), so
+// shared_callee's output and internal fmax must stay F32.
+TEST_F(BFloat16PropagationTest, SharedCallChainedCallersInternalFusion) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule SharedCallChainedCallersInternalFusion
+
+fused_comp {
+  fp0 = f32[4,4] parameter(0)
+  fadd = f32[4,4] add(fp0, fp0)
+  fmax = f32[4,4] maximum(fadd, fadd)
+  fdot = f32[4,4] dot(fmax, fmax), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT fout = (f32[4,4], f32[4,4]) tuple(fadd, fdot)
+}
+
+shared_callee {
+  sp = f32[4,4] parameter(0)
+  ROOT fus = (f32[4,4], f32[4,4]) fusion(sp), kind=kLoop, calls=fused_comp
+}
+
+ENTRY main {
+  p0 = f32[4,4] parameter(0)
+  call_0 = (f32[4,4], f32[4,4]) call(p0), to_apply=shared_callee
+  gte0_0 = f32[4,4] get-tuple-element(call_0), index=0
+  gte0_1 = f32[4,4] get-tuple-element(call_0), index=1
+  call_1 = (f32[4,4], f32[4,4]) call(gte0_0), to_apply=shared_callee
+  gte1_0 = f32[4,4] get-tuple-element(call_1), index=0
+  gte1_1 = f32[4,4] get-tuple-element(call_1), index=1
+  dot_1 = f32[4,4] dot(gte1_0, gte1_0), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  ROOT out = (f32[4,4], f32[4,4], f32[4,4]) tuple(dot_1, gte0_1, gte1_1)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  TestBFloat16Support bfloat16_support;
+  PropagatePrecision(module.get(), &bfloat16_support);
+
+  for (absl::string_view name :
+       {"sp", "fp0", "fadd", "fmax", "fdot", "gte0_0", "gte1_0"}) {
+    HloInstruction* inst = FindInstruction(module.get(), name);
+    ASSERT_NE(inst, nullptr) << name;
+    EXPECT_EQ(inst->shape().element_type(), F32) << name;
+    EXPECT_FALSE(OutputsBF16(inst)) << name;
+  }
+  EXPECT_OK(HloVerifier(/*layout_sensitive=*/false,
+                        /*allow_mixed_precision=*/true)
+                .Run(module.get())
+                .status());
+}
+
+// An unused (dead) kCall to shared_callee must not block BF16 propagation
+// through the live call0, and DCE cleans it up at the end of the pass.
+TEST_F(BFloat16PropagationTest, SharedCallWithDeadCallerPropagatesBF16) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule SharedCallWithDeadCallerPropagatesBF16
+
+shared_callee {
+  sp = f32[4,4] parameter(0)
+  ROOT smax = f32[4,4] maximum(sp, sp)
+}
+
+ENTRY main {
+  p0 = f32[4,4] parameter(0)
+  op0 = f32[4,4] maximum(p0, p0)
+  call0 = f32[4,4] call(op0), to_apply=shared_callee
+  ROOT dot0 = f32[4,4] dot(call0, call0), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloComputation* entry = module->entry_computation();
+  HloComputation* shared_callee =
+      module->GetComputationWithName("shared_callee");
+  HloInstruction* op0 = FindInstruction(module.get(), "op0");
+  ASSERT_NE(shared_callee, nullptr);
+  ASSERT_NE(op0, nullptr);
+  entry->AddInstruction(
+      HloInstruction::CreateCall(op0->shape(), {op0}, shared_callee));
+
+  TestBFloat16Support bfloat16_support;
+  EXPECT_TRUE(PropagatePrecision(module.get(), &bfloat16_support));
+
+  for (absl::string_view name : {"call0", "op0", "sp", "smax"}) {
+    HloInstruction* inst = FindInstruction(module.get(), name);
+    ASSERT_NE(inst, nullptr) << name;
+    EXPECT_EQ(inst->shape().element_type(), BF16) << name;
+    EXPECT_TRUE(OutputsBF16(inst)) << name;
+  }
+  EXPECT_OK(HloVerifier(/*layout_sensitive=*/false,
+                        /*allow_mixed_precision=*/true)
+                .Run(module.get())
+                .status());
+}
+
+// Production FloatSupport(BF16) returns false from SupportsLowPrecisionOutput
+// on kParameter, but BF16 should still propagate through a kCall parameter.
+TEST_F(BFloat16PropagationTest, CallParameterBF16UnderProductionFloatSupport) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule CallParameterBF16UnderProductionFloatSupport
+
+producer {
+  ROOT alloc = f32[4,4] custom-call(), custom_call_target="AllocateBuffer"
+}
+
+consumer {
+  p = f32[4,4] parameter(0)
+  ROOT tup = (f32[4,4]) tuple(p)
+}
+
+ENTRY main {
+  prod = f32[4,4] call(), to_apply=producer
+  cons = (f32[4,4]) call(prod), to_apply=consumer
+  gte = f32[4,4] get-tuple-element(cons), index=0
+  ROOT conv = bf16[4,4] convert(gte)
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  FloatSupport production_bf16_support(BF16);
+  BFloat16Propagation propagation(&production_bf16_support, &alias_info_);
+  ASSERT_OK_AND_ASSIGN(bool changed, propagation.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  for (absl::string_view name : {"alloc", "prod", "p", "gte"}) {
+    HloInstruction* inst = FindInstruction(module.get(), name);
+    ASSERT_NE(inst, nullptr) << name;
+    EXPECT_EQ(inst->shape().element_type(), BF16) << name;
+    EXPECT_TRUE(OutputsBF16(inst)) << name;
+  }
+  EXPECT_OK(HloVerifier(/*layout_sensitive=*/false,
+                        /*allow_mixed_precision=*/true)
+                .Run(module.get())
+                .status());
 }
 
 }  // namespace xla
