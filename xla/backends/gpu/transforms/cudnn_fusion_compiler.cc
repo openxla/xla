@@ -1415,10 +1415,9 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
         // dims/strides are updated in place below, which would corrupt the
         // view seen by other consumers (e.g. a second bitcast or an
         // elementwise op reading the parameter in its original layout).
-        if (absl::c_any_of(hlo->operand(0)->users(),
-                           [hlo](const HloInstruction* user) {
-                             return user != hlo;
-                           })) {
+        if (absl::c_any_of(
+                hlo->operand(0)->users(),
+                [hlo](const HloInstruction* user) { return user != hlo; })) {
           return absl::UnimplementedError(absl::StrCat(
               "Parameter with non-default layout has multiple users, not "
               "supported: ",
