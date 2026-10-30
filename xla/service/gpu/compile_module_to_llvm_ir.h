@@ -63,12 +63,18 @@ struct CompileModuleResults {
 absl::Status LoadCache(IrEmitterContext& ir_emitter_context,
                        absl::string_view cache_file_path);
 
+// Assign buffers after all scheduling and post-scheduling HLO transformations.
+absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
+    const HloModule* module, const GpuAliasInfo* alias_info,
+    BufferValue::SizeFunction buffer_size_bytes_function);
+
+// Consumes the final assignment for `hlo_module`; does not assign buffers
+// again.
 absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
     const HloModule* hlo_module, llvm::LLVMContext* llvm_context,
     const std::string& target_triple, const std::string& data_layout,
     se::Platform::Id platform_id, const GpuTopology& gpu_topology,
-    const GpuAliasInfo* alias_info,
-    BufferValue::SizeFunction buffer_size_bytes_function,
+    std::unique_ptr<BufferAssignment> buffer_assignment,
     llvm_ir::LLVMCommandLineOptionsReleasableLock& llvm_options_lock,
     KernelCompiler* compiler,
     xla::cpu::TargetMachineOptions cpu_target_machine_options,
