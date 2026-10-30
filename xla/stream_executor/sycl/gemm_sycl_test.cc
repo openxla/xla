@@ -32,10 +32,15 @@ namespace {
 
 class GemmSyclTest : public HloInterpreterReferenceMixin<HloTestBase> {
  protected:
-  void TestGemmWithTypeVariations(absl::string_view hlo_template) {
+  void TestGemmWithTypeVariations(absl::string_view hlo_template,
+                                  bool include_complex) {
     std::vector<std::tuple<absl::string_view, absl::string_view>>
         type_combinations = {
             {"f32", "f32"}, {"f16", "f16"}, {"bf16", "bf16"}, {"f64", "f64"}};
+    if (include_complex) {
+      type_combinations.push_back({"c64", "c64"});
+      type_combinations.push_back({"c128", "c128"});
+    }
 
     for (const auto& type_combination : type_combinations) {
       VLOG(3) << "Testing type combination: " << std::get<0>(type_combination)
@@ -44,11 +49,15 @@ class GemmSyclTest : public HloInterpreterReferenceMixin<HloTestBase> {
       replacements["<<ABType>>"] = std::get<0>(type_combination);
       replacements["<<DType>>"] = std::get<1>(type_combination);
       const auto hlo_text = absl::StrReplaceAll(hlo_template, replacements);
-      double tol = 1e-2;
-      if (std::get<0>(type_combination) == "f32" &&
-          std::get<1>(type_combination) == "f32") {
-        // f32 is more precise, so we can tighten the error bounds.
+      double tol;
+      if (std::get<0>(type_combination) == "f32" ||
+          std::get<0>(type_combination) == "f64" ||
+          std::get<0>(type_combination) == "c64" ||
+          std::get<0>(type_combination) == "c128") {
+        // Use tighter error bounds.
         tol = 1e-4;
+      } else {
+        tol = 1e-2;
       }
       EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{tol, tol}));
     }
@@ -65,7 +74,7 @@ TEST_F(GemmSyclTest, MatmulNoFusion) {
     ROOT %dot = <<DType>>[256,8] dot(%parameter.1, %parameter.2), lhs_contracting_dims={1}, rhs_contracting_dims={0}
   }
     )";
-  TestGemmWithTypeVariations(hlo_module);
+  TestGemmWithTypeVariations(hlo_module, /*include_complex=*/true);
 }
 
 TEST_F(GemmSyclTest, MatmulWithBias) {
@@ -83,7 +92,7 @@ TEST_F(GemmSyclTest, MatmulWithBias) {
     tuple.12 = (<<DType>>[32,32,40,40]) tuple(reshape.11)
     ROOT get-tuple-element.13 = <<DType>>[32,32,40,40] get-tuple-element(tuple.12), index=0
   })";
-  TestGemmWithTypeVariations(matmul_module_str);
+  TestGemmWithTypeVariations(matmul_module_str, /*include_complex=*/false);
 }
 
 TEST_F(GemmSyclTest, MatmulWithRELU) {
@@ -99,7 +108,7 @@ TEST_F(GemmSyclTest, MatmulWithRELU) {
     ROOT out = <<DType>>[256,8] maximum(dot, c_bcast)
   }
     )";
-  TestGemmWithTypeVariations(hlo_module);
+  TestGemmWithTypeVariations(hlo_module, /*include_complex=*/false);
 }
 
 TEST_F(GemmSyclTest, MatmulWithApproxGELU) {
@@ -127,7 +136,7 @@ TEST_F(GemmSyclTest, MatmulWithApproxGELU) {
     mul.4 = <<DType>>[256,8] multiply(add.2, bcast.3)
     ROOT out = <<DType>>[256,8] multiply(dot, mul.4)
   })";
-  TestGemmWithTypeVariations(matmul_module_str);
+  TestGemmWithTypeVariations(matmul_module_str, /*include_complex=*/false);
 }
 
 }  // namespace
