@@ -649,7 +649,7 @@ sycl_library(
     ],
 )
 
-cc_library(
+sycl_library(
     name = "onemkl_blas_h",
     hdrs = ["onemkl_blas.h"],
     tags = [
@@ -662,7 +662,6 @@ cc_library(
         "//xla/stream_executor/gpu:gpu_blas_lt",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/status:status_macros",
-        "@local_config_sycl//sycl:sycl_headers",
     ],
 )
 
