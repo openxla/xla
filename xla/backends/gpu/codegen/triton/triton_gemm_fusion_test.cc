@@ -340,11 +340,6 @@ ENTRY e {
 }
 
 TEST_P(TritonTest, CodegenDynamicSliceWithCorrectOffsets) {
-  // TODO(b/417172838): we now should support non-majormost dimensions, port
-  // this test to fusion_emitter_device_test with that support.
-
-  // The start index(es) for the non-majormost dimension(s) are constant zero(s)
-  // because we don't support dynamic slice on those dimensions.
   constexpr absl::string_view kHloText = R"(
 HloModule t
 
@@ -1150,8 +1145,6 @@ TEST_P(TritonGemmTest, DynamicSliceIsSupportedInLhsEndToEnd) {
   // The select is used to restrict the start index to values that make sense.
   // If it was constant, then the dynamic-slice would be optimized to slice. It
   // is not strictly needed, because we also support clamping the indices.
-  // The start index(es) for the non-majormost dimension(s) are constant zero(s)
-  // because we don't support dynamic slice on those dimensions.
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -1180,8 +1173,6 @@ ENTRY e {
 }
 
 TEST_P(TritonGemmTest, DynamicSliceIsSupportedInRhs) {
-  // The start index(es) for the non-majormost dimension(s) are constant zero(s)
-  // because we don't support dynamic slice on those dimensions.
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -1222,11 +1213,6 @@ class TritonGemmDynamicSliceClampingTest
 
 TEST_P(TritonGemmDynamicSliceClampingTest,
        DynamicSliceIsSupportedWhenTheStartIndexNeedsClamping) {
-  // The start index(es) for the non-majormost dimension(s) are constant zero(s)
-  // because we don't support dynamic slice on those dimensions.
-  // TODO(b/417172838): we now should support non-majormost dimensions, port
-  // this test to fusion_emitter_device_test with that support.
-
   const std::string hlo_text = absl::Substitute(R"(
 HloModule m
 
@@ -1273,8 +1259,6 @@ INSTANTIATE_TEST_SUITE_P(All, TritonGemmDynamicSliceClampingTest,
 TEST_P(TritonGemmTest, DynamicSliceOfMajormostContractingDimIsSupported) {
   // Tests that dynamic-slice works on the majormost dimension even if that
   // dimension is contracted.
-  // The start index(es) for the non-majormost dimension(s) are constant zero(s)
-  // because we don't support dynamic slice on those dimensions.
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -1312,10 +1296,6 @@ ENTRY e {
 TEST_P(TritonGemmTest, DynamicSliceOfMajormostBatchDimIsSupported) {
   // Tests that dynamic-slice works on the majormost dimension even if that
   // dimension is a batch.
-  // The start index(es) for the non-majormost dimension(s) are constant zero(s)
-  // because we don't support dynamic slice on those dimensions.
-  // TODO(b/417172838): we now should support non-majormost dimensions, port
-  // this test to fusion_emitter_device_test with that support.
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -1356,8 +1336,6 @@ ENTRY e {
 TEST_P(TritonGemmTest, DynamicSliceSingleDimensionIntoReshapeIsSupported) {
   // This directly tests the targeted use case (b/307922364) of iterating over
   // layer weights and extracting them with dynamic slice.
-  // The start index(es) for the non-majormost dimension(s) are constant zero(s)
-  // because we don't support dynamic slice on those dimensions.
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
