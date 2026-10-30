@@ -27,10 +27,12 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -47,6 +49,35 @@ namespace xla::llvm_ir {
 namespace {
 
 using std::nullopt;
+
+TEST(EmitLoggingTest, UsesPointerSizedAddressesAndPointerTag) {
+  llvm::LLVMContext context;
+  for (const char* layout : {"e-p:32:32", "e-p:64:64"}) {
+    llvm::Module module("logging", context);
+    module.setDataLayout(layout);
+    llvm::IRBuilder<> builder(context);
+    llvm::Function* function = llvm::Function::Create(
+        llvm::FunctionType::get(builder.getVoidTy(), false),
+        llvm::Function::ExternalLinkage, "test", module);
+    llvm::BasicBlock* block =
+        llvm::BasicBlock::Create(context, "entry", function);
+    builder.SetInsertPoint(block);
+
+    EmitLogging("tag", builder.getInt64(42), &builder);
+
+    llvm::CallInst* call = llvm::dyn_cast<llvm::CallInst>(&block->back());
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->getFunctionType()->getParamType(0), builder.getPtrTy());
+    EXPECT_EQ(call->getFunctionType()->getParamType(1), builder.getInt64Ty());
+    llvm::ConstantExpr* tag =
+        llvm::dyn_cast<llvm::ConstantExpr>(call->getArgOperand(0));
+    ASSERT_NE(tag, nullptr);
+    EXPECT_EQ(tag->getOpcode(), llvm::Instruction::IntToPtr);
+    EXPECT_EQ(tag->getOperand(0)->getType(),
+              builder.getIntPtrTy(module.getDataLayout()));
+  }
+}
+
 struct EmitReducePrecisionIrTestCase {
   float input;
   std::string expected_res;

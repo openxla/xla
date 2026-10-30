@@ -544,12 +544,17 @@ static void LogS64(const char* tag, int64_t value) {
 }
 
 void EmitLogging(const char* tag, llvm::Value* value, llvm::IRBuilderBase* b) {
+  llvm::IntegerType* intptr_type =
+      b->getIntPtrTy(ModuleFromIRBuilder(b)->getDataLayout());
   llvm::FunctionType* log_function_type = llvm::FunctionType::get(
-      b->getVoidTy(), {b->getInt64Ty(), b->getInt64Ty()}, /*isVarArg=*/false);
-  b->CreateCall(log_function_type,
-                b->CreateIntToPtr(b->getInt64(absl::bit_cast<int64_t>(&LogS64)),
-                                  b->getPtrTy()),
-                {b->getInt64(absl::bit_cast<int64_t>(tag)), value});
+      b->getVoidTy(), {b->getPtrTy(), b->getInt64Ty()}, /*isVarArg=*/false);
+  llvm::Value* log_function = b->CreateIntToPtr(
+      llvm::ConstantInt::get(intptr_type, reinterpret_cast<uintptr_t>(&LogS64)),
+      b->getPtrTy());
+  llvm::Value* tag_pointer = b->CreateIntToPtr(
+      llvm::ConstantInt::get(intptr_type, reinterpret_cast<uintptr_t>(tag)),
+      b->getPtrTy());
+  b->CreateCall(log_function_type, log_function, {tag_pointer, value});
 }
 
 void SetAlignmentMetadataForLoad(llvm::LoadInst* load, uint64_t alignment) {
