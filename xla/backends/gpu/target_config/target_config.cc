@@ -98,6 +98,9 @@ absl::StatusOr<absl::string_view> GetEmbeddedGpuTargetConfigData(
     case GpuModel::MI450:
       filename = "mi450.txtpb";
       break;
+    case GpuModel::MI450_STRICT:
+      filename = "mi450_strict.txtpb";
+      break;
     case GpuModel::P100:
       filename = "p100.txtpb";
       break;
