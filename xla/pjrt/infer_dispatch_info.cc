@@ -15,42 +15,63 @@ limitations under the License.
 
 #include "xla/pjrt/infer_dispatch_info.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Types.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Support/DebugStringHelper.h"
 #include "mlir/Support/LLVM.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/utils.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instruction_utils.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/hlo/translate/mhlo_to_hlo/type_to_shape.h"
 #include "xla/mlir/utils/type_util.h"
 #include "xla/pjrt/dynamic_shapes.h"
 #include "xla/pjrt/pjrt_client.h"
+#include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/utils.h"
 #include "xla/service/computation_layout.h"
+#include "xla/service/device_assignment.h"
+#include "xla/service/hlo_value.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/export_shardings.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
@@ -76,6 +97,516 @@ std::vector<Shape> GetParameterShapes(const ComputationLayout& layout) {
     }
   }
   return shapes;
+}
+
+namespace {
+
+bool IsPadRealToStaticOp(mlir::Operation* op) {
+  auto attr = op->getAttrOfType<mlir::StringAttr>("call_target_name");
+  return attr != nullptr && attr.getValue() == "PadRealToStatic";
+}
+
+bool ShapeIndexOverlaps(const ShapeIndex& a, const ShapeIndex& b) {
+  const size_t min_size = std::min(a.size(), b.size());
+  for (size_t i = 0; i < min_size; ++i) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool HasOutputToOperandAlias(const HloInstruction* instruction,
+                             int64_t operand_number,
+                             const ShapeIndex& operand_index) {
+  return absl::c_any_of(
+      instruction->output_operand_aliasing(), [&](const auto& alias) {
+        return alias.second.first == operand_number &&
+               ShapeIndexOverlaps(alias.second.second, operand_index);
+      });
+}
+
+// Returns true if `instruction` is an embedded custom-call dispatcher at the
+// root of an offloaded async wrapper computation (for example, after an
+// async-wrapped subcomputation `kCall` is embedded as a `kCustomCall` with
+// `to_apply()`).
+bool IsAsyncWrappedSubcomputationCall(const HloInstruction* instruction) {
+  if (instruction->opcode() != HloOpcode::kCustomCall ||
+      instruction->IsCustomCall("PadRealToStatic") ||
+      instruction->called_computations().size() != 1) {
+    return false;
+  }
+  const HloComputation* wrapper = instruction->parent();
+  if (wrapper == nullptr || wrapper->root_instruction() != instruction ||
+      wrapper->execution_thread() == HloInstruction::kMainExecutionThread) {
+    return false;
+  }
+  const HloComputation* callee = instruction->to_apply();
+  if (callee == nullptr ||
+      instruction->operand_count() != callee->num_parameters()) {
+    return false;
+  }
+  const absl::InlinedVector<HloInstruction*, 1> all_callers =
+      wrapper->caller_instructions();
+  const absl::InlinedVector<HloInstruction*, 1> start_callers =
+      wrapper->caller_instructions(HloOpcode::kAsyncStart);
+  return !start_callers.empty() &&
+         absl::c_all_of(all_callers, [&](const HloInstruction* caller) {
+           return caller->IsAsynchronous() &&
+                  caller->async_wrapped_instruction() == instruction;
+         });
+}
+
+// Maps a data operand `(async_user, operand_number)` on a `kAsyncStart` or
+// `kAsyncUpdate` instruction to the bound parameter index in
+// `async_user->async_wrapped_computation()`, or `std::nullopt` if the chain is
+// incomplete or `operand_number` is not a bound data operand.
+std::optional<int64_t> GetAsyncBoundParameterNumber(
+    const HloInstruction* async_user, int64_t operand_number) {
+  if (async_user->opcode() != HloOpcode::kAsyncStart &&
+      async_user->opcode() != HloOpcode::kAsyncUpdate) {
+    return std::nullopt;
+  }
+  const int64_t user_start_idx =
+      async_user->opcode() == HloOpcode::kAsyncStart ? 0 : 1;
+  if (operand_number < user_start_idx ||
+      operand_number >= async_user->operand_count()) {
+    return std::nullopt;
+  }
+  const HloInstruction* start = async_user->async_chain_start();
+  const HloInstruction* done = async_user->async_chain_done();
+  const HloComputation* wrapped = async_user->async_wrapped_computation();
+  const HloAsyncInstruction* done_async =
+      done != nullptr ? DynCast<HloAsyncInstruction>(done) : nullptr;
+  const HloAsyncStartInstruction* start_async =
+      start != nullptr ? DynCast<HloAsyncStartInstruction>(start) : nullptr;
+  if (start_async == nullptr || done_async == nullptr || wrapped == nullptr) {
+    return std::nullopt;
+  }
+  const std::vector<const HloInstruction*> bound_operands =
+      hlo_instruction_utils::async::GetAsyncBoundOperands(done_async);
+  if (bound_operands.size() != static_cast<size_t>(wrapped->num_parameters())) {
+    return std::nullopt;
+  }
+  int64_t offset = 0;
+  for (const HloInstruction* instr : start_async->GetAsyncChain()) {
+    const int64_t start_idx = instr->opcode() == HloOpcode::kAsyncStart ? 0 : 1;
+    if (instr == async_user) {
+      const int64_t param_no = offset + (operand_number - user_start_idx);
+      if (param_no < 0 || param_no >= wrapped->num_parameters()) {
+        return std::nullopt;
+      }
+      return param_no;
+    }
+    if (instr == done) {
+      break;
+    }
+    if (instr->operand_count() > start_idx) {
+      offset += instr->operand_count() - start_idx;
+    }
+  }
+  return std::nullopt;
+}
+
+// Returns the caller operand passed to `callee->parameter_instruction(
+// parameter_number)` when `caller` invokes `callee` with positional argument
+// forwarding, or `nullptr` otherwise. Output-to-operand aliasing on `caller`
+// is rejected separately by `IsAllowedPadRealToStaticUse`.
+const HloInstruction* GetSubcomputationCallerOperand(
+    const HloInstruction* caller, const HloComputation* callee,
+    int64_t parameter_number) {
+  if (parameter_number < 0 || parameter_number >= callee->num_parameters()) {
+    return nullptr;
+  }
+  if (caller->opcode() == HloOpcode::kCall) {
+    if (caller->to_apply() != callee ||
+        caller->operand_count() != callee->num_parameters()) {
+      return nullptr;
+    }
+    return caller->operand(parameter_number);
+  }
+  if (IsAsyncWrappedSubcomputationCall(caller)) {
+    if (caller->to_apply() != callee) {
+      return nullptr;
+    }
+    return caller->operand(parameter_number);
+  }
+  if (caller->opcode() == HloOpcode::kAsyncStart) {
+    if (caller->async_wrapped_computation() != callee ||
+        caller->async_chain_done() == nullptr) {
+      return nullptr;
+    }
+    const HloAsyncInstruction* done_async =
+        DynCast<HloAsyncInstruction>(caller->async_chain_done());
+    if (done_async == nullptr) {
+      return nullptr;
+    }
+    const std::vector<const HloInstruction*> bound_operands =
+        hlo_instruction_utils::async::GetAsyncBoundOperands(done_async);
+    if (bound_operands.size() !=
+        static_cast<size_t>(callee->num_parameters())) {
+      return nullptr;
+    }
+    return bound_operands[parameter_number];
+  }
+  return nullptr;
+}
+
+bool IsAllowedPadRealToStaticUse(
+    const HloDataflowAnalysis& dataflow,
+    const absl::flat_hash_set<HloValue::Id>& allowed_embedded_param_values,
+    const HloValue& value, const HloUse& use) {
+  const HloInstruction* user = use.instruction;
+  switch (user->opcode()) {
+    case HloOpcode::kCustomCall: {
+      if (user->IsCustomCall("PadRealToStatic")) {
+        return use.operand_number == 0 && use.operand_index.empty();
+      }
+      if (!IsAsyncWrappedSubcomputationCall(user) ||
+          HasOutputToOperandAlias(user, use.operand_number,
+                                  use.operand_index)) {
+        return false;
+      }
+      const HloInstruction* param =
+          user->to_apply()->parameter_instruction(use.operand_number);
+      if (!ShapeUtil::IndexIsValid(param->shape(), use.operand_index)) {
+        return false;
+      }
+      const std::vector<const HloValue*>& param_values =
+          dataflow.GetValueSet(param, use.operand_index).values();
+      return !param_values.empty() &&
+             absl::c_all_of(param_values, [&](const HloValue* v) {
+               return allowed_embedded_param_values.contains(v->id());
+             });
+    }
+    case HloOpcode::kBitcast:
+    case HloOpcode::kOptimizationBarrier:
+      return true;
+    case HloOpcode::kAddDependency:
+      return use.operand_number == 0;
+    case HloOpcode::kCall: {
+      const HloComputation* callee = user->to_apply();
+      if (callee == nullptr || use.operand_number >= callee->num_parameters() ||
+          HasOutputToOperandAlias(user, use.operand_number,
+                                  use.operand_index)) {
+        return false;
+      }
+      const HloInstruction* param =
+          callee->parameter_instruction(use.operand_number);
+      if (!ShapeUtil::IndexIsValid(param->shape(), use.operand_index)) {
+        return false;
+      }
+      const std::vector<const HloValue*>& param_values =
+          dataflow.GetValueSet(param, use.operand_index).values();
+      return absl::c_linear_search(param_values, &value) ||
+             (!param_values.empty() &&
+              absl::c_all_of(param_values, [&](const HloValue* v) {
+                return allowed_embedded_param_values.contains(v->id());
+              }));
+    }
+    case HloOpcode::kAsyncStart:
+    case HloOpcode::kAsyncUpdate: {
+      if (user->async_chain_start() == nullptr ||
+          user->async_chain_done() == nullptr ||
+          user->async_wrapped_computation() == nullptr) {
+        return false;
+      }
+      if (user->opcode() == HloOpcode::kAsyncUpdate &&
+          use.operand_number == 0) {
+        return !use.operand_index.empty() && use.operand_index.front() == 0 &&
+               !HasOutputToOperandAlias(user, 0, use.operand_index);
+      }
+      const std::optional<int64_t> param_no =
+          GetAsyncBoundParameterNumber(user, use.operand_number);
+      if (!param_no.has_value() ||
+          HasOutputToOperandAlias(user, use.operand_number,
+                                  use.operand_index) ||
+          HasOutputToOperandAlias(user->async_chain_start(), *param_no,
+                                  use.operand_index)) {
+        return false;
+      }
+      const HloInstruction* param =
+          user->async_wrapped_computation()->parameter_instruction(*param_no);
+      if (!ShapeUtil::IndexIsValid(param->shape(), use.operand_index)) {
+        return false;
+      }
+      const std::vector<const HloValue*>& param_values =
+          dataflow.GetValueSet(param, use.operand_index).values();
+      return absl::c_linear_search(param_values, &value) ||
+             (!param_values.empty() &&
+              absl::c_all_of(param_values, [&](const HloValue* v) {
+                return allowed_embedded_param_values.contains(v->id());
+              }));
+    }
+    case HloOpcode::kAsyncDone:
+      return user->async_chain_start() != nullptr && use.operand_number == 0 &&
+             !use.operand_index.empty() && use.operand_index.front() == 0;
+    default:
+      return false;
+  }
+}
+
+absl::Status VerifyOnlyPadRealToStaticReadsValue(
+    const HloDataflowAnalysis& dataflow,
+    const absl::flat_hash_set<HloValue::Id>& allowed_embedded_param_values,
+    const HloValue& value, const HloValue& entry_parameter_value) {
+  const HloInstruction* parameter =
+      entry_parameter_value.defining_instruction();
+  const ShapeIndex& leaf_index = entry_parameter_value.defining_index();
+  auto format_error = [&](absl::string_view detail,
+                          absl::string_view via_name) {
+    return InvalidArgument(
+        "Entry parameter %d%s of %s feeds PadRealToStatic and is also %s "
+        "(through %s). A dynamic parameter consumed by PadRealToStatic is "
+        "passed as a compact buffer without dynamic-shape metadata, which no "
+        "other instruction can read, so it must have no other users.",
+        parameter->parameter_number(),
+        leaf_index.empty() ? "" : absl::StrCat(" ", leaf_index.ToString()),
+        parameter->GetModule()->name(), detail, via_name);
+  };
+
+  for (const HloPosition& pos : value.positions()) {
+    if (pos.instruction->IsRoot()) {
+      return format_error(absl::StrCat("returned as a result of computation ",
+                                       pos.instruction->parent()->name()),
+                          pos.instruction->name());
+    }
+  }
+  for (const HloUse& use : value.GetUses()) {
+    if (!IsAllowedPadRealToStaticUse(dataflow, allowed_embedded_param_values,
+                                     value, use)) {
+      const HloInstruction* via = use.instruction->operand(use.operand_number);
+      return format_error(absl::StrCat("used by ", use.instruction->ToString()),
+                          via->name());
+    }
+  }
+  return absl::OkStatus();
+}
+
+struct EmbeddedParamOrigin {
+  const HloValue* embedded_value;
+  const HloValue* entry_parameter_value;
+};
+
+absl::StatusOr<std::vector<const HloValue*>> ResolvePadRealToStaticOriginValues(
+    const HloModule& hlo_module, const HloInstruction* pad,
+    const HloDataflowAnalysis& dataflow, const HloValue* value,
+    absl::flat_hash_map<HloValue::Id, std::vector<const HloValue*>>& memo,
+    absl::flat_hash_set<HloValue::Id>& active_stack,
+    absl::flat_hash_set<HloValue::Id>& allowed_embedded_param_values,
+    std::vector<EmbeddedParamOrigin>& embedded_origins,
+    absl::flat_hash_set<HloValue::Id>& seen_entry_values,
+    std::vector<const HloValue*>& entry_parameter_values) {
+  if (auto it = memo.find(value->id()); it != memo.end()) {
+    return it->second;
+  }
+
+  const HloComputation* entry_comp = hlo_module.entry_computation();
+  const HloInstruction* def = value->defining_instruction();
+  auto non_entry_error = [&]() {
+    return InvalidArgument(
+        "Dynamic operand of PadRealToStatic (%s) in %s must read an entry "
+        "computation parameter directly without intermediate copies or "
+        "reshards, but resolves to %s.",
+        pad->ToString(), hlo_module.name(), def->ToString());
+  };
+
+  if (def->opcode() != HloOpcode::kParameter) {
+    return non_entry_error();
+  }
+  if (def->parent() == entry_comp) {
+    if (seen_entry_values.insert(value->id()).second) {
+      entry_parameter_values.push_back(value);
+    }
+    std::vector<const HloValue*> result = {value};
+    memo.emplace(value->id(), result);
+    return result;
+  }
+
+  const HloComputation* sub_comp = def->parent();
+  absl::InlinedVector<HloInstruction*, 1> callers =
+      sub_comp->caller_instructions();
+  if (callers.empty() || !active_stack.insert(value->id()).second) {
+    return non_entry_error();
+  }
+  absl::c_sort(callers, [](const HloInstruction* a, const HloInstruction* b) {
+    return a->unique_id() < b->unique_id();
+  });
+
+  std::vector<const HloValue*> resolved_entry_values;
+  absl::flat_hash_set<HloValue::Id> seen_local_entry_values;
+  for (const HloInstruction* caller : callers) {
+    if ((caller->opcode() == HloOpcode::kAsyncUpdate ||
+         caller->opcode() == HloOpcode::kAsyncDone) &&
+        caller->async_chain_start() != nullptr &&
+        caller->async_wrapped_computation() == sub_comp) {
+      continue;
+    }
+    const HloInstruction* arg = GetSubcomputationCallerOperand(
+        caller, sub_comp, def->parameter_number());
+    if (arg == nullptr ||
+        !ShapeUtil::IndexIsValid(arg->shape(), value->defining_index())) {
+      return non_entry_error();
+    }
+    const std::vector<const HloValue*>& caller_values =
+        dataflow.GetValueSet(arg, value->defining_index()).values();
+    if (caller_values.empty()) {
+      return non_entry_error();
+    }
+    for (const HloValue* caller_value : caller_values) {
+      ABSL_ASSIGN_OR_RETURN(
+          const std::vector<const HloValue*> entry_vals,
+          ResolvePadRealToStaticOriginValues(
+              hlo_module, pad, dataflow, caller_value, memo, active_stack,
+              allowed_embedded_param_values, embedded_origins,
+              seen_entry_values, entry_parameter_values));
+      for (const HloValue* entry_val : entry_vals) {
+        if (seen_local_entry_values.insert(entry_val->id()).second) {
+          resolved_entry_values.push_back(entry_val);
+        }
+      }
+    }
+  }
+  active_stack.erase(value->id());
+
+  if (resolved_entry_values.empty()) {
+    return non_entry_error();
+  }
+  if (allowed_embedded_param_values.insert(value->id()).second) {
+    for (const HloValue* entry_val : resolved_entry_values) {
+      const Shape& leaf_shape =
+          ShapeUtil::GetSubshape(entry_val->defining_instruction()->shape(),
+                                 entry_val->defining_index());
+      if (leaf_shape.IsArray() && leaf_shape.is_dynamic()) {
+        embedded_origins.push_back({value, entry_val});
+        break;
+      }
+    }
+  }
+  memo.emplace(value->id(), resolved_entry_values);
+  return resolved_entry_values;
+}
+
+}  // namespace
+
+absl::Status ClearPadRealToStaticParameterMetadataPrefixes(
+    const HloModule& hlo_module, absl::Span<Shape> parameter_shapes) {
+  const HloComputation* entry_comp = hlo_module.entry_computation();
+  if (entry_comp == nullptr) {
+    return absl::OkStatus();
+  }
+
+  std::vector<const HloInstruction*> pad_calls;
+  for (const HloComputation* comp : hlo_module.computations()) {
+    for (const HloInstruction* instruction : comp->instructions()) {
+      if (instruction->IsCustomCall("PadRealToStatic") &&
+          instruction->operand_count() > 0 &&
+          instruction->operand(0)->shape().is_dynamic()) {
+        pad_calls.push_back(instruction);
+      }
+    }
+  }
+  if (pad_calls.empty()) {
+    return absl::OkStatus();
+  }
+
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloDataflowAnalysis> dataflow,
+                        HloDataflowAnalysis::Run(hlo_module));
+
+  const auto& layout = hlo_module.entry_computation_layout();
+  const bool flattened_tuple_parameter =
+      layout.parameter_count() == 1 && layout.parameter_shape(0).IsTuple();
+
+  absl::flat_hash_map<HloValue::Id, std::vector<const HloValue*>> memo;
+  absl::flat_hash_set<HloValue::Id> allowed_embedded_param_values;
+  std::vector<EmbeddedParamOrigin> embedded_origins;
+  absl::flat_hash_set<HloValue::Id> seen_entry_values;
+  std::vector<const HloValue*> entry_parameter_values;
+  for (const HloInstruction* pad : pad_calls) {
+    const std::vector<const HloValue*>& values =
+        dataflow->GetValueSet(pad->operand(0), {}).values();
+    if (values.empty()) {
+      return InvalidArgument(
+          "Dynamic operand of PadRealToStatic (%s) in %s does not resolve to "
+          "an entry computation parameter.",
+          pad->ToString(), hlo_module.name());
+    }
+    for (const HloValue* value : values) {
+      absl::flat_hash_set<HloValue::Id> active_stack;
+      ABSL_RETURN_IF_ERROR(ResolvePadRealToStaticOriginValues(
+                               hlo_module, pad, *dataflow, value, memo,
+                               active_stack, allowed_embedded_param_values,
+                               embedded_origins, seen_entry_values,
+                               entry_parameter_values)
+                               .status());
+    }
+  }
+
+  for (const EmbeddedParamOrigin& origin : embedded_origins) {
+    const HloInstruction* entry_def =
+        origin.entry_parameter_value->defining_instruction();
+    const Shape& entry_leaf_shape = ShapeUtil::GetSubshape(
+        entry_def->shape(), origin.entry_parameter_value->defining_index());
+    if (!entry_leaf_shape.IsArray() || !entry_leaf_shape.is_dynamic()) {
+      continue;
+    }
+    ABSL_RETURN_IF_ERROR(VerifyOnlyPadRealToStaticReadsValue(
+        *dataflow, allowed_embedded_param_values, *origin.embedded_value,
+        *origin.entry_parameter_value));
+  }
+
+  std::vector<const HloValue*> parameter_values;
+  parameter_values.reserve(entry_parameter_values.size());
+  for (const HloValue* value : entry_parameter_values) {
+    const HloInstruction* def = value->defining_instruction();
+    const Shape& leaf_shape =
+        ShapeUtil::GetSubshape(def->shape(), value->defining_index());
+    if (!leaf_shape.IsArray() || !leaf_shape.is_dynamic()) {
+      continue;
+    }
+    ABSL_RETURN_IF_ERROR(VerifyOnlyPadRealToStaticReadsValue(
+        *dataflow, allowed_embedded_param_values, *value, *value));
+    if (std::optional<ShapeIndex> aliased_output =
+            hlo_module.input_output_alias_config().GetAliasedOutput(
+                def->parameter_number(), value->defining_index());
+        aliased_output.has_value()) {
+      return InvalidArgument(
+          "Entry parameter %d%s of %s feeds PadRealToStatic and is aliased "
+          "to output %s. A dynamic parameter consumed by PadRealToStatic is "
+          "passed as a compact runtime-sized buffer without dynamic-shape "
+          "metadata, so it cannot back an aliased or donated output.",
+          def->parameter_number(),
+          value->defining_index().empty()
+              ? ""
+              : absl::StrCat(" ", value->defining_index().ToString()),
+          hlo_module.name(), aliased_output->ToString());
+    }
+    parameter_values.push_back(value);
+  }
+
+  // Mutate `parameter_shapes` only after all validations succeed so an error
+  // leaves `parameter_shapes` untouched.
+  for (const HloValue* value : parameter_values) {
+    int64_t shape_no = value->defining_instruction()->parameter_number();
+    ShapeIndex index = value->defining_index();
+    if (flattened_tuple_parameter) {
+      if (shape_no != 0 || index.empty()) {
+        continue;
+      }
+      shape_no = index.front();
+      index = ShapeIndex(index.begin() + 1, index.end());
+    }
+    if (shape_no < 0 || shape_no >= parameter_shapes.size() ||
+        !ShapeUtil::IndexIsValid(parameter_shapes[shape_no], index)) {
+      continue;
+    }
+    Shape* subshape =
+        ShapeUtil::GetMutableSubshape(&parameter_shapes[shape_no], index);
+    if (subshape->IsArray() && subshape->has_layout()) {
+      subshape->mutable_layout()->set_dynamic_shape_metadata_prefix_bytes(0);
+    }
+  }
+  return absl::OkStatus();
 }
 
 absl::StatusOr<PjRtLoadedExecutableDispatchInfo> InferDispatchInfo(
@@ -160,7 +691,9 @@ absl::StatusOr<std::vector<int64_t>> GetShardShape(
   std::vector<int64_t> tile_shape;
   tile_shape.reserve(shape.size());
   for (int64_t i = 0; i < shape.size(); ++i) {
-    tile_shape.push_back(xla::CeilOfRatio(shape[i], sharding_dims[i]));
+    tile_shape.push_back(shape[i] == Shape::kUnboundedSize
+                             ? Shape::kUnboundedSize
+                             : xla::CeilOfRatio(shape[i], sharding_dims[i]));
   }
   return tile_shape;
 }
@@ -204,21 +737,32 @@ absl::StatusOr<PjRtLoadedExecutableDispatchInfo> InferDispatchInfo(
     }
     std::vector<int64_t> shard_shape;
     xla::PrimitiveType primitive_type;
+    std::vector<bool> dynamic_dimensions;
     if (auto tensor_type = mlir::dyn_cast<mlir::RankedTensorType>(type)) {
-      llvm::ArrayRef<int64_t> dims = tensor_type.getShape();
+      xla::Shape unsharded_shape = xla::TypeToShape(tensor_type);
+      if (unsharded_shape.element_type() == PRIMITIVE_TYPE_INVALID) {
+        return absl::InvalidArgumentError(
+            absl::StrCat("Unsupported type ", mlir::debugString(type)));
+      }
+      llvm::ArrayRef<int64_t> dims(unsharded_shape.dimensions().data(),
+                                   unsharded_shape.dimensions().size());
       ABSL_ASSIGN_OR_RETURN(
           shard_shape,
           GetShardShape(sharding, dims,
                         extras->num_replicas * extras->num_partitions));
-      primitive_type =
-          xla::ConvertMlirTypeToPrimitiveType(tensor_type.getElementType());
+      primitive_type = unsharded_shape.element_type();
+      dynamic_dimensions.assign(unsharded_shape.dynamic_dimensions().begin(),
+                                unsharded_shape.dynamic_dimensions().end());
     } else {
       primitive_type = xla::ConvertMlirTypeToPrimitiveType(type);
     }
     ABSL_ASSIGN_OR_RETURN(auto* memory_space,
                           addressable_devices[0]->default_memory_space());
-    auto xla_shard_shape =
-        xla::ShapeUtil::MakeShape(primitive_type, shard_shape);
+    xla::Shape xla_shard_shape =
+        dynamic_dimensions.empty()
+            ? xla::ShapeUtil::MakeShape(primitive_type, shard_shape)
+            : xla::ShapeUtil::MakeShape(primitive_type, shard_shape,
+                                        dynamic_dimensions);
     // TODO(parkers): Fix the nullptr layout.
     ABSL_ASSIGN_OR_RETURN(
         auto xla_shape, topology->MakeCanonicalShapeForMemorySpace(
@@ -246,18 +790,37 @@ absl::StatusOr<PjRtLoadedExecutableDispatchInfo> InferDispatchInfo(
 
     // Inputs feeding PadRealToStatic custom calls are bounded dynamic tensors
     // supplied without the TPU hardware dynamic metadata prefix (0 bytes).
-    // During async compilation, InferDispatchInfo is called on the MLIR module
-    // before TpuLayoutAssignment runs, so we must set prefix bytes to 0 here to
-    // ensure the inferred parameter layout matches the actual compiled layout.
-    for (mlir::Operation* user : main.getArgument(i).getUsers()) {
-      if (auto attr =
-              user->getAttrOfType<mlir::StringAttr>("call_target_name")) {
-        if (attr.getValue() == "PadRealToStatic" &&
-            user->getNumOperands() > 0 &&
-            user->getOperand(0) == main.getArgument(i)) {
-          shape.mutable_layout()->set_dynamic_shape_metadata_prefix_bytes(0);
-          layout = std::make_shared<PjRtLayout>(shape.layout());
+    // On the async-compile path, CommonPjRtClient::CompileAndLoad builds
+    // DispatchInfo directly from this MLIR pass without calling LoadInternal,
+    // whereas sync/loaded executables validate and clear prefixes post-compile
+    // in ClearPadRealToStaticParameterMetadataPrefixes.
+    if (shape.is_dynamic()) {
+      mlir::BlockArgument arg = main.getArgument(i);
+      const bool feeds_pad_real_to_static =
+          llvm::any_of(arg.getUses(), [](mlir::OpOperand& use) {
+            return use.getOperandNumber() == 0 &&
+                   IsPadRealToStaticOp(use.getOwner());
+          });
+      if (feeds_pad_real_to_static) {
+        for (mlir::OpOperand& use : arg.getUses()) {
+          if (use.getOperandNumber() != 0 ||
+              !IsPadRealToStaticOp(use.getOwner())) {
+            return absl::InvalidArgumentError(absl::StrFormat(
+                "Entry argument %d feeds PadRealToStatic and has another use "
+                "(%s); PadRealToStatic dynamic inputs have no metadata prefix "
+                "and must have no other users.",
+                i, use.getOwner()->getName().getStringRef().str()));
+          }
         }
+        if (main.getArgAttr(i, "tf.aliasing_output") != nullptr) {
+          return absl::InvalidArgumentError(absl::StrFormat(
+              "Entry argument %d feeds PadRealToStatic and is aliased via "
+              "tf.aliasing_output; compact PadRealToStatic buffers cannot back "
+              "aliased or donated outputs.",
+              i));
+        }
+        shape.mutable_layout()->set_dynamic_shape_metadata_prefix_bytes(0);
+        layout = std::make_shared<PjRtLayout>(shape.layout());
       }
     }
 
