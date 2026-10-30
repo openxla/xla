@@ -1060,15 +1060,6 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
                                   *hlo->operand(0), graph,
                                   /*rank=*/hlo->shape().dimensions().size(),
                                   /*is_gemm_or_conv=*/is_gemm_or_conv));
-        if (!ShapeUtil::IsScalar(hlo->shape())) {
-          std::vector<int64_t> broadcast_dims(hlo->shape().dimensions_size(),
-                                              1);
-          std::vector<int64_t> broadcast_strides(hlo->shape().dimensions_size(),
-                                                 1);
-          hlo_to_cudnn[hlo]
-              ->set_dim(broadcast_dims)
-              .set_stride(broadcast_strides);
-        }
       } else if (!ShapeUtil::EqualIgnoringElementType(
                      hlo->shape(), hlo->operand(0)->shape()) &&
                  !is_gemm_or_conv) {
@@ -1420,15 +1411,17 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
           hlo_to_cudnn[hlo]->set_dim(output_dims).set_stride(output_strides);
         }
       } else if (HloPredicateIsOp<HloOpcode::kParameter>(hlo->operand(0))) {
-        // Reject if the parameter has another bitcast user — two bitcasts on
-        // the same parameter would compete to set its dims/strides.
+        // Reject if the parameter has any other user: the parameter tensor's
+        // dims/strides are updated in place below, which would corrupt the
+        // view seen by other consumers (e.g. a second bitcast or an
+        // elementwise op reading the parameter in its original layout).
         if (absl::c_any_of(hlo->operand(0)->users(),
                            [hlo](const HloInstruction* user) {
-                             return user != hlo &&
-                                    HloPredicateIsOp<HloOpcode::kBitcast>(user);
+                             return user != hlo;
                            })) {
           return absl::UnimplementedError(absl::StrCat(
-              "Parameter has multiple bitcast users, not supported: ",
+              "Parameter with non-default layout has multiple users, not "
+              "supported: ",
               hlo->operand(0)->ToShortString()));
         }
         // Bitcast directly on a non-default-layout parameter: nop at the

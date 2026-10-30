@@ -76,5 +76,57 @@ TEST(ScopedActivateContextTest, TwoThreadsBothSetActiveButDontRestore) {
   });
 }
 
+TEST(ScopedDeactivateContextTest, DeactivatesAndRestoresActiveContext) {
+  MockContext context;
+  EXPECT_CALL(context, device_ordinal).WillRepeatedly(Return(1));
+  EXPECT_CALL(context, IsActive).WillRepeatedly(Return(true));
+  EXPECT_CALL(context, SetActive).Times(2);  // Activate + restore.
+  EXPECT_CALL(context, SetInactive).Times(1);
+  ScopedActivateContext scoped_activate_context(&context);
+  { ScopedDeactivateContext scoped_deactivate_context; }
+}
+
+TEST(ScopedDeactivateContextTest, NestedScopesDeactivateOnlyOnce) {
+  MockContext context;
+  EXPECT_CALL(context, device_ordinal).WillRepeatedly(Return(1));
+  EXPECT_CALL(context, IsActive).WillRepeatedly(Return(true));
+  EXPECT_CALL(context, SetActive).Times(2);  // Activate + restore.
+  EXPECT_CALL(context, SetInactive).Times(1);
+  ScopedActivateContext scoped_activate_context(&context);
+  {
+    ScopedDeactivateContext outer;
+    // The outer scope cleared the tracked context, so the inner one has
+    // nothing to deactivate or restore.
+    { ScopedDeactivateContext inner; }
+  }
+}
+
+TEST(ScopedDeactivateContextTest, NoActiveContextIsNoOp) {
+  // Run on a fresh thread so no context is tracked in the thread-local state
+  // left behind by other tests. Nothing is tracked, so no context methods may
+  // be called.
+  MockContext context;
+  EXPECT_CALL(context, SetActive).Times(0);
+  EXPECT_CALL(context, SetInactive).Times(0);
+  {
+    tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "test", 1);
+    thread_pool.Schedule([] { ScopedDeactivateContext scoped_deactivate; });
+  }
+}
+
+TEST(ScopedDeactivateContextTest, ActivateInsideDeactivateScopeWorks) {
+  MockContext context;
+  EXPECT_CALL(context, device_ordinal).WillRepeatedly(Return(1));
+  EXPECT_CALL(context, IsActive).WillRepeatedly(Return(true));
+  EXPECT_CALL(context, SetInactive).Times(1);
+  // Activate (outer) + re-activate inside the deactivated scope + restore.
+  EXPECT_CALL(context, SetActive).Times(3);
+  ScopedActivateContext outer(&context);
+  {
+    ScopedDeactivateContext deactivate;
+    ScopedActivateContext inner(&context);
+  }
+}
+
 }  // namespace
 }  // namespace stream_executor::gpu
