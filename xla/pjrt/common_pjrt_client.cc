@@ -1369,22 +1369,44 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
                 HostBufferSemantics::kImmutableOnlyDuringCall,
             device_shape, byte_strides.value_or(absl::Span<const int64_t>()),
             raw_buffer));
+    constexpr int64_t kMaxInlineAsyncLinearizeBytes = 512 * 1024;
+    const int64_t on_device_bytes = raw_buffer->GetOnDeviceSizeInBytes();
     // TODO(parkers): IsCpuId because the linearization pool shares with the
     // execute pool on cpu, so we have potential deadlocks.
-    if (host_buffer_semantics ==
+    const bool sync_linearize =
+        host_buffer_semantics ==
             HostBufferSemantics::kImmutableOnlyDuringCall ||
         IsCpuId(platform_id()) ||
-        memory_space->kind_id() == UnpinnedHostMemorySpace::kKindId) {
+        memory_space->kind_id() == UnpinnedHostMemorySpace::kKindId;
+    if (sync_linearize || (on_device_bytes > 0 &&
+                           on_device_bytes <= kMaxInlineAsyncLinearizeBytes &&
+                           linearized.IsAvailable() && !linearized.IsError())) {
       if (!linearized.IsAvailable()) {
         tsl::BlockUntilReady(linearized.GetAsyncValue());
       }
       if (auto* error = linearized.GetAsyncValue()->GetErrorIfPresent()) {
         return *error;
       }
-      ABSL_RETURN_IF_ERROR(
+      absl::Status status =
           Linearize(linearized->data(), data,
                     byte_strides.value_or(absl::Span<const int64_t>()),
-                    device_shape, dynamic_sizes, memory_space));
+                    device_shape, dynamic_sizes, memory_space);
+      if (!status.ok()) {
+        if (sync_linearize) {
+          return status;
+        }
+        PjRtDeviceEventPromiseRef copy_event_promise;
+        PjRtDeviceEventRef copy_event;
+        ABSL_ASSIGN_OR_RETURN(
+            std::tie(copy_event_promise, copy_event),
+            CreateLinkedEventPromise(memory_space, "BufferFromHostBuffer"));
+        if (on_done_with_host_buffer) {
+          std::move(on_done_with_host_buffer)();
+          on_done_with_host_buffer = nullptr;
+        }
+        copy_event_promise.SetError(std::move(status));
+        return copy_event;
+      }
       if (on_done_with_host_buffer) {
         std::move(on_done_with_host_buffer)();
         on_done_with_host_buffer = nullptr;
