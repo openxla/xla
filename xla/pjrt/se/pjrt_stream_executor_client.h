@@ -213,10 +213,8 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
   }
 
   bool ShouldStageHostToDeviceTransfers(const void* data, int64_t size) const {
-    // In Confidential Computing VMs, transfers must always be staged onto
-    // host memory allocated via cuMemHostAlloc.
     if (confidential_computing_enabled_) {
-      return true;
+      return false;
     }
     // Allocating multi-gigabyte pinned buffers can be very slow. In that case,
     // using a staging buffer is probably worse than not using one.
@@ -227,6 +225,10 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
 
   tsl::AsyncValueRef<PjRtExecutable> ToAsyncExecutable(
       std::shared_ptr<PjRtExecutable> executable) const override;
+
+  std::pair<tsl::AsyncValueRef<PjRtExecutable>,
+            PjRtFulfillAsyncExecutableCallback>
+  CreateLinkedExecutablePromise() const override;
 
   void ThenRecordEvent(BufferSequencingEventRef event,
                        LocalDeviceState* local_device,
@@ -342,6 +344,17 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
 
   void Stop() { async_work_runner_.reset(); }
 
+  // Compiles `computation` for `target_topology` using this client's compiler
+  // backend.
+  // - `topology`: The topology of the client performing the compilation (may be
+  //   nullptr).
+  // - `target_topology`: The topology the compiled executable is promised to
+  //   run on (which may have a different number of hosts or devices than
+  //   `topology`).
+  // - Target topology properties (`num_nodes`, `slice_size`, default memory
+  //   space) come from `target_topology`.
+  // - Local device ordinals are only looked up when
+  //   `topology == &target_topology`.
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> CrossCompile(
       const XlaComputation& computation, CompileOptions options,
       int process_index,
@@ -349,6 +362,7 @@ class PjRtStreamExecutorRawClient : public PjRtRawClient {
       const PjRtTopologyDescription* topology,
       const PjRtTopologyDescription& target_topology);
 
+  // Same as above, but compiles `mlir_module`.
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> CrossCompile(
       MaybeOwningMlirModule mlir_module, CompileOptions options,
       int process_index,

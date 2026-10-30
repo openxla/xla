@@ -63,6 +63,34 @@ package_group(
 )
 
 cc_library(
+    name = "locality_domain_memory",
+    srcs = ["locality_domain_memory.cc"],
+    hdrs = ["locality_domain_memory.h"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:fingerprint",
+    ],
+)
+
+xla_cc_test(
+    name = "locality_domain_memory_test",
+    srcs = ["locality_domain_memory_test.cc"],
+    deps = [
+        ":locality_domain_memory",
+        "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/platform:fingerprint",
+    ],
+)
+
+cc_library(
     name = "context",
     hdrs = ["context.h"],
     deps = [
@@ -474,11 +502,47 @@ xla_test(
     ],
 )
 
+tf_proto_library(
+    name = "blas_lt_matmul_algorithm_proto",
+    srcs = ["blas_lt_matmul_algorithm.proto"],
+    deps = [
+        "//xla/stream_executor/cuda:cublas_lt_matmul_algorithm_proto",
+    ],
+)
+
+cc_library(
+    name = "blas_lt_matmul_algorithm",
+    srcs = ["blas_lt_matmul_algorithm.cc"],
+    hdrs = ["blas_lt_matmul_algorithm.h"],
+    deps = [
+        ":blas_lt_matmul_algorithm_proto_cc",
+        "//xla/stream_executor/cuda:cublas_lt_matmul_algorithm",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "blas_lt_matmul_algorithm_test",
+    srcs = ["blas_lt_matmul_algorithm_test.cc"],
+    deps = [
+        ":blas_lt_matmul_algorithm",
+        ":blas_lt_matmul_algorithm_proto_cc",
+        "//xla/stream_executor/cuda:cublas_lt_matmul_algorithm",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 cc_library(
     name = "gpu_blas_lt",
     srcs = ["gpu_blas_lt.cc"],
     hdrs = ["gpu_blas_lt.h"],
     deps = [
+        ":blas_lt_matmul_algorithm",
         ":gpu_blas_lt_proto_cc",
         "//xla:shape_util",
         "//xla:types",
@@ -501,6 +565,7 @@ cc_library(
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@tsl//tsl/platform:tensor_float_32_hdr_lib",
     ] + if_static([
@@ -664,6 +729,7 @@ xla_test(
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel",
+        "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
@@ -682,6 +748,7 @@ xla_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
@@ -1173,6 +1240,7 @@ xla_cc_test(
     deps = [
         ":scoped_command_buffer_annotation",
         "//xla/tsl/platform:env",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )

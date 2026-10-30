@@ -17,8 +17,17 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include "llvm/IR/LLVMContext.h"
+
 namespace xla::llvm_ir {
 namespace {
+
+TEST(LLVMCommandLineOptionsLockTest, ApplyLibraryOptions) {
+  LLVMCommandLineOptionsLock lock(/*client_options=*/{});
+  llvm::LLVMContext context;
+  LLVMCommandLineOptionsLock::ApplyLibraryOptions(context);
+  EXPECT_TRUE(context.getLibraryOptions().args().empty());
+}
 
 TEST(LLVMCommandLineOptionsReleasableLockTest, Basic) {
   LLVMCommandLineOptionsReleasableLock lock(

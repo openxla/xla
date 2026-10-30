@@ -16,8 +16,11 @@ limitations under the License.
 #include "xla/core/host_offloading/hlo_host_device_type_call_wrapper.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -35,6 +38,10 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_context.h"
+#include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/pass/hlo_pass_options.h"
+#include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/hlo/transforms/offloaded_instruction_wrapper.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
@@ -636,7 +643,24 @@ absl::StatusOr<bool> HloHostDeviceTypeCallWrapper::RunImpl(
 
   ABSL_RETURN_IF_ERROR(
       AnnotateHostComputeOffload().Run(module, execution_threads).status());
-  ABSL_RETURN_IF_ERROR(CallInliner().Run(module, execution_threads).status());
+  std::optional<std::function<CallInliner::InlineOverridePolicy(
+      const CallGraph&, const HloInstruction*)>>
+      override_policy = std::nullopt;
+  if (options_.inline_only_host_computations) {
+    override_policy = [](const CallGraph& /*call_graph*/,
+                         const HloInstruction* instruction) {
+      if (host_offload_utils::ComputeTypeIsHost(instruction) ||
+          absl::c_any_of(instruction->to_apply()->instructions(),
+                         host_offload_utils::ComputeTypeIsHost)) {
+        return CallInliner::InlineOverridePolicy::kAllowInline;
+      }
+      return CallInliner::InlineOverridePolicy::kProhibitInline;
+    };
+  }
+  CallInliner call_inliner(
+      /*single_call_site=*/false, /*composites_to_preserve=*/{},
+      std::move(override_policy));
+  ABSL_RETURN_IF_ERROR(call_inliner.Run(module, execution_threads).status());
   ABSL_RETURN_IF_ERROR(
       TupleSimplifier().Run(module, execution_threads).status());
   ABSL_RETURN_IF_ERROR(HloDCE().Run(module, execution_threads).status());
@@ -669,5 +693,28 @@ absl::StatusOr<bool> HloHostDeviceTypeCallWrapper::RunImpl(
 
   return true;
 }
+
+namespace {
+
+class HloHostDeviceTypeCallWrapperFactory : public HloPassFactory {
+ public:
+  absl::string_view name() const override {
+    return "hlo_host_device_type_call_wrapper";
+  }
+
+  absl::StatusOr<std::unique_ptr<HloPassInterface>> Create(
+      const HloPassContext& context,
+      const HloPassOptions& options) const override {
+    ABSL_ASSIGN_OR_RETURN(
+        const HloHostDeviceTypeCallWrapper::Options& wrapper_options,
+        context.Get<const HloHostDeviceTypeCallWrapper::Options>());
+    return std::make_unique<HloHostDeviceTypeCallWrapper>(wrapper_options);
+  }
+};
+
+const HloPassFactory* const kHloHostDeviceTypeCallWrapperRegistration =
+    RegisterHloPassFactory<HloHostDeviceTypeCallWrapperFactory>();
+
+}  // namespace
 
 }  // namespace xla

@@ -64,9 +64,12 @@ inline constexpr int64_t kMinTotalDimensionsToTransposeTiled = 64 * 128;
 // dimension.
 inline constexpr int64_t kMaxBitsInMostMinorDimension = 8 * 8;
 
-// Returns true if the given dot is supported by cuBLAS.
+// Returns true if the given dot is supported by cuBLAS. If `is_normalized` is
+// false, checks whether the dot will be supported after DotDimensionNormalizer
+// and GpuLayoutAssignment run.
 absl::StatusOr<bool> IsCublasSupportedMatMul(
-    const HloInstruction& dot, bool allow_matrix_vector_multiplication);
+    const HloInstruction& dot, bool allow_matrix_vector_multiplication,
+    bool is_normalized = true);
 
 // Returns true if the given instruction is supported by gpuBLASLt
 // GroupedMatMul.
@@ -75,8 +78,6 @@ bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr);
 // Returns true if the ragged-dot instruction can be lowered by the Triton
 // XTile backend.  Criteria:
 //   - Exactly one LHS ragged dimension.
-//   - Tiling propagation enabled
-//   (xla_gpu_experimental_enable_tiling_propagation).
 //   - Element types supported by the xtile emitter: F16, BF16, F32, F64,
 //     F8E5M2, F8E4M3FN; nanoo FP8 types (F8E4M3FNUZ, F8E5M2FNUZ) on ROCm only.
 //     Complex types (C64, C128) are not supported.
@@ -129,6 +130,10 @@ inline constexpr absl::string_view kTritonNestedGemmFusionKind =
 
 // Fusions that use cuDNN have FusionBackendConfig.kind equal to this string.
 inline constexpr absl::string_view kCuDnnFusionKind = "__cudnn$fusion";
+
+// Fusions codegen'd through the TensorIR/CudaTile pipeline have
+// FusionBackendConfig.kind equal to this string.
+inline constexpr absl::string_view kTensorIrFusionKind = "__tensorir";
 
 inline constexpr absl::string_view kUncompilableFusion =
     "__uncompilable_fusion";

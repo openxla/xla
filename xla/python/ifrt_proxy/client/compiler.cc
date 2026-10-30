@@ -27,6 +27,7 @@
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/debug_options_flags.h"

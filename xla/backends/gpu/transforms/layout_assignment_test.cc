@@ -20,10 +20,13 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/status/status_matchers.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -38,6 +41,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo_verifier.h"
+#include "xla/service/layout_assignment.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
@@ -215,7 +219,7 @@ TEST_F(LayoutAssignmentTest, DotOperandLayoutSetToBatchRowsColsOtherwise) {
   EXPECT_THAT(layout_assignment.Run(module.get()),
               absl_testing::IsOkAndHolds(true));
   EXPECT_THAT(module->entry_computation()->root_instruction(),
-              GmockMatch(m::Dot(m::Op().WithShape(F32, {2, 3, 5}, {0, 1, 2}),
+              GmockMatch(m::Dot(m::Op().WithShape(F32, {2, 3, 5}, {1, 0, 2}),
                                 m::Op().WithShape(F32, {3, 4, 5}, {1, 0, 2}))));
 }
 
@@ -457,6 +461,48 @@ TEST_F(LayoutAssignmentTest, TopKLayout) {
               GmockMatch(m::CustomCall(
                   m::Transpose(m::Copy().WithShape(F32, {2048, 6}, {0, 1}))
                       .WithShape(F32, {6, 2048}, {1, 0}))));
+}
+
+TEST_F(LayoutAssignmentTest, TopKAfterAllGatherHasDefaultLayout) {
+  const char* hlo_text = R"(
+  HloModule topk
+
+  compare-greater-than {
+    p.1.lhs.3 = s32[] parameter(2)
+    p.1.rhs.4 = s32[] parameter(3)
+    p.0.lhs.1 = f32[] parameter(0)
+    p.0.rhs.2 = f32[] parameter(1)
+    ROOT compare.5 = pred[] compare(p.0.lhs.1, p.0.rhs.2), direction=GT
+  }
+
+  ENTRY main {
+    p0 = f32[32,64]{1,0} parameter(0)
+    ag = f32[32,512]{1,0} all-gather(p0), dimensions={1}, replica_groups={{0,1,2,3,4,5,6,7}}
+    neg = f32[32,512]{1,0} negate(ag)
+    topk = (f32[32,64]{1,0}, s32[32,64]{1,0}) custom-call(neg), custom_call_target="__gpu$TopK", api_version=API_VERSION_TYPED_FFI, called_computations={compare-greater-than}
+    gte0 = f32[32,64]{1,0} get-tuple-element(topk), index=0
+    gte1 = s32[32,64]{1,0} get-tuple-element(topk), index=1
+    ROOT out = (f32[32,64]{1,0}, s32[32,64]{1,0}) tuple(gte0, gte1)
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+
+  EXPECT_THAT(layout_assignment.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* topk = FindInstruction(module.get(), "topk");
+  ASSERT_NE(topk, nullptr);
+  EXPECT_EQ(topk->operand(0)->shape().layout(), LayoutUtil::MakeLayout({1, 0}));
+  EXPECT_EQ(ShapeUtil::GetSubshape(topk->shape(), {0}).layout(),
+            LayoutUtil::MakeLayout({1, 0}));
+  EXPECT_EQ(ShapeUtil::GetSubshape(topk->shape(), {1}).layout(),
+            LayoutUtil::MakeLayout({1, 0}));
 }
 
 TEST_F(LayoutAssignmentTest,
@@ -1441,6 +1487,149 @@ main {
   EXPECT_THAT(verifier.Run(module.get()).status(), absl_testing::IsOk())
       << module->ToString();
 }
+
+TEST_F(LayoutAssignmentTest,
+       DotWithReversedBatchDimsPreservesDefaultRowColOrder) {
+  const char* hlo_text = R"(
+  HloModule DotReversedBatchDims
+  ENTRY main {
+    lhs = f32[2,4,12,65] parameter(0)
+    rhs = f32[4,2,65,32] parameter(1)
+    ROOT dot = f32[4,2,12,32] dot(lhs, rhs),
+      lhs_batch_dims={1,0}, lhs_contracting_dims={3},
+      rhs_batch_dims={0,1}, rhs_contracting_dims={2}
+  })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* dot = module->entry_computation()->root_instruction();
+  EXPECT_THAT(dot->operand(0)->shape().layout().minor_to_major(),
+              ::testing::ElementsAre(3, 2, 0, 1));
+}
+
+struct ScaledDotLayoutTestCase {
+  std::string name;
+  // Shapes of lhs, rhs, lhs_scale, rhs_scale and the output, followed by the
+  // dot dimension numbers.
+  std::string lhs, rhs, lhs_scale, rhs_scale, output, dims;
+  // Expected minor_to_major of lhs and rhs.
+  std::string lhs_minor_to_major, rhs_minor_to_major;
+};
+
+class ScaledDotLayoutAssignmentTest
+    : public LayoutAssignmentTest,
+      public ::testing::WithParamInterface<ScaledDotLayoutTestCase> {};
+
+// Expects operand `operand_no` of `dot` to have `minor_to_major`, and its scale
+// (unless a no-op scalar) to have the same layout without the sub-byte element
+// size of an FP4 operand.
+void ExpectScaledDotSideLayout(const HloInstruction* dot, int64_t operand_no,
+                               absl::string_view minor_to_major) {
+  const Layout& operand_layout = dot->operand(operand_no)->shape().layout();
+  EXPECT_EQ(absl::StrJoin(operand_layout.minor_to_major(), ","),
+            minor_to_major);
+  const Shape& scale_shape = dot->operand(operand_no + 2)->shape();
+  if (ShapeUtil::IsScalar(scale_shape)) {
+    return;
+  }
+  EXPECT_EQ(scale_shape.layout(),
+            LayoutUtil::MakeLayout(operand_layout.minor_to_major()));
+}
+
+TEST_P(ScaledDotLayoutAssignmentTest, OperandsAndScalesAreContractingMinor) {
+  const ScaledDotLayoutTestCase& test_case = GetParam();
+  const std::string hlo_text =
+      absl::Substitute(R"(
+  HloModule ScaledDot
+  ENTRY main {
+    lhs = $0 parameter(0)
+    rhs = $1 parameter(1)
+    lhs_scale = $2 parameter(2)
+    rhs_scale = $3 parameter(3)
+    ROOT dot = $4 scaled-dot(lhs, rhs, lhs_scale, rhs_scale), $5
+  })",
+                       test_case.lhs, test_case.rhs, test_case.lhs_scale,
+                       test_case.rhs_scale, test_case.output, test_case.dims);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  ComputationLayout computation_layout(
+      module->entry_computation()->ComputeProgramShape(),
+      /*ignore_layouts=*/false);
+  GpuLayoutAssignment layout_assignment(&computation_layout, default_gpu_cc_,
+                                        default_device_description_);
+  EXPECT_THAT(layout_assignment.Run(module.get()),
+              absl_testing::IsOkAndHolds(true));
+
+  const HloInstruction* dot =
+      FindInstruction(module.get(), HloOpcode::kScaledDot);
+  ASSERT_THAT(dot, NotNull());
+  ExpectScaledDotSideLayout(dot, 0, test_case.lhs_minor_to_major);
+  ExpectScaledDotSideLayout(dot, 1, test_case.rhs_minor_to_major);
+  EXPECT_TRUE(LayoutUtil::IsMonotonicWithDim0Major(dot->shape().layout()));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ScaledDot, ScaledDotLayoutAssignmentTest,
+    ::testing::ValuesIn<ScaledDotLayoutTestCase>({
+        {"NN", "f8e4m3fn[128,64]", "f8e4m3fn[64,256]", "f8e8m0fnu[128,2]",
+         "f8e8m0fnu[2,256]", "bf16[128,256]",
+         "lhs_contracting_dims={1}, rhs_contracting_dims={0}", "1,0", "0,1"},
+        {"NT", "f8e4m3fn[128,64]", "f8e4m3fn[256,64]", "f8e8m0fnu[128,2]",
+         "f8e8m0fnu[256,2]", "bf16[128,256]",
+         "lhs_contracting_dims={1}, rhs_contracting_dims={1}", "1,0", "1,0"},
+        {"TN", "f8e4m3fn[64,128]", "f8e4m3fn[64,256]", "f8e8m0fnu[2,128]",
+         "f8e8m0fnu[2,256]", "bf16[128,256]",
+         "lhs_contracting_dims={0}, rhs_contracting_dims={0}", "0,1", "0,1"},
+        {"TT", "f8e4m3fn[64,128]", "f8e4m3fn[256,64]", "f8e8m0fnu[2,128]",
+         "f8e8m0fnu[256,2]", "bf16[128,256]",
+         "lhs_contracting_dims={0}, rhs_contracting_dims={1}", "0,1", "1,0"},
+        {"BatchedNN", "f8e4m3fn[4,128,64]", "f8e4m3fn[4,64,256]",
+         "f8e8m0fnu[4,128,2]", "f8e8m0fnu[4,2,256]", "bf16[4,128,256]",
+         "lhs_batch_dims={0}, lhs_contracting_dims={2}, "
+         "rhs_batch_dims={0}, rhs_contracting_dims={1}",
+         "2,1,0", "1,2,0"},
+        {"BatchedNT", "f8e4m3fn[4,128,64]", "f8e4m3fn[4,256,64]",
+         "f8e8m0fnu[4,128,2]", "f8e8m0fnu[4,256,2]", "bf16[4,128,256]",
+         "lhs_batch_dims={0}, lhs_contracting_dims={2}, "
+         "rhs_batch_dims={0}, rhs_contracting_dims={2}",
+         "2,1,0", "2,1,0"},
+        {"BatchedTN", "f8e4m3fn[4,64,128]", "f8e4m3fn[4,64,256]",
+         "f8e8m0fnu[4,2,128]", "f8e8m0fnu[4,2,256]", "bf16[4,128,256]",
+         "lhs_batch_dims={0}, lhs_contracting_dims={1}, "
+         "rhs_batch_dims={0}, rhs_contracting_dims={1}",
+         "1,2,0", "1,2,0"},
+        {"BatchedTT", "f8e4m3fn[4,64,128]", "f8e4m3fn[4,256,64]",
+         "f8e8m0fnu[4,2,128]", "f8e8m0fnu[4,256,2]", "bf16[4,128,256]",
+         "lhs_batch_dims={0}, lhs_contracting_dims={1}, "
+         "rhs_batch_dims={0}, rhs_contracting_dims={2}",
+         "1,2,0", "2,1,0"},
+        // rhs already has a valid contracting-minor layout and keeps it, which
+        // its scale must follow; lhs does not and gets reassigned.
+        {"PresetLayouts", "f8e4m3fn[64,128,4]{2,1,0}",
+         "f8e4m3fn[256,4,64]{2,1,0}", "f8e8m0fnu[2,128,4]{2,1,0}",
+         "f8e8m0fnu[256,4,2]{2,0,1}", "bf16[4,128,256]{0,2,1}",
+         "lhs_batch_dims={2}, lhs_contracting_dims={0}, "
+         "rhs_batch_dims={1}, rhs_contracting_dims={2}",
+         "0,1,2", "2,1,0"},
+        {"Fp4SingleScaleBlock", "f4e2m1fn[32,128]{1,0:E(4)}",
+         "f4e2m1fn[32,256]{0,1:E(4)}", "f8e8m0fnu[1,128]{1,0}",
+         "f8e8m0fnu[1,256]{1,0}", "bf16[128,256]{1,0}",
+         "lhs_contracting_dims={0}, rhs_contracting_dims={0}", "0,1", "0,1"},
+        {"ScalarScale", "bf16[64,128]{1,0}", "f8e4m3fn[256,64]{0,1}", "bf16[]",
+         "f8e8m0fnu[256,2]{0,1}", "bf16[128,256]{1,0}",
+         "lhs_contracting_dims={0}, rhs_contracting_dims={1}", "0,1", "1,0"},
+    }),
+    [](const ::testing::TestParamInfo<ScaledDotLayoutTestCase>& info) {
+      return info.param.name;
+    });
 
 }  // namespace
 }  // namespace gpu

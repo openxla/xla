@@ -280,6 +280,11 @@ class ElementalIrEmitter : public IrBuilderMixin<ElementalIrEmitter> {
       const HloToElementGeneratorMap& operand_to_generator,
       const llvm_ir::IrArray::Index& index);
 
+  absl::StatusOr<llvm::Value*> EmitElementalFma(
+      const HloInstruction* hlo,
+      const HloToElementGeneratorMap& operand_to_generator,
+      const llvm_ir::IrArray::Index& index);
+
   absl::StatusOr<llvm::Value*> EmitElementalConcatenate(
       const HloInstruction* hlo,
       const HloToElementGeneratorMap& operand_to_generator,
@@ -376,10 +381,6 @@ class ElementalIrEmitterForTests : public ElementalIrEmitter {
 
   HloToElementGeneratorMap generator_map_;
 };
-
-absl::StatusOr<llvm::Value*> EmitIota(
-    const HloInstruction* hlo, const llvm_ir::IrArray::Index& target_index,
-    llvm::Module* module, llvm::IRBuilderBase* b);
 
 }  // namespace xla
 

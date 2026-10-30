@@ -15,11 +15,21 @@ limitations under the License.
 
 #include "xla/stream_executor/sycl/sycl_blas_lt.h"
 
+#include <complex>
+#include <cstdint>
+#include <limits>
+#include <sycl/sycl.hpp>  // NOLINT
+
+#include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "oneapi/mkl.hpp"
 #include "xla/service/gpu/matmul_utils.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/gpu/gpu_helpers.h"
 #include "xla/stream_executor/platform/initialize.h"
 #include "xla/stream_executor/plugin_registry.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/sycl/onemkl_blas.h"
 #include "xla/stream_executor/sycl/onemkl_util.h"
 #include "xla/stream_executor/sycl/sycl_matmul_utils.h"
@@ -92,6 +102,88 @@ absl::Status BlasLt::MatmulPlan::OneMklMatmulPlan::ExecuteOnStream(
 SyclBlasSupport::SyclBlasSupport(StreamExecutor* parent) : blas_lt_(parent) {}
 
 SyclBlasSupport::~SyclBlasSupport() {}
+
+namespace {
+
+// Multiplies every element of the vector x by alpha on the stream's SYCL
+// queue. The scaling factor has its own template parameter because a complex
+// vector can be scaled by either a complex or a real number.
+template <typename ScalarT, typename T>
+bool ScalImpl(Stream* stream, uint64_t elem_count, ScalarT alpha,
+              DeviceAddress<T>* x, int incx) {
+  if (stream == nullptr || x == nullptr) {
+    LOG(ERROR) << "DoBlasScal: stream and x must not be null";
+    return false;
+  }
+  if (elem_count == 0) {
+    return true;
+  }
+  // oneMKL takes the element count as a signed 64-bit integer.
+  if (elem_count >
+      static_cast<uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    LOG(ERROR) << "DoBlasScal: elem_count " << elem_count
+               << " does not fit in int64_t";
+    return false;
+  }
+  auto* stream_queue =
+      static_cast<::sycl::queue*>(stream->platform_specific_handle().stream);
+  if (stream_queue == nullptr) {
+    LOG(ERROR) << "DoBlasScal: stream has no SYCL queue";
+    return false;
+  }
+  absl::StatusOr<::sycl::event> status = ExecMklFunc([&] {
+    return oneapi::mkl::blas::scal(*stream_queue,
+                                   static_cast<std::int64_t>(elem_count), alpha,
+                                   gpu::GpuMemoryMutable(x), incx);
+  });
+  if (status.ok()) {
+    return true;
+  }
+  LOG(ERROR) << status.status();
+  return false;
+}
+
+}  // namespace
+
+bool SyclBlasSupport::DoBlasScal(Stream* stream, uint64_t elem_count,
+                                 float alpha, DeviceAddress<float>* x,
+                                 int incx) {
+  return ScalImpl(stream, elem_count, alpha, x, incx);
+}
+
+bool SyclBlasSupport::DoBlasScal(Stream* stream, uint64_t elem_count,
+                                 double alpha, DeviceAddress<double>* x,
+                                 int incx) {
+  return ScalImpl(stream, elem_count, alpha, x, incx);
+}
+
+bool SyclBlasSupport::DoBlasScal(Stream* stream, uint64_t elem_count,
+                                 float alpha,
+                                 DeviceAddress<std::complex<float>>* x,
+                                 int incx) {
+  return ScalImpl(stream, elem_count, alpha, x, incx);
+}
+
+bool SyclBlasSupport::DoBlasScal(Stream* stream, uint64_t elem_count,
+                                 double alpha,
+                                 DeviceAddress<std::complex<double>>* x,
+                                 int incx) {
+  return ScalImpl(stream, elem_count, alpha, x, incx);
+}
+
+bool SyclBlasSupport::DoBlasScal(Stream* stream, uint64_t elem_count,
+                                 std::complex<float> alpha,
+                                 DeviceAddress<std::complex<float>>* x,
+                                 int incx) {
+  return ScalImpl(stream, elem_count, alpha, x, incx);
+}
+
+bool SyclBlasSupport::DoBlasScal(Stream* stream, uint64_t elem_count,
+                                 std::complex<double> alpha,
+                                 DeviceAddress<std::complex<double>>* x,
+                                 int incx) {
+  return ScalImpl(stream, elem_count, alpha, x, incx);
+}
 
 bool SyclBlasSupport::Init() { return true; }
 

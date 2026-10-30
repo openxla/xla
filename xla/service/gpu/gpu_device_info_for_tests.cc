@@ -156,6 +156,7 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::VRNVL72DeviceInfo(
   b.set_threads_per_warp(32);
   b.set_shared_memory_per_block(48 * 1024);
   b.set_shared_memory_per_block_optin(227 * 1024);
+  b.set_oversized_shared_memory_per_block(327 * 1024);
   b.set_shared_memory_per_core(228 * 1024);
   b.set_threads_per_core_limit(1024);
   b.set_core_count(212);
@@ -285,6 +286,7 @@ stream_executor::DeviceDescription TestGpuDeviceInfo::AMDRX7900DeviceInfo() {
   b.set_l2_cache_size(6 * 1024 * 1024);
   b.set_clock_rate_ghz(2.5);
   b.set_device_memory_size(24'000'000'000);
+  b.set_registers_per_block_limit(196608);
   b.set_runtime_version(stream_executor::SemanticVersion{7, 1, 0});
   b.set_driver_version(stream_executor::SemanticVersion{7, 1, 0});
 

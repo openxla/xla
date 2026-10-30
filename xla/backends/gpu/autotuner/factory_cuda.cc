@@ -31,7 +31,9 @@ limitations under the License.
 #include "xla/backends/gpu/autotuner/factory.h"
 #include "xla/backends/gpu/autotuner/fission_backend.h"
 #include "xla/backends/gpu/autotuner/native_emitter.h"
+#include "xla/backends/gpu/autotuner/tensor_ir.h"
 #include "xla/backends/gpu/autotuner/triton.h"
+#include "xla/backends/gpu/transforms/cublas_pad_for_gemms.h"
 #include "xla/backends/gpu/transforms/dot_algorithm_rewriter.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter.h"
 #include "xla/backends/gpu/transforms/scaled_dot_rewriter.h"
@@ -63,6 +65,8 @@ std::unique_ptr<HloPassPipeline> GetCublasLtRewriterPipeline(
       device_description.runtime_version(),
       GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}));
   pipeline->AddPass(std::make_unique<DotAlgorithmRewriter>(
+      device_description.gpu_compute_capability()));
+  pipeline->AddPass(std::make_unique<CublasPadForGemms>(
       device_description.gpu_compute_capability()));
   pipeline->AddPass(std::make_unique<GemmRewriter>(
       device_description.gpu_compute_capability(),
@@ -102,6 +106,8 @@ std::vector<std::unique_ptr<CodegenBackend>> GetCodegenBackendsForCuda(
   backends.push_back(std::make_unique<BlockLevelEmitterBackend>(
       debug_options, compiler, shape_size_fn, target_config, thread_pool,
       mlir_context_pool));
+  backends.push_back(std::make_unique<TensorIrBackend>(debug_options, compiler,
+                                                       target_config));
 
   if (!backend_allowlist.empty()) {
     backends.erase(

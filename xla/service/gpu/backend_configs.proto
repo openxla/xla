@@ -19,6 +19,7 @@ package xla.gpu;
 
 import "xla/autotuning.proto";
 import "xla/codegen/xtile/xtile_config.proto";
+import "xla/stream_executor/gpu/blas_lt_matmul_algorithm.proto";
 import "xla/tsl/protobuf/dnn.proto";
 import "xla/xla.proto";
 import "xla/xla_data.proto";
@@ -93,6 +94,14 @@ message GemmBackendConfig {
     int64 selected_algorithm = 1;
   }
 
+  // Serialized blasLt algorithm configuration replacing `selected_algorithm`
+  // for blasLt GEMMs. Kept outside `oneof algorithm` because submessages
+  // already track presence in proto3 (the `oneof` was only needed for scalar
+  // `int64` presence) and so both fields can be populated together during the
+  // migration while fallback paths and legacy callers still read
+  // `selected_algorithm`.
+  stream_executor.gpu.BlasLtMatmulAlgorithmProto algorithm_proto = 23;
+
   double alpha_real = 2;
   double alpha_imag = 9;
 
@@ -136,6 +145,8 @@ message GemmBackendConfig {
   // Whether the last operand of an FP8-output `__cublas$lt$matmul$f8` is the
   // multiplicative F32 D scale. Set by GemmRewriter on ROCm only.
   optional bool has_d_scale = 22;
+
+  // Next id: 24
 }
 
 // Backend config for the grouped (ragged-dot) GEMM operation running through
@@ -284,7 +295,7 @@ message DynamicSliceConfig {
   }
 }
 
-// Next id: 8
+// Next id: 9
 message FusionBackendConfig {
   // kLoop, kInput, or kOutput (from HloInstruction::FusionKind), or your own
   // custom string.
@@ -312,8 +323,23 @@ message FusionBackendConfig {
 
   CuDnnFusionConfig cudnn_fusion_config = 5;
 
+  // Only valid when kind == "__tensorir". Code generation of such fusions
+  // will fail if this field is not set.
+  TensorIrFusionConfig tensor_ir_fusion_config = 8;
+
   reserved 3, 7;
   reserved "dynamic_memcpy_config";
+}
+
+// Backend config for fusions codegen'd through the TensorIR/CudaTile
+// pipeline (kind == "__tensorir").
+message TensorIrFusionConfig {
+  // Tile size for each dimension of the fusion's output.
+  repeated int32 tile_size = 1;
+
+  // Tile size for the reduction (contracting) dimension. Ignored if the
+  // fusion doesn't contain a reduction.
+  int64 reduction_tile_size = 2;
 }
 
 // Backed config for norm executed by cuDNN.

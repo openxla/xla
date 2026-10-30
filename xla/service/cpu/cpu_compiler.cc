@@ -128,6 +128,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/dot_decomposer.h"
 #include "xla/hlo/transforms/expanders/dynamic_index_splitter.h"
 #include "xla/hlo/transforms/expanders/eigh_expander.h"
+#include "xla/hlo/transforms/expanders/elementary_function_expander.h"
 #include "xla/hlo/transforms/expanders/logistic_expander.h"
 #include "xla/hlo/transforms/expanders/optimization_barrier_expander.h"
 #include "xla/hlo/transforms/expanders/permutation_sort_expander.h"
@@ -654,7 +655,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     }
     spmd_pipeline.AddPass<xla::CallInliner>(
         /*single_call_site=*/false,
-        /*update_domain=*/false,
         /*composites_to_preserve=*/absl::flat_hash_set<std::string>{},
         /*override_policy=*/
         [](const xla::CallGraph& call_graph,
@@ -897,6 +897,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
       /*rewrite_inference_op=*/true,
       /*rewrite_grad_op=*/true);
   pipeline.AddPass<LogisticExpander>();
+  pipeline.AddPass<ElementaryFunctionExpander>();
   pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<DynamicDimensionSimplifier>();
 
@@ -1208,7 +1209,8 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     ABSL_ASSIGN_OR_RETURN(
         int64_t byte_threshold,
         xla::cpu::options::SmallWhileLoopByteThreshold(module->config()));
-    pipeline.AddPass<SmallWhileLoopHoistingPass>(byte_threshold);
+    pipeline.AddPass<SmallWhileLoopHoistingPass>(byte_threshold,
+                                                 target_machine_features);
   }
 
   pipeline.AddPass<PropagateCallMetadata>();
@@ -1598,23 +1600,6 @@ inline void VlogMaxIsa(absl::string_view max_cpu_isa) {
     } else {
       VLOG(1) << "`xla_cpu_max_isa` is set to `" << max_cpu_isa
               << "`. This flag is not supported on non-x86 CPUs yet.";
-    }
-  }
-}
-
-// We keep HloProto in the CpuExecutable, but we don't need to keep literals
-// payload in it as we use it only for debugging and memory analysis.
-static void StripPayloadFromLiteralProto(HloProto& proto) {
-  auto* module = proto.mutable_hlo_module();
-  for (auto& computation : *module->mutable_computations()) {
-    for (auto& instruction : *computation.mutable_instructions()) {
-      // We only keep literal shape to correctly estimate memory usage of the
-      // HLO module, but we don't need the actual literal data.
-      if (instruction.has_literal()) {
-        LiteralProto literal;
-        *literal.mutable_shape() = instruction.literal().shape();
-        *instruction.mutable_literal() = std::move(literal);
-      }
     }
   }
 }

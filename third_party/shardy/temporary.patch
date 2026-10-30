@@ -1,1857 +1,1438 @@
+diff --git a/shardy/dialect/mpmd/transforms/export/mark_fragment_reserved_memory.cc b/shardy/dialect/mpmd/transforms/export/mark_fragment_reserved_memory.cc
+index 76536209..e1032c94 100644
+--- a/shardy/dialect/mpmd/transforms/export/mark_fragment_reserved_memory.cc
++++ b/shardy/dialect/mpmd/transforms/export/mark_fragment_reserved_memory.cc
+@@ -40,6 +40,8 @@ namespace mlir::mpmd {
+ 
+ namespace {
+ 
++using OperandLastUseMap = DenseMap<Operation*, SmallVector<unsigned int>>;
++
+ // Mapping from the mesh name to how much memory is being used on it (in bytes).
+ using LiveMemoryMap = DenseMap<StringRef, double>;
+ 
+@@ -54,8 +56,8 @@ double GetMeshTensorSize(MeshTensorType mesh_tensor_type, Operation* op) {
+ // on. But any operands need to be excluded from this calculation since
+ // XLA already knows about them.
+ template <typename FragOpT>
+-int64_t GetLiveMemoryBytes(FragOpT op,
+-                           const LiveMemoryMap& current_memory_usage_per_mesh) {
++int64_t GetLiveMemoryBytes(FragOpT op, OpBuilder& builder,
++                           LiveMemoryMap current_memory_usage_per_mesh) {
+   auto it_memory = current_memory_usage_per_mesh.find(op.getMeshName());
+   SDY_CHECK(it_memory != current_memory_usage_per_mesh.end())
+       << "Required mesh_name missing: " << std::string_view(op.getMeshName());
+@@ -120,9 +122,10 @@ class MarkFragmentReservedMemoryPass
+       if (auto fragment_op = dyn_cast<FragmentOp>(op)) {
+         fragment_op->setAttr(
+             kReservedHbmBytes,
+-            IntegerAttr::get(builder.getI64Type(),
+-                             GetLiveMemoryBytes(
+-                                 fragment_op, current_memory_usage_per_mesh)));
++            IntegerAttr::get(
++                builder.getI64Type(),
++                GetLiveMemoryBytes(fragment_op, builder,
++                                   current_memory_usage_per_mesh)));
+       }
+ 
+       if (isa<TransferOp>(op) || isa<FragmentOp>(op)) {
+@@ -136,7 +139,7 @@ class MarkFragmentReservedMemoryPass
+         for (auto [index, operand] : llvm::enumerate(op.getOperands())) {
+           if (!IsArgOnHost(&op, index) && already_seen.insert(operand).second &&
+               liveness.isDeadAfter(operand, &op)) {
+-            if (auto block_arg = dyn_cast<BlockArgument>(operand);
++            if (auto block_arg = dyn_cast_or_null<BlockArgument>(operand);
+                 !block_arg ||
+                 IsArgDonated(main_func, block_arg.getArgNumber())) {
+               MeshTensorType mesh_tensor_type =
+@@ -164,26 +167,24 @@ class MarkFragmentReservedMemoryPass
+     }
+   }
+ 
+-  void UpdateLiveValue(MeshTensorType type,
+-                       LiveMemoryMap& current_memory_usage_per_mesh,
+-                       Operation* op, double multiplier) {
++  void AddLiveValue(MeshTensorType type,
++                    LiveMemoryMap& current_memory_usage_per_mesh,
++                    Operation* op) {
+     StringRef mesh_name = type.getMeshName();
+     auto it_memory = current_memory_usage_per_mesh.find(mesh_name);
+     SDY_CHECK(it_memory != current_memory_usage_per_mesh.end())
+         << "Required mesh_name missing: " << std::string_view(mesh_name);
+-    it_memory->second += multiplier * GetMeshTensorSize(type, op);
+-  }
+-
+-  void AddLiveValue(MeshTensorType type,
+-                    LiveMemoryMap& current_memory_usage_per_mesh,
+-                    Operation* op) {
+-    UpdateLiveValue(type, current_memory_usage_per_mesh, op, 1.0);
++    it_memory->second += GetMeshTensorSize(type, op);
+   }
+ 
+   void SubtractLastUse(MeshTensorType type,
+                        LiveMemoryMap& current_memory_usage_per_mesh,
+                        Operation* op) {
+-    UpdateLiveValue(type, current_memory_usage_per_mesh, op, -1.0);
++    StringRef mesh_name = type.getMeshName();
++    auto it_memory = current_memory_usage_per_mesh.find(mesh_name);
++    SDY_CHECK(it_memory != current_memory_usage_per_mesh.end())
++        << "Required mesh_name missing: " << std::string_view(mesh_name);
++    it_memory->second -= GetMeshTensorSize(type, op);
+   }
+ };
+ 
+diff --git a/shardy/dialect/mpmd/transforms/export/test/mark_fragment_reserved_memory.mlir b/shardy/dialect/mpmd/transforms/export/test/mark_fragment_reserved_memory.mlir
+index 341ed254..7533cf98 100644
+--- a/shardy/dialect/mpmd/transforms/export/test/mark_fragment_reserved_memory.mlir
++++ b/shardy/dialect/mpmd/transforms/export/test/mark_fragment_reserved_memory.mlir
+@@ -275,7 +275,7 @@ func.func @donated_program_arg_is_not_counted_after_last_use(
+ 
+   // %arg3, %arg0, and %1 are still alive.
+   // CHECK: mpmd.fragment
+-  // CHECK-SAME: reserved_hbm_bytes = 256
++  // CHECK-SAME: reserved_hbm_bytes = 384
+   %2 = mpmd.fragment<mesh="m1", origin=["f3"]> (%arg3, %arg3) (%arg4: tensor<4x8xf32>, %arg5: tensor<4x8xf32>) {
+     %14 = stablehlo.add %arg4, %arg5 : tensor<4x8xf32>
+     %15 = stablehlo.abs %arg5 : tensor<4x8xf32>
+diff --git a/shardy/dialect/mpmd/transforms/export/utils.h b/shardy/dialect/mpmd/transforms/export/utils.h
+index 9a865672..7efad838 100644
+--- a/shardy/dialect/mpmd/transforms/export/utils.h
++++ b/shardy/dialect/mpmd/transforms/export/utils.h
+@@ -95,8 +95,9 @@ inline bool IsInputOutputLayoutMatch(Operation* op, int input_index,
+ 
+ // Checks if the arg of the function is donated or aliased.
+ inline bool IsArgDonated(func::FuncOp func, int index) {
+-  return func.getArgAttrOfType<IntegerAttr>(index, kAliasingAttrName) ||
+-         func.getArgAttrOfType<BoolAttr>(index, kBufferDonationAttrName) ==
++  return func.getArgAttrOfType<StringAttr>(index, kAliasingAttrName) ||
++         func.getArgAttrOfType<BoolAttr>(index,
++                                               kBufferDonationAttrName) ==
+              BoolAttr::get(func.getContext(), true);
+ }
+ 
+diff --git a/shardy/dialect/mpmd/transforms/export/utils_test.cc b/shardy/dialect/mpmd/transforms/export/utils_test.cc
+index c44cc741..70e86fb7 100644
+--- a/shardy/dialect/mpmd/transforms/export/utils_test.cc
++++ b/shardy/dialect/mpmd/transforms/export/utils_test.cc
+@@ -92,21 +92,6 @@ TEST(GetDonatedBlockArguments, ShouldReturnCorrectBlockArgsToDonate) {
+   EXPECT_THAT(block_args_to_donate.begin()->getArgNumber(), 1);
+ }
+ 
+-TEST(IsArgDonated, ShouldReturnTrueForAliasedOrDonatedArg) {
+-  MLIRContext context;
+-  loadAllRequiredDialects(&context);
+-  OwningOpRef<ModuleOp> module =
+-      parseSourceString<ModuleOp>(kProgramWithUserMarkedDonation, &context);
+-  FuncOp func_op = GetMainFunction(*module);
+-
+-  // %arg0 has tf.aliasing_output = 1 : i32.
+-  EXPECT_TRUE(IsArgDonated(func_op, 0));
+-  // %arg1 has jax.buffer_donor = true.
+-  EXPECT_TRUE(IsArgDonated(func_op, 1));
+-  // %arg2 has no aliasing or buffer donation annotations.
+-  EXPECT_FALSE(IsArgDonated(func_op, 2));
+-}
+-
+ TEST(OperandsForDeletionMapping,
+      ShouldReturnCorrectOperandsForDeletionMapping) {
+   MLIRContext context;
 diff --git a/shardy/dialect/sdy/ir/canonicalization.cc b/shardy/dialect/sdy/ir/canonicalization.cc
-index 9af43e32..f4cda6da 100644
+index a79460f1..67ed717e 100644
 --- a/shardy/dialect/sdy/ir/canonicalization.cc
 +++ b/shardy/dialect/sdy/ir/canonicalization.cc
-@@ -108,7 +108,7 @@ class RedundantManualComputationPattern
-     if (!inShardings.empty() || !outShardings.empty()) {
-       MeshAttr mesh =
-           getCommonMesh(inShardings, outShardings, manualComputationOp);
--      SDY_CHECK(mesh) << "expected inputs and outputs to have a common mesh";
-+      assert(mesh && "expected inputs and outputs to have a common mesh");
-       for (StringAttr manualAxis : manualComputationOp.getManualAxes()) {
-         manualAxesProduct *= mesh.getAxisSize(manualAxis);
+@@ -283,20 +283,12 @@ class ReduceScatterFusion : public OpRewritePattern<AllSliceOp> {
+ 
+     // Check if all uses of the allReduceOp are AllSliceOps identical to this
+     // one.
+-    MeshAttr allReduceMesh = allReduceOp.getOutSharding().getMesh(allReduceOp);
+     for (Operation* user : allReduceOp->getUsers()) {
+       auto userSliceOp = dyn_cast<AllSliceOp>(user);
+       if (!userSliceOp) {
+         return rewriter.notifyMatchFailure(
+             allSliceOp, "sdy.all_reduce has a user that is not sdy.all_slice");
        }
-diff --git a/shardy/dialect/sdy/ir/test/manual_computation_verification.mlir b/shardy/dialect/sdy/ir/test/manual_computation_verification.mlir
-index c2c24800..5853611e 100644
---- a/shardy/dialect/sdy/ir/test/manual_computation_verification.mlir
-+++ b/shardy/dialect/sdy/ir/test/manual_computation_verification.mlir
-@@ -294,28 +294,3 @@ func.func @ranked_sharding_on_token(%arg0: !stablehlo.token) -> !stablehlo.token
-   } : (!stablehlo.token) -> !stablehlo.token
-   return %0 : !stablehlo.token
- }
--
--// -----
--
--sdy.mesh @mesh = <["a"=2]>
--
--func.func @scalar_region_arg(%arg0: tensor<16x32xf32>) -> tensor<16x32xf32> {
--  // expected-error @+1 {{op operand shape, corresponding sharding, and region operand shape at index 0 must match. Expected local shape 'tensor<8x32xf32>', actual local shape 'f32'}}
--  %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{"a"}, {}]>] out_shardings=[<@mesh, [{"a"}, {}]>] manual_axes={"a"} (%arg1: f32) {
--    %c = stablehlo.constant dense<0.000000e+00> : tensor<8x32xf32>
--    sdy.return %c : tensor<8x32xf32>
--  } : (tensor<16x32xf32>) -> tensor<16x32xf32>
--  func.return %0: tensor<16x32xf32>
--}
--
--// -----
--
--sdy.mesh @mesh = <["a"=2]>
--
--func.func @token_region_result(%arg0: tensor<16x32xf32>, %arg1: !stablehlo.token) -> tensor<16x32xf32> {
--  // expected-error @+1 {{op result shape, corresponding sharding, and region result shape at index 0 must match. Expected local shape 'tensor<8x32xf32>', actual local shape '!stablehlo.token'}}
--  %0 = sdy.manual_computation(%arg0, %arg1) in_shardings=[<@mesh, [{"a"}, {}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}, {}]>] manual_axes={"a"} (%arg2: tensor<8x32xf32>, %arg3: !stablehlo.token) {
--    sdy.return %arg3 : !stablehlo.token
--  } : (tensor<16x32xf32>, !stablehlo.token) -> tensor<16x32xf32>
--  func.return %0: tensor<16x32xf32>
--}
-diff --git a/shardy/dialect/sdy/ir/utils.cc b/shardy/dialect/sdy/ir/utils.cc
-index ca77dca8..4a639a80 100644
---- a/shardy/dialect/sdy/ir/utils.cc
-+++ b/shardy/dialect/sdy/ir/utils.cc
-@@ -25,7 +25,6 @@ limitations under the License.
- #include <numeric>
- #include <optional>
- #include <string>
--#include <string_view>
- #include <utility>
- #include <vector>
- 
-@@ -223,7 +222,7 @@ TensorShardingAttr inlineMesh(const SymbolTable& symbolTable,
-                               TensorShardingAttr sharding) {
-   if (auto name = dyn_cast<FlatSymbolRefAttr>(sharding.getMeshOrRef())) {
-     MeshAttr mesh = getMeshAttr(symbolTable, name);
--    SDY_CHECK(mesh) << "unknown mesh: " << std::string_view(name.getValue());
-+    assert(mesh && "unknown mesh");
-     return TensorShardingAttr::get(
-         sharding.getContext(), mesh, sharding.getDimShardings(),
-         sharding.getReplicatedAxes(), sharding.getUnreducedAxes(),
-@@ -264,7 +263,7 @@ Attribute getCommonMeshOrRef(ArrayRef<TensorShardingAttr> operandShardings,
-       meshOrRef = sharding.getMeshOrRef();
-       continue;
-     }
--    if (!otherMesh || otherMesh.empty()) {
-+    if (otherMesh.empty()) {
-       continue;
-     }
-     if (!otherMesh.equals(mesh, ignoreDeviceIds)) {
-@@ -964,13 +963,9 @@ mlir::Attribute getMeshOrRef(
-     int64_t numElements, const SymbolTable& symbolTable,
-     std::function<TensorShardingAttr(int64_t)> getSharding) {
-   for (int64_t i = 0; i < numElements; ++i) {
--    if (TensorShardingAttr sdySharding = getSharding(i); sdySharding) {
--      MeshAttr mesh = sdySharding.getMesh(symbolTable);
--      SDY_CHECK(mesh) << "unknown mesh: "
--                      << std::string_view(sdySharding.getMeshName());
--      if (!mesh.isSingleDevice()) {
--        return sdySharding.getMeshOrRef();
+-      // An sdy.all_slice of a fully replicated tensor may switch meshes, which
+-      // an sdy.reduce_scatter on the sdy.all_reduce mesh cannot express.
+-      if (userSliceOp.getOutSharding().getMesh(userSliceOp) != allReduceMesh) {
+-        return rewriter.notifyMatchFailure(
+-            allSliceOp,
+-            "sdy.all_reduce has an sdy.all_slice user on a different mesh");
 -      }
-+    if (TensorShardingAttr sdySharding = getSharding(i);
-+        sdySharding && !sdySharding.getMesh(symbolTable).isSingleDevice()) {
-+      return sdySharding.getMeshOrRef();
-     }
-   }
-   return nullptr;
-diff --git a/shardy/dialect/sdy/ir/verifiers.cc b/shardy/dialect/sdy/ir/verifiers.cc
-index 65c6212b..3d90562f 100644
---- a/shardy/dialect/sdy/ir/verifiers.cc
-+++ b/shardy/dialect/sdy/ir/verifiers.cc
-@@ -1021,12 +1021,13 @@ LogicalResult verifyManualComputationValue(
-     //    arguments/results match.
-     auto expectedLocalRankedType =
-         RankedTensorType::get(newDimSizes, globalShapedType.getElementType());
--    if (expectedLocalRankedType != localType) {
-+    auto localRankedType = cast<RankedTensorType>(localType);
-+    if (expectedLocalRankedType != localRankedType) {
-       return op->emitOpError(valueKindStr)
-              << " shape, corresponding sharding, and region " << valueKindStr
-              << " shape at index " << valueIndex
-              << " must match. Expected local shape " << expectedLocalRankedType
--             << ", actual local shape " << localType;
-+             << ", actual local shape " << localRankedType;
-     }
+       // Check for identical slicing axes.
+       if (userSliceOp.getSlicingAxes() != allSliceOp.getSlicingAxes()) {
+         return rewriter.notifyMatchFailure(
+diff --git a/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir b/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir
+index 093112bb..de616ede 100644
+--- a/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir
++++ b/shardy/dialect/sdy/ir/test/collective_canonicalization.mlir
+@@ -238,35 +238,6 @@ func.func @reduce_scatter_fusion_no_subaxis_prefix_match(%arg0 : tensor<64x16xf3
+   return %1 : tensor<64x16xf32>
+ }
+ 
+-// CHECK-LABEL: func @reduce_scatter_fusion_different_mesh_device_ids
+-func.func @reduce_scatter_fusion_different_mesh_device_ids(%arg0 : tensor<16x2xf32> {sdy.sharding=#sdy.sharding<@mesh, [{}, {}], unreduced={"x", "y"}>}) -> tensor<16x2xf32> {
+-  // CHECK-NEXT: %[[AR:.*]] = sdy.all_reduce {"x", "y"} %arg0 out_sharding=<@mesh, [{}, {}]> : tensor<16x2xf32>
+-  // CHECK-NEXT: %[[AS:.*]] = sdy.all_slice [{"x", "y"}, {}] %[[AR]] out_sharding=<@mesh_non_iota, [{"x", "y"}, {}]> : tensor<16x2xf32>
+-  // CHECK-NEXT: return %[[AS]] : tensor<16x2xf32>
+-  %0 = sdy.all_reduce {"x", "y"} %arg0 out_sharding=<@mesh, [{}, {}]> : tensor<16x2xf32>
+-  %1 = sdy.all_slice [{"x", "y"}, {}] %0 out_sharding=<@mesh_non_iota, [{"x", "y"}, {}]> : tensor<16x2xf32>
+-  return %1 : tensor<16x2xf32>
+-}
+-
+-// CHECK-LABEL: func @reduce_scatter_fusion_different_mesh_device_ids_residual_slice
+-func.func @reduce_scatter_fusion_different_mesh_device_ids_residual_slice(%arg0 : tensor<16x2xf32> {sdy.sharding=#sdy.sharding<@mesh, [{}, {}], unreduced={"x"}>}) -> tensor<16x2xf32> {
+-  // CHECK-NEXT: %[[AR:.*]] = sdy.all_reduce {"x"} %arg0 out_sharding=<@mesh, [{}, {}]> : tensor<16x2xf32>
+-  // CHECK-NEXT: %[[AS:.*]] = sdy.all_slice [{"x", "y"}, {}] %[[AR]] out_sharding=<@mesh_non_iota, [{"x", "y"}, {}]> : tensor<16x2xf32>
+-  // CHECK-NEXT: return %[[AS]] : tensor<16x2xf32>
+-  %0 = sdy.all_reduce {"x"} %arg0 out_sharding=<@mesh, [{}, {}]> : tensor<16x2xf32>
+-  %1 = sdy.all_slice [{"x", "y"}, {}] %0 out_sharding=<@mesh_non_iota, [{"x", "y"}, {}]> : tensor<16x2xf32>
+-  return %1 : tensor<16x2xf32>
+-}
+-
+-// CHECK-LABEL: func @reduce_scatter_fusion_inlined_equal_mesh
+-func.func @reduce_scatter_fusion_inlined_equal_mesh(%arg0 : tensor<16x2xf32> {sdy.sharding=#sdy.sharding<@mesh, [{}, {}], unreduced={"x", "y"}>}) -> tensor<16x2xf32> {
+-  // CHECK-NEXT: %[[RS:.*]] = sdy.reduce_scatter [{"x", "y"}, {}] %arg0 out_sharding=<@mesh, [{"x", "y"}, {}]> : tensor<16x2xf32>
+-  // CHECK-NEXT: return %[[RS]] : tensor<16x2xf32>
+-  %0 = sdy.all_reduce {"x", "y"} %arg0 out_sharding=<@mesh, [{}, {}]> : tensor<16x2xf32>
+-  %1 = sdy.all_slice [{"x", "y"}, {}] %0 out_sharding=<mesh<["x"=2, "y"=2]>, [{"x", "y"}, {}]> : tensor<16x2xf32>
+-  return %1 : tensor<16x2xf32>
+-}
+-
+ // CHECK-LABEL: func @all_to_all_no_use
+ func.func @all_to_all_no_use(%arg0 : tensor<64x16xf32> {sdy.sharding=#sdy.sharding<@mesh, [{"x"}, {}]>}) -> tensor<64x16xf32> {
+   // CHECK-NEXT: %0 = sdy.all_to_all [{"x"}: 0->1] %arg0 out_sharding=<@mesh, [{}, {"x"}]> : tensor<64x16xf32>
+diff --git a/shardy/dialect/sdy/transforms/export/convert_global_to_local.cc b/shardy/dialect/sdy/transforms/export/convert_global_to_local.cc
+index 8cb26f4c..7fd5b8a5 100644
+--- a/shardy/dialect/sdy/transforms/export/convert_global_to_local.cc
++++ b/shardy/dialect/sdy/transforms/export/convert_global_to_local.cc
+@@ -2107,6 +2107,14 @@ class StablehloDynamicSliceOpPattern
+   ConversionState& conversionState;
+ };
+ 
++Value createScalarInt(Location loc, RankedTensorType type, int64_t val,
++                      OpBuilder& b) {
++  return stablehlo::ConstantOp::create(
++      b, loc,
++      DenseIntElementsAttr::get(type,
++                                APInt(type.getElementTypeBitWidth(), val)));
++}
++
+ // Computes the predicate indicating whether the current shard owns the
+ // update slice in a single dimension:
+ // `(clampedIndex >= offset) && (clampedIndex + sliceDim <= offset +
+@@ -2116,12 +2124,12 @@ Value computeOwnershipPredicate(Location loc, Value clampedIndex, Value offset,
+                                 RankedTensorType scalarIndexType,
+                                 ConversionPatternRewriter& rewriter) {
+   Value sliceSizeConst =
+-      createScalarIntConstant(loc, scalarIndexType, sliceDim, rewriter);
++      createScalarInt(loc, scalarIndexType, sliceDim, rewriter);
+   Value clampedPlusSlice = stablehlo::AddOp::create(
+       rewriter, loc, scalarIndexType, clampedIndex, sliceSizeConst);
+ 
+   Value shardSizeConst =
+-      createScalarIntConstant(loc, scalarIndexType, shardDim, rewriter);
++      createScalarInt(loc, scalarIndexType, shardDim, rewriter);
+   Value offsetPlusShard = stablehlo::AddOp::create(
+       rewriter, loc, scalarIndexType, offset, shardSizeConst);
+ 
+@@ -2150,9 +2158,9 @@ LocalIndexAndOwnership computeLocalIndexAndOwnershipForDim(
+   RankedTensorType scalarIndexType = RankedTensorType::get({}, indexEltTy);
+ 
+   // Clamp the start index to [0, globalDim - sliceDim].
+-  Value zeroConst = createScalarIntConstant(loc, scalarIndexType, 0, rewriter);
+-  Value maxConst = createScalarIntConstant(loc, scalarIndexType,
+-                                           globalDim - sliceDim, rewriter);
++  Value zeroConst = createScalarInt(loc, scalarIndexType, 0, rewriter);
++  Value maxConst =
++      createScalarInt(loc, scalarIndexType, globalDim - sliceDim, rewriter);
+   Value clampedIndex = stablehlo::ClampOp::create(
+       rewriter, loc, scalarIndexType, zeroConst, rawIndex, maxConst);
+ 
+@@ -2482,15 +2490,19 @@ std::pair<SmallVector<Value>, SmallVector<Value>> getTrivialSliceDimBounds(
+     maxBounds.reserve(startIndexMap.size());
    }
  
-diff --git a/shardy/dialect/sdy/transforms/export/insert_explicit_reshards.cc b/shardy/dialect/sdy/transforms/export/insert_explicit_reshards.cc
-index 756b46ae..6b86b36e 100644
---- a/shardy/dialect/sdy/transforms/export/insert_explicit_reshards.cc
-+++ b/shardy/dialect/sdy/transforms/export/insert_explicit_reshards.cc
-@@ -19,7 +19,6 @@ limitations under the License.
- #include <cstdint>
- #include <memory>  // IWYU pragma: keep
- #include <optional>
--#include <string_view>
- #include <utility>
- 
- #include "llvm/ADT/DenseMap.h"
-@@ -351,7 +350,7 @@ std::optional<MeshOp> getMesh(ArrayRef<TensorShardingAttr> inShardings,
-     return std::nullopt;
-   }
-   MeshOp meshOp = getMeshOp(symbolTable, *meshName);
--  SDY_CHECK(meshOp) << "unknown mesh: " << std::string_view(*meshName);
-+  assert(meshOp && "unknown mesh");
-   if (meshOp.getMesh().isSingleDevice()) {
-     return std::nullopt;
-   }
-diff --git a/shardy/dialect/sdy/transforms/export/pad_for_divisibility.cc b/shardy/dialect/sdy/transforms/export/pad_for_divisibility.cc
-index 4cef1c10..111e882e 100644
---- a/shardy/dialect/sdy/transforms/export/pad_for_divisibility.cc
-+++ b/shardy/dialect/sdy/transforms/export/pad_for_divisibility.cc
-@@ -557,8 +557,7 @@ class GenericOpPattern : public ConversionPattern {
-     Dialect* dialect = op->getDialect();
-     if ((dialect && dialect->getNamespace() != "stablehlo" &&
-          !isa<func::CallOp, func::ReturnOp, sdy::ReturnOp, sdy::AllReduceOp,
--              sdy::CollectivePermuteOp, sdy::ShardedToUnreducedOp,
--              sdy::ReplicatedToUnreducedOp>(op)) ||
-+              sdy::ShardedToUnreducedOp, sdy::ReplicatedToUnreducedOp>(op)) ||
-         hasCustomPadHandling(op)) {
-       return failure();
++  unsigned bitWidth = indexEltTy.getIntOrFloatBitWidth();
+   for (int64_t indexedDim : startIndexMap) {
+     if (!llvm::is_contained(trivialSliceDims, indexedDim)) {
+       // For non-trivial dims, the bounds cover the entire global range.
+       minBounds.push_back(createZeroConstant(
+           loc, RankedTensorType::get({}, indexEltTy), rewriter));
+       if (computeMask) {
+-        maxBounds.push_back(createScalarIntConstant(
+-            loc, indexEltTy, globalOperandType.getDimSize(indexedDim) - 1,
+-            rewriter));
++        maxBounds.push_back(stablehlo::ConstantOp::create(
++            rewriter, loc,
++            DenseIntElementsAttr::get(
++                RankedTensorType::get({}, indexEltTy),
++                APInt(bitWidth,
++                      globalOperandType.getDimSize(indexedDim) - 1))));
+       }
+       continue;
      }
-diff --git a/shardy/dialect/sdy/transforms/export/reshard_to_collectives.cc b/shardy/dialect/sdy/transforms/export/reshard_to_collectives.cc
-index 3b01769d..5554918b 100644
---- a/shardy/dialect/sdy/transforms/export/reshard_to_collectives.cc
-+++ b/shardy/dialect/sdy/transforms/export/reshard_to_collectives.cc
-@@ -29,7 +29,6 @@ limitations under the License.
+@@ -2505,8 +2517,10 @@ std::pair<SmallVector<Value>, SmallVector<Value>> getTrivialSliceDimBounds(
+ 
+     minBounds.push_back(offset);
+     if (computeMask) {
+-      Value shardSizeMinus1 =
+-          createScalarIntConstant(loc, indexEltTy, shardSize - 1, rewriter);
++      Value shardSizeMinus1 = stablehlo::ConstantOp::create(
++          rewriter, loc,
++          DenseIntElementsAttr::get(RankedTensorType::get({}, indexEltTy),
++                                    APInt(bitWidth, shardSize - 1)));
+       maxBounds.push_back(stablehlo::AddOp::create(
+           rewriter, loc, RankedTensorType::get({}, indexEltTy), offset,
+           shardSizeMinus1));
+diff --git a/shardy/dialect/sdy/transforms/export/resolve_permutation_factors.cc b/shardy/dialect/sdy/transforms/export/resolve_permutation_factors.cc
+index 62172532..0ebe46c3 100644
+--- a/shardy/dialect/sdy/transforms/export/resolve_permutation_factors.cc
++++ b/shardy/dialect/sdy/transforms/export/resolve_permutation_factors.cc
+@@ -22,7 +22,6 @@ limitations under the License.
+ 
  #include "llvm/ADT/DenseSet.h"
  #include "llvm/ADT/STLExtras.h"
+-#include "llvm/ADT/STLFunctionalExtras.h"
+ #include "llvm/ADT/Sequence.h"
  #include "llvm/ADT/SmallVector.h"
--#include "llvm/Support/MathExtras.h"
- #include "mlir/Dialect/Func/IR/FuncOps.h"  // IWYU pragma: keep
- #include "mlir/IR/Attributes.h"
- #include "mlir/IR/BuiltinAttributes.h"
-@@ -97,16 +96,10 @@ AxisList concatAxisLists(MutableArrayRef<AxisList> axisLists) {
-   return result;
+ #include "llvm/ADT/SmallVectorExtras.h"
+@@ -311,8 +310,12 @@ Value convertPartitionIdToIdInGroup(Location loc, Value globalPartitionId,
+         rewriter, loc, RankedTensorType::get({}, i32Ty), sliceOp);
+   }
+ 
+-  Type pidElemTy =
+-      cast<RankedTensorType>(globalPartitionId.getType()).getElementType();
++  Value globalPartitionIdI32 = globalPartitionId;
++  if (cast<RankedTensorType>(globalPartitionId.getType()).getElementType() !=
++      i32Ty) {
++    globalPartitionIdI32 = stablehlo::ConvertOp::create(
++        rewriter, loc, RankedTensorType::get({}, i32Ty), globalPartitionId);
++  }
+ 
+   // Standard iota mesh: compute shard index via scalar HLO arithmetic ops.
+   Value idInGroup = nullptr;
+@@ -336,20 +339,16 @@ Value convertPartitionIdToIdInGroup(Location loc, Value globalPartitionId,
+     int64_t subAxisStride = fullSize / (axis.getSubAxisPreSize() * axisSize);
+     int64_t divisor = suffixSize * subAxisStride;
+ 
+-    // Compute div, rem, and multi-axis accumulation in the native element type
+-    // of globalPartitionId (for example, ui32) before converting to i32, and
+-    // skip rem when the axis spans the most significant dimension of the mesh
+-    // (axisSize * divisor == totalMeshDevices).
+-    Value coord = globalPartitionId;
++    Value coord = globalPartitionIdI32;
+     if (divisor > 1) {
+       coord = stablehlo::DivOp::create(
+           rewriter, loc, coord.getType(), coord,
+-          createScalarIntConstant(loc, pidElemTy, divisor, rewriter));
++          createScalarIntConstant(loc, i32Ty, divisor, rewriter));
+     }
+-    if (axisSize * divisor < totalMeshDevices) {
++    if (axisSize < totalMeshDevices) {
+       coord = stablehlo::RemOp::create(
+           rewriter, loc, coord.getType(), coord,
+-          createScalarIntConstant(loc, pidElemTy, axisSize, rewriter));
++          createScalarIntConstant(loc, i32Ty, axisSize, rewriter));
+     }
+ 
+     if (!idInGroup) {
+@@ -357,16 +356,13 @@ Value convertPartitionIdToIdInGroup(Location loc, Value globalPartitionId,
+     } else {
+       idInGroup = stablehlo::MulOp::create(
+           rewriter, loc, idInGroup,
+-          createScalarIntConstant(loc, pidElemTy, axisSize, rewriter));
++          createScalarIntConstant(loc, i32Ty, axisSize, rewriter));
+       idInGroup = stablehlo::AddOp::create(rewriter, loc, idInGroup, coord);
+     }
+   }
+ 
+   if (!idInGroup) {
+     idInGroup = createScalarIntConstant(loc, i32Ty, 0, rewriter);
+-  } else if (pidElemTy != i32Ty) {
+-    idInGroup = stablehlo::ConvertOp::create(
+-        rewriter, loc, RankedTensorType::get({}, i32Ty), idInGroup);
+   }
+ 
+   return idInGroup;
+@@ -407,43 +403,27 @@ DeviceOffsetInfo getDeviceOffsetInfo(Location loc, Value partitionId,
+                                      int64_t diffSize, int64_t baseOffset,
+                                      int64_t baseDilation,
+                                      ResolutionState& state,
+-                                     bool needUndilated = true,
+-                                     bool clampToZero = true) {
++                                     bool needUndilated = true) {
+   IRRewriter& rewriter = state.rewriter;
+   Type i32Ty = rewriter.getI32Type();
+-  Value dilatedOffset;
+-  Value zeroConst;
+-  // When diffSize == 0 and baseOffset >= 0, every shard has the same
+-  // non-negative offset in the HALO buffer, so fold directly to a constant.
+-  if (diffSize == 0 && baseOffset >= 0) {
+-    dilatedOffset = createScalarIntConstant(loc, i32Ty, baseOffset, rewriter);
+-    zeroConst =
+-        createZeroConstant(loc, RankedTensorType::get({}, i32Ty), rewriter);
+-  } else {
+-    Value diffSizeVal = createScalarIntConstant(loc, i32Ty, diffSize, rewriter);
+-    Value baseOffsetVal =
+-        createScalarIntConstant(loc, i32Ty, baseOffset, rewriter);
+-    Value offsetInPartition =
+-        stablehlo::MulOp::create(rewriter, loc, partitionId, diffSizeVal);
+-    dilatedOffset = stablehlo::AddOp::create(rewriter, loc, offsetInPartition,
+-                                             baseOffsetVal);
+-    zeroConst =
+-        createZeroConstant(loc, RankedTensorType::get({}, i32Ty), rewriter);
+-    // Only clamp dilatedOffset to 0 when the minimum offset across all shards
+-    // can be negative.
+-    if (clampToZero) {
+-      dilatedOffset =
+-          stablehlo::MaxOp::create(rewriter, loc, dilatedOffset, zeroConst);
+-    }
+-  }
++  Value diffSizeVal = createScalarIntConstant(loc, i32Ty, diffSize, rewriter);
++  Value baseOffsetVal =
++      createScalarIntConstant(loc, i32Ty, baseOffset, rewriter);
++  Value offsetInPartition =
++      stablehlo::MulOp::create(rewriter, loc, partitionId, diffSizeVal);
++  Value dilatedOffset =
++      stablehlo::AddOp::create(rewriter, loc, offsetInPartition, baseOffsetVal);
++
++  auto zeroConst =
++      createZeroConstant(loc, RankedTensorType::get({}, i32Ty), rewriter);
++
++  dilatedOffset =
++      stablehlo::MaxOp::create(rewriter, loc, dilatedOffset, zeroConst);
+ 
+   Value undilatedOffset;
+   if (needUndilated) {
+     if (baseDilation == 1) {
+       undilatedOffset = dilatedOffset;
+-    } else if (diffSize == 0 && baseOffset >= 0) {
+-      undilatedOffset = createScalarIntConstant(
+-          loc, i32Ty, baseOffset / baseDilation, rewriter);
+     } else {
+       Value baseDilationVal =
+           createScalarIntConstant(loc, i32Ty, baseDilation, rewriter);
+@@ -672,35 +652,6 @@ Value padHighSideToShape(Location loc, Value operand,
+                            paddingValue);
  }
  
--// Remove the common prefix of `inAxesPerDim` and `outAxesPerDim` for dimensions
--// that do not need to be unsharded first.
-+// Remove the common prefix of `inAxesPerDim` and `outAxesPerDim`.
- void removeCommonPrefix(SmallVector<AxisList>& inAxesPerDim,
--                        SmallVector<AxisList>& outAxesPerDim,
--                        ArrayRef<bool> dimsToUnshard) {
--  for (auto [inAxes, outAxes, unshardDim] :
--       llvm::zip_equal(inAxesPerDim, outAxesPerDim, dimsToUnshard)) {
--    if (unshardDim) {
--      continue;
--    }
-+                        SmallVector<AxisList>& outAxesPerDim) {
-+  for (auto [inAxes, outAxes] : llvm::zip_equal(inAxesPerDim, outAxesPerDim)) {
-     while (!inAxes.empty() && !outAxes.empty() &&
-            inAxes.front() == outAxes.front()) {
-       inAxes.pop_front();
-@@ -202,16 +195,11 @@ struct AllToAllInfo {
- // We define the current state of the transformation as follows:
- //
- // - `inAxesPerDim` - the axes in the current sharding per dimension, such that
--//   the common prefix with the output sharding is removed (unless the
--//   dimension is in `dimsToUnshard`).
-+//   the common prefix with the output sharding is removed.
- // - `outAxesPerDim` - the axes in the output sharding per dimension, such that
--//   the common prefix with the current sharding is removed (unless the
--//   dimension is in `dimsToUnshard`).
-+//   the common prefix with the current sharding is removed.
- // - `currentAxesPerDim` - the axes in the current sharding, including the
- //   common prefix with the output sharding.
--// - `dimsToUnshard` - per-dimension boolean indicating whether a dimension has
--//   different padded sizes in the input and output shardings and must first be
--//   completely unsharded before acquiring its output sharding.
- //
- // These invariants are maintained throughout the algorithm, and specifically
- // after each collective insertion.
-@@ -245,39 +233,21 @@ class CollectiveInserter {
-         outAxesPerDim(getAxesPerDim<AxisList>(outSharding)),
-         currentAxesPerDim(getAxesPerDim<SmallVector<AxisRefAttr>>(inSharding)),
-         capacityPerDim(inSharding.getRank(), 1),
--        collectiveAxesPerDim(inSharding.getRank()),
--        dimsToUnshard(inSharding.getRank(), false) {
-+        collectiveAxesPerDim(inSharding.getRank()) {
-     // Unreduced axes in the input and output sharding must match, given we
-     // insert an all-reduce if an unreduced axis becomes replicated/sharded, and
-     // never insert a reshard that goes from replicated/sharded to unreduced.
-     assert(inSharding.getUnreducedAxes() == outSharding.getUnreducedAxes());
- 
--    // If a dimension is sharded in both the input and output shardings with
--    // different padded sizes, it must first be unsharded so that downstream
--    // passes can pad or trim the dimension while it is unsharded.
--    ArrayRef<int64_t> shape = getTensorShape(result);
--    for (int64_t dim = 0; dim < getRank(); ++dim) {
--      int64_t dimSize = shape[dim];
--      int64_t inShardedSize =
--          inSharding.getDimSharding(dim).getShardedSize(mesh);
--      int64_t outShardedSize =
--          outSharding.getDimSharding(dim).getShardedSize(mesh);
--      if (dimSize > 0 && inShardedSize > 1 && outShardedSize > 1 &&
--          llvm::alignTo(dimSize, inShardedSize) !=
--              llvm::alignTo(dimSize, outShardedSize)) {
--        dimsToUnshard[dim] = true;
--      }
--    }
+-// Slices val along dimension dim on [sliceStart, sliceLimit) with stride 1 and
+-// attaches sharding to the result. Returns val directly if skipFullDimSlice is
+-// true and the slice covers the full dimension.
+-Value sliceAlongDim(Location loc, Value val, int64_t dim, int64_t sliceStart,
+-                    int64_t sliceLimit, TensorShardingAttr sharding,
+-                    IRRewriter& rewriter, bool skipFullDimSlice = true) {
+-  auto valType = cast<RankedTensorType>(val.getType());
+-  if (skipFullDimSlice && sliceStart == 0 &&
+-      sliceLimit == valType.getDimSize(dim)) {
+-    return val;
+-  }
+-  int64_t rank = valType.getRank();
+-  SmallVector<int64_t> starts(rank, 0);
+-  SmallVector<int64_t> limits = llvm::to_vector(valType.getShape());
+-  SmallVector<int64_t> strides(rank, 1);
+-  starts[dim] = sliceStart;
+-  limits[dim] = sliceLimit;
+-  SmallVector<int64_t> slicedShape = llvm::to_vector(valType.getShape());
+-  slicedShape[dim] = sliceLimit - sliceStart;
+-  auto slicedType =
+-      RankedTensorType::get(slicedShape, valType.getElementType());
+-  auto sliceOp = stablehlo::SliceOp::create(
+-      rewriter, loc, slicedType, val, rewriter.getDenseI64ArrayAttr(starts),
+-      rewriter.getDenseI64ArrayAttr(limits),
+-      rewriter.getDenseI64ArrayAttr(strides));
+-  setSharding(sliceOp.getResult(), sharding);
+-  return sliceOp.getResult();
+-}
 -
-     // We align sub-axes between the input and output axes, so that we can treat
-     // sub-axes like full axes and assume any two sub-axes that overlap are also
-     // equal, which allows using them as keys in a hash map.
-     alignSubAxesByDecomposition(inAxesPerDim, outAxesPerDim, mesh);
--    // We remove the common prefix of `inAxesPerDim` and `outAxesPerDim` (except
--    // on dimensions in `dimsToUnshard`), since those axes stay exactly the same
--    // during the reshard. We are left with `inAxesPerDim` and `outAxesPerDim`
--    // that need to become empty, via a sequence of collectives.
--    removeCommonPrefix(inAxesPerDim, outAxesPerDim, dimsToUnshard);
-+    // We remove the common prefix of `inAxesPerDim` and `outAxesPerDim`, since
-+    // those axes stay exactly the same during the reshard. We are left with
-+    // `inAxesPerDim` and `outAxesPerDim` that need to become empty, via a
-+    // sequence of collectives.
-+    removeCommonPrefix(inAxesPerDim, outAxesPerDim);
+ // -----------------------------------------------------------------------------
+ // Core HALO exchange helpers.
+ // -----------------------------------------------------------------------------
+@@ -784,6 +735,7 @@ Value rightShiftData(Location loc, Value input, int64_t dim, int64_t totalShift,
+                      ResolutionState& state) {
+   auto inputType = cast<RankedTensorType>(input.getType());
+   int64_t shardSize = inputType.getDimSize(dim);
++  int64_t rank = inputType.getRank();
+   TensorShardingAttr localSharding =
+       removeAxesFromSharding(sharding, manualAxes, mesh);
  
-     inAxisSet = getAxisSet(inAxesPerDim);
-     outAxisToDimAndIndex = getAxisToDimAndIndex(outAxesPerDim);
-@@ -297,12 +267,11 @@ class CollectiveInserter {
-     // can be handled by the previous collectives, so we are left with
-     // all-gathering all axes in `inAxesPerDim` and we're done.
-     //
--    // Otherwise, we need at most 2 iterations (or 3 if a dimension must first
--    // be unsharded due to a padded dimension size mismatch).
-+    // Otherwise, we need at most 2 iterations.
+@@ -827,18 +779,35 @@ Value rightShiftData(Location loc, Value input, int64_t dim, int64_t totalShift,
+   int64_t headSliceSize = shardSize - fraction;
  
-     // TODO(tomnatan): consider looping only over all-to-all and collective
-     // permute as long as one of them was inserted.
--    for (int i = 0; i < 3 && !isDone(); ++i) {
-+    for (int i = 0; i < 2 && !isDone(); ++i) {
-       // 1. Try to insert an all-slice, that decreases the size of the tensor.
-       tryAllSlice();
+   // tailSlice slices tail[shardSize - fraction : shardSize]
+-  Value tailSlice =
+-      sliceAlongDim(loc, tail, dim, headSliceSize, shardSize, localSharding,
+-                    state.rewriter, /*skipFullDimSlice=*/false);
++  SmallVector<int64_t> tailStarts(rank, 0);
++  tailStarts[dim] = headSliceSize;
++
++  SmallVector<int64_t> tailShape = llvm::to_vector(inputType.getShape());
++  tailShape[dim] = fraction;
++  auto tailType = RankedTensorType::get(tailShape, inputType.getElementType());
++  auto tailSlice = stablehlo::SliceOp::create(
++      state.rewriter, loc, tailType, tail,
++      state.rewriter.getDenseI64ArrayAttr(tailStarts),
++      state.rewriter.getDenseI64ArrayAttr(inputType.getShape()),
++      state.rewriter.getDenseI64ArrayAttr(SmallVector<int64_t>(rank, 1)));
++  setSharding(tailSlice.getResult(), localSharding);
  
-@@ -351,10 +320,9 @@ class CollectiveInserter {
-   // that dimension.
-   //
-   // We gather the suffix of axes (`gatheringAxes`) in `inAxesPerDim[dim]` that
--  // aren't present in `outAxesPerDim` (or whose target dimension in
--  // `outAxesPerDim` is in `dimsToUnshard`, or all axes if `dimsToUnshard[dim]`
--  // is true), and update the internal state as follows: `gatheringAxes` are
--  // popped from the back of `inAxesPerDim[dim]` and `currentAxesPerDim[dim]`.
-+  // aren't present in `outAxesPerDim`, and update the internal state as
-+  // follows: `gatheringAxes` are popped from the back of `inAxesPerDim[dim]`
-+  // and `currentAxesPerDim[dim]`.
-   //
-   // For example:
-   //
-@@ -376,18 +344,11 @@ class CollectiveInserter {
-     SmallVector<AxisRefAttr>& currentAxes = currentAxesPerDim[dim];
-     SmallVector<AxisRefAttr> gatheringAxes;
-     gatheringAxes.reserve(inAxes.size());
--    bool gatherAll = dimsToUnshard[dim];
--    auto shouldGatherAxis = [&](AxisRefAttr axis) {
--      if (gatherAll) {
+   // headSlice slices head[0 : headSliceSize]
+-  Value headSlice = sliceAlongDim(loc, head, dim, 0, headSliceSize,
+-                                  localSharding, state.rewriter,
+-                                  /*skipFullDimSlice=*/false);
++  SmallVector<int64_t> headLimits = llvm::to_vector(inputType.getShape());
++  headLimits[dim] = headSliceSize;
++
++  auto headType = RankedTensorType::get(headLimits, inputType.getElementType());
++  auto headSlice = stablehlo::SliceOp::create(
++      state.rewriter, loc, headType, head,
++      state.rewriter.getDenseI64ArrayAttr(SmallVector<int64_t>(rank, 0)),
++      state.rewriter.getDenseI64ArrayAttr(headLimits),
++      state.rewriter.getDenseI64ArrayAttr(SmallVector<int64_t>(rank, 1)));
++  setSharding(headSlice.getResult(), localSharding);
+ 
+   // Concat tailSlice followed by headSlice
+   Value concat = stablehlo::ConcatenateOp::create(
+-      state.rewriter, loc, ValueRange{tailSlice, headSlice}, dim);
++      state.rewriter, loc,
++      ValueRange{tailSlice.getResult(), headSlice.getResult()}, dim);
+   setSharding(concat, localSharding);
+   return concat;
+ }
+@@ -913,9 +882,7 @@ Value mayCollectivePermute(Location loc, Value input,
+ //
+ // For an undilated HALO exchange buffer, interiorPad is 0. Otherwise,
+ // interiorPad is baseDilation - 1. Parameter edgePadSize already considers
+-// interior padding. Optional callbacks shouldMaskNonTarget and
+-// sliceSegment allow skipping non-target masking and trimming segment
+-// bounds prior to collective-permute for a given hop offset.
++// interior padding.
+ Value assembleHaloExchangeBuffer(
+     Location loc, Value input, int64_t dim, int64_t edgePadSize,
+     Value paddingValue, int64_t leftHops, int64_t rightHops,
+@@ -923,8 +890,6 @@ Value assembleHaloExchangeBuffer(
+     const llvm::SmallDenseSet<AxisRefAttr>& manualAxes,
+     TensorShardingAttr localSharding, int64_t interiorPad,
+     const DimExchangeInfo& dimExchange, Value idInPartitionGroup,
+-    llvm::function_ref<bool(int64_t)> shouldMaskNonTarget,
+-    llvm::function_ref<Value(Value, int64_t)> sliceSegment,
+     ResolutionState& state) {
+   DimensionShardingAttr activeDimSharded =
+       dimExchange.reshapeInfo ? dimExchange.reshapeInfo->getTargetDimSharding()
+@@ -935,21 +900,15 @@ Value assembleHaloExchangeBuffer(
+   SmallVector<Value> concatSegments;
+   concatSegments.reserve(leftHops + 1 + rightHops);
+ 
+-  auto getSegmentInput = [&](Value val, int64_t offset) -> Value {
+-    return sliceSegment ? sliceSegment(val, offset) : val;
+-  };
+-
+   auto fetchNeighbors = [&](int64_t start, int64_t end) {
+     for (int64_t offset = start; offset >= end; --offset) {
+       SmallVector<int64_t> pairs =
+           getDataShiftSourceTargetPairs(mesh, manualAxesInDim, offset);
+-      Value segInput = getSegmentInput(input, offset);
+-      Value neighborData = mayCollectivePermute(loc, segInput, pairs, state);
++      Value neighborData = mayCollectivePermute(loc, input, pairs, state);
+       if (!isFullyReplicated(localSharding)) {
+         setSharding(neighborData, localSharding);
+       }
+-      if (paddingValue && idInPartitionGroup && !manualAxesInDim.empty() &&
+-          (!shouldMaskNonTarget || shouldMaskNonTarget(offset))) {
++      if (paddingValue && idInPartitionGroup && !manualAxesInDim.empty()) {
+         // Ensure devices not in target set use 0 instead of garbage values.
+         int64_t shardCount = activeDimSharded.getShardedSize(mesh);
+         int64_t thresholdVal = offset > 0 ? offset : shardCount + offset;
+@@ -959,18 +918,18 @@ Value assembleHaloExchangeBuffer(
+             state.rewriter, loc, idInPartitionGroup, thresholdConst,
+             offset > 0 ? stablehlo::ComparisonDirection::GE
+                        : stablehlo::ComparisonDirection::LT);
+-        auto segType = cast<RankedTensorType>(neighborData.getType());
++        auto inputType = cast<RankedTensorType>(input.getType());
+         Value broadcastPadding = stablehlo::BroadcastInDimOp::create(
+-            state.rewriter, loc, segType, paddingValue,
++            state.rewriter, loc, inputType, paddingValue,
+             state.rewriter.getDenseI64ArrayAttr({}));
+         Value broadcastPred = stablehlo::BroadcastInDimOp::create(
+             state.rewriter, loc,
+-            RankedTensorType::get(segType.getShape(),
++            RankedTensorType::get(inputType.getShape(),
+                                   state.rewriter.getI1Type()),
+             isTargetPred, state.rewriter.getDenseI64ArrayAttr({}));
+-        neighborData = stablehlo::SelectOp::create(state.rewriter, loc, segType,
+-                                                   broadcastPred, neighborData,
+-                                                   broadcastPadding);
++        neighborData = stablehlo::SelectOp::create(
++            state.rewriter, loc, inputType, broadcastPred, neighborData,
++            broadcastPadding);
+         if (!isFullyReplicated(localSharding)) {
+           setSharding(broadcastPadding, localSharding);
+           setSharding(broadcastPred, localSharding);
+@@ -984,7 +943,7 @@ Value assembleHaloExchangeBuffer(
+   // Fetch Left Neighbors (hop count h = leftHops down to 1)
+   fetchNeighbors(leftHops, 1);
+   // Local Shard
+-  concatSegments.push_back(getSegmentInput(input, /*offset=*/0));
++  concatSegments.push_back(input);
+   // Fetch Right Neighbors (hop count h = 1 up to rightHops, offset maps to -1
+   // down to -rightHops)
+   fetchNeighbors(-1, -rightHops);
+@@ -994,10 +953,6 @@ Value assembleHaloExchangeBuffer(
+                                                   concatSegments, dim);
+   setSharding(concat, localSharding);
+ 
+-  if (edgePadSize == 0 && interiorPad == 0) {
+-    return concat;
+-  }
+-
+   // Pad the concatenated tensor on both sides by edgePadSize.
+   auto concatType = cast<RankedTensorType>(concat.getType());
+   auto inputType = cast<RankedTensorType>(input.getType());
+@@ -1068,97 +1023,23 @@ Value exchangeDimWithDynamicOffset(
+   Value idInPartitionGroup = convertPartitionIdToIdInGroup(
+       loc, partitionId, mesh, activeDimShardedAttr, state.rewriter);
+ 
+-  auto inputType = cast<RankedTensorType>(operand.getType());
+-  int64_t sIn = inputType.getShape()[dim];
+-  int64_t sInDilated = sIn * baseDilation;
+-  int64_t activeSOut = sOut == 0 ? dimExchange.sFootprint : sOut;
+-  int64_t diffSize = activeSOut * stride - sInDilated;
+-  int64_t unpaddedBaseOffset = -padLow + dimExchange.leftHops * sInDilated;
+-  int64_t interiorPad = dilatedHaloBuffer ? baseDilation - 1 : 0;
+-
+   int64_t edgePadSize = dilatedHaloBuffer
+                             ? dimExchange.sFootprint * baseDilation
+                             : dimExchange.sFootprint;
+-  int64_t shardCount = activeDimShardedAttr.getShardedSize(mesh);
+-  int64_t endOffset = (shardCount - 1) * diffSize + unpaddedBaseOffset;
+-  int64_t minUnpaddedOff = std::min(unpaddedBaseOffset, endOffset);
+-  int64_t maxUnpaddedOff = std::max(unpaddedBaseOffset, endOffset);
+-  int64_t concatDimSize =
+-      (dimExchange.leftHops + 1 + dimExchange.rightHops) * sIn;
+-  int64_t dilatedConcatSize = (concatDimSize - 1) * (interiorPad + 1) + 1;
+-  // Skip edge padding when every shard's slice window [offset, offset +
+-  // dilatedFootprint] lies entirely within the concatenated segments [0,
+-  // dilatedConcatSize].
+-  if (!dimExchange.reshapeInfo) {
+-    int64_t dilatedFootprint = dilatedHaloBuffer
+-                                   ? dimExchange.sFootprint
+-                                   : dimExchange.sFootprint * baseDilation;
+-    if (minUnpaddedOff >= 0 &&
+-        maxUnpaddedOff + dilatedFootprint <= dilatedConcatSize) {
+-      edgePadSize = 0;
+-    }
+-  }
+-  int64_t bufferDimSize =
+-      (dilatedHaloBuffer ? dilatedConcatSize : concatDimSize) + 2 * edgePadSize;
+-  // When there is no edge or interior padding and baseDilation == 1, if the
+-  // union of all shards' slice windows starts inside the first segment and ends
+-  // inside the last segment, we can trim the unused prefix of the first segment
+-  // and unused suffix of the last segment before collective-permute.
+-  int64_t totalSegments = dimExchange.leftHops + 1 + dimExchange.rightHops;
+-  int64_t maxEnd = maxUnpaddedOff + dimExchange.sFootprint;
+-  bool canTrimSegments =
+-      !dimExchange.reshapeInfo && edgePadSize == 0 && interiorPad == 0 &&
+-      baseDilation == 1 && totalSegments > 1 && minUnpaddedOff >= 0 &&
+-      minUnpaddedOff < sIn && maxEnd > (totalSegments - 1) * sIn &&
+-      maxEnd <= totalSegments * sIn;
+-  int64_t untrimmedOffsetInConcat =
+-      unpaddedBaseOffset + edgePadSize * (dilatedHaloBuffer ? 1 : baseDilation);
+-  // Returns true if any non-target shard for hop offset has a dynamic slice
+-  // window overlapping that hop's segment [segStart, segEnd) in the buffer.
+-  auto shouldMaskNonTarget = [&](int64_t offset) -> bool {
+-    if (dimExchange.reshapeInfo) {
+-      return true;
+-    }
+-    int64_t segStart =
+-        edgePadSize + (dimExchange.leftHops - offset) * sIn * (interiorPad + 1);
+-    int64_t segEnd =
+-        edgePadSize +
+-        (dimExchange.leftHops - offset + 1) * sIn * (interiorPad + 1) -
+-        interiorPad;
+-    int64_t nonTargetStart =
+-        offset > 0 ? 0 : std::max<int64_t>(0, shardCount + offset);
+-    int64_t nonTargetEnd =
+-        offset > 0 ? std::min(offset, shardCount) : shardCount;
+-    for (int64_t t = nonTargetStart; t < nonTargetEnd; ++t) {
+-      int64_t rawDilatedOff =
+-          std::max<int64_t>(t * diffSize + untrimmedOffsetInConcat, 0);
+-      int64_t sliceStart =
+-          dilatedHaloBuffer ? rawDilatedOff : rawDilatedOff / baseDilation;
+-      sliceStart = std::min(sliceStart, bufferDimSize - dimExchange.sFootprint);
+-      int64_t sliceEnd = sliceStart + dimExchange.sFootprint;
+-      if (sliceStart < segEnd && sliceEnd > segStart) {
 -        return true;
 -      }
--      auto it = outAxisToDimAndIndex.find(axis);
--      return it == outAxisToDimAndIndex.end() || dimsToUnshard[it->second.dim];
--    };
-     auto axisRevIt = inAxes.rbegin();
--    while (axisRevIt != inAxes.rend() && shouldGatherAxis(*axisRevIt)) {
-+    while (axisRevIt != inAxes.rend() &&
-+           !outAxisToDimAndIndex.contains(*axisRevIt)) {
-       inAxisSet.erase(*axisRevIt);
--      ++axisRevIt;
-+      --axisRevIt;
-     }
-     auto inAxisIt = axisRevIt.base();
-     popBackFromCurrentAxes(currentAxes, inAxes, inAxisIt);
-@@ -408,12 +369,6 @@ class CollectiveInserter {
-       }
-       collectiveAxes = AxisRefListAttr::get(getContext(), gatheringAxes);
-     }
--    for (auto [currentAxes, unshardDim] :
--         llvm::zip_equal(currentAxesPerDim, dimsToUnshard)) {
--      if (currentAxes.empty()) {
--        unshardDim = false;
--      }
 -    }
-     if (hasGatheringAxes) {
-       result = AllGatherOp::create(rewriter, loc, result, collectiveAxesPerDim,
-                                    getCurrentSharding());
-@@ -620,10 +575,9 @@ class CollectiveInserter {
-   // We define the term capacity per dimension for all-slice - the product of
-   // axis sizes in `outAxesPerDim[d]` divided by the product of axis sizes in
-   // `inAxesPerDim[d]` for each dimension d, or the former divided by their GCD,
--  // if the former is not divisible by the latter (or 1 if `dimsToUnshard[d]` is
--  // true, since dimension d must be unsharded before slicing). In other words,
--  // the capacity represents how much the output is sharded more than the input
--  // along a specific dimension.
-+  // if the former is not divisible by the latter (as the dimension size needs
-+  // to be a multiplier of both). In other words, the capacity represents how
-+  // much the output is sharded more than the input along a specific dimension.
-   //
-   // Constraint: we can only slice dimension d along axes whose product of
-   // sizes doesn't exceed the capacity for that dimension, otherwise we will
-@@ -715,12 +669,8 @@ class CollectiveInserter {
-     bool hasSlicingAxes = false;
- 
-     // Initialize capacity per dimension.
--    for (auto [inAxes, outAxes, dimCapacity, unshardDim] : llvm::zip_equal(
--             inAxesPerDim, outAxesPerDim, capacityPerDim, dimsToUnshard)) {
--      if (unshardDim) {
--        dimCapacity = 1;
--        continue;
--      }
-+    for (auto [inAxes, outAxes, dimCapacity] :
-+         llvm::zip_equal(inAxesPerDim, outAxesPerDim, capacityPerDim)) {
-       int64_t inShardedSize = getShardedSize(inAxes, mesh);
-       int64_t outShardedSize = getShardedSize(outAxes, mesh);
-       dimCapacity = outShardedSize / std::gcd(inShardedSize, outShardedSize);
-@@ -748,13 +698,9 @@ class CollectiveInserter {
-     // 2. Slice axes in the dimension they appear in `outAxesPerDim`, i.e. the
-     // desired dimension, as long as the per-dim capacity allows.
-     AxisList availableOutAxes;
--    for (auto [inAxes, outAxes, currentAxes, slicingAxes, dimCapacity,
--               unshardDim] :
-+    for (auto [inAxes, outAxes, currentAxes, slicingAxes, dimCapacity] :
-          llvm::zip_equal(inAxesPerDim, outAxesPerDim, currentAxesPerDim,
--                         slicingAxesPerDim, capacityPerDim, dimsToUnshard)) {
--      if (unshardDim) {
--        continue;
--      }
-+                         slicingAxesPerDim, capacityPerDim)) {
-       auto outIt = outAxes.begin();
-       while (outIt != outAxes.end()) {
-         AxisRefAttr outAxis = *outIt;
-@@ -822,8 +768,7 @@ class CollectiveInserter {
-     }
-   }
- 
--  // We should insert a collective permute (assuming no dimension in
--  // `dimsToUnshard` still needs to be unsharded) if one of the following holds:
-+  // We should insert a collective permute if one of the following holds:
-   //
-   // 1. Both `inAxesPerDim[d]` and `outAxesPerDim[d]` aren't empty for a certain
-   //    dimension d and their front axes are divisible. This means we can
-@@ -856,9 +801,6 @@ class CollectiveInserter {
-   //    that B is before A, and A can be moved to d2 via an all-to-all before B
-   //    is all-gathered.
-   bool shouldCollectivePermute() {
--    if (llvm::any_of(dimsToUnshard, [](bool b) { return b; })) {
--      return false;
+-    return false;
+-  };
+-  auto sliceSegment = [&](Value val, int64_t offset) -> Value {
+-    if (!canTrimSegments) {
+-      return val;
 -    }
-     OptionalAxisRef availableInAxis;
-     OptionalAxisRef availableOutAxis;
-     for (auto [dim, inOutAxes] :
-@@ -1123,15 +1065,12 @@ class CollectiveInserter {
-   // The suffix of axes in `inAxesPerDim[srcDim]`, such that all axes within the
-   // suffix are mapped to the same dimension in `outAxisToDimAndIndex`
-   // (`allToAllAxes`), are all-to-all-ed with the mapped dimension as the target
--  // (`tgtDim`), provided `dimsToUnshard[tgtDim]` is false and (if
--  // `dimsToUnshard[srcDim]` is true) `allToAllAxes` includes all axes on
--  // `srcDim` so that `srcDim` becomes completely unsharded.
-+  // (`tgtDim`).
-   //
-   // The internal state is updated as follows for `allToAllAxes` and `tgtDim`:
-   //
-   // - `allToAllAxes` are popped from the back of `inAxesPerDim[srcDim]` and
--  //   `currentAxesPerDim[srcDim]` (and `dimsToUnshard[srcDim]` is cleared if
--  //   `currentAxesPerDim[srcDim]` becomes empty).
-+  //   `currentAxesPerDim[srcDim]`.
-   // - `allToAllAxes` are appended to `inAxesPerDim[tgtDim]` and
-   //   `currentAxesPerDim[tgtDim]`.
-   // - The common prefix between `inAxesPerDim[tgtDim]` and
-@@ -1198,8 +1137,7 @@ class CollectiveInserter {
-         break;
-       }
-       int64_t outAxisDim = outAxisEntryIt->second.dim;
--      if (outAxisDim == srcDim || dimsToUnshard[outAxisDim] ||
--          (tgtDim && outAxisDim != *tgtDim)) {
-+      if (outAxisDim == srcDim || (tgtDim && outAxisDim != *tgtDim)) {
-         break;
-       }
-       tgtDim = outAxisDim;
-@@ -1212,9 +1150,6 @@ class CollectiveInserter {
-     }
- 
-     auto startInAxisIt = axisRevIt.base();
--    if (dimsToUnshard[srcDim] && startInAxisIt != srcInAxes.begin()) {
--      return std::nullopt;
--    }
- 
-     AxisList& tgtOutAxes = outAxesPerDim[*tgtDim];
-     if (!allowOutOfOrderTarget &&
-@@ -1231,9 +1166,6 @@ class CollectiveInserter {
-     SmallVector<AxisRefAttr>& tgtCurrentAxes = currentAxesPerDim[*tgtDim];
- 
-     popBackFromCurrentAxes(srcCurrentAxes, srcInAxes, startInAxisIt);
--    if (srcCurrentAxes.empty()) {
--      dimsToUnshard[srcDim] = false;
--    }
- 
-     AxisList& tgtInAxes = inAxesPerDim[*tgtDim];
-     auto srcInAxisIt = startInAxisIt;
-@@ -1280,7 +1212,6 @@ class CollectiveInserter {
-   AxesPerDim currentAxesPerDim;
-   SmallVector<int64_t> capacityPerDim;
-   SmallVector<AxisRefListAttr> collectiveAxesPerDim;
--  SmallVector<bool> dimsToUnshard;
-   AxisSet inAxisSet;
-   AxisToDimAndIndex outAxisToDimAndIndex;
- };
-diff --git a/shardy/dialect/sdy/transforms/export/test/pad_for_divisibility/generic_ops.mlir b/shardy/dialect/sdy/transforms/export/test/pad_for_divisibility/generic_ops.mlir
-index 9bd4e0a8..4d4faae8 100644
---- a/shardy/dialect/sdy/transforms/export/test/pad_for_divisibility/generic_ops.mlir
-+++ b/shardy/dialect/sdy/transforms/export/test/pad_for_divisibility/generic_ops.mlir
-@@ -12,45 +12,3 @@ func.func @no_pad(
-   %0 = stablehlo.add %arg0, %arg0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh_4_2, [{"x"}, {}]>]>} : tensor<4x8xf32>
-   return %0 : tensor<4x8xf32>
- }
--
--sdy.mesh @mesh_4_2_4 = <["x"=4, "y"=2, "z"=4]>
--
--// CHECK-LABEL: func private @pad_all_reduce
--func.func private @pad_all_reduce(
--  %arg0: tensor<7x8xf32> {sdy.sharding = #sdy.sharding<@mesh_4_2, [{"x"}, {}], unreduced={"y"}>})
--  -> (tensor<7x8xf32> {sdy.sharding = #sdy.sharding<@mesh_4_2, [{"x"}, {}]>}) {
--  // CHECK-NEXT: %[[AR:.*]] = sdy.all_reduce {"y"} %arg0 out_sharding=<@mesh_4_2, [{"x"}, {}]> : tensor<8x8xf32>
--  // CHECK-NEXT: return %[[AR]] : tensor<8x8xf32>
--  %0 = sdy.all_reduce {"y"} %arg0 out_sharding=<@mesh_4_2, [{"x"}, {}]> : tensor<7x8xf32>
--  return %0 : tensor<7x8xf32>
--}
--
--// CHECK-LABEL: func private @pad_collective_permute
--func.func private @pad_collective_permute(
--  %arg0: tensor<7x8xf32> {sdy.sharding = #sdy.sharding<@mesh_4_2_4, [{"x"}, {}]>})
--  -> (tensor<7x8xf32> {sdy.sharding = #sdy.sharding<@mesh_4_2_4, [{"z"}, {}]>}) {
--  // CHECK-NEXT: %[[CP:.*]] = sdy.collective_permute %arg0 out_sharding=<@mesh_4_2_4, [{"z"}, {}]> : tensor<8x8xf32>
--  // CHECK-NEXT: return %[[CP]] : tensor<8x8xf32>
--  %0 = sdy.collective_permute %arg0 out_sharding=<@mesh_4_2_4, [{"z"}, {}]> : tensor<7x8xf32>
--  return %0 : tensor<7x8xf32>
--}
--
--// CHECK-LABEL: func private @pad_sharded_to_unreduced
--func.func private @pad_sharded_to_unreduced(
--  %arg0: tensor<7x8xf32> {sdy.sharding = #sdy.sharding<@mesh_4_2, [{"x"}, {"y"}]>})
--  -> (tensor<7x8xf32> {sdy.sharding = #sdy.sharding<@mesh_4_2, [{"x"}, {}], unreduced={"y"}>}) {
--  // CHECK-NEXT: %[[S2U:.*]] = sdy.sharded_to_unreduced [{}, {"y"}] %arg0 out_sharding=<@mesh_4_2, [{"x"}, {}], unreduced={"y"}> : tensor<8x8xf32>
--  // CHECK-NEXT: return %[[S2U]] : tensor<8x8xf32>
--  %0 = sdy.sharded_to_unreduced [{}, {"y"}] %arg0 out_sharding=<@mesh_4_2, [{"x"}, {}], unreduced={"y"}> : tensor<7x8xf32>
--  return %0 : tensor<7x8xf32>
--}
--
--// CHECK-LABEL: func private @pad_replicated_to_unreduced
--func.func private @pad_replicated_to_unreduced(
--  %arg0: tensor<7x8xf32> {sdy.sharding = #sdy.sharding<@mesh_4_2, [{"x"}, {}]>})
--  -> (tensor<7x8xf32> {sdy.sharding = #sdy.sharding<@mesh_4_2, [{"x"}, {}], unreduced={"y"}>}) {
--  // CHECK-NEXT: %[[R2U:.*]] = sdy.replicated_to_unreduced {"y"} %arg0 out_sharding=<@mesh_4_2, [{"x"}, {}], unreduced={"y"}> : tensor<8x8xf32>
--  // CHECK-NEXT: return %[[R2U]] : tensor<8x8xf32>
--  %0 = sdy.replicated_to_unreduced {"y"} %arg0 out_sharding=<@mesh_4_2, [{"x"}, {}], unreduced={"y"}> : tensor<7x8xf32>
--  return %0 : tensor<7x8xf32>
--}
-diff --git a/shardy/dialect/sdy/transforms/export/test/reshard_to_collectives.mlir b/shardy/dialect/sdy/transforms/export/test/reshard_to_collectives.mlir
-index a63c54d1..f185669a 100644
---- a/shardy/dialect/sdy/transforms/export/test/reshard_to_collectives.mlir
-+++ b/shardy/dialect/sdy/transforms/export/test/reshard_to_collectives.mlir
-@@ -644,12 +644,12 @@ func.func @all_to_all_axes_at_src_out_of_order(%arg0 : tensor<16x8x8xf32> {sdy.s
- }
- 
- // CHECK-LABEL: func @all_to_all_axes_at_src_and_tgt_out_of_order
--func.func @all_to_all_axes_at_src_and_tgt_out_of_order(%arg0 : tensor<32x8x8xf32> {sdy.sharding = #sdy.sharding<@mesh3d_4x2x4, [{"z"}, {"y", "x"}, {}]>}) -> tensor<32x8x8xf32> {
-+func.func @all_to_all_axes_at_src_and_tgt_out_of_order(%arg0 : tensor<16x8x8xf32> {sdy.sharding = #sdy.sharding<@mesh3d_4x2x4, [{"z"}, {"y", "x"}, {}]>}) -> tensor<16x8x8xf32> {
-   // CHECK-NEXT: %[[COLLECTIVE_PERMUTE:.*]] = sdy.collective_permute %arg0 out_sharding=<@mesh3d_4x2x4, [{"x"}, {"y", "z"}, {}]>
-   // CHECK-NEXT: %[[ALL_TO_ALL:.*]] = sdy.all_to_all [{"y", "z"}: 1->0] %[[COLLECTIVE_PERMUTE]] out_sharding=<@mesh3d_4x2x4, [{"x", "y", "z"}, {}, {}]>
-   // CHECK-NEXT: return %[[ALL_TO_ALL]]
--  %0 = sdy.reshard %arg0 <@mesh3d_4x2x4, [{"x", "y", "z"}, {}, {}]> : tensor<32x8x8xf32>
--  return %0 : tensor<32x8x8xf32>
-+  %0 = sdy.reshard %arg0 <@mesh3d_4x2x4, [{"x", "y", "z"}, {}, {}]> : tensor<16x8x8xf32>
-+  return %0 : tensor<16x8x8xf32>
- }
- 
- // CHECK-LABEL: func @all_to_all_two_tgt_dims_src_out_of_order
-@@ -935,60 +935,6 @@ func.func @reshard_with_propagation_barrier(
-   return %1 : tensor<8x8x8xf32>
- }
- 
--// CHECK-LABEL: func @reshard_uneven_padded_size_mismatch_common_prefix
--func.func @reshard_uneven_padded_size_mismatch_common_prefix(%arg0 : tensor<6x3xf32> {sdy.sharding = #sdy.sharding<@mesh2d_4x2, [{"x":(1)2}, {}]>}) -> tensor<6x3xf32> {
--  // CHECK-NEXT: %[[ALL_GATHER:.*]] = sdy.all_gather [{"x":(1)2}, {}] %arg0 out_sharding=<@mesh2d_4x2, [{}, {}]> : tensor<6x3xf32>
--  // CHECK-NEXT: %[[ALL_SLICE:.*]] = sdy.all_slice [{"x"}, {}] %[[ALL_GATHER]] out_sharding=<@mesh2d_4x2, [{"x"}, {}]> : tensor<6x3xf32>
--  // CHECK-NEXT: return %[[ALL_SLICE]] : tensor<6x3xf32>
--  %0 = sdy.reshard %arg0 <@mesh2d_4x2, [{"x"}, {}]> : tensor<6x3xf32>
--  return %0 : tensor<6x3xf32>
--}
--
--// CHECK-LABEL: func @reshard_uneven_padded_size_mismatch_subaxis
--func.func @reshard_uneven_padded_size_mismatch_subaxis(%arg0 : tensor<6x3xf32> {sdy.sharding = #sdy.sharding<@mesh2d_2x8, [{"y":(1)2}, {}]>}) -> tensor<6x3xf32> {
--  // CHECK-NEXT: %[[ALL_GATHER:.*]] = sdy.all_gather [{"y":(1)2}, {}] %arg0 out_sharding=<@mesh2d_2x8, [{}, {}]> : tensor<6x3xf32>
--  // CHECK-NEXT: %[[ALL_SLICE:.*]] = sdy.all_slice [{"y":(2)4}, {}] %[[ALL_GATHER]] out_sharding=<@mesh2d_2x8, [{"y":(2)4}, {}]> : tensor<6x3xf32>
--  // CHECK-NEXT: return %[[ALL_SLICE]] : tensor<6x3xf32>
--  %0 = sdy.reshard %arg0 <@mesh2d_2x8, [{"y":(2)4}, {}]> : tensor<6x3xf32>
--  return %0 : tensor<6x3xf32>
--}
--
--// CHECK-LABEL: func @reshard_uneven_padded_size_mismatch_all_to_all
--func.func @reshard_uneven_padded_size_mismatch_all_to_all(%arg0 : tensor<8x8xf32> {sdy.sharding = #sdy.sharding<@mesh1d_6, [{}, {"x":(1)2}]>}) -> tensor<8x8xf32> {
--  // CHECK-NEXT: %[[ALL_TO_ALL:.*]] = sdy.all_to_all [{"x":(1)2}: 1->0] %arg0 out_sharding=<@mesh1d_6, [{"x":(1)2}, {}]> : tensor<8x8xf32>
--  // CHECK-NEXT: %[[ALL_SLICE:.*]] = sdy.all_slice [{}, {"x":(2)3}] %[[ALL_TO_ALL]] out_sharding=<@mesh1d_6, [{"x":(1)2}, {"x":(2)3}]> : tensor<8x8xf32>
--  // CHECK-NEXT: return %[[ALL_SLICE]] : tensor<8x8xf32>
--  %0 = sdy.reshard %arg0 <@mesh1d_6, [{"x":(1)2}, {"x":(2)3}]> : tensor<8x8xf32>
--  return %0 : tensor<8x8xf32>
--}
--
--// CHECK-LABEL: func @reshard_uneven_padded_size_mismatch_all_to_all_src_and_tgt_out_of_order
--func.func @reshard_uneven_padded_size_mismatch_all_to_all_src_and_tgt_out_of_order(%arg0 : tensor<16x8x8xf32> {sdy.sharding = #sdy.sharding<@mesh3d_4x2x4, [{"z"}, {"y", "x"}, {}]>}) -> tensor<16x8x8xf32> {
--  // CHECK-NEXT: %[[ALL_GATHER:.*]] = sdy.all_gather [{"z"}, {"y", "x"}, {}] %arg0 out_sharding=<@mesh3d_4x2x4, [{}, {}, {}]> : tensor<16x8x8xf32>
--  // CHECK-NEXT: %[[ALL_SLICE:.*]] = sdy.all_slice [{"x", "y", "z"}, {}, {}] %[[ALL_GATHER]] out_sharding=<@mesh3d_4x2x4, [{"x", "y", "z"}, {}, {}]> : tensor<16x8x8xf32>
--  // CHECK-NEXT: return %[[ALL_SLICE]] : tensor<16x8x8xf32>
--  %0 = sdy.reshard %arg0 <@mesh3d_4x2x4, [{"x", "y", "z"}, {}, {}]> : tensor<16x8x8xf32>
--  return %0 : tensor<16x8x8xf32>
--}
--
--// CHECK-LABEL: func @reshard_uneven_padded_size_mismatch_swap_axes
--func.func @reshard_uneven_padded_size_mismatch_swap_axes(%arg0 : tensor<5x5xf32> {sdy.sharding = #sdy.sharding<@mesh2d_4x2, [{"x"}, {"y"}]>}) -> tensor<5x5xf32> {
--  // CHECK-NEXT: %[[ALL_GATHER:.*]] = sdy.all_gather [{"x"}, {"y"}] %arg0 out_sharding=<@mesh2d_4x2, [{}, {}]> : tensor<5x5xf32>
--  // CHECK-NEXT: %[[ALL_SLICE:.*]] = sdy.all_slice [{"y"}, {"x"}] %[[ALL_GATHER]] out_sharding=<@mesh2d_4x2, [{"y"}, {"x"}]> : tensor<5x5xf32>
--  // CHECK-NEXT: return %[[ALL_SLICE]] : tensor<5x5xf32>
--  %0 = sdy.reshard %arg0 <@mesh2d_4x2, [{"y"}, {"x"}]> : tensor<5x5xf32>
--  return %0 : tensor<5x5xf32>
--}
--
--// CHECK-LABEL: func @reshard_uneven_padded_size_match_swap_axes
--func.func @reshard_uneven_padded_size_match_swap_axes(%arg0 : tensor<19x19xf32> {sdy.sharding = #sdy.sharding<@mesh2d_4x2, [{"x"}, {"y"}]>}) -> tensor<19x19xf32> {
--  // CHECK-NEXT: %[[CP:.*]] = sdy.collective_permute %arg0 out_sharding=<@mesh2d_4x2, [{"y", "x":(2)2}, {"x":(1)2}]> : tensor<19x19xf32>
--  // CHECK-NEXT: %[[ALL_TO_ALL:.*]] = sdy.all_to_all [{"x":(2)2}: 0->1] %[[CP]] out_sharding=<@mesh2d_4x2, [{"y"}, {"x"}]> : tensor<19x19xf32>
--  // CHECK-NEXT: return %[[ALL_TO_ALL]] : tensor<19x19xf32>
--  %0 = sdy.reshard %arg0 <@mesh2d_4x2, [{"y"}, {"x"}]> : tensor<19x19xf32>
--  return %0 : tensor<19x19xf32>
--}
--
- //===----------------------------------------------------------------------===//
- // Single-Device Reshard Tests (Preserved as sdy.reshard)
- //===----------------------------------------------------------------------===//
-@@ -1010,3 +956,5 @@ func.func @single_device_out_sharding(%arg0 : tensor<16x8xf32> {sdy.sharding = #
-   %0 = sdy.reshard %arg0 <@single_dev_0, []> : tensor<16x8xf32>
-   return %0 : tensor<16x8xf32>
- }
+-    int64_t k = dimExchange.leftHops - offset;
+-    int64_t sliceStart = (k == 0) ? minUnpaddedOff : 0;
+-    int64_t sliceLimit = (k == totalSegments - 1) ? (maxEnd - k * sIn) : sIn;
+-    return sliceAlongDim(loc, val, dim, sliceStart, sliceLimit, localSharding,
+-                         state.rewriter);
+-  };
+   Value paddedConcat = assembleHaloExchangeBuffer(
+       loc, operand, dim, edgePadSize, paddingValue, dimExchange.leftHops,
+       dimExchange.rightHops, sharding, mesh, manualAxes, localSharding,
+-      interiorPad, dimExchange, idInPartitionGroup, shouldMaskNonTarget,
+-      sliceSegment, state);
+-  int64_t bufferBaseOffset =
+-      untrimmedOffsetInConcat - (canTrimSegments ? minUnpaddedOff : 0);
++      dilatedHaloBuffer ? baseDilation - 1 : 0, dimExchange, idInPartitionGroup,
++      state);
 +
-+
-diff --git a/shardy/dialect/sdy/transforms/export/update_non_divisible_input_output_shardings.cc b/shardy/dialect/sdy/transforms/export/update_non_divisible_input_output_shardings.cc
-index 97c93fbf..90bcb8d5 100644
---- a/shardy/dialect/sdy/transforms/export/update_non_divisible_input_output_shardings.cc
-+++ b/shardy/dialect/sdy/transforms/export/update_non_divisible_input_output_shardings.cc
-@@ -17,7 +17,6 @@ limitations under the License.
- #include <cstdint>
- #include <functional>
- #include <numeric>
--#include <string_view>
++  auto inputType = cast<RankedTensorType>(operand.getType());
++  int64_t sIn = inputType.getShape()[dim];
++  int64_t sInDilated = sIn * baseDilation;
++  int64_t activeSOut = sOut == 0 ? dimExchange.sFootprint : sOut;
++  int64_t diffSize = activeSOut * stride - sInDilated;
++  int64_t baseOffsetInPaddedConcat = -padLow +
++                                     dimExchange.leftHops * sInDilated +
++                                     dimExchange.sFootprint * baseDilation;
  
- #include "llvm/ADT/ArrayRef.h"
- #include "llvm/ADT/STLExtras.h"
-@@ -35,7 +34,6 @@ limitations under the License.
- #include "mlir/Pass/Pass.h"  // IWYU pragma: keep
- #include "mlir/Support/LLVM.h"
- #include "mlir/Transforms/DialectConversion.h"
--#include "shardy/common/logging.h"
- #include "shardy/dialect/sdy/ir/dialect.h"
- #include "shardy/dialect/sdy/ir/utils.h"
+   Value offset;
+   Value zeroConst;
+@@ -1189,13 +1070,10 @@ Value exchangeDimWithDynamicOffset(
+     zeroConst = createZeroConstant(loc, RankedTensorType::get({}, i32Ty),
+                                    state.rewriter);
+   } else {
+-    int64_t minOffsetInBuffer = std::min(
+-        bufferBaseOffset, (shardCount - 1) * diffSize + bufferBaseOffset);
+     DeviceOffsetInfo offsetInfo =
+-        getDeviceOffsetInfo(loc, idInPartitionGroup, diffSize, bufferBaseOffset,
+-                            baseDilation, state,
+-                            /*needUndilated=*/!dilatedHaloBuffer,
+-                            /*clampToZero=*/minOffsetInBuffer < 0);
++        getDeviceOffsetInfo(loc, idInPartitionGroup, diffSize,
++                            baseOffsetInPaddedConcat, baseDilation, state,
++                            /*needUndilated=*/!dilatedHaloBuffer);
+     offset = dilatedHaloBuffer ? offsetInfo.dilatedOffset
+                                : offsetInfo.undilatedOffset;
+     zeroConst = offsetInfo.zeroConst;
+@@ -1543,6 +1421,7 @@ Value rotatePaddedShardRight(Location loc, Value localInput, int64_t dim,
+                              ResolutionState& state) {
+   auto localType = cast<RankedTensorType>(localInput.getType());
+   ArrayRef<int64_t> localShape = localType.getShape();
++  int64_t rank = localType.getRank();
+   int64_t shardSize = localShape[dim];
+   rotateAmount %= (shardSize * participatingShards);
+   SDY_CHECK_GT(rotateAmount, 0);
+@@ -1559,9 +1438,23 @@ Value rotatePaddedShardRight(Location loc, Value localInput, int64_t dim,
+         std::min(shardSize - offsetInShard, shardSize - currentSize);
+     currentSize += haloSize;
  
-@@ -67,8 +65,7 @@ TensorShardingAttr getEvenlySharded(TensorShardingAttr sharding,
-                                     ShapedType type,
-                                     const SymbolTable& symbolTable) {
-   MeshAttr mesh = sharding.getMesh(symbolTable);
--  SDY_CHECK(mesh) << "unknown mesh: "
--                  << std::string_view(sharding.getMeshName());
-+  assert(mesh && "unknown mesh");
-   MLIRContext* ctx = sharding.getContext();
-   llvm::SmallVector<DimensionShardingAttr> newDimShardings;
-   newDimShardings.reserve(sharding.getRank());
-diff --git a/shardy/dialect/sdy/transforms/import/manual_axes_cleanup.cc b/shardy/dialect/sdy/transforms/import/manual_axes_cleanup.cc
-index 6b368f91..f71266a5 100644
---- a/shardy/dialect/sdy/transforms/import/manual_axes_cleanup.cc
-+++ b/shardy/dialect/sdy/transforms/import/manual_axes_cleanup.cc
-@@ -29,7 +29,6 @@ limitations under the License.
- #include "mlir/IR/SymbolTable.h"
- #include "mlir/IR/TypeRange.h"
- #include "mlir/Support/LLVM.h"
--#include "shardy/common/logging.h"
- #include "shardy/dialect/sdy/ir/dialect.h"
- #include "shardy/dialect/sdy/ir/utils.h"
- #include "shardy/dialect/sdy/transforms/import/passes.h"  // IWYU pragma: keep
-@@ -163,7 +162,7 @@ struct ManualAxesCleanupPass
-           getCommonMeshOrRef(inShardings, outShardings, symbolTable);
-       MeshAttr mesh =
-           meshOrRef ? getMeshOrLookup(symbolTable, meshOrRef) : nullptr;
--      SDY_CHECK(mesh) << "expected inputs and outputs to have a common mesh";
-+      assert(mesh && "expected inputs and outputs to have a common mesh");
-       sortManualAxes(op, mesh);
-       addUnusedManualAxesToReplicatedAxes(op, mesh, meshOrRef, symbolTable);
-     });
-diff --git a/shardy/dialect/sdy/transforms/import/remove_size_one_axes.cc b/shardy/dialect/sdy/transforms/import/remove_size_one_axes.cc
-index ce2abb40..99a47092 100644
---- a/shardy/dialect/sdy/transforms/import/remove_size_one_axes.cc
-+++ b/shardy/dialect/sdy/transforms/import/remove_size_one_axes.cc
-@@ -17,14 +17,12 @@ limitations under the License.
- #include <cstdint>
- #include <iterator>
- #include <optional>
--#include <string_view>
+-    Value halo =
+-        sliceAlongDim(loc, localInput, dim, offsetInShard,
+-                      offsetInShard + haloSize, localSharding, rewriter);
++    Value halo = localInput;
++    if (haloSize != shardSize) {
++      SmallVector<int64_t> sliceStarts(rank, 0);
++      sliceStarts[dim] = offsetInShard;
++      SmallVector<int64_t> sliceLimits(localShape.begin(), localShape.end());
++      sliceLimits[dim] = offsetInShard + haloSize;
++      SmallVector<int64_t> sliceShape(localShape.begin(), localShape.end());
++      sliceShape[dim] = haloSize;
++      auto sliceType =
++          RankedTensorType::get(sliceShape, localType.getElementType());
++      halo = stablehlo::SliceOp::create(
++          rewriter, loc, sliceType, halo,
++          rewriter.getDenseI64ArrayAttr(sliceStarts),
++          rewriter.getDenseI64ArrayAttr(sliceLimits),
++          rewriter.getDenseI64ArrayAttr(SmallVector<int64_t>(rank, 1)));
++      setSharding(halo, localSharding);
++    }
+     int64_t effectiveDistance = shardDistance % participatingShards;
+     if (effectiveDistance != 0) {
+       SmallVector<int64_t> pairs = getDataShiftSourceTargetPairs(
+@@ -1608,15 +1501,21 @@ Value selectRotatedWithRightPadding(Location loc, Value rotated0,
  
- #include "llvm/ADT/STLExtras.h"
- #include "llvm/ADT/SmallVector.h"
- #include "mlir/IR/BuiltinOps.h"
- #include "mlir/IR/SymbolTable.h"
- #include "mlir/Support/LLVM.h"
--#include "shardy/common/logging.h"
- #include "shardy/dialect/sdy/ir/dialect.h"
- #include "shardy/dialect/sdy/transforms/common/sharding_walker.h"
- #include "shardy/dialect/sdy/transforms/import/passes.h"  // IWYU pragma: keep
-@@ -45,8 +43,7 @@ bool hasSizeOneAxes(MeshOp meshOp) {
- TensorShardingAttr removeSizeOneAxes(TensorShardingAttr sharding,
-                                      const SymbolTable& symbolTable) {
-   MeshAttr mesh = sharding.getMesh(symbolTable);
--  SDY_CHECK(mesh) << "unknown mesh: "
--                  << std::string_view(sharding.getMeshName());
-+  assert(mesh && "unknown mesh");
+   Value idInPartitionGroup = convertPartitionIdToIdInGroup(
+       loc, createDeviceId(loc, state), mesh, dimSharding, rewriter);
+-  Type i32Ty = rewriter.getI32Type();
+-  Value shardSizeConst =
+-      createScalarIntConstant(loc, i32Ty, shardSize, rewriter);
++  auto scalarI32Type = RankedTensorType::get({}, rewriter.getI32Type());
++  SDY_CHECK_LE(shardSize, std::numeric_limits<int32_t>::max());
++  Value shardSizeConst = stablehlo::ConstantOp::create(
++      rewriter, loc,
++      DenseIntElementsAttr::get(scalarI32Type,
++                                static_cast<int32_t>(shardSize)));
+   Value shardOffset = stablehlo::MulOp::create(
+       rewriter, loc, idInPartitionGroup, shardSizeConst);
+-  Value amountConst = createScalarIntConstant(loc, i32Ty, amount, rewriter);
++  SDY_CHECK_LE(amount, std::numeric_limits<int32_t>::max());
++  Value amountConst = stablehlo::ConstantOp::create(
++      rewriter, loc,
++      DenseIntElementsAttr::get(scalarI32Type, static_cast<int32_t>(amount)));
+   Value boundary =
+       stablehlo::SubtractOp::create(rewriter, loc, amountConst, shardOffset);
+-  auto localI32Type = RankedTensorType::get(localShape, i32Ty);
++  auto localI32Type = RankedTensorType::get(localShape, rewriter.getI32Type());
+   Value bcastBoundary = stablehlo::BroadcastInDimOp::create(
+       rewriter, loc, localI32Type, boundary, rewriter.getDenseI64ArrayAttr({}));
+   setSharding(bcastBoundary, localSharding);
+@@ -2950,23 +2849,12 @@ LogicalResult handleSliceOp(stablehlo::SliceOp sliceOp,
+   Value paddingValue =
+       createZeroScalarConstant(loc, origInputType.getElementType(), rewriter);
  
-   auto isNotSizeOne = [&](AxisRefAttr axis) { return axis.getSize(mesh) != 1; };
- 
-diff --git a/shardy/dialect/sdy/transforms/import/test/sharding_group_constraints.mlir b/shardy/dialect/sdy/transforms/import/test/sharding_group_constraints.mlir
-index 34db7665..a3518d30 100644
---- a/shardy/dialect/sdy/transforms/import/test/sharding_group_constraints.mlir
-+++ b/shardy/dialect/sdy/transforms/import/test/sharding_group_constraints.mlir
-@@ -310,189 +310,3 @@ func.func private @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
-   func.return %arg0 : tensor<8x8xf32>
- }
- 
--// -----
--
--sdy.mesh @mesh = <["a"=2, "b"=2]>
--
--// Allows sharding groups within ManualComputationOp when group members are
--// across multiple functions called from the same ManualComputationOp.
--func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{?}, {?}]>] out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={} (%arg1: tensor<8x8xf32>) {
--    sdy.sharding_group %arg1 group_id = 1234 : tensor<8x8xf32>
--    %1 = func.call @foo(%arg1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--    %2 = func.call @bar(%1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--    sdy.return %2 : tensor<8x8xf32>
--  } : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  func.return %0: tensor<8x8xf32>
--}
--
--func.func private @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  sdy.sharding_group %arg0 group_id = 1234 : tensor<8x8xf32>
--  func.return %arg0 : tensor<8x8xf32>
--}
--
--func.func private @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  sdy.sharding_group %arg0 group_id = 1234 : tensor<8x8xf32>
--  func.return %arg0 : tensor<8x8xf32>
--}
--
--// -----
--
--sdy.mesh @mesh = <["a"=2, "b"=2]>
--
--// Allows sharding groups within ManualComputationOp when a function with group
--// members is called multiple times from the same ManualComputationOp.
--func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{?}, {?}]>] out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={} (%arg1: tensor<8x8xf32>) {
--    sdy.sharding_group %arg1 group_id = 1234 : tensor<8x8xf32>
--    %1 = func.call @foo(%arg1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--    %2 = func.call @foo(%1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--    sdy.return %2 : tensor<8x8xf32>
--  } : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  func.return %0: tensor<8x8xf32>
--}
--
--func.func private @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  sdy.sharding_group %arg0 group_id = 1234 : tensor<8x8xf32>
--  func.return %arg0 : tensor<8x8xf32>
--}
--
--// -----
--
--sdy.mesh @mesh = <["a"=2, "b"=2]>
--
--// TODO(b/569928811): Disallow sharding groups which cross the barrier of a
--// ManualComputationOp when the function is called inside and then outside the
--// ManualComputationOp.
--func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{?}, {?}]>] out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={} (%arg1: tensor<8x8xf32>) {
--    %1 = func.call @foo(%arg1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--    sdy.return %1 : tensor<8x8xf32>
--  } : (tensor<8x8xf32>) -> tensor<8x8xf32>
--
--  %2 = func.call @foo(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  func.return %2: tensor<8x8xf32>
--}
--
--func.func private @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  sdy.sharding_group %arg0 group_id = 1234 : tensor<8x8xf32>
--  func.return %arg0 : tensor<8x8xf32>
--}
--
--// -----
--
--sdy.mesh @mesh = <["a"=2, "b"=2]>
--
--// TODO(b/569928811): Disallow sharding groups which cross the barrier of a
--// ManualComputationOp when the function is called inside and then outside the
--// ManualComputationOp.
--func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{?}, {?}]>] out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={} (%arg1: tensor<8x8xf32>) {
--    %1 = func.call @foo(%arg1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--    sdy.return %1 : tensor<8x8xf32>
--  } : (tensor<8x8xf32>) -> tensor<8x8xf32>
--
--  %2 = func.call @foo(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  sdy.sharding_group %2 group_id = 1234 : tensor<8x8xf32>
--  func.return %2: tensor<8x8xf32>
--}
--
--func.func private @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  sdy.sharding_group %arg0 group_id = 1234 : tensor<8x8xf32>
--  func.return %arg0 : tensor<8x8xf32>
--}
--
--// -----
--
--sdy.mesh @mesh = <["a"=2, "b"=2]>
--
--// TODO(b/569928811): Disallow sharding groups which cross the barrier of a
--// ManualComputationOp when the function is called outside and then inside the
--// ManualComputationOp.
--func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = func.call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  %1 = sdy.manual_computation(%0) in_shardings=[<@mesh, [{?}, {?}]>] out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={} (%arg1: tensor<8x8xf32>) {
--    sdy.sharding_group %arg1 group_id = 1234 : tensor<8x8xf32>
--    %2 = func.call @foo(%arg1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--    sdy.return %2 : tensor<8x8xf32>
--  } : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  func.return %1: tensor<8x8xf32>
--}
--
--func.func private @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  sdy.sharding_group %arg0 group_id = 1234 : tensor<8x8xf32>
--  func.return %arg0 : tensor<8x8xf32>
--}
--
--// -----
--
--sdy.mesh @mesh = <["a"=2, "b"=2]>
--
--// Allows sharding groups inside a function that is called from different
--// ManualComputationOps.
--func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{?}, {?}]>] out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={} (%arg1: tensor<8x8xf32>) {
--    %1 = func.call @foo(%arg1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--    sdy.return %1 : tensor<8x8xf32>
--  } : (tensor<8x8xf32>) -> tensor<8x8xf32>
--
--  %2 = sdy.manual_computation(%0) in_shardings=[<@mesh, [{?}, {?}]>] out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={} (%arg1: tensor<8x8xf32>) {
--    %3 = func.call @foo(%arg1) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--    sdy.return %3 : tensor<8x8xf32>
--  } : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  func.return %2: tensor<8x8xf32>
--}
--
--func.func private @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  sdy.sharding_group %arg0 group_id = 1234 : tensor<8x8xf32>
--  func.return %arg0 : tensor<8x8xf32>
--}
--
--// -----
--
--sdy.mesh @mesh = <["a"=2, "b"=2]>
--
--// Allows sharding groups inside a ManualComputationOp within a function that
--// is called multiple times.
--func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = func.call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  %1 = func.call @foo(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  func.return %1: tensor<8x8xf32>
--}
--
--func.func private @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{?}, {?}]>] out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={} (%arg1: tensor<8x8xf32>) {
--    sdy.sharding_group %arg1 group_id = 1234 : tensor<8x8xf32>
--    sdy.return %arg1 : tensor<8x8xf32>
--  } : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  func.return %0 : tensor<8x8xf32>
--}
--
--// -----
--
--sdy.mesh @mesh = <["a"=2, "b"=2]>
--
--// Disallows sharding groups which have different ManualComputationOp parents
--// across different functions.
--func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = func.call @foo(%arg0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  %1 = func.call @bar(%0) : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  func.return %1: tensor<8x8xf32>
--}
--
--func.func private @foo(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{?}, {?}]>] out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={} (%arg1: tensor<8x8xf32>) {
--    sdy.sharding_group %arg1 group_id = 1234 : tensor<8x8xf32>
--    sdy.return %arg1 : tensor<8x8xf32>
--  } : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  func.return %0 : tensor<8x8xf32>
--}
--
--func.func private @bar(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
--  %0 = sdy.manual_computation(%arg0) in_shardings=[<@mesh, [{?}, {?}]>] out_shardings=[<@mesh, [{?}, {?}]>] manual_axes={} (%arg1: tensor<8x8xf32>) {
--    // expected-error@below {{ShardingGroupOps values cannot cross ManualComputationOp boundaries for groupId: 1234}}
--    sdy.sharding_group %arg1 group_id = 1234 : tensor<8x8xf32>
--    sdy.return %arg1 : tensor<8x8xf32>
--  } : (tensor<8x8xf32>) -> tensor<8x8xf32>
--  func.return %0 : tensor<8x8xf32>
--}
-diff --git a/shardy/dialect/sdy/transforms/propagation/basic_propagation.cc b/shardy/dialect/sdy/transforms/propagation/basic_propagation.cc
-index 8417874d..2c6b451f 100644
---- a/shardy/dialect/sdy/transforms/propagation/basic_propagation.cc
-+++ b/shardy/dialect/sdy/transforms/propagation/basic_propagation.cc
-@@ -20,7 +20,6 @@ limitations under the License.
- #include <functional>
- #include <memory>
- #include <optional>
--#include <string_view>
- #include <utility>
- 
- #include "llvm/ADT/STLExtras.h"
-@@ -246,11 +245,6 @@ bool updateTensorSharding(Value modifiedValue, const SymbolTable& symbolTable,
-     if (groupValue == modifiedValue) {
-       continue;
-     }
--    TensorShardingAttr oldGroupSharding = getSharding(groupValue);
--    if ((!oldGroupSharding && newSharding.emptyAxes()) ||
--        newSharding == oldGroupSharding) {
+-  int64_t rank = origInputType.getRank();
+-  SmallVector<int64_t> edgePaddingLow;
+-  edgePaddingLow.reserve(rank);
+-  for (int64_t dim = 0; dim < rank; ++dim) {
+-    // Unsharded dimensions are sliced in postProcess
+-    // (handleReplicatedSliceDims) and do not participate in HALO exchange
+-    // padding.
+-    if (inSharding.getDimShardings()[dim].getShardedSize(mesh) <= 1) {
+-      edgePaddingLow.push_back(0);
 -      continue;
 -    }
-     setSharding(groupValue, newSharding);
-     if (params.notifyOpModified) {
-       notifyShardingModified(groupValue, symbolTable, userMap,
-@@ -319,7 +313,7 @@ LogicalResult propagateTensorShardings(
-     PropagationDirectionAlongFactor directionAlongFactor,
-     const FactorPropagation& factorPropagation, bool conservativePropagation,
-     Operation* op, const SymbolTable& symbolTable, PatternRewriter* rewriter,
--    const ShardingGroupMap& shardingGroupMap) {
-+    ShardingGroupMap shardingGroupMap) {
-   std::optional<StringRef> meshName =
-       getCommonMeshName(operandsParams.shardings, resultsParams.shardings,
-                         symbolTable, /*ignoreDeviceIds=*/false);
-@@ -333,8 +327,8 @@ LogicalResult propagateTensorShardings(
-     }
-     return failure();
-   }
--  MeshAttr mesh = getMeshAttr(symbolTable, meshName.value());
--  SDY_CHECK(mesh) << "unknown mesh: " << std::string_view(meshName.value());
-+  MeshAttr mesh = getMeshAttr(op, meshName.value());
-+  assert(mesh && "unknown mesh");
-   if (mesh.isSingleDevice()) {
-     // Single-device meshes and shardings are usually a placeholder for special
-     // operations, such as send and recv. We do not propagate single-device
-diff --git a/shardy/dialect/sdy/transforms/propagation/user_priority_propagation.cc b/shardy/dialect/sdy/transforms/propagation/user_priority_propagation.cc
-index f3eb2fc8..34e741d0 100644
---- a/shardy/dialect/sdy/transforms/propagation/user_priority_propagation.cc
-+++ b/shardy/dialect/sdy/transforms/propagation/user_priority_propagation.cc
-@@ -19,7 +19,6 @@ limitations under the License.
- #include <cstdint>
- #include <iterator>
- #include <memory>
--#include <string_view>
- #include <utility>
- #include <variant>
+-    int64_t start = sliceOp.getStartIndices()[dim];
+-    edgePaddingLow.push_back(-start);
+-  }
++  SmallVector<int64_t> edgePaddingLow = llvm::map_to_vector(
++      sliceOp.getStartIndices(), [](int64_t start) { return -start; });
  
-@@ -37,7 +36,6 @@ limitations under the License.
- #include "mlir/Support/LLVM.h"
- #include "mlir/Support/LogicalResult.h"
- #include "shardy/common/file_utils.h"
--#include "shardy/common/logging.h"
- #include "shardy/dialect/sdy/ir/dialect.h"
- #include "shardy/dialect/sdy/transforms/common/propagation_options.h"
- #include "shardy/dialect/sdy/transforms/common/sharding_walker.h"
-@@ -142,8 +140,7 @@ TensorShardingAttr getInitializedSharding(TensorShardingAttr originalSharding,
-     }
-   }
-   MeshAttr mesh = originalSharding.getMesh(symbolTable);
--  SDY_CHECK(mesh) << "unknown mesh: "
--                  << std::string_view(originalSharding.getMeshName());
-+  assert(mesh && "unknown mesh");
-   llvm::sort(newReplicatedAxes, AxisRefAttr::getMeshComparator(mesh));
-   // TODO(tomnatan): we need to merge split axes and split them again when
-   // updating? or can we assume we won't see split axes?
-diff --git a/third_party/llvm/generated.patch b/third_party/llvm/generated.patch
-index e2237d49..509398da 100644
---- a/third_party/llvm/generated.patch
-+++ b/third_party/llvm/generated.patch
-@@ -1,459 +1 @@
- Auto generated patch. Do not edit or delete it, even if empty.
--diff -ruN --strip-trailing-cr a/llvm/include/llvm/IR/Metadata.h b/llvm/include/llvm/IR/Metadata.h
----- a/llvm/include/llvm/IR/Metadata.h
--+++ b/llvm/include/llvm/IR/Metadata.h
--@@ -397,18 +397,8 @@
--   using OwnerTy = MetadataTracking::OwnerTy;
-- 
-- private:
---  struct UseEntry {
---    void *Ref = nullptr;
---    OwnerTy Owner = nullptr;
---  };
---
---  static constexpr unsigned IndexThreshold = 32;
---  // Tracked uses of this. Dropping one moves the last entry into its slot, so
---  // the order is deterministic but not the order they were added in.
---  SmallVector<UseEntry, 4> UseMap;
---  // Lazily allocated map from Ref to its index in UseMap for large use lists.
---  using IndexMapTy = DenseMap<void *, unsigned>;
---  std::unique_ptr<IndexMapTy> IndexMap;
--+  uint64_t NextIndex = 0;
--+  SmallDenseMap<void *, std::pair<OwnerTy, uint64_t>, 4> UseMap;
-- 
-- protected:
--   ~ReplaceableUses() {
--@@ -439,7 +429,6 @@
--   unsigned getNumUses() const { return UseMap.size(); }
-- 
-- private:
---  UseEntry *findRef(void *Ref);
--   void addRef(void *Ref, OwnerTy Owner);
--   void dropRef(void *Ref);
--   void moveRef(void *Ref, void *New, const Metadata &MD);
--diff -ruN --strip-trailing-cr a/llvm/lib/IR/Metadata.cpp b/llvm/lib/IR/Metadata.cpp
----- a/llvm/lib/IR/Metadata.cpp
--+++ b/llvm/lib/IR/Metadata.cpp
--@@ -258,96 +258,82 @@
-- }
-- 
-- SmallVector<Metadata *> ReplaceableUses::getAllArgListUsers() {
---  SmallVector<Metadata *> MDUsers;
---  for (const auto &[Ref, Owner] : UseMap) {
--+  SmallVector<std::pair<OwnerTy, uint64_t> *> MDUsersWithID;
--+  for (auto Pair : UseMap) {
--+    OwnerTy Owner = Pair.second.first;
--     if (Owner.isNull())
--       continue;
--     if (!isa<Metadata *>(Owner))
--       continue;
--     Metadata *OwnerMD = cast<Metadata *>(Owner);
--     if (OwnerMD->getMetadataID() == Metadata::DIArgListKind)
---      MDUsers.push_back(OwnerMD);
--+      MDUsersWithID.push_back(&UseMap[Pair.first]);
--   }
--+  llvm::sort(MDUsersWithID, [](auto UserA, auto UserB) {
--+    return UserA->second < UserB->second;
--+  });
--+  SmallVector<Metadata *> MDUsers;
--+  for (auto *UserWithID : MDUsersWithID)
--+    MDUsers.push_back(cast<Metadata *>(UserWithID->first));
--   return MDUsers;
-- }
-- 
-- SmallVector<DbgVariableRecord *>
-- ReplaceableUses::getAllDbgVariableRecordUsers() {
--+  SmallVector<std::pair<OwnerTy, uint64_t> *> DVRUsersWithID;
--+  for (auto Pair : UseMap) {
--+    OwnerTy Owner = Pair.second.first;
--+    if (Owner.isNull())
--+      continue;
--+    if (!isa<DebugValueUser *>(Owner))
--+      continue;
--+    DVRUsersWithID.push_back(&UseMap[Pair.first]);
--+  }
--   // Order DbgVariableRecord users in reverse-creation order. Normal dbg.value
--   // users of MetadataAsValues are ordered by their UseList, i.e. reverse order
--   // of when they were added: we need to replicate that here. The structure of
--   // debug-info output depends on the ordering of intrinsics, thus we need
--   // to keep them consistent for comparisons sake.
--+  llvm::sort(DVRUsersWithID, [](auto UserA, auto UserB) {
--+    return UserA->second > UserB->second;
--+  });
--   SmallVector<DbgVariableRecord *> DVRUsers;
---  for (const auto &[Ref, Owner] : reverse(UseMap)) {
---    if (Owner.isNull())
---      continue;
---    if (!isa<DebugValueUser *>(Owner))
---      continue;
---    DVRUsers.push_back(cast<DebugValueUser *>(Owner)->getUser());
---  }
--+  for (auto UserWithID : DVRUsersWithID)
--+    DVRUsers.push_back(cast<DebugValueUser *>(UserWithID->first)->getUser());
--   return DVRUsers;
-- }
-- 
---ReplaceableUses::UseEntry *ReplaceableUses::findRef(void *Ref) {
---  if (!IndexMap) {
---    // Search backward for temporal locality; recently added references are
---    // often dropped or moved first.
---    for (UseEntry &U : reverse(UseMap))
---      if (U.Ref == Ref)
---        return &U;
---    return nullptr;
---  }
---
---  auto It = IndexMap->find(Ref);
---  return It == IndexMap->end() ? nullptr : &UseMap[It->second];
---}
---
-- void ReplaceableUses::addRef(void *Ref, OwnerTy Owner) {
---  assert(Ref && "Expected live reference");
---  assert(!findRef(Ref) && "Reference already tracked");
---  unsigned NewIdx = UseMap.size();
---  UseMap.push_back({Ref, Owner});
---  if (IndexMap) {
---    (*IndexMap)[Ref] = NewIdx;
---  } else if (UseMap.size() > IndexThreshold) {
---    // Build the index map once UseMap grows past the threshold.
---    IndexMap = std::make_unique<IndexMapTy>();
---    for (unsigned I = 0, E = UseMap.size(); I != E; ++I)
---      (*IndexMap)[UseMap[I].Ref] = I;
---  }
--+  bool WasInserted =
--+      UseMap.insert(std::make_pair(Ref, std::make_pair(Owner, NextIndex)))
--+          .second;
--+  (void)WasInserted;
--+  assert(WasInserted && "Expected to add a reference");
--+
--+  ++NextIndex;
--+  assert(NextIndex != 0 && "Unexpected overflow");
-- }
-- 
-- void ReplaceableUses::dropRef(void *Ref) {
---  UseEntry *Entry = findRef(Ref);
---  assert(Entry && "Expected to find Ref");
---  if (IndexMap)
---    IndexMap->erase(Ref);
---  if (Entry != &UseMap.back()) {
---    *Entry = UseMap.back();
---    if (IndexMap)
---      (*IndexMap)[Entry->Ref] = Entry - UseMap.begin();
---  }
---  UseMap.pop_back();
---  if (IndexMap && UseMap.size() <= IndexThreshold / 2)
---    IndexMap.reset();
--+  bool WasErased = UseMap.erase(Ref);
--+  (void)WasErased;
--+  assert(WasErased && "Expected to drop a reference");
-- }
-- 
-- void ReplaceableUses::moveRef(void *Ref, void *New, const Metadata &MD) {
---  assert(!findRef(New) && "Cannot move to an existing reference");
---  UseEntry *Entry = findRef(Ref);
---  assert(Entry && "Expected to move a reference");
---  if (IndexMap) {
---    IndexMap->erase(Ref);
---    (*IndexMap)[New] = Entry - UseMap.begin();
---  }
---  Entry->Ref = New;
--+  auto I = UseMap.find(Ref);
--+  assert(I != UseMap.end() && "Expected to move a reference");
--+  auto OwnerAndIndex = I->second;
--+  UseMap.erase(I);
--+  bool WasInserted = UseMap.insert(std::make_pair(New, OwnerAndIndex)).second;
--+  (void)WasInserted;
--+  assert(WasInserted && "Expected to add a reference");
-- 
--   // Check that the references are direct if there's no owner.
--   (void)MD;
---  assert((Entry->Owner || *static_cast<Metadata **>(Ref) == &MD) &&
--+  assert((OwnerAndIndex.first || *static_cast<Metadata **>(Ref) == &MD) &&
--          "Reference without owner must be direct");
---  assert((Entry->Owner || *static_cast<Metadata **>(New) == &MD) &&
--+  assert((OwnerAndIndex.first || *static_cast<Metadata **>(New) == &MD) &&
--          "Reference without owner must be direct");
-- }
-- 
--@@ -360,11 +346,14 @@
--   auto &Store = Context.pImpl->ValuesAsMetadata;
--   auto I = Store.find(&C);
--   ValueAsMetadata *MD = I->second;
--+  using UseTy =
--+      std::pair<void *, std::pair<MetadataTracking::OwnerTy, uint64_t>>;
--   // Copy out uses and update value of Constant used by debug info metadata with
---  // poison below.
---  SmallVector<UseEntry, 4> Uses = MD->UseMap;
--+  // poison below
--+  SmallVector<UseTy, 8> Uses(MD->UseMap.begin(), MD->UseMap.end());
-- 
---  for (const auto &[Ref, Owner] : Uses) {
--+  for (const auto &Pair : Uses) {
--+    MetadataTracking::OwnerTy Owner = Pair.second.first;
--     if (!Owner)
--       continue;
--     // Check for MetadataAsValue.
--@@ -380,7 +369,7 @@
--       continue;
--     if (isa<DINode>(OwnerMD)) {
--       OwnerMD->handleChangedOperand(
---          Ref, ValueAsMetadata::get(PoisonValue::get(C.getType())));
--+          Pair.first, ValueAsMetadata::get(PoisonValue::get(C.getType())));
--     }
--   }
-- }
--@@ -390,21 +379,25 @@
--     return;
-- 
--   // Copy out uses since UseMap will get touched below.
---  SmallVector<UseEntry, 4> Uses = UseMap;
---
---  for (const auto &[Ref, Owner] : Uses) {
--+  using UseTy = std::pair<void *, std::pair<OwnerTy, uint64_t>>;
--+  SmallVector<UseTy, 8> Uses(UseMap.begin(), UseMap.end());
--+  llvm::sort(Uses, [](const UseTy &L, const UseTy &R) {
--+    return L.second.second < R.second.second;
--+  });
--+  for (const auto &Pair : Uses) {
--     // Check that this Ref hasn't disappeared after RAUW (when updating a
--     // previous Ref).
---    if (!findRef(Ref))
--+    if (!UseMap.count(Pair.first))
--       continue;
-- 
--+    OwnerTy Owner = Pair.second.first;
--     if (!Owner) {
--       // Update unowned tracking references directly.
---      Metadata *&DirectRef = *static_cast<Metadata **>(Ref);
---      dropRef(Ref);
---      DirectRef = MD;
--+      Metadata *&Ref = *static_cast<Metadata **>(Pair.first);
--+      Ref = MD;
--       if (MD)
---        MetadataTracking::track(DirectRef);
--+        MetadataTracking::track(Ref);
--+      UseMap.erase(Pair.first);
--       continue;
--     }
-- 
--@@ -415,7 +408,7 @@
--     }
-- 
--     if (auto *DVU = dyn_cast<DebugValueUser *>(Owner)) {
---      DVU->handleChangedValue(Ref, MD);
--+      DVU->handleChangedValue(Pair.first, MD);
--       continue;
--     }
-- 
--@@ -424,7 +417,7 @@
--     switch (OwnerMD->getMetadataID()) {
-- #define HANDLE_METADATA_LEAF(CLASS)                                            \
--   case Metadata::CLASS##Kind:                                                  \
---    cast<CLASS>(OwnerMD)->handleChangedOperand(Ref, MD);                       \
--+    cast<CLASS>(OwnerMD)->handleChangedOperand(Pair.first, MD);                \
--     continue;
-- #include "llvm/IR/Metadata.def"
--     default:
--@@ -440,16 +433,18 @@
-- 
--   if (!ResolveUsers) {
--     UseMap.clear();
---    IndexMap.reset();
--     return;
--   }
-- 
---  // Move uses out since UseMap could get touched below.
---  SmallVector<UseEntry, 4> Uses = std::move(UseMap);
--+  // Copy out uses since UseMap could get touched below.
--+  using UseTy = std::pair<void *, std::pair<OwnerTy, uint64_t>>;
--+  SmallVector<UseTy, 8> Uses(UseMap.begin(), UseMap.end());
--+  llvm::sort(Uses, [](const UseTy &L, const UseTy &R) {
--+    return L.second.second < R.second.second;
--+  });
--   UseMap.clear();
---  IndexMap.reset();
---  for (const auto &U : Uses) {
---    auto Owner = U.Owner;
--+  for (const auto &Pair : Uses) {
--+    auto Owner = Pair.second.first;
--     if (!Owner)
--       continue;
--     if (!isa<Metadata *>(Owner))
--diff -ruN --strip-trailing-cr a/llvm/lib/ObjCopy/ELF/ELFObject.cpp b/llvm/lib/ObjCopy/ELF/ELFObject.cpp
----- a/llvm/lib/ObjCopy/ELF/ELFObject.cpp
--+++ b/llvm/lib/ObjCopy/ELF/ELFObject.cpp
--@@ -1709,11 +1709,7 @@
--   case SHT_REL:
--   case SHT_RELA:
--   case SHT_CREL:
---    // SHF_ALLOC relocations of an executable or shared object are copied
---    // verbatim. Relocatable files relocations are usually non-ALLOC, but Linux
---    // livepatch modules set SHF_ALLOC on .klp.rela.* to keep these static
---    // relocations in memory.
---    if ((Shdr.sh_flags & SHF_ALLOC) && ElfFile.getHeader().e_type != ET_REL) {
--+    if (Shdr.sh_flags & SHF_ALLOC) {
--       if (Expected<ArrayRef<uint8_t>> Data = ElfFile.getSectionContents(Shdr))
--         return Obj.addSection<DynamicRelocationSection>(*Data);
--       else
--diff -ruN --strip-trailing-cr a/llvm/lib/ObjCopy/ELF/ELFObject.h b/llvm/lib/ObjCopy/ELF/ELFObject.h
----- a/llvm/lib/ObjCopy/ELF/ELFObject.h
--+++ b/llvm/lib/ObjCopy/ELF/ELFObject.h
--@@ -38,7 +38,6 @@
-- class SymbolTableSection;
-- class RelocationSection;
-- class DynamicRelocationSection;
---class DynamicSymbolTableSection;
-- class GnuDebugLinkSection;
-- class GroupSection;
-- class SectionIndexSection;
--@@ -876,15 +875,10 @@
-- // and another which handles the symbol table type. The symbol table type is
-- // taken as a type parameter to the class (see RelocSectionWithSymtabBase).
-- class RelocationSectionBase : public SectionBase {
---  const bool Dynamic;
---
-- protected:
--   SectionBase *SecToApplyRel = nullptr;
-- 
---  explicit RelocationSectionBase(bool Dynamic) : Dynamic(Dynamic) {}
---
-- public:
---  bool isDynamic() const { return Dynamic; }
--   const SectionBase *getSection() const { return SecToApplyRel; }
--   void setSection(SectionBase *Sec) { SecToApplyRel = Sec; }
-- 
--@@ -903,9 +897,7 @@
--   void setSymTab(SymTabType *SymTab) { Symbols = SymTab; }
-- 
-- protected:
---  RelocSectionWithSymtabBase()
---      : RelocationSectionBase(
---            std::is_same_v<SymTabType, DynamicSymbolTableSection>) {}
--+  RelocSectionWithSymtabBase() = default;
-- 
--   SymTabType *Symbols = nullptr;
-- 
--@@ -936,8 +928,9 @@
--   const Object &getObject() const { return Obj; }
-- 
--   static bool classof(const SectionBase *S) {
---    return RelocationSectionBase::classof(S) &&
---           !static_cast<const RelocationSectionBase *>(S)->isDynamic();
--+    if (S->OriginalFlags & ELF::SHF_ALLOC)
--+      return false;
--+    return RelocationSectionBase::classof(S);
--   }
-- };
-- 
--@@ -1022,8 +1015,9 @@
--       function_ref<bool(const SectionBase *)> ToRemove) override;
-- 
--   static bool classof(const SectionBase *S) {
---    return RelocationSectionBase::classof(S) &&
---           static_cast<const RelocationSectionBase *>(S)->isDynamic();
--+    if (!(S->OriginalFlags & ELF::SHF_ALLOC))
--+      return false;
--+    return S->OriginalType == ELF::SHT_REL || S->OriginalType == ELF::SHT_RELA;
--   }
-- };
-- 
--diff -ruN --strip-trailing-cr a/llvm/test/tools/llvm-objcopy/ELF/reloc-alloc-symtab.test b/llvm/test/tools/llvm-objcopy/ELF/reloc-alloc-symtab.test
----- a/llvm/test/tools/llvm-objcopy/ELF/reloc-alloc-symtab.test
--+++ b/llvm/test/tools/llvm-objcopy/ELF/reloc-alloc-symtab.test
--@@ -1,42 +0,0 @@
---## In a relocatable file, an SHF_ALLOC relocation section (e.g. .klp.rela.* in
---## Linux livepatch modules) is a static relocation section: its symbol indexes
---## are updated and the symbols it references are kept.
---
---# RUN: yaml2obj %s -o %t
---# RUN: llvm-strip --strip-unneeded %t -o %t1
---# RUN: llvm-readelf -Sr -s %t1 | FileCheck %s
---# RUN: yaml2obj -DTYPE=SHT_CREL %s -o %t.crel
---# RUN: llvm-strip --strip-unneeded %t.crel -o %t1.crel
---# RUN: llvm-readelf -Sr -s %t1.crel | FileCheck %s
---
---# CHECK:      [ 2] .klp.rela.vmlinux.text {{RELA|CREL}} {{.*}} AI  3   1
---# CHECK-NEXT: [ 3] .symtab
---# CHECK:      R_X86_64_PC32 {{.*}} referenced + 0
---# CHECK:      Symbol table '.symtab' contains 2 entries:
---# CHECK:      1: {{.*}} UND referenced
---
---!ELF
---FileHeader:
---  Class:   ELFCLASS64
---  Data:    ELFDATA2LSB
---  Type:    ET_REL
---  Machine: EM_X86_64
---Sections:
---  - Name:    .text
---    Type:    SHT_PROGBITS
---    Flags:   [ SHF_ALLOC, SHF_EXECINSTR ]
---    Content: "e800000000"
---  - Name:    .klp.rela.vmlinux.text
---    Type:    [[TYPE=SHT_RELA]]
---    Flags:   [ SHF_ALLOC, SHF_INFO_LINK ]
---    Link:    .symtab
---    Info:    .text
---    Relocations:
---      - Offset: 1
---        Symbol: referenced
---        Type:   R_X86_64_PC32
---Symbols:
---  - Name:    unreferenced
---    Section: .text
---  - Name:    referenced
---    Binding: STB_GLOBAL
--diff -ruN --strip-trailing-cr a/llvm/test/tools/llvm-objcopy/ELF/reloc-no-symtab.test b/llvm/test/tools/llvm-objcopy/ELF/reloc-no-symtab.test
----- a/llvm/test/tools/llvm-objcopy/ELF/reloc-no-symtab.test
--+++ b/llvm/test/tools/llvm-objcopy/ELF/reloc-no-symtab.test
--@@ -10,16 +10,11 @@
-- # RUN: llvm-readobj --sections %t.original | FileCheck %s
-- # RUN: llvm-readobj --sections %t.stripped | FileCheck %s
-- 
---## In a relocatable file, .rela.plt is a static relocation section.
---# RUN: yaml2obj -DTYPE=ET_REL %s -o %t.rel
---# RUN: llvm-strip %t.rel -o %t.rel.stripped
---# RUN: llvm-readobj --sections %t.rel.stripped | FileCheck %s
---
-- !ELF
-- FileHeader:
--   Class:           ELFCLASS64
--   Data:            ELFDATA2LSB
---  Type:            [[TYPE=ET_EXEC]]
--+  Type:            ET_REL
--   Machine:         EM_X86_64
-- Sections:
--   - Name:          .text
--diff -ruN --strip-trailing-cr a/llvm/unittests/IR/MetadataTest.cpp b/llvm/unittests/IR/MetadataTest.cpp
----- a/llvm/unittests/IR/MetadataTest.cpp
--+++ b/llvm/unittests/IR/MetadataTest.cpp
--@@ -5355,29 +5355,6 @@
--   EXPECT_TRUE(!MD);
-- }
-- 
---// Once the use list is indexed, look each changed reference up again right
---// away: a later swap in dropRef would repair a stale index entry.
---TEST_F(TrackingMDRefTest, LargeUseList) {
---  auto Temp = MDTuple::getTemporary(Context, {});
---  TrackingMDRef Refs[41];
---  for (unsigned I = 0; I != 40; ++I)
---    Refs[I].reset(Temp.get());
---  Refs[0].reset();
---  Refs[0].reset(Temp.get());
---  Refs[0].reset();
---  Refs[40] = std::move(Refs[1]);
---  Refs[1].reset(Temp.get());
---  Refs[40].reset();
---  Refs[39].reset();
---  EXPECT_EQ(38u, Temp->getNumTemporaryUses());
---
---  auto *N = MDTuple::getDistinct(Context, {});
---  Temp->replaceAllUsesWith(N);
---  EXPECT_EQ(0u, Temp->getNumTemporaryUses());
---  for (unsigned I = 1; I != 39; ++I)
---    EXPECT_EQ(N, Refs[I].get()) << I;
---}
---
-- TEST(NamedMDNodeTest, Search) {
--   LLVMContext Context;
--   ConstantAsMetadata *C =
-diff --git a/third_party/llvm/workspace.bzl b/third_party/llvm/workspace.bzl
-index 9de7c05a..7b8ac881 100644
---- a/third_party/llvm/workspace.bzl
-+++ b/third_party/llvm/workspace.bzl
-@@ -19,8 +19,8 @@ load("//third_party:repo.bzl", "tf_http_archive")
+-  auto postProcess = [&](Value exchangedLocal, Value /*localPaddingValue*/,
+-                         RankedTensorType /*unused paddedGlobalResultType*/,
++  // Define step 3 as post processing inside haloDataExchange.
++  auto postProcess = [&](Value exchangedLocal, Value localPaddingValue,
++                         RankedTensorType /*unused padddedGlobalResultType*/,
+                          ResolutionState& state) -> Value {
+     return handleReplicatedSliceDims(loc, exchangedLocal, inSharding, mesh,
+                                      info.manualAxes, sliceOp.getStartIndices(),
+diff --git a/shardy/dialect/sdy/transforms/export/test/executable_partitioner_pipeline/sdy_reduce_scatter_fusion_different_mesh.mlir b/shardy/dialect/sdy/transforms/export/test/executable_partitioner_pipeline/sdy_reduce_scatter_fusion_different_mesh.mlir
+deleted file mode 100644
+index 566ec9d6..00000000
+--- a/shardy/dialect/sdy/transforms/export/test/executable_partitioner_pipeline/sdy_reduce_scatter_fusion_different_mesh.mlir
++++ /dev/null
+@@ -1,74 +0,0 @@
+-// RUN: rm -rf %t && mkdir -p %t && split-file %s %t
+-// RUN: sdy_opt %t/part1.mlir --sdy-export-pipeline="partitioner-stage=convert-global-to-local partition-count=4" --sdy-drop-sharding-and-mesh --allow-unregistered-dialect > %t/part1_processed.mlir
+-// RUN: sed '1d; /^}/,$d' %t/part1_processed.mlir > %t/combined.mlir
+-// RUN: cat %t/part2.mlir >> %t/combined.mlir
+-// RUN: stablehlo-translate --interpret %t/combined.mlir
+-
+-//--- part1.mlir
+-sdy.mesh @mesh = <["x"=2, "y"=2]>
+-sdy.mesh @mesh_non_iota = <["x"=2, "y"=2], device_ids=[1, 0, 3, 2]>
+-
+-func.func @parallel_reduce_scatter_fusion_different_mesh(
+-    %arg0: tensor<4x4xi32> {sdy.sharding = #sdy.sharding<@mesh, [{}, {"x", "y"}]>},
+-    %arg1: tensor<4x2xi32> {sdy.sharding = #sdy.sharding<@mesh, [{"x", "y"}, {}]>})
+-    -> (tensor<4x2xi32> {sdy.sharding = #sdy.sharding<@mesh, [{}, {}]>}) {
+-  %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [1] x [0] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}, {}], unreduced={"x", "y"}>]>} : (tensor<4x4xi32>, tensor<4x2xi32>) -> tensor<4x2xi32>
+-  %1 = sdy.reshard %0 <@mesh, [{}, {}]> : tensor<4x2xi32>
+-  %2 = sdy.reshard %1 <@mesh_non_iota, [{"x", "y"}, {}]> : tensor<4x2xi32>
+-  %3 = stablehlo.negate %2 {sdy.sharding = #sdy.sharding_per_value<[<@mesh_non_iota, [{"x", "y"}, {}]>]>} : tensor<4x2xi32>
+-  %4 = sdy.reshard %3 <@mesh, [{}, {}]> : tensor<4x2xi32>
+-  return %4 : tensor<4x2xi32>
+-}
+-
+-//--- part2.mlir
+-func.func @sequential_reduce_scatter_fusion_different_mesh(
+-    %arg0: tensor<4x4xi32>, %arg1: tensor<4x2xi32>) -> tensor<4x2xi32> {
+-  %0 = stablehlo.dot_general %arg0, %arg1, contracting_dims = [1] x [0] : (tensor<4x4xi32>, tensor<4x2xi32>) -> tensor<4x2xi32>
+-  %1 = stablehlo.negate %0 : tensor<4x2xi32>
+-  return %1 : tensor<4x2xi32>
+-}
+-
+-func.func @main() {
+-  %lhs = stablehlo.constant dense<[
+-    [ 1,  2,  3,  4],
+-    [ 5,  6,  7,  8],
+-    [ 9, 10, 11, 12],
+-    [13, 14, 15, 16]
+-  ]> : tensor<4x4xi32>
+-  %rhs = stablehlo.constant dense<[
+-    [1, 0],
+-    [0, 1],
+-    [1, 1],
+-    [2, 0]
+-  ]> : tensor<4x2xi32>
+-  %expected = func.call @sequential_reduce_scatter_fusion_different_mesh(%lhs, %rhs)
+-      : (tensor<4x4xi32>, tensor<4x2xi32>) -> tensor<4x2xi32>
+-
+-  %l0 = "stablehlo.slice"(%lhs) {start_indices = array<i64: 0, 0>, limit_indices = array<i64: 4, 1>, strides = array<i64: 1, 1>} : (tensor<4x4xi32>) -> tensor<4x1xi32>
+-  %l1 = "stablehlo.slice"(%lhs) {start_indices = array<i64: 0, 1>, limit_indices = array<i64: 4, 2>, strides = array<i64: 1, 1>} : (tensor<4x4xi32>) -> tensor<4x1xi32>
+-  %l2 = "stablehlo.slice"(%lhs) {start_indices = array<i64: 0, 2>, limit_indices = array<i64: 4, 3>, strides = array<i64: 1, 1>} : (tensor<4x4xi32>) -> tensor<4x1xi32>
+-  %l3 = "stablehlo.slice"(%lhs) {start_indices = array<i64: 0, 3>, limit_indices = array<i64: 4, 4>, strides = array<i64: 1, 1>} : (tensor<4x4xi32>) -> tensor<4x1xi32>
+-  %r0 = "stablehlo.slice"(%rhs) {start_indices = array<i64: 0, 0>, limit_indices = array<i64: 1, 2>, strides = array<i64: 1, 1>} : (tensor<4x2xi32>) -> tensor<1x2xi32>
+-  %r1 = "stablehlo.slice"(%rhs) {start_indices = array<i64: 1, 0>, limit_indices = array<i64: 2, 2>, strides = array<i64: 1, 1>} : (tensor<4x2xi32>) -> tensor<1x2xi32>
+-  %r2 = "stablehlo.slice"(%rhs) {start_indices = array<i64: 2, 0>, limit_indices = array<i64: 3, 2>, strides = array<i64: 1, 1>} : (tensor<4x2xi32>) -> tensor<1x2xi32>
+-  %r3 = "stablehlo.slice"(%rhs) {start_indices = array<i64: 3, 0>, limit_indices = array<i64: 4, 2>, strides = array<i64: 1, 1>} : (tensor<4x2xi32>) -> tensor<1x2xi32>
+-
+-  %res:4 = "interpreter.run_parallel"(%l0, %r0, %l1, %r1, %l2, %r2, %l3, %r3) {
+-    programs = [[
+-      @parallel_reduce_scatter_fusion_different_mesh,
+-      @parallel_reduce_scatter_fusion_different_mesh,
+-      @parallel_reduce_scatter_fusion_different_mesh,
+-      @parallel_reduce_scatter_fusion_different_mesh
+-    ]]
+-  } : (tensor<4x1xi32>, tensor<1x2xi32>,
+-       tensor<4x1xi32>, tensor<1x2xi32>,
+-       tensor<4x1xi32>, tensor<1x2xi32>,
+-       tensor<4x1xi32>, tensor<1x2xi32>) ->
+-      (tensor<4x2xi32>, tensor<4x2xi32>, tensor<4x2xi32>, tensor<4x2xi32>)
+-
+-  "check.expect_eq"(%res#0, %expected) : (tensor<4x2xi32>, tensor<4x2xi32>) -> ()
+-  "check.expect_eq"(%res#1, %expected) : (tensor<4x2xi32>, tensor<4x2xi32>) -> ()
+-  "check.expect_eq"(%res#2, %expected) : (tensor<4x2xi32>, tensor<4x2xi32>) -> ()
+-  "check.expect_eq"(%res#3, %expected) : (tensor<4x2xi32>, tensor<4x2xi32>) -> ()
+-  func.return
+-}
+diff --git a/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/concatenate.mlir b/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/concatenate.mlir
+index 1d1ba6cf..3a79d272 100644
+--- a/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/concatenate.mlir
++++ b/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/concatenate.mlir
+@@ -190,21 +190,28 @@ func.func @concatenate_rotate_right_multi_use_slice_not_matched(
+   // HALO-NEXT: %[[CST0:.*]] = stablehlo.constant dense<0.000000e+00> : tensor<f32>
+   // HALO-NEXT: %[[S0:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST0]]) in_shardings=[<@mesh, [{"a"}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}]>] manual_axes={"a"} (%arg1: tensor<5xf32>, %arg2: tensor<f32>) {
+   // HALO-NEXT:   %[[PID0:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO-NEXT:   %[[C2_0:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO-NEXT:   %[[DIV0:.*]] = stablehlo.divide %[[PID0]], %[[C2_0]] : tensor<ui32>
+-  // HALO-NEXT:   %[[ID0:.*]] = stablehlo.convert %[[DIV0]] : (tensor<ui32>) -> tensor<i32>
+-  // HALO-NEXT:   %[[SELF0:.*]] = stablehlo.slice %arg1 [2:5] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>) -> tensor<3xf32>
+-  // HALO-NEXT:   %[[RIGHT0:.*]] = stablehlo.slice %arg1 [0:2] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>) -> tensor<2xf32>
+-  // HALO-NEXT:   %[[CP0:.*]] = "stablehlo.collective_permute"(%[[RIGHT0]]) <{
++  // HALO-NEXT:   %[[PID0_I32:.*]] = stablehlo.convert %[[PID0]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[C2_0:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[DIV0:.*]] = stablehlo.divide %[[PID0_I32]], %[[C2_0]] : tensor<i32>
++  // HALO-NEXT:   %[[C2_1:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[REM0:.*]] = stablehlo.remainder %[[DIV0]], %[[C2_1]] : tensor<i32>
++  // HALO-NEXT:   %[[CP0:.*]] = "stablehlo.collective_permute"(%arg1) <{
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[2, 0], [3, 1]]> : tensor<2x2xi64>
+-  // HALO-SAME:   }> : (tensor<2xf32>) -> tensor<2xf32>
+-  // HALO-NEXT:   %[[CONCAT0:.*]] = stablehlo.concatenate %[[SELF0]], %[[CP0]], dim = 0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<3xf32>, tensor<2xf32>) -> tensor<5xf32>
++  // HALO-SAME:   }> : (tensor<5xf32>) -> tensor<5xf32>
++  // HALO-NEXT:   %[[C1_0:.*]] = stablehlo.constant dense<1> : tensor<i32>
++  // HALO-NEXT:   %[[CMP0:.*]] = stablehlo.compare LT, %[[REM0]], %[[C1_0]] : (tensor<i32>, tensor<i32>) -> tensor<i1>
++  // HALO-NEXT:   %[[BCAST_PAD0:.*]] = stablehlo.broadcast_in_dim %arg2, dims = [] : (tensor<f32>) -> tensor<5xf32>
++  // HALO-NEXT:   %[[BCAST0:.*]] = stablehlo.broadcast_in_dim %[[CMP0]], dims = [] : (tensor<i1>) -> tensor<5xi1>
++  // HALO-NEXT:   %[[SEL0:.*]] = stablehlo.select %[[BCAST0]], %[[CP0]], %[[BCAST_PAD0]] : tensor<5xi1>, tensor<5xf32>
++  // HALO-NEXT:   %[[CONCAT0:.*]] = stablehlo.concatenate %arg1, %[[SEL0]], dim = 0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>, tensor<5xf32>) -> tensor<10xf32>
++  // HALO-NEXT:   %[[PAD0:.*]] = stablehlo.pad %[[CONCAT0]], %arg2, low = [3], high = [3], interior = [0] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<10xf32>, tensor<f32>) -> tensor<16xf32>
+   // HALO-NEXT:   %[[CM2_0:.*]] = stablehlo.constant dense<-2> : tensor<i32>
+-  // HALO-NEXT:   %[[C2_1:.*]] = stablehlo.constant dense<2> : tensor<i32>
+-  // HALO-NEXT:   %[[MUL0:.*]] = stablehlo.multiply %[[ID0]], %[[CM2_0]] : tensor<i32>
+-  // HALO-NEXT:   %[[ADD0:.*]] = stablehlo.add %[[MUL0]], %[[C2_1]] : tensor<i32>
++  // HALO-NEXT:   %[[C7_0:.*]] = stablehlo.constant dense<7> : tensor<i32>
++  // HALO-NEXT:   %[[MUL0:.*]] = stablehlo.multiply %[[REM0]], %[[CM2_0]] : tensor<i32>
++  // HALO-NEXT:   %[[ADD0:.*]] = stablehlo.add %[[MUL0]], %[[C7_0]] : tensor<i32>
+   // HALO-NEXT:   %[[CZ0:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:   %[[DS0:.*]] = stablehlo.dynamic_slice %[[CONCAT0]], %[[ADD0]], sizes = [3] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>, tensor<i32>) -> tensor<3xf32>
++  // HALO-NEXT:   %[[MAX0:.*]] = stablehlo.maximum %[[ADD0]], %[[CZ0]] : tensor<i32>
++  // HALO-NEXT:   %[[DS0:.*]] = stablehlo.dynamic_slice %[[PAD0]], %[[MAX0]], sizes = [3] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<16xf32>, tensor<i32>) -> tensor<3xf32>
+   // HALO-NEXT:   sdy.return %[[DS0]] : tensor<3xf32>
+   // HALO-NEXT: } : (tensor<10xf32>, tensor<f32>) -> tensor<6xf32>
+   %0 = stablehlo.slice %arg0 [4:10] {
+@@ -218,21 +225,28 @@ func.func @concatenate_rotate_right_multi_use_slice_not_matched(
+   // HALO-NEXT: %[[CST1:.*]] = stablehlo.constant dense<0.000000e+00> : tensor<f32>
+   // HALO-NEXT: %[[S1:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST1]]) in_shardings=[<@mesh, [{"a"}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}]>] manual_axes={"a"} (%arg1: tensor<5xf32>, %arg2: tensor<f32>) {
+   // HALO-NEXT:   %[[PID1:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO-NEXT:   %[[C2_2:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO-NEXT:   %[[DIV1:.*]] = stablehlo.divide %[[PID1]], %[[C2_2]] : tensor<ui32>
+-  // HALO-NEXT:   %[[ID1:.*]] = stablehlo.convert %[[DIV1]] : (tensor<ui32>) -> tensor<i32>
+-  // HALO-NEXT:   %[[LEFT1:.*]] = stablehlo.slice %arg1 [2:5] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>) -> tensor<3xf32>
+-  // HALO-NEXT:   %[[CP1:.*]] = "stablehlo.collective_permute"(%[[LEFT1]]) <{
++  // HALO-NEXT:   %[[PID1_I32:.*]] = stablehlo.convert %[[PID1]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[C2_2:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[DIV1:.*]] = stablehlo.divide %[[PID1_I32]], %[[C2_2]] : tensor<i32>
++  // HALO-NEXT:   %[[C2_3:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[REM1:.*]] = stablehlo.remainder %[[DIV1]], %[[C2_3]] : tensor<i32>
++  // HALO-NEXT:   %[[CP1:.*]] = "stablehlo.collective_permute"(%arg1) <{
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[0, 2], [1, 3]]> : tensor<2x2xi64>
+-  // HALO-SAME:   }> : (tensor<3xf32>) -> tensor<3xf32>
+-  // HALO-NEXT:   %[[SELF1:.*]] = stablehlo.slice %arg1 [0:2] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>) -> tensor<2xf32>
+-  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %[[CP1]], %[[SELF1]], dim = 0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<3xf32>, tensor<2xf32>) -> tensor<5xf32>
++  // HALO-SAME:   }> : (tensor<5xf32>) -> tensor<5xf32>
++  // HALO-NEXT:   %[[C1_1:.*]] = stablehlo.constant dense<1> : tensor<i32>
++  // HALO-NEXT:   %[[CMP1:.*]] = stablehlo.compare GE, %[[REM1]], %[[C1_1]] : (tensor<i32>, tensor<i32>) -> tensor<i1>
++  // HALO-NEXT:   %[[BCAST_PAD1:.*]] = stablehlo.broadcast_in_dim %arg2, dims = [] : (tensor<f32>) -> tensor<5xf32>
++  // HALO-NEXT:   %[[BCAST1:.*]] = stablehlo.broadcast_in_dim %[[CMP1]], dims = [] : (tensor<i1>) -> tensor<5xi1>
++  // HALO-NEXT:   %[[SEL1:.*]] = stablehlo.select %[[BCAST1]], %[[CP1]], %[[BCAST_PAD1]] : tensor<5xi1>, tensor<5xf32>
++  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %[[SEL1]], %arg1, dim = 0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>, tensor<5xf32>) -> tensor<10xf32>
++  // HALO-NEXT:   %[[PAD1:.*]] = stablehlo.pad %[[CONCAT1]], %arg2, low = [2], high = [2], interior = [0] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<10xf32>, tensor<f32>) -> tensor<14xf32>
+   // HALO-NEXT:   %[[CM3_1:.*]] = stablehlo.constant dense<-3> : tensor<i32>
+-  // HALO-NEXT:   %[[C3_1:.*]] = stablehlo.constant dense<3> : tensor<i32>
+-  // HALO-NEXT:   %[[MUL1:.*]] = stablehlo.multiply %[[ID1]], %[[CM3_1]] : tensor<i32>
+-  // HALO-NEXT:   %[[ADD1:.*]] = stablehlo.add %[[MUL1]], %[[C3_1]] : tensor<i32>
++  // HALO-NEXT:   %[[C7_1:.*]] = stablehlo.constant dense<7> : tensor<i32>
++  // HALO-NEXT:   %[[MUL1:.*]] = stablehlo.multiply %[[REM1]], %[[CM3_1]] : tensor<i32>
++  // HALO-NEXT:   %[[ADD1:.*]] = stablehlo.add %[[MUL1]], %[[C7_1]] : tensor<i32>
+   // HALO-NEXT:   %[[CZ1:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:   %[[DS1:.*]] = stablehlo.dynamic_slice %[[CONCAT1]], %[[ADD1]], sizes = [2] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>, tensor<i32>) -> tensor<2xf32>
++  // HALO-NEXT:   %[[MAX1:.*]] = stablehlo.maximum %[[ADD1]], %[[CZ1]] : tensor<i32>
++  // HALO-NEXT:   %[[DS1:.*]] = stablehlo.dynamic_slice %[[PAD1]], %[[MAX1]], sizes = [2] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<14xf32>, tensor<i32>) -> tensor<2xf32>
+   // HALO-NEXT:   sdy.return %[[DS1]] : tensor<2xf32>
+   // HALO-NEXT: } : (tensor<10xf32>, tensor<f32>) -> tensor<4xf32>
+   %1 = stablehlo.slice %arg0 [0:4] {
+@@ -262,21 +276,28 @@ func.func @concatenate_identity_order_slices_not_matched(
+   // HALO-NEXT: %[[CST0:.*]] = stablehlo.constant dense<0.000000e+00> : tensor<f32>
+   // HALO-NEXT: %[[S0:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST0]]) in_shardings=[<@mesh, [{"a"}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}]>] manual_axes={"a"} (%arg1: tensor<5xf32>, %arg2: tensor<f32>) {
+   // HALO-NEXT:   %[[PID0:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO-NEXT:   %[[C2_0:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO-NEXT:   %[[DIV0:.*]] = stablehlo.divide %[[PID0]], %[[C2_0]] : tensor<ui32>
+-  // HALO-NEXT:   %[[ID0:.*]] = stablehlo.convert %[[DIV0]] : (tensor<ui32>) -> tensor<i32>
+-  // HALO-NEXT:   %[[LEFT0:.*]] = stablehlo.slice %arg1 [2:5] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>) -> tensor<3xf32>
+-  // HALO-NEXT:   %[[CP0:.*]] = "stablehlo.collective_permute"(%[[LEFT0]]) <{
++  // HALO-NEXT:   %[[PID0_I32:.*]] = stablehlo.convert %[[PID0]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[C2_0:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[DIV0:.*]] = stablehlo.divide %[[PID0_I32]], %[[C2_0]] : tensor<i32>
++  // HALO-NEXT:   %[[C2_1:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[REM0:.*]] = stablehlo.remainder %[[DIV0]], %[[C2_1]] : tensor<i32>
++  // HALO-NEXT:   %[[CP0:.*]] = "stablehlo.collective_permute"(%arg1) <{
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[0, 2], [1, 3]]> : tensor<2x2xi64>
+-  // HALO-SAME:   }> : (tensor<3xf32>) -> tensor<3xf32>
+-  // HALO-NEXT:   %[[SELF0:.*]] = stablehlo.slice %arg1 [0:2] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>) -> tensor<2xf32>
+-  // HALO-NEXT:   %[[CONCAT0:.*]] = stablehlo.concatenate %[[CP0]], %[[SELF0]], dim = 0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<3xf32>, tensor<2xf32>) -> tensor<5xf32>
++  // HALO-SAME:   }> : (tensor<5xf32>) -> tensor<5xf32>
++  // HALO-NEXT:   %[[C1_0:.*]] = stablehlo.constant dense<1> : tensor<i32>
++  // HALO-NEXT:   %[[CMP0:.*]] = stablehlo.compare GE, %[[REM0]], %[[C1_0]] : (tensor<i32>, tensor<i32>) -> tensor<i1>
++  // HALO-NEXT:   %[[BCAST_PAD0:.*]] = stablehlo.broadcast_in_dim %arg2, dims = [] : (tensor<f32>) -> tensor<5xf32>
++  // HALO-NEXT:   %[[BCAST0:.*]] = stablehlo.broadcast_in_dim %[[CMP0]], dims = [] : (tensor<i1>) -> tensor<5xi1>
++  // HALO-NEXT:   %[[SEL0:.*]] = stablehlo.select %[[BCAST0]], %[[CP0]], %[[BCAST_PAD0]] : tensor<5xi1>, tensor<5xf32>
++  // HALO-NEXT:   %[[CONCAT0:.*]] = stablehlo.concatenate %[[SEL0]], %arg1, dim = 0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>, tensor<5xf32>) -> tensor<10xf32>
++  // HALO-NEXT:   %[[PAD0:.*]] = stablehlo.pad %[[CONCAT0]], %arg2, low = [2], high = [2], interior = [0] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<10xf32>, tensor<f32>) -> tensor<14xf32>
+   // HALO-NEXT:   %[[CM3_0:.*]] = stablehlo.constant dense<-3> : tensor<i32>
+-  // HALO-NEXT:   %[[C3_0:.*]] = stablehlo.constant dense<3> : tensor<i32>
+-  // HALO-NEXT:   %[[MUL0:.*]] = stablehlo.multiply %[[ID0]], %[[CM3_0]] : tensor<i32>
+-  // HALO-NEXT:   %[[ADD0:.*]] = stablehlo.add %[[MUL0]], %[[C3_0]] : tensor<i32>
++  // HALO-NEXT:   %[[C7_0:.*]] = stablehlo.constant dense<7> : tensor<i32>
++  // HALO-NEXT:   %[[MUL0:.*]] = stablehlo.multiply %[[REM0]], %[[CM3_0]] : tensor<i32>
++  // HALO-NEXT:   %[[ADD0:.*]] = stablehlo.add %[[MUL0]], %[[C7_0]] : tensor<i32>
+   // HALO-NEXT:   %[[CZ0:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:   %[[DS0:.*]] = stablehlo.dynamic_slice %[[CONCAT0]], %[[ADD0]], sizes = [2] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>, tensor<i32>) -> tensor<2xf32>
++  // HALO-NEXT:   %[[MAX0:.*]] = stablehlo.maximum %[[ADD0]], %[[CZ0]] : tensor<i32>
++  // HALO-NEXT:   %[[DS0:.*]] = stablehlo.dynamic_slice %[[PAD0]], %[[MAX0]], sizes = [2] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<14xf32>, tensor<i32>) -> tensor<2xf32>
+   // HALO-NEXT:   sdy.return %[[DS0]] : tensor<2xf32>
+   // HALO-NEXT: } : (tensor<10xf32>, tensor<f32>) -> tensor<4xf32>
+   %0 = stablehlo.slice %arg0 [0:4] {
+@@ -290,21 +311,28 @@ func.func @concatenate_identity_order_slices_not_matched(
+   // HALO-NEXT: %[[CST1:.*]] = stablehlo.constant dense<0.000000e+00> : tensor<f32>
+   // HALO-NEXT: %[[S1:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST1]]) in_shardings=[<@mesh, [{"a"}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}]>] manual_axes={"a"} (%arg1: tensor<5xf32>, %arg2: tensor<f32>) {
+   // HALO-NEXT:   %[[PID1:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO-NEXT:   %[[C2_3:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO-NEXT:   %[[DIV1:.*]] = stablehlo.divide %[[PID1]], %[[C2_3]] : tensor<ui32>
+-  // HALO-NEXT:   %[[ID1:.*]] = stablehlo.convert %[[DIV1]] : (tensor<ui32>) -> tensor<i32>
+-  // HALO-NEXT:   %[[SELF1:.*]] = stablehlo.slice %arg1 [2:5] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>) -> tensor<3xf32>
+-  // HALO-NEXT:   %[[RIGHT1:.*]] = stablehlo.slice %arg1 [0:2] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>) -> tensor<2xf32>
+-  // HALO-NEXT:   %[[CP1:.*]] = "stablehlo.collective_permute"(%[[RIGHT1]]) <{
++  // HALO-NEXT:   %[[PID1_I32:.*]] = stablehlo.convert %[[PID1]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[C2_3:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[DIV1:.*]] = stablehlo.divide %[[PID1_I32]], %[[C2_3]] : tensor<i32>
++  // HALO-NEXT:   %[[C2_4:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[REM1:.*]] = stablehlo.remainder %[[DIV1]], %[[C2_4]] : tensor<i32>
++  // HALO-NEXT:   %[[CP1:.*]] = "stablehlo.collective_permute"(%arg1) <{
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[2, 0], [3, 1]]> : tensor<2x2xi64>
+-  // HALO-SAME:   }> : (tensor<2xf32>) -> tensor<2xf32>
+-  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %[[SELF1]], %[[CP1]], dim = 0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<3xf32>, tensor<2xf32>) -> tensor<5xf32>
++  // HALO-SAME:   }> : (tensor<5xf32>) -> tensor<5xf32>
++  // HALO-NEXT:   %[[C1_1:.*]] = stablehlo.constant dense<1> : tensor<i32>
++  // HALO-NEXT:   %[[CMP1:.*]] = stablehlo.compare LT, %[[REM1]], %[[C1_1]] : (tensor<i32>, tensor<i32>) -> tensor<i1>
++  // HALO-NEXT:   %[[BCAST_PAD1:.*]] = stablehlo.broadcast_in_dim %arg2, dims = [] : (tensor<f32>) -> tensor<5xf32>
++  // HALO-NEXT:   %[[BCAST1:.*]] = stablehlo.broadcast_in_dim %[[CMP1]], dims = [] : (tensor<i1>) -> tensor<5xi1>
++  // HALO-NEXT:   %[[SEL1:.*]] = stablehlo.select %[[BCAST1]], %[[CP1]], %[[BCAST_PAD1]] : tensor<5xi1>, tensor<5xf32>
++  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %arg1, %[[SEL1]], dim = 0 {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>, tensor<5xf32>) -> tensor<10xf32>
++  // HALO-NEXT:   %[[PAD1:.*]] = stablehlo.pad %[[CONCAT1]], %arg2, low = [3], high = [3], interior = [0] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<10xf32>, tensor<f32>) -> tensor<16xf32>
+   // HALO-NEXT:   %[[CM2_1:.*]] = stablehlo.constant dense<-2> : tensor<i32>
+-  // HALO-NEXT:   %[[C2_4:.*]] = stablehlo.constant dense<2> : tensor<i32>
+-  // HALO-NEXT:   %[[MUL1:.*]] = stablehlo.multiply %[[ID1]], %[[CM2_1]] : tensor<i32>
+-  // HALO-NEXT:   %[[ADD1:.*]] = stablehlo.add %[[MUL1]], %[[C2_4]] : tensor<i32>
++  // HALO-NEXT:   %[[C7_1:.*]] = stablehlo.constant dense<7> : tensor<i32>
++  // HALO-NEXT:   %[[MUL1:.*]] = stablehlo.multiply %[[REM1]], %[[CM2_1]] : tensor<i32>
++  // HALO-NEXT:   %[[ADD1:.*]] = stablehlo.add %[[MUL1]], %[[C7_1]] : tensor<i32>
+   // HALO-NEXT:   %[[CZ1:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:   %[[DS1:.*]] = stablehlo.dynamic_slice %[[CONCAT1]], %[[ADD1]], sizes = [3] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<5xf32>, tensor<i32>) -> tensor<3xf32>
++  // HALO-NEXT:   %[[MAX1:.*]] = stablehlo.maximum %[[ADD1]], %[[CZ1]] : tensor<i32>
++  // HALO-NEXT:   %[[DS1:.*]] = stablehlo.dynamic_slice %[[PAD1]], %[[MAX1]], sizes = [3] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}]>]>} : (tensor<16xf32>, tensor<i32>) -> tensor<3xf32>
+   // HALO-NEXT:   sdy.return %[[DS1]] : tensor<3xf32>
+   // HALO-NEXT: } : (tensor<10xf32>, tensor<f32>) -> tensor<6xf32>
+   %1 = stablehlo.slice %arg0 [4:10] {
+diff --git a/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/pad.mlir b/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/pad.mlir
+index 2733d65e..32c21a6c 100644
+--- a/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/pad.mlir
++++ b/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/pad.mlir
+@@ -38,21 +38,22 @@ func.func @pad_single_left_hop(
+   // HALO: %[[CST:.*]] = stablehlo.constant dense<0> : tensor<i32>
+   // HALO: %[[MC:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST]]) in_shardings=[<@mesh_a4, [{"a":(2)2}, {"b"}]>, <@mesh_a4, []>] out_shardings=[<@mesh_a4, [{"a":(2)2}, {"b"}]>] manual_axes={"a":(2)2, "b"} (%[[ARG1:.*]]: tensor<2x4xi32>, %[[ARG2:.*]]: tensor<i32>) {
+   // HALO: %[[PART_ID:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO: %[[C_DIV:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO: %[[DIV:.*]] = stablehlo.divide %[[PART_ID]], %[[C_DIV]] : tensor<ui32>
+-  // HALO: %[[C_REM:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO: %[[REM:.*]] = stablehlo.remainder %[[DIV]], %[[C_REM]] : tensor<ui32>
+-  // HALO: %[[CONVERT:.*]] = stablehlo.convert %[[REM]] : (tensor<ui32>) -> tensor<i32>
++  // HALO: %[[CONVERT:.*]] = stablehlo.convert %[[PART_ID]] : (tensor<ui32>) -> tensor<i32>
++  // HALO: %[[C_DIV:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO: %[[DIV:.*]] = stablehlo.divide %[[CONVERT]], %[[C_DIV]] : tensor<i32>
++  // HALO: %[[C_REM:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO: %[[REM:.*]] = stablehlo.remainder %[[DIV]], %[[C_REM]] : tensor<i32>
+   // HALO: %[[CP:.*]] = "stablehlo.collective_permute"(%[[ARG1]]) <{channel_handle = #stablehlo.channel_handle<handle = {{.*}}, type = 1>, source_target_pairs ={{.*}}
+   // HALO: %[[SELECT:.*]] = stablehlo.select {{.*}}, %[[CP]], {{.*}}
+   // HALO: %[[CONCAT:.*]] = stablehlo.concatenate %[[SELECT]], %[[ARG1]], dim = 0 {sdy.sharding ={{.*}}
+   // HALO: %[[PAD_1:.*]] = stablehlo.pad %[[CONCAT]], %[[ARG2]], low ={{.*}}
+   // HALO: %[[CST_3:.*]] = stablehlo.constant dense<2> : tensor<i32>
+   // HALO: %[[CST_4:.*]] = stablehlo.constant dense<3> : tensor<i32>
+-  // HALO: %[[MUL:.*]] = stablehlo.multiply %[[CONVERT]], %[[CST_3]] : tensor<i32>
++  // HALO: %[[MUL:.*]] = stablehlo.multiply %[[REM]], %[[CST_3]] : tensor<i32>
+   // HALO: %[[ADD:.*]] = stablehlo.add %[[MUL]], %[[CST_4]] : tensor<i32>
+   // HALO: %[[CST_5:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO: %[[V_RES:.*]] = stablehlo.dynamic_slice %[[PAD_1]], %[[ADD]], %[[CST_5]], sizes = [4, 4] {sdy.sharding ={{.*}}
++  // HALO: %[[MAX:.*]] = stablehlo.maximum %[[ADD]], %[[CST_5]] : tensor<i32>
++  // HALO: %[[V_RES:.*]] = stablehlo.dynamic_slice %[[PAD_1]], %[[MAX]], %[[CST_5]], sizes = [4, 4] {sdy.sharding ={{.*}}
+   // HALO: %[[RES:.*]] = stablehlo.slice %[[MC]] [0:7, 0:8] {sdy.sharding ={{.*}}
+   %0 = stablehlo.pad %arg0, %c, low = [3, 0], high = [0, 0], interior = [0, 0]
+     {sdy.sharding = #sdy.sharding_per_value<[#sdy.sharding<@mesh_a4, [{"a":(2)2}, {"b"}]>]>} : (tensor<4x8xi32>, tensor<i32>) -> tensor<7x8xi32>
+@@ -82,8 +83,10 @@ func.func @pad_multiple_left_hops(
+   // HALO: %[[PAD:.*]] = stablehlo.pad %[[SLICE]], %[[CST]], low ={{.*}}
+   // HALO: %[[MC:.*]] = sdy.manual_computation(%[[PAD]], %[[CST]]) in_shardings=[<@mesh_a4, [{"a"}, {}, {"b"}]>, <@mesh_a4, []>] out_shardings=[<@mesh_a4, [{"a"}, {}, {"b"}]>] manual_axes={"a", "b"} (%[[ARG1:.*]]: tensor<1x8x2xi32>, %[[ARG2:.*]]: tensor<i32>) {
+   // HALO: %[[CP:.*]] = "stablehlo.collective_permute"(%[[ARG1]]) <{channel_handle = #stablehlo.channel_handle<handle = {{.*}}, type = 1>, source_target_pairs ={{.*}}
++  // HALO: %[[SEL:.*]] = stablehlo.select {{.*}}, %[[CP]], {{.*}}
+   // HALO: %[[CP_1:.*]] = "stablehlo.collective_permute"(%[[ARG1]]) <{channel_handle = #stablehlo.channel_handle<handle = {{.*}}, type = 1>, source_target_pairs ={{.*}}
+-  // HALO: %[[CONCAT:.*]] = stablehlo.concatenate %[[CP]], %[[CP_1]], %[[ARG1]], dim = 0 {sdy.sharding ={{.*}}
++  // HALO: %[[SEL_1:.*]] = stablehlo.select {{.*}}, %[[CP_1]], {{.*}}
++  // HALO: %[[CONCAT:.*]] = stablehlo.concatenate %[[SEL]], %[[SEL_1]], %[[ARG1]], dim = 0 {sdy.sharding ={{.*}}
+   // HALO: %[[PAD_2:.*]] = stablehlo.pad %[[CONCAT]], %[[ARG2]], low ={{.*}}
+   // HALO: %[[V_RES:.*]] = stablehlo.dynamic_slice %[[PAD_2]], {{.*}}, sizes = [4, 8, 2] {sdy.sharding ={{.*}}
+   // HALO: %[[RES:.*]] = stablehlo.slice %[[MC]] [0:13, 0:8, 0:3] {sdy.sharding ={{.*}}
+@@ -170,16 +173,15 @@ func.func @pad_two_direction_hops(
  
- def repo(name):
-     """Imports LLVM."""
--    LLVM_COMMIT = "62e30e3326d9b4e3948d242ccfee7aa4fc030ef3"
--    LLVM_SHA256 = "478ae34c463f28708582082098aaf0e79f431c2719f5d297bd546051dbeae0dd"
-+    LLVM_COMMIT = "c4d9267a31897dd76b2aab5196b75bffb49e6846"
-+    LLVM_SHA256 = "a96c8b33f0d8d3be008b8c9f74ef310254c4f7f7edf8c04c76f4d99ed9d34f1a"
+   // HALO-NEXT: %[[PAD_HIGH:.*]] = stablehlo.pad %[[SLICE]], %[[CST]], low = [0, 0], high = [1, 0], interior = [0, 0] {sdy.sharding = #sdy.sharding_per_value<[<@mesh_a4, [{"a"}, {"b"}]>]>} : (tensor<11x8xi32>, tensor<i32>) -> tensor<12x8xi32>
+   // HALO-NEXT:   %[[MC:.*]] = sdy.manual_computation(%[[PAD_HIGH]], %[[CST]]) in_shardings=[<@mesh_a4, [{"a"}, {"b"}]>, <@mesh_a4, []>] out_shardings=[<@mesh_a4, [{"a"}, {"b"}]>] manual_axes={"a", "b"} (%arg1: tensor<3x4xi32>, %arg2: tensor<i32>) {
+-  // HALO:        %[[S1:.*]] = stablehlo.slice %arg1 [1:3, 0:4]
+-  // HALO-NEXT:   %[[CP1:.*]] = "stablehlo.collective_permute"(%[[S1]])
++  // HALO:        %[[CP1:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[0, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7]]> : tensor<6x2xi64>
+   // HALO:        %[[SEL1:.*]] = stablehlo.select {{.*}}, %[[CP1]], {{.*}}
+-  // HALO:        %[[S2:.*]] = stablehlo.slice %arg1 [0:2, 0:4]
+-  // HALO-NEXT:   %[[CP2:.*]] = "stablehlo.collective_permute"(%[[S2]])
++  // HALO:        %[[CP2:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[2, 0], [3, 1], [4, 2], [5, 3], [6, 4], [7, 5]]> : tensor<6x2xi64>
+   // HALO:        %[[SEL2:.*]] = stablehlo.select {{.*}}, %[[CP2]], {{.*}}
+   // HALO-NEXT:   %[[CONCAT:.*]] = stablehlo.concatenate %[[SEL1]], %arg1, %[[SEL2]], dim = 0
+-  // HALO:   %[[SLICE:.*]] = stablehlo.dynamic_slice %[[CONCAT]], {{.*}}, sizes = [4, 4]
++  // HALO-NEXT:   %[[PAD:.*]] = stablehlo.pad %[[CONCAT]], %arg2, low = [4, 0], high = [4, 0], interior = [0, 0]
++  // HALO:   %[[SLICE:.*]] = stablehlo.dynamic_slice %[[PAD]], {{.*}}, sizes = [4, 4]
+   // HALO-NEXT:   sdy.return %[[SLICE]] : tensor<4x4xi32>
+   // HALO-NEXT: }
+   // HALO-NEXT: %[[RES:.*]] = stablehlo.slice %[[MC]] [0:13, 0:8]
+@@ -216,7 +218,8 @@ func.func @pad_multidim_with_hops(
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[0, 1], [2, 3]]> : tensor<2x2xi64>
+   // HALO:        %[[SEL3:.*]] = stablehlo.select {{.*}}, %[[CP3]], {{.*}}
+   // HALO-NEXT:   %[[CONCAT2:.*]] = stablehlo.concatenate %[[SEL3]], %[[SLICE1]], dim = 1
+-  // HALO:        %[[SLICE2:.*]] = stablehlo.dynamic_slice %[[CONCAT2]], {{.*}}, sizes = [4, 3, 2]
++  // HALO-NEXT:   %[[PAD2:.*]] = stablehlo.pad %[[CONCAT2]], %arg2, low = [0, 3, 0], high = [0, 3, 0], interior = [0, 0, 0]
++  // HALO:        %[[SLICE2:.*]] = stablehlo.dynamic_slice %[[PAD2]], {{.*}}, sizes = [4, 3, 2]
+   // HALO-NEXT:   %[[PAD3:.*]] = stablehlo.pad %[[SLICE2]], %arg2, low = [0, 0, 1], high = [0, 0, 1], interior = [0, 0, 0]
+   // HALO-NEXT:   sdy.return %[[PAD3]] : tensor<4x3x4xi32>
+   // HALO-NEXT: }
+@@ -246,9 +249,11 @@ func.func @pad_replicated_negative_low_padding(
  
-     tf_http_archive(
-         name = name,
-diff --git a/third_party/stablehlo/temporary.patch b/third_party/stablehlo/temporary.patch
-index c38c5147..c6cd6f2b 100644
---- a/third_party/stablehlo/temporary.patch
-+++ b/third_party/stablehlo/temporary.patch
-@@ -881,9 +881,9 @@ diff --ruN a/stablehlo/docs/spec.md b/stablehlo/docs/spec.md
- +Performs element-wise base-2 exponential operation on `operand` tensor and
- +produces a `result` tensor. Depending on the element type, does the following:
- +
--+*   For floats: `exp2` from IEEE-754.
--+*   For complex numbers: complex base-2 exponential.
--+*   For quantized types: `dequantize_op_quantize(exp2, operand, type(result))`.
-++* For floats: `exp2` from IEEE-754.
-++* For complex numbers: complex base-2 exponential.
-++* For quantized types: `dequantize_op_quantize(exp2, operand, type(result))`.
- +
- +#### Inputs
- +
-@@ -907,7 +907,7 @@ diff --ruN a/stablehlo/docs/spec.md b/stablehlo/docs/spec.md
- +
- +#### Constraints
- +
--+*   (C1) `baseline_type(operand) = baseline_type(result)`.
-++* (C1) `baseline_type(operand) = baseline_type(result)`.
- +
- +#### Examples
- +
-@@ -947,9 +947,9 @@ diff --ruN a/stablehlo/docs/spec.md b/stablehlo/docs/spec.md
- +Performs element-wise base-2 logarithm operation on `operand` tensor and
- +produces a `result` tensor. Depending on the element type, does the following:
- +
--+*   For floats: `log2` from IEEE-754.
--+*   For complex numbers: complex base-2 logarithm.
--+*   For quantized types: `dequantize_op_quantize(log2, operand, type(result))`.
-++* For floats: `log2` from IEEE-754.
-++* For complex numbers: complex base-2 logarithm.
-++* For quantized types: `dequantize_op_quantize(log2, operand, type(result))`.
- +
- +#### Inputs
- +
-@@ -973,7 +973,7 @@ diff --ruN a/stablehlo/docs/spec.md b/stablehlo/docs/spec.md
- +
- +#### Constraints
- +
--+*   (C1) `baseline_type(operand) = baseline_type(result)`.
-++* (C1) `baseline_type(operand) = baseline_type(result)`.
- +
- +#### Examples
- +
-@@ -1018,22 +1018,24 @@ diff --ruN a/stablehlo/docs/spec.md b/stablehlo/docs/spec.md
-  * (C1) `element_type(operand) = element_type(source)`.
-  * (C2) `shape(source) = num_windows` where:
-    * `padded_operand_shape = padding[:, 0] + shape(operand) + padding[:, 1]`.
--@@ -7501,6 +7597,7 @@
-+@@ -7501,7 +7597,7 @@
-  syntax ([ISO/IEC 14977:1996](https://www.iso.org/standard/26153.html),
-  [Wikipedia](https://en.wikipedia.org/wiki/Extended_Backus%E2%80%93Naur_form)),
-  with two modifications: 1) rules are defined using `::=` rather than `=`,
--+
-- 2) concatenation is expressed using juxtaposition rather than `,`.
-+-2) concatenation is expressed using juxtaposition rather than `,`.
-++2\) concatenation is expressed using juxtaposition rather than `,`.
-  
-  For describing semantics (i.e. within "Types", "Constants" and "Ops" sections),
--@@ -7571,6 +7668,7 @@
-+ we are using formulas which are based on Python syntax extended with support
-+@@ -7571,7 +7667,7 @@
-  ### Names
-  
-  In formulas, lexical scope includes: 1) global functions, 2) member definitions,
--+
-- 3) local definitions. The list of global functions is provided below. The list
-+-3) local definitions. The list of global functions is provided below. The list
-++3\) local definitions. The list of global functions is provided below. The list
-  of element definitions depends on the program element that the notation is
-  applied to:
-+ 
- diff --ruN a/stablehlo/rfcs/20260821-low-precision-complex.md b/stablehlo/rfcs/20260821-low-precision-complex.md
- --- stablehlo/rfcs/20260821-low-precision-complex.md
- +++ stablehlo/rfcs/20260821-low-precision-complex.md
-@@ -1657,16 +1659,16 @@ diff --ruN a/stablehlo/rfcs/20260907-exp2-log2.md b/stablehlo/rfcs/20260907-exp2
- +
- +Currently, StableHLO lacks native `exp2` and `log2` operations:
- +
--+*   Frameworks expose `exp2` and `log2` directly: JAX provides
--+    [`jnp.exp2`][jax1] / `lax.exp2` and [`jnp.log2`][jax2] / `lax.log2`, and
--+    PyTorch provides [`torch.exp2`][torch1] and [`torch.log2`][torch2].
--+*   Without first-class ops in StableHLO, frameworks must decompose `exp2(x)`
--+    into `exponential(x * ln(2))` and `log2(x)` into `log(x) / ln(2)`.
--+*   Decomposing `exp2` and `log2` into natural `exponential` and `log` scaled by
--+    `ln(2)` degrades numerical accuracy (introducing rounding error on integer
--+    powers of two where `exp2(n)` and `log2(2^n)` should evaluate exactly) and
--+    prevents backends from emitting single-instruction base-2 hardware
--+    operations without fragile algebraic pattern-matching.
-++* Frameworks expose `exp2` and `log2` directly: JAX provides [`jnp.exp2`][jax1]
-++  / `lax.exp2` and [`jnp.log2`][jax2] / `lax.log2`, and PyTorch provides
-++  [`torch.exp2`][torch1] and [`torch.log2`][torch2].
-++* Without first-class ops in StableHLO, frameworks must decompose `exp2(x)` into
-++  `exponential(x * ln(2))` and `log2(x)` into `log(x) / ln(2)`.
-++* Decomposing `exp2` and `log2` into natural `exponential` and `log` scaled by
-++  `ln(2)` degrades numerical accuracy (introducing rounding error on integer
-++  powers of two where `exp2(n)` and `log2(2^n)` should evaluate exactly) and
-++  prevents backends from emitting single-instruction base-2 hardware operations
-++  without fragile algebraic pattern-matching.
- +
- +Following the precedent of `TanOp` ([20240312-tanop.md](20240312-tanop.md)) and
- +the transcendental accuracy specification
-@@ -1681,12 +1683,12 @@ diff --ruN a/stablehlo/rfcs/20260907-exp2-log2.md b/stablehlo/rfcs/20260907-exp2
- +
- +## Exp2Op, Log2Op, and Compatibility
- +
--+*   **VHLO Serialization**: StableHLO version `1.21.0` introduces
--+    `VHLO_Exp2OpV1` (`exp2_v1`) and `VHLO_Log2OpV1` (`log2_v1`).
--+*   **Forward Compatibility & Decomposition**: For runtimes targeting StableHLO
--+    versions prior to `1.21.0`, compatibility expansion lowers `exp2(x)` to
--+    `exponential(multiply(x, constant(ln(2))))` and `log2(x)` to `divide(log(x),
--+    constant(ln(2)))`.
-++* **VHLO Serialization**: StableHLO version `1.21.0` introduces `VHLO_Exp2OpV1`
-++  (`exp2_v1`) and `VHLO_Log2OpV1` (`log2_v1`).
-++* **Forward Compatibility & Decomposition**: For runtimes targeting StableHLO
-++  versions prior to `1.21.0`, compatibility expansion lowers `exp2(x)` to
-++  `exponential(multiply(x, constant(ln(2))))` and `log2(x)` to
-++  `divide(log(x), constant(ln(2)))`.
- +
- +[jax1]: https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.exp2.html
- +[jax2]: https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.log2.html
-@@ -3698,15 +3700,30 @@ diff --ruN a/stablehlo/stablehlo/reference/InterpreterOps.cpp b/stablehlo/stable
-  
-  #include "llvm/Support/Casting.h"
-  #include "llvm/Support/Errc.h"
--@@ -175,36 +176,39 @@
-+@@ -174,37 +175,52 @@
-+     ArrayRef<InterpreterValue> inputs, std::queue<StringAttr>& infeed,
-      SmallVector<SmallVector<StringAttr>> programs, SymbolTable& symbolTable,
-      InterpreterFallback* fallback) {
--   llvm::DefaultThreadPool threadPool;
-+-  llvm::DefaultThreadPool threadPool;
- -  SmallVector<std::shared_future<SmallVector<InterpreterValue>>> futures;
--+  llvm::ThreadPoolTaskGroup taskGroup(threadPool);
-- 
-+-
-    uint32_t numReplicas = programs.size();
-    uint32_t numPartitions = programs[0].size();
-++
-++  // StableHLO collectives are blocking barriers: a process inside rendezvous
-++  // waits for every other process in its group to arrive, so all processes
-++  // must run concurrently. Size the pool from the process count rather than
-++  // the default (hardware_concurrency(), i.e. the host thread count). With a
-++  // default-sized pool, a program with more processes than the host has
-++  // hardware threads leaves the surplus tasks queued and never started while
-++  // the started tasks block forever waiting for them - a deadlock that only
-++  // surfaces as the rendezvous timeout. hardware_concurrency(N) leaves
-++  // ThreadPoolStrategy::Limit false, so the pool gets N threads uncapped by the
-++  // host.
-++  llvm::DefaultThreadPool threadPool(
-++      llvm::hardware_concurrency(numReplicas * numPartitions));
-++  llvm::ThreadPoolTaskGroup taskGroup(threadPool);
-++
-    ProcessGrid processGrid(numReplicas, numPartitions, infeed);
-  
- +  SmallVector<SmallVector<InterpreterValue>> taskOutputs(numReplicas *
-@@ -4443,6 +4460,159 @@ diff --ruN a/stablehlo/stablehlo/tests/transforms/mesh_axes_replica_group_compat
-  
-    // CHECK-LABEL: @all_reduce_sdy_mesh_max
-    func.func @all_reduce_sdy_mesh_max(%arg0: tensor<4xf32>) -> tensor<4xf32> {
-+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_canonicalize_dynamism.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_canonicalize_dynamism.mlir
-+--- stablehlo/stablehlo/tests/transforms/stablehlo_canonicalize_dynamism.mlir
-++++ stablehlo/stablehlo/tests/transforms/stablehlo_canonicalize_dynamism.mlir
-+@@ -168,6 +168,18 @@
-+ 
-+ // -----
-+ 
-++// CHECK-LABEL: func @dynamic_broadcast_in_dim_discardable_attrs
-++func.func @dynamic_broadcast_in_dim_discardable_attrs(%arg0: tensor<4xf32>) -> tensor<3x4xf32> {
-++  //  CHECK-NOT: stablehlo.dynamic_broadcast_in_dim
-++  //      CHECK: stablehlo.broadcast_in_dim %arg0, dims = [1]
-++  // CHECK-SAME:   {mhlo.frontend_attributes = {MUST_FUSE = "0"}}
-++  %0 = stablehlo.constant dense<[3, 4]> : tensor<2xi64>
-++  %1 = stablehlo.dynamic_broadcast_in_dim %arg0, %0, dims = [1] {mhlo.frontend_attributes = {MUST_FUSE = "0"}} : (tensor<4xf32>, tensor<2xi64>) -> tensor<3x4xf32>
-++  return %1 : tensor<3x4xf32>
-++}
-++
-++// -----
-++
-+ // CHECK-LABEL: func @dynamic_broadcast_in_dim_inapplicable_dynamic_operand_type
-+ func.func @dynamic_broadcast_in_dim_inapplicable_dynamic_operand_type(%arg0: tensor<?xf32>) -> tensor<3x4xf32> {
-+   // CHECK: stablehlo.dynamic_broadcast_in_dim
-+@@ -225,6 +237,26 @@
-+ 
-+ // -----
-+ 
-++// CHECK-LABEL: func @dynamic_conv_discardable_attrs
-++func.func @dynamic_conv_discardable_attrs(%arg0: tensor<100x26x26x32xf32>, %arg1: tensor<3x3x1x32xf32>) -> tensor<100x28x28x1xf32> {
-++  //  CHECK-NOT: stablehlo.dynamic_conv
-++  //      CHECK: stablehlo.convolution(%arg0, %arg1)
-++  // CHECK-SAME:   mhlo.frontend_attributes = {MUST_FUSE = "0"}
-++  %0 = stablehlo.constant dense<2> : tensor<2x2xi32>
-++  %1 = "stablehlo.dynamic_conv"(%arg0, %arg1, %0) {
-++    dimension_numbers = #stablehlo.conv<[b, 0, 1, f]x[0, 1, o, i]->[b, 0, 1, f]>,
-++    window_strides = array<i64: 1, 1>,
-++    lhs_dilation = array<i64: 1, 1>,
-++    rhs_dilation = array<i64: 1, 1>,
-++    feature_group_count = 1 : i64,
-++    batch_group_count = 1 : i64,
-++    mhlo.frontend_attributes = {MUST_FUSE = "0"}
-++  } : (tensor<100x26x26x32xf32>, tensor<3x3x1x32xf32>, tensor<2x2xi32>) -> tensor<100x28x28x1xf32>
-++  return %1 : tensor<100x28x28x1xf32>
-++}
-++
-++// -----
-++
-+ // CHECK-LABEL: func @dynamic_conv_success_dynamic_result_type
-+ func.func @dynamic_conv_success_dynamic_result_type(%arg0: tensor<100x26x26x32xf32>, %arg1: tensor<3x3x1x32xf32>) -> tensor<?x28x28x1xf32> {
-+   //  CHECK-NOT: stablehlo.dynamic_conv
-+@@ -295,6 +327,25 @@
-+ 
-+ // -----
-+ 
-++// CHECK-LABEL: @dynamic_gather_discardable_attrs
-++func.func @dynamic_gather_discardable_attrs(%arg0 : tensor<2x4x9xi32>, %arg1 : tensor<1x5x2xi32>) -> tensor<1x5x8xi32> {
-++  //  CHECK-NOT: stablehlo.dynamic_gather
-++  //      CHECK: "stablehlo.gather"(%arg0, %arg1)
-++  // CHECK-SAME:   {mhlo.frontend_attributes = {MUST_FUSE = "0"}}
-++  %0 = stablehlo.constant dense<[1, 1, 8]> : tensor<3xi32>
-++  %1 = "stablehlo.dynamic_gather"(%arg0, %arg1, %0) <{
-++    dimension_numbers = #stablehlo.gather<
-++      collapsed_slice_dims = [0, 1],
-++      index_vector_dim = 2,
-++      offset_dims = [2],
-++      start_index_map = [0, 1]
-++    >
-++  }> {mhlo.frontend_attributes = {MUST_FUSE = "0"}} : (tensor<2x4x9xi32>, tensor<1x5x2xi32>, tensor<3xi32>) -> tensor<1x5x8xi32>
-++  return %1 : tensor<1x5x8xi32>
-++}
-++
-++// -----
-++
-+ // CHECK-LABEL: @dynamic_gather_success_dynamic_result_type
-+ func.func @dynamic_gather_success_dynamic_result_type(%arg0 : tensor<2x4x9xi32>, %arg1 : tensor<1x5x2xi32>) -> tensor<1x5x?xi32> {
-+   //  CHECK-NOT: stablehlo.dynamic_gather
-+@@ -348,6 +399,18 @@
-+ 
-+ // -----
-+ 
-++// CHECK-LABEL: func @dynamic_iota_discardable_attrs
-++func.func @dynamic_iota_discardable_attrs() -> tensor<4xf32> {
-++  //  CHECK-NOT: stablehlo.dynamic_iota
-++  //      CHECK: stablehlo.iota
-++  // CHECK-SAME:   {mhlo.frontend_attributes = {MUST_FUSE = "0"}}
-++  %0 = stablehlo.constant dense<4> : tensor<1xi64>
-++  %1 = stablehlo.dynamic_iota %0, dim = 0 {mhlo.frontend_attributes = {MUST_FUSE = "0"}} : (tensor<1xi64>) -> tensor<4xf32>
-++  return %1 : tensor<4xf32>
-++}
-++
-++// -----
-++
-+ // CHECK-LABEL: func @dynamic_iota_inapplicable_dynamic_output_shape
-+ func.func @dynamic_iota_inapplicable_dynamic_output_shape(%arg0: tensor<1xi64>) -> tensor<4xf32> {
-+   // CHECK: stablehlo.dynamic_iota
-+@@ -380,6 +443,20 @@
-+ 
-+ // -----
-+ 
-++// CHECK-LABEL: func @dynamic_pad_discardable_attrs
-++func.func @dynamic_pad_discardable_attrs(%arg0: tensor<4xf32>, %arg1: tensor<f32>) -> tensor<11xf32> {
-++  //  CHECK-NOT: stablehlo.dynamic_pad
-++  //      CHECK: stablehlo.pad
-++  // CHECK-SAME:   {mhlo.frontend_attributes = {MUST_FUSE = "0"}}
-++  %0 = stablehlo.constant dense<0> : tensor<1xi64>
-++  %1 = stablehlo.constant dense<1> : tensor<1xi64>
-++  %2 = stablehlo.constant dense<2> : tensor<1xi64>
-++  %3 = stablehlo.dynamic_pad %arg0, %arg1, %0, %1, %2 {mhlo.frontend_attributes = {MUST_FUSE = "0"}} : (tensor<4xf32>, tensor<f32>, tensor<1xi64>, tensor<1xi64>, tensor<1xi64>) -> tensor<11xf32>
-++  return %3 : tensor<11xf32>
-++}
-++
-++// -----
-++
-+ // CHECK-LABEL: func @dynamic_pad_success_dynamic_result_type
-+ func.func @dynamic_pad_success_dynamic_result_type(%arg0: tensor<4xf32>, %arg1: tensor<f32>) -> tensor<?xf32> {
-+   // CHECK-NOT: stablehlo.dynamic_pad
-+@@ -437,6 +514,17 @@
-+ 
-+ // -----
-+ 
-++// CHECK-LABEL: func @dynamic_reshape_discardable_attrs
-++func.func @dynamic_reshape_discardable_attrs(%arg0: tensor<4xf32>) -> tensor<1x4xf32> {
-++  //  CHECK-NOT: stablehlo.dynamic_reshape
-++  //      CHECK: stablehlo.reshape %arg0 {mhlo.frontend_attributes = {MUST_FUSE = "0"}} : (tensor<4xf32>) -> tensor<1x4xf32>
-++  %0 = stablehlo.constant dense<[1, 4]> : tensor<2xi64>
-++  %1 = stablehlo.dynamic_reshape %arg0, %0 {mhlo.frontend_attributes = {MUST_FUSE = "0"}} : (tensor<4xf32>, tensor<2xi64>) -> tensor<1x4xf32>
-++  return %1 : tensor<1x4xf32>
-++}
-++
-++// -----
-++
-+ // CHECK-LABEL: func @dynamic_reshape_inapplicable_dynamic_output_shape
-+ func.func @dynamic_reshape_inapplicable_dynamic_output_shape(%arg0: tensor<4xf32>, %arg1: tensor<2xi64>) -> tensor<1x4xf32> {
-+   // CHECK: stablehlo.dynamic_reshape
-+diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_legalize_deprecated_ops.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_legalize_deprecated_ops.mlir
-+--- stablehlo/stablehlo/tests/transforms/stablehlo_legalize_deprecated_ops.mlir
-++++ stablehlo/stablehlo/tests/transforms/stablehlo_legalize_deprecated_ops.mlir
-+@@ -10,6 +10,16 @@
-+ 
-+ // -----
-+ 
-++// CHECK-LABEL: op_dot_discardable_attrs
-++func.func @op_dot_discardable_attrs(%arg0: tensor<2x3xf32>,
-++                 %arg1: tensor<3x?xf32>) -> tensor<2x?xf32> {
-++  // CHECK: stablehlo.dot_general %arg0, %arg1, contracting_dims = [1] x [0] {mhlo.frontend_attributes = {MUST_FUSE = "0"}} : (tensor<2x3xf32>, tensor<3x?xf32>) -> tensor<2x?xf32>
-++  %0 = "stablehlo.dot"(%arg0, %arg1) {mhlo.frontend_attributes = {MUST_FUSE = "0"}} : (tensor<2x3xf32>, tensor<3x?xf32>) -> tensor<2x?xf32>
-++  func.return %0 : tensor<2x?xf32>
-++}
-++
-++// -----
-++
-+ // CHECK-LABEL: op_unary_einsum
-+ func.func @op_unary_einsum(%arg0: tensor<8x16xf32>) -> tensor<8xf32> {
-+   // CHECK:      %cst = stablehlo.constant dense<1.000000e+00> : tensor<f32>
- diff --ruN a/stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir b/stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
- --- stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
- +++ stablehlo/stablehlo/tests/transforms/stablehlo_refine_shapes.mlir
-@@ -8393,6 +8563,99 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloCanonicalizeDynamism.cpp b/
-      return success();
-    }
-  };
-+@@ -119,8 +120,11 @@
-+                                          "expected static output_dimensions");
-+     if (!op.getType().hasStaticShape())
-+       return rewriter.notifyMatchFailure(op, "expected static result type");
-+-    rewriter.replaceOpWithNewOp<BroadcastInDimOp>(
-+-        op, op.getType(), op.getOperand(), op.getBroadcastDimensionsAttr());
-++    auto broadcastInDimOp = BroadcastInDimOp::create(
-++        rewriter, op.getLoc(), op.getType(), op.getOperand(),
-++        op.getBroadcastDimensionsAttr());
-++    broadcastInDimOp->setDiscardableAttrs(op->getDiscardableAttrDictionary());
-++    rewriter.replaceOp(op, broadcastInDimOp);
-+     return success();
-+   }
-+ };
-+@@ -139,12 +143,14 @@
-+         RankedTensorType::get({static_cast<int64_t>(padding.size()) / 2, 2},
-+                               rewriter.getI64Type()),
-+         padding);
-+-    rewriter.replaceOpWithNewOp<ConvolutionOp>(
-+-        op, op.getType(), op.getLhs(), op.getRhs(), op.getWindowStridesAttr(),
-+-        paddingAttr, op.getLhsDilationAttr(), op.getRhsDilationAttr(),
-+-        op.getWindowReversalAttr(), op.getDimensionNumbers(),
-+-        op.getFeatureGroupCount(), op.getBatchGroupCount(),
-+-        op.getPrecisionConfigAttr());
-++    auto convolutionOp = ConvolutionOp::create(
-++        rewriter, op.getLoc(), op.getType(), op.getLhs(), op.getRhs(),
-++        op.getWindowStridesAttr(), paddingAttr, op.getLhsDilationAttr(),
-++        op.getRhsDilationAttr(), op.getWindowReversalAttr(),
-++        op.getDimensionNumbers(), op.getFeatureGroupCount(),
-++        op.getBatchGroupCount(), op.getPrecisionConfigAttr());
-++    convolutionOp->setDiscardableAttrs(op->getDiscardableAttrDictionary());
-++    rewriter.replaceOp(op, convolutionOp);
-+     return success();
-+   }
-+ };
-+@@ -159,10 +165,13 @@
-+     SmallVector<int64_t> sliceSizes;
-+     if (!succeeded(hlo::matchInts(op.getSliceSizes(), sliceSizes)))
-+       return rewriter.notifyMatchFailure(op, "expected static slice_sizes");
-+-    rewriter.replaceOpWithNewOp<GatherOp>(
-+-        op, op.getType(), op.getOperand(), op.getStartIndices(),
-+-        op.getDimensionNumbersAttr(), rewriter.getDenseI64ArrayAttr(sliceSizes),
-+-        op.getIndicesAreSortedAttr());
-++    auto gatherOp =
-++        GatherOp::create(rewriter, op.getLoc(), op.getType(), op.getOperand(),
-++                         op.getStartIndices(), op.getDimensionNumbersAttr(),
-++                         rewriter.getDenseI64ArrayAttr(sliceSizes),
-++                         op.getIndicesAreSortedAttr());
-++    gatherOp->setDiscardableAttrs(op->getDiscardableAttrDictionary());
-++    rewriter.replaceOp(op, gatherOp);
-+     return success();
-+   }
-+ };
-+@@ -179,8 +188,10 @@
-+       return rewriter.notifyMatchFailure(op, "expected static output_shape");
-+     if (!op.getType().hasStaticShape())
-+       return rewriter.notifyMatchFailure(op, "expected static result type");
-+-    rewriter.replaceOpWithNewOp<IotaOp>(op, op.getType(),
-+-                                        op.getIotaDimension());
-++    auto iotaOp = IotaOp::create(rewriter, op.getLoc(), op.getType(),
-++                                 op.getIotaDimension());
-++    iotaOp->setDiscardableAttrs(op->getDiscardableAttrDictionary());
-++    rewriter.replaceOp(op, iotaOp);
-+     return success();
-+   }
-+ };
-+@@ -198,9 +209,11 @@
-+       return rewriter.notifyMatchFailure(op, "expected static high");
-+     if (!succeeded(hlo::matchInts(op.getInteriorPadding(), interiorPadding)))
-+       return rewriter.notifyMatchFailure(op, "expected static interior");
-+-    rewriter.replaceOpWithNewOp<PadOp>(op, op.getType(), op.getOperand(),
-+-                                       op.getPaddingValue(), edgePaddingLow,
-+-                                       edgePaddingHigh, interiorPadding);
-++    auto padOp = PadOp::create(
-++        rewriter, op.getLoc(), op.getType(), op.getOperand(),
-++        op.getPaddingValue(), edgePaddingLow, edgePaddingHigh, interiorPadding);
-++    padOp->setDiscardableAttrs(op->getDiscardableAttrDictionary());
-++    rewriter.replaceOp(op, padOp);
-+     return success();
-+   }
-+ };
-+@@ -216,7 +229,10 @@
-+       return rewriter.notifyMatchFailure(op, "expected static output_shape");
-+     if (!op.getType().hasStaticShape())
-+       return rewriter.notifyMatchFailure(op, "expected static result type");
-+-    rewriter.replaceOpWithNewOp<ReshapeOp>(op, op.getType(), op.getOperand());
-++    auto reshapeOp =
-++        ReshapeOp::create(rewriter, op.getLoc(), op.getType(), op.getOperand());
-++    reshapeOp->setDiscardableAttrs(op->getDiscardableAttrDictionary());
-++    rewriter.replaceOp(op, reshapeOp);
-+     return success();
-+   }
-+ };
- diff --ruN a/stablehlo/stablehlo/transforms/StablehloComplexMathExpander.cpp b/stablehlo/stablehlo/transforms/StablehloComplexMathExpander.cpp
- --- stablehlo/stablehlo/transforms/StablehloComplexMathExpander.cpp
- +++ stablehlo/stablehlo/transforms/StablehloComplexMathExpander.cpp
-@@ -8433,6 +8696,42 @@ diff --ruN a/stablehlo/stablehlo/transforms/StablehloComplexMathExpander.cpp b/s
-    populateWithGenerated(*patterns);
-  }
-  
-+diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOps.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOps.cpp
-+--- stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOps.cpp
-++++ stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOps.cpp
-+@@ -132,6 +132,14 @@
-+   llvm::report_fatal_error("unsupported type");
-+ }
-+ 
-++void copyDiscardableAttrs(Operation* src, Operation* dst) {
-++  dst->setDiscardableAttrs(src->getDiscardableAttrDictionary());
-++}
-++
-++void copyDiscardableAttrs(Value src, Value dst) {
-++  copyDiscardableAttrs(src.getDefiningOp(), dst.getDefiningOp());
-++}
-++
-+ #include "stablehlo/transforms/StablehloLegalizeDeprecatedOpsPatterns.h.inc"
-+ }  // namespace
-+ 
-+diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOpsPatterns.td b/stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOpsPatterns.td
-+--- stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOpsPatterns.td
-++++ stablehlo/stablehlo/transforms/StablehloLegalizeDeprecatedOpsPatterns.td
-+@@ -45,9 +45,12 @@
-+ 
-+ // def CrossReplicaSumToAllReduce : <Declared in cpp>
-+ 
-++def CopyDiscardableAttrs : NativeCodeCallVoid<"copyDiscardableAttrs($0, $1)">;
-++
-+ def DotToDotGeneral : Pat<
-+-  (StableHLO_DotOp $lhs, $rhs, $precision_config),
-+-  (StableHLO_DotGeneralOp $lhs, $rhs, (GetDefaultDotDimensionNumbers $lhs), $precision_config, (NativeCodeCall<"Attribute{}">))>;
-++  (StableHLO_DotOp:$src $lhs, $rhs, $precision_config),
-++  (StableHLO_DotGeneralOp:$dst $lhs, $rhs, (GetDefaultDotDimensionNumbers $lhs), $precision_config, (NativeCodeCall<"Attribute{}">)),
-++  [], [(CopyDiscardableAttrs $src, $dst)]>;
-+ 
-+ def UnaryEinsumToEinsum : Pat<
-+   (StableHLO_UnaryEinsumOp $operand, $equation),
- diff --ruN a/stablehlo/stablehlo/transforms/StablehloLegalizeQuantToMath.cpp b/stablehlo/stablehlo/transforms/StablehloLegalizeQuantToMath.cpp
- --- stablehlo/stablehlo/transforms/StablehloLegalizeQuantToMath.cpp
- +++ stablehlo/stablehlo/transforms/StablehloLegalizeQuantToMath.cpp
+   // HALO-NEXT: %[[MC:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST]]) in_shardings=[<@mesh, [{"a"}, {"b"}, {}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}, {"b"}, {}]>] manual_axes={"a", "b"} (%arg1: tensor<4x4x3xi32>, %arg2: tensor<i32>) {
+   // HALO:        %[[PID1:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO-NEXT:   %[[C_DIV1:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO-NEXT:   %[[DIV1:.*]] = stablehlo.divide %[[PID1]], %[[C_DIV1]] : tensor<ui32>
+-  // HALO-NEXT:   %[[CONV1:.*]] = stablehlo.convert %[[DIV1]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[CONV1:.*]] = stablehlo.convert %[[PID1]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[C_DIV1:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[DIV1:.*]] = stablehlo.divide %[[CONV1]], %[[C_DIV1]] : tensor<i32>
++  // HALO-NEXT:   %[[C_MOD1:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[REM_PR:.*]] = stablehlo.remainder %[[DIV1]], %[[C_MOD1]] : tensor<i32>
+   // HALO-NEXT:   %[[CP1:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[0, 2], [1, 3]]> : tensor<2x2xi64>
+   // HALO:        %[[SEL1:.*]] = stablehlo.select {{.*}}, %[[CP1]], {{.*}}
+@@ -256,10 +261,11 @@ func.func @pad_replicated_negative_low_padding(
+   // HALO-NEXT:   %[[PAD1:.*]] = stablehlo.pad %[[CONCAT1]], %arg2, low = [6, 0, 0], high = [6, 0, 0], interior = [0, 0, 0]
+   // HALO-NEXT:   %[[C_STRIDE1:.*]] = stablehlo.constant dense<2> : tensor<i32>
+   // HALO-NEXT:   %[[C_OFFSET1:.*]] = stablehlo.constant dense<7> : tensor<i32>
+-  // HALO-NEXT:   %[[MUL1:.*]] = stablehlo.multiply %[[CONV1]], %[[C_STRIDE1]] : tensor<i32>
++  // HALO-NEXT:   %[[MUL1:.*]] = stablehlo.multiply %[[REM_PR]], %[[C_STRIDE1]] : tensor<i32>
+   // HALO-NEXT:   %[[ADD1:.*]] = stablehlo.add %[[MUL1]], %[[C_OFFSET1]] : tensor<i32>
+   // HALO-NEXT:   %[[C_ZERO1:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:   %[[SLICE1:.*]] = stablehlo.dynamic_slice %[[PAD1]], %[[ADD1]], %[[C_ZERO1]], %[[C_ZERO1]], sizes = [6, 4, 3]
++  // HALO-NEXT:   %[[MAX1:.*]] = stablehlo.maximum %[[ADD1]], %[[C_ZERO1]] : tensor<i32>
++  // HALO-NEXT:   %[[SLICE1:.*]] = stablehlo.dynamic_slice %[[PAD1]], %[[MAX1]], %[[C_ZERO1]], %[[C_ZERO1]], sizes = [6, 4, 3]
+   // HALO-NEXT:   %[[PAD_OUT:.*]] = stablehlo.pad %[[SLICE1]], %arg2, low = [0, 0, -1], high = [0, 0, 0], interior = [0, 0, 0] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}, {}, {}]>]>} : (tensor<6x4x3xi32>, tensor<i32>) -> tensor<6x4x2xi32>
+   // HALO-NEXT:   sdy.return %[[PAD_OUT]] : tensor<6x4x2xi32>
+   // HALO-NEXT: }
+@@ -289,7 +295,8 @@ func.func @pad_large_low_pad_within_one_hop(
+   // HALO-NEXT: %[[RES:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST]]) in_shardings=[<@mesh, [{"a"}, {}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}, {}]>] manual_axes={"a"} (%arg1: tensor<2x8xi32>, %arg2: tensor<i32>) {
+   // HALO:        %[[CP1:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[0, 2], [1, 3]]> : tensor<2x2xi64>
+-  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %[[CP1]], %arg1, dim = 0
++  // HALO:        %[[SEL1:.*]] = stablehlo.select {{.*}}, %[[CP1]], {{.*}}
++  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %[[SEL1]], %arg1, dim = 0
+   // HALO-NEXT:   %[[PAD1:.*]] = stablehlo.pad %[[CONCAT1]], %arg2, low = [8, 0], high = [8, 0], interior = [0, 0]
+   // HALO:   %[[SLICE1:.*]] = stablehlo.dynamic_slice %[[PAD1]], {{.*}}, sizes = [8, 8]
+   // HALO-NEXT:   sdy.return %[[SLICE1]] : tensor<8x8xi32>
+@@ -346,21 +353,26 @@ func.func @pad_sharded_indivisible_interior_pad(
+   // HALO-NEXT: %[[PAD_HIGH:.*]] = stablehlo.pad %[[ARG0]], %[[CST]], low = [0, 0], high = [1, 0], interior = [0, 0] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {"b"}]>]>} : (tensor<3x8xi32>, tensor<i32>) -> tensor<4x8xi32>
+   // HALO-NEXT: %[[MC:.*]] = sdy.manual_computation(%[[PAD_HIGH]], %[[CST]]) in_shardings=[<@mesh, [{"a"}, {"b"}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}, {"b"}]>] manual_axes={"a", "b"} (%arg1: tensor<2x4xi32>, %arg2: tensor<i32>) {
+   // HALO:        %[[PID1:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO-NEXT:   %[[C_DIV1:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO-NEXT:   %[[DIV1:.*]] = stablehlo.divide %[[PID1]], %[[C_DIV1]] : tensor<ui32>
+-  // HALO-NEXT:   %[[CONV1:.*]] = stablehlo.convert %[[DIV1]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[CONV1:.*]] = stablehlo.convert %[[PID1]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[C_DIV1:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[DIV1:.*]] = stablehlo.divide %[[CONV1]], %[[C_DIV1]] : tensor<i32>
++  // HALO-NEXT:   %[[C_MOD1:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[REM1:.*]] = stablehlo.remainder %[[DIV1]], %[[C_MOD1]] : tensor<i32>
+   // HALO-NEXT:   %[[CP1:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[0, 2], [1, 3]]> : tensor<2x2xi64>
+-  // HALO-NEXT:   %[[CP2:.*]] = "stablehlo.collective_permute"(%arg1)
++  // HALO:        %[[SEL1:.*]] = stablehlo.select {{.*}}, %[[CP1]], {{.*}}
++  // HALO:        %[[CP2:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[2, 0], [3, 1]]> : tensor<2x2xi64>
+-  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %[[CP1]], %arg1, %[[CP2]], dim = 0
+-  // HALO-NEXT:   %[[PAD1:.*]] = stablehlo.pad %[[CONCAT1]], %arg2, low = [0, 0], high = [0, 0], interior = [2, 0]
++  // HALO:        %[[SEL2:.*]] = stablehlo.select {{.*}}, %[[CP2]], {{.*}}
++  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %[[SEL1]], %arg1, %[[SEL2]], dim = 0
++  // HALO-NEXT:   %[[PAD1:.*]] = stablehlo.pad %[[CONCAT1]], %arg2, low = [12, 0], high = [12, 0], interior = [2, 0]
+   // HALO-NEXT:   %[[C_STRIDE1:.*]] = stablehlo.constant dense<-2> : tensor<i32>
+-  // HALO-NEXT:   %[[C_OFFSET1:.*]] = stablehlo.constant dense<6> : tensor<i32>
+-  // HALO-NEXT:   %[[MUL1:.*]] = stablehlo.multiply %[[CONV1]], %[[C_STRIDE1]] : tensor<i32>
++  // HALO-NEXT:   %[[C_OFFSET1:.*]] = stablehlo.constant dense<18> : tensor<i32>
++  // HALO-NEXT:   %[[MUL1:.*]] = stablehlo.multiply %[[REM1]], %[[C_STRIDE1]] : tensor<i32>
+   // HALO-NEXT:   %[[ADD1:.*]] = stablehlo.add %[[MUL1]], %[[C_OFFSET1]] : tensor<i32>
+   // HALO-NEXT:   %[[C_ZERO1:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO:        %[[SLICE1:.*]] = stablehlo.dynamic_slice %[[PAD1]], %[[ADD1]], %[[C_ZERO1]], sizes = [4, 4]
++  // HALO-NEXT:   %[[MAX1:.*]] = stablehlo.maximum %[[ADD1]], %[[C_ZERO1]]
++  // HALO:        %[[SLICE1:.*]] = stablehlo.dynamic_slice %[[PAD1]], %[[MAX1]], %[[C_ZERO1]], sizes = [4, 4]
+   // HALO-NEXT:   sdy.return %[[SLICE1]] : tensor<4x4xi32>
+   // HALO-NEXT: }
+   // HALO-NEXT: %[[RES:.*]] = stablehlo.slice %[[MC]] [0:7, 0:8]
+@@ -385,20 +397,21 @@ func.func @pad_replicated_negative_high_padding(
+ 
+   // HALO-NEXT: %[[MC:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST]]) in_shardings=[<@mesh, [{}, {"b"}]>, <@mesh, []>] out_shardings=[<@mesh, [{}, {"b"}]>] manual_axes={"b"} (%[[ARG1:.*]]: tensor<8x4xi32>, %[[ARG2:.*]]: tensor<i32>) {
+   // HALO:        %[[PID:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO-NEXT:   %[[C_MOD:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO-NEXT:   %[[REM:.*]] = stablehlo.remainder %[[PID]], %[[C_MOD]] : tensor<ui32>
+-  // HALO-NEXT:   %[[CONV:.*]] = stablehlo.convert %[[REM]] : (tensor<ui32>) -> tensor<i32>
+-  // HALO-NEXT:   %[[S_HOP:.*]] = stablehlo.slice %[[ARG1]] [0:8, 0:2]
+-  // HALO-NEXT:   %[[CP:.*]] = "stablehlo.collective_permute"(%[[S_HOP]])
++  // HALO-NEXT:   %[[CONV:.*]] = stablehlo.convert %[[PID]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[C_MOD:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[REM:.*]] = stablehlo.remainder %[[CONV]], %[[C_MOD]] : tensor<i32>
++  // HALO-NEXT:   %[[CP:.*]] = "stablehlo.collective_permute"(%[[ARG1]])
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[1, 0], [3, 2]]> : tensor<2x2xi64>
+   // HALO:        %[[SEL:.*]] = stablehlo.select {{.*}}, %[[CP]], {{.*}}
+   // HALO-NEXT:   %[[CONCAT:.*]] = stablehlo.concatenate %[[ARG1]], %[[SEL]], dim = 1
++  // HALO-NEXT:   %[[PAD:.*]] = stablehlo.pad %[[CONCAT]], %[[ARG2]], low = [0, 5], high = [0, 5], interior = [0, 0]
+   // HALO-NEXT:   %[[C_STRIDE:.*]] = stablehlo.constant dense<1> : tensor<i32>
+-  // HALO-NEXT:   %[[C_OFFSET:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:   %[[MUL:.*]] = stablehlo.multiply %[[CONV]], %[[C_STRIDE]] : tensor<i32>
++  // HALO-NEXT:   %[[C_OFFSET:.*]] = stablehlo.constant dense<5> : tensor<i32>
++  // HALO-NEXT:   %[[MUL:.*]] = stablehlo.multiply %[[REM]], %[[C_STRIDE]] : tensor<i32>
+   // HALO-NEXT:   %[[ADD:.*]] = stablehlo.add %[[MUL]], %[[C_OFFSET]] : tensor<i32>
+   // HALO-NEXT:   %[[C_ZERO:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:   %[[SLICE_D:.*]] = stablehlo.dynamic_slice %[[CONCAT]], %[[C_ZERO]], %[[ADD]], sizes = [8, 5]
++  // HALO-NEXT:   %[[MAX:.*]] = stablehlo.maximum %[[ADD]], %[[C_ZERO]] : tensor<i32>
++  // HALO-NEXT:   %[[SLICE_D:.*]] = stablehlo.dynamic_slice %[[PAD]], %[[C_ZERO]], %[[MAX]], sizes = [8, 5]
+   // HALO-NEXT:   %[[SLICE_H:.*]] = stablehlo.pad %[[SLICE_D]], %[[ARG2]], low = [0, 0], high = [-2, 0], interior = [0, 0] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}, {}]>]>} : (tensor<8x5xi32>, tensor<i32>) -> tensor<6x5xi32>
+   // HALO-NEXT:   sdy.return %[[SLICE_H]] : tensor<6x5xi32>
+   // HALO-NEXT: }
+@@ -429,13 +442,14 @@ func.func @pad_sharded_indivisible_interior_low_and_high(
+   // HALO-NEXT: %[[MC:.*]] = sdy.manual_computation(%[[PRE_PAD]], %[[CST]]) in_shardings=[<@mesh_a4, [{"a"}, {}]>, <@mesh_a4, []>] out_shardings=[<@mesh_a4, [{"a"}, {}]>] manual_axes={"a"} (%arg1: tensor<2x8xi32>, %arg2: tensor<i32>) {
+   // HALO:        %[[CP1:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[0, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7]]> : tensor<6x2xi64>
+-  // HALO-NEXT:   %[[CP2:.*]] = "stablehlo.collective_permute"(%arg1)
++  // HALO:        %[[SEL1:.*]] = stablehlo.select {{.*}}, %[[CP1]], {{.*}}
++  // HALO:        %[[CP2:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[2, 0], [3, 1], [4, 2], [5, 3], [6, 4], [7, 5]]> : tensor<6x2xi64>
+-  // HALO-NEXT:   %[[CONCAT:.*]] = stablehlo.concatenate %[[CP1]], %arg1, %[[CP2]], dim = 0
+-  // HALO-NEXT:   %[[PAD_INNER:.*]] = stablehlo.pad %[[CONCAT]], %arg2, low = [0, 0], high = [0, 0], interior = [1, 0]
+-  // HALO-NEXT:   %[[C_OFFSET:.*]] = stablehlo.constant dense<3> : tensor<i32>
+-  // HALO-NEXT:   %[[C_ZERO:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:   %[[SLICE_INNER:.*]] = stablehlo.dynamic_slice %[[PAD_INNER]], %[[C_OFFSET]], %[[C_ZERO]], sizes = [4, 8]
++  // HALO:        %[[SEL2:.*]] = stablehlo.select {{.*}}, %[[CP2]], {{.*}}
++  // HALO-NEXT:   %[[CONCAT:.*]] = stablehlo.concatenate %[[SEL1]], %arg1, %[[SEL2]], dim = 0
++  // HALO-NEXT:   %[[PAD_INNER:.*]] = stablehlo.pad %[[CONCAT]], %arg2, low = [8, 0], high = [8, 0], interior = [1, 0]
++  // HALO:        %[[MAX_INNER:.*]] = stablehlo.maximum %{{.*}}, %{{.*}}
++  // HALO:        %[[SLICE_INNER:.*]] = stablehlo.dynamic_slice %[[PAD_INNER]], %[[MAX_INNER]], %{{.*}}, sizes = [4, 8]
+   // HALO-NEXT:   sdy.return %[[SLICE_INNER]] : tensor<4x8xi32>
+   // HALO-NEXT: }
+   // HALO-NEXT: %[[RES:.*]] = stablehlo.slice %[[MC]] [0:15, 0:8]
+@@ -447,31 +461,3 @@ func.func @pad_sharded_indivisible_interior_low_and_high(
+   // CHECK: return %[[RSD]] : tensor<15x8xi32>
+   return %2 : tensor<15x8xi32>
+ }
+-
+-
+-// CHECK-LABEL: func @pad_large_high_padding
+-// CHECK-SAME: (%[[ARG0:.*]]: tensor<4x8xi32>
+-func.func @pad_large_high_padding(
+-  %arg0: tensor<4x8xi32> {sdy.sharding = #sdy.sharding<@mesh, [{"a"}, {}]>})
+-  -> tensor<14x8xi32> {
+-  // CHECK-NEXT: %[[CST:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  %c = stablehlo.constant dense<0> : tensor<i32>
+-
+-  // REPL-NEXT: %[[RESHARD_IN:.*]] = sdy.reshard %[[ARG0]] <@mesh, [{}, {}]> : tensor<4x8xi32>
+-  // REPL-NEXT: %[[PAD:.*]] = stablehlo.pad %[[RESHARD_IN]], %[[CST]], low = [0, 0], high = [10, 0], interior = [0, 0] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}, {}]>]>}
+-  // REPL-NEXT: %[[RES:.*]] = sdy.reshard %[[PAD]] <@mesh, [{"a"}, {}]>
+-
+-  // HALO-NEXT: %[[RES:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST]]) in_shardings=[<@mesh, [{"a"}, {}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}, {}]>] manual_axes={"a"} (%arg1: tensor<2x8xi32>, %arg2: tensor<i32>) {
+-  // HALO:        %[[CP1:.*]] = "stablehlo.collective_permute"(%arg1)
+-  // HALO-SAME{LITERAL}: source_target_pairs = dense<[[2, 0], [3, 1]]> : tensor<2x2xi64>
+-  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %arg1, %[[CP1]], dim = 0
+-  // HALO-NEXT:   %[[PAD1:.*]] = stablehlo.pad %[[CONCAT1]], %arg2, low = [7, 0], high = [7, 0], interior = [0, 0]
+-  // HALO:        %[[SLICE1:.*]] = stablehlo.dynamic_slice %[[PAD1]], {{.*}}, sizes = [7, 8]
+-  // HALO-NEXT:   sdy.return %[[SLICE1]] : tensor<7x8xi32>
+-  // HALO-NEXT: }
+-  %0 = stablehlo.pad %arg0, %c, low = [0, 0], high = [10, 0], interior = [0, 0]
+-    {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}, {}]>]>} : (tensor<4x8xi32>, tensor<i32>) -> tensor<14x8xi32>
+-
+-  // CHECK-NEXT: return %[[RES]] : tensor<14x8xi32>
+-  return %0 : tensor<14x8xi32>
+-}
+diff --git a/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/replica_id.mlir b/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/replica_id.mlir
+index dc0c6c0e..275615d2 100644
+--- a/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/replica_id.mlir
++++ b/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/replica_id.mlir
+@@ -12,11 +12,7 @@ func.func @pad_single_left_hop_replica_id(
+   // CHECK: %[[MC:.*]] = sdy.manual_computation
+   // REPL: %[[RID:.*]] = stablehlo.replica_id : tensor<ui32>
+   // PART: %[[RID:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // CHECK: %[[C_DIV:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // CHECK: %[[DIV:.*]] = stablehlo.divide %[[RID]], %[[C_DIV]] : tensor<ui32>
+-  // CHECK: %[[C_REM:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // CHECK: %[[REM:.*]] = stablehlo.remainder %[[DIV]], %[[C_REM]] : tensor<ui32>
+-  // CHECK: %[[CONVERT:.*]] = stablehlo.convert %[[REM]] : (tensor<ui32>) -> tensor<i32>
++  // CHECK: %[[CONVERT:.*]] = stablehlo.convert %[[RID]] : (tensor<ui32>) -> tensor<i32>
+   // REPL: %[[CP:.*]] = "stablehlo.collective_permute"(%arg1) <{source_target_pairs = dense<{{\[\[}}0, 2], [1, 3], [4, 6], [5, 7]]> : tensor<4x2xi64>}> : (tensor<2x4xi32>) -> tensor<2x4xi32>
+   // PART: %[[CP:.*]] = "stablehlo.collective_permute"(%arg1) <{channel_handle = #stablehlo.channel_handle<handle = 1, type = 1>, source_target_pairs = dense<{{\[\[}}0, 2], [1, 3], [4, 6], [5, 7]]> : tensor<4x2xi64>}> : (tensor<2x4xi32>) -> tensor<2x4xi32>
+   %0 = stablehlo.pad %arg0, %c, low = [3, 0], high = [0, 0], interior = [0, 0]
+diff --git a/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/slice.mlir b/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/slice.mlir
+index 2a4560ee..02a5fb2f 100644
+--- a/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/slice.mlir
++++ b/shardy/dialect/sdy/transforms/export/test/resolve_permutation_factors/slice.mlir
+@@ -20,9 +20,10 @@ func.func @strided_slice(
+   // HALO-NEXT: %[[MC:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST]]) in_shardings=[<@mesh_a4, [{"a"}, {"b"}]>, <@mesh_a4, []>] out_shardings=[<@mesh_a4, [{"a"}, {"b"}]>] manual_axes={"a", "b"} (%arg1: tensor<3x4xi32>, %arg2: tensor<i32>) {
+   // HALO:      %[[CP:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[0, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7]]> : tensor<6x2xi64>
+-  // HALO-NEXT: %[[SELF_SLICE:.*]] = stablehlo.slice %arg1 [0:2, 0:4]
+-  // HALO-NEXT: %[[CONCAT:.*]] = stablehlo.concatenate %[[CP]], %[[SELF_SLICE]], dim = 0
+-  // HALO: %[[DYN_SLICE:.*]] = stablehlo.dynamic_slice %[[CONCAT]], {{.*}}, sizes = [2, 4]
++  // HALO:      %[[SEL:.*]] = stablehlo.select {{.*}}, %[[CP]], {{.*}}
++  // HALO-NEXT: %[[CONCAT:.*]] = stablehlo.concatenate %[[SEL]], %arg1, dim = 0
++  // HALO-NEXT: %[[PAD:.*]] = stablehlo.pad %[[CONCAT]], %arg2, low = [2, 0], high = [2, 0], interior = [0, 0]
++  // HALO: %[[DYN_SLICE:.*]] = stablehlo.dynamic_slice %[[PAD]], {{.*}}, sizes = [2, 4]
+   // HALO-NEXT: sdy.return %[[DYN_SLICE]] : tensor<2x4xi32>
+   // HALO-NEXT: }
+   // HALO-NEXT: %[[SLICE:.*]] = stablehlo.slice %[[MC]] [0:5, 0:8]
+@@ -79,20 +80,23 @@ func.func @slice_partition_partial_dim_with_communication(
+   // HALO-NEXT:  %[[CST:.*]] = stablehlo.constant dense<0> : tensor<i32>
+   // HALO-NEXT:  %[[MC:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST]]) in_shardings=[<@mesh, [{"a"}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}]>] manual_axes={"a"} (%arg1: tensor<4xi32>, %arg2: tensor<i32>) {
+   // HALO:         %[[PID:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO-NEXT:    %[[C_DIV:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO-NEXT:    %[[DIV:.*]] = stablehlo.divide %[[PID]], %[[C_DIV]] : tensor<ui32>
+-  // HALO-NEXT:    %[[CONV:.*]] = stablehlo.convert %[[DIV]] : (tensor<ui32>) -> tensor<i32>
+-  // HALO-NEXT:    %[[S_HOP:.*]] = stablehlo.slice %arg1 [2:4]
+-  // HALO-NEXT:    %[[CP1:.*]] = "stablehlo.collective_permute"(%[[S_HOP]])
++  // HALO-NEXT:    %[[CONV:.*]] = stablehlo.convert %[[PID]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:    %[[C_DIV:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:    %[[DIV:.*]] = stablehlo.divide %[[CONV]], %[[C_DIV]] : tensor<i32>
++  // HALO-NEXT:    %[[C_MOD:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:    %[[REM:.*]] = stablehlo.remainder %[[DIV]], %[[C_MOD]] : tensor<i32>
++  // HALO-NEXT:    %[[CP1:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[0, 2], [1, 3]]> : tensor<2x2xi64>
+-  // HALO-NEXT:    %[[S_SELF:.*]] = stablehlo.slice %arg1 [0:2]
+-  // HALO-NEXT:    %[[CONCAT:.*]] = stablehlo.concatenate %[[CP1]], %[[S_SELF]], dim = 0
++  // HALO:         %[[SEL1:.*]] = stablehlo.select {{.*}}, %[[CP1]], {{.*}}
++  // HALO-NEXT:    %[[CONCAT:.*]] = stablehlo.concatenate %[[SEL1]], %arg1, dim = 0
++  // HALO-NEXT:    %[[PAD:.*]] = stablehlo.pad %[[CONCAT]], %arg2, low = [2], high = [2], interior = [0]
+   // HALO-NEXT:    %[[C_STRIDE:.*]] = stablehlo.constant dense<-2> : tensor<i32>
+-  // HALO-NEXT:    %[[C_OFFSET:.*]] = stablehlo.constant dense<2> : tensor<i32>
+-  // HALO-NEXT:    %[[MUL:.*]] = stablehlo.multiply %[[CONV]], %[[C_STRIDE]] : tensor<i32>
++  // HALO-NEXT:    %[[C_OFFSET:.*]] = stablehlo.constant dense<6> : tensor<i32>
++  // HALO-NEXT:    %[[MUL:.*]] = stablehlo.multiply %[[REM]], %[[C_STRIDE]] : tensor<i32>
+   // HALO-NEXT:    %[[ADD:.*]] = stablehlo.add %[[MUL]], %[[C_OFFSET]] : tensor<i32>
+   // HALO-NEXT:    %[[C_ZERO:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:    %[[SLICE1:.*]] = stablehlo.dynamic_slice %[[CONCAT]], %[[ADD]], sizes = [2]
++  // HALO-NEXT:    %[[MAX:.*]] = stablehlo.maximum %[[ADD]], %[[C_ZERO]] : tensor<i32>
++  // HALO-NEXT:    %[[SLICE1:.*]] = stablehlo.dynamic_slice %[[PAD]], %[[MAX]], sizes = [2]
+   // HALO-NEXT:    sdy.return %[[SLICE1]] : tensor<2xi32>
+   // HALO-NEXT:  }
+   // HALO-NEXT:  %[[RES:.*]] = stablehlo.slice %[[MC]] [0:3] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{"a"}]>]>} : (tensor<4xi32>) -> tensor<3xi32>
+@@ -121,20 +125,23 @@ func.func @slice_multidim_mixed(
+   // HALO-NEXT: %[[CST_0:.*]] = stablehlo.constant dense<0> : tensor<i32>
+   // HALO-NEXT: %[[MC:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST_0]]) in_shardings=[<@mesh, [{"a"}, {"b"}, {}]>, <@mesh, []>] out_shardings=[<@mesh, [{"a"}, {"b"}, {}]>] manual_axes={"a", "b"} (%arg1: tensor<2x2x4xi32>, %arg2: tensor<i32>) {
+   // HALO:        %[[PID2:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO-NEXT:   %[[C_MOD_S:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO-NEXT:   %[[REM_S:.*]] = stablehlo.remainder %[[PID2]], %[[C_MOD_S]] : tensor<ui32>
+-  // HALO-NEXT:   %[[CONV2:.*]] = stablehlo.convert %[[REM_S]] : (tensor<ui32>) -> tensor<i32>
+-  // HALO-NEXT:   %[[S_SELF:.*]] = stablehlo.slice %arg1 [0:2, 1:2, 0:4]
+-  // HALO-NEXT:   %[[S_HOP:.*]] = stablehlo.slice %arg1 [0:2, 0:1, 0:4]
+-  // HALO-NEXT:   %[[CP3:.*]] = "stablehlo.collective_permute"(%[[S_HOP]])
++  // HALO-NEXT:   %[[CONV2:.*]] = stablehlo.convert %[[PID2]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[C_MOD_S:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[REM_S:.*]] = stablehlo.remainder %[[CONV2]], %[[C_MOD_S]] : tensor<i32>
++  // HALO-NEXT:   %[[CP3:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[1, 0], [3, 2]]> : tensor<2x2xi64>
+   // HALO:        %[[SEL3:.*]] = stablehlo.select {{.*}}, %[[CP3]], {{.*}}
+-  // HALO-NEXT:   %[[CONCAT2:.*]] = stablehlo.concatenate %[[S_SELF]], %[[SEL3]], dim = 1
+-  // HALO-NEXT:   %[[C_OFFSET2:.*]] = stablehlo.constant dense<0> : tensor<i32>
++  // HALO-NEXT:   %[[CONCAT2:.*]] = stablehlo.concatenate %arg1, %[[SEL3]], dim = 1
++  // HALO-NEXT:   %[[PAD2:.*]] = stablehlo.pad %[[CONCAT2]], %arg2, low = [0, 2, 0], high = [0, 2, 0], interior = [0, 0, 0]
++  // HALO-NEXT:   %[[C_STRIDE2:.*]] = stablehlo.constant dense<0> : tensor<i32>
++  // HALO-NEXT:   %[[C_OFFSET2:.*]] = stablehlo.constant dense<3> : tensor<i32>
++  // HALO-NEXT:   %[[MUL2:.*]] = stablehlo.multiply %[[REM_S]], %[[C_STRIDE2]] : tensor<i32>
++  // HALO-NEXT:   %[[ADD2:.*]] = stablehlo.add %[[MUL2]], %[[C_OFFSET2]] : tensor<i32>
+   // HALO-NEXT:   %[[C_ZERO2:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:   %[[SLICE2:.*]] = stablehlo.dynamic_slice %[[CONCAT2]], %[[C_ZERO2]], %[[C_OFFSET2]], %[[C_ZERO2]], sizes = [2, 2, 4]
+-  // HALO-NEXT:   %[[REP_SLICE:.*]] = stablehlo.slice %[[SLICE2]] [0:2, 0:2, 1:3]
+-  // HALO-NEXT:   sdy.return %[[REP_SLICE]] : tensor<2x2x2xi32>
++  // HALO-NEXT:   %[[MAX2:.*]] = stablehlo.maximum %[[ADD2]], %[[C_ZERO2]] : tensor<i32>
++  // HALO-NEXT:   %[[SLICE2:.*]] = stablehlo.dynamic_slice %[[PAD2]], %[[C_ZERO2]], %[[MAX2]], %[[C_ZERO2]], sizes = [2, 2, 4]
++  // HALO-NEXT:   %[[SLICE3:.*]] = stablehlo.slice %[[SLICE2]] [0:2, 0:2, 1:3] {sdy.sharding = #sdy.sharding_per_value<[<@mesh, [{}, {}, {}]>]>} : (tensor<2x2x4xi32>) -> tensor<2x2x2xi32>
++  // HALO-NEXT:   sdy.return %[[SLICE3]] : tensor<2x2x2xi32>
+   // HALO-NEXT: }
+   // HALO-NEXT: %[[RES:.*]] = stablehlo.slice %[[MC]] [0:3, 0:3, 0:2]
+ 
+@@ -164,21 +171,26 @@ func.func @slice_multiple_hops_shift(
+   // HALO-NEXT: %[[CST_0:.*]] = stablehlo.constant dense<0> : tensor<i32>
+   // HALO-NEXT: %[[MC:.*]] = sdy.manual_computation(%[[ARG0]], %[[CST_0]]) in_shardings=[<@mesh_a4, [{"a"}, {"b"}]>, <@mesh_a4, []>] out_shardings=[<@mesh_a4, [{"a"}, {"b"}]>] manual_axes={"a", "b"} (%arg1: tensor<2x4xi32>, %arg2: tensor<i32>) {
+   // HALO:        %[[PID1:.*]] = stablehlo.partition_id : tensor<ui32>
+-  // HALO-NEXT:   %[[C_DIV_MH:.*]] = stablehlo.constant dense<2> : tensor<ui32>
+-  // HALO-NEXT:   %[[DIV_MH:.*]] = stablehlo.divide %[[PID1]], %[[C_DIV_MH]] : tensor<ui32>
+-  // HALO-NEXT:   %[[CONV1:.*]] = stablehlo.convert %[[DIV_MH]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[CONV1:.*]] = stablehlo.convert %[[PID1]] : (tensor<ui32>) -> tensor<i32>
++  // HALO-NEXT:   %[[C_DIV_MH:.*]] = stablehlo.constant dense<2> : tensor<i32>
++  // HALO-NEXT:   %[[DIV_MH:.*]] = stablehlo.divide %[[CONV1]], %[[C_DIV_MH]] : tensor<i32>
++  // HALO-NEXT:   %[[C_MOD_MH:.*]] = stablehlo.constant dense<4> : tensor<i32>
++  // HALO-NEXT:   %[[REM_MH:.*]] = stablehlo.remainder %[[DIV_MH]], %[[C_MOD_MH]] : tensor<i32>
+   // HALO-NEXT:   %[[CP1:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[2, 0], [3, 1], [4, 2], [5, 3], [6, 4], [7, 5]]> : tensor<6x2xi64>
+   // HALO:        %[[SEL1:.*]] = stablehlo.select {{.*}}, %[[CP1]], {{.*}}
+   // HALO:        %[[CP2:.*]] = "stablehlo.collective_permute"(%arg1)
+   // HALO-SAME{LITERAL}: source_target_pairs = dense<[[4, 0], [5, 1], [6, 2], [7, 3]]> : tensor<4x2xi64>
+-  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %arg1, %[[SEL1]], %[[CP2]], dim = 0
++  // HALO:        %[[SEL2:.*]] = stablehlo.select {{.*}}, %[[CP2]], {{.*}}
++  // HALO-NEXT:   %[[CONCAT1:.*]] = stablehlo.concatenate %arg1, %[[SEL1]], %[[SEL2]], dim = 0
++  // HALO-NEXT:   %[[PAD1:.*]] = stablehlo.pad %[[CONCAT1]], %arg2, low = [1, 0], high = [1, 0], interior = [0, 0]
+   // HALO-NEXT:   %[[C_STRIDE1:.*]] = stablehlo.constant dense<-1> : tensor<i32>
+-  // HALO-NEXT:   %[[C_OFFSET1:.*]] = stablehlo.constant dense<5> : tensor<i32>
+-  // HALO-NEXT:   %[[MUL1:.*]] = stablehlo.multiply %[[CONV1]], %[[C_STRIDE1]] : tensor<i32>
++  // HALO-NEXT:   %[[C_OFFSET1:.*]] = stablehlo.constant dense<6> : tensor<i32>
++  // HALO-NEXT:   %[[MUL1:.*]] = stablehlo.multiply %[[REM_MH]], %[[C_STRIDE1]] : tensor<i32>
+   // HALO-NEXT:   %[[ADD1:.*]] = stablehlo.add %[[MUL1]], %[[C_OFFSET1]] : tensor<i32>
+   // HALO-NEXT:   %[[C_ZERO1:.*]] = stablehlo.constant dense<0> : tensor<i32>
+-  // HALO-NEXT:   %[[SLICE1:.*]] = stablehlo.dynamic_slice %[[CONCAT1]], %[[ADD1]], %[[C_ZERO1]], sizes = [1, 4]
++  // HALO-NEXT:   %[[MAX1:.*]] = stablehlo.maximum %[[ADD1]], %[[C_ZERO1]] : tensor<i32>
++  // HALO-NEXT:   %[[SLICE1:.*]] = stablehlo.dynamic_slice %[[PAD1]], %[[MAX1]], %[[C_ZERO1]], sizes = [1, 4]
+   // HALO-NEXT:   sdy.return %[[SLICE1]] : tensor<1x4xi32>
+   // HALO-NEXT: }
+   // HALO-NEXT: %[[RES:.*]] = stablehlo.slice %[[MC]] [0:1, 0:8]
+@@ -207,7 +219,8 @@ func.func @slice_non_communication_free_zero_hops(
+   // HALO-NOT:    collective_permute
+   // HALO:        %[[PID:.*]] = stablehlo.partition_id : tensor<ui32>
+   // HALO:        %[[CONCAT:.*]] = stablehlo.concatenate %arg1, dim = 0
+-  // HALO:        %[[SLICE:.*]] = stablehlo.dynamic_slice %[[CONCAT]], {{.*}}, sizes = [3, 4]
++  // HALO-NEXT:   %[[PAD:.*]] = stablehlo.pad %[[CONCAT]], %arg2, low = [3, 0], high = [3, 0], interior = [0, 0]
++  // HALO:        %[[SLICE:.*]] = stablehlo.dynamic_slice %[[PAD]], {{.*}}, sizes = [3, 4]
+   // HALO-NEXT:   sdy.return %[[SLICE]] : tensor<3x4xi32>
+   // HALO-NEXT: }
+   %0 = stablehlo.slice %arg0 [1:7, 0:4] {

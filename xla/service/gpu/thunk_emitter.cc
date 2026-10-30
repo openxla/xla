@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 #include "xla/backends/gpu/codegen/llvm/llvm_emitter.h"
+#include "xla/backends/gpu/codegen/sort.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
 #include "xla/backends/gpu/ffi/ffi_attributes_from_backend_config.h"
@@ -116,6 +117,7 @@ limitations under the License.
 #include "xla/codegen/kernel_spec.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
+#include "xla/comparison_util.h"
 #include "xla/core/host_offloading/host_offloading_executable.pb.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/attributes.h"
@@ -167,6 +169,7 @@ limitations under the License.
 #include "xla/side_effect_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/gpu/blas_lt_matmul_algorithm.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/memory_space.h"
@@ -531,6 +534,7 @@ absl::StatusOr<std::string> CanonicalGemmHlo(
 
   // Clear algorithm-specific fields from the cache key
   gemm_config->clear_selected_algorithm();
+  gemm_config->clear_algorithm_proto();
   gemm_config->set_autotune_workspace_size(0);
   return instr->ToString(HloPrintOptions::Fingerprint()) +
          BackendConfigWrapper(gpu_config).GetRawString();
@@ -541,7 +545,8 @@ ThunkEmitter::ThunkEmitter(
     llvm_ir::LLVMCommandLineOptionsReleasableLock* absl_nonnull
         llvm_options_lock)
     : ir_emitter_context_(ir_emitter_context),
-      send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>()),
+      send_recv_events_(std::make_shared<HostSendRecvAsyncEvents>(
+          ir_emitter_context_->gpu_topology().num_devices_per_host())),
       call_graph_(CallGraph::Build(&ir_emitter_context->hlo_module())),
       constants_module_context_(std::make_unique<llvm::LLVMContext>()),
       constants_module_(ir_emitter_context_->CreateLLVMModule(
@@ -773,6 +778,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmul(
       config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
           ? config.selected_algorithm()
           : 0;
+  std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm;
+  if (config.has_algorithm_proto()) {
+    ABSL_ASSIGN_OR_RETURN(
+        blas_lt_algorithm,
+        se::gpu::BlasLtMatmulAlgorithm::FromProto(config.algorithm_proto()));
+  }
 
   ABSL_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
                         gpublas_lt::AsBlasLtEpilogue(epilogue));
@@ -783,8 +794,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmul(
   return ThunkSequence::Of<CublasLtMatmulThunk>(
       std::move(info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
-      /*group_sizes=*/std::nullopt, bias, aux, std::nullopt, std::nullopt,
-      std::nullopt, std::nullopt, std::nullopt, workspace_buffer);
+      /*group_sizes=*/std::nullopt, bias, aux, /*a_scale=*/std::nullopt,
+      /*b_scale=*/std::nullopt, /*c_scale=*/std::nullopt,
+      /*d_scale=*/std::nullopt, /*d_amax=*/std::nullopt, workspace_buffer,
+      std::move(blas_lt_algorithm),
+      ir_emitter_context_->debug_options()
+          .xla_gpu_require_exact_blas_lt_algorithm());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulF8(
@@ -867,6 +882,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulF8(
       config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
           ? config.selected_algorithm()
           : 0;
+  std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm;
+  if (config.has_algorithm_proto()) {
+    ABSL_ASSIGN_OR_RETURN(
+        blas_lt_algorithm,
+        se::gpu::BlasLtMatmulAlgorithm::FromProto(config.algorithm_proto()));
+  }
 
   TF_RET_CHECK(!has_aux_output);
   std::optional<ShapedSlice> workspace_buffer;
@@ -886,8 +907,11 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulF8(
   return ThunkSequence::Of<CublasLtMatmulThunk>(
       std::move(info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
-      /*group_sizes=*/std::nullopt, bias, std::nullopt, a_scale, b_scale,
-      std::nullopt, d_scale, d_amax, workspace_buffer);
+      /*group_sizes=*/std::nullopt, bias, /*aux=*/std::nullopt, a_scale,
+      b_scale, /*c_scale=*/std::nullopt, d_scale, d_amax, workspace_buffer,
+      std::move(blas_lt_algorithm),
+      ir_emitter_context_->debug_options()
+          .xla_gpu_require_exact_blas_lt_algorithm());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmul(
@@ -950,6 +974,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmul(
       config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
           ? config.selected_algorithm()
           : 0;
+  std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm;
+  if (config.has_algorithm_proto()) {
+    ABSL_ASSIGN_OR_RETURN(
+        blas_lt_algorithm,
+        se::gpu::BlasLtMatmulAlgorithm::FromProto(config.algorithm_proto()));
+  }
 
   // Extract epilogue from backend config instead of hardcoding to kDefault
   ABSL_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue blas_lt_epilogue,
@@ -962,8 +992,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtGroupedMatmul(
   return ThunkSequence::Of<CublasLtMatmulThunk>(
       std::move(info), std::move(canonical_hlo), std::move(gemm_config),
       blas_lt_epilogue, algorithm, config.autotune_workspace_size(), a, b, c, d,
-      std::move(group_sizes), bias, std::nullopt, std::nullopt, std::nullopt,
-      std::nullopt, std::nullopt, std::nullopt, workspace_buffer);
+      std::move(group_sizes), bias, /*aux=*/std::nullopt,
+      /*a_scale=*/std::nullopt, /*b_scale=*/std::nullopt,
+      /*c_scale=*/std::nullopt, /*d_scale=*/std::nullopt,
+      /*d_amax=*/std::nullopt, workspace_buffer, std::move(blas_lt_algorithm),
+      ir_emitter_context_->debug_options()
+          .xla_gpu_require_exact_blas_lt_algorithm());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulMx(
@@ -997,6 +1031,12 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulMx(
       config.algorithm_case() == GemmBackendConfig::kSelectedAlgorithm
           ? config.selected_algorithm()
           : 0;
+  std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm;
+  if (config.has_algorithm_proto()) {
+    ABSL_ASSIGN_OR_RETURN(
+        blas_lt_algorithm,
+        se::gpu::BlasLtMatmulAlgorithm::FromProto(config.algorithm_proto()));
+  }
 
   std::optional<ShapedSlice> workspace_buffer;
   if (instr->shape().tuple_shapes().size() == 2) {
@@ -1018,7 +1058,9 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCublasLtMatmulMx(
       /*group_sizes=*/std::nullopt,
       /*bias=*/std::nullopt, /*aux=*/std::nullopt, a_scale, b_scale,
       /*c_scale=*/std::nullopt, /*d_scale=*/std::nullopt,
-      /*d_amax=*/std::nullopt, workspace_buffer);
+      /*d_amax=*/std::nullopt, workspace_buffer, std::move(blas_lt_algorithm),
+      ir_emitter_context_->debug_options()
+          .xla_gpu_require_exact_blas_lt_algorithm());
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConvolutionReorder(
@@ -1574,11 +1616,18 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitTopKCustomCall(
       ir_emitter_context_->gpu_device_info().threads_per_warp();
 
   TF_RET_CHECK(k <= 16) << "CustomCall TopK requires k <= 16";
+  ComparisonOrder comparison_order = hlo_instruction_utils::GetTopKOrder(instr);
+  TF_RET_CHECK(comparison_order == ComparisonOrder::kTotal ||
+               comparison_order == ComparisonOrder::kPartial)
+      << "CustomCall TopK requires TOTAL or PARTIAL comparison order.";
+  kernel::topk::Order order = comparison_order == ComparisonOrder::kPartial
+                                  ? kernel::topk::Order::kPartial
+                                  : kernel::topk::Order::kTotal;
   // Load TopK custom kernel.
-  ABSL_ASSIGN_OR_RETURN(CustomKernel kernel,
-                        kernel::topk::GetTopKKernel(
-                            "topk", dtype, n, k, batch_size, platform_name(),
-                            wavefront_size, kernel::topk::Order::kTotal));
+  ABSL_ASSIGN_OR_RETURN(
+      CustomKernel kernel,
+      kernel::topk::GetTopKKernel("topk", dtype, n, k, batch_size,
+                                  platform_name(), wavefront_size, order));
 
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
@@ -1909,6 +1958,48 @@ Future<ThunkSequence> ThunkEmitter::EmitDynamicSliceFusionV2(
             &embedded_allocations[parameters.size() + leaf_idx], 0, byte_size));
       });
 
+  // If the hero has output-to-operand aliasing, the hero expects its aliased
+  // operand and output leaf to point to the same buffer. When the fusion
+  // reads from and writes to different buffers (e.g. a scan reading from `in`
+  // and updating `out` via DUS), copy the input slice into the output slice
+  // first and point both the hero operand and output at the output slice.
+  ThunkSequence copy_thunks;
+  if (const auto* callable = DynCast<HloCallableInstruction>(hero)) {
+    for (const auto& [output_index, operand_pair] :
+         callable->output_to_operand_aliasing()) {
+      int64_t op_idx = operand_pair.first;
+      TF_RET_CHECK(op_idx >= 0 && op_idx < parameters.size());
+      TF_RET_CHECK(operand_pair.second.empty());
+      TF_RET_CHECK(output_index.size() <= 1);
+      int64_t leaf_idx = output_index.empty() ? 0 : output_index[0];
+      TF_RET_CHECK(leaf_idx >= 0 && leaf_idx < results.size());
+
+      BufferAllocation::Slice src_slice = overrides[hero->operand(op_idx)][0];
+      BufferAllocation::Slice dst_slice = overrides[hero][leaf_idx];
+      if (parameter_buffers[parameters[op_idx].parameter_number] !=
+          result_buffers[results[leaf_idx].result_number]) {
+        copy_thunks.Emplace<DeviceToDeviceCopyThunk>(
+            Thunk::ThunkInfo::WithProfileAnnotation(
+                instr, ir_emitter_context_->GetNextThunkId()),
+            /*source_buffer=*/
+            ShapedSlice{src_slice, hero->operand(op_idx)->shape()},
+            /*destination_buffer=*/
+            ShapedSlice{dst_slice,
+                        ShapeUtil::GetSubshape(hero->shape(), output_index)},
+            /*mem_size=*/src_slice.size());
+      } else {
+        // When the aliased input parameter and output result share the same
+        // underlying buffer, DynamicSliceFusionRewriterV2 only fuses the DUS if
+        // its DynamicSliceConfig matches the input slice's config (so both
+        // resolve to the exact same runtime slice and no copy is needed).
+        TF_RET_CHECK(parameters[op_idx].slice_config ==
+                     results[leaf_idx].update_config);
+      }
+
+      overrides[hero->operand(op_idx)] = {dst_slice};
+    }
+  }
+
   auto overrides_cleanup = InstallAllocationOverrides(std::move(overrides));
 
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
@@ -1923,7 +2014,13 @@ Future<ThunkSequence> ThunkEmitter::EmitDynamicSliceFusionV2(
        parameters = std::move(parameters),
        parameter_buffers = std::move(parameter_buffers),
        embedded_allocations = std::move(embedded_allocations),
+       copy_thunks = std::move(copy_thunks),
        verify_offsets](ThunkSequence embedded_thunks) mutable {
+        if (!copy_thunks.empty()) {
+          embedded_thunks.insert(embedded_thunks.begin(),
+                                 std::make_move_iterator(copy_thunks.begin()),
+                                 std::make_move_iterator(copy_thunks.end()));
+        }
         return ThunkSequence::Of<DynamicSliceFusionV2Thunk>(
             std::move(info), std::move(parameters), std::move(results),
             std::move(parameter_buffers), std::move(result_buffers),
@@ -2068,7 +2165,7 @@ Future<ThunkSequence> ThunkEmitter::EmitSort(const HloSortInstruction* sort) {
     }
   }
 
-  return EmitBitonicSortLLVMIR(sort, ir_emitter_context_)
+  return EmitBitonicSort(sort, ir_emitter_context_)
       .Map([thunks = std::move(thunks)](ThunkSequence sort_thunks) mutable {
         AppendThunkSequence(thunks, sort_thunks);
         return std::move(thunks);
@@ -2296,12 +2393,6 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
         ir_emitter_context_->gpu_topology().num_devices_per_host(),
         ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
         has_dynamic_root);
-  } else if constexpr (std::is_same_v<CollectiveThunkType,
-                                      RaggedAllToAllThunk>) {
-    thunks = ThunkSequence::Of<CollectiveThunkType>(
-        info, inst, /*buffers=*/std::move(buffers),
-        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
-        ir_emitter_context_->gpu_topology().num_devices_per_host());
   } else if constexpr (std::is_constructible_v<
                            CollectiveThunkType, Thunk::ThunkInfo,
                            decltype(inst),
@@ -2311,7 +2402,8 @@ Future<ThunkSequence> ThunkEmitter::EmitCollective(
   } else {
     thunks = ThunkSequence::Of<CollectiveThunkType>(
         info, inst, /*buffers=*/std::move(buffers),
-        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p());
+        ir_emitter_context_->debug_options().xla_gpu_use_memcpy_local_p2p(),
+        ir_emitter_context_->gpu_topology().num_devices_per_host());
   }
   return thunks;
 }
@@ -2703,11 +2795,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitHostExecuteStart(
       HostOffloadingExecutableProto::EXECUTABLE_TYPE_NANORT);
 
   ABSL_ASSIGN_OR_RETURN(
-      auto thunk, HostExecuteStartThunk::Create(
-                      Thunk::ThunkInfo::WithProfileAnnotation(
-                          async_start, ir_emitter_context_->GetNextThunkId()),
-                      std::move(host_offloading_executable_proto),
-                      std::move(operand_slices), std::move(result_slices)));
+      auto thunk,
+      HostExecuteStartThunk::Create(
+          Thunk::ThunkInfo::WithProfileAnnotation(
+              async_start, ir_emitter_context_->GetNextThunkId()),
+          std::move(host_offloading_executable_proto),
+          std::move(operand_slices), std::move(result_slices),
+          ir_emitter_context_->gpu_topology().num_devices_per_host()));
 
   auto [it, inserted] = GetInstructionToHostExecuteAsyncEvents().emplace(
       host_execute, thunk->async_events());

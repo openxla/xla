@@ -1185,6 +1185,7 @@ ColorScheme HloDotDumper::GetInstructionColor(const HloInstruction* instr) {
     case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
+    case HloOpcode::kFma:
     case HloOpcode::kImag:
     case HloOpcode::kIota:
     case HloOpcode::kIsFinite:
@@ -1290,7 +1291,6 @@ ColorScheme HloDotDumper::GetInstructionColor(const HloInstruction* instr) {
     case HloOpcode::kSelectAndScatter:
     case HloOpcode::kGather:  // not a reduction, but goes with scatter
       return kPurple;
-    case HloOpcode::kDomain:
     case HloOpcode::kFusion:
     case HloOpcode::kMap:
     case HloOpcode::kGetDimensionSize:

@@ -29,7 +29,6 @@ limitations under the License.
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
-#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/compiler.h"
@@ -81,7 +80,8 @@ class TritonBlockLevelFusionEmitterBackendTest
     : public HloHardwareIndependentTestBase {
  protected:
   TritonBlockLevelFusionEmitterBackendTest()
-      : debug_options_(GetDebugOptionsFromFlags()),
+      : debug_options_(
+            HloHardwareIndependentTestBase::GetDebugOptionsForTest()),
         stream_executor_(GetDefaultStreamExecutor()),
         target_config_(stream_executor_),
         backend_(&debug_options_, &compiler_,
@@ -341,6 +341,71 @@ ENTRY %main {
 
 TEST_F(TritonBlockLevelFusionEmitterBackendTest, Version) {
   EXPECT_NE(backend_.version(), "");
+}
+
+TEST_F(TritonBlockLevelFusionEmitterBackendTest, IsSupportedConcatenate) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+%wrapped_concat_computation {
+  %p0 = f32[16,24]{1,0} parameter(0)
+  %p1 = f32[16,40]{1,0} parameter(1)
+  ROOT %concat = f32[16,64]{1,0} concatenate(%p0, %p1), dimensions={1}
+}
+
+ENTRY %main {
+  %p0 = f32[16,24]{1,0} parameter(0)
+  %p1 = f32[16,40]{1,0} parameter(1)
+  ROOT %wrapped_concat = f32[16,64]{1,0} fusion(%p0, %p1), kind=kInput,
+  calls=%wrapped_concat_computation
+}
+)"));
+  const HloInstruction* instr = module->entry_computation()->root_instruction();
+  EXPECT_TRUE(backend_.IsSupported(*instr));
+}
+
+TEST_F(TritonBlockLevelFusionEmitterBackendTest,
+       IsSupportedUnalignedConcatenateRejected) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+%wrapped_concat_computation {
+  %p0 = f32[16,7]{1,0} parameter(0)
+  %p1 = f32[16,9]{1,0} parameter(1)
+  ROOT %concat = f32[16,16]{1,0} concatenate(%p0, %p1), dimensions={1}
+}
+
+ENTRY %main {
+  %p0 = f32[16,7]{1,0} parameter(0)
+  %p1 = f32[16,9]{1,0} parameter(1)
+  ROOT %wrapped_concat = f32[16,16]{1,0} fusion(%p0, %p1), kind=kInput,
+  calls=%wrapped_concat_computation
+}
+)"));
+  const HloInstruction* instr = module->entry_computation()->root_instruction();
+  EXPECT_FALSE(backend_.IsSupported(*instr));
+}
+
+TEST_F(TritonBlockLevelFusionEmitterBackendTest,
+       IsSupportedElementwiseRejectedWithoutAllFusionsWithTriton) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+%wrapped_add_computation {
+  %p0 = f32[16,64]{1,0} parameter(0)
+  %p1 = f32[16,64]{1,0} parameter(1)
+  ROOT %add = f32[16,64]{1,0} add(%p0, %p1)
+}
+
+ENTRY %main {
+  %p0 = f32[16,64]{1,0} parameter(0)
+  %p1 = f32[16,64]{1,0} parameter(1)
+  ROOT %wrapped_add = f32[16,64]{1,0} fusion(%p0, %p1), kind=kLoop,
+  calls=%wrapped_add_computation
+}
+)"));
+  const HloInstruction* instr = module->entry_computation()->root_instruction();
+  EXPECT_FALSE(backend_.IsSupported(*instr));
 }
 
 }  // namespace gpu

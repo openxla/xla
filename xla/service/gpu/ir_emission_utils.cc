@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/layout_util.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
@@ -109,16 +110,6 @@ bool IsTritonSupportedRaggedDot(
     return false;
   }
 
-  // Tiling propagation must be enabled.  TritonBackend::IsSupported gates
-  // kRaggedDot fusions on this flag — the xtile pipeline needs
-  // TiledHloComputation::Tile to drive code generation.
-  if (!instr.GetModule()
-           ->config()
-           .debug_options()
-           .xla_gpu_experimental_enable_tiling_propagation()) {
-    return false;
-  }
-
   // The xtile emitter's PrimitiveTypeToMlirType conversion supports the
   // following element types for ragged-dot operands and output.
   // Complex types (C64, C128) fall to the default branch and return
@@ -150,7 +141,8 @@ bool IsTritonSupportedRaggedDot(
 }
 
 absl::StatusOr<bool> IsCublasSupportedMatMul(
-    const HloInstruction& dot, bool allow_matrix_vector_multiplication) {
+    const HloInstruction& dot, bool allow_matrix_vector_multiplication,
+    bool is_normalized) {
   if (dot.opcode() != HloOpcode::kDot) {
     return false;
   }
@@ -160,24 +152,26 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
   for (int operand : {0, 1}) {
     ABSL_ASSIGN_OR_RETURN(DotOperandDims dims,
                           DotOperandDims::FromDotOperand(&dot, operand));
-    // cuBLAS only supports single contracting dimension.
-    if (dims.Rank(DotOperandDims::kContracting) != 1) {
+    if (dims.Rank(DotOperandDims::kContracting) == 0) {
       return false;
     }
-    // cuBLAS doesn't support minor batch dimension.
-    if (absl::c_any_of(dims.Indices(DotOperandDims::kBatch), [&](int64_t dim) {
-          return dim == dims.shape().dimensions().size() - 1;
-        })) {
-      return false;
+    if (is_normalized) {
+      // cuBLAS only supports single contracting dimension.
+      if (dims.Rank(DotOperandDims::kContracting) > 1) {
+        return false;
+      }
+      // cuBLAS doesn't support a physically minor batch dimension.
+      if (absl::c_linear_search(dims.Indices(DotOperandDims::kBatch),
+                                LayoutUtil::Minor(dims.shape().layout(), 0))) {
+        return false;
+      }
+      // cuBLAS supports up to one non-contracting dimension.
+      if (dims.Rank(DotOperandDims::kNonContracting) > 1) {
+        return false;
+      }
     }
-    // cuBLAS supports up to one non-contracting dimension.
-    const auto& nc_dims = dims.Sizes(DotOperandDims::kNonContracting);
-    if (nc_dims.size() > 1) {
-      return false;
-    }
-    if (nc_dims.size() == 1) {
-      num_matrix_operands += (nc_dims[0] != 1);
-    }
+    num_matrix_operands +=
+        (dims.TotalSize(DotOperandDims::kNonContracting) != 1);
   }
 
   if (num_matrix_operands == 0 ||

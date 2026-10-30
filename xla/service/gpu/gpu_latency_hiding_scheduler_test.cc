@@ -56,6 +56,7 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
+using ::testing::IsEmpty;
 using ::testing::Property;
 using ::testing::UnorderedElementsAre;
 
@@ -155,6 +156,182 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
     EXPECT_EQ(after_stats.missing_instructions.size(), 0);
     EXPECT_EQ(after_stats.found_instructions_count, 0);
   }
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       GPUProfileStatisticsAggregatorDoesNotCountAllocateBuffer) {
+  GPUProfileStatisticsAggregator aggregator;
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    ENTRY main {
+      empty = f32[32] custom-call(), custom_call_target="AllocateBuffer"
+      ROOT work = f32[32] custom-call(empty), custom_call_target="work"
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+
+  for (const HloInstruction* instr :
+       module->entry_computation()->instructions()) {
+    aggregator.HandleMissingInstructionCost(*instr);
+  }
+  EXPECT_THAT(aggregator.GetStats().missing_instructions,
+              UnorderedElementsAre(Property(&HloInstruction::name, "work")));
+}
+
+// The GPU runtime runs the body of a loop with a known trip count without
+// evaluating its condition.
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       GPUProfileStatisticsAggregatorDoesNotCountUnevaluatedLoopConditions) {
+  GPUProfileStatisticsAggregator aggregator;
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    cond {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      c = s32[] constant(4)
+      ROOT lt = pred[] compare(i, c), direction=LT
+    }
+
+    body {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      one = s32[] constant(1)
+      add = s32[] add(i, one)
+      ROOT t = (s32[]) tuple(add)
+    }
+
+    ENTRY main {
+      zero = s32[] constant(0)
+      init = (s32[]) tuple(zero)
+      ROOT loop = (s32[]) while(init), condition=cond, body=body,
+          backend_config={"known_trip_count":{"n":"4"}}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+
+  aggregator.HandleMissingInstructionCost(*FindInstruction(module.get(), "lt"));
+  EXPECT_THAT(aggregator.GetStats().missing_instructions, IsEmpty());
+}
+
+// A condition shared by several loops is only unevaluated if every one of them
+// has a known trip count.
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       GPUProfileStatisticsAggregatorHandlesSharedLoopConditions) {
+  GPUProfileStatisticsAggregator aggregator;
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    cond_all_known {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      c = s32[] constant(4)
+      ROOT lt.0 = pred[] compare(i, c), direction=LT
+    }
+
+    cond_some_known {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      c = s32[] constant(4)
+      ROOT lt.1 = pred[] compare(i, c), direction=LT
+    }
+
+    body {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      one = s32[] constant(1)
+      add = s32[] add(i, one)
+      ROOT t = (s32[]) tuple(add)
+    }
+
+    ENTRY main {
+      zero = s32[] constant(0)
+      init = (s32[]) tuple(zero)
+      loop.0 = (s32[]) while(init), condition=cond_all_known, body=body,
+          backend_config={"known_trip_count":{"n":"4"}}
+      loop.1 = (s32[]) while(init), condition=cond_all_known, body=body,
+          backend_config={"known_trip_count":{"n":"4"}}
+      loop.2 = (s32[]) while(init), condition=cond_some_known, body=body,
+          backend_config={"known_trip_count":{"n":"4"}}
+      loop.3 = (s32[]) while(init), condition=cond_some_known, body=body
+      ROOT t = ((s32[]), (s32[]), (s32[]), (s32[])) tuple(loop.0, loop.1,
+          loop.2, loop.3)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+
+  aggregator.HandleMissingInstructionCost(
+      *FindInstruction(module.get(), "lt.0"));
+  aggregator.HandleMissingInstructionCost(
+      *FindInstruction(module.get(), "lt.1"));
+  EXPECT_THAT(aggregator.GetStats().missing_instructions,
+              UnorderedElementsAre(Property(&HloInstruction::name, "lt.1")));
+}
+
+// Without a known trip count the GPU runtime evaluates the condition on every
+// iteration, so it should have been profiled. That holds whether the loop has
+// no backend config or one that knows other properties of the loop.
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       GPUProfileStatisticsAggregatorCountsEvaluatedLoopConditions) {
+  GPUProfileStatisticsAggregator aggregator;
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    cond_no_config {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      c = s32[] constant(4)
+      ROOT lt.0 = pred[] compare(i, c), direction=LT
+    }
+
+    cond_init_step {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      c = s32[] constant(4)
+      ROOT lt.1 = pred[] compare(i, c), direction=LT
+    }
+
+    body.0 {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      one = s32[] constant(1)
+      add.0 = s32[] add(i, one)
+      ROOT t = (s32[]) tuple(add.0)
+    }
+
+    body.1 {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      one = s32[] constant(1)
+      add.1 = s32[] add(i, one)
+      ROOT t = (s32[]) tuple(add.1)
+    }
+
+    ENTRY main {
+      zero = s32[] constant(0)
+      init = (s32[]) tuple(zero)
+      loop_no_config = (s32[]) while(init), condition=cond_no_config,
+          body=body.0
+      loop_init_step = (s32[]) while(init), condition=cond_init_step,
+          body=body.1,
+          backend_config={"known_init_step":{"init":"0","step":"1"}}
+      ROOT t = ((s32[]), (s32[])) tuple(loop_no_config, loop_init_step)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+
+  aggregator.HandleMissingInstructionCost(
+      *FindInstruction(module.get(), "lt.0"));
+  aggregator.HandleMissingInstructionCost(
+      *FindInstruction(module.get(), "lt.1"));
+  EXPECT_THAT(aggregator.GetStats().missing_instructions,
+              UnorderedElementsAre(Property(&HloInstruction::name, "lt.0"),
+                                   Property(&HloInstruction::name, "lt.1")));
 }
 
 // Copies are not fusion wrapped. We ran a fusion wrapper prior to scheduling
@@ -1299,6 +1476,55 @@ ENTRY main {
 }
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       CollectiveStreamAnnotatedCallUsesOneResource) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule test, is_scheduled=true
+
+body {
+  p0 = f32[1] parameter(0)
+  ag-start = (f32[1], f32[1]) all-gather-start(p0), dimensions={0}
+  ROOT ag-done = f32[1] all-gather-done(ag-start)
+}
+
+ENTRY main {
+  p0 = f32[1] parameter(0)
+  call-start = ((f32[1]), f32[1]) call-start(p0), to_apply=body,
+    frontend_attributes={_xla_stream_annotation="collective"}
+  ROOT call-done = f32[1] call-done(call-start),
+    frontend_attributes={_xla_stream_annotation="collective"}
+})";
+
+  HloModuleConfig config = GetModuleConfig(/*fdo_profile=*/"");
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+  HloInstruction* call_start = FindInstruction(module.get(), "call-start");
+  HloInstruction* call_done = FindInstruction(module.get(), "call-done");
+  ASSERT_NE(call_start, nullptr);
+  ASSERT_NE(call_done, nullptr);
+
+  SchedulerConfig sched_config;
+  GpuAsyncTracker async_tracker(sched_config);
+  const int64_t collective_resource =
+      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamCollectives);
+
+  EXPECT_EQ(async_tracker.GetNumResourcesPerInstruction(collective_resource,
+                                                        *call_start),
+            0);
+  EXPECT_EQ(async_tracker.GetNumResourcesPerInstruction(collective_resource,
+                                                        *call_done),
+            1);
+
+  auto start_resource_counts =
+      async_tracker.GetNumResourcesPerInstruction(*call_start);
+  EXPECT_TRUE(start_resource_counts.empty());
+
+  auto done_resource_counts =
+      async_tracker.GetNumResourcesPerInstruction(*call_done);
+  ASSERT_EQ(done_resource_counts.size(), 1);
+  EXPECT_EQ(done_resource_counts.at(collective_resource), 1);
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
        ExplicitCollectivesGroupSerializesWithNativeCollective) {
   absl::string_view kFdoProfile = R"pb(
     costs { name: "add" cost_us: 100000.0 }
@@ -2320,6 +2546,36 @@ ENTRY main {
   // native collectives.
   EXPECT_TRUE(GetIndexByName(instruction_sequence, "call-done") <
               GetIndexByName(instruction_sequence, "ar_0"));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       CollectiveStreamAnnotatedCallOverlapsNativeCollective) {
+  absl::string_view kHloModule = R"(
+HloModule m
+
+body {
+  p0 = f32[2] parameter(0)
+  ag-start = (f32[2], f32[2]) all-gather-start(p0), dimensions={0}
+  ROOT ag-done = f32[2] all-gather-done(ag-start)
+}
+
+ENTRY main {
+  p0 = f32[2] parameter(0)
+  native-start = (f32[2], f32[2]) all-gather-start(p0), dimensions={0}
+  call-start = ((f32[2]), f32[2]) call-start(p0), to_apply=body,
+    frontend_attributes={_xla_stream_annotation="collective"}
+  call-done = f32[2] call-done(call-start),
+    frontend_attributes={_xla_stream_annotation="collective"}
+  native-done = f32[2] all-gather-done(native-start)
+  ROOT result = (f32[2], f32[2]) tuple(call-done, native-done)
+}
+)";
+
+  auto config = GetModuleConfig(/*fdo_profile=*/"");
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+
+  EXPECT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/1));
 }
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest, LargeIndependentFillsAreForcedEarly) {
