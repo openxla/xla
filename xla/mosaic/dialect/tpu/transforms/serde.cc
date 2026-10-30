@@ -238,6 +238,63 @@ LogicalResult reduce_downgrade(Operation* op, int version) {
   return success();
 }
 
+// Before version 20, tpu.reduce_index dropped the reduced dimension instead of
+// keeping it with size 1. Retypes the result of `op` to the other convention
+// and routes its uses through a reshape back to the original type.
+LogicalResult migrate_reduce_index(Operation* op, int version, bool upgrade) {
+  if (version >= 20) {
+    return success();
+  }
+  if (op->getNumOperands() != 1 || op->getNumResults() != 1) {
+    return op->emitError("Unexpected operand/result count in tpu.reduce_index");
+  }
+  auto in_ty = dyn_cast<VectorType>(op->getOperand(0).getType());
+  auto reduce_index_out_ty = dyn_cast<VectorType>(op->getResult(0).getType());
+  auto axis_attr = op->getAttrOfType<IntegerAttr>("axis");
+  if (in_ty == nullptr || reduce_index_out_ty == nullptr ||
+      axis_attr == nullptr) {
+    return op->emitError(
+        "Missing or invalid operand/result types or attributes in "
+        "tpu.reduce_index");
+  }
+  const int64_t axis = axis_attr.getInt();
+  if (axis < 0 || axis >= in_ty.getRank()) {
+    return op->emitError("Invalid axis in tpu.reduce_index");
+  }
+  SmallVector<int64_t> shape(in_ty.getShape());
+  if (upgrade) {
+    shape[axis] = 1;
+  } else {
+    shape.erase(shape.begin() + axis);
+  }
+  Value reduce_index_result = op->getResult(0);
+  OpBuilder builder(op->getContext());
+  builder.setInsertionPointAfter(op);
+  // RunSerde does not visit ops that rules insert, and it runs upgrade rules
+  // only when deserializing and downgrade rules only when serializing. So the
+  // reshape gets its final name here: plain after an upgrade, mangled after a
+  // downgrade.
+  OperationState state(op->getLoc(),
+                       ((upgrade ? StringRef() : kMangledDialect) +
+                        ReshapeOp::getOperationName())
+                           .str());
+  state.addTypes(reduce_index_out_ty);
+  state.addOperands(reduce_index_result);
+  Operation* reshape = builder.create(state);
+  reduce_index_result.setType(
+      VectorType::get(shape, reduce_index_out_ty.getElementType()));
+  reduce_index_result.replaceAllUsesExcept(reshape->getResult(0), reshape);
+  return success();
+}
+
+LogicalResult reduce_index_upgrade(Operation* op, int version, bool&) {
+  return migrate_reduce_index(op, version, /*upgrade=*/true);
+}
+
+LogicalResult reduce_index_downgrade(Operation* op, int version) {
+  return migrate_reduce_index(op, version, /*upgrade=*/false);
+}
+
 // Upgrades an operation from a version without subcore_id (v13) to HEAD (v14+)
 // by delinearizing a single core_id into separate core_id and subcore_id.
 // This runs during deserialization (`serialize = false`), where operations have
@@ -845,6 +902,7 @@ const llvm::StringMap<UpgradeRuleType>& upgrade_rules() {
       {DynamicGatherOp::getOperationName(), dynamic_gather_upgrade},
       {ScanOp::getOperationName(), scan_upgrade},
       {ReduceOp::getOperationName(), reduce_upgrade},
+      {ReduceIndexOp::getOperationName(), reduce_index_upgrade},
       {IotaOp::getOperationName(), iota_upgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_upgrade},
       {vector::MultiDimReductionOp::getOperationName(),
@@ -866,6 +924,7 @@ const llvm::StringMap<DowngradeRuleType>& downgrade_rules() {
       {DynamicGatherOp::getOperationName(), dynamic_gather_downgrade},
       {ScanOp::getOperationName(), scan_downgrade},
       {ReduceOp::getOperationName(), reduce_downgrade},
+      {ReduceIndexOp::getOperationName(), reduce_index_downgrade},
       {IotaOp::getOperationName(), iota_downgrade},
       {SemaphoreSignalOp::getOperationName(), semaphore_signal_downgrade},
       {StoreOp::getOperationName(), store_downgrade},
