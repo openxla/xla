@@ -17,12 +17,28 @@ limitations under the License.
 #include <cstdint>
 
 #include "absl/base/casts.h"
+#include "third_party/gpus/cuda/include/cooperative_groups.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/gpu/gpu_test_kernel_traits.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels_lib.cu.h"
 #include "xla/stream_executor/kernel_args_packing_spec.h"
 #include "xla/stream_executor/kernel_spec.h"
+
+namespace stream_executor::gpu {
+
+extern "C" __global__ void AddI32Cooperative(int32_t* a, int32_t* b,
+                                             int32_t* c) {
+  cooperative_groups::grid_group grid = cooperative_groups::this_grid();
+  if (!grid.is_valid()) {
+    return;
+  }
+  grid.sync();
+  int index = threadIdx.x + blockIdx.x * blockDim.x;
+  c[index] = a[index] + b[index];
+}
+
+}  // namespace stream_executor::gpu
 
 GPU_KERNEL_REGISTRY_REGISTER_KERNEL_STATICALLY(
     AddI32KernelCuda, stream_executor::gpu::internal::AddI32Kernel,

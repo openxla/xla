@@ -183,7 +183,10 @@ void RunRecordFfiTest(se::StreamExecutor* executor, ffi::Ffi& handler) {
   EXPECT_EQ(c, expected_update);
 }
 
-TEST(RecordFfiTest, KernelLaunchWithCuFunc) {
+class RecordFfiKernelLaunchTest : public ::testing::TestWithParam<bool> {};
+
+TEST_P(RecordFfiKernelLaunchTest, KernelLaunchWithCuFunc) {
+  bool cooperative = GetParam();
   ASSERT_OK_AND_ASSIGN(auto platform,
                        stream_executor::PlatformManager::PlatformWithName(
                            stream_executor::GpuPlatformName()));
@@ -194,10 +197,14 @@ TEST(RecordFfiTest, KernelLaunchWithCuFunc) {
   if (cuda_cc && !cuda_cc->IsAtLeastAmpere()) {
     GTEST_SKIP() << "Skipping test for compute capability less than Ampere.";
   }
+  if (cooperative && !cuda_cc) {
+    GTEST_SKIP() << "Cooperative kernel launches are only supported on CUDA.";
+  }
 
   ASSERT_OK_AND_ASSIGN(KernelBinary binary, GetKernelSpec());
+  const char* kernel_name = cooperative ? "AddI32Cooperative" : "AddI32";
   absl::StatusOr<void*> func_ptr =
-      LoadNativeFunctionPtr(executor, binary.bytes, "AddI32");
+      LoadNativeFunctionPtr(executor, binary.bytes, kernel_name);
   if (absl::IsUnimplemented(func_ptr.status())) {
     GTEST_SKIP() << func_ptr.status().message();
   }
@@ -210,7 +217,7 @@ TEST(RecordFfiTest, KernelLaunchWithCuFunc) {
           .Arg<ffi::AnyBuffer>()
           .Arg<ffi::AnyBuffer>()
           .Arg<ffi::AnyBuffer>()
-          .To([func_ptr = *func_ptr](
+          .To([func_ptr = *func_ptr, kernel_name, cooperative](
                   ffi::RecordContext record_ctx, ffi::AnyBuffer input_0,
                   ffi::AnyBuffer input_1, ffi::AnyBuffer buffer_scratch,
                   ffi::AnyBuffer result) -> absl::Status {
@@ -227,15 +234,15 @@ TEST(RecordFfiTest, KernelLaunchWithCuFunc) {
               ABSL_RETURN_IF_ERROR(
                   record_ctx
                       .CreateLaunch(
-                          "AddI32", func_ptr, /*kernel_size=*/0,
+                          kernel_name, func_ptr, /*kernel_size=*/0,
                           ffi::SourceFormat::kFunctionPtr,
-                          /*launch_dims=*/{{1, 1, 1}, {8, 1, 1}},
+                          /*launch_dims=*/{{2, 1, 1}, {4, 1, 1}},
                           /*shared_mem_bytes=*/1024,
                           /*uses_pdl=*/false,
                           std::vector<ffi::KernelArg>{
                               ffi::DevicePointer{scratch},
                               ffi::DevicePointer{in1}, ffi::DevicePointer{res}},
-                          /*dependencies=*/{memcpy_d2d})
+                          /*dependencies=*/{memcpy_d2d}, cooperative)
                       .status());
             } else if (record_ctx.action() == ffi::RecordAction::kUpdate) {
               auto cmds = record_ctx.commands();
@@ -252,6 +259,8 @@ TEST(RecordFfiTest, KernelLaunchWithCuFunc) {
           });
   RunRecordFfiTest(executor, *handler);
 }
+
+INSTANTIATE_TEST_SUITE_P(All, RecordFfiKernelLaunchTest, ::testing::Bool());
 
 class FakeSymmetricMemory : public xla::SymmetricMemory {
  public:
