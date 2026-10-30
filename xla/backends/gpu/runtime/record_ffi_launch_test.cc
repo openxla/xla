@@ -40,6 +40,7 @@ namespace se = ::stream_executor;
 using ::absl_testing::StatusIs;
 using ::testing::_;
 using ::testing::A;
+using ::testing::Eq;
 using ::testing::HasSubstr;
 using ::testing::NiceMock;
 using ::testing::Optional;
@@ -227,7 +228,7 @@ TEST_F(RecordFfiLaunchTest, RejectsInvalidConfigurations) {
 TEST_F(RecordFfiLaunchTest, LegacyCallbacksPreservePdlPolicy) {
   context_.pdl_enabled = false;
   EXPECT_CALL(command_buffer_,
-              CreateLaunch(se::ThreadDim(32), se::BlockDim(8), std::nullopt,
+              CreateLaunch(se::ThreadDim(32), se::BlockDim(8), Eq(std::nullopt),
                            A<const se::NativeKernel&>(), _, _, _))
       .WillOnce([&](const auto&, const auto&, const auto&,
                     const se::NativeKernel& kernel, const auto&, auto,
@@ -242,7 +243,7 @@ TEST_F(RecordFfiLaunchTest, LegacyCallbacksPreservePdlPolicy) {
       {{8, 1, 1}, {32, 1, 1}, {}}, 0, 1, &args_, nullptr, 0, &ffi_command_)));
   EXPECT_CALL(command_buffer_,
               UpdateLaunch(&command_, se::ThreadDim(32), se::BlockDim(8),
-                           std::nullopt, A<const se::NativeKernel&>(), _))
+                           Eq(std::nullopt), A<const se::NativeKernel&>(), _))
       .WillOnce(Return(absl::OkStatus()));
   EXPECT_OK(UpdateArguments());
 }
