@@ -134,11 +134,11 @@ class GpuCompiler : public LLVMCompiler {
   // Whether a ragged dot that RaggedDotRewriter would leave for the cuDNN
   // fusion can actually be lowered by cuDNN on the target. `stream_exec` is
   // null for deviceless (AOT) compilation. Backends without a cuDNN probe
-  // accept every ragged dot.
+  // cannot verify cuDNN support and therefore reject every ragged dot.
   virtual Decision IsRaggedDotSupportedByCuDnn(
       const HloInstruction* instr, const GpuTargetConfig& gpu_target_config,
       se::StreamExecutor* absl_nullable stream_exec) const {
-    return Decision::Allow();
+    return Decision::Forbid("backend has no cuDNN ragged dot probe");
   }
 
   enum class AlgebraicSimplifierMode {

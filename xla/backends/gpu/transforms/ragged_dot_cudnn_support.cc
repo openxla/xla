@@ -15,8 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/ragged_dot_cudnn_support.h"
 
-#include <cstdint>
-#include <vector>
+#include <memory>
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -24,7 +23,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
 #include "xla/backends/gpu/transforms/ragged_dot_fusion_rewriter.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
-#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -33,6 +31,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/stream_executor.h"
+#include "xla/tools/hlo_decomposer.h"
 
 namespace xla {
 namespace gpu {
@@ -41,20 +40,12 @@ Decision IsRaggedDotSupportedByCuDnn(
     const HloInstruction& ragged_dot,
     const stream_executor::DeviceDescription& device_description,
     stream_executor::StreamExecutor* stream_exec) {
-  HloModule probe_module("ragged_dot_cudnn_probe",
-                         ragged_dot.GetModule()->config());
-  HloComputation::Builder builder("probe_entry");
-  std::vector<HloInstruction*> operands;
-  for (int64_t i = 0; i < ragged_dot.operand_count(); ++i) {
-    operands.push_back(builder.AddInstruction(HloInstruction::CreateParameter(
-        i, ragged_dot.operand(i)->shape(), "p")));
-  }
-  builder.AddInstruction(
-      ragged_dot.CloneWithNewOperands(ragged_dot.shape(), operands));
-  probe_module.AddEntryComputationWithLayouts(builder.Build());
+  std::unique_ptr<HloModule> probe_module =
+      ExtractInstructionIntoNewModule(ragged_dot);
 
   // No device description is passed: this pass only builds the fusion.
-  absl::StatusOr<bool> changed = RaggedDotFusionRewriter().Run(&probe_module);
+  absl::StatusOr<bool> changed =
+      RaggedDotFusionRewriter().Run(probe_module.get());
   if (!changed.ok()) {
     VLOG(1) << "Ragged dot cuDNN probe: fusion rewrite failed: "
             << changed.status();
@@ -62,7 +53,7 @@ Decision IsRaggedDotSupportedByCuDnn(
            << changed.status().message();
   }
   for (const HloInstruction* instr :
-       probe_module.entry_computation()->instructions()) {
+       probe_module->entry_computation()->instructions()) {
     if (instr->opcode() != HloOpcode::kFusion) {
       continue;
     }

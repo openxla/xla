@@ -2932,6 +2932,7 @@ cc_library(
         "//xla/stream_executor/cuda:cudnn_plugin",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/tools:hlo_decomposer_lib",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

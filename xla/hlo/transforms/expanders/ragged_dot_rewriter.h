@@ -51,11 +51,12 @@ bool SupportsCudnnRaggedDotWgrad(
 // RaggedDotRewriter converts ragged dots to general dots through expansion.
 class RaggedDotRewriter : public HloModulePass {
  public:
-  // `is_supported_by_cudnn_fusion`, if set, is consulted for every ragged dot
-  // that passes the version/dtype/mode gates; returning a forbidden Decision
-  // expands the ragged dot instead of leaving it for the cuDNN fusion. It lets
-  // the caller probe cuDNN (e.g. devicelessly) without this pass depending on
-  // cuDNN.
+  // `is_supported_by_cudnn_fusion` is consulted for every ragged dot that
+  // passes the version/dtype/mode gates; a ragged dot is left for the cuDNN
+  // fusion only if it is set and returns an allowed Decision. If unset, nothing
+  // vouches for cuDNN support, so the ragged dot is expanded. The callback
+  // lets the caller probe cuDNN (which does call into cuDNN) without this pass
+  // depending on cuDNN targets.
   explicit RaggedDotRewriter(
       se::GpuComputeCapability gpu_compute_capability,
       stream_executor::dnn::VersionInfo cudnn_version =
