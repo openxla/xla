@@ -418,6 +418,9 @@ xla_test(
     backends = ["gpu"],
     shard_count = 4,
     tags = ["nofixdeps"],
+    backend_tags = {
+        "amdgpu_any" : [ "flaky" ],
+    },
     use_legacy_runtime = True,
     deps = [
         ":se_gpu_pjrt_client",
