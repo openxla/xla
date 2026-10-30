@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef XLA_PYTHON_IFRT_IR_VIFRT_BYTECODE_H_
-#define XLA_PYTHON_IFRT_IR_VIFRT_BYTECODE_H_
+#ifndef XLA_PYTHON_IFRT_IR_EXPORT_VIFRT_BYTECODE_H_
+#define XLA_PYTHON_IFRT_IR_EXPORT_VIFRT_BYTECODE_H_
 
 namespace xla {
 namespace ifrt {
@@ -28,4 +28,4 @@ void addBytecodeInterface(VifrtDialect* dialect);
 }  // namespace ifrt
 }  // namespace xla
 
-#endif  // XLA_PYTHON_IFRT_IR_VIFRT_BYTECODE_H_
+#endif  // XLA_PYTHON_IFRT_IR_EXPORT_VIFRT_BYTECODE_H_

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/python/ifrt/ir/vifrt_bytecode.h"
+#include "xla/python/ifrt/ir/export/vifrt_bytecode.h"
 
 #include <cstdint>
 #include <utility>
@@ -31,8 +31,8 @@ limitations under the License.
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/python/ifrt/ir/export/vifrt_dialect.h"
 #include "xla/python/ifrt/ir/sharding_param.h"
-#include "xla/python/ifrt/ir/vifrt_dialect.h"
 
 // Tag to be passed to `-debug-only` argument so that the mlir opt tool prints
 // the debug info for this bytecode writer.
