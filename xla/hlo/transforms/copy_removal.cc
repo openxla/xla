@@ -767,15 +767,30 @@ bool CopyRemover::TryElideCopy(
     }
     return true;
   };
-  auto add_control_deps = [](ValueNode* a, ValueNode* b) {
+  auto resolve_async_caller = [](HloInstruction* instruction) {
+    if (std::optional<HloInstruction*> caller =
+            instruction->parent()->GetUniqueCaller(HloOpcode::kAsyncStart)) {
+      return *caller;
+    }
+    return instruction;
+  };
+  auto add_control_deps = [&](ValueNode* a, ValueNode* b) {
     if (a == nullptr || b == nullptr) {
       return;
     }
-    HloInstruction* dst_instr = b->value->instruction();
+    HloInstruction* raw_dst_instr = b->value->instruction();
+    HloInstruction* resolved_dst_instr = resolve_async_caller(raw_dst_instr);
     for (const HloUse* use : a->uses) {
-      if (use->instruction->parent() == dst_instr->parent() &&
-          use->instruction != dst_instr) {
-        CHECK_OK(use->instruction->AddControlDependencyTo(dst_instr));
+      HloInstruction* use_instr = use->instruction;
+      HloInstruction* dst_instr = raw_dst_instr;
+      if (use_instr->parent() != dst_instr->parent()) {
+        use_instr = resolve_async_caller(use_instr);
+        dst_instr = resolved_dst_instr;
+      }
+      if (use_instr->parent() == dst_instr->parent() &&
+          use_instr != dst_instr &&
+          ordering_->ExecutesBefore(use_instr, dst_instr)) {
+        CHECK_OK(use_instr->AddControlDependencyTo(dst_instr));
       }
     }
   };
