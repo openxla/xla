@@ -142,6 +142,27 @@ class GpuCompilerTest
   }
 };
 
+TEST(GpuCompilerOptionsTest, AllAlgebraicSimplifierModesRespectFastMinMax) {
+  using Mode = GpuCompiler::AlgebraicSimplifierMode;
+  for (Mode mode : {Mode::kLayoutInsensitive, Mode::kPostFusionSimplification,
+                    Mode::kLayoutNormalization, Mode::kPostLayoutAssignment,
+                    Mode::kAfterSimplifyFPConversions,
+                    Mode::kGpuConvoluationCanonicalization}) {
+    SCOPED_TRACE(static_cast<int>(mode));
+    for (bool fast_min_max : {false, true}) {
+      SCOPED_TRACE(fast_min_max);
+      DebugOptions debug_options;
+      debug_options.set_xla_gpu_enable_fast_min_max(fast_min_max);
+      for (bool is_non_cuda_platform : {false, true}) {
+        SCOPED_TRACE(is_non_cuda_platform);
+        const auto options = GpuCompiler::GetAlgebraicSimplifierOptions(
+            mode, debug_options, is_non_cuda_platform);
+        EXPECT_EQ(options.minmax_propagate_nan(), !fast_min_max);
+      }
+    }
+  }
+}
+
 absl::StatusOr<std::string> ReadNonEmptyFile(absl::string_view file_path) {
   std::string str;
   tsl::Env* env = tsl::Env::Default();
@@ -1213,6 +1234,126 @@ ENTRY main {
 }
 
 using GpuCompilerPassTest = GpuCompilerTest;
+
+TEST_F(GpuCompilerPassTest, JaxAbsArgmaxGatherUsesMaximumReduction) {
+  // JAX lowering of:
+  //   a = jnp.abs(x)
+  //   i = jnp.argmax(a, axis=1, keepdims=True)
+  //   return jnp.take_along_axis(a, i, axis=1).squeeze(1)
+  // Keep the calls, broadcasted iota, index normalization and bounds checks so
+  // this also exercises their ordering relative to algebraic simplification.
+  constexpr absl::string_view kHloText = R"(
+HloModule jit__lambda, entry_computation_layout={(f32[3,4]{1,0})->f32[3]{0}}
+
+region_0.1 {
+  reduce.4 = f32[] parameter(0)
+  reduce.6 = f32[] parameter(2)
+  gt.1 = pred[] compare(reduce.4, reduce.6), direction=GT
+  ne.1 = pred[] compare(reduce.4, reduce.4), direction=NE
+  or.2 = pred[] or(gt.1, ne.1)
+  select_n.2 = f32[] select(or.2, reduce.4, reduce.6)
+  eq.1 = pred[] compare(reduce.4, reduce.6), direction=EQ
+  reduce.5 = $index_type[] parameter(1)
+  reduce.7 = $index_type[] parameter(3)
+  lt.1 = pred[] compare(reduce.5, reduce.7), direction=LT
+  and.1 = pred[] and(eq.1, lt.1)
+  or.3 = pred[] or(or.2, and.1)
+  select_n.3 = $index_type[] select(or.3, reduce.5, reduce.7)
+  ROOT tuple.1 = (f32[], $index_type[]) tuple(select_n.2, select_n.3)
+}
+
+argmax.2 {
+  jit__lambda__.1 = f32[3,4]{1,0} parameter(0)
+  iota.2 = $index_type[4]{0} iota(), iota_dimension=0
+  iota.3 = $index_type[3,4]{1,0} broadcast(iota.2), dimensions={1}
+  constant.3 = f32[] constant(-inf)
+  constant.2 = $index_type[] constant(0)
+  reduce.11 = (f32[3]{0}, $index_type[3]{0}) reduce(jit__lambda__.1, iota.3, constant.3, constant.2), dimensions={1}, to_apply=region_0.1
+  reduce.12 = f32[3]{0} get-tuple-element(reduce.11), index=0
+  ROOT reduce.13 = $index_type[3]{0} get-tuple-element(reduce.11), index=1
+}
+
+region_1.3 {
+  reduce_and.3 = pred[] parameter(0)
+  reduce_and.4 = pred[] parameter(1)
+  ROOT reduce_and.5 = pred[] and(reduce_and.3, reduce_and.4)
+}
+
+take_along_axis.4 {
+  $gather_indices
+  constant.15 = s32[] constant(0)
+  broadcast.9 = s32[3,1]{1,0} broadcast(constant.15), dimensions={}
+  lt.3 = pred[3,1]{1,0} compare(Arg_1.1, broadcast.9), direction=LT
+  constant.13 = s32[] constant(4)
+  broadcast.8 = s32[3,1]{1,0} broadcast(constant.13), dimensions={}
+  add.1 = s32[3,1]{1,0} add(Arg_1.1, broadcast.8)
+  select_n.6 = s32[3,1]{1,0} select(lt.3, add.1, Arg_1.1)
+  reshape.1 = s32[3,1,1]{2,1,0} reshape(select_n.6)
+  constant.12 = s32[] constant(0)
+  broadcast.7 = s32[3,1,1]{2,1,0} broadcast(constant.12), dimensions={}
+  ge.1 = pred[3,1,1]{2,1,0} compare(reshape.1, broadcast.7), direction=GE
+  constant.11 = s32[] constant(3)
+  broadcast.6 = s32[3,1,1]{2,1,0} broadcast(constant.11), dimensions={}
+  le.1 = pred[3,1,1]{2,1,0} compare(reshape.1, broadcast.6), direction=LE
+  and.3 = pred[3,1,1]{2,1,0} and(ge.1, le.1)
+  constant.14 = pred[] constant(true)
+  reduce_and.7 = pred[3,1]{1,0} reduce(and.3, constant.14), dimensions={2}, to_apply=region_1.3
+  Arg_0.1 = f32[3,4]{1,0} parameter(0)
+  gather.1 = f32[3,1]{1,0} gather(Arg_0.1, reshape.1), offset_dims={}, collapsed_slice_dims={1}, start_index_map={1}, operand_batching_dims={0}, start_indices_batching_dims={0}, index_vector_dim=2, slice_sizes={1,1}
+  constant.10 = f32[] constant(nan)
+  broadcast.5 = f32[3,1]{1,0} broadcast(constant.10), dimensions={}
+  ROOT select_n.7 = f32[3,1]{1,0} select(reduce_and.7, gather.1, broadcast.5)
+}
+
+ENTRY main.5 {
+  a.1 = f32[3,4]{1,0} parameter(0)
+  abs.1 = f32[3,4]{1,0} abs(a.1)
+  jit__lambda__.3 = $index_type[3]{0} call(abs.1), to_apply=argmax.2
+  broadcast_in_dim.1 = $index_type[3,1]{1,0} reshape(jit__lambda__.3)
+  jit_take_along_axis_.1 = f32[3,1]{1,0} call(abs.1, broadcast_in_dim.1), to_apply=take_along_axis.4
+  ROOT squeeze.1 = f32[3]{0} reshape(jit_take_along_axis_.1)
+}
+)";
+  for (bool use_s64_indices : {false, true}) {
+    SCOPED_TRACE(use_s64_indices);
+    // With jax_enable_x64, argmax returns s64 but take_along_axis narrows its
+    // indices to s32 before normalization and gather.
+    const std::string hlo_text = absl::StrReplaceAll(
+        kHloText,
+        {{"$index_type", use_s64_indices ? "s64" : "s32"},
+         {"$gather_indices",
+          use_s64_indices ? "wide_indices = s64[3,1]{1,0} parameter(1)\n"
+                            "  Arg_1.1 = s32[3,1]{1,0} convert(wide_indices)"
+                          : "Arg_1.1 = s32[3,1]{1,0} parameter(1)"}});
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(hlo_text, GetModuleConfigForTest()));
+    Compiler::CompileOptions compile_options;
+    compile_options.gpu_topology = GetSingleDeviceGpuTopology(
+        /*platform_version=*/"", gpu_target_config());
+    // This regression concerns the default HLO optimization pipeline, so there
+    // is no need to generate or assemble device code.
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> optimized_module,
+        compiler()->RunHloPasses(std::move(module), /*executor=*/nullptr,
+                                 compile_options));
+    bool has_maximum = false;
+    for (const HloComputation* computation : optimized_module->computations()) {
+      for (const HloInstruction* instruction : computation->instructions()) {
+        EXPECT_NE(instruction->opcode(), HloOpcode::kGather)
+            << instruction->ToString();
+        if (instruction->shape().IsArray()) {
+          EXPECT_NE(instruction->shape().element_type(), S32)
+              << instruction->ToString();
+          EXPECT_NE(instruction->shape().element_type(), S64)
+              << instruction->ToString();
+        }
+        has_maximum |= instruction->opcode() == HloOpcode::kMaximum;
+      }
+    }
+    EXPECT_TRUE(has_maximum);
+  }
+}
 
 TEST_F(GpuCompilerPassTest,
        GpuCompilerRunsTritonGemmRewriterByDefaultFromAmpere) {
