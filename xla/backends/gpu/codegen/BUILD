@@ -309,9 +309,24 @@ cc_library(
 )
 
 cc_library(
+    name = "gpu_kernel_spec",
+    srcs = ["gpu_kernel_spec.cc"],
+    hdrs = ["gpu_kernel_spec.h"],
+    deps = [
+        "//xla/codegen:kernel_spec",
+        "//xla/codegen/emitters:kernel_arguments",
+        "//xla/service/gpu:launch_dimensions",
+        "//xla/stream_executor/gpu:tma_metadata",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "kernel_compiler",
     hdrs = ["kernel_compiler.h"],
     deps = [
+        ":gpu_kernel_spec",
         "//xla:future",
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/codegen/triton:triton_kernel_source",
@@ -322,7 +337,6 @@ cc_library(
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/codegen/xtile:block_level_parameters",
         "//xla/hlo/ir:hlo",
-        "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:mlir_context_pool",
         "//xla/stream_executor:device_description",
         "@com_google_absl//absl/functional:any_invocable",
