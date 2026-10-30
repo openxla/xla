@@ -368,7 +368,8 @@ void PjRtStreamExecutorRawBuffer::CopyTo(
         });
     definition_event_promise.Set(*std::move(h2d_event));
     return;
-  } else if (auto* dst_ptr = dst_raw_buffer->GetHostPointer()) {
+  } else if (auto* dst_ptr = dst_raw_buffer->GetHostPointerForInternalUse(
+                 PjRtRawBufferInterface::HostAccess::kWrite)) {
     auto d2h_event = CopyRawDeviceToHostAndReturnEvent(
         dst_ptr, 0, GetOnDeviceSizeInBytes(), {});
     if (!d2h_event.ok()) {

@@ -213,7 +213,9 @@ void ReadDynamicShape(PjRtRawBufferRef raw_buffer,
     return;
   }
 
-  if (void* host_ptr = raw_buffer->GetHostPointer(); host_ptr != nullptr) {
+  if (void* host_ptr = raw_buffer->GetHostPointerForInternalUse(
+          PjRtRawBufferInterface::HostAccess::kRead);
+      host_ptr != nullptr) {
     const uint8_t* metadata_base =
         static_cast<const uint8_t*>(host_ptr) + requirements.metadata_offset;
     auto result = ReadDynamicShapeMetadata(

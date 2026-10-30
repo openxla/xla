@@ -1,6 +1,7 @@
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
 load("//xla/pjrt/cpu:package_groups.bzl", "xla_cpu_internal_packages")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
+load("//xla/tsl/mkl:graph.bzl", "onednn_cc_test")
 load("//xla/tsl:tsl.default.bzl", "if_include_google_deps")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
@@ -57,6 +58,9 @@ xla_cc_test(
         "//xla/pjrt:common_pjrt_client",
         "//xla/pjrt:device_event",
         "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:raw_buffer",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:env",
@@ -138,6 +142,7 @@ cc_library(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/util:tied_ref",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -446,5 +451,39 @@ xla_cc_test(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Parser",
         "@tsl//tsl/platform:path",
+    ],
+)
+
+onednn_cc_test(
+    name = "onednn_weight_cache_pjrt_test",
+    srcs = ["onednn_weight_cache_pjrt_test.cc"],
+    env = {"XLA_ONEDNN_WEIGHT_CACHE_CAPACITY_BYTES": "1048576"},
+    deps = [
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/client:executable_build_options",
+        "//xla/hlo/builder:xla_computation",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/pjrt:common_pjrt_client",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/pjrt:raw_buffer",
+        "//xla/pjrt:strided_gather",
+        "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
+        "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "//xla/service/cpu:onednn_weight_cache",
+        "//xla/tsl/mkl:onednn",
+        "//xla/tsl/util:tied_ref",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
     ],
 )
