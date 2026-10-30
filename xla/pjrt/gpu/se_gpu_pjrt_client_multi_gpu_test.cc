@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -42,6 +43,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
@@ -95,6 +97,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -1381,6 +1384,171 @@ TEST(StreamExecutorGpuClientTest, DeviceErrorCallbackPropagatesToPeerNodes) {
                        kv_store->Get("gpu_fatal_error", absl::Seconds(5)));
   EXPECT_THAT(kv_error, HasSubstr("Fatal GPU device error on node 0 device 0"));
   EXPECT_THAT(kv_error, HasSubstr("CUDA_ERROR_ILLEGAL_ADDRESS"));
+}
+
+// Keeps a stream blocked until released or destroyed.
+class StreamBlocker {
+ public:
+  explicit StreamBlocker(se::Stream* stream)
+      : blocked_(std::make_shared<absl::Notification>()),
+        release_(std::make_shared<absl::Notification>()) {
+    CHECK_OK(stream->DoHostCallback([blocked = blocked_, release = release_] {
+      blocked->Notify();
+      release->WaitForNotification();
+    }));
+    blocked_->WaitForNotification();
+  }
+  ~StreamBlocker() { Release(); }
+  void Release() {
+    if (!release_->HasBeenNotified()) {
+      release_->Notify();
+    }
+  }
+
+ private:
+  std::shared_ptr<absl::Notification> blocked_;
+  std::shared_ptr<absl::Notification> release_;
+};
+
+class CrossDeviceCopyTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    // Read when the client creates its devices.
+    setenv("XLA_PJRT_GPU_HOST_WAIT_CROSS_DEVICE_COPIES", "true", 1);
+    ASSERT_OK_AND_ASSIGN(
+        client_, GetStreamExecutorGpuClient(GetTestGpuClientOptions(2)));
+    ASSERT_GE(client_->addressable_devices().size(), 2);
+    common_client_ = absl::down_cast<CommonPjRtClient*>(client_.get());
+    raw_client_ = absl::down_cast<PjRtStreamExecutorRawClient*>(
+        common_client_->raw_client());
+    PjRtDevice* dev0 = client_->addressable_devices()[0];
+    PjRtDevice* dev1 = client_->addressable_devices()[1];
+    ASSERT_OK_AND_ASSIGN(
+        d0_, raw_client_->GetLocalDeviceState(dev0->local_device_id()));
+    ASSERT_OK_AND_ASSIGN(
+        d1_, raw_client_->GetLocalDeviceState(dev1->local_device_id()));
+    ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * d0_memory,
+                         dev0->default_memory_space());
+    ASSERT_OK_AND_ASSIGN(d1_memory_, dev1->default_memory_space());
+    ASSERT_OK_AND_ASSIGN(src_,
+                         client_->BufferFromHostLiteral(literal_, d0_memory));
+    ASSERT_OK(src_->GetReadyFuture().Await());
+    ASSERT_OK_AND_ASSIGN(dst_shape_,
+                         common_client_->MakeDefaultShapeForMemorySpace(
+                             d1_memory_, literal_.shape(), /*layout=*/nullptr));
+  }
+
+  void TearDown() override {
+    unsetenv("XLA_PJRT_GPU_HOST_WAIT_CROSS_DEVICE_COPIES");
+  }
+
+  // Returns true if all work on d0 finishes while d1's compute stream is still
+  // blocked. If not, one of d0's streams waits on d1. Releases `d1_blocker`
+  // before returning either way.
+  bool D0SynchronizesWhileD1Blocked(StreamBlocker& d1_blocker) {
+    absl::Notification done;
+    std::unique_ptr<tsl::Thread> thread(
+        tsl::Env::Default()->StartThread({}, "sync_d0", [&] {
+          CHECK(d0_->executor()->SynchronizeAllActivity());
+          done.Notify();
+        }));
+    bool synced = done.WaitForNotificationWithTimeout(absl::Seconds(10));
+    d1_blocker.Release();
+    return synced;
+  }
+
+  // Schedules a raw copy of `src_` into `dst` on d1 (the same path as
+  // CopyToMemorySpace) and returns the event that defines `dst`.
+  absl::StatusOr<PjRtDeviceEventRef> ScheduleCopy(
+      PjRtRawBufferRef dst, PjRtDeviceEventRefVector dependencies) {
+    ABSL_ASSIGN_OR_RETURN(PjRtRawBufferRef src,
+                          PjRtRawBuffer::CreateRawAliasOfBuffer(src_.get()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto def, common_client_->CreateLinkedEventPromise(d1_memory_, ""));
+    ABSL_ASSIGN_OR_RETURN(auto usage, common_client_->CreateLinkedEventPromise(
+                                          src->memory_space(), ""));
+    src->ScheduleCopyTo(std::move(dependencies), std::move(dst),
+                        std::move(def.first), std::move(usage.first),
+                        /*allocation_event=*/nullptr);
+    return std::move(def.second);
+  }
+
+  // Returns true if the copy defining `event` gets enqueued on a stream within
+  // 500ms.
+  static bool RecordedSoon(const PjRtDeviceEventRef& event) {
+    auto recorded = std::make_shared<absl::Notification>();
+    event.down_cast<BufferSequencingEvent>()->event().AndThen(
+        [recorded] { recorded->Notify(); });
+    return recorded->WaitForNotificationWithTimeout(absl::Milliseconds(500));
+  }
+
+  absl::StatusOr<PjRtRawBufferRef> AllocateOnD1() {
+    ABSL_ASSIGN_OR_RETURN(int64_t size, common_client_->GetOnDeviceBytesCount(
+                                            d1_memory_, dst_shape_));
+    return common_client_->AllocateRawBuffer(d1_memory_, size,
+                                             /*retry_on_oom=*/true,
+                                             /*allocate_after=*/{});
+  }
+
+  void ExpectCopied(PjRtRawBufferRef dst, PjRtDeviceEventRef def_event) {
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtBuffer> buffer,
+        common_client_->DefineBuffer(dst_shape_, d1_memory_, std::move(dst),
+                                     {std::move(def_event)}));
+    ASSERT_OK_AND_ASSIGN(std::shared_ptr<Literal> result,
+                         buffer->ToLiteral().Await());
+    EXPECT_EQ(literal_.data<float>(),
+              result->Relayout(literal_.shape().layout()).data<float>());
+  }
+
+  Literal literal_ = LiteralUtil::CreateR1<float>({41.0f, 42.0f, 43.0f, 44.0f});
+  std::unique_ptr<PjRtClient> client_;
+  CommonPjRtClient* common_client_ = nullptr;
+  PjRtStreamExecutorRawClient* raw_client_ = nullptr;
+  LocalDeviceState* d0_ = nullptr;
+  LocalDeviceState* d1_ = nullptr;
+  PjRtMemorySpace* d1_memory_ = nullptr;
+  Shape dst_shape_;
+  std::unique_ptr<PjRtBuffer> src_;
+};
+
+// The destination is allocated while d1's compute stream is blocked (e.g. by a
+// collective waiting for d0), so its allocation event is stuck behind it.
+TEST_F(CrossDeviceCopyTest, DoesNotWaitOnPeerStreamForDstAllocation) {
+  StreamBlocker d1_compute(d1_->compute_stream());
+  ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef dst, AllocateOnD1());
+  ASSERT_OK_AND_ASSIGN(PjRtDeviceEventRef def_event,
+                       ScheduleCopy(dst, /*dependencies=*/{}));
+  EXPECT_FALSE(RecordedSoon(def_event))
+      << "Copy enqueued before d1's allocation completed.";
+  EXPECT_TRUE(D0SynchronizesWhileD1Blocked(d1_compute))
+      << "d0's stream waits on d1's blocked compute stream.";
+  ExpectCopied(std::move(dst), std::move(def_event));
+}
+
+// Same, but the cross-device event is a dependency of the copy (e.g. the
+// definition event of a donated destination buffer).
+TEST_F(CrossDeviceCopyTest, DoesNotWaitOnPeerStreamForDependency) {
+  // Let the destination's allocation complete first, so only the dependency is
+  // stuck behind the blocked stream.
+  ASSERT_OK_AND_ASSIGN(PjRtRawBufferRef dst, AllocateOnD1());
+  raw_client_->MaterializeAllocationEvent(*dst);
+  ASSERT_TRUE(d1_->executor()->SynchronizeAllActivity());
+  StreamBlocker d1_compute(d1_->compute_stream());
+  BufferSequencingEventRef d1_event =
+      BufferSequencingEvent::Create(raw_client_->async_work_runner());
+  // Record the dependency only after scheduling the copy, so the copy first
+  // has to find out which device the dependency is on.
+  ASSERT_OK_AND_ASSIGN(
+      PjRtDeviceEventRef def_event,
+      ScheduleCopy(dst, {PjRtDeviceEventRef(d1_event.CopyRef())}));
+  ASSERT_OK(raw_client_->AllocateAndRecordEvent(d1_event, d1_,
+                                                d1_->compute_stream()));
+  EXPECT_FALSE(RecordedSoon(def_event))
+      << "Copy enqueued before its d1 dependency completed.";
+  EXPECT_TRUE(D0SynchronizesWhileD1Blocked(d1_compute))
+      << "d0's stream waits on d1's blocked compute stream.";
+  ExpectCopied(std::move(dst), std::move(def_event));
 }
 
 }  // namespace
