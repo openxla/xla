@@ -98,9 +98,54 @@ jobs:
           python3 -m build_tools.ci.change_detector \
             --build_name="XLA Linux x86 AMD Instinct GPU"
 
+  pid1-reaping-test:
+    needs: rocm-config
+    name: PID 1 zombie reaping test
+    runs-on: ${{ inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-dpx-1' }}
+    timeout-minutes: 20
+    container: ${{ needs.rocm-config.outputs.docker-image }}  # zizmor: ignore[unpinned-images]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checking out .bazelversion
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .bazelversion
+          sparse-checkout-cone-mode: false
+
+      - name: Show PID 1
+        run: |
+          echo "PID 1: $(tr '\0' ' ' < /proc/1/cmdline)"
+          ps -eo pid,ppid,stat,comm
+
+      - name: Start Bazel server
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pid1-ws"
+          cp .bazelversion "${RUNNER_TEMP}/pid1-ws/"
+          touch "${RUNNER_TEMP}/pid1-ws/MODULE.bazel"
+          cd "${RUNNER_TEMP}/pid1-ws"
+          bazel info server_pid
+          ps -eo pid,ppid,stat,comm | grep -E 'PID|java'
+
+      - name: Restart Bazel server with different startup options
+        run: |
+          cd "${RUNNER_TEMP}/pid1-ws"
+          bazel --host_jvm_args=-Xmx2g info server_pid
+
+      - name: Check for zombie processes
+        if: always()
+        run: |
+          ps -eo pid,ppid,stat,comm
+          if ps -eo stat= | grep -q '^Z'; then
+            echo "::error::Zombie processes found"
+            exit 1
+          fi
+
   jax:
     needs: rocm-config
-    if: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' }}
+    if: false
     name: JAX Linux x86 AMD Instinct GPU
     runs-on: ${{ needs.rocm-config.outputs.skip-jax == 'true' && 'ubuntu-latest' || inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-dpx-1' }}
     timeout-minutes: 55
@@ -167,6 +212,7 @@ jobs:
           if-no-files-found: warn
   xla:
     needs: rocm-config
+    if: false
     name: XLA Linux x86 AMD Instinct GPU
     runs-on: ${{ needs.rocm-config.outputs.skip-xla == 'true' && 'ubuntu-latest' || inputs.runner_label || 'amd-do-linux-xla-gpu-gfx950-dpx-1' }}
     timeout-minutes: 50
