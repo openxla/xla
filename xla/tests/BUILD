@@ -1685,7 +1685,6 @@ xla_test(
     name = "convolution_cudnn_test",
     srcs = ["convolution_cudnn_test.cc"],
     backends = [
-        "v100",
         "a100",
         "h100",
         "b200",

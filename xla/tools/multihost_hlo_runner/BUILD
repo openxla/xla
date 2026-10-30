@@ -470,7 +470,6 @@ xla_py_test(
     srcs = ["python_hlo_runner_test.py"],
     # copybara:uncomment_begin(google-only)
     # backends = [
-    # "v100",
     # "a100",
     # "h100",
     # "b200",
