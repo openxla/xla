@@ -537,7 +537,15 @@ absl::StatusOr<TensorValue> MaskOperand(mlir::ImplicitLocOpBuilder& b,
                                         Value neutral_value) {
   llvm::ArrayRef<int64_t> tile_shape = operand_value.getType().getShape();
 
-  int64_t dimension_size = operand.hlo()->shape().dimensions(dimension_index);
+  // `operand_value` uses the storage shape, which is smaller than the logical
+  // shape along the packed dimension of sub-byte types (e.g. f4e2m1fn), so
+  // compare against the storage shape too.
+  const Shape& logical_shape = operand.hlo()->shape();
+  llvm::SmallVector<int64_t> logical_dims(logical_shape.dimensions().begin(),
+                                          logical_shape.dimensions().end());
+  ABSL_ASSIGN_OR_RETURN(llvm::SmallVector<int64_t> storage_dims,
+                        GetStorageShape(logical_dims, logical_shape));
+  int64_t dimension_size = storage_dims[dimension_index];
   int64_t tile_size = tile_shape[dimension_index];
 
   if (dimension_size % tile_size == 0) {
@@ -792,6 +800,7 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     mlir::OpBuilder::InsertionGuard g(b);
     b.setInsertionPointToStart(for_op.getBody());
     Value iv = for_op.getInductionVar();
+    Value iv_i32 = Cast(b, iv, b.getI32Type());
     const gpu::TilingSpace::DimensionInfo& dim_info =
         tiled_scaled_dot.tile().tiling_space().GetDimensionInfo(
             *tiled_scaled_dot.hlo(), sequential_dim_ids.front());
@@ -806,6 +815,56 @@ absl::StatusOr<TensorValue> EmitScaledDot(
         auto results,
         EmitTiledComputation(emitter_ctx, region, region.roots()));
 
+    const DotDimensionNumbers& dim_numbers = scaled_dot.dot_dimension_numbers();
+    int64_t lhs_contracting_dim_idx = dim_numbers.lhs_contracting_dimensions(0);
+    int64_t rhs_contracting_dim_idx = dim_numbers.rhs_contracting_dimensions(0);
+
+    const gpu::TiledHloInstruction* lhs_operand = tiled_scaled_dot.operand(0);
+    TensorValue lhs_tensor = results[0];
+    Value lhs_zero = CreateConst(b, lhs_tensor.getType().getElementType(), 0,
+                                 /*shape=*/{});
+    ABSL_ASSIGN_OR_RETURN(lhs_tensor,
+                          MaskOperand(b, *lhs_operand, lhs_tensor, iv_i32,
+                                      lhs_contracting_dim_idx, lhs_zero));
+
+    const gpu::TiledHloInstruction* rhs_operand = tiled_scaled_dot.operand(1);
+    TensorValue rhs_tensor = results[1];
+    Value rhs_zero = CreateConst(b, rhs_tensor.getType().getElementType(), 0,
+                                 /*shape=*/{});
+    ABSL_ASSIGN_OR_RETURN(rhs_tensor,
+                          MaskOperand(b, *rhs_operand, rhs_tensor, iv_i32,
+                                      rhs_contracting_dim_idx, rhs_zero));
+
+    const gpu::TiledHloInstruction* lhs_scale_operand =
+        tiled_scaled_dot.operand(2);
+    TensorValue lhs_scale_tensor = results[2];
+    if (lhs_scale_tensor &&
+        IsTritonDotScaledOperandType(
+            lhs_operand->hlo()->shape().element_type()) &&
+        !ShapeUtil::IsScalar(lhs_scale_operand->hlo()->shape())) {
+      Value lhs_scale_one = CreateConst(
+          b, lhs_scale_tensor.getType().getElementType(), 1, /*shape=*/{});
+      ABSL_ASSIGN_OR_RETURN(
+          lhs_scale_tensor,
+          MaskOperand(b, *lhs_scale_operand, lhs_scale_tensor, iv_i32,
+                      lhs_contracting_dim_idx, lhs_scale_one));
+    }
+
+    const gpu::TiledHloInstruction* rhs_scale_operand =
+        tiled_scaled_dot.operand(3);
+    TensorValue rhs_scale_tensor = results[3];
+    if (rhs_scale_tensor &&
+        IsTritonDotScaledOperandType(
+            rhs_operand->hlo()->shape().element_type()) &&
+        !ShapeUtil::IsScalar(rhs_scale_operand->hlo()->shape())) {
+      Value rhs_scale_one = CreateConst(
+          b, rhs_scale_tensor.getType().getElementType(), 1, /*shape=*/{});
+      ABSL_ASSIGN_OR_RETURN(
+          rhs_scale_tensor,
+          MaskOperand(b, *rhs_scale_operand, rhs_scale_tensor, iv_i32,
+                      rhs_contracting_dim_idx, rhs_scale_one));
+    }
+
     // Emit the partial dot.
     Value acc = for_op.getRegionIterArgs().front();
     ABSL_ASSIGN_OR_RETURN(
@@ -813,7 +872,7 @@ absl::StatusOr<TensorValue> EmitScaledDot(
         xtile::EmitSingleTileScaledDot(
             b, scaled_dot,
             xtile::ScaledDotOperands{
-                results[0], results[1], results[2], results[3], acc,
+                lhs_tensor, rhs_tensor, lhs_scale_tensor, rhs_scale_tensor, acc,
                 ::xla::stablehlo::ConvertDotDimensionNumbers(
                     scaled_dot.dot_dimension_numbers(), &b)}));
     mlir::scf::YieldOp::create(b, acc_next);
@@ -1862,18 +1921,21 @@ absl::StatusOr<TensorValue> EmitPad(EmitterContext& emitter_ctx,
   const gpu::TiledHloInstruction* tiled_operand = tiled_pad.operand(0);
   const auto& pad_input_shape = tiled_operand->hlo()->shape().dimensions();
 
-  // Compute tile offsets.
+  // Compute tile offsets and strides.
   ABSL_ASSIGN_OR_RETURN(TileInfo tile_info,
                         TileInfo::Construct(emitter_ctx, tiled_pad));
   SmallVector<Value, 3> tile_offsets = tile_info.offsets();
+  ArrayRef<int64_t> tile_strides = tile_info.tile_strides();
 
-  // Compute mask.
-  Type i32_type = b.getI32Type();
+  // Compute mask in i64 so dimensions and offsets >= 2^31 do not overflow or
+  // truncate.
+  Type i64_type = b.getI64Type();
   Value mask;
   for (auto [dim_index, sizes] : llvm::enumerate(
-           llvm::zip(pad_input_shape, tile_sizes, tile_offsets,
+           llvm::zip(pad_input_shape, tile_sizes, tile_offsets, tile_strides,
                      tiled_pad.hlo()->padding_config().dimensions()))) {
-    auto [pad_input_dim_size, tile_size, tile_offset, dim_config] = sizes;
+    auto [pad_input_dim_size, tile_size, tile_offset, tile_stride, dim_config] =
+        sizes;
     if (dim_config.edge_padding_low() != 0) {
       return absl::InvalidArgumentError(absl::StrCat(
           "Low padding is not supported but got edge_padding_low: ",
@@ -1890,18 +1952,27 @@ absl::StatusOr<TensorValue> EmitPad(EmitterContext& emitter_ctx,
       continue;
     }
 
-    // LHS for the compare is an iota broadcasted to the output shape.
-    TensorValue range = Iota(b, tile_size);
-    TensorValue bcast = xtile::BroadcastInDims(
-        b, range, tile_sizes, {static_cast<int64_t>(dim_index)});
+    // LHS for the compare is a 1D iota (scaled by the tile stride).
+    TensorValue range =
+        mlir::cast<TensorValue>(Cast(b, Iota(b, tile_size), i64_type));
+    if (tile_stride != 1) {
+      range = mlir::cast<TensorValue>(
+          arith::MulIOp::create(
+              b, range, CreateConst(b, i64_type, tile_stride, {tile_size}))
+              .getResult());
+    }
 
-    // RHS for the compare is splat(pad_input_dim_size - tile_offset).
-    Value tile_offset_i32 = Cast(b, tile_offset, i32_type);
+    // Compare in 1D against splat(pad_input_dim_size - tile_offset), then
+    // broadcast the i1 mask to the output tile shape.
+    Value tile_offset_i64 = Cast(b, tile_offset, i64_type);
     Value threshold = arith::SubIOp::create(
-        b, CreateConst(b, i32_type, pad_input_dim_size), tile_offset_i32);
-    TensorValue threshold_splat = xtile::Splat(b, threshold, tile_sizes);
-    Value cmp = arith::CmpIOp::create(b, arith::CmpIPredicate::slt, bcast,
-                                      threshold_splat);
+        b, CreateConst(b, i64_type, pad_input_dim_size), tile_offset_i64);
+    TensorValue threshold_splat = xtile::Splat(b, threshold, {tile_size});
+    Value cmp_1d = arith::CmpIOp::create(b, arith::CmpIPredicate::slt, range,
+                                         threshold_splat);
+    TensorValue cmp =
+        xtile::BroadcastInDims(b, mlir::cast<TensorValue>(cmp_1d), tile_sizes,
+                               {static_cast<int64_t>(dim_index)});
     mask = mask ? stablehlo::AndOp::create(b, mask, cmp) : cmp;
   }
   if (!mask) {
