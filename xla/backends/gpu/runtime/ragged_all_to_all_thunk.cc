@@ -807,17 +807,18 @@ absl::Status RaggedAllToAllThunk::Initialize(const InitializeParams& params) {
                     ? absl::StrCat(state->lsa_size.value())
                     : "null");
 
-        if (ShouldUseSymmetricMemoryKernel(*this, state)) {
+        state->one_shot_impl =
+            SelectOneShotImpl(*state, params.local_device_count);
+
+        if (state->one_shot_impl ==
+            RaggedAllToAllOneShotImpl::kSymmetricMemory) {
           ABSL_ASSIGN_OR_RETURN(
               state->sym_mem_kernel,
               LoadRaggedAllToAllWithSymmetricMemoryKernel(
                   executor, config_.config.operand_element_type[0],
                   config_.num_row_elements));
-        }
-
-        if (is_local(params.local_device_count) ||
-            (state->lsa_size.has_value() &&
-             state->lsa_size.value() == state->clique_key.num_devices())) {
+        } else if (state->one_shot_impl ==
+                   RaggedAllToAllOneShotImpl::kPeerAccess) {
           using MultiGpuBarrierKernel = se::gpu::MultiGpuBarrierKernel;
 
           ABSL_ASSIGN_OR_RETURN(
@@ -862,11 +863,7 @@ absl::Status RaggedAllToAllThunk::Initialize(const InitializeParams& params) {
   //      was released. NCCL communicator can be destroyed in comm splitting
   //      process, but generally it should not change between executions, so
   //      it's safe to cache the symmetric handler.
-  if ((!state->lsa_size.has_value() ||
-       state->lsa_size.value() != state->clique_key.num_devices() ||
-       !config_.use_multi_gpu_barrier_with_nccl_in_one_shot_kernel ||
-       state->clique_key.num_devices() < 2) &&
-      is_local(params.local_device_count)) {
+  if (state->one_shot_impl == RaggedAllToAllOneShotImpl::kPeerAccess) {
     // Rendezvous - Exchange output pointers and barrier signal buffers.
     ABSL_ASSIGN_OR_RETURN(
         std::vector<DeviceBufferPair> device_buffers,
@@ -910,7 +907,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> RaggedAllToAllThunk::Record(
                              config_.config.operand_element_type));
 
   RaggedAllToAllStreamState* state = per_device_states_.Find(device_ordinal);
-  if (ShouldUseSymmetricMemoryKernel(*this, state)) {
+  if (state != nullptr &&
+      state->one_shot_impl == RaggedAllToAllOneShotImpl::kSymmetricMemory) {
     return RecordRaggedAllToAllWithSymmetricMemory(
         *this, execute_params, record_params, record_action, command_buffer,
         state, device_buffers);
@@ -1202,15 +1200,8 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
     }
   }
 
-  FabricHomogeneity homogeneity =
-      CheckFabricHomogeneity(stream.parent(), clique_key);
-  // The fabric is "safe" unless we have confirmed a mismatch.
-  // This allows H100/Borg (kUnknown) to still use one-shot kernels.
-  // FabricInfo queries are unavailable with old driver (e.g. 535.xx).
-  bool fabric_safe = (homogeneity != FabricHomogeneity::kHeterogeneous);
-
-  if (is_one_shot_kernel_enabled() && fabric_safe) {
-    if (ShouldUseSymmetricMemoryKernel(*this, state)) {
+  switch (state->one_shot_impl) {
+    case RaggedAllToAllOneShotImpl::kSymmetricMemory: {
       TF_RET_CHECK(static_cast<bool>(state->sym_mem_kernel))
           << "RaggedAllToAllThunk::RunCollective: symmetric-memory kernel was "
              "not loaded during Initialize";
@@ -1224,19 +1215,23 @@ absl::Status RaggedAllToAllThunk::RunCollective(const ExecuteParams& params,
           output_sym_mem, output_sym_offset, config_.num_total_updates,
           config_.num_input_rows, config_.num_row_elements, device_buffers);
     }
-
-    if (state->participants != nullptr && IsOneShotKernelSupported() &&
-        peer_access_enabled &&
-        is_local(params.collective_params->local_device_count)) {
-      return RunOneShotRaggedAllToAll(
-          clique_key, stream, state->rank,
-          state->barrier_signal_buffer
-              ->address(),  // Buff peers write signals to
-          state->barrier_signal_value
-              ->address(),  // Local monotonic step counter
-          config_.num_total_updates, config_.num_input_rows,
-          config_.num_row_elements, device_buffers, *state->participants);
-    }
+    case RaggedAllToAllOneShotImpl::kPeerAccess:
+      TF_RET_CHECK(state->participants != nullptr)
+          << "RaggedAllToAllThunk::RunCollective: participants were not "
+             "exchanged during Initialize";
+      if (peer_access_enabled) {
+        return RunOneShotRaggedAllToAll(
+            clique_key, stream, state->rank,
+            state->barrier_signal_buffer
+                ->address(),  // Buff peers write signals to
+            state->barrier_signal_value
+                ->address(),  // Local monotonic step counter
+            config_.num_total_updates, config_.num_input_rows,
+            config_.num_row_elements, device_buffers, *state->participants);
+      }
+      break;
+    case RaggedAllToAllOneShotImpl::kNone:
+      break;
   }
 
   SymmetricMemory* output_sym_mem = nullptr;
@@ -1504,6 +1499,18 @@ absl::Status RunOneShotRaggedAllToAll(
 bool RaggedAllToAllThunk::is_local(int device_count) const {
   return IsAllReplicasLocal(device_count, config_.config.replica_groups,
                             config_.config.group_mode);
+}
+
+RaggedAllToAllOneShotImpl RaggedAllToAllThunk::SelectOneShotImpl(
+    const RaggedAllToAllStreamState& state, int local_device_count) const {
+  if (ShouldUseSymmetricMemoryKernel(*this, &state)) {
+    return RaggedAllToAllOneShotImpl::kSymmetricMemory;
+  }
+  if (is_one_shot_kernel_enabled() && IsOneShotKernelSupported() &&
+      is_local(local_device_count)) {
+    return RaggedAllToAllOneShotImpl::kPeerAccess;
+  }
+  return RaggedAllToAllOneShotImpl::kNone;
 }
 
 }  // namespace gpu

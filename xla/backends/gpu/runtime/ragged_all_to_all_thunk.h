@@ -99,11 +99,28 @@ struct RaggedAllToAllRendezvousValue {
   }
 };
 
+// One-shot ragged-all-to-all implementation selected for a device in
+// RaggedAllToAllThunk::Initialize. The same selection drives resource
+// allocation in Initialize and kernel dispatch in Record and RunCollective.
+enum class RaggedAllToAllOneShotImpl {
+  // No one-shot kernel. Use the device kernel, GXL, or the NCCL fallback.
+  kNone,
+  // One-shot kernel on symmetric memory, synchronized with the NCCL multi-GPU
+  // barrier. Requires all ranks to be in the same fast-interconnect domain.
+  kSymmetricMemory,
+  // One-shot kernel using peer access, synchronized with barrier signal
+  // buffers that are exchanged via rendezvous. Requires all ranks to be local.
+  kPeerAccess,
+};
+
 struct RaggedAllToAllStreamState {
   int device_ordinal = 0;
   RankId rank = RankId(0);
   std::optional<int64_t> lsa_size;
   GpuCliqueKey clique_key{{}, 0};
+
+  // One-shot implementation selected during Initialize.
+  RaggedAllToAllOneShotImpl one_shot_impl = RaggedAllToAllOneShotImpl::kNone;
 
   // Host memory allocations for ragged metadata.
   absl::InlinedVector<std::unique_ptr<se::MemoryAllocation>, 8>
@@ -273,6 +290,11 @@ class RaggedAllToAllThunk : public CollectiveThunk {
 
  private:
   bool is_local(int device_count) const;
+
+  // Selects the one-shot implementation for the given device state. Must be
+  // called after `state.lsa_size` is set.
+  RaggedAllToAllOneShotImpl SelectOneShotImpl(
+      const RaggedAllToAllStreamState& state, int local_device_count) const;
 
   const RaggedAllToAllConfig config_;
 
