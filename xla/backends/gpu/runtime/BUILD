@@ -219,6 +219,7 @@ cc_library(
     srcs = ["traced_command.cc"],
     hdrs = ["traced_command.h"],
     deps = [
+        ":annotation",
         ":command",
         ":command_state",
         ":thunk",
@@ -232,6 +233,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
@@ -256,6 +258,8 @@ xla_cc_test(
         "//xla/stream_executor:mock_command_buffer",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
+        "//xla/tsl/profiler/backends/cpu:annotation_stack",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -278,6 +282,7 @@ xla_test(
         ":memset_thunk",
         ":shaped_slice",
         ":thunk",
+        ":traced_command",
         ":traced_command_buffer",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -304,7 +309,9 @@ xla_test(
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_benchmark",
         "//xla/tsl/platform:test_main",
+        "//xla/tsl/profiler/backends/cpu:annotation_stack",
         "//xla/tsl/util:safe_reinterpret_cast",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -1905,9 +1912,11 @@ cc_library(
     hdrs = ["collective_kernel_thunk.h"],
     deps = [
         ":all_reduce",
+        ":annotation",
         ":collective_cliques",
         ":collective_kernel_thunk_proto_cc",
         ":collective_memory",
+        ":collective_memory_requests",
         ":collective_params",
         ":collective_thunk",
         ":collective_thunk_proto_cc",
@@ -1932,6 +1941,7 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/service:buffer_assignment",
         "//xla/service:collective_ops_utils",
+        "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:gpu_constants",
         "//xla/service/gpu:launch_dimensions",
         "//xla/service/gpu:stream_executor_util",
@@ -1946,9 +1956,11 @@ cc_library(
         "//xla/stream_executor:trace_command_buffer_factory",
         "//xla/stream_executor/gpu:collective_kernel_metadata",
         "//xla/tsl/util:safe_reinterpret_cast",
+        "//xla/tsl/util:sorted_range",
         "//xla/tsl/util:tied_ref",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:overload",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:vlog_is_on",
@@ -1958,6 +1970,8 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
@@ -2013,6 +2027,7 @@ xla_test(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:memory_space",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream",
@@ -2029,6 +2044,7 @@ xla_test(
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -2357,6 +2373,7 @@ cc_library(
     srcs = ["ragged_all_to_all_thunk.cc"],
     hdrs = ["ragged_all_to_all_thunk.h"],
     deps = [
+        ":annotation",
         ":collective_clique_requests",
         ":collective_cliques",
         ":collective_memory",
@@ -2413,6 +2430,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
@@ -3083,6 +3101,7 @@ cc_library(
     srcs = ["collective_thunk.cc"],
     hdrs = ["collective_thunk.h"],
     deps = [
+        ":annotation",
         ":collective_clique_requests",
         ":collective_execution",
         ":collective_params",
@@ -3126,6 +3145,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
@@ -3343,6 +3363,7 @@ cc_library(
     srcs = ["collective_group_thunk.cc"],
     hdrs = ["collective_group_thunk.h"],
     deps = [
+        ":annotation",
         ":collective_cliques",
         ":collective_thunk",
         ":command",
@@ -3367,6 +3388,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
     ],
 )
 
@@ -4926,6 +4948,7 @@ cc_library(
     srcs = ["host_execute_thunk.cc"],
     hdrs = ["host_execute_thunk.h"],
     deps = [
+        ":annotation",
         ":command",
         ":host_async_thunk",
         ":per_device_state",
@@ -4968,6 +4991,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/profiler/lib:scoped_annotation",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )

@@ -35,7 +35,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.pb.h"
@@ -498,13 +500,18 @@ absl::StatusOr<const se::CommandBuffer::Command*> CollectiveThunk::Record(
       execute_params,
       [&](const GpuCliqueKey& clique_key, Communicator& comm) -> absl::Status {
         ABSL_ASSIGN_OR_RETURN(
-            nested_cmd, se::TraceCommandBufferFactory::Create(
-                            execute_params.stream->parent(),
-                            execute_params.command_buffer_trace_stream,
-                            [&](se::Stream* stream) {
-                              return RunCollective(execute_params, clique_key,
-                                                   *stream, comm);
-                            }));
+            nested_cmd,
+            se::TraceCommandBufferFactory::Create(
+                execute_params.stream->parent(),
+                execute_params.command_buffer_trace_stream,
+                [&](se::Stream* stream) {
+                  std::optional<tsl::profiler::ScopedAnnotation> annotation =
+                      std::holds_alternative<RecordUpdate>(record_action)
+                          ? GetInstructionAnnotation(profile_annotation())
+                          : std::nullopt;
+                  return RunCollective(execute_params, clique_key, *stream,
+                                       comm);
+                }));
         return absl::OkStatus();
       }));
 

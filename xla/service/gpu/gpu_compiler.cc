@@ -293,6 +293,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
+#include "xla/service/gpu/gpu_pipeline.h"
 #include "xla/service/gpu/gpu_spmd_pipeline.h"
 #include "xla/service/gpu/hlo_fusion_stats.h"
 #include "xla/service/gpu/ir_emission_utils.h"
@@ -1792,7 +1793,18 @@ bool GpuCompiler::IsScaledDotSupportedByBackend(
 AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
     AlgebraicSimplifierMode mode, const DebugOptions& debug_options,
     bool is_non_cuda_platform) {
-  AlgebraicSimplifierOptions opts = GpuAlgebraicSimplifierBaseOptions();
+  AlgebraicSimplifierOptions opts;
+
+  opts.set_enable_dot_strength_reduction(false);
+  // On GPU it helps to reorder them so that the fused cuDNN kernel can be
+  // used.
+  opts.set_enable_conv_add_multiply_reorder(true);
+  // GPU only supports canonical convolutions.
+  opts.set_supports_non_canonical_dots(false);
+  opts.set_enable_unconditional_reduce_of_concat_replacement(false);
+  opts.set_rewrite_no_op_bitcast_convert_to_bitcast(true);
+  opts.set_enable_conditional_simplification(true);
+  opts.set_enable_fold_transpose_into_scatter(true);
 
   if (!is_non_cuda_platform &&
       debug_options.xla_gpu_experimental_enable_conv_fusion()) {
@@ -1885,6 +1897,11 @@ absl::Status GpuCompiler::OptimizeHloModule(
           AlgebraicSimplifierMode::kLayoutInsensitive,
           hlo_module->config().debug_options(),
           IsNonCudaPlatform(gpu_topology.gpu_target_config()));
+
+  XLA_VLOG_LINES(1, absl::StrCat("Default compilation pipeline:\n",
+                                 GetDefaultCompilationPipeline(
+                                     layout_insensitive_algsimp_opts)
+                                     .DebugString()));
 
   {
     HloPassPipeline pipeline("annotate-host-compute", compilation_stats);
@@ -2214,7 +2231,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
           gpu_target_config.device_description, ShapeSizeBytesFunction(),
           alias_info, mlir_context,
           /*only_fuse_if_profitable=*/true, thread_pool, &mlir_context_pool_);
-      if (debug_options.xla_gpu_experimental_enable_triton_scan()) {
+      if (debug_options.xla_gpu_experimental_enable_triton_scan() &&
+          gpu_version.cuda_compute_capability() != nullptr) {
         pipeline.AddPass<ScanRewriterTriton>(
             gpu_target_config.device_description);
       }

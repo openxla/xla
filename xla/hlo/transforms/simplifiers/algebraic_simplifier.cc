@@ -59,7 +59,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_original_value_util.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/pass/hlo_pass_interface.h"
-#include "xla/hlo/pass/hlo_pass_options.h"
 #include "xla/hlo/transforms/simplifiers/conv_operand_swapper.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/layout.h"
@@ -2139,32 +2138,32 @@ absl::Status AlgebraicSimplifierVisitor::HandleConcatenate(
         operands[0], m::Broadcast(m::Op().WithShape(m::Shape().IsScalar())));
     bool is_effective_high_pad = Match(
         operands[1], m::Broadcast(m::Op().WithShape(m::Shape().IsScalar())));
-    if (!is_effective_low_pad && !is_effective_high_pad) {
-      return absl::OkStatus();
-    }
-    PaddingConfig padding_config;
-    for (int64_t dim = 0; dim < operands[0]->shape().dimensions().size();
-         ++dim) {
-      auto padding_config_dim = padding_config.add_dimensions();
-      padding_config_dim->set_edge_padding_high(0);
-      padding_config_dim->set_edge_padding_low(0);
-      padding_config_dim->set_interior_padding(0);
-      if (dim == concatenate_dimension) {
-        if (is_effective_low_pad) {
-          padding_config_dim->set_edge_padding_low(
-              operands[0]->shape().dimensions(dim));
-        } else {
-          padding_config_dim->set_edge_padding_high(
-              operands[1]->shape().dimensions(dim));
+    if (is_effective_low_pad || is_effective_high_pad) {
+      PaddingConfig padding_config;
+      for (int64_t dim = 0; dim < operands[0]->shape().dimensions().size();
+           ++dim) {
+        auto padding_config_dim = padding_config.add_dimensions();
+        padding_config_dim->set_edge_padding_high(0);
+        padding_config_dim->set_edge_padding_low(0);
+        padding_config_dim->set_interior_padding(0);
+        if (dim == concatenate_dimension) {
+          if (is_effective_low_pad) {
+            padding_config_dim->set_edge_padding_low(
+                operands[0]->shape().dimensions(dim));
+          } else {
+            padding_config_dim->set_edge_padding_high(
+                operands[1]->shape().dimensions(dim));
+          }
         }
       }
+      int64_t operand_to_pad = is_effective_low_pad ? 1 : 0;
+      int64_t pad_value_operand = is_effective_low_pad ? 0 : 1;
+      HloInstruction* pad =
+          concatenate->AddInstruction(HloInstruction::CreatePad(
+              concatenate->shape(), operands[operand_to_pad],
+              operands[pad_value_operand]->mutable_operand(0), padding_config));
+      return ReplaceInstruction(concatenate, pad);
     }
-    int64_t operand_to_pad = is_effective_low_pad ? 1 : 0;
-    int64_t pad_value_operand = is_effective_low_pad ? 0 : 1;
-    HloInstruction* pad = concatenate->AddInstruction(HloInstruction::CreatePad(
-        concatenate->shape(), operands[operand_to_pad],
-        operands[pad_value_operand]->mutable_operand(0), padding_config));
-    return ReplaceInstruction(concatenate, pad);
   }
 
   if (absl::c_count(operands, operands[0]) == operands.size() &&
@@ -11247,33 +11246,6 @@ bool AlgebraicSimplifierVisitor::ShouldStrengthReduceDotToReduce(
            rhs_has_only_batch_and_contracting;
   }
   return true;
-}
-
-AlgebraicSimplifierOptions AlgebraicSimplifierOptionsFromHloPassOptions(
-    const HloPassOptions& options, AlgebraicSimplifierOptions base) {
-  using FieldDescriptor = tsl::protobuf::FieldDescriptor;
-  const tsl::protobuf::Descriptor* descriptor = base.GetDescriptor();
-  const tsl::protobuf::Reflection* reflection = base.GetReflection();
-  for (int i = 0; i < descriptor->field_count(); ++i) {
-    const FieldDescriptor* field = descriptor->field(i);
-    switch (field->cpp_type()) {
-      case FieldDescriptor::CPPTYPE_BOOL:
-        if (std::optional<bool> value = options.Get<bool>(field->name())) {
-          reflection->SetBool(&base, field, *value);
-        }
-        break;
-      case FieldDescriptor::CPPTYPE_INT64:
-        if (std::optional<int64_t> value =
-                options.Get<int64_t>(field->name())) {
-          reflection->SetInt64(&base, field, *value);
-        }
-        break;
-      default:
-        // Not representable in HloPassOptions.
-        break;
-    }
-  }
-  return base;
 }
 
 }  // namespace xla
