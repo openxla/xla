@@ -237,6 +237,11 @@ PlanHoistBitcastUpwardsToCallers(const HloInstruction* bitcast) {
         break;
       }
       default:
+        if (IsLayoutChangingCopy(instruction)) {
+          return absl::FailedPreconditionError(absl::StrCat(
+              "Cannot hoist bitcast past layout-changing copy ",
+              instruction->ToString()));
+        }
         if (!instruction->IsElementwise()) {
           return absl::FailedPreconditionError(absl::StrCat(
               "Cannot hoist bitcast past ", instruction->ToString()));
@@ -336,6 +341,11 @@ absl::StatusOr<Shape> ComputeRootShapeAfterHoistingBitcasts(
         case HloOpcode::kBitcast:
           return operand_shape;
         default:
+          if (IsLayoutChangingCopy(instruction)) {
+            return absl::FailedPreconditionError(absl::StrCat(
+                "Cannot hoist bitcast past layout-changing copy ",
+                instruction->ToString()));
+          }
           if (instruction->IsElementwise()) {
             return operand_shape;
           }

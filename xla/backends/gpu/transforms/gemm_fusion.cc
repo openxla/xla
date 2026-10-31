@@ -899,6 +899,10 @@ absl::StatusOr<HloInstruction*> FusionSearchSpace::HoistBitcast(
   HloInstruction* operand = instr->mutable_operand(0);
   HloInstruction* new_instr = nullptr;
 
+  if (IsLayoutChangingCopy(operand)) {
+    return instr;
+  }
+
   switch (operand->opcode()) {
     case HloOpcode::kParameter: {
       if (!CanReplaceParameterShape(operand, instr->shape())) {
@@ -1050,6 +1054,11 @@ absl::StatusOr<HloInstruction*> FusionSearchSpace::SinkBitcast(
 
   HloInstruction* user = instr->users()[0];
   HloInstruction* new_instr = nullptr;
+
+  if (IsLayoutChangingCopy(user)) {
+    return instr;
+  }
+
   switch (user->opcode()) {
     case HloOpcode::kTranspose: {
       absl::StatusOr<BitcastParams> params = CalculateTransposeOfBitcast(

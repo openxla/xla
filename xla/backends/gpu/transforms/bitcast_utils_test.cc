@@ -53,6 +53,26 @@ TEST(BitcastUtilsTest, CopyElementTypeCopiesCustomElementSize) {
   EXPECT_EQ(destination_custom_size.layout().element_size_in_bits(), 4);
 }
 
+
+TEST(BitcastUtilsTest, IsLayoutChangingCopy) {
+  Shape no_layout = ShapeUtil::MakeShape(F32, {2, 3});
+  Shape row_major = ShapeUtil::MakeShapeWithDenseLayout(F32, {2, 3}, {1, 0});
+  Shape col_major = ShapeUtil::MakeShapeWithDenseLayout(F32, {2, 3}, {0, 1});
+
+  auto param = HloInstruction::CreateParameter(0, row_major, "p");
+  auto same_layout_copy = HloInstruction::CreateUnary(
+      row_major, HloOpcode::kCopy, param.get());
+  auto changing_layout_copy = HloInstruction::CreateUnary(
+      col_major, HloOpcode::kCopy, param.get());
+  auto layout_less_copy =
+      HloInstruction::CreateUnary(no_layout, HloOpcode::kCopy, param.get());
+
+  EXPECT_FALSE(IsLayoutChangingCopy(param.get()));
+  EXPECT_FALSE(IsLayoutChangingCopy(same_layout_copy.get()));
+  EXPECT_TRUE(IsLayoutChangingCopy(changing_layout_copy.get()));
+  EXPECT_FALSE(IsLayoutChangingCopy(layout_less_copy.get()));
+}
+
 TEST(BitcastUtilsTest, CalculateBitcastOfBroadcast) {
   // Example:
   // operand = f32[2, 3]
