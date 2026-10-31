@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -25,6 +26,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -37,6 +39,10 @@ absl::Status CollectiveCliqueRequests::RequestClique(
     const GpuCliqueKey& clique_key,
     absl::Span<const std::vector<GlobalDeviceId>> device_groups,
     const CliqueRequirements& requirements) {
+  if (device_groups.empty()) {
+    return absl::InvalidArgumentError(
+        "Collective clique requests require a nonempty device group partition");
+  }
   // Each replica group should have devices in sorted order.
   DCHECK(absl::c_all_of(device_groups, [](const auto& g) {
     return absl::c_is_sorted(g);
@@ -51,6 +57,20 @@ absl::Status CollectiveCliqueRequests::RequestClique(
       "Add collective clique request: %v; device_groups=[%s]; "
       "requirements=%v",
       clique_key, HumanReadableDeviceGroups(device_groups), requirements);
+
+  // A singleton clique can be requested from multiple partitions. Preserve
+  // every partition before deduplicating by the rank-local clique key.
+  if (!graph_requests_.empty() &&
+      !absl::c_equal(graph_requests_.front().device_groups, device_groups)) {
+    has_mixed_device_groups_ = true;
+  }
+  if (!absl::c_any_of(graph_requests_, [&](const GraphRequest& request) {
+        return request.communication_id == clique_key.communication_id() &&
+               absl::c_equal(request.device_groups, device_groups);
+      })) {
+    graph_requests_.push_back({clique_key.communication_id(),
+                               {device_groups.begin(), device_groups.end()}});
+  }
 
   // If the clique already exists, update it with new requirements.
   if (auto it = cliques_.find(clique_key); it != cliques_.end()) {
@@ -116,6 +136,45 @@ std::vector<GpuCliqueKey> CollectiveCliqueRequests::RequestedCliques() const {
   }
 
   return clique_keys;
+}
+
+std::string CollectiveCliqueRequests::CollectiveGraphSignature() const {
+  std::string signature;
+  for (const GraphRequest& request : graph_requests_) {
+    absl::StrAppend(&signature, request.communication_id.value(), ":",
+                    request.device_groups.size(), ":");
+    for (const auto& group : request.device_groups) {
+      absl::StrAppend(&signature, group.size(), ":");
+      for (GlobalDeviceId device : group) {
+        absl::StrAppend(&signature, device.value(), ",");
+      }
+    }
+    absl::StrAppend(&signature, ";");
+  }
+  return signature;
+}
+
+std::vector<GlobalDeviceId>
+CollectiveCliqueRequests::CollectiveGraphParticipants(GlobalDeviceId device)
+    const {
+  absl::flat_hash_set<GlobalDeviceId> participants = {device};
+  size_t previous_size;
+  do {
+    previous_size = participants.size();
+    for (const GraphRequest& request : graph_requests_) {
+      for (const auto& group : request.device_groups) {
+        if (absl::c_any_of(group, [&](GlobalDeviceId member) {
+              return participants.contains(member);
+            })) {
+          participants.insert(group.begin(), group.end());
+        }
+      }
+    }
+  } while (participants.size() != previous_size);
+
+  std::vector<GlobalDeviceId> result(participants.begin(), participants.end());
+  absl::c_sort(result);
+  return result;
 }
 
 std::vector<CollectiveCliqueRequests::CliqueRequest>

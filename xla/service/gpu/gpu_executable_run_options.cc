@@ -48,6 +48,18 @@ const CliqueIdCallback& GpuExecutableRunOptions::clique_id_callback() const {
   return clique_id_callback_;
 }
 
+GpuExecutableRunOptions&
+GpuExecutableRunOptions::set_collective_graph_invalidation_callback(
+    CollectiveGraphInvalidationCallback callback) {
+  collective_graph_invalidation_callback_ = std::move(callback);
+  return *this;
+}
+
+const CollectiveGraphInvalidationCallback&
+GpuExecutableRunOptions::collective_graph_invalidation_callback() const {
+  return collective_graph_invalidation_callback_;
+}
+
 GpuExecutableRunOptions& GpuExecutableRunOptions::set_collectives(
     GpuCollectives* collectives) {
   collectives_ = collectives;

@@ -188,8 +188,10 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
     return absl::OkStatus();
   }
 
-  ABSL_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-                        GetOrCreateCommandBuffer(params.executor));
+  ABSL_ASSIGN_OR_RETURN(
+      std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
+      GetOrCreateCommandBuffer(params.executor, params.collective_cliques,
+                               params.invalidate_command_buffers));
   absl::MutexLock lock(cmd_buffer->mutex);
 
   // If there are no thunks, or command buffer does not require warmup,
@@ -300,8 +302,9 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
   }
 
   se::StreamExecutor* executor = params.stream->parent();
-  ABSL_ASSIGN_OR_RETURN(std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-                        GetOrCreateCommandBuffer(executor));
+  ABSL_ASSIGN_OR_RETURN(
+      std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
+      GetOrCreateCommandBuffer(executor, params.collective_cliques));
 
   absl::MutexLock lock(cmd_buffer->mutex);
 
@@ -380,19 +383,55 @@ absl::Status CommandBufferThunk::ExecuteOnStream(const ExecuteParams& params) {
 }
 
 absl::StatusOr<std::shared_ptr<CommandBufferThunk::ExecutorCommandBuffer>>
-CommandBufferThunk::GetOrCreateCommandBuffer(se::StreamExecutor* executor) {
+CommandBufferThunk::GetOrCreateCommandBuffer(
+    se::StreamExecutor* executor, CollectiveCliques* collective_cliques,
+    bool invalidate) {
   ABSL_ASSIGN_OR_RETURN(
       DeviceState * device_state,
       state_->device_states.GetOrCreate(executor->device_ordinal()));
   absl::MutexLock lock(device_state->mutex);
+  if (collective_cliques != nullptr &&
+      device_state->command_buffer != nullptr &&
+      (invalidate ||
+       absl::c_any_of(device_state->command_buffer->collective_dependencies,
+                      [](const auto& token) { return token.Expired(); }))) {
+    // Replacing the owner also drops traced child graphs and RECORD state.
+    device_state->command_buffer.reset();
+  }
   if (device_state->command_buffer == nullptr) {
     ABSL_ASSIGN_OR_RETURN(
         std::unique_ptr<se::CommandBuffer> command_buffer,
         executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-    device_state->command_buffer =
+    auto owner =
         std::make_shared<ExecutorCommandBuffer>(std::move(command_buffer));
+    if (collective_cliques != nullptr) {
+      ABSL_ASSIGN_OR_RETURN(
+          owner->collective_dependencies,
+          collective_cliques->CreateLifetimeTokens(
+              [weak = std::weak_ptr<ExecutorCommandBuffer>(owner)] {
+                if (auto owner = weak.lock()) {
+                  absl::MutexLock lock(owner->mutex);
+                  // NCCL destruction waits for all captured graphs referencing
+                  // the communicator, including cached child graphs, to die.
+                  owner->command_buffer.reset();
+                  owner->state = CommandStateManager();
+                }
+              }));
+    }
+    device_state->command_buffer = std::move(owner);
   }
   return device_state->command_buffer;
+}
+
+absl::StatusOr<bool> CommandBufferThunk::RequiresCommandBufferRebuild(
+    se::StreamExecutor* executor) {
+  ABSL_ASSIGN_OR_RETURN(
+      DeviceState * device_state,
+      state_->device_states.GetOrCreate(executor->device_ordinal()));
+  absl::MutexLock lock(device_state->mutex);
+  return device_state->command_buffer == nullptr ||
+         absl::c_any_of(device_state->command_buffer->collective_dependencies,
+                        [](const auto& token) { return token.Expired(); });
 }
 
 //===----------------------------------------------------------------------===//

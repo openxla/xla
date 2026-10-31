@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -28,6 +25,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/container/btree_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -36,9 +36,15 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "tsl/profiler/lib/profiler_lock.h"
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
+#include "xla/backends/gpu/collectives/gpu_clique.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_cliques.h"
+#include "xla/backends/gpu/collectives/mock_gpu_communicator.h"
+#include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_cmd_emitter.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
+#include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/conditional_thunk.h"
 #include "xla/backends/gpu/runtime/device_to_device_copy_thunk.h"
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
@@ -46,9 +52,13 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/traced_command.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
+#include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/rank_id.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/gpu/launch_dimensions.h"
@@ -202,6 +212,169 @@ Thunk::ExecuteParams CreateExecuteParams(
       /*additional_compute_streams=*/{}, /*execution_scoped_state=*/nullptr,
       persistent_alloc_indices);
 }
+
+struct RecordingCounts {
+  uint32_t recordings = 0;
+  uint32_t destroyed_states = 0;
+  uint32_t destroyed_graphs = 0;
+};
+
+template <typename Base>
+class CountDestruction : public Base {
+ public:
+  explicit CountDestruction(uint32_t* count) : count_(count) {}
+  ~CountDestruction() override { ++*count_; }
+
+ private:
+  uint32_t* count_;
+};
+
+class DestructionCheckingCommunicator : public MockGpuCommunicator {
+ public:
+  explicit DestructionCheckingCommunicator(RecordingCounts* counts)
+      : counts_(counts) {}
+  ~DestructionCheckingCommunicator() override {
+    EXPECT_EQ(counts_->destroyed_states, counts_->recordings);
+    EXPECT_EQ(counts_->destroyed_graphs, counts_->recordings);
+  }
+
+ private:
+  RecordingCounts* counts_;
+};
+
+class CountingMemsetCommand : public TracedCommand {
+ public:
+  CountingMemsetCommand(BufferAllocation::Slice destination, bool traced,
+                        RecordingCounts* counts)
+      : TracedCommand(Thunk::kCommand),
+        destination_(destination),
+        traced_(traced),
+        counts_(counts) {}
+
+  bool IsTracedCommand() const override { return traced_; }
+
+  BufferUses buffer_uses() const override {
+    return {BufferUse::Write(destination_, ShapeUtil::MakeShape(U32, {}))};
+  }
+
+  absl::Status ExecuteOnStream(const ExecuteParams& params) override {
+    return Memset32BitValueThunk(ThunkInfo(), ++counts_->recordings, destination_)
+        .ExecuteOnStream(params);
+  }
+
+  absl::StatusOr<const se::CommandBuffer::Command*> Record(
+      const ExecuteParams& execute_params, const RecordParams& record_params,
+      RecordAction record_action, se::CommandBuffer* command_buffer) override {
+    record_params.state.GetOrCreate<CountDestruction<CommandState>>(
+        this, command_buffer, [&] {
+          return std::make_unique<CountDestruction<CommandState>>(
+              &counts_->destroyed_states);
+        });
+    command_buffer->GetOrConstructResource<
+        CountDestruction<se::CommandBuffer::Resource>>(
+        &counts_->destroyed_graphs);
+    if (traced_) {
+      return TracedCommand::Record(execute_params, record_params,
+                                   std::move(record_action), command_buffer);
+    }
+    return Memset32BitValueThunk(ThunkInfo(), ++counts_->recordings, destination_)
+        .Record(execute_params, record_params, std::move(record_action),
+                command_buffer);
+  }
+
+ private:
+  BufferAllocation::Slice destination_;
+  bool traced_;
+  RecordingCounts* counts_;
+};
+
+class CommandBufferCliqueTest : public ::testing::TestWithParam<bool> {};
+
+TEST_P(CommandBufferCliqueTest, RebuildsAfterCliqueReplacement) {
+  se::StreamExecutor* executor = GpuExecutor();
+  ASSERT_OK_AND_ASSIGN(auto stream, executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(auto trace_stream, executor->CreateStream());
+  se::DeviceAddress<uint32_t> destination =
+      executor->AllocateArray<uint32_t>(1, 0);
+  BufferAllocation allocation(/*index=*/0, sizeof(uint32_t), /*color=*/0);
+  BufferAllocation::Slice slice(&allocation, /*offset=*/0, sizeof(uint32_t));
+
+  RecordingCounts counts;
+  CommandSequence commands;
+  commands.Emplace<CountingMemsetCommand>(slice, GetParam(), &counts);
+  ASSERT_OK_AND_ASSIGN(CommandExecutor command_executor,
+                       CommandExecutor::Create(std::move(commands), serialize));
+  CommandBufferThunk thunk(std::move(command_executor), Thunk::ThunkInfo(),
+                           /*devices_in_process=*/1);
+
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations allocations({destination}, /*device_ordinal=*/0,
+                                &allocator);
+  ServiceExecutableRunOptions run_options;
+  std::vector<BufferAllocation::Index> persistent_alloc_indices = {0};
+  Thunk::ExecuteParams execute_params = CreateExecuteParams(
+      run_options, allocations, stream.get(), persistent_alloc_indices);
+  execute_params.command_buffer_trace_stream = trace_stream.get();
+
+  Thunk::InitializeParams initialize_params;
+  initialize_params.executor = executor;
+  initialize_params.buffer_allocations = &allocations;
+  initialize_params.stream = stream.get();
+  initialize_params.command_buffer_trace_stream = trace_stream.get();
+  initialize_params.persistent_alloc_indices = persistent_alloc_indices;
+
+  GpuCliqueKey key({GlobalDeviceId(0)}, /*num_local_participants=*/1);
+  uint32_t expected_records = 0;
+  for (uint32_t generation = 1; generation <= 2; ++generation) {
+    absl::btree_map<RankId, std::unique_ptr<Communicator>> communicators;
+    communicators.emplace(
+        RankId(0), std::make_unique<DestructionCheckingCommunicator>(&counts));
+    auto clique = std::make_unique<LockableGpuClique>(
+        key, std::nullopt, std::move(communicators),
+        /*peer_access_enabled=*/true, /*cancel=*/nullptr);
+    AcquiredCliquesMap cliques_map;
+    cliques_map.emplace(
+        key, std::make_shared<LockableGpuClique::Lock>(clique->Acquire()));
+    CollectiveCliques cliques(std::move(cliques_map));
+    initialize_params.collective_cliques = &cliques;
+    execute_params.collective_cliques = &cliques;
+    EXPECT_THAT(thunk.RequiresCommandBufferRebuild(executor),
+                ::absl_testing::IsOkAndHolds(true));
+
+    for (int replay = 0; replay < 4; ++replay) {
+      SCOPED_TRACE(::testing::Message()
+                   << "generation=" << generation << ", replay=" << replay);
+      // Another rank can require rebuilding while this rank's clique survives.
+      initialize_params.invalidate_command_buffers = replay == 2;
+      if (replay == 0 || initialize_params.invalidate_command_buffers) {
+        ++expected_records;
+      }
+      ASSERT_OK(thunk.Initialize(initialize_params));
+      EXPECT_THAT(thunk.RequiresCommandBufferRebuild(executor),
+                  ::absl_testing::IsOkAndHolds(false));
+      ASSERT_OK(stream->MemZero(&destination, sizeof(uint32_t)));
+      ASSERT_OK(thunk.ExecuteOnStream(execute_params));
+      uint32_t result = 0;
+      ASSERT_OK(stream->Memcpy(&result, destination, sizeof(result)));
+      ASSERT_OK(stream->BlockHostUntilDone());
+      EXPECT_EQ(result, expected_records);
+      EXPECT_EQ(counts.recordings, expected_records);
+      EXPECT_THAT(thunk.RequiresCommandBufferRebuild(executor),
+                  ::absl_testing::IsOkAndHolds(false));
+    }
+    cliques = CollectiveCliques();
+    clique.reset();
+    EXPECT_EQ(counts.destroyed_states, expected_records);
+    EXPECT_EQ(counts.destroyed_graphs, expected_records);
+  }
+  executor->Deallocate(&destination);
+}
+
+INSTANTIATE_TEST_SUITE_P(RecordingPaths, CommandBufferCliqueTest,
+                         ::testing::Bool(),
+                         [](const ::testing::TestParamInfo<bool>& info) {
+                           return info.param ? "Traced" : "Recorded";
+                         });
 
 }  // namespace
 

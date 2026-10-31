@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -68,6 +69,20 @@ namespace xla::gpu {
 
 CollectiveCliques::CollectiveCliques(AcquiredCliquesMap cliques_map)
     : cliques_map_(std::move(cliques_map)) {}
+
+absl::StatusOr<CollectiveCliques::LifetimeTokens>
+CollectiveCliques::CreateLifetimeTokens(
+    const std::function<void()>& on_destroy) const {
+  LifetimeTokens tokens;
+  tokens.reserve(cliques_map_.size());
+  for (const auto& [_, clique] : cliques_map_) {
+    ABSL_ASSIGN_OR_RETURN(
+        tsl::TiedRef<LifetimeToken> token,
+        (*clique)->Tie(std::make_unique<LifetimeToken>(on_destroy)));
+    tokens.push_back(std::move(token));
+  }
+  return tokens;
+}
 
 absl::StatusOr<GpuCommunicator*> CollectiveCliques::GetComm(
     const GpuCliqueKey& clique_key, RankId rank) const {

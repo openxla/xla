@@ -97,6 +97,7 @@ cc_library(
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@com_google_absl//absl/time",
     ],
 )
@@ -834,6 +835,7 @@ cc_library(
         "//xla/backends/gpu/runtime:collective_memory_requests",
         "//xla/backends/gpu/runtime:collective_params",
         "//xla/backends/gpu/runtime:command_buffer_conversion_pass",
+        "//xla/backends/gpu/runtime:command_buffer_thunk",
         "//xla/backends/gpu/runtime:execution_stream_id",
         "//xla/backends/gpu/runtime:per_device_state",
         "//xla/backends/gpu/runtime:sequential_thunk",

@@ -15,10 +15,10 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 
-#include <gmock/gmock.h>
-
+#include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -32,6 +32,7 @@ namespace xla::gpu {
 
 namespace {
 
+using ::testing::ElementsAre;
 using ::testing::UnorderedElementsAre;
 
 TEST(CollectiveCliqueRequestsTest, OrderedRequests) {
@@ -125,11 +126,88 @@ TEST(CollectiveCliqueRequestsTest, SingletonDeviceGroupsMismatchAllowed) {
 
   CollectiveCliqueRequests requests;
   ASSERT_OK(requests.RequestClique(k_singleton, dg_a));
+  EXPECT_FALSE(requests.HasMixedDeviceGroups());
   EXPECT_OK(requests.RequestClique(k_singleton, dg_b));
+  EXPECT_TRUE(requests.HasMixedDeviceGroups());
 
   auto ordered_requests = requests.OrderedRequestedCliques();
   ASSERT_EQ(ordered_requests.size(), 1);
   EXPECT_EQ(ordered_requests[0].key, k_singleton);
+}
+
+TEST(CollectiveCliqueRequestsTest, UniformDeviceGroups) {
+  GlobalDeviceId d0(0), d1(1), d2(2), d3(3);
+  std::vector<std::vector<GlobalDeviceId>> groups = {{d0, d1}, {d2, d3}};
+  GpuCliqueKey key({d0, d1}, /*num_local_participants=*/2);
+
+  CollectiveCliqueRequests requests;
+  EXPECT_FALSE(requests.HasMixedDeviceGroups());
+  ASSERT_OK(requests.RequestClique(key, groups));
+  std::string signature = requests.CollectiveGraphSignature();
+  ASSERT_OK(requests.RequestClique(key, groups));
+  EXPECT_EQ(requests.CollectiveGraphSignature(), signature);
+  EXPECT_FALSE(requests.HasMixedDeviceGroups());
+
+  GpuCliqueKey other_communication({d0, d1}, /*num_local_participants=*/2,
+                                   CommunicationId(1));
+  ASSERT_OK(requests.RequestClique(other_communication, groups));
+  EXPECT_NE(requests.CollectiveGraphSignature(), signature);
+  EXPECT_FALSE(requests.HasMixedDeviceGroups());
+}
+
+TEST(CollectiveCliqueRequestsTest, GraphSignatureIsRankIndependent) {
+  GlobalDeviceId d0(0), d1(1), d2(2), d3(3);
+  std::vector<std::vector<GlobalDeviceId>> groups_a = {{d0}, {d1, d2, d3}};
+  std::vector<std::vector<GlobalDeviceId>> groups_b = {{d0}, {d1}, {d2, d3}};
+
+  CollectiveCliqueRequests rank0;
+  GpuCliqueKey singleton({d0}, /*num_local_participants=*/1);
+  ASSERT_OK(rank0.RequestClique(singleton, groups_a));
+  std::string signature = rank0.CollectiveGraphSignature();
+  ASSERT_OK(rank0.RequestClique(singleton, groups_b));
+  EXPECT_NE(rank0.CollectiveGraphSignature(), signature);
+  EXPECT_EQ(rank0.size(), 1);
+
+  CollectiveCliqueRequests rank1;
+  ASSERT_OK(rank1.RequestClique(
+      GpuCliqueKey({d1, d2, d3}, /*num_local_participants=*/2), groups_a));
+  ASSERT_OK(rank1.RequestClique(
+      GpuCliqueKey({d1}, /*num_local_participants=*/1), groups_b));
+  EXPECT_EQ(rank1.size(), 2);
+  EXPECT_TRUE(rank1.HasMixedDeviceGroups());
+  EXPECT_EQ(rank0.CollectiveGraphSignature(), rank1.CollectiveGraphSignature());
+}
+
+TEST(CollectiveCliqueRequestsTest, GraphParticipantsFollowTransitiveGroups) {
+  GlobalDeviceId d0(0), d1(1), d2(2), d3(3), d4(4), d5(5), d6(6), d7(7);
+  std::vector<std::vector<GlobalDeviceId>> first = {
+      {d0}, {d1, d2}, {d3}, {d4, d5}, {d6}, {d7}};
+  std::vector<std::vector<GlobalDeviceId>> second = {
+      {d0, d1}, {d2, d3}, {d4}, {d5, d6}, {d7}};
+  CollectiveCliqueRequests requests;
+  ASSERT_OK(requests.RequestClique(GpuCliqueKey({d0}, 1), first));
+  ASSERT_OK(requests.RequestClique(GpuCliqueKey({d0, d1}, 2), second));
+
+  EXPECT_THAT(requests.CollectiveGraphParticipants(d0),
+              ElementsAre(d0, d1, d2, d3));
+  EXPECT_THAT(requests.CollectiveGraphParticipants(d3),
+              ElementsAre(d0, d1, d2, d3));
+  EXPECT_THAT(requests.CollectiveGraphParticipants(d4), ElementsAre(d4, d5, d6));
+  EXPECT_THAT(requests.CollectiveGraphParticipants(d7), ElementsAre(d7));
+}
+
+TEST(CollectiveCliqueRequestsTest, GraphParticipantsWithoutRequests) {
+  CollectiveCliqueRequests requests;
+  EXPECT_THAT(requests.CollectiveGraphParticipants(GlobalDeviceId(3)),
+              ElementsAre(GlobalDeviceId(3)));
+}
+
+TEST(CollectiveCliqueRequestsTest, RejectEmptyDeviceGroups) {
+  CollectiveCliqueRequests requests;
+  EXPECT_THAT(
+      requests.RequestClique(GpuCliqueKey({GlobalDeviceId(0)}, 1), {}),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             testing::HasSubstr("nonempty device group")));
 }
 
 TEST(CollectiveCliqueRequestsTest, DeviceGroupsLexicographicSort) {
