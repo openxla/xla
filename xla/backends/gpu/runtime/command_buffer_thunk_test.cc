@@ -258,7 +258,8 @@ class CountingMemsetCommand : public TracedCommand {
   }
 
   absl::Status ExecuteOnStream(const ExecuteParams& params) override {
-    return Memset32BitValueThunk(ThunkInfo(), ++counts_->recordings, destination_)
+    return Memset32BitValueThunk(ThunkInfo(), ++counts_->recordings,
+                                 destination_)
         .ExecuteOnStream(params);
   }
 
@@ -270,14 +271,15 @@ class CountingMemsetCommand : public TracedCommand {
           return std::make_unique<CountDestruction<CommandState>>(
               &counts_->destroyed_states);
         });
-    command_buffer->GetOrConstructResource<
-        CountDestruction<se::CommandBuffer::Resource>>(
-        &counts_->destroyed_graphs);
+    command_buffer
+        ->GetOrConstructResource<CountDestruction<se::CommandBuffer::Resource>>(
+            &counts_->destroyed_graphs);
     if (traced_) {
       return TracedCommand::Record(execute_params, record_params,
                                    std::move(record_action), command_buffer);
     }
-    return Memset32BitValueThunk(ThunkInfo(), ++counts_->recordings, destination_)
+    return Memset32BitValueThunk(ThunkInfo(), ++counts_->recordings,
+                                 destination_)
         .Record(execute_params, record_params, std::move(record_action),
                 command_buffer);
   }

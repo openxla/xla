@@ -180,8 +180,8 @@ TEST(CollectiveCliqueRequestsTest, GraphSignatureIsRankIndependent) {
 
 TEST(CollectiveCliqueRequestsTest, GraphParticipantsFollowTransitiveGroups) {
   GlobalDeviceId d0(0), d1(1), d2(2), d3(3), d4(4), d5(5), d6(6), d7(7);
-  std::vector<std::vector<GlobalDeviceId>> first = {
-      {d0}, {d1, d2}, {d3}, {d4, d5}, {d6}, {d7}};
+  std::vector<std::vector<GlobalDeviceId>> first = {{d0},     {d1, d2}, {d3},
+                                                    {d4, d5}, {d6},     {d7}};
   std::vector<std::vector<GlobalDeviceId>> second = {
       {d0, d1}, {d2, d3}, {d4}, {d5, d6}, {d7}};
   CollectiveCliqueRequests requests;
@@ -192,7 +192,8 @@ TEST(CollectiveCliqueRequestsTest, GraphParticipantsFollowTransitiveGroups) {
               ElementsAre(d0, d1, d2, d3));
   EXPECT_THAT(requests.CollectiveGraphParticipants(d3),
               ElementsAre(d0, d1, d2, d3));
-  EXPECT_THAT(requests.CollectiveGraphParticipants(d4), ElementsAre(d4, d5, d6));
+  EXPECT_THAT(requests.CollectiveGraphParticipants(d4),
+              ElementsAre(d4, d5, d6));
   EXPECT_THAT(requests.CollectiveGraphParticipants(d7), ElementsAre(d7));
 }
 

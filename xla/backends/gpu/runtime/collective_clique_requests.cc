@@ -155,8 +155,8 @@ std::string CollectiveCliqueRequests::CollectiveGraphSignature() const {
 }
 
 std::vector<GlobalDeviceId>
-CollectiveCliqueRequests::CollectiveGraphParticipants(GlobalDeviceId device)
-    const {
+CollectiveCliqueRequests::CollectiveGraphParticipants(
+    GlobalDeviceId device) const {
   absl::flat_hash_set<GlobalDeviceId> participants = {device};
   size_t previous_size;
   do {
