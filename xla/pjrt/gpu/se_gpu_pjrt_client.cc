@@ -88,6 +88,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/topology_util.h"
 #include "xla/pjrt/gpu/allocator_config.h"
+#include "xla/pjrt/gpu/collective_graph_invalidation.h"
 #include "xla/pjrt/gpu/cross_host_transfer_clique_key.h"
 #include "xla/pjrt/gpu/gpu_helpers.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_cross_host_transfer.pb.h"
@@ -2015,6 +2016,9 @@ absl::StatusOr<PjRtDevicesAndTopology> BuildDistributedDevices(
   }
 
   size_t num_processes = global_topology.processes().size();
+  gpu_executable_run_options->set_collective_graph_invalidation_callback(
+      gpu::CreateCollectiveGraphInvalidationCallback(
+          ProcessId(process_id), device_to_process, kv_store));
   if (gpu_collectives->IsImplemented()) {
     ABSL_ASSIGN_OR_RETURN(
         auto clique_id_callback,

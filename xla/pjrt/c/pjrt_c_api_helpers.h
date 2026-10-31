@@ -195,31 +195,30 @@ using PJRT_KeyValueTryGetCFunc =
 using PJRT_KeyValuePutCFunc =
     std::function<PJRT_Error*(PJRT_KeyValuePutCallback_Args* args)>;
 
-// Groups data needed to support key value get/put callbacks.
+using PJRT_KeyValueDeleteCFunc =
+    std::function<PJRT_Error*(PJRT_KeyValueDeleteCallback_Args* args)>;
+
+// Owns the callback state used by a C API client's key-value store.
 struct PJRT_KeyValueCallbackData {
   PJRT_KeyValueCallbackData() = default;
   PJRT_KeyValueCallbackData(const PJRT_KeyValueCallbackData&) = delete;
 
   std::shared_ptr<xla::KeyValueStoreInterface> kv_store;
 
-  // kv_get_c_func, kv_try_get_c_func and kv_put_c_func are holding pointers to
-  // kv_store.
+  // Function objects retain pointers to kv_store. C callbacks refer to these
+  // function objects through their user_arg pointers.
   pjrt::PJRT_KeyValueGetCFunc kv_get_c_func;
   pjrt::PJRT_KeyValuePutCFunc kv_put_c_func;
-  // c_kv_get, c_kv_try_get and c_kv_put are holding pointers to kv_get_c_func,
-  // kv_try_get_c_func and kv_put_c_func.
   PJRT_KeyValueGetCallback c_kv_get;
   PJRT_KeyValuePutCallback c_kv_put;
   pjrt::PJRT_KeyValueTryGetCFunc kv_try_get_c_func;
   PJRT_KeyValueTryGetCallback c_kv_try_get;
+  pjrt::PJRT_KeyValueDeleteCFunc kv_delete_c_func;
+  PJRT_KeyValueDeleteCallback c_kv_delete;
 };
 
-// The returned &kv_get_c_func, &kv_try_get_c_func and &kv_put_c_func must be
-// set as PJRT_Client_Create_Args.kv_get_user_arg,
-// PJRT_Client_Create_Args.kv_try_get_user_arg and
-// PJRT_Client_Create_Args.kv_put_user_arg, respectively. The entire
-// PJRT_KeyValueCallbackData must be kept alive as long as c_kv_get and c_kv_put
-// may be called.
+// Each callback's user_arg must point to its corresponding function object in
+// the returned data. Keep the data alive for the lifetime of the C API client.
 std::unique_ptr<PJRT_KeyValueCallbackData> ConvertToCKeyValueCallbacks(
     std::shared_ptr<xla::KeyValueStoreInterface> kv_store);
 

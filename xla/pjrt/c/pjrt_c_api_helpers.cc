@@ -764,6 +764,20 @@ static PJRT_KeyValuePutCFunc ToKVPutCFunc(
   };
 }
 
+static PJRT_KeyValueDeleteCFunc ToKVDeleteCFunc(
+    xla::KeyValueStoreInterface* kv_store) {
+  return [kv_store](PJRT_KeyValueDeleteCallback_Args* args) -> PJRT_Error* {
+    absl::Status status =
+        kv_store->Delete(absl::string_view(args->key, args->key_size));
+    if (!status.ok()) {
+      absl::string_view message = status.message();
+      return (*args->callback_error)(StatusCodeToPjrtErrorCode(status.code()),
+                                     message.data(), message.size());
+    }
+    return nullptr;
+  };
+}
+
 static PJRT_KeyValueGetCallback ToCKVGetCallback(
     PJRT_KeyValueGetCFunc* kv_get_c_func) {
   return [](PJRT_KeyValueGetCallback_Args* args) -> PJRT_Error* {
@@ -812,18 +826,35 @@ static PJRT_KeyValuePutCallback ToCKVPutCallback(
   };
 }
 
+static PJRT_KeyValueDeleteCallback ToCKVDeleteCallback() {
+  return [](PJRT_KeyValueDeleteCallback_Args* args) -> PJRT_Error* {
+    auto* callback =
+        reinterpret_cast<PJRT_KeyValueDeleteCFunc*>(args->user_arg);
+    if (callback == nullptr) {
+      absl::Status status = xla::InvalidArgument(
+          "got nullptr for PJRT_KeyValueDeleteCallback_Args.user_arg");
+      return (*args->callback_error)(StatusCodeToPjrtErrorCode(status.code()),
+                                     status.message().data(),
+                                     status.message().size());
+    }
+    return (*callback)(args);
+  };
+}
+
 std::unique_ptr<PJRT_KeyValueCallbackData> ConvertToCKeyValueCallbacks(
     std::shared_ptr<xla::KeyValueStoreInterface> kv_store) {
   auto kv_callback_data = std::make_unique<PJRT_KeyValueCallbackData>();
   kv_callback_data->kv_get_c_func = ToKVGetCFunc(kv_store.get());
   kv_callback_data->kv_try_get_c_func = ToKVTryGetCFunc(kv_store.get());
   kv_callback_data->kv_put_c_func = ToKVPutCFunc(kv_store.get());
+  kv_callback_data->kv_delete_c_func = ToKVDeleteCFunc(kv_store.get());
   kv_callback_data->c_kv_get =
       ToCKVGetCallback(&kv_callback_data->kv_get_c_func);
   kv_callback_data->c_kv_try_get =
       ToCKVTryGetCallback(&kv_callback_data->kv_try_get_c_func);
   kv_callback_data->c_kv_put =
       ToCKVPutCallback(&kv_callback_data->kv_put_c_func);
+  kv_callback_data->c_kv_delete = ToCKVDeleteCallback();
   kv_callback_data->kv_store = std::move(kv_store);
   return kv_callback_data;
 }

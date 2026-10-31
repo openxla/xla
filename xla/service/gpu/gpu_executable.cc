@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
+#include "xla/backends/gpu/runtime/command_buffer_thunk.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -589,6 +590,13 @@ absl::Status RendezvousAfterExecution(
     const ServiceExecutableRunOptions& run_options,
     const DebugOptions* absl_nullable debug_options);
 
+static absl::StatusOr<bool> SynchronizeCommandBufferInvalidation(
+    const ServiceExecutableRunOptions& run_options,
+    const DebugOptions* debug_options,
+    const CollectiveParams& collective_params,
+    const CollectiveCliqueRequests& clique_requests,
+    ThunkExecutor& thunk_executor);
+
 // Returns HangWatchdog guards for the given execution timeout handlers.
 static std::vector<std::shared_ptr<HangWatchdog::Guard>> ExecutionTimeoutGuards(
     absl::Span<ExecutionTimeoutHandler> handlers,
@@ -860,6 +868,13 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
       AcquireCollectiveMemory(collective_params, collective_cliques,
                               collective_memory_requests,
                               collective_memory_cache));
+  bool invalidate_command_buffers = false;
+  if (!mock_collectives) {
+    ABSL_ASSIGN_OR_RETURN(invalidate_command_buffers,
+                          SynchronizeCommandBufferInvalidation(
+                              *run_options, debug_options, collective_params,
+                              collective_clique_requests, thunk_executor));
+  }
   {  // Initialize thunks using prepared resources before execution.
     Thunk::InitializeParams initialize_params{
         executor,
@@ -875,6 +890,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         run_options->local_device_count(),
         &execution_scoped_state};
     initialize_params.persistent_alloc_indices = persistent_alloc_indices;
+    initialize_params.invalidate_command_buffers = invalidate_command_buffers;
 
     tsl::profiler::TraceMe trace_initialize("Thunks::Initialize");
     ABSL_RETURN_IF_ERROR(thunk_executor.Initialize(initialize_params));
@@ -998,6 +1014,21 @@ struct ExecutionCompletionKey {
   }
 };
 
+struct CommandBufferInvalidationKey {
+  RunId run_id;
+  std::vector<GlobalDeviceId> participants;
+
+  template <typename H>
+  friend H AbslHashValue(H h, const CommandBufferInvalidationKey& key) {
+    return H::combine(std::move(h), key.run_id, key.participants);
+  }
+
+  friend bool operator==(const CommandBufferInvalidationKey& a,
+                         const CommandBufferInvalidationKey& b) {
+    return a.run_id == b.run_id && a.participants == b.participants;
+  }
+};
+
 absl::StatusOr<int64_t> GetNumLocalParticipants(
     const ServiceExecutableRunOptions& run_options) {
   auto* gpu_opts = run_options.run_options().gpu_executable_run_options();
@@ -1032,6 +1063,92 @@ absl::StatusOr<int64_t> GetNumLocalParticipants(
   return num_local_participants;
 }
 }  // namespace
+
+static absl::StatusOr<bool> SynchronizeCommandBufferInvalidation(
+    const ServiceExecutableRunOptions& run_options,
+    const DebugOptions* debug_options,
+    const CollectiveParams& collective_params,
+    const CollectiveCliqueRequests& clique_requests,
+    ThunkExecutor& thunk_executor) {
+  // With one partition of devices, communicator replacement invalidates every
+  // rank in each group together. Mixed partitions can invalidate only a subset
+  // of the ranks needed to recapture another collective in the same graph.
+  if (!clique_requests.HasMixedDeviceGroups()) {
+    return false;
+  }
+
+  bool invalidated = false;
+  ABSL_RETURN_IF_ERROR(
+      thunk_executor.thunks().WalkNested([&](Thunk* thunk) -> absl::Status {
+        if (thunk->kind() != Thunk::kCommandBuffer) {
+          return absl::OkStatus();
+        }
+        ABSL_ASSIGN_OR_RETURN(
+            bool needs_rebuild,
+            static_cast<CommandBufferThunk*>(thunk)
+                ->RequiresCommandBufferRebuild(collective_params.executor));
+        invalidated |= needs_rebuild;
+        return absl::OkStatus();
+      }));
+  std::vector<GlobalDeviceId> participants =
+      clique_requests.CollectiveGraphParticipants(
+          collective_params.global_device_id);
+  int64_t num_local_participants = participants.size();
+  if (collective_params.global_device_id_map != nullptr) {
+    num_local_participants = absl::c_count_if(
+        *collective_params.global_device_id_map, [&](const auto& entry) {
+          return absl::c_binary_search(participants, entry.second);
+        });
+  }
+  TF_RET_CHECK(num_local_participants > 0);
+  auto synchronize =
+      [&](absl::Span<const bool* const> values) -> absl::StatusOr<bool> {
+    bool local_invalidated =
+        absl::c_any_of(values, [](const bool* value) { return *value; });
+    if (participants.size() == num_local_participants) {
+      return local_invalidated;
+    }
+
+    const GpuExecutableRunOptions* gpu_options =
+        run_options.run_options().gpu_executable_run_options();
+    if (gpu_options == nullptr ||
+        !gpu_options->collective_graph_invalidation_callback()) {
+      // Without host coordination, every rank must rebuild. Commands requiring
+      // warmup consequently keep using their fallback thunk sequence.
+      return true;
+    }
+
+    std::string signature = clique_requests.CollectiveGraphSignature();
+    if (collective_params.incarnations != nullptr) {
+      for (GlobalDeviceId device : participants) {
+        auto incarnation = collective_params.incarnations->find(device);
+        TF_RET_CHECK(incarnation != collective_params.incarnations->end());
+        absl::StrAppend(&signature, ";", device.value(), ":",
+                        incarnation->second.value());
+      }
+    }
+    return gpu_options->collective_graph_invalidation_callback()(
+        signature, participants, local_invalidated);
+  };
+
+  ABSL_ASSIGN_OR_RETURN(
+      std::shared_ptr<bool> result,
+      Rendezvous<bool>(
+          "command buffer invalidation",
+          CommandBufferInvalidationKey{collective_params.run_id, participants},
+          invalidated, num_local_participants, synchronize,
+          absl::Seconds(
+              debug_options
+                  ? debug_options
+                        ->xla_gpu_executable_warn_stuck_timeout_seconds()
+                  : 10),
+          absl::Seconds(
+              debug_options
+                  ? debug_options
+                        ->xla_gpu_executable_terminate_timeout_seconds()
+                  : 30)));
+  return *result;
+}
 
 absl::Status RendezvousAfterInitialization(
     const ServiceExecutableRunOptions& run_options,
