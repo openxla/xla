@@ -117,7 +117,7 @@ limitations under the License.
 
 namespace xla {
 
-constexpr int kMaxDims = 4;
+constexpr size_t kMaxDims = 8;
 const char PjRtCApiClient::kPjRtCApiMemorySpaceKey = 0;
 
 // Helper macros
