@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
+#include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -10579,6 +10580,115 @@ std::vector<DotOfGatherTestSpec> DotOfGatherPositiveNegativeTests() {
 INSTANTIATE_TEST_SUITE_P(
     DotOfGatherSimplificationTestInstantiation, DotOfGatherSimplificationTest,
     ::testing::ValuesIn(DotOfGatherPositiveNegativeTests()));
+
+class AbsArgMaxGatherTest : public AlgebraicSimplifierTest {
+ protected:
+  std::string ModuleString(
+      absl::string_view root = "ROOT result = f32[2] reshape(values)",
+      absl::string_view extra_computation = "") {
+    constexpr absl::string_view kModule = R"(
+HloModule abs_argmax_gather
+
+argmax {
+  lhs_value = f32[] parameter(0)
+  lhs_index = s32[] parameter(1)
+  rhs_value = f32[] parameter(2)
+  rhs_index = s32[] parameter(3)
+  greater = pred[] compare(lhs_value, rhs_value), direction=GT
+  lhs_nan = pred[] compare(lhs_value, lhs_value), direction=NE
+  value_pred = pred[] or(greater, lhs_nan)
+  value = f32[] select(value_pred, lhs_value, rhs_value)
+  equal = pred[] compare(lhs_value, rhs_value), direction=EQ
+  lower_index = pred[] compare(lhs_index, rhs_index), direction=LT
+  tie = pred[] and(equal, lower_index)
+  index_pred = pred[] or(value_pred, tie)
+  index = s32[] select(index_pred, lhs_index, rhs_index)
+  ROOT result = (f32[], s32[]) tuple(value, index)
+}
+
+$extra_computation
+
+ENTRY main {
+  input = f32[2,3] parameter(0)
+  magnitudes = f32[2,3] abs(input)
+  iota = s32[2,3] iota(), iota_dimension=1
+  negative_infinity = f32[] constant(-inf)
+  zero = s32[] constant(0)
+  argmax_result = (f32[2], s32[2]) reduce(magnitudes, iota, negative_infinity, zero), dimensions={1}, to_apply=argmax
+  indices = s32[2] get-tuple-element(argmax_result), index=1
+  gather_indices = s32[2,1,1] reshape(indices)
+  values = f32[2,1] gather(magnitudes, gather_indices), offset_dims={}, collapsed_slice_dims={1}, start_index_map={1}, operand_batching_dims={0}, start_indices_batching_dims={0}, index_vector_dim=2, slice_sizes={1,1}
+  $root
+}
+)";
+    return absl::StrReplaceAll(
+        kModule, {{"$root", root}, {"$extra_computation", extra_computation}});
+  }
+};
+
+TEST_F(AbsArgMaxGatherTest, PreservesForwardValues) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(ModuleString()));
+  const Literal input =
+      LiteralUtil::CreateR2<float>({{1.0f, -4.0f, 2.0f}, {-3.0f, 2.0f, 1.0f}});
+  const Literal expected = LiteralUtil::CreateR1<float>({4.0f, 3.0f});
+  ASSERT_OK_AND_ASSIGN(Literal before,
+                       HloEvaluator().Evaluate(*module, {&input}));
+  HloPassFix<AlgebraicSimplifier> simplifier(default_options_);
+  ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(FindInstructions(module.get(), HloOpcode::kGather).empty());
+  ASSERT_OK_AND_ASSIGN(Literal after,
+                       HloEvaluator().Evaluate(*module, {&input}));
+  for (int64_t row = 0; row < 2; ++row) {
+    EXPECT_EQ(before.Get<float>({row}), expected.Get<float>({row}));
+    EXPECT_EQ(after.Get<float>({row}), before.Get<float>({row}));
+  }
+}
+
+TEST_F(AbsArgMaxGatherTest, PreservesBackwardGradient) {
+  // JAX differentiates gather into scatter-add, then applies the sign of abs.
+  // Keep the forward values live so the optimization runs on this AD graph.
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(ModuleString(R"(
+  zero_float = f32[] constant(0)
+  zeros = f32[2,3] broadcast(zero_float), dimensions={}
+  one_float = f32[] constant(1)
+  cotangent = f32[2,1] broadcast(one_float), dimensions={}
+  magnitude_gradient = f32[2,3] scatter(zeros, gather_indices, cotangent), update_window_dims={}, inserted_window_dims={1}, scatter_dims_to_operand_dims={1}, input_batching_dims={0}, scatter_indices_batching_dims={0}, index_vector_dim=2, to_apply=scatter_add
+  nonnegative = pred[2,3] compare(input, zeros), direction=GE
+  positive_gradient = f32[2,3] select(nonnegative, magnitude_gradient, zeros)
+  negative_gradient = f32[2,3] select(nonnegative, zeros, magnitude_gradient)
+  negated_gradient = f32[2,3] negate(negative_gradient)
+  gradient = f32[2,3] add(positive_gradient, negated_gradient)
+  ROOT result = (f32[2,1], f32[2,3]) tuple(values, gradient)
+)",
+                                                                 R"(
+scatter_add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT sum = f32[] add(lhs, rhs)
+}
+)")));
+  // Each row has tied maximum magnitudes. Only the first winner receives the
+  // gradient, with the sign of the selected input.
+  const Literal input =
+      LiteralUtil::CreateR2<float>({{-3.0f, 3.0f, 2.0f}, {1.0f, -5.0f, 5.0f}});
+  const Literal expected =
+      LiteralUtil::CreateR2<float>({{-1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}});
+  ASSERT_OK_AND_ASSIGN(Literal before,
+                       HloEvaluator().Evaluate(*module, {&input}));
+  HloPassFix<AlgebraicSimplifier> simplifier(default_options_);
+  ASSERT_OK_AND_ASSIGN(bool changed, simplifier.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_TRUE(FindInstructions(module.get(), HloOpcode::kGather).empty());
+  ASSERT_OK_AND_ASSIGN(Literal after,
+                       HloEvaluator().Evaluate(*module, {&input}));
+  for (int64_t i = 0; i < 6; ++i) {
+    EXPECT_EQ(before.GetLinear<float>(i, {1}), expected.GetLinear<float>(i));
+    EXPECT_EQ(after.GetLinear<float>(i, {1}), before.GetLinear<float>(i, {1}));
+  }
+}
 
 TEST_F(AlgebraicSimplifierTest, GatherOfScalarToBroadcast) {
   constexpr absl::string_view hlo_string = R"(

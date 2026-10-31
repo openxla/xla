@@ -88,6 +88,8 @@ limitations under the License.
 
 namespace xla {
 
+static bool MatchArgMax(const HloInstruction* hlo);
+
 namespace {
 
 namespace m = match;
@@ -96,8 +98,16 @@ using primitive_util::NativeTypeOf;
 
 // Unwraps ops whose output elements are all taken from operand(0), hunting for
 // a constant.
-const HloInstruction* UnwrapToConstant(const HloInstruction* op) {
+const HloInstruction* UnwrapToConstant(
+    const HloInstruction* op, bool reject_control_dependencies = false) {
   while (true) {
+    // Restrict this mode to unary paths: otherwise an omitted operand could
+    // carry control dependencies of its own (e.g. a dynamic-slice index).
+    if (reject_control_dependencies &&
+        (op->HasControlDependencies() ||
+         (op->opcode() != HloOpcode::kConstant && op->operand_count() != 1))) {
+      return nullptr;
+    }
     switch (op->opcode()) {
       case HloOpcode::kBroadcast:
       case HloOpcode::kCopy:
@@ -4530,12 +4540,229 @@ GatherOfPadInfo CheckPaddedDimsForGatherOfPad(
   return {true, true};
 }
 
+// Returns the argmax reduction producing index, provided its indices are in
+// [0, reduction_size). Reshapes and lossless signed integer conversions
+// preserve both this bound and the batch order.
+HloInstruction* MatchBoundedArgMaxIndex(HloInstruction* index) {
+  PrimitiveType narrowest_type = index->shape().element_type();
+  if (!primitive_util::IsSignedIntegralType(narrowest_type)) {
+    return nullptr;
+  }
+  while (index->opcode() == HloOpcode::kReshape ||
+         index->opcode() == HloOpcode::kConvert) {
+    PrimitiveType operand_type = index->operand(0)->shape().element_type();
+    if (index->HasControlDependencies() || index->shape().is_dynamic() ||
+        !primitive_util::IsSignedIntegralType(operand_type)) {
+      return nullptr;
+    }
+    if (primitive_util::BitWidth(operand_type) <
+        primitive_util::BitWidth(narrowest_type)) {
+      narrowest_type = operand_type;
+    }
+    index = index->mutable_operand(0);
+  }
+  if (index->opcode() != HloOpcode::kGetTupleElement ||
+      index->tuple_index() != 1 || index->HasControlDependencies() ||
+      index->shape().is_dynamic()) {
+    return nullptr;
+  }
+  HloInstruction* argmax = index->mutable_operand(0);
+  if (!MatchArgMax(argmax) || argmax->dimensions().size() != 1 ||
+      argmax->HasControlDependencies() ||
+      argmax->operand(0)->shape().is_dynamic() ||
+      !primitive_util::IsSignedIntegralType(index->shape().element_type())) {
+    return nullptr;
+  }
+  const int64_t axis = argmax->dimensions(0);
+  const int64_t size = argmax->operand(0)->shape().dimensions(axis);
+  if (size == 0 ||
+      Cast<HloIotaInstruction>(argmax->operand(1))->iota_dimension() != axis ||
+      absl::c_any_of(argmax->operands(),
+                     [](const HloInstruction* operand) {
+                       return operand->HasControlDependencies();
+                     }) ||
+      !primitive_util::FitsInIntegralType(size - 1, narrowest_type)) {
+    return nullptr;
+  }
+  // The argmax matcher recognizes the NaN-propagating, partial-order floating
+  // comparisons. Total-order comparisons would give that expression different
+  // semantics.
+  for (const HloInstruction* instruction : argmax->to_apply()->instructions()) {
+    if (instruction->HasControlDependencies()) {
+      return nullptr;
+    }
+    if (instruction->opcode() == HloOpcode::kCompare) {
+      const Comparison& comparison =
+          Cast<HloCompareInstruction>(instruction)->comparison();
+      if (comparison.IsFloatingPointPrimitiveType() &&
+          !comparison.IsPartialOrder()) {
+        return nullptr;
+      }
+    }
+  }
+  return argmax;
+}
+
+// Recognizes comparisons made redundant by the proven argmax index bounds.
+// This also removes negative-index normalization and fill-value checks around
+// take_along_axis without changing any indices still needed by other users.
+std::optional<bool> EvaluateBoundedArgMaxComparison(HloInstruction* compare) {
+  if (compare->HasControlDependencies()) {
+    return std::nullopt;
+  }
+  HloInstruction* index = compare->mutable_operand(0);
+  const HloInstruction* constant = UnwrapToConstant(
+      compare->operand(1), /*reject_control_dependencies=*/true);
+  bool reverse_operands = constant == nullptr;
+  if (constant == nullptr) {
+    index = compare->mutable_operand(1);
+    constant = UnwrapToConstant(compare->operand(0),
+                                /*reject_control_dependencies=*/true);
+  }
+  const Comparison& original =
+      Cast<HloCompareInstruction>(compare)->comparison();
+  Comparison comparison = reverse_operands ? original.Converse() : original;
+  if (constant == nullptr || !comparison.IsTotalOrder() ||
+      !primitive_util::IsSignedIntegralType(comparison.GetPrimitiveType()) ||
+      !primitive_util::IsSignedIntegralType(constant->shape().element_type()) ||
+      ShapeUtil::IsZeroElementArray(constant->shape())) {
+    return std::nullopt;
+  }
+  HloInstruction* argmax = MatchBoundedArgMaxIndex(index);
+  if (argmax == nullptr || !constant->literal().IsAllFirst()) {
+    return std::nullopt;
+  }
+  std::optional<int64_t> bound = constant->literal().GetFirstInteger();
+  if (!bound.has_value()) {
+    return std::nullopt;
+  }
+  int64_t upper =
+      argmax->operand(0)->shape().dimensions(argmax->dimensions(0)) - 1;
+  if ((comparison.IsEq() || comparison.IsNe()) && upper != 0 && *bound >= 0 &&
+      *bound <= upper) {
+    return std::nullopt;
+  }
+  bool lower_result = comparison.Compare<int64_t>(0, *bound);
+  bool upper_result = comparison.Compare<int64_t>(upper, *bound);
+  if (lower_result == upper_result) {
+    return lower_result;
+  }
+  return std::nullopt;
+}
+
+// Matches take_along_axis(abs(x), argmax(abs(x))) with explicit gather batching
+// or the concatenated batch iotas emitted by BatchedGatherScatterNormalizer.
+// Every non-reduced input dimension must select the corresponding batch, and
+// the remaining index dimensions may only insert singleton output dimensions.
+HloInstruction* MatchAbsArgMaxGather(HloInstruction* gather) {
+  HloInstruction* values = gather->mutable_operand(0);
+  if (gather->HasControlDependencies() || values->opcode() != HloOpcode::kAbs ||
+      !primitive_util::IsFloatingPointType(
+          values->operand(0)->shape().element_type())) {
+    return nullptr;
+  }
+  HloInstruction* indices = gather->mutable_operand(1);
+  const GatherDimensionNumbers& dnums = gather->gather_dimension_numbers();
+  const int64_t rank = values->shape().dimensions_size();
+  if (dnums.offset_dims_size() != 0 ||
+      !absl::c_all_of(gather->gather_slice_sizes(),
+                      [](int64_t size) { return size == 1; })) {
+    return nullptr;
+  }
+  std::vector<int64_t> operand_batching_dims;
+  std::vector<int64_t> indices_batching_dims;
+  if (rank > 1 && dnums.operand_batching_dims_size() == 0) {
+    if (indices->opcode() != HloOpcode::kConcatenate ||
+        indices->HasControlDependencies() || indices->operand_count() != rank ||
+        indices->concatenate_dimension() != dnums.index_vector_dim() ||
+        dnums.collapsed_slice_dims_size() != rank ||
+        dnums.start_index_map_size() != rank) {
+      return nullptr;
+    }
+    for (int64_t batch = 0; batch < rank - 1; ++batch) {
+      const HloIotaInstruction* iota =
+          DynCast<HloIotaInstruction>(indices->operand(batch));
+      if (iota == nullptr || iota->HasControlDependencies() ||
+          iota->iota_dimension() == dnums.index_vector_dim() ||
+          iota->shape().dimensions(dnums.index_vector_dim()) != 1 ||
+          !primitive_util::FitsInIntegralType(
+              iota->shape().dimensions(iota->iota_dimension()) - 1,
+              iota->shape().element_type())) {
+        return nullptr;
+      }
+      operand_batching_dims.push_back(dnums.start_index_map(batch));
+      indices_batching_dims.push_back(iota->iota_dimension());
+    }
+    indices = indices->mutable_operand(rank - 1);
+  } else {
+    if (dnums.collapsed_slice_dims_size() != 1 ||
+        dnums.start_index_map_size() != 1 ||
+        dnums.operand_batching_dims_size() != rank - 1) {
+      return nullptr;
+    }
+    operand_batching_dims.assign(dnums.operand_batching_dims().begin(),
+                                 dnums.operand_batching_dims().end());
+    indices_batching_dims.assign(dnums.start_indices_batching_dims().begin(),
+                                 dnums.start_indices_batching_dims().end());
+  }
+  HloInstruction* argmax = MatchBoundedArgMaxIndex(indices);
+  if (argmax == nullptr || argmax->operand(0) != values) {
+    return nullptr;
+  }
+  int64_t axis = argmax->dimensions(0);
+  if (dnums.start_index_map(dnums.start_index_map_size() - 1) != axis ||
+      (dnums.collapsed_slice_dims_size() == 1 &&
+       dnums.collapsed_slice_dims(0) != axis)) {
+    return nullptr;
+  }
+  int64_t batch = 0;
+  int64_t previous_index_dim = -1;
+  for (int64_t dim = 0; dim < rank; ++dim) {
+    if (dim == axis) {
+      continue;
+    }
+    int64_t index_dim = indices_batching_dims[batch];
+    if (operand_batching_dims[batch] != dim ||
+        index_dim <= previous_index_dim ||
+        indices->shape().dimensions(index_dim) !=
+            values->shape().dimensions(dim)) {
+      return nullptr;
+    }
+    previous_index_dim = index_dim;
+    ++batch;
+  }
+  for (int64_t dim = 0; dim < indices->shape().dimensions_size(); ++dim) {
+    if (!absl::c_linear_search(indices_batching_dims, dim) &&
+        indices->shape().dimensions(dim) != 1) {
+      return nullptr;
+    }
+  }
+  return argmax;
+}
+
 }  // namespace
 
 absl::Status AlgebraicSimplifierVisitor::HandleGather(HloInstruction* gather) {
   const Shape& operand_shape = gather->operand(0)->shape();
   if (ShapeUtil::IsZeroElementArray(operand_shape)) {
     return ReplaceInstruction(gather, MakeScalarLike(gather, 0));
+  }
+
+  // The argmax reducer propagates NaNs even when fast min/max is enabled.
+  if (!options_.is_layout_sensitive() && options_.minmax_propagate_nan()) {
+    if (HloInstruction* argmax = MatchAbsArgMaxGather(gather)) {
+      // Abs makes all zeros positive, so replacing the selected value with a
+      // maximum also preserves signed-zero behavior. Existing users of the
+      // argmax index, including gradient computations, remain unchanged.
+      ABSL_ASSIGN_OR_RETURN(
+          HloInstruction * maximum,
+          MakeReduceHlo(gather->mutable_operand(0), argmax->mutable_operand(2),
+                        argmax->dimensions(), HloOpcode::kMaximum,
+                        &gather->metadata(), &gather->frontend_attributes()));
+      ABSL_ASSIGN_OR_RETURN(HloInstruction * result,
+                            MakeReshapeHlo(gather->shape(), maximum));
+      return ReplaceInstruction(gather, result);
+    }
   }
 
   // Gathering from a scalar operand is simply a broadcast of that scalar
@@ -5810,6 +6037,12 @@ absl::Status AlgebraicSimplifierVisitor::HandleCompare(
   HloInstruction* lhs;
   HloInstruction* rhs;
   CHECK(Match(compare, m::Compare(m::Op(&lhs), m::Op(&rhs))));
+
+  if (!options_.is_layout_sensitive()) {
+    if (std::optional<bool> result = EvaluateBoundedArgMaxComparison(compare)) {
+      return ReplaceInstruction(compare, MakeScalarLike(compare, *result));
+    }
+  }
 
   if (primitive_util::IsUnsignedIntegralType(lhs->shape().element_type())) {
     // X u<  0 -> false
