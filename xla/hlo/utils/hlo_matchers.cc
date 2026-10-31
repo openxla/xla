@@ -220,11 +220,10 @@ bool HloShardingMatcher::MatchAndExplain(
               << " has incorrect sharding (expected: " << sharding_->ToString()
               << ")";
     return false;
-  } else {
-    *listener << instruction->ToString()
-              << " has no sharding (expected: " << sharding_->ToString() << ")";
-    return false;
   }
+  *listener << instruction->ToString()
+            << " has no sharding (expected: " << sharding_->ToString() << ")";
+  return false;
 }
 
 void HloShardingMatcher::DescribeTo(std::ostream* os) const {
