@@ -592,8 +592,9 @@ class PjRtCApiClient : public PjRtClient {
       const Layout* device_layout);
 
   const PJRT_Api* c_api_;
-  std::unique_ptr<PJRT_Client, ::pjrt::PJRT_ClientDeleter> c_client_;
+  // The plugin can use key-value callbacks while destroying its client.
   std::unique_ptr<::pjrt::PJRT_KeyValueCallbackData> kv_callback_data_;
+  std::unique_ptr<PJRT_Client, ::pjrt::PJRT_ClientDeleter> c_client_;
   std::vector<std::unique_ptr<PjRtCApiDevice>> owned_devices_;
   std::vector<PjRtDevice*> devices_;
   std::vector<PjRtDevice*> addressable_devices_;

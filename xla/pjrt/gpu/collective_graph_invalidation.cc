@@ -46,6 +46,11 @@ namespace xla::gpu {
 namespace {
 
 struct InvalidationState {
+  struct Sequence {
+    uint64_t next = 0;
+    bool can_delete = true;
+  };
+
   InvalidationState(
       ProcessId process_id,
       absl::flat_hash_map<GlobalDeviceId, ProcessId> device_to_process,
@@ -58,7 +63,7 @@ struct InvalidationState {
   absl::flat_hash_map<GlobalDeviceId, ProcessId> device_to_process;
   std::shared_ptr<KeyValueStoreInterface> kv_store;
   absl::Mutex mutex;
-  absl::flat_hash_map<std::string, uint64_t> sequences ABSL_GUARDED_BY(mutex);
+  absl::flat_hash_map<std::string, Sequence> sequences ABSL_GUARDED_BY(mutex);
 
   absl::StatusOr<bool> Synchronize(
       absl::string_view signature,
@@ -87,22 +92,58 @@ struct InvalidationState {
       absl::MutexLock lock(mutex);
       // RunId can differ across processes after unrelated local executions.
       // Clique locks serialize executions sharing this collective signature.
-      sequence = sequences[identity]++;
+      Sequence& state = sequences[identity];
+      if (!state.can_delete) {
+        return true;
+      }
+      sequence = state.next++;
     }
     tsl::Fprint128 fingerprint = tsl::Fingerprint128(identity);
     std::string prefix =
         absl::StrFormat("gpu/collective_graph_invalidation/%016x%016x/%d/",
                         fingerprint.high64, fingerprint.low64, sequence);
-    auto key = [&](absl::string_view kind, ProcessId process) {
-      return absl::StrCat(prefix, kind, "/", process.value());
-    };
     auto get = [&](absl::string_view key) {
       return kv_store->Get(key, absl::Minutes(10));
+    };
+    bool is_coordinator = process_id == *processes.begin();
+    if (sequence == 0) {
+      std::string capability_key = absl::StrCat(prefix, "can_delete");
+      if (is_coordinator) {
+        absl::Status status = kv_store->Delete(absl::StrCat(prefix, "probe"));
+        if (!status.ok() && !absl::IsUnimplemented(status)) {
+          return status;
+        }
+        absl::Status published =
+            kv_store->Set(capability_key, status.ok() ? "1" : "0");
+        if (!published.ok()) {
+          if (!absl::IsAlreadyExists(published)) {
+            return published;
+          }
+          // A previous client using this store may have left an undeletable
+          // fallback decision. Every reader must keep honoring it.
+          ABSL_ASSIGN_OR_RETURN(std::string previous, get(capability_key));
+          if (previous != "0") {
+            return published;
+          }
+        }
+      }
+      ABSL_ASSIGN_OR_RETURN(std::string can_delete, get(capability_key));
+      TF_RET_CHECK(can_delete == "0" || can_delete == "1");
+      if (can_delete == "0") {
+        // Older PJRT C API hosts cannot delete or overwrite keys. Agree once
+        // to rebuild every execution instead of accumulating per-run keys.
+        absl::MutexLock lock(mutex);
+        sequences[identity].can_delete = false;
+        return true;
+      }
+    }
+
+    auto key = [&](absl::string_view kind, ProcessId process) {
+      return absl::StrCat(prefix, kind, "/", process.value());
     };
 
     ABSL_RETURN_IF_ERROR(
         kv_store->Set(key("dirty", process_id), local_dirty ? "1" : "0"));
-    bool is_coordinator = process_id == *processes.begin();
     if (is_coordinator) {
       bool dirty = false;
       for (ProcessId process : processes) {

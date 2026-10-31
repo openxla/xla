@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/gpu/collective_graph_invalidation.h"
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <thread>
@@ -47,6 +48,8 @@ using ::testing::ElementsAre;
 
 class TestStore : public InMemoryKeyValueStore {
  public:
+  TestStore() : InMemoryKeyValueStore(/*allow_overwrite=*/false) {}
+
   absl::StatusOr<std::string> Get(absl::string_view key,
                                   absl::Duration) override {
     return InMemoryKeyValueStore::Get(key, absl::Seconds(5));
@@ -102,6 +105,56 @@ TEST_F(CollectiveGraphInvalidationTest, IndependentSignaturesCanInterleave) {
   other.join();
   EXPECT_THAT(first, IsOkAndHolds(ElementsAre(true, true)));
   EXPECT_THAT(second, IsOkAndHolds(ElementsAre(false, false)));
+}
+
+TEST_F(CollectiveGraphInvalidationTest, RecreatedCallbacksReuseCleanedKeys) {
+  for (int round = 0; round != 2; ++round) {
+    for (int process = 0; process != 2; ++process) {
+      callbacks_[process] = CreateCollectiveGraphInvalidationCallback(
+          ProcessId(process), devices_, store_);
+    }
+    EXPECT_THAT(RunRound("cliques", {false, true}),
+                IsOkAndHolds(ElementsAre(true, true)));
+    EXPECT_THAT(RunRound("cliques", {false, false}),
+                IsOkAndHolds(ElementsAre(false, false)));
+  }
+}
+
+class GetSetOnlyStore : public TestStore {
+ public:
+  absl::Status Delete(absl::string_view) override {
+    return absl::UnimplementedError("Delete is not supported");
+  }
+
+  absl::Status Set(absl::string_view key, absl::string_view value) override {
+    ++writes;
+    return TestStore::Set(key, value);
+  }
+
+  std::atomic<int> writes{0};
+};
+
+TEST_F(CollectiveGraphInvalidationTest,
+       UnsupportedCleanupRebuildsWithoutPerExecutionKeys) {
+  auto store = std::make_shared<GetSetOnlyStore>();
+  for (int process = 0; process != 2; ++process) {
+    callbacks_[process] = CreateCollectiveGraphInvalidationCallback(
+        ProcessId(process), devices_, store);
+  }
+  EXPECT_THAT(RunRound("cliques", {false, false}),
+              IsOkAndHolds(ElementsAre(true, true)));
+  int initial_writes = store->writes;
+  EXPECT_THAT(RunRound("cliques", {false, true}),
+              IsOkAndHolds(ElementsAre(true, true)));
+  EXPECT_THAT(RunRound("cliques", {false, false}),
+              IsOkAndHolds(ElementsAre(true, true)));
+  EXPECT_EQ(store->writes, initial_writes);
+  for (int process = 0; process != 2; ++process) {
+    callbacks_[process] = CreateCollectiveGraphInvalidationCallback(
+        ProcessId(process), devices_, store);
+  }
+  EXPECT_THAT(RunRound("cliques", {false, false}),
+              IsOkAndHolds(ElementsAre(true, true)));
 }
 
 class CleanupStore : public TestStore {

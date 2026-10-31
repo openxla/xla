@@ -437,13 +437,17 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
   CApiKeyValueStore(PJRT_KeyValueGetCallback c_get_callback, void* get_user_arg,
                     PJRT_KeyValueTryGetCallback c_try_get_callback,
                     void* try_get_user_arg,
-                    PJRT_KeyValuePutCallback c_put_callback, void* put_user_arg)
+                    PJRT_KeyValuePutCallback c_put_callback, void* put_user_arg,
+                    PJRT_KeyValueDeleteCallback c_delete_callback,
+                    void* delete_user_arg)
       : c_get_callback_(c_get_callback),
         get_user_arg_(get_user_arg),
         c_try_get_callback_(c_try_get_callback),
         try_get_user_arg_(try_get_user_arg),
         c_put_callback_(c_put_callback),
-        put_user_arg_(put_user_arg) {}
+        put_user_arg_(put_user_arg),
+        c_delete_callback_(c_delete_callback),
+        delete_user_arg_(delete_user_arg) {}
 
   absl::StatusOr<std::string> Get(absl::string_view key,
                                   absl::Duration timeout) override {
@@ -520,8 +524,27 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
   }
 
   absl::Status Delete(absl::string_view key) override {
-    return absl::UnimplementedError(
-        "Delete is not supported in CApiKeyValueStore.");
+    if (c_delete_callback_ == nullptr) {
+      return absl::UnimplementedError(
+          "Delete is not supported in CApiKeyValueStore.");
+    }
+    PJRT_CallbackError callback_error =
+        [](PJRT_Error_Code code, const char* message, size_t message_size) {
+          return StatusToPjRtError(
+              absl::Status(static_cast<absl::StatusCode>(code),
+                           std::string(message, message_size)));
+        };
+    PJRT_KeyValueDeleteCallback_Args args = {};
+    args.struct_size = PJRT_KeyValueDeleteCallback_Args_STRUCT_SIZE;
+    args.key = key.data();
+    args.key_size = key.size();
+    args.callback_error = &callback_error;
+    args.user_arg = delete_user_arg_;
+    PJRT_Error* error = c_delete_callback_(&args);
+    if (error != nullptr) {
+      return PjrtErrorToStatus(error);
+    }
+    return absl::OkStatus();
   }
 
  private:
@@ -531,19 +554,22 @@ class CApiKeyValueStore : public xla::KeyValueStoreInterface {
   void* try_get_user_arg_;
   PJRT_KeyValuePutCallback c_put_callback_;
   void* put_user_arg_;
+  PJRT_KeyValueDeleteCallback c_delete_callback_;
+  void* delete_user_arg_;
 };
 
 std::shared_ptr<xla::KeyValueStoreInterface> ToCppKeyValueStore(
     PJRT_KeyValueGetCallback c_get_callback, void* get_user_arg,
     PJRT_KeyValueTryGetCallback c_try_get_callback, void* try_get_user_arg,
-    PJRT_KeyValuePutCallback c_put_callback, void* put_user_arg) {
+    PJRT_KeyValuePutCallback c_put_callback, void* put_user_arg,
+    PJRT_KeyValueDeleteCallback c_delete_callback, void* delete_user_arg) {
   if (c_get_callback == nullptr || c_try_get_callback == nullptr ||
       c_put_callback == nullptr) {
     return nullptr;
   }
   return std::make_shared<CApiKeyValueStore>(
       c_get_callback, get_user_arg, c_try_get_callback, try_get_user_arg,
-      c_put_callback, put_user_arg);
+      c_put_callback, put_user_arg, c_delete_callback, delete_user_arg);
 }
 
 // ---------------------------------- Errors -----------------------------------

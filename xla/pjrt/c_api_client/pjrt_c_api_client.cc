@@ -170,9 +170,9 @@ PjRtCApiClient::PjRtCApiClient(
     const PJRT_Api* c_api, PJRT_Client* c_client,
     std::unique_ptr<pjrt::PJRT_KeyValueCallbackData> kv_callback_data)
     : c_api_(c_api),
+      kv_callback_data_(std::move(kv_callback_data)),
       c_client_(std::unique_ptr<PJRT_Client, ::pjrt::PJRT_ClientDeleter>(
           c_client, ::pjrt::MakeClientDeleter(c_api))),
-      kv_callback_data_(std::move(kv_callback_data)),
       topo_desc_(InitClientTopoDesc(c_api, c_client)),
       extensions_(InitExtensions(c_api)),
       host_memory_allocator_(InitHostMemoryAllocator(c_api, c_client)),
@@ -5064,7 +5064,7 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> WrapClientAroundCApi(
     const PJRT_Api* c_api,
     const absl::flat_hash_map<std::string, PjRtValueType>& create_options,
     std::shared_ptr<KeyValueStoreInterface> kv_store) {
-  PJRT_Client_Create_Args init_args;
+  PJRT_Client_Create_Args init_args = {};
   init_args.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
   init_args.extension_start = nullptr;
   ABSL_ASSIGN_OR_RETURN(std::vector<PJRT_NamedValue> c_options,
@@ -5072,6 +5072,7 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> WrapClientAroundCApi(
   init_args.create_options = c_options.data();
   init_args.num_options = c_options.size();
 
+  PJRT_KeyValueStore_Extension kv_extension = {};
   std::unique_ptr<pjrt::PJRT_KeyValueCallbackData> kv_callback_data;
   if (kv_store) {
     kv_callback_data = pjrt::ConvertToCKeyValueCallbacks(kv_store);
@@ -5081,6 +5082,13 @@ absl::StatusOr<std::unique_ptr<PjRtClient>> WrapClientAroundCApi(
     init_args.kv_try_get_user_arg = &kv_callback_data->kv_try_get_c_func;
     init_args.kv_put_callback = kv_callback_data->c_kv_put;
     init_args.kv_put_user_arg = &kv_callback_data->kv_put_c_func;
+    if (c_api->pjrt_api_version.minor_version >= 118) {
+      kv_extension.base.struct_size = PJRT_KeyValueStore_Extension_STRUCT_SIZE;
+      kv_extension.base.type = PJRT_Extension_Type_KeyValueStore;
+      kv_extension.kv_delete_callback = kv_callback_data->c_kv_delete;
+      kv_extension.kv_delete_user_arg = &kv_callback_data->kv_delete_c_func;
+      init_args.extension_start = &kv_extension.base;
+    }
   }
 
   RETURN_STATUS_IF_PJRT_ERROR(c_api->PJRT_Client_Create(&init_args), c_api);
