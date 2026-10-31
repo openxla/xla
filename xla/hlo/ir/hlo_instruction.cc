@@ -4063,14 +4063,6 @@ std::string HloInstruction::SignatureString() const {
   return StrCat("(", operands, ") -> ", ShapeUtil::HumanString(shape()));
 }
 
-absl::string_view PrintName(absl::string_view name, bool print_ids) {
-  if (print_ids) {
-    return name;
-  }
-  size_t dot_position = name.find_first_of('.');
-  return name.substr(0, dot_position);
-}
-
 namespace {
 
 using DFSStack = absl::InlinedVector<std::pair<int64_t, HloInstruction*>, 16>;

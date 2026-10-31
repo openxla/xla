@@ -34,7 +34,6 @@ cc_library(
         "hlo_original_value.cc",
         "hlo_original_value_util.cc",
         "hlo_schedule.cc",
-        "replica_group.cc",
     ],
     hdrs = [
         "dfs_hlo_visitor.h",
@@ -51,10 +50,8 @@ cc_library(
         "hlo_opcode.h",
         "hlo_original_value.h",
         "hlo_original_value_util.h",
-        "hlo_print_options.h",
         "hlo_schedule.h",
         "hlo_sharding.h",
-        "replica_group.h",
     ],
     visibility = internal_visibility([
         ":friends",
@@ -64,10 +61,11 @@ cc_library(
         ":backend_config",
         ":hlo_module_metadata",
         ":hlo_payload_deduplicator",
+        ":hlo_print_options",
         ":hlo_sharding",  # keep: provides implementations for re-exported hlo_sharding.h.
-        ":mesh_and_axis",
         ":named_sharding",
         ":ptrvec",
+        ":replica_group",
         ":stack_frames",
         ":tile_assignment",
         "//xla:array",
@@ -182,6 +180,7 @@ xla_cc_test(
     srcs = ["hlo_computation_test.cc"],
     deps = [
         ":hlo",
+        ":hlo_print_options",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/parser:hlo_parser",
@@ -205,6 +204,7 @@ xla_cc_test(
     deps = [
         ":dfs_hlo_visitor_with_default",
         ":hlo",
+        ":hlo_print_options",
         ":stack_frames",
         "//xla:comparison_util",
         "//xla:frontend_attributes",
@@ -314,6 +314,21 @@ cc_library(
 )
 
 cc_library(
+    name = "hlo_print_options",
+    hdrs = ["hlo_print_options.h"],
+    visibility = internal_visibility([
+        ":friends",
+        "//xla:native_custom_call_handler_allowlist",
+    ]),
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
     name = "hlo_module_metadata",
     srcs = ["hlo_module_metadata.cc"],
     hdrs = ["hlo_module_metadata.h"],
@@ -347,6 +362,7 @@ xla_cc_test(
     srcs = ["hlo_module_test.cc"],
     deps = [
         ":hlo",
+        ":hlo_print_options",
         ":stack_frames",
         "//xla:debug_options_flags",
         "//xla:shape_util",
@@ -567,12 +583,42 @@ xla_cc_test(
     ],
 )
 
+cc_library(
+    name = "replica_group",
+    srcs = ["replica_group.cc"],
+    hdrs = ["replica_group.h"],
+    visibility = internal_visibility([
+        ":friends",
+        "//xla:native_custom_call_handler_allowlist",
+    ]),
+    deps = [
+        ":hlo_print_options",
+        ":mesh_and_axis",
+        ":tile_assignment",
+        "//xla:array",
+        "//xla:printer",
+        "//xla:xla_data_proto_cc",
+        "//xla/service:hlo_proto_cc",
+        "//xla/tsl/platform:logging",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_protobuf//:protobuf_lite",
+        "@tsl//tsl/platform:protobuf",
+    ],
+)
+
 xla_cc_test(
     name = "replica_group_test",
     srcs = ["replica_group_test.cc"],
     deps = [
-        ":hlo",
+        ":hlo_print_options",
         ":mesh_and_axis",
+        ":replica_group",
         ":tile_assignment",
         "//xla:array",
         "//xla:array2d",

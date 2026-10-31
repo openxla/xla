@@ -63,6 +63,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/parser:hlo_parser",
         "//xla/service:dump",
         "//xla/service:hlo_module_config",

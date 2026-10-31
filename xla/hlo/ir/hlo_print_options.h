@@ -32,7 +32,13 @@ limitations under the License.
 
 namespace xla {
 
-absl::string_view PrintName(absl::string_view name, bool print_ids);
+inline absl::string_view PrintName(absl::string_view name, bool print_ids) {
+  if (print_ids) {
+    return name;
+  }
+  size_t dot_position = name.find_first_of('.');
+  return name.substr(0, dot_position);
+}
 
 // A bunch of switches that control how the hlo text should be printed.
 class HloPrintOptions {

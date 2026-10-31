@@ -231,6 +231,7 @@ cc_library(
         ":hlo_evaluator_interface",
         "//xla:literal",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/service:dynamic_dimension_inference",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",

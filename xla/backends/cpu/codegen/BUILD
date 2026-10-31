@@ -639,6 +639,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/codegen:kernel_spec",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/service:buffer_assignment",
         "//xla/service:shaped_slice",
         "//xla/service/cpu:ir_emission_utils",

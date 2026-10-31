@@ -72,6 +72,7 @@ cc_library(
     deps = [
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "@com_google_absl//absl/strings",
         "@com_google_protobuf//:protobuf",
         "@tsl//tsl/platform:fingerprint",
@@ -230,6 +231,7 @@ cc_library(
         "//xla:autotuning_proto_cc",
         "//xla:status_macros",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:dump",
         "//xla/service/gpu/autotuning:autotuner_status_key",

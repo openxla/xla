@@ -36,6 +36,7 @@ cc_library(
     hdrs = ["hlo_gumgraph_renderer_util.h"],
     deps = [
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/tools/hlo_diff:hlo_diff_result",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -84,6 +85,7 @@ cc_library(
         "//xla:printer",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/tools/hlo_diff:hlo_diff_result",
         "//xla/hlo/tools/hlo_diff:hlo_diff_summary",
         "//xla/hlo/tools/hlo_diff/utils:text_diff",

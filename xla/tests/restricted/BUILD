@@ -26,6 +26,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/testlib:filecheck",
         "//xla/service:backend",
         "//xla/service:compiler",

@@ -230,6 +230,7 @@ cc_library(
         ":comparison_service_proto_cc",
         "//xla:shape_util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/tools/hlo_diff:hlo_gumgraph_diff",
         "//xla/tsl/platform:env",
         "@com_google_absl//absl/algorithm:container",

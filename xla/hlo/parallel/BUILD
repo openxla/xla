@@ -70,6 +70,7 @@ cc_library(
     deps = [
         ":hlo_linking_manifest",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/service:compilation_environments",
         "@com_google_absl//absl/base:nullability",
@@ -115,6 +116,7 @@ xla_cc_test(
         ":hlo_module_linking",
         ":hlo_module_splitting",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:compiler",
         "//xla/service:cpu_plugin",  # fixdeps: keep

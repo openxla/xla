@@ -577,6 +577,7 @@ cc_library(
         "//xla/ffi:execution_context",
         "//xla/ffi:type_registry",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/translate/mhlo_to_hlo:type_to_shape",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/pjrt:host_callback",

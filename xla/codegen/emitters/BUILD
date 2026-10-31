@@ -474,6 +474,7 @@ cc_library(
     deps = [
         ":kernel_arguments",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/service:buffer_assignment",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",

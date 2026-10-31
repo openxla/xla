@@ -132,6 +132,7 @@ cc_library(
     hdrs = ["similarity.h"],
     deps = [
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/tools/hlo_diff/graph:hlo_gumgraph_node",
         "//xla/hlo/tools/hlo_diff/graph/utils:hlo_gumgraph_bfs",
         "@com_google_absl//absl/container:flat_hash_set",
