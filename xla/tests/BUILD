@@ -1970,6 +1970,7 @@ xla_test(
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
         ":xla_internal_test_main",
+        ":xla_test_backend_predicates",
         "//xla:array2d",
         "//xla:array3d",
         "//xla:error_spec",
@@ -2433,11 +2434,13 @@ xla_test(
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
         ":xla_internal_test_main",  # fixdeps: keep
+        ":xla_test_backend_predicates",
         "//xla:error_spec",
         "//xla:literal",
         "//xla/hlo/builder:xla_builder",
         "//xla/service",
         "//xla/tsl/platform:test",
+        "@com_google_googletest//:gtest",
     ],
 )
 

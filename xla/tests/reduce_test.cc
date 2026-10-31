@@ -25,6 +25,7 @@ limitations under the License.
 //    <possible layouts for chosen rank> x
 //    <possible subsets of dimensions in chosen rank>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <stdlib.h>
 
@@ -48,6 +49,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/array2d.h"
 #include "xla/array3d.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/lib/arithmetic.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -600,6 +602,46 @@ TEST_F(ReduceTest, MinReduce2DToR0) {
   input.Each(
       [&](int64_t, int64_t, float* v) { input_min = std::min(input_min, *v); });
   ComputeAndCompareR0<float>(&builder, input_min, {}, ErrorSpec(0.0001));
+}
+
+TEST_F(ReduceTest, MinReduceSignedZero) {
+  if (!test::DeviceTypeIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
+  XlaBuilder builder(TestName());
+  auto min = CreateScalarMinComputation(F32, &builder);
+  XlaOp input;
+  const Literal input_data = CreateR1Parameter<float>(
+      {0.0f, -0.0f, 0.0f}, /*parameter_number=*/0, /*name=*/"input",
+      /*builder=*/&builder, /*data_handle=*/&input);
+  Reduce(input,
+         ConstantR0<float>(&builder,
+                           std::numeric_limits<float>::infinity()),
+         min, {0});
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&input_data}));
+  EXPECT_TRUE(std::signbit(result.Get<float>({})));
+}
+
+TEST_F(ReduceTest, MaxReduceSignedZero) {
+  if (!test::DeviceTypeIs(test::kCpu)) {
+    GTEST_SKIP();
+  }
+  XlaBuilder builder(TestName());
+  auto max = CreateScalarMaxComputation(F32, &builder);
+  XlaOp input;
+  const Literal input_data = CreateR1Parameter<float>(
+      {-0.0f, 0.0f, -0.0f}, /*parameter_number=*/0, /*name=*/"input",
+      /*builder=*/&builder, /*data_handle=*/&input);
+  Reduce(input,
+         ConstantR0<float>(&builder,
+                           -std::numeric_limits<float>::infinity()),
+         max, {0});
+
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       ExecuteAndTransfer(&builder, {&input_data}));
+  EXPECT_FALSE(std::signbit(result.Get<float>({})));
 }
 
 TEST_F(ReduceTest, UnsignedInt_MinReduce) {
