@@ -641,7 +641,9 @@ template <typename Container>
 std::vector<const HloInstruction*> Pointers(const Container& container) {
   std::vector<const HloInstruction*> result;
   result.reserve(container.size());
-  for (const auto& entry : container) result.push_back(entry.get());
+  for (const auto& entry : container) {
+    result.push_back(entry.get());
+  }
   return result;
 }
 

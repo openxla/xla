@@ -347,7 +347,9 @@ HloComputation* FindComputation(HloModule* module, absl::string_view name) {
 HloInstruction* FindInstruction(const HloComputation* computation,
                                 absl::string_view name) {
   for (HloInstruction* instruction : computation->instructions()) {
-    if (instruction->name() == name) return instruction;
+    if (instruction->name() == name) {
+      return instruction;
+    }
   }
   return nullptr;
 }
@@ -355,7 +357,9 @@ HloInstruction* FindInstruction(const HloComputation* computation,
 HloInstruction* FindInstruction(const HloComputation* computation,
                                 HloOpcode opcode) {
   for (auto* instruction : computation->instructions()) {
-    if (instruction->opcode() == opcode) return instruction;
+    if (instruction->opcode() == opcode) {
+      return instruction;
+    }
   }
   return nullptr;
 }
