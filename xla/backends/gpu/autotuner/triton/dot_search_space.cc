@@ -83,6 +83,22 @@ int64_t PreviousPowerOfTwo(int64_t x) {
   return tsl::NextPowerOfTwoS64(x + 1) / 2;
 }
 
+int GetPhysicalOperandBitwidth(const HloInstruction* instr) {
+  while (instr->opcode() == HloOpcode::kConvert ||
+         instr->opcode() == HloOpcode::kBitcast ||
+         instr->opcode() == HloOpcode::kCopy ||
+         instr->opcode() == HloOpcode::kReshape ||
+         instr->opcode() == HloOpcode::kTranspose) {
+    instr = instr->operand(0);
+  }
+  return primitive_util::BitWidth(instr->shape().element_type());
+}
+
+// Restricts storage-aware shared-memory and WGMMA search-space refinements to
+// GEMMs where both non-contracting dimensions are at least 1024, avoiding
+// candidate expansion and autotuning perturbations on decode and small GEMMs.
+constexpr int64_t kMinLargeGemmParallelDim = 1024;
+
 }  // namespace
 
 TritonDotFusionSearchSpace::TritonDotFusionSearchSpace(
@@ -102,6 +118,8 @@ TritonDotFusionSearchSpace::TritonDotFusionSearchSpace(
                          (contracting_size_ * batch_size_)),
       operand_bitwidth_(  // The bitwitdth of both operands is the same.
           primitive_util::BitWidth(dot->operand(0)->shape().element_type())),
+      lhs_storage_bitwidth_(GetPhysicalOperandBitwidth(dot->operand(0))),
+      rhs_storage_bitwidth_(GetPhysicalOperandBitwidth(dot->operand(1))),
       compute_bitwidth_(primitive_util::BitWidth(dot->shape().element_type())),
       operand_type_(dot->operand(0)->shape().element_type()),
       compute_type_(dot->shape().element_type()),
@@ -258,8 +276,17 @@ double TritonDotFusionSearchSpace::GetArithmeticIntensity() const {
   const double n = static_cast<double>(rhs_parallel_size_);
   const double k = static_cast<double>(contracting_size_);
   const double flops = 2.0 * m * n * k;
-  const double lhs_bytes = m * k * (operand_bitwidth_ / 8.0);
-  const double rhs_bytes = k * n * (operand_bitwidth_ / 8.0);
+  const bool use_storage_bitwidth =
+      lhs_parallel_size_ >= kMinLargeGemmParallelDim &&
+      rhs_parallel_size_ >= kMinLargeGemmParallelDim;
+  const int lhs_bits = use_storage_bitwidth && lhs_storage_bitwidth_ > 0
+                           ? lhs_storage_bitwidth_
+                           : operand_bitwidth_;
+  const int rhs_bits = use_storage_bitwidth && rhs_storage_bitwidth_ > 0
+                           ? rhs_storage_bitwidth_
+                           : operand_bitwidth_;
+  const double lhs_bytes = m * k * (lhs_bits / 8.0);
+  const double rhs_bytes = k * n * (rhs_bits / 8.0);
   const double out_bytes = m * n * (compute_bitwidth_ / 8.0);
   const double total_bytes = lhs_bytes + rhs_bytes + out_bytes;
   return total_bytes > 0 ? flops / total_bytes : 0.0;
@@ -407,9 +434,14 @@ int TritonDotFusionSearchSpace::GetMaxWarpsPerCta(OutputTile tile) const {
   // also holds for wgmma: the warp-group level instruction is at least
   // 64x8, and split 4-ways across the 4 warps in the group).
   constexpr OutputTile kMmaSubTile = {16, 8};
-  const int max_warps =
-      device_description_.threads_per_block_limit() /
-      std::max<int>(device_description_.threads_per_warp(), 1);
+  int max_warps = device_description_.threads_per_block_limit() /
+                  std::max<int>(device_description_.threads_per_warp(), 1);
+  if (device_description_.cuda_compute_capability().IsAtLeastHopper() &&
+      lhs_parallel_size_ >= kMinLargeGemmParallelDim &&
+      rhs_parallel_size_ >= kMinLargeGemmParallelDim) {
+    constexpr int kHopperMaxWarpsPerCta = 16;
+    max_warps = std::min(max_warps, kHopperMaxWarpsPerCta);
+  }
   const int lhs_warps = CeilOfRatio(tile.lhs_dim, kMmaSubTile.lhs_dim);
   const int rhs_warps = CeilOfRatio(tile.rhs_dim, kMmaSubTile.rhs_dim);
   return std::max(min_warps_per_cta_,
@@ -424,8 +456,21 @@ int TritonDotFusionSearchSpace::GetMinContractingTileSize() const {
   /// TODO: b/395572776 - Triton currently requires at least 16 elements, but we
   // should be able to relax this and remove this limit here.
   constexpr int kTritonLowerLimit = 16;
-  const int min_contracting_tile_size =
+  if (operand_bitwidth_ <= 0) {
+    return kTritonLowerLimit;
+  }
+  int min_contracting_tile_size =
       std::max(kMmaContractingBitwidth / operand_bitwidth_, kTritonLowerLimit);
+  if (device_description_.cuda_compute_capability().IsAtLeastHopper() &&
+      !should_optimize_for_occupancy_ &&
+      lhs_parallel_size_ >= kMinLargeGemmParallelDim &&
+      rhs_parallel_size_ >= kMinLargeGemmParallelDim) {
+    // Hopper WGMMA requires a 256-bit contracting atom (k >= 32 for 8-bit,
+    // k >= 16 for 16-bit).
+    constexpr int kWgmmaContractingBitwidth = 256;
+    min_contracting_tile_size = std::max(
+        kWgmmaContractingBitwidth / operand_bitwidth_, kTritonLowerLimit);
+  }
   VLOG(5) << "Computing min_contracting_tile_size: Based on bitwidth of "
           << operand_bitwidth_
           << ", min_contracting_tile_size = " << min_contracting_tile_size;
@@ -436,16 +481,58 @@ int TritonDotFusionSearchSpace::GetContractingSizeLimitToFitSharedMemory(
     OutputTile output_tile) const {
   const int64_t shared_memory_budget =
       device_description_.shared_memory_per_block_optin();
-  // Need to satisfy:
-  //   (lhs_dim  + rhs_dim) * contracting_dim * bitwidth <= budget_in_bits
-  return 8 * shared_memory_budget / compute_bitwidth_ /
-         (output_tile.lhs_dim + output_tile.rhs_dim);
+  if (lhs_parallel_size_ < kMinLargeGemmParallelDim ||
+      rhs_parallel_size_ < kMinLargeGemmParallelDim) {
+    return 8 * shared_memory_budget / compute_bitwidth_ /
+           (output_tile.lhs_dim + output_tile.rhs_dim);
+  }
+  const int lhs_bits =
+      lhs_storage_bitwidth_ > 0
+          ? lhs_storage_bitwidth_
+          : (operand_bitwidth_ > 0 ? operand_bitwidth_ : compute_bitwidth_);
+  const int rhs_bits =
+      rhs_storage_bitwidth_ > 0
+          ? rhs_storage_bitwidth_
+          : (operand_bitwidth_ > 0 ? operand_bitwidth_ : compute_bitwidth_);
+  const int64_t bits_per_k =
+      static_cast<int64_t>(lhs_bits) * output_tile.lhs_dim +
+      static_cast<int64_t>(rhs_bits) * output_tile.rhs_dim;
+  if (bits_per_k <= 0) {
+    return 0;
+  }
+  return 8 * shared_memory_budget / bits_per_k;
 }
 
 int TritonDotFusionSearchSpace::GetMaxContractingTileSize(
     OutputTile output_tile) const {
   const int64_t available_size = contracting_size_;
-  const int size_limit = GetContractingSizeLimitToFitSharedMemory(output_tile);
+  int size_limit = GetContractingSizeLimitToFitSharedMemory(output_tile);
+  if (lhs_parallel_size_ >= kMinLargeGemmParallelDim &&
+      rhs_parallel_size_ >= kMinLargeGemmParallelDim) {
+    const int64_t shared_memory_budget =
+        device_description_.shared_memory_per_block_optin();
+    const int lhs_storage =
+        lhs_storage_bitwidth_ > 0
+            ? lhs_storage_bitwidth_
+            : (operand_bitwidth_ > 0 ? operand_bitwidth_ : compute_bitwidth_);
+    const int rhs_storage =
+        rhs_storage_bitwidth_ > 0
+            ? rhs_storage_bitwidth_
+            : (operand_bitwidth_ > 0 ? operand_bitwidth_ : compute_bitwidth_);
+    const int lhs_op =
+        operand_bitwidth_ > 0 ? operand_bitwidth_ : compute_bitwidth_;
+    const int rhs_op =
+        primitive_util::BitWidth(compute_type_) > 0 && operand_bitwidth_ <= 0
+            ? compute_bitwidth_
+            : lhs_op;
+    const int64_t step_bits_per_k =
+        std::max(static_cast<int64_t>(lhs_storage) * output_tile.lhs_dim +
+                     static_cast<int64_t>(rhs_storage) * output_tile.rhs_dim,
+                 static_cast<int64_t>(lhs_op) * output_tile.lhs_dim +
+                     static_cast<int64_t>(rhs_op) * output_tile.rhs_dim);
+    size_limit =
+        step_bits_per_k > 0 ? (8 * shared_memory_budget / step_bits_per_k) : 0;
+  }
   const int max_size =
       std::min(NextPowerOfTwo(available_size), PreviousPowerOfTwo(size_limit));
   VLOG(5) << "Computing max_contracting_tile_size for tiling BxMxN = " << 1
@@ -458,11 +545,18 @@ int TritonDotFusionSearchSpace::GetMaxContractingTileSize(
 
 int TritonDotFusionSearchSpace::GetMaxNumStages(
     OutputTile output_tile, int contracting_tile_size) const {
+  if (contracting_tile_size <= 0) {
+    return 1;
+  }
   const int64_t available_stages =
       CeilOfRatio<int64_t>(contracting_size_, contracting_tile_size);
-  const int64_t stage_limit = std::max(
-      1, CeilOfRatio(GetContractingSizeLimitToFitSharedMemory(output_tile),
-                     contracting_tile_size));
+  const int smem_k_limit =
+      GetContractingSizeLimitToFitSharedMemory(output_tile);
+  const int64_t stage_limit = std::max<int64_t>(
+      1, (lhs_parallel_size_ >= kMinLargeGemmParallelDim &&
+          rhs_parallel_size_ >= kMinLargeGemmParallelDim)
+             ? smem_k_limit / contracting_tile_size
+             : CeilOfRatio(smem_k_limit, contracting_tile_size));
   // Number of stages is basically a replacement for oversubscription, so
   // the maximum number we want is also limited by kMaxWarpsPerScheduler.
   const int stages = std::min({available_stages, stage_limit,
@@ -545,7 +639,29 @@ void TritonDotFusionSearchSpace::AddCtaSizeParameter(
   VLOG(5) << "Computing max_warps: For output_tile = " << tile_rows << "x"
           << tile_cols
           << " and (wg)mma instruction shape, max_warps = " << max_warps;
-  for (int warps = min_warps_per_cta_; warps <= max_warps; warps *= 2) {
+  int min_warps = min_warps_per_cta_;
+  if (lhs_parallel_size_ >= kMinLargeGemmParallelDim &&
+      rhs_parallel_size_ >= kMinLargeGemmParallelDim) {
+    constexpr int kMaxRegistersPerThread = 255;
+    const int threads_per_warp =
+        std::max<int>(device_description_.threads_per_warp(), 1);
+    constexpr int kRegSizeInBits = 32;
+    const int64_t accum_regs =
+        (static_cast<int64_t>(tile_rows) * tile_cols * compute_bitwidth_ +
+         kRegSizeInBits - 1) /
+        kRegSizeInBits;
+    const int min_warps_for_regs = NextPowerOfTwo(CeilOfRatio<int64_t>(
+        accum_regs, kMaxRegistersPerThread * threads_per_warp));
+    min_warps = std::max(min_warps, min_warps_for_regs);
+    const int min_storage_bitwidth =
+        std::min(lhs_storage_bitwidth_, rhs_storage_bitwidth_);
+    if (device_description_.cuda_compute_capability().IsAtLeastHopper() &&
+        !should_optimize_for_occupancy_ && tile_rows >= 64 && tile_cols >= 64 &&
+        min_storage_bitwidth > 0 && min_storage_bitwidth < 32) {
+      min_warps = std::max(min_warps, kMinWarpsPerCtaForWgmma);
+    }
+  }
+  for (int warps = min_warps; warps <= max_warps; warps *= 2) {
     new_config.config.num_warps = warps;
     VLOG(10) << "Adding CTA size parameter: config = " << new_config.ToString();
     updated_configs.push_back(new_config);

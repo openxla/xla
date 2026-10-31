@@ -765,5 +765,93 @@ ENTRY entry {
                                mlir_context));
 }
 
+TEST_F(ExperimentalTilingTritonEmitterTest,
+       BatchedDotGroupSizeTileIdRemappingEmitOk) {
+  constexpr absl::string_view kHloText = R"(
+fusion_computation {
+  p0 = f16[2,1024,64]{2,1,0} parameter(0)
+  p1 = f16[2,64,512]{2,1,0} parameter(1)
+  ROOT dot = f32[2,1024,512]{2,1,0} dot(p0, p1),
+    lhs_batch_dims={0}, lhs_contracting_dims={2},
+    rhs_batch_dims={0}, rhs_contracting_dims={1},
+    backend_config={"sizes": [32]}
+}
+
+ENTRY main {
+  param0 = f16[2,1024,64]{2,1,0} parameter(0)
+  param1 = f16[2,64,512]{2,1,0} parameter(1)
+  ROOT triton_fusion = f32[2,1024,512]{2,1,0} fusion(param0, param1),
+    kind=kCustom, calls=fusion_computation, backend_config={
+      "fusion_backend_config": {
+        "kind": "__triton_nested_gemm_fusion",
+        "block_level_fusion_config": {
+          "output_tiles": [{"sizes": [1, 64, 64]}],
+          "num_warps": 4,
+          "num_ctas": 1,
+          "num_stages": 1,
+          "group_size": 8
+        }
+      }
+    }
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::string triton_ir,
+                       EmitAndCompileTritonFusion(kHloText));
+  EXPECT_THAT(RunFileCheck(triton_ir, R"(
+// CHECK-LABEL: xtile.entry_func @test_fn
+// CHECK:         %[[PID_I32:.*]] = arith.index_cast %arg3 : index to i32
+// CHECK:         %[[BATCH_IDX:.*]] = arith.divui %[[PID_I32]], %c128_i32 : i32
+// CHECK:         %[[BATCH_OFF:.*]] = arith.muli %[[BATCH_IDX]], %c128_i32 : i32
+// CHECK:         %[[MN_PID:.*]] = arith.remui %[[PID_I32]], %c128_i32 : i32
+// CHECK:         arith.index_cast {{.*}} {xla.range = [0 : index, 255 : index]} : i32 to index
+)"),
+              absl_testing::IsOkAndHolds(true))
+      << triton_ir;
+}
+
+TEST_F(ExperimentalTilingTritonEmitterTest,
+       PartialTailGroupUsesConstantDivisionWithoutMinUI) {
+  constexpr absl::string_view kHloText = R"(
+fusion_computation {
+  p0 = f16[1280,64]{1,0} parameter(0)
+  p1 = f16[64,512]{1,0} parameter(1)
+  ROOT dot = f32[1280,512]{1,0} dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    backend_config={"sizes": [32]}
+}
+
+ENTRY main {
+  param0 = f16[1280,64]{1,0} parameter(0)
+  param1 = f16[64,512]{1,0} parameter(1)
+  ROOT triton_fusion = f32[1280,512]{1,0} fusion(param0, param1),
+    kind=kCustom, calls=fusion_computation, backend_config={
+      "fusion_backend_config": {
+        "kind": "__triton_nested_gemm_fusion",
+        "block_level_fusion_config": {
+          "output_tiles": [{"sizes": [64, 64]}],
+          "num_warps": 4,
+          "num_ctas": 1,
+          "num_stages": 1,
+          "group_size": 8
+        }
+      }
+    }
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::string triton_ir,
+                       EmitAndCompileTritonFusion(kHloText));
+  EXPECT_THAT(RunFileCheck(triton_ir, R"(
+// CHECK-LABEL: xtile.entry_func @test_fn
+// CHECK-NOT:     arith.minui
+// CHECK:         arith.cmpi ult
+// CHECK:         arith.select
+// CHECK:         arith.select
+)"),
+              absl_testing::IsOkAndHolds(true))
+      << triton_ir;
+}
+
 }  // namespace
 }  // namespace xla::gpu

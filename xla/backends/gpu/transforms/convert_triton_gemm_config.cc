@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/matmul_indexing_utils.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
@@ -90,6 +91,17 @@ absl::Status IsDot(const HloInstruction& dot) {
 bool IsScaledDotWithTritonEnabled(const HloModuleConfig& module_config) {
   const DebugOptions& debug_options = module_config.debug_options();
   return debug_options.xla_gpu_experimental_scaled_dot_with_triton();
+}
+
+int64_t GetPhysicalOperandByteSize(const HloInstruction* instr) {
+  while (instr->opcode() == HloOpcode::kConvert ||
+         instr->opcode() == HloOpcode::kBitcast ||
+         instr->opcode() == HloOpcode::kCopy ||
+         instr->opcode() == HloOpcode::kReshape ||
+         instr->opcode() == HloOpcode::kTranspose) {
+    instr = instr->operand(0);
+  }
+  return ShapeUtil::ByteSizeOf(instr->shape());
 }
 
 class ConvertTritonGemmConfigVisitor : public DfsHloRewriteVisitor {
@@ -313,6 +325,27 @@ absl::StatusOr<BlockLevelParameters> FindBlockLevelParameters(
         config.is_warp_specialization_allowed;
     params.waves_per_eu = config.waves_per_eu;
     params.mfma_size = config.mfma_size;
+    params.group_size = config.group_size;
+    if (params.group_size <= 1 &&
+        operands_dims[0].Rank(DotOperandDims::kNonContracting) == 1 &&
+        operands_dims[1].Rank(DotOperandDims::kNonContracting) == 1 &&
+        config.block_m > 0 && config.block_n > 0) {
+      const int64_t m_size =
+          operands_dims[0].TotalSize(DotOperandDims::kNonContracting);
+      const int64_t n_size =
+          operands_dims[1].TotalSize(DotOperandDims::kNonContracting);
+      const int64_t m_tiles = CeilOfRatio<int64_t>(m_size, config.block_m);
+      const int64_t n_tiles = CeilOfRatio<int64_t>(n_size, config.block_n);
+      const int64_t l2_cache_size = device_description.l2_cache_size();
+      const bool exceeds_l2_cache =
+          l2_cache_size <= 0 ||
+          (GetPhysicalOperandByteSize(dot->operand(0)) +
+           GetPhysicalOperandByteSize(dot->operand(1))) > l2_cache_size;
+      if (m_tiles >= 8 && n_tiles >= 8 && m_tiles * n_tiles >= 512 &&
+          m_size >= 2048 && n_size >= 2048 && exceeds_l2_cache) {
+        params.group_size = 8;
+      }
+    }
     return params;
   } while (absl::c_next_permutation(parallel_tile_sizes));
 
