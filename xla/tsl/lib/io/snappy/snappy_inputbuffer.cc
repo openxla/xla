@@ -128,7 +128,11 @@ absl::Status SnappyInputBuffer::Inflate() {
   DCHECK_EQ(avail_out_, 0);
 
   // Output buffer must be large enough to fit the uncompressed block.
-  DCHECK_GE(output_buffer_capacity_, uncompressed_length);
+  if (uncompressed_length > output_buffer_capacity_) {
+    return absl::DataLossError(absl::StrCat(
+        "Uncompressed block length (", uncompressed_length,
+        ") exceeds output buffer capacity (", output_buffer_capacity_, ")"));
+  }
   next_out_ = output_buffer_.get();
 
   bool status = port::Snappy_Uncompress(next_in_, compressed_block_length,
