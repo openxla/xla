@@ -545,6 +545,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_parallel_async_compute_limit(2);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes(0);
   opts.set_xla_gpu_experimental_scheduler_memory_fencing_slack_windows(1);
+  opts.set_xla_gpu_experimental_enable_post_lhs_memory_scheduler(false);
   opts.set_xla_pjrt_allow_auto_layout_in_hlo(false);
   opts.set_xla_gpu_enable_scatter_determinism_expander(false);
   opts.set_xla_gpu_unsupported_enable_all_reduce_decomposer(false);
@@ -3468,6 +3469,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_parallel_async_compute_limit(),
       "This controls how many in-flight asynchronous computations "
       "latency hiding scheduler can schedule."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_post_lhs_memory_scheduler",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_enable_post_lhs_memory_scheduler),
+      debug_options->xla_gpu_experimental_enable_post_lhs_memory_scheduler(),
+      "Reduce modeled peak memory after LHS by recursively scheduling atomic "
+      "async regions while preserving their membership and overlap."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes",
       int64_setter_for(

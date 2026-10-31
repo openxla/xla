@@ -1988,7 +1988,11 @@ message DebugOptions {
   // (ScanRewriterTriton).
   optional bool xla_gpu_experimental_enable_triton_scan = 562;
 
-  // Next id: 564
+  // Minimize peak memory after LHS while preserving async block membership
+  // and communication order. Disabled by default.
+  optional bool xla_gpu_experimental_enable_post_lhs_memory_scheduler = 564;
+
+  // Next id: 565
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
