@@ -3290,27 +3290,32 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
                                mlir_context, thread_pool, &mlir_context_pool_));
   }
 
-  // Sanitize constant names. This is in its own pipeline to ensure it always
-  // runs, as the preceding pipeline is conditional.
-  {
-    auto& pipeline =
-        main_pipeline.AddPass<HloPassPipeline>("sanitize-constant-names");
-    pipeline.AddPass<SanitizeConstantNames>();
-  }
+  ABSL_RETURN_IF_ERROR(
+      main_pipeline
+          .Run(module, {HloInstruction::kMainExecutionThread})
+          .status());
+
+  // Constants in async computations can be emitted by the GPU backend, so
+  // sanitize constant names on all execution threads.
+  HloPassPipeline sanitize_pipeline("sanitize-constant-names");
+  sanitize_pipeline.AddPass<SanitizeConstantNames>();
+  ABSL_RETURN_IF_ERROR(sanitize_pipeline.Run(module).status());
+
+  HloPassPipeline final_pipeline("post-sanitization-passes");
 
   if (IsPdlLaunchInsertionEnabled(module->config().debug_options(),
                                   gpu_device_info.gpu_compute_capability())) {
     HloPassPipeline& pipeline =
-        main_pipeline.AddPass<HloPassPipeline>("pdl-launch-annotation");
+      final_pipeline.AddPass<HloPassPipeline>("pdl-launch-annotation");
     pipeline.AddPass<PdlLaunchAnnotationPass>();
   }
 
   if (module->config().debug_options().xla_gpu_pgle_accuracy_checker() ==
       DebugOptions::PGLE_STRICTNESS_LEVEL_ERROR) {
-    AddHloVerifier(&main_pipeline,
+    AddHloVerifier(&final_pipeline,
                    HloVerifierOpts{}.VerifyInstructionNameUnchanged());
   }
-  return main_pipeline.Run(module, {HloInstruction::kMainExecutionThread})
+  return final_pipeline.Run(module, {HloInstruction::kMainExecutionThread})
       .status();
 }
 
