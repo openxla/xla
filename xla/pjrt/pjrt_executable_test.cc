@@ -18,6 +18,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -60,6 +61,37 @@ TEST(CompileOptionsTest, Serialization) {
   EXPECT_EQ(proto.SerializeAsString(), output_proto.SerializeAsString());
   EXPECT_EQ(src.individually_defined_output_indices,
             output.individually_defined_output_indices);
+}
+
+TEST(CompileOptionsTest, MemoryBusWidthPresenceSurvivesSerialization) {
+  for (std::optional<int64_t> width :
+       {std::optional<int64_t>(), std::optional<int64_t>(0),
+        std::optional<int64_t>(5120)}) {
+    SCOPED_TRACE(width.has_value() ? std::to_string(*width) : "absent");
+    ASSERT_OK_AND_ASSIGN(CompileOptionsProto proto, CompileOptions().ToProto());
+    auto* device = proto.mutable_target_config()->mutable_gpu_device_info();
+    device->mutable_cuda_compute_capability()->set_major(9);
+    device->set_dnn_version("9.0.0");
+    if (width.has_value()) {
+      device->set_memory_bus_width(*width);
+    }
+
+    // An absent field represents metadata written before width was recorded.
+    CompileOptionsProto parsed;
+    ASSERT_TRUE(parsed.ParseFromString(proto.SerializeAsString()));
+    ASSERT_OK_AND_ASSIGN(CompileOptions options,
+                         CompileOptions::FromProto(parsed));
+    ASSERT_TRUE(options.gpu_target_config.has_value());
+    EXPECT_EQ(options.gpu_target_config->device_description.memory_bus_width(),
+              width);
+    ASSERT_OK_AND_ASSIGN(CompileOptionsProto output, options.ToProto());
+    ASSERT_TRUE(output.has_target_config());
+    const auto& output_device = output.target_config().gpu_device_info();
+    EXPECT_EQ(output_device.has_memory_bus_width(), width.has_value());
+    if (width.has_value()) {
+      EXPECT_EQ(output_device.memory_bus_width(), *width);
+    }
+  }
 }
 
 TEST(CompileOptionsTest, DeserializeSerializedMultiSliceConfig) {

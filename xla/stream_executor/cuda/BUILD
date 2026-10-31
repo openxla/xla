@@ -1763,6 +1763,7 @@ xla_test(
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/gpu:gpu_test_kernels",
+        "//xla/tsl/cuda:cuda",
         "//xla/tsl/platform:statusor",
         "//xla/tsl/util:command_line_flags",
         "@com_google_absl//absl/cleanup",
@@ -1771,6 +1772,7 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
+        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 

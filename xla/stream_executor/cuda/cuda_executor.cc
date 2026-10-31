@@ -1886,6 +1886,11 @@ CudaExecutor::CreateDeviceDescription(int device_ordinal) {
       GetDeviceAttribute(CU_DEVICE_ATTRIBUTE_MEMORY_CLOCK_RATE, device_ordinal);
   absl::StatusOr<int> mem_bus_width_bits = GetDeviceAttribute(
       CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH, device_ordinal);
+  // Keep the reported width, including zero, independently of clock discovery
+  // and the bandwidth workaround below.
+  if (mem_bus_width_bits.ok()) {
+    desc.set_memory_bus_width(*mem_bus_width_bits);
+  }
   if (mem_clock_khz.ok() && mem_bus_width_bits.ok()) {
     // Temporary fix when driver reports 0.
     // Affected CUDA 13.1, driver r590, should be fixed in later releases.
