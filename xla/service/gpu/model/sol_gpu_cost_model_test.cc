@@ -15,14 +15,14 @@ limitations under the License.
 
 #include "xla/service/gpu/model/sol_gpu_cost_model.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "xla/hlo/parser/hlo_parser.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla::gpu {
@@ -140,6 +140,27 @@ TEST(SolGPUCostModelGetConfigTest, ConfigForBlackwell) {
   // Allow a tolerance of 10 nanoseconds for chunk_prep_time
   EXPECT_LT(absl::AbsDuration(config.chunk_prep_time - absl::Microseconds(2)),
             absl::Nanoseconds(10));
+}
+
+TEST(SolGPUCostModelGetConfigTest, ConfigForSm107) {
+  constexpr absl::string_view kDummyModule = R"(
+    HloModule noop
+
+    ENTRY main {
+      ROOT constant = f32[] constant(0)
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(kDummyModule));
+
+  se::DeviceDescription device_info;
+  device_info.set_gpu_compute_capability(
+      se::GpuComputeCapability{se::CudaComputeCapability{
+          10, 7,
+          se::CudaComputeCapability::FeatureExtension::kAcceleratedFeatures}});
+  SolGPUCostModel::Config config =
+      SolGPUCostModel::GetConfig(module.get(), device_info);
+  EXPECT_FLOAT_EQ(config.nvlink_bw_per_lane_gbps, 31.2);
 }
 
 TEST(SolGPUCostModelGetConfigTest, ConfigForDefaultGPU) {

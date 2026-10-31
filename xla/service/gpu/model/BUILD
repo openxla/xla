@@ -147,6 +147,7 @@ xla_cc_test(
         ":sol_gpu_cost_model",
         "//xla/hlo/parser:hlo_parser",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:xla_internal_test_main",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
