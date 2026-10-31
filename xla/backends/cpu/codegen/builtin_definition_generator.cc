@@ -178,7 +178,7 @@ static Registry CreateRegistry() {
   REGISTER_LIBM_SYMBOL(asin, double (*)(double));
   REGISTER_LIBM_SYMBOL(asinh, double (*)(double));
   REGISTER_LIBM_SYMBOL(atan, double (*)(double));
-  registry["atan2f"] = SymbolDef(atan2f);
+  registry["atan2f"] = SymbolDef(BuiltinAtan2f);
   registry["atan2"] = SymbolDef(BuiltinAtan2);
   REGISTER_LIBM_SYMBOL(atanh, double (*)(double));
   REGISTER_LIBM_SYMBOL(cbrt, double (*)(double));

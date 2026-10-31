@@ -65,7 +65,6 @@ cc_library(
     deps = [
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
-        "@tsl//tsl/platform:denormal",
     ],
 )
 
@@ -75,6 +74,7 @@ xla_cc_test(
     deps = [
         ":builtin_atan2",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_googletest//:gtest_main",
         "@tsl//tsl/platform:denormal",
     ],

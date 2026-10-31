@@ -18,9 +18,14 @@ limitations under the License.
 
 namespace xla::cpu {
 
-// Computes atan2(y, x), preserving F64 subnormal inputs even when the caller
-// flushes denormals to zero.
+// Computes atan2(y, x), flushing subnormal inputs to signed zero before
+// calling libm. XLA:CPU flushes f32 and f64 subnormals, and glibc's atan2 and
+// atan2f misbehave on subnormal inputs when the CPU flushes denormals (wrong
+// quadrant or NaN), so the inputs are flushed explicitly here. The sign of
+// flushed inputs is preserved so quadrant selection still works. This does not
+// touch the floating-point environment.
 double BuiltinAtan2(double y, double x);
+float BuiltinAtan2f(float y, float x);
 
 }  // namespace xla::cpu
 
