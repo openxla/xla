@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/layout_util.h"
 #include "xla/map_util.h"
 #include "xla/permutation_util.h"
+#include "xla/service/async_computation_utils.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/while_util.h"
@@ -3414,6 +3415,9 @@ absl::StatusOr<bool> LayoutAssignment::RunImpl(
          ->mutable_computation_layout() = *entry_computation_layout_;
     ABSL_RETURN_IF_ERROR(CheckLayouts(module, execution_threads));
   }
+
+  ABSL_RETURN_IF_ERROR(
+      LegalizeAsyncComputations(module, execution_threads).status());
 
   return true;
 }
