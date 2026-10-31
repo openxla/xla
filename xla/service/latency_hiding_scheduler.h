@@ -252,6 +252,9 @@ class LatencyEstimator {
 // Implementation of LatencyEstimator using an approximate cost model.
 class ApproximateLatencyEstimator : public LatencyEstimator {
  public:
+  // Name of this estimator, e.g. in OpMetadata.scheduler_cost_source.
+  static constexpr absl::string_view kName = "APPROXIMATE";
+
   explicit ApproximateLatencyEstimator(
       GetCanonicalAsyncOpFunc func = DefaultGetCanonicalAsyncOp)
       : LatencyEstimator(func) {}
