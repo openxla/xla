@@ -87,6 +87,13 @@ static thread_local int internalCuCall = 0;
 constexpr uint64_t kInvalidCallbackTimestamp =
     std::numeric_limits<uint64_t>::max();
 
+// Keep optional V2 paths buildable with older CUPTI headers; weak symbol checks
+// still decide runtime availability.
+// CUPTI_ACTIVITY_ATTR_ENABLE_MULTI_SUBSCRIBER_GRAPH_TRACE = 20 (CUDA 13.3+).
+constexpr CUpti_ActivityAttribute
+    kCuptiActivityAttrEnableMultiSubscriberGraphTrace =
+        static_cast<CUpti_ActivityAttribute>(20);
+
 // Temporary disable cupti api tracing for this thread during the life scope of
 // this class. Used for the API calls that initiated by us.
 class CuptiApiTracingDisabler {
@@ -1732,6 +1739,22 @@ absl::Status CuptiTracer::EnableActivityTracing() {
                "already set it or tracing is already active); cupti "
                "trace overhead may be big.";
       }
+      if (absl::c_contains(option_->activities_selected,
+                           CUPTI_ACTIVITY_KIND_GRAPH_TRACE)) {
+        // In V2 multi-subscriber mode, CUPTI requires the global
+        // CUPTI_ACTIVITY_ATTR_ENABLE_MULTI_SUBSCRIBER_GRAPH_TRACE attribute to
+        // be set before enabling any activity kind when graph-level tracing
+        // (CUPTI_ACTIVITY_KIND_GRAPH_TRACE) is requested.
+        uint8_t enable_graph_trace = 1;
+        size_t value_size = sizeof(enable_graph_trace);
+        if (cupti_interface_->ActivitySetAttributeV2(
+                /*subscriber=*/nullptr,
+                kCuptiActivityAttrEnableMultiSubscriberGraphTrace, &value_size,
+                &enable_graph_trace) != CUPTI_SUCCESS) {
+          LOG(WARNING) << "Failed to enable CUPTI multi-subscriber graph "
+                          "level trace attribute.";
+        }
+      }
     } else {
       if (cupti_interface_->SetThreadIdType(
               CUPTI_ACTIVITY_THREAD_ID_TYPE_SYSTEM) != CUPTI_SUCCESS) {
@@ -1806,6 +1829,19 @@ absl::Status CuptiTracer::DisableActivityTracing() {
             ActivityDisableV2(subscriber_, activity, nullptr));
       } else {
         RETURN_IF_CUPTI_ERROR(ActivityDisable(activity));
+      }
+    }
+    if (using_v2_subscriber_api_ &&
+        absl::c_contains(option_->activities_selected,
+                         CUPTI_ACTIVITY_KIND_GRAPH_TRACE)) {
+      uint8_t enable_graph_trace = 0;
+      size_t value_size = sizeof(enable_graph_trace);
+      if (cupti_interface_->ActivitySetAttributeV2(
+              /*subscriber=*/nullptr,
+              kCuptiActivityAttrEnableMultiSubscriberGraphTrace, &value_size,
+              &enable_graph_trace) != CUPTI_SUCCESS) {
+        LOG(WARNING) << "Failed to reset CUPTI multi-subscriber graph "
+                        "level trace attribute.";
       }
     }
     option_->activities_selected.clear();

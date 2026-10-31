@@ -198,6 +198,8 @@ CUptiResult CuptiErrorManager::ActivitySetAttributeV2(
   IGNORE_CALL_IF_DISABLED;
   CUptiResult error =
       interface_->ActivitySetAttributeV2(subscriber, attr, valueSize, value);
+  ALLOW_ERROR(error, CUPTI_ERROR_NOT_SUPPORTED);
+  ALLOW_ERROR(error, CUPTI_ERROR_NOT_COMPATIBLE);
   LOG_AND_DISABLE_IF_ERROR(error);
   return error;
 }

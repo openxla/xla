@@ -18,6 +18,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -868,6 +869,79 @@ TEST_F(CuptiTracerTest,
   EXPECT_TRUE(CuptiDisabled());
 }
 
+TEST_F(CuptiTracerTest,
+       V2GraphTraceSetsAndResetsMultiSubscriberGraphTraceAttr) {
+  auto* const subscriber =
+      reinterpret_cast<CUpti_SubscriberHandle>(uintptr_t{1});
+  constexpr CUpti_ActivityAttribute
+      kCuptiActivityAttrEnableMultiSubscriberGraphTrace =
+          static_cast<CUpti_ActivityAttribute>(20);
+
+  CuptiTracerOptions options = KernelTraceOptions();
+  options.activities_selected.push_back(CUPTI_ACTIVITY_KIND_GRAPH_TRACE);
+
+  ::testing::InSequence in_sequence;
+  EXPECT_CALL(*mock_, SubscribeV2(_, _, _))
+      .WillOnce(DoAll(SetArgPointee<0>(subscriber), Return(CUPTI_SUCCESS)));
+  EXPECT_CALL(*mock_, GetTimestampV2(subscriber, _))
+      .WillOnce(SetTimestampAndReturnSuccess(1));
+  ExpectV2ResourceCallbacks(subscriber, /*enable=*/1);
+  ExpectV2KernelCallback(subscriber, /*enable=*/1);
+  EXPECT_CALL(*mock_, ActivityUseSystemThreadIdV2(subscriber))
+      .WillOnce(Return(CUPTI_SUCCESS));
+  EXPECT_CALL(*mock_, ActivityUsePerThreadBufferV2())
+      .WillOnce(Return(CUPTI_SUCCESS));
+  EXPECT_CALL(
+      *mock_,
+      ActivitySetAttributeV2(
+          nullptr, kCuptiActivityAttrEnableMultiSubscriberGraphTrace, _, _))
+      .WillOnce([](CUpti_SubscriberHandle /*subscriber*/,
+                   CUpti_ActivityAttribute /*attr*/, size_t* value_size,
+                   void* value) {
+        EXPECT_EQ(*value_size, sizeof(uint8_t));
+        EXPECT_EQ(*static_cast<const uint8_t*>(value), 1);
+        return CUPTI_SUCCESS;
+      });
+  EXPECT_CALL(*mock_, ActivityRegisterCallbacksV2(subscriber, _, _))
+      .WillOnce(Return(CUPTI_SUCCESS));
+  EXPECT_CALL(*mock_,
+              ActivityEnableV2(subscriber, CUPTI_ACTIVITY_KIND_KERNEL, _))
+      .WillOnce(Return(CUPTI_SUCCESS));
+  EXPECT_CALL(*mock_,
+              ActivityEnableV2(subscriber, CUPTI_ACTIVITY_KIND_GRAPH_TRACE, _))
+      .WillOnce(Return(CUPTI_SUCCESS));
+  EnableProfiling(options);
+
+  EXPECT_CALL(*mock_, GetTimestampV2(subscriber, _))
+      .WillOnce(SetTimestampAndReturnSuccess(2));
+  EXPECT_CALL(*mock_, GetTimestampV2(subscriber, _))
+      .WillOnce(SetTimestampAndReturnSuccess(3));
+  ExpectV2ResourceCallbacks(subscriber, /*enable=*/0);
+  ExpectV2KernelCallback(subscriber, /*enable=*/0);
+  EXPECT_CALL(*mock_,
+              ActivityDisableV2(subscriber, CUPTI_ACTIVITY_KIND_KERNEL, _))
+      .WillOnce(Return(CUPTI_SUCCESS));
+  EXPECT_CALL(*mock_,
+              ActivityDisableV2(subscriber, CUPTI_ACTIVITY_KIND_GRAPH_TRACE, _))
+      .WillOnce(Return(CUPTI_SUCCESS));
+  EXPECT_CALL(
+      *mock_,
+      ActivitySetAttributeV2(
+          nullptr, kCuptiActivityAttrEnableMultiSubscriberGraphTrace, _, _))
+      .WillOnce([](CUpti_SubscriberHandle /*subscriber*/,
+                   CUpti_ActivityAttribute /*attr*/, size_t* value_size,
+                   void* value) {
+        EXPECT_EQ(*value_size, sizeof(uint8_t));
+        EXPECT_EQ(*static_cast<const uint8_t*>(value), 0);
+        return CUPTI_SUCCESS;
+      });
+  EXPECT_CALL(*mock_, ActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED))
+      .WillOnce(Return(CUPTI_SUCCESS));
+  EXPECT_CALL(*mock_, Unsubscribe(subscriber)).WillOnce(Return(CUPTI_SUCCESS));
+  DisableProfiling();
+
+  EXPECT_FALSE(CuptiDisabled());
+}
 }  // namespace
 }  // namespace test
 }  // namespace profiler
