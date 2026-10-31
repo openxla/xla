@@ -2550,7 +2550,7 @@ namespace op = xla::testing::opcode_matchers;
 
 class HloDimensionSizeLegalizerTest : public HloTestBase {
  protected:
-  HloDimensionSizeLegalizerTest() {}
+  HloDimensionSizeLegalizerTest() = default;
 };
 
 TEST_F(HloDimensionSizeLegalizerTest, Ok) {
@@ -2613,7 +2613,7 @@ ENTRY gds {
 
 class SizeCheckTest : public HloTestBase {
  protected:
-  SizeCheckTest() {}
+  SizeCheckTest() = default;
 };
 
 TEST_F(SizeCheckTest, CompileTimeCheckBinaryOpFail) {
