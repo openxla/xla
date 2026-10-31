@@ -974,6 +974,15 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateKernelNode(
                         deps.size(), &node_params),
       "Failed to add kernel node to a CUDA graph"));
 
+  if (kernel.cooperative) {
+    CUlaunchAttributeValue value{};
+    value.cooperative = 1;
+    ABSL_RETURN_IF_ERROR(cuda::ToStatus(
+        cuGraphKernelNodeSetAttribute(node_handle,
+                                      CU_LAUNCH_ATTRIBUTE_COOPERATIVE, &value),
+        "Failed to enable cooperative kernel launch"));
+  }
+
   if (priority != StreamPriority::Default) {
     SetHasNodePriority();
     CUlaunchAttributeValue value;

@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/ffi/api/record_ffi.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/ffi/api/record_api.h"
@@ -38,6 +39,7 @@ TEST(FfiTest, RecordStage) {
     const void* kernel_data = nullptr;
     int64_t kernel_size = -1;
     XLA_FFI_SourceFormat format = static_cast<XLA_FFI_SourceFormat>(-1);
+    int32_t cooperative = -1;
     const XLA_FFI_Command* dummy_cmd =
         reinterpret_cast<const XLA_FFI_Command*>(0x1);
   } state;
@@ -79,7 +81,8 @@ TEST(FfiTest, RecordStage) {
       /*.create_launch=*/+[](XLA_FFI_RecordContext* ctx, const char*,
                              const void* kernel_data, int64_t kernel_size,
                              XLA_FFI_SourceFormat format, XLA_FFI_LaunchDims,
-                             uint32_t, int32_t, const XLA_FFI_KernelArgs*,
+                             uint32_t, int32_t, int32_t cooperative,
+                             const XLA_FFI_KernelArgs*,
                              const XLA_FFI_Command* const*, uint32_t,
                              const XLA_FFI_Command** out_command)
                               -> XLA_FFI_Error* {
@@ -87,6 +90,7 @@ TEST(FfiTest, RecordStage) {
         s->kernel_data = kernel_data;
         s->kernel_size = kernel_size;
         s->format = format;
+        s->cooperative = cooperative;
         *out_command = s->dummy_cmd;
         return nullptr;
       },
@@ -122,6 +126,7 @@ TEST(FfiTest, RecordStage) {
   EXPECT_EQ(state.kernel_data, expected_func_ptr);
   EXPECT_EQ(state.kernel_size, 0);
   EXPECT_EQ(state.format, XLA_FFI_SourceFormat_FUNCTION_PTR);
+  EXPECT_EQ(state.cooperative, 0);
   EXPECT_EQ(num_commands, 1);
 }
 
@@ -135,17 +140,17 @@ TEST(FfiTest, RecordExtensionVersionMismatch) {
   XLA_FFI_RecordFrame record_frame = {};
   RecordExtension::CExtension record_frame_ext =
       BuildRecordCExtension(&record_frame);
-  record_frame_ext.extension_base.id.minor_version = 1;
+  record_frame_ext.extension_base.id.minor_version = 3;
 
   InvokeContext context;
   context.extension_start = &record_frame_ext.extension_base;
 
   auto status =
       Invoke(Api(), *handler, call_frame, context, ExecutionStage::kRecord);
-  EXPECT_FALSE(status.ok());
-  EXPECT_THAT(
-      status.message(),
-      testing::HasSubstr("Extension version mismatch for RecordExtension"));
+  EXPECT_THAT(status, absl_testing::StatusIs(
+                          absl::StatusCode::kInvalidArgument,
+                          testing::HasSubstr("Extension version mismatch for "
+                                             "RecordExtension: actual(0.3)")));
 }
 
 }  // namespace

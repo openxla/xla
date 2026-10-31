@@ -38,7 +38,9 @@ using ::testing::Eq;
 
 static const XLA_FFI_Api* Api() { return GetXlaFfiApi(); }
 
-TEST(FfiTest, RecordStageCreateAndUpdateCommands) {
+class RecordFfiTest : public testing::TestWithParam<bool> {};
+
+TEST_P(RecordFfiTest, RecordStageCreateAndUpdateCommands) {
   struct DummyCommand {};
 
   struct RecordState {
@@ -56,6 +58,7 @@ TEST(FfiTest, RecordStageCreateAndUpdateCommands) {
     const void* kernel_data = nullptr;
     int64_t kernel_size = -1;
     XLA_FFI_SourceFormat format = static_cast<XLA_FFI_SourceFormat>(-1);
+    int32_t cooperative = -1;
 
     bool launch_created = false;
     bool launch_updated = false;
@@ -71,7 +74,8 @@ TEST(FfiTest, RecordStageCreateAndUpdateCommands) {
       /*create_launch=*/+[](XLA_FFI_RecordContext* ctx, const char*,
                             const void* kernel_data, int64_t kernel_size,
                             XLA_FFI_SourceFormat format, XLA_FFI_LaunchDims,
-                            uint32_t, int32_t, const XLA_FFI_KernelArgs*,
+                            uint32_t, int32_t, int32_t cooperative,
+                            const XLA_FFI_KernelArgs*,
                             const XLA_FFI_Command* const*, uint32_t,
                             const XLA_FFI_Command** out_command)
                              -> XLA_FFI_Error* {
@@ -79,6 +83,7 @@ TEST(FfiTest, RecordStageCreateAndUpdateCommands) {
         s->kernel_data = kernel_data;
         s->kernel_size = kernel_size;
         s->format = format;
+        s->cooperative = cooperative;
         *out_command = s->launch_cmd;
         return nullptr;
       },
@@ -133,7 +138,8 @@ TEST(FfiTest, RecordStageCreateAndUpdateCommands) {
               /*kernel_data=*/expected_func_ptr,
               /*kernel_size=*/0, /*format=*/SourceFormat::kFunctionPtr,
               /*launch_dims=*/dims, /*shared_mem_bytes=*/0,
-              /*uses_pdl=*/false, /*args=*/std::initializer_list<KernelArg>{});
+              /*uses_pdl=*/false, /*args=*/std::initializer_list<KernelArg>{},
+              /*dependencies=*/{}, /*cooperative=*/GetParam());
           EXPECT_THAT(launch_cmd, IsOkAndHolds(Eq(state.launch_cmd)));
           state.launch_created = true;
 
@@ -193,6 +199,7 @@ TEST(FfiTest, RecordStageCreateAndUpdateCommands) {
     EXPECT_EQ(state.kernel_data, expected_func_ptr);
     EXPECT_EQ(state.kernel_size, 0);
     EXPECT_EQ(state.format, XLA_FFI_SourceFormat_FUNCTION_PTR);
+    EXPECT_EQ(state.cooperative, static_cast<int32_t>(GetParam()));
     EXPECT_TRUE(state.memcpy_created);
     EXPECT_TRUE(state.empty_created);
     EXPECT_EQ(num_commands, 3);
@@ -219,10 +226,13 @@ TEST(FfiTest, RecordStageCreateAndUpdateCommands) {
         Invoke(Api(), *handler, call_frame, context, ExecutionStage::kRecord);
     ASSERT_OK(status);
     EXPECT_TRUE(state.launch_updated);
+    EXPECT_EQ(state.cooperative, static_cast<int32_t>(GetParam()));
     EXPECT_TRUE(state.memcpy_updated);
     EXPECT_EQ(num_commands, 3);
   }
 }
+
+INSTANTIATE_TEST_SUITE_P(CooperativeLaunch, RecordFfiTest, testing::Bool());
 
 TEST(FfiTest, RecordExtensionVersionMismatch) {
   auto handler = Ffi::BindRecord().Ctx<Extension<RecordExtension>>().To(
@@ -234,17 +244,17 @@ TEST(FfiTest, RecordExtensionVersionMismatch) {
   XLA_FFI_RecordFrame record_frame = {};
   RecordExtension::CExtension record_frame_ext =
       BuildRecordCExtension(&record_frame);
-  record_frame_ext.extension_base.id.minor_version = 1;
+  record_frame_ext.extension_base.id.minor_version = 3;
 
   InvokeContext context;
   context.extension_start = &record_frame_ext.extension_base;
 
   auto status =
       Invoke(Api(), *handler, call_frame, context, ExecutionStage::kRecord);
-  EXPECT_FALSE(status.ok());
-  EXPECT_THAT(
-      status.message(),
-      testing::HasSubstr("Extension version mismatch for RecordExtension"));
+  EXPECT_THAT(status, absl_testing::StatusIs(
+                          absl::StatusCode::kInvalidArgument,
+                          testing::HasSubstr("Extension version mismatch for "
+                                             "RecordExtension: actual(0.3)")));
 }
 
 }  // namespace
