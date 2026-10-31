@@ -572,6 +572,7 @@ message DebugOptions {
       503;
 
   // List of autotuner backends to enable. If empty, all backends are enabled.
+  // DEPRECATED: Use `xla_config_assigner_backends` instead.
   // Backends not relevant to the platform will be ignored, e.g. cuDNN on AMD.
   // If xla_gpu_experimental_disable_binary_libraries is set, all binary
   // libraries (CUBLAS, CUBLASLT, CUDNN, with fission) are disabled.
@@ -579,7 +580,8 @@ message DebugOptions {
   // The NATIVE_EMITTER and the BLOCK_LEVEL_EMITTER are always enabled for the
   // fusion autuning pass, and are not affected by this flag, use
   // --xla_gpu_experimental_enable_fusion_autotuner for that pass.
-  repeated autotuner.Backend xla_gpu_experimental_autotune_backends = 442;
+  repeated autotuner.Backend xla_gpu_experimental_autotune_backends = 442
+      [deprecated = true];
 
   // Preferred autotuner backend. If set and the preferred backend generates
   // valid configs for an instruction, the autotuner will pick a config from
@@ -648,8 +650,9 @@ message DebugOptions {
   // this field.
   optional float xla_gpu_auto_spmd_partitioning_memory_budget_ratio = 225;
 
+  // DEPRECATED: Use `xla_autotune_rtol` instead.
   // Relative precision for comparing different GEMM solutions
-  optional float xla_gpu_autotune_gemm_rtol = 316;
+  optional float xla_gpu_autotune_gemm_rtol = 316 [deprecated = true];
 
   // 0:   Disable gemm and convolution autotuning.
   // 1:   Enable autotuning, but disable correctness checking.
@@ -777,8 +780,9 @@ message DebugOptions {
   // inputs+output is within the threshold.
   optional int32 xla_gpu_dot_merger_threshold_mb = 331;
 
+  // DEPRECATED: Use `xla_dump_autotune_logs_to` instead.
   // File to write autotune logs to. It will stored in txt format.
-  optional string xla_gpu_dump_autotune_logs_to = 292;
+  optional string xla_gpu_dump_autotune_logs_to = 292 [deprecated = true];
 
   // File to write autotune results to. It will be a binary file unless the name
   // ends with .txt or .textproto. Warning: The results are written at every
@@ -786,11 +790,13 @@ message DebugOptions {
   optional string xla_gpu_dump_autotune_results_to = 222;
 
   // This flag will be deleted soon. Please use
-  // xla_gpu_dump_autotuned_instructions instead.
+  // xla_dump_isolated_hlos_pre_and_post_config_assignment instead.
   optional bool xla_gpu_dump_autotuned_gemm_fusions = 232 [deprecated = true];
 
+  // DEPRECATED: Use `xla_dump_isolated_hlos_pre_and_post_config_assignment`
+  // instead.
   // Whether to dump instructions before/after autotuning.
-  optional bool xla_gpu_dump_autotuned_instructions = 445;
+  optional bool xla_gpu_dump_autotuned_instructions = 445 [deprecated = true];
 
   // Whether to dump llvm ir when compiling to ptx.
   optional bool xla_gpu_dump_llvmir = 155;
@@ -1243,10 +1249,12 @@ message DebugOptions {
   // fusions.
   optional int32 xla_gpu_fusion_autotune_top_k_configs = 476;
 
+  // DEPRECATED: Use `xla_gpu_override_triton_configs_file` instead.
   // A textproto file to override triton configs considered by autotuner. See
-  // also `xla_gpu_override_gemm_autotuner` to override with a single config.
+  // also `xla_gpu_override_triton_config` to override with a single config.
   // Use xla_gpu_cublas_fallback to allow/disallow fallback to cuBLAS.
-  optional string xla_gpu_gemm_autotuner_override_file = 434;
+  optional string xla_gpu_gemm_autotuner_override_file = 434
+      [deprecated = true];
 
   // Threshold to rewrite matmul to cuBLAS or Triton (minimum combined number of
   // elements of both matrices in non-batch dimensions to be considered for a
@@ -1335,10 +1343,11 @@ message DebugOptions {
   // xla_gpu_threshold_for_windowed_einsum_mib will be ignored.
   optional int64 xla_gpu_operand_bytes_threshold_for_windowed_einsum = 339;
 
+  // DEPRECATED: Use `xla_gpu_override_triton_config` instead.
   // If set, override triton configs considered by autotuner. Use a textproto
   // format matching AutotuneResult::TritonGemmKey. Use xla_gpu_cublas_fallback
   // to allow/disallow fallback to cuBLAS.
-  optional string xla_gpu_override_gemm_autotuner = 295;
+  optional string xla_gpu_override_gemm_autotuner = 295 [deprecated = true];
 
   optional string xla_gpu_per_fusion_autotune_cache_dir = 310;
 
@@ -1988,7 +1997,30 @@ message DebugOptions {
   // (ScanRewriterTriton).
   optional bool xla_gpu_experimental_enable_triton_scan = 562;
 
-  // Next id: 564
+  // List of backends to enable for config assignment / autotuning. Backends not
+  // relevant to the platform will be ignored.
+  repeated autotuner.Backend xla_config_assigner_backends = 564;
+
+  // Relative precision for comparing different autotuning solutions against the
+  // reference one.
+  optional float xla_autotune_rtol = 565;
+
+  // Whether to dump isolated HLO instructions before and after config
+  // assignment.
+  optional bool xla_dump_isolated_hlos_pre_and_post_config_assignment = 566;
+
+  // File to write autotune logs to. It will be a binary file unless the name
+  // ends with .txt or .textproto.
+  optional string xla_dump_autotune_logs_to = 567;
+
+  // If set, override Triton config considered by the autotuner using a
+  // textproto format matching AutotuneResult::TritonGemmKey.
+  optional string xla_gpu_override_triton_config = 568;
+
+  // A textproto file to override Triton configs considered by the autotuner.
+  optional string xla_gpu_override_triton_configs_file = 569;
+
+  // Next id: 570
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

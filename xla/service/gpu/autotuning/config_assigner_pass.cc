@@ -297,8 +297,9 @@ ConfigAssigner::Options GetConfigAssignerOptions(
 
   options.expect_all_instructions_in_cache =
       debug_options.xla_gpu_require_complete_aot_autotune_results();
-  options.dump_hlos = debug_options.xla_gpu_dump_autotuned_gemm_fusions() ||
-                      debug_options.xla_gpu_dump_autotuned_instructions();
+  options.dump_hlos =
+      debug_options.xla_gpu_dump_autotuned_gemm_fusions() ||
+      debug_options.xla_dump_isolated_hlos_pre_and_post_config_assignment();
   options.use_new_cache_format =
       debug_options.xla_gpu_use_new_autotune_cache_format();
   options.compile_all_supported_configs =
@@ -360,11 +361,10 @@ Autotuner::Options GetAutotunerOptions(const DebugOptions& debug_options,
   autotuner_options.correctness_check_options.enable_correctness_check =
       is_buffer_check_supported && debug_options.xla_gpu_autotune_level() >= 4;
   autotuner_options.correctness_check_options.relative_tolerance =
-      debug_options.xla_gpu_autotune_gemm_rtol();
+      debug_options.xla_autotune_rtol();
   autotuner_options.correctness_check_options.crash_on_failure =
       debug_options.xla_gpu_crash_on_verification_failures();
-  autotuner_options.dump_logs_to =
-      debug_options.xla_gpu_dump_autotune_logs_to();
+  autotuner_options.dump_logs_to = debug_options.xla_dump_autotune_logs_to();
   autotuner_options.use_new_logging_format =
       debug_options.xla_gpu_use_new_autotune_cache_format();
   return autotuner_options;
@@ -409,8 +409,7 @@ ConfigAssignerPass::GetEnabledBackends(
     se::PlatformId platform_id, tsl::thread::ThreadPool* thread_pool,
     MlirContextPool* mlir_context_pool) {
   std::vector<autotuner::Backend> autotune_backends;
-  for (const auto& backend :
-       debug_options.xla_gpu_experimental_autotune_backends()) {
+  for (const auto& backend : debug_options.xla_config_assigner_backends()) {
     autotune_backends.push_back(static_cast<autotuner::Backend>(backend));
   }
 

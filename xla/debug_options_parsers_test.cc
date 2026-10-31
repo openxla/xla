@@ -598,35 +598,39 @@ TEST(ParseRepeatedEnumFlagsTest, AutotuneBackend) {
   MakeDebugOptionsFlags(&flag_objects, &debug_options);
 
   // Check that the default setting is populated.
-  ASSERT_THAT(debug_options.xla_gpu_experimental_autotune_backends(),
-              Not(IsEmpty()));
+  ASSERT_THAT(debug_options.xla_config_assigner_backends(), Not(IsEmpty()));
 
   // Overwriting the default setting.
-  SetXlaFlagsEnvVar("--xla_gpu_experimental_autotune_backends=cudnn,triton");
+  SetXlaFlagsEnvVar("--xla_config_assigner_backends=cudnn,triton");
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
   EXPECT_THAT(
-      debug_options.xla_gpu_experimental_autotune_backends(),
+      debug_options.xla_config_assigner_backends(),
       ElementsAre(autotuner::Backend::CUDNN, autotuner::Backend::TRITON));
 
   // Adding / removing options from the existing setting.
-  SetXlaFlagsEnvVar(
-      "--xla_gpu_experimental_autotune_backends=+cublaslt,-triton");
+  SetXlaFlagsEnvVar("--xla_config_assigner_backends=+cublaslt,-triton");
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
   EXPECT_THAT(
-      debug_options.xla_gpu_experimental_autotune_backends(),
+      debug_options.xla_config_assigner_backends(),
       ElementsAre(autotuner::Backend::CUDNN, autotuner::Backend::CUBLASLT));
 
   // Test starting from defaults and applying modifiers.
   debug_options = DefaultDebugOptionsIgnoringFlags();
-  SetXlaFlagsEnvVar("--xla_gpu_experimental_autotune_backends=-triton");
+  SetXlaFlagsEnvVar("--xla_config_assigner_backends=-triton");
   ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
-  EXPECT_THAT(debug_options.xla_gpu_experimental_autotune_backends(),
+  EXPECT_THAT(debug_options.xla_config_assigner_backends(),
               Not(Contains(autotuner::Backend::TRITON)));
-  EXPECT_THAT(debug_options.xla_gpu_experimental_autotune_backends(),
-              Not(IsEmpty()));
+  EXPECT_THAT(debug_options.xla_config_assigner_backends(), Not(IsEmpty()));
   // It should still contain CUDNN (which was in defaults).
-  EXPECT_THAT(debug_options.xla_gpu_experimental_autotune_backends(),
+  EXPECT_THAT(debug_options.xla_config_assigner_backends(),
               Contains(autotuner::Backend::CUDNN));
+
+  // Deprecated flag also populates xla_config_assigner_backends.
+  SetXlaFlagsEnvVar("--xla_gpu_experimental_autotune_backends=cudnn,triton");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+  EXPECT_THAT(
+      debug_options.xla_config_assigner_backends(),
+      ElementsAre(autotuner::Backend::CUDNN, autotuner::Backend::TRITON));
 }
 
 TEST(PreferredBackendParsingTest, CaseInsensitive) {
