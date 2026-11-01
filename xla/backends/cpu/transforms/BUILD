@@ -56,6 +56,7 @@ xla_cc_test(
     srcs = ["embedded_while_loop_unroller_test.cc"],
     deps = [
         ":embedded_while_loop_unroller",
+        "//third_party/gloop/util/task:status_matchers",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_query",
