@@ -688,5 +688,95 @@ ENTRY main {
   RunTest(hlo_text, {&base, &exponent});
 }
 
+template <typename T>
+class ElementalIrEmitterIntegerPowTypedTest
+    : public ElementalIrEmitterExecutionTypedTest<T> {};
+
+using IntegerPowTypes = ::testing::Types<int8_t, uint8_t, int16_t, uint16_t,
+                                         int32_t, uint32_t, int64_t, uint64_t>;
+TYPED_TEST_SUITE(ElementalIrEmitterIntegerPowTypedTest, IntegerPowTypes);
+
+TYPED_TEST(ElementalIrEmitterIntegerPowTypedTest, OddBaseExponentGe64) {
+  const std::string hlo_text = absl::StrReplaceAll(
+      R"(
+HloModule IntegerPowOddBaseExponentGe64
+
+ENTRY main {
+  base = TYPE[8]{0} parameter(0)
+  exponent = TYPE[8]{0} parameter(1)
+  ROOT power = TYPE[8]{0} power(base, exponent)
+}
+)",
+      {{"TYPE", this->TypeName()}});
+
+  Literal base = LiteralUtil::CreateR1<TypeParam>({3, 2, 3, 1, 5, 7, 0, 3});
+  Literal exponent =
+      LiteralUtil::CreateR1<TypeParam>({64, 64, 65, 100, 64, 66, 64, 127});
+  this->RunTest(hlo_text, {&base, &exponent});
+}
+
+TYPED_TEST(ElementalIrEmitterIntegerPowTypedTest, OddBaseExponentGe64Fused) {
+  const std::string hlo_text = absl::StrReplaceAll(
+      R"(
+HloModule IntegerPowOddBaseExponentGe64Fused
+
+ENTRY main {
+  base = TYPE[8]{0} parameter(0)
+  exponent = TYPE[8]{0} parameter(1)
+  pow = TYPE[8]{0} power(base, exponent)
+  ROOT out = TYPE[8]{0} add(pow, base)
+}
+)",
+      {{"TYPE", this->TypeName()}});
+
+  Literal base = LiteralUtil::CreateR1<TypeParam>({3, 2, 3, 1, 5, 7, 0, 3});
+  Literal exponent =
+      LiteralUtil::CreateR1<TypeParam>({64, 64, 65, 100, 64, 66, 64, 127});
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       this->ParseAndReturnVerifiedModule(hlo_text));
+  EXPECT_TRUE(this->RunAndCompare(std::move(module), {&base, &exponent},
+                                  ErrorSpec{0, 0}));
+}
+
+TEST_F(ElementalIrEmitterExecutionTest, SignedIntegerPowNegativeOddBaseGe64) {
+  const std::string hlo_text = R"(
+HloModule SignedIntegerPowNegativeOddBaseGe64
+
+ENTRY main {
+  base = s32[6]{0} parameter(0)
+  exponent = s32[6]{0} parameter(1)
+  ROOT power = s32[6]{0} power(base, exponent)
+}
+)";
+
+  Literal base = LiteralUtil::CreateR1<int32_t>({-3, -3, -5, -5, 3, 5});
+  Literal exponent =
+      LiteralUtil::CreateR1<int32_t>({64, 65, 64, 65, 1000, (1 << 20) + 3});
+  RunTest(hlo_text, {&base, &exponent});
+}
+
+TEST_F(ElementalIrEmitterExecutionTest, IntegerPowInSortComparator) {
+  const std::string hlo_text = R"(
+HloModule IntegerPowInSortComparator
+
+comparator {
+  p0 = u32[] parameter(0)
+  p1 = u32[] parameter(1)
+  exp = u32[] constant(64)
+  lhs_pow = u32[] power(p0, exp)
+  rhs_pow = u32[] power(p1, exp)
+  ROOT lt = pred[] compare(lhs_pow, rhs_pow), direction=LT
+}
+
+ENTRY main {
+  input = u32[2]{0} parameter(0)
+  ROOT sorted = u32[2]{0} sort(input), dimensions={0}, to_apply=comparator
+}
+)";
+
+  Literal input = LiteralUtil::CreateR1<uint32_t>({3, 1});
+  RunTest(hlo_text, {&input});
+}
+
 }  // namespace
 }  // namespace xla

@@ -2494,47 +2494,37 @@ llvm::Value* ElementalIrEmitter::EmitIntegerPow(llvm::Value* lhs,
                                                 bool is_signed) {
   // Exponentiation by squaring:
   // https://en.wikipedia.org/wiki/Exponentiation_by_squaring;
-  int bits = 6;  // Everything else would overflow for any exponent > 1, as 2^64
-                 // is the larget possible exponent for a 64-bit integer, and
-                 // that's 1 << 6.
+  const unsigned bits = rhs->getType()->getScalarSizeInBits();
   llvm::Value* base = lhs;
   llvm::Value* exponent = rhs;
   llvm::Value* exp_one = llvm::ConstantInt::get(exponent->getType(), 1);
-  llvm::Value* exp_zero = llvm::ConstantInt::get(exponent->getType(), 0);
   llvm::Value* base_one = llvm::ConstantInt::get(base->getType(), 1);
-  llvm::Value* base_zero = llvm::ConstantInt::get(base->getType(), 0);
-  llvm::Value* base_neg_one = llvm::ConstantInt::get(base->getType(), -1, true);
   llvm::Value* accumulator = base_one;
-  llvm::Value* original_base = base;
-  llvm::Value* original_exponent = exponent;
 
-  // Unroll the loop at compile time.
-  for (int i = 0; i < bits; i++) {
+  // Unroll the loop at compile time over all exponent bits, since for odd bases
+  // modulo 2^N the result can depend on exponent bits beyond bit 5.
+  for (unsigned i = 0; i < bits; ++i) {
     accumulator = b_->CreateSelect(
         b_->CreateICmpEQ(b_->CreateAnd(exponent, exp_one), exp_one),
         b_->CreateMul(accumulator, base), accumulator);
     base = b_->CreateMul(base, base);
     exponent = b_->CreateLShr(exponent, 1);
   }
-  accumulator = b_->CreateSelect(
-      b_->CreateAnd(
-          b_->CreateICmpNE(exponent, exp_zero),
-          b_->CreateICmpEQ(b_->CreateAnd(original_base, base_one), base_zero)),
-      base_zero, accumulator);
   if (!is_signed) {
     return accumulator;
   }
 
-  llvm::Value* neg_one_base_result = b_->CreateSelect(
-      b_->CreateICmpEQ(b_->CreateAnd(original_exponent, exp_one), exp_one),
-      base_neg_one, base_one);
-  llvm::Value* neg_exp_res =
-      b_->CreateSelect(b_->CreateICmpEQ(original_base, base_neg_one),
-                       neg_one_base_result, base_zero);
+  llvm::Value* exp_zero = llvm::ConstantInt::get(rhs->getType(), 0);
+  llvm::Value* base_zero = llvm::ConstantInt::get(lhs->getType(), 0);
+  llvm::Value* base_neg_one = llvm::ConstantInt::get(lhs->getType(), -1, true);
+  llvm::Value* neg_one_base_result =
+      b_->CreateSelect(b_->CreateICmpEQ(b_->CreateAnd(rhs, exp_one), exp_one),
+                       base_neg_one, base_one);
+  llvm::Value* neg_exp_res = b_->CreateSelect(
+      b_->CreateICmpEQ(lhs, base_neg_one), neg_one_base_result, base_zero);
   return b_->CreateSelect(
-      b_->CreateICmpSGE(original_exponent, exp_zero), accumulator,
-      b_->CreateSelect(b_->CreateICmpEQ(original_base, base_one), base_one,
-                       neg_exp_res));
+      b_->CreateICmpSGE(rhs, exp_zero), accumulator,
+      b_->CreateSelect(b_->CreateICmpEQ(lhs, base_one), base_one, neg_exp_res));
 }
 
 llvm::Value* ElementalIrEmitter::EmitIntegerMulhi(llvm::Value* lhs,

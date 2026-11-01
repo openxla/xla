@@ -61,8 +61,26 @@ func.func @expand_integer_power_unsigned_scalar(
     %arg0: i32,
     %arg1: i32) -> i32 {
   // CHECK-NOT: math.ipowi
-  // CHECK: scf.for
+  // CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
+  // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : index
+  // CHECK-DAG: %[[C32:.*]] = arith.constant 32 : index
+  // CHECK: scf.for {{.*}} = %[[C0]] to %[[C32]] step %[[C1]]
   // CHECK-NOT: arith.cmpi slt
   %0 = math.ipowi %arg0, %arg1 {xla.is_unsigned} : i32
   func.return %0 : i32
+}
+
+// -----
+
+// CHECK-LABEL: @expand_integer_power_i64
+func.func @expand_integer_power_i64(
+    %arg0: i64,
+    %arg1: i64) -> i64 {
+  // CHECK-NOT: math.ipowi
+  // CHECK-DAG: %[[C0:.*]] = arith.constant 0 : index
+  // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : index
+  // CHECK-DAG: %[[C64:.*]] = arith.constant 64 : index
+  // CHECK: scf.for {{.*}} = %[[C0]] to %[[C64]] step %[[C1]]
+  %0 = math.ipowi %arg0, %arg1 : i64
+  func.return %0 : i64
 }

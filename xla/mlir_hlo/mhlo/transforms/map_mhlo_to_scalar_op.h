@@ -1195,20 +1195,12 @@ inline Value mapMhloOpToStdScalarOp<mhlo::PowOp>(
 
   // Exponentiation by squaring:
   // https://en.wikipedia.org/wiki/Exponentiation_by_squaring;
-  Value negOne = getConstantOrSplat(&lb, loc, resultTypes[0],
-                                    lb.getIntegerAttr(elementType, -1));
-  Value zero = getConstantOrSplat(&lb, loc, resultTypes[0],
-                                  lb.getIntegerAttr(elementType, 0));
   Value one = getConstantOrSplat(&lb, loc, resultTypes[0],
                                  lb.getIntegerAttr(elementType, 1));
-  Value two = getConstantOrSplat(&lb, loc, resultTypes[0],
-                                 lb.getIntegerAttr(elementType, 2));
   Value step = arith::ConstantIndexOp::create(lb, 1);
   Value lowerBound = arith::ConstantIndexOp::create(lb, 0);
-  // Everything else would overflow for any exponent > 1, as 2^64
-  // is the larget possible exponent for a 64-bit integer, and
-  // that's 1 << 6.
-  Value upperBound = arith::ConstantIndexOp::create(lb, 6);
+  Value upperBound =
+      arith::ConstantIndexOp::create(lb, elementType.getIntOrFloatBitWidth());
   auto originalBase = adaptor.getLhs();
   auto originalExponent = adaptor.getRhs();
 
@@ -1232,19 +1224,17 @@ inline Value mapMhloOpToStdScalarOp<mhlo::PowOp>(
                              SmallVector<Value>({accum, base, exponent}));
       });
   Value accum = forOp.getResult(0);
-  Value remainingExponent = forOp.getResult(2);
-  Value exponentNonZero = arith::CmpIOp::create(lb, arith::CmpIPredicate::ne,
-                                                remainingExponent, zero);
-  Value baseIsEven = arith::CmpIOp::create(
-      lb, arith::CmpIPredicate::eq,
-      ::mlir::arith::AndIOp::create(lb, originalBase, one), zero);
-  accum = ::mlir::arith::SelectOp::create(
-      lb, ::mlir::arith::AndIOp::create(lb, exponentNonZero, baseIsEven), zero,
-      accum);
 
   if (IsUnsignedIntegerType{}(getElementTypeOrSelf(argTypes.front()))) {
     return accum;
   }
+
+  Value negOne = getConstantOrSplat(&lb, loc, resultTypes[0],
+                                    lb.getIntegerAttr(elementType, -1));
+  Value zero = getConstantOrSplat(&lb, loc, resultTypes[0],
+                                  lb.getIntegerAttr(elementType, 0));
+  Value two = getConstantOrSplat(&lb, loc, resultTypes[0],
+                                 lb.getIntegerAttr(elementType, 2));
 
   Value rhsIsEven = arith::CmpIOp::create(
       lb, arith::CmpIPredicate::eq,
