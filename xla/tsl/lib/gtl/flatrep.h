@@ -154,7 +154,8 @@ class FlatRep {
       const uint32_t x = b->marker[bi];
       if (x == marker && equal_(b->key(bi), k)) {
         return {true, b, bi};
-      } else if (x == kEmpty) {
+      }
+      if (x == kEmpty) {
         return {false, nullptr, 0};
       }
       index = NextIndex(index, num_probes);
@@ -181,7 +182,8 @@ class FlatRep {
       const uint32_t x = b->marker[bi];
       if (x == marker && equal_(b->key(bi), k)) {
         return {true, b, bi};
-      } else if (!del && x == kDeleted) {
+      }
+      if (!del && x == kDeleted) {
         // Remember deleted index to use for insertion.
         del = b;
         di = bi;
@@ -219,7 +221,7 @@ class FlatRep {
     absl::PrefetchToLocalCache(&b->storage.key[bi]);
   }
 
-  inline void MaybeResize() {
+  void MaybeResize() {
     if (not_empty_ < grow_) {
       return;  // Nothing to do
     }
@@ -228,7 +230,9 @@ class FlatRep {
       if (size() >= shrink_) {
         // Not small enough to shrink.
         grow_ = static_cast<size_t>(bucket_count() * 0.8);
-        if (not_empty_ < grow_) return;
+        if (not_empty_ < grow_) {
+          return;
+        }
       }
     }
     Resize(size() + 1);
@@ -290,16 +294,14 @@ class FlatRep {
 
   // Used by FreshInsert when we should copy from source.
   struct CopyEntry {
-    inline void operator()(Bucket* dst, uint32_t dsti, Bucket* src,
-                           uint32_t srci) {
+    void operator()(Bucket* dst, uint32_t dsti, Bucket* src, uint32_t srci) {
       dst->CopyFrom(dsti, src, srci);
     }
   };
 
   // Used by FreshInsert when we should move from source.
   struct MoveEntry {
-    inline void operator()(Bucket* dst, uint32_t dsti, Bucket* src,
-                           uint32_t srci) {
+    void operator()(Bucket* dst, uint32_t dsti, Bucket* src, uint32_t srci) {
       dst->MoveFrom(dsti, src, srci);
       src->Destroy(srci);
       src->marker[srci] = kDeleted;
@@ -342,7 +344,7 @@ class FlatRep {
     }
   }
 
-  inline size_t NextIndex(size_t i, uint32_t num_probes) const {
+  size_t NextIndex(size_t i, uint32_t num_probes) const {
     // Quadratic probing.
     return (i + num_probes) & mask_;
   }

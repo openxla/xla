@@ -263,7 +263,9 @@ class FlatMap {
 
   size_t erase(const Key& k) {
     auto r = rep_.Find(k);
-    if (!r.found) return 0;
+    if (!r.found) {
+      return 0;
+    }
     rep_.Erase(r.b, r.index);
     return 1;
   }
@@ -283,29 +285,33 @@ class FlatMap {
     auto pos = find(k);
     if (pos == end()) {
       return std::make_pair(pos, pos);
-    } else {
-      auto next = pos;
-      ++next;
-      return std::make_pair(pos, next);
     }
+    auto next = pos;
+    ++next;
+    return std::make_pair(pos, next);
   }
   std::pair<const_iterator, const_iterator> equal_range(const Key& k) const {
     auto pos = find(k);
     if (pos == end()) {
       return std::make_pair(pos, pos);
-    } else {
-      auto next = pos;
-      ++next;
-      return std::make_pair(pos, next);
     }
+    auto next = pos;
+    ++next;
+    return std::make_pair(pos, next);
   }
 
   bool operator==(const FlatMap& x) const {
-    if (size() != x.size()) return false;
+    if (size() != x.size()) {
+      return false;
+    }
     for (auto& p : x) {
       auto i = find(p.first);
-      if (i == end()) return false;
-      if (i->second != p.second) return false;
+      if (i == end()) {
+        return false;
+      }
+      if (i->second != p.second) {
+        return false;
+      }
     }
     return true;
   }

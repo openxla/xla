@@ -37,11 +37,10 @@ bool Has(const NumSet& set, int64_t k) {
   if (iter == set.end()) {
     EXPECT_EQ(set.count(k), 0);
     return false;
-  } else {
-    EXPECT_EQ(set.count(k), 1);
-    EXPECT_EQ(*iter, k);
-    return true;
   }
+  EXPECT_EQ(set.count(k), 1);
+  EXPECT_EQ(*iter, k);
+  return true;
 }
 
 // Return contents of set as a sorted list of numbers.

@@ -203,7 +203,9 @@ typename Collection::value_type::second_type EraseKeyReturnValuePtr(
     Collection* collection,
     const typename Collection::value_type::first_type& key) {
   auto it = collection->find(key);
-  if (it == collection->end()) return nullptr;
+  if (it == collection->end()) {
+    return nullptr;
+  }
   auto v = gtl::subtle::GetMapped(*it);
   collection->erase(it);
   return v;

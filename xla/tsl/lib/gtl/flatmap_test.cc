@@ -38,12 +38,11 @@ int32_t Get(const NumMap& map, int64_t k, int32_t def = -1) {
   if (iter == map.end()) {
     EXPECT_EQ(map.count(k), 0);
     return def;
-  } else {
-    EXPECT_EQ(map.count(k), 1);
-    EXPECT_EQ(&map.at(k), &iter->second);
-    EXPECT_EQ(iter->first, k);
-    return iter->second;
   }
+  EXPECT_EQ(map.count(k), 1);
+  EXPECT_EQ(&map.at(k), &iter->second);
+  EXPECT_EQ(iter->first, k);
+  return iter->second;
 }
 
 // Return contents of map as a sorted list of pairs.

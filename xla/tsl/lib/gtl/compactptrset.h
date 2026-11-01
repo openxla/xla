@@ -41,16 +41,22 @@ class CompactPointerSet {
     static_assert(
         std::is_pointer<T>::value,
         "CompactPointerSet<T> can only be used with T's that are pointers");
-    if (isbig()) delete big();
+    if (isbig()) {
+      delete big();
+    }
   }
 
   CompactPointerSet(const CompactPointerSet& other) : rep_(0) { *this = other; }
 
   CompactPointerSet& operator=(const CompactPointerSet& other) {
-    if (this == &other) return *this;
+    if (this == &other) {
+      return *this;
+    }
     if (other.isbig()) {
       // big => any
-      if (!isbig()) MakeBig();
+      if (!isbig()) {
+        MakeBig();
+      }
       *big() = *other.big();
     } else if (isbig()) {
       // !big => big
@@ -92,19 +98,17 @@ class CompactPointerSet {
     bool operator==(const iterator& other) const {
       if (bigrep_) {
         return iter_ == other.iter_;
-      } else {
-        return single_ == other.single_;
       }
+      return single_ == other.single_;
     }
     bool operator!=(const iterator& other) const { return !(*this == other); }
 
     const T& operator*() const {
       if (bigrep_) {
         return *iter_;
-      } else {
-        DCHECK(single_ != nullptr);
-        return single_;
       }
+      DCHECK(single_ != nullptr);
+      return single_;
     }
 
    private:
@@ -159,7 +163,8 @@ class CompactPointerSet {
   iterator find(T elem) const {
     if (rep_ == safe_reinterpret_cast<std::uintptr_t>(elem)) {
       return iterator(rep_);
-    } else if (!isbig()) {
+    }
+    if (!isbig()) {
       return iterator(0);
     } else {
       return iterator(big()->find(elem));
@@ -173,9 +178,9 @@ class CompactPointerSet {
       if (rep_ == safe_reinterpret_cast<std::uintptr_t>(elem)) {
         rep_ = 0;
         return 1;
-      } else {
-        return 0;
       }
+      return 0;
+
     } else {
       return big()->erase(elem);
     }
