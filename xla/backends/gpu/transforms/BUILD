@@ -1268,6 +1268,7 @@ xla_test(
         ":conv_fusion_rewriter",
         ":conv_kind_assignment",
         ":cudnn_fusion_compiler",
+        "//xla:xla_proto_cc",
         "//xla/backends/gpu/target_config",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
