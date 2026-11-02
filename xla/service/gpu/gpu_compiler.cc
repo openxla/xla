@@ -2900,6 +2900,15 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   // The module is being moved into the GpuExecutable below and we need to
   // read a few config values from the module, before it becomes invalid.
   bool embed_debug_info = debug_opts.xla_gpu_executable_embed_debug_info();
+  // Only used by the executable if the module isn't embedded.
+  std::optional<DeviceAssignment> static_device_assignment;
+  if (module->config().has_static_device_assignment()) {
+    static_device_assignment = module->config().static_device_assignment();
+  }
+  HloBufferDonorConfig buffer_donor_config = module->buffer_donor_config();
+  int64_t partition_size = module->config().partition_size();
+  ComputationLayout entry_computation_layout =
+      module->config().entry_computation_layout();
 
   tsl::profiler::ScopedAnnotation annotation([&] {
     return absl::StrFormat("XlaCreateGpuExecutable:#module=%s#",
@@ -2918,6 +2927,13 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           alias_info.get(), debug_opts.xla_debug_buffer_assignment_show_max());
   BufferAssignmentProto buffer_assignment_proto =
       res.compile_module_results.buffer_assignment->ToProto();
+
+  // Without the module the executable can't compute the fingerprint, so we
+  // pass it along.
+  std::string fingerprint;
+  if (!options.embed_hlo_module) {
+    fingerprint = module->GetFingerprint128();
+  }
 
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<GpuExecutable> gpu_executable,
@@ -2939,7 +2955,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*alias_info=*/std::move(alias_info),
           /*debug_options=*/debug_opts,
           /*device_description=*/gpu_device_info,
-          /*debug_module=*/options.embed_hlo_module
+          /*hlo_module=*/options.embed_hlo_module
               ? std::move(module)
               : std::unique_ptr<HloModule>(),
           /*enable_debug_info_manager=*/embed_debug_info,
@@ -2952,7 +2968,12 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*buffer_assignment_proto=*/std::move(buffer_assignment_proto),
           /*buffer_allocations_debug_summary=*/
           std::move(buffer_allocations_debug_summary),
-          /*gpu_topology=*/gpu_topology}));
+          /*gpu_topology=*/gpu_topology,
+          /*static_device_assignment=*/std::move(static_device_assignment),
+          /*buffer_donor_config=*/std::move(buffer_donor_config),
+          /*partition_size=*/partition_size,
+          /*entry_computation_layout=*/std::move(entry_computation_layout),
+          /*fingerprint=*/std::move(fingerprint)}));
   IncrementCompiledProgramsCount();
 
   if (gpu_executable->has_module() && gpu_executable->module()
