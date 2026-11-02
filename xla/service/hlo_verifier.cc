@@ -1733,6 +1733,8 @@ absl::Status ShapeVerifier::HandleFusion(HloInstruction* fusion) {
   const HloFusionInstruction* casted_fusion =
       DynCast<const HloFusionInstruction>(fusion);
   for (const auto& pair : casted_fusion->output_to_operand_aliasing()) {
+    TF_RET_CHECK(pair.second.first >= 0)
+        << "Negative operand index in aliasing config.";
     TF_RET_CHECK(pair.second.first < casted_fusion->operand_count())
         << "Invalid aliasing operand index.";
     TF_RET_CHECK(ShapeUtil::IndexIsValid(
@@ -1846,6 +1848,8 @@ absl::Status ShapeVerifier::HandleCustomCall(HloInstruction* instruction) {
   bool ignore_buffer = custom_call->IsCustomCall(kPinCustomCallTarget) ||
                        custom_call->IsCustomCall(kUnpinCustomCallTarget);
   for (const auto& pair : custom_call->output_to_operand_aliasing()) {
+    TF_RET_CHECK(pair.second.first >= 0)
+        << "Negative operand index in aliasing config.";
     TF_RET_CHECK(pair.second.first < custom_call->operand_count())
         << "Invalid aliasing operand index.";
     TF_RET_CHECK(ShapeUtil::IndexIsValid(
@@ -2900,6 +2904,19 @@ absl::Status ShapeVerifier::VerifyEntryComputationLayout(
         // We skip may-alias buffers as they do not force aliasing.
         if (!alias.must_alias()) {
           return absl::OkStatus();
+        }
+
+        // HloInputOutputAliasConfig::SetUpAlias rejects negative parameter
+        // numbers, but it cannot know the parameter count, so it accepts
+        // numbers beyond it. The out-of-range case is only rejected later, in
+        // HloInputOutputAliasConfig::Verify, which runs after this function;
+        // guard the parameter_layout access here so an out-of-range parameter
+        // number cannot index parameter_layouts_ out of bounds.
+        if (alias.parameter_number >= layout.parameter_count()) {
+          return Internal(
+              "Parameter number %d in input output alias is out of bounds: "
+              "the entry computation has %d parameters.",
+              alias.parameter_number, layout.parameter_count());
         }
 
         const Shape& result_shape =
@@ -4694,6 +4711,8 @@ absl::Status InstructionVerifier::HandleCall(HloInstruction* call) {
   }
   const auto* callable = Cast<const HloCallableInstruction>(call);
   for (const auto& pair : callable->output_to_operand_aliasing()) {
+    TF_RET_CHECK(pair.second.first >= 0)
+        << "Negative operand index in aliasing config.";
     TF_RET_CHECK(pair.second.first < callable->operand_count())
         << "Invalid aliasing operand index.";
     TF_RET_CHECK(ShapeUtil::IndexIsValid(

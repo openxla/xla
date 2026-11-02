@@ -469,6 +469,118 @@ TEST_F(HloVerifierTest, CheckCustomCallOperandOutputAliasing) {
   EXPECT_OK(verifier().Run(module.get()).status());
 }
 
+TEST_F(HloVerifierTest, CheckCallOperandOutputAliasingNegativeOperandIndex) {
+  constexpr absl::string_view hlo = R"(
+    HloModule Module
+
+    callme {
+      ROOT param = (s32[], f32[4]) parameter(0)
+    }
+
+    ENTRY entry {
+      p0 = (s32[], f32[4]) parameter(0)
+      ROOT mycall = (s32[], f32[4]) call(p0), to_apply=callme
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+
+  // We have to set the `output_to_operand_aliasing` attribute manually,
+  // because, even though the internal representation supports it for kCall,
+  // the parser doesn't.
+  Cast<HloCallInstruction>(
+      module->entry_computation()->GetInstructionWithName("mycall"))
+      ->set_output_to_operand_aliasing({{{}, {-1, {}}}});
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Negative operand index"));
+}
+
+TEST_F(HloVerifierTest,
+       CheckCustomCallOperandOutputAliasingNegativeOperandIndex) {
+  constexpr absl::string_view hlo = R"(
+    HloModule Module
+
+    ENTRY entry {
+      p0 = (s32[], f32[4]) parameter(0)
+      ROOT mycall = (s32[], f32[4]) custom-call(p0), custom_call_target="CallMe", output_to_operand_aliasing={{0}: (-1, {0})}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Negative operand index"));
+}
+
+TEST_F(HloVerifierTest, CheckFusionOperandOutputAliasingNegativeOperandIndex) {
+  constexpr absl::string_view hlo = R"(
+    HloModule Module
+
+    fused {
+      ROOT param = (s32[], f32[4]) parameter(0)
+    }
+
+    ENTRY entry {
+      p0 = (s32[], f32[4]) parameter(0)
+      ROOT myfusion = (s32[], f32[4]) fusion(p0), kind=kLoop, calls=fused, output_to_operand_aliasing={{}: (-1, {})}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Negative operand index"));
+}
+
+TEST_F(HloVerifierTest, CheckFusionOperandOutputAliasingValid) {
+  constexpr absl::string_view hlo = R"(
+    HloModule Module
+
+    fused {
+      ROOT param = (s32[], f32[4]) parameter(0)
+    }
+
+    ENTRY entry {
+      p0 = (s32[], f32[4]) parameter(0)
+      ROOT myfusion = (s32[], f32[4]) fusion(p0), kind=kLoop, calls=fused, output_to_operand_aliasing={{}: (0, {})}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HloVerifierTest, CheckEntryComputationAliasedParameterOutOfRange) {
+  constexpr absl::string_view hlo = R"(
+    HloModule Module, input_output_alias={{}: (3, {}, must-alias)}
+
+    ENTRY entry {
+      p0 = f32[4] parameter(0)
+      ROOT out = f32[4] add(p0, p0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(), HasSubstr("Parameter number 3"));
+}
+
+TEST_F(HloVerifierTest, CheckEntryComputationAliasedParameterValid) {
+  constexpr absl::string_view hlo = R"(
+    HloModule Module, input_output_alias={{}: (0, {}, must-alias)}
+
+    ENTRY entry {
+      p0 = f32[4] parameter(0)
+      ROOT out = f32[4] add(p0, p0)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
 TEST_F(HloVerifierTest, CompositeCall) {
   constexpr absl::string_view hlo = R"(
   HloModule Module
