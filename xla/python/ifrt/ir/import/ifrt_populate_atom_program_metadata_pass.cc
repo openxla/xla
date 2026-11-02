@@ -35,14 +35,14 @@ limitations under the License.
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
-#include "xla/python/ifrt/ir/transforms/passes.h"
+#include "xla/python/ifrt/ir/import/passes.h"
 #include "xla/python/ifrt/ir/transforms/utils.h"
 
 namespace xla {
 namespace ifrt {
 
 #define GEN_PASS_DEF_IFRTPOPULATEATOMPROGRAMMETADATAPASS
-#include "xla/python/ifrt/ir/transforms/passes.h.inc"
+#include "xla/python/ifrt/ir/import/passes.h.inc"
 
 namespace {
 
