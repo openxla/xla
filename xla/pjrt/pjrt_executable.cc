@@ -358,9 +358,8 @@ std::optional<std::vector<OpSharding>> PjRtExecutable::GetOutputShardings()
     return std::nullopt;
   }
 
-  std::vector<OpSharding> out;
-  GetOpSharding((*modules)[0]->spmd_output_sharding(), out);
-  return out;
+  return PjRtExecutableUtil::FlattenShardings(
+      {(*modules)[0]->spmd_output_sharding()});
 }
 
 std::optional<std::vector<OpSharding>> PjRtExecutable::GetParameterShardings()
@@ -371,11 +370,8 @@ std::optional<std::vector<OpSharding>> PjRtExecutable::GetParameterShardings()
     return std::nullopt;
   }
 
-  std::vector<OpSharding> out;
-  for (const auto& s : (*modules)[0]->spmd_parameters_shardings()) {
-    GetOpSharding(s, out);
-  }
-  return out;
+  return PjRtExecutableUtil::FlattenShardings(
+      (*modules)[0]->spmd_parameters_shardings());
 }
 
 absl::StatusOr<std::vector<Shape>> PjRtExecutable::GetOutputShapes() const {
@@ -535,6 +531,15 @@ PjRtExecutableUtil::RunHloCostAnalysis(
   hlo_cost_analysis->properties().ForEach(
       [&](absl::string_view key, float val) { ret[key] = val; });
   return ret;
+}
+
+std::vector<OpSharding> PjRtExecutableUtil::FlattenShardings(
+    absl::Span<const HloSharding> shardings) {
+  std::vector<OpSharding> out;
+  for (const HloSharding& sharding : shardings) {
+    GetOpSharding(sharding, out);
+  }
+  return out;
 }
 
 absl::StatusOr<CompileOptions::EnvironmentOptionOverrides>

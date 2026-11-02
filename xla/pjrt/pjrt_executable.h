@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/client/executable_build_options.h"
 #include "xla/ffi/execution_context.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/pjrt/compiled_memory_stats.h"
@@ -474,6 +475,13 @@ class PjRtExecutableUtil {
   RunHloCostAnalysis(
       const std::vector<std::shared_ptr<xla::HloModule>>& hlo_modules,
       HloCostAnalysis* hlo_cost_analysis);
+
+  // Converts SPMD shardings (e.g. `HloModule::spmd_parameters_shardings()`)
+  // into the format of `PjRtExecutable::GetParameterShardings()` and
+  // `GetOutputShardings()`: tuple shardings are flattened and named sharding
+  // leaves are converted to V2 shardings.
+  static std::vector<OpSharding> FlattenShardings(
+      absl::Span<const HloSharding> shardings);
 };
 
 }  // namespace xla
