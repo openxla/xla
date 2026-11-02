@@ -342,6 +342,7 @@ cc_library(
         "//xla/service:executable",
         "//xla/service:shaped_buffer",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",

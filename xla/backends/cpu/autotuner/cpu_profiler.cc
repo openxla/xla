@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/cpu/autotuner/cpu_profiler.h"
 
-#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -88,22 +87,22 @@ absl::StatusOr<ProfileResult> CpuProfiler::Profile(
                                  /*profile=*/nullptr));
   }
 
-  // See ProfileOptions::num_profiling_runs: candidates are compared by the mean
-  // of the measurements, so that a single noisy one cannot decide the pick.
-  const int num_runs = std::max(1, options_.num_profiling_runs);
-  std::vector<absl::Duration> durations;
-  durations.reserve(num_runs);
-  for (int run = 0; run < num_runs; ++run) {
-    ExecutionProfile profile;
-    profile.set_warmup_run_executed(true);
+  // See ProfileOptions::num_profiling_runs: MeanOfProfilingRuns decides how
+  // repeated measurements are turned into the duration candidates are judged
+  // by, so that this only has to say how one run is executed and timed.
+  ABSL_ASSIGN_OR_RETURN(
+      absl::Duration duration,
+      MeanOfProfilingRuns(
+          options_.num_profiling_runs, [&]() -> absl::StatusOr<absl::Duration> {
+            ExecutionProfile profile;
+            profile.set_warmup_run_executed(true);
 
-    ABSL_RETURN_IF_ERROR(
-        Execute(executable, literal_backed_buffers.buffers, &profile));
+            ABSL_RETURN_IF_ERROR(
+                Execute(executable, literal_backed_buffers.buffers, &profile));
 
-    durations.push_back(absl::Nanoseconds(profile.compute_time_ns()));
-  }
-
-  return ProfileResult{MeanWithoutSlowOutliers(std::move(durations))};
+            return absl::Nanoseconds(profile.compute_time_ns());
+          }));
+  return ProfileResult{duration};
 }
 
 absl::Status CpuProfiler::Execute(

@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/gpu_profiler.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -327,29 +326,29 @@ absl::StatusOr<ProfileResult> GpuProfiler::Profile(
   }
 
   // A single measurement of a short kernel is dominated by launch latency and
-  // by whatever else the host is doing, so the caller can ask for several runs
-  // and compare candidates by their mean instead.
-  const int num_runs = std::max(1, options_.num_profiling_runs);
-  std::vector<absl::Duration> durations;
-  durations.reserve(num_runs);
-  for (int run = 0; run < num_runs; ++run) {
-    ExecutionProfile profile;
-    profile.set_warmup_run_executed(true);
-    std::vector<ExecutionInput> execution_inputs =
-        CreateExecutionInputsFromBuffers(rz_buffers.input_buffers(),
-                                         rz_buffers.input_shapes());
+  // by whatever else the host is doing, so the caller can ask for the run to be
+  // repeated; MeanOfProfilingRuns decides what the candidate is judged by.
+  ABSL_ASSIGN_OR_RETURN(
+      result.duration,
+      MeanOfProfilingRuns(
+          options_.num_profiling_runs, [&]() -> absl::StatusOr<absl::Duration> {
+            ExecutionProfile profile;
+            profile.set_warmup_run_executed(true);
+            std::vector<ExecutionInput> execution_inputs =
+                CreateExecutionInputsFromBuffers(rz_buffers.input_buffers(),
+                                                 rz_buffers.input_shapes());
 
-    ABSL_ASSIGN_OR_RETURN(
-        ExecutionOutput execution_output,
-        Execute(executable, std::move(execution_inputs), &profile, allocator_));
+            ABSL_ASSIGN_OR_RETURN(
+                ExecutionOutput execution_output,
+                Execute(executable, std::move(execution_inputs), &profile,
+                        allocator_));
 
-    durations.push_back(absl::Nanoseconds(profile.compute_time_ns()));
-    // Assigning releases the previous run's buffer, so only the last run's
-    // output survives to be compared against the other candidates.
-    result.output_buffer = execution_output.Commit().ConsumeResult();
-  }
-
-  result.duration = MeanWithoutSlowOutliers(std::move(durations));
+            // Assigning releases the previous run's buffer, so only the last
+            // run's output survives to be compared against the other
+            // candidates.
+            result.output_buffer = execution_output.Commit().ConsumeResult();
+            return absl::Nanoseconds(profile.compute_time_ns());
+          }));
   return result;
 }
 

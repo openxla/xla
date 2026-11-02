@@ -21,6 +21,7 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -56,6 +57,7 @@ struct ProfileOptions {
 // Note this cannot rescue a run where interference lasted the whole profiling
 // window: with every sample inflated the median rises too, nothing looks like
 // an outlier, and the candidate simply measures slow.
+// Exposed for testing; callers should use MeanOfProfilingRuns below.
 inline absl::Duration MeanWithoutSlowOutliers(
     std::vector<absl::Duration> durations) {
   CHECK(!durations.empty());
@@ -75,6 +77,25 @@ inline absl::Duration MeanWithoutSlowOutliers(
   }
   // The median itself is always within the limit, so `kept` is never zero.
   return total / kept;
+}
+
+// Times `measure_once` `num_profiling_runs` times (always at least once) and
+// returns the mean of the measurements with the slow outliers discarded.
+//
+// Every Profiler implementation compares candidates this way, so that the
+// backends only have to say how a single run is executed and timed. The
+// warm-up run is the implementation's own business and is not counted here.
+inline absl::StatusOr<absl::Duration> MeanOfProfilingRuns(
+    int num_profiling_runs,
+    absl::FunctionRef<absl::StatusOr<absl::Duration>()> measure_once) {
+  const int num_runs = std::max(1, num_profiling_runs);
+  std::vector<absl::Duration> durations;
+  durations.reserve(num_runs);
+  for (int run = 0; run < num_runs; ++run) {
+    ABSL_ASSIGN_OR_RETURN(absl::Duration duration, measure_once());
+    durations.push_back(duration);
+  }
+  return MeanWithoutSlowOutliers(std::move(durations));
 }
 
 struct ProfileResult {

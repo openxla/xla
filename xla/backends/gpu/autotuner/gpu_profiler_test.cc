@@ -248,6 +248,9 @@ TEST_F(GpuProfilerTest, ProfileReturnsMeanOfRequestedNumberOfRuns) {
   // three are averaged.
   MockExecutable mock_executable(module, std::vector<int>{1000, 2000, 3000});
 
+  // Set here rather than inherited from --xla_gpu_autotune_profiling_runs:
+  // ProfileOptions is built directly, so it never sees DebugOptions, and this
+  // test is about the aggregation itself and has to pin what it aggregates.
   ProfileOptions options;
   options.num_profiling_runs = 3;
   auto profiler = GpuProfiler::Create(stream_exec_, options, allocator_.get());
@@ -276,6 +279,7 @@ TEST_F(GpuProfilerTest, ProfileDiscardsSlowOutlierMeasurements) {
   MockExecutable mock_executable(
       module, std::vector<int>{1000, 1100, 1200, 1300, 20000});
 
+  // See the comment above: this cannot come from the flag.
   ProfileOptions options;
   options.num_profiling_runs = 5;
   auto profiler = GpuProfiler::Create(stream_exec_, options, allocator_.get());
