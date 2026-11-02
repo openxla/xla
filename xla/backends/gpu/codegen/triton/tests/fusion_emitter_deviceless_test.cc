@@ -529,6 +529,63 @@ ENTRY main {
       << triton_ir;
 }
 
+// On GPUs without bf16 arithmetic, FloatNormalization rewrites the bf16 add of
+// the scan combiner to an f32 add between converts.
+TEST_F(ExperimentalTilingTritonEmitterTest,
+       ScanBf16FloatNormalizedTiledEmitOk) {
+  constexpr absl::string_view kHloText = R"(
+scan_computation {
+  p_carry = bf16[] parameter(0)
+  p_input = bf16[] parameter(1)
+  c_carry = f32[] convert(p_carry)
+  c_input = f32[] convert(p_input)
+  add = f32[] add(c_carry, c_input)
+  c_out = bf16[] convert(add)
+  ROOT tuple = (bf16[], bf16[]) tuple(c_out, c_out)
+}
+
+fusion_computation {
+  p0 = bf16[1024]{0} parameter(0)
+  p1 = bf16[] parameter(1)
+  scan = (bf16[1024]{0}, bf16[]) scan(p0, p1), dimensions={0}, num_carries=1, is_associative=true, to_apply=scan_computation, backend_config={"sizes": [256]}
+  ROOT gte = bf16[1024]{0} get-tuple-element(scan), index=0
+}
+
+ENTRY main {
+  param0 = bf16[1024]{0} parameter(0)
+  param1 = bf16[] parameter(1)
+  ROOT triton_fusion = bf16[1024]{0} fusion(param0, param1), kind=kCustom, calls=fusion_computation, backend_config={
+    "fusion_backend_config": {
+      "kind": "__triton_nested_gemm_fusion",
+      "block_level_fusion_config": {
+        "output_tiles": [{"sizes": []}],
+        "num_warps": 4,
+        "num_ctas": 1,
+        "num_stages": 1
+      }
+    }
+  }
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::string triton_ir,
+                       EmitAndCompileTritonFusion(kHloText));
+
+  constexpr absl::string_view kPattern = R"(
+// CHECK-LABEL: @test_fn
+// CHECK:         %[[LOOP:.*]] = scf.for {{.*}} iter_args(%[[CARRY:.*]] = %{{.*}}) -> (tensor<1xbf16>)
+// CHECK:           "tt.scan"
+// CHECK:             arith.extf {{.*}} : bf16 to f32
+// CHECK:             arith.addf {{.*}} : f32
+// CHECK:             arith.truncf {{.*}} : f32 to bf16
+// CHECK:           scf.yield {{.*}} : tensor<1xbf16>
+)";
+
+  EXPECT_THAT(RunFileCheck(triton_ir, kPattern),
+              absl_testing::IsOkAndHolds(true))
+      << triton_ir;
+}
+
 TEST_F(ExperimentalTilingTritonEmitterTest, Scan2DTiledEmitOk) {
   constexpr absl::string_view kHloText = R"(
 scan_computation {
