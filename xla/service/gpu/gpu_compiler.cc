@@ -1844,9 +1844,7 @@ AlgebraicSimplifierOptions GpuCompiler::GetAlgebraicSimplifierOptions(
       break;
   }
 
-  // Every phase, including convolution canonicalization, runs general
-  // algebraic rewrites that may introduce min/max and must respect the
-  // backend's NaN behavior.
+  // "slow" minmax means we propagate nan.
   opts.set_minmax_propagate_nan(!debug_options.xla_gpu_enable_fast_min_max());
 
   if (mode == AlgebraicSimplifierMode::kAfterSimplifyFPConversions) {
