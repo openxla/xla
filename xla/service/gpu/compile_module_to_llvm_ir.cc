@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -164,24 +163,8 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
 
   const DebugOptions& options = module->config().debug_options();
 
-  std::optional<BufferValue::Color> color =
-      options.xla_gpu_temp_buffer_use_separate_color()
-          ? std::optional<BufferValue::Color>(
-                (int)MemorySpaceColor::kTempBuffer)
-          : std::nullopt;
-
-  BufferAssigner::Options opts;
+  BufferAssigner::Options opts = CreateBufferAssignerOptions(options);
   opts.allocate_buffers_for_constants = true;
-  opts.colorer = CreateColorer(options);
-  opts.temp_buffer_color = color;
-
-  // Allow S(0) buffers to reuse S(1) temp allocations. S(1) allocations
-  // satisfy stricter alignment and symmetric-offset requirements, so they are
-  // valid storage for S(0) buffers. Keep this directional: S(1) buffers must
-  // not be assigned to S(0) allocations.
-  opts.can_use_allocation = BufferAssigner::AllowCrossColorReuse(
-      static_cast<int>(MemorySpaceColor::kDefault),
-      static_cast<int>(MemorySpaceColor::kCollective));
 
   std::unique_ptr<HloOrdering> hlo_ordering;
   switch (options.xla_gpu_command_buffer_scheduling_mode()) {
