@@ -628,8 +628,8 @@ Future<ThunkSequence> ThunkEmitter::EmitPadToStatic(
   return ir_emitter_context_->kernel_compiler()
       ->Compile(Thunk::ThunkInfo::WithProfileAnnotation(
                     instr, ir_emitter_context_->GetNextThunkId()),
-                std::move(kernel_def).TakeSource(), std::string(spec.name()),
-                kernel_arguments, launch_dimensions)
+                std::move(kernel_def).TakeSource(),
+                GpuKernelSpec(spec.name(), launch_dimensions, kernel_arguments))
       .Map([](auto thunk) { return ThunkSequence::Of(std::move(thunk)); });
 }
 
@@ -653,8 +653,8 @@ Future<ThunkSequence> ThunkEmitter::EmitSliceToDynamic(
   return ir_emitter_context_->kernel_compiler()
       ->Compile(Thunk::ThunkInfo::WithProfileAnnotation(
                     instr, ir_emitter_context_->GetNextThunkId()),
-                std::move(kernel_def).TakeSource(), std::string(spec.name()),
-                kernel_arguments, launch_dimensions)
+                std::move(kernel_def).TakeSource(),
+                GpuKernelSpec(spec.name(), launch_dimensions, kernel_arguments))
       .Map([](auto thunk) { return ThunkSequence::Of(std::move(thunk)); });
 }
 
@@ -2109,8 +2109,8 @@ Future<ThunkSequence> ThunkEmitter::EmitRngGetAndUpdateState(
   return ir_emitter_context_->kernel_compiler()
       ->Compile(Thunk::ThunkInfo::WithProfileAnnotation(
                     instr, ir_emitter_context_->GetNextThunkId()),
-                std::move(kernel_def).TakeSource(), std::string(spec.name()),
-                kernel_arguments, launch_dimensions)
+                std::move(kernel_def).TakeSource(),
+                GpuKernelSpec(spec.name(), launch_dimensions, kernel_arguments))
       .Map([](auto thunk) { return ThunkSequence::Of(std::move(thunk)); });
 }
 
