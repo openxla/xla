@@ -321,7 +321,7 @@ TEST_F(CudnnFusionCompilerConstTest,
     ROOT _ = f32[] fusion(p0, p1), kind=kCustom, calls=fusion_amax,
       backend_config={
         "fusion_backend_config": {
-          "kind": "__cudnn$$fusion",
+          "kind": "__cudnn$fusion",
         }
       }
   })";
@@ -368,7 +368,7 @@ TEST_F(CudnnFusionCompilerConstTest,
     ROOT _ = f32[] fusion(p0, p1), kind=kCustom, calls=fusion_sum,
       backend_config={
         "fusion_backend_config": {
-          "kind": "__cudnn$$fusion",
+          "kind": "__cudnn$fusion",
         }
       }
   })";
