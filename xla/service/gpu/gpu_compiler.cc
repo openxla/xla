@@ -3042,7 +3042,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*alias_info=*/std::move(alias_info),
           /*debug_options=*/debug_opts,
           /*device_description=*/gpu_device_info,
-          /*debug_module=*/options.embed_hlo_module
+          /*hlo_module=*/options.embed_hlo_module
               ? std::move(module)
               : std::unique_ptr<HloModule>(),
           /*enable_debug_info_manager=*/embed_debug_info,
