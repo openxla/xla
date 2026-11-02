@@ -25,13 +25,17 @@ namespace sycl {
 
 namespace se = ::stream_executor;
 
-// This struct contains the metadata of a matrix, e.g., its base address and
-// dimensions.
+constexpr int64_t kOneDnnGemm = 1;
+
+// Describes a batched matrix in BLAS terms. The rows and columns are the
+// stored row-major shape, and the transpose flag says whether the matmul uses
+// the matrix transposed.
 struct MatrixDescriptor {
   se::DeviceAddressBase data;
   se::blas::Transpose transpose;
   int64_t num_rows;
   int64_t num_cols;
+  int64_t batch_size;
   int64_t batch_stride;
   int64_t leading_dim_stride;
 
@@ -80,12 +84,12 @@ absl::Status RunGemm(const gpu::GemmConfig& config,
                      sycl_gemm::GemmBackendEpilogue epilogue, int64_t algorithm,
                      se::ScratchAllocator* scratch_allocator = nullptr);
 
-// Creates an OneDNN matmul primitive descriptor from a GemmConfig
-// Uses a default GPU engine for OneDNN operations
+// Creates a oneDNN matmul primitive descriptor from a gemm config on the
+// default GPU engine. Used at compile time to size the scratchpad. Callers
+// must convert the epilogue to its SYCL form first
 absl::StatusOr<std::unique_ptr<dnnl::matmul::primitive_desc>>
-CreateMatMulPrimDescFromGemmConfig(
-    const xla::gpu::GemmConfig& config,
-    xla::gpu::GemmBackendConfig_Epilogue epilogue);
+CreateMatMulPrimDescFromGemmConfig(const xla::gpu::GemmConfig& config,
+                                   sycl_gemm::GemmBackendEpilogue epilogue);
 absl::StatusOr<dnnl::memory::desc> TransposeLastTwoDims(
     const dnnl::memory::desc& md);
 inline absl::Status TransposeLastTwoDimsIf(bool pred,
