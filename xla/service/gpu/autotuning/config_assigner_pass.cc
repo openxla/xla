@@ -343,6 +343,8 @@ ProfileOptions GetProfileOptions(const DebugOptions& debug_options,
     profile_options.redzone_padding_bytes = 0;
   }
   profile_options.should_init_buffers = check_buffers;
+  profile_options.num_profiling_runs =
+      std::max(1, debug_options.xla_gpu_autotune_profiling_runs());
   return profile_options;
 }
 

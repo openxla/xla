@@ -707,8 +707,8 @@ cc_library(
 )
 
 xla_test(
-    name = "mx_scaled_dot_execution_test",
-    srcs = ["mx_scaled_dot_execution_test.cc"],
+    name = "mx_scaled_dot_selection_test",
+    srcs = ["mx_scaled_dot_selection_test.cc"],
     backends = [
         "amdgpu_any",
     ],
@@ -717,10 +717,11 @@ xla_test(
         "rocm-only",
     ],
     deps = [
-        "//xla:error_spec",
+        "//xla/backends/autotuner:in_memory_store",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:filecheck",
+        "//xla/service/gpu/autotuning:autotuner_cache",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
@@ -847,6 +848,7 @@ xla_test(
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",

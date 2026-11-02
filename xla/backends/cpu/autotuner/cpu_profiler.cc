@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/cpu/autotuner/cpu_profiler.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -27,7 +28,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/autotuner/profiler.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 
@@ -87,13 +88,22 @@ absl::StatusOr<ProfileResult> CpuProfiler::Profile(
                                  /*profile=*/nullptr));
   }
 
-  ExecutionProfile profile;
-  profile.set_warmup_run_executed(true);
+  // See ProfileOptions::num_profiling_runs: candidates are compared by the mean
+  // of the measurements, so that a single noisy one cannot decide the pick.
+  const int num_runs = std::max(1, options_.num_profiling_runs);
+  std::vector<absl::Duration> durations;
+  durations.reserve(num_runs);
+  for (int run = 0; run < num_runs; ++run) {
+    ExecutionProfile profile;
+    profile.set_warmup_run_executed(true);
 
-  ABSL_RETURN_IF_ERROR(
-      Execute(executable, literal_backed_buffers.buffers, &profile));
+    ABSL_RETURN_IF_ERROR(
+        Execute(executable, literal_backed_buffers.buffers, &profile));
 
-  return ProfileResult{absl::Nanoseconds(profile.compute_time_ns())};
+    durations.push_back(absl::Nanoseconds(profile.compute_time_ns()));
+  }
+
+  return ProfileResult{MeanWithoutSlowOutliers(std::move(durations))};
 }
 
 absl::Status CpuProfiler::Execute(

@@ -509,6 +509,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
 
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
 
+  opts.set_xla_gpu_autotune_profiling_runs(1);
+
   // TODO(b/355487968): Remove this flag once all data will be presented in
   // xprof with command buffers.
   opts.set_xla_enable_command_buffers_during_profiling(false);
@@ -1840,6 +1842,14 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       float_setter_for(&DebugOptions::set_xla_gpu_autotune_gemm_rtol),
       debug_options->xla_gpu_autotune_gemm_rtol(),
       "Relative precision for comparing GEMM solutions vs the reference one"));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_autotune_profiling_runs",
+      int32_setter_for(&DebugOptions::set_xla_gpu_autotune_profiling_runs),
+      debug_options->xla_gpu_autotune_profiling_runs(),
+      "Number of times each autotuning candidate is executed and timed; the "
+      "mean of those measurements is used to compare candidates. Raising this "
+      "trades compilation time for a more stable pick when the candidates are "
+      "short enough that a single measurement is dominated by noise."));
   flag_list->push_back(tsl::Flag(
       "xla_force_host_platform_device_count",
       int32_setter_for(&DebugOptions::set_xla_force_host_platform_device_count),

@@ -16,8 +16,10 @@ limitations under the License.
 #ifndef XLA_BACKENDS_AUTOTUNER_PROFILER_H_
 #define XLA_BACKENDS_AUTOTUNER_PROFILER_H_
 
+#include <algorithm>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
@@ -35,7 +37,45 @@ struct ProfileOptions {
   // Whether to initialize the buffers with random data or leave them
   // uninitialized.
   bool should_init_buffers = false;
+  // How many times to run and time the executable. ProfileResult::duration is
+  // the mean of those measurements, outliers aside. Must be at least 1.
+  int num_profiling_runs = 1;
 };
+
+// A measurement can only ever come out slower than the kernel really is:
+// interference adds time, it never removes it. So anything far above the bulk
+// of the samples is noise rather than signal, and averaging it in would let a
+// single disturbed run decide which candidate the autotuner picks.
+//
+// Samples more than kOutlierFactor times the median are therefore dropped
+// before the mean is taken. The median is the reference because it stays put
+// even when up to half the samples are spoiled, and only the slow side is
+// trimmed. The factor is loose enough that ordinary jitter survives; measured
+// run-to-run spread on a quiet gfx950 stays near 1.6x.
+//
+// Note this cannot rescue a run where interference lasted the whole profiling
+// window: with every sample inflated the median rises too, nothing looks like
+// an outlier, and the candidate simply measures slow.
+inline absl::Duration MeanWithoutSlowOutliers(
+    std::vector<absl::Duration> durations) {
+  CHECK(!durations.empty());
+  std::sort(durations.begin(), durations.end());
+  constexpr int kOutlierFactor = 2;
+  const absl::Duration limit = kOutlierFactor * durations[durations.size() / 2];
+
+  absl::Duration total = absl::ZeroDuration();
+  int kept = 0;
+  for (const absl::Duration& duration : durations) {
+    // Sorted, so everything from here on is at least as far out.
+    if (duration > limit) {
+      break;
+    }
+    total += duration;
+    ++kept;
+  }
+  // The median itself is always within the limit, so `kept` is never zero.
+  return total / kept;
+}
 
 struct ProfileResult {
   // The duration of the executable run.

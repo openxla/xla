@@ -651,6 +651,19 @@ message DebugOptions {
   // Relative precision for comparing different GEMM solutions
   optional float xla_gpu_autotune_gemm_rtol = 316;
 
+  // Number of times each autotuning candidate is executed and timed. The
+  // autotuner compares candidates by the mean of those measurements, after
+  // discarding the ones far above the median as interference.
+  //
+  // One run (the default) is enough when the candidates differ clearly, but for
+  // short kernels a single measurement is dominated by launch latency and host
+  // interference, so raising this trades compilation time for a more stable
+  // pick. Outlier rejection needs a few samples to have a meaningful median,
+  // so prefer 5 or more when raising it. Values below 1 are treated as 1.
+  //
+  // Default: 1.
+  optional int32 xla_gpu_autotune_profiling_runs = 564;
+
   // 0:   Disable gemm and convolution autotuning.
   // 1:   Enable autotuning, but disable correctness checking.
   // 2:   Also set output buffers to random numbers during autotuning.
@@ -1988,7 +2001,7 @@ message DebugOptions {
   // (ScanRewriterTriton).
   optional bool xla_gpu_experimental_enable_triton_scan = 562;
 
-  // Next id: 564
+  // Next id: 565
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

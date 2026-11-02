@@ -1605,6 +1605,27 @@ xla_test(
 )
 
 xla_test(
+    name = "mx_scaled_dot_test",
+    srcs = ["mx_scaled_dot_test.cc"],
+    backends = [
+        "amdgpu_any",
+    ],
+    deps = [
+        ":hlo_pjrt_gpu_test_base",
+        "//xla:error_spec",
+        "//xla/backends/autotuner:backends_proto_cc",
+        "//xla/backends/autotuner:in_memory_store",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:filecheck",
+        "//xla/service/gpu/autotuning:autotuner_cache",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_test(
     name = "multioutput_fusion_test",
     srcs = ["multioutput_fusion_test.cc"],
     backends = ["gpu"],

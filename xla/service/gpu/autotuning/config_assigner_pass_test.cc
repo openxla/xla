@@ -644,6 +644,18 @@ INSTANTIATE_TEST_SUITE_P(
       return std::to_string(info.param.autotune_level);
     });
 
+TEST_F(AutotunerPassTest, ProfileOptionsCarryNumberOfProfilingRuns) {
+  DebugOptions debug_options = GetDebugOptionsForTest();
+  EXPECT_EQ(GetProfileOptions(debug_options).num_profiling_runs, 1);
+
+  debug_options.set_xla_gpu_autotune_profiling_runs(5);
+  EXPECT_EQ(GetProfileOptions(debug_options).num_profiling_runs, 5);
+
+  // Fewer than one run would leave the mean undefined.
+  debug_options.set_xla_gpu_autotune_profiling_runs(0);
+  EXPECT_EQ(GetProfileOptions(debug_options).num_profiling_runs, 1);
+}
+
 struct RegSpillsParams {
   bool filter_kernels_flag;
   bool fail_on_spill_flag;
