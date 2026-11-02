@@ -897,6 +897,43 @@ TEST_F(HloEvaluatorTest, DoesBroadcastScalar) {
   EXPECT_TRUE(LiteralTestUtil::Equal(result, output_literal));
 }
 
+TEST_F(HloEvaluatorTest, BroadcastToLastOutputDimensionSucceeds) {
+  constexpr absl::string_view hlo_text = R"(
+HloModule Test
+
+ENTRY main {
+  c = s32[3] constant({1, 2, 3})
+  ROOT b = s32[2,3] broadcast(c), dimensions={1}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+  TF_ASSERT_OK_AND_ASSIGN(Literal result, Evaluate());
+  EXPECT_TRUE(LiteralTestUtil::Equal(
+      LiteralUtil::CreateR2<int32_t>({{1, 2, 3}, {1, 2, 3}}), result));
+}
+
+// The evaluator must reject a broadcast dimension that is out of bounds for
+// the output shape instead of using it to index the output dimensions.
+TEST_F(HloEvaluatorTest, BroadcastOutOfBoundsDimensionReturnsError) {
+  for (int64_t dim : {-1, 2, 1073741824}) {
+    const std::string hlo_text = absl::StrFormat(R"(
+HloModule Test
+
+ENTRY main {
+  c = s32[3] constant({1, 2, 3})
+  ROOT b = s32[2,3] broadcast(c), dimensions={%d}
+}
+)",
+                                                 dim);
+    TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnUnverifiedModule(hlo_text));
+    absl::StatusOr<Literal> result = Evaluate();
+    ASSERT_FALSE(result.ok()) << "dimension " << dim;
+    EXPECT_THAT(result.status().message(),
+                ::testing::HasSubstr(absl::StrFormat(
+                    "broadcast dimension %d is out of bounds", dim)));
+  }
+}
+
 TEST_F(HloEvaluatorTest, DoesConcatenateSimple) {
   HloComputation::Builder b(TestName());
 
@@ -6615,6 +6652,49 @@ TEST_F(HloEvaluatorTest, SetDimensionSizeKeepsSizeEqualToBound) {
   EXPECT_EQ(result.GetDynamicSize(0), 4);
 }
 
+TEST_F(HloEvaluatorTest, SetDimensionSizeOnLastDimensionSucceeds) {
+  constexpr absl::string_view hlo_text = R"(
+HloModule Test
+
+ENTRY main {
+  data = s32[2,4] parameter(0)
+  size = s32[] parameter(1)
+  ROOT sds = s32[2,<=4] set-dimension-size(data, size), dimensions={1}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+  Literal data_arg =
+      LiteralUtil::CreateR2<int32_t>({{1, 2, 3, 4}, {5, 6, 7, 8}});
+  Literal size_arg = LiteralUtil::CreateR0<int32_t>(3);
+  TF_ASSERT_OK_AND_ASSIGN(Literal result, Evaluate({&data_arg, &size_arg}));
+  EXPECT_EQ(result.GetDynamicSize(1), 3);
+}
+
+// The evaluator must reject a set-dimension-size dimension that is out of
+// bounds for the result shape instead of using it to index that shape.
+TEST_F(HloEvaluatorTest, SetDimensionSizeOutOfBoundsDimensionReturnsError) {
+  for (int64_t dim : {-1, 1, 1073741824}) {
+    const std::string hlo_text = absl::StrFormat(R"(
+HloModule Test
+
+ENTRY main {
+  data = s32[4] parameter(0)
+  size = s32[] parameter(1)
+  ROOT sds = s32[<=4] set-dimension-size(data, size), dimensions={%d}
+}
+)",
+                                                 dim);
+    TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnUnverifiedModule(hlo_text));
+    Literal data_arg = LiteralUtil::CreateR1<int32_t>({1, 2, 3, 4});
+    Literal size_arg = LiteralUtil::CreateR0<int32_t>(2);
+    absl::StatusOr<Literal> result = Evaluate({&data_arg, &size_arg});
+    ASSERT_FALSE(result.ok()) << "dimension " << dim;
+    EXPECT_THAT(result.status().message(),
+                ::testing::HasSubstr(absl::StrFormat(
+                    "set-dimension-size dimension %d is out of bounds", dim)));
+  }
+}
+
 // Check that we get a useful error if we pass inputs of the wrong shape.
 TEST_F(HloEvaluatorTest, EvaluateWithWrongInputShapes) {
   const absl::string_view hlo_text = R"(
@@ -7282,6 +7362,80 @@ TEST_F(HloEvaluatorTest, SortC64) {
   TF_ASSERT_OK_AND_ASSIGN(
       Literal result, HloEvaluator().Evaluate(*m_->entry_computation(), {}));
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+}
+
+TEST_F(HloEvaluatorTest, SortAlongLastDimensionSucceeds) {
+  constexpr absl::string_view hlo_text = R"(
+HloModule Test
+
+compare {
+  p0 = s32[] parameter(0)
+  p1 = s32[] parameter(1)
+  ROOT lt = pred[] compare(p0, p1), direction=LT
+}
+
+ENTRY main {
+  c = s32[2,3] constant({{3, 1, 2}, {6, 5, 4}})
+  ROOT sort = s32[2,3] sort(c), dimensions={1}, to_apply=compare
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+  TF_ASSERT_OK_AND_ASSIGN(Literal result, Evaluate());
+  EXPECT_TRUE(LiteralTestUtil::Equal(
+      LiteralUtil::CreateR2<int32_t>({{1, 2, 3}, {4, 5, 6}}), result));
+}
+
+// The evaluator must reject a sort dimension that is out of bounds for the
+// keys before using it to index the key shape.
+TEST_F(HloEvaluatorTest, SortOutOfBoundsDimensionReturnsError) {
+  for (int64_t dim : {-1, 1, 1073741824}) {
+    const std::string hlo_text = absl::StrFormat(R"(
+HloModule Test
+
+compare {
+  p0 = s32[] parameter(0)
+  p1 = s32[] parameter(1)
+  ROOT lt = pred[] compare(p0, p1), direction=LT
+}
+
+ENTRY main {
+  c = s32[4] constant({3, 1, 4, 2})
+  ROOT sort = s32[4] sort(c), dimensions={%d}, to_apply=compare
+}
+)",
+                                                 dim);
+    TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnUnverifiedModule(hlo_text));
+    absl::StatusOr<Literal> result = Evaluate();
+    ASSERT_FALSE(result.ok()) << "dimension " << dim;
+    EXPECT_THAT(result.status().message(),
+                ::testing::HasSubstr(
+                    absl::StrFormat("out-of-bound sort dimension %d", dim)));
+  }
+}
+
+// HloVerifier only checks the upper bound of the sort dimension, so a verified
+// module can carry a negative one. The keys have rank 7 so that their
+// dimensions are stored out of line.
+TEST_F(HloEvaluatorTest, SortNegativeDimensionInVerifiedModuleReturnsError) {
+  constexpr absl::string_view hlo_text = R"(
+HloModule Test
+
+compare {
+  p0 = s32[] parameter(0)
+  p1 = s32[] parameter(1)
+  ROOT lt = pred[] compare(p0, p1), direction=LT
+}
+
+ENTRY main {
+  c = s32[1,1,1,1,1,1,2] constant({{{{{{{2, 1}}}}}}})
+  ROOT sort = s32[1,1,1,1,1,1,2] sort(c), dimensions={-1}, to_apply=compare
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_text));
+  absl::StatusOr<Literal> result = Evaluate();
+  ASSERT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(),
+              ::testing::HasSubstr("out-of-bound sort dimension -1"));
 }
 
 // Ordered comparisons are not defined for complex numbers. The evaluator
@@ -8683,6 +8837,94 @@ TEST_F(HloEvaluatorTest, ScanDisagreeingCarry) {
       LiteralUtil::CreateR2<float>({{2.0f, 4.0f}, {8.0f, 12.0f}}),
       LiteralUtil::CreateR2<float>({{4.0f, 6.0f}, {4.0f, 6.0f}}));
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+}
+
+TEST_F(HloEvaluatorTest, ScanAlongLastDimensionSucceeds) {
+  const char* const hlo_string = R"(
+  HloModule scan_module
+
+  scan_add {
+    x = f32[2] parameter(0)
+    y = f32[2] parameter(1)
+    add = f32[2] add(x, y)
+    ROOT t = (f32[2], f32[2]) tuple(add, add)
+  }
+
+  ENTRY entry {
+    input = f32[2,3] constant({{1, 2, 3}, {4, 5, 6}})
+    init = f32[2] constant({0, 0})
+    ROOT scan = (f32[2,3], f32[2]) scan(input, init), dimensions={1}, num_carries=1, to_apply=scan_add
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnVerifiedModule(hlo_string));
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      Literal result,
+      evaluator_.Evaluate(m_->entry_computation()->root_instruction()));
+
+  auto expected = LiteralUtil::MakeTupleOwned(
+      LiteralUtil::CreateR2<float>({{1.0f, 3.0f, 6.0f}, {4.0f, 9.0f, 15.0f}}),
+      LiteralUtil::CreateR1<float>({6.0f, 15.0f}));
+  EXPECT_TRUE(LiteralTestUtil::Equal(expected, result));
+}
+
+// The evaluator must reject a scan dimension that is out of bounds for an
+// input before using it to index the input shape and the slice bounds.
+TEST_F(HloEvaluatorTest, ScanOutOfBoundsInputDimensionReturnsError) {
+  for (int64_t dim : {-1, 1, 1073741824}) {
+    const std::string hlo_string = absl::StrFormat(R"(
+  HloModule scan_module
+
+  scan_add {
+    x = f32[] parameter(0)
+    y = f32[] parameter(1)
+    add = f32[] add(x, y)
+    ROOT t = (f32[], f32[]) tuple(add, add)
+  }
+
+  ENTRY entry {
+    input = f32[4] constant({1, 2, 3, 4})
+    init = f32[] constant(0)
+    ROOT scan = (f32[4], f32[]) scan(input, init), dimensions={%d}, num_carries=1, to_apply=scan_add
+  }
+  )",
+                                                   dim);
+    TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnUnverifiedModule(hlo_string));
+    absl::StatusOr<Literal> result =
+        evaluator_.Evaluate(m_->entry_computation()->root_instruction());
+    ASSERT_FALSE(result.ok()) << "dimension " << dim;
+    EXPECT_THAT(result.status().message(),
+                ::testing::HasSubstr(absl::StrFormat(
+                    "Scan dimension %d is out of bounds for input 0", dim)));
+  }
+}
+
+// The evaluator must reject a scan output whose rank cannot hold the scan
+// dimension before using it to index the output slab.
+TEST_F(HloEvaluatorTest, ScanOutOfBoundsOutputDimensionReturnsError) {
+  const char* const hlo_string = R"(
+  HloModule scan_module
+
+  scan_add {
+    x = f32[] parameter(0)
+    y = f32[] parameter(1)
+    add = f32[] add(x, y)
+    ROOT t = (f32[], f32[]) tuple(add, add)
+  }
+
+  ENTRY entry {
+    input = f32[4] constant({1, 2, 3, 4})
+    init = f32[] constant(0)
+    ROOT scan = (f32[], f32[]) scan(input, init), dimensions={0}, num_carries=1, to_apply=scan_add
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(m_, ParseAndReturnUnverifiedModule(hlo_string));
+  absl::StatusOr<Literal> result =
+      evaluator_.Evaluate(m_->entry_computation()->root_instruction());
+  ASSERT_FALSE(result.ok());
+  EXPECT_THAT(result.status().message(),
+              ::testing::HasSubstr(
+                  "Scan dimension 0 is out of bounds for output 0 of rank 0"));
 }
 
 TEST_F(HloEvaluatorTest, DefaultDoesNotMemoizeCall) {

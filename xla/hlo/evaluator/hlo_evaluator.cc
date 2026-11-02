@@ -1450,6 +1450,10 @@ absl::Status HloEvaluator::HandleSetDimensionSize(
   const Literal& size_literal =
       GetEvaluatedLiteralFor(set_dimension_size->operand(1));
   const int64_t dimension = set_dimension_size->dimension();
+  TF_RET_CHECK(dimension >= 0 && dimension < result.shape().dimensions().size())
+      << "set-dimension-size dimension " << dimension
+      << " is out of bounds for a result of rank "
+      << result.shape().dimensions().size();
   // Nothing validates the size operand against the bound; clamp to [0, bound]
   // so an out-of-contract runtime size cannot trip internal CHECKs.
   const int32_t size = static_cast<int32_t>(std::clamp<int64_t>(
@@ -3264,6 +3268,12 @@ absl::Status HloEvaluator::HandleBroadcast(const HloInstruction* broadcast) {
   // Checks that operand's dimensions are the same as the broadcast's
   // dimensions along the dimensions to be broadcasted.
   for (int64_t i = 0; i < broadcast->dimensions().size(); ++i) {
+    TF_RET_CHECK(broadcast->dimensions(i) >= 0 &&
+                 broadcast->dimensions(i) <
+                     broadcast->shape().dimensions().size())
+        << "broadcast dimension " << broadcast->dimensions(i)
+        << " is out of bounds for an output of rank "
+        << broadcast->shape().dimensions().size();
     auto operand_dim_size = operand.shape().dimensions(i);
     auto broadcast_dim_size =
         broadcast->shape().dimensions(broadcast->dimensions(i));
@@ -4436,10 +4446,10 @@ absl::Status HloEvaluator::HandleSort(const HloInstruction* sort) {
   std::vector<int64_t> zero_base(rank, 0);
   std::vector<int64_t> increment(rank, 1);
   int64_t sort_dim = sort->dimensions(0);
-  int64_t sort_dim_elements = key_shape.dimensions(sort_dim);
   TF_RET_CHECK(sort_dim >= 0 && sort_dim < increment.size())
       << "Unexpected out-of-bound sort dimension " << sort_dim
       << " accessing increment of size " << increment.size();
+  int64_t sort_dim_elements = key_shape.dimensions(sort_dim);
   increment[sort_dim] = sort_dim_elements;
 
   auto comparator =
@@ -5476,6 +5486,10 @@ absl::Status HloEvaluator::HandleScan(const HloInstruction* hlo) {
   std::vector<const Literal*> inputs(num_inputs);
   for (int64_t i = 0; i < num_inputs; ++i) {
     inputs[i] = &GetEvaluatedLiteralFor(scan->operand(i));
+    TF_RET_CHECK(scan_dim >= 0 &&
+                 scan_dim < inputs[i]->shape().dimensions().size())
+        << "Scan dimension " << scan_dim << " is out of bounds for input " << i
+        << " of rank " << inputs[i]->shape().dimensions().size();
   }
   std::vector<Literal> carries;
   carries.reserve(num_carries);
@@ -5503,6 +5517,9 @@ absl::Status HloEvaluator::HandleScan(const HloInstruction* hlo) {
   for (int64_t j = 0; j < num_outputs; ++j) {
     const Shape& out_shape =
         scan_shape.IsTuple() ? scan_shape.tuple_shapes(j) : scan_shape;
+    TF_RET_CHECK(scan_dim >= 0 && scan_dim < out_shape.dimensions().size())
+        << "Scan dimension " << scan_dim << " is out of bounds for output " << j
+        << " of rank " << out_shape.dimensions().size();
     stacked_outputs.emplace_back(out_shape);
   }
 
