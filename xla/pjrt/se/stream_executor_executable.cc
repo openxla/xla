@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/cord.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "riegeli/base/any.h"
@@ -156,21 +157,18 @@ StreamExecutorExecutable::StreamExecutorExecutable(
     PjRtPlatformId platform_id, const CompileOptions& compile_options,
     std::unique_ptr<CompiledModule> executable, int num_replicas,
     int num_partitions, absl::string_view name, absl::string_view fingerprint,
-    absl::string_view default_memory_kind)
+    absl::string_view default_memory_kind,
+    std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+        metadata_provider)
     : platform_id_(platform_id),
       compile_options_(compile_options),
       executables_(std::move(executable)),
+      metadata_provider_(std::move(metadata_provider)),
       num_replicas_(num_replicas),
       num_partitions_(num_partitions),
       name_(name),
       fingerprint_(fingerprint),
-      default_memory_kind_(default_memory_kind) {
-  const auto& mod = std::get<std::unique_ptr<CompiledModule>>(executables_);
-  if (mod != nullptr) {
-    hlo_module_ = mod->shared_optimized_module();
-  }
-  CHECK(hlo_module_ != nullptr);
-}
+      default_memory_kind_(default_memory_kind) {}
 
 StreamExecutorExecutable::StreamExecutorExecutable(
     PjRtPlatformId platform_id, const CompileOptions& compile_options,
@@ -178,23 +176,60 @@ StreamExecutorExecutable::StreamExecutorExecutable(
     std::shared_ptr<LocalExecutable> local_executable,
     LocalClient* local_client, int num_replicas, int num_partitions,
     absl::string_view name, absl::string_view fingerprint,
-    absl::string_view default_memory_kind)
+    absl::string_view default_memory_kind,
+    std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+        metadata_provider)
     : platform_id_(platform_id),
       compile_options_(compile_options),
       unoptimized_hlo_module_proto_(std::move(unoptimized_hlo_module_proto)),
       executables_(std::move(local_executable)),
       local_client_(local_client),
+      metadata_provider_(std::move(metadata_provider)),
       num_replicas_(num_replicas),
       num_partitions_(num_partitions),
       name_(name),
       fingerprint_(fingerprint),
-      default_memory_kind_(default_memory_kind) {
-  const auto& local_exec =
-      std::get<std::shared_ptr<LocalExecutable>>(executables_);
-  if (local_exec != nullptr) {
-    hlo_module_ = local_exec->executable()->shared_module();
+      default_memory_kind_(default_memory_kind) {}
+
+absl::StatusOr<std::shared_ptr<HloModule>>
+StreamExecutorExecutable::GetHloModule() const {
+  std::shared_ptr<LocalExecutable> local_executable;
+  {
+    absl::MutexLock lock(mu_);
+    if (const auto* compiled_module =
+            std::get_if<std::unique_ptr<CompiledModule>>(&executables_)) {
+      if (*compiled_module == nullptr) {
+        return absl::FailedPreconditionError(absl::StrCat(
+            "StreamExecutorExecutable ", name_, " has no compiled module."));
+      }
+      std::shared_ptr<HloModule> module =
+          (*compiled_module)->shared_optimized_module();
+      if (module == nullptr) {
+        return absl::NotFoundError(
+            absl::StrCat("The compiled module of StreamExecutorExecutable ",
+                         name_, " has no HloModule."));
+      }
+      return module;
+    }
+    local_executable = std::get<std::shared_ptr<LocalExecutable>>(executables_);
   }
-  CHECK(hlo_module_ != nullptr);
+  // The module might have to be built, so we don't hold the lock while asking
+  // for it.
+  if (local_executable == nullptr) {
+    return absl::FailedPreconditionError(absl::StrCat(
+        "StreamExecutorExecutable ", name_, " has no local executable."));
+  }
+  const Executable& executable = *local_executable->executable();
+  if (metadata_provider_ != nullptr) {
+    return metadata_provider_->GetHloModule(
+        executable, /*reason=*/"StreamExecutorExecutable::GetHloModule");
+  }
+  if (!executable.has_module()) {
+    return absl::NotFoundError(
+        absl::StrCat("The executable of StreamExecutorExecutable ", name_,
+                     " has no HloModule."));
+  }
+  return executable.shared_module();
 }
 
 absl::StatusOr<CompiledMemoryStats>
@@ -450,9 +485,12 @@ StreamExecutorExecutable::GetDefaultMemoryKind(
 }
 
 absl::StatusOr<std::unique_ptr<StreamExecutorExecutable>>
-StreamExecutorExecutable::Deserialize(riegeli::Any<riegeli::Reader*> reader,
-                                      const PjRtTopologyDescription& topology,
-                                      std::optional<CompileOptions> options) {
+StreamExecutorExecutable::Deserialize(
+    riegeli::Any<riegeli::Reader*> reader,
+    const PjRtTopologyDescription& topology,
+    std::optional<CompileOptions> options,
+    std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+        metadata_provider) {
   ABSL_ASSIGN_OR_RETURN(ExecutableAndOptionsProto proto,
                         SerializedGpuExecutableFromReader(std::move(reader)));
   if (!proto.pjrt_client_name().empty() &&
@@ -499,21 +537,32 @@ StreamExecutorExecutable::Deserialize(riegeli::Any<riegeli::Reader*> reader,
   if (aot_result == nullptr) {
     return Internal("Failed to deserialize compiled module");
   }
-  std::shared_ptr<HloModule> optimized_module =
-      aot_result->shared_optimized_module();
-  if (optimized_module == nullptr) {
-    return Internal("Deserialized compiled module has no optimized module");
+  std::optional<
+      StreamExecutorExecutableMetadataProvider::CompiledModuleMetadata>
+      metadata;
+  if (metadata_provider != nullptr) {
+    metadata = metadata_provider->GetCompiledModuleMetadata(*aot_result);
   }
-
-  int num_replicas = optimized_module->config().replica_count();
-  int num_partitions = optimized_module->config().num_partitions();
-  std::string name = optimized_module->name();
-  std::string fingerprint = optimized_module->GetFingerprint128();
+  if (!metadata.has_value() || metadata->fingerprint.empty()) {
+    std::shared_ptr<HloModule> optimized_module =
+        aot_result->shared_optimized_module();
+    if (optimized_module == nullptr) {
+      return Internal("Deserialized compiled module has no optimized module");
+    }
+    if (!metadata.has_value()) {
+      metadata.emplace();
+      metadata->name = optimized_module->name();
+      metadata->num_replicas = optimized_module->config().replica_count();
+      metadata->num_partitions = optimized_module->config().num_partitions();
+    }
+    metadata->fingerprint = optimized_module->GetFingerprint128();
+  }
 
   return std::make_unique<StreamExecutorExecutable>(
       platform_id, std::move(compile_options), std::move(aot_result),
-      num_replicas, num_partitions, std::move(name), std::move(fingerprint),
-      default_memory_space);
+      metadata->num_replicas, metadata->num_partitions,
+      std::move(metadata->name), std::move(metadata->fingerprint),
+      default_memory_space, std::move(metadata_provider));
 }
 
 }  // namespace xla

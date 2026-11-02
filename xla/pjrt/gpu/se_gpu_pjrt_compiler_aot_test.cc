@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -43,6 +44,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/pjrt/compiled_memory_stats.h"
+#include "xla/pjrt/gpu/se_gpu_executable_metadata_provider.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_compiler.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -50,12 +52,16 @@ limitations under the License.
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/se/stream_executor_executable.h"
 #include "xla/service/compiler.h"
+#include "xla/service/gpu/gpu_aot_compilation_result.h"
+#include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -352,6 +358,119 @@ TEST(StreamExecutorGpuCompilerTest, AutoLayoutIsSupported) {
   // Check that the assigned layouts are not default.
   EXPECT_NE(layouts[0]->ToString(), "{2,1,0}");
   EXPECT_NE(layouts[1]->ToString(), "{2,1,0}");
+}
+
+// The metadata provider reads the name, replica and partition counts and the
+// fingerprint of a deserialized executable from the serialized proto. They have
+// to be the same as the values derived from the deserialized HLO module.
+TEST(StreamExecutorGpuCompilerTest, DeserializedMetadataMatchesModule) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  StreamExecutorGpuCompiler compiler(
+      client->platform_id(), GetLocalClient(client.get())->platform()->id());
+  TF_ASSERT_OK_AND_ASSIGN(const PjRtTopologyDescription* topology,
+                          client->GetTopologyDescription());
+
+  for (absl::string_view program : {kProgram, kProgramIdentity}) {
+    for (int num_replicas : {1, 2}) {
+      SCOPED_TRACE(absl::StrCat(program, " num_replicas=", num_replicas));
+      xla::CompileOptions opts;
+      opts.gpu_target_config = Compiler::GpuTargetConfig(
+          GetLocalClient(client.get())->backend().default_stream_executor());
+      opts.executable_build_options.set_num_replicas(num_replicas);
+      TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation,
+                              GetXlaComputation(program));
+      TF_ASSERT_OK_AND_ASSIGN(
+          std::unique_ptr<PjRtExecutable> executable,
+          compiler.Compile(opts, computation, *topology, /*client=*/nullptr));
+      TF_ASSERT_OK_AND_ASSIGN(std::string serialized,
+                              executable->SerializeExecutable());
+
+      // The provider reads the metadata from the proto.
+      TF_ASSERT_OK_AND_ASSIGN(ExecutableAndOptionsProto executable_and_options,
+                              SerializedGpuExecutableFromString(serialized));
+      gpu::GpuExecutableProto gpu_executable_proto;
+      ASSERT_OK(
+          ReadSplitProto(std::make_unique<riegeli::StringReader<>>(
+                             executable_and_options.serialized_executable()),
+                         gpu_executable_proto));
+      TF_ASSERT_OK_AND_ASSIGN(
+          std::unique_ptr<gpu::GpuAotCompilationResult> aot_result,
+          gpu::GpuAotCompilationResult::FromProto(gpu_executable_proto));
+      std::optional<
+          StreamExecutorExecutableMetadataProvider::CompiledModuleMetadata>
+          metadata =
+              GpuExecutableMetadataProvider::Get()->GetCompiledModuleMetadata(
+                  *aot_result);
+      ASSERT_TRUE(metadata.has_value());
+      const HloModule* module = aot_result->optimized_module();
+      ASSERT_NE(module, nullptr);
+      EXPECT_EQ(metadata->name, module->name());
+      EXPECT_EQ(metadata->num_replicas, module->config().replica_count());
+      EXPECT_EQ(metadata->num_partitions, module->config().num_partitions());
+      EXPECT_EQ(metadata->fingerprint, module->GetFingerprint128());
+      EXPECT_EQ(metadata->num_replicas, num_replicas);
+
+      // Deserializing with and without the provider gives the same executable
+      // metadata.
+      TF_ASSERT_OK_AND_ASSIGN(
+          std::unique_ptr<StreamExecutorExecutable> with_provider,
+          StreamExecutorExecutable::Deserialize(
+              riegeli::StringReader<>(serialized), *topology, std::nullopt,
+              GpuExecutableMetadataProvider::Get()));
+      TF_ASSERT_OK_AND_ASSIGN(
+          std::unique_ptr<StreamExecutorExecutable> without_provider,
+          StreamExecutorExecutable::Deserialize(
+              riegeli::StringReader<>(serialized), *topology, std::nullopt));
+      EXPECT_EQ(with_provider->name(), without_provider->name());
+      EXPECT_EQ(with_provider->num_replicas(),
+                without_provider->num_replicas());
+      EXPECT_EQ(with_provider->num_partitions(),
+                without_provider->num_partitions());
+      TF_ASSERT_OK_AND_ASSIGN(std::string fingerprint,
+                              without_provider->FingerprintExecutable());
+      EXPECT_THAT(with_provider->FingerprintExecutable(),
+                  IsOkAndHolds(fingerprint));
+      EXPECT_THAT(with_provider->GetHloModules(), IsOkAndHolds(SizeIs(1)));
+    }
+  }
+}
+
+// After loading, the module of a deserialized executable comes from the loaded
+// `GpuExecutable`, and it is the module of the compiled module.
+TEST(StreamExecutorGpuCompilerTest,
+     LoadedExecutableKeepsTheDeserializedModule) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  StreamExecutorGpuCompiler compiler(
+      client->platform_id(), GetLocalClient(client.get())->platform()->id());
+  xla::CompileOptions opts;
+  opts.gpu_target_config = Compiler::GpuTargetConfig(
+      GetLocalClient(client.get())->backend().default_stream_executor());
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation,
+                          GetXlaComputation(kProgram));
+  TF_ASSERT_OK_AND_ASSIGN(const PjRtTopologyDescription* topology,
+                          client->GetTopologyDescription());
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> executable,
+      compiler.Compile(opts, computation, *topology, /*client=*/nullptr));
+  TF_ASSERT_OK_AND_ASSIGN(std::string serialized,
+                          executable->SerializeExecutable());
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> deserialized,
+      compiler.DeserializeExecutable(
+          *topology, riegeli::StringReader<>(serialized), std::nullopt, {}));
+  auto* se_executable =
+      absl::down_cast<StreamExecutorExecutable*>(deserialized.get());
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<HloModule> module_before_load,
+                          se_executable->GetHloModule());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::shared_ptr<LocalExecutable> local_executable,
+      se_executable->GetOrLoadExecutable(GetLocalClient(client.get())));
+  EXPECT_THAT(se_executable->GetHloModule(), IsOkAndHolds(module_before_load));
+  EXPECT_EQ(local_executable->executable()->shared_module(),
+            module_before_load);
 }
 
 }  // namespace
