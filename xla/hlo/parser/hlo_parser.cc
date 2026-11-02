@@ -7641,6 +7641,23 @@ bool HloParserImpl::ParseShape(Shape* result,
                       layout.minor_to_major().size()));
       }
     }
+    // A non-empty minor_to_major must be a permutation of the dimension
+    // numbers. Its entries are used to index the shape's dimensions without
+    // bounds checks, e.g. by IndexUtil::MultidimensionalIndexToLinearIndex.
+    absl::InlinedVector<bool, InlineRank()> dimension_seen(
+        layout.minor_to_major().size(), false);
+    for (int64_t dimension : layout.minor_to_major()) {
+      if (dimension < 0 || dimension >= dimension_seen.size() ||
+          dimension_seen[dimension]) {
+        return Error(
+            lexer_.GetLoc(),
+            StrFormat("Layout minor to major {%s} is not a permutation of the "
+                      "%ld dimensions of the shape.",
+                      StrJoin(layout.minor_to_major(), ","),
+                      result->dimensions().size()));
+      }
+      dimension_seen[dimension] = true;
+    }
     if (layout.has_physical_shape()) {
       return Error(
           lexer_.GetLoc(),

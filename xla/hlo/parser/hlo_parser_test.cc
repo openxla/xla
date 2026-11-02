@@ -6064,6 +6064,78 @@ TEST_F(HloParserTest, ParseShapeStringWithSplitConfigLayout) {
       << "actual:   " << ShapeUtil::HumanStringWithLayout(actual);
 }
 
+TEST_F(HloParserTest, ParseShapeStringWithNonPermutationLayoutFails) {
+  for (absl::string_view shape_string :
+       {"f32[2,3]{5,0}", "f32[2,3]{-1,0}", "f32[2,3]{1,1}",
+        "f32[2,3,4]{0,1,3}", "f32[2,3]{0,9223372036854775807}",
+        "f32[2,3]{2,0:T(2,128)}", "(f32[2,3]{1,0}, s32[4]{1})"}) {
+    auto result = ParseShape(shape_string);
+    EXPECT_FALSE(result.ok()) << shape_string;
+    ExpectHasSubstr(result.status().message(), "is not a permutation of the");
+  }
+}
+
+TEST_F(HloParserTest, ParseShapeStringWithValidPermutationLayoutSucceeds) {
+  ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape("f32[2,3,4]{1,2,0}"));
+  EXPECT_THAT(actual.layout().minor_to_major(), ElementsAre(1, 2, 0));
+  ASSERT_OK_AND_ASSIGN(actual, ParseShape("f32[2,3]{0,1}"));
+  EXPECT_THAT(actual.layout().minor_to_major(), ElementsAre(0, 1));
+  ASSERT_OK_AND_ASSIGN(actual, ParseShape("f32[]"));
+  EXPECT_TRUE(actual.layout().minor_to_major().empty());
+  // AUTO layout with non-default memory space has no minor_to_major.
+  ASSERT_OK_AND_ASSIGN(actual, ParseShape("f32[2,3]{:S(1)}"));
+  EXPECT_TRUE(actual.layout().minor_to_major().empty());
+  EXPECT_EQ(actual.layout().memory_space(), 1);
+  ASSERT_OK_AND_ASSIGN(actual, ParseShape("(f32[2,3]{0,1}, s32[4]{0})"));
+  EXPECT_THAT(actual.tuple_shapes(0).layout().minor_to_major(),
+              ElementsAre(0, 1));
+}
+
+TEST_F(HloParserTest, ConstantWithNonPermutationLayoutFails) {
+  for (absl::string_view layout : {"{5,0}", "{-1,0}", "{1,1}"}) {
+    const std::string hlo_string = absl::StrFormat(R"(
+HloModule module
+
+ENTRY entry {
+  ROOT c = f32[2,3]%s constant({{1, 2, 3}, {4, 5, 6}})
+})",
+                                                   layout);
+    auto result = ParseAndReturnUnverifiedModule(hlo_string);
+    EXPECT_FALSE(result.ok()) << layout;
+    ExpectHasSubstr(result.status().message(), "is not a permutation of the");
+  }
+}
+
+TEST_F(HloParserTest, InstructionWithNonPermutationLayoutFails) {
+  const std::string hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  p = f32[2,3]{1,0} parameter(0)
+  n = f32[2,3]{1,1} negate(p)
+  ROOT c = f32[2,3]{1,0} copy(n)
+})";
+  auto result = ParseAndReturnVerifiedModule(hlo_string);
+  EXPECT_FALSE(result.ok());
+  ExpectHasSubstr(result.status().message(), "is not a permutation of the");
+}
+
+TEST_F(HloParserTest, ConstantWithValidPermutationLayoutSucceeds) {
+  const std::string hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  ROOT c = f32[2,3]{0,1} constant({{1, 2, 3}, {4, 5, 6}})
+})";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  const Literal& literal =
+      module->entry_computation()->root_instruction()->literal();
+  EXPECT_THAT(literal.shape().layout().minor_to_major(), ElementsAre(0, 1));
+  EXPECT_EQ(literal.Get<float>({0, 2}), 3);
+  EXPECT_EQ(literal.Get<float>({1, 0}), 4);
+  EXPECT_EQ(literal.Get<float>({1, 2}), 6);
+}
+
 TEST_F(HloParserTest, ParseOpaqueType) {
   ASSERT_OK_AND_ASSIGN(Shape actual, ParseShape("opaque[]"));
   Shape expected = ShapeUtil::MakeOpaqueShape();
