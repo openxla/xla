@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "unsupported/Eigen/CXX11/Tensor"
+#include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -61,6 +62,7 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 
@@ -396,9 +398,7 @@ absl::StatusOr<ExecutionOutput> HloRunnerLegacy::ExecuteWithDeviceBuffers(
   std::vector<ExecutionInput> execution_arguments =
       ExecutionInputsFromScopedShapedBuffers(
           arguments,
-          hlo_runner_executable->executable()
-              ->module()
-              .input_output_alias_config(),
+          hlo_runner_executable->executable()->input_output_alias_config(),
           backend().default_stream_executor()->device_ordinal(),
           GetAllocator());
   return ExecuteWithExecutionInputs(hlo_runner_executable->executable(),
@@ -441,7 +441,7 @@ absl::StatusOr<ExecutionOutput> HloRunnerLegacy::ExecuteWithMovedDeviceBuffers(
 
   ExecutionInputsFromMovedScopedShapedBuffers(
       &execution_arguments, &owned_arguments, std::move(arguments),
-      executable->module().input_output_alias_config(),
+      executable->input_output_alias_config(),
       backend().default_stream_executor()->device_ordinal(), GetAllocator());
 
   ABSL_ASSIGN_OR_RETURN(
@@ -458,7 +458,9 @@ absl::StatusOr<ExecutionOutput> HloRunnerLegacy::ExecuteWithMovedDeviceBuffers(
 absl::StatusOr<ExecutionOutput> HloRunnerLegacy::ExecuteWithExecutionInputs(
     Executable* executable, std::vector<ExecutionInput> arguments,
     ExecutionProfile* profile) {
-  MaybeUpdateEntryComputationLayout(&executable->module());
+  if (executable->has_module()) {
+    MaybeUpdateEntryComputationLayout(&executable->module());
+  }
 
   // Get service run options.
   ABSL_ASSIGN_OR_RETURN(auto stream,
@@ -469,7 +471,10 @@ absl::StatusOr<ExecutionOutput> HloRunnerLegacy::ExecuteWithExecutionInputs(
           RunId::CreateUniqueId(), backend().device_count());
   service_run_options.mutable_run_options()->set_execution_profile(profile);
 
-  auto options = executable->module().config().debug_options();
+  // Without a module, fall back to the debug options from the flags.
+  const DebugOptions options =
+      executable->has_module() ? executable->module().config().debug_options()
+                               : GetDebugOptionsFromFlags();
   auto gpu_run_options = std::make_unique<gpu::GpuExecutableRunOptions>();
   if (options.xla_gpu_require_exclusive_lock()) {
     gpu_run_options->set_requires_exclusive_lock_on_gpu();

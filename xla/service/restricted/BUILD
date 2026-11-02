@@ -35,6 +35,7 @@ cc_library(
     srcs = ["hlo_runner_legacy.cc"],
     hdrs = ["hlo_runner_legacy.h"],
     deps = [
+        "//xla:debug_options_flags",
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:literal_util",
@@ -43,6 +44,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:backend",
         "//xla/service:computation_layout",
