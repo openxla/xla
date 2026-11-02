@@ -81,5 +81,74 @@ TEST_F(ExecutableTest, HloProtoGetterIsThreadCompatible) {
   }
 }
 
+constexpr absl::string_view kModuleWithAliasing = R"(
+  HloModule module, input_output_alias={ {0}: (0, {}, must-alias) }, buffer_donor={ (1, {}) }
+
+  ENTRY main {
+    p0 = f32[4] parameter(0)
+    p1 = f32[4] parameter(1)
+    add = f32[4] add(p0, p1)
+    ROOT result = (f32[4], f32[4]) tuple(add, p1)
+  }
+)";
+
+TEST_F(ExecutableTest, MetadataDefaultsReadTheModule) {
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleWithAliasing));
+  TestExecutable executable(module);
+
+  EXPECT_TRUE(executable.has_module());
+  EXPECT_EQ(&executable.module(), module.get());
+  EXPECT_EQ(executable.shared_module(), module);
+  EXPECT_EQ(&executable.module_config(), &module->config());
+  EXPECT_EQ(&executable.input_output_alias_config(),
+            &module->input_output_alias_config());
+  EXPECT_EQ(&executable.buffer_donor_config(), &module->buffer_donor_config());
+  EXPECT_EQ(executable.name(), "module");
+  EXPECT_EQ(executable.result_shape(),
+            module->config().entry_computation_layout().result_shape());
+  // Make sure that the test doesn't compare empty configs.
+  EXPECT_TRUE(executable.input_output_alias_config().OutputHasAlias({0}));
+  EXPECT_FALSE(executable.buffer_donor_config().buffer_donor().empty());
+}
+
+TEST_F(ExecutableTest, WithoutModule) {
+  TestExecutable executable(nullptr);
+
+  EXPECT_FALSE(executable.has_module());
+  EXPECT_EQ(executable.shared_module(), nullptr);
+  EXPECT_EQ(executable.name(), "<unknown executable>");
+}
+
+// An executable that keeps its module itself, like `GpuExecutable`.
+class ExecutableWithOwnModule : public TestExecutable {
+ public:
+  explicit ExecutableWithOwnModule(std::shared_ptr<HloModule> module)
+      : TestExecutable(nullptr), module_(std::move(module)) {}
+
+  std::shared_ptr<HloModule> shared_module() const override { return module_; }
+
+ protected:
+  HloModule* module_ptr() const override { return module_.get(); }
+
+ private:
+  std::shared_ptr<HloModule> module_;
+};
+
+TEST_F(ExecutableTest, ModuleAccessorsUseTheOverride) {
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kModuleWithAliasing));
+  ExecutableWithOwnModule executable(module);
+
+  EXPECT_TRUE(executable.has_module());
+  EXPECT_EQ(&executable.module(), module.get());
+  EXPECT_EQ(executable.shared_module(), module);
+  EXPECT_EQ(&executable.module_config(), &module->config());
+  EXPECT_EQ(&executable.input_output_alias_config(),
+            &module->input_output_alias_config());
+  EXPECT_EQ(&executable.buffer_donor_config(), &module->buffer_donor_config());
+  EXPECT_EQ(executable.name(), "module");
+}
+
 }  // namespace
 }  // namespace xla
