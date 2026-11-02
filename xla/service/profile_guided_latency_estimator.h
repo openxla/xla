@@ -26,6 +26,7 @@ limitations under the License.
 #include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/latency_estimator.h"
 #include "xla/service/latency_hiding_scheduler.h"
 
 namespace xla {

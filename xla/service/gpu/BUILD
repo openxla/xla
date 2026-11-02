@@ -3813,6 +3813,7 @@ cc_library(
         "//xla/service:collective_ops_utils",
         "//xla/service:device_assignment",
         "//xla/service:hlo_cost_analysis",
+        "//xla/service:latency_estimator",
         "//xla/service:latency_hiding_scheduler",
         "//xla/service:profile_guided_latency_estimator",
         "//xla/stream_executor:stream_executor_h",
