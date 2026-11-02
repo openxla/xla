@@ -39,6 +39,7 @@ limitations under the License.
 #include "tsl/platform/errors.h"
 #include "xla/hlo/builder/padding.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/test.h"
@@ -300,6 +301,23 @@ TEST_F(ShapeInferenceTest, BitcastConvertWithDynamicContractedDimension) {
   EXPECT_FALSE(inferred_shape.ok());
   EXPECT_THAT(inferred_shape.status().message(),
               HasSubstr("Last dimension of input shape must be static"));
+}
+
+TEST_F(ShapeInferenceTest, BitcastConvertScalarToWiderTypeReturnsError) {
+  const Shape operand = ShapeUtil::MakeShape(F16, {});
+  const absl::StatusOr<Shape> inferred_shape =
+      ShapeInference::InferBitcastConvertShape(operand, PrimitiveType::F32);
+  EXPECT_FALSE(inferred_shape.ok());
+  EXPECT_THAT(inferred_shape.status().message(), HasSubstr("rank >= 1"));
+}
+
+TEST_F(ShapeInferenceTest, BitcastConvertRankOneToWiderTypeSucceeds) {
+  const Shape operand = ShapeUtil::MakeShape(F16, {2});
+  ASSERT_OK_AND_ASSIGN(
+      const Shape inferred_shape,
+      ShapeInference::InferBitcastConvertShape(operand, PrimitiveType::F32));
+  EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, ShapeUtil::MakeShape(F32, {})))
+      << ShapeUtil::HumanString(inferred_shape);
 }
 
 TEST_F(ShapeInferenceTest, ClampAllMatrix) {
@@ -1871,6 +1889,42 @@ TEST_F(ShapeInferenceTest, UnchangedDimension) {
                                         /*inferred_dimension=*/-11);
   ASSERT_EQ(ShapeUtil::MakeShape(F32, {2, 3, 10}, {false, false, true}),
             *status);
+}
+
+TEST_F(ShapeInferenceTest,
+       InferReshapeSplitInferredDimensionTooLargeReturnsError) {
+  // [<=6]
+  //   | reshape
+  // [2, 3, 1, 1, 1, 1, 1]
+  //
+  // Several output dimensions can be dynamic, so inferred_dimension is used
+  // as the tie-break and must be a valid output dimension.
+  const Shape operand = ShapeUtil::MakeShape(F32, {6}, {true});
+  const absl::StatusOr<Shape> status = ShapeInference::InferReshapeShape(
+      operand, {2, 3, 1, 1, 1, 1, 1}, /*inferred_dimension=*/7);
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.status().message(), HasSubstr("inferred_dimension"));
+}
+
+TEST_F(ShapeInferenceTest,
+       InferReshapeSplitNegativeInferredDimensionReturnsError) {
+  const Shape operand = ShapeUtil::MakeShape(F32, {6}, {true});
+  const absl::StatusOr<Shape> status = ShapeInference::InferReshapeShape(
+      operand, {2, 3, 1, 1, 1, 1, 1}, /*inferred_dimension=*/-2);
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.status().message(), HasSubstr("inferred_dimension"));
+}
+
+TEST_F(ShapeInferenceTest, InferReshapeSplitInferredDimensionLastSucceeds) {
+  const Shape operand = ShapeUtil::MakeShape(F32, {6}, {true});
+  ASSERT_OK_AND_ASSIGN(
+      const Shape inferred_shape,
+      ShapeInference::InferReshapeShape(operand, {2, 3, 1, 1, 1, 1, 1},
+                                        /*inferred_dimension=*/6));
+  EXPECT_EQ(
+      ShapeUtil::MakeShape(F32, {2, 3, 1, 1, 1, 1, 1},
+                           {false, false, false, false, false, false, true}),
+      inferred_shape);
 }
 
 TEST_F(ShapeInferenceTest, InferDynamicBroadcast) {
@@ -3498,6 +3552,26 @@ TEST_F(ShapeInferenceTest, FailTopKLargeK) {
   EXPECT_FALSE(statusor.ok());
 }
 
+TEST_F(ShapeInferenceTest, TopKScalarOperandReturnsError) {
+  const Shape input = ShapeUtil::MakeShape(F32, {});
+  for (int64_t k : {0, 1}) {
+    const absl::StatusOr<Shape> statusor =
+        ShapeInference::InferTopKShape(input, k);
+    ASSERT_FALSE(statusor.ok()) << "k=" << k;
+    EXPECT_THAT(statusor.status().message(), HasSubstr("rank >= 1"));
+  }
+}
+
+TEST_F(ShapeInferenceTest, TopKRankOneOperandSucceeds) {
+  const Shape input = ShapeUtil::MakeShape(F32, {5});
+  ASSERT_OK_AND_ASSIGN(const Shape inferred_shape,
+                       ShapeInference::InferTopKShape(input, /*k=*/2));
+  EXPECT_TRUE(ShapeUtil::Equal(
+      inferred_shape,
+      ShapeUtil::MakeTupleShape(
+          {ShapeUtil::MakeShape(F32, {2}), ShapeUtil::MakeShape(S32, {2})})));
+}
+
 TEST_F(ShapeInferenceTest, ConvWithSparsity) {
   const Shape lhs = ShapeUtil::MakeShape(F32, {256, 256});
   // Sparse dimension is 64 == 256/4
@@ -5024,6 +5098,50 @@ TEST_F(ShapeInferenceTest, UnboundedBatchNormGrad) {
   EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, expected_tuple_shape))
       << "inferred: " << ShapeUtil::HumanString(inferred_shape)
       << " expected: " << ShapeUtil::HumanString(expected_tuple_shape);
+}
+
+TEST_F(ShapeInferenceTest, BatchNormGradNegativeFeatureIndexReturnsError) {
+  const Shape operand = ShapeUtil::MakeShape(F32, {2, 2, 2, 2, 2, 2, 3});
+  const Shape feature = ShapeUtil::MakeShape(F32, {3});
+  const absl::StatusOr<Shape> inferred_shape =
+      ShapeInference::InferBatchNormGradShape(operand, feature, feature,
+                                              feature, operand,
+                                              /*feature_index=*/-1);
+  ASSERT_FALSE(inferred_shape.ok());
+  EXPECT_THAT(inferred_shape.status().message(), HasSubstr("non-negative"));
+}
+
+TEST_F(ShapeInferenceTest,
+       BatchNormGradNegativeFeatureIndexInHloTextReturnsError) {
+  // The parser infers the result shape when it is omitted.
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+
+ENTRY e {
+  operand = f32[2,2,2,2,2,2,3] parameter(0)
+  scale = f32[3] parameter(1)
+  mean = f32[3] parameter(2)
+  variance = f32[3] parameter(3)
+  grad_output = f32[2,2,2,2,2,2,3] parameter(4)
+  ROOT bng = batch-norm-grad(operand, scale, mean, variance, grad_output),
+      epsilon=0.001, feature_index=-1
+}
+)";
+  const auto module = ParseAndReturnUnverifiedModule(kHlo);
+  ASSERT_FALSE(module.ok());
+  EXPECT_THAT(module.status().message(), HasSubstr("non-negative"));
+}
+
+TEST_F(ShapeInferenceTest, BatchNormGradFirstFeatureIndexSucceeds) {
+  const Shape operand = ShapeUtil::MakeShape(F32, {3, 2, 2, 2, 2, 2, 2});
+  const Shape feature = ShapeUtil::MakeShape(F32, {3});
+  ASSERT_OK_AND_ASSIGN(const Shape inferred_shape,
+                       ShapeInference::InferBatchNormGradShape(
+                           operand, feature, feature, feature, operand,
+                           /*feature_index=*/0));
+  EXPECT_TRUE(ShapeUtil::Equal(
+      inferred_shape, ShapeUtil::MakeTupleShape({operand, feature, feature})))
+      << ShapeUtil::HumanString(inferred_shape);
 }
 
 TEST_F(ShapeInferenceTest, UnboundedBatchNormInference) {

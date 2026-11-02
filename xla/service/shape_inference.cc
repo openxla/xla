@@ -479,6 +479,10 @@ absl::StatusOr<DimAndBound> InferMostSpecificDimAndBound(int64_t dim,
     const Shape& operand_shape, int64_t k) {
   ABSL_RETURN_IF_ERROR(
       ExpectArray(operand_shape, "operand of top-k operation"));
+  if (operand_shape.dimensions().empty()) {
+    return InvalidArgument("The operand of top-k must have rank >= 1, got %s.",
+                           ShapeUtil::HumanString(operand_shape));
+  }
   int64_t last_dim =
       static_cast<int64_t>(operand_shape.dimensions().size()) - 1;
   std::vector<bool> is_dynamic(operand_shape.dimensions().size());
@@ -647,10 +651,15 @@ absl::StatusOr<DimAndBound> InferMostSpecificDimAndBound(int64_t dim,
   if (input_bitwidth > output_bitwidth) {
     ShapeUtil::AppendMinorDimension(ratio, &new_shape);
   } else if (input_bitwidth < output_bitwidth) {
+    if (operand_shape.dimensions().empty()) {
+      return InvalidArgument(
+          "Input shape of bitcast-convert from %s to %s must have rank >= 1.",
+          ShapeUtil::HumanString(operand_shape),
+          PrimitiveType_Name(new_element_type));
+    }
     int last_dimension_idx =
         static_cast<int64_t>(operand_shape.dimensions().size()) - 1;
-    if (operand_shape.dimensions().empty() ||
-        operand_shape.dimensions(last_dimension_idx) != ratio) {
+    if (operand_shape.dimensions(last_dimension_idx) != ratio) {
       return InvalidArgument(
           "Last dimension of input shape=%d is not equal to ratio of "
           "bit-widths=%d "
@@ -2043,6 +2052,13 @@ ShapeInference::InferScalarBroadcastShape(absl::Span<const Shape> shapes) {
         "smaller than the rank of operand_shape; "
         "got feature_index %d, and rank %d.",
         feature_index, operand_shape.dimensions().size());
+  }
+
+  if (feature_index < 0) {
+    return InvalidArgument(
+        "Expected feature_index of batch-norm-grad to "
+        "be a non-negative number, got %d.",
+        feature_index);
   }
 
   if (operand_shape.dimensions().size() !=
@@ -4187,6 +4203,13 @@ ShapeInference::InferCollectivePermuteDoneShape(const Shape& operand_shape) {
     if (output_dynamic_dimension == -1 &&
         output_dim_end - output_dim_start > 1) {
       // Multiple outputs can be dynamic, use "inferred_dimension" to tie-break.
+      if (inferred_dimension < -1 ||
+          inferred_dimension >= static_cast<int64_t>(dimensions.size())) {
+        return InvalidArgument(
+            "Reshape inferred_dimension %d is out of range for output rank %d: "
+            "%s",
+            inferred_dimension, dimensions.size(), reshape_debug_str);
+      }
       output_dynamic_dimension = inferred_dimension;
     }
 
