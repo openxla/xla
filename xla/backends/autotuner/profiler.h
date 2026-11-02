@@ -19,6 +19,7 @@ limitations under the License.
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/functional/function_ref.h"

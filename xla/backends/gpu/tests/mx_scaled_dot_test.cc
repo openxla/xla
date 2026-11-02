@@ -33,8 +33,14 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-// Numerical correctness of the MX (block-scaled) scaled-dot lowerings, checked
-// against the same computation lowered without MX.
+// Numerical correctness of the scaled-dot lowerings, each checked against the
+// same computation lowered without MX.
+//
+// All three backends that can claim a scaled-dot fusion are covered, including
+// HIPBLASLT_FISSION, which uses no MX at all: it converts the operands and the
+// scales to bf16 and runs an ordinary GEMM. The autotuner is free to select it
+// in production whenever it measures fastest, so its numerics have to be right
+// too.
 //
 // Which backend lowers the scaled dot is pinned per test rather than left to
 // the autotuner, so that this test exercises a known code path instead of
@@ -259,12 +265,16 @@ TEST_P(MxScaledDotTest, MxFp8ReshapedOperandsCorrectness) {
 
 INSTANTIATE_TEST_SUITE_P(
     MxBackends, MxScaledDotTest,
-    ::testing::Values(MxBackendParam{autotuner::Backend::TRITON,
-                                     R"(__triton_nested_gemm_fusion)",
-                                     "Triton"},
-                      MxBackendParam{autotuner::Backend::HIPBLASLT,
-                                     R"(__cublas\$lt\$matmul\$mx)",
-                                     "HipblasLt"}),
+    ::testing::Values(
+        MxBackendParam{autotuner::Backend::TRITON,
+                       R"(__triton_nested_gemm_fusion)", "Triton"},
+        MxBackendParam{autotuner::Backend::HIPBLASLT,
+                       R"(__cublas\$lt\$matmul\$mx)", "HipblasLt"},
+        // The trailing quote stops this matching the "$mx"
+        // target, which shares the same prefix.
+        MxBackendParam{autotuner::Backend::HIPBLASLT_FISSION,
+                       R"(custom_call_target="__cublas\$lt\$matmul")",
+                       "HipblasLtFission"}),
     [](const ::testing::TestParamInfo<MxBackendParam>& info) {
       return std::string(info.param.name);
     });
