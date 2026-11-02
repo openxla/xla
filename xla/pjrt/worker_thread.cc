@@ -50,6 +50,10 @@ void WorkerThread::Schedule(absl::AnyInvocable<void() &&> fn) {
 }
 
 void WorkerThread::Drain() {
+  // Draining from the worker thread itself would deadlock: the sentinel closure
+  // below can only run after the currently running closure returns.
+  CHECK(!IsCurrentThread())
+      << "WorkerThread::Drain() called from its own worker thread";
   absl::Notification done;
   // Schedule a sentinel closure after all currently-queued work. When the
   // worker thread executes it, we know every prior closure has completed.
