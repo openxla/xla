@@ -55,6 +55,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/union_find.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -637,7 +638,7 @@ int64_t EraseIndicesDeadAsGroup(WhileInputDependencies& deps,
 
 absl::StatusOr<bool> TryRemoveDeadWhileParams(HloInstruction* while_op) {
   CHECK_EQ(while_op->opcode(), HloOpcode::kWhile);
-  if (HasDisableWhileLoopDceAttr(while_op)) {
+  if (frontend::HasDisableWhileLoopDceAttr(while_op)) {
     return false;
   }
 
@@ -852,7 +853,7 @@ const HloPassFactory* const kWhileLoopSimplifierRegistration =
 static absl::StatusOr<bool> TryRemoveRepeatedWhileTupleIndices(
     HloInstruction* while_op) {
   CHECK_EQ(while_op->opcode(), HloOpcode::kWhile);
-  if (HasDisableWhileLoopDceAttr(while_op)) {
+  if (frontend::HasDisableWhileLoopDceAttr(while_op)) {
     return false;
   }
 
@@ -948,7 +949,7 @@ static absl::StatusOr<bool> TryRemoveRepeatedWhileTupleIndices(
 // Removes each loop parameter (i.e. member of the while loop tuple) that is a
 // constant and is the same in the while loop body and the while loop init.
 static absl::StatusOr<bool> TryRemoveConstantParams(HloInstruction* while_op) {
-  if (HasDisableWhileLoopDceAttr(while_op)) {
+  if (frontend::HasDisableWhileLoopDceAttr(while_op)) {
     return false;
   }
   HloModule* module = while_op->GetModule();
@@ -1143,7 +1144,7 @@ static absl::StatusOr<bool> TryRemoveConstantParams(HloInstruction* while_op) {
 //
 // Returns true if it made a change to the graph.
 static absl::StatusOr<bool> TryRemoveWhileLoop(HloInstruction* while_op) {
-  if (HasDisableWhileLoopDceAttr(while_op)) {
+  if (frontend::HasDisableWhileLoopDceAttr(while_op)) {
     return false;
   }
   // Cowardly refuse to remove loops that are not removable.  In practice, this
@@ -1371,7 +1372,7 @@ static std::vector<HloInstruction*> GetFlatTupleElems(
 }
 
 static absl::StatusOr<bool> TryFlattenNestedTuples(HloInstruction* while_op) {
-  if (HasDisableWhileLoopDceAttr(while_op)) {
+  if (frontend::HasDisableWhileLoopDceAttr(while_op)) {
     return false;
   }
   auto flatten_original_value = [&](const HloInstruction* old_instr,
@@ -1812,7 +1813,7 @@ absl::StatusOr<bool> WhileLoopSimplifier::RunImpl(
     // to do it right now, so just add a bail-out to be conservative.
     if (while_op->while_body()->caller_instructions().size() > 1 ||
         while_op->while_condition()->caller_instructions().size() > 1 ||
-        HasDisableWhileLoopDceAttr(while_op)) {
+        frontend::HasDisableWhileLoopDceAttr(while_op)) {
       continue;
     }
 
