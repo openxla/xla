@@ -2271,6 +2271,40 @@ TEST_F(ShapeInferenceTest, DotWithNarrowerPreferredElementType) {
 }
 
 // <ragged-dot> mode 1 : [m,k], [g,k,n], [g] -> [m,n]
+TEST_F(ShapeInferenceTest, RaggedDotGroupSizesIntegerTypes) {
+  const Shape lhs = ShapeUtil::MakeShape(F32, {8, 4});
+  const Shape rhs = ShapeUtil::MakeShape(F32, {2, 4, 6});
+  RaggedDotDimensionNumbers dims;
+  dims.mutable_dot_dimension_numbers()->add_lhs_contracting_dimensions(1);
+  dims.mutable_dot_dimension_numbers()->add_rhs_contracting_dimensions(1);
+  dims.add_lhs_ragged_dimensions(0);
+  dims.add_rhs_group_dimensions(0);
+  for (PrimitiveType type : {S8, U8, S16, U16, S32, U32, S64, U64}) {
+    SCOPED_TRACE(PrimitiveType_Name(type));
+    ASSERT_OK_AND_ASSIGN(Shape result, ShapeInference::InferRaggedDotOpShape(
+                                          lhs, rhs, ShapeUtil::MakeShape(type, {2}),
+                                          dims, std::nullopt));
+    EXPECT_TRUE(ShapeUtil::Equal(result, ShapeUtil::MakeShape(F32, {8, 6})));
+  }
+}
+
+TEST_F(ShapeInferenceTest, RaggedDotGroupSizesNonIntegerTypes) {
+  const Shape lhs = ShapeUtil::MakeShape(F32, {8, 4});
+  const Shape rhs = ShapeUtil::MakeShape(F32, {2, 4, 6});
+  RaggedDotDimensionNumbers dims;
+  dims.mutable_dot_dimension_numbers()->add_lhs_contracting_dimensions(1);
+  dims.mutable_dot_dimension_numbers()->add_rhs_contracting_dimensions(1);
+  dims.add_lhs_ragged_dimensions(0);
+  dims.add_rhs_group_dimensions(0);
+  for (PrimitiveType type : {PRED, F16, BF16, F32, F64, C64, C128}) {
+    SCOPED_TRACE(PrimitiveType_Name(type));
+    EXPECT_THAT(ShapeInference::InferRaggedDotOpShape(
+                    lhs, rhs, ShapeUtil::MakeShape(type, {2}), dims, std::nullopt),
+                absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                      HasSubstr("integer element type")));
+  }
+}
+
 TEST_F(ShapeInferenceTest, RaggedDotRaggedNonContracting) {
   const Shape lhs_shape = ShapeUtil::MakeShape(F32, {11, 5});
   const Shape rhs_shape = ShapeUtil::MakeShape(F32, {3, 5, 7});

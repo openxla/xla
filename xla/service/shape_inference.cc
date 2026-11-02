@@ -1045,6 +1045,11 @@ void GenerateDotResultDimensions(
   ABSL_RETURN_IF_ERROR(ExpectArray(lhs, "lhs of ragged dot"));
   ABSL_RETURN_IF_ERROR(ExpectArray(rhs, "rhs of ragged dot"));
   ABSL_RETURN_IF_ERROR(ExpectArray(group_sizes, "group_sizes of ragged dot"));
+  if (!primitive_util::IsIntegralType(group_sizes.element_type())) {
+    return InvalidArgument("ragged dot group_sizes must have an integer element "
+                           "type; got %s",
+                           ShapeUtil::HumanString(group_sizes));
+  }
 
   auto fail = [lhs, rhs](const std::string& addendum) -> absl::Status {
     std::string message = StrFormat(

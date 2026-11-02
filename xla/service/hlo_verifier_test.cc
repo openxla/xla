@@ -4975,6 +4975,35 @@ TEST_F(HloVerifierTestLayoutSensitive, Int4CompareSelect) {
   ASSERT_OK(verifier().Run(module.get()));
 }
 
+TEST_F(HloVerifierTest, RaggedDotGroupSizesElementType) {
+  constexpr absl::string_view hlo = R"hlo(
+HloModule module
+ENTRY main {
+  lhs = f32[8,4] parameter(0)
+  rhs = f32[2,4,6] parameter(1)
+  groups = %s[2] parameter(2)
+  ROOT rd = f32[8,6] ragged-dot(lhs, rhs, groups),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1},
+    lhs_ragged_dims={0}, rhs_group_dims={0}
+})hlo";
+  for (absl::string_view type : {"s8", "u8", "s16", "u16", "s32", "u32",
+                                "s64", "u64"}) {
+    SCOPED_TRACE(type);
+    ASSERT_OK_AND_ASSIGN(auto module,
+                        ParseAndReturnUnverifiedModule(absl::StrFormat(hlo, type)));
+    EXPECT_OK(verifier().Run(module.get()).status());
+  }
+  for (absl::string_view type : {"pred", "f16", "bf16", "f32", "f64", "c64",
+                                "c128"}) {
+    SCOPED_TRACE(type);
+    ASSERT_OK_AND_ASSIGN(auto module,
+                        ParseAndReturnUnverifiedModule(absl::StrFormat(hlo, type)));
+    EXPECT_THAT(verifier().Run(module.get()).status(),
+                StatusIs(absl::StatusCode::kInvalidArgument,
+                         HasSubstr("integer element type")));
+  }
+}
+
 TEST_F(HloVerifierTest, RaggedDotNonContracting) {
   static const char* const kRaggedDotHloString = R"(
 HloModule module
