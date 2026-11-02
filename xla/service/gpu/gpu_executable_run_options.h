@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/clique_id.h"
 #include "xla/core/collectives/clique_key.h"
@@ -37,6 +38,14 @@ namespace xla::gpu {
 // A callback to get a unique clique ids.
 using CliqueIdCallback =  // NOLINT
     std::function<absl::StatusOr<CliqueIds>(const CliqueKey&)>;
+
+// ORs graph invalidation across participating processes. Call once per process,
+// with all participating clique locks held and the same collective signature
+// and participants on every process. Corresponding calls must have the same
+// order within each signature.
+using CollectiveGraphInvalidationCallback = std::function<absl::StatusOr<bool>(
+    absl::string_view collective_signature,
+    absl::Span<const GlobalDeviceId> participants, bool local_dirty)>;
 
 // A user-defined timeout handler attached to XLA:GPU execution.
 struct ExecutionTimeoutHandler {
@@ -87,6 +96,11 @@ class GpuExecutableRunOptions {
       CliqueIdCallback clique_id_callback);
   const CliqueIdCallback& clique_id_callback() const;
 
+  GpuExecutableRunOptions& set_collective_graph_invalidation_callback(
+      CollectiveGraphInvalidationCallback callback);
+  const CollectiveGraphInvalidationCallback&
+  collective_graph_invalidation_callback() const;
+
   // Collectives API for running collective operations on the GPU devices.
   GpuExecutableRunOptions& set_collectives(GpuCollectives* collectives);
   GpuCollectives* collectives() const;
@@ -129,6 +143,7 @@ class GpuExecutableRunOptions {
   bool enable_mock_collectives_ = false;
   std::optional<DeviceIdMap> gpu_global_device_ids_;
   CliqueIdCallback clique_id_callback_;
+  CollectiveGraphInvalidationCallback collective_graph_invalidation_callback_;
   GpuCollectives* collectives_ = nullptr;
   std::optional<absl::flat_hash_map<GlobalDeviceId, IncarnationId>>
       incarnations_;

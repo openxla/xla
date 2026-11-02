@@ -575,7 +575,9 @@ PJRT_Memory* PJRT_Client_FindMemoryWrapper(xla::PjRtMemorySpace* cpp_memory,
 std::shared_ptr<xla::KeyValueStoreInterface> ToCppKeyValueStore(
     PJRT_KeyValueGetCallback c_get_callback, void* get_user_arg,
     PJRT_KeyValueTryGetCallback c_try_get_callback, void* try_get_user_arg,
-    PJRT_KeyValuePutCallback c_put_callback, void* put_user_arg);
+    PJRT_KeyValuePutCallback c_put_callback, void* put_user_arg,
+    PJRT_KeyValueDeleteCallback c_delete_callback = nullptr,
+    void* delete_user_arg = nullptr);
 
 // A method that does not nothing other than returning a nullptr. Can be used as
 // the implementation of PJRT_Plugin_Initialize for plugins that do not require

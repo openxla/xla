@@ -16,8 +16,10 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_CLIQUES_H_
 #define XLA_BACKENDS_GPU_RUNTIME_COLLECTIVE_CLIQUES_H_
 
+#include <functional>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "absl/status/statusor.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
@@ -36,8 +38,21 @@ namespace xla::gpu {
 // collected from all thunks at prepare stage.
 class CollectiveCliques {
  public:
+  struct LifetimeToken {
+    explicit LifetimeToken(std::function<void()> on_destroy)
+        : on_destroy(std::move(on_destroy)) {}
+    ~LifetimeToken() { on_destroy(); }
+    const std::function<void()> on_destroy;
+  };
+  using LifetimeTokens = std::vector<tsl::TiedRef<LifetimeToken>>;
+
   CollectiveCliques() = default;
   explicit CollectiveCliques(AcquiredCliquesMap cliques_map);
+
+  // Invokes `on_destroy` before clique communicators are destroyed, or when
+  // the returned token is released. Tokens do not extend clique lifetimes.
+  absl::StatusOr<LifetimeTokens> CreateLifetimeTokens(
+      const std::function<void()>& on_destroy) const;
 
   absl::StatusOr<GpuCommunicator*> GetComm(const GpuCliqueKey& clique_key,
                                            RankId rank) const;

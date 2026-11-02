@@ -153,6 +153,7 @@ cc_library(
     ]),
     deps = [
         ":allocator_config",
+        ":collective_graph_invalidation",
         ":cross_host_transfer_clique_key",
         ":gpu_helpers",
         ":gpu_metrics",
@@ -1177,4 +1178,53 @@ memfile_embed_data(
     srcs = [":gpu_pjrt_client_hash"],
     embedded_dir_name = "gpu_pjrt_client_hash",
     visibility = internal_visibility([":gpu_pjrt_client_hash_users"]),
+)
+
+cc_library(
+    name = "collective_graph_invalidation",
+    srcs = ["collective_graph_invalidation.cc"],
+    hdrs = ["collective_graph_invalidation.h"],
+    deps = [
+        "//xla/pjrt/distributed:key_value_store_interface",
+        "//xla/runtime:device_id",
+        "//xla/runtime:process_id",
+        "//xla/service/gpu:gpu_executable_run_options",
+        "//xla:status_macros",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:btree",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@tsl//tsl/platform:fingerprint",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_graph_invalidation_test",
+    srcs = ["collective_graph_invalidation_test.cc"],
+    deps = [
+        "//xla/pjrt/distributed:in_memory_key_value_store",
+        "//xla/runtime:device_id",
+        "//xla/runtime:process_id",
+        "//xla/service/gpu:gpu_executable_run_options",
+        ":collective_graph_invalidation",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
+    ],
 )

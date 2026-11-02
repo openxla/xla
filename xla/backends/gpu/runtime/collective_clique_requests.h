@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -161,9 +162,10 @@ class CollectiveCliqueRequests {
     bool use_gxl;
   };
 
-  // Adds a clique key to the list of requested cliques. Callers must pass
-  // device_groups pre-sorted: each inner group sorted in ascending device id
-  // order, and the outer vector sorted by the first device id of each group.
+  // Adds a clique key to the list of requested cliques. Callers must pass the
+  // complete, nonempty device group partition, identical across ranks, with
+  // each inner group sorted in ascending device id order and the outer vector
+  // sorted by the first device id of each group.
   //
   // WARNING: This invariant is verified in debug builds only, if it doesn't
   // hold, XLA will acquire duplicate communicators for same set of devices.
@@ -179,10 +181,28 @@ class CollectiveCliqueRequests {
   // efficient communicator acquisition.
   std::vector<CliqueRequest> OrderedRequestedCliques() const;
 
+  bool HasMixedDeviceGroups() const { return has_mixed_device_groups_; }
+
+  // Identifies the requested group partitions and communication IDs across
+  // ranks, independently of each rank's clique keys and local device counts.
+  std::string CollectiveGraphSignature() const;
+
+  // Returns the sorted connected component of `device` across requested group
+  // partitions. Graph invalidation must not synchronize independent components.
+  std::vector<GlobalDeviceId> CollectiveGraphParticipants(
+      GlobalDeviceId device) const;
+
   size_t size() const { return cliques_.size(); }
 
  private:
+  struct GraphRequest {
+    CommunicationId communication_id;
+    std::vector<std::vector<GlobalDeviceId>> device_groups;
+  };
+
   absl::flat_hash_map<GpuCliqueKey, CliqueRequest> cliques_;
+  std::vector<GraphRequest> graph_requests_;
+  bool has_mixed_device_groups_ = false;
 };
 
 }  // namespace xla::gpu

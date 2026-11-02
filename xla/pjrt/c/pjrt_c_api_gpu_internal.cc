@@ -246,9 +246,19 @@ PJRT_Error* PJRT_Client_Create(PJRT_Client_Create_Args* args) {
   options.num_nodes = num_nodes;
   options.allowed_devices = visible_devices;
   options.platform_name = platform_name;
+  auto* kv_extension = pjrt::FindExtension<PJRT_KeyValueStore_Extension>(
+      args, PJRT_Extension_Type_KeyValueStore);
+  if (kv_extension != nullptr) {
+    PJRT_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
+        "PJRT_KeyValueStore_Extension",
+        PJRT_KeyValueStore_Extension_STRUCT_SIZE,
+        kv_extension->base.struct_size));
+  }
   options.kv_store = pjrt::ToCppKeyValueStore(
       args->kv_get_callback, args->kv_get_user_arg, args->kv_try_get_callback,
-      args->kv_try_get_user_arg, args->kv_put_callback, args->kv_put_user_arg);
+      args->kv_try_get_user_arg, args->kv_put_callback, args->kv_put_user_arg,
+      kv_extension ? kv_extension->kv_delete_callback : nullptr,
+      kv_extension ? kv_extension->kv_delete_user_arg : nullptr);
   options.should_stage_host_to_device_transfers =
       should_stage_host_to_device_transfers;
   options.abort_collectives_on_failure = abort_collectives_on_failure;

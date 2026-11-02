@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "stablehlo/dialect/Version.h"
 #include "xla/future.h"
@@ -45,6 +46,7 @@ namespace pjrt {
 namespace {
 
 using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
 using ::testing::HasSubstr;
 
 TEST(PjRtCApiHelperTest, ConvertValidPjRtValueType) {
@@ -126,6 +128,9 @@ TEST(PjRtCApiHelperTest, Callback) {
   EXPECT_THAT(converted_kv_store->Get("key", absl::Seconds(1)),
               IsOkAndHolds("value"));
   EXPECT_THAT(converted_kv_store->TryGet("key"), IsOkAndHolds("value"));
+  EXPECT_THAT(converted_kv_store->Delete("key"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("Delete is not supported")));
 
   auto [promise, future] = xla::MakePromise<std::string>();
   std::shared_ptr<tsl::CallOptions> call_options = converted_kv_store->AsyncGet(
@@ -134,6 +139,44 @@ TEST(PjRtCApiHelperTest, Callback) {
           const absl::StatusOr<std::string>& result) { promise->Set(result); });
   EXPECT_EQ(call_options, nullptr);
   EXPECT_TRUE(absl::IsUnimplemented(future.Await().status()));
+}
+
+TEST(PjRtCApiHelperTest, DeleteCallbackRemovesDirectory) {
+  auto kv_store = std::make_shared<xla::InMemoryKeyValueStore>();
+  auto callbacks = ConvertToCKeyValueCallbacks(kv_store);
+  auto converted =
+      ToCppKeyValueStore(callbacks->c_kv_get, &callbacks->kv_get_c_func,
+                         callbacks->c_kv_try_get, &callbacks->kv_try_get_c_func,
+                         callbacks->c_kv_put, &callbacks->kv_put_c_func,
+                         callbacks->c_kv_delete, &callbacks->kv_delete_c_func);
+
+  ASSERT_OK(converted->Set("round/result", "1"));
+  ASSERT_OK(converted->Set("round/ack/0", ""));
+  ASSERT_OK(converted->Set("other/result", "0"));
+  EXPECT_OK(converted->Delete("round"));
+  EXPECT_THAT(converted->TryGet("round/result"),
+              StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_THAT(converted->TryGet("round/ack/0"),
+              StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_THAT(converted->TryGet("other/result"), IsOkAndHolds("0"));
+  EXPECT_OK(converted->Delete("round"));
+}
+
+TEST(PjRtCApiHelperTest, DeleteCallbackPreservesErrors) {
+  class Store : public xla::InMemoryKeyValueStore {
+   public:
+    absl::Status Delete(absl::string_view) override {
+      return absl::UnavailableError("delete failed");
+    }
+  };
+  auto callbacks = ConvertToCKeyValueCallbacks(std::make_shared<Store>());
+  auto converted =
+      ToCppKeyValueStore(callbacks->c_kv_get, &callbacks->kv_get_c_func,
+                         callbacks->c_kv_try_get, &callbacks->kv_try_get_c_func,
+                         callbacks->c_kv_put, &callbacks->kv_put_c_func,
+                         callbacks->c_kv_delete, &callbacks->kv_delete_c_func);
+  EXPECT_THAT(converted->Delete("round"),
+              StatusIs(absl::StatusCode::kUnavailable, "delete failed"));
 }
 
 TEST(PjRtCApiHelperTest, ConvertToCLayoutFromStrides) {

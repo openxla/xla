@@ -84,6 +84,7 @@ typedef enum {
   PJRT_Extension_Type_MultiSlice,
   PJRT_Extension_Type_HostMemoryAllocator,
   PJRT_Extension_Type_XlaTransform,
+  PJRT_Extension_Type_KeyValueStore,
 } PJRT_Extension_Type;
 
 // PJRT_Extension_Base contains a type and a pointer to next
@@ -118,7 +119,7 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_Extension_Base, next);
 // Changes include:
 // * Adding a new field to the PJRT_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define PJRT_API_MINOR 117
+#define PJRT_API_MINOR 118
 
 // The plugin should set the major_version and minor_version of
 // PJRT_Api.pjrt_api_version to be the `PJRT_API_MAJOR` and `PJRT_API_MINOR` in
@@ -520,6 +521,30 @@ PJRT_DEFINE_STRUCT_TRAITS(PJRT_KeyValuePutCallback_Args, user_arg);
 // different plugins, but not between different nodes in one plugin).
 typedef PJRT_Error* (*PJRT_KeyValuePutCallback)(
     PJRT_KeyValuePutCallback_Args* args);
+
+struct PJRT_KeyValueDeleteCallback_Args {
+  size_t struct_size;
+  PJRT_Extension_Base* extension_start;
+  const char* key;
+  size_t key_size;
+  PJRT_CallbackError* callback_error;
+  void* user_arg;
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_KeyValueDeleteCallback_Args, user_arg);
+
+// Deletes a key and all keys below its directory prefix. The callback must be
+// thread-safe. Deleting a missing key succeeds.
+typedef PJRT_Error* (*PJRT_KeyValueDeleteCallback)(
+    PJRT_KeyValueDeleteCallback_Args* args);
+
+// Optional callbacks supplied through PJRT_Client_Create_Args.extension_start.
+// The callback and user_arg must remain valid for the lifetime of the client.
+struct PJRT_KeyValueStore_Extension {
+  PJRT_Extension_Base base;
+  PJRT_KeyValueDeleteCallback kv_delete_callback;
+  void* kv_delete_user_arg;
+};
+PJRT_DEFINE_STRUCT_TRAITS(PJRT_KeyValueStore_Extension, kv_delete_user_arg);
 
 struct PJRT_Client_Create_Args {
   size_t struct_size;

@@ -285,6 +285,10 @@ class Thunk {
     // each step.
     std::optional<absl::Span<const BufferAllocation::Index>>
         persistent_alloc_indices = std::nullopt;
+
+    // A collective decision made before initialization so all ranks rebuild
+    // graphs containing captured collectives together.
+    bool invalidate_command_buffers = false;
   };
 
   //===--------------------------------------------------------------------===//
