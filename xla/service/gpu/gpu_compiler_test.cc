@@ -1996,6 +1996,68 @@ ENTRY main {
   EXPECT_THAT(kinds, ElementsAre(Thunk::Kind::kMemzero));
 }
 
+TEST_F(GpuCompilerTest, CollectiveCommandBuffersKeepCollectivesOutOfOutputs) {
+  constexpr absl::string_view kHloText = R"(
+HloModule test
+
+add {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+exponential {
+  p = f32[1024] parameter(0)
+  ROOT e = f32[1024] exponential(p)
+}
+
+negate {
+  p = f32[1024] parameter(0)
+  ROOT n = f32[1024] negate(p)
+}
+
+ENTRY main {
+  p0 = f32[1024] parameter(0)
+  ar = f32[1024] all-reduce(p0), replica_groups={}, to_apply=add
+  e = f32[1024] fusion(ar), kind=kLoop, calls=exponential
+  ROOT n = f32[1024] fusion(e), kind=kLoop, calls=negate
+}
+)";
+
+  auto temp_bytes = [&](DebugOptions::CommandBufferUpdateMode update_mode)
+      -> absl::StatusOr<int64_t> {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(kHloText));
+    DebugOptions& debug_options =
+        module->mutable_config().mutable_debug_options();
+    debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
+    debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
+
+    Compiler::CompileOptions compile_options;
+    compile_options.gpu_topology = GetSingleDeviceGpuTopology(
+        /*platform_version=*/"", gpu_target_config());
+    compile_options.early_exit_with_layouts = false;
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<Executable> executable,
+        compiler()->RunBackend(std::move(module), /*executor=*/nullptr,
+                               compile_options));
+    int64_t bytes = 0;
+    for (const BufferAllocation* allocation :
+         absl::down_cast<GpuExecutable*>(executable.get())->GetAllocations()) {
+      if (allocation->IsPreallocatedTempBuffer()) {
+        bytes += allocation->size();
+      }
+    }
+    return bytes;
+  };
+
+  ASSERT_OK_AND_ASSIGN(int64_t always_update,
+                       temp_bytes(DebugOptions::ALWAYS_UPDATE));
+  ASSERT_OK_AND_ASSIGN(int64_t skip_temp, temp_bytes(DebugOptions::SKIP_TEMP));
+  constexpr int64_t kAllReduceBytes = 1024 * sizeof(float);
+  EXPECT_GE(skip_temp - always_update, kAllReduceBytes);
+}
+
 TEST_F(GpuCompilerTest, NoCudnnVectorizationOnHopperAndBeyond) {
   if (gpu_target_config().device_description.dnn_version() <
           stream_executor::SemanticVersion(9, 12, 0) &&
