@@ -49,7 +49,7 @@ target_config_map = {
     "mi300": "//xla/backends/gpu/target_config:specs/mi300.txtpb",
     "mi350": "//xla/backends/gpu/target_config:specs/mi350.txtpb",
     "mi450": "//xla/backends/gpu/target_config:specs/mi450.txtpb",
-    "mi450_strict": "//xla/backends/gpu/target_config:specs/mi450_strict.txtpb",
+    "gfx1250_strict": "//xla/backends/gpu/target_config:specs/gfx1250_strict.txtpb",
     "p100": "//xla/backends/gpu/target_config:specs/p100.txtpb",
     "pvc": "//xla/backends/gpu/target_config:specs/pvc.txtpb",
     "rtx6000pro": "//xla/backends/gpu/target_config:specs/rtx6000pro.txtpb",

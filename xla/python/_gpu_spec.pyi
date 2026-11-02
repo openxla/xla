@@ -61,9 +61,9 @@ class GpuModel(enum.Enum):
 
   MI450 = 15
 
-  MI450_STRICT = 16
+  GFX1250_STRICT = 16
 
-  P100 = 17 
+  P100 = 17
 
   PVC = 18
 

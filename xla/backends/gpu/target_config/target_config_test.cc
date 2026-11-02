@@ -78,7 +78,7 @@ INSTANTIATE_TEST_SUITE_P(
         {"MI300", GpuModel::MI300, true},
         {"MI350", GpuModel::MI350, true},
         {"MI450", GpuModel::MI450, true},
-        {"MI450_STRICT", GpuModel::MI450_STRICT, true},
+        {"GFX1250_STRICT", GpuModel::GFX1250_STRICT, true},
         {"P100", GpuModel::P100, true},
         {"PVC", GpuModel::PVC, true},
         {"VR_NVL72", GpuModel::VR_NVL72, true},
