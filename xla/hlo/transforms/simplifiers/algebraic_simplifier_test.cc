@@ -4492,7 +4492,8 @@ ENTRY test {
 
 TEST_F(AlgebraicSimplifierTest,
        TrivialReduceWindowWithNegativeHighPadExceedingDimension) {
-  // Same with the high crop, in a dimension of a multi-dimensional operand.
+  // Same with a high crop of exactly the dimension size, in a dimension of a
+  // multi-dimensional operand.
   constexpr absl::string_view hlo_string = R"(
 HloModule test
 
@@ -4505,7 +4506,7 @@ max {
 ENTRY test {
   p = f32[2,4] parameter(0)
   constant = f32[] constant(-inf)
-  ROOT reduce-window = f32[1,4] reduce-window(p, constant), window={size=1x1 pad=2_-3x0_0}, to_apply=max
+  ROOT reduce-window = f32[1,4] reduce-window(p, constant), window={size=1x1 pad=1_-2x0_0}, to_apply=max
 }
 )";
 
@@ -4517,6 +4518,34 @@ ENTRY test {
       GmockMatch(m::Broadcast(m::ConstantEffectiveScalar(
                                   -std::numeric_limits<float>::infinity()))
                      .WithShape(F32, {1, 4})));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       TrivialReduceWindowWithNegativePadOnDynamicDimension) {
+  // The crop applies to the runtime size of the dynamic dimension, which a
+  // static slice cannot express, so the reduce-window must stay.
+  constexpr absl::string_view hlo_string = R"(
+HloModule test
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+
+ENTRY test {
+  p = f32[<=16,32] parameter(0)
+  constant = f32[] constant(0)
+  ROOT reduce-window = f32[<=15,32] reduce-window(p, constant), window={size=1x1 pad=-1_0x0_0}, to_apply=add
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::ReduceWindow(m::Parameter(0),
+                                         m::ConstantEffectiveScalar(0))));
 }
 
 TEST_F(AlgebraicSimplifierTest,
