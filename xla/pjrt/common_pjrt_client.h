@@ -46,6 +46,7 @@ limitations under the License.
 #include "riegeli/bytes/reader.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
@@ -848,6 +849,7 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
         addressable_device_logical_ids_(
             std::move(info.addressable_device_logical_ids)),
         device_assignment_(std::move(info.device_assignment)),
+        input_output_alias_config_(std::move(info.input_output_alias_config)),
         extras_(std::move(info.extras)),
         input_hlo_snapshot_bits_(std::move(info.input_hlo_snapshot_bits)),
         executable_(std::move(executable)),
@@ -939,6 +941,7 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
         device_assignment_,
         parameters_that_may_be_donated_,
         input_buffer_sizes_in_bytes_,
+        input_output_alias_config_,
     };
   }
 
@@ -1067,12 +1070,7 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
   absl::Span<int const> ParametersThatMayBeDonated() const;
 
   virtual const HloInputOutputAliasConfig& input_output_alias_config() const {
-    if (extras_) {
-      return extras_->input_output_alias_config;
-    }
-    auto hlo_module = GetExecutable()->GetHloModule();
-    CHECK_OK(hlo_module.status());
-    return (*hlo_module)->input_output_alias_config();
+    return input_output_alias_config_;
   }
 
   // Checks that the input buffers passed in by the user have the correct size
@@ -1159,6 +1157,9 @@ class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
   std::vector<LogicalDeviceIds> addressable_device_logical_ids_;
 
   std::shared_ptr<DeviceAssignment> device_assignment_;
+
+  // Determined at load time, so that executions don't need the HLO module.
+  HloInputOutputAliasConfig input_output_alias_config_;
 
   std::unique_ptr<DispatchInfo::Extras> extras_;
 

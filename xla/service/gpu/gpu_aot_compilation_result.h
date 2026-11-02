@@ -93,9 +93,10 @@ class GpuAotCompilationResult : public CompiledModule {
 
   absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const final;
 
- private:
+  // Returns the serialized executable.
   const GpuExecutableProto& GetExecutableProto() const;
 
+ private:
   explicit GpuAotCompilationResult(
       std::variant<internal::ArenaAllocatedGpuExecutableProto,
                    GpuExecutableProto>

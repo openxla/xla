@@ -2120,6 +2120,23 @@ absl::Status PjRtStreamExecutorExecutableLoadState::Preload(
       .status();
 }
 
+std::optional<PjRtExecutableLoadState::EntryComputationInfo>
+PjRtStreamExecutorExecutableLoadState::GetEntryComputationInfo(
+    PjRtExecutable* executable) const {
+  std::shared_ptr<LocalExecutable> local_executable =
+      absl::down_cast<StreamExecutorExecutable*>(executable)
+          ->GetLocalExecutableWithMetadata();
+  if (local_executable == nullptr) {
+    return std::nullopt;
+  }
+  const Executable& xla_executable = *local_executable->executable();
+  return EntryComputationInfo{
+      xla_executable.result_shape(),
+      GetParameterShapes(xla_executable.compute_computation_layout()),
+      xla_executable.input_output_alias_config(),
+  };
+}
+
 tsl::RCReference<PjRtExecutableLoadState>
 PjRtStreamExecutorRawClient::MakeLoadState() {
   return tsl::MakeRef<PjRtStreamExecutorExecutableLoadState>(this);

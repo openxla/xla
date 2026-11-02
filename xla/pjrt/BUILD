@@ -63,6 +63,8 @@ cc_library(
         ":raw_buffer",
         "//xla:executable_run_options",
         "//xla:future",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
         "//xla/runtime:device_id",
