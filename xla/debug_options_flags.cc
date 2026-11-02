@@ -616,6 +616,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_raft_for_stable_topk(true);
   opts.set_xla_gpu_experimental_enable_tensor_ir(false);
   opts.set_xla_gpu_experimental_enable_triton_scan(true);
+  opts.set_xla_gpu_experimental_fail_on_lazy_hlo_module_materialization(false);
   opts.set_xla_gpu_async_copy_min_bytes(-1);
 
   // Disable float checks.
@@ -4103,6 +4104,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_horizontal_fusion(),
       "Enable experimental thread-block specialized horizontal fusion of "
       "independent small-grid GPU kernels."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_fail_on_lazy_hlo_module_materialization",
+      bool_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_fail_on_lazy_hlo_module_materialization),
+      debug_options
+          ->xla_gpu_experimental_fail_on_lazy_hlo_module_materialization(),
+      "If true, fail instead of lazily materializing the HloModule of an "
+      "executable (e.g. one that was loaded from a serialized executable "
+      "without deserializing its HloModule)."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more
