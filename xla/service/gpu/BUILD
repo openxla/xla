@@ -2911,6 +2911,7 @@ cc_library(
         "//xla/service:latency_hiding_scheduler",
         "//xla/service:legalize_scheduling_annotations",
         "//xla/service:p2p_schedule_preparation",
+        "//xla/service:post_lhs_memory_scheduler",
         "//xla/service:profile_guided_latency_estimator",
         "//xla/service:scheduler_memory_fencing",
         "//xla/service/gpu/model:analytical_latency_estimator",
