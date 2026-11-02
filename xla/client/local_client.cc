@@ -169,7 +169,7 @@ absl::StatusOr<std::pair<ServiceExecutableRunOptions, StreamPool::Ptr>>
 LocalExecutable::RunHelper(const absl::Span<const Shape* const> argument_shapes,
                            ExecutableRunOptions run_options) {
   const ComputationLayout& computation_layout =
-      executable_->module_config().entry_computation_layout();
+      executable_->entry_computation_layout();
 
   // Check argument number, shapes, and layouts.
   const int argument_shapes_size = argument_shapes.size();

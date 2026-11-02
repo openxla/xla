@@ -350,9 +350,8 @@ absl::StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
     device_assignment(replica, 0) = replicas[replica]->device_ordinal();
   }
   const DeviceAssignment* device_assignment_ptr = &device_assignment;
-  if (executable->module_config().has_static_device_assignment()) {
-    device_assignment_ptr =
-        &executable->module_config().static_device_assignment();
+  if (executable->static_device_assignment() != nullptr) {
+    device_assignment_ptr = executable->static_device_assignment();
   }
   // Set up run options.
   std::vector<ServiceExecutableRunOptions> run_options;
@@ -709,17 +708,16 @@ absl::StatusOr<std::unique_ptr<GlobalData>> Service::Execute(
 
   // Check that the replicated_arguments has the same shape and layout as the
   // module config used when creating the executable.
-  const int64_t num_module_args =
-      executable->module_config().entry_computation_layout().parameter_count();
+  const ComputationLayout& entry_computation_layout =
+      executable->entry_computation_layout();
+  const int64_t num_module_args = entry_computation_layout.parameter_count();
   if (num_module_args != arguments.size()) {
     return InvalidArgument(
         "The executable expects %lld arguments, but sees %lld.",
         num_module_args, arguments.size());
   }
   for (int64_t i = 0; i < num_module_args; i++) {
-    const Shape& shape_module =
-        executable->module_config().entry_computation_layout().parameter_shape(
-            i);
+    const Shape& shape_module = entry_computation_layout.parameter_shape(i);
     const Shape& shape_arg = replicated_arguments.front()[i]->on_device_shape();
     if (!ShapeUtil::Equal(shape_module, shape_arg)) {
       return InvalidArgumentStrCat(
