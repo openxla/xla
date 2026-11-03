@@ -1054,10 +1054,16 @@ void VerifyAndLeakMockCollectives(StrictMock<MockGpuCollectives>* collectives,
   }
 }
 
+enum class SecondRunBufferMode {
+  kSameBuffer,
+  kSameArenaNewOffset,
+  kNewAllocation,
+};
+
 struct SymmetricMemoryCachingTestCase {
   std::string test_name;
   SymmetricMemoryType output_memory_type;
-  bool reallocate_on_second_run;
+  SecondRunBufferMode second_run_buffer_mode;
   int expected_create_symmetric_memory_calls;
 };
 
@@ -1091,15 +1097,21 @@ TEST_P(CollectiveKernelThunkSymmetricMemoryCachingTest,
   VerifyDeviceOutputs(result_buffers1, metadata.input_data_size_bytes,
                       expected_output_data1);
 
-  if (param.reallocate_on_second_run) {
+  if (param.second_run_buffer_mode == SecondRunBufferMode::kNewAllocation) {
     metadata.device_buffers.assign(kDevicesCount, se::DeviceAddressBase());
+  } else if (param.second_run_buffer_mode ==
+             SecondRunBufferMode::kSameArenaNewOffset) {
+    for (int d = 0; d < kDevicesCount; ++d) {
+      metadata.device_buffers[d] = metadata.device_buffers[d].GetByteSlice(
+          metadata.total_buffer_size, metadata.total_buffer_size);
+    }
   }
 
   ASSERT_OK_AND_ASSIGN(
       std::vector<se::DeviceAddressBase> result_buffers2,
       RunCollectiveKernelThunkOnDevices(
           metadata, /*emulate_multiprocess=*/false, input_data2, collectives));
-  if (param.reallocate_on_second_run) {
+  if (param.second_run_buffer_mode != SecondRunBufferMode::kSameBuffer) {
     for (int d = 0; d < kDevicesCount; ++d) {
       ASSERT_NE(result_buffers1[d].opaque(), result_buffers2[d].opaque());
     }
@@ -1118,16 +1130,21 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Values(
         SymmetricMemoryCachingTestCase{
             "ScratchOnly", SymmetricMemoryType::kNone,
-            /*reallocate_on_second_run=*/false,
+            SecondRunBufferMode::kSameBuffer,
             /*expected_create_symmetric_memory_calls=*/1},
         SymmetricMemoryCachingTestCase{
             "IoAndScratchSameAddress",
             SymmetricMemoryType::kLoadStoreAccessible,
-            /*reallocate_on_second_run=*/false,
+            SecondRunBufferMode::kSameBuffer,
+            /*expected_create_symmetric_memory_calls=*/2},
+        SymmetricMemoryCachingTestCase{
+            "IoAndScratchSameArenaNewOffset",
+            SymmetricMemoryType::kLoadStoreAccessible,
+            SecondRunBufferMode::kSameArenaNewOffset,
             /*expected_create_symmetric_memory_calls=*/2},
         SymmetricMemoryCachingTestCase{
             "IoAndScratchNewAddress", SymmetricMemoryType::kLoadStoreAccessible,
-            /*reallocate_on_second_run=*/true,
+            SecondRunBufferMode::kNewAllocation,
             /*expected_create_symmetric_memory_calls=*/3}),
     [](const ::testing::TestParamInfo<SymmetricMemoryCachingTestCase>& info) {
       return info.param.test_name;

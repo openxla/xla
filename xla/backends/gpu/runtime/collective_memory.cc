@@ -47,6 +47,7 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/rendezvous.h"
+#include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/util/safe_reinterpret_cast.h"
@@ -100,7 +101,14 @@ CollectiveMemory::FindWeakSymmetricMemory(
   if (it == sym_memories_.end()) {
     return std::make_pair(std::weak_ptr<SymmetricMemory>(), 0);
   }
-  return std::make_pair(it->second, 0);
+  // sym_memories_ stores an address of the pre-allocated memory range
+  // within which buffers_ is allocated.
+  const std::shared_ptr<SymmetricMemory>& sym = it->second;
+  se::DeviceAddressBase alloc_base = buffers_.GetDeviceAddress(allocation);
+  size_t alloc_offset =
+      tsl::safe_reinterpret_cast<uintptr_t>(alloc_base.opaque()) -
+      tsl::safe_reinterpret_cast<uintptr_t>(sym->addr().opaque());
+  return std::make_pair(sym, alloc_offset);
 }
 
 std::pair<std::weak_ptr<SymmetricMemory>, size_t>
@@ -236,6 +244,7 @@ AcquireSymmetricMemory(
     CollectiveMemoryCache& memory_cache) {
   absl::flat_hash_map<CollectiveMemory::Key, std::shared_ptr<SymmetricMemory>>
       sym_memories;
+  std::unique_ptr<se::ActivateContext> activation = params.executor->Activate();
 
   for (const CollectiveMemoryRequests::CollectiveAllocations& r : allocs) {
     std::optional<RankId> rank = r.clique.rank(params.global_device_id);
@@ -261,21 +270,26 @@ AcquireSymmetricMemory(
                           cliques.GetComm(r.clique, *rank));
     for (BufferAllocation::Index i : r.allocations) {
       se::DeviceAddressBase addr = buffers.GetDeviceAddress(i);
+      if (addr.is_null() || addr.size() == 0) {
+        continue;
+      }
+      ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase base_range,
+                            params.executor->GetMemoryRange(addr));
       CollectiveMemory::Key mem_key = std::make_pair(r.clique, i);
       // Check cache first to avoid redundant collective window registration.
       if (auto cached = memory_cache.FindSymmetricMemory(
-              params.executor->device_ordinal(), r.clique, addr)) {
+              params.executor->device_ordinal(), r.clique, base_range)) {
         sym_memories[mem_key] = std::move(cached);
         continue;
       }
-      ABSL_ASSIGN_OR_RETURN(
-          std::unique_ptr<SymmetricMemory> symm,
-          comm->CreateSymmetricMemory(addr, params.nccl_window_symmetric));
+      ABSL_ASSIGN_OR_RETURN(std::unique_ptr<SymmetricMemory> symm,
+                            comm->CreateSymmetricMemory(
+                                base_range, params.nccl_window_symmetric));
       ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<SymmetricMemory> tied_symm,
                             cliques.Tie(r.clique, std::move(symm)));
-      sym_memories[mem_key] =
-          memory_cache.AddSymmetricMemory(params.executor->device_ordinal(),
-                                          r.clique, addr, std::move(tied_symm));
+      sym_memories[mem_key] = memory_cache.AddSymmetricMemory(
+          params.executor->device_ordinal(), r.clique, base_range,
+          std::move(tied_symm));
     }
   }
 

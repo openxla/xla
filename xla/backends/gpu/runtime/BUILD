@@ -2943,6 +2943,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service:rendezvous",
         "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:activate_context",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/util:safe_reinterpret_cast",
