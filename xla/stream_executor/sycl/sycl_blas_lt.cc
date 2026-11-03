@@ -18,12 +18,12 @@ limitations under the License.
 #include <complex>
 #include <cstdint>
 #include <limits>
-#include <sycl/sycl.hpp>  // NOLINT
 
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "oneapi/mkl.hpp"
+#include <sycl/sycl.hpp>  // NOLINT
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/gpu/gpu_helpers.h"
