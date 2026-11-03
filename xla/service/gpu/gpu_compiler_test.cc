@@ -629,7 +629,7 @@ class PersistedAutotuningTest : public HloTestBase,
   void SetUp() override {
     AutotunerCache::ClearAutotuneResults();
     InMemoryStore::Clear();
-    xla_gpu_dump_autotune_results_to_ = GetUniqueTempFilePath(".txt");
+    dump_autotune_cache_to_ = GetUniqueTempFilePath(".txt");
   }
 
   void TearDown() override {
@@ -660,10 +660,8 @@ ENTRY e {
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions options =
         HloHardwareIndependentTestBase::GetDebugOptionsForTest();
-    options.set_xla_gpu_dump_autotune_results_to(
-        xla_gpu_dump_autotune_results_to_);
-    options.set_xla_gpu_load_autotune_results_from(
-        xla_gpu_load_autotune_results_from_);
+    options.set_xla_dump_autotune_cache_to(dump_autotune_cache_to_);
+    options.set_xla_load_autotune_cache_from(load_autotune_cache_from_);
     options.set_xla_gpu_use_new_autotune_cache_format(use_new_format());
     return options;
   }
@@ -683,8 +681,8 @@ ENTRY e {
     }
   }
 
-  std::string xla_gpu_dump_autotune_results_to_;
-  std::string xla_gpu_load_autotune_results_from_;
+  std::string dump_autotune_cache_to_;
+  std::string load_autotune_cache_from_;
 };
 
 TEST_P(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
@@ -695,20 +693,20 @@ TEST_P(PersistedAutotuningTest, WriteResultsOnEachCompilation) {
   EXPECT_OK(GetOptimizedModuleForExecutable(kHloText, config).status());
   {
     ASSERT_OK_AND_ASSIGN(std::string autotune_results_str,
-                         ReadNonEmptyFile(xla_gpu_dump_autotune_results_to_));
+                         ReadNonEmptyFile(dump_autotune_cache_to_));
     ExpectValidAutotuneResults(autotune_results_str, use_new_format());
   }
 
   // Overwrite results with an invalid textproto.
   tsl::Env* env = tsl::Env::Default();
-  EXPECT_OK(tsl::WriteStringToFile(env, xla_gpu_dump_autotune_results_to_,
-                                   kInvalidTextProto));
+  EXPECT_OK(
+      tsl::WriteStringToFile(env, dump_autotune_cache_to_, kInvalidTextProto));
 
   // Check that it writes the results on the second compilation.
   EXPECT_OK(GetOptimizedModuleForExecutable(kHloText, config).status());
   {
     ASSERT_OK_AND_ASSIGN(std::string autotune_results_str,
-                         ReadNonEmptyFile(xla_gpu_dump_autotune_results_to_));
+                         ReadNonEmptyFile(dump_autotune_cache_to_));
     ExpectValidAutotuneResults(autotune_results_str, use_new_format());
   }
 }
@@ -723,7 +721,7 @@ e {
                 .status());
 
   ASSERT_OK_AND_ASSIGN(std::string autotune_results_str,
-                       ReadNonEmptyFile(xla_gpu_dump_autotune_results_to_));
+                       ReadNonEmptyFile(dump_autotune_cache_to_));
   ExpectValidAutotuneResults(autotune_results_str, use_new_format());
 }
 
@@ -758,7 +756,7 @@ TEST_P(PersistedAutotuningTest, LoadMismatchedFormatResultsFallback) {
     ASSERT_OK(tsl::WriteStringToFile(env, autotune_file, serialized));
   }
 
-  xla_gpu_load_autotune_results_from_ = autotune_file;
+  load_autotune_cache_from_ = autotune_file;
 
   EXPECT_OK(GetOptimizedModuleForExecutable(kHloText, GetModuleConfigForTest())
                 .status());

@@ -3355,7 +3355,7 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
 absl::Status GpuCompiler::LoadAutotuneResultsFromFile(
     const DebugOptions& debug_options) {
   tsl::profiler::TraceMe traceme("LoadAutotuneResultsFromFile");
-  std::string file_path = debug_options.xla_gpu_load_autotune_results_from();
+  std::string file_path = debug_options.xla_load_autotune_cache_from();
   if (!file_path.empty()) {
     bool use_new_format = debug_options.xla_gpu_use_new_autotune_cache_format();
     static absl::once_flag once;
@@ -3402,8 +3402,7 @@ absl::Status GpuCompiler::LoadAutotuneResultsFromFile(
 absl::Status GpuCompiler::SerializeAutotuneResultsToFile(
     const DebugOptions& debug_options) {
   // We are doing this after the timer is finished.
-  if (absl::string_view file_path =
-          debug_options.xla_gpu_dump_autotune_results_to();
+  if (absl::string_view file_path = debug_options.xla_dump_autotune_cache_to();
       !file_path.empty()) {
     // Warning: This writes the autotune results at every compilation,
     // possibly multiple times per process.
