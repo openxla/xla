@@ -4549,6 +4549,34 @@ ENTRY test {
 }
 
 TEST_F(AlgebraicSimplifierTest,
+       TrivialReduceWindowWithNegativePadAndUncroppedDynamicDimension) {
+  // The slice that applies the crop covers every dimension, so a dynamic
+  // dimension without a crop still rules out the rewrite.
+  constexpr absl::string_view hlo_string = R"(
+HloModule test
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+
+ENTRY test {
+  p = f32[16,<=32] parameter(0)
+  constant = f32[] constant(0)
+  ROOT reduce-window = f32[15,<=32] reduce-window(p, constant), window={size=1x1 pad=-1_0x0_0}, to_apply=add
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_FALSE(simplifier.Run(m.get()).value());
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
+              GmockMatch(m::ReduceWindow(m::Parameter(0),
+                                         m::ConstantEffectiveScalar(0))));
+}
+
+TEST_F(AlgebraicSimplifierTest,
        TrivialReduceWindowWithNegativePadFeedingPaddedReduceWindow) {
   // The crop must not be folded into the padding of the consumer.
   constexpr absl::string_view hlo_string = R"(

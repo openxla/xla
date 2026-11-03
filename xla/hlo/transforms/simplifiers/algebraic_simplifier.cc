@@ -9696,43 +9696,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
                 m::AddAnyOrder(m::Parameter(0), m::Parameter(1)),
                 m::MinimumAnyOrder(m::Parameter(0), m::Parameter(1)),
                 m::MaximumAnyOrder(m::Parameter(0), m::Parameter(1))))) {
-    // A negative window padding that crops at least as many elements as the
-    // dimension has leaves no operand element in the output: every output
-    // element lies in the padding and equals the init value.
-    bool operand_fully_cropped = false;
-    for (int64_t i = 0; i < window.dimensions_size(); ++i) {
-      const WindowDimension& window_dim = window.dimensions(i);
-      if (window_dim.padding_low() >= 0 && window_dim.padding_high() >= 0) {
-        continue;
-      }
-      // Negative padding crops relative to the runtime size of a dynamic
-      // dimension, which a static slice cannot express.
-      if (operand->shape().is_dynamic_dimension(i)) {
-        return absl::OkStatus();
-      }
-      const int64_t dim_size = operand->shape().dimensions(i);
-      operand_fully_cropped |= -window_dim.padding_low() >= dim_size ||
-                               -window_dim.padding_high() >= dim_size;
-    }
-    if (operand_fully_cropped) {
-      return ReplaceWithNewInstruction(
-          reduce_window, HloInstruction::CreateBroadcast(reduce_window->shape(),
-                                                         init_value, {}));
-    }
-
-    const HloInstruction* nested_root = function->root_instruction();
-    DimensionVector broadcast_dims(nested_root->shape().dimensions().size());
-    absl::c_iota(broadcast_dims, 0);
-    ABSL_ASSIGN_OR_RETURN(
-        auto new_op, MakeBinaryHlo(nested_root->opcode(), operand,
-                                   MakeBroadcastHlo(init_value, broadcast_dims,
-                                                    operand->shape())));
-
-    // Negative window padding crops the operand: apply the negative amounts
-    // with a slice and the positive amounts with a pad. The slice goes first
-    // so that later passes can sink it into the elementwise op. The slice is
-    // well-formed because every cropped dimension is static and is cropped
-    // less than its size (see above).
+    // Apply the positive window padding amounts with a pad and the negative
+    // amounts (a crop) with a slice.
     PaddingConfig padding_config;
     bool has_positive_padding = false;
     bool has_negative_padding = false;
@@ -9748,17 +9713,46 @@ absl::Status AlgebraicSimplifierVisitor::HandleReduceWindow(
       has_negative_padding |=
           window_dim.padding_low() < 0 || window_dim.padding_high() < 0;
     }
+
+    std::vector<int64_t> start_indices;
+    std::vector<int64_t> limit_indices;
     if (has_negative_padding) {
-      std::vector<int64_t> start_indices;
-      std::vector<int64_t> limit_indices;
+      // Negative padding crops relative to the runtime size of a dynamic
+      // dimension, and the slice covers every dimension of the operand, so it
+      // cannot express the crop if any dimension is dynamic.
+      if (operand->shape().is_dynamic()) {
+        return absl::OkStatus();
+      }
       for (int64_t i = 0; i < window.dimensions_size(); ++i) {
         const WindowDimension& window_dim = window.dimensions(i);
+        const int64_t dim_size = operand->shape().dimensions(i);
+        // A crop of at least the whole dimension leaves no operand element in
+        // the output: every output element lies in the padding and equals the
+        // init value.
+        if (-window_dim.padding_low() >= dim_size ||
+            -window_dim.padding_high() >= dim_size) {
+          return ReplaceWithNewInstruction(
+              reduce_window, HloInstruction::CreateBroadcast(
+                                 reduce_window->shape(), init_value, {}));
+        }
         start_indices.push_back(
             std::max<int64_t>(-window_dim.padding_low(), 0));
         limit_indices.push_back(
-            new_op->shape().dimensions(i) +
-            std::min<int64_t>(window_dim.padding_high(), 0));
+            dim_size + std::min<int64_t>(window_dim.padding_high(), 0));
       }
+    }
+
+    const HloInstruction* nested_root = function->root_instruction();
+    DimensionVector broadcast_dims(nested_root->shape().dimensions().size());
+    absl::c_iota(broadcast_dims, 0);
+    ABSL_ASSIGN_OR_RETURN(
+        auto new_op, MakeBinaryHlo(nested_root->opcode(), operand,
+                                   MakeBroadcastHlo(init_value, broadcast_dims,
+                                                    operand->shape())));
+
+    // The slice goes before the pad so that later passes can sink it into the
+    // elementwise op.
+    if (has_negative_padding) {
       std::vector<int64_t> strides(start_indices.size(), 1);
       ABSL_ASSIGN_OR_RETURN(
           new_op, MakeSliceHlo(new_op, start_indices, limit_indices, strides));
