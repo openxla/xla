@@ -146,7 +146,7 @@ HWY_INLINE void RepackToHardwareLayoutSublaneHighwayPackingFactor4(
         hn::BitCast(d8, hn::LoadU(d32, source_buffer + i + 3 * kStride));
 
     FastStoreInterleaved4(x0, x1, x2, x3, d8,
-                          tsl::safe_reinterpret_cast<uint8_t* HWY_RESTRICT>(
+                          tsl::safe_reinterpret_cast<uint8_t*>(
                               target_buffer + i * kNumInterleavedStores));
   }
 }
@@ -206,7 +206,7 @@ HWY_INLINE HWY_FLATTEN void RepackToHardwareLayoutSublaneHighwayPackingFactor8(
     const V8 x3 = make_byte(6);
 
     FastStoreInterleaved4(x0, x1, x2, x3, d8,
-                          tsl::safe_reinterpret_cast<uint8_t* HWY_RESTRICT>(
+                          tsl::safe_reinterpret_cast<uint8_t*>(
                               target_buffer + i * kNumInterleavedStores));
   }
 }
@@ -253,7 +253,7 @@ HWY_INLINE HWY_FLATTEN void RepackToHardwareLayoutSublaneHighwayPackingFactor16(
     const V8 x3 = make_byte(12);
 
     FastStoreInterleaved4(x0, x1, x2, x3, d8,
-                          tsl::safe_reinterpret_cast<uint8_t* HWY_RESTRICT>(
+                          tsl::safe_reinterpret_cast<uint8_t*>(
                               target_buffer + i * kNumInterleavedStores));
   }
 }
@@ -314,7 +314,7 @@ HWY_INLINE HWY_FLATTEN void RepackToHardwareLayoutSublaneHighwayPackingFactor32(
     const V8 x3 = make_byte(24);
 
     FastStoreInterleaved4(x0, x1, x2, x3, d8,
-                          tsl::safe_reinterpret_cast<uint8_t* HWY_RESTRICT>(
+                          tsl::safe_reinterpret_cast<uint8_t*>(
                               target_buffer + i * kNumInterleavedStores));
   }
 }
@@ -355,11 +355,10 @@ HWY_INLINE void RepackToHostLayoutSublaneHighwayPackingFactor4(
   using V8 = hn::Vec<decltype(d8)>;
   for (int i = 0; i < kStride; i += kCpuVectorLanes) {
     V8 x0, x1, x2, x3;
-    FastLoadInterleaved4(
-        d8,
-        tsl::safe_reinterpret_cast<const uint8_t* HWY_RESTRICT>(
-            source_buffer + i * kNumInterleavedLoads),
-        x0, x1, x2, x3);
+    FastLoadInterleaved4(d8,
+                         tsl::safe_reinterpret_cast<const uint8_t*>(
+                             source_buffer + i * kNumInterleavedLoads),
+                         x0, x1, x2, x3);
 
     hn::StoreU(
         x0, d8,
@@ -389,11 +388,10 @@ HWY_INLINE HWY_FLATTEN void RepackToHostLayoutSublaneHighwayPackingFactor8(
   using V8 = hn::Vec<decltype(d8)>;
   for (int i = 0; i < kStride; i += kCpuVectorLanes) {
     V8 x0, x1, x2, x3;
-    FastLoadInterleaved4(
-        d8,
-        tsl::safe_reinterpret_cast<const uint8_t* HWY_RESTRICT>(
-            source_buffer + i * kNumInterleavedLoads),
-        x0, x1, x2, x3);
+    FastLoadInterleaved4(d8,
+                         tsl::safe_reinterpret_cast<const uint8_t*>(
+                             source_buffer + i * kNumInterleavedLoads),
+                         x0, x1, x2, x3);
 
     auto store_results = [&](const V8& v0, int store_index) {
       const V8 result0 =
@@ -429,11 +427,10 @@ HWY_INLINE HWY_FLATTEN void RepackToHostLayoutSublaneHighwayPackingFactor16(
   using V8 = hn::Vec<decltype(d8)>;
   for (int i = 0; i < kStride; i += kCpuVectorLanes) {
     V8 x0, x1, x2, x3;
-    FastLoadInterleaved4(
-        d8,
-        tsl::safe_reinterpret_cast<const uint8_t* HWY_RESTRICT>(
-            source_buffer + i * kNumInterleavedLoads),
-        x0, x1, x2, x3);
+    FastLoadInterleaved4(d8,
+                         tsl::safe_reinterpret_cast<const uint8_t*>(
+                             source_buffer + i * kNumInterleavedLoads),
+                         x0, x1, x2, x3);
     auto store_results = [&](const V8& v, size_t store_index) {
       auto result0 = ExtractCrumb<0, 0>(d8, v);
       hn::StoreU(result0, d8,
@@ -472,11 +469,10 @@ HWY_INLINE HWY_FLATTEN void RepackToHostLayoutSublaneHighwayPackingFactor32(
   using V8 = hn::Vec<decltype(d8)>;
   for (int i = 0; i < kStride; i += kCpuVectorLanes) {
     V8 x0, x1, x2, x3;
-    FastLoadInterleaved4(
-        d8,
-        tsl::safe_reinterpret_cast<const uint8_t* HWY_RESTRICT>(
-            source_buffer + i * kNumInterleavedLoads),
-        x0, x1, x2, x3);
+    FastLoadInterleaved4(d8,
+                         tsl::safe_reinterpret_cast<const uint8_t*>(
+                             source_buffer + i * kNumInterleavedLoads),
+                         x0, x1, x2, x3);
     auto store_results = [&](const V8& v, size_t store_index) {
       auto result0 = ExtractBit<0, 0>(d8, v);
       hn::StoreU(result0, d8,

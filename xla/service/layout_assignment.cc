@@ -3535,7 +3535,6 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     case HloOpcode::kCopy:
     case HloOpcode::kCopyStart:
     case HloOpcode::kCopyDone:
-    case HloOpcode::kDomain:
     case HloOpcode::kDot:
     case HloOpcode::kFusion:
     case HloOpcode::kGather:
