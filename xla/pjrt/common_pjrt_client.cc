@@ -868,7 +868,7 @@ CommonPjRtClient::CompileAndLoad(MaybeOwningMlirModule module,
       [this, &options](int num_replicas, int num_partitions) {
         return GetDefaultDeviceAssignment(
             num_replicas, /*num_replicas_per_slice=*/std::nullopt,
-            num_partitions, options.multi_slice_config);
+            num_partitions, options.multi_slice_config.get());
       },
       &num_replicas, &num_partitions, &device_assignment));
 
@@ -1103,7 +1103,7 @@ CommonPjRtClient::LoadInternal(
           return topology->GetDefaultDeviceAssignment(
               process_index(), num_replicas,
               /*num_replicas_per_slice=*/std::nullopt, num_partitions,
-              compile_options.multi_slice_config);
+              compile_options.multi_slice_config.get());
         },
         &num_replicas, &num_partitions, &device_assignment));
   }
