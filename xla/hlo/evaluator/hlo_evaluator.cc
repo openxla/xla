@@ -834,7 +834,6 @@ std::optional<ParsedWhileLoop> PatternMatchParseWhileLoop(
     case HloOpcode::kCollectivePermute:
     case HloOpcode::kCollectivePermuteDone:
     case HloOpcode::kCollectivePermuteStart:
-    case HloOpcode::kDomain:
     case HloOpcode::kDynamicReshape:
     case HloOpcode::kOptimizationBarrier:
     case HloOpcode::kOutfeed:
@@ -1169,7 +1168,6 @@ bool IsBufferUnchangedInWhileBodySyntactic(const HloComputation* while_body,
       current = current->operand(0);
     } else if (current->opcode() == HloOpcode::kBitcast ||
                current->opcode() == HloOpcode::kOptimizationBarrier ||
-               current->opcode() == HloOpcode::kDomain ||
                current->opcode() == HloOpcode::kAddDependency ||
                current->opcode() == HloOpcode::kCopy) {
       if (current->operand_count() == 0) {
@@ -1451,8 +1449,12 @@ absl::Status HloEvaluator::HandleSetDimensionSize(
          operand_literal.total_size_bytes());
   const Literal& size_literal =
       GetEvaluatedLiteralFor(set_dimension_size->operand(1));
-  result.SetDynamicSize(set_dimension_size->dimension(),
-                        size_literal.Get<int32_t>({}));
+  const int64_t dimension = set_dimension_size->dimension();
+  // Nothing validates the size operand against the bound; clamp to [0, bound]
+  // so an out-of-contract runtime size cannot trip internal CHECKs.
+  const int32_t size = static_cast<int32_t>(std::clamp<int64_t>(
+      size_literal.Get<int32_t>({}), 0, result.shape().dimensions(dimension)));
+  result.SetDynamicSize(dimension, size);
   SetEvaluatedLiteralFor(set_dimension_size, std::move(result));
   return absl::OkStatus();
 }

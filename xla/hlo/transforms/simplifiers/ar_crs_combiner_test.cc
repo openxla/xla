@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"

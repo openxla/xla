@@ -102,9 +102,7 @@ DotKernelEmitter::EmitKernelDefinition() {
           *instr_, target_array, lhs_array, rhs_array,
           /*addend_array=*/nullptr,
           {kernel_prototype.workgroup_id.x, kernel_prototype.workgroup_id.y},
-          /*executable_run_options_value=*/nullptr, &builder, config,
-          *target_machine_,
-          /*allow_runtime_calls=*/false));
+          &builder, config, *target_machine_));
 
   LlvmKernelSource source(std::move(ctx), std::move(llvm_module));
 
