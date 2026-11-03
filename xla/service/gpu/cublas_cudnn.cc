@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/cublas_cudnn.h"
 
+// Throw-away test comment: Trigger gpu/ file used by CPU jaxlib for CI test.
 #include <string>
 
 #include "absl/status/status.h"

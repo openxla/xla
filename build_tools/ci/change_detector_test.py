@@ -375,6 +375,314 @@ class ChangeDetectorTest(parameterized.TestCase):
     self.assertIn("Failed to get git changed files", decision.reason)
     mock_fetch.assert_called_once()
 
+  def test_resolve_bazel_file_label_maps_xla_and_tsl_packages(self):
+    temp_root = self.create_tempdir()
+    xla_pkg = os.path.join(
+        temp_root.full_path, "xla", "backends", "gpu", "transforms"
+    )
+    os.makedirs(xla_pkg, exist_ok=True)
+    with open(os.path.join(xla_pkg, "BUILD"), "w", encoding="utf-8") as f:
+      f.write("# BUILD\n")
+    gemm_file = os.path.join(xla_pkg, "gemm_fusion.cc")
+    with open(gemm_file, "w", encoding="utf-8") as f:
+      f.write("// code\n")
+
+    nested_dir = os.path.join(xla_pkg, "sub", "dir")
+    os.makedirs(nested_dir, exist_ok=True)
+    nested_file = os.path.join(nested_dir, "helper.h")
+    with open(nested_file, "w", encoding="utf-8") as f:
+      f.write("// header\n")
+
+    tsl_pkg = os.path.join(
+        temp_root.full_path, "third_party", "tsl", "tsl", "platform"
+    )
+    os.makedirs(tsl_pkg, exist_ok=True)
+    with open(os.path.join(tsl_pkg, "BUILD.bazel"), "w", encoding="utf-8") as f:
+      f.write("# BUILD\n")
+    tsl_file = os.path.join(tsl_pkg, "denormal.cc")
+    with open(tsl_file, "w", encoding="utf-8") as f:
+      f.write("// tsl\n")
+
+    self.assertEqual(
+        change_detector.resolve_bazel_file_label(
+            "xla/backends/gpu/transforms/gemm_fusion.cc", temp_root.full_path
+        ),
+        "@xla//xla/backends/gpu/transforms:gemm_fusion.cc",
+    )
+    self.assertEqual(
+        change_detector.resolve_bazel_file_label(
+            "xla/backends/gpu/transforms/sub/dir/helper.h", temp_root.full_path
+        ),
+        "@xla//xla/backends/gpu/transforms:sub/dir/helper.h",
+    )
+    self.assertEqual(
+        change_detector.resolve_bazel_file_label(
+            "xla/backends/gpu/transforms/BUILD", temp_root.full_path
+        ),
+        "@xla//xla/backends/gpu/transforms:BUILD",
+    )
+    self.assertEqual(
+        change_detector.resolve_bazel_file_label(
+            "third_party/tsl/tsl/platform/denormal.cc", temp_root.full_path
+        ),
+        "@tsl//tsl/platform:denormal.cc",
+    )
+    self.assertEqual(
+        change_detector.resolve_bazel_file_label(
+            "third_party/tsl/tsl/platform/BUILD.bazel", temp_root.full_path
+        ),
+        "@tsl//tsl/platform:BUILD",
+    )
+    self.assertEqual(
+        change_detector.resolve_bazel_file_label(
+            "xla/backends/gpu/transforms/deleted_pass.cc", temp_root.full_path
+        ),
+        "@xla//xla/backends/gpu/transforms:BUILD",
+    )
+    self.assertIsNone(
+        change_detector.resolve_bazel_file_label(
+            "unpackaged/dir/missing.cc", temp_root.full_path
+        )
+    )
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="apparent_xla_label",
+          raw="@xla//xla/service/gpu:gpu_compiler.cc",
+          expected="@xla//xla/service/gpu:gpu_compiler.cc",
+      ),
+      dict(
+          testcase_name="canonical_bzlmod_xla_plus",
+          raw="@@xla+//xla/service/gpu:BUILD.bazel",
+          expected="@xla//xla/service/gpu:BUILD",
+      ),
+      dict(
+          testcase_name="canonical_bzlmod_xla_override",
+          raw="@@xla~override//xla/service/gpu:cublas_cudnn.cc",
+          expected="@xla//xla/service/gpu:cublas_cudnn.cc",
+      ),
+      dict(
+          testcase_name="canonical_bzlmod_tsl_extension",
+          raw="@@+tsl_extension+tsl//tsl/platform:denormal.cc",
+          expected="@tsl//tsl/platform:denormal.cc",
+      ),
+      dict(
+          testcase_name="xla_nested_third_party_tsl",
+          raw="@xla//third_party/tsl/tsl/platform:BUILD.bazel",
+          expected="@tsl//tsl/platform:BUILD",
+      ),
+      dict(
+          testcase_name="unrelated_repo_returns_none",
+          raw="@@abseil-cpp+//absl/strings:strings",
+          expected=None,
+      ),
+  )
+  def test_normalize_external_bazel_label(self, raw, expected):
+    self.assertEqual(
+        change_detector.normalize_external_bazel_label(raw), expected
+    )
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="cpu_build",
+          build_name="BuildType.JAX_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS",
+          expected=change_detector.JAX_CPU_ROOT_TARGETS,
+      ),
+      dict(
+          testcase_name="windows_cpu_build",
+          build_name="BuildType.JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS",
+          expected=change_detector.JAX_CPU_ROOT_TARGETS,
+      ),
+      dict(
+          testcase_name="cuda_gpu_build",
+          build_name="BuildType.JAX_LINUX_X86_GPU_T4_GITHUB_ACTIONS",
+          expected=(
+              change_detector.JAX_CPU_ROOT_TARGETS
+              + change_detector.JAX_CUDA_ROOT_TARGETS
+          ),
+      ),
+      dict(
+          testcase_name="rocm_gpu_build",
+          build_name="JAX Linux x86 AMD Instinct GPU",
+          expected=(
+              change_detector.JAX_CPU_ROOT_TARGETS
+              + change_detector.JAX_ROCM_ROOT_TARGETS
+          ),
+      ),
+      dict(
+          testcase_name="unknown_build",
+          build_name="ci_build",
+          expected=(),
+      ),
+  )
+  def test_get_jax_query_roots(self, build_name, expected):
+    self.assertEqual(change_detector.get_jax_query_roots(build_name), expected)
+
+  @mock.patch.object(
+      change_detector.subprocess, "run", autospec=True, spec_set=True
+  )
+  def test_are_files_reachable_in_jax_unreachable_returns_false(self, mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=["bazel", "query"],
+        returncode=0,
+        stdout="@@xla~override//xla/service/gpu:cublas_cudnn.cc\n",
+        stderr="",
+    )
+    reachable = change_detector.are_files_reachable_in_jax(
+        ["@xla//xla/backends/gpu/transforms:gemm_fusion.cc"],
+        change_detector.JAX_CPU_ROOT_TARGETS,
+        "/workspace/jax-ml/jax",
+        startup_options=["--output_base=/tmp/out"],
+        query_options=["--override_module=xla=/workspace/openxla/xla"],
+    )
+    self.assertIs(reachable, False)
+    mock_run.assert_called_once_with(
+        [
+            "bazel",
+            "--output_base=/tmp/out",
+            "query",
+            "--noshow_progress",
+            "--override_module=xla=/workspace/openxla/xla",
+            (
+                r'filter("^@+[^/]*(xla|tsl)[^/]*//", '
+                "deps(//jaxlib/tools:jaxlib_sources +"
+                " //jaxlib/tools:build_utils) +"
+                " buildfiles(deps(//jaxlib/tools:jaxlib_sources +"
+                " //jaxlib/tools:build_utils)))"
+            ),
+        ],
+        cwd="/workspace/jax-ml/jax",
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=600,
+    )
+
+  @mock.patch.object(
+      change_detector.subprocess, "run", autospec=True, spec_set=True
+  )
+  def test_are_files_reachable_in_jax_reachable_returns_true(self, mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=["bazel", "query"],
+        returncode=0,
+        stdout="@@xla+//xla/service/gpu:gpu_executable.proto\n",
+        stderr="",
+    )
+    reachable = change_detector.are_files_reachable_in_jax(
+        ["@xla//xla/service/gpu:gpu_executable.proto"],
+        change_detector.JAX_CPU_ROOT_TARGETS,
+        "/workspace/jax-ml/jax",
+    )
+    self.assertIs(reachable, True)
+
+  @mock.patch.object(
+      change_detector.subprocess, "run", autospec=True, spec_set=True
+  )
+  def test_are_files_reachable_in_jax_query_error_returns_none(self, mock_run):
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=["bazel", "query"], returncode=7, stdout="", stderr="query error"
+    )
+    reachable = change_detector.are_files_reachable_in_jax(
+        ["@xla//xla/backends/gpu/transforms:gemm_fusion.cc"],
+        change_detector.JAX_CPU_ROOT_TARGETS,
+        "/workspace/jax-ml/jax",
+    )
+    self.assertIsNone(reachable)
+
+  @mock.patch.object(
+      change_detector,
+      "are_files_reachable_in_jax",
+      autospec=True,
+      spec_set=True,
+  )
+  @mock.patch.object(
+      change_detector, "resolve_bazel_file_label", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "ensure_base_fetched", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "get_changed_files", autospec=True, spec_set=True
+  )
+  def test_evaluate_skip_jax_cpu_skips_unreachable_gpu_pass(
+      self,
+      mock_changed,
+      mock_fetch,
+      mock_resolve,
+      mock_reachable,
+  ):
+    mock_changed.return_value = [
+        "xla/backends/gpu/transforms/gemm_fusion.cc",
+        "xla/backends/gpu/transforms/gemm_fusion_test.cc",
+    ]
+    mock_resolve.return_value = (
+        "@xla//xla/backends/gpu/transforms:gemm_fusion.cc"
+    )
+    mock_reachable.return_value = False
+
+    decision = change_detector.evaluate_skip(
+        "base_sha",
+        "head_sha",
+        cwd="/workspace/openxla/xla",
+        is_jax_build=True,
+        jax_dir="/workspace/jax-ml/jax",
+        build_name="BuildType.JAX_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS",
+    )
+    self.assertTrue(decision.should_skip)
+    self.assertIn("not in the Bazel dependency graph", decision.reason)
+    mock_fetch.assert_called_once()
+    mock_resolve.assert_called_once_with(
+        "xla/backends/gpu/transforms/gemm_fusion.cc",
+        xla_dir="/workspace/openxla/xla",
+    )
+    mock_reachable.assert_called_once_with(
+        ["@xla//xla/backends/gpu/transforms:gemm_fusion.cc"],
+        change_detector.JAX_CPU_ROOT_TARGETS,
+        "/workspace/jax-ml/jax",
+        startup_options=(),
+        query_options=(),
+    )
+
+  @mock.patch.object(
+      change_detector,
+      "are_files_reachable_in_jax",
+      autospec=True,
+      spec_set=True,
+  )
+  @mock.patch.object(
+      change_detector, "resolve_bazel_file_label", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "ensure_base_fetched", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "get_changed_files", autospec=True, spec_set=True
+  )
+  def test_evaluate_skip_jax_cpu_runs_when_gpu_data_structure_is_reachable(
+      self,
+      mock_changed,
+      mock_fetch,
+      mock_resolve,
+      mock_reachable,
+  ):
+    mock_changed.return_value = ["xla/backends/gpu/runtime/thunk.h"]
+    mock_resolve.return_value = "@xla//xla/backends/gpu/runtime:thunk.h"
+    mock_reachable.return_value = True
+
+    decision = change_detector.evaluate_skip(
+        "base_sha",
+        "head_sha",
+        cwd="/workspace/openxla/xla",
+        is_jax_build=True,
+        jax_dir="/workspace/jax-ml/jax",
+        build_name="BuildType.JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS",
+    )
+    self.assertFalse(decision.should_skip)
+    self.assertIn("in the Bazel dependency graph", decision.reason)
+    mock_fetch.assert_called_once()
+    mock_resolve.assert_called_once()
+    mock_reachable.assert_called_once()
+
   def test_report_skip(self):
     summary_file = self.create_tempfile("step_summary.md")
     with mock.patch.dict(

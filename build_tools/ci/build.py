@@ -823,7 +823,7 @@ Build(
     override_module=dict(
         xla=f"{_GITHUB_WORKSPACE}\\openxla\\xla",
     ),
-    options=_DEFAULT_BAZEL_OPTIONS,
+    options={**_DEFAULT_BAZEL_OPTIONS, "remote_download_minimal": True},
     repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
     subcommand="build",
     startup_options={
@@ -903,6 +903,25 @@ def get_xla_dir(build: Build) -> str:
       if not expanded.startswith("$"):
         return expanded
   return "."
+
+
+def get_jax_query_options(build: Build) -> List[str]:
+  """Returns Bazel query flags for resolving @xla in a JAX workspace."""
+  configs = [f"--config={config}" for config in build.configs]
+  repo_env = [f"--repo_env={k}={v}" for k, v in build.repo_env.items()]
+  override_repository = [
+      f"--override_repository={k}={os.path.expandvars(v)}"
+      for k, v in build.override_repository.items()
+  ]
+  override_module = [
+      f"--override_module={k}={os.path.expandvars(v)}"
+      for k, v in build.override_module.items()
+  ]
+  # Disable ResultStore BES uploads inherited from JAX's .bazelrc during query.
+  bes_overrides = ["--bes_backend=", "--bes_results_url="]
+  return (
+      configs + repo_env + override_repository + override_module + bes_overrides
+  )
 
 
 def execute_build_commands(
@@ -988,11 +1007,18 @@ def main() -> None:
   target_pattern_file = None
   if is_presubmit and base_sha and not disabled:
     xla_dir = get_xla_dir(build)
+    is_jax = build.repo == "google/jax"
     skip_decision = change_detector.evaluate_skip(
         base_sha,
         head_sha,
         cwd=xla_dir,
-        is_jax_build=(build.repo == "google/jax"),
+        is_jax_build=is_jax,
+        jax_dir="." if is_jax else None,
+        build_name=str(build.type_),
+        startup_options=(
+            _dict_to_cli_options(build.startup_options) if is_jax else ()
+        ),
+        query_options=get_jax_query_options(build) if is_jax else (),
     )
     if skip_decision.should_skip:
       change_detector.report_skip(skip_decision, str(build.type_))
