@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "absl/time/time.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -82,12 +83,17 @@ struct GpuClientOptions {
 
   std::optional<int> max_inflight_computations = 32;
 
-  // Priority of the compute stream to create on each GPU device, in the
+  // Priorities of the compute streams to create on each GPU device, in the
   // platform's convention (CUDA: 0 is the default and lowest priority, more
-  // negative values are higher priorities). Every execution of this client
-  // runs at that priority. The H2D and D2H streams are created at the same
-  // priority. If unset, the streams are created at the default priority.
-  std::optional<int> compute_stream_priority;
+  // negative values are higher priorities). One compute stream is created per
+  // distinct priority. The one with the lowest priority is the default compute
+  // stream, and the H2D and D2H streams are created at its priority. An
+  // execution that sets the `execution_priority` custom option runs on the
+  // compute stream whose priority is closest to it, and any other execution
+  // runs on the default compute stream. With a single priority, every
+  // execution of this client runs at that priority. If empty, the streams are
+  // created at the default priority.
+  std::vector<int> compute_stream_priorities;
 
   bool verify_topology_fingerprint = true;
 };

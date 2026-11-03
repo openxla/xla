@@ -65,10 +65,12 @@ cc_library(
     srcs = [
         "buffer_sequencing_event.cc",
         "local_device_state.cc",
+        "prioritized_compute_stream.cc",
     ],
     hdrs = [
         "buffer_sequencing_event.h",
         "local_device_state.h",
+        "prioritized_compute_stream.h",
     ],
     deps = [
         ":event_pool",
@@ -80,6 +82,7 @@ cc_library(
         "//xla/pjrt:semaphore",
         "//xla/pjrt:worker_thread",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:device_address_allocator",
         "//xla/stream_executor:event",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:stream",
@@ -100,6 +103,7 @@ cc_library(
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
@@ -108,6 +112,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/types:span",
         "@tsl//tsl/profiler/lib:traceme",
     ],
 )
@@ -210,6 +215,7 @@ cc_library(
         ":pjrt_stream_executor_device_description",
         ":stream_executor_executable",
         ":stream_executor_pjrt_abi_version",
+        "//xla:custom_options",
         "//xla:executable_run_options",
         "//xla:future",
         "//xla:literal",
