@@ -23,12 +23,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/call_once.h"
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/client/local_client.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/se/buffer_sequencing_event.h"
-#include "xla/pjrt/thread_pool_async_work_runner.h"
 #include "xla/pjrt/worker_thread.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/platform.h"
@@ -61,11 +60,13 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
                                    bool allow_event_reuse,
                                    bool use_callback_stream, int device_ordinal,
                                    std::optional<StreamOptions> stream_options,
-                                   bool schedule_async)
+                                   bool schedule_async,
+                                   DeviceErrorCallback device_error_callback)
     : allocation_model_(allocation_model),
       event_pool_(allow_event_reuse),
       executor_(executor),
-      client_(client) {
+      client_(client),
+      device_error_callback_(std::move(device_error_callback)) {
   if (max_inflight_computations.has_value()) {
     compute_semaphore_.emplace(*max_inflight_computations);
   }
@@ -160,9 +161,6 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
 }
 
 LocalDeviceState::~LocalDeviceState() {
-  // Finish staged host-to-device copies before synchronizing the streams they
-  // use.
-  staged_host_to_device_runner_.reset();
   absl::Status status = SynchronizeAllActivity();
   if (!status.ok()) {
     LOG(ERROR) << "Error when closing device: " << status;
@@ -245,17 +243,6 @@ absl::Status LocalDeviceState::SynchronizeAllActivity() {
   return status;
 }
 
-AsyncWorkRunner* LocalDeviceState::staged_host_to_device_runner() {
-  absl::call_once(staged_host_to_device_runner_once_, [this] {
-    tsl::ThreadOptions thread_options;
-    thread_options.numa_node = executor_->numa_node();
-    staged_host_to_device_runner_ =
-        MakeThreadPoolAsyncWorkRunner(tsl::Env::Default(), "py_xla_staged_h2d",
-                                      /*num_threads=*/1, thread_options);
-  });
-  return staged_host_to_device_runner_.get();
-}
-
 absl::Status LocalDeviceState::ThenMemcpyDeviceToDevice(
     se::Stream* transfer_stream, se::Stream* dst_stream,
     se::DeviceAddressBase src_buffer, se::DeviceAddressBase dst_buffer) {
@@ -292,11 +279,17 @@ absl::Status LocalDeviceState::ThenExecuteCallback(
     ABSL_RETURN_IF_ERROR(callback_exec_stream->WaitFor(stream));
     stream = callback_exec_stream;
   }
-  if (error_cb) {
-    error_cb = [cb = std::move(error_cb),
+  if (error_cb || device_error_callback_) {
+    error_cb = [this, cb = std::move(error_cb),
                 worker = callback_thread_.get()](absl::Status status) mutable {
-      worker->Schedule(
-          [cb = std::move(cb), status]() mutable { std::move(cb)(status); });
+      worker->Schedule([this, cb = std::move(cb), status]() mutable {
+        if (device_error_callback_ && !absl::IsCancelled(status)) {
+          device_error_callback_(status);
+        }
+        if (cb) {
+          std::move(cb)(status);
+        }
+      });
     };
   }
   return stream->DoHostCallback(
@@ -400,13 +393,11 @@ void LocalDeviceState::ReturnStreamToPool(std::unique_ptr<se::Stream> stream) {
 }
 
 absl::Status LocalDeviceState::AllocateAndRecordEvent(
-    AsyncWorkRunner* async_work_runner, BufferSequencingEventRef event,
-    se::Stream* stream, absl::string_view tag,
+    BufferSequencingEventRef event, se::Stream* stream, absl::string_view tag,
     absl::AnyInvocable<void() &&> cleanup) {
   auto status = [&]() {
-    ABSL_ASSIGN_OR_RETURN(
-        EventPool::Handle device_event,
-        event_pool().AllocateEvent(async_work_runner, stream->parent()));
+    ABSL_ASSIGN_OR_RETURN(EventPool::Handle device_event,
+                          event_pool().AllocateEvent(stream->parent()));
     event_pool().ThenRecordEvent(stream, device_event);
     event->SetSequencingEvent(std::move(device_event), stream);
     return ThenExecuteCallback(
@@ -450,9 +441,8 @@ LocalDeviceState::GetEventForComputeStreamSyncPoint(
   }
   next_compute_stream_sync_point_.store(cur_sync_point + 1);
   auto event = BufferSequencingEvent::Create(async_work_runner);
-  auto status =
-      AllocateAndRecordEvent(async_work_runner, event, compute_stream(),
-                             "GetEventForComputeStreamSyncPoint");
+  auto status = AllocateAndRecordEvent(event, compute_stream(),
+                                       "GetEventForComputeStreamSyncPoint");
   if (!status.ok()) {
     mu_.unlock();
     return status;

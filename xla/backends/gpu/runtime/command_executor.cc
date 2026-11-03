@@ -200,6 +200,7 @@ CommandExecutor::CommandExecutor(
     Command::BufferUses buffer_uses = command->buffer_uses();
     buffer_uses_.insert(buffer_uses.begin(), buffer_uses.end());
     requires_update_on_initialize_ |= command->requires_update_on_initialize();
+    requires_warmup_ |= command->requires_warmup();
     requires_update_on_execute_ |= command->requires_update_on_execute();
   });
 
@@ -404,7 +405,7 @@ CommandExecutor::RecordCreate(
     Command* command = commands_[id];
 
     std::optional<tsl::profiler::ScopedAnnotation> annotation =
-        GetKernelAnnotation(command->profile_annotation());
+        GetInstructionAnnotation(command->profile_annotation());
 
     // Skip recording collective commands if mock collectives are enabled.
     if (execute_params.mock_collectives && command->IsCollective()) {
@@ -565,9 +566,14 @@ absl::Status CommandExecutor::RecordUpdate(
       continue;
     }
 
-    std::optional<tsl::profiler::ScopedAnnotation> annotation =
-        GetKernelAnnotation(command->profile_annotation());
-
+    // Do not push a per-command ScopedAnnotation during in-place parameter
+    // updates: unchanged-buffer commands are skipped above (leaving update-time
+    // NVTX attribution incomplete even when CUPTI tracks
+    // cuGraphExec*NodeSetParams), while full node attribution uses RecordCreate
+    // (or --cuda-graph-trace=node:nvtx-precapture for cudaProfilerStart).
+    // Commands that rebuild a child graph on RecordUpdate (TracedCommand cache
+    // misses, direct TraceCommandBufferFactory::Create callers, and
+    // HostExecuteStartThunk::Record) still push their annotation locally.
     Command::RecordUpdate record_action{recorded_commands[id]};
     ABSL_ASSIGN_OR_RETURN(
         recorded_commands[id],

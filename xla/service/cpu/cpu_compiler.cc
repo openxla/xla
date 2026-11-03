@@ -49,6 +49,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Bitcode/BitcodeReader.h"
@@ -128,6 +129,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/dot_decomposer.h"
 #include "xla/hlo/transforms/expanders/dynamic_index_splitter.h"
 #include "xla/hlo/transforms/expanders/eigh_expander.h"
+#include "xla/hlo/transforms/expanders/elementary_function_expander.h"
 #include "xla/hlo/transforms/expanders/logistic_expander.h"
 #include "xla/hlo/transforms/expanders/optimization_barrier_expander.h"
 #include "xla/hlo/transforms/expanders/permutation_sort_expander.h"
@@ -654,7 +656,6 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
     }
     spmd_pipeline.AddPass<xla::CallInliner>(
         /*single_call_site=*/false,
-        /*update_domain=*/false,
         /*composites_to_preserve=*/absl::flat_hash_set<std::string>{},
         /*override_policy=*/
         [](const xla::CallGraph& call_graph,
@@ -897,6 +898,7 @@ absl::Status CpuCompiler::RunHloPassesThroughLayoutAssn(
       /*rewrite_inference_op=*/true,
       /*rewrite_grad_op=*/true);
   pipeline.AddPass<LogisticExpander>();
+  pipeline.AddPass<ElementaryFunctionExpander>();
   pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<DynamicDimensionSimplifier>();
 
@@ -1520,10 +1522,9 @@ static llvm::orc::ThreadSafeModule CloneAsThreadSafeModule(
 }
 
 namespace {
-// Compiled symbols (kernels and comparators) from a single LLVM module part.
+// Compiled symbols (kernels) from a single LLVM module part.
 struct CompiledSymbolsPart {
   std::vector<IrEmitter2::KernelInfo> kernels;
-  std::vector<IrEmitter2::ComparatorInfo> comparators;
 };
 }  // namespace
 
@@ -1544,22 +1545,9 @@ static CompiledSymbolsPart CollectCompiledSymbolsPart(
     return std::nullopt;
   };
 
-  auto find_comparator =
-      [&](llvm::StringRef name) -> std::optional<IrEmitter2::ComparatorInfo> {
-    for (auto& c : ir_emitter.comparators()) {
-      if (c.name == name) {
-        return c;
-      }
-    }
-    return std::nullopt;
-  };
-
   for (auto& f : module.functions()) {
     if (auto kernel = find_kernel(f.getName())) {
       syms.kernels.push_back(*kernel);
-    }
-    if (auto comparator = find_comparator(f.getName())) {
-      syms.comparators.push_back(*comparator);
     }
   }
 
@@ -1599,23 +1587,6 @@ inline void VlogMaxIsa(absl::string_view max_cpu_isa) {
     } else {
       VLOG(1) << "`xla_cpu_max_isa` is set to `" << max_cpu_isa
               << "`. This flag is not supported on non-x86 CPUs yet.";
-    }
-  }
-}
-
-// We keep HloProto in the CpuExecutable, but we don't need to keep literals
-// payload in it as we use it only for debugging and memory analysis.
-static void StripPayloadFromLiteralProto(HloProto& proto) {
-  auto* module = proto.mutable_hlo_module();
-  for (auto& computation : *module->mutable_computations()) {
-    for (auto& instruction : *computation.mutable_instructions()) {
-      // We only keep literal shape to correctly estimate memory usage of the
-      // HLO module, but we don't need the actual literal data.
-      if (instruction.has_literal()) {
-        LiteralProto literal;
-        *literal.mutable_shape() = instruction.literal().shape();
-        *instruction.mutable_literal() = std::move(literal);
-      }
     }
   }
 }
@@ -1939,6 +1910,8 @@ CpuCompiler::CompileCpuExecutable(
 
   ABSL_ASSIGN_OR_RETURN(std::vector<ThunkEmitter::EmittedKernel> kernels,
                         thunk_emitter.ConsumeKernels());
+  std::vector<ThunkEmitter::EmittedKernel> comparators =
+      thunk_emitter.ConsumeComparators();
 
   std::string ir_module_string;
   if (embed_ir_in_executable) {
@@ -1950,12 +1923,18 @@ CpuCompiler::CompileCpuExecutable(
                       llvm_ir::DumpToString(kernel.module.getModuleUnlocked()));
     };
     std::string thunks_ir = absl::StrJoin(kernels, "\n", thunk_kernel_fmt);
+    std::string comparators_ir =
+        absl::StrJoin(comparators, "\n", thunk_kernel_fmt);
 
     ir_module_string = absl::StrCat(emitter2_ir, "\n", thunks_ir);
+    if (!comparators_ir.empty()) {
+      absl::StrAppend(&ir_module_string, "\n", comparators_ir);
+    }
   }
 
   ABSL_RETURN_IF_ERROR(VerifyLlvmModule(*llvm_module));
-  for (const auto& [name, module] : kernels) {
+  for (const auto& [name, module] :
+       llvm::concat<const ThunkEmitter::EmittedKernel>(kernels, comparators)) {
     ABSL_RETURN_IF_ERROR(VerifyLlvmModule(*module.getModuleUnlocked()));
   }
 
@@ -1992,9 +1971,8 @@ CpuCompiler::CompileCpuExecutable(
   // We define the number of module parts based on the total number of
   // compiled functions (kernels and comparators) that are called from thunks,
   // and the maximum number of parts that we want to split the module into.
-  size_t num_compiled_functions = ir_emitter2.kernels().size() +
-                                  ir_emitter2.comparators().size() +
-                                  kernels.size();
+  size_t num_compiled_functions =
+      ir_emitter2.kernels().size() + kernels.size() + comparators.size();
   size_t num_default_parts =
       std::min(num_compiled_functions - num_extra_functions,
                parallel_codegen_split_count - num_extra_parts);
@@ -2011,8 +1989,7 @@ CpuCompiler::CompileCpuExecutable(
   std::vector<CompiledSymbolsPart> compiled_parts;
 
   VLOG(2) << "Compile LLVM module with " << ir_emitter2.kernels().size()
-          << " kernels and " << ir_emitter2.comparators().size()
-          << " comparators";
+          << " kernels";
 
   int dylib_index = 0;
   auto add_module_for_compilation =
@@ -2113,6 +2090,16 @@ CpuCompiler::CompileCpuExecutable(
     // Simply roundrobin the default kernel dylibs
     kernel_dylib_index = (kernel_dylib_index + 1) % num_default_parts;
   }
+  for (auto& [name, module] : comparators) {
+    compiled_symbols.push_back(
+        FunctionLibrary::Sym<FunctionLibrary::Comparator>(name));
+    symbol_type_id_to_function_type_id.emplace(compiled_symbols.back().type_id,
+                                               SymbolProto::COMPARATOR);
+    ABSL_RETURN_IF_ERROR(llvm_module_compiler->AddModule(
+        std::move(module), num_extra_parts + kernel_dylib_index));
+    // Simply roundrobin the default kernel dylibs
+    kernel_dylib_index = (kernel_dylib_index + 1) % num_default_parts;
+  }
 
   for (const CompiledSymbolsPart& part : compiled_parts) {
     for (const IrEmitter2::KernelInfo& kernel : part.kernels) {
@@ -2120,12 +2107,6 @@ CpuCompiler::CompileCpuExecutable(
           FunctionLibrary::Sym<FunctionLibrary::Kernel>(kernel.name));
       symbol_type_id_to_function_type_id.emplace(
           compiled_symbols.back().type_id, SymbolProto::KERNEL);
-    }
-    for (const IrEmitter2::ComparatorInfo& comparator : part.comparators) {
-      compiled_symbols.push_back(
-          FunctionLibrary::Sym<FunctionLibrary::Comparator>(comparator.name));
-      symbol_type_id_to_function_type_id.emplace(
-          compiled_symbols.back().type_id, SymbolProto::COMPARATOR);
     }
   }
 

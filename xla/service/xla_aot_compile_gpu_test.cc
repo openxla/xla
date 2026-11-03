@@ -20,7 +20,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 
-#include "absl/status/status_macros.h"
+#include "absl/base/casts.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/types.h"
 
 namespace xla {
 namespace xla_compile {
@@ -138,6 +139,26 @@ TEST_F(XlaCompileTest, LoadGpuExecutableWithDevicelessCudnnConvolution) {
   LoadAndRunConvolution(
       *this, "xla_aot_compile_test_gpu_executable_convolution_deviceless_cudnn",
       target_suffix);
+}
+
+TEST_F(XlaCompileTest, LoadGpuExecutableWithDevicelessCudnnFmha) {
+  if (!se::gpu::SupportsDevicelessCudnnCompilation()) {
+    GTEST_SKIP() << "Deviceless cuDNN compilation requires cuDNN >= "
+                 << se::gpu::kMinDevicelessCudnnVersion;
+  }
+  absl::string_view target_suffix =
+      absl::StrContains(device_description().name(), "MIG") ? "_mig" : "";
+  Literal q = LiteralUtil::CreateFullWithDescendingLayout<bfloat16>(
+      {1, 2, 128, 64}, static_cast<bfloat16>(0.0f));
+  Literal k = LiteralUtil::CreateFullWithDescendingLayout<bfloat16>(
+      {1, 2, 128, 64}, static_cast<bfloat16>(0.0f));
+  Literal v = LiteralUtil::CreateFullWithDescendingLayout<bfloat16>(
+      {1, 2, 128, 64}, static_cast<bfloat16>(1.0f));
+  Literal expected = LiteralUtil::CreateFullWithDescendingLayout<bfloat16>(
+      {1, 2, 128, 64}, static_cast<bfloat16>(1.0f));
+  LoadAndRunExecutable(
+      "xla_aot_compile_test_gpu_executable_fmha_deviceless_cudnn", {&q, &k, &v},
+      expected, target_suffix);
 }
 
 }  // namespace

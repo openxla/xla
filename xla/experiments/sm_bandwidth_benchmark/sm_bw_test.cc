@@ -15,8 +15,12 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <memory>
 
+#include "absl/log/log.h"
 #include "xla/experiments/sm_bandwidth_benchmark/sm_bw_kernels.h"
 #include "xla/experiments/sm_bandwidth_benchmark/sm_bw_utils.h"
 

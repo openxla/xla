@@ -25,6 +25,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/flags/marshalling.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -487,6 +488,33 @@ TEST(PjRtCompilerInitializationTest, RegistriesOutOfSync) {
   // Verify that the existing compiler was used and the factory was NOT called.
   // GetOrCreateCompiler should find the entry in CompilerRegistry() first.
   EXPECT_FALSE(*factory_called);
+}
+
+TEST(CompilerMetadataOnLoadTest, ParseAndUnparseRoundTrip) {
+  for (CompilerMetadataOnLoad on_load :
+       {CompilerMetadataOnLoad::kKeep, CompilerMetadataOnLoad::kStrip,
+        CompilerMetadataOnLoad::kStripAndCompress}) {
+    CompilerMetadataOnLoad parsed;
+    std::string error;
+    ASSERT_TRUE(absl::ParseFlag(absl::UnparseFlag(on_load), &parsed, &error))
+        << error;
+    EXPECT_EQ(parsed, on_load);
+  }
+}
+
+TEST(CompilerMetadataOnLoadTest, Spellings) {
+  EXPECT_EQ(absl::UnparseFlag(CompilerMetadataOnLoad::kKeep), "keep");
+  EXPECT_EQ(absl::UnparseFlag(CompilerMetadataOnLoad::kStrip), "strip");
+  EXPECT_EQ(absl::UnparseFlag(CompilerMetadataOnLoad::kStripAndCompress),
+            "strip_and_compress");
+}
+
+TEST(CompilerMetadataOnLoadTest, ParseRejectsUnknownValue) {
+  CompilerMetadataOnLoad parsed = CompilerMetadataOnLoad::kKeep;
+  std::string error;
+  EXPECT_FALSE(absl::ParseFlag("compress", &parsed, &error));
+  EXPECT_THAT(error, ::testing::HasSubstr("compress"));
+  EXPECT_EQ(parsed, CompilerMetadataOnLoad::kKeep);
 }
 
 }  // namespace
