@@ -327,6 +327,23 @@ absl::string_view kConcatFusionTaggedCustomFusionKindHlo = R"hlo(
       backend_config={"fusion_backend_config": {kind: "__custom_fusion"}}
   })hlo";
 
+// Two concatenates in one fusion: cuDNN reports plans for it but fails to
+// lower it, so it must be rejected before any cuDNN query.
+absl::string_view kMultiConcatFusionHlo = R"hlo(
+  fused_computation {
+    p0 = f32[4,8] parameter(0)
+    p1 = f32[4,8] parameter(1)
+    c0 = f32[4,16] concatenate(p0, p1), dimensions={1}
+    c1 = f32[4,32] concatenate(c0, c0), dimensions={1}
+    ROOT neg = f32[4,32] negate(c1)
+  }
+
+  ENTRY e {
+    a = f32[4,8] parameter(0)
+    b = f32[4,8] parameter(1)
+    ROOT fusion = f32[4,32] fusion(a, b), kind=kLoop, calls=fused_computation
+  })hlo";
+
 class CudnnBackendTest : public HloHardwareIndependentTestBase {
  protected:
   CudnnBackendTest()
@@ -775,6 +792,22 @@ TEST_F(CudnnBackendTest,
   Compiler::GpuTargetConfig target_config = target_config_;
   target_config.device_description.set_dnn_version(
       stream_executor::SemanticVersion(9, 25, 0));
+  CudnnBackend backend(stream_executor_, &debug_options, &compiler_,
+                       &target_config);
+  EXPECT_FALSE(backend.IsSupported(
+      *hlo_module->entry_computation()->root_instruction()));
+}
+
+TEST_F(CudnnBackendTest, IsSupportedForFusionWithMultipleConcatsIsFalse) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kMultiConcatFusionHlo));
+  DebugOptions debug_options = debug_options_;
+  debug_options.set_xla_gpu_cudnn_non_gemm_fusion_level(1);
+  Compiler::GpuTargetConfig target_config = target_config_;
+  target_config.device_description.set_dnn_version(
+      stream_executor::SemanticVersion(9, 26, 0));
+  target_config.device_description.set_gpu_compute_capability(
+      se::CudaComputeCapability::Blackwell());
   CudnnBackend backend(stream_executor_, &debug_options, &compiler_,
                        &target_config);
   EXPECT_FALSE(backend.IsSupported(

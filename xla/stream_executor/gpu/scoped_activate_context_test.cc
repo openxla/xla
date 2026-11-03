@@ -114,17 +114,19 @@ TEST(ScopedDeactivateContextTest, NoActiveContextIsNoOp) {
   }
 }
 
-TEST(ScopedDeactivateContextTest, ActivateInsideDeactivateScopeWorks) {
+TEST(ScopedDeactivateContextTest, ActivateInsideDeactivateScopeIsUndone) {
   MockContext context;
   EXPECT_CALL(context, device_ordinal).WillRepeatedly(Return(1));
   EXPECT_CALL(context, IsActive).WillRepeatedly(Return(true));
-  EXPECT_CALL(context, SetInactive).Times(1);
-  // Activate (outer) + re-activate inside the deactivated scope + restore.
+  // Deactivate scope clears it, and the inner activation is cleared again when
+  // the inner scope exits.
+  EXPECT_CALL(context, SetInactive).Times(2);
+  // Activate (outer) + inner activation + restore at end of deactivate scope.
   EXPECT_CALL(context, SetActive).Times(3);
   ScopedActivateContext outer(&context);
   {
     ScopedDeactivateContext deactivate;
-    ScopedActivateContext inner(&context);
+    { ScopedActivateContext inner(&context); }
   }
 }
 

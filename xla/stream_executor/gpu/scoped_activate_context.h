@@ -33,6 +33,9 @@ class ScopedActivateContext : public ActivateContext {
 
  private:
   Context* to_restore_ = nullptr;
+  // True if this scope activated a context while nested inside a
+  // ScopedDeactivateContext, so it must deactivate it again on exit.
+  bool deactivate_on_exit_ = false;
 };
 
 // Ensures no GPU context is current on this thread for the duration of a

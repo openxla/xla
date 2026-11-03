@@ -59,6 +59,9 @@ ScopedActivateContext::ScopedActivateContext(gpu::Context* gpu_context) {
           << tls->device_ordinal << " to " << gpu_context->device_ordinal();
 
   to_restore_ = tls->context;
+  // No tracked context means we are nested inside a ScopedDeactivateContext;
+  // undo the activation on exit to preserve the deactivated state.
+  deactivate_on_exit_ = (tls->context == nullptr);
   // Set the context and update thread local.
   gpu_context->SetActive();
   tls->device_ordinal = gpu_context->device_ordinal();
@@ -70,6 +73,12 @@ ScopedActivateContext::~ScopedActivateContext() {
 
   tls->depth--;
   DCHECK_GE(tls->depth, 0);
+  if (deactivate_on_exit_) {
+    tls->context->SetInactive();
+    tls->context = nullptr;
+    tls->device_ordinal = -1;
+    return;
+  }
   if (to_restore_ == nullptr) {
     // Leave context, tls->device_ordinal, and tls->context set.
     return;
