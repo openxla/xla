@@ -2954,14 +2954,18 @@ CommonPjRtClient::AllocateOutputBuffersWithInputReuse(
     return buffer && !buffer->is_mutable();
   };
 
-  struct PendingAllocation {
-    int output_index;
-    const Shape* shape;
-    int64_t size_bytes;
+  struct MemorySpacePendingAllocations {
+    // Memory space kind ID for this group.
+    int kind_id;
+    // Resolved memory space on `device`.
+    PjRtMemorySpace* memory_space;
+    // Output leaf indices in `buffers` corresponding to `sizes_bytes`.
+    absl::InlinedVector<int, 16> output_indices;
+    // Requested on-device byte size for each output in `output_indices`.
+    absl::InlinedVector<size_t, 16> sizes_bytes;
   };
 
-  absl::flat_hash_map<PjRtMemorySpace*, std::vector<PendingAllocation>>
-      pending_allocations;
+  absl::InlinedVector<MemorySpacePendingAllocations, 2> pending_allocations;
   int64_t total_allocated_bytes = 0;
 
   for (int i = 0; i < output_leaf_shapes.size(); ++i) {
@@ -2974,44 +2978,53 @@ CommonPjRtClient::AllocateOutputBuffersWithInputReuse(
             alias->ToString());
       }
       const Shape& leaf_shape = output_leaf_shapes[i];
-      const auto& current_anno =
-          tsl::profiler::ScopedMemoryDebugAnnotation::CurrentAnnotation();
-      tsl::profiler::ScopedMemoryDebugAnnotation anno(
-          "dummy", current_anno.pending_region_type, 0, [&leaf_shape]() {
-            return ShapeUtil::HumanStringWithLayout(leaf_shape);
-          });
       int kind_id = output_memory_space_kind_ids[i];
-      PjRtMemorySpace* memory_space = nullptr;
-      for (PjRtMemorySpace* ms : device->memory_spaces()) {
-        if (kind_id == ms->kind_id()) {
-          memory_space = ms;
+      MemorySpacePendingAllocations* pending = nullptr;
+      for (MemorySpacePendingAllocations& candidate : pending_allocations) {
+        if (candidate.kind_id == kind_id) {
+          pending = &candidate;
           break;
         }
       }
-      if (memory_space == nullptr) {
-        std::string silly;
+      if (pending == nullptr) {
+        PjRtMemorySpace* memory_space = nullptr;
         for (PjRtMemorySpace* ms : device->memory_spaces()) {
-          absl::StrAppend(&silly, ms->kind_id(), ":", ms->kind(), ",");
+          if (kind_id == ms->kind_id()) {
+            memory_space = ms;
+            break;
+          }
         }
-        return absl::InternalError(absl::StrCat(
-            "No memory space found (kind_id: ", kind_id, ")", silly));
+        if (memory_space == nullptr) {
+          std::string available_memory_spaces;
+          for (PjRtMemorySpace* ms : device->memory_spaces()) {
+            absl::StrAppend(&available_memory_spaces, ms->kind_id(), ":",
+                            ms->kind(), ",");
+          }
+          return absl::InternalError(
+              absl::StrCat("No memory space found (kind_id: ", kind_id, ")",
+                           available_memory_spaces));
+        }
+        MemorySpacePendingAllocations new_entry = {
+            kind_id,
+            memory_space,
+            {},
+            {},
+        };
+        pending_allocations.push_back(std::move(new_entry));
+        pending = &pending_allocations.back();
       }
-      ABSL_ASSIGN_OR_RETURN(int64_t on_device_bytes,
-                            GetOnDeviceBytesCount(memory_space, leaf_shape));
+      ABSL_ASSIGN_OR_RETURN(
+          int64_t on_device_bytes,
+          GetOnDeviceBytesCount(pending->memory_space, leaf_shape));
+      if (on_device_bytes < 0) {
+        return absl::InternalError(absl::StrFormat(
+            "Invalid negative on-device byte size (%d) for output %d (%s)",
+            on_device_bytes, i, leaf_shape.ToString(true)));
+      }
 
       total_allocated_bytes += on_device_bytes;
-
-      if (!options.use_output_arena) {
-        ABSL_ASSIGN_OR_RETURN(
-            auto raw_buffer,
-            AllocateRawBufferForExecute(memory_space, on_device_bytes,
-                                        /*retry_on_oom=*/false));
-        buffers[i] = std::move(raw_buffer);
-      } else {
-        // If arena allocation is requested, we defer the allocation.
-        pending_allocations[memory_space].push_back(
-            {i, &leaf_shape, on_device_bytes});
-      }
+      pending->output_indices.push_back(i);
+      pending->sizes_bytes.push_back(static_cast<size_t>(on_device_bytes));
     } else {
       // a tuple output element alias to input. There are 3 supported cases.
       // Case 1: alias a non-tuple input.
@@ -3051,36 +3064,57 @@ CommonPjRtClient::AllocateOutputBuffersWithInputReuse(
     }
   }
 
-  // If pending_allocations is not empty, these allocations should be done in
-  // an arena.
-  for (const auto& [memory_space, allocs] : pending_allocations) {
-    tsl::profiler::TraceMe trace_arena("Arena Allocation");
-    ABSL_ASSIGN_OR_RETURN(size_t alignment, GetDeviceAddressAlignment());
-    std::vector<PjRtRawBufferInterface::SliceInfo> slices(allocs.size());
-    int64_t total_arena_size_in_bytes = 0;
-    for (int i = 0; i < allocs.size(); ++i) {
-      PjRtRawBufferInterface::SliceInfo slice;
-      slice.offset = total_arena_size_in_bytes;
-      slice.size = allocs[i].size_bytes;
-      slices[i] = std::move(slice);
-      total_arena_size_in_bytes += allocs[i].size_bytes;
-
-      // Make each sub buffer aligned.
-      total_arena_size_in_bytes =
-          llvm::alignTo(total_arena_size_in_bytes, alignment);
+  if (!options.use_output_arena) {
+    const auto& current_anno =
+        tsl::profiler::ScopedMemoryDebugAnnotation::CurrentAnnotation();
+    for (const MemorySpacePendingAllocations& pending : pending_allocations) {
+      for (size_t j = 0; j < pending.output_indices.size(); ++j) {
+        const int output_index = pending.output_indices[j];
+        const Shape& leaf_shape = output_leaf_shapes[output_index];
+        tsl::profiler::ScopedMemoryDebugAnnotation anno(
+            "dummy", current_anno.pending_region_type, 0, [&leaf_shape]() {
+              return ShapeUtil::HumanStringWithLayout(leaf_shape);
+            });
+        ABSL_ASSIGN_OR_RETURN(PjRtRawBufferRef raw_buffer,
+                              AllocateRawBufferForExecute(
+                                  pending.memory_space, pending.sizes_bytes[j],
+                                  /*retry_on_oom=*/false));
+        buffers[output_index] = std::move(raw_buffer);
+      }
     }
+  } else {
+    for (const MemorySpacePendingAllocations& pending : pending_allocations) {
+      tsl::profiler::TraceMe trace_arena("Arena Allocation");
+      ABSL_ASSIGN_OR_RETURN(size_t alignment, GetDeviceAddressAlignment());
+      std::vector<PjRtRawBufferInterface::SliceInfo> slices(
+          pending.sizes_bytes.size());
+      int64_t total_arena_size_in_bytes = 0;
+      for (size_t j = 0; j < pending.sizes_bytes.size(); ++j) {
+        int64_t size_bytes = static_cast<int64_t>(pending.sizes_bytes[j]);
+        PjRtRawBufferInterface::SliceInfo slice = {
+            total_arena_size_in_bytes,
+            size_bytes,
+        };
+        slices[j] = slice;
+        total_arena_size_in_bytes += size_bytes;
 
-    ABSL_ASSIGN_OR_RETURN(
-        PjRtRawBufferRef arena_buffer,
-        AllocateRawBufferForExecute(memory_space, total_arena_size_in_bytes,
-                                    /*retry_on_oom=*/false));
+        // Make each sub buffer aligned.
+        total_arena_size_in_bytes =
+            llvm::alignTo(total_arena_size_in_bytes, alignment);
+      }
 
-    tsl::profiler::TraceMe trace_arena_slicing("Arena Slicing");
-    ABSL_ASSIGN_OR_RETURN(std::vector<PjRtRawBufferRef> sliced_buffers,
-                          arena_buffer->MultiSlice(slices));
+      ABSL_ASSIGN_OR_RETURN(PjRtRawBufferRef arena_buffer,
+                            AllocateRawBufferForExecute(
+                                pending.memory_space, total_arena_size_in_bytes,
+                                /*retry_on_oom=*/false));
 
-    for (int i = 0; i < allocs.size(); ++i) {
-      buffers[allocs[i].output_index] = std::move(sliced_buffers[i]);
+      tsl::profiler::TraceMe trace_arena_slicing("Arena Slicing");
+      ABSL_ASSIGN_OR_RETURN(std::vector<PjRtRawBufferRef> sliced_buffers,
+                            arena_buffer->MultiSlice(slices));
+
+      for (size_t j = 0; j < pending.output_indices.size(); ++j) {
+        buffers[pending.output_indices[j]] = std::move(sliced_buffers[j]);
+      }
     }
   }
 
