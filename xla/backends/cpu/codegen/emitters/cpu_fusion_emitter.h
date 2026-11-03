@@ -21,6 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "llvm/IR/LLVMContext.h"
@@ -32,6 +33,7 @@ limitations under the License.
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/PassManager.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
+#include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/mlir/tools/mlir_replay/public/compiler_trace.pb.h"
@@ -48,6 +50,15 @@ absl::StatusOr<mlir::func::FuncOp> EmitEntryFunctionApi(
     mlir::ModuleOp fusion_module, const HloFusionInstruction& fusion,
     const std::string& entry_function_name,
     const BufferAssignment& buffer_assignment);
+
+// Returns whether `args` writes a donated entry computation parameter.
+bool WritesDonatedParameter(const emitters::KernelArguments& args);
+
+// Marks entry parameter arguments with `xla.aliased` when `fusion` writes a
+// donated parameter, since callers may pass that buffer twice.
+absl::Status MarkEntryParametersAliasedIfDonatedWritten(
+    mlir::ModuleOp module, const HloFusionInstruction& fusion,
+    const BufferAssignment* buffer_assignment);
 
 // Emit the call targets for the given fusion.
 absl::StatusOr<emitters::CallTargetProvider> EmitCallTargets(

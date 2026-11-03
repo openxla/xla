@@ -105,12 +105,13 @@ struct PackedArgs {
     for (int i = 0; i < op.getNumArguments(); ++i) {
       if (op.getArgAttr(i, "xla.slice_index")) {
         op.removeArgAttr(i, "xla.slice_index");
-        if (!op.getArgAttr(i, kXlaNotInvariantAttr)) {
+        if (!op.getArgAttr(i, kXlaNotInvariantAttr) &&
+            !op.getArgAttr(i, kXlaAliasedAttr)) {
           op.setArgAttr(i, mlir::LLVM::LLVMDialect::getNoAliasAttrName(),
                         mlir::UnitAttr::get(op->getContext()));
-        } else {
-          op.removeArgAttr(i, kXlaNotInvariantAttr);
         }
+        op.removeArgAttr(i, kXlaNotInvariantAttr);
+        op.removeArgAttr(i, kXlaAliasedAttr);
       }
     }
   }
@@ -127,6 +128,9 @@ struct PackedArgs {
     if (op.getArgAttr(from, kXlaNotInvariantAttr)) {
       op.setArgAttr(to, kXlaNotInvariantAttr,
                     mlir::UnitAttr::get(op->getContext()));
+    }
+    if (op.getArgAttr(from, kXlaAliasedAttr)) {
+      op.setArgAttr(to, kXlaAliasedAttr, mlir::UnitAttr::get(op->getContext()));
     }
   }
 };
