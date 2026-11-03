@@ -25,6 +25,21 @@ package(default_visibility = ["//visibility:public"])
 
 _IBV_SHIM_SRC = "transport/rdma/providers/ibverbs/ibv_shim.cpp"
 
+# Every MORI TU here includes mori/utils/mori_log.hpp -> spdlog -> @fmt, and
+# @fmt is pinned to 8.1.1. fmt 8 only enables its consteval FMT_STRING checker
+# when __cplusplus > 201703L, and that code path does a pointer subtraction
+# across two evaluations of the same string literal (core.h:2930,
+# `begin - &*context_.begin()`). Clang 22 no longer gives those evaluations a
+# common object, so the subtraction stops being a constant expression and the
+# consteval constructor fails to compile. Upstream MORI builds as C++17
+# (CMAKE_CXX_STANDARD 17), so pinning matches how AMD ships it; this mirrors
+# what //third_party/rapids_logger:rapids_logger already does for the CUDA
+# side of the same spdlog -> fmt chain. Target copts come after the global
+# --cxxopt=-std=c++20, so this wins. Drop it once @fmt moves past 10.x --
+# note that also needs format_as() overloads for the HIP enums MORI logs,
+# since fmt 10 removed implicit enum-to-integer formatting.
+_CXX17 = ["-std=c++17"]
+
 # Mirrors CMake's mori_ibv_shim OBJECT library. The shim defines the core ibv_*
 # symbols and dlopen()s libibverbs.so.1 at runtime; it must be compiled with
 # hidden visibility so those definitions never interpose a real libibverbs
@@ -35,7 +50,7 @@ cc_library(
     copts = [
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",
-    ],
+    ] + _CXX17,
     linkstatic = True,
     visibility = ["//visibility:private"],
     deps = [
@@ -66,7 +81,7 @@ cc_library(
     ],
     # Hide the GCC 8 std::filesystem code (libstdc++fs.a and inline members):
     # it is ABI-incompatible with the libstdc++.so that other libraries use.
-    copts = ["-fvisibility-inlines-hidden"],
+    copts = ["-fvisibility-inlines-hidden"] + _CXX17,
     linkopts = [
         "-ldl",
         "-Wl,--exclude-libs,libstdc++fs.a",
