@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/functional/any_invocable.h"
 #include "absl/log/check.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/service/buffer_allocation.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -86,7 +87,7 @@ namespace xla {
 
 class BufferValue {
  public:
-  using Color = int64_t;
+  using Color = BufferColor;
 
   // Id is a unique identifier for the BufferValue to facilitate efficient
   // collections of BufferValues with stable iteration order.

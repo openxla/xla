@@ -30,10 +30,11 @@ limitations under the License.
 namespace xla {
 namespace llvm_ir {
 const HloInstruction& InstrForConstantBufferAllocation(
-    const BufferAllocation& allocation) {
+    const BufferAssignment& assignment, const BufferAllocation& allocation) {
   CHECK(allocation.is_constant());
   HloInstruction* const_instr = nullptr;
-  for (const auto& buffer_offset_pair : allocation.assigned_buffers()) {
+  for (const auto& buffer_offset_pair :
+       assignment.assigned_buffers(allocation)) {
     const BufferValue* buffer = buffer_offset_pair.first;
     // BufferAssignment may have assigned non-constant instructions to this
     // allocation too so we can't CHECK this condition.  E.g. for
@@ -82,8 +83,8 @@ std::string ConstantNameToGlobalName(absl::string_view name) {
 }
 
 const Literal& LiteralForConstantAllocation(
-    const BufferAllocation& allocation) {
-  return InstrForConstantBufferAllocation(allocation).literal();
+    const BufferAssignment& assignment, const BufferAllocation& allocation) {
+  return InstrForConstantBufferAllocation(assignment, allocation).literal();
 }
 }  // namespace llvm_ir
 }  // namespace xla

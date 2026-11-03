@@ -60,7 +60,8 @@ struct CompiledMemoryStats {
   static CompiledMemoryStats FromProto(const CompiledMemoryStatsProto& proto);
 
   void PopulateBufferStatsFromAllocations(
-      absl::Span<const BufferAllocation* const> allocs);
+      absl::Span<const BufferAllocation* const> allocs,
+      const BufferAssignment* assignment = nullptr);
 };
 
 }  // namespace xla
