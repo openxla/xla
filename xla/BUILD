@@ -1732,13 +1732,23 @@ xla_cc_test(
 )
 
 bzl_library(
+    name = "lit_rules_bzl",
+    srcs = ["lit_rules.bzl"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "@bazel_skylib//lib:paths",
+        "@rules_cc//cc/common",
+    ],
+)
+
+bzl_library(
     name = "lit_bzl",
     srcs = ["lit.bzl"],
     deps = [
+        ":lit_rules_bzl",
         ":native_test_bzl",
         ":platform_native_rule_bzl",
         "//xla/tests:build_defs_bzl",
-        "@rules_cc//cc/common",
         # copybara:uncomment "@rules_python//python:defs_bzl",
         "@bazel_skylib//lib:paths",
         "//xla/tsl:package_groups_bzl",

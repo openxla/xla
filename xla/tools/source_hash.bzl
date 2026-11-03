@@ -16,85 +16,12 @@
 Computes a deterministic hash of a binary for version sealing.
 """
 
-load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+# This file defines macros, not rules. See go/for-macros-only.
+
 load("//xla:xla.default.bzl", "xla_cc_binary")
+load("//xla/tools:source_hash_rules.bzl", _source_hash_rule = "source_hash_rule")
 
 visibility("public")
-
-def _source_hash_impl(ctx):
-    args = ctx.actions.args()
-    args.add(ctx.file.target)
-    args.add(ctx.outputs.out)
-
-    ctx.actions.run(
-        inputs = [ctx.file.target],
-        outputs = [ctx.outputs.out],
-        executable = ctx.executable._hasher,
-        arguments = [args],
-        mnemonic = "ComputeSourceHash",
-    )
-
-    return [
-        DefaultInfo(files = depset([ctx.outputs.out])),
-    ]
-
-def _verify_alwayslink_aspect_impl(target, ctx):
-    if ctx.rule.kind == "alias":
-        return []
-
-    if CcInfo not in target:
-        fail("Target %s passed to source_hash must provide CcInfo" % target.label)
-
-    cc_info = target[CcInfo]
-    linking_context = cc_info.linking_context
-
-    has_direct_libs = False
-
-    for linker_input in linking_context.linker_inputs.to_list():
-        if linker_input.owner == target.label:
-            for lib in linker_input.libraries:
-                has_direct_libs = True
-                if (lib.static_library or lib.pic_static_library) and not lib.alwayslink:
-                    fail("Target %s passed to source_hash must be alwayslink" % target.label)
-
-    if not has_direct_libs:
-        fail("Target %s passed to source_hash does not produce any direct libraries to link" % target.label)
-
-    return []
-
-_verify_alwayslink_aspect = aspect(
-    implementation = _verify_alwayslink_aspect_impl,
-    attr_aspects = ["actual"],
-)
-
-_source_hash_rule = rule(
-    implementation = _source_hash_impl,
-    attrs = {
-        "target": attr.label(
-            mandatory = True,
-            executable = True,
-            allow_single_file = True,
-            providers = [CcInfo],
-            cfg = "exec",
-            doc = "Executable target to hash.",
-        ),
-        "original_target": attr.label(
-            mandatory = True,
-            providers = [CcInfo],
-            aspects = [_verify_alwayslink_aspect],
-            cfg = "exec",
-        ),
-        "_hasher": attr.label(
-            default = "//xla/tools:source_hash_hasher",
-            executable = True,
-            cfg = "exec",
-        ),
-        "out": attr.output(
-            mandatory = True,
-            doc = "Text file to write the hex hash to.",
-        ),
-    },
-)
 
 def source_hash(name, target, out):
     """Generates a text file containing a hash of the executable target.
