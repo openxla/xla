@@ -481,5 +481,137 @@ TEST_F(ScatterExpanderTest, ExtraFilterRestrictsExpansion) {
   EXPECT_THAT(root->operand(1), op::Scatter());
 }
 
+// index_vector_dim holds the scatter index, so it cannot also be an explicit
+// batching dim of the scatter indices.
+TEST_F(ScatterExpanderTest, BatchingDimAtIndexVectorDimReturnsError) {
+  const char* const kModuleStr = R"(
+    HloModule ScatterBatchingDimAtIndexVectorDim
+
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
+    }
+
+    ENTRY main {
+      operand = s32[2,4,5] parameter(0)
+      indices = s32[3,2] parameter(1)
+      updates = s32[3] parameter(2)
+      ROOT scatter = s32[2,4,5] scatter(operand, indices, updates),
+        update_window_dims={},
+        inserted_window_dims={1,2},
+        scatter_dims_to_operand_dims={1,2},
+        index_vector_dim=1,
+        input_batching_dims={0},
+        scatter_indices_batching_dims={1},
+        to_apply=add
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
+  ScatterExpander scatter_expander(ScatterExpander::kEliminateAllScatters);
+  absl::Status status = scatter_expander.Run(module.get()).status();
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(status.message(),
+              ::testing::HasSubstr("cannot also be an explicit batching"));
+}
+
+TEST_F(ScatterExpanderTest, BatchingDimAtImplicitIndexVectorDimReturnsError) {
+  const char* const kModuleStr = R"(
+    HloModule ScatterBatchingDimAtImplicitIndexVectorDim
+
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
+    }
+
+    ENTRY main {
+      operand = s32[1,4] parameter(0)
+      indices = s32[2,3] parameter(1)
+      updates = s32[2,3] parameter(2)
+      ROOT scatter = s32[1,4] scatter(operand, indices, updates),
+        update_window_dims={},
+        inserted_window_dims={1},
+        scatter_dims_to_operand_dims={1},
+        index_vector_dim=2,
+        input_batching_dims={0},
+        scatter_indices_batching_dims={2},
+        to_apply=add
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
+  ScatterExpander scatter_expander(ScatterExpander::kEliminateAllScatters);
+  absl::Status status = scatter_expander.Run(module.get()).status();
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(status.message(),
+              ::testing::HasSubstr("cannot also be an explicit batching"));
+}
+
+TEST_F(ScatterExpanderTest, BatchingDimNextToIndexVectorDimSucceeds) {
+  const char* const kModuleStr = R"(
+    HloModule ScatterBatchingDimNextToIndexVectorDim
+
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
+    }
+
+    ENTRY main {
+      operand = s32[3,4,5] parameter(0)
+      indices = s32[3,2] parameter(1)
+      updates = s32[3] parameter(2)
+      ROOT scatter = s32[3,4,5] scatter(operand, indices, updates),
+        update_window_dims={},
+        inserted_window_dims={1,2},
+        scatter_dims_to_operand_dims={1,2},
+        index_vector_dim=1,
+        input_batching_dims={0},
+        scatter_indices_batching_dims={0},
+        to_apply=add
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
+  ScatterExpander scatter_expander(ScatterExpander::kEliminateAllScatters);
+  ASSERT_OK_AND_ASSIGN(bool result,
+                       RunHloPass(&scatter_expander, module.get()));
+  EXPECT_TRUE(result);
+  EXPECT_THAT(FindInstructions(module.get(), HloOpcode::kScatter),
+              ::testing::IsEmpty());
+}
+
+TEST_F(ScatterExpanderTest, BatchingDimAtLastIndicesDimSucceeds) {
+  const char* const kModuleStr = R"(
+    HloModule ScatterBatchingDimAtLastIndicesDim
+
+    add {
+      x = s32[] parameter(0)
+      y = s32[] parameter(1)
+      ROOT add = s32[] add(x, y)
+    }
+
+    ENTRY main {
+      operand = s32[3,4] parameter(0)
+      indices = s32[2,3] parameter(1)
+      updates = s32[2,3] parameter(2)
+      ROOT scatter = s32[3,4] scatter(operand, indices, updates),
+        update_window_dims={},
+        inserted_window_dims={1},
+        scatter_dims_to_operand_dims={1},
+        index_vector_dim=2,
+        input_batching_dims={0},
+        scatter_indices_batching_dims={1},
+        to_apply=add
+    })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kModuleStr));
+  ScatterExpander scatter_expander(ScatterExpander::kEliminateAllScatters);
+  ASSERT_OK_AND_ASSIGN(bool result,
+                       RunHloPass(&scatter_expander, module.get()));
+  EXPECT_TRUE(result);
+  EXPECT_THAT(FindInstructions(module.get(), HloOpcode::kScatter),
+              ::testing::IsEmpty());
+}
+
 }  // namespace
 }  // namespace xla

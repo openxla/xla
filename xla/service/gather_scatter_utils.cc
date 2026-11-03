@@ -182,6 +182,15 @@ absl::StatusOr<HloInstruction*> ExpandIndexVectorIntoOperandSpace(
     absl::Span<const int64_t> start_indices_batching_dims,
     absl::Span<const int64_t> operand_batching_dims,
     HloInstruction* index_vector, HloInstruction* induction_var) {
+  // GenerateExplicitBatchDimIndices generates no index for index_vector_dim,
+  // so it cannot also be an explicit batching dim.
+  if (absl::c_linear_search(start_indices_batching_dims, index_vector_dim)) {
+    return InvalidArgument(
+        "Index vector dimension %d cannot also be an explicit batching "
+        "dimension of the indices.",
+        index_vector_dim);
+  }
+
   HloComputation* computation = index_vector->parent();
   const Shape& index_shape = index_vector->shape();
 

@@ -413,5 +413,117 @@ ENTRY main {
   CheckWhileBody(module.get(), expected);
 }
 
+// index_vector_dim holds the start index, so it cannot also be an explicit
+// batching dim of the start indices.
+TEST_F(GatherExpanderTest, BatchingDimAtIndexVectorDimReturnsError) {
+  const std::string hlo_text = R"(
+HloModule GatherBatchingDimAtIndexVectorDim
+
+ENTRY main {
+  operand = s32[2,4,5] parameter(0)
+  indices = s32[3,2] parameter(1)
+  ROOT gather = s32[3] gather(operand, indices),
+      offset_dims={},
+      collapsed_slice_dims={1,2},
+      start_index_map={1,2},
+      index_vector_dim=1,
+      operand_batching_dims={0},
+      start_indices_batching_dims={1},
+      slice_sizes={1,1,1}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  absl::Status status = GatherExpander{GatherExpander::kEliminateAllGathers}
+                            .Run(module.get())
+                            .status();
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(status.message(),
+              ::testing::HasSubstr("cannot also be an explicit batching"));
+}
+
+TEST_F(GatherExpanderTest, BatchingDimAtImplicitIndexVectorDimReturnsError) {
+  const std::string hlo_text = R"(
+HloModule GatherBatchingDimAtImplicitIndexVectorDim
+
+ENTRY main {
+  operand = s32[1,4] parameter(0)
+  indices = s32[2,3] parameter(1)
+  ROOT gather = s32[2,3] gather(operand, indices),
+      offset_dims={},
+      collapsed_slice_dims={1},
+      start_index_map={1},
+      index_vector_dim=2,
+      operand_batching_dims={0},
+      start_indices_batching_dims={2},
+      slice_sizes={1,1}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+
+  absl::Status status = GatherExpander{GatherExpander::kEliminateAllGathers}
+                            .Run(module.get())
+                            .status();
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(status.message(),
+              ::testing::HasSubstr("cannot also be an explicit batching"));
+}
+
+TEST_F(GatherExpanderTest, BatchingDimNextToIndexVectorDimSucceeds) {
+  const std::string hlo_text = R"(
+HloModule GatherBatchingDimNextToIndexVectorDim
+
+ENTRY main {
+  operand = s32[3,4,5] parameter(0)
+  indices = s32[3,2] parameter(1)
+  ROOT gather = s32[3] gather(operand, indices),
+      offset_dims={},
+      collapsed_slice_dims={1,2},
+      start_index_map={1,2},
+      index_vector_dim=1,
+      operand_batching_dims={0},
+      start_indices_batching_dims={0},
+      slice_sizes={1,1,1}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      GatherExpander{GatherExpander::kEliminateAllGathers}.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_FALSE(hlo_query::ContainsInstrWithOpcode(module->entry_computation(),
+                                                  {HloOpcode::kGather}));
+  module->VerifyOrAddFailure("after-gather-expander.");
+}
+
+TEST_F(GatherExpanderTest, BatchingDimAtLastIndicesDimSucceeds) {
+  const std::string hlo_text = R"(
+HloModule GatherBatchingDimAtLastIndicesDim
+
+ENTRY main {
+  operand = s32[3,4] parameter(0)
+  indices = s32[2,3] parameter(1)
+  ROOT gather = s32[2,3] gather(operand, indices),
+      offset_dims={},
+      collapsed_slice_dims={1},
+      start_index_map={1},
+      index_vector_dim=2,
+      operand_batching_dims={0},
+      start_indices_batching_dims={1},
+      slice_sizes={1,1}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      GatherExpander{GatherExpander::kEliminateAllGathers}.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_FALSE(hlo_query::ContainsInstrWithOpcode(module->entry_computation(),
+                                                  {HloOpcode::kGather}));
+  module->VerifyOrAddFailure("after-gather-expander.");
+}
+
 }  // namespace
 }  // namespace xla
