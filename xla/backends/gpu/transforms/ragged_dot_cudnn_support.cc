@@ -43,7 +43,16 @@ Decision IsRaggedDotSupportedByCuDnn(
   std::unique_ptr<HloModule> probe_module =
       ExtractInstructionIntoNewModule(ragged_dot);
 
-  // No device description is passed: this pass only builds the fusion.
+  // Build the exact fusion that the real pipeline would hand to cuDNN, by
+  // running RaggedDotFusionRewriter on the scratch module. This is not
+  // recursive: the rewriter does not consult this support check (that happens
+  // earlier, in RaggedDotRewriter, via the callback), it unconditionally
+  // converts every ragged dot it sees. We deliberately reuse the rewriter
+  // rather than hand-building a fusion because its output depends on its
+  // rewrites (wgrad K/N padding for TMA alignment, padding-tail masking,
+  // cumulative-sum group offsets), and cuDNN support must be probed on that
+  // final form. The scratch module keeps those in-place rewrites away from
+  // the module being compiled.
   absl::StatusOr<bool> changed =
       RaggedDotFusionRewriter().Run(probe_module.get());
   if (!changed.ok()) {
@@ -74,7 +83,7 @@ Decision IsRaggedDotSupportedByCuDnn(
       return Decision::Allow();
     }
     absl::StatusOr<int> plan_count = CuDnnFusionCompiler::GetAvailablePlanCount(
-        stream_exec, device_description, fusion);
+        stream_exec->AsDnn(), device_description, fusion);
     if (!plan_count.ok()) {
       VLOG(1) << "Ragged dot cuDNN probe: plan count failed: "
               << plan_count.status();
