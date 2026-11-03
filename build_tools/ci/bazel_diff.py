@@ -188,7 +188,7 @@ def filter_and_normalize_targets(
       continue
 
     normalized = normalize_target_label(line)
-    if not normalized:
+    if not normalized or normalized.startswith("//build_tools/ci:"):
       continue
 
     if any(normalized.startswith(prefix) for prefix in keep_prefixes):

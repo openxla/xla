@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/service/gpu/amdgpu_compiler.h"
 
+// Throw-away test comment: Trigger ROCm-only GPU change for CI skip check.
 #include <cstdint>
 #include <optional>
 #include <string>
