@@ -15,12 +15,11 @@ limitations under the License.
 
 #include "xla/ffi/api/record_ffi.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/ffi/api/record_api.h"
@@ -30,6 +29,8 @@ limitations under the License.
 
 namespace xla::ffi {
 namespace {
+
+using ::testing::FieldsAre;
 
 static const XLA_FFI_Api* Api() { return GetXlaFfiApi(); }
 
@@ -146,6 +147,84 @@ TEST(FfiTest, RecordExtensionVersionMismatch) {
   EXPECT_THAT(
       status.message(),
       testing::HasSubstr("Extension version mismatch for RecordExtension"));
+}
+
+TEST(FfiTest, RecordLaunchConfig) {
+  struct CaptureState {
+    XLA_FFI_LaunchConfig config = {};
+    const XLA_FFI_Command* command =
+        reinterpret_cast<const XLA_FFI_Command*>(0x1);
+    int updates = 0;
+  } state;
+
+  XLA_FFI_RecordApi record_api = {};
+  record_api.create_launch_with_config =
+      +[](XLA_FFI_RecordContext* ctx, const char* name, const void* kernel,
+          int64_t size, XLA_FFI_SourceFormat format,
+          const XLA_FFI_LaunchConfig* config, const XLA_FFI_KernelArgs* args,
+          const XLA_FFI_Command* const* dependencies, uint32_t num_dependencies,
+          const XLA_FFI_Command** out_command) -> XLA_FFI_Error* {
+    auto* state = reinterpret_cast<CaptureState*>(ctx);
+    EXPECT_STREQ(name, "test");
+    EXPECT_EQ(kernel, state);
+    EXPECT_EQ(size, 0);
+    EXPECT_EQ(format, XLA_FFI_SourceFormat_FUNCTION_PTR);
+    EXPECT_EQ(args->num_args, 1);
+    EXPECT_EQ(args->args[0].arg_address, state);
+    EXPECT_EQ(num_dependencies, 1);
+    EXPECT_EQ(dependencies[0], state->command);
+    state->config = *config;
+    *out_command = state->command;
+    return nullptr;
+  };
+  record_api.update_launch_with_config =
+      +[](XLA_FFI_RecordContext* ctx, const XLA_FFI_Command* command,
+          const XLA_FFI_LaunchConfig* config,
+          const XLA_FFI_KernelArgs* args) -> XLA_FFI_Error* {
+    auto* state = reinterpret_cast<CaptureState*>(ctx);
+    EXPECT_EQ(command, state->command);
+    EXPECT_EQ(args->num_args, 1);
+    EXPECT_EQ(args->args[0].arg_address, state);
+    state->config = *config;
+    ++state->updates;
+    return nullptr;
+  };
+
+  const XLA_FFI_Command* commands[1] = {};
+  int64_t num_commands = 0;
+  XLA_FFI_RecordFrame frame = {reinterpret_cast<XLA_FFI_RecordContext*>(&state),
+                               &record_api,
+                               XLA_FFI_RecordAction_Create,
+                               commands,
+                               &num_commands,
+                               1};
+  RecordContext context(Api(), &frame);
+  XLA_FFI_LaunchConfig config = {XLA_FFI_LaunchConfig_STRUCT_SIZE,
+                                 {{8, 1, 1}, {32, 1, 1}, {2, 1, 1}},
+                                 128,
+                                 1,
+                                 1,
+                                 {4, 1, 1}};
+  std::vector<KernelArg> args = {DevicePointer{&state}};
+  auto command =
+      context.CreateLaunch("test", &state, 0, SourceFormat::kFunctionPtr,
+                           config, args, {state.command});
+  ASSERT_TRUE(command.has_value());
+  EXPECT_EQ(*command, state.command);
+  EXPECT_THAT(state.config,
+              FieldsAre(XLA_FFI_LaunchConfig_STRUCT_SIZE,
+                        FieldsAre(FieldsAre(8, 1, 1), FieldsAre(32, 1, 1),
+                                  FieldsAre(2, 1, 1)),
+                        128, 1, 1, FieldsAre(4, 1, 1)));
+  EXPECT_EQ(num_commands, 1);
+  EXPECT_EQ(commands[0], state.command);
+
+  XLA_FFI_LaunchConfig updated = config;
+  updated.launch_dims.grid.x = 16;
+  EXPECT_TRUE(context.UpdateLaunch(*command, updated, args).success());
+  EXPECT_EQ(state.config.launch_dims.grid.x, 16);
+  EXPECT_EQ(state.updates, 1);
+  EXPECT_EQ(num_commands, 1);
 }
 
 }  // namespace

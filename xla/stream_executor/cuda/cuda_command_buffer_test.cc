@@ -321,6 +321,50 @@ TEST_F(CudaCommandBufferTest, LaunchClusterKernelWithClusterDimsSucceeds) {
   ASSERT_OK(stream->BlockHostUntilDone());
 }
 
+TEST_F(CudaCommandBufferTest, NativeKernelPreservesCooperativeAttribute) {
+  Platform* platform = CudaPlatform();
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  CUdevice device;
+  ASSERT_EQ(cuDeviceGet(&device, executor->device_ordinal()), CUDA_SUCCESS);
+  int supported;
+  ASSERT_EQ(cuDeviceGetAttribute(
+                &supported, CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH, device),
+            CUDA_SUCCESS);
+  if (supported == 0) {
+    GTEST_SKIP() << "Requires cooperative launch support.";
+  }
+
+  ASSERT_OK_AND_ASSIGN(
+      KernelLoaderSpec spec,
+      ::stream_executor::gpu::GetAddI32TestKernelSpec(platform->id()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> kernel,
+                       executor->LoadKernel(spec));
+  DeviceAddress<int32_t> a = executor->AllocateArray<int32_t>(4);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBuffer> command_buffer,
+                       executor->CreateCommandBuffer(primary));
+  for (bool cooperative : {false, true}) {
+    NativeKernel native{kernel->platform_specific_handle().kernel, "add",
+                        /*pdl=*/false, cooperative};
+    ASSERT_OK_AND_ASSIGN(
+        const CommandBuffer::Command* command,
+        command_buffer->CreateLaunch(ThreadDim(4, 1, 1), BlockDim(1, 1, 1),
+                                     std::nullopt, native,
+                                     *PackKernelArgs(0, a, a, a), {}));
+    const auto* gpu_command =
+        dynamic_cast<const gpu::GpuCommandBuffer::GpuCommand*>(command);
+    ASSERT_NE(gpu_command, nullptr);
+    CUlaunchAttributeValue value{};
+    ASSERT_EQ(cuGraphKernelNodeGetAttribute(
+                  absl::bit_cast<CUgraphNode>(gpu_command->handle),
+                  CU_LAUNCH_ATTRIBUTE_COOPERATIVE, &value),
+              CUDA_SUCCESS);
+    EXPECT_EQ(value.cooperative, cooperative);
+  }
+  ASSERT_OK(command_buffer->Finalize());
+  executor->Deallocate(&a);
+}
+
 TEST_F(CudaCommandBufferTest, LaunchHostCallback) {
   Platform* platform = CudaPlatform();
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,

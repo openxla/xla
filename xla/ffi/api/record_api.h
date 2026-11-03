@@ -223,6 +223,57 @@ class RecordContextBase {
     return ErrorPolicy::Ok();
   }
 
+  template <typename KernelArgSpan,
+            typename DepSpan = std::initializer_list<const XLA_FFI_Command*>>
+  StatusOr<const XLA_FFI_Command*> CreateLaunch(
+      const char* kernel_name, const void* kernel_data, size_t kernel_size,
+      SourceFormat format, const XLA_FFI_LaunchConfig& config,
+      const KernelArgSpan& args, const DepSpan& dependencies = {}) {
+    if (kernel_data == nullptr) {
+      return ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_INVALID_ARGUMENT,
+          "kernel_data/function_ptr must not be null during create_launch.");
+    }
+    std::vector<XLA_FFI_KernelArg> raw_args = ConvertArgs(args);
+    XLA_FFI_KernelArgs ffi_args{raw_args.data(),
+                                static_cast<int64_t>(raw_args.size())};
+    const XLA_FFI_Command* out_command = nullptr;
+    XLA_FFI_Error* err = frame_->api->create_launch_with_config(
+        frame_->record_ctx, kernel_name, kernel_data, kernel_size,
+        static_cast<XLA_FFI_SourceFormat>(format), &config, &ffi_args,
+        std::data(dependencies), std::size(dependencies), &out_command);
+    if (err) {
+      return ErrorPolicy::TakeError(api_, err);
+    }
+    if (!out_command) {
+      return ErrorPolicy::FromErrorCode(XLA_FFI_Error_Code_INTERNAL,
+                                        "out_command is null but no error was "
+                                        "returned during create_launch.");
+    }
+    if (!commands().push_back(out_command)) {
+      return ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_RESOURCE_EXHAUSTED,
+          "Maximum number of commands that can be recorded per FFI::Record "
+          "call has been reached.");
+    }
+    return out_command;
+  }
+
+  template <typename KernelArgSpan>
+  Status UpdateLaunch(const XLA_FFI_Command* command,
+                      const XLA_FFI_LaunchConfig& config,
+                      const KernelArgSpan& args) {
+    std::vector<XLA_FFI_KernelArg> raw_args = ConvertArgs(args);
+    XLA_FFI_KernelArgs ffi_args{raw_args.data(),
+                                static_cast<int64_t>(raw_args.size())};
+    XLA_FFI_Error* err = frame_->api->update_launch_with_config(
+        frame_->record_ctx, command, &config, &ffi_args);
+    if (err) {
+      return ErrorPolicy::TakeError(api_, err);
+    }
+    return ErrorPolicy::Ok();
+  }
+
   template <typename DepSpan = std::initializer_list<const XLA_FFI_Command*>>
   StatusOr<const XLA_FFI_Command*> CreateEmptyCommand(
       DepSpan dependencies = {}) {

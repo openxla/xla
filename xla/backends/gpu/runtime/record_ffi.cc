@@ -23,31 +23,25 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "absl/debugging/symbolize.h"
-#include "absl/functional/overload.h"
 #include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "tsl/platform/mem.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/record_c_api.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_interop.h"
-#include "xla/service/gpu/launch_dimensions.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/util.h"
+#include "tsl/platform/mem.h"
 
 namespace xla::gpu {
 
@@ -130,14 +124,6 @@ class FfiKernelArgsPacked : public se::KernelArgsPackedArrayBase {
   int64_t shared_memory_bytes_ = 0;
 };
 
-std::string GetSymbolName(const void* ptr) {
-  char buf[512];
-  if (absl::Symbolize(ptr, buf, sizeof(buf))) {
-    return std::string(buf);
-  }
-  return "unknown";
-}
-
 absl::Status PackArgs(const XLA_FFI_KernelArgs* args,
                       FfiKernelArgsPacked& packed_args) {
   if (args == nullptr || (args->num_args > 0 && args->args == nullptr)) {
@@ -190,29 +176,65 @@ const XLA_FFI_Command* AsXlaFfiCommand(
       const_cast<se::CommandBuffer::Command*>(command));
 }
 
-struct FfiLaunchParams {
-  LaunchDimensions launch_dimensions;
-  std::optional<stream_executor::ClusterDim> cluster_dims;
-
-  std::variant<se::Kernel*, se::NativeKernel> kernel;
-  uint32_t shared_mem_bytes;
-};
-
-template <typename Sink>
-void AbslStringify(Sink& sink, const FfiLaunchParams& params) {
-  std::string kernel_name =
-      std::visit(absl::Overload{[](se::Kernel* k) { return GetSymbolName(k); },
-                                [](const se::NativeKernel& nk) {
-                                  return GetSymbolName(nk.device_fn);
-                                }},
-                 params.kernel);
-  absl::Format(&sink,
-               "FfiLaunchParams(launch_dimensions=%s, cluster_dims=%s, "
-               "kernel=%s, shared_mem_bytes=%u)",
-               params.launch_dimensions.ToString(),
-               params.cluster_dims.value_or(se::ClusterDim{0, 0, 0}).ToString(),
-               kernel_name, params.shared_mem_bytes);
+bool EqualDims(XLA_FFI_Dim3 a, XLA_FFI_Dim3 b) {
+  return a.x == b.x && a.y == b.y && a.z == b.z;
 }
+
+bool PositiveDims(XLA_FFI_Dim3 dims) {
+  return dims.x > 0 && dims.y > 0 && dims.z > 0;
+}
+
+bool Divides(XLA_FFI_Dim3 divisor, XLA_FFI_Dim3 dividend) {
+  return dividend.x % divisor.x == 0 && dividend.y % divisor.y == 0 &&
+         dividend.z % divisor.z == 0;
+}
+
+std::optional<se::ClusterDim> ClusterDims(XLA_FFI_Dim3 dims) {
+  if (EqualDims(dims, {0, 0, 0})) {
+    return std::nullopt;
+  }
+  return se::ClusterDim(dims.x, dims.y, dims.z);
+}
+
+absl::Status ValidateLaunchConfig(const XLA_FFI_LaunchConfig* config) {
+  if (config == nullptr ||
+      config->struct_size < XLA_FFI_LaunchConfig_STRUCT_SIZE) {
+    return absl::InvalidArgumentError(
+        "Missing or truncated launch configuration");
+  }
+  const auto& dims = config->launch_dims;
+  if (!PositiveDims(dims.grid) || !PositiveDims(dims.block)) {
+    return absl::InvalidArgumentError(
+        "Grid and block dimensions must be positive");
+  }
+  if (!EqualDims(dims.cluster, {0, 0, 0}) &&
+      (!PositiveDims(dims.cluster) || !Divides(dims.cluster, dims.grid))) {
+    return absl::InvalidArgumentError(
+        "Cluster dimensions must be all zero or positive divisors of the grid");
+  }
+  if (!EqualDims(config->preferred_cluster, {0, 0, 0}) &&
+      (!PositiveDims(config->preferred_cluster) ||
+       !PositiveDims(dims.cluster) ||
+       config->preferred_cluster.z != dims.cluster.z ||
+       !Divides(dims.cluster, config->preferred_cluster) ||
+       !Divides(config->preferred_cluster, dims.grid))) {
+    return absl::InvalidArgumentError(
+        "Preferred cluster x/y dimensions must be positive multiples of "
+        "cluster "
+        "dimensions and divide the grid; z must match the cluster");
+  }
+  if ((config->cooperative != 0 && config->cooperative != 1) ||
+      (config->uses_pdl != 0 && config->uses_pdl != 1)) {
+    return absl::InvalidArgumentError(
+        "Cooperative and PDL flags must be 0 or 1");
+  }
+  return absl::OkStatus();
+}
+
+struct FfiLaunchParams {
+  XLA_FFI_LaunchConfig config;
+  se::NativeKernel kernel;
+};
 
 class FfiKernelCache : public se::CommandBuffer::Resource {
  public:
@@ -244,133 +266,134 @@ class FfiKernelCache : public se::CommandBuffer::Resource {
       launch_params_;
 };
 
+XLA_FFI_Error* FfiCreateLaunchWithConfig(
+    XLA_FFI_RecordContext* ctx, const char* kernel_name,
+    const void* kernel_data, int64_t kernel_size, XLA_FFI_SourceFormat format,
+    const XLA_FFI_LaunchConfig* config, const XLA_FFI_KernelArgs* args,
+    const XLA_FFI_Command* const* dependencies, uint32_t num_dependencies,
+    const XLA_FFI_Command** out_command) {
+  if (absl::Status status = ValidateLaunchConfig(config); !status.ok()) {
+    return ffi::CreateError(status);
+  }
+  if (format != XLA_FFI_SourceFormat_FUNCTION_PTR) {
+    return ffi::CreateError(absl::InvalidArgumentError(
+        absl::StrFormat("Unsupported XLA_FFI_SourceFormat: %d", format)));
+  }
+  if (kernel_data == nullptr) {
+    return ffi::CreateError(absl::InvalidArgumentError(
+        "kernel_data cannot be null for XLA_FFI_SourceFormat_FUNCTION_PTR"));
+  }
+
+  FfiLaunchParams params{
+      *config,
+      // Native driver function handles are non-const opaque pointers.
+      {const_cast<void*>(kernel_data), std::string(kernel_name),
+       ctx->pdl_enabled && config->uses_pdl != 0, config->cooperative != 0,
+       ClusterDims(config->preferred_cluster)}};
+  if (args == nullptr || args->num_args < 0) {
+    return ffi::CreateError(
+        absl::InvalidArgumentError("Invalid XLA_FFI_KernelArgs struct"));
+  }
+  FfiKernelArgsPacked packed_args(args->num_args);
+  packed_args.add_shared_bytes(config->shared_mem_bytes);
+  if (absl::Status status = PackArgs(args, packed_args); !status.ok()) {
+    return ffi::CreateError(status);
+  }
+
+  std::vector<const se::CommandBuffer::Command*> deps;
+  deps.reserve(num_dependencies + ctx->dependencies.size());
+  deps.insert(deps.end(), ctx->dependencies.begin(), ctx->dependencies.end());
+  for (uint32_t i = 0; i < num_dependencies; ++i) {
+    deps.push_back(AsStreamExecutorCommand(dependencies[i]));
+  }
+
+  const auto& dims = config->launch_dims;
+  auto command = ctx->command_buffer->CreateLaunch(
+      se::ThreadDim(dims.block.x, dims.block.y, dims.block.z),
+      se::BlockDim(dims.grid.x, dims.grid.y, dims.grid.z),
+      ClusterDims(dims.cluster), params.kernel, packed_args, deps);
+  if (!command.ok()) {
+    return ffi::CreateError(command.status());
+  }
+  ctx->command_buffer->GetOrConstructResource<FfiKernelCache>()
+      ->SaveLaunchParams(*command, std::move(params));
+  *out_command = AsXlaFfiCommand(*command);
+  return nullptr;
+}
+
 XLA_FFI_Error* FfiCreateLaunch(
     XLA_FFI_RecordContext* ctx, const char* kernel_name,
     const void* kernel_data, int64_t kernel_size, XLA_FFI_SourceFormat format,
     XLA_FFI_LaunchDims launch_dims, uint32_t shared_mem_bytes, int32_t use_pdl,
     const XLA_FFI_KernelArgs* args, const XLA_FFI_Command* const* dependencies,
     uint32_t num_dependencies, const XLA_FFI_Command** out_command) {
-  se::CommandBuffer* cmd_buffer = ctx->command_buffer;
-  const bool pdl = ctx->pdl_enabled && (use_pdl != 0);
+  XLA_FFI_LaunchConfig config{XLA_FFI_LaunchConfig_STRUCT_SIZE,
+                              launch_dims,
+                              shared_mem_bytes,
+                              use_pdl != 0,
+                              0,
+                              {0, 0, 0}};
+  return FfiCreateLaunchWithConfig(ctx, kernel_name, kernel_data, kernel_size,
+                                   format, &config, args, dependencies,
+                                   num_dependencies, out_command);
+}
 
-  if (format != XLA_FFI_SourceFormat_FUNCTION_PTR) {
-    return xla::ffi::CreateError(absl::InvalidArgumentError(
-        absl::StrFormat("Unsupported XLA_FFI_SourceFormat: %d", format)));
+XLA_FFI_Error* FfiUpdateLaunchWithConfig(XLA_FFI_RecordContext* ctx,
+                                         const XLA_FFI_Command* command,
+                                         const XLA_FFI_LaunchConfig* config,
+                                         const XLA_FFI_KernelArgs* args) {
+  if (absl::Status status = ValidateLaunchConfig(config); !status.ok()) {
+    return ffi::CreateError(status);
   }
-  if (kernel_data == nullptr) {
-    return xla::ffi::CreateError(absl::InvalidArgumentError(
-        "kernel_data cannot be null for XLA_FFI_SourceFormat_FUNCTION_PTR"));
+  const se::CommandBuffer::Command* cmd = AsStreamExecutorCommand(command);
+  auto* cache = ctx->command_buffer->GetOrConstructResource<FfiKernelCache>();
+  FfiLaunchParams* params = cache->GetMutableLaunchParams(cmd);
+  if (params == nullptr) {
+    return ffi::CreateError(absl::InvalidArgumentError(
+        "Failed to find cached launch parameters for update"));
+  }
+  const auto& original = params->config;
+  if (!EqualDims(config->launch_dims.cluster, original.launch_dims.cluster) ||
+      !EqualDims(config->preferred_cluster, original.preferred_cluster) ||
+      config->cooperative != original.cooperative ||
+      config->uses_pdl != original.uses_pdl) {
+    return ffi::CreateError(absl::InvalidArgumentError(
+        "Cluster dimensions, preferred cluster dimensions, cooperative mode, "
+        "and PDL cannot change during a launch update"));
   }
 
-  auto* cache = cmd_buffer->GetOrConstructResource<FfiKernelCache>();
-  std::variant<se::Kernel*, se::NativeKernel> kernel_target = se::NativeKernel{
-      // FFI C API passes kernel_data as const void*, whereas driver function
-      // handles (e.g. CUfunction / hipFunction_t) are non-const opaque
-      // pointers.
-      // NOLINTNEXTLINE(*-readability-const-cast)
-      const_cast<void*>(kernel_data), std::string(kernel_name), pdl};
-
+  if (args == nullptr || args->num_args < 0) {
+    return ffi::CreateError(
+        absl::InvalidArgumentError("Invalid XLA_FFI_KernelArgs struct"));
+  }
   FfiKernelArgsPacked packed_args(args->num_args);
-  packed_args.add_shared_bytes(shared_mem_bytes);
+  packed_args.add_shared_bytes(config->shared_mem_bytes);
   if (absl::Status status = PackArgs(args, packed_args); !status.ok()) {
-    return xla::ffi::CreateError(status);
+    return ffi::CreateError(status);
   }
-  // Map dependencies
-  std::vector<const se::CommandBuffer::Command*> deps;
-  deps.reserve(num_dependencies + ctx->dependencies.size());
-  for (const se::CommandBuffer::Command* dep : ctx->dependencies) {
-    deps.push_back(dep);
+  const auto& dims = config->launch_dims;
+  absl::Status status = ctx->command_buffer->UpdateLaunch(
+      cmd, se::ThreadDim(dims.block.x, dims.block.y, dims.block.z),
+      se::BlockDim(dims.grid.x, dims.grid.y, dims.grid.z),
+      ClusterDims(dims.cluster), params->kernel, packed_args);
+  if (!status.ok()) {
+    return ffi::CreateError(status);
   }
-  for (uint32_t i = 0; i < num_dependencies; ++i) {
-    deps.push_back(AsStreamExecutorCommand(dependencies[i]));
-  }
-
-  se::ThreadDim threads(launch_dims.block.x, launch_dims.block.y,
-                        launch_dims.block.z);
-  se::BlockDim blocks(launch_dims.grid.x, launch_dims.grid.y,
-                      launch_dims.grid.z);
-  std::optional<se::ClusterDim> cluster_dims = std::nullopt;
-  if (launch_dims.cluster.x != 0 || launch_dims.cluster.y != 0 ||
-      launch_dims.cluster.z != 0) {
-    cluster_dims = se::ClusterDim(launch_dims.cluster.x, launch_dims.cluster.y,
-                                  launch_dims.cluster.z);
-  }
-
-  FfiLaunchParams params{
-      /*.launch_dimensions = */ LaunchDimensions(blocks, threads),
-      /*.cluster_dims =*/cluster_dims,
-      /*.kernel =*/std::move(kernel_target),
-      /*.shared_mem_bytes = */ shared_mem_bytes,
-  };
-  const int32_t device_ordinal = ctx->executor->device_ordinal();
-  XLA_VLOG_DEVICE(3, device_ordinal)
-      << "FfiCreateLaunch for kernel: " << kernel_name << ", use_pdl: " << pdl
-      << ", num_dependencies passed: " << num_dependencies
-      << ", resolved deps size: " << deps.size()
-      << ", launch_params: " << params;
-
-  auto status_or_cmd = std::visit(
-      absl::Overload{
-          [&](se::Kernel* k) {
-            return cmd_buffer->CreateLaunch(threads, blocks, cluster_dims, *k,
-                                            packed_args, deps);
-          },
-          [&](const se::NativeKernel& nk) {
-            return cmd_buffer->CreateLaunch(threads, blocks, cluster_dims, nk,
-                                            packed_args, deps);
-          }},
-      params.kernel);
-
-  if (!status_or_cmd.ok()) {
-    return xla::ffi::CreateError(status_or_cmd.status());
-  }
-
-  const se::CommandBuffer::Command* cmd = *status_or_cmd;
-  XLA_VLOG_DEVICE(3, device_ordinal)
-      << "FfiCreateLaunch: created command ptr: " << cmd;
-  cache->SaveLaunchParams(cmd, std::move(params));
-
-  *out_command = AsXlaFfiCommand(cmd);
+  params->config = *config;
   return nullptr;
 }
 
 XLA_FFI_Error* FfiUpdateLaunch(XLA_FFI_RecordContext* ctx,
                                const XLA_FFI_Command* command,
                                const XLA_FFI_KernelArgs* args) {
-  se::CommandBuffer* cmd_buffer = ctx->command_buffer;
-  se::CommandBuffer::Command* cmd = AsStreamExecutorCommand(command);
-
-  auto* cache = cmd_buffer->GetOrConstructResource<FfiKernelCache>();
-  FfiLaunchParams* params = cache->GetMutableLaunchParams(cmd);
+  auto* cache = ctx->command_buffer->GetOrConstructResource<FfiKernelCache>();
+  const FfiLaunchParams* params =
+      cache->GetLaunchParams(AsStreamExecutorCommand(command));
   if (params == nullptr) {
-    return xla::ffi::CreateError(absl::InternalError(
+    return ffi::CreateError(absl::InternalError(
         "Failed to find cached launch parameters for update"));
   }
-  FfiKernelArgsPacked packed_args(args->num_args);
-  packed_args.add_shared_bytes(params->shared_mem_bytes);
-  if (absl::Status status = PackArgs(args, packed_args); !status.ok()) {
-    return xla::ffi::CreateError(status);
-  }
-  absl::Status status = std::visit(
-      absl::Overload{
-          [&](se::Kernel* k) {
-            return cmd_buffer->UpdateLaunch(
-                cmd, params->launch_dimensions.thread_counts_per_block(),
-                params->launch_dimensions.block_counts(), params->cluster_dims,
-                *k, packed_args);
-          },
-          [&](const se::NativeKernel& nk) {
-            return cmd_buffer->UpdateLaunch(
-                cmd, params->launch_dimensions.thread_counts_per_block(),
-                params->launch_dimensions.block_counts(), params->cluster_dims,
-                nk, packed_args);
-          }},
-      params->kernel);
-  if (!status.ok()) {
-    return xla::ffi::CreateError(status);
-  }
-
-  return nullptr;
+  return FfiUpdateLaunchWithConfig(ctx, command, &params->config, args);
 }
 
 XLA_FFI_Error* FfiCreateMemcpyD2D(XLA_FFI_RecordContext* ctx, void* dst,
@@ -449,6 +472,8 @@ const XLA_FFI_RecordApi* GetXlaFfiRecordApi() {
       /*.update_memcpy_d2d =*/FfiUpdateMemcpyD2D,
       /*.request_stream_capture =*/FfiRequestStreamCapture,
       /*.create_empty_command =*/FfiCreateEmptyCommand,
+      /*.create_launch_with_config =*/FfiCreateLaunchWithConfig,
+      /*.update_launch_with_config =*/FfiUpdateLaunchWithConfig,
   };
   return &ffi_record_api;
 }

@@ -79,6 +79,30 @@ simply copy XLA FFI headers to your project.
 * `xla::ffi::DataType` vs `xla::PrimitiveType` - similar to `Error`, `DataType`
   is a mirror of the enum defined in XLA.
 
+## RECORD launch configuration
+
+RECORD extension 0.4 adds `create_launch_with_config` and
+`update_launch_with_config`, with corresponding `RecordContext::CreateLaunch`
+and `UpdateLaunch` overloads. Initialize `XLA_FFI_LaunchConfig` to zero, set
+`struct_size` to `XLA_FFI_LaunchConfig_STRUCT_SIZE`, and provide positive grid
+and block dimensions. The configuration includes dynamic shared memory, PDL,
+cooperative mode, and optional regular and preferred cluster dimensions. When
+both cluster shapes are supplied, the regular shape is the fallback.
+
+Updates may change grid/block dimensions, dynamic shared memory, and kernel
+arguments. Cluster shapes, cooperative mode, and PDL must match creation; the
+kernel and dependencies remain fixed. The caller owns the native function and
+must configure its shared-memory opt-in limit before recording. Backends that
+do not support cooperative or preferred-cluster launches return an error for
+those requests. Preferred clusters require driver support for graph-node
+attributes; support for direct launches alone is insufficient. Launch events and
+other CUDA launch attributes are not exposed by this configuration.
+
+The original C callbacks retain their signatures and offsets. Raw C clients
+must check the RECORD extension version before accessing the appended callbacks.
+The C++ extension binding checks versions exactly, so clients compiled against
+0.3 must rebuild against the new headers before binding to a 0.4 runtime.
+
 ## Per-execution custom options
 
 Custom options passed to an executable can be read as a `Dictionary` using
