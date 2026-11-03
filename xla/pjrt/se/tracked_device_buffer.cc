@@ -60,7 +60,8 @@ class AllocatedRawSEDeviceMemory : public RawSEDeviceMemory {
         allocator_(allocator),
         local_device_(local_device) {
     if (local_device_->allocation_model() ==
-        LocalDeviceState::kComputeSynchronized) {
+            LocalDeviceState::kComputeSynchronized &&
+        local_device_->allocation_sync_points_enabled()) {
       sync_point_ = local_device_->GetNextComputeStreamSyncPoint();
     }
   }

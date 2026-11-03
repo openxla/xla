@@ -37,8 +37,10 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/se/buffer_sequencing_event.h"
 #include "xla/pjrt/se/event_pool.h"
+#include "xla/pjrt/se/prioritized_compute_stream.h"
 #include "xla/pjrt/semaphore.h"
 #include "xla/pjrt/worker_thread.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 
@@ -105,6 +107,9 @@ class LocalDeviceState {
     int priority = 0;
     int num_device_to_host_streams = 1;
     int num_device_to_device_streams = 1;
+    // Additional compute stream priorities to create besides the default
+    // compute stream.
+    std::vector<int> additional_compute_stream_priorities;
   };
 
   using DeviceErrorCallback =
@@ -141,6 +146,56 @@ class LocalDeviceState {
   se::Stream* compute_stream() const { return compute_stream_.get(); }
   se::Stream* host_to_device_stream() const {
     return host_to_device_stream_.get();
+  }
+
+  // Prioritized compute streams. Entry 0 is always the default compute stream
+  // (`compute_stream()`), so there is at least one entry; additional distinct
+  // priorities are created when
+  // `StreamOptions::additional_compute_stream_priorities` is set, and the
+  // entries are kept sorted by descending priority value (from lowest to
+  // highest CUDA priority, e.g. 0, -1, -3). Only when there is more than one
+  // entry does execution behavior change (per-stream events and
+  // completion-ordered deallocation).
+  bool has_prioritized_compute_streams() const {
+    return prioritized_compute_streams_.size() > 1;
+  }
+
+  // Number of prioritized compute streams, including the default compute
+  // stream.
+  int num_prioritized_compute_streams() const {
+    return static_cast<int>(prioritized_compute_streams_.size());
+  }
+
+  PrioritizedComputeStream* default_prioritized_compute_stream() const {
+    return default_prioritized_compute_stream_;
+  }
+
+  // Prioritized compute stream `index`, ordered by descending priority value.
+  PrioritizedComputeStream* prioritized_compute_stream(int index) const {
+    return prioritized_compute_streams_.at(index).get();
+  }
+
+  // Returns the prioritized compute stream whose priority is closest to
+  // `priority`. Ties are resolved towards the higher priority (the smaller
+  // value). Returns the default compute stream when no additional prioritized
+  // compute streams are configured.
+  PrioritizedComputeStream* ComputeStreamForPriority(int priority) const;
+
+  // Installs the prioritized compute streams' allocators on top of
+  // `base_allocator`, which must outlive this object. No-op when no additional
+  // prioritized compute streams are configured.
+  void InitializePrioritizedComputeStreamAllocators(
+      se::DeviceAddressAllocator* base_allocator);
+
+  // Allocation sync points (see `GetNextComputeStreamSyncPoint`) make a newly
+  // allocated buffer wait for the compute stream to pass the point at which its
+  // previous owner was released. With additional prioritized compute streams,
+  // memory is released only after the device work using it has completed,
+  // which makes sync points both unnecessary and, since they wait on the
+  // default compute stream only, a source of priority inversion. They are
+  // therefore disabled in that case.
+  bool allocation_sync_points_enabled() const {
+    return !has_prioritized_compute_streams();
   }
 
   // Returns a device to host stream. Allocates streams in a round-robin fashion
@@ -268,6 +323,12 @@ class LocalDeviceState {
   se::StreamExecutor* const executor_;
   LocalClient* const client_;
   std::unique_ptr<se::Stream> compute_stream_;
+  // Includes the default compute stream and distinct streams created for
+  // `StreamOptions::additional_compute_stream_priorities`, sorted by descending
+  // priority value.
+  std::vector<std::unique_ptr<PrioritizedComputeStream>>
+      prioritized_compute_streams_;
+  PrioritizedComputeStream* default_prioritized_compute_stream_ = nullptr;
   std::unique_ptr<se::Stream> host_to_device_stream_;
   std::vector<std::unique_ptr<se::Stream>> device_to_host_streams_;
   std::vector<std::unique_ptr<se::Stream>> device_to_device_streams_;

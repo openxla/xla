@@ -108,6 +108,7 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/client/local_client.h"
+#include "xla/custom_options.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -144,6 +145,7 @@ limitations under the License.
 #include "xla/pjrt/se/buffer_sequencing_event.h"
 #include "xla/pjrt/se/event_pool.h"
 #include "xla/pjrt/se/local_device_state.h"
+#include "xla/pjrt/se/prioritized_compute_stream.h"
 #include "xla/pjrt/se/se_raw_buffer.h"
 #include "xla/pjrt/se/stream_executor_executable.h"
 #include "xla/pjrt/se/stream_executor_pjrt_abi_version.h"
@@ -332,6 +334,7 @@ PjRtStreamExecutorRawClient::PjRtStreamExecutorRawClient(
   for (const auto& state : local_device_states_) {
     CHECK(state != nullptr);
     local_device_states_by_id_[state->local_device_id()] = state.get();
+    state->InitializePrioritizedComputeStreamAllocators(allocator_);
   }
 }
 
@@ -1431,6 +1434,29 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     }
   }
 
+  // The requested execution priority picks one of the device's prioritized
+  // compute streams. Without additional prioritized compute streams every
+  // execution runs on the default compute stream, as before.
+  PrioritizedComputeStream* prioritized_stream =
+      device_state->default_prioritized_compute_stream();
+  if (device_state->has_prioritized_compute_streams() &&
+      options.custom_options != nullptr) {
+    absl::StatusOr<int64_t> priority =
+        options.custom_options->Get<int64_t>(kExecutionPriorityCustomOption);
+    if (priority.ok()) {
+      prioritized_stream =
+          device_state->ComputeStreamForPriority(static_cast<int>(*priority));
+    } else if (!absl::IsNotFound(priority.status())) {
+      LOG_FIRST_N(WARNING, 1)
+          << "Priority not found for " << kExecutionPriorityCustomOption
+          << " custom option: " << priority.status();
+    }
+  }
+  se::Stream* const compute_stream = prioritized_stream->stream();
+  // Non-null only when the device has additional prioritized compute streams.
+  se::DeviceAddressAllocator* const stream_allocator =
+      prioritized_stream->allocator();
+
   auto launch_on_device =
       [device_state, gpu_run_options = gpu_run_options,
        launch_gpu_run_options = std::move(launch_gpu_run_options),
@@ -1450,7 +1476,8 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
        extra_deps = std::move(extra_deps),
        result_definition_event_promises =
            std::move(result_definition_event_promises),
-       control_deps = std::move(control_deps)]() mutable -> PjRtDeviceEventRef {
+       control_deps = std::move(control_deps), prioritized_stream,
+       compute_stream, stream_allocator]() mutable -> PjRtDeviceEventRef {
     // Create PjRt<->StreamExecutor adaptors to send/recv device memory as PjRt
     // chunks via the user-provided callbacks. Send operations are scheduled in
     // the client thread pool. Sends are issued from this thread, so the send
@@ -1463,8 +1490,17 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     RecvDeviceMemoryFunction recv_device_memory =
         ConvertRecvCallbacksToRecvFunction(replica, recv_callbacks);
 
+    // With prioritized compute streams, memory released while enqueueing this
+    // execution (temporaries torn down after launch, copy-protected outputs,
+    // ...) is collected and handed back to the allocator only once the
+    // execution has completed on its stream.
+    std::optional<ScopedDeferredDeallocationCollector> deallocation_collector;
+    if (stream_allocator != nullptr) {
+      deallocation_collector.emplace(prioritized_stream);
+    }
+
     ExecutableRunOptions run_options;
-    run_options.set_stream(device_state->compute_stream());
+    run_options.set_stream(compute_stream);
     run_options.set_device_ordinal(device_state->local_device_id().value());
     run_options.set_local_device_count(
         raw_client->client() != nullptr ? raw_client->client()->device_count()
@@ -1476,7 +1512,9 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
         device_state->host_to_device_stream());
     run_options.set_device_to_host_stream(
         device_state->GetDeviceToHostStream());
-    run_options.set_allocator(raw_client->allocator());
+    run_options.set_allocator(stream_allocator != nullptr
+                                  ? stream_allocator
+                                  : raw_client->allocator());
     run_options.set_intra_op_thread_pool(
         raw_client->client() != nullptr
             ? raw_client->client()
@@ -1504,7 +1542,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     for (size_t i = 0; i < extra_deps.size(); ++i) {
       const auto& event = extra_deps[i];
       if (auto ev = event.down_cast<BufferSequencingEvent>()) {
-        ev->WaitForEventOnStream(device_state->compute_stream());
+        ev->WaitForEventOnStream(compute_stream);
         if (ev->IsPredeterminedError()) {
           if (predetermined_error.ok()) {
             predetermined_error = ev->GetDefinedStatus();
@@ -1523,7 +1561,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     for (size_t i = 0; i < control_deps.size(); ++i) {
       const auto& event = control_deps[i];
       if (auto ev = event.down_cast<BufferSequencingEvent>()) {
-        ev->WaitForEventOnStream(device_state->compute_stream());
+        ev->WaitForEventOnStream(compute_stream);
       } else if (event) {
         xla::BlockUntilReady(event);
       }
@@ -1545,13 +1583,13 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     if (key.has_value()) {
       start_time_ns = std::make_shared<uint64_t>();
       auto status = device_state->ThenExecuteCallback(
-          device_state->compute_stream(),
+          compute_stream,
           [start_time_ns]() {
             *start_time_ns = tsl::Env::Default()->NowNanos();
           },
           nullptr, "RecordExecuteStart");
       if (!status.ok()) {
-        StallStreamOnError(device_state, device_state->compute_stream());
+        StallStreamOnError(device_state, compute_stream);
         LOG(ERROR) << "Problem registering Execute start time: " << status;
         *start_time_ns = tsl::Env::Default()->NowNanos();
       }
@@ -1620,7 +1658,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     // the stream, and to avoid needing a mutex.
     if (key.has_value()) {
       auto status = device_state->ThenExecuteCallback(
-          device_state->compute_stream(),
+          compute_stream,
           [key, start_time_ns,
            device_type = GetDeviceType(device->client()->platform_id())]() {
             auto elapsed =
@@ -1631,7 +1669,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
           nullptr, "RecordExecuteFinish");
       if (!status.ok()) {
         LOG(ERROR) << "Error logging device time.";
-        StallStreamOnError(device_state, device_state->compute_stream());
+        StallStreamOnError(device_state, compute_stream);
         auto device_type = GetDeviceType(device->client()->platform_id());
         auto elapsed = absl::FromUnixNanos(tsl::Env::Default()->NowNanos()) -
                        absl::FromUnixNanos(*start_time_ns);
@@ -1647,7 +1685,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     };
 
     auto definition_event = [&]() -> PjRtDeviceEventRef {
-      se::Stream* stream = device_state->compute_stream();
+      se::Stream* stream = compute_stream;
 
       if (!result_buffer_or_status.ok()) {
         StallStreamOnError(device_state, stream);
@@ -1680,6 +1718,22 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
             });
         return error_event;
       }
+      if (!prioritized_stream->is_default()) {
+        // Executions on an additional prioritized compute stream get a
+        // dedicated definition event recorded on that stream. The shared
+        // sync-point event queue tracks the default compute stream only.
+        BufferSequencingEventRef stream_event =
+            BufferSequencingEvent::Create(raw_client->async_work_runner());
+        absl::Status status = device_state->AllocateAndRecordEvent(
+            stream_event, stream, "PrioritizedComputeDefinitionEvent");
+        if (!status.ok()) {
+          StallStreamOnError(device_state, stream);
+          return raw_client->CreateErrorDeviceEvent(add_error_context(status));
+        }
+        stream_event->AddErrorContext(
+            kExecutableName, std::string(executable->executable()->name()));
+        return PjRtDeviceEventRef(std::move(stream_event));
+      }
       absl::StatusOr<BufferSequencingEventRef> definition_event_or =
           device_state->GetEventForComputeStreamSyncPoint(
               device_state->GetNextComputeStreamSyncPoint(),
@@ -1699,7 +1753,44 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
         promise.Set(definition_event);
       }
     }
-    if (device_state->allocation_model() == LocalDeviceState::kSynchronous &&
+    if (stream_allocator != nullptr) {
+      // Remember the stream's most recent execution so that later releases of
+      // memory used on this stream (e.g. results deleted by the caller) wait
+      // for it, and release the memory freed during this enqueue after it.
+      BufferSequencingEventRef stream_event =
+          definition_event.down_cast<BufferSequencingEvent>();
+      if (!stream_event) {
+        // The execution failed to enqueue and the definition event is a plain
+        // error event. Record a marker on the stream so that memory released
+        // by the partial enqueue is recycled only once the stream has drained.
+        stream_event =
+            BufferSequencingEvent::Create(raw_client->async_work_runner());
+        if (!device_state
+                 ->AllocateAndRecordEvent(stream_event, compute_stream,
+                                          "PrioritizedComputeErrorMarker")
+                 .ok()) {
+          stream_event = BufferSequencingEventRef();
+        }
+      }
+      if (stream_event) {
+        prioritized_stream->set_last_event(stream_event);
+      }
+      std::vector<PrioritizedComputeStream::DeferredDeallocation>
+          deallocations = deallocation_collector->Take();
+      deallocation_collector.reset();
+      if (!deallocations.empty()) {
+        if (stream_event) {
+          stream_event.AndThen(
+              [prioritized_stream, deallocations = std::move(deallocations)]() {
+                prioritized_stream->PerformDeferredDeallocations(deallocations);
+              });
+        } else {
+          prioritized_stream->PerformDeferredDeallocations(deallocations);
+        }
+      }
+    }
+    if ((device_state->allocation_model() == LocalDeviceState::kSynchronous ||
+         stream_allocator != nullptr) &&
         result_buffer_or_status.ok()) {
       // If we used a transient tuple for the arguments we donated its root
       // table buffer. In that case, and/or if we donated any input buffers that
@@ -1708,6 +1799,11 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
       // after execution completes. (Currently XLA does not support aliasing
       // tuple tables, so if any donated parameter is a tuple there will be
       // donated but unaliased buffers.)
+      //
+      // With prioritized compute streams the same holds for every input and
+      // result: nothing may be recycled until the stream has finished with it,
+      // because work on another compute stream could otherwise reuse the
+      // memory while this one is still running.
       std::vector<tsl::AsyncValueRef<RawSEDeviceMemory>> buffers_to_release;
       buffers_to_release.reserve(results.size() + inputs.size());
       for (auto& node : results) {
