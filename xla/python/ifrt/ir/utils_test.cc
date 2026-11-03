@@ -13,12 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/python/ifrt/ir/transforms/utils.h"
+#include "xla/python/ifrt/ir/utils.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include <string>
 #include <utility>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"

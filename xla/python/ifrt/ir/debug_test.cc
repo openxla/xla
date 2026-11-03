@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/python/ifrt/ir/transforms/debug.h"
+#include "xla/python/ifrt/ir/debug.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -30,7 +30,6 @@ limitations under the License.
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Dialect.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/Pass.h"
@@ -40,7 +39,6 @@ limitations under the License.
 #include "tsl/platform/path.h"
 #include "xla/python/ifrt/ir/support/module_parsing.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
 
 namespace xla {
 namespace ifrt {
