@@ -17,12 +17,14 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
@@ -38,8 +40,10 @@ limitations under the License.
 #include "xla/client/local_client.h"
 #include "xla/pjrt/async_work_runner.h"
 #include "xla/pjrt/se/buffer_sequencing_event.h"
+#include "xla/pjrt/se/prioritized_compute_stream.h"
 #include "xla/pjrt/worker_thread.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/sycl/sycl_platform_id.h"
@@ -52,6 +56,34 @@ limitations under the License.
 #include "xla/util.h"
 
 namespace xla {
+
+PrioritizedComputeStream* LocalDeviceState::ComputeStreamForPriority(
+    int priority) const {
+  PrioritizedComputeStream* best = prioritized_compute_streams_.front().get();
+  int best_distance = std::abs(priority - best->priority());
+  for (size_t i = 1; i < prioritized_compute_streams_.size(); ++i) {
+    PrioritizedComputeStream* candidate = prioritized_compute_streams_[i].get();
+    const int distance = std::abs(priority - candidate->priority());
+    if (distance <= best_distance) {
+      best = candidate;
+      best_distance = distance;
+    } else {
+      break;
+    }
+  }
+  return best;
+}
+
+void LocalDeviceState::InitializePrioritizedComputeStreamAllocators(
+    se::DeviceAddressAllocator* base_allocator) {
+  if (!has_prioritized_compute_streams() || base_allocator == nullptr) {
+    return;
+  }
+  for (const std::unique_ptr<PrioritizedComputeStream>& compute_stream :
+       prioritized_compute_streams_) {
+    compute_stream->InitializeAllocator(base_allocator);
+  }
+}
 
 LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
                                    LocalClient* client,
@@ -126,6 +158,47 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
       };
   compute_stream_ = create_stream("Compute");
   host_to_device_stream_ = create_stream("Host-to-device");
+  // The default compute stream is always the first entry of
+  // `prioritized_compute_streams_`, so that execution code handles one and
+  // several compute streams uniformly (`Execute` always goes through a
+  // PrioritizedComputeStream handle). Without additional priorities it is the
+  // only entry, its allocator() stays null, and nothing else changes.
+  // Additional distinct priorities follow, sorted by descending priority value
+  // (e.g. 0, -1, -3).
+  const int default_priority =
+      stream_options.has_value() ? stream_options->priority : 0;
+  prioritized_compute_streams_.push_back(PrioritizedComputeStream::WrapDefault(
+      default_priority, compute_stream_.get()));
+  default_prioritized_compute_stream_ =
+      prioritized_compute_streams_.front().get();
+  if (stream_options.has_value()) {
+    for (int stream_priority :
+         stream_options->additional_compute_stream_priorities) {
+      // Callers are expected to pass distinct priorities that differ from
+      // `stream_options->priority`, but this is a public API: skip duplicates
+      // rather than creating two streams at the same priority.
+      if (absl::c_any_of(
+              prioritized_compute_streams_,
+              [stream_priority](
+                  const std::unique_ptr<PrioritizedComputeStream>& existing) {
+                return existing->priority() == stream_priority;
+              })) {
+        continue;
+      }
+      std::unique_ptr<se::Stream> stream =
+          executor->CreateStream(stream_priority).value();
+      stream->SetName(
+          absl::StrFormat("Compute [priority %d]", stream_priority));
+      prioritized_compute_streams_.push_back(
+          PrioritizedComputeStream::CreateOwned(stream_priority,
+                                                std::move(stream)));
+    }
+    absl::c_sort(prioritized_compute_streams_,
+                 [](const std::unique_ptr<PrioritizedComputeStream>& a,
+                    const std::unique_ptr<PrioritizedComputeStream>& b) {
+                   return a->priority() > b->priority();
+                 });
+  }
   if (use_callback_stream) {
     callback_stream_map_ =
         absl::flat_hash_map<se::Stream*, std::unique_ptr<se::Stream>>();
@@ -219,14 +292,21 @@ LocalDeviceState::~LocalDeviceState() {
     }
   }
   host_to_device_stream_.reset();
+  for (std::unique_ptr<PrioritizedComputeStream>& prioritized_stream :
+       prioritized_compute_streams_) {
+    prioritized_stream->ResetOwnedStream();
+  }
   compute_stream_.reset();
 
   // 3. Join callback/cleanup threads to execute all pending tasks.
   callback_thread_.reset();
   cleanup_thread_.reset();
 
-  // 4. Finally, clear compute events.
+  // 4. Finally, clear compute events and the prioritized compute streams'
+  // bookkeeping.
   compute_events_.clear();
+  default_prioritized_compute_stream_ = nullptr;
+  prioritized_compute_streams_.clear();
 }
 
 absl::Status LocalDeviceState::SynchronizeAllActivity() {
@@ -237,6 +317,13 @@ absl::Status LocalDeviceState::SynchronizeAllActivity() {
   // stopped, also block on the compute stream. If SynchronizeAllActivity is
   // fixed, we could remove the BlockHostUntilDone call.
   status.Update(compute_stream_->BlockHostUntilDone());
+  for (const std::unique_ptr<PrioritizedComputeStream>& prioritized_stream :
+       prioritized_compute_streams_) {
+    if (!prioritized_stream->is_default() &&
+        prioritized_stream->stream() != nullptr) {
+      status.Update(prioritized_stream->stream()->BlockHostUntilDone());
+    }
+  }
   if (callback_stream_map_.has_value()) {
     absl::MutexLock lock(callback_stream_map_mu_);
     for (auto& callback_stream : callback_stream_map_.value()) {
