@@ -582,7 +582,6 @@ cc_library(
         ":custom_call_sharding_helper",
         ":dot_as_convolution_util",
         ":hlo_graph_dumper",
-        ":hlo_module_config",
         ":memory_annotations_hdr",
         "//xla:array",
         "//xla:protobuf_util",
@@ -594,9 +593,6 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
-        "//xla/hlo/pass:hlo_pass_context",
-        "//xla/hlo/pass:hlo_pass_options",
-        "//xla/hlo/pass:hlo_pass_registry",
         "//xla/hlo/utils:hlo_sharding_util",
         "//xla/service/spmd:shard_barrier_partitioner",
         "//xla/tsl/platform:errors",
@@ -614,7 +610,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
     ],
-    alwayslink = True,
 )
 
 xla_cc_test(
@@ -623,7 +618,6 @@ xla_cc_test(
         "sharding_propagation_test.cc",
     ],
     deps = [
-        ":hlo_module_config",
         ":sharding_propagation",
         "//xla:shape_util",
         "//xla:util",
@@ -631,7 +625,6 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
-        "//xla/hlo/testlib:verified_hlo_module",
         "//xla/hlo/transforms/simplifiers:hlo_constant_splitter",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/hlo/utils:hlo_matchers",
@@ -639,7 +632,6 @@ xla_cc_test(
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
@@ -2664,7 +2656,6 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla/hlo/ir:hlo",
-        "//xla/hlo/ir:hlo_sharding",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
