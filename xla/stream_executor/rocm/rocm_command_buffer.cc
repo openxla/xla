@@ -347,6 +347,11 @@ absl::StatusOr<GraphNodeHandle> RocmCommandBuffer::CreateKernelNode(
     const ThreadDim& threads, const BlockDim& blocks,
     const std::optional<ClusterDim>& cluster_dims, const NativeKernel& kernel,
     const KernelArgsPackedArrayBase& args) {
+  if (kernel.cooperative) {
+    return absl::UnimplementedError(
+        "Cooperative kernel launches are not supported by ROCm command "
+        "buffers");
+  }
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
 
   VLOG(2) << "Add kernel node to a graph " << graph_
@@ -405,6 +410,11 @@ absl::Status RocmCommandBuffer::UpdateKernelNode(
     GraphNodeHandle node_handle, const ThreadDim& threads,
     const BlockDim& blocks, const std::optional<ClusterDim>& cluster_dims,
     const NativeKernel& kernel, const KernelArgsPackedArrayBase& args) {
+  if (kernel.cooperative) {
+    return absl::UnimplementedError(
+        "Cooperative kernel launches are not supported by ROCm command "
+        "buffers");
+  }
   const uint64_t shared_mem_bytes = args.number_of_shared_bytes();
 
   VLOG(2) << "Set kernel node params " << node_handle << " in graph executable "

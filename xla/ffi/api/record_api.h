@@ -168,13 +168,14 @@ class RecordContextBase {
 
   // Unified CreateLaunch (handles both Span<const KernelArg> and Span<const
   // void* const> for args)
+  // Cooperative launches retain their launch mode across UpdateLaunch calls.
   template <typename KernelArgSpan,
             typename DepSpan = std::initializer_list<const XLA_FFI_Command*>>
   StatusOr<const XLA_FFI_Command*> CreateLaunch(
       const char* kernel_name, const void* kernel_data, size_t kernel_size,
       SourceFormat format, XLA_FFI_LaunchDims launch_dims,
       uint32_t shared_mem_bytes, bool uses_pdl, const KernelArgSpan& args,
-      const DepSpan& dependencies = {}) {
+      const DepSpan& dependencies = {}, bool cooperative = false) {
     if (kernel_data == nullptr) {
       return ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_INVALID_ARGUMENT,
@@ -188,8 +189,9 @@ class RecordContextBase {
     XLA_FFI_Error* err = frame_->api->create_launch(
         frame_->record_ctx, kernel_name, kernel_data, kernel_size,
         static_cast<XLA_FFI_SourceFormat>(format), launch_dims,
-        shared_mem_bytes, static_cast<int32_t>(uses_pdl), &ffi_args,
-        std::data(dependencies), std::size(dependencies), &out_command);
+        shared_mem_bytes, static_cast<int32_t>(uses_pdl),
+        static_cast<int32_t>(cooperative), &ffi_args, std::data(dependencies),
+        std::size(dependencies), &out_command);
 
     if (err) {
       return ErrorPolicy::TakeError(api_, err);

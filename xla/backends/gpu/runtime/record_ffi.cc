@@ -248,8 +248,9 @@ XLA_FFI_Error* FfiCreateLaunch(
     XLA_FFI_RecordContext* ctx, const char* kernel_name,
     const void* kernel_data, int64_t kernel_size, XLA_FFI_SourceFormat format,
     XLA_FFI_LaunchDims launch_dims, uint32_t shared_mem_bytes, int32_t use_pdl,
-    const XLA_FFI_KernelArgs* args, const XLA_FFI_Command* const* dependencies,
-    uint32_t num_dependencies, const XLA_FFI_Command** out_command) {
+    int32_t cooperative, const XLA_FFI_KernelArgs* args,
+    const XLA_FFI_Command* const* dependencies, uint32_t num_dependencies,
+    const XLA_FFI_Command** out_command) {
   se::CommandBuffer* cmd_buffer = ctx->command_buffer;
   const bool pdl = ctx->pdl_enabled && (use_pdl != 0);
 
@@ -268,7 +269,8 @@ XLA_FFI_Error* FfiCreateLaunch(
       // handles (e.g. CUfunction / hipFunction_t) are non-const opaque
       // pointers.
       // NOLINTNEXTLINE(*-readability-const-cast)
-      const_cast<void*>(kernel_data), std::string(kernel_name), pdl};
+      const_cast<void*>(kernel_data), std::string(kernel_name), pdl,
+      cooperative != 0};
 
   FfiKernelArgsPacked packed_args(args->num_args);
   packed_args.add_shared_bytes(shared_mem_bytes);

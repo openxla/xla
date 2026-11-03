@@ -41,7 +41,7 @@ extern "C" {
 //==============================================================================
 #define XLA_FFI_Extension_Record 128
 #define XLA_FFI_Extension_Record_MajorVersion 0
-#define XLA_FFI_Extension_Record_MinorVersion 3
+#define XLA_FFI_Extension_Record_MinorVersion 4
 
 //===----------------------------------------------------------------------===//
 // Command Buffer Recording API (FFI Record)
@@ -156,6 +156,8 @@ typedef struct XLA_FFI_RecordApi {
   // need to be kept alive by the client. The args array itself can also be
   // destroyed after the call to create_launch since implementations must copy
   // this internally before returning.
+  // A nonzero cooperative value enables a cooperative launch. This setting
+  // cannot be changed by update_launch.
   XLA_FFI_Error* (*create_launch)(
       XLA_FFI_RecordContext* ctx,
       const char* kernel_name,                     //
@@ -165,6 +167,7 @@ typedef struct XLA_FFI_RecordApi {
       XLA_FFI_LaunchDims launch_dims,              //
       uint32_t shared_mem_bytes,                   //
       int32_t uses_pdl,                            //
+      int32_t cooperative,                         //
       const XLA_FFI_KernelArgs* args,              //
       const XLA_FFI_Command* const* dependencies,  //
       uint32_t num_dependencies,                   //
