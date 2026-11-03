@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -33,6 +30,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/log_severity.h"
@@ -56,9 +55,9 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "google/protobuf/text_format.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
 #include "xla/backends/gpu/ffi.h"
@@ -100,6 +99,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/gpu_topology.pb.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -3570,7 +3570,7 @@ TEST(StreamExecutorGpuClientTest, SharedPoolAnchorsCollectiveMemoryAtLowerEnd) {
       static_cast<int>(gpu::MemorySpaceColor::kCollective);
   constexpr uint64_t kBytes = uint64_t{1} << 20;
   auto address = [](const se::ScopedDeviceAddress<uint8_t>& memory) {
-    return absl::bit_cast<uintptr_t>(memory->opaque());
+    return reinterpret_cast<uintptr_t>(memory->opaque());
   };
 
   ASSERT_OK_AND_ASSIGN(
@@ -4453,6 +4453,141 @@ TEST_F(VmmTest, CollectiveSpacePlacementKeepsAddressStableAcrossExecutions) {
   for (int i = 1; i < kIters; ++i) {
     EXPECT_EQ(RecordedBufferAddresses()[i], RecordedBufferAddresses()[0])
         << "Address changed on run " << i + 1;
+  }
+}
+
+// kTempBuffer has its own pool, so default allocations cannot take a freed
+// temp slot.
+TEST(StreamExecutorGpuClientTest, TempBufferColorUsesSeparatePool) {
+  ScopedXlaFlags flags("--xla_gpu_temp_buffer_use_separate_color=true");
+  GpuClientOptions options;
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
+  options.allocator_config.memory_fraction = 0.05;
+  options.allowed_devices = {0};
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+  auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+  auto* allocator =
+      dynamic_cast<se::MultiDeviceAdapter*>(raw_client->allocator());
+  ASSERT_NE(allocator, nullptr);
+  ASSERT_OK_AND_ASSIGN(tsl::Allocator * default_pool,
+                       allocator->GetAllocator(/*device_ordinal=*/0));
+
+  constexpr int kDefault = static_cast<int>(gpu::MemorySpaceColor::kDefault);
+  constexpr int kTemp = static_cast<int>(gpu::MemorySpaceColor::kTempBuffer);
+  constexpr uint64_t kBytes = uint64_t{1} << 20;
+  std::optional<tsl::AllocatorStats> stats = default_pool->GetStats();
+  ASSERT_TRUE(stats.has_value());
+  const int64_t default_bytes_in_use = stats->bytes_in_use;
+
+  ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> temp,
+                       allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                                           /*retry_on_failure=*/false, kTemp));
+  EXPECT_EQ(default_pool->GetStats()->bytes_in_use, default_bytes_in_use);
+  void* const temp_address = temp->opaque();
+  ASSERT_OK(temp.Free());
+
+  ASSERT_OK_AND_ASSIGN(
+      se::ScopedDeviceAddress<uint8_t> other,
+      allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                          /*retry_on_failure=*/false, kDefault));
+  ASSERT_OK_AND_ASSIGN(se::ScopedDeviceAddress<uint8_t> temp_again,
+                       allocator->Allocate(/*device_ordinal=*/0, kBytes,
+                                           /*retry_on_failure=*/false, kTemp));
+  EXPECT_EQ(temp_again->opaque(), temp_address);
+#if TENSORFLOW_USE_ROCM
+  EXPECT_THAT(allocator->Allocate(/*device_ordinal=*/0, uint64_t{1} << 50,
+                                  /*retry_on_failure=*/false, kTemp),
+              StatusIs(absl::StatusCode::kResourceExhausted,
+                       HasSubstr("GPU_tempbuffer_0_bfc")));
+#endif
+}
+
+// Records the address of its first (operand-aliased) result. The second result
+// makes the custom call tuple-shaped.
+absl::Status RecordTempAddressCustomCall(ffi::AnyBuffer,
+                                         ffi::Result<ffi::AnyBuffer> aliased,
+                                         ffi::Result<ffi::AnyBuffer>) {
+  RecordedBufferAddresses().push_back(aliased->untyped_data());
+  return absl::OkStatus();
+}
+
+XLA_FFI_DEFINE_HANDLER(kRecordTempAddressCustomCall,
+                       RecordTempAddressCustomCall,
+                       ffi::Ffi::Bind()
+                           .Arg<ffi::AnyBuffer>()
+                           .Ret<ffi::AnyBuffer>()
+                           .Ret<ffi::AnyBuffer>());
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "RecordTempAddress", "CUDA",
+                         kRecordTempAddressCustomCall);
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "RecordTempAddress", "ROCM",
+                         kRecordTempAddressCustomCall);
+
+// The flag recolours a temp allocation only when a second one is combined into
+// it; cc's tuple index table is that second one. Run i returns 512*1024*i*i.
+constexpr char kTempBufferModule[] = R"(
+  HloModule temp_buffer_color
+  add {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT sum = f32[] add(a, b)
+  }
+  ENTRY e {
+    p0 = f32[512,1024] parameter(0)
+    t = f32[512,1024] multiply(p0, p0)
+    cc = (f32[512,1024], f32[8]) custom-call(t),
+      custom_call_target="RecordTempAddress", api_version=API_VERSION_TYPED_FFI,
+      output_to_operand_aliasing={{0}: (0, {})}
+    s = f32[512,1024] get-tuple-element(cc), index=0
+    zero = f32[] constant(0)
+    ROOT r = f32[] reduce(s, zero), dimensions={0,1}, to_apply=add
+  })";
+
+TEST(StreamExecutorGpuClientTest, TempBufferColorKeepsTempAddressStable) {
+  ScopedXlaFlags flags("--xla_gpu_temp_buffer_use_separate_color=true");
+  RecordedBufferAddresses().clear();
+  GpuClientOptions options;
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
+  options.allocator_config.memory_fraction = 0.05;
+  options.allowed_devices = {0};
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+  CompileOptions opts;
+  opts.executable_build_options.mutable_debug_options()
+      ->set_xla_gpu_temp_buffer_use_separate_color(true);
+  ASSERT_OK_AND_ASSIGN(auto executable,
+                       CompileExecutable(kTempBufferModule, *client, opts));
+  ASSERT_OK_AND_ASSIGN(auto memory_stats,
+                       executable->GetExecutable()->GetCompiledMemoryStats());
+  BufferAssignmentProto buffer_assignment;
+  ASSERT_TRUE(buffer_assignment.ParseFromString(
+      memory_stats.serialized_buffer_assignment));
+  ASSERT_TRUE(absl::c_any_of(buffer_assignment.buffer_allocations(),
+                             [](const BufferAllocationProto& allocation) {
+                               return allocation.color() ==
+                                      static_cast<int64_t>(
+                                          gpu::MemorySpaceColor::kTempBuffer);
+                             }))
+      << "No allocation was placed in memory space kTempBuffer";
+  ASSERT_OK_AND_ASSIGN(
+      auto* mem, client->addressable_devices()[0]->default_memory_space());
+  constexpr int kIters = 3;
+  for (int i = 1; i <= kIters; ++i) {
+    const float v = static_cast<float>(i);
+    Literal input =
+        LiteralUtil::CreateFullWithDescendingLayout<float>({512, 1024}, v);
+    ASSERT_OK_AND_ASSIGN(auto in_buf,
+                         client->BufferFromHostLiteral(input, mem));
+    auto result = executable->Execute({{in_buf.get()}}, {});
+    ASSERT_OK_AND_ASSIGN(auto result_lit, ExtractSingleResult(result));
+    EXPECT_EQ(result_lit->Get<float>({}), 512 * 1024 * v * v)
+        << "Mismatch on run " << i;
+  }
+  ASSERT_EQ(RecordedBufferAddresses().size(), kIters);
+  for (int i = 1; i < kIters; ++i) {
+    EXPECT_EQ(RecordedBufferAddresses()[i], RecordedBufferAddresses()[0])
+        << "Temp address changed on run " << i + 1;
   }
 }
 
