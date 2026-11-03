@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "benchmark/registration.h"
 #include "tsl/platform/test.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/test_benchmark.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -1491,6 +1493,220 @@ TEST_F(PatternMatcherTest, TestWithControlDeps) {
       "HloInstruction expected to have control successors {div} but has {}\n"
       "in div = f32[4]{0} divide(p0, p1), control-predecessors={mul}");
 }
+
+TEST_F(PatternMatcherTest, SinglePassNonCapturingAndSelectiveCapturePass) {
+  const HloInstruction* captured_inst = nullptr;
+  const Shape* captured_shape = nullptr;
+  const Layout* captured_layout = nullptr;
+
+  static_assert(!match::detail::HasCapture<decltype(m::Op())>::value);
+  static_assert(!match::detail::HasCapture<decltype(m::Shape())>::value);
+  static_assert(!match::detail::HasCapture<decltype(m::Layout())>::value);
+  static_assert(!match::detail::HasCapture<decltype(m::Add(
+                    m::Op(), m::ConstantScalar(1)))>::value);
+  static_assert(!match::detail::HasCapture<decltype(m::AddAnyOrder(
+                    m::Op(), m::ConstantScalar(1)))>::value);
+  static_assert(!match::detail::HasCapture<decltype(m::AnyOf<HloInstruction>(
+                    m::Add(), m::Multiply()))>::value);
+  static_assert(sizeof(decltype(m::Op())) == 1);
+  static_assert(sizeof(decltype(m::Shape())) == 1);
+  static_assert(sizeof(decltype(m::Layout())) == 1);
+
+  static_assert(match::detail::HasCapture<decltype(m::Add(m::Op(&captured_inst),
+                                                          m::Op()))>::value);
+  static_assert(match::detail::HasCapture<decltype(m::Op().WithShape(
+                    m::Shape(&captured_shape)))>::value);
+  static_assert(
+      match::detail::HasCapture<decltype(m::Op().WithShape(
+          m::Shape().WithLayout(m::Layout(&captured_layout))))>::value);
+
+  constexpr char kModuleStr[] = R"(
+    HloModule test_module
+    ENTRY test {
+      p0 = f32[4]{0} parameter(0)
+      c1 = f32[4]{0} constant({1, 2, 3, 4})
+      add = f32[4]{0} add(p0, c1)
+      ROOT t = (f32[4]{0}, f32[4]{0}) tuple(add, p0)
+    })";
+  ASSERT_OK_AND_ASSIGN(auto hlo_module,
+                       ParseAndReturnVerifiedModule(kModuleStr));
+  HloInstruction* p0 = FindInstruction(hlo_module.get(), "p0");
+  HloInstruction* c1 = FindInstruction(hlo_module.get(), "c1");
+  HloInstruction* add = FindInstruction(hlo_module.get(), "add");
+  HloInstruction* root = hlo_module->entry_computation()->root_instruction();
+
+  // Non-capturing patterns execute in a single pass.
+  int pred_calls = 0;
+  EXPECT_TRUE(
+      Match(add, m::Add(m::Parameter(0),
+                        m::Op().WithPredicate([&](const HloInstruction* inst) {
+                          ++pred_calls;
+                          return inst == c1;
+                        }))));
+  EXPECT_EQ(pred_calls, 1);
+
+  // Partially-capturing patterns do not re-evaluate non-capturing sibling
+  // predicates during the capture pass, and do not mutate capture pointers on
+  // match failure.
+  pred_calls = 0;
+  HloInstruction* matched_lhs = nullptr;
+  EXPECT_TRUE(
+      Match(add, m::Add(m::Op(&matched_lhs),
+                        m::Op().WithPredicate([&](const HloInstruction* inst) {
+                          ++pred_calls;
+                          return inst == c1;
+                        }))));
+  EXPECT_EQ(matched_lhs, p0);
+  EXPECT_EQ(pred_calls, 1);
+
+  HloInstruction* sentinel = c1;
+  EXPECT_FALSE(
+      Match(add, m::Add(m::Op(&sentinel),
+                        m::Op().WithPredicate(
+                            [&](const HloInstruction*) { return false; }))));
+  EXPECT_EQ(sentinel, c1);
+
+  // Commutative AnyOrder, WithOperandIfPresent, WithSubshape, WithLayout, and
+  // SharedSubpattern preserve capture semantics.
+  pred_calls = 0;
+  EXPECT_TRUE(Match(
+      add, m::AddAnyOrder(m::Parameter(0), m::Constant().WithPredicate(
+                                               [&](const HloInstruction* inst) {
+                                                 ++pred_calls;
+                                                 return inst == c1;
+                                               }))));
+  EXPECT_EQ(pred_calls, 1);
+
+  HloInstruction* any_order_param = nullptr;
+  pred_calls = 0;
+  EXPECT_TRUE(Match(add, m::AddAnyOrder(m::Parameter(&any_order_param, 0),
+                                        m::Constant().WithPredicate(
+                                            [&](const HloInstruction* inst) {
+                                              ++pred_calls;
+                                              return inst == c1;
+                                            }))));
+  EXPECT_EQ(any_order_param, p0);
+  EXPECT_EQ(pred_calls, 2);
+
+  HloInstruction* optional_op2 = c1;
+  HloInstruction* present_op0 = nullptr;
+  EXPECT_TRUE(Match(add, m::Op()
+                             .WithOperand(0, m::Op(&present_op0))
+                             .WithOperandIfPresent(2, m::Op(&optional_op2))));
+  EXPECT_EQ(present_op0, p0);
+  EXPECT_EQ(optional_op2, c1);
+
+  const Shape* subshape0 = nullptr;
+  const Layout* layout0 = nullptr;
+  EXPECT_TRUE(Match(
+      root, m::Tuple().WithShape(m::Shape().WithSubshape(
+                {0}, m::Shape(&subshape0).WithLayout(m::Layout(&layout0))))));
+  ASSERT_NE(subshape0, nullptr);
+  EXPECT_EQ(subshape0, &root->shape().tuple_shapes(0));
+  EXPECT_EQ(layout0, &subshape0->layout());
+
+  HloInstruction* shared_captured = nullptr;
+  auto shared_capturing = m::SharedSubpattern(m::Parameter(&shared_captured));
+  auto shared_non_capturing = m::SharedSubpattern(m::Constant());
+  static_assert(match::detail::HasCapture<decltype(shared_capturing)>::value);
+  static_assert(
+      !match::detail::HasCapture<decltype(shared_non_capturing)>::value);
+
+  // MatchSingleUserOnly does not overwrite capture pointers when an operand has
+  // multiple users (p0 is used by both add and root tuple).
+  HloInstruction* single_user_capture = c1;
+  EXPECT_FALSE(MatchSingleUserOnly(
+      add, m::Add(m::Op(&single_user_capture), m::Constant())));
+  EXPECT_EQ(single_user_capture, c1);
+  EXPECT_FALSE(MatchSingleUserOnly(
+      root, m::Tuple(m::Op(), m::Op(&single_user_capture))));
+  EXPECT_EQ(single_user_capture, c1);
+  EXPECT_TRUE(MatchSingleUserOnly(
+      root, m::Op().WithOperand(0, m::Op(&single_user_capture))));
+  EXPECT_EQ(single_user_capture, add);
+}
+
+void BM_MatchNonCapturing(benchmark::State& state) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule bm_module
+    ENTRY main {
+      p0 = f32[16,32]{1,0} parameter(0)
+      p1 = f32[32]{0} parameter(1)
+      c = f32[] constant(2.0)
+      bcast_c = f32[16,32]{1,0} broadcast(c), dimensions={}
+      mul = f32[16,32]{1,0} multiply(p0, bcast_c)
+      bcast_p1 = f32[16,32]{1,0} broadcast(p1), dimensions={1}
+      ROOT add = f32[16,32]{1,0} add(mul, bcast_p1)
+    }
+  )";
+  auto module = ParseAndReturnUnverifiedModule(kModuleStr).value();
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  for (auto s : state) {
+    bool matched =
+        Match(root, m::Add(m::Multiply(m::Parameter(0),
+                                       m::Broadcast(m::ConstantScalar(2.0f))),
+                           m::Broadcast(m::Parameter(1))));
+    benchmark::DoNotOptimize(matched);
+  }
+}
+BENCHMARK(BM_MatchNonCapturing);
+
+void BM_MatchCapturing(benchmark::State& state) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule bm_module
+    ENTRY main {
+      p0 = f32[16,32]{1,0} parameter(0)
+      p1 = f32[32]{0} parameter(1)
+      c = f32[] constant(2.0)
+      bcast_c = f32[16,32]{1,0} broadcast(c), dimensions={}
+      mul = f32[16,32]{1,0} multiply(p0, bcast_c)
+      bcast_p1 = f32[16,32]{1,0} broadcast(p1), dimensions={1}
+      ROOT add = f32[16,32]{1,0} add(mul, bcast_p1)
+    }
+  )";
+  auto module = ParseAndReturnUnverifiedModule(kModuleStr).value();
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  for (auto s : state) {
+    const HloInstruction* lhs = nullptr;
+    bool matched = Match(
+        root,
+        m::Add(m::Multiply(m::Op(&lhs), m::Broadcast(m::ConstantScalar(2.0f))),
+               m::Broadcast(m::Parameter(1))));
+    benchmark::DoNotOptimize(matched);
+    benchmark::DoNotOptimize(lhs);
+  }
+}
+BENCHMARK(BM_MatchCapturing);
+
+void BM_MatchCommutativeAnyOrder(benchmark::State& state) {
+  constexpr absl::string_view kModuleStr = R"(
+    HloModule bm_module
+    ENTRY main {
+      p0 = f32[16,32]{1,0} parameter(0)
+      p1 = f32[32]{0} parameter(1)
+      c = f32[] constant(2.0)
+      bcast_c = f32[16,32]{1,0} broadcast(c), dimensions={}
+      mul = f32[16,32]{1,0} multiply(p0, bcast_c)
+      bcast_p1 = f32[16,32]{1,0} broadcast(p1), dimensions={1}
+      ROOT add = f32[16,32]{1,0} add(mul, bcast_p1)
+    }
+  )";
+  auto module = ParseAndReturnUnverifiedModule(kModuleStr).value();
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  for (auto s : state) {
+    const HloInstruction* lhs = nullptr;
+    const HloInstruction* rhs = nullptr;
+    bool matched = Match(
+        root, m::AddAnyOrder(
+                  m::Broadcast(m::Op(&rhs)),
+                  m::MultiplyAnyOrder(m::Broadcast(m::ConstantScalar(2.0f)),
+                                      m::Op(&lhs))));
+    benchmark::DoNotOptimize(matched);
+    benchmark::DoNotOptimize(lhs);
+    benchmark::DoNotOptimize(rhs);
+  }
+}
+BENCHMARK(BM_MatchCommutativeAnyOrder);
 
 }  // namespace
 }  // namespace xla
