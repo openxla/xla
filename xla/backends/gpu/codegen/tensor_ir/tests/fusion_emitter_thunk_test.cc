@@ -17,29 +17,39 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/gpu/runtime/custom_kernel_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/tests/gpu_pjrt_codegen_test.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/service/dump.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/stream_executor/launch_dim.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
 
+using ::absl_testing::IsOk;
+using ::absl_testing::IsOkAndHolds;
+using ::testing::AllOf;
 using ::testing::ElementsAre;
+using ::testing::HasSubstr;
+using ::testing::StartsWith;
 
 constexpr absl::string_view kAddF32 = R"(
 fused_computation {
@@ -204,6 +214,48 @@ TEST_F(TensorIrCommandBufferTest, RecordsIntoACommandBuffer) {
   ASSERT_OK_AND_ASSIGN(const Thunk* thunk,
                        CompileToSingleThunk(kAddF32, &executable));
   EXPECT_EQ(thunk->kind(), Thunk::Kind::kCommandBuffer);
+}
+
+TEST_F(TensorIrThunkTest, DumpsFusionHloIrAndBytecode) {
+  std::string dump_dir;
+  ASSERT_TRUE(tsl::Env::Default()->LocalTempFilename(&dump_dir));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kAddF32));
+  DebugOptions& debug_options =
+      module->mutable_config().mutable_debug_options();
+  debug_options.set_xla_dump_to(dump_dir);
+  debug_options.set_xla_dump_emitter_re("tensor-ir-fusion");
+
+  auto read_dump =
+      [&, id = module->unique_id(), name = module->name()](
+          absl::string_view suffix) -> absl::StatusOr<std::string> {
+    std::string contents;
+    ABSL_RETURN_IF_ERROR(tsl::ReadFileToString(
+        tsl::Env::Default(),
+        tsl::io::JoinPath(dump_dir, FilenameFor(id, name, "", suffix)),
+        &contents));
+    return contents;
+  };
+
+  ASSERT_THAT(CompileToExecutable(std::move(module),
+                                  /*run_optimization_passes=*/false),
+              IsOk());
+
+  EXPECT_THAT(read_dump("fusion.hlo"),
+              IsOkAndHolds(HasSubstr("fused_computation")));
+  EXPECT_THAT(
+      read_dump("fusion.tensor_ir.mlir"),
+      IsOkAndHolds(AllOf(StartsWith("// kernel-target=sm_"),
+                         HasSubstr("nv_tensor_ir.graph @fused_computation"))));
+  EXPECT_THAT(read_dump("fusion.cuda_tile.mlir"),
+              IsOkAndHolds(AllOf(
+                  StartsWith("// cuda-tile-translate --mlir-to-cudatilebc "),
+                  HasSubstr("\n// tileiras --gpu-name=sm_"),
+                  HasSubstr("cuda_tile.module"))));
+  constexpr absl::string_view kTileIrBytecodeMagic("\x7fTileIR\0", 8);
+  EXPECT_THAT(read_dump("fusion.tilebc"),
+              IsOkAndHolds(StartsWith(kTileIrBytecodeMagic)));
 }
 
 }  // namespace
