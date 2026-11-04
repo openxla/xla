@@ -41,10 +41,41 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/compiled_module.h"
+#include "xla/service/executable.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/stream_executor/abi/executable_abi_version.h"
 
 namespace xla {
+
+// Lets a backend answer metadata queries of a `StreamExecutorExecutable`
+// without requiring the HLO module of the underlying executable to exist up
+// front. Backends that can build the module on demand install a provider when
+// they create a `StreamExecutorExecutable`. Without a provider the module of
+// the `CompiledModule` or `Executable` is used.
+class StreamExecutorExecutableMetadataProvider {
+ public:
+  // Metadata of a compiled module that hasn't been loaded yet.
+  struct CompiledModuleMetadata {
+    std::string name;
+    int num_replicas = 1;
+    int num_partitions = 1;
+    // The fingerprint of the optimized HLO module (as returned by
+    // `HloModule::GetFingerprint128()`). Empty if it isn't known.
+    std::string fingerprint;
+  };
+
+  virtual ~StreamExecutorExecutableMetadataProvider() = default;
+
+  // Returns the optimized HLO module of `executable`, building it if needed.
+  // `reason` describes why the module is needed.
+  virtual absl::StatusOr<std::shared_ptr<HloModule>> GetHloModule(
+      const Executable& executable, absl::string_view reason) const = 0;
+
+  // Returns the metadata of `compiled_module` if it is available without the
+  // HLO module, and std::nullopt otherwise.
+  virtual std::optional<CompiledModuleMetadata> GetCompiledModuleMetadata(
+      const CompiledModule& compiled_module) const = 0;
+};
 
 class StreamExecutorExecutable : public PjRtExecutable {
  public:
@@ -55,13 +86,13 @@ class StreamExecutorExecutable : public PjRtExecutable {
       int num_replicas, int num_partitions, absl::string_view name,
       absl::string_view fingerprint, absl::string_view default_memory_kind);
 
-  StreamExecutorExecutable(PjRtPlatformId platform_id,
-                           const CompileOptions& compile_options,
-                           std::unique_ptr<CompiledModule> executable,
-                           int num_replicas, int num_partitions,
-                           absl::string_view name,
-                           absl::string_view fingerprint,
-                           absl::string_view default_memory_kind);
+  StreamExecutorExecutable(
+      PjRtPlatformId platform_id, const CompileOptions& compile_options,
+      std::unique_ptr<CompiledModule> executable, int num_replicas,
+      int num_partitions, absl::string_view name, absl::string_view fingerprint,
+      absl::string_view default_memory_kind,
+      std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+          metadata_provider = nullptr);
 
   StreamExecutorExecutable(
       PjRtPlatformId platform_id, const CompileOptions& compile_options,
@@ -69,7 +100,9 @@ class StreamExecutorExecutable : public PjRtExecutable {
       std::shared_ptr<LocalExecutable> local_executable,
       LocalClient* local_client, int num_replicas, int num_partitions,
       absl::string_view name, absl::string_view fingerprint,
-      absl::string_view default_memory_kind);
+      absl::string_view default_memory_kind,
+      std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+          metadata_provider = nullptr);
 
   absl::StatusOr<std::string> SerializeExecutable() const override;
 
@@ -79,11 +112,9 @@ class StreamExecutorExecutable : public PjRtExecutable {
   absl::StatusOr<CompileOptions> GetCompileOptions() const override {
     return compile_options_;
   }
-  absl::StatusOr<std::shared_ptr<HloModule>> GetHloModule() const override {
-    return hlo_module_;
-  }
-
-  const std::shared_ptr<HloModule>& hlo_module() const { return hlo_module_; }
+  // Returns the optimized HLO module. Executables loaded from a serialized
+  // form might build the module on the first call.
+  absl::StatusOr<std::shared_ptr<HloModule>> GetHloModule() const override;
 
   absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override;
 
@@ -118,10 +149,15 @@ class StreamExecutorExecutable : public PjRtExecutable {
   absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>> GetAbiVersion()
       const override;
 
+  // Deserializes an executable serialized with `SerializeExecutable`. If
+  // `metadata_provider` is set, it is installed in the returned executable and
+  // used to read the module metadata.
   static absl::StatusOr<std::unique_ptr<StreamExecutorExecutable>> Deserialize(
       riegeli::Any<riegeli::Reader*> reader,
       const PjRtTopologyDescription& topology,
-      std::optional<CompileOptions> options = std::nullopt);
+      std::optional<CompileOptions> options = std::nullopt,
+      std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+          metadata_provider = nullptr);
 
   static absl::StatusOr<absl::string_view> GetDefaultMemoryKind(
       const PjRtTopologyDescription& topology);
@@ -141,7 +177,8 @@ class StreamExecutorExecutable : public PjRtExecutable {
                std::shared_ptr<LocalExecutable>>
       executables_ ABSL_GUARDED_BY(mu_);
   LocalClient* local_client_ = nullptr;
-  std::shared_ptr<HloModule> hlo_module_;
+  std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+      metadata_provider_;
   int num_replicas_;
   int num_partitions_;
   std::string name_;
