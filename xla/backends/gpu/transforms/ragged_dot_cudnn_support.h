@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_TRANSFORMS_RAGGED_DOT_CUDNN_SUPPORT_H_
 #define XLA_BACKENDS_GPU_TRANSFORMS_RAGGED_DOT_CUDNN_SUPPORT_H_
 
+#include "absl/base/nullability.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/decision.h"
 #include "xla/stream_executor/device_description.h"
@@ -27,24 +28,22 @@ namespace gpu {
 // Returns an allowed Decision iff cuDNN positively reports an execution plan
 // for the cuDNN fusion that RaggedDotFusionRewriter would build for
 // `ragged_dot` on `device_description`. The ragged dot is cloned into a scratch
-// module and RaggedDotFusionRewriter is run on it, then cuDNN is probed:
-//  - with a `stream_exec`, against its live cuDNN handle
-//    (CuDnnFusionCompiler::GetAvailablePlanCount);
-//  - without one (deviceless/AOT) and if the loaded cuDNN supports deviceless
-//    compilation, from the device description alone
-//    (CuDnnFusionCompiler::SupportsFusionDeviceless);
-//  - otherwise there is no way to probe.
-// Anything but a positive answer -- kUnsupported, kUnknown (e.g. cuDNN headers
-// older than 9.15), a probe failure or no way to probe -- returns a forbidden
-// Decision with the reason, so the
-// caller falls back to the regular dense expansion.
+// module (with the debug options of its module) and RaggedDotFusionRewriter is
+// run on it, then cuDNN is asked for the plan count
+// (CuDnnFusionCompiler::GetAvailablePlanCount). The cuDNN handle is resolved
+// with ResolveCudnnSupport, like CuDnnFusionCompiler does: it uses the live
+// handle of `stream_exec`, or deviceless cuDNN when there is no `stream_exec`
+// or when xla_gpu_cudnn_deviceless_compilation_mode forces it.
+// Anything but a positive answer -- no plans, a probe failure, or no way to
+// probe -- returns a forbidden Decision with the reason, so the caller falls
+// back to the regular dense expansion.
 //
-// The probe runs on the shapes/layouts `ragged_dot` has now; layout assignment
-// may later pick different layouts for the real fusion.
+// The probe normalizes all layouts to the default layout, matching what
+// GpuLayoutAssignment later assigns to the ragged dot / cuDNN fusion.
 Decision IsRaggedDotSupportedByCuDnn(
     const HloInstruction& ragged_dot,
     const stream_executor::DeviceDescription& device_description,
-    stream_executor::StreamExecutor* stream_exec = nullptr);
+    stream_executor::StreamExecutor* absl_nullable stream_exec = nullptr);
 
 }  // namespace gpu
 }  // namespace xla

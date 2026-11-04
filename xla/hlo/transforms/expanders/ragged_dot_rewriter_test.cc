@@ -140,14 +140,21 @@ TEST_F(RaggedDotRewriterTest, RewriteIfPreAmpereForRaggedDotFusion) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
-  // Volta is pre-Ampere, so even with a recent cuDNN the fusion gate must
-  // fail and the rewriter must fall back to expansion.
+  // Volta is pre-Ampere, so even with a recent cuDNN and a support callback
+  // that allows everything, the fusion gate must fail and the rewriter must
+  // fall back to expansion.
+  int calls = 0;
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(
           se::CudaComputeCapability{se::CudaComputeCapability::kVolta, 0},
-          kMinCudnnVersionForRaggedDotFusion)
+          kMinCudnnVersionForRaggedDotFusion,
+          [&](const HloInstruction*) {
+            ++calls;
+            return Decision::Allow();
+          })
           .Run(module.get()));
+  EXPECT_EQ(calls, 0);
   EXPECT_TRUE(changed);
 }
 
@@ -169,10 +176,18 @@ TEST_F(RaggedDotRewriterTest, RewriteIfCudnnVersionTooOldForRaggedDotFusion) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  // The support callback allows everything, so the expansion is caused by the
+  // cuDNN version gate alone.
+  int calls = 0;
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
-      RaggedDotRewriter(GetCudaComputeCapability(), se::dnn::VersionInfo{9, 21})
+      RaggedDotRewriter(GetCudaComputeCapability(), se::dnn::VersionInfo{9, 21},
+                        [&](const HloInstruction*) {
+                          ++calls;
+                          return Decision::Allow();
+                        })
           .Run(module.get()));
+  EXPECT_EQ(calls, 0);
   EXPECT_TRUE(changed);
 }
 
