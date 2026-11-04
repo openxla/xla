@@ -341,9 +341,6 @@ XLA_FFI_Error* WindowGet(const XLA_FFI_Collectives_Extension* self,
 absl::Status LogicalDeviceInfoGetImpl(
     const XLA_FFI_Collectives_Extension* self,
     XLA_FFI_LogicalDeviceInfo_Get_Args* args) {
-  if (self == nullptr) {
-    return InvalidArgument("Collectives extension is not available");
-  }
   if (args == nullptr) {
     return InvalidArgument("XLA_FFI_LogicalDeviceInfo_Get_Args is null");
   }
