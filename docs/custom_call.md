@@ -454,26 +454,6 @@ work recorded with earlier option values. Custom calls whose recorded work
 depends on options that change between executions must stay out of GPU command
 buffers until this is supported.
 
-### Logical Device Information
-
-Include `xla/ffi/api/collectives_ffi.h` and bind
-`Ctx<Extension<Collectives>>()` to receive a `Communicator` context. Its
-`GetLogicalDeviceInfo()` method returns an `ErrorOr<LogicalDeviceInfo>` with
-the executing device's `replica_id`, `partition_id`, `replica_count`, and
-`partition_count` from the executable's device assignment. The flattened
-logical ID is `int64_t{replica_id} * partition_count + partition_id`.
-
-These coordinates are independent of communicator groups, physical device IDs,
-and frontend mesh axes. The lookup reads host runtime metadata without
-requesting a communicator or window, calling NCCL, or transferring data from
-the device. GPU supports this lookup during Prepare, Initialize, Execute, and
-Record. The extension is unavailable during Instantiate and on CPU; a missing
-device assignment also returns an error.
-
-This accessor requires collectives extension version 0.3. The C++ extension
-binding checks the exact version, so handlers compiled for version 0.2 must be
-rebuilt against the new headers. The base FFI API version is unchanged.
-
 ### User-defined Struct Attributes
 
 XLA FFI can decode dictionary attributes into user-defined structs.
