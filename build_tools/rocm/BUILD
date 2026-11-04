@@ -55,6 +55,15 @@ sh_binary(
     visibility = ["//visibility:public"],
 )
 
+# Test run_under wrapper that logs container memory before and after each test
+# action and the peak memory while it runs.
+sh_binary(
+    name = "mem_probe",
+    srcs = ["mem_probe.sh"],
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)
+
 # Sanitizer wrapper that runs under parallel_gpu_execute
 # Combines sanitizer setup with GPU locking and device visibility
 # buildifier: disable=platform-specific-binaries
