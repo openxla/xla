@@ -359,6 +359,12 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> CustomCallThunk::CallTypedFFI(
       /*called_computation=*/nullptr,
       custom_call_params->ffi_execution_context,
       params.custom_options};
+  if (params.collective_params != nullptr) {
+    invoke_context.logical_device_context =
+        ffi::InvokeContext::LogicalDeviceContext{
+            params.collective_params->device_assignment,
+            params.collective_params->global_device_id};
+  }
 
   ffi::HandlerRegistration& handler = std::get<1>(target_);
   auto future = ffi::InvokeAsync(ffi::GetXlaFfiApi(), handler.bundle.execute,
