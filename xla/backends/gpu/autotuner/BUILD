@@ -425,8 +425,6 @@ cc_library(
         "//xla/backends/gpu/transforms:convert_triton_gemm_config",
         "//xla/backends/gpu/transforms:fusion_wrapper",
         "//xla/backends/gpu/transforms:priority_fusion",
-        "//xla/codegen/tiling:symbolic_tile_analysis",
-        "//xla/codegen/tiling:tiling_specification",
         "//xla/codegen/tiling:tile",
         "//xla/codegen/tiling:tiled_hlo",
         "//xla/codegen/xtile:xtile_config_proto_cc",
