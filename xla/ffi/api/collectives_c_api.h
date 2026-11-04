@@ -42,6 +42,9 @@ extern "C" {
 // This API is backend agnostic; backend wiring lives in the runtime that
 // attaches the extension.
 
+// Minor versions add backward-compatible fields or callbacks. Callers and
+// implementations must honor struct_size; incompatible changes require a major
+// version bump.
 #define XLA_FFI_Extension_Collectives 129
 #define XLA_FFI_Extension_Collectives_MajorVersion 0
 #define XLA_FFI_Extension_Collectives_MinorVersion 3

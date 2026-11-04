@@ -123,6 +123,12 @@ class CommunicatorContextBase {
   StatusOr<CommunicatorInfo> GetCommunicator(
       GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
       int64_t communication_id) {
+    // Before 0.3, the callback fills only the communicator handle.
+    if (ext_->extension_base.id.minor_version < 3) {
+      return StatusOr<CommunicatorInfo>(ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_UNIMPLEMENTED,
+          "Communicator metadata requires collectives extension 0.3 or newer"));
+    }
     std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
     XLA_FFI_Communicator_Get_Args args = {};
     args.struct_size = XLA_FFI_Communicator_Get_Args_STRUCT_SIZE;
@@ -227,6 +233,11 @@ struct CollectivesExtensionBase {
       XLA_FFI_Extension_Collectives_MajorVersion;
   static constexpr int32_t kMinorVersion =
       XLA_FFI_Extension_Collectives_MinorVersion;
+
+  // The communicator/window ABI starts at 0.2; methods guard newer features.
+  static bool Support(int32_t major_version, int32_t minor_version) {
+    return major_version == kMajorVersion && minor_version >= 2;
+  }
 
   // Builds a context from the extension.
   static CommunicatorContextT Create(const XLA_FFI_Api* api,

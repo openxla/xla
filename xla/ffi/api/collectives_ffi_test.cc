@@ -170,6 +170,47 @@ static XLA_FFI_Collectives_Extension MakeFakeCollectivesExtension(
   return ext;
 }
 
+TEST(CollectivesFfiTest, ExtensionVersionCompatibility) {
+  auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
+      [](Communicator comm) -> Error {
+        return comm.RequestCommunicator(GroupMode::kCrossReplica, {},
+                                        /*communication_id=*/0);
+      });
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  const struct {
+    int32_t major;
+    int32_t minor;
+    bool supported;
+  } cases[] = {
+      {Collectives::kMajorVersion, 2, true},
+      {Collectives::kMajorVersion, Collectives::kMinorVersion, true},
+      {Collectives::kMajorVersion, Collectives::kMinorVersion + 1, true},
+      {Collectives::kMajorVersion, 1, false},
+      {Collectives::kMajorVersion + 1, Collectives::kMinorVersion, false},
+  };
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(test_case.major);
+    SCOPED_TRACE(test_case.minor);
+    FakeBackend backend;
+    XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
+        reinterpret_cast<XLA_FFI_CollectivesState*>(&backend),
+        FakeRequestCommunicator, nullptr);
+    ext.extension_base.id.major_version = test_case.major;
+    ext.extension_base.id.minor_version = test_case.minor;
+    InvokeContext context;
+    context.extension_start = &ext.extension_base;
+
+    absl::Status status = Invoke(Api(), *handler, call_frame, context);
+    if (test_case.supported) {
+      EXPECT_OK(status);
+    } else {
+      EXPECT_THAT(status, StatusIs(absl::StatusCode::kInvalidArgument,
+                                   HasSubstr("Extension version mismatch")));
+    }
+    EXPECT_EQ(backend.request_called, test_case.supported);
+  }
+}
+
 TEST(CollectivesFfiTest, LogicalDeviceInfoWithoutResourceRequests) {
   auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
       [](Communicator comm) -> Error {
@@ -209,12 +250,15 @@ TEST(CollectivesFfiTest, LogicalDeviceInfoRejectsOlderExtension) {
   XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
       reinterpret_cast<XLA_FFI_CollectivesState*>(&backend), nullptr, nullptr);
   ext.extension_base.id.minor_version = 2;
+  ext.extension_base.struct_size =
+      XLA_FFI_STRUCT_SIZE(XLA_FFI_Collectives_Extension, get_window);
   InvokeContext context;
   context.extension_start = &ext.extension_base;
 
-  EXPECT_THAT(Invoke(Api(), *handler, call_frame, context),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("Extension version mismatch")));
+  EXPECT_THAT(
+      Invoke(Api(), *handler, call_frame, context),
+      StatusIs(absl::StatusCode::kUnimplemented,
+               HasSubstr("Logical device information is not supported")));
   EXPECT_FALSE(backend.logical_device_info_called);
 }
 
@@ -274,6 +318,27 @@ TEST(CollectivesFfiTest, GetCommunicatorPropagatesCallbackError) {
   ASSERT_TRUE(info.has_error());
   EXPECT_EQ(info.error().errc(), ErrorCode::kInvalidArgument);
   EXPECT_EQ(info.error().message(), "invalid communicator group");
+}
+
+TEST(CollectivesFfiTest, GetCommunicatorRequiresMetadataSupport) {
+  XLA_FFI_Collectives_Extension ext =
+      MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
+  ext.extension_base.id.minor_version = 2;
+  ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
+                            XLA_FFI_Communicator_Get_Args* args) {
+    args->communicator = kFakeCommunicator;
+    return static_cast<XLA_FFI_Error*>(nullptr);
+  };
+
+  ErrorOr<CommunicatorInfo> info =
+      Communicator(Api(), &ext)
+          .GetCommunicator(GroupMode::kCrossReplica, {},
+                           /*communication_id=*/0);
+  ASSERT_TRUE(info.has_error());
+  EXPECT_EQ(info.error().errc(), ErrorCode::kUnimplemented);
+  EXPECT_THAT(
+      info.error().message(),
+      HasSubstr("Communicator metadata requires collectives extension"));
 }
 
 TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
