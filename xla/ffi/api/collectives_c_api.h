@@ -114,8 +114,8 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Communicator_Get_Args,
 // stages). Process-local membership does not describe physical host or
 // load/store-accessible topology.
 // Callers may pass the original argument prefix ending at `communicator` to
-// retrieve only the handle. Metadata fields are written only when covered by
-// `struct_size`.
+// retrieve only the handle. Metadata is written only when `struct_size` covers
+// `local_participant_count`.
 typedef XLA_FFI_Error* XLA_FFI_Communicator_Get(
     const XLA_FFI_Collectives_Extension* self,
     XLA_FFI_Communicator_Get_Args* args);

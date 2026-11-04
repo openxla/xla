@@ -357,22 +357,29 @@ absl::Status PublicApiAllReduce(
   const int64_t ids[] = {1, 0};
   XLA_FFI_ReplicaGroup group{ids, 2};
   XLA_FFI_Communicator_Get_Args args = {};
-  args.struct_size =
-      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator);
   args.group_mode = XLA_FFI_GROUP_FLATTENED_ID;
   args.groups = &group;
   args.num_groups = 1;
   args.rank = -1;
   args.size = -1;
   args.local_participant_count = -1;
-  ABSL_RETURN_IF_ERROR(
-      ffi::TakeError(extension->get_communicator(extension, &args)));
-  EXPECT_EQ(args.communicator, info.communicator);
-  EXPECT_EQ(args.rank, -1);
-  EXPECT_EQ(args.size, -1);
-  EXPECT_EQ(args.local_participant_count, -1);
+  for (size_t struct_size : {
+           XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator),
+           XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args,
+                               local_participant_count) -
+               1,
+       }) {
+    args.struct_size = struct_size;
+    ABSL_RETURN_IF_ERROR(
+        ffi::TakeError(extension->get_communicator(extension, &args)));
+    EXPECT_EQ(args.communicator, info.communicator);
+    EXPECT_EQ(args.rank, -1);
+    EXPECT_EQ(args.size, -1);
+    EXPECT_EQ(args.local_participant_count, -1);
+  }
 
-  --args.struct_size;
+  args.struct_size =
+      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator) - 1;
   EXPECT_THAT(ffi::TakeError(extension->get_communicator(extension, &args)),
               absl_testing::StatusIs(
                   absl::StatusCode::kInvalidArgument,
