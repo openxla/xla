@@ -793,6 +793,7 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     mlir::OpBuilder::InsertionGuard g(b);
     b.setInsertionPointToStart(for_op.getBody());
     Value iv = for_op.getInductionVar();
+    Value iv_i32 = Cast(b, iv, b.getI32Type());
     const gpu::TilingSpace::DimensionInfo& dim_info =
         tiled_scaled_dot.tile().tiling_space().GetDimensionInfo(
             *tiled_scaled_dot.hlo(), sequential_dim_ids.front());
@@ -806,6 +807,36 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     ABSL_ASSIGN_OR_RETURN(
         auto results,
         EmitTiledComputation(emitter_ctx, region, region.roots()));
+
+    // Mask out-of-bounds contracting lanes: lhs/rhs with 0 and non-scalar
+    // scales with 1, so tail lanes contribute exactly 0.
+    const DotDimensionNumbers& dim_numbers = scaled_dot.dot_dimension_numbers();
+    for (int side : {0, 1}) {
+      int64_t contracting_dim_idx =
+          side == 0 ? dim_numbers.lhs_contracting_dimensions(0)
+                    : dim_numbers.rhs_contracting_dimensions(0);
+      const gpu::TiledHloInstruction* operand = tiled_scaled_dot.operand(side);
+      Value zero = CreateConst(b, results[side].getType().getElementType(), 0,
+                               /*shape=*/{});
+      ABSL_ASSIGN_OR_RETURN(results[side],
+                            MaskOperand(b, *operand, results[side], iv_i32,
+                                        contracting_dim_idx, zero));
+
+      int scale_idx = side + 2;
+      const gpu::TiledHloInstruction* scale_operand =
+          tiled_scaled_dot.operand(scale_idx);
+      if (results[scale_idx] &&
+          IsTritonDotScaledOperandType(
+              operand->hlo()->shape().element_type()) &&
+          !ShapeUtil::IsScalar(scale_operand->hlo()->shape())) {
+        Value scale_one = CreateConst(
+            b, results[scale_idx].getType().getElementType(), 1, /*shape=*/{});
+        ABSL_ASSIGN_OR_RETURN(
+            results[scale_idx],
+            MaskOperand(b, *scale_operand, results[scale_idx], iv_i32,
+                        contracting_dim_idx, scale_one));
+      }
+    }
 
     // Emit the partial dot.
     Value acc = for_op.getRegionIterArgs().front();
