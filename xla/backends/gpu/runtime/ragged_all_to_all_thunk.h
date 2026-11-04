@@ -264,6 +264,7 @@ class RaggedAllToAllThunk : public CollectiveThunk {
     requirements.gin_signal_count = c;
     requirements.gin_connection_full = true;
     requirements.cft_caps = GpuDeviceCommunicator::kGpuCftCapUnicast;
+    requirements.cft_barrier_count = c;
     return requirements;
   }
 
