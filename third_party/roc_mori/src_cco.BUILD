@@ -27,9 +27,6 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "mori_cco",
     srcs = ["cco_init.cpp"],
-    # cco_init.cpp reaches mori_log.hpp -> spdlog -> @fmt 8.1.1, which does not
-    # compile under clang 22 at C++20. See the _CXX17 comment in
-    # //third_party/roc_mori:src_application.BUILD for the full rationale.
     copts = ["-std=c++17"],
     # PUBLIC BUILD_CCO_SDMA=1 mirrors src/cco/CMakeLists.txt: it must match the
     # value every dependent that includes mori/cco/cco.hpp compiles with.
