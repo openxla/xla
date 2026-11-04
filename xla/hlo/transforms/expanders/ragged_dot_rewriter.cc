@@ -19,13 +19,11 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
-#include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
-#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -442,18 +440,6 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> RaggedToGeneral(
                                    ragged_dot->precision_config());
 }
 
-bool IsFP16Operation(const HloInstruction* ragged_dot) {
-  return (ragged_dot->shape().element_type() == F16) &&
-         (ragged_dot->operand(0)->shape().element_type() == F16) &&
-         (ragged_dot->operand(1)->shape().element_type() == F16);
-}
-
-bool IsBF16Operation(const HloInstruction* ragged_dot) {
-  return (ragged_dot->shape().element_type() == BF16) &&
-         (ragged_dot->operand(0)->shape().element_type() == BF16) &&
-         (ragged_dot->operand(1)->shape().element_type() == BF16);
-}
-
 bool CanBeHandledByCuDNNFusion(
     const HloInstruction* instruction,
     const se::GpuComputeCapability& gpu_compute_capability,
@@ -476,30 +462,6 @@ bool CanBeHandledByCuDNNFusion(
   return mode == RaggedDotMode::kRaggedNonContracting;
 }
 
-bool CanBeHandledByGpublasltGroupGemm(
-    const se::GpuComputeCapability& gpu_compute_capability,
-    const HloInstruction* instruction) {
-  // Currently only Hipblaslt supports GroupGemm.
-  // The current status of Hipblaslt support for GroupGemm is as follows:
-  // For MI300 targets (gfx942) : datatype supported FP16 and BF16
-  // For MI350/355 targets (gfx950) : datatype supported FP16 only
-
-  if (const auto* rocm_cc = gpu_compute_capability.rocm_compute_capability()) {
-    const std::string& gfx_version = rocm_cc->gfx_version();
-    VLOG(2) << "RaggedDotRewriter running on ROCm device: " << gfx_version;
-
-    if (gfx_version == "gfx942" &&
-        (IsFP16Operation(instruction) || IsBF16Operation(instruction))) {
-      return true;
-    }
-
-    if (gfx_version == "gfx950" && IsFP16Operation(instruction)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 }  // namespace
 
 absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
@@ -519,9 +481,9 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
           .xla_gpu_experimental_use_ragged_dot_fusion() &&
       cudnn_version_ >= kMinCudnnVersionForRaggedDotFusion &&
       cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere();
-  // Priority 1b: hipBLASLt group-gemm backend (AMD/ROCm targets only).
+  // Priority 1b: hipBLASLt group-gemm backend (AMD/ROCm targets only; the
+  // target and element type checks live in IsGpublasLtSupportedGroupedMatMul).
   const bool has_grouped_gemm =
-      gpu_compute_capability_.rocm_compute_capability() != nullptr &&
       module->config()
           .debug_options()
           .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
@@ -550,8 +512,8 @@ absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
           continue;
         }
         // Priority 1b: hipBLASLt (AMD/ROCm targets).
-        if (has_grouped_gemm && CanBeHandledByGpublasltGroupGemm(
-                                    gpu_compute_capability_, instruction)) {
+        if (has_grouped_gemm && gpu::IsGpublasLtSupportedGroupedMatMul(
+                                    gpu_compute_capability_, *instruction)) {
           continue;
         }
         // Priority 2: Triton XTile backend (when enabled and configuration
