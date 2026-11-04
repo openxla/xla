@@ -4454,12 +4454,31 @@ absl::Status SpmdPartitioningVisitor::HandleIota(HloInstruction* hlo) {
     if (sharding.dimension(dimension) > 1) {
       auto partition_ordinals = MakeTiledPartitionOrdinals(
           sharding, MakePartitioningState().partition_id, &b_);
-      auto multiplier = b_.AddInstruction(HloInstruction::CreateConstant(
-          LiteralUtil::CreateR0<int32_t>(iota->shape().dimensions(dimension))));
-      auto offset = b_.AddInstruction(HloInstruction::CreateBinary(
-          ShapeUtil::MakeShape(S32, {}), HloOpcode::kMultiply,
-          partition_ordinals[dimension], multiplier));
-      if (iota->shape().element_type() != S32) {
+      const int64_t shard_dim = iota->shape().dimensions(dimension);
+      const bool needs_64bit_offset =
+          shard_dim > std::numeric_limits<int32_t>::max() ||
+          (sharding.dimension(dimension) - 1) * shard_dim >
+              std::numeric_limits<int32_t>::max();
+      const PrimitiveType offset_type =
+          !needs_64bit_offset
+              ? S32
+              : (iota->shape().element_type() == U64 ? U64 : S64);
+      const Shape offset_shape = ShapeUtil::MakeShape(offset_type, {});
+      HloInstruction* ordinal = partition_ordinals[dimension];
+      if (ordinal->shape().element_type() != offset_type) {
+        ordinal = b_.AddInstruction(
+            HloInstruction::CreateConvert(offset_shape, ordinal));
+      }
+      HloInstruction* multiplier =
+          b_.AddInstruction(HloInstruction::CreateConstant(
+              offset_type == S32
+                  ? LiteralUtil::CreateR0<int32_t>(shard_dim)
+                  : (offset_type == U64
+                         ? LiteralUtil::CreateR0<uint64_t>(shard_dim)
+                         : LiteralUtil::CreateR0<int64_t>(shard_dim))));
+      HloInstruction* offset = b_.AddInstruction(HloInstruction::CreateBinary(
+          offset_shape, HloOpcode::kMultiply, ordinal, multiplier));
+      if (iota->shape().element_type() != offset_type) {
         offset = b_.AddInstruction(HloInstruction::CreateConvert(
             ShapeUtil::MakeShape(iota->shape().element_type(), {}), offset));
       }
@@ -8187,14 +8206,26 @@ absl::Status SpmdPartitioner::PreprocessHlos(
           // Since the concat requires that the size of all operands along the
           // non-concat dimension is the same, it implies that the lhs/rhs slice
           // is slicing along the concat dims.
+          const int64_t low_pad = lhs->shape().dimensions(dim);
+          const int64_t high_pad = rhs->shape().dimensions(dim);
+          const int64_t padded_size = hlo->shape().dimensions(dim);
+          const int64_t shard_count = hlo->sharding().dimension(dim);
+          const int64_t shard_size = CeilOfRatio(padded_size, shard_count);
+          if (padded_size > std::numeric_limits<int32_t>::max() &&
+              (!mid->has_sharding() || mid->sharding() != hlo->sharding() ||
+               !EvenlyPartitions(hlo->shape(), hlo->sharding()) ||
+               !EvenlyPartitions(mid->shape(), mid->sharding()) ||
+               low_pad + high_pad >
+                   std::min<int64_t>(std::numeric_limits<int32_t>::max(),
+                                     shard_size))) {
+            continue;
+          }
 
           // Step 1: Pad the mid operand to the final size. The low padding is
           // the size of the lhs shape, and high padding is size of rhs shape.
           PaddingConfig padding_config =
               MakeNoPaddingConfig(hlo->shape().dimensions().size());
           auto* padding_config_dim = padding_config.mutable_dimensions(dim);
-          const int64_t low_pad = lhs->shape().dimensions(dim);
-          const int64_t high_pad = rhs->shape().dimensions(dim);
           padding_config_dim->set_edge_padding_low(low_pad);
           padding_config_dim->set_edge_padding_high(high_pad);
           HloInstruction* zero =
@@ -8213,8 +8244,7 @@ absl::Status SpmdPartitioner::PreprocessHlos(
           //  slice_start in padded_operand = lhs->slice_start + low_pad.
           //  Rotate left by (lhs->slice_start + low_pad)
           //  i.e., rotate right = padded_size - (lhs_slice_start + low_pad).
-          const int64_t padded_size = hlo->shape().dimensions(dim);
-          const int rotate_lhs_amount =
+          const int64_t rotate_lhs_amount =
               padded_size - (pad_pattern->lhs_slice_start + low_pad);
           HloInstruction* rotate_lhs = computation->AddInstruction(
               CreateCustomCallSPMDInternal_RotateRight(pad, dim,
@@ -8257,8 +8287,10 @@ absl::Status SpmdPartitioner::PreprocessHlos(
           rotate_rhs = apply_modifiers(rotate_rhs, pad_pattern->rhs_modifiers);
 
           // Now merge the 3 results using appropriate selects.
+          const PrimitiveType index_type =
+              padded_size > std::numeric_limits<uint32_t>::max() ? U64 : U32;
           const Shape iota_shape =
-              ShapeUtil::ChangeElementType(hlo->shape(), U32);
+              ShapeUtil::ChangeElementType(hlo->shape(), index_type);
           HloInstruction* iota = computation->AddInstruction(
               HloInstruction::CreateIota(iota_shape, dim));
           iota->set_metadata(hlo->metadata());
@@ -8282,7 +8314,9 @@ absl::Status SpmdPartitioner::PreprocessHlos(
           for (const SelectSpec& select_spec : selects) {
             HloInstruction* limit =
                 computation->AddInstruction(HloInstruction::CreateConstant(
-                    LiteralUtil::CreateR0<uint32_t>(select_spec.limit)));
+                    index_type == U64
+                        ? LiteralUtil::CreateR0<uint64_t>(select_spec.limit)
+                        : LiteralUtil::CreateR0<uint32_t>(select_spec.limit)));
             limit->set_sharding(HloSharding::Replicate());
             HloInstruction* limit_bcast = computation->AddInstruction(
                 HloInstruction::CreateBroadcast(iota_shape, limit, {}));
