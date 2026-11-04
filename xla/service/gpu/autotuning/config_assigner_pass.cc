@@ -52,7 +52,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/utils/hlo_query.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/service/compiler.h"
 #include "xla/service/decision.h"
@@ -152,17 +151,6 @@ AutotuneDecision ShouldAssignConfigToCustomCall(
       "Instruction is not a supported custom call (GEMM or Conv)");
 }
 
-// Returns true for the ragged-dot XTile fusions created by
-// GemmRewriter::HandleRaggedDot. They carry the generic Triton fusion kind but
-// are tuned by TritonBackend along with the other GEMM fusions.
-bool IsRaggedDotTritonFusion(const FusionBackendConfig& backend_config,
-                             const HloInstruction& instruction) {
-  return backend_config.kind() == kTritonFusionKind &&
-         hlo_query::ContainsInstrWithOpcode(
-             instruction.fused_instructions_computation(),
-             {HloOpcode::kRaggedDot});
-}
-
 AutotuneDecision ShouldAssignConfigToGemmFusion(
     const HloInstruction& instruction) {
   auto gpu_config = instruction.backend_config<GpuBackendConfig>();
@@ -192,7 +180,7 @@ AutotuneDecision ShouldAssignConfigToGemmFusion(
     }
     return AutotuneDecision::Allow();
   }
-  if (IsRaggedDotTritonFusion(backend_config, instruction)) {
+  if (IsRaggedDotTritonFusion(instruction)) {
     return AutotuneDecision::Allow();
   }
   return AutotuneDecision::Forbid(
@@ -264,7 +252,7 @@ AutotuneDecision ShouldAssignConfigToInstruction(
     if (backend_config.kind() == kTritonGemmFusionKind ||
         backend_config.kind() == kCuDnnFusionKind ||
         backend_config.kind() == kCustomFusionKind ||
-        IsRaggedDotTritonFusion(backend_config, instruction)) {
+        IsRaggedDotTritonFusion(instruction)) {
       return ShouldAssignConfigToGemmFusion(instruction);
     }
     // 3. Generic Triton-only fusions. These are expected to only be tuned by
