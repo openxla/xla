@@ -32,7 +32,7 @@ extern "C" {
 // Exposes the XLA-owned host collective communicator, collective memory window,
 // and logical device and communicator information to FFI handlers.
 // `request_communicator` requests a clique in the Prepare stage;
-// `get_communicator` returns the handle once cliques are acquired.
+// `get_communicator` returns the handle and metadata once cliques are acquired.
 // `request_window` requests window registration for a batch of already-
 // allocated buffers with the clique in Prepare; `get_window` returns the
 // corresponding window handle once collective memory is acquired.
@@ -101,40 +101,21 @@ typedef struct XLA_FFI_Communicator_Get_Args {
   size_t num_groups;
   int64_t communication_id;
   XLA_FFI_Communicator* communicator;  // out
-} XLA_FFI_Communicator_Get_Args;
-
-XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Communicator_Get_Args, communicator);
-
-// Returns the non-owning communicator handle for the clique. Valid once
-// cliques are acquired (Initialize/Execute stages).
-typedef XLA_FFI_Error* XLA_FFI_Communicator_Get(
-    const XLA_FFI_Collectives_Extension* self,
-    XLA_FFI_Communicator_Get_Args* args);
-
-typedef struct XLA_FFI_CommunicatorInfo_Get_Args {
-  size_t struct_size;
-  XLA_FFI_InternalExtension* extension_start;
-
-  XLA_FFI_CollectiveGroupMode group_mode;
-  const XLA_FFI_ReplicaGroup* groups;
-  size_t num_groups;
-  int64_t communication_id;
-
   int32_t rank;                     // zero-based rank in the communicator (out)
   int32_t size;                     // total participant count (out)
   int32_t local_participant_count;  // participants in the current process (out)
-} XLA_FFI_CommunicatorInfo_Get_Args;
+} XLA_FFI_Communicator_Get_Args;
 
-XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_CommunicatorInfo_Get_Args,
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Communicator_Get_Args,
                              local_participant_count);
 
-// Returns metadata for the current device's group using the same participant
-// order as `get_communicator`. No communicator request is required. Available
-// on GPU in Prepare, Initialize, Execute, and Record. Process-local membership
-// does not describe physical host or load/store-accessible topology.
-typedef XLA_FFI_Error* XLA_FFI_CommunicatorInfo_Get(
+// Returns the non-owning communicator handle and metadata for the current
+// device's clique. Valid once cliques are acquired (Initialize/Execute/Record
+// stages). Process-local membership does not describe physical host or
+// load/store-accessible topology.
+typedef XLA_FFI_Error* XLA_FFI_Communicator_Get(
     const XLA_FFI_Collectives_Extension* self,
-    XLA_FFI_CommunicatorInfo_Get_Args* args);
+    XLA_FFI_Communicator_Get_Args* args);
 
 //===----------------------------------------------------------------------===//
 // Collective memory window
@@ -242,11 +223,10 @@ struct XLA_FFI_Collectives_Extension {
   XLA_FFI_Window_Get* get_window;
 
   XLA_FFI_LogicalDeviceInfo_Get* get_logical_device_info;
-  XLA_FFI_CommunicatorInfo_Get* get_communicator_info;
 };
 
 XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Collectives_Extension,
-                             get_communicator_info);
+                             get_logical_device_info);
 
 #ifdef __cplusplus
 }  // extern "C"

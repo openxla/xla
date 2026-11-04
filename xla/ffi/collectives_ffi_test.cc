@@ -85,6 +85,9 @@ static XLA_FFI_Error* FakeGetCommunicator(
     const XLA_FFI_Collectives_Extension* self,
     XLA_FFI_Communicator_Get_Args* args) {
   args->communicator = kFakeCommunicator;
+  args->rank = 2;
+  args->size = 3;
+  args->local_participant_count = 1;
   return nullptr;
 }
 
@@ -139,18 +142,18 @@ static XLA_FFI_Collectives_Extension MakeFakeCollectivesExtension(
 
 TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
   bool called = false;
-  XLA_FFI_Communicator* got = nullptr;
+  CommunicatorInfo got = {};
 
   auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
       [&](Communicator comm) -> absl::Status {
         called = true;
         if (absl::Status status = comm.RequestCommunicator(
-                GroupMode::kFlattenedId, {{0, 1}}, /*communication_id=*/7);
+                GroupMode::kFlattenedId, {{2, 0, 1}}, /*communication_id=*/7);
             !status.ok()) {
           return status;
         }
-        absl::StatusOr<XLA_FFI_Communicator*> comm_or = comm.GetCommunicator(
-            GroupMode::kFlattenedId, {{0, 1}}, /*communication_id=*/7);
+        absl::StatusOr<CommunicatorInfo> comm_or = comm.GetCommunicator(
+            GroupMode::kFlattenedId, {{2, 0, 1}}, /*communication_id=*/7);
         if (!comm_or.ok()) {
           return comm_or.status();
         }
@@ -174,12 +177,15 @@ TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
 
   ASSERT_OK(status);
   EXPECT_TRUE(called);
-  EXPECT_EQ(got, kFakeCommunicator);
+  EXPECT_EQ(got.communicator, kFakeCommunicator);
+  EXPECT_EQ(got.rank, 2);
+  EXPECT_EQ(got.size, 3);
+  EXPECT_EQ(got.local_participant_count, 1);
   EXPECT_TRUE(backend.request_called);
   EXPECT_EQ(backend.requested_group_mode, XLA_FFI_GROUP_FLATTENED_ID);
   EXPECT_EQ(backend.requested_num_groups, 1u);
   EXPECT_EQ(backend.requested_communication_id, 7);
-  EXPECT_THAT(backend.requested_ids, ElementsAre(0, 1));
+  EXPECT_THAT(backend.requested_ids, ElementsAre(2, 0, 1));
 }
 
 TEST(CollectivesFfiTest, RequestAndGetWindow) {

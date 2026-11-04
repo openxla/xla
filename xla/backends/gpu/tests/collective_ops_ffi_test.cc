@@ -323,8 +323,7 @@ std::vector<std::vector<int64_t>> PublicApiReplicaGroups() {
 // Prepare handler: requests the XLA-owned collective clique via the public
 // collectives FFI extension, using the C++ Communicator wrapper.
 absl::Status PreparePublicApiAllReduce(ffi::Communicator comm) {
-  return comm.RequestCommunicator(ffi::GroupMode::kFlattenedId,
-                                  PublicApiReplicaGroups(),
+  return comm.RequestCommunicator(ffi::GroupMode::kFlattenedId, {{1, 0}},
                                   /*communication_id=*/0);
 }
 
@@ -334,13 +333,18 @@ absl::Status PreparePublicApiAllReduce(ffi::Communicator comm) {
 absl::Status PublicApiAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
                                 ffi::Result<ffi::BufferR0<U32>> dst,
                                 ffi::Communicator comm) {
-  ABSL_ASSIGN_OR_RETURN(XLA_FFI_Communicator * communicator,
-                        comm.GetCommunicator(ffi::GroupMode::kFlattenedId,
-                                             PublicApiReplicaGroups(),
-                                             /*communication_id=*/0));
-  TF_RET_CHECK(communicator != nullptr);
+  ABSL_ASSIGN_OR_RETURN(
+      ffi::CommunicatorInfo info,
+      comm.GetCommunicator(ffi::GroupMode::kFlattenedId, {{1, 0}},
+                           /*communication_id=*/0));
+  ABSL_ASSIGN_OR_RETURN(ffi::LogicalDeviceInfo logical_info,
+                        comm.GetLogicalDeviceInfo());
+  TF_RET_CHECK(info.communicator != nullptr);
+  EXPECT_EQ(info.rank, kNumReplicas - 1 - logical_info.replica_id);
+  EXPECT_EQ(info.size, kNumReplicas);
+  EXPECT_EQ(info.local_participant_count, kNumReplicas);
   return CommunicatorAllReduceU32(
-      stream, communicator, src.device_memory().opaque(),
+      stream, info.communicator, src.device_memory().opaque(),
       dst->device_memory().opaque(), src.element_count());
 }
 

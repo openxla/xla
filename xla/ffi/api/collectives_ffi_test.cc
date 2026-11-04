@@ -49,16 +49,15 @@ static constexpr size_t kFakeWindowOffset = 42;
 // requested so the test can check the C++ wrapper builds the C args correctly.
 struct FakeBackend {
   bool logical_device_info_called = false;
-  bool communicator_info_called = false;
-  XLA_FFI_CollectiveGroupMode info_group_mode = XLA_FFI_GROUP_CROSS_REPLICA;
-  int64_t info_communication_id = -1;
-  std::vector<std::vector<int64_t>> info_groups;
   bool request_called = false;
   XLA_FFI_CollectiveGroupMode requested_group_mode =
       XLA_FFI_GROUP_CROSS_REPLICA;
   size_t requested_num_groups = 0;
   int64_t requested_communication_id = -1;
   std::vector<int64_t> requested_ids;
+  XLA_FFI_CollectiveGroupMode get_group_mode = XLA_FFI_GROUP_CROSS_REPLICA;
+  int64_t get_communication_id = -1;
+  std::vector<std::vector<int64_t>> get_groups;
 
   bool request_window_called = false;
   XLA_FFI_CollectiveGroupMode requested_window_group_mode =
@@ -84,26 +83,6 @@ static XLA_FFI_Error* FakeGetLogicalDeviceInfo(
   return nullptr;
 }
 
-static XLA_FFI_Error* FakeGetCommunicatorInfo(
-    const XLA_FFI_Collectives_Extension* self,
-    XLA_FFI_CommunicatorInfo_Get_Args* args) {
-  auto* backend = reinterpret_cast<FakeBackend*>(self->state);
-  backend->communicator_info_called = true;
-  EXPECT_EQ(args->struct_size, XLA_FFI_CommunicatorInfo_Get_Args_STRUCT_SIZE);
-  EXPECT_EQ(args->extension_start, nullptr);
-  backend->info_group_mode = args->group_mode;
-  backend->info_communication_id = args->communication_id;
-  backend->info_groups.clear();
-  for (size_t i = 0; i < args->num_groups; ++i) {
-    backend->info_groups.emplace_back(
-        args->groups[i].ids, args->groups[i].ids + args->groups[i].size);
-  }
-  args->rank = 2;
-  args->size = 3;
-  args->local_participant_count = 1;
-  return nullptr;
-}
-
 static XLA_FFI_Error* FakeRequestCommunicator(
     const XLA_FFI_Collectives_Extension* self,
     XLA_FFI_Communicator_Request_Args* args) {
@@ -124,7 +103,20 @@ static XLA_FFI_Error* FakeRequestCommunicator(
 static XLA_FFI_Error* FakeGetCommunicator(
     const XLA_FFI_Collectives_Extension* self,
     XLA_FFI_Communicator_Get_Args* args) {
+  auto* backend = reinterpret_cast<FakeBackend*>(self->state);
+  EXPECT_EQ(args->struct_size, XLA_FFI_Communicator_Get_Args_STRUCT_SIZE);
+  EXPECT_EQ(args->extension_start, nullptr);
+  backend->get_group_mode = args->group_mode;
+  backend->get_communication_id = args->communication_id;
+  backend->get_groups.clear();
+  for (size_t i = 0; i < args->num_groups; ++i) {
+    backend->get_groups.emplace_back(
+        args->groups[i].ids, args->groups[i].ids + args->groups[i].size);
+  }
   args->communicator = kFakeCommunicator;
+  args->rank = 2;
+  args->size = 3;
+  args->local_participant_count = 1;
   return nullptr;
 }
 
@@ -175,7 +167,6 @@ static XLA_FFI_Collectives_Extension MakeFakeCollectivesExtension(
   ext.request_window = request_window;
   ext.get_window = get_window;
   ext.get_logical_device_info = FakeGetLogicalDeviceInfo;
-  ext.get_communicator_info = FakeGetCommunicatorInfo;
   return ext;
 }
 
@@ -267,77 +258,19 @@ TEST(CollectivesFfiTest, LogicalDeviceInfoPropagatesCallbackError) {
   EXPECT_EQ(info.error().message(), "logical device assignment unavailable");
 }
 
-TEST(CollectivesFfiTest, CommunicatorInfoWithoutResourceRequests) {
-  auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
-      [](Communicator comm) -> Error {
-        ErrorOr<CommunicatorInfo> info = comm.GetCommunicatorInfo(
-            GroupMode::kFlattenedId, {{5, 1, 3}, {2, 0, 4}},
-            /*communication_id=*/7);
-        if (info.has_error()) {
-          return info.error();
-        }
-        EXPECT_EQ(info->rank, 2);
-        EXPECT_EQ(info->size, 3);
-        EXPECT_EQ(info->local_participant_count, 1);
-        return Error::Success();
-      });
-  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
-  FakeBackend backend;
-  XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
-      reinterpret_cast<XLA_FFI_CollectivesState*>(&backend),
-      FakeRequestCommunicator, FakeGetCommunicator, FakeRequestWindow,
-      FakeGetWindow);
-  InvokeContext context;
-  context.extension_start = &ext.extension_base;
-
-  ASSERT_OK(Invoke(Api(), *handler, call_frame, context));
-  EXPECT_TRUE(backend.communicator_info_called);
-  EXPECT_EQ(backend.info_group_mode, XLA_FFI_GROUP_FLATTENED_ID);
-  EXPECT_EQ(backend.info_communication_id, 7);
-  EXPECT_THAT(backend.info_groups,
-              ElementsAre(ElementsAre(5, 1, 3), ElementsAre(2, 0, 4)));
-  EXPECT_FALSE(backend.request_called);
-  EXPECT_FALSE(backend.request_window_called);
-}
-
-TEST(CollectivesFfiTest, CommunicatorInfoUnsupportedCallback) {
-  for (bool truncated : {false, true}) {
-    SCOPED_TRACE(truncated);
-    FakeBackend backend;
-    XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
-        reinterpret_cast<XLA_FFI_CollectivesState*>(&backend), nullptr,
-        nullptr);
-    if (truncated) {
-      ext.extension_base.struct_size = XLA_FFI_STRUCT_SIZE(
-          XLA_FFI_Collectives_Extension, get_logical_device_info);
-    } else {
-      ext.get_communicator_info = nullptr;
-    }
-
-    ErrorOr<CommunicatorInfo> info =
-        Communicator(Api(), &ext)
-            .GetCommunicatorInfo(GroupMode::kCrossReplica, {},
-                                 /*communication_id=*/0);
-    ASSERT_TRUE(info.has_error());
-    EXPECT_EQ(info.error().errc(), ErrorCode::kUnimplemented);
-    EXPECT_THAT(info.error().message(), HasSubstr("not supported"));
-    EXPECT_FALSE(backend.communicator_info_called);
-  }
-}
-
-TEST(CollectivesFfiTest, CommunicatorInfoPropagatesCallbackError) {
+TEST(CollectivesFfiTest, GetCommunicatorPropagatesCallbackError) {
   XLA_FFI_Collectives_Extension ext =
       MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
-  ext.get_communicator_info = [](const XLA_FFI_Collectives_Extension*,
-                                 XLA_FFI_CommunicatorInfo_Get_Args*) {
+  ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
+                            XLA_FFI_Communicator_Get_Args*) {
     return internal::CreateError(
         Api(), Error::InvalidArgument("invalid communicator group"));
   };
 
   ErrorOr<CommunicatorInfo> info =
       Communicator(Api(), &ext)
-          .GetCommunicatorInfo(GroupMode::kCrossReplica, {},
-                               /*communication_id=*/0);
+          .GetCommunicator(GroupMode::kCrossReplica, {},
+                           /*communication_id=*/0);
   ASSERT_TRUE(info.has_error());
   EXPECT_EQ(info.error().errc(), ErrorCode::kInvalidArgument);
   EXPECT_EQ(info.error().message(), "invalid communicator group");
@@ -345,18 +278,20 @@ TEST(CollectivesFfiTest, CommunicatorInfoPropagatesCallbackError) {
 
 TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
   bool called = false;
-  XLA_FFI_Communicator* got = nullptr;
+  CommunicatorInfo got = {};
 
   auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
       [&](Communicator comm) -> Error {
         called = true;
-        if (Error status = comm.RequestCommunicator(
-                GroupMode::kFlattenedId, {{0, 1}}, /*communication_id=*/7);
+        if (Error status = comm.RequestCommunicator(GroupMode::kFlattenedId,
+                                                    {{5, 1, 3}, {2, 0, 4}},
+                                                    /*communication_id=*/7);
             status.failure()) {
           return status;
         }
-        ErrorOr<XLA_FFI_Communicator*> comm_or = comm.GetCommunicator(
-            GroupMode::kFlattenedId, {{0, 1}}, /*communication_id=*/7);
+        ErrorOr<CommunicatorInfo> comm_or = comm.GetCommunicator(
+            GroupMode::kFlattenedId, {{5, 1, 3}, {2, 0, 4}},
+            /*communication_id=*/7);
         if (comm_or.has_error()) {
           return comm_or.error();
         }
@@ -380,12 +315,19 @@ TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
 
   ASSERT_OK(status);
   EXPECT_TRUE(called);
-  EXPECT_EQ(got, kFakeCommunicator);
+  EXPECT_EQ(got.communicator, kFakeCommunicator);
+  EXPECT_EQ(got.rank, 2);
+  EXPECT_EQ(got.size, 3);
+  EXPECT_EQ(got.local_participant_count, 1);
   EXPECT_TRUE(backend.request_called);
   EXPECT_EQ(backend.requested_group_mode, XLA_FFI_GROUP_FLATTENED_ID);
-  EXPECT_EQ(backend.requested_num_groups, 1u);
+  EXPECT_EQ(backend.requested_num_groups, 2u);
   EXPECT_EQ(backend.requested_communication_id, 7);
-  EXPECT_THAT(backend.requested_ids, ElementsAre(0, 1));
+  EXPECT_THAT(backend.requested_ids, ElementsAre(5, 1, 3, 2, 0, 4));
+  EXPECT_EQ(backend.get_group_mode, XLA_FFI_GROUP_FLATTENED_ID);
+  EXPECT_EQ(backend.get_communication_id, 7);
+  EXPECT_THAT(backend.get_groups,
+              ElementsAre(ElementsAre(5, 1, 3), ElementsAre(2, 0, 4)));
 }
 
 TEST(CollectivesFfiTest, RequestAndGetWindow) {

@@ -206,10 +206,17 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
       GpuCliqueKey clique_key,
       GetCliqueKey(*state->collective_params, args->group_mode, replica_groups,
                    args->communication_id));
-  ABSL_ASSIGN_OR_RETURN(
-      GpuCommunicator * comm,
-      state->collective_cliques->GetComm(
-          clique_key, state->collective_params->global_device_id));
+  GlobalDeviceId device_id = state->collective_params->global_device_id;
+  std::optional<RankId> rank = clique_key.rank(device_id);
+  if (!rank.has_value()) {
+    return InvalidArgument("Rank not found for device %v", device_id);
+  }
+  if (clique_key.num_devices() >
+      static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+    return absl::OutOfRangeError("Communicator size exceeds int32 range");
+  }
+  ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm,
+                        state->collective_cliques->GetComm(clique_key, *rank));
 
   PlatformCommunicatorHandle platform_comm = comm->platform_comm();
   if (platform_comm.handle == nullptr) {
@@ -218,6 +225,10 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
 
   args->communicator =
       reinterpret_cast<XLA_FFI_Communicator*>(platform_comm.handle);
+  args->rank = static_cast<int32_t>(rank->value());
+  args->size = static_cast<int32_t>(clique_key.num_devices());
+  args->local_participant_count =
+      static_cast<int32_t>(clique_key.num_local_participants());
   return absl::OkStatus();
 }
 
@@ -229,46 +240,6 @@ XLA_FFI_Error* CommunicatorRequest(const XLA_FFI_Collectives_Extension* self,
 XLA_FFI_Error* CommunicatorGet(const XLA_FFI_Collectives_Extension* self,
                                XLA_FFI_Communicator_Get_Args* args) {
   return ffi::CreateError(CommunicatorGetImpl(self, args));
-}
-
-absl::Status CommunicatorInfoGetImpl(const XLA_FFI_Collectives_Extension* self,
-                                     XLA_FFI_CommunicatorInfo_Get_Args* args) {
-  if (args == nullptr) {
-    return InvalidArgument("XLA_FFI_CommunicatorInfo_Get_Args is null");
-  }
-  ABSL_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-      "XLA_FFI_CommunicatorInfo_Get_Args",
-      XLA_FFI_CommunicatorInfo_Get_Args_STRUCT_SIZE, args->struct_size));
-
-  GpuCollectivesState* state = AsState(self);
-  if (state == nullptr || state->collective_params == nullptr) {
-    return InvalidArgument("Collective params are not available");
-  }
-  const CollectiveParams& params = *state->collective_params;
-  ABSL_ASSIGN_OR_RETURN(std::vector<ReplicaGroup> replica_groups,
-                        ToReplicaGroups(args->groups, args->num_groups));
-  ABSL_ASSIGN_OR_RETURN(GpuCliqueKey clique_key,
-                        GetCliqueKey(params, args->group_mode, replica_groups,
-                                     args->communication_id));
-  std::optional<RankId> rank = clique_key.rank(params.global_device_id);
-  if (!rank.has_value()) {
-    return InvalidArgument("Rank not found for device %v",
-                           params.global_device_id);
-  }
-  if (clique_key.num_devices() >
-      static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
-    return absl::OutOfRangeError("Communicator size exceeds int32 range");
-  }
-  args->rank = static_cast<int32_t>(rank->value());
-  args->size = static_cast<int32_t>(clique_key.num_devices());
-  args->local_participant_count =
-      static_cast<int32_t>(clique_key.num_local_participants());
-  return absl::OkStatus();
-}
-
-XLA_FFI_Error* CommunicatorInfoGet(const XLA_FFI_Collectives_Extension* self,
-                                   XLA_FFI_CommunicatorInfo_Get_Args* args) {
-  return ffi::CreateError(CommunicatorInfoGetImpl(self, args));
 }
 
 absl::Status WindowRequestImpl(const XLA_FFI_Collectives_Extension* self,
@@ -435,7 +406,6 @@ XLA_FFI_Collectives_Extension MakeCollectivesExtension(
   ext.request_window = WindowRequest;
   ext.get_window = WindowGet;
   ext.get_logical_device_info = LogicalDeviceInfoGet;
-  ext.get_communicator_info = CommunicatorInfoGet;
   return ext;
 }
 
