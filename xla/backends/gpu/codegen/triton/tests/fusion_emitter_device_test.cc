@@ -2441,14 +2441,15 @@ class ScanTritonEmitterTest : public TritonEmitterTest {
 
   // Returns arguments for the entry computation of `module` filled with small
   // integers. All intermediate scan results are then exactly representable in
-  // f32, so that the results match the interpreter reference bit-exactly,
-  // independently of the order in which the scan combines the elements.
+  // f32 and bf16, so that the results match the interpreter reference
+  // bit-exactly, independently of the order in which the scan combines the
+  // elements.
   absl::StatusOr<std::vector<Literal>> MakeSmallIntegerArguments(
       const HloModule& module) {
     std::vector<Literal> arguments;
     for (const HloInstruction* parameter :
          module.entry_computation()->parameter_instructions()) {
-      Literal literal(parameter->shape());
+      Literal literal(ShapeUtil::ChangeElementType(parameter->shape(), F32));
       ABSL_RETURN_IF_ERROR(
           literal.Populate<float>([](absl::Span<const int64_t> indices) {
             int64_t value = 0;
@@ -2457,7 +2458,9 @@ class ScanTritonEmitterTest : public TritonEmitterTest {
             }
             return static_cast<float>(value % 7 - 3);
           }));
-      arguments.push_back(std::move(literal));
+      ABSL_ASSIGN_OR_RETURN(Literal argument,
+                            literal.Convert(parameter->shape().element_type()));
+      arguments.push_back(std::move(argument));
     }
     return arguments;
   }
@@ -2703,6 +2706,119 @@ ENTRY entry_computation {
         "num_warps":4,"num_ctas":1,"num_stages":1}}}
 })";
   RunAndCompareScan(kHloText);
+}
+
+// The combiner is in the form that FloatNormalization produces for bf16 scans
+// on targets without native bf16 adds.
+TEST_F(ScanTritonEmitterTest, TiledBf16ScanWithF32Combiner) {
+  constexpr absl::string_view kHloText = R"(
+add_computation {
+  p0 = bf16[] parameter(0)
+  p1 = bf16[] parameter(1)
+  p0_f32 = f32[] convert(p0)
+  p1_f32 = f32[] convert(p1)
+  add = f32[] add(p0_f32, p1_f32)
+  add_bf16 = bf16[] convert(add)
+  ROOT tuple = (bf16[], bf16[]) tuple(add_bf16, add_bf16)
+}
+
+scan_fusion {
+  p0 = bf16[1000] parameter(0)
+  p1 = bf16[] parameter(1)
+  scan = (bf16[1000], bf16[]) scan(p0, p1), dimensions={0}, num_carries=1,
+    is_associative=true, to_apply=add_computation, backend_config={sizes:[256]}
+  ROOT get-tuple-element = bf16[1000] get-tuple-element(scan), index=0
+}
+
+ENTRY entry_computation {
+  p0 = bf16[1000] parameter(0)
+  p1 = bf16[] parameter(1)
+  ROOT fusion = bf16[1000] fusion(p0, p1), kind=kCustom, calls=scan_fusion,
+    backend_config={"fusion_backend_config":{"kind":"__triton",
+      "block_level_fusion_config":{"output_tiles":[{"sizes":[]}],
+        "num_warps":4,"num_ctas":1,"num_stages":1}}}
+})";
+  RunAndCompareScan(kHloText);
+}
+
+// The input tile of the last loop iteration is padded with zero, which is not
+// the identity of multiply.
+TEST_F(ScanTritonEmitterTest, TiledMultiplyScanWithPartialTile) {
+  constexpr absl::string_view kHloText = R"(
+multiply_computation {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  multiply = f32[] multiply(p0, p1)
+  ROOT tuple = (f32[], f32[]) tuple(multiply, multiply)
+}
+
+scan_fusion {
+  p0 = f32[1000] parameter(0)
+  p1 = f32[] parameter(1)
+  scan = (f32[1000], f32[]) scan(p0, p1), dimensions={0}, num_carries=1,
+    is_associative=true, to_apply=multiply_computation,
+    backend_config={sizes:[256]}
+  ROOT get-tuple-element = f32[1000] get-tuple-element(scan), index=0
+}
+
+ENTRY entry_computation {
+  p0 = f32[1000] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT fusion = f32[1000] fusion(p0, p1), kind=kCustom, calls=scan_fusion,
+    backend_config={"fusion_backend_config":{"kind":"__triton",
+      "block_level_fusion_config":{"output_tiles":[{"sizes":[]}],
+        "num_warps":4,"num_ctas":1,"num_stages":1}}}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  // Products of -1 and 1 are exact, and the carry changes sign between loop
+  // iterations.
+  Literal input(ShapeUtil::MakeShape(F32, {1000}));
+  ASSERT_OK(input.Populate<float>([](absl::Span<const int64_t> indices) {
+    return indices[0] % 3 == 0 ? -1.0f : 1.0f;
+  }));
+  Literal init = LiteralUtil::CreateR0<float>(-1.0f);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), {&input, &init},
+                                       kExactMatch));
+}
+
+// The tile is padded along the scan dimension with zero, which is not the
+// identity of maximum.
+TEST_F(ScanTritonEmitterTest, SingleTileMaxScanWithPaddedTile) {
+  constexpr absl::string_view kHloText = R"(
+max_computation {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  max = f32[] maximum(p0, p1)
+  ROOT tuple = (f32[], f32[]) tuple(max, max)
+}
+
+scan_fusion {
+  p0 = f32[1000] parameter(0)
+  p1 = f32[] parameter(1)
+  scan = (f32[1000], f32[]) scan(p0, p1), dimensions={0}, num_carries=1,
+    is_associative=true, to_apply=max_computation
+  ROOT get-tuple-element = f32[1000] get-tuple-element(scan), index=0
+}
+
+ENTRY entry_computation {
+  p0 = f32[1000] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT fusion = f32[1000] fusion(p0, p1), kind=kCustom, calls=scan_fusion,
+    backend_config={"fusion_backend_config":{"kind":"__triton",
+      "block_level_fusion_config":{"output_tiles":[{"sizes":[]}],
+        "num_warps":4,"num_ctas":1,"num_stages":1}}}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  // All outputs are negative, so any padding that reached them would show.
+  Literal input(ShapeUtil::MakeShape(F32, {1000}));
+  ASSERT_OK(input.Populate<float>([](absl::Span<const int64_t> indices) {
+    return -1.0f - static_cast<float>((indices[0] * 37 + 50) % 101);
+  }));
+  Literal init = LiteralUtil::CreateR0<float>(-1000.0f);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(std::move(module), {&input, &init},
+                                       kExactMatch));
 }
 
 TEST_F(ScanTritonEmitterTest, TopPMaskEndToEnd8x128) {

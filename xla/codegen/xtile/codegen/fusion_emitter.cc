@@ -2221,19 +2221,21 @@ absl::StatusOr<std::vector<TensorValue>> EmitScan(
         "in Triton emission.");
   }
 
+  // Out-of-bounds elements are padded with zero, which only reaches returned
+  // outputs in reverse scans, so those need a combiner with zero as identity.
+  // TODO(b/390559452): Pad reverse scans with the identity of their combiner.
   const HloInstruction* scan_root = hlo_scan.to_apply()->root_instruction();
-  if (!HloPredicateIsOp<HloOpcode::kTuple>(scan_root) ||
-      !absl::c_all_of(scan_root->operands(),
-                      HloPredicateIsOp<HloOpcode::kAdd>)) {
-    // Non-additive scans (e.g. min, max, product) require their respective
-    // identity elements for out-of-bounds padding, which is not yet supported.
+  if (hlo_scan.is_reverse() &&
+      (!HloPredicateIsOp<HloOpcode::kTuple>(scan_root) ||
+       !absl::c_all_of(scan_root->operands(),
+                       HloPredicateIsOp<HloOpcode::kAdd>))) {
     return absl::UnimplementedError(
-        "Only additive scan operations are currently supported in Triton "
-        "emission.");
+        "Only additive reverse scan operations are currently supported in "
+        "Triton emission.");
   }
 
-  // TODO(b/390559452): Support complex-typed scans. Complex additive scans pass
-  // the kAdd check above, but creating the neutral masking value below via
+  // TODO(b/390559452): Support complex-typed scans. Complex scans pass the
+  // combiner check above, but creating the zero padding value below via
   // CreateConst with a float literal would LOG(FATAL) on complex element types.
   if (primitive_util::IsComplexType(
           hlo_scan.operand(0)->shape().element_type())) {
@@ -2322,11 +2324,11 @@ absl::StatusOr<std::vector<TensorValue>> EmitScan(
       output_types.push_back(input_tile.getType());
 
       auto init_type = mlir::cast<mlir::ShapedType>(inits[i].getType());
-      mlir::Value neutral_value =
+      mlir::Value padding_value =
           CreateConst(b, init_type.getElementType(), 0.0f);
       ABSL_ASSIGN_OR_RETURN(input_tile,
                             MaskOperand(b, *input_region.roots()[i], input_tile,
-                                        tile_idx_i32, scan_dim, neutral_value));
+                                        tile_idx_i32, scan_dim, padding_value));
       masked_inputs.push_back(input_tile);
     }
 
@@ -2383,11 +2385,11 @@ absl::StatusOr<std::vector<TensorValue>> EmitScan(
                       emitter_ctx.TiledHloToTensorValue(
                           *tiled_hlo_scan.operand(num_operands + i)),
                       scan_dim);
-    mlir::Value neutral_value =
+    mlir::Value padding_value =
         CreateConst(b, init_tensor.getType().getElementType(), 0.0f);
 
     input = mlir::cast<TensorValue>(
-        b.createOrFold<xtile::MaskOp>(input, mask_dim_bounds, neutral_value));
+        b.createOrFold<xtile::MaskOp>(input, mask_dim_bounds, padding_value));
 
     inputs.push_back(input);
     inits.push_back(init_tensor);

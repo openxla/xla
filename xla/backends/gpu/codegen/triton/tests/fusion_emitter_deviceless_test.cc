@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <string>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -30,16 +30,20 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
+#include "xla/backends/gpu/transforms/scan_rewriter_triton.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/hlo/transforms/simplifiers/float_normalization.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/gpu/gpu_float_support.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
@@ -763,6 +767,87 @@ ENTRY entry {
                                    gpu_backend_config.fusion_backend_config()
                                        .block_level_fusion_config()),
                                mlir_context));
+}
+
+// On targets without native bf16 adds, FloatNormalization rewrites the combiner
+// of a bf16 scan that ScanRewriterTriton put into a Triton fusion to
+// convert(add(convert(x), convert(y))).
+TEST_F(TritonEmitterDevicelessTest, EmitsBf16ScanAfterFloatNormalization) {
+  constexpr absl::string_view kHloText = R"(
+HloModule bf16_cumsum
+
+add_computation {
+  p0 = bf16[] parameter(0)
+  p1 = bf16[] parameter(1)
+  add = bf16[] add(p0, p1)
+  ROOT tuple = (bf16[], bf16[]) tuple(add, add)
+}
+
+ENTRY entry {
+  p0 = bf16[128] parameter(0)
+  init = bf16[] constant(0)
+  scan = (bf16[128], bf16[]) scan(p0, init), dimensions={0}, num_carries=1,
+    is_associative=true, to_apply=add_computation
+  ROOT gte = bf16[128] get-tuple-element(scan), index=0
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  const se::DeviceDescription dev_info =
+      TestGpuDeviceInfo::AMDMI350DeviceInfo();
+
+  ScanRewriterTriton rewriter(dev_info);
+  ASSERT_OK_AND_ASSIGN(bool rewritten, rewriter.Run(module.get()));
+  ASSERT_TRUE(rewritten);
+
+  GpuFloatSupport bf16_support(dev_info.gpu_compute_capability(), BF16);
+  FloatNormalization normalization(&bf16_support);
+  ASSERT_OK_AND_ASSIGN(bool normalized, normalization.Run(module.get()));
+  ASSERT_TRUE(normalized);
+
+  const auto* fusion = Cast<HloFusionInstruction>(
+      module->entry_computation()->root_instruction());
+  const HloScanInstruction* scan = nullptr;
+  for (const HloInstruction* instr :
+       fusion->fused_instructions_computation()->instructions()) {
+    if (instr->opcode() == HloOpcode::kScan) {
+      scan = Cast<HloScanInstruction>(instr);
+      break;
+    }
+  }
+  ASSERT_NE(scan, nullptr);
+  const HloInstruction* combiner_root = scan->to_apply()->root_instruction();
+  ASSERT_EQ(combiner_root->opcode(), HloOpcode::kTuple);
+  EXPECT_TRUE(absl::c_all_of(combiner_root->operands(),
+                             HloPredicateIsOp<HloOpcode::kConvert>))
+      << combiner_root->ToString();
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{}};
+  block_level_parameters.num_warps = 4;
+  block_level_parameters.num_ctas = 1;
+  block_level_parameters.num_stages = 1;
+
+  mlir::MLIRContext mlir_context;
+  RegisterSymbolicExprStorage(&mlir_context);
+  ASSERT_OK_AND_ASSIGN(
+      TritonKernelSource triton_source,
+      CreateTritonModule("test_fn", *fusion, dev_info, block_level_parameters,
+                         mlir_context));
+  std::string triton_ir = triton_source.ToString();
+
+  constexpr absl::string_view kPattern = R"(
+// CHECK:         "tt.scan"
+// CHECK:         ^bb0(%[[LHS:.*]]: bf16, %[[RHS:.*]]: bf16):
+// CHECK-DAG:       %[[LHS_F32:.*]] = arith.extf %[[LHS]] : bf16 to f32
+// CHECK-DAG:       %[[RHS_F32:.*]] = arith.extf %[[RHS]] : bf16 to f32
+// CHECK:           %[[ADD:.*]] = arith.addf %[[LHS_F32]], %[[RHS_F32]] : f32
+// CHECK:           %[[RESULT:.*]] = arith.truncf %[[ADD]] : f32 to bf16
+// CHECK:           tt.scan.return %[[RESULT]] : bf16
+)";
+  EXPECT_THAT(RunFileCheck(triton_ir, kPattern),
+              absl_testing::IsOkAndHolds(true))
+      << triton_ir;
 }
 
 }  // namespace
