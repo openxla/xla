@@ -71,13 +71,19 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
     const HloInstruction& dot, bool allow_matrix_vector_multiplication,
     bool is_normalized = true);
 
-// Returns true if the given instruction is supported by gpuBLASLt
-// GroupedMatMul.
-bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr);
+// Returns true if the given ragged-dot is supported by gpuBLASLt
+// GroupedMatMul.  Only hipBLASLt implements grouped GEMM, and the supported
+// element types depend on the target: F16 and BF16 on gfx942, F16 only on
+// gfx950.
+bool IsGpublasLtSupportedGroupedMatMul(
+    const se::GpuComputeCapability& gpu_compute_capability,
+    const HloInstruction& instr);
 
 // Returns true if the ragged-dot instruction can be lowered by the Triton
 // XTile backend.  Criteria:
+//   - Ampere or later on NVIDIA targets.
 //   - Exactly one LHS ragged dimension.
+//   - Exactly one contracting dimension on each of the LHS and the RHS.
 //   - Element types supported by the xtile emitter: F16, BF16, F32, F64,
 //     F8E5M2, F8E4M3FN; nanoo FP8 types (F8E4M3FNUZ, F8E5M2FNUZ) on ROCm only.
 //     Complex types (C64, C128) are not supported.

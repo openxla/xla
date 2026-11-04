@@ -422,8 +422,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_gemm_fusion_v2(true);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
   opts.set_xla_gpu_experimental_cost_model_gemm_tiling_default(false);
-
   opts.set_xla_gpu_experimental_triton_ragged_dot(false);
+
   // Moving reduce-scatter out of while loops can increase memory footprint, so
   // turning it off by default.
   opts.set_xla_gpu_enable_while_loop_reduce_scatter_code_motion(false);
@@ -3976,8 +3976,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       bool_setter_for(
           &DebugOptions::set_xla_gpu_experimental_triton_ragged_dot),
       debug_options->xla_gpu_experimental_triton_ragged_dot(),
-      "If true, route kRaggedDot through the experimental Triton XTile "
-      "backend instead of hipBLASLt GroupedGEMM."));
+      "If true, lower supported kRaggedDot ops not handled by cuDNN or "
+      "hipBLASLt through the experimental Triton (XTile) backend instead of "
+      "expanding them to dense dots."));
 
   auto setter_for_xla_gpu_detect_nan =
       [debug_options, detection_mode](const std::string& value) {
