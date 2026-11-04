@@ -13,20 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <optional>
 #include <string>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/protobuf.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
@@ -35,6 +31,9 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"
 
 namespace stream_executor {
 namespace {
@@ -42,7 +41,7 @@ namespace {
 // Older stored profiles do not supply memory bus width. Compare only that
 // field's known values without weakening DeviceDescription equality globally.
 DeviceDescription ForStoredSpecComparison(DeviceDescription physical,
-                                         const GpuDeviceInfoProto& stored) {
+                                          const GpuDeviceInfoProto& stored) {
   if (!stored.has_memory_bus_width()) {
     physical.set_memory_bus_width(std::nullopt);
   }
@@ -55,8 +54,8 @@ TEST(EmbeddedTargetConfigTest, LegacySpecMemoryBusWidth) {
   GpuDeviceInfoProto stored = physical.ToProto();
   stored.clear_memory_bus_width();
   const DeviceDescription compared = ForStoredSpecComparison(physical, stored);
-  EXPECT_TRUE(tsl::protobuf::util::MessageDifferencer::Equals(compared.ToProto(),
-                                                           stored));
+  EXPECT_TRUE(tsl::protobuf::util::MessageDifferencer::Equals(
+      compared.ToProto(), stored));
   ASSERT_OK_AND_ASSIGN(DeviceDescription stored_description,
                        DeviceDescription::FromProto(stored));
   EXPECT_TRUE(compared.EqualsTo(stored_description));
@@ -70,9 +69,10 @@ TEST(EmbeddedTargetConfigTest, KnownMemoryBusWidthIsCompared) {
     SCOPED_TRACE(width);
     GpuDeviceInfoProto stored = physical.ToProto();
     stored.set_memory_bus_width(width);
-    const DeviceDescription compared = ForStoredSpecComparison(physical, stored);
-    EXPECT_EQ(tsl::protobuf::util::MessageDifferencer::Equals(compared.ToProto(),
-                                                           stored),
+    const DeviceDescription compared =
+        ForStoredSpecComparison(physical, stored);
+    EXPECT_EQ(tsl::protobuf::util::MessageDifferencer::Equals(
+                  compared.ToProto(), stored),
               width == 7680);
     ASSERT_OK_AND_ASSIGN(DeviceDescription stored_description,
                          DeviceDescription::FromProto(stored));
@@ -88,8 +88,8 @@ TEST(EmbeddedTargetConfigTest, LegacySpecRetainsOtherFields) {
   stored.clear_memory_bus_width();
   stored.set_core_count(149);
   const DeviceDescription compared = ForStoredSpecComparison(physical, stored);
-  EXPECT_FALSE(tsl::protobuf::util::MessageDifferencer::Equals(compared.ToProto(),
-                                                            stored));
+  EXPECT_FALSE(tsl::protobuf::util::MessageDifferencer::Equals(
+      compared.ToProto(), stored));
   ASSERT_OK_AND_ASSIGN(DeviceDescription stored_description,
                        DeviceDescription::FromProto(stored));
   EXPECT_FALSE(compared.EqualsTo(stored_description));
@@ -100,8 +100,8 @@ TEST(EmbeddedTargetConfigTest, MissingLiveWidthDoesNotMatchKnownSpec) {
   GpuDeviceInfoProto stored = physical.ToProto();
   stored.set_memory_bus_width(0);
   const DeviceDescription compared = ForStoredSpecComparison(physical, stored);
-  EXPECT_FALSE(tsl::protobuf::util::MessageDifferencer::Equals(compared.ToProto(),
-                                                            stored));
+  EXPECT_FALSE(tsl::protobuf::util::MessageDifferencer::Equals(
+      compared.ToProto(), stored));
   ASSERT_OK_AND_ASSIGN(DeviceDescription stored_description,
                        DeviceDescription::FromProto(stored));
   EXPECT_FALSE(compared.EqualsTo(stored_description));
@@ -155,7 +155,8 @@ TEST(EmbeddedTargetConfigTest, DeviceInfoMatches) {
     all_skipped = false;
     const GpuDeviceInfoProto& stored_device_info = it->second;
     const DeviceDescription compared_device_description =
-        ForStoredSpecComparison(physical_device_description, stored_device_info);
+        ForStoredSpecComparison(physical_device_description,
+                                stored_device_info);
     const GpuDeviceInfoProto physical_device_info =
         compared_device_description.ToProto();
     VLOG(1) << physical_device_description.name();

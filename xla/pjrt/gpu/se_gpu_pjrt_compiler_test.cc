@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/pjrt/gpu/se_gpu_pjrt_compiler.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <optional>
 #include <string>
@@ -25,6 +22,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -407,7 +406,8 @@ enum class TargetWidthCase {
 class MemoryBusWidthDispatchTest
     : public ::testing::TestWithParam<std::tuple<bool, TargetWidthCase>> {};
 
-TEST_P(MemoryBusWidthDispatchTest, SelectsCompilationPathWithoutMutatingMetadata) {
+TEST_P(MemoryBusWidthDispatchTest,
+       SelectsCompilationPathWithoutMutatingMetadata) {
   const bool use_mlir = std::get<0>(GetParam());
   const TargetWidthCase width_case = std::get<1>(GetParam());
   SCOPED_TRACE(use_mlir ? "MLIR" : "XlaComputation");
@@ -454,7 +454,8 @@ TEST_P(MemoryBusWidthDispatchTest, SelectsCompilationPathWithoutMutatingMetadata
       expect_jit = false;
       break;
   }
-  auto gpu_topology = std::make_shared<GpuTopology>(CudaName(), 1, 1, 1, target);
+  auto gpu_topology =
+      std::make_shared<GpuTopology>(CudaName(), 1, 1, 1, target);
   StreamExecutorGpuTopologyDescription topology(
       CudaId(), CudaName(), kFakePlatformVersion, gpu_topology);
   const auto topology_before = gpu_topology->ToProto();
@@ -483,14 +484,14 @@ TEST_P(MemoryBusWidthDispatchTest, SelectsCompilationPathWithoutMutatingMetadata
     }
     auto context = std::make_unique<mlir::MLIRContext>();
     context->loadDialect<mlir::mhlo::MhloDialect, mlir::func::FuncDialect>();
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(mlir_str, context.get());
+    auto module =
+        mlir::parseSourceString<mlir::ModuleOp>(mlir_str, context.get());
     if (!module) {
       return absl::InvalidArgumentError("Failed to parse test MLIR");
     }
     return compiler.Compile(
         options, MaybeOwningMlirModule(std::move(context), std::move(module)),
-        topology,
-        client.get());
+        topology, client.get());
   };
   auto result = compile();
   if (expect_jit) {
@@ -499,14 +500,16 @@ TEST_P(MemoryBusWidthDispatchTest, SelectsCompilationPathWithoutMutatingMetadata
       // The wrapper's MLIR fallback sets this flag before calling the HLO
       // overload. Check the retained options to distinguish the direct MLIR
       // path from a fallback that subsequently selects JIT in the HLO overload.
-      ASSERT_OK_AND_ASSIGN(auto returned_options, (*result)->GetCompileOptions());
+      ASSERT_OK_AND_ASSIGN(auto returned_options,
+                           (*result)->GetCompileOptions());
       EXPECT_FALSE(returned_options.executable_build_options.debug_options()
                        .xla_pjrt_allow_auto_layout_in_hlo());
     }
   } else {
-    EXPECT_THAT(result, absl_testing::StatusIs(
-                            absl::StatusCode::kFailedPrecondition,
-                            ::testing::HasSubstr("selected cross-compilation")));
+    EXPECT_THAT(result,
+                absl_testing::StatusIs(
+                    absl::StatusCode::kFailedPrecondition,
+                    ::testing::HasSubstr("selected cross-compilation")));
   }
   EXPECT_THAT(gpu_topology->ToProto(), EqualsProto(topology_before));
   EXPECT_EQ(gpu::GpuTargetConfig(executor), local);
@@ -514,13 +517,13 @@ TEST_P(MemoryBusWidthDispatchTest, SelectsCompilationPathWithoutMutatingMetadata
 
 INSTANTIATE_TEST_SUITE_P(
     BothInputs, MemoryBusWidthDispatchTest,
-    ::testing::Combine(
-        ::testing::Bool(),
-        ::testing::Values(TargetWidthCase::kNoTargetConfig,
-                          TargetWidthCase::kLegacyAbsent,
-                          TargetWidthCase::kMatching, TargetWidthCase::kDifferent,
-                          TargetWidthCase::kZero,
-                          TargetWidthCase::kUnrelatedMismatch)));
+    ::testing::Combine(::testing::Bool(),
+                       ::testing::Values(TargetWidthCase::kNoTargetConfig,
+                                         TargetWidthCase::kLegacyAbsent,
+                                         TargetWidthCase::kMatching,
+                                         TargetWidthCase::kDifferent,
+                                         TargetWidthCase::kZero,
+                                         TargetWidthCase::kUnrelatedMismatch)));
 
 TEST(StreamExecutorGpuCompilerTest, DevicelessCompilation) {
   auto mock_compiler = std::make_unique<MockCompiler>();

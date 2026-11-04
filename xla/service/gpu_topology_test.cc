@@ -15,21 +15,19 @@ limitations under the License.
 
 #include "xla/service/gpu_topology.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/path.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/service/cpu/executable.pb.h"
@@ -39,6 +37,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
+#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -120,8 +119,9 @@ TEST(GpuTopologyTest, MemoryBusWidthPresenceSurvivesSerialization) {
     ASSERT_TRUE(parsed.ParseFromString(proto.SerializeAsString()));
     ASSERT_OK_AND_ASSIGN(auto topology, GpuTopology::FromProto(parsed));
     ASSERT_TRUE(topology->has_gpu_target_config());
-    EXPECT_EQ(topology->gpu_target_config().device_description.memory_bus_width(),
-              width);
+    EXPECT_EQ(
+        topology->gpu_target_config().device_description.memory_bus_width(),
+        width);
     const auto output = topology->ToProto();
     ASSERT_TRUE(output.has_gpu_target_config());
     const auto& output_device = output.gpu_target_config().gpu_device_info();
