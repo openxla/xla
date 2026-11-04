@@ -198,15 +198,22 @@ int64_t DeviceChunkSizeBytes(const TransposePlan& plan, bool is_h2d,
 }
 
 // Pipelines multi-chunk host<->staging transposes and staging<->device DMAs
-// across at most `kMaxStages` staging buffer slots:
+// across `kBaseStages` (when multiple transfers run concurrently) up to
+// `kMaxStages` (when a single transfer is active) staging buffer slots:
 //   - H2D: Stage 1 transposes `host_ptr_ -> slot`; Stage 2 DMAs `slot ->
 //     raw_buffer_`.
 //   - D2H: Stage 1 DMAs `raw_buffer_ -> slot`; Stage 2 transposes `slot ->
 //     host_ptr_`.
 class PipelinedChunkedTransfer {
  public:
-  static constexpr int kMaxStages = 4;
+  static constexpr int kBaseStages = 4;
+  static constexpr int kMaxStages = 8;
   using HostPtr = std::variant<const void*, void*>;
+
+  static std::atomic<int>& ActiveCount(bool is_h2d) {
+    static std::atomic<int> counts[2] = {};
+    return counts[is_h2d];
+  }
 
   PipelinedChunkedTransfer(
       CommonPjRtClient* client, std::shared_ptr<TransposePlan> plan,
@@ -227,14 +234,20 @@ class PipelinedChunkedTransfer {
         dma_promise_(std::move(dma_promise)),
         on_host_done_(std::move(on_host_done)),
         next_chunk_(num_stages),
-        in_flight_stages_(num_stages) {}
+        in_flight_stages_(num_stages) {
+    ActiveCount(is_h2d_).fetch_add(1, std::memory_order_relaxed);
+  }
+
+  ~PipelinedChunkedTransfer() {
+    ActiveCount(is_h2d_).fetch_sub(1, std::memory_order_relaxed);
+  }
 
   void Start(std::shared_ptr<PipelinedChunkedTransfer> self, int num_stages) {
     if (const absl::Status* error = staging_buf_.GetErrorIfPresent()) {
       return Finish(*error);
     }
     uint8_t* base_ptr = staging_buf_->data().data();
-    const bool exact_slots = total_chunks_ <= kMaxStages;
+    const bool exact_slots = total_chunks_ <= num_stages;
     for (int s = 0; s < num_stages; ++s) {
       uint8_t* slot =
           exact_slots ? base_ptr + DeviceChunkOffsetBytes(*plan_, is_h2d_, s)
@@ -300,10 +313,14 @@ class PipelinedChunkedTransfer {
                            uint8_t* slot, const absl::Status& chunk_status) {
     int next = -1;
     absl::Status final_status;
+    const int max_stages =
+        ActiveCount(is_h2d_).load(std::memory_order_relaxed) > 1 ? kBaseStages
+                                                                 : kMaxStages;
     {
       absl::MutexLock lock(mu_);
       status_.Update(chunk_status);
-      if (status_.ok() && next_chunk_ < total_chunks_) {
+      if (status_.ok() && next_chunk_ < total_chunks_ &&
+          in_flight_stages_ <= max_stages) {
         next = next_chunk_++;
       } else if (--in_flight_stages_ > 0) {
         return;
@@ -412,8 +429,12 @@ void RunPipelinedChunkedTransfer(
     absl::AnyInvocable<void(const absl::Status&) &&> on_host_done) {
   const bool is_h2d = std::holds_alternative<const void*>(host_ptr);
   const int total_chunks = plan->Parallelism();
-  const int num_stages =
-      std::min(total_chunks, PipelinedChunkedTransfer::kMaxStages);
+  const int max_stages =
+      (!sync && PipelinedChunkedTransfer::ActiveCount(is_h2d).load(
+                    std::memory_order_relaxed) > 0)
+          ? PipelinedChunkedTransfer::kBaseStages
+          : PipelinedChunkedTransfer::kMaxStages;
+  const int num_stages = std::min(total_chunks, max_stages);
   const size_t slot_bytes =
       is_h2d ? plan->MaxOutputChunkSizeBytes() : plan->MaxInputChunkSizeBytes();
   const size_t total_device_bytes = ShapeUtil::ArraySize(device_shape);
@@ -423,9 +444,7 @@ void RunPipelinedChunkedTransfer(
     client->raw_client()->RecordLinearizeBytes(is_h2d, total_device_bytes);
   }
   const size_t staging_bytes =
-      total_chunks <= PipelinedChunkedTransfer::kMaxStages
-          ? total_device_bytes
-          : num_stages * slot_bytes;
+      total_chunks <= num_stages ? total_device_bytes : num_stages * slot_bytes;
 
   tsl::AsyncValueRef<PjRtStagingBuffer> staging_buf;
   if (is_h2d) {
