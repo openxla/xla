@@ -727,6 +727,7 @@ class HloGraphNode {
         (opcode_ == HloOpcode::kSend || opcode_ == HloOpcode::kSendDone ||
          opcode_ == HloOpcode::kRecv || opcode_ == HloOpcode::kRecvDone) &&
         static_cast<const HloSendRecvInstruction*>(i)->is_host_transfer();
+    is_nested_sync_computation_ = ComputeIsNestedSyncComputation(*i);
   }
 
   static void UpdateOrAddDependency(HloGraphNode* from, HloGraphNode* to,
@@ -801,6 +802,15 @@ class HloGraphNode {
   const HloInstruction& GetInstr() const { return *instr_; }
   HloOpcode GetOpcode() const { return opcode_; }
   bool IsHostTransfer() const { return is_host_transfer_; }
+  // Whether the instruction calls a computation and is not an async start or
+  // done: the scheduler must not interleave such a computation with in order
+  // resources held by the enclosing computation.
+  bool IsNestedSyncComputation() const { return is_nested_sync_computation_; }
+  // The start of this supported async done when its first operand is a
+  // supported async start, nullptr otherwise (and for every other node).
+  const HloGraphNode* GetSupportedAsyncStart() const {
+    return rare_->async_start;
+  }
   bool IsScheduled() const { return scheduled_; }
   int32_t GetIndegree() const { return indegree_; }
   int32_t GetOutdegree() const { return outdegree_; }
@@ -1066,6 +1076,13 @@ class HloGraphNode {
     releases_selective_resource_ = false;
     occupies_selective_resource_ = false;
     has_recursive_resources_ = false;
+    is_nested_sync_computation_ = false;
+  }
+
+  static bool ComputeIsNestedSyncComputation(const HloInstruction& instr) {
+    return !instr.called_computations().empty() &&
+           instr.opcode() != HloOpcode::kAsyncStart &&
+           instr.opcode() != HloOpcode::kAsyncDone;
   }
 
   // Some of the fields in this are rarely non-empty (in one large compilation,
@@ -1086,6 +1103,10 @@ class HloGraphNode {
     absl::flat_hash_map<int64_t, int64_t> recursive_resources;
     // AsyncResources used by the node.
     ResourcesVector resources;
+    // For a supported async done whose first operand is a supported async
+    // start, that start's node; nullptr otherwise. Resolved once when the
+    // graph is built; the done then owns its Rare entry.
+    const HloGraphNode* async_start = nullptr;
   };
 
   // Instruction this Graph node represents
@@ -1147,6 +1168,9 @@ class HloGraphNode {
   bool occupies_selective_resource_ : 1;
   // Whether recursive_resources_.size() > 0
   bool has_recursive_resources_ : 1;
+  // Whether the instruction calls a computation synchronously, see
+  // IsNestedSyncComputation().
+  bool is_nested_sync_computation_ : 1;
   // The position of this node in the original order.
   int32_t original_position_;
   // Pointer to the HloGraphNode::Rare entry for this node in the parent object
