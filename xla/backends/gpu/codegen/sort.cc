@@ -39,12 +39,13 @@ limitations under the License.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/IR/ArithAttributes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/GPU/IR/GPUDialectDecl.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -86,7 +87,9 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/launch_dim.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -202,16 +205,18 @@ struct BitonicSortKernelSpec {
     kIotaCopy,
     // Single compare step without shared memory (global steps or 1-step sort).
     kSingleStep,
-    // Trailing intra-tile merge for outer stages: steps mask = num_stages - 1
-    // down to 0 with xor_mask = block_size = 1 << mask.
+    // Trailing intra-tile (and optional cluster) merge for outer stages: steps
+    // mask = num_stages - 1 down to 0 with xor_mask = block_size = 1 << mask.
     kIntraTileMerge,
-    // Initial triangular intra-tile sort: stages 0 .. num_stages - 1.
+    // Initial triangular intra-tile (and optional cluster) sort:
+    // stages 0 .. num_stages - 1.
     kIntraTileSort,
   };
 
   Kind kind;
   // For kSingleStep, the xor mask of the step. For kIntraTileMerge and
-  // kIntraTileSort, the number of intra-tile stages covered by the kernel.
+  // kIntraTileSort, the number of stages (intra-tile + cluster) covered by the
+  // kernel.
   int64_t xor_mask_or_num_stages = 0;
   // For kSingleStep, the block size of the step.
   int64_t block_size = 0;
@@ -241,6 +246,14 @@ using WriteElementFn = absl::FunctionRef<Value(
     ImplicitLocOpBuilder&, Value /*tensor*/, int64_t /*operand*/,
     Value /*index*/, Value /*value*/)>;
 
+struct ClusterStepInfo {
+  Value cta_base;
+  int64_t tile_size;
+  Value block_size;
+  ReadElementFn read_partner;
+  WriteElementFn write_partner;
+};
+
 enum class Pair1Stride {
   kDefault,
   // block_size <= 32 and xor_mask < 64 with num_threads % 32 == 0 and
@@ -262,12 +275,14 @@ absl::StatusOr<SmallVector<Value>> EmitCompareLoopBody(
     Value xor_mask, Value mask_low, ValueRange tensors,
     ReadElementFn read_element, WriteElementFn write_element, FuncOp comparator,
     bool force_write, bool needs_bounds_checks, bool is_merge_step,
-    Pair1Stride pair1_stride = Pair1Stride::kDefault) {
+    Pair1Stride pair1_stride = Pair1Stride::kDefault,
+    std::optional<ClusterStepInfo> cluster_step = std::nullopt) {
   auto index_const = [&](int64_t value) -> Value {
     return arith::ConstantIndexOp::create(b, value);
   };
   if (pair1_stride != Pair1Stride::kDefault) {
-    TF_RET_CHECK(num_threads % kNumShmemBanks == 0 && unroll_factor == 2);
+    TF_RET_CHECK(num_threads % kNumShmemBanks == 0 && unroll_factor == 2 &&
+                 !cluster_step.has_value());
   }
 
   if (num_threads % kNumShmemBanks == 0 && unroll_factor > 1) {
@@ -288,12 +303,42 @@ absl::StatusOr<SmallVector<Value>> EmitCompareLoopBody(
     const_mask_low = const_op.value();
   }
 
+  Value cta_is_high;
+  Value partner_cta_base;
+  Value idx_high_cta_base;
+  Value half_tile_offset;
+  Value intra_tile_xor;
+  if (cluster_step.has_value()) {
+    cta_is_high =
+        arith::CmpIOp::create(b, arith::CmpIPredicate::ne,
+                              arith::AndIOp::create(b, cluster_step->cta_base,
+                                                    cluster_step->block_size),
+                              index_const(0));
+    Value cta_xor_mask = arith::AndIOp::create(
+        b, xor_mask, index_const(-cluster_step->tile_size));
+    partner_cta_base =
+        arith::XOrIOp::create(b, cluster_step->cta_base, cta_xor_mask);
+    idx_high_cta_base = arith::SelectOp::create(
+        b, cta_is_high, cluster_step->cta_base, partner_cta_base);
+    half_tile_offset = arith::SelectOp::create(
+        b, cta_is_high, index_const(cluster_step->tile_size / 2),
+        index_const(0));
+    intra_tile_xor = arith::AndIOp::create(
+        b, xor_mask, index_const(cluster_step->tile_size - 1));
+  }
+
+  ReadElementFn read_partner =
+      cluster_step.has_value() ? cluster_step->read_partner : read_element;
+  WriteElementFn write_partner =
+      cluster_step.has_value() ? cluster_step->write_partner : write_element;
+
   SmallVector<Value> current_tensors(tensors.begin(), tensors.end());
   Value pair0_keys_index;
   Value pair0_compare_index;
   for (int64_t i = 0; i < unroll_factor; ++i) {
     Value current_keys_index;
     Value compare_keys_index;
+    Value upper_keys_index;
     if (i == 1 && pair1_stride != Pair1Stride::kDefault) {
       int64_t idx_stride = pair1_stride == Pair1Stride::kWithinDoubleWarp64
                                ? 2 * kNumShmemBanks
@@ -307,6 +352,30 @@ absl::StatusOr<SmallVector<Value>> EmitCompareLoopBody(
         compare_keys_index = arith::AddIOp::create(b, pair0_compare_index,
                                                    index_const(idx_stride));
       }
+      upper_keys_index = compare_keys_index;
+    } else if (cluster_step.has_value()) {
+      Value pair_offset = element_pair_index;
+      if (i > 0) {
+        int64_t offset_stride =
+            num_threads % kNumShmemBanks == 0 ? i * kNumShmemBanks : i;
+        pair_offset = arith::AddIOp::create(b, element_pair_index,
+                                            index_const(offset_stride));
+      }
+      Value local_idx_low =
+          arith::OrIOp::create(b, half_tile_offset, pair_offset);
+      Value local_idx_high =
+          arith::XOrIOp::create(b, local_idx_low, intra_tile_xor);
+      current_keys_index = arith::SelectOp::create(
+          b, cta_is_high, local_idx_high, local_idx_low);
+      Value partner_local_idx = arith::AndIOp::create(
+          b,
+          arith::SelectOp::create(b, cta_is_high, local_idx_low,
+                                  local_idx_high),
+          index_const(cluster_step->tile_size - 1));
+      compare_keys_index =
+          arith::OrIOp::create(b, partner_cta_base, partner_local_idx);
+      upper_keys_index =
+          arith::OrIOp::create(b, idx_high_cta_base, local_idx_high);
     } else {
       Value pair_offset = element_pair_index;
       if (i > 0) {
@@ -338,6 +407,7 @@ absl::StatusOr<SmallVector<Value>> EmitCompareLoopBody(
                               .getResult()
                         : arith::XOrIOp::create(b, current_keys_index, xor_mask)
                               .getResult();
+      upper_keys_index = compare_keys_index;
       if (i == 0) {
         pair0_keys_index = current_keys_index;
         pair0_compare_index = compare_keys_index;
@@ -346,17 +416,50 @@ absl::StatusOr<SmallVector<Value>> EmitCompareLoopBody(
 
     auto emit_body = [&](ImplicitLocOpBuilder& body_b)
         -> absl::StatusOr<SmallVector<Value>> {
+      SmallVector<Value> first_values;
+      SmallVector<Value> second_values;
+      first_values.reserve(num_values);
+      second_values.reserve(num_values);
+      if (cluster_step.has_value()) {
+        for (int64_t param = 0; param < num_values; ++param) {
+          ABSL_ASSIGN_OR_RETURN(
+              Value val_partner,
+              read_partner(body_b, current_tensors, param, compare_keys_index));
+          first_values.push_back(val_partner);
+        }
+        for (int64_t param = 0; param < num_values; ++param) {
+          ABSL_ASSIGN_OR_RETURN(
+              Value val_self,
+              read_element(body_b, current_tensors, param, current_keys_index));
+          second_values.push_back(val_self);
+        }
+      } else {
+        for (int64_t param = 0; param < num_values; ++param) {
+          ABSL_ASSIGN_OR_RETURN(
+              Value val_compare,
+              read_element(body_b, current_tensors, param, compare_keys_index));
+          first_values.push_back(val_compare);
+          ABSL_ASSIGN_OR_RETURN(
+              Value val_current,
+              read_element(body_b, current_tensors, param, current_keys_index));
+          second_values.push_back(val_current);
+        }
+      }
+
       SmallVector<Value> values_to_compare;
       values_to_compare.reserve(num_values * 2);
       for (int64_t param = 0; param < num_values; ++param) {
-        ABSL_ASSIGN_OR_RETURN(
-            Value val_compare,
-            read_element(body_b, current_tensors, param, compare_keys_index));
-        values_to_compare.push_back(val_compare);
-        ABSL_ASSIGN_OR_RETURN(
-            Value val_current,
-            read_element(body_b, current_tensors, param, current_keys_index));
-        values_to_compare.push_back(val_current);
+        if (cluster_step.has_value()) {
+          Value val_low = arith::SelectOp::create(
+              body_b, cta_is_high, first_values[param], second_values[param]);
+          Value val_high = arith::SelectOp::create(
+              body_b, cta_is_high, second_values[param], first_values[param]);
+          values_to_compare.push_back(val_high);
+          values_to_compare.push_back(val_low);
+        } else {
+          values_to_compare.push_back(first_values[param]);
+          values_to_compare.push_back(second_values[param]);
+        }
       }
       Value pred = PureCallOp::create(body_b, comparator, values_to_compare)
                        .getResult(0);
@@ -369,12 +472,12 @@ absl::StatusOr<SmallVector<Value>> EmitCompareLoopBody(
         SmallVector<Value> updated(current_tensors.begin(),
                                    current_tensors.end());
         for (int64_t param = 0; param < num_values; ++param) {
-          Value value1 = values_to_compare[param * 2];
-          Value value2 = values_to_compare[param * 2 + 1];
-          updated[param] = write_element(swap_b, updated[param], param,
-                                         current_keys_index, value1);
-          updated[param] = write_element(swap_b, updated[param], param,
-                                         compare_keys_index, value2);
+          updated[param] =
+              write_element(swap_b, updated[param], param, current_keys_index,
+                            first_values[param]);
+          updated[param] =
+              write_partner(swap_b, updated[param], param, compare_keys_index,
+                            second_values[param]);
         }
         return updated;
       };
@@ -385,12 +488,12 @@ absl::StatusOr<SmallVector<Value>> EmitCompareLoopBody(
           SmallVector<Value> updated(current_tensors.begin(),
                                      current_tensors.end());
           for (int64_t param = 0; param < num_values; ++param) {
-            Value value1 = values_to_compare[param * 2];
-            Value value2 = values_to_compare[param * 2 + 1];
-            updated[param] = write_element(orig_b, updated[param], param,
-                                           current_keys_index, value2);
-            updated[param] = write_element(orig_b, updated[param], param,
-                                           compare_keys_index, value1);
+            updated[param] =
+                write_element(orig_b, updated[param], param, current_keys_index,
+                              second_values[param]);
+            updated[param] =
+                write_partner(orig_b, updated[param], param, compare_keys_index,
+                              first_values[param]);
           }
           return updated;
         };
@@ -403,8 +506,8 @@ absl::StatusOr<SmallVector<Value>> EmitCompareLoopBody(
 
     if (needs_bounds_checks) {
       Value index_is_inbounds =
-          arith::CmpIOp::create(b, arith::CmpIPredicate::slt,
-                                compare_keys_index, iteration_bound)
+          arith::CmpIOp::create(b, arith::CmpIPredicate::slt, upper_keys_index,
+                                iteration_bound)
               .getResult();
       ABSL_ASSIGN_OR_RETURN(current_tensors,
                             EmitUpdateIfWithStatus(b, index_is_inbounds,
@@ -421,7 +524,7 @@ absl::StatusOr<SmallVector<Value>> EmitTiledCompareLoop(
     const HloSortInstruction* sort, int64_t dimension_to_sort_bound,
     int64_t num_threads, const BitonicSortKernelSpec& kernel_spec,
     ValueRange output_tensors, bool emit_iota_operands, int64_t tile_size,
-    int64_t unroll_factor, FuncOp comparator) {
+    int64_t cluster_size, int64_t unroll_factor, FuncOp comparator) {
   int64_t dimension_to_sort = sort->sort_dimension();
   int64_t num_values = sort->operand_count();
   auto index_const = [&](int64_t value) -> Value {
@@ -484,6 +587,25 @@ absl::StatusOr<SmallVector<Value>> EmitTiledCompareLoop(
             }));
   }
 
+  int64_t cluster_tile_size = tile_size * cluster_size;
+  int64_t full_tiles_bound = RoundDownTo(dimension_to_sort_bound, tile_size);
+  int64_t full_clusters_bound =
+      RoundDownTo(dimension_to_sort_bound, cluster_tile_size);
+  int64_t active_tiles_bound = RoundUpTo(dimension_to_sort_bound, tile_size);
+  int64_t rounded_cluster_bound =
+      RoundUpTo(dimension_to_sort_bound, cluster_tile_size);
+  int64_t partial_tile_elems = dimension_to_sort_bound % tile_size;
+
+  Value cta_base;
+  if (cluster_size > 1) {
+    auto cluster_block_id_x = mlir::gpu::ClusterBlockIdOp::create(
+        b, mlir::gpu::Dimension::x, b.getIndexAttr(cluster_size));
+    cluster_block_id_x->setAttr("xla.range",
+                                b.getIndexArrayAttr({0, cluster_size - 1}));
+    cta_base =
+        arith::MulIOp::create(b, cluster_block_id_x, index_const(tile_size));
+  }
+
   auto read_shmem = [](ImplicitLocOpBuilder& body_b, ValueRange tensors,
                        int64_t operand, Value index) -> absl::StatusOr<Value> {
     return tensor::ExtractOp::create(body_b, tensors[operand],
@@ -494,243 +616,429 @@ absl::StatusOr<SmallVector<Value>> EmitTiledCompareLoop(
                         int64_t operand, Value index, Value value) -> Value {
     return tensor::InsertOp::create(body_b, value, tensor, ValueRange{index});
   };
+  auto read_cluster_shmem = [](ImplicitLocOpBuilder& body_b, ValueRange tensors,
+                               int64_t operand,
+                               Value index) -> absl::StatusOr<Value> {
+    auto op =
+        tensor::ExtractOp::create(body_b, tensors[operand], ValueRange{index});
+    op->setAttr("xla_gpu.dsmem", body_b.getUnitAttr());
+    return op.getResult();
+  };
+  auto write_cluster_shmem = [](ImplicitLocOpBuilder& body_b, Value tensor,
+                                int64_t operand, Value index,
+                                Value value) -> Value {
+    auto op =
+        tensor::InsertOp::create(body_b, value, tensor, ValueRange{index});
+    op->setAttr("xla_gpu.dsmem", body_b.getUnitAttr());
+    return op.getResult();
+  };
 
   Value c0 = index_const(0);
   Value c1 = index_const(1);
   bool use_warp_pair1_stride =
       num_threads % kNumShmemBanks == 0 && (unroll_factor / 2) == 2;
+  int64_t intra_stages = Log2Floor<uint64_t>(tile_size);
+  int64_t tail_tile_elems = dimension_to_sort_bound < tile_size
+                                ? dimension_to_sort_bound
+                                : partial_tile_elems;
+  int64_t tail_tile_stages =
+      tail_tile_elems == 0
+          ? 0
+          : std::min<int64_t>(
+                intra_stages,
+                Log2Ceiling(static_cast<uint64_t>(tail_tile_elems)));
 
-  auto emit_compare_loops =
-      [&](ImplicitLocOpBuilder& loop_b, ValueRange initial_tensors,
-          int64_t tile_elem_bound,
-          bool check_bounds) -> absl::StatusOr<SmallVector<Value>> {
-    SmallVector<Value> loop_tensors(initial_tensors.begin(),
-                                    initial_tensors.end());
-    int64_t active_stages =
-        std::min<int64_t>(kernel_spec.xor_mask_or_num_stages,
-                          Log2Ceiling(static_cast<uint64_t>(tile_elem_bound)));
-    if (active_stages == 0) {
-      return loop_tensors;
-    }
+  TF_RET_CHECK(cluster_size == 1 ||
+               (cluster_size == 2 && tile_size >= shmem_tile_size &&
+                dimension_to_sort_bound > tile_size));
+  bool has_cluster_step = kernel_spec.xor_mask_or_num_stages > intra_stages;
+  TF_RET_CHECK(!has_cluster_step || cluster_size == 2);
 
-    Value local_bound = arith::ConstantIndexOp::create(loop_b, tile_elem_bound);
-    auto emit_sync_and_compare =
-        [&](ImplicitLocOpBuilder& step_b, Value xor_mask, Value mask_low,
-            ValueRange step_tensors, bool is_merge_step,
-            Pair1Stride pair1_stride) -> absl::StatusOr<SmallVector<Value>> {
-      auto synced =
-          SyncThreadsOp::create(step_b, TypeRange(step_tensors), step_tensors)
-              .getResults();
-      return EmitCompareLoopBody(
-          step_b, local_bound, num_threads, unroll_factor / 2, num_values,
-          thread_id_x, xor_mask, mask_low, synced, read_shmem, write_shmem,
-          comparator, /*force_write=*/false, check_bounds, is_merge_step,
-          use_warp_pair1_stride ? pair1_stride : Pair1Stride::kDefault);
-    };
+  auto sync_workgroup = [&](ImplicitLocOpBuilder& sync_b,
+                            ValueRange tensors) -> SmallVector<Value> {
+    auto synced = SyncThreadsOp::create(sync_b, TypeRange(tensors), tensors,
+                                        mlir::gpu::BarrierScope::Workgroup)
+                      .getResults();
+    return SmallVector<Value>(synced.begin(), synced.end());
+  };
 
-    auto emit_rolled_merge_steps =
-        [&](ImplicitLocOpBuilder& merge_b, Value num_steps,
-            Value initial_merge_mask_low, ValueRange merge_tensors,
-            Pair1Stride pair1_stride) -> absl::StatusOr<SmallVector<Value>> {
-      SmallVector<Value> inner_init_args;
-      inner_init_args.reserve(merge_tensors.size() + 1);
-      inner_init_args.push_back(initial_merge_mask_low);
-      inner_init_args.append(merge_tensors.begin(), merge_tensors.end());
+  auto emit_intra_step =
+      [&](ImplicitLocOpBuilder& step_b, Value tile_bound, Value xor_mask,
+          Value mask_low, ValueRange step_tensors, bool is_merge_step,
+          Pair1Stride pair1_stride, bool check_bounds,
+          bool post_sync) -> absl::StatusOr<SmallVector<Value>> {
+    if (post_sync) {
       ABSL_ASSIGN_OR_RETURN(
-          SmallVector<Value> inner_results,
-          EmitForWithStatus(
-              merge_b, c0, num_steps, c1, inner_init_args,
-              [&](ImplicitLocOpBuilder& step_b, Value /*step*/,
-                  ValueRange step_args) -> absl::StatusOr<SmallVector<Value>> {
-                Value merge_mask_low = step_args.front();
-                Value merge_xor_mask =
-                    arith::AddIOp::create(step_b, merge_mask_low, c1);
-                ABSL_ASSIGN_OR_RETURN(
-                    SmallVector<Value> next_tensors,
-                    emit_sync_and_compare(
-                        step_b, merge_xor_mask, merge_mask_low,
-                        step_args.drop_front(),
-                        /*is_merge_step=*/true, pair1_stride));
-                Value next_mask_low =
-                    arith::ShRUIOp::create(step_b, merge_mask_low, c1);
-                SmallVector<Value> yield_args;
-                yield_args.reserve(next_tensors.size() + 1);
-                yield_args.push_back(next_mask_low);
-                yield_args.append(next_tensors.begin(), next_tensors.end());
-                return yield_args;
-              }));
-      return SmallVector<Value>(inner_results.begin() + 1, inner_results.end());
-    };
+          SmallVector<Value> updated,
+          EmitCompareLoopBody(
+              step_b, tile_bound, num_threads, unroll_factor / 2, num_values,
+              thread_id_x, xor_mask, mask_low, step_tensors, read_shmem,
+              write_shmem, comparator, /*force_write=*/false, check_bounds,
+              is_merge_step,
+              use_warp_pair1_stride ? pair1_stride : Pair1Stride::kDefault));
+      return sync_workgroup(step_b, updated);
+    }
+    SmallVector<Value> synced = sync_workgroup(step_b, step_tensors);
+    return EmitCompareLoopBody(
+        step_b, tile_bound, num_threads, unroll_factor / 2, num_values,
+        thread_id_x, xor_mask, mask_low, synced, read_shmem, write_shmem,
+        comparator, /*force_write=*/false, check_bounds, is_merge_step,
+        use_warp_pair1_stride ? pair1_stride : Pair1Stride::kDefault);
+  };
 
+  auto emit_rolled_merge_steps =
+      [&](ImplicitLocOpBuilder& merge_b, Value tile_bound, Value num_steps,
+          Value initial_merge_mask_low, ValueRange merge_tensors,
+          Pair1Stride pair1_stride, bool check_bounds,
+          bool post_sync) -> absl::StatusOr<SmallVector<Value>> {
+    SmallVector<Value> inner_init_args;
+    inner_init_args.reserve(merge_tensors.size() + 1);
+    inner_init_args.push_back(initial_merge_mask_low);
+    inner_init_args.append(merge_tensors.begin(), merge_tensors.end());
+    ABSL_ASSIGN_OR_RETURN(
+        SmallVector<Value> inner_results,
+        EmitForWithStatus(
+            merge_b, c0, num_steps, c1, inner_init_args,
+            [&](ImplicitLocOpBuilder& step_b, Value /*step*/,
+                ValueRange step_args) -> absl::StatusOr<SmallVector<Value>> {
+              Value merge_mask_low = step_args.front();
+              Value merge_xor_mask =
+                  arith::AddIOp::create(step_b, merge_mask_low, c1);
+              ABSL_ASSIGN_OR_RETURN(
+                  SmallVector<Value> next_tensors,
+                  emit_intra_step(step_b, tile_bound, merge_xor_mask,
+                                  merge_mask_low, step_args.drop_front(),
+                                  /*is_merge_step=*/true, pair1_stride,
+                                  check_bounds, post_sync));
+              Value next_mask_low =
+                  arith::ShRUIOp::create(step_b, merge_mask_low, c1);
+              SmallVector<Value> yield_args;
+              yield_args.reserve(next_tensors.size() + 1);
+              yield_args.push_back(next_mask_low);
+              yield_args.append(next_tensors.begin(), next_tensors.end());
+              return yield_args;
+            }));
+    return SmallVector<Value>(inner_results.begin() + 1, inner_results.end());
+  };
+
+  auto compute_tail_tile_bound = [&](ImplicitLocOpBuilder& bound_b) -> Value {
+    if (dimension_to_sort_bound < tile_size) {
+      return arith::ConstantIndexOp::create(bound_b, dimension_to_sort_bound);
+    }
+    Value bound = arith::ConstantIndexOp::create(bound_b, partial_tile_elems);
+    if (partial_tile_elems != 0 &&
+        active_tiles_bound != rounded_cluster_bound) {
+      Value is_oob_tile = arith::CmpIOp::create(
+          bound_b, arith::CmpIPredicate::sge, base_keys_index,
+          arith::ConstantIndexOp::create(bound_b, active_tiles_bound));
+      bound = arith::SelectOp::create(
+          bound_b, is_oob_tile, arith::ConstantIndexOp::create(bound_b, 0),
+          bound);
+    }
+    return bound;
+  };
+
+  auto emit_per_tile_intra =
+      [&](ImplicitLocOpBuilder& phase_b, ValueRange initial_tensors,
+          absl::FunctionRef<absl::StatusOr<SmallVector<Value>>(
+              ImplicitLocOpBuilder&, ValueRange, Value /*tile_bound*/,
+              int64_t /*stage_limit*/, bool /*check_bounds*/)>
+              emit_tile_fn) -> absl::StatusOr<SmallVector<Value>> {
+    if (full_tiles_bound == 0) {
+      return emit_tile_fn(phase_b, initial_tensors,
+                          compute_tail_tile_bound(phase_b), tail_tile_stages,
+                          /*check_bounds=*/true);
+    }
+    if (full_tiles_bound == rounded_cluster_bound) {
+      return emit_tile_fn(phase_b, initial_tensors,
+                          arith::ConstantIndexOp::create(phase_b, tile_size),
+                          intra_stages, /*check_bounds=*/false);
+    }
+    // Split per-tile so every full tile within a partial cluster still runs
+    // the bounds-check-free unrolled intra-tile fast path.
+    Value is_partial_or_oob_tile = arith::CmpIOp::create(
+        phase_b, arith::CmpIPredicate::sge, base_keys_index,
+        arith::ConstantIndexOp::create(phase_b, full_tiles_bound));
+    return EmitIfElseWithStatus(
+        phase_b, is_partial_or_oob_tile, TypeRange(initial_tensors),
+        [&](ImplicitLocOpBuilder& then_b) {
+          return emit_tile_fn(then_b, initial_tensors,
+                              compute_tail_tile_bound(then_b), tail_tile_stages,
+                              /*check_bounds=*/true);
+        },
+        [&](ImplicitLocOpBuilder& else_b) {
+          return emit_tile_fn(else_b, initial_tensors,
+                              arith::ConstantIndexOp::create(else_b, tile_size),
+                              intra_stages, /*check_bounds=*/false);
+        });
+  };
+
+  constexpr int64_t kUnrolledTailMasks = 6;
+  static_assert(kUnrolledTailMasks == 6);
+
+  auto emit_intra_sort_tile =
+      [&](ImplicitLocOpBuilder& tile_b, ValueRange tile_tensors,
+          Value tile_bound, int64_t stage_limit,
+          bool check_bounds) -> absl::StatusOr<SmallVector<Value>> {
+    SmallVector<Value> tensors(tile_tensors.begin(), tile_tensors.end());
+    if (stage_limit <= 0) {
+      return tensors;
+    }
     if (check_bounds) {
       // Keep bounds-checked loops rolled with default pair-1 stride so LLVM
       // LICM does not hoist unrolled tail indices and bounds predicates across
       // stages, preserving high SM occupancy when combined with the full-tile
       // fast path.
-      if (kernel_spec.kind == BitonicSortKernelSpec::Kind::kIntraTileSort) {
-        return EmitForWithStatus(
-            loop_b, c0, arith::ConstantIndexOp::create(loop_b, active_stages),
-            c1, loop_tensors,
-            [&](ImplicitLocOpBuilder& stage_b, Value stage,
-                ValueRange stage_tensors)
-                -> absl::StatusOr<SmallVector<Value>> {
-              Value flip_block_size = arith::ShLIOp::create(stage_b, c1, stage);
-              Value flip_mask_low =
-                  arith::SubIOp::create(stage_b, flip_block_size, c1);
-              Value flip_xor_mask = arith::SubIOp::create(
-                  stage_b, arith::ShLIOp::create(stage_b, flip_block_size, c1),
-                  c1);
-              ABSL_ASSIGN_OR_RETURN(
-                  SmallVector<Value> rolled_tensors,
-                  emit_sync_and_compare(
-                      stage_b, flip_xor_mask, flip_mask_low, stage_tensors,
-                      /*is_merge_step=*/false, Pair1Stride::kDefault));
-              Value initial_merge_mask_low =
-                  arith::ShRUIOp::create(stage_b, flip_mask_low, c1);
-              return emit_rolled_merge_steps(
-                  stage_b, stage, initial_merge_mask_low, rolled_tensors,
-                  Pair1Stride::kDefault);
-            });
-      }
-      TF_RET_CHECK(kernel_spec.kind ==
-                   BitonicSortKernelSpec::Kind::kIntraTileMerge);
-      Value initial_merge_mask_low = arith::ConstantIndexOp::create(
-          loop_b, (int64_t{1} << (active_stages - 1)) - 1);
-      return emit_rolled_merge_steps(
-          loop_b, arith::ConstantIndexOp::create(loop_b, active_stages),
-          initial_merge_mask_low, loop_tensors, Pair1Stride::kDefault);
+      return EmitForWithStatus(
+          tile_b, c0, arith::ConstantIndexOp::create(tile_b, stage_limit), c1,
+          tensors,
+          [&](ImplicitLocOpBuilder& stage_b, Value stage,
+              ValueRange stage_tensors) -> absl::StatusOr<SmallVector<Value>> {
+            Value flip_block_size = arith::ShLIOp::create(stage_b, c1, stage);
+            Value flip_mask_low =
+                arith::SubIOp::create(stage_b, flip_block_size, c1);
+            Value flip_xor_mask = arith::SubIOp::create(
+                stage_b, arith::ShLIOp::create(stage_b, flip_block_size, c1),
+                c1);
+            ABSL_ASSIGN_OR_RETURN(
+                SmallVector<Value> rolled_tensors,
+                emit_intra_step(stage_b, tile_bound, flip_xor_mask,
+                                flip_mask_low, stage_tensors,
+                                /*is_merge_step=*/false, Pair1Stride::kDefault,
+                                /*check_bounds=*/true, /*post_sync=*/false));
+            Value initial_merge_mask_low =
+                arith::ShRUIOp::create(stage_b, flip_mask_low, c1);
+            return emit_rolled_merge_steps(
+                stage_b, tile_bound, stage, initial_merge_mask_low,
+                rolled_tensors, Pair1Stride::kDefault, /*check_bounds=*/true,
+                /*post_sync=*/false);
+          });
     }
 
-    if (kernel_spec.kind == BitonicSortKernelSpec::Kind::kIntraTileSort) {
-      // Unroll intra-warp mask steps (mask in [0, 6)) with compile-time
-      // constants so bit-scatter masks, shared-memory offsets, and vectorized
-      // loads/stores fold into constants, while ensuring every remaining rolled
-      // step has block_size >= 64 (and thus a constant +32 pair-1 stride).
-      constexpr int64_t kUnrolledTailMasks = 6;
-      static_assert(kUnrolledTailMasks == 6);
-      int64_t unrolled_stages = std::min(active_stages, kUnrolledTailMasks);
-      for (int64_t stage = 0; stage < unrolled_stages; ++stage) {
-        for (int64_t step = 0; step <= stage; ++step) {
-          int64_t mask = stage - step;
-          int64_t block_size = int64_t{1} << mask;
-          int64_t xor_mask = step == 0 ? (block_size << 1) - 1 : block_size;
-          ABSL_ASSIGN_OR_RETURN(
-              loop_tensors,
-              emit_sync_and_compare(
-                  loop_b, arith::ConstantIndexOp::create(loop_b, xor_mask),
-                  arith::ConstantIndexOp::create(loop_b, block_size - 1),
-                  loop_tensors, /*is_merge_step=*/step > 0,
-                  Pair1Stride::kWithinDoubleWarp64));
-        }
-      }
-
-      if (active_stages > kUnrolledTailMasks) {
+    // Unroll intra-warp mask steps (mask in [0, 6)) with compile-time
+    // constants so bit-scatter masks, shared-memory offsets, and vectorized
+    // loads/stores fold into constants, while ensuring every remaining rolled
+    // step has block_size >= 64 (and thus a constant +32 pair-1 stride).
+    int64_t unrolled_stages = std::min(stage_limit, kUnrolledTailMasks);
+    for (int64_t stage = 0; stage < unrolled_stages; ++stage) {
+      for (int64_t step = 0; step <= stage; ++step) {
+        int64_t mask = stage - step;
+        int64_t block_size = int64_t{1} << mask;
+        int64_t xor_mask = step == 0 ? (block_size << 1) - 1 : block_size;
         ABSL_ASSIGN_OR_RETURN(
-            loop_tensors,
-            EmitForWithStatus(
-                loop_b,
-                arith::ConstantIndexOp::create(loop_b, kUnrolledTailMasks),
-                arith::ConstantIndexOp::create(loop_b, active_stages), c1,
-                loop_tensors,
-                [&](ImplicitLocOpBuilder& stage_b, Value stage,
-                    ValueRange stage_tensors)
-                    -> absl::StatusOr<SmallVector<Value>> {
-                  // Emit step 0 (flip step) separately so the inner merge loop
-                  // has xor_mask == block_size on every iteration and avoids
-                  // loop peeling.
-                  Value flip_block_size =
-                      arith::ShLIOp::create(stage_b, c1, stage);
-                  Value flip_mask_low =
-                      arith::SubIOp::create(stage_b, flip_block_size, c1);
-                  Value flip_xor_mask = arith::SubIOp::create(
-                      stage_b,
-                      arith::ShLIOp::create(stage_b, flip_block_size, c1), c1);
-                  ABSL_ASSIGN_OR_RETURN(
-                      SmallVector<Value> rolled_tensors,
-                      emit_sync_and_compare(
-                          stage_b, flip_xor_mask, flip_mask_low, stage_tensors,
-                          /*is_merge_step=*/false, Pair1Stride::kFlip32));
+            tensors,
+            emit_intra_step(
+                tile_b, tile_bound,
+                arith::ConstantIndexOp::create(tile_b, xor_mask),
+                arith::ConstantIndexOp::create(tile_b, block_size - 1), tensors,
+                /*is_merge_step=*/step > 0, Pair1Stride::kWithinDoubleWarp64,
+                /*check_bounds=*/false, /*post_sync=*/false));
+      }
+    }
 
-                  Value initial_merge_mask_low =
-                      arith::ShRUIOp::create(stage_b, flip_mask_low, c1);
-                  Value num_merge_steps =
-                      arith::SubIOp::create(stage_b, stage,
-                                            arith::ConstantIndexOp::create(
-                                                stage_b, kUnrolledTailMasks));
+    if (stage_limit > kUnrolledTailMasks) {
+      ABSL_ASSIGN_OR_RETURN(
+          tensors,
+          EmitForWithStatus(
+              tile_b,
+              arith::ConstantIndexOp::create(tile_b, kUnrolledTailMasks),
+              arith::ConstantIndexOp::create(tile_b, stage_limit), c1, tensors,
+              [&](ImplicitLocOpBuilder& stage_b, Value stage,
+                  ValueRange stage_tensors)
+                  -> absl::StatusOr<SmallVector<Value>> {
+                // Emit step 0 (flip step) separately so the inner merge loop
+                // has xor_mask == block_size on every iteration and avoids
+                // loop peeling.
+                Value flip_block_size =
+                    arith::ShLIOp::create(stage_b, c1, stage);
+                Value flip_mask_low =
+                    arith::SubIOp::create(stage_b, flip_block_size, c1);
+                Value flip_xor_mask = arith::SubIOp::create(
+                    stage_b,
+                    arith::ShLIOp::create(stage_b, flip_block_size, c1), c1);
+                ABSL_ASSIGN_OR_RETURN(
+                    SmallVector<Value> rolled_tensors,
+                    emit_intra_step(stage_b, tile_bound, flip_xor_mask,
+                                    flip_mask_low, stage_tensors,
+                                    /*is_merge_step=*/false,
+                                    Pair1Stride::kFlip32,
+                                    /*check_bounds=*/false,
+                                    /*post_sync=*/false));
+
+                Value initial_merge_mask_low =
+                    arith::ShRUIOp::create(stage_b, flip_mask_low, c1);
+                Value num_merge_steps =
+                    arith::SubIOp::create(stage_b, stage,
+                                          arith::ConstantIndexOp::create(
+                                              stage_b, kUnrolledTailMasks));
+                ABSL_ASSIGN_OR_RETURN(
+                    rolled_tensors,
+                    emit_rolled_merge_steps(
+                        stage_b, tile_bound, num_merge_steps,
+                        initial_merge_mask_low, rolled_tensors,
+                        Pair1Stride::kMerge32, /*check_bounds=*/false,
+                        /*post_sync=*/false));
+
+                for (int64_t mask = kUnrolledTailMasks - 1; mask >= 0; --mask) {
+                  int64_t block_size = int64_t{1} << mask;
                   ABSL_ASSIGN_OR_RETURN(
                       rolled_tensors,
-                      emit_rolled_merge_steps(
-                          stage_b, num_merge_steps, initial_merge_mask_low,
-                          rolled_tensors, Pair1Stride::kMerge32));
-
-                  for (int64_t mask = kUnrolledTailMasks - 1; mask >= 0;
-                       --mask) {
-                    int64_t block_size = int64_t{1} << mask;
-                    ABSL_ASSIGN_OR_RETURN(
-                        rolled_tensors,
-                        emit_sync_and_compare(
-                            stage_b,
-                            arith::ConstantIndexOp::create(stage_b, block_size),
-                            arith::ConstantIndexOp::create(stage_b,
-                                                           block_size - 1),
-                            rolled_tensors,
-                            /*is_merge_step=*/true,
-                            Pair1Stride::kWithinDoubleWarp64));
-                  }
-                  return rolled_tensors;
-                }));
-      }
-    } else {
-      TF_RET_CHECK(kernel_spec.kind ==
-                   BitonicSortKernelSpec::Kind::kIntraTileMerge);
-      for (int64_t mask = active_stages - 1; mask >= 0; --mask) {
-        int64_t block_size = int64_t{1} << mask;
-        Pair1Stride pair1_stride = block_size >= 64
-                                       ? Pair1Stride::kMerge32
-                                       : Pair1Stride::kWithinDoubleWarp64;
-        ABSL_ASSIGN_OR_RETURN(
-            loop_tensors,
-            emit_sync_and_compare(
-                loop_b, arith::ConstantIndexOp::create(loop_b, block_size),
-                arith::ConstantIndexOp::create(loop_b, block_size - 1),
-                loop_tensors, /*is_merge_step=*/true, pair1_stride));
-      }
+                      emit_intra_step(
+                          stage_b, tile_bound,
+                          arith::ConstantIndexOp::create(stage_b, block_size),
+                          arith::ConstantIndexOp::create(stage_b,
+                                                         block_size - 1),
+                          rolled_tensors, /*is_merge_step=*/true,
+                          Pair1Stride::kWithinDoubleWarp64,
+                          /*check_bounds=*/false, /*post_sync=*/false));
+                }
+                return rolled_tensors;
+              }));
     }
-    return loop_tensors;
+    return tensors;
   };
 
-  if (dimension_to_sort_bound <= tile_size ||
-      dimension_to_sort_bound % tile_size == 0) {
-    bool check_bounds = dimension_to_sort_bound < tile_size;
-    int64_t tile_elem_bound =
-        check_bounds ? dimension_to_sort_bound : tile_size;
+  auto emit_intra_merge_tile =
+      [&](ImplicitLocOpBuilder& tile_b, ValueRange tile_tensors,
+          Value tile_bound, int64_t stage_limit, bool check_bounds,
+          bool post_sync) -> absl::StatusOr<SmallVector<Value>> {
+    SmallVector<Value> tensors(tile_tensors.begin(), tile_tensors.end());
+    if (stage_limit <= 0) {
+      return tensors;
+    }
+    if (check_bounds ||
+        (post_sync &&
+         kernel_spec.kind == BitonicSortKernelSpec::Kind::kIntraTileSort)) {
+      // Keep bounds-checked loops and post-cluster merges inside
+      // kIntraTileSort rolled with default pair-1 stride so LLVM does not
+      // hoist bounds predicates or keep stage 0..5 shared-memory pointers live
+      // from Phase 1 across cluster barriers (which causes register spills).
+      Value initial_merge_mask_low = arith::ConstantIndexOp::create(
+          tile_b, (int64_t{1} << (stage_limit - 1)) - 1);
+      return emit_rolled_merge_steps(
+          tile_b, tile_bound,
+          arith::ConstantIndexOp::create(tile_b, stage_limit),
+          initial_merge_mask_low, tensors, Pair1Stride::kDefault, check_bounds,
+          post_sync);
+    }
+    for (int64_t mask = stage_limit - 1; mask >= 0; --mask) {
+      int64_t block_size = int64_t{1} << mask;
+      Pair1Stride pair1_stride = block_size >= 64
+                                     ? Pair1Stride::kMerge32
+                                     : Pair1Stride::kWithinDoubleWarp64;
+      ABSL_ASSIGN_OR_RETURN(
+          tensors, emit_intra_step(
+                       tile_b, tile_bound,
+                       arith::ConstantIndexOp::create(tile_b, block_size),
+                       arith::ConstantIndexOp::create(tile_b, block_size - 1),
+                       tensors, /*is_merge_step=*/true, pair1_stride,
+                       /*check_bounds=*/false, post_sync));
+    }
+    return tensors;
+  };
+
+  if (kernel_spec.kind == BitonicSortKernelSpec::Kind::kIntraTileSort) {
     ABSL_ASSIGN_OR_RETURN(
         shmem_tensors,
-        emit_compare_loops(b, shmem_tensors, tile_elem_bound, check_bounds));
-  } else {
-    // Only the last tile is partial; split once on is_last_tile so all full
-    // tiles execute without bounds checks or branch divergence.
-    Value is_last_tile = arith::CmpIOp::create(
-        b, arith::CmpIPredicate::sge, base_keys_index,
-        index_const(RoundDownTo(dimension_to_sort_bound, tile_size)));
+        emit_per_tile_intra(b, shmem_tensors, emit_intra_sort_tile));
+  }
+
+  if (has_cluster_step) {
+    int64_t block_size = int64_t{1} << intra_stages;
+    int64_t cluster_xor_mask =
+        kernel_spec.kind == BitonicSortKernelSpec::Kind::kIntraTileSort
+            ? (block_size << 1) - 1
+            : block_size;
+    Value xor_mask_val = index_const(cluster_xor_mask);
+    Value block_size_val = index_const(block_size);
+
+    auto emit_cluster_phase =
+        [&](ImplicitLocOpBuilder& phase_b, ValueRange phase_tensors,
+            Value cluster_bound,
+            bool check_bounds) -> absl::StatusOr<SmallVector<Value>> {
+      auto pre_synced =
+          SyncThreadsOp::create(phase_b, TypeRange(phase_tensors),
+                                phase_tensors, mlir::gpu::BarrierScope::Cluster)
+              .getResults();
+      ClusterStepInfo cluster_info{cta_base, tile_size, block_size_val,
+                                   read_cluster_shmem, write_cluster_shmem};
+      ABSL_ASSIGN_OR_RETURN(
+          SmallVector<Value> updated,
+          EmitCompareLoopBody(
+              phase_b, cluster_bound, num_threads, unroll_factor / 2,
+              num_values, thread_id_x, xor_mask_val, block_size_val, pre_synced,
+              read_shmem, write_shmem, comparator, /*force_write=*/false,
+              check_bounds, /*is_merge_step=*/false, Pair1Stride::kDefault,
+              cluster_info));
+      auto post_synced =
+          SyncThreadsOp::create(phase_b, TypeRange(updated), updated,
+                                mlir::gpu::BarrierScope::Cluster)
+              .getResults();
+      return SmallVector<Value>(post_synced.begin(), post_synced.end());
+    };
+
+    if (full_clusters_bound == 0) {
+      ABSL_ASSIGN_OR_RETURN(
+          shmem_tensors,
+          emit_cluster_phase(b, shmem_tensors,
+                             index_const(dimension_to_sort_bound),
+                             /*check_bounds=*/true));
+    } else if (full_clusters_bound == rounded_cluster_bound) {
+      ABSL_ASSIGN_OR_RETURN(
+          shmem_tensors,
+          emit_cluster_phase(b, shmem_tensors, index_const(cluster_tile_size),
+                             /*check_bounds=*/false));
+    } else {
+      // Split once on is_last_cluster so full clusters run without bounds
+      // checks and cluster synchronization remains cluster-uniform.
+      Value is_last_cluster =
+          arith::CmpIOp::create(b, arith::CmpIPredicate::sge, base_keys_index,
+                                index_const(full_clusters_bound));
+      int64_t tail_elem_bound = dimension_to_sort_bound % cluster_tile_size;
+      ABSL_ASSIGN_OR_RETURN(
+          shmem_tensors,
+          EmitIfElseWithStatus(
+              b, is_last_cluster, TypeRange(shmem_tensors),
+              [&](ImplicitLocOpBuilder& then_b)
+                  -> absl::StatusOr<SmallVector<Value>> {
+                if (tail_elem_bound <= tile_size) {
+                  // Only CTA 0 in the last cluster has in-bounds elements;
+                  // skip cross-CTA DSMEM traffic and sync locally instead.
+                  return sync_workgroup(then_b, shmem_tensors);
+                }
+                return emit_cluster_phase(
+                    then_b, shmem_tensors,
+                    arith::ConstantIndexOp::create(then_b, tail_elem_bound),
+                    /*check_bounds=*/true);
+              },
+              [&](ImplicitLocOpBuilder& else_b) {
+                return emit_cluster_phase(
+                    else_b, shmem_tensors,
+                    arith::ConstantIndexOp::create(else_b, cluster_tile_size),
+                    /*check_bounds=*/false);
+              }));
+    }
+  }
+
+  bool needs_post_cluster_merge =
+      kernel_spec.kind == BitonicSortKernelSpec::Kind::kIntraTileMerge ||
+      has_cluster_step;
+  bool post_sync = has_cluster_step;
+  if (needs_post_cluster_merge) {
     ABSL_ASSIGN_OR_RETURN(
         shmem_tensors,
-        EmitIfElseWithStatus(
-            b, is_last_tile, TypeRange(shmem_tensors),
-            [&](ImplicitLocOpBuilder& then_b) {
-              return emit_compare_loops(then_b, shmem_tensors,
-                                        dimension_to_sort_bound % tile_size,
-                                        /*check_bounds=*/true);
-            },
-            [&](ImplicitLocOpBuilder& else_b) {
-              return emit_compare_loops(else_b, shmem_tensors, tile_size,
-                                        /*check_bounds=*/false);
+        emit_per_tile_intra(
+            b, shmem_tensors,
+            [&](ImplicitLocOpBuilder& tile_b, ValueRange tile_tensors,
+                Value tile_bound, int64_t stage_limit, bool check_bounds) {
+              return emit_intra_merge_tile(tile_b, tile_tensors, tile_bound,
+                                           stage_limit, check_bounds,
+                                           post_sync);
             }));
   }
-  auto synced =
-      SyncThreadsOp::create(b, TypeRange(shmem_tensors), shmem_tensors)
-          .getResults();
-  shmem_tensors.assign(synced.begin(), synced.end());
+  if (!post_sync) {
+    shmem_tensors = sync_workgroup(b, shmem_tensors);
+  }
 
   // Copy sorted tile from shared memory back to global memory.
   SmallVector<Value> updated_outputs(output_tensors.begin(),
@@ -865,12 +1173,15 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateBitonicSortMlirModule(
   } else if (kernel_spec.is_tiled()) {
     SmallVector<Value, 3> keys_index =
         emitters::ApplyIndexing(indexing_map, thread_and_block_ids, {}, b);
+    int64_t cluster_size = launch_dimensions.cluster_dims().has_value()
+                               ? launch_dimensions.cluster_dims()->x
+                               : 1;
     ABSL_ASSIGN_OR_RETURN(
         output_tensors,
         EmitTiledCompareLoop(b, keys_index, thread_id_x, sort,
                              dimension_to_sort_bound, num_threads, kernel_spec,
                              output_tensors, emit_iota_operands, tile_size,
-                             unroll_factor, comparator));
+                             cluster_size, unroll_factor, comparator));
   } else {
     Value in_bounds =
         emitters::CheckConstraints(indexing_map, thread_and_block_ids, {}, b);
@@ -966,6 +1277,36 @@ AsyncThunkSequence EmitBitonicSort(const HloSortInstruction* sort,
                uint64_t{1} << num_stages);
   tile_size = uint64_t{1} << Log2Floor(tile_size);
 
+  constexpr uint64_t kMaxClusterSize = 2;
+  const auto* cuda_cc = ir_emitter_context->gpu_device_info()
+                            .gpu_compute_capability()
+                            .cuda_compute_capability();
+  bool supports_clusters = cuda_cc != nullptr && cuda_cc->IsAtLeastHopper();
+  uint64_t cluster_size = 1;
+  if (supports_clusters && tile_size >= 64 &&
+      (uint64_t{1} << num_stages) > tile_size) {
+    uint64_t active_tiles = CeilOfRatio(dimension_to_sort_bound, tile_size);
+    uint64_t batch_size =
+        ShapeUtil::ElementsIn(keys_shape) / dimension_to_sort_bound;
+    uint64_t unclustered_blocks = batch_size * active_tiles;
+    int core_count = ir_emitter_context->gpu_device_info().core_count();
+    uint64_t candidate_cluster_bound =
+        RoundUpTo(dimension_to_sort_bound, tile_size * kMaxClusterSize);
+    // Cap clusters at 2 CTAs (one TPC on Hopper/Blackwell) to avoid GPC
+    // cluster-slot fragmentation, cross-TPC DSMEM crossbar contention, and
+    // elevated register pressure. Require > 1 CTA/SM to amortize cluster
+    // synchronization and scheduling over multi-wave execution, and skip
+    // clustering when OOB cluster padding exceeds 12.5% (either idle CTAs or
+    // heavily asymmetric partial tiles).
+    if (core_count > 0 &&
+        unclustered_blocks > static_cast<uint64_t>(core_count) &&
+        (candidate_cluster_bound - dimension_to_sort_bound) * 8 <=
+            candidate_cluster_bound) {
+      cluster_size = kMaxClusterSize;
+    }
+  }
+  uint64_t cluster_tile_size = tile_size * cluster_size;
+
   Shape standard_iteration_shape = keys_shape;
   uint64_t standard_num_iterations_in_sort_dim =
       num_stages == 0 ? 1
@@ -977,7 +1318,8 @@ AsyncThunkSequence EmitBitonicSort(const HloSortInstruction* sort,
   LaunchDimensions standard_launch_dimensions = CalculateLaunchDimensions(
       standard_iteration_shape, ir_emitter_context->gpu_device_info());
 
-  uint64_t rounded_bound = RoundUpTo(dimension_to_sort_bound, tile_size);
+  uint64_t rounded_bound =
+      RoundUpTo(dimension_to_sort_bound, cluster_tile_size);
   Shape iteration_shape = keys_shape;
   uint64_t num_iterations_in_sort_dim =
       CeilOfRatio(rounded_bound, kBitonicSortUnrollFactor);
@@ -988,7 +1330,12 @@ AsyncThunkSequence EmitBitonicSort(const HloSortInstruction* sort,
       std::max(uint64_t{1}, tile_size / kBitonicSortUnrollFactor);
 
   uint64_t num_blocks = CeilOfRatio(num_iterations, kThreadsPerBlock);
-  LaunchDimensions tiled_launch_dimensions(num_blocks, kThreadsPerBlock);
+  std::optional<se::ClusterDim> cluster_dim =
+      cluster_size > 1 ? std::make_optional(se::ClusterDim(cluster_size, 1, 1))
+                       : std::nullopt;
+  LaunchDimensions tiled_launch_dimensions(
+      se::BlockDim(num_blocks, 1, 1), se::ThreadDim(kThreadsPerBlock, 1, 1),
+      cluster_dim);
   VLOG(2) << absl::StreamFormat("%s launch dims: %d blocks, %d threads/block",
                                 op_name, num_blocks, kThreadsPerBlock);
 
@@ -1050,7 +1397,8 @@ AsyncThunkSequence EmitBitonicSort(const HloSortInstruction* sort,
     // entry when PDL is enabled for this module and device, so launch with PDL
     // in that case.
     GpuKernelSpec spec(std::move(sanitized_kernel_name), launch_dimensions,
-                       kernel_arguments, std::nullopt, use_pdl);
+                       kernel_arguments, std::nullopt, use_pdl,
+                       /*tma_metadata=*/{}, launch_dimensions.cluster_dims());
     MlirKernelDefinition kernel_def(
         spec, MlirKernelSource(nullptr, std::move(mlir_module)));
     Future<CompiledSortKernel> compiled_future =
@@ -1099,8 +1447,8 @@ AsyncThunkSequence EmitBitonicSort(const HloSortInstruction* sort,
       thunks.push_back(emit_thunk({BitonicSortKernelSpec::Kind::kIotaCopy}));
     }
   } else {
-    int64_t intra_stages = Log2Floor(tile_size);
-    int64_t local_stages = std::min(num_stages, intra_stages);
+    int64_t tiled_stages = Log2Floor(cluster_tile_size);
+    int64_t local_stages = std::min(num_stages, tiled_stages);
     if (local_stages >= 2) {
       thunks.push_back(emit_thunk(
           {BitonicSortKernelSpec::Kind::kIntraTileSort, local_stages}));
@@ -1108,16 +1456,16 @@ AsyncThunkSequence EmitBitonicSort(const HloSortInstruction* sort,
       thunks.push_back(
           emit_thunk({BitonicSortKernelSpec::Kind::kSingleStep, 1, 1}));
     }
-    for (int64_t stage = intra_stages; stage < num_stages; ++stage) {
-      for (int64_t mask = stage; mask >= intra_stages; --mask) {
+    for (int64_t stage = tiled_stages; stage < num_stages; ++stage) {
+      for (int64_t mask = stage; mask >= tiled_stages; --mask) {
         int64_t block_size = int64_t{1} << mask;
         int64_t xor_mask = mask == stage ? (block_size << 1) - 1 : block_size;
         thunks.push_back(emit_thunk(
             {BitonicSortKernelSpec::Kind::kSingleStep, xor_mask, block_size}));
       }
-      if (intra_stages >= 2) {
+      if (tiled_stages >= 2) {
         thunks.push_back(emit_thunk(
-            {BitonicSortKernelSpec::Kind::kIntraTileMerge, intra_stages}));
+            {BitonicSortKernelSpec::Kind::kIntraTileMerge, tiled_stages}));
       } else {
         thunks.push_back(
             emit_thunk({BitonicSortKernelSpec::Kind::kSingleStep, 1, 1}));

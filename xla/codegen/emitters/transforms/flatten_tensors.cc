@@ -792,7 +792,7 @@ struct RewriteSyncThreads : OpRewritePattern<gpu::SyncThreadsOp> {
               .getResult(0));
     }
     auto new_op = gpu::SyncThreadsOp::create(
-        rewriter, loc, TypeRange(new_operands), new_operands);
+        rewriter, loc, TypeRange(new_operands), new_operands, op.getScope());
     SmallVector<Value> new_results;
     new_results.reserve(op.getNumResults());
     for (auto [index, result] : llvm::enumerate(new_op.getResults())) {

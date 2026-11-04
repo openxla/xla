@@ -263,6 +263,33 @@ func.func @transpose_shared(%in: tensor<1024xf32>,
 
 // -----
 
+func.func @cluster_dsmem(%idx: index, %val: f32) -> f32 {
+  %shared = xla_gpu.allocate_shared : tensor<1024xf32>
+  %inserted = tensor.insert %val into %shared[%idx] {xla_gpu.dsmem} : tensor<1024xf32>
+  %synced = xla_gpu.sync_threads scope <cluster> %inserted : tensor<1024xf32>
+  %extracted = tensor.extract %synced[%idx] {xla_gpu.dsmem} : tensor<1024xf32>
+  return %extracted : f32
+}
+// CHECK-LABEL: @cluster_dsmem(
+// CHECK-SAME:      %[[IDX:.*]]: index, %[[VAL:.*]]: f32) -> f32 {
+// CHECK-DAG:     %[[ADDR:.*]] = llvm.mlir.addressof @shared_{{.*}} : !llvm.ptr<3>
+// CHECK-DAG:     %[[CAST:.*]] = llvm.addrspacecast %[[ADDR]] : !llvm.ptr<3> to !llvm.ptr
+// CHECK-DAG:     %[[IDX_INT:.*]] = arith.index_castui %[[IDX]] : index to i64
+// CHECK-DAG:     %[[C1024:.*]] = arith.constant 1024 : i64
+// CHECK:         %[[CTA_I64:.*]] = arith.divui %[[IDX_INT]], %[[C1024]] : i64
+// CHECK:         %[[CTA:.*]] = arith.trunci %[[CTA_I64]] : i64 to i32
+// CHECK:         %[[LOCAL_IDX:.*]] = arith.remui %[[IDX_INT]], %[[C1024]] : i64
+// CHECK:         %[[DSMEM_PTR:.*]] = nvvm.mapa %[[CAST]], %[[CTA]] : !llvm.ptr -> !llvm.ptr
+// CHECK:         %[[GEP_STORE:.*]] = llvm.getelementptr inbounds %[[DSMEM_PTR]][0, %[[LOCAL_IDX]]] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.array<1024 x f32>
+// CHECK:         llvm.store %[[VAL]], %[[GEP_STORE]] : f32, !llvm.ptr
+// CHECK:         gpu.barrier scope <cluster>
+// CHECK:         %[[DSMEM_PTR2:.*]] = nvvm.mapa %[[CAST]], %{{.*}} : !llvm.ptr -> !llvm.ptr
+// CHECK:         %[[GEP_LOAD:.*]] = llvm.getelementptr inbounds %[[DSMEM_PTR2]][0, %{{.*}}] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.array<1024 x f32>
+// CHECK:         %[[LOAD:.*]] = llvm.load %[[GEP_LOAD]] : !llvm.ptr -> f32
+// CHECK:         return %[[LOAD]] : f32
+
+// -----
+
 func.func @atomic_rmw_f32(%in: tensor<8xf32>, %i: index) -> (tensor<8xf32>) {
   %ret = xla.atomic_rmw %in[%i] : tensor<8xf32> {
     ^bb0(%current : f32):

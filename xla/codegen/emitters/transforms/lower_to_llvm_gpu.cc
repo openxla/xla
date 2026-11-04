@@ -41,6 +41,8 @@ limitations under the License.
 #include "mlir/Dialect/AMDGPU/IR/AMDGPUDialectDecl.h"
 #include "mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/GPU/IR/GPUDialectDecl.h"
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"   // IWYU pragma: keep
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"   // IWYU pragma: keep
@@ -246,6 +248,28 @@ class FmaToLLVM : public mlir::ConvertOpToLLVMPattern<mlir::math::FmaOp> {
   }
 };
 
+// TODO(akuegel): Remove this pattern once upstream GPUToNVVM lowers
+// `gpu.barrier scope <cluster>`.
+class ClusterBarrierToNVVM
+    : public mlir::ConvertOpToLLVMPattern<mlir::gpu::BarrierOp> {
+ public:
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      mlir::gpu::BarrierOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter& rewriter) const override {
+    if (op.getScope() != mlir::gpu::BarrierScope::Cluster ||
+        op.getAddressSpaces().has_value() || adaptor.getNamedBarrier()) {
+      return rewriter.notifyMatchFailure(op, "not an unnamed cluster barrier");
+    }
+    mlir::NVVM::ClusterArriveOp::create(rewriter, op.getLoc(),
+                                        rewriter.getUnitAttr());
+    rewriter.replaceOpWithNewOp<mlir::NVVM::ClusterWaitOp>(
+        op, rewriter.getUnitAttr());
+    return mlir::success();
+  }
+};
+
 class LowerToLLVMGPUPass
     : public impl::LowerToLLVMGPUPassBase<LowerToLLVMGPUPass> {
  public:
@@ -330,7 +354,8 @@ class LowerToLLVMGPUPass
       } else {
         mlir::populateGpuToNVVMConversionPatterns(converter, patterns);
         mlir::configureGpuToNVVMConversionLegality(target);
-        patterns.add<FmaToLLVM>(converter, mlir::PatternBenefit(2));
+        patterns.add<FmaToLLVM, ClusterBarrierToNVVM>(converter,
+                                                      mlir::PatternBenefit(2));
       }
       return mlir::success();
     };
