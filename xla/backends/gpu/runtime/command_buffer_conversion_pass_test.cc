@@ -1704,7 +1704,7 @@ TEST(CommandBufferConversionPassTest, CollectivesFilterDefaultsToAll) {
 }
 
 TEST(CommandBufferConversionPassTest,
-     ConvertsSymmetricRaggedAllToAllThunkWithCollectivesKernel) {
+     ConvertsSymmetricRaggedAllToAllThunkWithCollectives) {
   ThunkSequence thunks;
   BufferAllocation alloc0(1, 16 * 4, 0);
   BufferAllocation alloc1(1, 16 * 4, 0);
@@ -1717,8 +1717,7 @@ TEST(CommandBufferConversionPassTest,
   DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_graph_min_graph_size(1);
   debug_options.clear_xla_gpu_enable_command_buffer();
-  debug_options.add_xla_gpu_enable_command_buffer(
-      DebugOptions::COLLECTIVES_KERNEL);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   FakeErrorAllocator allocator;
@@ -1820,8 +1819,7 @@ TEST(CommandBufferConversionPassTest,
   DebugOptions debug_options = xla::GetDebugOptionsFromFlags();
   debug_options.set_xla_gpu_graph_min_graph_size(1);
   debug_options.clear_xla_gpu_enable_command_buffer();
-  debug_options.add_xla_gpu_enable_command_buffer(
-      DebugOptions::COLLECTIVES_KERNEL);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
 
   se::DeviceDescription device_info = TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
   FakeErrorAllocator allocator;

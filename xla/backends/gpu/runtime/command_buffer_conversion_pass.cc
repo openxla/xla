@@ -213,13 +213,8 @@ std::optional<DebugOptions::CommandBufferCmdType> GetCommandBufferCmdType(
       return DebugOptions::FUSION;
     case Thunk::kCollectiveKernel:
       return DebugOptions::COLLECTIVES_KERNEL;
-    case Thunk::kRaggedAllToAll: {
-      const auto& ra2a_thunk = static_cast<const RaggedAllToAllThunk&>(thunk);
-      if (ra2a_thunk.IsSymmetricMemoryKernelSupported()) {
-        return DebugOptions::COLLECTIVES_KERNEL;
-      }
+    case Thunk::kRaggedAllToAll:
       return DebugOptions::COLLECTIVES;
-    }
     case Thunk::kWhile:
       return DebugOptions::WHILE;
     case Thunk::kConditional:

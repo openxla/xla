@@ -147,6 +147,8 @@ TEST_F(CollectiveOpsCommandBufferPeerAccessTest, RaggedAllToAll_Simple) {
   bool run_hlo_passes = true;
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.mutable_debug_options().add_xla_gpu_enable_command_buffer(
+      DebugOptions::COLLECTIVES);
   config.mutable_debug_options().set_xla_gpu_graph_min_graph_size(1);
 
   ASSERT_OK_AND_ASSIGN(auto module,
