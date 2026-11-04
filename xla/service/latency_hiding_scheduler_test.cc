@@ -3576,14 +3576,14 @@ TEST_F(LatencyHidingSchedulerTest, RerunWithSmallerMemoryLimit) {
   std::vector<HloInstruction*> original_instruction_sequence =
       module_schedule.sequence(entry_computation).instructions();
   auto sched_config = GetDefaultSchedConfig();
-  sched_config.memory_limit = 110;
+  sched_config.memory_limit = 100;
   sched_config.rerun = 1;
   EXPECT_OK(RunScheduler(hlo_module.get(), sched_config));
   // LatencyHidingScheduler runs an additional "rerun" iteration because the
-  // peak memory usage after the first run was 136 bytes (> 110 bytes), so it
-  // sets the new limit to 99 and obtains a peak memory usage of 88 bytes at
-  // the end of the rerun. In the first run, collective-permute overlaps the
-  // slice op, whereas in the rerun, it does not overlap anything.
+  // HeapSimulator peak memory usage after the first run was 104 bytes (> 100
+  // bytes), so it sets the new limit to 90 and obtains a peak memory usage of
+  // 88 bytes at the end of the rerun. In the first run, collective-permute
+  // overlaps the slice op, whereas in the rerun, it does not overlap anything.
   std::vector<HloInstruction*> new_instruction_sequence =
       module_schedule.sequence(entry_computation).instructions();
   if (VLOG_IS_ON(1)) {
@@ -3596,6 +3596,215 @@ TEST_F(LatencyHidingSchedulerTest, RerunWithSmallerMemoryLimit) {
       FindInstruction(hlo_module.get(), "collective-permute-start");
   EXPECT_LT(PositionInVector(new_instruction_sequence, s),
             PositionInVector(new_instruction_sequence, cps));
+}
+
+TEST_F(LatencyHidingSchedulerTest, RerunRestartsFromTheOriginalSchedule) {
+  // Same module as RerunWithSmallerMemoryLimit: the first run does not fit in
+  // the memory limit, so the scheduler reruns with a tighter memory limit.
+  absl::string_view hlo_string = R"(
+    HloModule rerun_scheduler_test, is_scheduled=true
+    ENTRY main {
+     p0 = bf16[8]{0} parameter(0)
+     c = bf16[] constant(0)
+     b = bf16[43]{0} broadcast(c), dimensions={}
+     s = bf16[1]{0} slice(b), slice={[0:1]}
+     cp = bf16[8]{0} collective-permute(p0), source_target_pairs={{0,1},{1,2},{2,3}}
+    ROOT tuple = (bf16[8]{0}, bf16[1]{0}) tuple(cp, s)
+  }
+)";
+
+  // Records the input schedule of each scheduling run of a computation.
+  class InputScheduleRecordingAsyncTracker : public AsyncTracker {
+   public:
+    InputScheduleRecordingAsyncTracker(
+        const SchedulerConfig& config,
+        std::vector<std::vector<std::string>>* input_schedules)
+        : AsyncTracker(config), input_schedules_(input_schedules) {}
+    using AsyncTracker::UpdateTargetDefinedStates;
+
+    void UpdateTargetDefinedStates(
+        const HloInstruction& hlo, const HloScheduleGraph* schedule_graph,
+        const LatencyEstimator* latency_estimator,
+        LatencyEstimator::TimeCost current_time,
+        SchedulerCore::SchedulingState* sched_state) override {
+      // The root is the first instruction scheduled in a run.
+      if (hlo.parent()->root_instruction() != &hlo) {
+        return;
+      }
+      std::vector<std::string>& input_schedule =
+          input_schedules_->emplace_back();
+      for (const HloInstruction* instruction :
+           schedule_graph->GetOriginalInstrList()) {
+        input_schedule.push_back(std::string(instruction->name()));
+      }
+    }
+
+   private:
+    std::vector<std::vector<std::string>>* input_schedules_;
+  };
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseHloText(hlo_string));
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.memory_limit = 100;
+  sched_config.rerun = 1;
+  std::vector<std::vector<std::string>> input_schedules;
+  EXPECT_OK(RunScheduler(hlo_module.get(), sched_config,
+                         std::make_unique<ApproximateLatencyEstimator>(),
+                         std::make_unique<InputScheduleRecordingAsyncTracker>(
+                             sched_config, &input_schedules)));
+  // The rerun restarts from the original schedule rather than from the
+  // schedule produced by the first run.
+  ASSERT_EQ(input_schedules.size(), 2);
+  EXPECT_EQ(input_schedules[1], input_schedules[0]);
+}
+
+TEST_F(LatencyHidingSchedulerTest, RerunTriggeredByHeapSimulatorFragmentation) {
+  // In Trial 0 (`memory_limit = 104`), `all-reduce` (50B) overlaps both `b1`
+  // (52B) and `b4` (49B), while `b4` also overlaps `b2` (51B). Instantaneous
+  // live memory stays within 103 bytes (<= 104), so `MemoryPressureTracker`
+  // alone does not see an over-limit peak. Under decreasing-size spatial
+  // packing (`HeapSimulator`), `b1` (52B) and `b2` (51B) do not overlap and
+  // both take offset 0, `all-reduce` (50B) takes `[52, 102)`, and `b4` (49B)
+  // overlaps both `all-reduce` and `b2` so it is forced to `[102, 151)` (> 104
+  // bytes). That triggers a rerun at limit 93 which schedules `b1` before
+  // `all-reduce-start` and `b4` after `all-reduce-done`, eliminating the
+  // fragmentation.
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule frag_rerun_test, is_scheduled=true
+    add_op {
+      lhs = u8[] parameter(0)
+      rhs = u8[] parameter(1)
+      ROOT sum = u8[] add(lhs, rhs)
+    }
+    ENTRY main {
+      p0 = u8[50]{0} parameter(0)
+      p1 = u8[] parameter(1)
+      c0 = u8[] constant(0)
+      b1 = u8[52]{0} broadcast(p1), dimensions={}
+      s_b1 = u8[1]{0} slice(b1), slice={[0:1]}
+      b4 = u8[49]{0} pad(s_b1, c0), padding=0_48
+      neg = u8[50]{0} negate(p0)
+      ar = u8[50]{0} all-reduce(neg), replica_groups={{0,1}}, to_apply=add_op
+      s_ar = u8[1]{0} slice(ar), slice={[0:1]}
+      r_ar = u8[] reshape(s_ar)
+      b2 = u8[51]{0} broadcast(r_ar), dimensions={}
+      s_b4 = u8[1]{0} slice(b4), slice={[0:1]}, control-predecessors={b2}
+      s_b2 = u8[1]{0} slice(b2), slice={[0:1]}, control-predecessors={s_b4}
+      ROOT out = u8[1]{0} add(s_b2, s_b4)
+    }
+  )hlo";
+
+  // Verify that on the first run (`rerun = 0`), LHS's online memory pressure
+  // peak is within `memory_limit` (<= 104) and `all-reduce-start` is scheduled
+  // before `b1` so `all-reduce` overlaps `b1` and `b4`.
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                         ParseHloText(kHlo));
+    SchedulerConfig sched_config = GetDefaultSchedConfig();
+    sched_config.memory_limit = 104;
+    sched_config.rerun = 0;
+    ASSERT_OK_AND_ASSIGN(auto schedulers,
+                         SetupScheduler(hlo_module.get(), sched_config));
+    ASSERT_OK(schedulers.first->Run(hlo_module.get()));
+    EXPECT_LE(schedulers.second->GetMemoryPeak(), 104);
+    const std::vector<HloInstruction*>& seq =
+        hlo_module->schedule()
+            .sequence(hlo_module->entry_computation())
+            .instructions();
+    EXPECT_LT(PositionInVector(
+                  seq, FindInstruction(hlo_module.get(), "all-reduce-start")),
+              PositionInVector(seq, FindInstruction(hlo_module.get(), "b1")));
+  }
+
+  // With `rerun = 1`, HeapSimulator detects the fragmented peak (> 104) and
+  // triggers a rerun at limit 93 that finishes `b1` before `all-reduce-start`,
+  // bringing the HeapSimulator peak within `memory_limit`.
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                         ParseHloText(kHlo));
+    SchedulerConfig sched_config = GetDefaultSchedConfig();
+    sched_config.memory_limit = 104;
+    sched_config.rerun = 1;
+    EXPECT_OK(RunScheduler(hlo_module.get(), sched_config));
+    const std::vector<HloInstruction*>& seq =
+        hlo_module->schedule()
+            .sequence(hlo_module->entry_computation())
+            .instructions();
+    EXPECT_LT(PositionInVector(seq, FindInstruction(hlo_module.get(), "b1")),
+              PositionInVector(
+                  seq, FindInstruction(hlo_module.get(), "all-reduce-start")));
+  }
+}
+
+TEST_F(LatencyHidingSchedulerTest,
+       RerunKeepsBestScheduleWhenTighterLimitIncreasesPeak) {
+  // `b_big` (125B) + `b_mid` (20B) creates an irreducible 145B peak (> 140B),
+  // so Trial 0 (`memory_limit = 140`) triggers a rerun at `memory_limit = 126`.
+  // In Trial 0, `all-reduce` runs and unlocks/frees `huge` (100B) before
+  // `b_mid` / `b_big` are scheduled, keeping peak heap usage at 145B. At the
+  // tighter `memory_limit = 126`, `kMemoryPeakOverLimit` delays `a_end` behind
+  // `b_end`, pulling `b_mid` (20B) into `huge`'s live range and raising peak
+  // heap usage to >= 157B. The rerun loop must restore Trial 0's lower-peak
+  // schedule.
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule rerun_keep_best_test, is_scheduled=true
+    add_op {
+      lhs = u8[] parameter(0)
+      rhs = u8[] parameter(1)
+      ROOT sum = u8[] add(lhs, rhs)
+    }
+    ENTRY main {
+      p0 = u8[] parameter(0)
+      b_big = u8[125]{0} broadcast(p0), dimensions={}
+      b_mid = u8[20]{0} slice(b_big), slice={[0:20]}
+      b_end = u8[1]{0} slice(b_mid), slice={[0:1]}
+      huge = u8[100]{0} broadcast(p0), dimensions={}
+      s_huge = u8[36]{0} slice(huge), slice={[0:36]}
+      ar = u8[36]{0} all-reduce(s_huge), replica_groups={{0,1}}, to_apply=add_op
+      a_end = u8[1]{0} slice(ar), slice={[0:1]}
+      ab_end = u8[1]{0} add(a_end, b_end)
+      s_huge_end = u8[1]{0} slice(huge), slice={[0:1]}, control-predecessors={ab_end}
+      ROOT root = u8[1]{0} add(ab_end, s_huge_end)
+    }
+  )hlo";
+
+  // Verify that scheduling directly at the tightened `memory_limit = 126`
+  // places `a_end` before `b_end` (the worse-peak order).
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                         ParseHloText(kHlo));
+    SchedulerConfig tight_config = GetDefaultSchedConfig();
+    tight_config.memory_limit = 126;
+    tight_config.rerun = 0;
+    ASSERT_OK(RunScheduler(hlo_module.get(), tight_config));
+    const std::vector<HloInstruction*>& seq =
+        hlo_module->schedule()
+            .sequence(hlo_module->entry_computation())
+            .instructions();
+    EXPECT_LT(
+        PositionInVector(seq, FindInstruction(hlo_module.get(), "a_end")),
+        PositionInVector(seq, FindInstruction(hlo_module.get(), "b_end")));
+  }
+
+  // With `memory_limit = 140` and `rerun = 1`, Trial 1 runs at `memory_limit =
+  // 126`, observes the higher HeapSimulator peak, and restores Trial 0's
+  // schedule (`b_end` before `a_end`).
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                         ParseHloText(kHlo));
+    SchedulerConfig sched_config = GetDefaultSchedConfig();
+    sched_config.memory_limit = 140;
+    sched_config.rerun = 1;
+    ASSERT_OK(RunScheduler(hlo_module.get(), sched_config));
+    const std::vector<HloInstruction*>& seq =
+        hlo_module->schedule()
+            .sequence(hlo_module->entry_computation())
+            .instructions();
+    EXPECT_LT(
+        PositionInVector(seq, FindInstruction(hlo_module.get(), "b_end")),
+        PositionInVector(seq, FindInstruction(hlo_module.get(), "a_end")));
+  }
 }
 
 TEST_F(LatencyHidingSchedulerTest, MultipleAsyncDoneOperationsDoNotCreateLoop) {
