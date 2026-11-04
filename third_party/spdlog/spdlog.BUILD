@@ -44,9 +44,6 @@ cc_test(
     copts = [
         "-DSPDLOG_FMT_EXTERNAL",
         "-fexceptions",
-        # @fmt 8.1.1 does not compile under clang 22 above C++17; see the
-        # _CXX17 comment in //third_party/roc_mori:src_application.BUILD.
-        "-std=c++17",
     ],
     deps = [
         ":spdlog",

@@ -41,11 +41,6 @@ cc_test(
         "test/header-only-test.cc",
         "test/test-main.cc",
     ],
-    # fmt 8.1.1 only enables its consteval FMT_STRING checker above C++17, and
-    # that path does not compile under clang 22 (see the _CXX17 comment in
-    # //third_party/roc_mori:src_application.BUILD). Every consumer in this
-    # repo compiles fmt at C++17, so smoke-test it the same way.
-    copts = ["-std=c++17"],
     deps = [
         ":fmt",
         "@com_google_googletest//:gtest",
