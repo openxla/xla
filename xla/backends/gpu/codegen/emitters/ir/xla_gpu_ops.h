@@ -22,6 +22,7 @@ limitations under the License.
 #include "mlir/Bytecode/BytecodeOpInterface.h"     // IWYU pragma: keep
 #include "mlir/Dialect/Func/IR/FuncOps.h"          // IWYU pragma: keep
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"        // IWYU pragma: keep
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"       // IWYU pragma: keep
 #include "mlir/IR/Attributes.h"                    // IWYU pragma: keep
 #include "mlir/IR/BuiltinTypes.h"                  // IWYU pragma: keep
 #include "mlir/IR/Dialect.h"                       // IWYU pragma: keep

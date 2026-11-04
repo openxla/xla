@@ -92,3 +92,14 @@ func.func @shuffler(%a: f32, %b: i32) -> (f32, i32) {
 // CHECK:        xla_gpu.shuffle_reduce(%[[IN1]], %[[IN2]]) to 4
 // CHECK-SAME:    combiner=@do_nothing {xla.range = [0 : index, 42 : index]}
 // CHECK-SAME:    : f32, i32
+
+// -----
+
+func.func @dsmem_pointer(%ptr: !llvm.ptr, %cta_rank: i32) -> !llvm.ptr {
+  %0 = xla_gpu.dsmem_pointer %ptr, %cta_rank : !llvm.ptr -> !llvm.ptr
+  return %0 : !llvm.ptr
+}
+// CHECK-LABEL: func.func @dsmem_pointer(
+// CHECK-SAME:    %[[PTR:.*]]: !llvm.ptr, %[[CTA:.*]]: i32)
+// CHECK:         %[[RES:.*]] = xla_gpu.dsmem_pointer %[[PTR]], %[[CTA]] : !llvm.ptr -> !llvm.ptr
+// CHECK:         return %[[RES]] : !llvm.ptr
