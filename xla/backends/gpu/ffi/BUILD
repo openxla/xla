@@ -43,6 +43,7 @@ cc_library(
     ],
     deps = [
         "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
         "//xla/backends/gpu:ffi",
         "//xla/ffi",
         "//xla/ffi:type_registry",
@@ -50,6 +51,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_spec",
+        "//xla/stream_executor:kernel_spec_proto_cc",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
@@ -85,6 +87,7 @@ xla_cc_binary(
         "//xla/service:gpu_topology",
         "//xla/service/gpu:nvptx_compiler",
         "//xla/service/gpu:nvptx_compiler_impl",  # buildcleaner: keep
+        "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor/cuda:all_runtime",
         "//xla/stream_executor/cuda:cuda_platform",
         "//xla/stream_executor/cuda:cuda_platform_id",
