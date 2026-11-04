@@ -153,9 +153,9 @@ xla::OpMetadata CreateOpMetadataFromLocation(
   }
 
   if (frame_index_builder != nullptr) {
-    auto result = frame_index_builder->AddCallStackAndGetFirstFrameId(loc);
-    if (result.last_frame_id != mlir::StackFrameIndexBuilder::kInvalidIndex) {
-      metadata.set_stack_frame_id(result.last_frame_id);
+    int frame_id = frame_index_builder->AddCallStackAndGetFirstFrameId(loc);
+    if (frame_id != mlir::StackFrameIndexBuilder::kInvalidIndex) {
+      metadata.set_stack_frame_id(frame_id);
       return metadata;
     }
   }
