@@ -124,6 +124,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: "openxla/xla"
+          filter: blob:none
           persist-credentials: false
       - name: Checking out ${{ matrix.job_info.repo }}
         if: ${{ matrix.job_info.repo != 'openxla/xla' }}
@@ -131,6 +132,7 @@ jobs:
         with:
           repository: ${{ matrix.job_info.repo }}
           path: ${{ matrix.job_info.repo }}
+          filter: blob:none
           persist-credentials: false
       - name: "Set Bazel version for JAX"
         if: ${{ matrix.job_info.repo == 'jax-ml/jax' }}
