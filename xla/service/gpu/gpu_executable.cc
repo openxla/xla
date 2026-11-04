@@ -1016,25 +1016,12 @@ absl::StatusOr<int64_t> GetNumLocalParticipants(
     return 1;
   }
 
-  // Assume that all participants execute locally first, if we have a local
-  // device id to global device id map we will use it to get the real number of
-  // participating local devices.
-  int64_t num_local_participants =
-      device_assn->replica_count() * device_assn->computation_count();
-
-  // Find what local devices are part of the device assignment.
-  if (gpu_opts->gpu_global_device_ids()) {
-    auto d2l_map = device_assn->GetDeviceToLogicalIdMap();
-
-    num_local_participants = 0;
-    for (auto& [local_id, global_id] : *gpu_opts->gpu_global_device_ids()) {
-      num_local_participants += d2l_map.contains(global_id);
-    }
-
-    if (num_local_participants == 0) {
-      return absl::InternalError(
-          "Cound't find the number of local participants");
-    }
+  const std::optional<GpuExecutableRunOptions::DeviceIdMap>& global_device_ids =
+      gpu_opts->gpu_global_device_ids();
+  const int64_t num_local_participants = CountLocalParticipants(
+      *device_assn, global_device_ids ? &*global_device_ids : nullptr);
+  if (global_device_ids && num_local_participants == 0) {
+    return absl::InternalError("Cound't find the number of local participants");
   }
   return num_local_participants;
 }

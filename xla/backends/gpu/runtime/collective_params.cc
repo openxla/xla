@@ -19,23 +19,25 @@ limitations under the License.
 #include <optional>
 #include <string>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/collectives_registry.h"
 #include "xla/executable_run_options.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/computation_placer.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
@@ -126,5 +128,20 @@ CollectiveParams::CollectiveParams(
       local_device_count(local_device_count),
       collective_use_minimal_resource(collective_use_minimal_resource),
       nccl_window_symmetric(nccl_window_symmetric) {}
+
+int64_t CountLocalParticipants(
+    const DeviceAssignment& device_assn,
+    const CollectiveParams::GlobalDeviceIdMap* global_device_id_map) {
+  if (global_device_id_map == nullptr) {
+    return device_assn.replica_count() * device_assn.computation_count();
+  }
+  const absl::flat_hash_map<GlobalDeviceId, DeviceAssignment::LogicalID>
+      logical_ids = device_assn.GetDeviceToLogicalIdMap();
+  return absl::c_count_if(
+      *global_device_id_map,
+      [&](const CollectiveParams::GlobalDeviceIdMap::value_type& entry) {
+        return logical_ids.contains(entry.second);
+      });
+}
 
 }  // namespace xla::gpu
