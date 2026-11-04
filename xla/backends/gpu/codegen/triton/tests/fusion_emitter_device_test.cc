@@ -235,9 +235,11 @@ class TritonEmitterTestWithOffsetParam
 using EmitDynamicSliceTest = TritonEmitterTestWithOffsetParam;
 
 INSTANTIATE_TEST_SUITE_P(DynamicSliceSuite, EmitDynamicSliceTest,
-                         ::testing::Values(0, 1, 10, 100),
+                         ::testing::Values(-100, 0, 1, 10, 100),
                          [](const ::testing::TestParamInfo<int32_t>& info) {
-                           return absl::StrCat("offset_", info.param);
+                           return absl::StrCat("offset_",
+                                               info.param < 0 ? "neg_" : "",
+                                               std::abs(info.param));
                          });
 
 TEST_P(EmitDynamicSliceTest, LowerDynamicSliceWithSingleDimension) {
@@ -422,6 +424,141 @@ ENTRY entry {
   parameters[2].Set<int32_t>({}, offset);
   EXPECT_TRUE(RunAndCompareNoHloPasses(
       std::move(module), LiteralUtil::MakePointers(parameters), kExactMatch));
+}
+
+TEST_P(EmitDynamicSliceTest, LowerDotOfDynamicSlice) {
+  constexpr absl::string_view kHloText = R"(
+fdot {
+  p0 = f32[40,80] parameter(0)
+  p1 = f32[64,32] parameter(1)
+  off0 = s32[] parameter(2)
+  off1 = s32[] parameter(3)
+  ds = f32[32,64] dynamic-slice(p0, off0, off1), dynamic_slice_sizes={32,64}
+  ROOT dot = f32[32,32] dot(ds, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    algorithm=dot_f32_f32_f32, backend_config={sizes:[32]}
+}
+
+ENTRY entry {
+  p0 = f32[40,80] parameter(0)
+  p1 = f32[64,32] parameter(1)
+  off0 = s32[] parameter(2)
+  off1 = s32[] parameter(3)
+  ROOT fusion = f32[32,32] fusion(p0, p1, off0, off1),
+    kind=kCustom, calls=fdot,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["16", "16"]}],
+        "num_warps":"1","num_ctas":"1","num_stages":"1"}}}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> parameters,
+                       MakeFakeArguments(module.get()));
+  int32_t offset = GetParam();
+  parameters[2].Set<int32_t>({}, offset);
+  parameters[3].Set<int32_t>({}, offset + 3);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), LiteralUtil::MakePointers(parameters),
+      ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
+}
+
+TEST_P(EmitDynamicSliceTest, LowerBatchedDotOfDynamicSlice) {
+  constexpr absl::string_view kHloText = R"(
+fdot {
+  p0 = f32[40,7,80] parameter(0)
+  p1 = f32[4,64,32] parameter(1)
+  off0 = s32[] parameter(2)
+  off1 = s32[] parameter(3)
+  off2 = s32[] parameter(4)
+  ds = f32[32,4,64] dynamic-slice(p0, off0, off1, off2),
+    dynamic_slice_sizes={32,4,64}
+  ROOT dot = f32[4,32,32] dot(ds, p1),
+    lhs_batch_dims={1}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1},
+    algorithm=dot_f32_f32_f32, backend_config={sizes:[32]}
+}
+
+ENTRY entry {
+  p0 = f32[40,7,80] parameter(0)
+  p1 = f32[4,64,32] parameter(1)
+  off0 = s32[] parameter(2)
+  off1 = s32[] parameter(3)
+  off2 = s32[] parameter(4)
+  ROOT fusion = f32[4,32,32] fusion(p0, p1, off0, off1, off2),
+    kind=kCustom, calls=fdot,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["1", "16", "16"]}],
+        "num_warps":"1","num_ctas":"1","num_stages":"1"}}}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> parameters,
+                       MakeFakeArguments(module.get()));
+  int32_t offset = GetParam();
+  parameters[2].Set<int32_t>({}, offset);
+  parameters[3].Set<int32_t>({}, offset + 1);
+  parameters[4].Set<int32_t>({}, offset + 2);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), LiteralUtil::MakePointers(parameters),
+      ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
+}
+
+TEST_F(TritonEmitterTest, CodegenDynamicSliceWithCorrectOffsets) {
+  constexpr absl::string_view kHloText = R"(
+fdot {
+  lhs = f32[64,16] parameter(0)
+  rhs = f32[4,40,80] parameter(1)
+  off0 = s32[] parameter(2)
+  off1 = s32[] parameter(3)
+  off2 = s32[] parameter(4)
+  ds = f32[1,32,64] dynamic-slice(rhs, off0, off1, off2),
+    dynamic_slice_sizes={1,32,64}
+  bitcast = f32[32,64] bitcast(ds)
+  ROOT dot = f32[16,32] dot(lhs, bitcast),
+    lhs_contracting_dims={0}, rhs_contracting_dims={1},
+    algorithm=dot_f32_f32_f32, backend_config={sizes:[32]}
+}
+
+ENTRY entry {
+  p0 = f32[64,16] parameter(0)
+  p1 = f32[4,40,80] parameter(1)
+  p2 = s32[] parameter(2)
+  p3 = s32[] parameter(3)
+  p4 = s32[] parameter(4)
+  ROOT fusion = f32[16,32] fusion(p0, p1, p2, p3, p4),
+    kind=kCustom, calls=fdot,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton_nested_gemm_fusion",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["16", "16"]}],
+        "num_warps":"1","num_ctas":"1","num_stages":"1"}}}
+})";
+  EXPECT_THAT(CreateTritonIrFromHloTextAndFileCheck(kHloText, "fdot", R"(
+    CHECK-DAG: #[[MAP1:.*]] = #xla.indexing_map<"(pid, d1) -> (pid * 16 + d1), domain: pid in [0, 1], d1 in [0, 8]">
+    CHECK-DAG: #[[MAP2:.*]] = #xla.indexing_map<"(d0, d1) -> (d0 * 32 + d1), domain: d0 in [0, 1], d1 in [0, 16]">
+    CHECK: xtile.entry_func @triton_fn({{.*}}%[[RHS:[A-Za-z0-9]+]]: memref<4x40x80xf32>{{.*}}%[[PID:[A-Za-z0-9]+]]: index
+    CHECK: %[[OFF0:.*]] = arith.index_cast
+    CHECK: scf.for %[[IV:[A-Za-z0-9]+]] =
+    CHECK: %[[OFF1:.*]] = xla.apply_indexing #[[MAP1]](%[[PID]], %{{.*}})
+    CHECK: %[[OFF2:.*]] = xla.apply_indexing #[[MAP2]](%[[IV]], %{{.*}})
+    CHECK: xtile.extract %[[RHS]][%[[OFF0]], %[[OFF1]], %[[OFF2]]] [1, 16, 32] [1, 1, 1]
+    CHECK: tt.dot
+  )"),
+              IsOk());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> parameters,
+                       MakeFakeArguments(module.get()));
+  parameters[2].Set<int32_t>({}, 2);
+  parameters[3].Set<int32_t>({}, 5);
+  parameters[4].Set<int32_t>({}, 11);
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), LiteralUtil::MakePointers(parameters),
+      ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-6}));
 }
 
 TEST_F(TritonEmitterTest, LowerDynamicSliceOfAdd) {
