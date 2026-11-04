@@ -322,7 +322,7 @@ TEST(CustomCallThunkTest, CustomCallWithOwnedHandlers) {
   EXPECT_EQ(execute_calls, 1);
 }
 
-TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfoToAllRuntimeStages) {
+TEST(CustomCallThunkTest, CollectiveInfoAvailableInAllRuntimeStages) {
   ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
                        executor->CreateStream());
@@ -335,6 +335,22 @@ TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfoToAllRuntimeStages) {
     EXPECT_EQ(info.partition_id, 2);
     EXPECT_EQ(info.replica_count, 2);
     EXPECT_EQ(info.partition_count, 3);
+
+    ABSL_ASSIGN_OR_RETURN(
+        ffi::CommunicatorInfo partition_info,
+        comm.GetCommunicatorInfo(ffi::GroupMode::kCrossPartition, {{2, 0, 1}},
+                                 /*communication_id=*/7));
+    EXPECT_EQ(partition_info.rank, 0);
+    EXPECT_EQ(partition_info.size, 3);
+    EXPECT_EQ(partition_info.local_participant_count, 2);
+
+    ABSL_ASSIGN_OR_RETURN(
+        ffi::CommunicatorInfo flattened_info,
+        comm.GetCommunicatorInfo(ffi::GroupMode::kFlattenedId, {{0, 5, 1, 3}},
+                                 /*communication_id=*/8));
+    EXPECT_EQ(flattened_info.rank, 1);
+    EXPECT_EQ(flattened_info.size, 4);
+    EXPECT_EQ(flattened_info.local_participant_count, 3);
     ++handler_calls;
     return absl::OkStatus();
   };
@@ -367,7 +383,9 @@ TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfoToAllRuntimeStages) {
   assignment(1, 2) = 7;
   GpuExecutableRunOptions gpu_options;
   gpu_options.set_gpu_global_device_ids(GpuExecutableRunOptions::DeviceIdMap{
-      {LocalDeviceId(executor->device_ordinal()), GlobalDeviceId(7)}});
+      {LocalDeviceId(executor->device_ordinal()), GlobalDeviceId(7)},
+      {LocalDeviceId(executor->device_ordinal() + 1), GlobalDeviceId(3)},
+      {LocalDeviceId(executor->device_ordinal() + 2), GlobalDeviceId(9)}});
   ServiceExecutableRunOptions run_options;
   run_options.mutable_run_options()->set_stream(stream.get());
   run_options.mutable_run_options()->set_device_assignment(&assignment);

@@ -54,6 +54,14 @@ struct LogicalDeviceInfo {
   int32_t partition_count;
 };
 
+struct CommunicatorInfo {
+  int32_t rank;
+  int32_t size;
+  // Counts participants in this process, which need not match a physical host
+  // or load/store-accessible group.
+  int32_t local_participant_count;
+};
+
 namespace internal {
 
 // C++ wrapper for the XLA FFI Collectives extension API.
@@ -126,6 +134,33 @@ class CommunicatorContextBase {
       return StatusOr<XLA_FFI_Communicator*>(ErrorPolicy::TakeError(api_, err));
     }
     return args.communicator;
+  }
+
+  // Reads the current device's rank and group size without requesting a
+  // communicator. Uses the same participant order as GetCommunicator.
+  StatusOr<CommunicatorInfo> GetCommunicatorInfo(
+      GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
+      int64_t communication_id) {
+    if (ext_->extension_base.struct_size <
+            XLA_FFI_STRUCT_SIZE(XLA_FFI_Collectives_Extension,
+                                get_communicator_info) ||
+        ext_->get_communicator_info == nullptr) {
+      return StatusOr<CommunicatorInfo>(ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_UNIMPLEMENTED,
+          "Communicator information is not supported by this collectives "
+          "extension"));
+    }
+    std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
+    XLA_FFI_CommunicatorInfo_Get_Args args = {};
+    args.struct_size = XLA_FFI_CommunicatorInfo_Get_Args_STRUCT_SIZE;
+    args.group_mode = static_cast<XLA_FFI_CollectiveGroupMode>(group_mode);
+    args.groups = raw_groups.data();
+    args.num_groups = raw_groups.size();
+    args.communication_id = communication_id;
+    if (XLA_FFI_Error* error = ext_->get_communicator_info(ext_, &args)) {
+      return StatusOr<CommunicatorInfo>(ErrorPolicy::TakeError(api_, error));
+    }
+    return CommunicatorInfo{args.rank, args.size, args.local_participant_count};
   }
 
   //===--------------------------------------------------------------------===//
