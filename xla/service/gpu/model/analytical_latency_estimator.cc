@@ -37,10 +37,15 @@ namespace xla {
 namespace gpu {
 LatencyEstimator::TimeCost AnalyticalLatencyEstimator::GetLatencyBetween(
     const HloGraphNode& from, const HloGraphNode& target) const {
+  return EstimateLatencyBetween(from, target).value;
+}
+
+LatencyEstimator::Estimate AnalyticalLatencyEstimator::EstimateLatencyBetween(
+    const HloGraphNode& from, const HloGraphNode& target) const {
   const HloOpcode from_op = from.GetInstr().opcode();
   if (!config_.schedule_send_recvs &&
       (from_op == HloOpcode::kSend || from_op == HloOpcode::kRecv)) {
-    return kLowLatency;
+    return {kLowLatency, Source()};
   }
 
   if (IsAsyncPair(from, target)) {
@@ -50,9 +55,9 @@ LatencyEstimator::TimeCost AnalyticalLatencyEstimator::GetLatencyBetween(
     VLOG(10) << "Analytical estimator calculated latency between "
              << from.GetInstr().name() << " and " << target.GetInstr().name()
              << " to be: " << coll_time << " us.";
-    return coll_time;
+    return {coll_time, Source()};
   }
-  return latency_estimator_->GetLatencyBetween(from, target);
+  return latency_estimator_->EstimateLatencyBetween(from, target);
 }
 
 LatencyEstimator::TimeCost AnalyticalLatencyEstimator::NodeCost(

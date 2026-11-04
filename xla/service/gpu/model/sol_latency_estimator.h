@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -56,6 +57,14 @@ class SolLatencyEstimator : public LatencyEstimator {
   int CyclesPerMicrosecond() const override {
     return latency_estimator_->CyclesPerMicrosecond();
   }
+  OpMetadata::SchedulerCostSource Source() const override {
+    return OpMetadata::SCHEDULER_COST_SOURCE_SOL;
+  }
+  // Estimates this estimator computes itself are attributed to it, others to
+  // the wrapped estimator that produced them.
+  Estimate EstimateNodeCost(const HloInstruction* instr) const override;
+  Estimate EstimateLatencyBetween(const HloGraphNode& from,
+                                  const HloGraphNode& target) const override;
 
   // Computes the time it takes to execute the given collective instruction.
   // If `collective_interpolator` is provided, it will be used to estimate the

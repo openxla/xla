@@ -18,9 +18,17 @@ limitations under the License.
 
 #include <string>
 
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+// The short name of a scheduler cost source as printed in HLO text, e.g.
+// "PGLE" for SCHEDULER_COST_SOURCE_PGLE, and the reverse.
+std::string SchedulerCostSourceToString(OpMetadata::SchedulerCostSource source);
+absl::StatusOr<OpMetadata::SchedulerCostSource> StringToSchedulerCostSource(
+    absl::string_view name);
+
 std::string OpMetadataToString(const OpMetadata& metadata,
                                bool only_op_name = false);
 }  // namespace xla
