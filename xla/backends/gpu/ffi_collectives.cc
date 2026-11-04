@@ -187,9 +187,13 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
   if (args == nullptr) {
     return InvalidArgument("XLA_FFI_Communicator_Get_Args is null");
   }
-  ABSL_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-      "XLA_FFI_Communicator_Get_Args",
-      XLA_FFI_Communicator_Get_Args_STRUCT_SIZE, args->struct_size));
+  constexpr size_t kMinArgsSize =
+      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator);
+  if (args->struct_size < kMinArgsSize) {
+    return InvalidArgument(
+        "Unexpected XLA_FFI_Communicator_Get_Args size: expected %zu, got %zu",
+        kMinArgsSize, args->struct_size);
+  }
 
   GpuCollectivesState* state = AsState(self);
   if (state == nullptr || state->collective_params == nullptr) {
@@ -211,8 +215,10 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
   if (!rank.has_value()) {
     return InvalidArgument("Rank not found for device %v", device_id);
   }
-  if (clique_key.num_devices() >
-      static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+  if (args->struct_size >=
+          XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, rank) &&
+      clique_key.num_devices() >
+          static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
     return absl::OutOfRangeError("Communicator size exceeds int32 range");
   }
   ABSL_ASSIGN_OR_RETURN(GpuCommunicator * comm,
@@ -225,10 +231,19 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
 
   args->communicator =
       reinterpret_cast<XLA_FFI_Communicator*>(platform_comm.handle);
-  args->rank = static_cast<int32_t>(rank->value());
-  args->size = static_cast<int32_t>(clique_key.num_devices());
-  args->local_participant_count =
-      static_cast<int32_t>(clique_key.num_local_participants());
+  if (args->struct_size >=
+      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, rank)) {
+    args->rank = static_cast<int32_t>(rank->value());
+  }
+  if (args->struct_size >=
+      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, size)) {
+    args->size = static_cast<int32_t>(clique_key.num_devices());
+  }
+  if (args->struct_size >= XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args,
+                                               local_participant_count)) {
+    args->local_participant_count =
+        static_cast<int32_t>(clique_key.num_local_participants());
+  }
   return absl::OkStatus();
 }
 

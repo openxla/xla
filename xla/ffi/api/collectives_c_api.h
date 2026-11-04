@@ -113,6 +113,9 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Communicator_Get_Args,
 // device's clique. Valid once cliques are acquired (Initialize/Execute/Record
 // stages). Process-local membership does not describe physical host or
 // load/store-accessible topology.
+// Callers may pass the original argument prefix ending at `communicator` to
+// retrieve only the handle. Metadata fields are written only when covered by
+// `struct_size`.
 typedef XLA_FFI_Error* XLA_FFI_Communicator_Get(
     const XLA_FFI_Collectives_Extension* self,
     XLA_FFI_Communicator_Get_Args* args);

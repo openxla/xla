@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -24,10 +22,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "absl/base/no_destructor.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -58,6 +58,7 @@ limitations under the License.
 #include "xla/ffi/api/collectives_c_api.h"
 #include "xla/ffi/collectives_ffi.h"
 #include "xla/ffi/ffi.h"
+#include "xla/ffi/ffi_interop.h"
 #include "xla/future.h"
 #include "xla/literal.h"
 #include "xla/runtime/device_id.h"
@@ -311,6 +312,14 @@ static absl::Status PreparePeerAllReduce(
 }
 
 namespace {
+struct RawCollectives : ffi::Collectives {
+  using Type = const XLA_FFI_Collectives_Extension*;
+
+  static Type Create(const XLA_FFI_Api*, const CExtension* extension) {
+    return extension;
+  }
+};
+
 std::vector<std::vector<int64_t>> PublicApiReplicaGroups() {
   std::vector<int64_t> ids;
   ids.reserve(kNumReplicas);
@@ -330,9 +339,10 @@ absl::Status PreparePublicApiAllReduce(ffi::Communicator comm) {
 // Execute handler: gets the XLA-owned communicator via the public collectives
 // FFI extension and runs an all-reduce on it via the platform collective
 // library (see CommunicatorAllReduceU32).
-absl::Status PublicApiAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
-                                ffi::Result<ffi::BufferR0<U32>> dst,
-                                ffi::Communicator comm) {
+absl::Status PublicApiAllReduce(
+    se::Stream* stream, ffi::BufferR0<U32> src,
+    ffi::Result<ffi::BufferR0<U32>> dst, ffi::Communicator comm,
+    const XLA_FFI_Collectives_Extension* extension) {
   ABSL_ASSIGN_OR_RETURN(
       ffi::CommunicatorInfo info,
       comm.GetCommunicator(ffi::GroupMode::kFlattenedId, {{1, 0}},
@@ -343,6 +353,31 @@ absl::Status PublicApiAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
   EXPECT_EQ(info.rank, kNumReplicas - 1 - logical_info.replica_id);
   EXPECT_EQ(info.size, kNumReplicas);
   EXPECT_EQ(info.local_participant_count, kNumReplicas);
+
+  const int64_t ids[] = {1, 0};
+  XLA_FFI_ReplicaGroup group{ids, 2};
+  XLA_FFI_Communicator_Get_Args args = {};
+  args.struct_size =
+      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator);
+  args.group_mode = XLA_FFI_GROUP_FLATTENED_ID;
+  args.groups = &group;
+  args.num_groups = 1;
+  args.rank = -1;
+  args.size = -1;
+  args.local_participant_count = -1;
+  ABSL_RETURN_IF_ERROR(
+      ffi::TakeError(extension->get_communicator(extension, &args)));
+  EXPECT_EQ(args.communicator, info.communicator);
+  EXPECT_EQ(args.rank, -1);
+  EXPECT_EQ(args.size, -1);
+  EXPECT_EQ(args.local_participant_count, -1);
+
+  --args.struct_size;
+  EXPECT_THAT(ffi::TakeError(extension->get_communicator(extension, &args)),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInvalidArgument,
+                  ::testing::HasSubstr(
+                      "Unexpected XLA_FFI_Communicator_Get_Args size")));
   return CommunicatorAllReduceU32(
       stream, info.communicator, src.device_memory().opaque(),
       dst->device_memory().opaque(), src.element_count());
@@ -908,7 +943,8 @@ XLA_FFI_DEFINE_HANDLER(kPublicApiAllReduce, PublicApiAllReduce,
                            .Ctx<ffi::Stream>()
                            .Arg<ffi::BufferR0<U32>>()  // src
                            .Ret<ffi::BufferR0<U32>>()  // dst
-                           .Ctx<ffi::Extension<ffi::Collectives>>());
+                           .Ctx<ffi::Extension<ffi::Collectives>>()
+                           .Ctx<ffi::Extension<RawCollectives>>());
 
 XLA_FFI_DEFINE_HANDLER(kPreparePublicApiWindow, PreparePublicApiWindow,
                        ffi::Ffi::BindPrepare()
