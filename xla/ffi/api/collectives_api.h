@@ -45,6 +45,15 @@ struct WindowLookup {
   size_t offset;
 };
 
+// Coordinates and dimensions in the executable's device assignment, not
+// communicator ranks or physical device IDs.
+struct LogicalDeviceInfo {
+  int32_t replica_id;
+  int32_t partition_id;
+  int32_t replica_count;
+  int32_t partition_count;
+};
+
 namespace internal {
 
 // C++ wrapper for the XLA FFI Collectives extension API.
@@ -59,6 +68,26 @@ class CommunicatorContextBase {
   CommunicatorContextBase(const XLA_FFI_Api* api,
                           const XLA_FFI_Collectives_Extension* ext)
       : api_(api), ext_(ext) {}
+
+  // Reads host runtime metadata without requesting a communicator or window.
+  StatusOr<LogicalDeviceInfo> GetLogicalDeviceInfo() {
+    if (ext_->extension_base.struct_size <
+            XLA_FFI_STRUCT_SIZE(XLA_FFI_Collectives_Extension,
+                                get_logical_device_info) ||
+        ext_->get_logical_device_info == nullptr) {
+      return StatusOr<LogicalDeviceInfo>(ErrorPolicy::FromErrorCode(
+          XLA_FFI_Error_Code_UNIMPLEMENTED,
+          "Logical device information is not supported by this collectives "
+          "extension"));
+    }
+    XLA_FFI_LogicalDeviceInfo_Get_Args args = {};
+    args.struct_size = XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE;
+    if (XLA_FFI_Error* error = ext_->get_logical_device_info(ext_, &args)) {
+      return StatusOr<LogicalDeviceInfo>(ErrorPolicy::TakeError(api_, error));
+    }
+    return LogicalDeviceInfo{args.replica_id, args.partition_id,
+                             args.replica_count, args.partition_count};
+  }
 
   // Requests the clique for `groups` so it is acquired before execution.
   // Prepare stage only.

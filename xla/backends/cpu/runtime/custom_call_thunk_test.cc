@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/custom_call_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -27,8 +28,6 @@ limitations under the License.
 #include "xla/custom_options.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/ffi.h"
-#include "xla/runtime/device_id.h"
-#include "xla/service/device_assignment.h"
 #include "xla/service/hlo.pb.h"
 
 namespace xla::cpu {
@@ -80,46 +79,4 @@ TEST(CustomCallThunkTest, ForwardsCustomOptionsOnEveryExecution) {
   }
 }
 
-namespace {
-
-absl::Status ReadLogicalDeviceInfo(ffi::LogicalDeviceInfo info) {
-  EXPECT_EQ(info.replica_id, 1);
-  EXPECT_EQ(info.partition_id, 2);
-  EXPECT_EQ(info.replica_count, 2);
-  EXPECT_EQ(info.partition_count, 3);
-  return absl::OkStatus();
-}
-
-XLA_FFI_DEFINE_HANDLER(kReadLogicalDeviceInfo, ReadLogicalDeviceInfo,
-                       ffi::Ffi::Bind().Ctx<ffi::LogicalDeviceInfo>());
-XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "cpu_test_logical_device_info",
-                         "Host", kReadLogicalDeviceInfo);
-
-TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfo) {
-  ASSERT_OK_AND_ASSIGN(
-      auto thunk, CustomCallThunk::Create({}, "cpu_test_logical_device_info",
-                                          {}, "{}", API_VERSION_TYPED_FFI));
-
-  DeviceAssignment assignment(/*replica_count=*/2, /*computation_count=*/3);
-  assignment(0, 0) = 9;
-  assignment(0, 1) = 4;
-  assignment(0, 2) = 8;
-  assignment(1, 0) = 3;
-  assignment(1, 1) = 6;
-  assignment(1, 2) = 7;
-  Thunk::CollectiveExecuteParams collective_params(
-      RunId{0}, /*local_device_ordinal=*/0, GlobalDeviceId(7), &assignment,
-      /*collectives=*/nullptr);
-  Thunk::CustomCallExecuteParams custom_call_params(RunId{0}, 0, nullptr,
-                                                    nullptr);
-  Thunk::ExecuteParams params;
-  params.collective_params = &collective_params;
-  params.custom_call_params = &custom_call_params;
-
-  auto done = thunk->Execute(params);
-  ASSERT_TRUE(done.IsAvailable());
-  ASSERT_FALSE(done.IsError()) << done.GetError();
-}
-
-}  // namespace
 }  // namespace xla::cpu

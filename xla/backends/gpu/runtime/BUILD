@@ -1168,6 +1168,7 @@ xla_test(
         "//xla/backends/gpu:ffi",
         "//xla/ffi",
         "//xla/ffi:attribute_map",
+        "//xla/ffi:collectives_ffi",
         "//xla/ffi:execution_state",
         "//xla/ffi:record_ffi",
         "//xla/ffi:type_registry",

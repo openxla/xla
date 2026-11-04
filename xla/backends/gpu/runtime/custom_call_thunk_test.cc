@@ -50,6 +50,7 @@ limitations under the License.
 #include "xla/ffi/api/record_api.h"
 #include "xla/ffi/api/record_c_api.h"
 #include "xla/ffi/attribute_map.h"
+#include "xla/ffi/collectives_ffi.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/record_ffi.h"
@@ -327,7 +328,9 @@ TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfoToAllRuntimeStages) {
                        executor->CreateStream());
 
   int handler_calls = 0;
-  auto check_device_info = [&](ffi::LogicalDeviceInfo info) {
+  auto check_device_info = [&](ffi::Communicator comm) -> absl::Status {
+    ABSL_ASSIGN_OR_RETURN(ffi::LogicalDeviceInfo info,
+                          comm.GetLogicalDeviceInfo());
     EXPECT_EQ(info.replica_id, 1);
     EXPECT_EQ(info.partition_id, 2);
     EXPECT_EQ(info.replica_count, 2);
@@ -336,15 +339,18 @@ TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfoToAllRuntimeStages) {
     return absl::OkStatus();
   };
   CustomCallThunk::OwnedHandlerBundle bundle;
-  bundle.prepare = ffi::Ffi::BindPrepare().Ctx<ffi::LogicalDeviceInfo>().To(
-      check_device_info);
-  bundle.initialize =
-      ffi::Ffi::BindInitialize().Ctx<ffi::LogicalDeviceInfo>().To(
+  bundle.prepare =
+      ffi::Ffi::BindPrepare().Ctx<ffi::Extension<ffi::Collectives>>().To(
           check_device_info);
-  bundle.execute = ffi::Ffi::BindExecute().Ctx<ffi::LogicalDeviceInfo>().To(
-      check_device_info);
-  bundle.record = ffi::Ffi::BindRecord().Ctx<ffi::LogicalDeviceInfo>().To(
-      check_device_info);
+  bundle.initialize =
+      ffi::Ffi::BindInitialize().Ctx<ffi::Extension<ffi::Collectives>>().To(
+          check_device_info);
+  bundle.execute =
+      ffi::Ffi::BindExecute().Ctx<ffi::Extension<ffi::Collectives>>().To(
+          check_device_info);
+  bundle.record =
+      ffi::Ffi::BindRecord().Ctx<ffi::Extension<ffi::Collectives>>().To(
+          check_device_info);
   ASSERT_OK_AND_ASSIGN(
       auto thunk,
       CustomCallThunk::Create(
@@ -404,6 +410,17 @@ TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfoToAllRuntimeStages) {
   ASSERT_OK(thunk->Record(execute_params, record_params,
                           Command::RecordCreate{/*dependencies=*/{}},
                           command_buffer.get()));
+  EXPECT_EQ(handler_calls, 4);
+
+  collective_params.device_assn = nullptr;
+  EXPECT_THAT(thunk->Prepare(prepare_params),
+              StatusIs(absl::StatusCode::kFailedPrecondition,
+                       HasSubstr("Device assignment is required")));
+  collective_params.device_assn = &assignment;
+  collective_params.global_device_id = GlobalDeviceId(42);
+  EXPECT_THAT(thunk->Prepare(prepare_params),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("Device 42 doesn't appear")));
   EXPECT_EQ(handler_calls, 4);
 }
 

@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/ffi/api/collectives_ffi.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/collectives_api.h"
 #include "xla/ffi/api/collectives_c_api.h"
@@ -32,7 +33,9 @@ limitations under the License.
 namespace xla::ffi {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
+using ::testing::HasSubstr;
 
 static const XLA_FFI_Api* Api() { return GetXlaFfiApi(); }
 
@@ -45,6 +48,7 @@ static constexpr size_t kFakeWindowOffset = 42;
 // Fake backend: implements the extension callbacks and records what the handler
 // requested so the test can check the C++ wrapper builds the C args correctly.
 struct FakeBackend {
+  bool logical_device_info_called = false;
   bool request_called = false;
   XLA_FFI_CollectiveGroupMode requested_group_mode =
       XLA_FFI_GROUP_CROSS_REPLICA;
@@ -61,6 +65,20 @@ struct FakeBackend {
   std::vector<XLA_FFI_CollectiveMemoryRegion> requested_regions;
   const void* get_window_buffer = nullptr;
 };
+
+static XLA_FFI_Error* FakeGetLogicalDeviceInfo(
+    const XLA_FFI_Collectives_Extension* self,
+    XLA_FFI_LogicalDeviceInfo_Get_Args* args) {
+  auto* backend = reinterpret_cast<FakeBackend*>(self->state);
+  backend->logical_device_info_called = true;
+  EXPECT_EQ(args->struct_size, XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE);
+  EXPECT_EQ(args->extension_start, nullptr);
+  args->replica_id = 1;
+  args->partition_id = 2;
+  args->replica_count = 3;
+  args->partition_count = 4;
+  return nullptr;
+}
 
 static XLA_FFI_Error* FakeRequestCommunicator(
     const XLA_FFI_Collectives_Extension* self,
@@ -132,7 +150,96 @@ static XLA_FFI_Collectives_Extension MakeFakeCollectivesExtension(
   ext.get_communicator = get_communicator;
   ext.request_window = request_window;
   ext.get_window = get_window;
+  ext.get_logical_device_info = FakeGetLogicalDeviceInfo;
   return ext;
+}
+
+TEST(CollectivesFfiTest, LogicalDeviceInfoWithoutResourceRequests) {
+  auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
+      [](Communicator comm) -> Error {
+        ErrorOr<LogicalDeviceInfo> info = comm.GetLogicalDeviceInfo();
+        if (info.has_error()) {
+          return info.error();
+        }
+        EXPECT_EQ(info->replica_id, 1);
+        EXPECT_EQ(info->partition_id, 2);
+        EXPECT_EQ(info->replica_count, 3);
+        EXPECT_EQ(info->partition_count, 4);
+        return Error::Success();
+      });
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  FakeBackend backend;
+  XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
+      reinterpret_cast<XLA_FFI_CollectivesState*>(&backend),
+      FakeRequestCommunicator, FakeGetCommunicator, FakeRequestWindow,
+      FakeGetWindow);
+  InvokeContext context;
+  context.extension_start = &ext.extension_base;
+
+  ASSERT_OK(Invoke(Api(), *handler, call_frame, context));
+  EXPECT_TRUE(backend.logical_device_info_called);
+  EXPECT_FALSE(backend.request_called);
+  EXPECT_FALSE(backend.request_window_called);
+}
+
+TEST(CollectivesFfiTest, LogicalDeviceInfoRejectsOlderExtension) {
+  auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
+      [](Communicator comm) -> Error {
+        ErrorOr<LogicalDeviceInfo> info = comm.GetLogicalDeviceInfo();
+        return info.has_error() ? info.error() : Error::Success();
+      });
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  FakeBackend backend;
+  XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
+      reinterpret_cast<XLA_FFI_CollectivesState*>(&backend), nullptr, nullptr);
+  ext.extension_base.id.minor_version = 2;
+  InvokeContext context;
+  context.extension_start = &ext.extension_base;
+
+  EXPECT_THAT(Invoke(Api(), *handler, call_frame, context),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Extension version mismatch")));
+  EXPECT_FALSE(backend.logical_device_info_called);
+}
+
+TEST(CollectivesFfiTest, LogicalDeviceInfoUnsupportedCallback) {
+  for (bool truncated : {false, true}) {
+    SCOPED_TRACE(truncated);
+    FakeBackend backend;
+    XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
+        reinterpret_cast<XLA_FFI_CollectivesState*>(&backend), nullptr,
+        nullptr);
+    if (truncated) {
+      ext.extension_base.struct_size =
+          XLA_FFI_STRUCT_SIZE(XLA_FFI_Collectives_Extension, get_window);
+    } else {
+      ext.get_logical_device_info = nullptr;
+    }
+
+    ErrorOr<LogicalDeviceInfo> info =
+        Communicator(Api(), &ext).GetLogicalDeviceInfo();
+    ASSERT_TRUE(info.has_error());
+    EXPECT_EQ(info.error().errc(), ErrorCode::kUnimplemented);
+    EXPECT_THAT(info.error().message(), HasSubstr("not supported"));
+    EXPECT_FALSE(backend.logical_device_info_called);
+  }
+}
+
+TEST(CollectivesFfiTest, LogicalDeviceInfoPropagatesCallbackError) {
+  XLA_FFI_Collectives_Extension ext =
+      MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
+  ext.get_logical_device_info = [](const XLA_FFI_Collectives_Extension*,
+                                   XLA_FFI_LogicalDeviceInfo_Get_Args*) {
+    return internal::CreateError(
+        Api(), Error(ErrorCode::kFailedPrecondition,
+                     "logical device assignment unavailable"));
+  };
+
+  ErrorOr<LogicalDeviceInfo> info =
+      Communicator(Api(), &ext).GetLogicalDeviceInfo();
+  ASSERT_TRUE(info.has_error());
+  EXPECT_EQ(info.error().errc(), ErrorCode::kFailedPrecondition);
+  EXPECT_EQ(info.error().message(), "logical device assignment unavailable");
 }
 
 TEST(CollectivesFfiTest, RequestAndGetCommunicator) {

@@ -75,6 +75,7 @@ cc_library(
         "//xla/ffi/api:c_api",
         "//xla/runtime:device_id",
         "//xla/service:collective_ops_utils",
+        "//xla/service:device_assignment",
         "//xla/stream_executor:device_address",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/log",
