@@ -30,8 +30,9 @@ class GpuDeviceCommunicator;
 
 namespace stream_executor::gpu {
 
-// Reference cost of a local-HBM copy. Remote-peer cost is derived from this
-// in RaggedAllToAllRemoteCost.
+// Reference per-element cost of a local-HBM copy. Used as the baseline
+// weight for CTA scheduling; the remote-peer weight is derived from this
+// in RaggedAllToAllCostWeights (see the thunk).
 inline constexpr int64_t kLocalCopyCost = 100;
 
 template <int64_t kVectorSize>
@@ -47,7 +48,8 @@ struct RaggedAllToAllDeviceKernel {
       int64_t,                             // num_row_elements
       int64_t,                             // input_buffer_offset_bytes
       int64_t,                             // output_buffer_offset_bytes
-      int32_t>;                            // remote_cost
+      int32_t,                             // local_write_cost
+      int32_t>;                            // remote_write_cost
 };
 
 }  // namespace stream_executor::gpu

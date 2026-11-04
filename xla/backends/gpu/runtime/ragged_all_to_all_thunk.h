@@ -87,7 +87,7 @@ struct RaggedAllToAllConfig {
   // Empirical weight applied to the (hbm_bw / fabric_bw) ratio when
   // computing remote-peer cost for per-CTA scheduling in the device kernel.
   // Higher value => higher remote-write cost => more CTAs on remote work.
-  // 0 (default) uses the arch-fitted value in RaggedAllToAllRemoteCost.
+  // 0 (default) uses the arch-fitted value in RaggedAllToAllComputeCostWeights.
   float fabric_cost_weight = 0.0f;
 };
 

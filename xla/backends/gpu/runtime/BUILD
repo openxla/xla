@@ -2417,6 +2417,7 @@ cc_library(
         "//xla/service:buffer_assignment",
         "//xla/service:rendezvous",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu/model:ici_bandwidth",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",

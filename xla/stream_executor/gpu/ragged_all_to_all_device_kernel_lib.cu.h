@@ -79,7 +79,8 @@ __device__ void RaggedAllToAllCopy(
     int64_t num_updates_per_replica, int64_t num_row_elements,
     int64_t input_buffer_offset_bytes, int64_t output_buffer_offset_bytes,
     int start_lsa, int lsa_size, int num_ranks, ncclGin* gin, ncclTeam world,
-    unsigned int signal_index, int32_t remote_cost) {
+    unsigned int signal_index, int32_t local_write_cost,
+    int32_t remote_write_cost) {
   using T = DeviceVec<kVectorSize>;
 
   if (gin != nullptr) {
@@ -109,13 +110,11 @@ __device__ void RaggedAllToAllCopy(
   }
 
   if (lsa_size > 0) {
-    // Cost-weighted range partition. `remote_cost` is the per-element weight
-    // for a write across NVLink; local writes use kLocalCopyCost. See
-    // RaggedAllToAllRemoteCost in the thunk. remote_cost <= 0 falls back to
-    // equal weights, matching the unweighted byte-balanced walk.
-    const int64_t local_cost = kLocalCopyCost;
-    const int64_t peer_cost =
-        remote_cost > 0 ? int64_t{remote_cost} : kLocalCopyCost;
+    // Cost-weighted range partition. Both weights are per-element costs
+    // computed on the host (see RaggedAllToAllCostWeights in the thunk).
+    // Equal weights give an unweighted byte-balanced walk.
+    const int64_t local_cost = local_write_cost;
+    const int64_t peer_cost = remote_write_cost;
     const int64_t grid = static_cast<int64_t>(gridDim.x);
     const int64_t num_lsa_updates =
         static_cast<int64_t>(lsa_size) * num_updates_per_replica;
@@ -183,7 +182,7 @@ __global__ void __launch_bounds__(512) RaggedAllToAllDeviceKernelImpl(
     const int64_t* __restrict__ output_offsets_ptr,
     int64_t num_updates_per_replica, int64_t num_row_elements,
     int64_t input_buffer_offset_bytes, int64_t output_buffer_offset_bytes,
-    int32_t remote_cost) {
+    int32_t local_write_cost, int32_t remote_write_cost) {
 #if __CUDA_ARCH__ >= 600
   ncclTeam world = ncclTeamWorld(dev_comm);
   ncclTeam lsa = ncclTeamLsa(dev_comm);
@@ -208,7 +207,8 @@ __global__ void __launch_bounds__(512) RaggedAllToAllDeviceKernelImpl(
         send_win, recv_win, input_offsets_ptr, send_sizes_ptr,
         output_offsets_ptr, num_updates_per_replica, num_row_elements,
         input_buffer_offset_bytes, output_buffer_offset_bytes, start_lsa,
-        lsa_size, num_ranks, &gin, world, signal_index, remote_cost);
+        lsa_size, num_ranks, &gin, world, signal_index, local_write_cost,
+        remote_write_cost);
 
     gin.flush(ncclCoopCta());
     bar.sync(ncclCoopCta(), ::cuda::memory_order_release,
@@ -223,7 +223,7 @@ __global__ void __launch_bounds__(512) RaggedAllToAllDeviceKernelImpl(
         output_offsets_ptr, num_updates_per_replica, num_row_elements,
         input_buffer_offset_bytes, output_buffer_offset_bytes, start_lsa,
         lsa_size, num_ranks, /*gin=*/nullptr, world, /*signal_index=*/0,
-        remote_cost);
+        local_write_cost, remote_write_cost);
 
     bar.sync(ncclCoopCta(), ::cuda::memory_order_release);
   }
@@ -238,7 +238,8 @@ __global__ void RaggedAllToAllDeviceKernelImpl(
     const int64_t* input_offsets_ptr, const int64_t* send_sizes_ptr,
     const int64_t* output_offsets_ptr, int64_t num_updates_per_replica,
     int64_t num_row_elements, int64_t input_buffer_offset_bytes,
-    int64_t output_buffer_offset_bytes, int32_t remote_cost) {}
+    int64_t output_buffer_offset_bytes, int32_t local_write_cost,
+    int32_t remote_write_cost) {}
 
 #endif  // NCCL_VERSION_CODE >= 22900
 
