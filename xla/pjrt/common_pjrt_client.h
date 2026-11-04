@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_PJRT_COMMON_PJRT_CLIENT_H_
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -33,6 +34,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -259,6 +261,21 @@ class CommonPjRtClient : public PjRtClient {
                                           load_state,
                                           std::move(prepare_status));
   }
+
+  // Runs `attempt_fn` with per-device OOM serialization and retries.
+  // When `device` is not under OOM, runs lock-free without acquiring any mutex.
+  // On RESOURCE_EXHAUSTED, serializes recovery and retry attempts on `device`
+  // via OomSequencer, skipping redundant recovery when another thread already
+  // completed recovery (bumped generation) while this thread waited.
+  absl::Status RunWithOomRetries(
+      PjRtDevice* device,
+      absl::FunctionRef<absl::Status(int attempt)> attempt_fn,
+      absl::FunctionRef<bool(int attempts, const absl::Status& status)>
+          should_retry_fn);
+
+  // Returns the number of requests currently waiting for or holding `device`'s
+  // OomSequencer. Intended for deterministic synchronization in tests.
+  int ActiveOomRequestsForTesting(PjRtDevice* device) const;
 
   absl::StatusOr<std::unique_ptr<HloCostAnalysis>> GetHloCostAnalysis()
       const override;
@@ -767,6 +784,57 @@ class CommonPjRtClient : public PjRtClient {
       const PjRtMemorySpace* absl_nonnull memory_space) const;
 
  private:
+  struct DeviceOomState {
+    // Number of threads currently waiting for or holding `mu` due to an active
+    // OOM on this device. Checked lock-free on the non-OOM fast path.
+    std::atomic<int> active_oom_requests{0};
+    // Monotonically incremented whenever an OOM recovery completes under `mu`.
+    // Lets threads that hit OOM concurrently skip a redundant second recovery.
+    std::atomic<uint64_t> generation{0};
+    absl::Mutex mu;
+
+    bool under_oom() const { return active_oom_requests.load() > 0; }
+  };
+
+  // Move-only RAII guard that serializes OOM recovery and retry attempts on a
+  // single device while marking the device as under OOM.
+  class OomSequencer {
+   public:
+    explicit OomSequencer(DeviceOomState* state) ABSL_NO_THREAD_SAFETY_ANALYSIS
+        : state_(state) {
+      state_->active_oom_requests.fetch_add(1);
+      state_->mu.lock();
+    }
+    ~OomSequencer() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+      if (state_ != nullptr) {
+        state_->active_oom_requests.fetch_sub(1);
+        state_->mu.unlock();
+      }
+    }
+    OomSequencer(const OomSequencer&) = delete;
+    OomSequencer& operator=(const OomSequencer&) = delete;
+    OomSequencer(OomSequencer&& other) noexcept : state_(other.state_) {
+      other.state_ = nullptr;
+    }
+    OomSequencer& operator=(OomSequencer&& other) noexcept
+        ABSL_NO_THREAD_SAFETY_ANALYSIS {
+      if (this != &other) {
+        if (state_ != nullptr) {
+          state_->active_oom_requests.fetch_sub(1);
+          state_->mu.unlock();
+        }
+        state_ = other.state_;
+        other.state_ = nullptr;
+      }
+      return *this;
+    }
+
+   private:
+    DeviceOomState* state_;
+  };
+
+  DeviceOomState* GetDeviceOomState(PjRtDevice* device) const;
+
   // Applies compiler_metadata_on_load() only if `for_load`.
   absl::StatusOr<std::unique_ptr<PjRtExecutable>> DeserializeExecutableInternal(
       riegeli::Any<riegeli::Reader*> reader,
@@ -821,6 +889,10 @@ class CommonPjRtClient : public PjRtClient {
   int64_t chunked_transfer_target_bytes_ = 0;
 
   std::vector<std::shared_ptr<void>> stats_reporters_;
+
+  // Per-addressable-device OOM serialization state, populated in AttachDevices.
+  absl::flat_hash_map<PjRtDevice*, std::unique_ptr<DeviceOomState>>
+      device_oom_states_;
 };
 
 class CommonPjRtLoadedExecutable : public PjRtLoadedExecutable {
