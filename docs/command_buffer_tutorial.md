@@ -45,6 +45,7 @@ need an extra flag to enable the default behavior.
 | `xla_gpu_command_buffer_scheduling_mode` | `LHS` | How operations inside a graph may overlap. |
 | `xla_gpu_command_buffer_update_mode` | `ALWAYS_UPDATE` | How buffer addresses are managed to reduce graph updates. |
 | `xla_cmd_buffer_trace_cache_size` | `16` | Number of cached captures per traced-command cache. |
+| `xla_gpu_command_buffer_skip_unchanged_collectives` | `false` | Whether a graph with library collectives records them again only when a participant has to. |
 | `xla_gpu_command_buffer_unroll_loops` | `false` | Whether eligible loops with known trip counts are unrolled during graph lowering. |
 | `xla_enable_command_buffers_during_profiling` | `false` | Whether graph execution remains enabled during an XLA-detected profiling session. |
 
@@ -210,6 +211,20 @@ symmetric warmup behavior across ranks.
 
 Neither skip mode promises to eliminate all graph updates: other dynamic buffers
 and changing operation parameters can still require them.
+
+A graph that contains library collectives records them again at the start of
+every execution when it has non-persistent buffers, so that all participants
+record them together. With
+`--xla_gpu_command_buffer_skip_unchanged_collectives=true`, the participants
+skip this together unless one of them has to record: the graph was not recorded
+yet, cannot be replayed (warm-up, profiling, no persistent allocation indices
+yet), or a buffer of its collectives moved. The participants agree through a
+host rendezvous, so the flag applies only when all of them run in one process
+and execute the same executable. A graph is dropped when a clique it was created
+with is abandoned or destroyed, so a re-created clique makes all participants
+record again. The flag saves work only if the buffers of the collectives stay in
+place between executions, for example with a fixed-address temp buffer
+allocator.
 
 ## Tune the trace cache
 

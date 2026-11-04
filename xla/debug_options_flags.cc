@@ -317,6 +317,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       DebugOptions::ALLCOLLECTIVES);
   opts.set_xla_gpu_graph_min_graph_size(5);
   opts.set_xla_gpu_command_buffer_scheduling_mode(DebugOptions::LHS);
+  opts.set_xla_gpu_command_buffer_skip_unchanged_collectives(false);
   opts.set_xla_gpu_command_buffer_unroll_loops(false);
   opts.set_xla_cmd_buffer_trace_cache_size(16);
 
@@ -2865,6 +2866,22 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "(AutotuneResult::TritonGemmKey) textproto configuration for all Triton "
       "GEMM fusions. (You can get such textprotos from the debug logs of the "
       "GEMM autotuner.) "));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_command_buffer_skip_unchanged_collectives",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_command_buffer_skip_unchanged_collectives),
+      debug_options->xla_gpu_command_buffer_skip_unchanged_collectives(),
+      "If true, a command buffer with collectives and non-persistent buffer "
+      "allocations re-records its collectives on initialization only if a "
+      "participant has to, instead of on every execution: it has not "
+      "recorded them yet, cannot replay them (warm-up, profiling, no "
+      "persistent allocation indices yet), or a buffer of these collectives "
+      "moved. Participants agree through a host rendezvous, so this applies "
+      "only when all of them run in this process, and they must all execute "
+      "the same executable. A command buffer is dropped when a clique it was "
+      "created with is abandoned or destroyed, so a re-created clique makes "
+      "all participants record again. Buffers only stay in place if temp "
+      "buffers have a stable address between executions."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_command_buffer_unroll_loops",
       bool_setter_for(&DebugOptions::set_xla_gpu_command_buffer_unroll_loops),

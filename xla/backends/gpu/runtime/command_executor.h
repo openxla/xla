@@ -153,6 +153,11 @@ class CommandExecutor {
   // Returns buffer allocations indices referenced by commands in this sequence.
   absl::Span<const BufferAllocation::Index> allocs_indices() const;
 
+  // Returns buffer allocations indices referenced by commands, including nested
+  // commands, that require an update during initialization.
+  absl::Span<const BufferAllocation::Index>
+  update_on_initialize_allocs_indices() const;
+
   bool empty() const { return commands_.empty(); }
   size_t size() const { return commands_.size(); }
 
@@ -257,6 +262,10 @@ class CommandExecutor {
   // Unique buffer allocations indices referenced by all commands in this
   // sequence (sorted by the buffer allocation index).
   std::vector<BufferAllocation::Index> allocs_indices_;
+
+  // Unique buffer allocations indices referenced by commands that require an
+  // update during initialization (sorted by the buffer allocation index).
+  std::vector<BufferAllocation::Index> update_on_initialize_allocs_indices_;
 
   // Whether any command in this sequence requires an update during
   // initialization.
