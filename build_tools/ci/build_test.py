@@ -72,6 +72,7 @@ class BuildTest(parameterized.TestCase):
       self.assertNotIn("remote_download_toplevel", builds[build_type].options)
     for build_type in (
         build.BuildType.JAX_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS,
+        build.BuildType.JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS,
         build.BuildType.JAX_LINUX_X86_GPU_T4_GITHUB_ACTIONS,
     ):
       self.assertIs(
@@ -90,6 +91,26 @@ class BuildTest(parameterized.TestCase):
           target_build.options.get("experimental_remote_grpc_log"),
           "bazel_remote_grpc.log",
       )
+
+  def test_get_query_options_includes_configs_repo_env_and_overrides(
+      self,
+  ) -> None:
+    builds = build.Build.all_builds()
+    win_jax = builds[build.BuildType.JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS]
+    options = build.get_query_options(win_jax)
+    self.assertIn("--config=rbe_windows_amd64", options)
+    self.assertIn("--repo_env=HERMETIC_PYTHON_VERSION=3.12", options)
+    self.assertTrue(
+        any(
+            option.startswith("--override_repository=xla=")
+            for option in options
+        )
+    )
+    self.assertTrue(
+        any(option.startswith("--override_module=xla=") for option in options)
+    )
+    self.assertIn("--bes_backend=", options)
+    self.assertIn("--bes_results_url=", options)
 
   def test_xla_github_actions_ci_builds_enable_bazel_diff(self) -> None:
     builds = build.Build.all_builds()

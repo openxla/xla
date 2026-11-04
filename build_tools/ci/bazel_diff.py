@@ -188,7 +188,7 @@ def filter_and_normalize_targets(
       continue
 
     normalized = normalize_target_label(line)
-    if not normalized:
+    if not normalized or normalized.startswith("//build_tools/ci:"):
       continue
 
     if any(normalized.startswith(prefix) for prefix in keep_prefixes):
@@ -973,7 +973,10 @@ def run_cli(args: argparse.Namespace) -> int:
     return 0
 
   skip_decision = change_detector.evaluate_skip(
-      base_sha, head_sha, cwd=args.workspace_dir, is_jax_build=False
+      base_sha,
+      head_sha,
+      xla_repo_root=args.workspace_dir,
+      is_jax_build=False,
   )
   if skip_decision.should_skip:
     change_detector.report_skip(skip_decision, args.build_name)
