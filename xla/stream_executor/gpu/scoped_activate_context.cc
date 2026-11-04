@@ -25,10 +25,12 @@ namespace stream_executor::gpu {
 namespace {
 
 thread_local struct ThreadLocalData {
-  Context* context;
-  int device_ordinal;
-  int depth;
-} tls_data = {};
+  Context* context = nullptr;
+  // -1 means no device is tracked as active, so that it never compares equal
+  // to a real device ordinal (including 0) on a fresh thread.
+  int device_ordinal = -1;
+  int depth = 0;
+} tls_data;
 
 }  // namespace
 

@@ -101,16 +101,23 @@ TEST(ScopedDeactivateContextTest, NestedScopesDeactivateOnlyOnce) {
   }
 }
 
-TEST(ScopedDeactivateContextTest, NoActiveContextIsNoOp) {
+TEST(ScopedDeactivateContextTest,
+     ActivateDevice0InsideDeactivateScopeOnFreshThreadIsUndone) {
   // Run on a fresh thread so no context is tracked in the thread-local state
-  // left behind by other tests. Nothing is tracked, so no context methods may
-  // be called.
+  // left behind by other tests.
   MockContext context;
-  EXPECT_CALL(context, SetActive).Times(0);
-  EXPECT_CALL(context, SetInactive).Times(0);
+  EXPECT_CALL(context, device_ordinal).WillRepeatedly(Return(0));
+  EXPECT_CALL(context, IsActive).WillRepeatedly(Return(true));
+  // The inner scope must really activate device 0 (not take the "already
+  // active" early return) and deactivate it again on exit.
+  EXPECT_CALL(context, SetActive).Times(1);
+  EXPECT_CALL(context, SetInactive).Times(1);
   {
     tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "test", 1);
-    thread_pool.Schedule([] { ScopedDeactivateContext scoped_deactivate; });
+    thread_pool.Schedule([&context] {
+      ScopedDeactivateContext deactivate;
+      { ScopedActivateContext inner(&context); }
+    });
   }
 }
 
