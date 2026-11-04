@@ -456,26 +456,23 @@ buffers until this is supported.
 
 ### Logical Device Information
 
-Bind `Ctx<LogicalDeviceInfo>()` to read the executing device's `replica_id`,
-`partition_id`, `replica_count`, and `partition_count` from the executable's
-device assignment:
+Include `xla/ffi/api/collectives_ffi.h` and bind
+`Ctx<Extension<Collectives>>()` to receive a `Communicator` context. Its
+`GetLogicalDeviceInfo()` method returns an `ErrorOr<LogicalDeviceInfo>` with
+the executing device's `replica_id`, `partition_id`, `replica_count`, and
+`partition_count` from the executable's device assignment. The flattened
+logical ID is `int64_t{replica_id} * partition_count + partition_id`.
 
-```c++
-auto handler = Ffi::Bind().Ctx<LogicalDeviceInfo>().To(
-    [](LogicalDeviceInfo info) -> Error {
-      int64_t flattened_id =
-          int64_t{info.replica_id} * info.partition_count + info.partition_id;
-      // Use flattened_id when setting up the device's work.
-      return Error::Success();
-    });
-```
+These coordinates are independent of communicator groups, physical device IDs,
+and frontend mesh axes. The lookup reads host runtime metadata without
+requesting a communicator or window, calling NCCL, or transferring data from
+the device. GPU supports this lookup during Prepare, Initialize, Execute, and
+Record. The extension is unavailable during Instantiate and on CPU; a missing
+device assignment also returns an error.
 
-These logical coordinates are not physical device IDs, communicator ranks, or
-JAX mesh coordinates. The lookup reads host runtime metadata and does not
-require a communicator or a device-to-host transfer. It is available during
-GPU Prepare, Initialize, Execute, and Record, and CPU Execute. Instantiate has
-no executing device assignment and returns an error. Older FFI runtimes report
-that the accessor is unsupported.
+This accessor requires collectives extension version 0.3. The C++ extension
+binding checks the exact version, so handlers compiled for version 0.2 must be
+rebuilt against the new headers. The base FFI API version is unchanged.
 
 ### User-defined Struct Attributes
 

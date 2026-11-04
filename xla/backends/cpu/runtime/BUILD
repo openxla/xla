@@ -757,8 +757,6 @@ xla_cc_test(
         "//xla:custom_options",
         "//xla:executable_run_options",
         "//xla/ffi",
-        "//xla/runtime:device_id",
-        "//xla/service:device_assignment",
         "//xla/service:hlo_proto_cc",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",

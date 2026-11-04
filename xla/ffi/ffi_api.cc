@@ -49,7 +49,6 @@ limitations under the License.
 #include "xla/ffi/ffi_structs.h"
 #include "xla/ffi/invoke.h"
 #include "xla/ffi/type_registry.h"
-#include "xla/service/device_assignment.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/stream.h"
@@ -357,29 +356,6 @@ static XLA_FFI_Error* XLA_FFI_DeviceOrdinal_Get(
       "XLA_FFI_DeviceOrdinal_Get", XLA_FFI_DeviceOrdinal_Get_Args_STRUCT_SIZE,
       args->struct_size));
   args->device_ordinal = args->ctx->device_ordinal;
-  return nullptr;
-}
-
-static XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
-    XLA_FFI_LogicalDeviceInfo_Get_Args* args) {
-  XLA_FFI_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-      "XLA_FFI_LogicalDeviceInfo_Get_Args",
-      XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE, args->struct_size));
-
-  const auto& logical = args->ctx->logical_device_context;
-  if (!logical.has_value() || logical->device_assignment == nullptr) {
-    return new XLA_FFI_Error{FailedPrecondition(
-        "Logical device information requires an execution device assignment")};
-  }
-  const DeviceAssignment& assignment = *logical->device_assignment;
-  auto id = assignment.LogicalIdForDevice(logical->device_id);
-  if (!id.ok()) {
-    return new XLA_FFI_Error{std::move(id).status()};
-  }
-  args->replica_id = id->replica_id;
-  args->partition_id = id->computation_id;
-  args->replica_count = assignment.replica_count();
-  args->partition_count = assignment.computation_count();
   return nullptr;
 }
 
@@ -748,7 +724,6 @@ const XLA_FFI_Api* GetXlaFfiApi() {
       XLA_FFI_DeviceOrdinal_Get,
       XLA_FFI_InvokeContext_FindExtension,
       XLA_FFI_CustomOptions_Get,
-      XLA_FFI_LogicalDeviceInfo_Get,
   };
 
   return &api;
