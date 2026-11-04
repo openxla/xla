@@ -25,9 +25,6 @@ package(default_visibility = ["//visibility:public"])
 
 _IBV_SHIM_SRC = "transport/rdma/providers/ibverbs/ibv_shim.cpp"
 
-# mori can only be compiled with c++17
-_CXX17 = ["-std=c++17"]
-
 # Mirrors CMake's mori_ibv_shim OBJECT library. The shim defines the core ibv_*
 # symbols and dlopen()s libibverbs.so.1 at runtime; it must be compiled with
 # hidden visibility so those definitions never interpose a real libibverbs
@@ -38,7 +35,8 @@ cc_library(
     copts = [
         "-fvisibility=hidden",
         "-fvisibility-inlines-hidden",
-    ] + _CXX17,
+        "-std=c++17",
+    ],
     linkstatic = True,
     visibility = ["//visibility:private"],
     deps = [
@@ -69,7 +67,10 @@ cc_library(
     ],
     # Hide the GCC 8 std::filesystem code (libstdc++fs.a and inline members):
     # it is ABI-incompatible with the libstdc++.so that other libraries use.
-    copts = ["-fvisibility-inlines-hidden"] + _CXX17,
+    copts = [
+        "-fvisibility-inlines-hidden",
+        "-std=c++17",
+    ],
     linkopts = [
         "-ldl",
         "-Wl,--exclude-libs,libstdc++fs.a",
