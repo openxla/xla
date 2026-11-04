@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <utility>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
@@ -105,6 +106,22 @@ absl::Status HloModuleMetadata::set_custom_metadata(
                  << pass_metadata->pass_id();
     return Internal("failed to pack custom metadata");
   };
+  return absl::OkStatus();
+}
+
+absl::Status HloModuleMetadata::AddDecisionRecord(
+    const ::tsl::protobuf::Message& payload) {
+  ABSL_ASSIGN_OR_RETURN(HloPassMetadata * pass_metadata,
+                        GetCurrentHloPassMetadata());
+  HloPassDecisionRecord record;
+  record.set_pass_id(pass_metadata->pass_id());
+  record.set_pass_name(pass_metadata->pass_name());
+  record.set_pipeline_name(pass_metadata->pipeline_name());
+  if (!record.mutable_payload()->PackFrom(payload)) {
+    return Internal("failed to pack decision record of pass %d",
+                    pass_metadata->pass_id());
+  }
+  *module_metadata_.add_decision_records() = std::move(record);
   return absl::OkStatus();
 }
 
