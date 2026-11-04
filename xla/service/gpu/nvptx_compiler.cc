@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/gpu/nvptx_compiler.h"
 
+// Throw-away comment: Trigger GPU-only change for CI skip verification.
 #include <array>
 #include <cstdint>
 #include <fstream>
