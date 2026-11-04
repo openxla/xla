@@ -1297,25 +1297,8 @@ absl::Status BufferAssignment::CombineTempAllocations(
     }
   }
   const int64_t page_size_bytes = module_->config().page_size_kib() * 1024;
-  // Find the first unused virtual page ID for kPagingColor so allocations that
-  // overflow or have fixed offsets receive unique page IDs when split off.
-  int64_t next_fresh_page_id = 0;
-  if (page_size_bytes > 0) {
-    for (auto it = first_temp_it; it != allocations_.end(); ++it) {
-      if (it->color() == kPagingColor) {
-        next_fresh_page_id = std::max(next_fresh_page_id, it->page_id() + 1);
-      }
-    }
-  }
-  absl::flat_hash_set<int64_t> used_page_ids;
-  auto push_combined_allocation = [&](BufferAllocation&& alloc,
-                                      bool use_page_constraint) {
-    if (use_page_constraint && !used_page_ids.insert(alloc.page_id()).second) {
-      const int64_t fresh_page_id = next_fresh_page_id++;
-      alloc.set_page_id(fresh_page_id);
-      used_page_ids.insert(fresh_page_id);
-    }
-    combined_allocations.push_back(std::move(alloc));
+  auto page_count_for_size = [&](int64_t size) {
+    return std::max<int64_t>(1, CeilOfRatio(size, page_size_bytes));
   };
 
   std::stable_sort(first_temp_it, allocations_.end(),
@@ -1335,6 +1318,46 @@ absl::Status BufferAssignment::CombineTempAllocations(
                      return false;
                    });
 
+  // With multi page buffer assignment, a `kPagingColor` allocation of `size`
+  // spans `page_count_for_size(size)` consecutive page IDs starting at its
+  // page ID, and two allocations kept apart must not share a page. Heap
+  // simulator allocations are placed before unpaged allocations (e.g. tuple
+  // tables) so they keep their pages. Any allocation whose pages collide moves
+  // to fresh pages after `next_fresh_page_id`.
+  int64_t next_fresh_page_id = 0;
+  if (page_size_bytes > 0) {
+    std::stable_partition(first_temp_it, allocations_.end(),
+                          [](const BufferAllocation& allocation) {
+                            return !allocation.HeapTraces().empty();
+                          });
+    for (auto it = first_temp_it; it != allocations_.end(); ++it) {
+      if (it->color() == kPagingColor) {
+        const int64_t end_page =
+            it->page_id() + page_count_for_size(it->size());
+        next_fresh_page_id = std::max(next_fresh_page_id, end_page);
+      }
+    }
+  }
+  absl::flat_hash_set<int64_t> used_page_ids;
+  auto push_combined_allocation = [&](BufferAllocation&& alloc,
+                                      bool use_page_constraint) {
+    if (use_page_constraint) {
+      const int64_t allocation_pages = page_count_for_size(alloc.size());
+      for (int64_t page_offset = 0; page_offset < allocation_pages;
+           ++page_offset) {
+        if (used_page_ids.contains(alloc.page_id() + page_offset)) {
+          alloc.set_page_id(next_fresh_page_id);
+          next_fresh_page_id += allocation_pages;
+          break;
+        }
+      }
+      for (int64_t page_offset = 0; page_offset < allocation_pages;
+           ++page_offset) {
+        used_page_ids.insert(alloc.page_id() + page_offset);
+      }
+    }
+    combined_allocations.push_back(std::move(alloc));
+  };
   // Walk over the run of temp allocations, collecting the allocations belonging
   // to the same color.
   for (auto it = first_temp_it; it != allocations_.end(); ++it) {
@@ -1370,9 +1393,10 @@ absl::Status BufferAssignment::CombineTempAllocations(
       // We have found the first temp allocation of this color. Collect
       // the other temp allocations of the same color into it subject to the
       // size constraint.
-      VLOG(1) << "Combined temp allocation for color " << color << " page "
-              << page << " is: " << temp_allocation;
       push_combined_allocation(std::move(temp_allocation), use_page_constraint);
+      VLOG(1) << "Combined temp allocation for color " << color << " page "
+              << combined_allocations.back().page_id()
+              << " is: " << combined_allocations.back();
       combined_allocation_map.emplace(std::make_pair(color, page),
                                       &combined_allocations.back());
       continue;
@@ -1406,7 +1430,7 @@ absl::Status BufferAssignment::CombineTempAllocations(
             : (combined_it->second->size() + temp_allocation.size() >=
                multiheap_size_constraint_per_heap_)) {
       // We cannot put more into the current combined_it. So, appoint a new
-      // combined_it.
+      // combined_it, in new pages with paging.
       VLOG(1) << "Due to size constraint, reset temp allocation for color "
               << color << " to: " << temp_allocation;
       push_combined_allocation(std::move(temp_allocation), use_page_constraint);
@@ -3534,25 +3558,16 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
   // algorithms.
   auto get_heap_algorithm = [&](int64_t alignment, LogicalBuffer::Color color)
       -> std::unique_ptr<HeapAlgorithm<HloValue>> {
-    uint64_t page_size = assignment->module().config().page_size_kib() * 1024;
-    if (page_size > 0 && color == BufferAssignment::kPagingColor) {
-      // Check that all buffers that are assigned fit in the page size. This is
-      // a requirement for multi-page buffer assignment.
-      absl::c_for_each(buffers_to_assign_sequentially, [&](const auto& pair) {
-        absl::c_for_each(pair.second, [&](const HloValue* hlo_value) {
-          if (hlo_value->color() == color &&
-              !assignment->alias_analysis().ValueLivesOut(*hlo_value)) {
-            uint64_t size = assignment->buffer_size_(*hlo_value);
-            CHECK_LE(size, page_size)
-                << "Temp buffer size " << size << " is larger than page size "
-                << page_size
-                << " for hlo value: " << hlo_value->ToShortString();
-          }
-        });
-      });
+    int64_t page_size_bytes =
+        assignment->module().config().page_size_kib() * 1024;
+    if (page_size_bytes > 0 && color == BufferAssignment::kPagingColor) {
+      // A buffer larger than the page size gets its own heap spanning the
+      // fewest pages that fit it (see AssignBuffersFromHeapSimulator).
       VLOG(1) << "Executing multi page buffer assignment";
       return std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
-          page_size, alignment, opts_.multi_page_strategy);
+          page_size_bytes, alignment, opts_.multi_page_strategy,
+          /*buffer_interval_compare=*/nullptr,
+          /*round_up_oversized_heaps=*/true);
     }
 
     if (heap_buffer_interval_compare) {
@@ -3904,15 +3919,28 @@ absl::Status BufferAssigner::AssignBuffersFromHeapSimulator(
   VLOG(1) << "Result size from heap simulator: " << result.heap_size;
 
   // Iterate through heap_results. For each heap_result, create a new allocation
-  // in `assignment`.
+  // in `assignment`. With multi page buffer assignment, a heap larger than the
+  // page size spans that many consecutive page ids. Single page heaps come
+  // first, so that page 0 (the default page of temp allocations outside the
+  // heap simulator) is a regular page whenever one exists.
+  const int64_t page_size_bytes =
+      assignment->module().config().page_size_kib() * 1024;
+  if (page_size_bytes > 0 && color == BufferAssignment::kPagingColor) {
+    absl::c_stable_partition(
+        result.heap_results,
+        [&](const HeapSimulator::HeapResult<HloValue>& heap_result) {
+          return heap_result.heap_size <= page_size_bytes;
+        });
+  }
   int64_t page_index = 0;
   for (const HeapSimulator::HeapResult<HloValue>& heap_result :
        result.heap_results) {
     BufferAllocation* allocation =
         assignment->NewEmptyAllocation(heap_result.heap_size, color);
-    if (assignment->module().config().page_size_kib() > 0 &&
-        color == BufferAssignment::kPagingColor) {
-      allocation->set_page_id(page_index++);
+    if (page_size_bytes > 0 && color == BufferAssignment::kPagingColor) {
+      allocation->set_page_id(page_index);
+      page_index += std::max<int64_t>(
+          1, CeilOfRatio(heap_result.heap_size, page_size_bytes));
     }
     for (const auto& [value, chunk] : heap_result.chunk_map) {
       TF_RET_CHECK(

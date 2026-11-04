@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/service/buffer_assignment.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -35,6 +36,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
@@ -74,6 +76,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -7847,6 +7850,117 @@ TEST_F(BufferAssignmentTest,
                        buffers->GetUniqueTopLevelSlice(b));
   EXPECT_EQ(b_slice.allocation()->page_id(), 1);
   EXPECT_EQ(b_slice.offset(), 512);
+}
+
+// Returns the sorted [start_page, end_page) ranges of all preallocated temp
+// allocations in `buffers`.
+std::vector<std::pair<int64_t, int64_t>> CollectTempPageRanges(
+    const BufferAssignment& buffers, int64_t page_size_bytes) {
+  std::vector<std::pair<int64_t, int64_t>> ranges;
+  for (const BufferAllocation& alloc : buffers.Allocations()) {
+    if (alloc.IsPreallocatedTempBuffer()) {
+      const int64_t num_pages =
+          std::max<int64_t>(1, CeilOfRatio(alloc.size(), page_size_bytes));
+      ranges.push_back({alloc.page_id(), alloc.page_id() + num_pages});
+    }
+  }
+  absl::c_sort(ranges);
+  return ranges;
+}
+
+// A temp buffer larger than the page size gets its own run of consecutive
+// pages after the single pages, and unpaged temp allocations (such as tuples)
+// that overflow page 0 pack into fresh pages after the multi page range.
+TEST_F(BufferAssignmentTest, MultiPageBufferLargerThanPage) {
+  constexpr absl::string_view kHloText = R"(
+HloModule test, is_scheduled=true
+
+ENTRY main {
+  input = f32[600] parameter(0)
+  large_temp = f32[600] negate(input)
+  small_temp_0 = f32[255] slice(large_temp), slice={[0:255]}
+  small_temp_1 = f32[255] negate(small_temp_0)
+  tuple_0 = (f32[255], f32[255]) tuple(small_temp_1, small_temp_1)
+  tuple_1 = (f32[600], f32[255]) tuple(input, small_temp_1)
+  ROOT root_slice = f32[1] slice(small_temp_1), slice={[0:1]}
+}
+)";
+  constexpr int64_t kPageSizeBytes = 1024;
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  module->mutable_config().set_page_size_kib(kPageSizeBytes / 1024);
+  std::unique_ptr<BufferAssignment> buffers =
+      RunBufferAssignmentWithSequentialOrdering(module.get());
+
+  // small_temp_0 and small_temp_1 fill page 0 (1020 B), large_temp (2400 B)
+  // spans pages [1, 4), and both 16 B tuple tables pack into page 4.
+  EXPECT_THAT(CollectTempPageRanges(*buffers, kPageSizeBytes),
+              ElementsAre(Pair(0, 1), Pair(1, 4), Pair(4, 5)));
+}
+
+// Verifies CombineTempAllocations edge cases under paging:
+// 1. Without single page heap allocations, unpaged tuples do not join a multi
+//    page allocation on page 0.
+// 2. Alignment rounding pushes a near full single page allocation over
+//    page_size and moves the tuple to a fresh page.
+// 3. An unpaged multi page tuple moves past taken pages without overlap.
+TEST_F(BufferAssignmentTest, MultiPageBufferCombiningAndAlignmentEdgeCases) {
+  constexpr int64_t kPageSizeBytes = 1024;
+  auto run_and_collect = [&](absl::string_view hlo_text, int64_t alignment = 1)
+      -> absl::StatusOr<std::vector<std::pair<int64_t, int64_t>>> {
+    auto module = ParseAndReturnVerifiedModule(hlo_text);
+    if (!module.ok()) {
+      return module.status();
+    }
+    (*module)->mutable_config().set_page_size_kib(kPageSizeBytes / 1024);
+    std::unique_ptr<BufferAssignment> buffers =
+        RunBufferAssignmentWithSequentialOrdering(module->get(), alignment);
+    return CollectTempPageRanges(*buffers, kPageSizeBytes);
+  };
+
+  // Case 1: Only a multi page temp buffer (large_temp) and a tuple table.
+  EXPECT_THAT(run_and_collect(R"(
+HloModule no_single_page, is_scheduled=true
+
+ENTRY main {
+  input = f32[600] parameter(0)
+  large_temp = f32[600] negate(input)
+  tuple_0 = (f32[600], f32[600]) tuple(large_temp, input)
+  ROOT root_slice = f32[1] slice(large_temp), slice={[0:1]}
+}
+)"),
+              absl_testing::IsOkAndHolds(ElementsAre(Pair(0, 3), Pair(3, 4))));
+
+  // Case 2: Alignment rounding (512 B) pushes 516 B to 1024 B, so adding a
+  // 16 B tuple exceeds 1024 B and moves the tuple to page 1.
+  EXPECT_THAT(run_and_collect(R"(
+HloModule align_overflow, is_scheduled=true
+
+ENTRY main {
+  input = f32[129] parameter(0)
+  small_temp = f32[129] negate(input)
+  tuple_0 = (f32[129], f32[129]) tuple(small_temp, input)
+  ROOT root_slice = f32[1] slice(small_temp), slice={[0:1]}
+}
+)",
+                              /*alignment=*/512),
+              absl_testing::IsOkAndHolds(ElementsAre(Pair(0, 1), Pair(1, 2))));
+
+  // Case 3: A large unpaged tuple (> 1 page: 129 elements * 8 B = 1032 B)
+  // defaults to page 0, advancing next_free_page to 2; colliding with
+  // small_temp on page 0 moves large_tuple to [2, 4).
+  const std::string huge_tuple_hlo = absl::StrCat(
+      "HloModule huge_tuple, is_scheduled=true\nENTRY main {\n"
+      "  input = f32[10] parameter(0)\n"
+      "  small_temp = f32[10] negate(input)\n"
+      "  large_tuple = (",
+      absl::StrJoin(std::vector<absl::string_view>(129, "f32[10]"), ", "),
+      ") tuple(",
+      absl::StrJoin(std::vector<absl::string_view>(129, "small_temp"), ", "),
+      ")\n"
+      "  ROOT root_slice = f32[1] slice(small_temp), slice={[0:1]}\n"
+      "}\n");
+  EXPECT_THAT(run_and_collect(huge_tuple_hlo),
+              absl_testing::IsOkAndHolds(ElementsAre(Pair(0, 1), Pair(2, 4))));
 }
 
 // Verifies that BufferAssignment builds successfully when using a dependency
