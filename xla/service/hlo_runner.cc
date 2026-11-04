@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
@@ -69,6 +70,7 @@ limitations under the License.
 #include "xla/tsl/lib/io/zlib_inputstream.h"
 #include "xla/tsl/lib/io/zlib_outputbuffer.h"
 #include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
@@ -666,13 +668,29 @@ absl::StatusOr<std::vector<Literal>> HloRunner::ExecuteReplicated(
         }
         // Aggregate results.
         std::vector<std::vector<std::unique_ptr<PjRtBuffer>>> results;
+        std::vector<std::string> failure_messages;
+        absl::Status first_failure_status = absl::OkStatus();
         for (int64_t i = 0; i < options.num_devices; ++i) {
           absl::StatusOr<std::vector<std::unique_ptr<PjRtBuffer>>>&
               replica_result = per_replica_results[i];
           if (!replica_result.ok()) {
-            return replica_result.status();
+            first_failure_status.Update(replica_result.status());
+            failure_messages.push_back(
+                absl::StrFormat("%s: %s", id_to_device_ptr[i]->DebugString(),
+                                replica_result.status().message()));
+          } else {
+            results.push_back(*std::move(replica_result));
           }
-          results.push_back(*std::move(replica_result));
+        }
+        if (!failure_messages.empty()) {
+          if (failure_messages.size() == 1) {
+            return first_failure_status;
+          }
+          return tsl::errors::CreateWithUpdatedMessage(
+              first_failure_status,
+              absl::StrCat("Execution failed on ", failure_messages.size(),
+                           " devices:\n\n",
+                           absl::StrJoin(failure_messages, "\n\n")));
         }
         return results;
       },
