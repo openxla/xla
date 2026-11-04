@@ -538,7 +538,15 @@ absl::StatusOr<TensorValue> MaskOperand(mlir::ImplicitLocOpBuilder& b,
                                         Value neutral_value) {
   llvm::ArrayRef<int64_t> tile_shape = operand_value.getType().getShape();
 
-  int64_t dimension_size = operand.hlo()->shape().dimensions(dimension_index);
+  // `operand_value` uses the storage shape, which is smaller than the logical
+  // shape along the packed dimension of sub-byte types (e.g. f4e2m1fn), so
+  // compare against the storage shape too.
+  const Shape& logical_shape = operand.hlo()->shape();
+  llvm::SmallVector<int64_t> logical_dims(logical_shape.dimensions().begin(),
+                                          logical_shape.dimensions().end());
+  ABSL_ASSIGN_OR_RETURN(llvm::SmallVector<int64_t> storage_dims,
+                        GetStorageShape(logical_dims, logical_shape));
+  int64_t dimension_size = storage_dims[dimension_index];
   int64_t tile_size = tile_shape[dimension_index];
 
   if (dimension_size % tile_size == 0) {

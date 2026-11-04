@@ -1500,6 +1500,62 @@ ENTRY e {
       ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
+TEST_F(TritonScaledDotTest, Fp4ScaledDotMasksNonDivisibleContractingDimension) {
+  if (!GetCudaComputeCapability().IsAtLeastHopper()) {
+    GTEST_SKIP() << "Scaled dot isn't supported by Triton for pre-Hopper GPUs.";
+  }
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule m
+
+triton_dot {
+  // K = 96 with a K tile of 128, and K is the packed dimension of both
+  // operands. Both need to be packed along K: fp4 has no NaN, so if either
+  // side were masked, its zeros would hide the other side's tail.
+  lhs_in = f4e2m1fn[128,128]{1,0:E(4)} parameter(0)
+  lhs = f4e2m1fn[128,96]{1,0:E(4)} slice(lhs_in), slice={[0:128], [0:96]}
+  rhs_in = f4e2m1fn[128,128]{1,0:E(4)} parameter(1)
+  rhs = f4e2m1fn[128,96]{1,0:E(4)} slice(rhs_in), slice={[0:128], [0:96]}
+  lhs_scale_in = f8e8m0fnu[128,4]{1,0} parameter(2)
+  lhs_scale = f8e8m0fnu[128,3]{1,0} slice(lhs_scale_in), slice={[0:128], [0:3]}
+  rhs_scale_in = f8e8m0fnu[128,4]{1,0} parameter(3)
+  rhs_scale = f8e8m0fnu[128,3]{1,0} slice(rhs_scale_in), slice={[0:128], [0:3]}
+  ROOT dot = bf16[128,128]{1,0} scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+    lhs_contracting_dims={1},
+    rhs_contracting_dims={1},
+    backend_config={sizes:[128]}
+}
+
+ENTRY e {
+  p0 = f4e2m1fn[128,128]{1,0:E(4)} parameter(0)
+  p1 = f4e2m1fn[128,128]{1,0:E(4)} parameter(1)
+  p2 = f8e8m0fnu[128,4]{1,0} parameter(2)
+  p3 = f8e8m0fnu[128,4]{1,0} parameter(3)
+  ROOT fusion = bf16[128,128]{1,0} fusion(p0, p1, p2, p3),
+    kind=kCustom,
+    calls=triton_dot,
+    backend_config={
+      "fusion_backend_config": {
+        "kind": "__triton_nested_gemm_fusion",
+        "block_level_fusion_config": {
+          "output_tiles": [{"sizes": ["128", "128"]}],
+          "num_warps": "4",
+          "num_stages": "1",
+          "num_ctas": "1"
+        }
+      }
+    }
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  ASSERT_OK_AND_ASSIGN(std::vector<Literal> arguments,
+                       MakeScaledDotArguments(module.get()));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      std::move(module), LiteralUtil::MakePointers(arguments),
+      ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla
