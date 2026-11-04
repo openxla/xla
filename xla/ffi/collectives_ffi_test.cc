@@ -85,9 +85,12 @@ static XLA_FFI_Error* FakeGetCommunicator(
     const XLA_FFI_Collectives_Extension* self,
     XLA_FFI_Communicator_Get_Args* args) {
   args->communicator = kFakeCommunicator;
-  args->rank = 2;
-  args->size = 3;
-  args->local_participant_count = 1;
+  if (args->struct_size >= XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args,
+                                               local_participant_count)) {
+    args->rank = 2;
+    args->size = 3;
+    args->local_participant_count = 1;
+  }
   return nullptr;
 }
 
@@ -152,8 +155,15 @@ TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
             !status.ok()) {
           return status;
         }
-        absl::StatusOr<CommunicatorInfo> comm_or = comm.GetCommunicator(
+        absl::StatusOr<XLA_FFI_Communicator*> handle = comm.GetCommunicator(
             GroupMode::kFlattenedId, {{2, 0, 1}}, /*communication_id=*/7);
+        if (!handle.ok()) {
+          return handle.status();
+        }
+        EXPECT_EQ(*handle, kFakeCommunicator);
+        absl::StatusOr<CommunicatorInfo> comm_or =
+            comm.GetCommunicatorWithRankInfo(
+                GroupMode::kFlattenedId, {{2, 0, 1}}, /*communication_id=*/7);
         if (!comm_or.ok()) {
           return comm_or.status();
         }

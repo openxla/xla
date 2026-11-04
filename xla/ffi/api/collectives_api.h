@@ -117,10 +117,29 @@ class CommunicatorContextBase {
     return ErrorPolicy::Ok();
   }
 
-  // Returns the non-owning communicator handle and metadata for the current
-  // device's group. The handle is backend-defined; the caller reinterprets it
-  // (e.g. as `ncclComm_t`).
-  StatusOr<CommunicatorInfo> GetCommunicator(
+  // Returns the non-owning communicator handle for the current device's group.
+  // The handle is backend-defined; the caller reinterprets it (e.g. as
+  // `ncclComm_t`).
+  StatusOr<XLA_FFI_Communicator*> GetCommunicator(
+      GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
+      int64_t communication_id) {
+    std::vector<XLA_FFI_ReplicaGroup> raw_groups = ToRawGroups(groups);
+    XLA_FFI_Communicator_Get_Args args = {};
+    args.struct_size =
+        XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator);
+    args.group_mode = static_cast<XLA_FFI_CollectiveGroupMode>(group_mode);
+    args.groups = raw_groups.data();
+    args.num_groups = raw_groups.size();
+    args.communication_id = communication_id;
+    if (XLA_FFI_Error* err = ext_->get_communicator(ext_, &args)) {
+      return StatusOr<XLA_FFI_Communicator*>(ErrorPolicy::TakeError(api_, err));
+    }
+    return args.communicator;
+  }
+
+  // Returns the handle, rank, and participant counts for the current device's
+  // group.
+  StatusOr<CommunicatorInfo> GetCommunicatorWithRankInfo(
       GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
       int64_t communication_id) {
     // Before 0.3, the callback fills only the communicator handle.

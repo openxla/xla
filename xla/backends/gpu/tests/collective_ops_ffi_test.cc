@@ -345,8 +345,8 @@ absl::Status PublicApiAllReduce(
     const XLA_FFI_Collectives_Extension* extension) {
   ABSL_ASSIGN_OR_RETURN(
       ffi::CommunicatorInfo info,
-      comm.GetCommunicator(ffi::GroupMode::kFlattenedId, {{1, 0}},
-                           /*communication_id=*/0));
+      comm.GetCommunicatorWithRankInfo(ffi::GroupMode::kFlattenedId, {{1, 0}},
+                                       /*communication_id=*/0));
   ABSL_ASSIGN_OR_RETURN(ffi::LogicalDeviceInfo logical_info,
                         comm.GetLogicalDeviceInfo());
   TF_RET_CHECK(info.communicator != nullptr);

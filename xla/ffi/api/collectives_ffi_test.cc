@@ -173,8 +173,19 @@ static XLA_FFI_Collectives_Extension MakeFakeCollectivesExtension(
 TEST(CollectivesFfiTest, ExtensionVersionCompatibility) {
   auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
       [](Communicator comm) -> Error {
-        return comm.RequestCommunicator(GroupMode::kCrossReplica, {},
-                                        /*communication_id=*/0);
+        if (Error status =
+                comm.RequestCommunicator(GroupMode::kCrossReplica, {},
+                                         /*communication_id=*/0);
+            status.failure()) {
+          return status;
+        }
+        ErrorOr<XLA_FFI_Communicator*> handle = comm.GetCommunicator(
+            GroupMode::kCrossReplica, {}, /*communication_id=*/0);
+        if (handle.has_error()) {
+          return handle.error();
+        }
+        EXPECT_EQ(*handle, kFakeCommunicator);
+        return Error::Success();
       });
   auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
   const struct {
@@ -197,6 +208,14 @@ TEST(CollectivesFfiTest, ExtensionVersionCompatibility) {
         FakeRequestCommunicator, nullptr);
     ext.extension_base.id.major_version = test_case.major;
     ext.extension_base.id.minor_version = test_case.minor;
+    ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
+                              XLA_FFI_Communicator_Get_Args* args) {
+      EXPECT_EQ(
+          args->struct_size,
+          XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator));
+      args->communicator = kFakeCommunicator;
+      return static_cast<XLA_FFI_Error*>(nullptr);
+    };
     InvokeContext context;
     context.extension_start = &ext.extension_base;
 
@@ -311,29 +330,38 @@ TEST(CollectivesFfiTest, GetCommunicatorPropagatesCallbackError) {
         Api(), Error::InvalidArgument("invalid communicator group"));
   };
 
-  ErrorOr<CommunicatorInfo> info =
+  ErrorOr<XLA_FFI_Communicator*> handle =
       Communicator(Api(), &ext)
           .GetCommunicator(GroupMode::kCrossReplica, {},
                            /*communication_id=*/0);
+  ASSERT_TRUE(handle.has_error());
+  EXPECT_EQ(handle.error().errc(), ErrorCode::kInvalidArgument);
+  EXPECT_EQ(handle.error().message(), "invalid communicator group");
+
+  ErrorOr<CommunicatorInfo> info =
+      Communicator(Api(), &ext)
+          .GetCommunicatorWithRankInfo(GroupMode::kCrossReplica, {},
+                                       /*communication_id=*/0);
   ASSERT_TRUE(info.has_error());
   EXPECT_EQ(info.error().errc(), ErrorCode::kInvalidArgument);
   EXPECT_EQ(info.error().message(), "invalid communicator group");
 }
 
-TEST(CollectivesFfiTest, GetCommunicatorRequiresMetadataSupport) {
+TEST(CollectivesFfiTest, GetCommunicatorWithRankInfoRequiresMetadataSupport) {
   XLA_FFI_Collectives_Extension ext =
       MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
   ext.extension_base.id.minor_version = 2;
   ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
                             XLA_FFI_Communicator_Get_Args* args) {
+    ADD_FAILURE() << "Metadata lookup must not call a 0.2 callback";
     args->communicator = kFakeCommunicator;
     return static_cast<XLA_FFI_Error*>(nullptr);
   };
 
   ErrorOr<CommunicatorInfo> info =
       Communicator(Api(), &ext)
-          .GetCommunicator(GroupMode::kCrossReplica, {},
-                           /*communication_id=*/0);
+          .GetCommunicatorWithRankInfo(GroupMode::kCrossReplica, {},
+                                       /*communication_id=*/0);
   ASSERT_TRUE(info.has_error());
   EXPECT_EQ(info.error().errc(), ErrorCode::kUnimplemented);
   EXPECT_THAT(
@@ -341,7 +369,7 @@ TEST(CollectivesFfiTest, GetCommunicatorRequiresMetadataSupport) {
       HasSubstr("Communicator metadata requires collectives extension"));
 }
 
-TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
+TEST(CollectivesFfiTest, RequestAndGetCommunicatorWithRankInfo) {
   bool called = false;
   CommunicatorInfo got = {};
 
@@ -354,7 +382,7 @@ TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
             status.failure()) {
           return status;
         }
-        ErrorOr<CommunicatorInfo> comm_or = comm.GetCommunicator(
+        ErrorOr<CommunicatorInfo> comm_or = comm.GetCommunicatorWithRankInfo(
             GroupMode::kFlattenedId, {{5, 1, 3}, {2, 0, 4}},
             /*communication_id=*/7);
         if (comm_or.has_error()) {
