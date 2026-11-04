@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/conv_utils.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"

@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
+#include "xla/hlo/transforms/simplifiers/algebraic_simplifier_options.pb.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
