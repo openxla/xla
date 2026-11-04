@@ -3730,7 +3730,10 @@ xla_cc_test(
 
 cc_library(
     name = "thunk",
-    srcs = ["thunk.cc"],
+    srcs = [
+        "launch_ordering.cc",
+        "thunk.cc",
+    ],
     hdrs = [
         "launch_ordering.h",
         "thunk.h",

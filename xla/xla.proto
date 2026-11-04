@@ -1997,7 +1997,11 @@ message DebugOptions {
   // independent small-grid GPU kernels.
   optional bool xla_gpu_experimental_enable_horizontal_fusion = 565;
 
-  // Order launches on dispatch, not completion.
+  // Kernels issued after a collective wait until the collective kernel is
+  // dispatched, so no device runs compute ahead of a collective its peers wait
+  // for. Covers NCCL, ragged all-to-all and XLA collective kernels and needs
+  // NCCL 2.32 and driver 12.3. Not collective permute, send, recv, NVSHMEM or
+  // command buffers.
   optional bool xla_gpu_explicit_launch_ordering = 566;
 
   // Next id: 567

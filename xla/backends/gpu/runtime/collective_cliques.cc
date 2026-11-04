@@ -149,7 +149,7 @@ absl::StatusOr<GpuDeviceCommunicator*> CollectiveCliques::GetDeviceComm(
   return GetDeviceComm(clique_key, *rank, reqs);
 }
 
-absl::StatusOr<bool> CollectiveCliques::PeerAccessEnabled(
+absl::StatusOr<bool> CollectiveCliques::peer_access_enabled(
     const GpuCliqueKey& clique_key) const {
   // Check that we locked access to a clique for `clique_key`.
   auto clique = cliques_map_.find(clique_key);

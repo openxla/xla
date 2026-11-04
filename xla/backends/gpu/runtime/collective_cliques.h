@@ -62,7 +62,8 @@ class CollectiveCliques {
 
   // Returns whether peer device memory access is possible between all devices
   // in the clique.
-  absl::StatusOr<bool> PeerAccessEnabled(const GpuCliqueKey& clique_key) const;
+  absl::StatusOr<bool> peer_access_enabled(
+      const GpuCliqueKey& clique_key) const;
 
   // Ties an object to a clique. Clique takes ownership of the object and will
   // destroy it when the clique is destroyed. When TiedRef is destroyed, the

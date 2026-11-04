@@ -3844,7 +3844,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "xla_gpu_explicit_launch_ordering",
       bool_setter_for(&DebugOptions::set_xla_gpu_explicit_launch_ordering),
       debug_options->xla_gpu_explicit_launch_ordering(),
-      "If true, order kernel launches on dispatch rather than completion."));
+      "If true, kernels issued after a collective wait until the collective "
+      "kernel is dispatched. Needs NCCL 2.32 and CUDA driver 12.3."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_use_ragged_dot_fusion",
       bool_setter_for(

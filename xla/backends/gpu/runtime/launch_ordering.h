@@ -17,18 +17,14 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_RUNTIME_LAUNCH_ORDERING_H_
 
 #include <cstddef>
-#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
-#include "absl/status/status.h"
-#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/event_pool.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/util.h"
 
 namespace xla::gpu {
 
@@ -42,9 +38,10 @@ namespace xla::gpu {
 // whose kernel records one is a producer, and every later thunk is a consumer
 // whose stream waits on the events recorded before it, so its kernels start
 // after the kernel of the producer is on the SMs, while that kernel still
-// runs. Compute kernels record no event and keep stream order among
-// themselves. A wait needs only what happened before it, so one LaunchOrdering
-// per execution logs the launches as they happen. In
+// runs. Producers are NCCL, ragged all-to-all and XLA collective kernels.
+// Compute kernels record no event and keep stream order among themselves. A
+// wait needs only what happened before it, so one LaunchOrdering per
+// execution logs the launches as they happen. In
 //
 //   fusion.0, all-reduce.1, fusion.2, all-gather.3, fusion.4
 //
@@ -72,36 +69,6 @@ class LaunchOrdering {
   std::vector<Launch> launches_;
   absl::flat_hash_map<stream_executor::Stream*, size_t> waited_;
 };
-
-inline absl::StatusOr<stream_executor::Event*> LaunchOrdering::TakeLaunchEvent(
-    stream_executor::Stream* stream, absl::string_view producer) {
-  ABSL_ASSIGN_OR_RETURN(LaunchEventPool::Event event,
-                        pool_->GetOrCreateEvent());
-  stream_executor::Event* raw = event->get();
-  XLA_VLOG_DEVICE(3, stream->parent()->device_ordinal())
-      << "LaunchOrdering: " << producer << " records launch event "
-      << launches_.size() << " on stream " << stream;
-  launches_.push_back({stream, std::move(event)});
-  return raw;
-}
-
-inline absl::StatusOr<int> LaunchOrdering::WaitForProducers(
-    stream_executor::Stream* stream, absl::string_view consumer) {
-  int waits = 0;
-  for (size_t& cursor = waited_[stream]; cursor < launches_.size(); ++cursor) {
-    if (launches_[cursor].stream == stream) {
-      continue;
-    }
-    ABSL_RETURN_IF_ERROR(stream->WaitFor(launches_[cursor].event->get()));
-    ++waits;
-  }
-  if (waits > 0) {
-    XLA_VLOG_DEVICE(3, stream->parent()->device_ordinal())
-        << "LaunchOrdering: " << consumer << " waits on " << waits
-        << " launch event(s) on stream " << stream;
-  }
-  return waits;
-}
 
 }  // namespace xla::gpu
 

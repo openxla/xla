@@ -622,6 +622,11 @@ absl::Status LaunchCudaKernel(
 
     // Records once the last block has been dispatched, not on completion.
     if (launch_completion_event != nullptr) {
+      if (executor->GetDeviceDescription().driver_version() <
+          SemanticVersion{12, 3, 0}) {
+        return absl::UnimplementedError(
+            "Launch completion events require CUDA driver 12.3 or newer");
+      }
       CUlaunchAttribute attr{};
       attr.id = CU_LAUNCH_ATTRIBUTE_LAUNCH_COMPLETION_EVENT;
       attr.value.launchCompletionEvent.event =
