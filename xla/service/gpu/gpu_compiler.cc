@@ -784,7 +784,8 @@ absl::Status RunOptimizationPasses(
   }
   pipeline.AddPass<RaggedDotRewriter>(
       gpu_version,
-      se::dnn::VersionInfo(gpu_target_config.device_description.dnn_version()));
+      se::dnn::VersionInfo(gpu_target_config.device_description.dnn_version()),
+      gpu_target_config.device_description.runtime_version());
   pipeline.AddPass<ScaledDotRewriter>([&compiler, &gpu_target_config](
                                           const HloInstruction* instr) {
     return !compiler.IsScaledDotSupportedByBackend(instr, gpu_target_config);
