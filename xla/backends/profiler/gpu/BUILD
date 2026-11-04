@@ -1037,6 +1037,7 @@ cc_library(
         "cuda-only",
         "gpu",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         "//xla/backends/profiler/util:metadata_registry",
         "//xla/tsl/profiler/utils:xplane_schema",
