@@ -297,8 +297,6 @@ common:rocm_base --@rules_ml_toolchain//common:static_libcxx=False
 common:rocm_base --@rules_ml_toolchain//common:enable_xla_test_global_symbol_version=True
 common:rocm_base --@rules_ml_toolchain//common:enable_hermetic_libraries=True
 common:rocm_base --repo_env=SYSROOT_DIST=linux_glibc_2_31
-common:rocm_base --copt=-DABSL_NO_STD_SOURCE_LOCATION
-common:rocm_base --host_copt=-DABSL_NO_STD_SOURCE_LOCATION
 common:rocm_base --copt=-Wno-gnu-offsetof-extensions
 common:rocm_base --define=using_rocm_hipcc=true
 common:rocm_base --define=tensorflow_mkldnn_contraction_kernel=0
