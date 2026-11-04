@@ -380,6 +380,35 @@ cc_library(
 )
 
 cc_library(
+    name = "hlo_original_value_analyzer",
+    srcs = ["hlo_original_value_analyzer.cc"],
+    hdrs = ["hlo_original_value_analyzer.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":hlo_original_value_analysis",
+        ":hlo_original_value_analyzer_utils",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/container:flat_hash_set",
+    ],
+)
+
+xla_cc_test(
+    name = "hlo_original_value_analyzer_test",
+    srcs = ["hlo_original_value_analyzer_test.cc"],
+    deps = [
+        ":hlo_original_value_analysis",
+        ":hlo_original_value_analyzer",
+        ":hlo_original_value_analyzer_utils",
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:statusor",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "hlo_sharding_reconstruction_util",
     srcs = ["hlo_sharding_reconstruction_util.cc"],
     hdrs = ["hlo_sharding_reconstruction_util.h"],
@@ -428,34 +457,6 @@ cc_library(
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
-    ],
-)
-
-cc_library(
-    name = "hlo_original_value_analyzer",
-    srcs = ["hlo_original_value_analyzer.cc"],
-    hdrs = ["hlo_original_value_analyzer.h"],
-    deps = [
-        ":hlo_original_value_analysis",
-        ":hlo_original_value_analyzer_utils",
-        "//xla/hlo/ir:hlo",
-        "@com_google_absl//absl/container:flat_hash_set",
-    ],
-)
-
-xla_cc_test(
-    name = "hlo_original_value_analyzer_test",
-    srcs = ["hlo_original_value_analyzer_test.cc"],
-    deps = [
-        ":hlo_original_value_analysis",
-        ":hlo_original_value_analyzer",
-        ":hlo_original_value_analyzer_utils",
-        "//xla:shape_util",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
-        "//xla/hlo/testlib:test",
-        "//xla/tsl/platform:statusor",
-        "@com_google_googletest//:gtest_main",
     ],
 )
 
