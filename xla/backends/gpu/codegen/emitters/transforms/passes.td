@@ -135,6 +135,7 @@ def LowerTensorsPass : Pass<"xla-gpu-lower-tensors", "mlir::ModuleOp"> {
 
   let dependentDialects = [
     "mlir::LLVM::LLVMDialect",
+    "mlir::NVVM::NVVMDialect",
     "mlir::ROCDL::ROCDLDialect",
     "mlir::arith::ArithDialect",
     "mlir::complex::ComplexDialect",

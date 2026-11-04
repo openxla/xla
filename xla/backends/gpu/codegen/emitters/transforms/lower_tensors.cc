@@ -44,6 +44,8 @@ limitations under the License.
 #include "mlir/Dialect/LLVMIR/LLVMMemoryOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMModuleOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/LLVMIR/NVVMAttributes.h"
+#include "mlir/Dialect/LLVMIR/NVVMDataMovementOps.h"
 #include "mlir/Dialect/LLVMIR/ROCDLDialectDecl.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"  // IWYU pragma: keep
@@ -195,12 +197,31 @@ struct RewriteAllocateShared : OpRewritePattern<AllocateSharedOp> {
   }
 };
 
+// Maps a generic pointer to shared memory and a cluster CTA rank (`i32`) to a
+// peer CTA DSMEM pointer via `nvvm.mapa` in shared address space (3 -> 7) so
+// LLVM's InferAddressSpaces propagates shared::cluster provenance and alias
+// information through downstream cluster shared-memory accesses.
+Value CreateDsmemPointer(mlir::ImplicitLocOpBuilder& b, Value ptr,
+                         Value cta_rank) {
+  auto shared_ptr_type = ml::LLVMPointerType::get(
+      b.getContext(),
+      static_cast<unsigned>(mlir::NVVM::NVVMMemorySpace::Shared));
+  auto cluster_ptr_type = ml::LLVMPointerType::get(
+      b.getContext(),
+      static_cast<unsigned>(mlir::NVVM::NVVMMemorySpace::SharedCluster));
+  Value shared_ptr = ml::AddrSpaceCastOp::create(b, shared_ptr_type, ptr);
+  Value cluster_ptr =
+      mlir::NVVM::MapaOp::create(b, cluster_ptr_type, shared_ptr, cta_rank);
+  return ml::AddrSpaceCastOp::create(b, ptr.getType(), cluster_ptr);
+}
+
 struct RewriteSyncThreads : OpRewritePattern<SyncThreadsOp> {
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(
       SyncThreadsOp op, mlir::PatternRewriter& rewriter) const override {
-    mlir::gpu::BarrierOp::create(rewriter, op.getLoc());
+    auto barrier = mlir::gpu::BarrierOp::create(rewriter, op.getLoc());
+    barrier.setScope(op.getScope());
     rewriter.replaceOp(op, op.getOperands());
     return success();
   }
@@ -275,8 +296,8 @@ class RewriteGpuDirectAtomicStore : public OpRewritePattern<AtomicStoreOp> {
           emitters::GetGuaranteedByteAlignment(op.getDest(), op.getIndices(),
                                                op) >= 8) {
         mlir::ImplicitLocOpBuilder b(loc, rewriter);
-        Value addr =
-            emitters::CreateAtomicGep(op.getDest(), op.getIndices(), b);
+        Value addr = emitters::CreateAtomicGep(op.getDest(), op.getIndices(), b,
+                                               op, CreateDsmemPointer);
         Value store_value = emitters::CreateBitcast(b, value, b.getI64Type());
         ml::StoreOp::create(rewriter, loc, store_value, addr,
                             /*alignment=*/8,
@@ -293,7 +314,8 @@ class RewriteGpuDirectAtomicStore : public OpRewritePattern<AtomicStoreOp> {
     if (element_type.isF32() || element_type.isF64() ||
         IsGpuAtomicIntegral(element_type)) {
       mlir::ImplicitLocOpBuilder b(loc, rewriter);
-      Value addr = emitters::CreateAtomicGep(op.getDest(), op.getIndices(), b);
+      Value addr = emitters::CreateAtomicGep(op.getDest(), op.getIndices(), b,
+                                             op, CreateDsmemPointer);
       Value store_value = value;
       // LLVM's SPIRV backend only declares Int64Atomics on OpAtomicStore for
       // 64 bit integer operands, not 64 bit floats.
@@ -365,7 +387,8 @@ class RewriteGpuDirectAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
     mlir::ImplicitLocOpBuilder b(loc, rewriter);
 
     auto materialize_addr_and_modifier = [&]() -> std::pair<Value, Value> {
-      Value addr = emitters::CreateAtomicGep(op.getInput(), op.getIndices(), b);
+      Value addr = emitters::CreateAtomicGep(op.getInput(), op.getIndices(), b,
+                                             op, CreateDsmemPointer);
       Value modifier_arg = emitters::MaterializeAtomicModifier(
           rewriter, loc, modifier_parameters.modifier);
       return {addr, modifier_arg};
@@ -440,8 +463,8 @@ class RewriteGpuDirectAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
       return failure();
     }
     mlir::ImplicitLocOpBuilder implicit_b(loc, b);
-    Value addr =
-        emitters::CreateAtomicGep(op.getInput(), op.getIndices(), implicit_b);
+    Value addr = emitters::CreateAtomicGep(op.getInput(), op.getIndices(),
+                                           implicit_b, op, CreateDsmemPointer);
     Value modifier_arg = emitters::MaterializeAtomicModifier(b, loc, modifier);
     if (negated) {
       modifier_arg = arith::NegFOp::create(b, loc, modifier_arg);
@@ -469,8 +492,8 @@ class RewriteGpuDirectAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
       return failure();
     }
     mlir::ImplicitLocOpBuilder implicit_b(loc, b);
-    Value addr =
-        emitters::CreateAtomicGep(op.getInput(), op.getIndices(), implicit_b);
+    Value addr = emitters::CreateAtomicGep(op.getInput(), op.getIndices(),
+                                           implicit_b, op, CreateDsmemPointer);
     Value modifier_arg = emitters::MaterializeAtomicModifier(b, loc, modifier);
     if (negated) {
       modifier_arg = arith::NegFOp::create(b, loc, modifier_arg);
@@ -538,8 +561,8 @@ class RewriteGpuDirectAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
       return failure();
     }
     mlir::ImplicitLocOpBuilder implicit_b(loc, b);
-    Value addr =
-        emitters::CreateAtomicGep(op.getInput(), op.getIndices(), implicit_b);
+    Value addr = emitters::CreateAtomicGep(op.getInput(), op.getIndices(),
+                                           implicit_b, op, CreateDsmemPointer);
     Value modifier_arg = emitters::MaterializeAtomicModifier(b, loc, modifier);
     if (negated) {
       modifier_arg = arith::NegFOp::create(b, loc, modifier_arg);
@@ -601,8 +624,8 @@ class RewriteGpuDirectAtomicRMW : public OpRewritePattern<AtomicRMWOp> {
       return failure();
     }
     mlir::ImplicitLocOpBuilder implicit_b(loc, b);
-    Value addr =
-        emitters::CreateAtomicGep(op.getInput(), op.getIndices(), implicit_b);
+    Value addr = emitters::CreateAtomicGep(op.getInput(), op.getIndices(),
+                                           implicit_b, op, CreateDsmemPointer);
     Value modifier_arg = emitters::MaterializeAtomicModifier(b, loc, modifier);
     if (negated) {
       modifier_arg = arith::NegFOp::create(b, loc, modifier_arg);
@@ -1060,6 +1083,9 @@ class LowerTensorsPass : public impl::LowerTensorsPassBase<LowerTensorsPass> {
         (cuda_cc != nullptr && cuda_cc->IsAtLeastHopper()) ? 128 : 64;
     config.atomic_sync_scope = std::string(GetAtomicSyncScope(gpu_cc_));
     config.atomic_load_store_ordering = GetAtomicLoadStoreOrdering(gpu_cc_);
+    if (cuda_cc != nullptr) {
+      config.create_dsmem_pointer = CreateDsmemPointer;
+    }
 
     if (mlir::failed(emitters::LowerTensors(
             getOperation(), config, [&](mlir::RewritePatternSet& patterns) {
