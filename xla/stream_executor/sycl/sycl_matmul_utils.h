@@ -19,6 +19,7 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/sycl/onednn_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace stream_executor {
 namespace sycl {
@@ -29,9 +30,11 @@ constexpr int64_t kOneDnnGemm = 1;
 
 // Describes a batched matrix in BLAS terms. The rows and columns are the
 // stored row-major shape, and the transpose flag says whether the matmul uses
-// the matrix transposed.
+// the matrix transposed. The element type is kept with the descriptor so it
+// stays paired with the matrix when operands are swapped.
 struct MatrixDescriptor {
   se::DeviceAddressBase data;
+  xla::PrimitiveType dtype;
   se::blas::Transpose transpose;
   int64_t num_rows;
   int64_t num_cols;

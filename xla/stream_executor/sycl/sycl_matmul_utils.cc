@@ -157,6 +157,7 @@ MatrixDescriptor GetMatrixDesc(const se::gpu::MatrixLayout& layout,
   bool transpose = layout.order == se::gpu::MatrixLayout::Order::kColumnMajor;
   return MatrixDescriptor{
       data,
+      layout.dtype,
       transpose ? se::blas::Transpose::kTranspose
                 : se::blas::Transpose::kNoTranspose,
       transpose ? layout.num_cols : layout.num_rows,
@@ -170,8 +171,9 @@ MatrixDescriptor GetMatrixDesc(const se::gpu::MatrixLayout& layout,
 // Maps a BLAS-style MatrixDescriptor onto a oneDNN memory desc. For a
 // transposed operand, the last two dims and strides are swapped so the desc
 // has the logical shape; oneDNN infers the transpose from the strides.
-dnnl::memory::desc ToOneDnnMemDesc(const MatrixDescriptor& m,
-                             dnnl::memory::data_type dtype) {
+absl::StatusOr<dnnl::memory::desc> ToOneDnnMemDesc(const MatrixDescriptor& m) {
+  ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type dtype,
+                        sycl::ToOneDnnDataType(m.dtype));
   dnnl::memory::dims dims{m.batch_size, m.num_rows, m.num_cols};
   dnnl::memory::dims strides{m.batch_stride, m.leading_dim_stride, 1};
   if (m.transpose == se::blas::Transpose::kTranspose) {
@@ -183,13 +185,13 @@ dnnl::memory::desc ToOneDnnMemDesc(const MatrixDescriptor& m,
 
 // Builds the bias memory desc for the matmul output. The bias has shape
 // {1, ..., 1, N}, where N is the output's column dim, so oneDNN broadcasts
-// one bias value per output column across the batch and row dims.
-dnnl::memory::desc MakeBiasMemDesc(
-    const dnnl::memory::desc& output_md, dnnl::memory::data_type dtype) {
+// one bias value per output column across the batch and row dims. The bias
+// dtype matches the output dtype.
+dnnl::memory::desc MakeBiasMemDesc(const dnnl::memory::desc& output_md) {
   const auto out_dims = output_md.get_dims();
   dnnl::memory::dims bias_dims(out_dims.size(), 1);
   bias_dims.back() = out_dims.back();
-  return dnnl::memory::desc(bias_dims, dtype,
+  return dnnl::memory::desc(bias_dims, output_md.get_data_type(),
                             ComputeRowMajorStrides(bias_dims));
 }
 
@@ -253,17 +255,14 @@ struct GemmElementTypes {
   xla::PrimitiveType output;
 };
 constexpr GemmElementTypes kSupportedGemmElementTypes[] = {
-    {xla::F32, xla::F32, xla::F32},
-    {xla::F64, xla::F64, xla::F64},
-    {xla::BF16, xla::BF16, xla::BF16},
-    {xla::BF16, xla::BF16, xla::F32},
-    {xla::F16, xla::F16, xla::F16},
-    {xla::F16, xla::F16, xla::F32},
+    {xla::F32, xla::F32, xla::F32},    {xla::F64, xla::F64, xla::F64},
+    {xla::BF16, xla::BF16, xla::BF16}, {xla::BF16, xla::BF16, xla::F32},
+    {xla::F16, xla::F16, xla::F16},    {xla::F16, xla::F16, xla::F32},
     {xla::S8, xla::S8, xla::S32},
 };
 
 bool IsSupportedGemmElementTypes(xla::PrimitiveType lhs, xla::PrimitiveType rhs,
-                           xla::PrimitiveType output) {
+                                 xla::PrimitiveType output) {
   for (const auto& t : kSupportedGemmElementTypes) {
     if (t.lhs == lhs && t.rhs == rhs && t.output == output) {
       return true;
@@ -323,21 +322,14 @@ absl::StatusOr<OneDnnMatMulParams> CreateMatMulParams(
   MatrixDescriptor output = GetMatrixDesc(output_layout, output_buffer);
   MakeBlasGemmCompatible(lhs, rhs, output);
 
-  ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type lhs_dt,
-                        sycl::ToOneDnnDataType(lhs_layout.dtype));
-  ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type rhs_dt,
-                        sycl::ToOneDnnDataType(rhs_layout.dtype));
-  ABSL_ASSIGN_OR_RETURN(dnnl::memory::data_type out_dt,
-                        sycl::ToOneDnnDataType(output_layout.dtype));
-
-  auto output_md = ToOneDnnMemDesc(output, out_dt);
+  ABSL_ASSIGN_OR_RETURN(dnnl::memory::desc lhs_md, ToOneDnnMemDesc(lhs));
+  ABSL_ASSIGN_OR_RETURN(dnnl::memory::desc rhs_md, ToOneDnnMemDesc(rhs));
+  ABSL_ASSIGN_OR_RETURN(dnnl::memory::desc output_md, ToOneDnnMemDesc(output));
   return OneDnnMatMulParams{
-      .lhs_md = ToOneDnnMemDesc(lhs, lhs_dt),
-      .rhs_md = ToOneDnnMemDesc(rhs, rhs_dt),
+      .lhs_md = lhs_md,
+      .rhs_md = rhs_md,
       .output_md = output_md,
-      // Bias dtype should match the output dtype
-      .bias_md = has_bias ? MakeBiasMemDesc(output_md, out_dt)
-                          : dnnl::memory::desc(),
+      .bias_md = has_bias ? MakeBiasMemDesc(output_md) : dnnl::memory::desc(),
       .alpha = static_cast<float>(config.alpha.real()),
       .beta = static_cast<float>(config.beta),
       .epilogue = epilogue,

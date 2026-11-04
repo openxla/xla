@@ -1332,13 +1332,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       }
     }
 
-    // TODO (intel-tf): Remove this check once FP8 support is added for SYCL/oneAPI.
-    if (gpu_version_.IsOneAPI()) {
-      VLOG(1) << "FP8 Custom Calls are not supported on SYCL/oneAPI; keeping "
-                 "the dequantization and dot unfused.";
-      return false;
-    }
-
     PrimitiveType a_type = a.fp8_input->shape().element_type();
     PrimitiveType b_type = b.fp8_input->shape().element_type();
 
