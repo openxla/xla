@@ -124,6 +124,16 @@ TEST(DumpTest, GetDumpSubdirPathEmptyPath) {
   EXPECT_EQ(dump_subdir, "");
 }
 
+TEST(DumpTest, GetDumpSubdirPathPathTraversal) {
+  const std::string temp_dir = tsl::testing::TmpDir();
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::string dump_subdir,
+      pjrt::GetDumpSubdirPath(temp_dir, "../../../traversal_module", 0));
+  EXPECT_THAT(dump_subdir, testing::Not(HasSubstr("/traversal_module")));
+  EXPECT_THAT(dump_subdir, HasSubstr(".._.._.._traversal_module"));
+  EXPECT_THAT(tsl::Env::Default()->IsDirectory(dump_subdir), IsOk());
+}
+
 TEST(DumpTest, DumpCompileInputs) {
   const std::string temp_test_dir = tsl::testing::TmpDir();
   const std::string temp_test_subdir =
