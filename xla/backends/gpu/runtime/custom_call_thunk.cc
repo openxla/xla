@@ -422,7 +422,7 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
   // onto a command-buffer trace stream). The old CustomCallCmd path hard-coded
   // nullptr here with a TODO(b/342285364); this unified path resolves that
   // TODO so handlers see the real called computation under command buffers.
-  return InvokeContext{
+  InvokeContext context{
       run_id,
       device_ordinal,
       InvokeContext::GpuContext{
@@ -438,6 +438,11 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
       called_computation_,
       execution_context,
       custom_options};
+  if (collective_params != nullptr) {
+    context.logical_device_context = InvokeContext::LogicalDeviceContext{
+        collective_params->device_assn, collective_params->global_device_id};
+  }
+  return context;
 }
 
 absl::Status CustomCallThunk::ExecuteFfiHandler(
