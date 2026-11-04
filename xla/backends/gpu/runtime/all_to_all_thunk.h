@@ -114,7 +114,6 @@ class AllToAllThunk : public CollectiveThunk {
 absl::Status RunAllToAll(bool has_split_dimension,
                          std::vector<DeviceBufferPair>& buffers,
                          se::Stream& stream, Communicator& comm,
-                         bool use_symmetric_buffer = false,
                          se::Event* launch_event = nullptr);
 
 absl::Status RunMemCpyAllToAll(

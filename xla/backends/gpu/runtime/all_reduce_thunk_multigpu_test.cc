@@ -83,7 +83,7 @@ class DirectAllReduceThunk : public AllReduceReduceScatterThunkBase {
                           params.TakeLaunchEvent(this, &stream));
     received_launch_event = launch_event != nullptr;
     return RunAllReduce(config_.reduction_kind, device_buffers, stream, comm,
-                        /*use_symmetric_buffer=*/false, launch_event);
+                        launch_event);
   }
 };
 

@@ -32,6 +32,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
+#include "xla/backends/gpu/codegen/gpu_kernel_spec.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/xtile/block_level_parameters.h"
+#include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -97,8 +99,11 @@ TEST(CubinCustomKernelCompilerTest, CallbackInvoked) {
     ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Thunk> thunk,
         kernel_compiler
-            .Compile(thunk_info, std::move(kernel_source),
-                     absl::StrCat("kernel", i), kernel_arguments, dimensions)
+            .Compile(
+                thunk_info,
+                GpuKernelDefinition{GpuKernelSpec(absl::StrCat("kernel", i),
+                                                  dimensions, kernel_arguments),
+                                    std::move(kernel_source)})
             .Await());
   }
 

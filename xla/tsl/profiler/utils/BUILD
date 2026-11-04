@@ -284,6 +284,7 @@ tsl_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest_main",
+        "@com_google_protobuf//:arena",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
 )
@@ -533,8 +534,11 @@ tsl_cc_test(
         ":session_manager",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
+        "@tsl//tsl/profiler/protobuf:profiler_options_proto_cc",
     ],
 )
 

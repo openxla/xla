@@ -44,7 +44,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "hwy//highway.h"
+#include "hwy/highway.h"
 #include "tsl/platform/mem.h"
 #include "tsl/platform/ml_dtypes.h"
 #include "xla/index_util.h"

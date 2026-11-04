@@ -44,6 +44,7 @@ ncclRecv
 ncclRedOpCreatePreMulSum
 ncclRedOpDestroy
 ncclReduce
+ncclReduceConfig
 ncclReduceScatter
 ncclReduceScatterConfig
 ncclResetDebugInit
@@ -51,9 +52,13 @@ ncclSend
 ncclSignal
 ncclWaitSignal
 pncclAllGather
+pncclAllGatherConfig
 pncclAllReduce
+pncclAllReduceConfig
+pncclAlltoAllConfig
 pncclBcast
 pncclBroadcast
+pncclBroadcastConfig
 pncclCommAbort
 pncclCommCount
 pncclCommCuDevice
@@ -86,7 +91,9 @@ pncclRecv
 pncclRedOpCreatePreMulSum
 pncclRedOpDestroy
 pncclReduce
+pncclReduceConfig
 pncclReduceScatter
+pncclReduceScatterConfig
 pncclResetDebugInit
 pncclSend
 pncclSignal

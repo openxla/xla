@@ -103,9 +103,7 @@ CompileModuleResults InitializeResults(const HloModule* hlo_module) {
                       .xla_gpu_experimental_enable_collective_multi_streaming()
                   ? kDefaultNumCommunicationStreams
                   : 1,
-              // Keep disabled by default until the 14-day AOT
-              // forward-compatibility window has elapsed (9th of October 2026).
-              /*enable_dedicated_memcpy_streams=*/false,
+              /*enable_dedicated_memcpy_streams=*/true,
           });
   return results;
 }
@@ -275,7 +273,9 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
   if (has_constants_module) {
     ABSL_ASSIGN_OR_RETURN(
         results.constants_binary,
-        compiler->CompileToTargetBinary(thunk_emitter.ConsumeConstantsModule())
+        compiler
+            ->CompileToTargetBinary(thunk_emitter.ConsumeConstantsModule(),
+                                    /*kernel_spec=*/std::nullopt)
             .Await());
   } else {
     VLOG(2) << "Constants LLVM module is empty; skipping target compilation.";

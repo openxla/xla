@@ -237,14 +237,12 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
   }
   ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
                         params.TakeLaunchEvent(this, &stream));
-  return xla::gpu::RunAllGather(device_buffers, stream, comm,
-                                config_.config.use_symmetric_buffer,
-                                launch_event);
+  return xla::gpu::RunAllGather(device_buffers, stream, comm, launch_event);
 }
 
 absl::Status RunAllGather(std::vector<DeviceBufferPair>& buffers,
                           se::Stream& stream, Communicator& comm,
-                          bool use_symmetric_buffer, se::Event* launch_event) {
+                          se::Event* launch_event) {
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal) << "Performing all-gather";
   auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
@@ -254,7 +252,8 @@ absl::Status RunAllGather(std::vector<DeviceBufferPair>& buffers,
           buffer.source_buffer, buffer.destination_buffer, buffer.element_type,
           buffer.element_count,
           GpuCollectives::OnGroupMember(stream, launch_event,
-                                        &buffer == &buffers.back())));
+                                        &buffer == &buffers.back()),
+          buffer.IsRMA()));
     }
     return absl::OkStatus();
   });

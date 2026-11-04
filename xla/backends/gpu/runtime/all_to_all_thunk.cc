@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.pb.h"
@@ -125,7 +127,6 @@ AllToAllThunk::AllToAllThunk(ThunkInfo thunk_info,
 }
 
 absl::Status AllToAllThunk::Initialize(const InitializeParams& params) {
-  ABSL_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
   CHECK_GT(params.local_device_count, 0);
   XLA_VLOG_DEVICE(5, params.executor->device_ordinal())
       << "Local device count : " << params.local_device_count;
@@ -243,9 +244,8 @@ absl::Status AllToAllThunk::RunCollective(const ExecuteParams& params,
         receive_pointer_map, clique_key, *rank, state->event.get(),
         state->events, launch_event);
   }
-  return xla::gpu::RunAllToAll(
-      config_.has_split_dimension, device_buffers, stream, comm,
-      config_.config.use_symmetric_buffer, launch_event);
+  return xla::gpu::RunAllToAll(config_.has_split_dimension, device_buffers,
+                               stream, comm, launch_event);
 }
 
 absl::StatusOr<std::unique_ptr<AllToAllThunk>> AllToAllThunk::FromProto(
@@ -291,7 +291,7 @@ absl::StatusOr<ThunkProto> AllToAllThunk::ToProto() const {
 absl::Status RunAllToAll(bool has_split_dimension,
                          std::vector<DeviceBufferPair>& buffers,
                          se::Stream& stream, Communicator& comm,
-                         bool use_symmetric_buffer, se::Event* launch_event) {
+                         se::Event* launch_event) {
   int device_ordinal = stream.parent()->device_ordinal();
   XLA_VLOG_DEVICE(3, device_ordinal)
       << "Performing all-to-all, has_split_dimension: " << has_split_dimension;
@@ -319,6 +319,10 @@ absl::Status RunAllToAll(bool has_split_dimension,
   absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers;
   absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers;
 
+  bool is_rma = absl::c_all_of(
+      buffers, [](const DeviceBufferPair& buffer) { return buffer.IsRMA(); });
+
+  auto* gpu_comm = absl::down_cast<GpuCommunicator*>(&comm);
   if (has_split_dimension) {
     TF_RET_CHECK(element_count % num_ranks == 0)
         << "Buffer element count must be an exact multiple of the number of "
@@ -336,9 +340,12 @@ absl::Status RunAllToAll(bool has_split_dimension,
       }
     }
 
-    auto future = comm.AllToAll(
-        std::move(send_buffers), std::move(recv_buffers), element_type,
-        chunk_element_count, GpuCollectives::On(stream, launch_event));
+    auto future = gpu_comm->GroupExecute([&]() -> absl::Status {
+      return gpu_comm->LaunchAllToAll(
+          std::move(send_buffers), std::move(recv_buffers), element_type,
+          chunk_element_count, GpuCollectives::On(stream, launch_event),
+          is_rma);
+    });
     ABSL_RETURN_IF_ERROR(future.Await());
   } else {
     for (const DeviceBufferPair& buffer : buffers) {
@@ -346,9 +353,11 @@ absl::Status RunAllToAll(bool has_split_dimension,
       recv_buffers.push_back(buffer.destination_buffer);
     }
 
-    auto future = comm.AllToAll(
-        std::move(send_buffers), std::move(recv_buffers), element_type,
-        element_count, GpuCollectives::On(stream, launch_event));
+    auto future = gpu_comm->GroupExecute([&]() -> absl::Status {
+      return gpu_comm->LaunchAllToAll(
+          std::move(send_buffers), std::move(recv_buffers), element_type,
+          element_count, GpuCollectives::On(stream, launch_event), is_rma);
+    });
     ABSL_RETURN_IF_ERROR(future.Await());
   }
 
