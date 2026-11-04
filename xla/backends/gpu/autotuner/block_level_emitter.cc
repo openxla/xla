@@ -245,11 +245,11 @@ bool BlockLevelEmitterBackend::IsSupported(const HloInstruction& instr) {
     return false;
   }
   const HloFusionInstruction* fusion = Cast<HloFusionInstruction>(&instr);
-  if (absl::c_any_of(
-          fusion->fused_instructions_computation()->instructions(),
-          HloPredicateIsOp<HloOpcode::kDot, HloOpcode::kScaledDot>)) {
+  if (absl::c_any_of(fusion->fused_instructions_computation()->instructions(),
+                     HloPredicateIsOp<HloOpcode::kDot, HloOpcode::kScaledDot,
+                                      HloOpcode::kRaggedDot>)) {
     // If a dot fusion can be handled by Triton, GemmRewriter would have already
-    // taken care of it.
+    // taken care of it. Ragged-dot XTile fusions are tuned by TritonBackend.
     return false;
   }
   if (!xla_gpu_experimental_all_fusions_with_triton_ &&

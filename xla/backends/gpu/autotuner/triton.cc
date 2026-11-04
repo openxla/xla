@@ -687,6 +687,15 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
   }
   const FusionBackendConfig& backend_config =
       gpu_config->fusion_backend_config();
+
+  // Ragged-dot XTile fusions created by GemmRewriter::HandleRaggedDot carry
+  // the generic Triton fusion kind. Only claim those: all other
+  // kTritonFusionKind fusions are tuned by BlockLevelEmitterBackend.
+  if (backend_config.kind() == kTritonFusionKind) {
+    return hlo_query::ContainsInstrWithOpcode(
+        instr.fused_instructions_computation(), {HloOpcode::kRaggedDot});
+  }
+
   if (backend_config.kind() != kTritonGemmFusionKind &&
       backend_config.kind() != kCuDnnFusionKind &&
       backend_config.kind() != kCustomFusionKind) {
@@ -709,22 +718,6 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
              target_config().device_description.gpu_compute_capability())
              .IsAllowed()) {
       return false;
-    }
-  }
-
-  // kTritonGemmFusionKind ("__triton_gemm") is used by ragged-dot (group-GEMM)
-  // XTile fusions created by GemmRewriter::HandleRaggedDot.  We support
-  // autotuning for kRaggedDot fusions specifically.
-  if (backend_config.kind() == kTritonGemmFusionKind) {
-    const HloInstruction* ragged_dot_instr =
-        hlo_query::GetFirstInstructionWithOpcode(
-            *instr.fused_instructions_computation(), HloOpcode::kRaggedDot);
-    if (ragged_dot_instr != nullptr &&
-        instr.GetModule()
-            ->config()
-            .debug_options()
-            .xla_gpu_experimental_enable_tiling_propagation()) {
-      return true;
     }
   }
 
