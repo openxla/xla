@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -537,7 +538,15 @@ absl::StatusOr<TensorValue> MaskOperand(mlir::ImplicitLocOpBuilder& b,
                                         Value neutral_value) {
   llvm::ArrayRef<int64_t> tile_shape = operand_value.getType().getShape();
 
-  int64_t dimension_size = operand.hlo()->shape().dimensions(dimension_index);
+  // `operand_value` uses the storage shape, which is smaller than the logical
+  // shape along the packed dimension of sub-byte types (e.g. f4e2m1fn), so
+  // compare against the storage shape too.
+  const Shape& logical_shape = operand.hlo()->shape();
+  llvm::SmallVector<int64_t> logical_dims(logical_shape.dimensions().begin(),
+                                          logical_shape.dimensions().end());
+  ABSL_ASSIGN_OR_RETURN(llvm::SmallVector<int64_t> storage_dims,
+                        GetStorageShape(logical_dims, logical_shape));
+  int64_t dimension_size = storage_dims[dimension_index];
   int64_t tile_size = tile_shape[dimension_index];
 
   if (dimension_size % tile_size == 0) {
@@ -792,6 +801,7 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     mlir::OpBuilder::InsertionGuard g(b);
     b.setInsertionPointToStart(for_op.getBody());
     Value iv = for_op.getInductionVar();
+    Value iv_i32 = Cast(b, iv, b.getI32Type());
     const gpu::TilingSpace::DimensionInfo& dim_info =
         tiled_scaled_dot.tile().tiling_space().GetDimensionInfo(
             *tiled_scaled_dot.hlo(), sequential_dim_ids.front());
@@ -805,6 +815,36 @@ absl::StatusOr<TensorValue> EmitScaledDot(
     ABSL_ASSIGN_OR_RETURN(
         auto results,
         EmitTiledComputation(emitter_ctx, region, region.roots()));
+
+    // Mask out-of-bounds contracting lanes: lhs/rhs with 0 and non-scalar
+    // scales with 1, so tail lanes contribute exactly 0.
+    const DotDimensionNumbers& dim_numbers = scaled_dot.dot_dimension_numbers();
+    for (int side : {0, 1}) {
+      int64_t contracting_dim_idx =
+          side == 0 ? dim_numbers.lhs_contracting_dimensions(0)
+                    : dim_numbers.rhs_contracting_dimensions(0);
+      const gpu::TiledHloInstruction* operand = tiled_scaled_dot.operand(side);
+      Value zero = CreateConst(b, results[side].getType().getElementType(), 0,
+                               /*shape=*/{});
+      ABSL_ASSIGN_OR_RETURN(results[side],
+                            MaskOperand(b, *operand, results[side], iv_i32,
+                                        contracting_dim_idx, zero));
+
+      int scale_idx = side + 2;
+      const gpu::TiledHloInstruction* scale_operand =
+          tiled_scaled_dot.operand(scale_idx);
+      if (results[scale_idx] &&
+          IsTritonDotScaledOperandType(
+              operand->hlo()->shape().element_type()) &&
+          !ShapeUtil::IsScalar(scale_operand->hlo()->shape())) {
+        Value scale_one = CreateConst(
+            b, results[scale_idx].getType().getElementType(), 1, /*shape=*/{});
+        ABSL_ASSIGN_OR_RETURN(
+            results[scale_idx],
+            MaskOperand(b, *scale_operand, results[scale_idx], iv_i32,
+                        contracting_dim_idx, scale_one));
+      }
+    }
 
     // Emit the partial dot.
     Value acc = for_op.getRegionIterArgs().front();
@@ -878,8 +918,8 @@ Value ExtractGroupSizeScalar(mlir::ImplicitLocOpBuilder& b,
   return mlir::arith::IndexCastOp::create(b, b.getIndexType(), gs_raw);
 }
 
-// Resolves `hlo` (traversing through a leading kConvert and up any nested
-// fusion parameter chain) to the entry-function buffer argument that backs it.
+// Resolves `hlo` (traversing through a leading kConvert and fusion parameter)
+// to the entry-function buffer argument that backs it.
 // The returned buffer Value carries the underlying (pre-convert) element type,
 // which callers can obtain via `getElementTypeOrSelf`.
 mlir::Value ResolveBufferArgument(EmitterContext& emitter_ctx,
@@ -889,7 +929,7 @@ mlir::Value ResolveBufferArgument(EmitterContext& emitter_ctx,
     hlo = hlo->operand(0);
   }
   if (hlo->opcode() == HloOpcode::kParameter && !fusion.IsUserOf(hlo)) {
-    hlo = hlo->parent()->FusionInstruction()->operand(hlo->parameter_number());
+    hlo = fusion.operand(hlo->parameter_number());
   }
   int64_t arg_idx = fusion.operand_index(hlo);
   return emitter_ctx.entry_func().getArgument(arg_idx);
@@ -1853,6 +1893,30 @@ TensorValue EmitTranspose(mlir::ImplicitLocOpBuilder& b,
                                                 order);
 }
 
+// Returns the integer type to use for the pad bounds mask computation
+// `iota * tile_stride < pad_input_dim_size - tile_offset` of a single
+// dimension. Returns `i32` if all intermediate values are statically known to
+// fit in `i32`, and `i64` otherwise.
+Type GetPadMaskComparisonType(mlir::ImplicitLocOpBuilder& b,
+                              int64_t pad_input_dim_size, int64_t tile_size,
+                              int64_t tile_stride, Value tile_offset) {
+  std::optional<Interval> offset_range = GetRange(tile_offset);
+  if (!offset_range.has_value() || !offset_range->IsFeasible()) {
+    return b.getI64Type();
+  }
+  constexpr Interval kI32Range{std::numeric_limits<int32_t>::min(),
+                               std::numeric_limits<int32_t>::max()};
+  Interval input_dim_range{pad_input_dim_size, pad_input_dim_size};
+  Interval scaled_iota_range{0, tile_stride * (tile_size - 1)};
+  if (kI32Range.Contains(input_dim_range) &&
+      kI32Range.Contains(*offset_range) &&
+      kI32Range.Contains(input_dim_range - *offset_range) &&
+      kI32Range.Contains(scaled_iota_range)) {
+    return b.getI32Type();
+  }
+  return b.getI64Type();
+}
+
 absl::StatusOr<TensorValue> EmitPad(EmitterContext& emitter_ctx,
                                     const gpu::TiledHloInstruction& tiled_pad) {
   auto& b = emitter_ctx.b();
@@ -1869,7 +1933,6 @@ absl::StatusOr<TensorValue> EmitPad(EmitterContext& emitter_ctx,
   ArrayRef<int64_t> tile_strides = tile_info.tile_strides();
 
   // Compute mask.
-  Type i32_type = b.getI32Type();
   Value mask;
   for (auto [dim_index, sizes] : llvm::enumerate(
            llvm::zip(pad_input_shape, tile_sizes, tile_offsets, tile_strides,
@@ -1892,20 +1955,24 @@ absl::StatusOr<TensorValue> EmitPad(EmitterContext& emitter_ctx,
       continue;
     }
 
+    Type int_type = GetPadMaskComparisonType(b, pad_input_dim_size, tile_size,
+                                             tile_stride, tile_offset);
+
     // LHS for the compare is a 1D iota (scaled by the tile stride).
-    TensorValue range = Iota(b, tile_size);
+    TensorValue range =
+        mlir::cast<TensorValue>(Cast(b, Iota(b, tile_size), int_type));
     if (tile_stride != 1) {
       range = mlir::cast<TensorValue>(
           arith::MulIOp::create(
-              b, range, CreateConst(b, i32_type, tile_stride, {tile_size}))
+              b, range, CreateConst(b, int_type, tile_stride, {tile_size}))
               .getResult());
     }
 
     // Compare in 1D against splat(pad_input_dim_size - tile_offset), then
     // broadcast the i1 mask to the output tile shape.
-    Value tile_offset_i32 = Cast(b, tile_offset, i32_type);
+    Value tile_offset_int = Cast(b, tile_offset, int_type);
     Value threshold = arith::SubIOp::create(
-        b, CreateConst(b, i32_type, pad_input_dim_size), tile_offset_i32);
+        b, CreateConst(b, int_type, pad_input_dim_size), tile_offset_int);
     TensorValue threshold_splat = xtile::Splat(b, threshold, {tile_size});
     Value cmp_1d = arith::CmpIOp::create(b, arith::CmpIPredicate::slt, range,
                                          threshold_splat);
@@ -2541,22 +2608,17 @@ EmitTiledHloInstructionImpl(EmitterContext& emitter_ctx,
 
   const HloFusionInstruction& fusion = emitter_ctx.fusion();
   if (hlo->opcode() == HloOpcode::kParameter && !fusion.IsUserOf(hlo)) {
-    hlo = hlo->parent()->FusionInstruction()->operand(hlo->parameter_number());
+    hlo = fusion.operand(hlo->parameter_number());
   }
 
   if (fusion.IsUserOf(hlo)) {
-    int64_t arg_index = fusion.operand_index(hlo);
-    // Walk up the parameter chain to find the outermost operand index.
-    while (auto* instr = hlo->parent()->FusionInstruction()) {
-      arg_index = hlo->parameter_number();  // Nested operands are parameters.
-      hlo = instr->operand(arg_index);
-    }
     ABSL_ASSIGN_OR_RETURN(TileInfo tile_info,
                           TileInfo::Construct(emitter_ctx, tiled_hlo));
     ABSL_ASSIGN_OR_RETURN(
         TensorValue parameter,
-        EmitParameterExtract(b, tile_info,
-                             emitter_ctx.entry_func().getArgument(arg_index)));
+        EmitParameterExtract(
+            b, tile_info,
+            emitter_ctx.entry_func().getArgument(fusion.operand_index(hlo))));
 
     // Workaround(i1_to_i8_workaround)
     // Some types are stored using different types, e.g. i1 is stored in memory
@@ -3062,70 +3124,6 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
   return absl::OkStatus();
 }
 
-// Implementation for the tiling space.
-class TileRequirementsVisitor : public DefaultTileRequirementsVisitor {
- public:
-  explicit TileRequirementsVisitor(
-      const gpu::TiledHloComputation& computation) {
-    for (const gpu::TiledHloInstruction* tiled_hlo :
-         computation.instructions()) {
-      PopulateMap(tiled_hlo);
-    }
-  }
-
-  absl::StatusOr<llvm::SmallVector<int64_t>> RequiredReplicaIdBounds(
-      const HloInstruction& instr) const override {
-    ABSL_ASSIGN_OR_RETURN(auto tiled_hlo, LookupTiledHlo(&instr));
-    llvm::SmallVector<int64_t> bounds;
-    bounds.reserve(tiled_hlo->tile().replica_ids().size());
-    for (const auto& replica_id : tiled_hlo->tile().replica_ids()) {
-      SymbolicExpr upper_bound = replica_id.upper_bound.Canonicalize();
-      if (upper_bound.GetType() != SymbolicExprType::kConstant) {
-        return absl::InternalError(
-            absl::StrCat("Replica ID bound expression is not a constant: ",
-                         upper_bound.ToString()));
-      }
-      bounds.push_back(upper_bound.GetValue());
-    }
-    return bounds;
-  }
-
- private:
-  // Look up the instruction in the tiled HLO map.
-  // For parameters to nested fusions, we walk up the parameter chain to find
-  // the outermost operand index.
-  absl::StatusOr<const gpu::TiledHloInstruction*> LookupTiledHlo(
-      const HloInstruction* original_instr) const {
-    auto it = hlo_to_tiled_.find(original_instr);
-    if (it != hlo_to_tiled_.end()) {
-      return it->second;
-    }
-    if (original_instr->opcode() == HloOpcode::kParameter) {
-      if (auto* fusion = original_instr->parent()->FusionInstruction()) {
-        const HloInstruction* resolved_instr =
-            fusion->operand(original_instr->parameter_number());
-        return LookupTiledHlo(resolved_instr);
-      }
-    }
-    return absl::InternalError(absl::StrCat(
-        "InternalError: HLO instruction not found in tiled HLO map: ",
-        original_instr->ToString()));
-  }
-
-  void PopulateMap(const gpu::TiledHloInstruction* tiled_hlo) {
-    hlo_to_tiled_[tiled_hlo->hlo()] = tiled_hlo;
-    for (const auto& region : tiled_hlo->hlo_regions()) {
-      for (const auto* region_instruction : region.instructions()) {
-        PopulateMap(region_instruction);
-      }
-    }
-  }
-
-  absl::flat_hash_map<const HloInstruction*,
-                      const xla::gpu::TiledHloInstruction*>
-      hlo_to_tiled_;
-};
-
 }  // namespace
 
 // TODO(b/447133106): Contrary to the name, this function still does a lot of
@@ -3151,10 +3149,8 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
   b.setInsertionPointToEnd(xtile_module->getBody());
 
   // Compute function argument types.
-  ABSL_ASSIGN_OR_RETURN(
-      SmallVector<Type> fn_arg_types,
-      GetFnArgTypes(b, fusion, opaque_args_types, gpu_cc,
-                    TileRequirementsVisitor(tiled_computation)));
+  ABSL_ASSIGN_OR_RETURN(SmallVector<Type> fn_arg_types,
+                        GetFnArgTypes(b, fusion, opaque_args_types, gpu_cc));
   // Metadata arguments are opaque to the tiling infra.
   llvm::SmallVector<mlir::NamedAttribute> named_attributes{b.getNamedAttr(
       "num_opaque_args", b.getI32IntegerAttr(opaque_args_types.size()))};

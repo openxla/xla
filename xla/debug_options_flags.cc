@@ -440,6 +440,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_collect_cost_model_stats(false);
   opts.set_xla_gpu_cublas_fallback(true);
   opts.set_xla_gpu_cudnn_gemm_fusion_level(0);
+  opts.set_xla_gpu_cudnn_non_gemm_fusion_level(0);
   opts.set_xla_gpu_enable_while_loop_double_buffering(false);
   opts.set_xla_gpu_enable_while_loop_unrolling(
       DebugOptions::WHILE_LOOP_UNROLLING_AUTO_UNROLL);
@@ -2905,6 +2906,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_cudnn_gemm_fusion_level(),
       "cuDNN GEMM fusion level; higher level corresponds to more kinds of "
       "fused operations."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_cudnn_non_gemm_fusion_level",
+      int32_setter_for(&DebugOptions::set_xla_gpu_cudnn_non_gemm_fusion_level),
+      debug_options->xla_gpu_cudnn_non_gemm_fusion_level(),
+      "Lets cuDNN compile non-GEMM fusions. Current levels: 0: Disabled. 1: "
+      "Compile pointwise fusions with cuDNN."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_mock_custom_calls",
                 bool_setter_for(&DebugOptions::set_xla_gpu_mock_custom_calls),
@@ -4100,6 +4107,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "If true, require that BlasLt matmuls execute the exact algorithm "
       "described by BlasLtMatmulAlgorithmProto rather than falling back to the "
       "heuristic algorithm index."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_horizontal_fusion",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_enable_horizontal_fusion),
+      debug_options->xla_gpu_experimental_enable_horizontal_fusion(),
+      "Enable experimental thread-block specialized horizontal fusion of "
+      "independent small-grid GPU kernels."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

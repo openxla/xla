@@ -748,6 +748,12 @@ message DebugOptions {
   // 2: Enabled on all supported GPUs (Ampere+).
   optional int32 xla_gpu_cudnn_gemm_fusion_level = 285;
 
+  // Lets cuDNN compile non-GEMM fusions.
+  // Current levels:
+  // 0: Disabled.
+  // 1: Compile pointwise fusions with cuDNN.
+  optional int32 xla_gpu_cudnn_non_gemm_fusion_level = 510;
+
   // Limit for the number of kernel configurations (plans) to use during
   // autotuning of cuDNN GEMM fusions. The more - the slower the autotuning
   // but potentially higher the performance.
@@ -1987,10 +1993,14 @@ message DebugOptions {
   // (ScanRewriterTriton).
   optional bool xla_gpu_experimental_enable_triton_scan = 562;
 
-  // Order launches on dispatch, not completion.
-  optional bool xla_gpu_explicit_launch_ordering = 565;
+  // If true, enables experimental thread-block specialized horizontal fusion of
+  // independent small-grid GPU kernels.
+  optional bool xla_gpu_experimental_enable_horizontal_fusion = 565;
 
-  // Next id: 566
+  // Order launches on dispatch, not completion.
+  optional bool xla_gpu_explicit_launch_ordering = 566;
+
+  // Next id: 567
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
