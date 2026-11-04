@@ -39,10 +39,13 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -50,6 +53,7 @@ limitations under the License.
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/transforms/collectives/async_collective_creator.h"
 #include "xla/service/device_assignment.h"
+#include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/legalize_scheduling_annotations.h"
@@ -865,6 +869,216 @@ ENTRY %module {
               GetOpcodeIndexUsingMetaData(HloOpcode::kSendDone,
                                           new_instruction_sequence, "s1"));
   }
+}
+
+// Counts the send to send-done latency queries per send-done.
+class SendDoneQueryCountingLatencyEstimator
+    : public ApproximateLatencyEstimator {
+ public:
+  TimeCost GetLatencyBetween(const HloGraphNode& from,
+                             const HloGraphNode& target) const override {
+    if (from.GetOpcode() == HloOpcode::kSend &&
+        target.GetOpcode() == HloOpcode::kSendDone) {
+      ++queries_[&target.GetInstr()];
+    }
+    return ApproximateLatencyEstimator::GetLatencyBetween(from, target);
+  }
+  int Queries(const HloInstruction* send_done) const {
+    auto it = queries_.find(send_done);
+    return it == queries_.end() ? 0 : it->second;
+  }
+
+ private:
+  mutable absl::flat_hash_map<const HloInstruction*, int> queries_;
+};
+
+TEST_F(LatencyHidingSchedulerTest, HostSendLatencyIsEstimatedWhenGraphIsBuilt) {
+  // Three host send-dones sit in the ready set together, so the comparator
+  // asks ShouldDelaySendHostDone about each of them many times per search.
+  constexpr absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+ENTRY %module {
+  p0 = f32[8,256,256]{2,1,0} parameter(0)
+  after-all.1 = token[] after-all()
+  after-all.2 = token[] after-all()
+  after-all.3 = token[] after-all()
+  send.1 = (f32[8,256,256]{2,1,0}, u32[], token[]) send(p0, after-all.1), channel_id=1, is_host_transfer=true
+  send-done.1 = token[] send-done(send.1), channel_id=1, is_host_transfer=true
+  send.2 = (f32[8,256,256]{2,1,0}, u32[], token[]) send(p0, after-all.2), channel_id=2, is_host_transfer=true
+  send-done.2 = token[] send-done(send.2), channel_id=2, is_host_transfer=true
+  send.3 = (f32[8,256,256]{2,1,0}, u32[], token[]) send(p0, after-all.3), channel_id=3, is_host_transfer=true
+  send-done.3 = token[] send-done(send.3), channel_id=3, is_host_transfer=true
+  ROOT root = (token[], token[], token[]) tuple(send-done.1, send-done.2, send-done.3)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(hlo_string));
+  auto counting_estimator =
+      std::make_unique<SendDoneQueryCountingLatencyEstimator>();
+  const SendDoneQueryCountingLatencyEstimator* estimator =
+      counting_estimator.get();
+  SchedulerConfig sched_config = GetDefaultSchedConfig();
+  sched_config.schedule_send_recvs = true;
+  ASSERT_OK_AND_ASSIGN(auto setup,
+                       SetupScheduler(module.get(), sched_config,
+                                      std::move(counting_estimator)));
+  std::shared_ptr<SchedulerCore> scheduler_core = std::move(setup.second);
+  ASSERT_OK(scheduler_core->InitializeScheduler(module.get()));
+  ASSERT_OK_AND_ASSIGN(
+      std::shared_ptr<SchedulerCore::SchedulingState> state,
+      scheduler_core->MakeSchedulingState(module->entry_computation()));
+  const DefaultSchedulerCore::SchedulingState* default_state =
+      dynamic_cast<DefaultSchedulerCore::SchedulingState*>(state.get());
+  ASSERT_NE(default_state, nullptr);
+  const HloScheduleGraph& graph = *default_state->sched_graph;
+
+  const std::vector<const HloInstruction*> send_dones = {
+      FindInstruction(module.get(), "send-done.1"),
+      FindInstruction(module.get(), "send-done.2"),
+      FindInstruction(module.get(), "send-done.3")};
+  absl::flat_hash_map<const HloInstruction*, int> queries_after_build;
+  for (const HloInstruction* send_done : send_dones) {
+    ASSERT_NE(send_done, nullptr);
+    queries_after_build[send_done] = estimator->Queries(send_done);
+    // One query, for the edge from the send; the stored latency reuses it.
+    EXPECT_EQ(queries_after_build[send_done], 1) << send_done->name();
+    const HloGraphNode& node = graph.GetNode(send_done);
+    const HloGraphNode& send = graph.GetNode(send_done->operand(0));
+    EXPECT_EQ(node.GetHostSend(), &send) << send_done->name();
+    EXPECT_EQ(node.GetHostSendLatency(),
+              ApproximateLatencyEstimator().GetLatencyBetween(send, node))
+        << send_done->name();
+  }
+
+  // Scheduling, and scheduling again on the same state, make no further
+  // queries for the pairs.
+  for (int round = 0; round < 2; ++round) {
+    ASSERT_OK_AND_ASSIGN(std::vector<HloInstruction*> sequence,
+                         scheduler_core->ScheduleComputation(
+                             module->entry_computation(), state));
+    ASSERT_EQ(sequence.size(),
+              module->entry_computation()->instruction_count());
+    for (const HloInstruction* send_done : send_dones) {
+      EXPECT_EQ(estimator->Queries(send_done), queries_after_build[send_done])
+          << send_done->name() << " round " << round;
+    }
+  }
+}
+
+TEST_P(DirectionalLatencyHidingSchedulerTest,
+       CalleeTrackerStartsFromCallerLiveBuffers) {
+  // The while body and condition alias buffers that are live in the entry
+  // computation at the while, and the body calls a reducer. Bottom up, the
+  // callee of `called` frees the call's buffer, which is live at the call.
+  constexpr absl::string_view hlo_string = R"(
+HloModule module, is_scheduled=true
+
+add {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT sum = f32[] add(x, y)
+}
+
+body {
+  param = (f32[64], s32[]) parameter(0)
+  data = f32[64] get-tuple-element(param), index=0
+  i = s32[] get-tuple-element(param), index=1
+  one = s32[] constant(1)
+  next_i = s32[] add(i, one)
+  neg = f32[64] negate(data)
+  zero = f32[] constant(0)
+  total = f32[] reduce(neg, zero), dimensions={0}, to_apply=add
+  scaled = f32[64] broadcast(total), dimensions={}
+  new_data = f32[64] add(neg, scaled)
+  ROOT tuple = (f32[64], s32[]) tuple(new_data, next_i)
+}
+
+cond {
+  param = (f32[64], s32[]) parameter(0)
+  i = s32[] get-tuple-element(param), index=1
+  limit = s32[] constant(4)
+  ROOT lt = pred[] compare(i, limit), direction=LT
+}
+
+negate_callee {
+  cp = f32[64] parameter(0)
+  ROOT cneg = f32[64] negate(cp)
+}
+
+ENTRY entry {
+  p0 = f32[64] parameter(0)
+  p1 = f32[64]{0:S(1)} parameter(1)
+  a = f32[64] negate(p0)
+  b = f32[64]{0:S(1)} negate(p1)
+  zero = s32[] constant(0)
+  init = (f32[64], s32[]) tuple(a, zero)
+  while = (f32[64], s32[]) while(init), condition=cond, body=body
+  out = f32[64] get-tuple-element(while), index=0
+  c = f32[64] add(out, a)
+  called = f32[64] call(c), to_apply=negate_callee
+  ROOT root = (f32[64], f32[64]{0:S(1)}) tuple(called, b)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseHloText(hlo_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info_));
+  ModulePressureState module_pressure_state(module.get(), alias_analysis.get(),
+                                            ShapeSizeBytes, IsTopDown());
+  module_pressure_state.InitializePressureStates();
+  auto metadata = [&](const HloComputation* computation) {
+    return module_pressure_state.GetOrCreatePressureMetadata(computation);
+  };
+  auto expect_same = [](const MemoryPressureTracker& seeded,
+                        const MemoryPressureTracker& fresh) {
+    EXPECT_EQ(seeded.memory_usage(), fresh.memory_usage());
+    EXPECT_EQ(seeded.initial_memory_pressure(),
+              fresh.initial_memory_pressure());
+    EXPECT_EQ(seeded.live_buffers(), fresh.live_buffers());
+    EXPECT_EQ(seeded.pressure_state().memory_peak,
+              fresh.pressure_state().memory_peak);
+    EXPECT_EQ(seeded.pressure_state().live_ids_at_bottom,
+              fresh.pressure_state().live_ids_at_bottom);
+  };
+  // Walks `computation` in scheduling order on both trackers. A callee of
+  // `seeded` starts from it; a callee of `fresh` is constructed from its live
+  // buffers.
+  std::function<void(const HloComputation*, MemoryPressureTracker&,
+                     MemoryPressureTracker&)>
+      walk = [&](const HloComputation* computation,
+                 MemoryPressureTracker& seeded, MemoryPressureTracker& fresh) {
+        absl::Span<HloInstruction* const> sequence =
+            module->schedule().sequence(computation).instructions();
+        for (int i = 0; i < sequence.size(); ++i) {
+          const HloInstruction* instruction =
+              sequence[IsTopDown() ? i : sequence.size() - 1 - i];
+          SCOPED_TRACE(instruction->name());
+          for (const HloComputation* callee :
+               instruction->called_computations()) {
+            SCOPED_TRACE(callee->name());
+            MemoryPressureTracker seeded_callee(metadata(callee), seeded);
+            MemoryPressureTracker fresh_callee(metadata(callee),
+                                               fresh.live_buffers());
+            expect_same(seeded_callee, fresh_callee);
+            walk(callee, seeded_callee, fresh_callee);
+          }
+          EXPECT_EQ(seeded.MemoryPressureDifference(instruction),
+                    fresh.MemoryPressureDifference(instruction));
+          seeded.UpdateBuffers(instruction);
+          fresh.UpdateBuffers(instruction);
+          expect_same(seeded, fresh);
+        }
+      };
+  // The entry computation starts from live buffers that include one in memory
+  // space 1, which a fresh tracker leaves out of the pressure.
+  const LiveBufferSet initial_live_buffers = {
+      alias_analysis->GetUniqueBufferAt(FindInstruction(module.get(), "p0"))
+          .id(),
+      alias_analysis->GetUniqueBufferAt(FindInstruction(module.get(), "b"))
+          .id()};
+  const HloComputation* entry = module->entry_computation();
+  MemoryPressureTracker seeded(metadata(entry), initial_live_buffers);
+  MemoryPressureTracker fresh(metadata(entry), initial_live_buffers);
+  walk(entry, seeded, fresh);
 }
 
 TEST_F(LatencyHidingSchedulerTest, AllReduceAsyncBalance) {
@@ -6180,6 +6394,51 @@ BENCHMARK(BM_FindAndExtractBestNodeAvailable)
     ->Arg(1000)
     ->Arg(10000)
     ->Arg(40000);
+
+static void BM_ResetPressureStates(::testing::benchmark::State& state) {
+  // range(1) reduces, each calling its own reducer computation while the
+  // range(0) negates are live, as in large modules with many unfused reduces.
+  const int num_live = state.range(0);
+  const int num_calls = state.range(1);
+  std::string hlo = "HloModule module, is_scheduled=true\n";
+  for (int i = 0; i < num_calls; ++i) {
+    absl::StrAppend(&hlo, "add.", i,
+                    " {\n  x = f32[] parameter(0)\n  y = f32[] parameter(1)\n"
+                    "  ROOT sum = f32[] add(x, y)\n}\n");
+  }
+  hlo +=
+      "ENTRY entry {\n  p = f32[64] parameter(0)\n  zero = f32[] constant(0)\n";
+  std::vector<std::string> root_shapes;
+  std::vector<std::string> root_operands;
+  for (int i = 0; i < num_live; ++i) {
+    absl::StrAppend(&hlo, "  neg.", i, " = f32[64] negate(p)\n");
+    root_shapes.push_back("f32[64]");
+    root_operands.push_back(absl::StrCat("neg.", i));
+  }
+  for (int i = 0; i < num_calls; ++i) {
+    absl::StrAppend(&hlo, "  reduce.", i,
+                    " = f32[] reduce(p, zero), dimensions={0}, to_apply=add.",
+                    i, "\n");
+    root_shapes.push_back("f32[]");
+    root_operands.push_back(absl::StrCat("reduce.", i));
+  }
+  absl::StrAppend(&hlo, "  ROOT root = (", absl::StrJoin(root_shapes, ", "),
+                  ") tuple(", absl::StrJoin(root_operands, ", "), ")\n}\n");
+
+  BMHelper bm;
+  ASSERT_OK_AND_ASSIGN(auto module, bm.ParseForBM(hlo, HloModuleConfig()));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info));
+  ModulePressureState module_pressure_state(module.get(), alias_analysis.get(),
+                                            ShapeSizeBytes);
+  // Builds the per computation metadata, which later resets reuse.
+  module_pressure_state.InitializePressureStates();
+  for (auto s : state) {
+    module_pressure_state.ResetPressureStates();
+  }
+}
+BENCHMARK(BM_ResetPressureStates)->Args({1000, 1000})->Args({10000, 1000});
 
 TEST_F(LatencyHidingSchedulerTest, NopBypassPreferenceInteraction) {
   absl::string_view hlo_string = R"(
