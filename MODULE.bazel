@@ -74,6 +74,7 @@ single_version_override(
         "//third_party/absl:btree.patch",
         "//third_party/absl:endian.patch",
         "//third_party/absl:raw_hash_set.patch",
+        "//third_party/absl:source_location.patch",
     ],
     version = "20260526.0",
 )
