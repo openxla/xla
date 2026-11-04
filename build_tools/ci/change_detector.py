@@ -29,6 +29,8 @@ import sys
 import time
 from typing import List, Optional, Tuple
 
+from build_tools.ci import build_type as build_type_lib
+
 # Global configuration and external repository definition files whose
 # modification invalidates incremental bazel-diff target hashes (which run with
 # --excludeExternalTargets and fine-grained hash only @tsl) and necessitates a
@@ -60,6 +62,8 @@ GLOBAL_BAZEL_CONFIG_PATTERNS: Tuple[str, ...] = (
         r"^third_party/(?!tsl/tsl/|py/(numpy|rules_pywrap)/|rules_python/)"
         r".*/BUILD(\.bazel|\.system)?$"
     ),
+    r"^third_party/py/python_wheel\.bzl$",
+    r"^tools/toolchains/",
 )
 
 # Strict allowlist pattern for Git revision arguments (hexadecimal commit SHAs
@@ -83,6 +87,11 @@ BUILD_OR_PROTO_PATTERN = re.compile(r"((^|/)BUILD(\.bazel)?$|\.bzl$|\.proto$)")
 XLA_TEST_OR_BENCHMARK_PATTERN = re.compile(
     r"((_test|_tests|_test_gpu|_test_cpu|_benchmark)\.(cc|h|cu\.cc|py)$"
     r"|\.hlo$)"
+)
+
+# Safe characters allowed in Bazel target labels passed to `bazel query`.
+SAFE_BAZEL_LABEL_PATTERN = re.compile(
+    r"^@[A-Za-z0-9_.-]+//[A-Za-z0-9_./+-]*:[A-Za-z0-9_./+-]+$"
 )
 
 
@@ -259,21 +268,28 @@ def get_changed_files(
       line.strip().replace("\\", "/")
       for line in result.stdout.splitlines()
       if line.strip()
+      and not line.strip().replace("\\", "/").startswith("build_tools/ci/")
   ]
 
 
-def is_build_or_proto_or_ci_core_file(file_path: str) -> bool:
-  """Returns True if file_path requires a full run on JAX presubmits."""
+def is_ci_or_global_config_file(file_path: str) -> bool:
+  """Returns True if file_path is a global Bazel config or CI workflow/tool."""
   normalized = file_path.replace("\\", "/")
   if matches_any_pattern(normalized, GLOBAL_BAZEL_CONFIG_PATTERNS):
-    return True
-  if BUILD_OR_PROTO_PATTERN.search(normalized):
     return True
   if normalized.startswith((".github/", "build_tools/")) and not (
       DOCS_OR_METADATA_PATTERN.search(normalized)
   ):
     return True
   return False
+
+
+def is_build_or_proto_or_ci_core_file(file_path: str) -> bool:
+  """Returns True if file_path is a BUILD, .bzl, .proto, global config, or CI file."""
+  normalized = file_path.replace("\\", "/")
+  return is_ci_or_global_config_file(normalized) or bool(
+      BUILD_OR_PROTO_PATTERN.search(normalized)
+  )
 
 
 def is_unimpacted_for_all_jax(file_path: str) -> bool:
@@ -292,12 +308,236 @@ def is_unimpacted_for_all_jax(file_path: str) -> bool:
   return False
 
 
+def normalize_external_bazel_label(label: str) -> str | None:
+  """Normalizes an @xla or @tsl Bazel label (including Bzlmod canonical forms).
+
+  Canonicalizes repository names (`@@xla+//...`, `@@xla~override//...`,
+  `@@+tsl_extension+tsl//...`) to `@xla//...` or `@tsl//...`, maps
+  `@xla//third_party/tsl/...` to `@tsl//...`, and normalizes `:BUILD.bazel` to
+  `:BUILD` so build file labels match regardless of extension.
+
+  Args:
+    label: Raw Bazel label string.
+
+  Returns:
+    Normalized `@xla//pkg:target` or `@tsl//pkg:target` string, or None if the
+    label is malformed, contains disallowed characters, or does not belong to
+    `@xla` or `@tsl`.
+  """
+  stripped = label.strip()
+  if not stripped.startswith("@") or "//" not in stripped:
+    return None
+  repo_part, pkg_and_target = stripped.split("//", 1)
+  if ":" not in pkg_and_target:
+    return None
+
+  if "tsl" in repo_part:
+    repo = "@tsl"
+  elif "xla" in repo_part:
+    if pkg_and_target.startswith("third_party/tsl/"):
+      repo = "@tsl"
+      pkg_and_target = pkg_and_target[len("third_party/tsl/") :]
+    elif pkg_and_target.startswith("third_party/tsl:"):
+      repo = "@tsl"
+      pkg_and_target = pkg_and_target[len("third_party/tsl") :]
+    else:
+      repo = "@xla"
+  else:
+    return None
+
+  package_path, target_name = pkg_and_target.split(":", 1)
+  if target_name == "BUILD.bazel":
+    target_name = "BUILD"
+  normalized = f"{repo}//{package_path}:{target_name}"
+  if not SAFE_BAZEL_LABEL_PATTERN.fullmatch(normalized):
+    return None
+  return normalized
+
+
+def resolve_bazel_file_label(file_path: str, xla_dir: str) -> str | None:
+  """Maps a relative file path in xla_dir to its external Bazel target label.
+
+  Walks up ancestor directories of `file_path` inside `xla_dir` to find the
+  enclosing Bazel package (`BUILD.bazel` or `BUILD`) and returns the label as
+  referenced from the JAX workspace (`@xla//pkg:target` or `@tsl//pkg:target`).
+  When `file_path` was deleted and no longer exists on disk, maps it to its
+  enclosing package's `:BUILD` target so reachability is checked against
+  `buildfiles(deps(...))`.
+
+  Args:
+    file_path: Relative path of the modified file within `xla_dir`.
+    xla_dir: Path to the XLA repository root on disk.
+
+  Returns:
+    The external Bazel label string, or None if the file cannot be safely mapped
+    to a package in `@xla` or `@tsl`.
+  """
+  normalized = file_path.replace("\\", "/").lstrip("/")
+  if not normalized:
+    return None
+  full_path = os.path.join(xla_dir, normalized)
+  file_exists = os.path.isfile(full_path)
+
+  current_dir = os.path.dirname(normalized)
+  package_path: str | None = None
+  target_name: str | None = None
+  while True:
+    abs_dir = os.path.join(xla_dir, current_dir) if current_dir else xla_dir
+    if os.path.isfile(os.path.join(abs_dir, "BUILD.bazel")) or os.path.isfile(
+        os.path.join(abs_dir, "BUILD")
+    ):
+      package_path = current_dir
+      if file_exists:
+        target_name = (
+            normalized[len(current_dir) + 1 :] if current_dir else normalized
+        )
+      else:
+        target_name = "BUILD"
+      break
+    if not current_dir:
+      return None
+    parent = os.path.dirname(current_dir)
+    if parent == current_dir:
+      return None
+    current_dir = parent
+
+  if package_path is None or not target_name:
+    return None
+
+  if package_path == "third_party/tsl" or package_path.startswith(
+      "third_party/tsl/"
+  ):
+    tsl_package = package_path[len("third_party/tsl") :].lstrip("/")
+    raw_label = f"@tsl//{tsl_package}:{target_name}"
+  else:
+    raw_label = f"@xla//{package_path}:{target_name}"
+
+  return normalize_external_bazel_label(raw_label)
+
+
+def get_positive_target_patterns(
+    target_patterns: Sequence[str],
+) -> tuple[str, ...]:
+  """Returns non-empty positive Bazel target patterns."""
+  positive_patterns = []
+  for pattern in target_patterns:
+    stripped = pattern.strip()
+    if stripped and not stripped.startswith("-"):
+      positive_patterns.append(stripped)
+  return tuple(positive_patterns)
+
+
+def are_files_reachable_in_jax(
+    file_labels: Sequence[str],
+    jax_roots: Sequence[str],
+    jax_dir: str,
+    *,
+    startup_options: Sequence[str] = (),
+    query_options: Sequence[str] = (),
+) -> bool | None:
+  """Checks via `bazel query` whether any label in file_labels is in deps(jax_roots).
+
+  Queries `deps(jax_roots) + buildfiles(deps(jax_roots))` filtered to `@xla` and
+  `@tsl` targets and intersects the normalized labels in Python. This avoids
+  passing `set(file_labels)` to Bazel, which would fail with exit code 7
+  (`NoSuchTargetException`) when a modified file is conditionally excluded from
+  the current platform's BUILD evaluation (e.g. `if_cuda_is_configured` or
+  `if_rocm_is_configured` during a CPU build).
+
+  Args:
+    file_labels: External Bazel file labels (e.g. `@xla//pkg:file.cc`).
+    jax_roots: Root JAX targets for the current backend.
+    jax_dir: Path to the JAX repository root where `bazel query` is executed.
+    startup_options: Bazel startup flags placed before `query`.
+    query_options: Additional `bazel query` flags (such as `--config`,
+      `--repo_env`, `--override_repository`, and `--override_module`).
+
+  Returns:
+    True if at least one file label is reachable from `jax_roots`, False if
+    `bazel query` succeeds and the intersection is empty, or None if
+    `file_labels` or `jax_roots` is empty, contains an invalid label, or the
+    query cannot be executed or fails.
+  """
+  if not file_labels or not jax_roots:
+    return None
+  normalized_targets = set()
+  for label in file_labels:
+    normalized = normalize_external_bazel_label(label)
+    if normalized is None:
+      return None
+    normalized_targets.add(normalized)
+
+  roots_expr = " + ".join(jax_roots)
+  query_expr = (
+      r'filter("^@+[^/]*(xla|tsl)[^/]*//", '
+      f"deps({roots_expr}) + buildfiles(deps({roots_expr})))"
+  )
+  command = [
+      "bazel",
+      *startup_options,
+      "query",
+      "--noshow_progress",
+      *query_options,
+      query_expr,
+  ]
+  try:
+    result = subprocess.run(
+        command,
+        cwd=jax_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=600,
+    )
+  except (OSError, subprocess.SubprocessError) as e:
+    logging.warning("Failed to run bazel query in %s: %s", jax_dir, e)
+    return None
+
+  if result.returncode != 0:
+    logging.warning(
+        "bazel query failed with exit code %d: %s",
+        result.returncode,
+        result.stderr.strip()[-2000:],
+    )
+    return None
+
+  for line in result.stdout.splitlines():
+    normalized = normalize_external_bazel_label(line)
+    if normalized in normalized_targets:
+      return True
+  return False
+
+
+def _fallback_jax_run_decision(
+    changed_files: Sequence[str], start_time: float
+) -> SkipDecision:
+  """Returns the fail-open SkipDecision(should_skip=False) for a JAX build."""
+  if any(
+      is_build_or_proto_or_ci_core_file(file_path)
+      for file_path in changed_files
+  ):
+    reason = "Build configuration, proto, or CI workflow modified"
+  else:
+    reason = "Changed files may impact JAX build targets"
+  return SkipDecision(
+      should_skip=False,
+      reason=reason,
+      changed_files_count=len(changed_files),
+      elapsed_seconds=time.time() - start_time,
+  )
+
+
 def evaluate_skip(
     base_sha: str,
     head_sha: str = "HEAD",
-    cwd: str = ".",
+    xla_repo_root: str = ".",
     *,
     is_jax_build: bool = False,
+    jax_dir: str | None = None,
+    build_type: build_type_lib.BuildType | None = None,
+    target_patterns: Sequence[str] = (),
+    startup_options: Sequence[str] = (),
+    query_options: Sequence[str] = (),
 ) -> SkipDecision:
   """Evaluates whether a CI build can be skipped based on git changed files.
 
@@ -307,14 +547,26 @@ def evaluate_skip(
   Args:
     base_sha: Base git commit SHA to diff against.
     head_sha: Head git commit SHA or ref.
-    cwd: Path to the git repository root to inspect.
+    xla_repo_root: Path to the XLA git repository root to inspect.
     is_jax_build: Whether the build under evaluation is a JAX CI job.
+    jax_dir: Optional path to the JAX workspace root. When provided for a CPU
+      JAX build, uses `bazel query` to check whether modified XLA files are in
+      the transitive dependency graph of the JAX build's targets; when None,
+      falls back to file-path heuristics.
+    build_type: Optional BuildType enum value of the build under evaluation.
+      When None or not a CPU JAX build, `bazel query` is skipped and evaluation
+      falls back to file-path heuristics.
+    target_patterns: Bazel target patterns configured for the build.
+    startup_options: Optional Bazel startup flags for `bazel query` in
+      `jax_dir`.
+    query_options: Optional `bazel query` flags (`--config`, `--repo_env`,
+      `--override_repository`, `--override_module`) for `jax_dir`.
 
   Returns:
     A SkipDecision indicating whether the build can be skipped and why.
   """
   start_time = time.time()
-  cwd = os.path.abspath(cwd)
+  xla_repo_root = os.path.abspath(xla_repo_root)
 
   try:
     base_sha = validate_git_ref(base_sha)
@@ -326,10 +578,10 @@ def evaluate_skip(
         elapsed_seconds=time.time() - start_time,
     )
 
-  ensure_base_fetched(base_sha, head_sha, cwd=cwd)
+  ensure_base_fetched(base_sha, head_sha, cwd=xla_repo_root)
 
   try:
-    changed_files = get_changed_files(base_sha, head_sha, cwd=cwd)
+    changed_files = get_changed_files(base_sha, head_sha, cwd=xla_repo_root)
   except (OSError, subprocess.SubprocessError, ValueError) as e:
     return SkipDecision(
         should_skip=False,
@@ -362,7 +614,7 @@ def evaluate_skip(
         elapsed_seconds=time.time() - start_time,
     )
 
-  if any(is_build_or_proto_or_ci_core_file(f) for f in changed_files):
+  if any(is_ci_or_global_config_file(file_path) for file_path in changed_files):
     return SkipDecision(
         should_skip=False,
         reason="Build configuration, proto, or CI workflow modified",
@@ -370,7 +622,7 @@ def evaluate_skip(
         elapsed_seconds=time.time() - start_time,
     )
 
-  if all(is_unimpacted_for_all_jax(f) for f in changed_files):
+  if all(is_unimpacted_for_all_jax(file_path) for file_path in changed_files):
     return SkipDecision(
         should_skip=True,
         reason="Modified files do not affect JAX builds",
@@ -378,9 +630,59 @@ def evaluate_skip(
         elapsed_seconds=time.time() - start_time,
     )
 
+  # Unconfigured `bazel query` is used only for CPU JAX builds. GPU PJRT plugin
+  # targets (`@xla//xla/pjrt/gpu:se_gpu_pjrt_client` and
+  # `@xla//xla/service:gpu_plugin`) attach CUDA, ROCm, and SYCL compiler
+  # registrations via `select()`, which unconfigured `bazel query` traverses
+  # unconditionally across all backends.
+  if not jax_dir or not build_type_lib.is_jax_cpu_build(build_type):
+    return _fallback_jax_run_decision(changed_files, start_time)
+
+  jax_roots = get_positive_target_patterns(target_patterns)
+  if not jax_roots:
+    return _fallback_jax_run_decision(changed_files, start_time)
+
+  candidate_files = [
+      file_path
+      for file_path in changed_files
+      if not is_unimpacted_for_all_jax(file_path)
+  ]
+  file_labels: list[str] = []
+  for file_path in candidate_files:
+    label = resolve_bazel_file_label(file_path, xla_dir=xla_repo_root)
+    if label is None:
+      return _fallback_jax_run_decision(changed_files, start_time)
+    file_labels.append(label)
+  if not file_labels:
+    return _fallback_jax_run_decision(changed_files, start_time)
+
+  reachable = are_files_reachable_in_jax(
+      file_labels,
+      jax_roots,
+      os.path.abspath(jax_dir),
+      startup_options=startup_options,
+      query_options=query_options,
+  )
+  if reachable is None:
+    return _fallback_jax_run_decision(changed_files, start_time)
+
+  if not reachable:
+    return SkipDecision(
+        should_skip=True,
+        reason=(
+            "Modified files are not in the Bazel dependency graph of JAX"
+            " build targets"
+        ),
+        changed_files_count=changed_count,
+        elapsed_seconds=time.time() - start_time,
+    )
+
   return SkipDecision(
       should_skip=False,
-      reason="Changed files may impact JAX build targets",
+      reason=(
+          "Modified files are in the Bazel dependency graph of JAX build"
+          " targets"
+      ),
       changed_files_count=changed_count,
       elapsed_seconds=time.time() - start_time,
   )
@@ -459,9 +761,27 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
       help="Build name used in step summary reports.",
   )
   parser.add_argument(
+      "--build_type",
+      type=build_type_lib.BuildType.from_str,
+      choices=list(build_type_lib.BuildType),
+      default=None,
+      help="Optional BuildType enum value of the build under evaluation.",
+  )
+  parser.add_argument(
       "--is_jax_build",
       action="store_true",
       help="Whether the build under evaluation is a JAX CI job.",
+  )
+  parser.add_argument(
+      "--jax_dir",
+      default="",
+      help="Optional path to the JAX workspace root for Bazel query analysis.",
+  )
+  parser.add_argument(
+      "--target_pattern",
+      action="append",
+      default=[],
+      help="Repeatable Bazel target pattern for the build under evaluation.",
   )
   parser.add_argument(
       "--github_output",
@@ -493,8 +813,11 @@ def run_cli(args: argparse.Namespace) -> int:
   decision = evaluate_skip(
       base_sha,
       args.head_sha.strip() or "HEAD",
-      cwd=args.cwd,
+      xla_repo_root=args.cwd,
       is_jax_build=args.is_jax_build,
+      jax_dir=args.jax_dir.strip() or None,
+      build_type=args.build_type,
+      target_patterns=tuple(args.target_pattern),
   )
   report_skip(decision, args.build_name)
   _write_github_output(args.github_output, should_skip=decision.should_skip)

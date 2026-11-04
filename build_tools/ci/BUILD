@@ -34,14 +34,23 @@ package(
 )
 
 pytype_strict_library(
+    name = "build_type",
+    srcs = ["build_type.py"],
+)
+
+pytype_strict_library(
     name = "change_detector",
     srcs = ["change_detector.py"],
+    deps = [
+        ":build_type",
+    ],
 )
 
 py_test(
     name = "change_detector_test",
     srcs = ["change_detector_test.py"],
     deps = [
+        ":build_type",
         ":change_detector",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
@@ -72,6 +81,7 @@ pytype_strict_library(
     srcs = ["build.py"],
     deps = [
         ":bazel_diff",
+        ":build_type",
         ":change_detector",
     ],
 )
@@ -81,6 +91,7 @@ pytype_strict_binary(
     srcs = ["build.py"],
     deps = [
         ":bazel_diff",
+        ":build_type",
         ":change_detector",
     ],
 )

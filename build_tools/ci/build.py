@@ -25,7 +25,6 @@ To update the goldens associated with this file, run:
 
 import argparse
 import dataclasses
-import enum
 import logging
 import os
 import subprocess
@@ -42,8 +41,11 @@ if _XLA_SRC_ROOT not in sys.path:
 
 # pylint: disable=g-import-not-at-top
 from build_tools.ci import bazel_diff
+from build_tools.ci import build_type as build_type_lib
 from build_tools.ci import change_detector
 # pylint: enable=g-import-not-at-top
+
+BuildType = build_type_lib.BuildType
 
 # TODO(ddunleavy): move this to the bazelrc
 _DEFAULT_BAZEL_OPTIONS = dict(
@@ -91,44 +93,6 @@ def sh(args, check=True, **kwargs):
 def _dict_to_cli_options(d: Dict[str, Any]) -> List[str]:
   # pylint: disable=g-bool-id-comparison
   return [f"--{k}" if v is True else f"--{k}={v}" for k, v in d.items()]
-
-
-class BuildType(enum.Enum):
-  """Enum representing all types of builds.
-
-  Should be named as `REPO,OS,HOST_TYPE,BACKEND,GPU_TYPE,CI_TYPE`.
-  """
-
-  XLA_LINUX_X86_CPU_GITHUB_ACTIONS = enum.auto()
-  XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_CPU_WORKSPACE_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_ARM64_CPU_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_T4_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_8X_H100_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_HERMETIC_ROCM_GITHUB_ACTIONS = enum.auto()
-
-  # Presubmit builds for regression testing.
-  XLA_LINUX_ARM64_CPU_48_VCPU_PRESUBMIT_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_CPU_128_VCPU_PRESUBMIT_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_L4_16_VCPU_BENCHMARK_PRESUBMIT_GITHUB_ACTIONS = enum.auto()
-  XLA_LINUX_X86_GPU_A4_224_VCPU_BENCHMARK_PRESUBMIT_GITHUB_ACTIONS = enum.auto()
-
-  XLA_MACOS_X86_CPU_KOKORO = enum.auto()
-  XLA_MACOS_ARM64_CPU_KOKORO = enum.auto()
-
-  JAX_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS = enum.auto()
-  JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS = enum.auto()
-  JAX_LINUX_X86_GPU_T4_GITHUB_ACTIONS = enum.auto()
-
-  @classmethod
-  def from_str(cls, s):
-    try:
-      return cls[s.replace(" ", "_").upper()]
-    except KeyError:
-      # Sloppy looking exception handling, but argparse will catch ValueError
-      # and give a pleasant error message. KeyError would not work here.
-      raise ValueError  # pylint: disable=raise-missing-from
 
 
 @dataclasses.dataclass(frozen=True, **_KW_ONLY_IF_PYTHON310)
@@ -823,7 +787,7 @@ Build(
     override_module=dict(
         xla=f"{_GITHUB_WORKSPACE}\\openxla\\xla",
     ),
-    options=_DEFAULT_BAZEL_OPTIONS,
+    options={**_DEFAULT_BAZEL_OPTIONS, "remote_download_minimal": True},
     repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
     subcommand="build",
     startup_options={
@@ -903,6 +867,27 @@ def get_xla_dir(build: Build) -> str:
       if not expanded.startswith("$"):
         return expanded
   return "."
+
+
+def get_query_options(build: Build) -> list[str]:
+  """Returns Bazel query flags for the given build."""
+  configs = [f"--config={config}" for config in build.configs]
+  repo_env = [
+      f"--repo_env={key}={value}" for key, value in build.repo_env.items()
+  ]
+  override_repository = [
+      f"--override_repository={key}={os.path.expandvars(value)}"
+      for key, value in build.override_repository.items()
+  ]
+  override_module = [
+      f"--override_module={key}={os.path.expandvars(value)}"
+      for key, value in build.override_module.items()
+  ]
+  # Disable ResultStore BES uploads inherited from .bazelrc during query.
+  bes_overrides = ["--bes_backend=", "--bes_results_url="]
+  return (
+      configs + repo_env + override_repository + override_module + bes_overrides
+  )
 
 
 def execute_build_commands(
@@ -988,11 +973,17 @@ def main() -> None:
   target_pattern_file = None
   if is_presubmit and base_sha and not disabled:
     xla_dir = get_xla_dir(build)
+    is_jax = build.repo == "google/jax"
     skip_decision = change_detector.evaluate_skip(
         base_sha,
         head_sha,
-        cwd=xla_dir,
-        is_jax_build=(build.repo == "google/jax"),
+        xla_repo_root=xla_dir,
+        is_jax_build=is_jax,
+        jax_dir="." if is_jax else None,
+        build_type=build.type_,
+        target_patterns=build.target_patterns,
+        startup_options=_dict_to_cli_options(build.startup_options),
+        query_options=get_query_options(build),
     )
     if skip_decision.should_skip:
       change_detector.report_skip(skip_decision, str(build.type_))
