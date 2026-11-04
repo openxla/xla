@@ -1356,17 +1356,14 @@ absl::Status BufferAssignment::CombineTempAllocations(
         combined_allocation->cross_color_buffers_.end(),
         temp_allocation.cross_color_buffers_.begin(),
         temp_allocation.cross_color_buffers_.end());
-
-    if (temp_buffer_color.has_value()) {
-      if (combined_allocation->color() == 0) {
-        combined_allocation->set_color(temp_buffer_color.value());
-      }
-    }
   }
   // Replace all existing temporary allocations with the new combined
   // allocations.
   allocations_.erase(first_temp_it, allocations_.end());
   for (BufferAllocation& combined : combined_allocations) {
+    if (temp_buffer_color.has_value() && combined.color() == 0) {
+      combined.set_color(temp_buffer_color.value());
+    }
     temp_allocation_total_size_ += combined.size();
     allocations_.push_back(std::move(combined));
   }

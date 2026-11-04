@@ -158,17 +158,28 @@ absl::Status LoadCache(IrEmitterContext& ir_emitter_context,
 }
 
 absl::StatusOr<std::unique_ptr<BufferAssignment>> RunBufferAssignment(
-    const HloModule* module, const GpuAliasInfo* alias_info,
+    const HloModule* module, const GpuTopology& gpu_topology,
+    const GpuAliasInfo* alias_info,
     BufferValue::SizeFunction buffer_size_bytes_function) {
   ScopedAnnotation annotation(Phase("XlaBufferAssignment", module));
 
   const DebugOptions& options = module->config().debug_options();
 
+  const int64_t num_module_devices =
+      module->config().num_partitions() * module->config().replica_count();
+  const bool is_fully_sharded =
+      gpu_topology.number_of_devices() > 0 &&
+      num_module_devices == gpu_topology.number_of_devices();
+
   std::optional<BufferValue::Color> color =
-      options.xla_gpu_temp_buffer_use_separate_color()
+      (options.xla_gpu_temp_buffer_use_collective_color() && is_fully_sharded)
           ? std::optional<BufferValue::Color>(
-                (int)MemorySpaceColor::kTempBuffer)
-          : std::nullopt;
+                static_cast<BufferValue::Color>(MemorySpaceColor::kCollective))
+          : (options.xla_gpu_temp_buffer_use_separate_color()
+                 ? std::optional<BufferValue::Color>(
+                       static_cast<BufferValue::Color>(
+                           MemorySpaceColor::kTempBuffer))
+                 : std::nullopt);
 
   BufferAssigner::Options opts;
   opts.allocate_buffers_for_constants = true;
@@ -229,7 +240,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
 
   ABSL_ASSIGN_OR_RETURN(
       results.buffer_assignment,
-      RunBufferAssignment(hlo_module, alias_info,
+      RunBufferAssignment(hlo_module, gpu_topology, alias_info,
                           std::move(buffer_size_bytes_function)));
   ABSL_ASSIGN_OR_RETURN(results.output_info,
                         GetOutputInfo(*hlo_module, *results.buffer_assignment));
