@@ -1532,8 +1532,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
       }
     }
 
-    VLOG(1) << "Start calling RunAsync for "
-            << executable->executable()->module().name()
+    VLOG(1) << "Start calling RunAsync for " << executable->executable()->name()
             << ", device=" << device->DebugString()
             << ", run_id=" << run_options.run_id().ToInt();
 
@@ -1578,7 +1577,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     }
 
     VLOG(1) << "Finish calling RunAsync for "
-            << executable->executable()->module().name()
+            << executable->executable()->name()
             << ", device=" << device->DebugString()
             << ", run_id=" << run_options.run_id().ToInt()
             << ", replica=" << replica << ", partition=" << partition
