@@ -160,6 +160,49 @@ def run_git_best_effort(
     return None
 
 
+def get_merge_commit_first_parent(
+    original_head: str,
+    head_sha: str,
+    cwd: str = ".",
+) -> Optional[str]:
+  """Returns the first parent of original_head if it merges head_sha.
+
+  In GitHub Actions pull_request workflows, actions/checkout checks out a
+  synthetic merge commit whose first parent is the target branch tip and whose
+  second parent is the PR branch head (head_sha). Reading the commit header via
+  `git cat-file -p` works even in a `--depth=1` shallow checkout before parents
+  are fetched.
+
+  Args:
+    original_head: Git SHA currently checked out at HEAD.
+    head_sha: PR head git SHA.
+    cwd: Directory where the git command should be executed.
+
+  Returns:
+    The validated first-parent SHA if original_head is a 2-parent merge commit
+    whose second parent matches head_sha, otherwise None.
+  """
+  if original_head == head_sha:
+    return None
+  result = run_git_best_effort(["cat-file", "-p", original_head], cwd=cwd)
+  if not result or result.returncode != 0 or not result.stdout:
+    return None
+  parents: List[str] = []
+  for line in result.stdout.splitlines():
+    if not line.strip():
+      break
+    if line.startswith("parent "):
+      parts = line.split()
+      if len(parts) == 2:
+        parents.append(parts[1].strip())
+  if len(parents) == 2 and parents[1] == head_sha:
+    try:
+      return validate_git_ref(parents[0])
+    except ValueError:
+      return None
+  return None
+
+
 def get_merge_base(
     base_sha: str, head_sha: str = "HEAD", cwd: str = "."
 ) -> Optional[str]:
@@ -325,6 +368,25 @@ def evaluate_skip(
         reason=f"Invalid git revision parameter: {e}",
         elapsed_seconds=time.time() - start_time,
     )
+
+  if head_sha != "HEAD":
+    head_result = run_git_best_effort(["rev-parse", "HEAD"], cwd=cwd)
+    if (
+        head_result
+        and head_result.returncode == 0
+        and head_result.stdout.strip()
+    ):
+      try:
+        original_head = validate_git_ref(head_result.stdout.strip())
+      except ValueError:
+        original_head = ""
+      if original_head:
+        merge_first_parent = get_merge_commit_first_parent(
+            original_head, head_sha, cwd=cwd
+        )
+        if merge_first_parent:
+          base_sha = merge_first_parent
+          head_sha = original_head
 
   ensure_base_fetched(base_sha, head_sha, cwd=cwd)
 
