@@ -27,10 +27,10 @@ limitations under the License.
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/Pass/PassManager.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/service/dump.h"
 #include "xla/service/hlo_module_config.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 

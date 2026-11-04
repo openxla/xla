@@ -15,20 +15,21 @@ limitations under the License.
 
 #include "xla/tools/hlo_module_loader.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "riegeli/bytes/string_writer.h"
+#include "tsl/platform/status_matchers.h"  // IWYU pragma: keep
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_proto_util.h"
 #include "xla/util/split_proto/split_hlo_writer.h"
-#include "tsl/platform/status_matchers.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace {

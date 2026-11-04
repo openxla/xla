@@ -24,12 +24,12 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "tsl/platform/init_main.h"
 #include "xla/literal.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   tsl::port::InitMain(argv[0], &argc, &argv);
 
   if (argc < 2) {

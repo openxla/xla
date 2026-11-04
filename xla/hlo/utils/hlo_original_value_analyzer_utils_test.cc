@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/utils/hlo_original_value_analyzer_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/parser/hlo_parser.h"

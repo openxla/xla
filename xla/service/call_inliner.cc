@@ -41,13 +41,15 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/ir/hlo_schedule.h"
-#include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/ir/stack_frames.h"
+#include "xla/hlo/pass/hlo_pass_context.h"
+#include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/hlo/pass/hlo_pass_options.h"
+#include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/hlo/transforms/propagate_call_metadata.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/call_graph.h"
-#include "xla/service/hlo_domain_isolator.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
@@ -101,7 +103,7 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     // Account for control edges.
     for (HloInstruction* control_predecessor : hlo->control_predecessors()) {
       ABSL_ASSIGN_OR_RETURN(HloInstruction * new_control_predecessor,
-                       Resolve(control_predecessor));
+                            Resolve(control_predecessor));
       ABSL_RETURN_IF_ERROR(
           new_control_predecessor->AddControlDependencyTo(new_hlo_pointer));
     }
@@ -245,6 +247,23 @@ bool InlineComposites(
              instruction->frontend_attributes().map().at("composite.name"));
 }
 
+class CallInlinerFactory : public HloPassFactory {
+ public:
+  absl::string_view name() const override { return "call-inliner"; }
+
+  absl::StatusOr<std::unique_ptr<HloPassInterface>> Create(
+      const HloPassContext&, const HloPassOptions& options) const override {
+    return std::make_unique<CallInliner>(
+        options.Get<bool>("single_call_site").value_or(false),
+        /*composites_to_preserve=*/absl::flat_hash_set<std::string>{},
+        /*override_policy=*/std::nullopt,
+        options.Get<bool>("propagate_metadata").value_or(true));
+  }
+};
+
+const HloPassFactory* const kCallInlinerRegistration =
+    RegisterHloPassFactory<CallInlinerFactory>();
+
 }  // namespace
 
 // Introduces a specific attribute so that the frontend has the direct
@@ -303,8 +322,12 @@ CallInliner::Inline(HloInstruction* call, bool propagate_metadata) {
         if (instruction->IsFusible()) {
           FrontendAttributes frontend_attributes =
               instruction->frontend_attributes();
-          frontend_attributes.mutable_map()->insert(
-              {attribute, call_attributes.map().at(attribute)});
+          // Use assignment to overwrite any existing inner attributes. This
+          // ensures that in nested fusion scopes, the outermost scope's ID
+          // overrides inner IDs, unifying the entire region under a single
+          // logical ID instead of fragmenting it.
+          (*frontend_attributes.mutable_map())[attribute] =
+              call_attributes.map().at(attribute);
           instruction->set_frontend_attributes(frontend_attributes);
         }
       }
@@ -410,7 +433,7 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
       // callee computation beforehand, so we can find its schedule.
       HloComputation* callee = instruction->to_apply();
       ABSL_ASSIGN_OR_RETURN(InlinedInstructionMap inline_map_cur_call,
-                       Inline(instruction, propagate_metadata_));
+                            Inline(instruction, propagate_metadata_));
       if (module->has_schedule()) {
         for (HloInstruction* inlined_instruction :
              module->schedule().sequence(callee).instructions()) {
@@ -420,12 +443,6 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
             inlined_instructions.push_back(
                 inline_map_cur_call[inlined_instruction]);
           }
-        }
-      }
-      if (update_domain_) {
-        HloDomainIsolator isolator([]() { return ShardingDomainCreator{}; });
-        for (const auto& [call_inst, inlined_inst] : inline_map_cur_call) {
-          ABSL_RETURN_IF_ERROR(isolator.UpdateDomains(inlined_inst).status());
         }
       }
       if (inline_map.has_value()) {
@@ -460,6 +477,9 @@ absl::StatusOr<bool> CallInliner::RunWithInlineMap(
                     execution_threads)) {
               return false;
             };
+            if (node.computation()->IsAsyncComputation()) {
+              return false;
+            }
             if (module->has_schedule()) {
               HloInstructionSequence& sequence =
                   module->schedule().GetOrCreateSequence(node.computation());

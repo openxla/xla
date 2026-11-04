@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "ynnpack/include/ynnpack.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -27,6 +26,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "ynnpack/include/ynnpack.h"
 
 namespace xla::cpu {
 
@@ -55,6 +55,9 @@ bool IsLayoutSupportedByYnn(const Shape& shape);
 
 // Returns true if the bitcast op is supported by YNNPACK.
 bool IsBitcastOpSupportedByYnn(const HloInstruction* hlo);
+
+// Returns true if the copy op is supported by YNNPACK.
+bool IsCopyOpSupportedByYnn(const HloInstruction* hlo);
 
 // Returns true if the reshape op is supported by YNNPACK.
 bool IsReshapeOpSupportedByYnn(const HloInstruction* hlo);
@@ -95,7 +98,11 @@ bool IsElementwiseOpSupportedByYnn(const HloInstruction* hlo);
 
 // Returns true if the dot operation is supported by YNNPACK. Returns an error
 // if the dot operation shape is invalid.
-absl::StatusOr<bool> IsDotSupportedByYnn(const HloInstruction* hlo);
+// TODO(b/575584834): `allow_non_canonical_lhs` is added to allow emitting
+// non-canonical dot LHS, but not actually fusing it in `LibraryRewriter` yet.
+// Remove this once we fix the regression.
+absl::StatusOr<bool> IsDotSupportedByYnn(const HloInstruction* hlo,
+                                         bool allow_non_canonical_lhs = false);
 
 // Returns true if the reduce or reduce window op is supported by YNNPACK.
 bool IsReduceLikeOpSupportedByYnn(const HloInstruction* hlo);

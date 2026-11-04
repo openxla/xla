@@ -15,18 +15,19 @@ limitations under the License.
 
 #include "xla/error/debug_me_context_util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/debug_me_context.h"
 #include "tsl/platform/platform.h"
+#include "xla/tsl/platform/debug_me_context.h"
 
 namespace xla {
 namespace {
@@ -39,8 +40,7 @@ TEST(DebugMeContextUtil, StringCheck) {
   tsl::DebugMeContext<error::DebugMeContextKey> ctx(
       error::DebugMeContextKey::kCompiler, std::string(kCompilerName));
 
-  const std::string error_message =
-      error::DebugMeContextToErrorMessageString();
+  const std::string error_message = error::DebugMeContextToErrorMessageString();
 
   EXPECT_TRUE(absl::StrContains(error_message, kCompilerName));
 }

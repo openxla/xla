@@ -56,9 +56,10 @@ char PjRtCompiler::ID = 0;
 static absl::Status TranslateDeviceIds(PjRtClient* client,
                                        xla::CompileOptions& options) {
   if (options.executable_build_options.device_ordinal() != -1) {
-    ABSL_ASSIGN_OR_RETURN(auto pjrt_global_device_id,
-                     client->GetGlobalDeviceId(DeviceId(
-                         options.executable_build_options.device_ordinal())));
+    ABSL_ASSIGN_OR_RETURN(
+        auto pjrt_global_device_id,
+        client->GetGlobalDeviceId(
+            DeviceId(options.executable_build_options.device_ordinal())));
     options.executable_build_options.set_device_ordinal(
         pjrt_global_device_id.value());
   }
@@ -102,7 +103,7 @@ tsl::Future<LoadedExecutableRef> PjRtCompiler::CompileAndLoad(
   std::unique_ptr<HloProgram> xla_program =
       cast<HloProgram>(std::move(program));
   ABSL_ASSIGN_OR_RETURN(auto xla_compile_options,
-                   GetXlaCompileOptions(std::move(options)));
+                        GetXlaCompileOptions(std::move(options)));
   ABSL_RETURN_IF_ERROR(
       TranslateDeviceIds(client_, xla_compile_options->compile_options));
   return PjRtLoadedExecutable::Create(
@@ -123,7 +124,12 @@ tsl::Future<ExecutableRef> PjRtCompiler::Compile(
   std::unique_ptr<HloProgram> xla_program =
       cast<HloProgram>(std::move(program));
   ABSL_ASSIGN_OR_RETURN(auto xla_compile_options,
-                   GetXlaCompileOptions(std::move(options)));
+                        GetXlaCompileOptions(std::move(options)));
+  if (!xla_compile_options->loaded_host_callbacks.empty()) {
+    return absl::InvalidArgumentError(
+        "loaded_host_callbacks cannot be passed to Compiler::Compile; pass "
+        "them via XlaLoadOptions to Client::Load instead.");
+  }
   const auto* pjrt_topology = dyn_cast<PjRtTopology>(&topology);
   if (pjrt_topology == nullptr) {
     return absl::InvalidArgumentError("PjRtCompiler requires a PjRtTopology");
@@ -144,7 +150,8 @@ tsl::Future<ExecutableRef> PjRtCompiler::Compile(
   return PjRtExecutable::Create(
       std::move(*xla_program).ToMaybeOwningMlirModule(),
       std::move(xla_compile_options->compile_options),
-      *pjrt_topology->description(), compile_client);
+      *pjrt_topology->description(), compile_client,
+      std::move(xla_compile_options->outputs_bundle_slice_sizes));
 }
 
 tsl::Future<LoadedExecutableRef> PjRtCompiler::DeserializeLoadedExecutable(
@@ -157,7 +164,7 @@ tsl::Future<LoadedExecutableRef> PjRtCompiler::DeserializeLoadedExecutable(
         "DeserializeLoadedExecutable.");
   }
   ABSL_ASSIGN_OR_RETURN(auto xla_deserialize_options,
-                   GetXlaDeserializeExecutableOptions(std::move(options)));
+                        GetXlaDeserializeExecutableOptions(std::move(options)));
   if (xla_deserialize_options->compile_options.has_value()) {
     ABSL_RETURN_IF_ERROR(
         TranslateDeviceIds(client_, *xla_deserialize_options->compile_options));
@@ -169,21 +176,25 @@ tsl::Future<LoadedExecutableRef> PjRtCompiler::DeserializeLoadedExecutable(
           absl::bind_front(&PjRtCompiler::IsExecutableVersionCompatible, this),
           *xla_deserialize_options));
 
-  ABSL_ASSIGN_OR_RETURN(auto pjrt_loaded_executable,
-                   client_->pjrt_client()->LoadSerializedExecutable(
-                       common_metadata_and_serialized_pjrt_executable.second,
-                       std::move(xla_deserialize_options->compile_options),
-                       xla::LoadOptions()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto pjrt_loaded_executable,
+      client_->pjrt_client()->LoadSerializedExecutable(
+          common_metadata_and_serialized_pjrt_executable.second,
+          std::move(xla_deserialize_options->compile_options),
+          xla::LoadOptions()));
   // TODO(emilyaf): Remove the else branch once devices are plumbed
   // through from Australis and are always present in the
   // DeserializeExecutableOptions.
   DeviceListRef device_list;
-  if (xla_deserialize_options->devices.has_value()) {
-    device_list = std::move(xla_deserialize_options->devices.value());
-  } else {
-    ABSL_ASSIGN_OR_RETURN(device_list,
-                     GetDeviceListFromDeviceAssignment(
-                         client_, pjrt_loaded_executable->device_assignment()));
+  if (!common_metadata_and_serialized_pjrt_executable.first.is_portable) {
+    if (xla_deserialize_options->devices.has_value()) {
+      device_list = *std::move(xla_deserialize_options->devices);
+    } else {
+      ABSL_ASSIGN_OR_RETURN(
+          device_list,
+          GetDeviceListFromDeviceAssignment(
+              client_, pjrt_loaded_executable->device_assignment()));
+    }
   }
   return PjRtLoadedExecutable::Create(
       client_,

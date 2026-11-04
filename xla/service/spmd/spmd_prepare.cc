@@ -165,7 +165,8 @@ absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
     if (!hlo->has_sharding()) {
       continue;
     }
-    ABSL_ASSIGN_OR_RETURN(bool scatter_changed, ProcessScatter(hlo, call_graph));
+    ABSL_ASSIGN_OR_RETURN(bool scatter_changed,
+                          ProcessScatter(hlo, call_graph));
     if (scatter_changed) {
       changed = true;
       continue;
@@ -181,7 +182,8 @@ absl::StatusOr<bool> SpmdPrepare::RunImpl(
   bool changed = false;
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
   for (auto comp : module->computations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool comp_changed, RunOnComputation(comp, *call_graph));
+    ABSL_ASSIGN_OR_RETURN(bool comp_changed,
+                          RunOnComputation(comp, *call_graph));
     changed |= comp_changed;
   }
   return changed;

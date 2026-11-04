@@ -55,17 +55,12 @@ bool AreAllreduceKeysEqual(AllReduceKey& key0, AllReduceKey& key1,
     return std::get<0>(key0) == std::get<0>(key1) &&
            std::get<2>(key0) == std::get<2>(key1) &&
            std::get<3>(key0) == std::get<3>(key1) &&
-           std::get<4>(key0) == std::get<4>(key1) &&
-           std::get<5>(key0) == std::get<5>(key1);
+           std::get<4>(key0) == std::get<4>(key1);
   } else {
     return key0 == key1;
   }
 }
 // Returns if the given all reduce instructions are compatible with each other.
-// Note that since the given all-reduce instructions are connected to another
-// instruction by a direct data flow edge, they must belong to the same domain.
-// As a result, we don't need to include any domain information in the
-// AllReduceKey to check compatibility.
 bool AreCompatible(const HloAllReduceInstruction* ar0,
                    const HloAllReduceInstruction* ar1, ReductionKind op_kind,
                    bool ignore_element_type) {
@@ -233,9 +228,11 @@ absl::StatusOr<bool> AllReduceReassociate::RunImpl(
       // Check Dynamic-slice pattern is identical
       if (lhs->opcode() == HloOpcode::kDynamicSlice) {
         HloInstruction* original_rhs_operand = rhs->mutable_operand(0);
-        ABSL_RETURN_IF_ERROR(rhs->ReplaceOperandWith(0, lhs->mutable_operand(0)));
+        ABSL_RETURN_IF_ERROR(
+            rhs->ReplaceOperandWith(0, lhs->mutable_operand(0)));
         if (!lhs->Identical(*rhs)) {
-          ABSL_RETURN_IF_ERROR(rhs->ReplaceOperandWith(0, original_rhs_operand));
+          ABSL_RETURN_IF_ERROR(
+              rhs->ReplaceOperandWith(0, original_rhs_operand));
           continue;
         }
         ABSL_RETURN_IF_ERROR(rhs->ReplaceOperandWith(0, original_rhs_operand));

@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/gpu/dense_data_intermediate.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/gpu/dense_data_intermediate.pb.h"

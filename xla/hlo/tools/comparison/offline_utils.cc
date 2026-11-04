@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "re2/re2.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/tools/comparison/comparison_result.pb.h"
 #include "xla/hlo/tools/comparison/launch_info_compat.pb.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
 
 namespace xla::numerics::comparison {
 
@@ -72,7 +72,8 @@ absl::StatusOr<std::vector<std::string>> FindFiles(
 
 absl::StatusOr<std::string> FindOneFile(absl::Span<const std::string> dirs,
                                         absl::string_view pattern) {
-  ABSL_ASSIGN_OR_RETURN(std::vector<std::string> files, FindFiles(dirs, pattern));
+  ABSL_ASSIGN_OR_RETURN(std::vector<std::string> files,
+                        FindFiles(dirs, pattern));
   if (files.empty()) {
     return absl::NotFoundError(
         absl::StrCat("No file found matching pattern: ", pattern));
@@ -93,7 +94,8 @@ absl::StatusOr<LaunchInfoResult> FindLaunchInfo(
   // If no ID provided, find one and parse ID from filename.
   std::string pattern =
       absl::StrFormat("*module_*.%s.*.launch_info.pbtxt", module_name);
-  ABSL_ASSIGN_OR_RETURN(std::vector<std::string> files, FindFiles(dirs, pattern));
+  ABSL_ASSIGN_OR_RETURN(std::vector<std::string> files,
+                        FindFiles(dirs, pattern));
   if (files.empty()) {
     return absl::NotFoundError(absl::StrFormat(
         "No launch info file found for module '%s'. The file name should match "
@@ -167,12 +169,12 @@ absl::StatusOr<RunData> LoadRunData(absl::Span<const std::string> dirs,
 
   // 1. Load launch info and get device assignment.
   ABSL_ASSIGN_OR_RETURN(LaunchInfoResult launch_info,
-                   FindLaunchInfo(dirs, module_name, launch_barrier_id));
+                        FindLaunchInfo(dirs, module_name, launch_barrier_id));
   run_data.launch_barrier_id = launch_info.launch_barrier_id;
 
   LaunchInfo launch_info_proto;
   ABSL_RETURN_IF_ERROR(tsl::ReadTextProto(tsl::Env::Default(), launch_info.path,
-                                     &launch_info_proto));
+                                          &launch_info_proto));
   ABSL_ASSIGN_OR_RETURN(
       run_data.device_assignment,
       DeviceAssignment::Deserialize(launch_info_proto.device_assignment()));
@@ -193,7 +195,7 @@ absl::StatusOr<RunData> LoadRunData(absl::Span<const std::string> dirs,
                   absl::StrFormat("*module_*.%s.%d.optimized_hlo_module.pb",
                                   module_name, run_data.launch_barrier_id)));
   ABSL_ASSIGN_OR_RETURN(run_data.optimized_module,
-                   ReadHloModuleFromFile(optimized_hlo_path));
+                        ReadHloModuleFromFile(optimized_hlo_path));
 
   // 3. Find log files.
   ABSL_ASSIGN_OR_RETURN(

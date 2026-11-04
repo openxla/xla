@@ -72,7 +72,7 @@ absl::StatusOr<bool> CreateCollectivesGroupAsyncPair(HloInstruction* instr) {
 
   // Allow the scheduler to separate the done from the force-early start.
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig async_done_config,
-                   async_done->backend_config<GpuBackendConfig>());
+                        async_done->backend_config<GpuBackendConfig>());
   async_done_config.set_force_earliest_schedule(false);
   ABSL_RETURN_IF_ERROR(async_done->set_backend_config(async_done_config));
 
@@ -93,7 +93,8 @@ absl::StatusOr<bool> ExplicitCollectivesGroupAsyncWrapper::RunImpl(
   for (const HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instr : comp->instructions()) {
-      ABSL_ASSIGN_OR_RETURN(bool result, CreateCollectivesGroupAsyncPair(instr));
+      ABSL_ASSIGN_OR_RETURN(bool result,
+                            CreateCollectivesGroupAsyncPair(instr));
       changed |= result;
     }
   }

@@ -32,6 +32,11 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "grpcpp/server_context.h"
 #include "grpcpp/support/status.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/profiler/lib/profiler_session.h"
+#include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/env_time.h"
 #include "xla/tsl/platform/logging.h"
@@ -40,11 +45,6 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/math_utils.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "tsl/platform/host_info.h"
-#include "tsl/profiler/lib/profiler_session.h"
-#include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
-#include "tsl/profiler/protobuf/profiler_service.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -89,6 +89,20 @@ bool IsValidSnapshotSessionId(absl::string_view id) {
     }
   }
   return true;
+}
+
+// Returns the options for the profiler session that serves `request`.
+//
+// The session ID of the request is propagated into the options (unless they
+// specify their own), so that profilers that persist profile data outside of
+// this process, e.g. tracers of remote hosts, can store it alongside the XSpace
+// that `CollectData` saves under the same session ID.
+tensorflow::ProfileOptions GetSessionOptions(const ProfileRequest& request) {
+  tensorflow::ProfileOptions options = request.opts();
+  if (options.session_id().empty()) {
+    options.set_session_id(request.session_id());
+  }
+  return options;
 }
 
 // Collects data in XSpace format. The data is saved to a repository
@@ -156,7 +170,7 @@ class ProfilerServiceImpl : public tensorflow::grpc::ProfilerService::Service {
                          ProfileResponse* response) override {
     VLOG(1) << "Received a profile request: " << req->DebugString();
     std::unique_ptr<ProfilerSession> profiler =
-        ProfilerSession::Create(req->opts());
+        ProfilerSession::Create(GetSessionOptions(*req));
     absl::Status status = profiler->Status();
     if (!status.ok()) {
       LOG(ERROR) << "Failed to create profiler session: " << status;
@@ -202,7 +216,7 @@ class ProfilerServiceImpl : public tensorflow::grpc::ProfilerService::Service {
                             "A profiling session is already running.");
     }
     std::unique_ptr<ProfilerSession> profiler =
-        ProfilerSession::Create(req->opts());
+        ProfilerSession::Create(GetSessionOptions(*req));
     absl::Status status = profiler->Status();
     if (!status.ok()) {
       LOG(ERROR) << "Failed to create profiler session: " << status;

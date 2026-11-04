@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/pjrt/plugin/dynamic_registration.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/strings/string_view.h"
 #include "xla/pjrt/c_api_client/pjrt_c_api_client.h"

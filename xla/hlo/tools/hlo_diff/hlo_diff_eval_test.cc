@@ -14,9 +14,10 @@
 
 #include "xla/hlo/tools/hlo_diff/hlo_diff_eval.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph.h"
@@ -192,6 +193,8 @@ TEST_F(HloDiffTest, DiffSizeWorks) {
       {graph_l->GetRoot().instruction, graph_r->GetRoot().instruction});
   diff_result.unchanged_instructions.insert(
       {graph_l->GetRoot().instruction, graph_r->GetRoot().instruction});
+  diff_result.moved_instructions.insert(
+      {graph_l->GetRoot().instruction, graph_r->GetRoot().instruction});
   std::unique_ptr<const DiffEval> diff_eval =
       ComputeDiffEval(*graph_l, *graph_r, {}, diff_result, {});
 
@@ -199,6 +202,7 @@ TEST_F(HloDiffTest, DiffSizeWorks) {
   EXPECT_EQ(diff_eval->len_right_unmatched, 1);
   EXPECT_EQ(diff_eval->len_changed, 1);
   EXPECT_EQ(diff_eval->len_unchanged, 1);
+  EXPECT_EQ(diff_eval->len_moved, 1);
 }
 
 }  // namespace

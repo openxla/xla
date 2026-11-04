@@ -23,6 +23,8 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/pjrt/dump/mlir.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -31,8 +33,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
 
 namespace pjrt {
 namespace {
@@ -99,7 +99,7 @@ absl::Status DumpCompileInputs(absl::string_view dump_to_path,
                                 : "main";
 
   ABSL_ASSIGN_OR_RETURN(std::string dump_sub_dir,
-                   GetDumpSubdirPath(path, module_name, module_id));
+                        GetDumpSubdirPath(path, module_name, module_id));
 
   if (dump_sub_dir.empty()) {
     return absl::OkStatus();
@@ -119,11 +119,11 @@ absl::Status DumpCompileInputs(absl::string_view dump_to_path,
 
   ABSL_ASSIGN_OR_RETURN(auto options_proto, compile_options.ToProto());
   ABSL_RETURN_IF_ERROR(WriteProtoToFile(options_proto, "compile_options",
-                                   dump_sub_dir, dump_as_binary_proto));
+                                        dump_sub_dir, dump_as_binary_proto));
 
   ABSL_ASSIGN_OR_RETURN(auto topology_proto, topology.ToProto());
-  ABSL_RETURN_IF_ERROR(WriteProtoToFile(topology_proto, "topology", dump_sub_dir,
-                                   dump_as_binary_proto));
+  ABSL_RETURN_IF_ERROR(WriteProtoToFile(topology_proto, "topology",
+                                        dump_sub_dir, dump_as_binary_proto));
   return absl::OkStatus();
 }
 

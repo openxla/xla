@@ -52,13 +52,16 @@ bool FusionWrapper::MustWrapInstruction(const HloInstruction& instruction) {
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
+    case HloOpcode::kFma:
     case HloOpcode::kGather:
     case HloOpcode::kImag:
     case HloOpcode::kIota:
     case HloOpcode::kIsFinite:
     case HloOpcode::kLog:
+    case HloOpcode::kLog2:
     case HloOpcode::kLog1p:
     case HloOpcode::kMap:
     case HloOpcode::kMaximum:

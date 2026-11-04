@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/hash/hash_testing.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
@@ -249,6 +250,11 @@ TEST(CudaComputeCapabilityTest, Hash) {
 TEST(CudaComputeCapabilityTest, GenerationNumericTest) {
   EXPECT_TRUE(CudaComputeCapability(7, 5).IsAtLeastVolta());
   EXPECT_TRUE(CudaComputeCapability(8, 0).IsAtLeastAmpere());
+}
+
+TEST(CudaComputeCapabilityTest, Rubin) {
+  EXPECT_EQ(CudaComputeCapability::Rubin(), CudaComputeCapability(10, 7));
+  EXPECT_EQ(CudaComputeCapability::Rubin().GetPtxAsTargetName(), "sm_107");
 }
 
 TEST(CudaComputeCapabilityTest, ComparisonTest) {

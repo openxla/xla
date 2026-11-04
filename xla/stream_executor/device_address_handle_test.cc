@@ -14,10 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/stream_executor/device_address_handle.h"
 
-#include <utility>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <utility>
+
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/mock_stream_executor.h"
 #include "xla/tsl/platform/test.h"

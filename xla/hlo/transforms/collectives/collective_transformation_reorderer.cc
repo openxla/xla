@@ -25,14 +25,14 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/shape.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -76,8 +76,8 @@ GetAllGatherTransformations(HloInstruction* all_gather) {
     // all-gather that remains continuous after all-gather. This function
     // finds how much such regions exist before all-gather.
     int64_t all_gather_num_strides = absl::c_accumulate(
-        all_gather_shape.dimensions().subspan(0, all_gather_dimension), 1,
-        [](int64_t product, int64_t dimension_size) {
+        all_gather_shape.dimensions().subspan(0, all_gather_dimension),
+        int64_t{1}, [](int64_t product, int64_t dimension_size) {
           return product * dimension_size;
         });
     // If the reshape is eligible for this transformation, it does not change
@@ -295,7 +295,8 @@ CollectiveTransformationReorder::ReorderAllReduceTransformations(
       cur_operand = computation->AddInstruction(
           HloInstruction::CreateReshape(reshapes[i]->shape(), cur_operand));
     }
-    ABSL_RETURN_IF_ERROR(computation->ReplaceInstruction(all_reduce, cur_operand));
+    ABSL_RETURN_IF_ERROR(
+        computation->ReplaceInstruction(all_reduce, cur_operand));
   }
   return true;
 }
@@ -303,10 +304,10 @@ CollectiveTransformationReorder::ReorderAllReduceTransformations(
 absl::StatusOr<bool> CollectiveTransformationReorder::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  ABSL_ASSIGN_OR_RETURN(bool ag_changed,
-                   ReorderAllGatherTransformations(module, execution_threads));
-  ABSL_ASSIGN_OR_RETURN(bool ar_changed,
-                   ReorderAllReduceTransformations(module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(bool ag_changed, ReorderAllGatherTransformations(
+                                             module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(bool ar_changed, ReorderAllReduceTransformations(
+                                             module, execution_threads));
   if (ag_changed || ar_changed) {
     // Remove the original all-gathers/all-reduces and reshapes.
     HloDCE dce;

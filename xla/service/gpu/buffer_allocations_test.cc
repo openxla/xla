@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/buffer_allocations.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/stream_executor/device_address.h"
 
 namespace xla::gpu {

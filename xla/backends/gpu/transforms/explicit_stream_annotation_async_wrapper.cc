@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/side_effect_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -76,6 +77,15 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
     return false;
   }
 
+  // Instructions for which no thunks are emitted do no work on any stream, so
+  // there is nothing to run asynchronously, and wrapping them would only add a
+  // synchronization point on the annotated stream. Drop the annotations
+  // instead, as they are only legal on async pairs.
+  if (EmitsNoThunks(*instr)) {
+    ClearSchedulingAnnotations(instr);
+    return true;
+  }
+
   // If not already a kCall, wrap the instruction in one and move all
   // frontend attributes to the wrapper so the inner instruction is clean.
   if (instr->opcode() != HloOpcode::kCall) {
@@ -95,16 +105,15 @@ static absl::StatusOr<bool> AsynchronizeInstruction(HloInstruction* instr) {
   }
   ClearSchedulingAnnotations(instr);
 
-  ABSL_ASSIGN_OR_RETURN(
-      HloInstruction * done,
-      computation->CreateAsyncInstructions(
-          instr, {}, ExplicitStreamAnnotationAsyncWrapper::kMainExecutionThread,
-          /*replace=*/true));
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * done,
+                        computation->CreateAsyncInstructions(
+                            instr, {}, HloInstruction::kParallelExecutionThread,
+                            /*replace=*/true));
   // Replace the original attributes after creating the async pair.
   done->set_frontend_attributes(original_attributes);
   done->mutable_operand(0)->set_frontend_attributes(original_attributes);
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                   done->backend_config<GpuBackendConfig>());
+                        done->backend_config<GpuBackendConfig>());
   // Set earliest schedule of done op to be false so it can be scheduled
   // far apart from start.
   gpu_config.set_force_earliest_schedule(false);

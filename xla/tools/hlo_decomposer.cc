@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/tools/hlo_decomposer.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -25,6 +26,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status_macros.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -32,10 +34,35 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/compilation_environments.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
+
+// Appends the leaf elements of `instruction` to `elements`, decomposing any
+// tuple-shaped instruction via GetTupleElement instructions so that a flat
+// tuple can be constructed without nesting tuples.
+void AppendFlattenedTupleElements(HloInstruction* instruction,
+                                  HloComputation::Builder& builder,
+                                  std::vector<HloInstruction*>& elements) {
+  if (!instruction->shape().IsTuple()) {
+    elements.push_back(instruction);
+    return;
+  }
+  for (int64_t i = 0; i < instruction->shape().tuple_shapes().size(); ++i) {
+    HloInstruction* gte = builder.AddInstruction(
+        HloInstruction::CreateGetTupleElement(instruction, i));
+    AppendFlattenedTupleElements(gte, builder, elements);
+  }
+}
+
+void AddFlatTupleRoot(const std::vector<HloInstruction*>& instructions,
+                      HloComputation::Builder& builder) {
+  std::vector<HloInstruction*> tuple_elements;
+  for (HloInstruction* instruction : instructions) {
+    AppendFlattenedTupleElements(instruction, builder, tuple_elements);
+  }
+  builder.AddInstruction(HloInstruction::CreateTuple(tuple_elements));
+}
 
 // Returns whether it makes sense to run the given instruction in isolation
 // (e.g. whether it can run without dependent instructions).
@@ -107,8 +134,9 @@ absl::StatusOr<std::vector<std::unique_ptr<HloModule>>> DecomposeHloModule(
     return true;
   };
 
-  ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<HloModule>> isolated_modules,
-                   Decompose(module));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<std::unique_ptr<HloModule>> isolated_modules,
+      Decompose(module));
   for (auto& module : isolated_modules) {
     if (should_add_module(module.get())) {
       modules.push_back(std::move(module));
@@ -167,11 +195,17 @@ std::unique_ptr<HloModule> ExtractCollectiveOperationsIntoNewModule(
   }
 
   if (return_tuple) {
-    std::unique_ptr<HloInstruction> tuple_instruction =
-        HloInstruction::CreateTuple(result_instructions);
-    builder.AddInstruction(std::move(tuple_instruction));
+    AddFlatTupleRoot(result_instructions, builder);
   }
-  new_hlo_module->AddEntryComputationWithLayouts(builder.Build());
+  HloComputation* entry_computation =
+      new_hlo_module->AddEntryComputationWithLayouts(builder.Build());
+  // Preserve the execution thread so the extracted module stays internally
+  // consistent: a cloned instruction embedded below the entry (e.g. a fusion
+  // wrapping an op that lives on a non-"main" thread) still carries its
+  // original execution_thread, and HloVerifier requires the calling
+  // computation's thread to match.
+  entry_computation->SetExecutionThread(
+      first_instruction.parent()->execution_thread());
   return new_hlo_module;
 }
 
@@ -194,7 +228,10 @@ std::unique_ptr<HloModule> ExtractInstructionIntoNewModule(
   std::unique_ptr<HloInstruction> new_instruction =
       hlo.CloneWithNewOperands(hlo.shape(), new_operands, &clone_context);
   builder.AddInstruction(std::move(new_instruction));
-  new_hlo_module->AddEntryComputationWithLayouts(builder.Build());
+  HloComputation* entry_computation =
+      new_hlo_module->AddEntryComputationWithLayouts(builder.Build());
+  // See the comment in ExtractCollectiveOperationsIntoNewModule above.
+  entry_computation->SetExecutionThread(hlo.parent()->execution_thread());
   return new_hlo_module;
 }
 
@@ -244,10 +281,13 @@ std::unique_ptr<HloModule> ExtractProducerConsumersIntoNewModule(
   }
 
   if (consumer_outputs.size() > 1) {
-    builder.AddInstruction(HloInstruction::CreateTuple(consumer_outputs));
+    AddFlatTupleRoot(consumer_outputs, builder);
   }
 
-  new_hlo_module->AddEntryComputationWithLayouts(builder.Build());
+  HloComputation* entry_computation =
+      new_hlo_module->AddEntryComputationWithLayouts(builder.Build());
+  // See the comment in ExtractCollectiveOperationsIntoNewModule above.
+  entry_computation->SetExecutionThread(producer.parent()->execution_thread());
   return new_hlo_module;
 }
 

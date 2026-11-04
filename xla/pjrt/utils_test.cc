@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/pjrt/utils.h"
 
 #include <gtest/gtest.h>
+
 #include "absl/status/statusor.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"

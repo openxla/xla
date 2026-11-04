@@ -307,8 +307,10 @@ absl::Status ExchangeTopologies(absl::string_view platform, int node_id,
   if (num_nodes == 1) {
     LocalTopologyProto* topology = global_topology->add_processes();
     *topology = local_topology;
-    for (DeviceProto& device : *topology->mutable_devices()) {
-      device.set_global_device_id(device.local_device_ordinal());
+    if (assign_global_device_ids) {
+      for (int i = 0; i < topology->devices_size(); ++i) {
+        topology->mutable_devices(i)->set_global_device_id(i);
+      }
     }
     return absl::OkStatus();
   }
@@ -342,14 +344,14 @@ absl::Status ExchangeTopologies(absl::string_view platform, int node_id,
   std::string global_topology_key = GetGlobalTopologyKey(platform);
   if (node_id == 0) {
     ABSL_ASSIGN_OR_RETURN(std::vector<LocalTopologyProto> local_topologies,
-                     GetAllLocalTopologies(platform, num_nodes, kv_store,
-                                           get_local_topology_timeout));
+                          GetAllLocalTopologies(platform, num_nodes, kv_store,
+                                                get_local_topology_timeout));
     ABSL_ASSIGN_OR_RETURN(
         *global_topology,
         BuildGlobalTopology(absl::Span<LocalTopologyProto>(local_topologies),
                             assign_global_device_ids));
     ABSL_RETURN_IF_ERROR(kv_store->Set(global_topology_key,
-                                  global_topology->SerializeAsString()));
+                                       global_topology->SerializeAsString()));
   } else {
     ABSL_ASSIGN_OR_RETURN(
         std::string global_topology_str,

@@ -207,8 +207,8 @@ UnrollSingleIterationOfTrivialLoop(HloInstruction* while_op,
   HloInstruction* induction_value_constant = while_body_clone->AddInstruction(
       MakeScalarConstantWithShape(induction_var_hlo->shape(), induction_value));
   ABSL_RETURN_IF_ERROR(ReplaceInductionVarUses(while_body_clone.get(),
-                                          induction_value_constant,
-                                          config.induction_var_idx));
+                                               induction_value_constant,
+                                               config.induction_var_idx));
 
   absl::flat_hash_set<int64_t> seen_scheduling_ids;
   for (HloInstruction* body_inst : while_body_clone->instructions()) {
@@ -225,7 +225,7 @@ UnrollSingleIterationOfTrivialLoop(HloInstruction* while_op,
     // We need to assign a unique id to each scheduling group (of instructions)
     // that are unrolled within the while loop body.
     ABSL_ASSIGN_OR_RETURN(std::optional<int64_t> scheduling_id,
-                     GetSchedulingAnnotationGroupId(body_inst));
+                          GetSchedulingAnnotationGroupId(body_inst));
     if (scheduling_id.has_value()) {
       if (!seen_scheduling_ids.contains(scheduling_id.value())) {
         seen_scheduling_ids.insert(scheduling_id.value());
@@ -299,11 +299,13 @@ absl::StatusOr<bool> UnrollInternal(HloInstruction* while_op,
   std::vector<HloInstruction*> call_operands = {while_op->operands().at(0)};
 
   ABSL_ASSIGN_OR_RETURN(int64_t next_scheduling_id,
-                   NextSchedulingGroupId(*while_op->GetModule()));
+                        NextSchedulingGroupId(*while_op->GetModule()));
   std::vector<HloInstruction*> new_calls;
   new_calls.reserve(config.trip_count);
-  for (int64_t i = config.init; i < config.trip_count + config.init; ++i) {
-    CHECK(OverflowSafeAdd(i, (int64_t)1).has_value());
+  for (int64_t iter = 0; iter < config.trip_count; ++iter) {
+    int64_t i = OverflowSafeAdd(config.init,
+                                OverflowSafeMultiply(iter, config.step).first)
+                    .value();
 
     HloComputation* unrolled_body = module->AddEmbeddedComputation(
         UnrollSingleIterationOfTrivialLoop(while_op, config, i,
@@ -346,12 +348,14 @@ absl::StatusOr<UnrollResult> UnrollInternalWrappedAndReturnReplacement(
   call_operands.emplace_back(std::move(p.value()));
 
   ABSL_ASSIGN_OR_RETURN(int64_t next_scheduling_id,
-                   NextSchedulingGroupId(*while_op->GetModule()));
+                        NextSchedulingGroupId(*while_op->GetModule()));
 
   std::vector<HloInstruction*> new_calls;
   new_calls.reserve(config.trip_count);
-  for (int64_t i = config.init; i < config.trip_count + config.init; ++i) {
-    CHECK(OverflowSafeAdd(i, (int64_t)1).has_value());
+  for (int64_t iter = 0; iter < config.trip_count; ++iter) {
+    int64_t i = OverflowSafeAdd(config.init,
+                                OverflowSafeMultiply(iter, config.step).first)
+                    .value();
 
     HloComputation* unrolled_body = module->AddEmbeddedComputation(
         UnrollSingleIterationOfTrivialLoop(while_op, config, i,
@@ -392,8 +396,9 @@ absl::StatusOr<UnrollResult> UnrollInternalWrappedAndReturnReplacement(
 
 absl::StatusOr<bool> UnrollInternalWrapped(HloInstruction* while_op,
                                            WhileLoopConfig config) {
-  ABSL_ASSIGN_OR_RETURN(UnrollResult result,
-                   UnrollInternalWrappedAndReturnReplacement(while_op, config));
+  ABSL_ASSIGN_OR_RETURN(
+      UnrollResult result,
+      UnrollInternalWrappedAndReturnReplacement(while_op, config));
   return result.unrolled;
 }
 
@@ -646,7 +651,7 @@ absl::Status FindIndicesCoveredByDynamicInstructionsInInnerLoop(
 
   // Step 2: Find dynamic instructions inside the while body.
   ABSL_ASSIGN_OR_RETURN(std::vector<const HloInstruction*> dynamic_instructions,
-                   FindDynamicInstructions(input, while_instr));
+                        FindDynamicInstructions(input, while_instr));
 
   const Shape& input_shape = input->shape();
   const int64_t dimension_size = input_shape.dimensions(dynamic_indices.first);
@@ -876,10 +881,13 @@ std::optional<int64_t> MatchShapeCoveringDynamicIndexInstruction(
   // Based on the instruction type, start indices start from index 1 or 2 of the
   // operands.
   int64_t start_indices_offset;
+  const Shape* slice_shape;
   if (instr->opcode() == HloOpcode::kDynamicSlice) {
     start_indices_offset = 1;
+    slice_shape = &instr->shape();
   } else if (instr->opcode() == HloOpcode::kDynamicUpdateSlice) {
     start_indices_offset = 2;
+    slice_shape = &instr->operand(1)->shape();
   } else {
     return std::nullopt;
   }
@@ -928,23 +936,29 @@ std::optional<int64_t> MatchShapeCoveringDynamicIndexInstruction(
     return std::nullopt;
   }
 
-  if (opcode == HloOpcode::kDynamicSlice) {
-    const Shape& result_shape = instr->shape();
-    if (result_shape.dimensions(dynamic_index) != 1) {
-      VLOG(3) << "The slice size on the dynamic_index dimension must be 1.";
-      return std::nullopt;
-    }
+  // With trip count equal to the dimension size, the induction variable only
+  // visits every index if it runs 0, 1, 2, ...
+  std::optional<Range> loop_range = MatchTrivialLoopRange(config.while_instr);
+  if (!loop_range.has_value() || !loop_range->IsStepKnown() ||
+      loop_range->min().GetSignedValue() != 0 ||
+      loop_range->step()->GetSignedValue() != 1) {
+    VLOG(3) << "The loop induction variable must start at 0 with step 1.";
+    return std::nullopt;
+  }
 
-    const Shape& operand_shape = operand->shape();
-    CHECK_EQ(result_shape.dimensions().size(),
-             operand_shape.dimensions().size());
-    for (int64_t i = 0; i < result_shape.dimensions().size(); ++i) {
-      if (i != dynamic_index &&
-          result_shape.dimensions(i) != operand_shape.dimensions(i)) {
-        VLOG(3) << "The slice sizes must match the operand-shape on "
-                   "non-dynamic-index dimensions.";
-        return std::nullopt;
-      }
+  if (slice_shape->dimensions(dynamic_index) != 1) {
+    VLOG(3) << "The slice size on the dynamic_index dimension must be 1.";
+    return std::nullopt;
+  }
+
+  const Shape& operand_shape = operand->shape();
+  CHECK_EQ(slice_shape->dimensions().size(), operand_shape.dimensions().size());
+  for (int64_t i = 0; i < slice_shape->dimensions().size(); ++i) {
+    if (i != dynamic_index &&
+        slice_shape->dimensions(i) != operand_shape.dimensions(i)) {
+      VLOG(3) << "The slice sizes must match the operand-shape on "
+                 "non-dynamic-index dimensions.";
+      return std::nullopt;
     }
   }
 
@@ -966,7 +980,7 @@ absl::StatusOr<bool> IsInputShapeCoveredByDynamicUpdateSliceInstructions(
       config.while_instr->while_init()->operand(input_idx);
 
   ABSL_ASSIGN_OR_RETURN(std::vector<const HloInstruction*> dynamic_instructions,
-                   FindDynamicInstructions(input, config.while_instr));
+                        FindDynamicInstructions(input, config.while_instr));
 
   TF_RET_CHECK(dynamic_instructions.size() == 1);
   const HloInstruction* dus = dynamic_instructions.front();
@@ -1287,7 +1301,9 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
   Literal indvar_iter_val = std::move(indvar_init_result).value();
   std::optional<int64_t> trip_count =
       MatchTrivialLoopTripCount(while_op, *indvar_tuple_idx, indvar_iter_val);
-  if (!trip_count.has_value()) {
+  std::optional<int64_t> step =
+      MatchTrivialLoopInductionStep(while_op, *indvar_tuple_idx);
+  if (!trip_count.has_value() || !step.has_value()) {
     VLOG(3) << "Loop doesn't have trivial trip count";
     return std::nullopt;
   }
@@ -1300,6 +1316,7 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
       LiteralUtil::LiteralAsScalarInt64(std::move(indvar_iter_val)).value();
   config.trip_count = trip_count.value();
   config.induction_var_idx = *indvar_tuple_idx;
+  config.step = *step;
   return config;
 }
 
@@ -1327,7 +1344,7 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
     VLOG(3) << "Applied hlo cse to module " << module->name();
   }
   ABSL_ASSIGN_OR_RETURN(bool applied_tuple_simplifier,
-                   TupleSimplifier{}.Run(module, execution_threads));
+                        TupleSimplifier{}.Run(module, execution_threads));
   if (applied_tuple_simplifier) {
     changed = true;
     VLOG(3) << "Applied tuple simplifier to module " << module->name();
@@ -1338,7 +1355,7 @@ std::optional<int64_t> AdvancedMatchShapeCoveringDynamicIndexInstruction(
       /*sink_broadcast_of_constants=*/true,
       /*sink_only_scalar_constants=*/true);
   ABSL_ASSIGN_OR_RETURN(bool applied_constant_sinking,
-                   constant_sinking.Run(module, execution_threads));
+                        constant_sinking.Run(module, execution_threads));
   if (applied_constant_sinking) {
     changed = true;
     VLOG(3) << "Applied constant sinking to module " << module->name();
@@ -1412,15 +1429,17 @@ WhileLoopUnroller::UnrollAndReturnReplacement(
   }
   if (wrap_in_trivial_loop) {
     ABSL_ASSIGN_OR_RETURN(result, UnrollInternalWrappedAndReturnReplacement(
-                                 while_op, config.value()));
+                                      while_op, config.value()));
   } else {
-    ABSL_ASSIGN_OR_RETURN(result.unrolled, UnrollInternal(while_op, config.value()));
+    ABSL_ASSIGN_OR_RETURN(result.unrolled,
+                          UnrollInternal(while_op, config.value()));
   }
 
   if (result.unrolled) {
     // Inlining calls created during unrolling may have left unused computations
     // around, run DCE to clean them up.
-    ABSL_RETURN_IF_ERROR(HloDCE().Run(module, /*execution_threads=*/{}).status());
+    ABSL_RETURN_IF_ERROR(
+        HloDCE().Run(module, /*execution_threads=*/{}).status());
   }
 
   return result;
@@ -1440,7 +1459,7 @@ absl::StatusOr<bool> WhileLoopUnroller::RunImpl(
   // Make sure all the necessary passes are executed before unrolling in order
   // to unroll every possible loop.
   ABSL_ASSIGN_OR_RETURN(changed,
-                   PrepareModuleForUnrolling(module, execution_threads));
+                        PrepareModuleForUnrolling(module, execution_threads));
   // Processing the while loops in the reverse of topological order. If the body
   // of while loop A calls while loop B, B comes before A.
   std::vector<HloInstruction*> all_while_ops;

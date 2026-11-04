@@ -18,13 +18,13 @@ limitations under the License.
 #include <optional>
 
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/mem.h"
+#include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/framework/allocator_registry.h"
 #include "xla/tsl/framework/tracking_allocator.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/mem.h"
-#include "tsl/profiler/lib/scoped_memory_debug_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace tsl {
 

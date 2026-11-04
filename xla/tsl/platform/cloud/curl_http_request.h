@@ -22,14 +22,14 @@ limitations under the License.
 #include <unordered_map>
 #include <vector>
 
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/stringpiece.h"
 #include "xla/tsl/platform/cloud/http_request.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/stringpiece.h"
 
 namespace tsl {
 

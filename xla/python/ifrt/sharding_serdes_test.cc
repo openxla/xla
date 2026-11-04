@@ -13,19 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <tuple>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/device_test_util.h"
-#include "xla/python/ifrt/ir/sharding_param.h"
+#include "xla/python/ifrt/index.h"
+#include "xla/python/ifrt/index_domain.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/serdes.pb.h"
@@ -99,7 +101,10 @@ TEST_P(ShardingSerDesTest, ConcreteShardingRoundTrip) {
   auto sharding = ConcreteSharding::Create(
       GetDevices({0, 1}), MemoryKind("abc"),
       /*shape=*/Shape({10, 20}),
-      /*shard_shapes=*/{Shape({3, 20}), Shape({7, 20})});
+      /*shard_shapes=*/{Shape({3, 20}), Shape({7, 20})},
+      /*index_domains=*/
+      std::vector<IndexDomain>{IndexDomain(Index({0, 0}), Shape({3, 20})),
+                               IndexDomain(Index({3, 0}), Shape({7, 20}))});
 
   auto options = std::make_unique<SerializeOptions>(version());
   TF_ASSERT_OK_AND_ASSIGN(auto serialized,
@@ -115,6 +120,7 @@ TEST_P(ShardingSerDesTest, ConcreteShardingRoundTrip) {
   EXPECT_THAT(out_sharding->shape(), sharding->shape());
   EXPECT_THAT(out_sharding->shard_shapes(),
               ElementsAreArray(sharding->shard_shapes()));
+  EXPECT_THAT(out_sharding->index_domains(), sharding->index_domains());
 }
 
 TEST_P(ShardingSerDesTest, ConcreteShardingWithDynamicShapeRoundTrip) {
@@ -171,46 +177,6 @@ TEST_P(ShardingSerDesTest, ConcreteEvenShardingRoundTrip) {
   EXPECT_THAT(out_sharding->shape(), sharding->shape());
   EXPECT_THAT(out_sharding->shard_shape(), sharding->shard_shape());
   EXPECT_THAT(out_sharding->IsFullyReplicated(), sharding->IsFullyReplicated());
-}
-
-TEST_P(ShardingSerDesTest, ShardingParamShardingRoundTrip) {
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto sharding,
-      ShardingParamSharding::Create(ShardingParam({2, 1}, {{0}, {2}}),
-                                    GetDevices({0, 1}), MemoryKind("abc")));
-
-  auto options = std::make_unique<SerializeOptions>(version());
-  TF_ASSERT_OK_AND_ASSIGN(auto serialized,
-                          Serialize(*sharding, std::move(options)));
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto out_sharding,
-      Deserialize<ShardingParamSharding>(
-          serialized, std::make_unique<DeserializeShardingOptions>(client())));
-  EXPECT_THAT(out_sharding->devices()->devices(),
-              ElementsAreArray(sharding->devices()->devices()));
-  EXPECT_THAT(out_sharding->sharding_param(), sharding->sharding_param());
-}
-
-TEST_P(ShardingSerDesTest, ShardingParamShardingWithUnreducedDimsRoundTrip) {
-  if (version().version_number() < SerDesVersionNumber(1)) {
-    GTEST_SKIP() << "Unreduced dims not supported before version 1.";
-  }
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto sharding,
-      ShardingParamSharding::Create(ShardingParam({1, 1}, {{0}, {2}},
-                                                  /*unreduced_axes=*/{0}),
-                                    GetDevices({0, 1}), MemoryKind("abc")));
-
-  auto options = std::make_unique<SerializeOptions>(version());
-  TF_ASSERT_OK_AND_ASSIGN(auto serialized,
-                          Serialize(*sharding, std::move(options)));
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto out_sharding,
-      Deserialize<ShardingParamSharding>(
-          serialized, std::make_unique<DeserializeShardingOptions>(client())));
-  EXPECT_THAT(out_sharding->devices()->devices(),
-              ElementsAreArray(sharding->devices()->devices()));
-  EXPECT_THAT(out_sharding->sharding_param(), sharding->sharding_param());
 }
 
 INSTANTIATE_TEST_SUITE_P(

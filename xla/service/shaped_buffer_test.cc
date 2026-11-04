@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/service/shaped_buffer.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -22,10 +24,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/test_benchmark.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
@@ -35,7 +37,6 @@ limitations under the License.
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/stream_executor_memory_allocator.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/test_benchmark.h"
 
 namespace xla {
 namespace {

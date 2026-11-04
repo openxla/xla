@@ -16,19 +16,23 @@ limitations under the License.
 // Tests for CuDnnFusionCompiler::SupportsFusionDeviceless.
 //
 // The deviceless cases build DeviceDescriptions from checked-in target-config
-// specs and open no GPU; they need a loadable host cuDNN >= 9.8 and skip
-// otherwise. DevicelessSupportMatchesLivePlanEnumeration needs a real GPU
-// whose deviceless conv probing is not gated off and skips otherwise.
+// specs and open no GPU; they need a loadable host cuDNN >=
+// se::gpu::kMinDevicelessCudnnVersion and skip otherwise.
+// DevicelessSupportMatchesLivePlanEnumeration and
+// DevicelessConvWorkspaceMatchesLiveDeserializedPlan additionally use the
+// attached GPU.
 //
 // The fusions under test are produced by the real ConvKindAssignment +
 // ConvFusionRewriter passes, so they cannot drift from pipeline output.
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -61,24 +65,27 @@ namespace {
 
 namespace se = ::stream_executor;
 
+using ::absl_testing::IsOk;
+using ::absl_testing::StatusIs;
 using DevicelessFusionSupport = CuDnnFusionCompiler::DevicelessFusionSupport;
 
+// Deviceless probing/compilation only works on cuDNN >=
+// kMinDevicelessCudnnVersion; every test skips below it.
 class CudnnFusionCompilerDevicelessTest
     : public HloHardwareIndependentTestBase {
  protected:
   void SetUp() override {
-    if (!se::gpu::SupportsDevicelessDeviceProperties()) {
-      GTEST_SKIP() << "cuDNN runtime < 9.8 does not support deviceless "
-                      "DeviceProperties.";
+    if (!se::gpu::SupportsDevicelessCudnnCompilation()) {
+      GTEST_SKIP() << "Deviceless cuDNN compilation requires cuDNN >= "
+                   << se::gpu::kMinDevicelessCudnnVersion;
     }
   }
-
   // Builds a deviceless GpuTargetConfig for the given GPU model from its
   // checked-in target-config spec (no StreamExecutor / GPU required).
   static absl::StatusOr<GpuTargetConfig> DevicelessTargetConfig(
       GpuModel model) {
     ABSL_ASSIGN_OR_RETURN(stream_executor::GpuTargetConfigProto proto,
-                     GetGpuTargetConfig(model));
+                          GetGpuTargetConfig(model));
     return GpuTargetConfig::FromProto(proto);
   }
 
@@ -90,7 +97,7 @@ class CudnnFusionCompilerDevicelessTest
       absl::string_view hlo_text, const se::DeviceDescription& device_info,
       se::dnn::VersionInfo dnn_version, ConvolutionKind expected_kind) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     ConvKindAssignment kind_assignment(device_info.gpu_compute_capability(),
                                        dnn_version);
     ABSL_RETURN_IF_ERROR(RunHloPass(&kind_assignment, module.get()).status());
@@ -379,6 +386,41 @@ TEST_F(CudnnFusionCompilerDevicelessTest, GroupedFp8ConvDeliversVerdict) {
             DevicelessFusionSupport::kUnknown);
 }
 
+TEST_F(CudnnFusionCompilerDevicelessTest,
+       ConvWith1DChannelBroadcastEpilogueSupported) {
+  constexpr absl::string_view kConvWithChannelBroadcastHlo = R"(
+    ENTRY e {
+      input = f32[2,10,10,16] parameter(0)
+      filter = f32[16,3,3,16] parameter(1)
+      mask = bf16[16] parameter(2)
+      mask_f32 = f32[16] convert(mask)
+      c_neg1 = f32[] constant(-1)
+      c_neg1_bcast = f32[16] broadcast(c_neg1), dimensions={}
+      sub = f32[16] add(mask_f32, c_neg1_bcast)
+      zero = f32[] constant(0)
+      zero_bcast = f32[16] broadcast(zero), dimensions={}
+      max = f32[16] maximum(zero_bcast, sub)
+      mask_bcast = f32[2,10,10,16] broadcast(max), dimensions={3}
+      conv = f32[2,10,10,16] convolution(input, filter),
+        window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f
+      ROOT out = f32[2,10,10,16] multiply(conv, mask_bcast)
+    })";
+
+  ASSERT_OK_AND_ASSIGN(GpuTargetConfig target_config,
+                       DevicelessTargetConfig(GpuModel::H100_SXM));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      BuildConvFusionModule(
+          kConvWithChannelBroadcastHlo, target_config.device_description,
+          se::dnn::VersionInfo(target_config.device_description.dnn_version()),
+          CONVOLUTION_KIND_FPROP));
+  const HloFusionInstruction* fusion = FindCudnnFusion(*module);
+  ASSERT_NE(fusion, nullptr);
+  EXPECT_EQ(CuDnnFusionCompiler::SupportsFusionDeviceless(
+                target_config.device_description, *fusion),
+            DevicelessFusionSupport::kSupported);
+}
+
 // The deviceless verdict must agree with live plan enumeration on the
 // executor's own device: SupportsFusionDeviceless(desc, fusion) is kSupported
 // iff GetAvailablePlanCount(executor, desc, fusion) > 0.
@@ -390,10 +432,9 @@ TEST_F(CudnnFusionCompilerDevicelessTest,
   }
   const se::DeviceDescription& device_description =
       executor->GetDeviceDescription();
-  if (!se::gpu::SupportsDevicelessConvGraphs(device_description)) {
-    GTEST_SKIP() << "Deviceless conv graph probing is gated off for this "
-                    "GPU / cuDNN runtime combination, so every deviceless "
-                    "verdict is kUnknown and there is no parity to check.";
+  if (!se::gpu::SupportsDevicelessCudnnCompilation()) {
+    GTEST_SKIP() << "Deviceless cuDNN compilation requires cuDNN >= "
+                 << se::gpu::kMinDevicelessCudnnVersion;
   }
   const se::SemanticVersion dnn_version = device_description.dnn_version();
   struct ParityCase {
@@ -429,14 +470,113 @@ TEST_F(CudnnFusionCompilerDevicelessTest,
     // Live enumeration reports unsupported fusions as an error from
     // PrepareGraph, not as a zero count.
     const absl::StatusOr<int> live_plan_count =
-        CuDnnFusionCompiler::GetAvailablePlanCount(executor, device_description,
-                                                   *fusion);
+        CuDnnFusionCompiler::GetAvailablePlanCount(
+            executor != nullptr ? executor->AsDnn() : nullptr,
+            device_description, *fusion);
     const bool live_has_plans = live_plan_count.ok() && *live_plan_count > 0;
     EXPECT_EQ(CuDnnFusionCompiler::SupportsFusionDeviceless(device_description,
                                                             *fusion),
               live_has_plans ? DevicelessFusionSupport::kSupported
                              : DevicelessFusionSupport::kUnsupported);
   }
+}
+
+TEST_F(CudnnFusionCompilerDevicelessTest,
+       NullStreamExecWithCudnnFusionFailsWhenDevicelessDisabled) {
+  constexpr absl::string_view kHlo = R"hlo(
+    fusion1 {
+      p0 = f32[32,96] parameter(0)
+      p1 = f32[96,64] parameter(1)
+      r = f32[32,64] dot(p0, p1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      neg = f32[32,64] negate(r)
+      ROOT a = f32[32,64] add(neg, neg)
+    }
+
+    ENTRY e {
+      p0 = f32[32,96] parameter(0)
+      p1 = f32[96,64] parameter(1)
+      ROOT _ = f32[32,64] fusion(p0, p1), kind=kCustom, calls=fusion1,
+        backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+})hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_cudnn_deviceless_compilation_mode(
+          DebugOptions::CUDNN_DEVICELESS_COMPILATION_DISABLED);
+
+  ASSERT_OK_AND_ASSIGN(GpuTargetConfig target_config,
+                       DevicelessTargetConfig(GpuModel::H100_SXM));
+  BinaryMap dnn_compiled_graphs;
+  CuDnnFusionCompiler compiler(/*stream_exec=*/nullptr,
+                               target_config.device_description,
+                               dnn_compiled_graphs);
+  EXPECT_THAT(compiler.Run(module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST_F(CudnnFusionCompilerDevicelessTest,
+       NullStreamExecWithoutCudnnFusionSucceedsWhenDevicelessDisabled) {
+  constexpr absl::string_view kHlo = R"hlo(
+    ENTRY e {
+      p0 = f32[32,96] parameter(0)
+      p1 = f32[96,64] parameter(1)
+      ROOT r = f32[32,64] dot(p0, p1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_cudnn_deviceless_compilation_mode(
+          DebugOptions::CUDNN_DEVICELESS_COMPILATION_DISABLED);
+
+  ASSERT_OK_AND_ASSIGN(GpuTargetConfig target_config,
+                       DevicelessTargetConfig(GpuModel::H100_SXM));
+  BinaryMap dnn_compiled_graphs;
+  CuDnnFusionCompiler compiler(/*stream_exec=*/nullptr,
+                               target_config.device_description,
+                               dnn_compiled_graphs);
+  EXPECT_THAT(compiler.Run(module.get()), IsOk());
+}
+
+TEST_F(CudnnFusionCompilerDevicelessTest,
+       DevicelessCompilationWithOldDnnVersionFails) {
+  constexpr absl::string_view kHlo = R"hlo(
+    fusion1 {
+      p0 = f32[32,96] parameter(0)
+      p1 = f32[96,64] parameter(1)
+      dot = f32[32,64] dot(p0, p1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      neg = f32[32,64] negate(dot)
+      ROOT a = f32[32,64] add(neg, neg)
+    }
+
+    ENTRY e {
+      p0 = f32[32,96] parameter(0)
+      p1 = f32[96,64] parameter(1)
+      ROOT _ = f32[32,64] fusion(p0, p1), kind=kCustom, calls=fusion1,
+        backend_config={"fusion_backend_config": {kind: "__cudnn$fusion"}}
+})hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_cudnn_deviceless_compilation_mode(
+          DebugOptions::CUDNN_DEVICELESS_COMPILATION_AUTO);
+
+  ASSERT_OK_AND_ASSIGN(GpuTargetConfig target_config,
+                       DevicelessTargetConfig(GpuModel::H100_SXM));
+  target_config.device_description.set_dnn_version(
+      se::SemanticVersion(9, 7, 0));
+  BinaryMap dnn_compiled_graphs;
+  CuDnnFusionCompiler compiler(/*stream_exec=*/nullptr,
+                               target_config.device_description,
+                               dnn_compiled_graphs);
+  EXPECT_THAT(compiler.Run(module.get()),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
 }
 
 }  // namespace

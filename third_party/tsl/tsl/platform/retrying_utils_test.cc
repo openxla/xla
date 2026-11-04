@@ -22,11 +22,11 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/match.h"
 #include "absl/time/time.h"
+#include "tsl/platform/str_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/str_util.h"
 
 namespace tsl {
 namespace {

@@ -16,9 +16,7 @@ limitations under the License.
 #include "xla/service/scheduling_annotations_util.h"
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <optional>
 #include <string>
 #include <vector>
@@ -174,7 +172,7 @@ GetSchedulingAnnotationIterationId(const HloInstruction* instr) {
 absl::StatusOr<bool> RemoveSchedulingAnnotationIterationId(
     HloInstruction* instr) {
   ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
-                   GetSchedulingAnnotation(instr));
+                        GetSchedulingAnnotation(instr));
   if (!annotation || !annotation->iteration_id) {
     return false;
   }
@@ -206,7 +204,7 @@ absl::StatusOr<AnnotationGroupId> NextSchedulingGroupId(
   for (const HloComputation* comp : module.computations()) {
     for (const HloInstruction* hlo : comp->instructions()) {
       ABSL_ASSIGN_OR_RETURN(std::optional<int64_t> scheduling_id,
-                       GetSchedulingAnnotationGroupId(hlo));
+                            GetSchedulingAnnotationGroupId(hlo));
       if (scheduling_id.has_value()) {
         next_scheduling_id =
             std::max(next_scheduling_id, scheduling_id.value());

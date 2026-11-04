@@ -43,19 +43,19 @@ namespace gpu {
 
 class ReduceDimensionGroupVisitor : public DfsHloRewriteVisitor {
  public:
-  absl::Status HandleReduce(HloInstruction *hlo) override {
+  absl::Status HandleReduce(HloInstruction* hlo) override {
     auto reduce = Cast<HloReduceInstruction>(hlo);
 
     VLOG(4) << "Input: " << reduce->ToString();
 
-    absl::InlinedVector<HloInstruction *, 2> reduce_inputs_grouped;
+    absl::InlinedVector<HloInstruction*, 2> reduce_inputs_grouped;
     std::vector<int64_t> reduced_dims_grouped;
 
     int idx = -1;
-    for (HloInstruction *operand : reduce->inputs()) {
+    for (HloInstruction* operand : reduce->inputs()) {
       idx++;
       std::vector<int64_t> new_grouped_dims;
-      const Shape &shape = operand->shape();
+      const Shape& shape = operand->shape();
       CHECK(shape == LayoutUtil::GetWithDefaultLayout(shape))
           << "Default layout should be enforced on reduction operand";
       auto is_reduced = [&](int dim) {
@@ -117,7 +117,7 @@ absl::StatusOr<bool> ReductionDimensionGrouper::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   ABSL_ASSIGN_OR_RETURN(bool changed, ReduceDimensionGroupVisitor().RunOnModule(
-                                     module, execution_threads));
+                                          module, execution_threads));
   return changed;
 }
 

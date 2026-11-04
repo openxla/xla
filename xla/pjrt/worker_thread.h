@@ -23,8 +23,8 @@ limitations under the License.
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/synchronization/mutex.h"
-#include "xla/tsl/platform/env.h"
 #include "tsl/platform/env.h"
+#include "xla/tsl/platform/env.h"
 
 namespace xla {
 
@@ -56,6 +56,9 @@ class WorkerThread {
     absl::MutexLock lock(mu_);
     return !work_queue_.empty() || is_running_;
   }
+
+  // Returns true if the caller is currently running on this worker thread.
+  bool IsCurrentThread() const;
 
  private:
   bool WorkAvailable() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);

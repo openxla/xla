@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/status/status_matchers.h"
 #include "google/protobuf/text_format.h"
 #include "xla/service/gpu/launch_dimensions.pb.h"

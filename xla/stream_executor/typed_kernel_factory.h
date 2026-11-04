@@ -39,9 +39,9 @@ class TypedKernelFactory {
  public:
   // Creates a typed kernel on a given executor from a kernel specification.
   static absl::StatusOr<TypedKernel<Params...>> Create(
-      StreamExecutor *executor, const KernelLoaderSpec &spec) {
+      StreamExecutor* executor, const KernelLoaderSpec& spec) {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Kernel> kernel,
-                     executor->LoadKernel(spec));
+                          executor->LoadKernel(spec));
     return TypedKernel<Params...>(std::move(kernel));
   }
 
@@ -50,7 +50,7 @@ class TypedKernelFactory {
   // launch would have to match types of the arguments provided at creation
   // time. The canonical storage for both ptx and cubin_data should outlive the
   // lifetime of the kernel.
-  static absl::StatusOr<TypedKernel<Params...>> Create(StreamExecutor *executor,
+  static absl::StatusOr<TypedKernel<Params...>> Create(StreamExecutor* executor,
                                                        std::string kernel_name,
                                                        absl::string_view ptx) {
     KernelLoaderSpec loader_spec = KernelLoaderSpec::CreateCudaPtxInMemorySpec(
@@ -61,7 +61,7 @@ class TypedKernelFactory {
   }
 
   static absl::StatusOr<TypedKernel<Params...>> Create(
-      StreamExecutor *executor, std::string kernel_name,
+      StreamExecutor* executor, std::string kernel_name,
       absl::Span<const uint8_t> cubin_data) {
     KernelLoaderSpec loader_spec =
         KernelLoaderSpec::CreateCudaCubinInMemorySpec(
@@ -73,9 +73,9 @@ class TypedKernelFactory {
 
   // Creates a kernel which can be launched on a stream from
   // an in-process symbol pointer.
-  static absl::StatusOr<TypedKernel<Params...>> Create(StreamExecutor *executor,
+  static absl::StatusOr<TypedKernel<Params...>> Create(StreamExecutor* executor,
                                                        std::string kernel_name,
-                                                       void *symbol) {
+                                                       void* symbol) {
     KernelLoaderSpec loader_spec = KernelLoaderSpec::CreateInProcessSymbolSpec(
         symbol, std::move(kernel_name),
         TypedKernel<Params...>::kNumberOfParameters);

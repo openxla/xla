@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_TRANSFORMS_GEMM_REWRITER_TEST_LIB_H_
 
 #include <gtest/gtest.h>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"

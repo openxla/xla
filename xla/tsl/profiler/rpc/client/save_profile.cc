@@ -34,15 +34,15 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "riegeli/bytes/fd_writer.h"
 #include "riegeli/records/record_writer.h"
+#include "tsl/platform/path.h"
+#include "tsl/profiler/protobuf/profiler_service.pb.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/lib/io/zlib_compression_options.h"
 #include "xla/tsl/lib/io/zlib_outputbuffer.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/profiler/utils/file_system_utils.h"
-#include "tsl/platform/path.h"
-#include "tsl/profiler/protobuf/profiler_service.pb.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -211,7 +211,7 @@ absl::Status SaveXSpace(const std::string& repository_root,
 absl::Status SaveXSpaceChunks(
     absl::string_view repository_root, absl::string_view run,
     absl::string_view host,
-    std::vector<tensorflow::profiler::XSpace>& xspaces) {
+    const std::vector<tensorflow::profiler::XSpace>& xspaces) {
   if (xspaces.empty()) {
     return absl::OkStatus();
   }
@@ -256,7 +256,7 @@ absl::Status SaveXSpaceChunks(
   if (!writer.ok()) {
     return writer.status();
   }
-  for (tensorflow::profiler::XSpace& xspace : xspaces) {
+  for (const tensorflow::profiler::XSpace& xspace : xspaces) {
     std::string plane_names = GetPlaneNames(xspace);
     VLOG(1) << "SaveXSpaceChunks "
             << ", size: " << xspace.ByteSizeLong() << " bytes"
@@ -266,9 +266,7 @@ absl::Status SaveXSpaceChunks(
     if (!writer.WriteRecord(xspace)) {
       break;
     }
-    tensorflow::profiler::XSpace().Swap(&xspace);
   }
-  xspaces.clear();
   if (!writer.Close()) {
     return writer.status();
   }

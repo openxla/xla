@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/llvm_ir/ir_array.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"

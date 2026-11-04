@@ -21,6 +21,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -31,7 +32,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/tensor_float_32_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -195,7 +195,14 @@ std::vector<HloOpcode> TritonSupportedBinaryElementwiseUpToFloatNormalization(
 
 std::vector<HloOpcode> TritonSupportedTernaryElementwiseUpToFloatNormalization(
     PrimitiveType element_type) {
-  return {HloOpcode::kSelect, HloOpcode::kClamp};
+  std::vector<HloOpcode> ret{HloOpcode::kSelect, HloOpcode::kClamp};
+  if (element_type == PrimitiveType::F16 ||
+      element_type == PrimitiveType::BF16 ||
+      element_type == PrimitiveType::F32 ||
+      element_type == PrimitiveType::F64) {
+    ret.push_back(HloOpcode::kFma);
+  }
+  return ret;
 }
 
 bool IsTritonSupportedElementwiseUpToFloatNormalization(

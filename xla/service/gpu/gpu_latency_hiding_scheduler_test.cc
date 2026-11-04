@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -55,6 +56,7 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
+using ::testing::IsEmpty;
 using ::testing::Property;
 using ::testing::UnorderedElementsAre;
 
@@ -93,9 +95,9 @@ class GpuLatencyHidingSchedulerBaseTest
     options.set_xla_gpu_pgle_accuracy_checker(strictness);
 
     ABSL_RETURN_IF_ERROR(ScheduleGpuModule(module, /*pointer_size=*/8,
-                                      gpu_device_info, &mlir_context_,
-                                      &alias_info)
-                        .status());
+                                           gpu_device_info, &mlir_context_,
+                                           &alias_info)
+                             .status());
     return module;
   }
 
@@ -154,6 +156,182 @@ TEST_F(GpuLatencyHidingSchedulerBaseTest,
     EXPECT_EQ(after_stats.missing_instructions.size(), 0);
     EXPECT_EQ(after_stats.found_instructions_count, 0);
   }
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       GPUProfileStatisticsAggregatorDoesNotCountAllocateBuffer) {
+  GPUProfileStatisticsAggregator aggregator;
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    ENTRY main {
+      empty = f32[32] custom-call(), custom_call_target="AllocateBuffer"
+      ROOT work = f32[32] custom-call(empty), custom_call_target="work"
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+
+  for (const HloInstruction* instr :
+       module->entry_computation()->instructions()) {
+    aggregator.HandleMissingInstructionCost(*instr);
+  }
+  EXPECT_THAT(aggregator.GetStats().missing_instructions,
+              UnorderedElementsAre(Property(&HloInstruction::name, "work")));
+}
+
+// The GPU runtime runs the body of a loop with a known trip count without
+// evaluating its condition.
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       GPUProfileStatisticsAggregatorDoesNotCountUnevaluatedLoopConditions) {
+  GPUProfileStatisticsAggregator aggregator;
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    cond {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      c = s32[] constant(4)
+      ROOT lt = pred[] compare(i, c), direction=LT
+    }
+
+    body {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      one = s32[] constant(1)
+      add = s32[] add(i, one)
+      ROOT t = (s32[]) tuple(add)
+    }
+
+    ENTRY main {
+      zero = s32[] constant(0)
+      init = (s32[]) tuple(zero)
+      ROOT loop = (s32[]) while(init), condition=cond, body=body,
+          backend_config={"known_trip_count":{"n":"4"}}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+
+  aggregator.HandleMissingInstructionCost(*FindInstruction(module.get(), "lt"));
+  EXPECT_THAT(aggregator.GetStats().missing_instructions, IsEmpty());
+}
+
+// A condition shared by several loops is only unevaluated if every one of them
+// has a known trip count.
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       GPUProfileStatisticsAggregatorHandlesSharedLoopConditions) {
+  GPUProfileStatisticsAggregator aggregator;
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    cond_all_known {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      c = s32[] constant(4)
+      ROOT lt.0 = pred[] compare(i, c), direction=LT
+    }
+
+    cond_some_known {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      c = s32[] constant(4)
+      ROOT lt.1 = pred[] compare(i, c), direction=LT
+    }
+
+    body {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      one = s32[] constant(1)
+      add = s32[] add(i, one)
+      ROOT t = (s32[]) tuple(add)
+    }
+
+    ENTRY main {
+      zero = s32[] constant(0)
+      init = (s32[]) tuple(zero)
+      loop.0 = (s32[]) while(init), condition=cond_all_known, body=body,
+          backend_config={"known_trip_count":{"n":"4"}}
+      loop.1 = (s32[]) while(init), condition=cond_all_known, body=body,
+          backend_config={"known_trip_count":{"n":"4"}}
+      loop.2 = (s32[]) while(init), condition=cond_some_known, body=body,
+          backend_config={"known_trip_count":{"n":"4"}}
+      loop.3 = (s32[]) while(init), condition=cond_some_known, body=body
+      ROOT t = ((s32[]), (s32[]), (s32[]), (s32[])) tuple(loop.0, loop.1,
+          loop.2, loop.3)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+
+  aggregator.HandleMissingInstructionCost(
+      *FindInstruction(module.get(), "lt.0"));
+  aggregator.HandleMissingInstructionCost(
+      *FindInstruction(module.get(), "lt.1"));
+  EXPECT_THAT(aggregator.GetStats().missing_instructions,
+              UnorderedElementsAre(Property(&HloInstruction::name, "lt.1")));
+}
+
+// Without a known trip count the GPU runtime evaluates the condition on every
+// iteration, so it should have been profiled. That holds whether the loop has
+// no backend config or one that knows other properties of the loop.
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       GPUProfileStatisticsAggregatorCountsEvaluatedLoopConditions) {
+  GPUProfileStatisticsAggregator aggregator;
+  absl::string_view kHloModule = R"(
+    HloModule m
+
+    cond_no_config {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      c = s32[] constant(4)
+      ROOT lt.0 = pred[] compare(i, c), direction=LT
+    }
+
+    cond_init_step {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      c = s32[] constant(4)
+      ROOT lt.1 = pred[] compare(i, c), direction=LT
+    }
+
+    body.0 {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      one = s32[] constant(1)
+      add.0 = s32[] add(i, one)
+      ROOT t = (s32[]) tuple(add.0)
+    }
+
+    body.1 {
+      p = (s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      one = s32[] constant(1)
+      add.1 = s32[] add(i, one)
+      ROOT t = (s32[]) tuple(add.1)
+    }
+
+    ENTRY main {
+      zero = s32[] constant(0)
+      init = (s32[]) tuple(zero)
+      loop_no_config = (s32[]) while(init), condition=cond_no_config,
+          body=body.0
+      loop_init_step = (s32[]) while(init), condition=cond_init_step,
+          body=body.1,
+          backend_config={"known_init_step":{"init":"0","step":"1"}}
+      ROOT t = ((s32[]), (s32[])) tuple(loop_no_config, loop_init_step)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+
+  aggregator.HandleMissingInstructionCost(
+      *FindInstruction(module.get(), "lt.0"));
+  aggregator.HandleMissingInstructionCost(
+      *FindInstruction(module.get(), "lt.1"));
+  EXPECT_THAT(aggregator.GetStats().missing_instructions,
+              UnorderedElementsAre(Property(&HloInstruction::name, "lt.0"),
+                                   Property(&HloInstruction::name, "lt.1")));
 }
 
 // Copies are not fusion wrapped. We ran a fusion wrapper prior to scheduling
@@ -1298,6 +1476,55 @@ ENTRY main {
 }
 
 TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       CollectiveStreamAnnotatedCallUsesOneResource) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule test, is_scheduled=true
+
+body {
+  p0 = f32[1] parameter(0)
+  ag-start = (f32[1], f32[1]) all-gather-start(p0), dimensions={0}
+  ROOT ag-done = f32[1] all-gather-done(ag-start)
+}
+
+ENTRY main {
+  p0 = f32[1] parameter(0)
+  call-start = ((f32[1]), f32[1]) call-start(p0), to_apply=body,
+    frontend_attributes={_xla_stream_annotation="collective"}
+  ROOT call-done = f32[1] call-done(call-start),
+    frontend_attributes={_xla_stream_annotation="collective"}
+})";
+
+  HloModuleConfig config = GetModuleConfig(/*fdo_profile=*/"");
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+  HloInstruction* call_start = FindInstruction(module.get(), "call-start");
+  HloInstruction* call_done = FindInstruction(module.get(), "call-done");
+  ASSERT_NE(call_start, nullptr);
+  ASSERT_NE(call_done, nullptr);
+
+  SchedulerConfig sched_config;
+  GpuAsyncTracker async_tracker(sched_config);
+  const int64_t collective_resource =
+      ResourceTypeToIndex(GpuResourceType::kGpuAsyncStreamCollectives);
+
+  EXPECT_EQ(async_tracker.GetNumResourcesPerInstruction(collective_resource,
+                                                        *call_start),
+            0);
+  EXPECT_EQ(async_tracker.GetNumResourcesPerInstruction(collective_resource,
+                                                        *call_done),
+            1);
+
+  auto start_resource_counts =
+      async_tracker.GetNumResourcesPerInstruction(*call_start);
+  EXPECT_TRUE(start_resource_counts.empty());
+
+  auto done_resource_counts =
+      async_tracker.GetNumResourcesPerInstruction(*call_done);
+  ASSERT_EQ(done_resource_counts.size(), 1);
+  EXPECT_EQ(done_resource_counts.at(collective_resource), 1);
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
        ExplicitCollectivesGroupSerializesWithNativeCollective) {
   absl::string_view kFdoProfile = R"pb(
     costs { name: "add" cost_us: 100000.0 }
@@ -1509,7 +1736,8 @@ HloModule test, num_partitions=4
   %param_2 = s32[] parameter(2)
   %param_3 = s32[] parameter(3)
   ROOT %dynamic-slice = f32[1,2,2]{2,1,0} dynamic-slice(%param_0, %param_1, %param_2, %param_3), dynamic_slice_sizes={1,2,2},
-      backend_config={"dynamic_slice_config":{"byte_offset":"0","byte_stride":"0"}}
+      backend_config={"dynamic_slice_config":{
+        "linear":{"byte_offset":"0","byte_stride":"0"}}}
 }
 
 %async_computation (param_0: f32[2,2,2], param_1: s32[], param_2: s32[], param_3: s32[]) -> f32[1,2,2] {
@@ -1815,7 +2043,8 @@ dynamic_slice_computation {
   i2 = s32[] parameter(3)
   ROOT dynamic_slice = f32[1,2,2] dynamic-slice(input, i0, i1, i2),
     dynamic_slice_sizes={1,2,2},
-    backend_config={"dynamic_slice_config":{"byte_offset":"0","byte_stride":"0"}}
+    backend_config={"dynamic_slice_config":{
+      "linear":{"byte_offset":"0","byte_stride":"0"}}}
 }
 
 async_computation {
@@ -1945,7 +2174,8 @@ dynamic_slice_computation {
   i2 = s32[] parameter(3)
   ROOT dynamic_slice = f32[1,2,2] dynamic-slice(input, i0, i1, i2),
     dynamic_slice_sizes={1,2,2},
-    backend_config={"dynamic_slice_config":{"byte_offset":"0","byte_stride":"0"}}
+    backend_config={"dynamic_slice_config":{
+      "linear":{"byte_offset":"0","byte_stride":"0"}}}
 }
 
 async_computation {
@@ -2316,6 +2546,302 @@ ENTRY main {
   // native collectives.
   EXPECT_TRUE(GetIndexByName(instruction_sequence, "call-done") <
               GetIndexByName(instruction_sequence, "ar_0"));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       CollectiveStreamAnnotatedCallOverlapsNativeCollective) {
+  absl::string_view kHloModule = R"(
+HloModule m
+
+body {
+  p0 = f32[2] parameter(0)
+  ag-start = (f32[2], f32[2]) all-gather-start(p0), dimensions={0}
+  ROOT ag-done = f32[2] all-gather-done(ag-start)
+}
+
+ENTRY main {
+  p0 = f32[2] parameter(0)
+  native-start = (f32[2], f32[2]) all-gather-start(p0), dimensions={0}
+  call-start = ((f32[2]), f32[2]) call-start(p0), to_apply=body,
+    frontend_attributes={_xla_stream_annotation="collective"}
+  call-done = f32[2] call-done(call-start),
+    frontend_attributes={_xla_stream_annotation="collective"}
+  native-done = f32[2] all-gather-done(native-start)
+  ROOT result = (f32[2], f32[2]) tuple(call-done, native-done)
+}
+)";
+
+  auto config = GetModuleConfig(/*fdo_profile=*/"");
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+
+  EXPECT_OK(ScheduleModule(module.get(), /*num_parallel_resources=*/1));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest, LargeIndependentFillsAreForcedEarly) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule test
+
+fill_body {
+  zero = f32[] constant(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(zero), dimensions={}
+}
+
+iota_body {
+  ROOT iota = s32[512,512]{1,0} iota(), iota_dimension=0
+}
+
+small_body {
+  one = f32[] constant(1)
+  ROOT broadcast = f32[16,16]{1,0} broadcast(one), dimensions={}
+}
+
+scale_body {
+  p = f32[512,512]{1,0} parameter(0)
+  two = f32[] constant(2)
+  broadcast = f32[512,512]{1,0} broadcast(two), dimensions={}
+  ROOT multiply = f32[512,512]{1,0} multiply(p, broadcast)
+}
+
+earliest_body {
+  zero = f32[] constant(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(zero), dimensions={}
+}
+
+grouped_body {
+  zero = f32[] constant(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(zero), dimensions={}
+}
+
+streamed_body {
+  zero = f32[] constant(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(zero), dimensions={}
+}
+
+multi_body {
+  zero = f32[] constant(0)
+  broadcast = f32[384,384]{1,0} broadcast(zero), dimensions={}
+  copy = f32[384,384]{1,0} copy(broadcast)
+  ROOT tuple = (f32[384,384]{1,0}, f32[384,384]{1,0}) tuple(broadcast, copy)
+}
+
+small_multi_body {
+  zero = f32[] constant(0)
+  broadcast = f32[256,256]{1,0} broadcast(zero), dimensions={}
+  copy = f32[256,256]{1,0} copy(broadcast)
+  ROOT tuple = (f32[256,256]{1,0}, f32[256,256]{1,0}) tuple(broadcast, copy)
+}
+
+ENTRY main {
+  p0 = f32[512,512]{1,0} parameter(0)
+  fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+  iota_fill = s32[512,512]{1,0} fusion(), kind=kLoop, calls=iota_body
+  small_fill = f32[16,16]{1,0} fusion(), kind=kLoop, calls=small_body
+  scaled = f32[512,512]{1,0} fusion(p0), kind=kLoop, calls=scale_body
+  earliest_fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=earliest_body, backend_config={"force_earliest_schedule":true}
+  grouped_fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=grouped_body, frontend_attributes={_scheduling_group_id="0"}
+  streamed_fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=streamed_body, backend_config={"operation_queue_id":"1"}
+  multi_fill = (f32[384,384]{1,0}, f32[384,384]{1,0}) fusion(), kind=kLoop, calls=multi_body
+  small_multi_fill = (f32[256,256]{1,0}, f32[256,256]{1,0}) fusion(), kind=kLoop, calls=small_multi_body
+  ROOT result = (f32[512,512]{1,0}, s32[512,512]{1,0}, f32[16,16]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, f32[512,512]{1,0}, (f32[384,384]{1,0}, f32[384,384]{1,0}), (f32[256,256]{1,0}, f32[256,256]{1,0})) tuple(fill, iota_fill, small_fill, scaled, earliest_fill, grouped_fill, streamed_fill, multi_fill, small_multi_fill)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  HloComputation* computation = module->entry_computation();
+  HloSchedule schedule(module.get());
+  for (HloComputation* scheduled_computation :
+       module->MakeNonfusionComputations()) {
+    schedule.set_sequence(scheduled_computation,
+                          scheduled_computation->MakeInstructionPostOrder());
+  }
+  ASSERT_OK(module->set_schedule(std::move(schedule)));
+
+  SchedulerConfig config;
+  auto tracker = std::make_shared<GpuAsyncTracker>(config);
+  auto latency_estimator =
+      std::make_shared<GpuLatencyEstimator>(/*pointer_size=*/8);
+  stream_executor::DeviceDescription gpu_device_info =
+      TestGpuDeviceInfo::CudaOrRocmDeviceInfo();
+  GpuAliasInfo alias_info(gpu_device_info);
+  auto scheduling_context = std::make_shared<const SchedulingContext>(
+      module.get(), latency_estimator, tracker, &alias_info);
+  std::vector<HloInstruction*> post_order =
+      computation->MakeInstructionPostOrder();
+  // The graph constructor runs PostProcessScheduleGraph.
+  HloScheduleGraph graph(&post_order, scheduling_context);
+
+  auto node = [&](absl::string_view name) -> const HloGraphNode& {
+    return graph.GetNode(computation->GetInstructionWithName(name));
+  };
+  EXPECT_TRUE(node("fill").GetForceEarly());
+  EXPECT_TRUE(node("iota_fill").GetForceEarly());
+  // Small fills, fusions with operands, and parameters are left alone.
+  EXPECT_FALSE(node("small_fill").GetForceEarly());
+  EXPECT_FALSE(node("scaled").GetForceEarly());
+  EXPECT_FALSE(node("p0").GetForceEarly());
+  // Explicit placement constraints win over the fill heuristic.
+  EXPECT_FALSE(node("earliest_fill").GetForceEarly());
+  EXPECT_TRUE(node("earliest_fill").GetForceDelay());
+  EXPECT_FALSE(node("grouped_fill").GetForceEarly());
+  EXPECT_FALSE(node("streamed_fill").GetForceEarly());
+  // Multi-output fills count the bytes of all outputs: two 576 KiB outputs
+  // qualify, two 256 KiB outputs do not.
+  EXPECT_TRUE(node("multi_fill").GetForceEarly());
+  EXPECT_FALSE(node("small_multi_fill").GetForceEarly());
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       LargeFillIsScheduledNextToItsUserAfterLoop) {
+  // The latency hiding scheduler only schedules computations that contain an
+  // async op, so an unrelated all-reduce keeps the entry computation on its
+  // path.
+  constexpr absl::string_view kHloModule = R"(
+HloModule test
+
+apply_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+fill_body {
+  zero = f32[] constant(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(zero), dimensions={}
+}
+
+condition {
+  p = (s32[], f32[512,512]{1,0}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  limit = s32[] constant(4)
+  ROOT compare = pred[] compare(i, limit), direction=LT
+}
+
+body {
+  p = (s32[], f32[512,512]{1,0}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[512,512]{1,0} get-tuple-element(p), index=1
+  one = s32[] constant(1)
+  next = s32[] add(i, one)
+  negated = f32[512,512]{1,0} negate(x)
+  ROOT tuple = (s32[], f32[512,512]{1,0}) tuple(next, negated)
+}
+
+ENTRY main {
+  input = f32[512,512]{1,0} parameter(0)
+  other = f32[512,512]{1,0} parameter(1)
+  zero = s32[] constant(0)
+  initial = (s32[], f32[512,512]{1,0}) tuple(zero, input)
+  fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+  loop = (s32[], f32[512,512]{1,0}) while(initial), condition=condition, body=body
+  looped = f32[512,512]{1,0} get-tuple-element(loop), index=1
+  sum = f32[512,512]{1,0} add(looped, fill)
+  ar-start = f32[512,512]{1,0} all-reduce-start(other), to_apply=apply_op
+  ar-done = f32[512,512]{1,0} all-reduce-done(ar-start)
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(sum, ar-done)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(
+                           kHloModule, GetModuleConfig(/*fdo_profile=*/"")));
+  ASSERT_OK(ScheduleModule(module.get()));
+  std::vector<HloInstruction*> sequence =
+      module->schedule().sequence(module->entry_computation()).instructions();
+
+  // The fill's buffer is not live across the loop. Only the no-op
+  // get-tuple-element, which the scheduler emits as soon as it is ready, may
+  // sit between the fill and its user.
+  EXPECT_LT(GetIndexByName(sequence, "loop"), GetIndexByName(sequence, "fill"));
+  EXPECT_LT(GetIndexByName(sequence, "fill"),
+            GetIndexByName(sequence, "looped"));
+  EXPECT_LT(GetIndexByName(sequence, "looped"),
+            GetIndexByName(sequence, "sum"));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       LargeFillUsedAfterCollectiveStaysOutOfOverlapWindow) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule test
+
+apply_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+fill_body {
+  zero = f32[] constant(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(zero), dimensions={}
+}
+
+ENTRY main {
+  p0 = f32[512,512]{1,0} parameter(0)
+  p1 = f32[512,512]{1,0} parameter(1)
+  ar-start = f32[512,512]{1,0} all-reduce-start(p0), to_apply=apply_op
+  ar-done = f32[512,512]{1,0} all-reduce-done(ar-start)
+  negated = f32[512,512]{1,0} negate(p1)
+  fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+  sum = f32[512,512]{1,0} add(ar-done, fill)
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(sum, negated)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(
+                           kHloModule, GetModuleConfig(/*fdo_profile=*/"")));
+  ASSERT_OK(ScheduleModule(module.get()));
+  std::vector<HloInstruction*> sequence =
+      module->schedule().sequence(module->entry_computation()).instructions();
+
+  // In the bottom-up pass the fill becomes ready together with ar-done and is
+  // picked first, so it lands after the collective completes rather than
+  // inside the overlap window, directly before its user.
+  EXPECT_LT(GetIndexByName(sequence, "ar-done"),
+            GetIndexByName(sequence, "fill"));
+  EXPECT_EQ(GetIndexByName(sequence, "fill") + 1,
+            GetIndexByName(sequence, "sum"));
+}
+
+TEST_F(GpuLatencyHidingSchedulerBaseTest,
+       LargeFillUsedInsideOverlapWindowStaysNextToItsUser) {
+  constexpr absl::string_view kHloModule = R"(
+HloModule test
+
+apply_op {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT add = f32[] add(x, y)
+}
+
+fill_body {
+  zero = f32[] constant(0)
+  ROOT broadcast = f32[512,512]{1,0} broadcast(zero), dimensions={}
+}
+
+ENTRY main {
+  p0 = f32[512,512]{1,0} parameter(0)
+  ar-start = f32[512,512]{1,0} all-reduce-start(p0), to_apply=apply_op
+  ar-done = f32[512,512]{1,0} all-reduce-done(ar-start)
+  fill = f32[512,512]{1,0} fusion(), kind=kLoop, calls=fill_body
+  negated = f32[512,512]{1,0} negate(fill)
+  ROOT result = (f32[512,512]{1,0}, f32[512,512]{1,0}) tuple(ar-done, negated)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(
+                           kHloModule, GetModuleConfig(/*fdo_profile=*/"")));
+  ASSERT_OK(ScheduleModule(module.get()));
+  std::vector<HloInstruction*> sequence =
+      module->schedule().sequence(module->entry_computation()).instructions();
+
+  // The scheduler overlaps `negated` with the collective. The fill follows it
+  // into the window, directly before it, so the fill's cost still counts
+  // toward hiding the collective's latency.
+  EXPECT_LT(GetIndexByName(sequence, "ar-start"),
+            GetIndexByName(sequence, "fill"));
+  EXPECT_LT(GetIndexByName(sequence, "fill"),
+            GetIndexByName(sequence, "ar-done"));
+  EXPECT_EQ(GetIndexByName(sequence, "fill") + 1,
+            GetIndexByName(sequence, "negated"));
 }
 
 }  // namespace

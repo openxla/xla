@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/triangular_solve_expander.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
 #include "xla/array2d.h"
 #include "xla/error_spec.h"
 #include "xla/literal.h"

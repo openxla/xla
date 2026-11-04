@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/caching_compilation_provider.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status_matchers.h"
 #include "absl/synchronization/mutex.h"
 #include "xla/stream_executor/cuda/compilation_options.h"
@@ -413,6 +414,19 @@ TEST(CachingCompilationProviderTest,
     absl::MutexLock lock(mutex);
     compilation_supposed_to_be_done = true;
   });
+}
+
+TEST(CachingCompilationProviderTest,
+     GetLatestPtxIsaVersionDelegatesToUnderlyingProvider) {
+  auto mock_compilation_provider = std::make_unique<MockCompilationProvider>();
+  EXPECT_CALL(*mock_compilation_provider, GetLatestPtxIsaVersion)
+      .WillOnce(Return(92));
+
+  CachingCompilationProvider caching_compilation_provider(
+      std::move(mock_compilation_provider));
+
+  EXPECT_THAT(caching_compilation_provider.GetLatestPtxIsaVersion(),
+              absl_testing::IsOkAndHolds(92));
 }
 
 }  // namespace

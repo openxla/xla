@@ -26,7 +26,7 @@ namespace xla {
 void AggregateProfiledInstructionsProto(
     absl::Span<const tensorflow::profiler::ProfiledInstructionsProto> profiles,
     int percentile,
-    tensorflow::profiler::ProfiledInstructionsProto *result_profile);
+    tensorflow::profiler::ProfiledInstructionsProto* result_profile);
 
 }  // namespace xla
 

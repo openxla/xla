@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/python/ifrt/ref_wrapper.h"
 
+#include <gtest/gtest.h>
+
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"

@@ -14,19 +14,22 @@
 
 #include "xla/python/ifrt_proxy/client/executable.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/profiling/device_time_measurement.h"
 #include "xla/pjrt/profiling/test_util/mock_device_time_measurement.h"
@@ -58,8 +61,6 @@
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/protobuf.h"
 
 using ::testing::_;
 using ::testing::ElementsAre;
@@ -144,8 +145,7 @@ TEST_F(LoadedExecutableTest, Metadata) {
   ON_CALL(device2, Id()).WillByDefault(Return(DeviceId(2)));
   LoadedExecutable executable(
       &client, rpc_helper_, /*handle=*/1234, /*name=*/"foo",
-      /*num_devices=*/2, /*devices=*/{},
-      /*addressable_devices=*/{},
+      /*devices=*/{}, /*addressable_devices=*/{},
       /*fingerprint=*/"fingerprint",
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
 
@@ -226,7 +226,7 @@ TEST_F(LoadedExecutableTest, Execute) {
 
   LoadedExecutable executable(
       &client, rpc_helper_, /*handle=*/1234, /*name=*/"foo",
-      /*num_devices=*/2, /*devices=*/{}, /*addressable_devices=*/{},
+      /*devices=*/{}, /*addressable_devices=*/{},
       /*fingerprint=*/"fingerprint",
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
 
@@ -304,6 +304,10 @@ TEST_F(LoadedExecutableTest, Execute) {
   EXPECT_THAT(
       result.status.Await(),
       absl_testing::StatusIs(absl::StatusCode::kUnknown, "injected error"));
+  ASSERT_NE(result.cancellation_handle, nullptr);
+  EXPECT_NE(dynamic_cast<CancellationHandle*>(result.cancellation_handle.get())
+                ->handle(),
+            0);
 
   ASSERT_THAT(result.outputs, SizeIs(2));
 
@@ -351,6 +355,11 @@ TEST_F(LoadedExecutableTest, Execute) {
       absl_testing::StatusIs(absl::StatusCode::kUnknown, "injected error"));
   EXPECT_EQ(execute_req.result_status_handle(),
             fetch_execute_result_req.result_status_handle());
+  ASSERT_NE(result.cancellation_handle, nullptr);
+  EXPECT_NE(execute_req.cancellation_handle(), 0);
+  EXPECT_EQ(dynamic_cast<CancellationHandle*>(result.cancellation_handle.get())
+                ->handle(),
+            execute_req.cancellation_handle());
 
   ASSERT_THAT(result.outputs, SizeIs(2));
   ASSERT_THAT(execute_req.result_array_handle(), SizeIs(2));
@@ -390,7 +399,7 @@ TEST_F(LoadedExecutableTest, DeviceTime) {
 
   LoadedExecutable executable(
       &client, rpc_helper_, /*handle=*/1234, /*name=*/"foo",
-      /*num_devices=*/1, /*devices=*/{}, /*addressable_devices=*/{},
+      /*devices=*/{}, /*addressable_devices=*/{},
       /*fingerprint=*/"fingerprint",
       /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
 
@@ -434,6 +443,51 @@ TEST_F(LoadedExecutableTest, DeviceTime) {
   EXPECT_THAT(device_time->GetTotalDuration(
                   xla::DeviceTimeMeasurement::DeviceType::kTpu),
               absl::Microseconds(1234.0));
+}
+
+TEST_F(LoadedExecutableTest, NoCancellationHandleWithoutFillStatus) {
+  MockClient client;
+
+  IfrtResponse response;
+  ASSERT_TRUE(TextFormat::ParseFromString(
+      R"pb(
+        loaded_executable_metadata_response {
+          parameter_shardings {}
+          output_shardings {}
+          output_layouts_list {}
+        }
+      )pb",
+      &response));
+  EXPECT_CALL(*session_, Enqueue(Pointee(Partially(EquivToProto(
+                             R"pb(loaded_executable_metadata_request {
+                                    loaded_executable_handle: 1234
+                                  })pb")))))
+      .WillOnce(MockClientSessionReturnResponse(response));
+
+  LoadedExecutable executable(
+      &client, rpc_helper_, /*handle=*/1234, /*name=*/"foo",
+      /*devices=*/{}, /*addressable_devices=*/{},
+      /*fingerprint=*/"fingerprint",
+      /*loaded_host_callbacks=*/{}, /*loaded_host_callback_handles=*/{});
+
+  xla::ifrt::LoadedExecutable::ExecuteOptions exec_options;
+  exec_options.fill_status = false;
+
+  TestQueue<IfrtRequest> requests_queue(
+      /*default_pop_timeout=*/absl::Minutes(1));
+  IfrtResponse execute_response;
+  execute_response.mutable_loaded_executable_execute_response();
+  EXPECT_CALL(
+      *session_,
+      Enqueue(IfrtRequestOfType(IfrtRequest::kLoadedExecutableExecuteRequest)))
+      .WillOnce(MockClientCaptureAndReturn(&requests_queue, execute_response));
+
+  TF_ASSERT_OK_AND_ASSIGN(auto result,
+                          executable.Execute({}, exec_options, std::nullopt));
+
+  auto execute_req = requests_queue.Pop().loaded_executable_execute_request();
+  EXPECT_EQ(execute_req.cancellation_handle(), 0);
+  EXPECT_EQ(result.cancellation_handle, nullptr);
 }
 
 }  // namespace

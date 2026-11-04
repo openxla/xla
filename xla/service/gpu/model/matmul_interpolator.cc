@@ -141,12 +141,12 @@ absl::StatusOr<InterpolationSpecification> Spec(
   }
 
   ABSL_ASSIGN_OR_RETURN(Shape lhs_shape,
-                   Shape::FromProto(profile.operands(0).shape()));
+                        Shape::FromProto(profile.operands(0).shape()));
   ABSL_ASSIGN_OR_RETURN(Shape rhs_shape,
-                   Shape::FromProto(profile.operands(1).shape()));
+                        Shape::FromProto(profile.operands(1).shape()));
   DotDimensionNumbers dot_dims = profile.instruction().dot_dimension_numbers();
   ABSL_ASSIGN_OR_RETURN(Shape out_shape,
-                   Shape::FromProto(profile.instruction().shape()));
+                        Shape::FromProto(profile.instruction().shape()));
   return ExtractDotSpec(dot_dims, lhs_shape, rhs_shape, out_shape);
 }
 
@@ -187,6 +187,12 @@ InterpolationSpecification Spec(const HloFusionInstruction& dot_fusion,
 absl::StatusOr<GemmPerfTableEntryValues> ReadDefaultProfile(
     const se::DeviceDescription& device_info) {
   std::string key = HloOpProfiles::GetDeviceSpecificProfileName(device_info);
+  // B200 numbers should be close enough to GB200 for scheduling.
+  // TODO(https://github.com/openxla/xla/issues/48627): remove when the GB200
+  // matmul perf table is ready.
+  if (key == "sm_100_GB200") {
+    key = "sm_100_B200";
+  }
 
   if (!Profile().entries().contains(key)) {
     return absl::NotFoundError(absl::StrCat("Cannot find key: ", key));
@@ -243,7 +249,7 @@ MatmulInterpolator::Create(const HloInstructionProfileList& profiles,
   auto interpolator = std::make_unique<EuclideanNNInterpolator<int64_t, 4>>();
   for (auto& profile : profiles.entries()) {
     ABSL_ASSIGN_OR_RETURN(InterpolationSpecification spec,
-                     Spec(profile, device_info));
+                          Spec(profile, device_info));
     std::array<int64_t, 4> point = {
         spec.b,
         spec.m,
@@ -262,7 +268,7 @@ MatmulInterpolator::Create(const HloInstructionProfileList& profiles,
 /*static*/ absl::StatusOr<std::unique_ptr<MatmulInterpolator>>
 MatmulInterpolator::Create(const se::DeviceDescription& device_info) {
   ABSL_ASSIGN_OR_RETURN(GemmPerfTableEntryValues table,
-                   ReadDefaultProfile(device_info));
+                        ReadDefaultProfile(device_info));
   absl::flat_hash_map<MatmulDTypeKey,
                       std::vector<InterpolationSpecificationFlops>>
       spec_map;

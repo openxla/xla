@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/backends/cpu/testlib/kernel_runner.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <random>
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/cpu/codegen/jit_compiler.h"
@@ -76,7 +77,7 @@ TEST(KernelRunnerTest, Add) {
   constexpr int64_t kNumElements = 8;
   constexpr size_t kArgSizeBytes = kNumElements * sizeof(int32_t);
   LlvmTestKernelEmitter::KernelArg read_arg{kArgSizeBytes,
-                                            BufferUse::MemoryAccess ::kRead};
+                                            BufferUse::MemoryAccess::kRead};
   LlvmTestKernelEmitter::KernelArg write_arg{kArgSizeBytes,
                                              BufferUse::MemoryAccess::kWrite};
   LlvmTestKernelEmitter emitter(kLlvmAddI32, "LlvmAddI32",

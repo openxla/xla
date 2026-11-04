@@ -44,11 +44,11 @@ namespace gpu {
 
 class ReductionSplitterVisitor : public DfsHloRewriteVisitor {
  public:
-  ReductionSplitterVisitor(const se::DeviceDescription &device_description,
+  ReductionSplitterVisitor(const se::DeviceDescription& device_description,
                            bool ignore_small_dims)
       : device_description_(device_description),
         ignore_small_dims_(ignore_small_dims) {}
-  absl::Status HandleReduce(HloInstruction *reduce) override {
+  absl::Status HandleReduce(HloInstruction* reduce) override {
     VLOG(4) << "Input: " << reduce->ToString();
 
     // Reductions with contiguous dimensions are lowered to efficient code. No
@@ -65,8 +65,8 @@ class ReductionSplitterVisitor : public DfsHloRewriteVisitor {
       return absl::OkStatus();
     }
 
-    HloInstruction *operand = reduce->mutable_operand(0);
-    const Shape &shape = operand->shape();
+    HloInstruction* operand = reduce->mutable_operand(0);
+    const Shape& shape = operand->shape();
     CHECK(shape == LayoutUtil::GetWithDefaultLayout(shape))
         << "Default layout should be enforced on reduction operand";
     // Verify that contiguous dimensions have been grouped by the
@@ -83,7 +83,7 @@ class ReductionSplitterVisitor : public DfsHloRewriteVisitor {
     // reduce the output size most effectively.
     int64_t max_shape_dim = 0;
     int64_t max_reduce_dim = 0;
-    const auto &input_shape = reduce->operand(0)->shape();
+    const auto& input_shape = reduce->operand(0)->shape();
     for (int64_t i = 0; i < reduce->dimensions().size(); ++i) {
       if (input_shape.dimensions(reduce->dimensions(i)) > max_shape_dim) {
         max_reduce_dim = reduce->dimensions(i);
@@ -128,16 +128,17 @@ class ReductionSplitterVisitor : public DfsHloRewriteVisitor {
   }
 
  private:
-  const se::DeviceDescription &device_description_;
+  const se::DeviceDescription& device_description_;
   const bool ignore_small_dims_;
 };
 
 absl::StatusOr<bool> ReductionSplitter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  ABSL_ASSIGN_OR_RETURN(bool changed, ReductionSplitterVisitor(device_description_,
-                                                          ignore_small_dims_)
-                                     .RunOnModule(module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(
+      bool changed,
+      ReductionSplitterVisitor(device_description_, ignore_small_dims_)
+          .RunOnModule(module, execution_threads));
   return changed;
 }
 

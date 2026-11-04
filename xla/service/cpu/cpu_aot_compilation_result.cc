@@ -72,6 +72,21 @@ se::Platform::Id CpuAotCompilationOptions::PlatformId() const {
   return se::host::kHostPlatformId;
 }
 
+void StripPayloadFromLiteralProto(HloProto& proto) {
+  auto* module = proto.mutable_hlo_module();
+  for (auto& computation : *module->mutable_computations()) {
+    for (auto& instruction : *computation.mutable_instructions()) {
+      // Keep the literal shape so memory usage of the HLO module can still be
+      // estimated, but drop the literal data.
+      if (instruction.has_literal()) {
+        LiteralProto literal;
+        *literal.mutable_shape() = instruction.literal().shape();
+        *instruction.mutable_literal() = std::move(literal);
+      }
+    }
+  }
+}
+
 absl::StatusOr<std::unique_ptr<CpuAotCompilationResult>>
 CpuAotCompilationResult::Create(
     const HloModule* hlo_module, const BufferAssignment* buffer_assignment,
@@ -82,7 +97,7 @@ CpuAotCompilationResult::Create(
   ThunkSequenceSerDesProtobuf thunk_sequence_serdes(
       hlo_module, &buffer_assignment->Allocations());
   ABSL_ASSIGN_OR_RETURN(ThunkSequenceProto thunk_proto,
-                   thunk_sequence_serdes.ToProto(thunks));
+                        thunk_sequence_serdes.ToProto(thunks));
 
   std::vector<cpu::BufferAllocationInfo> buffer_allocation_infos;
   std::optional<size_t> temp_allocation_index;
@@ -146,8 +161,25 @@ CpuAotCompilationResult::CpuAotCompilationResult(
 
 absl::StatusOr<std::unique_ptr<Executable>>
 CpuAotCompilationResult::LoadExecutable() && {
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   HloModule::CreateFromProtoWithConfig(proto_.hlo_module()));
+  const bool embed_ir_in_executable =
+      proto_.hlo_module().config().debug_options().xla_embed_ir_in_executable();
+  return std::move(*this).LoadExecutableImpl(embed_ir_in_executable);
+}
+
+absl::StatusOr<std::unique_ptr<Executable>>
+CpuAotCompilationResult::LoadExecutable(
+    se::Platform::Id platform_id,
+    const se::DeviceDescription& device_description,
+    const DebugOptions& debug_options) && {
+  return std::move(*this).LoadExecutableImpl(
+      debug_options.xla_embed_ir_in_executable());
+}
+
+absl::StatusOr<std::unique_ptr<Executable>>
+CpuAotCompilationResult::LoadExecutableImpl(bool embed_ir_in_executable) && {
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloModule> module,
+      HloModule::CreateFromProtoWithConfig(proto_.hlo_module()));
 
   VLOG(2) << "Load XLA:CPU executable for module: " << module->name();
 
@@ -160,9 +192,9 @@ CpuAotCompilationResult::LoadExecutable() && {
   // Recreate BufferAssignment from proto.
   AliasInfo alias_info;
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<BufferAssignment> buffer_assignment,
-                   BufferAssignment::FromProto(
-                       proto_.buffer_assignment(), module.get(),
-                       buffer_size_bytes_function_getter, &alias_info));
+                        BufferAssignment::FromProto(
+                            proto_.buffer_assignment(), module.get(),
+                            buffer_size_bytes_function_getter, &alias_info));
 
   std::unique_ptr<CpuExecutable> cpu_executable;
 
@@ -172,14 +204,15 @@ CpuAotCompilationResult::LoadExecutable() && {
 
   ThunkSequenceSerDesProtobuf thunk_sequence_serdes(
       module.get(), &buffer_assignment->Allocations());
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<ThunkSequence> thunks,
-                   thunk_sequence_serdes.FromProto(proto_.thunk_sequence()));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<ThunkSequence> thunks,
+      thunk_sequence_serdes.FromProto(proto_.thunk_sequence()));
 
   VLOG(3) << "Loaded " << thunks->size() << " thunks.";
 
   // Create constant allocations from the buffer assignment.
   ABSL_ASSIGN_OR_RETURN(std::vector<ConstantAllocation> constants,
-                   CreateConstantAllocations(*buffer_assignment));
+                        CreateConstantAllocations(*buffer_assignment));
 
   ABSL_ASSIGN_OR_RETURN(
       TargetMachineOptions target_machine_options,
@@ -192,23 +225,22 @@ CpuAotCompilationResult::LoadExecutable() && {
                             std::move(*thunks), std::move(constants),
                             target_machine_options, proto_.data_layout()));
 
-  // Dump computation proto state and buffer assignment for
-  // GetCompiledMemoryStats results.
-  auto hlo_proto = std::make_unique<HloProto>();
-  *hlo_proto->mutable_hlo_module() = cpu_executable->module().ToProto();
-  *hlo_proto->mutable_buffer_assignment() =
-      cpu_executable->buffer_assignment().ToProto();
-  cpu_executable->set_hlo_proto(std::move(hlo_proto));
+  // Match CpuCompiler: embed the HloProto only when requested. Snapshot
+  // dumping also dereferences hlo_proto(), so attach it then as well.
+  const bool dump_snapshots = cpu_executable->dumping_snapshot();
+  if (embed_ir_in_executable || dump_snapshots) {
+    auto hlo_proto = std::make_unique<HloProto>();
+    *hlo_proto->mutable_hlo_module() = cpu_executable->module().ToProto();
+    *hlo_proto->mutable_buffer_assignment() =
+        cpu_executable->buffer_assignment().ToProto();
+    // Snapshots must be replayable, so keep literal payloads when dumping.
+    if (!dump_snapshots) {
+      StripPayloadFromLiteralProto(*hlo_proto);
+    }
+    cpu_executable->set_hlo_proto(std::move(hlo_proto));
+  }
 
   return cpu_executable;
-}
-
-absl::StatusOr<std::unique_ptr<Executable>>
-CpuAotCompilationResult::LoadExecutable(
-    se::Platform::Id platform_id,
-    const se::DeviceDescription& device_description,
-    const DebugOptions& debug_options) && {
-  return std::move((*this)).LoadExecutable();
 }
 
 }  // namespace xla::cpu

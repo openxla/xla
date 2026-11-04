@@ -31,14 +31,14 @@ template <>
 struct type_caster<absl::Status> {
   NB_TYPE_CASTER(absl::Status, const_name("Status"))
 
-  bool from_python(handle src, uint8_t flags, cleanup_list *cleanup) noexcept {
+  bool from_python(handle src, uint8_t flags, cleanup_list* cleanup) noexcept {
     value = absl::OkStatus();
     return true;
   }
 
   template <typename T>
-  static handle from_cpp(T &&value, rv_policy policy,
-                         cleanup_list *cleanup) noexcept {
+  static handle from_cpp(T&& value, rv_policy policy,
+                         cleanup_list* cleanup) noexcept {
     if (!value.ok()) {
       PyErr_Format(PyExc_RuntimeError, "absl::Status not ok: %s",
                    value.ToString().c_str());

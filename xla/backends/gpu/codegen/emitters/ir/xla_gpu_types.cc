@@ -15,9 +15,9 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "mlir/IR/Attributes.h"  // IWYU pragma: keep
-#include "mlir/IR/BuiltinTypes.h"  // IWYU pragma: keep
-#include "mlir/IR/Dialect.h"  // IWYU pragma: keep
+#include "mlir/IR/Attributes.h"        // IWYU pragma: keep
+#include "mlir/IR/BuiltinTypes.h"      // IWYU pragma: keep
+#include "mlir/IR/Dialect.h"           // IWYU pragma: keep
 #include "mlir/IR/OpImplementation.h"  // IWYU pragma: keep
 #include "mlir/IR/Types.h"
 #include "mlir/Support/LLVM.h"

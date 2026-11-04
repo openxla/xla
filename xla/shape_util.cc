@@ -44,6 +44,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/cpu_info.h"
 #include "xla/index_util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -56,14 +57,11 @@ limitations under the License.
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/math/math_util.h"
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/macros.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/cpu_info.h"
 
 namespace xla {
 
@@ -120,6 +118,79 @@ void PrintBufferShape(Printer* printer, const Shape& shape) {
   printer->Append(")");
 }
 
+absl::StatusOr<Shape> MakeValidatedShapeImpl(
+    PrimitiveType element_type, absl::Span<const int64_t> dimensions,
+    const std::vector<bool>* dynamic_dimensions,
+    bool populate_default_layout = true) {
+  if (dynamic_dimensions != nullptr &&
+      dynamic_dimensions->size() != dimensions.size()) {
+    return InvalidArgument(
+        "dynamic dimensions size %d did not match number of dimensions %d",
+        dynamic_dimensions->size(), dimensions.size());
+  }
+
+  if (!primitive_util::IsArrayType(element_type)) {
+    if (element_type != TOKEN && element_type != OPAQUE_TYPE) {
+      return InvalidArgument(
+          "Unsupported element type: %s",
+          PrimitiveType_IsValid(element_type)
+              ? PrimitiveType_Name(element_type)
+              : absl::StrCat(static_cast<int>(element_type)));
+    }
+    if (!dimensions.empty()) {
+      return InvalidArgument(
+          "Invalid dimensions size %d for non-array shape of type %s",
+          dimensions.size(), PrimitiveType_Name(element_type));
+    }
+    return Shape(element_type);
+  }
+
+  Shape shape;
+  int64_t dense_shape_size = primitive_util::ByteWidth(element_type);
+
+  // Verify that array-based lookup is consistent with public API.
+  DCHECK_EQ(dense_shape_size, ShapeUtil::ByteSizeOfPrimitiveType(element_type))
+      << element_type;
+
+  shape.set_element_type(element_type);
+  const int ndims = dimensions.size();
+  DimensionVector* minor_to_major = nullptr;
+  if (populate_default_layout) {
+    minor_to_major = shape.mutable_layout()->mutable_minor_to_major();
+    minor_to_major->reserve(ndims);
+  }
+  int64_t static_extent_product = dense_shape_size;
+  bool any_overflows = false;
+  for (int i = 0; i < ndims; i++) {
+    const int64_t d = dimensions[i];
+    const bool is_dynamic = dynamic_dimensions != nullptr
+                                ? (*dynamic_dimensions)[i]
+                                : (d == Shape::kUnboundedSize);
+    if (!Shape::IsValidDimensionSize(d, is_dynamic)) {
+      return InvalidArgument("Invalid dimension size %d, is_dynamic=%s", d,
+                             is_dynamic ? "true" : "false");
+    }
+    if (d != Shape::kUnboundedSize) {
+      bool overflow;
+      std::tie(static_extent_product, overflow) =
+          OverflowSafeMultiply(static_extent_product, d);
+      any_overflows |= overflow;
+    }
+
+    shape.add_dimensions(d, is_dynamic);
+    if (minor_to_major != nullptr) {
+      minor_to_major->push_back(ndims - 1 - i);
+    }
+  }
+
+  if (any_overflows) {
+    return InvalidArgument(
+        "overflow in static extent product: dimensions=[%s].",
+        absl::StrJoin(dimensions, ", "));
+  }
+  return shape;
+}
+
 // Constructs and returns the new shape with the given minor_to_major order in
 // its Layout.
 absl::StatusOr<Shape> MakeValidatedShapeWithLayoutInternal(
@@ -134,13 +205,16 @@ absl::StatusOr<Shape> MakeValidatedShapeWithLayoutInternal(
     return InvalidArgument("Dimensions size is %ld, but layout size is %ld.",
                            dimensions.size(), minor_to_major.size());
   }
-  if (element_type == OPAQUE_TYPE || element_type == TUPLE ||
-      element_type == TOKEN) {
+  if (!primitive_util::IsArrayType(element_type)) {
     return InvalidArgument("Unsupported element type: %s",
-                           PrimitiveType_Name(element_type));
+                           PrimitiveType_IsValid(element_type)
+                               ? PrimitiveType_Name(element_type)
+                               : absl::StrCat(static_cast<int>(element_type)));
   }
-  ABSL_ASSIGN_OR_RETURN(Shape shape,
-                   ShapeUtil::MakeValidatedShape(element_type, dimensions));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape shape, MakeValidatedShapeImpl(element_type, dimensions,
+                                          /*dynamic_dimensions=*/nullptr,
+                                          /*populate_default_layout=*/false));
   if (element_size_in_bits ==
       ShapeUtil::ByteSizeOfPrimitiveType(element_type) * 8) {
     // Only set element_size_in_bits if it's different from the default value.
@@ -150,7 +224,7 @@ absl::StatusOr<Shape> MakeValidatedShapeWithLayoutInternal(
       minor_to_major, tiles, tail_padding_alignment_in_elements,
       index_primitive_type, pointer_primitive_type, element_size_in_bits,
       memory_space, split_configs, std::move(physical_shape));
-  ABSL_RETURN_IF_ERROR(ShapeUtil::ValidateShape(shape));
+  ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutInShape(shape));
   return shape;
 }
 
@@ -291,16 +365,6 @@ std::ostream& operator<<(std::ostream& out, const ShapeIndex& shape_index) {
   return program_shape;
 }
 
-static std::vector<bool> MakeDynamicDimensions(
-    absl::Span<const int64_t> dimensions) {
-  std::vector<bool> dynamic_dimensions;
-  dynamic_dimensions.reserve(dimensions.size());
-  for (int64_t dimension : dimensions) {
-    dynamic_dimensions.push_back(dimension == Shape::kUnboundedSize);
-  }
-  return dynamic_dimensions;
-}
-
 /* static */ absl::StatusOr<Shape> ShapeUtil::MakeValidatedBufferShape(
     Shape element_shape) {
   TF_RET_CHECK(element_shape.IsArrayExcludingBuffer())
@@ -312,8 +376,8 @@ static std::vector<bool> MakeDynamicDimensions(
 
 /* static */ absl::StatusOr<Shape> ShapeUtil::MakeValidatedBufferShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions) {
-  ABSL_ASSIGN_OR_RETURN(Shape shape,
-                   ShapeUtil::MakeValidatedShape(element_type, dimensions));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape shape, ShapeUtil::MakeValidatedShape(element_type, dimensions));
   return ShapeUtil::MakeValidatedBufferShape(shape);
 }
 
@@ -326,65 +390,14 @@ static std::vector<bool> MakeDynamicDimensions(
 
 /* static */ absl::StatusOr<Shape> ShapeUtil::MakeValidatedShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions) {
-  return MakeValidatedShape(element_type, dimensions,
-                            MakeDynamicDimensions(dimensions));
+  return MakeValidatedShapeImpl(element_type, dimensions,
+                                /*dynamic_dimensions=*/nullptr);
 }
 
 /* static */ absl::StatusOr<Shape> ShapeUtil::MakeValidatedShape(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     const std::vector<bool>& dynamic_dimensions) {
-  if (dynamic_dimensions.size() != dimensions.size()) {
-    return InvalidArgument(
-        "dynamic dimensions size %d did not match number of dimensions %d",
-        dynamic_dimensions.size(), dimensions.size());
-  }
-
-  if (!primitive_util::IsArrayType(element_type)) {
-    if (!dimensions.empty()) {
-      return InvalidArgument(
-          "Invalid dimensions size %d for non-array shape of type %s",
-          dimensions.size(), PrimitiveType_Name(element_type));
-    }
-    return Shape(element_type);
-  }
-
-  Shape shape;
-  int64_t dense_shape_size = primitive_util::ByteWidth(element_type);
-
-  // Verify that array-based lookup is consistent with public API.
-  DCHECK_EQ(dense_shape_size, ByteSizeOfPrimitiveType(element_type))
-      << element_type;
-
-  shape.set_element_type(element_type);
-  const int ndims = dimensions.size();
-  auto layout = shape.mutable_layout();
-  auto* minor_to_major = layout->mutable_minor_to_major();
-  int64_t static_extent_product = dense_shape_size;
-  bool any_overflows = false;
-  for (int i = 0; i < ndims; i++) {
-    const int64_t d = dimensions[i];
-    const bool is_dynamic = dynamic_dimensions[i];
-    if (!Shape::IsValidDimensionSize(d, is_dynamic)) {
-      return InvalidArgument("Invalid dimension size %d, is_dynamic=%s", d,
-                             is_dynamic ? "true" : "false");
-    }
-    if (d != Shape::kUnboundedSize) {
-      bool overflow;
-      std::tie(static_extent_product, overflow) =
-          OverflowSafeMultiply(static_extent_product, d);
-      any_overflows |= overflow;
-    }
-
-    shape.add_dimensions(d, is_dynamic);
-    minor_to_major->push_back(ndims - 1 - i);
-  }
-
-  if (any_overflows) {
-    return InvalidArgument(
-        "overflow in static extent product: dimensions=[%s].",
-        absl::StrJoin(dimensions, ", "));
-  }
-  return shape;
+  return MakeValidatedShapeImpl(element_type, dimensions, &dynamic_dimensions);
 }
 
 /* static */ absl::StatusOr<Shape> ShapeUtil::MakeValidatedShapeWithDenseLayout(
@@ -443,9 +456,13 @@ ShapeUtil::MakeValidatedShapeWithSparseLayout(
 /* static */ absl::StatusOr<Shape>
 ShapeUtil::MakeValidatedShapeWithDescendingLayout(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions) {
-  std::vector<int64_t> layout(dimensions.size());
-  std::iota(layout.rbegin(), layout.rend(), static_cast<int64_t>(0));
-  return MakeValidatedShapeWithDenseLayout(element_type, dimensions, layout);
+  if (!primitive_util::IsArrayType(element_type)) {
+    return InvalidArgument("Unsupported element type: %s",
+                           PrimitiveType_IsValid(element_type)
+                               ? PrimitiveType_Name(element_type)
+                               : absl::StrCat(static_cast<int>(element_type)));
+  }
+  return MakeValidatedShape(element_type, dimensions);
 }
 
 /* static */ absl::StatusOr<Shape>
@@ -460,7 +477,7 @@ ShapeUtil::MakeValidatedShapeWithDescendingLayoutAndSamePhysicalLayout(
     dims[i] = shape.dimensions(dim);
   }
   ABSL_ASSIGN_OR_RETURN(Shape new_shape, MakeValidatedShapeWithDescendingLayout(
-                                        shape.element_type(), dims));
+                                             shape.element_type(), dims));
   if (shape.IsBuffer()) {
     ABSL_ASSIGN_OR_RETURN(new_shape, MakeValidatedBufferShape(new_shape));
   }
@@ -728,8 +745,12 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
 }
 
 /* static */ int64_t ShapeUtil::SubshapeCount(const Shape& shape) {
-  int64_t n = 0;
-  ForEachSubshape(shape, [&](const Shape&, const ShapeIndex&) { ++n; });
+  int64_t n = 1;
+  if (shape.IsTuple()) {
+    for (const Shape& subshape : shape.tuple_shapes()) {
+      n += SubshapeCount(subshape);
+    }
+  }
   return n;
 }
 
@@ -1031,18 +1052,24 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
 
 /* static */ int64_t ShapeUtil::ByteSizeOfElements(const Shape& shape) {
   DCHECK_OK(ValidateShapeWithOptionalLayout(shape));
-  int64_t allocated_element_count;
-
   CHECK(shape.IsArray()) << shape.ToString();
-  allocated_element_count = ElementsIn(shape);
+  auto [element_count, count_overflow] =
+      ExtentProduct</*kBoundedDynamicOk=*/false>(shape);
+  CHECK(!count_overflow);
 
   if (shape.has_layout() && shape.layout().element_size_in_bits() != 0) {
-    const int64_t num_bits =
-        allocated_element_count * shape.layout().element_size_in_bits();
+    int64_t element_size_in_bits = shape.layout().element_size_in_bits();
+    auto [num_bits, overflow] =
+        OverflowSafeMultiply(element_count, element_size_in_bits);
+    CHECK(!overflow);
     return CeilOfRatio<int64_t>(num_bits, CHAR_BIT);
   }
-  return allocated_element_count *
-         ByteSizeOfPrimitiveType(shape.element_type());
+
+  int64_t byte_width = ByteSizeOfPrimitiveType(shape.element_type());
+  auto [total_bytes, overflow] =
+      OverflowSafeMultiply(element_count, byte_width);
+  CHECK(!overflow);
+  return total_bytes;
 }
 
 /* static */ int64_t ShapeUtil::ByteSizeOfElementsRecursive(
@@ -1318,12 +1345,197 @@ bool ShapeUtil::IsLeafIndex(const Shape& shape, const ShapeIndex& index) {
 /* static */ std::vector<ShapeUtil::IndexedShape> ShapeUtil::GetLeafShapes(
     const Shape& shape) {
   std::vector<IndexedShape> leaves;
-  ForEachSubshape(shape, [&](const Shape& sub_shape, const ShapeIndex& index) {
-    if (IsLeafIndex(shape, index)) {
-      leaves.emplace_back(index, sub_shape);
-    }
+  ForEachLeafShape(shape, [&](const Shape& sub_shape, const ShapeIndex& index) {
+    leaves.emplace_back(index, sub_shape);
   });
   return leaves;
+}
+
+template <typename ShapeT, typename Fn>
+/* static */ void ShapeUtil::ForEachSubshapeHelper(ShapeT* shape, Fn&& fn,
+                                                   ShapeIndex* index) {
+  fn(shape, *index);
+  if (auto* tuple = shape->if_tuple_state()) {
+    ShapeT* tuple_shape = tuple->tuple_shapes.data();
+    int64_t tuple_count = tuple->tuple_shapes.size();
+    index->push_back(0);
+    for (int64_t i = 0; i < tuple_count; ++i, ++tuple_shape, ++index->back()) {
+      ForEachSubshapeHelper(tuple_shape, fn, index);
+    }
+    index->pop_back();
+  }
+}
+
+template <typename ShapeT, typename Fn>
+/* static */ absl::Status ShapeUtil::ForEachSubshapeWithStatusHelper(
+    ShapeT* shape, Fn&& fn, ShapeIndex* index) {
+  ABSL_RETURN_IF_ERROR(fn(shape, *index));
+  if (auto* tuple = shape->if_tuple_state()) {
+    ShapeT* tuple_shape = tuple->tuple_shapes.data();
+    int64_t tuple_count = tuple->tuple_shapes.size();
+    index->push_back(0);
+    for (int64_t i = 0; i < tuple_count; ++i, ++tuple_shape, ++index->back()) {
+      ABSL_RETURN_IF_ERROR(
+          ForEachSubshapeWithStatusHelper(tuple_shape, fn, index));
+    }
+    index->pop_back();
+  }
+  return absl::OkStatus();
+}
+
+template <typename ShapeT, typename Fn>
+/* static */ void ShapeUtil::ForEachSubshapePostOrderHelper(ShapeT* shape,
+                                                            Fn&& fn,
+                                                            ShapeIndex* index) {
+  if (auto* tuple = shape->if_tuple_state()) {
+    ShapeT* tuple_shape = tuple->tuple_shapes.data();
+    int64_t tuple_count = tuple->tuple_shapes.size();
+    index->push_back(0);
+    for (int64_t i = 0; i < tuple_count; ++i, ++tuple_shape, ++index->back()) {
+      ForEachSubshapePostOrderHelper(tuple_shape, fn, index);
+    }
+    index->pop_back();
+  }
+  fn(shape, *index);
+}
+
+template <typename ShapeT, typename Fn>
+/* static */ absl::Status ShapeUtil::ForEachSubshapePostOrderWithStatusHelper(
+    ShapeT* shape, Fn&& fn, ShapeIndex* index) {
+  if (auto* tuple = shape->if_tuple_state()) {
+    ShapeT* tuple_shape = tuple->tuple_shapes.data();
+    int64_t tuple_count = tuple->tuple_shapes.size();
+    index->push_back(0);
+    for (int64_t i = 0; i < tuple_count; ++i, ++tuple_shape, ++index->back()) {
+      ABSL_RETURN_IF_ERROR(
+          ForEachSubshapePostOrderWithStatusHelper(tuple_shape, fn, index));
+    }
+    index->pop_back();
+  }
+  ABSL_RETURN_IF_ERROR(fn(shape, *index));
+  return absl::OkStatus();
+}
+
+/* static */ void ShapeUtil::ForEachSubshape(const Shape& shape,
+                                             VisitorFunction fn) {
+  ShapeIndex index;
+  ForEachSubshapeHelper(
+      &shape,
+      [&](const Shape* subshape, const ShapeIndex& index) {
+        fn(*subshape, index);
+      },
+      &index);
+}
+
+/* static */ void ShapeUtil::ForEachMutableSubshape(Shape* shape,
+                                                    MutableVisitorFunction fn) {
+  ShapeIndex index;
+  ForEachSubshapeHelper(shape, fn, &index);
+}
+
+/* static */ absl::Status ShapeUtil::ForEachLeafShapeWithStatus(
+    const Shape& shape, StatusVisitorFunction fn) {
+  ShapeIndex index;
+  return ForEachSubshapeWithStatusHelper(
+      &shape,
+      [&](const Shape* subshape, const ShapeIndex& index) -> absl::Status {
+        if (!subshape->IsTuple()) {
+          ABSL_RETURN_IF_ERROR(fn(*subshape, index));
+        }
+        return absl::OkStatus();
+      },
+      &index);
+}
+
+/* static */ absl::Status ShapeUtil::ForEachMutableLeafShapeWithStatus(
+    Shape* shape, MutableStatusVisitorFunction fn) {
+  ShapeIndex index;
+  return ForEachSubshapeWithStatusHelper(
+      shape,
+      [&](Shape* subshape, const ShapeIndex& index) -> absl::Status {
+        if (!subshape->IsTuple()) {
+          ABSL_RETURN_IF_ERROR(fn(subshape, index));
+        }
+        return absl::OkStatus();
+      },
+      &index);
+}
+
+/* static */ void ShapeUtil::ForEachLeafShape(const Shape& shape,
+                                              VisitorFunction fn) {
+  ShapeIndex index;
+  ForEachSubshapeHelper(
+      &shape,
+      [&](const Shape* subshape, const ShapeIndex& index) {
+        if (!subshape->IsTuple()) {
+          fn(*subshape, index);
+        }
+      },
+      &index);
+}
+
+/* static */ void ShapeUtil::ForEachMutableLeafShape(
+    Shape* shape, MutableVisitorFunction fn) {
+  ShapeIndex index;
+  ForEachSubshapeHelper(
+      shape,
+      [&](Shape* subshape, const ShapeIndex& index) {
+        if (!subshape->IsTuple()) {
+          fn(subshape, index);
+        }
+      },
+      &index);
+}
+
+/* static */ absl::Status ShapeUtil::ForEachSubshapeWithStatus(
+    const Shape& shape, StatusVisitorFunction fn) {
+  ShapeIndex index;
+  return ForEachSubshapeWithStatusHelper(
+      &shape,
+      [&](const Shape* subshape, const ShapeIndex& index) -> absl::Status {
+        return fn(*subshape, index);
+      },
+      &index);
+}
+
+/* static */ absl::Status ShapeUtil::ForEachMutableSubshapeWithStatus(
+    Shape* shape, MutableStatusVisitorFunction fn) {
+  ShapeIndex index;
+  return ForEachSubshapeWithStatusHelper(shape, fn, &index);
+}
+
+/* static */ void ShapeUtil::ForEachSubshapePostOrder(const Shape& shape,
+                                                      VisitorFunction fn) {
+  ShapeIndex index;
+  ForEachSubshapePostOrderHelper(
+      &shape,
+      [&](const Shape* subshape, const ShapeIndex& index) {
+        fn(*subshape, index);
+      },
+      &index);
+}
+
+/* static */ void ShapeUtil::ForEachMutableSubshapePostOrder(
+    Shape* shape, MutableVisitorFunction fn) {
+  ShapeIndex index;
+  ForEachSubshapePostOrderHelper(shape, fn, &index);
+}
+
+/* static */ absl::Status ShapeUtil::ForEachSubshapePostOrderWithStatus(
+    const Shape& shape, StatusVisitorFunction fn) {
+  ShapeIndex index;
+  return ForEachSubshapePostOrderWithStatusHelper(
+      &shape,
+      [&](const Shape* subshape, const ShapeIndex& index) -> absl::Status {
+        return fn(*subshape, index);
+      },
+      &index);
+}
+
+/* static */ absl::Status ShapeUtil::ForEachMutableSubshapePostOrderWithStatus(
+    Shape* shape, MutableStatusVisitorFunction fn) {
+  ShapeIndex index;
+  return ForEachSubshapePostOrderWithStatusHelper(shape, fn, &index);
 }
 
 /* static */ bool ShapeUtil::HasDegenerateDimensions(const Shape& shape) {
@@ -2070,7 +2282,8 @@ ShapeUtil::DecomposeBitcastToTrt(const Shape& input_shape,
   int64_t n = -1;
   int64_t rank = s.rank;
   while (n < rank) {
-    ABSL_ASSIGN_OR_RETURN(bool should_continue, visitor_function(s.indexes_span));
+    ABSL_ASSIGN_OR_RETURN(bool should_continue,
+                          visitor_function(s.indexes_span));
     if (TF_PREDICT_FALSE(!should_continue)) {
       break;
     }
@@ -2351,8 +2564,21 @@ ShapeUtil::ByteStrides(const Shape& shape) {
     int64_t dim_size = dim < shape_dim_size ? LayoutUtil::MaxSplitSize(
                                                   shape, minor_to_major[dim])
                                             : 1;
-    num_of_elements *=
-        RoundUpTo(dim_size, tile_dimensions[tile_dim_size - dim - 1]);
+    int64_t tile_dim = tile_dimensions[tile_dim_size - dim - 1];
+    if (tile_dim == Tile::kMatchDimension) {
+      int64_t packing = 1;
+      if (shape.layout().tiles().size() > 1) {
+        const Tile& sub_tile = shape.layout().tiles(1);
+        if (dim < sub_tile.dimensions().size()) {
+          packing = std::max<int64_t>(
+              1, sub_tile.dimension(sub_tile.dimensions().size() - 1 - dim));
+        } else if (dim == 1 && !sub_tile.dimensions().empty()) {
+          packing = std::max<int64_t>(1, sub_tile.dimension(0));
+        }
+      }
+      tile_dim = packing;
+    }
+    num_of_elements *= RoundUpTo(dim_size, tile_dim);
   }
   for (; dim < shape_dim_size; dim++) {
     int64_t dim_size = LayoutUtil::MaxSplitSize(shape, minor_to_major[dim]);

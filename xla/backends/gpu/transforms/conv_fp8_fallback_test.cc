@@ -22,18 +22,18 @@ limitations under the License.
 //
 // The ConvFp8FallbackDevicelessTest cases run the full pass against
 // stream_executor::DeviceDescriptions built from checked-in target-config
-// specs and open no GPU; they need a loadable host cuDNN >= 9.8 (like the
-// SupportsFusionDeviceless probe they drive) and skip otherwise. The sm_120
-// cases additionally skip on cuDNN runtimes < 9.19, whose deviceless
-// heuristics cannot probe Blackwell-generation targets.
+// specs and open no GPU; they need a loadable host cuDNN >=
+// se::gpu::kMinDevicelessCudnnVersion (like the SupportsFusionDeviceless probe
+// they drive) and skip otherwise.
 //
 // The fusions under test are produced by the real ConvKindAssignment +
 // ConvFusionRewriter passes, so they cannot drift from pipeline output.
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -73,7 +73,7 @@ class ConvFp8FallbackTestBase : public HloHardwareIndependentTestBase {
   static absl::StatusOr<GpuTargetConfig> DevicelessTargetConfig(
       GpuModel model) {
     ABSL_ASSIGN_OR_RETURN(stream_executor::GpuTargetConfigProto proto,
-                     GetGpuTargetConfig(model));
+                          GetGpuTargetConfig(model));
     return GpuTargetConfig::FromProto(proto);
   }
 
@@ -83,7 +83,7 @@ class ConvFp8FallbackTestBase : public HloHardwareIndependentTestBase {
       absl::string_view hlo_text, const GpuTargetConfig& target_config) {
     const se::DeviceDescription& device_info = target_config.device_description;
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
-                     ParseAndReturnVerifiedModule(hlo_text));
+                          ParseAndReturnVerifiedModule(hlo_text));
     ConvKindAssignment kind_assignment(
         device_info.gpu_compute_capability(),
         se::dnn::VersionInfo(device_info.dnn_version()));
@@ -335,9 +335,9 @@ TEST_F(ConvFp8FallbackRewriteTest, TwoOutputAmaxFusionOnlyConvertsF8Output) {
 class ConvFp8FallbackDevicelessTest : public ConvFp8FallbackTestBase {
  protected:
   void SetUp() override {
-    if (!se::gpu::SupportsDevicelessDeviceProperties()) {
-      GTEST_SKIP() << "cuDNN runtime < 9.8 does not support deviceless "
-                      "DeviceProperties.";
+    if (!se::gpu::SupportsDevicelessCudnnCompilation()) {
+      GTEST_SKIP() << "Deviceless cuDNN compilation requires cuDNN >= "
+                   << se::gpu::kMinDevicelessCudnnVersion;
     }
   }
 };
@@ -412,24 +412,7 @@ TEST_F(ConvFp8FallbackDevicelessTest, Fp8ConvIsKeptWhenBf16AlsoHasNoPlans) {
   EXPECT_OK(verifier().Run(module.get()).status());
 }
 
-class ConvFp8FallbackSm120DevicelessTest
-    : public ConvFp8FallbackDevicelessTest {
- protected:
-  void SetUp() override {
-    ConvFp8FallbackDevicelessTest::SetUp();
-    if (IsSkipped()) {
-      return;
-    }
-    absl::StatusOr<GpuTargetConfig> target_config =
-        DevicelessTargetConfig(GpuModel::RTX6000PRO);
-    ASSERT_TRUE(target_config.ok()) << target_config.status();
-    if (!se::gpu::SupportsDevicelessConvGraphs(
-            target_config->device_description)) {
-      GTEST_SKIP() << "cuDNN runtime cannot probe conv graphs devicelessly "
-                      "for sm_120 targets (requires cuDNN >= 9.19).";
-    }
-  }
-};
+using ConvFp8FallbackSm120DevicelessTest = ConvFp8FallbackDevicelessTest;
 
 // channels/group == 16 has cuDNN plans on sm_120; the fusion must be kept
 // FP8.

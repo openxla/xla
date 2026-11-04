@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/hlo/tools/hlo_diff/render/hlo_gumgraph_html_renderer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <sstream>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/tools/hlo_diff/hlo_diff_result.h"

@@ -68,7 +68,7 @@ def quantize(arr: jax.Array, dtype: jnp.dtype) -> tuple[jax.Array, jax.Array]:
   """
   max_val = _get_dtype_max_val(dtype)
   inv_range = 1.0 / max_val
-  absmaxs = jnp.max(jnp.abs(arr), axis=1, keepdims=True)
+  absmaxs = jnp.max(jnp.abs(arr), axis=-1, keepdims=True)
   scales = absmaxs * inv_range
   safe_scales = jnp.where(scales == 0.0, 1.0, scales)
   inv_scales = 1.0 / safe_scales
@@ -85,15 +85,16 @@ def select_window(
     lhs_dtype: jnp.dtype,
     rhs_dtype: jnp.dtype,
     out_dtype: jnp.dtype,
-    acc_dtype: jnp.dtype,
+    outer_acc_dtype: jnp.dtype,
     lhs_quantized_dtype: jnp.dtype,
     rhs_quantized_dtype: jnp.dtype,
     pre_quantize_lhs: bool = False,
+    *,
+    inner_acc_dtype: jnp.dtype = jnp.dtype(jnp.float32),
+    subchannel_size: int = 1024,
     chip_version: pltpu.ChipVersion | None = None,
 ) -> tuple[int, int, int]:
   """Derives the optimal window size for subchannel matmul using the cost model."""
-  # Unused for now, may be used if `pre_quantize_rhs` is added in the future.
-  del rhs_dtype
   default_vmem_kib = platform_info.get_default_vmem_limit_kib(chip_version)
   vmem_limit_kib = flag_utils.get_flag_value(
       "xla_tpu_scoped_vmem_limit_kib", default=default_vmem_kib, flag_type=int
@@ -104,19 +105,22 @@ def select_window(
   )
   if p_state is not None and p_state < 0:
     p_state = None
-  cost_lhs_dtype = lhs_quantized_dtype if pre_quantize_lhs else lhs_dtype
-  cost_rhs_dtype = rhs_quantized_dtype
-  block_m, block_k, block_n = pallas_cost_model.CostModel(
+  block_m, block_k, block_n = pallas_cost_model.SubchannelCostModel(
       m,
       k,
       n,
       lhs_mem,
       rhs_mem,
       out_mem,
-      cost_lhs_dtype,
-      cost_rhs_dtype,
+      lhs_dtype,
+      rhs_dtype,
       out_dtype,
-      acc_dtype,
+      outer_acc_dtype,
+      lhs_quantized_dtype,
+      rhs_quantized_dtype,
+      inner_acc_dtype=inner_acc_dtype,
+      subchannel_size=subchannel_size,
+      pre_quantize_lhs=pre_quantize_lhs,
       chip_version=chip_version,
   ).select_window(
       vmem_limit_bytes,
@@ -143,7 +147,8 @@ class SubchannelMatmulConfig(benchmark.BenchmarkConfig):
     lhs_dtype: The unquantized dtype of the first operand.
     rhs_dtype: The unquantized dtype of the second operand.
     out_dtype: The dtype of the output.
-    acc_dtype: The dtype of the accumulator.
+    inner_acc_dtype: The dtype of the accumulator for the subchannel blocks.
+    outer_acc_dtype: The dtype of the accumulator for the output tiles.
     lhs_quantized_dtype: Quantized dtype of LHS.
     rhs_quantized_dtype: Quantized dtype of RHS.
     pre_quantize_lhs: Whether quantization of LHS happens outside kernel.
@@ -162,7 +167,8 @@ class SubchannelMatmulConfig(benchmark.BenchmarkConfig):
   lhs_dtype: jnp.dtype
   rhs_dtype: jnp.dtype
   out_dtype: jnp.dtype
-  acc_dtype: jnp.dtype
+  inner_acc_dtype: jnp.dtype
+  outer_acc_dtype: jnp.dtype
   lhs_quantized_dtype: jnp.dtype
   rhs_quantized_dtype: jnp.dtype
   pre_quantize_lhs: bool = False
@@ -180,7 +186,8 @@ def subchannel_matmul_kernel(
   block_m, block_k, block_n = cfg.block_m, cfg.block_k, cfg.block_n
   subchannel_size = cfg.subchannel_size
   lhs_mem, rhs_mem, out_mem = cfg.lhs_mem, cfg.rhs_mem, cfg.out_mem
-  acc_dtype = cfg.acc_dtype
+  inner_acc_dtype = cfg.inner_acc_dtype
+  outer_acc_dtype = cfg.outer_acc_dtype
 
   grid_m = math.ceil(m / block_m)
   grid_n = math.ceil(n / block_n)
@@ -219,31 +226,32 @@ def subchannel_matmul_kernel(
         y_q_slice = rhs_ref[k_start:k_end, n_start:n_end]
 
         result = jnp.dot(
-            x_q_block, y_q_slice, preferred_element_type=jnp.float32
-        ).astype(acc_dtype)
+            x_q_block, y_q_slice, preferred_element_type=inner_acc_dtype
+        ).astype(outer_acc_dtype)
 
         y_safe_scales = rhs_scales_ref[sub_idx : sub_idx + 1, n_start:n_end]
         acc_ref[:, n_start:n_end] += (
             result
-            * x_safe_scales.astype(acc_dtype)
-            * y_safe_scales.astype(acc_dtype)
+            * x_safe_scales.astype(outer_acc_dtype)
+            * y_safe_scales.astype(outer_acc_dtype)
         )
 
     @pl.when(pl.program_id(2) == grid_k - 1)
     def store():
       o_tile_ref[...] = acc_ref[...].astype(o_tile_ref.dtype)
 
+  num_sub_blocks = k // subchannel_size
   lhs_bits = jax.dtypes.itemsize_bits(cfg.lhs_dtype)
   lhs_quant_bits = jax.dtypes.itemsize_bits(cfg.lhs_quantized_dtype)
   lhs_input_bytes_accessed = (
-      m * k * lhs_quant_bits // 8 + m * subblocks_per_tile * lhs_bits // 8
+      m * k * lhs_quant_bits // 8 + m * num_sub_blocks * lhs_bits // 8
       if cfg.pre_quantize_lhs
       else m * k * lhs_bits // 8
   )
   rhs_bits = jax.dtypes.itemsize_bits(cfg.rhs_dtype)
   rhs_quant_bits = jax.dtypes.itemsize_bits(cfg.rhs_quantized_dtype)
   rhs_input_bytes_accessed = (
-      k * n * rhs_quant_bits // 8 + n * subblocks_per_tile * rhs_bits // 8
+      k * n * rhs_quant_bits // 8 + n * num_sub_blocks * rhs_bits // 8
   )
   bytes_accessed = (
       lhs_input_bytes_accessed
@@ -252,17 +260,29 @@ def subchannel_matmul_kernel(
   )
 
   if cfg.pre_quantize_lhs:
-    lhs_scales_spec = pl.BlockSpec(
-        (block_m, subblocks_per_tile),
-        lambda i, _, k_idx: (i, k_idx),
-    )
+    if grid_k > 1:
+      lhs_scales_spec = pl.BlockSpec(
+          (None, block_m, subblocks_per_tile),
+          lambda i, _, k_idx: (k_idx, i, 0),
+      )
+    else:
+      lhs_scales_spec = pl.BlockSpec(
+          (block_m, subblocks_per_tile),
+          lambda i, _, k_idx: (i, k_idx),
+      )
   else:
     lhs_scales_spec = None
 
-  rhs_scales_spec = pl.BlockSpec(
-      (subblocks_per_tile, block_n),
-      lambda _, j, k_idx: (k_idx, j),
-  )
+  if grid_k > 1:
+    rhs_scales_spec = pl.BlockSpec(
+        (None, subblocks_per_tile, block_n),
+        lambda _, j, k_idx: (k_idx, 0, j),
+    )
+  else:
+    rhs_scales_spec = pl.BlockSpec(
+        (subblocks_per_tile, block_n),
+        lambda _, j, k_idx: (k_idx, j),
+    )
   in_specs = [
       pl.BlockSpec(
           (block_m, block_k),
@@ -291,7 +311,7 @@ def subchannel_matmul_kernel(
           in_specs=in_specs,
           out_specs=out_specs,
           grid=(grid_m, grid_n, grid_k),
-          scratch_shapes=[pltpu.VMEM((block_m, block_n), acc_dtype)],
+          scratch_shapes=[pltpu.VMEM((block_m, block_n), outer_acc_dtype)],
       ),
       compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "parallel", "arbitrary"),
@@ -307,6 +327,12 @@ def subchannel_matmul_kernel(
 
   @jax.jit
   def _target_fn(lhs, rhs, lhs_scales, rhs_scales):
+    if grid_k > 1:
+      if lhs_scales is not None:
+        lhs_scales = lhs_scales.reshape(
+            m, grid_k, subblocks_per_tile
+        ).transpose(1, 0, 2)
+      rhs_scales = rhs_scales.reshape(grid_k, subblocks_per_tile, n)
     if lhs_mem == pltpu.VMEM:
       lhs = memory_utils.copy_to_vmem(lhs)
       if lhs_scales is not None:
@@ -319,7 +345,29 @@ def subchannel_matmul_kernel(
     rhs = memory_utils.with_large_2nd_minor_layout(rhs)
     return pallas_func(lhs, rhs, lhs_scales, rhs_scales)
 
-  return _target_fn
+  compiler_args: dict[str, Any] = {
+      "xla_detailed_logging": True,
+      "xla_tpu_control_large_2nd_minor_layout_for_x16": True,
+  }
+  if (
+      cfg.lhs_mem == pltpu.VMEM
+      and cfg.rhs_mem == pltpu.VMEM
+      and cfg.out_mem == pltpu.VMEM
+  ):
+    # For VMEM matmuls, if scoped VMEM is too high then we may hit OOM since we
+    # need space for the input operands outside of scoped VMEM. So set it to a
+    # relatively low value.
+    compiler_args["xla_tpu_scoped_vmem_limit_kib"] = 8 * 1024
+  lower_args = [
+      jax.ShapeDtypeStruct((m, k), cfg.lhs_dtype),
+      jax.ShapeDtypeStruct((k, n), cfg.rhs_quantized_dtype),
+      None,
+      jax.ShapeDtypeStruct((num_sub_blocks, n), cfg.rhs_dtype),
+  ]
+  if cfg.pre_quantize_lhs:
+    lower_args[0] = jax.ShapeDtypeStruct((m, k), cfg.lhs_quantized_dtype)
+    lower_args[2] = jax.ShapeDtypeStruct((m, num_sub_blocks), cfg.lhs_dtype)
+  return _target_fn.lower(*lower_args).compile(compiler_args)
 
 
 def subchannel_matmul_jax(
@@ -340,7 +388,8 @@ def subchannel_matmul_jax(
   def _jax_impl(lhs, rhs, lhs_scales, rhs_scales):
     if cfg.pre_quantize_lhs:
       assert lhs_scales is not None
-      lhs_q, lhs_s = lhs, lhs_scales
+      lhs_q = lhs.reshape(m, -1, subchannel_size)
+      lhs_s = lhs_scales[:, :, None]
     else:
       assert lhs_scales is None
       lhs_reshaped = lhs.reshape(m, -1, subchannel_size)
@@ -350,12 +399,17 @@ def subchannel_matmul_jax(
 
     dot_blocks = jnp.einsum(
         "mks, ksn -> mkn",
-        lhs_q.astype(jnp.float32),
-        rhs_reshaped.astype(jnp.float32),
+        lhs_q,
+        rhs_reshaped,
+        preferred_element_type=cfg.inner_acc_dtype,
+    ).astype(cfg.outer_acc_dtype)
+    scaled_blocks = (
+        dot_blocks
+        * lhs_s.astype(cfg.outer_acc_dtype)
+        * rhs_scales[None, :, :].astype(cfg.outer_acc_dtype)
     )
-    scaled_blocks = dot_blocks * lhs_s * rhs_scales
 
-    out = jnp.sum(scaled_blocks, axis=1)
+    out = jnp.sum(scaled_blocks, axis=1, dtype=cfg.outer_acc_dtype)
 
     return out.astype(out_dtype)
 

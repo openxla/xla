@@ -25,6 +25,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_command_buffer.h"
+#include "xla/stream_executor/cuda/cuda_command_buffer_telemetry.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_command_buffer.h"
@@ -49,7 +50,8 @@ absl::Status CheckRuntimeVersion(const DeviceDescription& device_description) {
 absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMovedChildNodeImpl(
     absl::Span<const GraphNodeHandle> dependencies,
     stream_executor::CommandBuffer* nested) {
-  ABSL_RETURN_IF_ERROR(CheckRuntimeVersion(stream_exec_->GetDeviceDescription()));
+  ABSL_RETURN_IF_ERROR(
+      CheckRuntimeVersion(stream_exec_->GetDeviceDescription()));
   auto* child_command_buffer = absl::down_cast<CudaCommandBuffer*>(nested);
   CHECK_EQ(child_command_buffer->parent_, nullptr)
       << "Nested command buffer's parent is not null";
@@ -74,6 +76,19 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateMovedChildNodeImpl(
 
   child_command_buffer->parent_ = this;
   child_command_buffer->is_owned_graph_ = false;
+  // Transfer telemetry ownership from the moved child to the root command
+  // buffer.
+  DCHECK(child_command_buffer->installed_child_graphs_.empty());
+  DCHECK(!child_command_buffer->pre134_exec_entry_.has_value());
+  std::vector<command_buffer_telemetry::TrackedGraph>& child_owned =
+      child_command_buffer->telemetry_graphs_;
+  std::vector<command_buffer_telemetry::TrackedGraph>& owned =
+      Root()->telemetry_graphs_;
+  owned.insert(owned.end(), child_owned.begin(), child_owned.end());
+  child_owned.clear();
+  if (child_command_buffer->has_node_priority_) {
+    SetHasNodePriority();
+  }
 
   return FromCudaGraphHandle(node_handle);
 }

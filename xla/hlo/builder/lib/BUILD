@@ -16,7 +16,13 @@
 # Common computation builders for XLA.
 
 load("//xla:xla.default.bzl", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "ALL_HARDWARE_BACKENDS", "generate_backend_suites", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "ALL_HARDWARE_BACKENDS",
+    "generate_backend_suites",
+    "get_sc_offload_backend_args",
+    "xla_test",
+)
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "filegroup")
 load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
@@ -262,6 +268,11 @@ cc_library(
 xla_test(
     name = "math_test",
     srcs = ["math_test.cc"],
+    # SparseCore fusion offloading is disabled: on some TPUs, the SparseCore and TensorCore f32
+    # divides are not bit-identical, which flips a convergence check (a pred output) in Igamma and
+    # fails the SparseCore mismatch detector, which compares pred outputs exactly. The test itself
+    # still reaches convergence and passes with SparseCore fusion offloading.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_fusion_offloading = False),
     deps = [
         ":constants",
         ":math",
@@ -324,7 +335,9 @@ xla_test(
         "//xla:array4d",
         "//xla:literal",
         "//xla:literal_util",
+        "//xla:shape_util",
         "//xla:types",
+        "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_builder",
         "//xla/hlo/testlib:test",
         "//xla/tests:client_library_test_runner_mixin",
@@ -648,9 +661,6 @@ cc_library(
 xla_test(
     name = "self_adjoint_eig_test",
     srcs = ["self_adjoint_eig_test.cc"],
-    backend_tags = {
-        "v100": ["broken"],  # b/455498612
-    },
     backends = ALL_HARDWARE_BACKENDS,
     shard_count = 5,
     tags = ["optonly"],
@@ -712,6 +722,8 @@ cc_library(
 xla_test(
     name = "svd_test",
     srcs = ["svd_test.cc"],
+    # TODO(b/579933085): Offloaded SparseCore fusions give wrong results on some TPU hardware.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_fusion_offloading = False),
     backends = ALL_HARDWARE_BACKENDS,
     shard_count = 10,
     tags = ["optonly"],
@@ -764,6 +776,8 @@ cc_library(
 xla_test(
     name = "tridiagonal_test",
     srcs = ["tridiagonal_test.cc"],
+    # TODO(b/579918825): Offloaded SparseCore fusions fail to compile on unaligned pred windows.
+    backend_args = get_sc_offload_backend_args(enable_sparse_core_fusion_offloading = False),
     backends = ALL_HARDWARE_BACKENDS,
     shard_count = 10,
     tags = ["optonly"],

@@ -39,6 +39,7 @@ limitations under the License.
 #include "json/json.h"
 #include "riegeli/bytes/fd_reader.h"
 #include "riegeli/records/record_reader.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -53,7 +54,6 @@ limitations under the License.
 #include "xla/tools/hlo_dump/hlo_dump_utils.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "tsl/platform/path.h"
 
 namespace xla::numerics::comparison {
 

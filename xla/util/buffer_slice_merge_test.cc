@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/util/buffer_slice_merge.h"
 
+#include <gtest/gtest.h>
+
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/service/buffer_assignment.h"
 
 namespace xla {

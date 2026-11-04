@@ -162,15 +162,12 @@ InterpreterLoadedExecutable::InterpreterLoadedExecutable(
     std::shared_ptr<InterpreterExecutable> executable,
     std::unique_ptr<HloEvaluatorInterface> hlo_evaluator,
     std::shared_ptr<DeviceAssignment> device_assignment,
-    std::vector<LogicalDeviceIds> addressable_device_logical_ids,
     std::vector<PjRtDevice*> addressable_devices)
     : client_(ABSL_DIE_IF_NULL(client)),
       name_(ABSL_DIE_IF_NULL(executable)->name()),
       executable_(std::move(executable)),
       hlo_evaluator_(std::move(hlo_evaluator)),
       device_assignment_(std::move(device_assignment)),
-      addressable_device_logical_ids_(
-          std::move(addressable_device_logical_ids)),
       addressable_devices_(std::move(addressable_devices)) {
   if (executable_ && executable_->dynamic_dimension_inference().has_value()) {
     hlo_evaluator_->set_dynamic_dimension_inference(
@@ -335,7 +332,7 @@ InterpreterLoadedExecutable::ExecuteSharded(
   }
 
   ABSL_ASSIGN_OR_RETURN(Literal result_literal,
-                   Evaluate(computation, literals, options));
+                        Evaluate(computation, literals, options));
   // Shrink the generated dynamic shape into static shape.
   result_literal = result_literal.ToStatic();
   if (fill_future) {
@@ -343,7 +340,7 @@ InterpreterLoadedExecutable::ExecuteSharded(
   }
 
   ABSL_ASSIGN_OR_RETURN(PjRtMemorySpace * memory_space,
-                   device->default_memory_space());
+                        device->default_memory_space());
 
   // Transform the result literal back into a one or more
   // InterpreterLiteralWrapperBuffer.
@@ -455,14 +452,14 @@ absl::StatusOr<Layout> InterpreterClient::GetDefaultLayout(
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> InterpreterClient::Compile(
     const XlaComputation& computation, CompileOptions options) {
   ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology,
-                   GetTopologyDescription());
+                        GetTopologyDescription());
   return PjRtCompile(options, computation, *topology, this);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> InterpreterClient::Compile(
     MaybeOwningMlirModule module, CompileOptions options) {
   ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology,
-                   GetTopologyDescription());
+                        GetTopologyDescription());
   return PjRtCompile(options, std::move(module), *topology, this);
 }
 
@@ -470,9 +467,9 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 InterpreterClient::CompileAndLoad(const XlaComputation& computation,
                                   CompileOptions options) {
   ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology,
-                   GetTopologyDescription());
+                        GetTopologyDescription());
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> executable,
-                   PjRtCompile(options, computation, *topology, this));
+                        PjRtCompile(options, computation, *topology, this));
   return Load(std::move(executable), LoadOptions());
 }
 
@@ -480,9 +477,10 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
 InterpreterClient::CompileAndLoad(MaybeOwningMlirModule module,
                                   CompileOptions options) {
   ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology,
-                   GetTopologyDescription());
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<PjRtExecutable> executable,
-                   PjRtCompile(options, std::move(module), *topology, this));
+                        GetTopologyDescription());
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<PjRtExecutable> executable,
+      PjRtCompile(options, std::move(module), *topology, this));
   return Load(std::move(executable), LoadOptions());
 }
 
@@ -529,19 +527,12 @@ absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> InterpreterClient::Load(
                         "num_replicas: %d, num_partitions: %d",
                         num_replicas, num_partitions));
   }
-  std::vector<PjRtLoadedExecutable::LogicalDeviceIds>
-      addressable_device_logical_ids;
   std::vector<PjRtDevice*> addressable_devices;
-  PjRtLoadedExecutable::LogicalDeviceIds logical_device_ids;
-  logical_device_ids.replica = 0;
-  logical_device_ids.partition = 0;
-  addressable_device_logical_ids.push_back(std::move(logical_device_ids));
   addressable_devices.push_back(&interpreter_device_);
 
   return std::make_unique<InterpreterLoadedExecutable>(
       this, std::move(shared_interpreter_executable), std::move(evaluator),
-      std::move(device_assignment), std::move(addressable_device_logical_ids),
-      std::move(addressable_devices));
+      std::move(device_assignment), std::move(addressable_devices));
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
@@ -556,7 +547,7 @@ InterpreterClient::LoadSerializedExecutable(
     absl::string_view serialized, std::optional<CompileOptions> options,
     const LoadOptions& load_options) {
   ABSL_ASSIGN_OR_RETURN(auto executable,
-                   DeserializeExecutable(serialized, std::move(options)));
+                        DeserializeExecutable(serialized, std::move(options)));
   return Load(std::move(executable), load_options);
 }
 

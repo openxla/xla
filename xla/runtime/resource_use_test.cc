@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/runtime/resource_use.h"
 
+#include <gtest/gtest.h>
+
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/tsl/platform/test.h"
 
 namespace xla {

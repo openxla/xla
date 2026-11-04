@@ -20,8 +20,8 @@ limitations under the License.
 #include <string>
 
 #include "Eigen/Core"
-#include "xla/hlo/testlib/test.h"
 #include "tsl/platform/ml_dtypes.h"
+#include "xla/hlo/testlib/test.h"
 
 namespace xla {
 namespace {

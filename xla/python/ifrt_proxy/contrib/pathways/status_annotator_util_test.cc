@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/python/ifrt_proxy/contrib/pathways/status_annotator_util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "xla/python/ifrt/test_util.h"

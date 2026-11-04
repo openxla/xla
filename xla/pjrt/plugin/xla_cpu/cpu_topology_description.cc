@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/host_memory_spaces.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -225,7 +225,7 @@ CpuTopologyDescription::FromProto(
         "Any.");
   }
   ABSL_ASSIGN_OR_RETURN(auto cpu_topology,
-                   CpuTopology::FromProto(cpu_topology_proto));
+                        CpuTopology::FromProto(cpu_topology_proto));
   return std::make_unique<CpuTopologyDescription>(
       proto.platform_id(), proto.platform_name(), proto.platform_version(),
       *cpu_topology);
@@ -233,21 +233,44 @@ CpuTopologyDescription::FromProto(
 
 absl::StatusOr<xla::Shape> MakeDefaultCpuBufferShape(
     xla::Shape shape, const xla::Layout* layout) {
-  if (layout) {
+  if (shape.IsToken()) {
+    if (layout != nullptr) {
+      return absl::InvalidArgumentError(
+          "Layout is not supported for token shapes.");
+    }
+    return shape;
+  }
+  if (!shape.IsArray()) {
+    return InvalidArgument(
+        "MakeDefaultCpuBufferShape only supports array or token shapes, got %s",
+        shape.ToString());
+  }
+  shape.clear_layout();
+  xla::LayoutUtil::SetToDefaultLayout(&shape);
+  ABSL_RETURN_IF_ERROR(xla::ShapeUtil::ValidateShape(shape));
+  if (layout != nullptr) {
+    ABSL_RETURN_IF_ERROR(
+        xla::LayoutUtil::ValidateLayoutForShape(*layout, shape));
     shape.mutable_layout()->mutable_minor_to_major()->assign(
         layout->minor_to_major().begin(), layout->minor_to_major().end());
-  } else {
-    xla::LayoutUtil::SetToDefaultLayout(&shape);
   }
   auto element_type = shape.element_type();
   if (primitive_util::IsSubByteNonPredType(element_type)) {
     shape.mutable_layout()->set_element_size_in_bits(
         primitive_util::BitWidth(element_type));
   }
-  if (layout && *layout != shape.layout()) {
-    return absl::UnimplementedError(absl::StrCat(
-        "Unsupported layout used for PjRt CPU buffers: ", layout->ToString(),
-        " (original) vs. ", shape.ToString(), " (canonicalized)"));
+  if (layout != nullptr) {
+    xla::Layout canonical_input = *layout;
+    if (canonical_input.element_size_in_bits() == 0 &&
+        primitive_util::IsSubByteNonPredType(element_type)) {
+      canonical_input.set_element_size_in_bits(
+          primitive_util::BitWidth(element_type));
+    }
+    if (canonical_input != shape.layout()) {
+      return absl::UnimplementedError(absl::StrCat(
+          "Unsupported layout used for PjRt CPU buffers: ", layout->ToString(),
+          " (original) vs. ", shape.ToString(), " (canonicalized)"));
+    }
   }
   return shape;
 }

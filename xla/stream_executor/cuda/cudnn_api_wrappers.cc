@@ -109,10 +109,12 @@ absl::StatusOr<int> GetCudnnProperty(CudnnProperty type) {
 }
 
 absl::StatusOr<SemanticVersion> GetLoadedCudnnVersion() {
-  ABSL_ASSIGN_OR_RETURN(int major, GetCudnnProperty(CudnnProperty::kMajorVersion));
-  ABSL_ASSIGN_OR_RETURN(int minor, GetCudnnProperty(CudnnProperty::kMinorVersion));
+  ABSL_ASSIGN_OR_RETURN(int major,
+                        GetCudnnProperty(CudnnProperty::kMajorVersion));
+  ABSL_ASSIGN_OR_RETURN(int minor,
+                        GetCudnnProperty(CudnnProperty::kMinorVersion));
   ABSL_ASSIGN_OR_RETURN(int patch,
-                   GetCudnnProperty(CudnnProperty::kPatchLevelVersion));
+                        GetCudnnProperty(CudnnProperty::kPatchLevelVersion));
   return SemanticVersion(major, minor, patch);
 }
 

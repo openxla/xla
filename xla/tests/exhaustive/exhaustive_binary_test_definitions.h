@@ -26,10 +26,10 @@ limitations under the License.
 #include "absl/log/check.h"  // IWYU pragma: keep, exhaustive_binary_test_definitions.inc
 #include "absl/log/log.h"  // IWYU pragma: keep, exhaustive_binary_test_definitions.inc
 #include "absl/types/span.h"  // IWYU pragma: keep, exhaustive_binary_test_definitions.inc
+#include "tsl/platform/test.h"  // IWYU pragma: keep, exhaustive_binary_test_definitions.inc
 #include "xla/literal.h"  // IWYU pragma: keep, exhaustive_binary_test_definitions.inc
 #include "xla/tests/exhaustive/exhaustive_op_test.h"  // IWYU pragma: keep, exhaustive_binary_test_definitions.inc
 #include "xla/types.h"  // IWYU pragma: keep, exhaustive_binary_test_definitions.inc
-#include "tsl/platform/test.h"  // IWYU pragma: keep, exhaustive_binary_test_definitions.inc
 
 namespace xla {
 namespace exhaustive_op_test {

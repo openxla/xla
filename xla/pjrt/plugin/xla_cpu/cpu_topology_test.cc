@@ -15,15 +15,16 @@ limitations under the License.
 
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
+#include "tsl/platform/protobuf.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_topology.pb.h"
 #include "xla/runtime/device_id.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace {

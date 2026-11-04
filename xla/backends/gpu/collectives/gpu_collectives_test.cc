@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstddef>
 #include <memory>
@@ -22,8 +25,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/btree_map.h"
 #include "absl/log/check.h"
@@ -166,17 +167,18 @@ TEST(GpuCollectivesTest, GroupLaunchMultipleCommunicators) {
     GpuCollectives::Executor executor2(streams[2].get());
     GpuCollectives::Executor executor3(streams[3].get());
 
-    ABSL_RETURN_IF_ERROR(comms01[0]->LaunchAllReduce(send_buffers[0],
-                                                recv_buffers[0], F32, kCount,
-                                                ReductionKind::SUM, executor0));
-    ABSL_RETURN_IF_ERROR(comms01[1]->LaunchAllReduce(send_buffers[1],
-                                                recv_buffers[1], F32, kCount,
-                                                ReductionKind::SUM, executor1));
-    ABSL_RETURN_IF_ERROR(comms23[0]->LaunchAllReduce(send_buffers[2],
-                                                recv_buffers[2], F32, kCount,
-                                                ReductionKind::SUM, executor2));
+    ABSL_RETURN_IF_ERROR(comms01[0]->LaunchAllReduce(
+        send_buffers[0], recv_buffers[0], F32, kCount, ReductionKind::SUM,
+        executor0, /*is_rma=*/false));
+    ABSL_RETURN_IF_ERROR(comms01[1]->LaunchAllReduce(
+        send_buffers[1], recv_buffers[1], F32, kCount, ReductionKind::SUM,
+        executor1, /*is_rma=*/false));
+    ABSL_RETURN_IF_ERROR(comms23[0]->LaunchAllReduce(
+        send_buffers[2], recv_buffers[2], F32, kCount, ReductionKind::SUM,
+        executor2, /*is_rma=*/false));
     return comms23[1]->LaunchAllReduce(send_buffers[3], recv_buffers[3], F32,
-                                       kCount, ReductionKind::SUM, executor3);
+                                       kCount, ReductionKind::SUM, executor3,
+                                       /*is_rma=*/false);
   }));
 
   std::vector<std::array<float, kCount>> expected = {
@@ -470,11 +472,13 @@ TEST(GpuCollectivesTest, PutAndWaitSignal) {
   tsl::thread::ThreadPool pool(tsl::Env::Default(), "collectives", 2);
   tsl::Executor& exec = *pool.AsExecutor();
 
-  auto fsymm_send = CreateSymmetricMemory(exec, comms, send_allocs);
+  auto fsymm_send = CreateSymmetricMemory(exec, comms, send_allocs,
+                                          /*symmetric_window=*/true);
   ASSERT_OK_AND_ASSIGN(auto symm_send,
                        AwaitSymmetricMemory(std::move(fsymm_send)));
 
-  auto fsymm_recv = CreateSymmetricMemory(exec, comms, recv_allocs);
+  auto fsymm_recv = CreateSymmetricMemory(exec, comms, recv_allocs,
+                                          /*symmetric_window=*/true);
   ASSERT_OK_AND_ASSIGN(auto symm_recv,
                        AwaitSymmetricMemory(std::move(fsymm_recv)));
 
@@ -483,18 +487,18 @@ TEST(GpuCollectivesTest, PutAndWaitSignal) {
   auto f0 = MakeFutureOn<void>(exec, [&]() -> absl::Status {
     GpuCollectives::Executor gpu_exec(stream0.get());
     ABSL_RETURN_IF_ERROR(comms[0]
-                        ->Put(send0_addr, symm_recv[0].get(), 0, kNumBytes,
-                              RankId(1), gpu_exec)
-                        .Await());
+                             ->Put(send0_addr, symm_recv[0].get(), 0, kNumBytes,
+                                   RankId(1), gpu_exec)
+                             .Await());
     return comms[0]->WaitSignal(RankId(1), 1, signal_desc, gpu_exec).Await();
   });
 
   auto f1 = MakeFutureOn<void>(exec, [&]() -> absl::Status {
     GpuCollectives::Executor gpu_exec(stream1.get());
     ABSL_RETURN_IF_ERROR(comms[1]
-                        ->Put(send1_addr, symm_recv[1].get(), 0, kNumBytes,
-                              RankId(0), gpu_exec)
-                        .Await());
+                             ->Put(send1_addr, symm_recv[1].get(), 0, kNumBytes,
+                                   RankId(0), gpu_exec)
+                             .Await());
     return comms[1]->WaitSignal(RankId(0), 1, signal_desc, gpu_exec).Await();
   });
 
@@ -580,11 +584,13 @@ TEST(GpuCollectivesTest, PutAndWaitSignals) {
   tsl::thread::ThreadPool pool(tsl::Env::Default(), "collectives", 4);
   tsl::Executor& exec = *pool.AsExecutor();
 
-  auto fsymm_send = CreateSymmetricMemory(exec, comms, send_allocs);
+  auto fsymm_send = CreateSymmetricMemory(exec, comms, send_allocs,
+                                          /*symmetric_window=*/true);
   ASSERT_OK_AND_ASSIGN(auto symm_send,
                        AwaitSymmetricMemory(std::move(fsymm_send)));
 
-  auto fsymm_recv = CreateSymmetricMemory(exec, comms, recv_allocs);
+  auto fsymm_recv = CreateSymmetricMemory(exec, comms, recv_allocs,
+                                          /*symmetric_window=*/true);
   ASSERT_OK_AND_ASSIGN(auto symm_recv,
                        AwaitSymmetricMemory(std::move(fsymm_recv)));
 
@@ -683,10 +689,8 @@ TEST(GpuCollectivesTest, AllocatorMemoryRegistrationRegistersWithClique) {
   ASSERT_OK(registration->RegisterWithClique(clique));
 }
 
-// Smoke test for the MORI backbone: creates a MORI communicator and exercises
-// MoriCollectives::Allocate/Deallocate. MORI is a ROCm-only backend and the
-// current implementation is bindings-free (stubbed), so this only verifies the
-// plumbing is reachable and does not crash.
+// Smoke test for the MORI backend: creates MORI communicators over the global
+// clique and allocates from every device's symmetric heap.
 TEST(GpuCollectivesTest, MoriCreateCommunicatorAndAllocate) {
   ASSERT_OK_AND_ASSIGN(se::Platform * platform,
                        PlatformUtil::GetPlatform("gpu"));
@@ -699,6 +703,10 @@ TEST(GpuCollectivesTest, MoriCreateCommunicatorAndAllocate) {
   if (platform->VisibleDeviceCount() < 4) {
     GTEST_SKIP() << "Test requires at least 4 GPUs";
   }
+
+  // MORI's CCO backend requires the SDMA copy path. Enable it unless the
+  // environment already overrides it, before MORI is resolved/initialized.
+  tsl::setenv("MORI_ENABLE_SDMA", "1", /*overwrite=*/0);
 
   auto* mori = xla::gpu::GpuCollectives::Resolve("ROCM", "mori");
   ASSERT_NE(mori, nullptr);
@@ -713,12 +721,14 @@ TEST(GpuCollectivesTest, MoriCreateCommunicatorAndAllocate) {
   ASSERT_OK_AND_ASSIGN(size_t num_ranks, comms[0]->NumRanks());
   EXPECT_EQ(num_ranks, 4u);
 
-  // Exercise Allocate/Deallocate wiring. The bindings-free stubs are inert
-  // (Allocate returns an error, Deallocate is unimplemented), so we only verify
-  // the calls are reachable and do not crash.
-  auto buffer_or = mori->Allocate(1024);
-  void* buffer = buffer_or.ok() ? *buffer_or : nullptr;
-  ASSERT_OK(mori->Deallocate(buffer));
+  // MoriCollectives::Allocate uses the current device's facade, and every PE
+  // must issue the same allocation sequence, so allocate once per device.
+  for (se::StreamExecutor* executor : executors) {
+    auto activate_context = executor->Activate();
+    ASSERT_OK_AND_ASSIGN(void* buffer, mori->Allocate(1024));
+    EXPECT_NE(buffer, nullptr);
+    ASSERT_OK(mori->Deallocate(buffer));
+  }
 }
 
 }  // namespace

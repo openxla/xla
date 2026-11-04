@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/computation_placer.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/statusor.h"
 #include "xla/service/device_assignment.h"
 #include "xla/stream_executor/platform_id.h"

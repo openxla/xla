@@ -17,10 +17,10 @@ limitations under the License.
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
-#include "xla/hlo/translate/register.h"
 #include "tsl/platform/init_main.h"
+#include "xla/hlo/translate/register.h"
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   int dummyArgc = 1;
   tsl::port::InitMain(argv[0], &dummyArgc, &argv);
 

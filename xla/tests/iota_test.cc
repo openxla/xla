@@ -13,14 +13,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/primitive_util.h"
@@ -31,7 +33,6 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {

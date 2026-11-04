@@ -148,6 +148,10 @@ class CreateShardedDotFunctor final
                                                 const Window&) const override {
     HloInstruction* l = ll.hlo();
     HloInstruction* r = rr.hlo();
+    CHECK(!dot_->sparsity_config().has_lhs() &&
+          !dot_->sparsity_config().has_rhs());
+    CHECK(!dot_->block_scaling_config().has_lhs() &&
+          !dot_->block_scaling_config().has_rhs());
     ABSL_ASSIGN_OR_RETURN(
         auto sharded_dot_shape,
         ShapeInference::InferDotOpShape(
@@ -167,6 +171,15 @@ class CreateShardedDotFunctor final
 };
 
 absl::Status SpmdPartitioningVisitor::HandleDot(HloInstruction* hlo) {
+  if (hlo->sharding().IsSingleDevice()) {
+    return DefaultAction(hlo);
+  }
+  // TODO(b/535773961): Support sharding for scaled / sparse dots.
+  if (hlo->block_scaling_config().has_lhs() ||
+      hlo->block_scaling_config().has_rhs() ||
+      hlo->sparsity_config().has_lhs() || hlo->sparsity_config().has_rhs()) {
+    return DefaultAction(hlo);
+  }
   if (!options_.need_resolve_conflicts &&
       !options_.enable_windowed_einsum_for_all_gather &&
       !options_.enable_windowed_einsum_for_reduce_scatter) {
@@ -1445,11 +1458,11 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
         dot_rhs = slice;
       }
     }
-    ABSL_ASSIGN_OR_RETURN(auto dot,
-                     create_sharded_dot(
-                         PartitionedHlo(dot_lhs, lhs.base_shape(), lhs.state()),
-                         PartitionedHlo(dot_rhs, rhs.base_shape(), rhs.state()),
-                         &body_b, conv_window));
+    ABSL_ASSIGN_OR_RETURN(
+        auto dot, create_sharded_dot(
+                      PartitionedHlo(dot_lhs, lhs.base_shape(), lhs.state()),
+                      PartitionedHlo(dot_rhs, rhs.base_shape(), rhs.state()),
+                      &body_b, conv_window));
     if (windowed_at_contracting_dims || operands_sharded_at_contracting_dims) {
       // Accumulate the partial output to the result buffer.
       o = body_b.AddInstruction(
@@ -1525,8 +1538,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
             &body_b, cw_cp_input, cw_sd_pairs,
             (*lhs.state().next_channel_id)++);
 
-    ABSL_ASSIGN_OR_RETURN(auto outputs, get_partial_bid_results(l, r, o, extra_inout,
-                                                           cw_cp_output, i));
+    ABSL_ASSIGN_OR_RETURN(
+        auto outputs,
+        get_partial_bid_results(l, r, o, extra_inout, cw_cp_output, i));
     o = outputs[0];
     cw_cp_output = outputs[1];
 
@@ -1557,9 +1571,9 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
             &body_b, next_cw_cp_input, cw_sd_pairs,
             (*lhs.state().next_channel_id)++);
 
-    ABSL_ASSIGN_OR_RETURN(outputs,
-                     get_partial_bid_results(next_l, next_r, o, cw_cp_output,
-                                             next_cw_cp_output, i));
+    ABSL_ASSIGN_OR_RETURN(
+        outputs, get_partial_bid_results(next_l, next_r, o, cw_cp_output,
+                                         next_cw_cp_output, i));
     o = outputs[0];
     next_cw_cp_output = outputs[1];
 
@@ -1584,7 +1598,7 @@ absl::StatusOr<HloInstruction*> EmitWindowedDotGeneral(
           &body_b, o, output_sd_pairs, (*lhs.state().next_channel_id)++);
 
       ABSL_ASSIGN_OR_RETURN(extra_inout,
-                       get_partial_unid_result(l, r, extra_inout, i));
+                            get_partial_unid_result(l, r, extra_inout, i));
 
       extra_inout =
           lhs.state().collective_ops_creator.create_collective_permute(
@@ -1879,7 +1893,8 @@ absl::StatusOr<HloInstruction*> PartitionBaseCaseBeforePartialMatch(
   if (lhs_batch_partitions == rhs_batch_partitions &&
       rhs_batch_partitions == num_partitions &&
       lhs_sharding_transposed_to_match_rhs == rhs_sharding) {
-    ABSL_ASSIGN_OR_RETURN(auto dot, create_sharded_dot(lhs, rhs, b, conv_window));
+    ABSL_ASSIGN_OR_RETURN(auto dot,
+                          create_sharded_dot(lhs, rhs, b, conv_window));
     dot->set_sharding(*lhs_sharding_transposed_to_match_output);
     return PartitionedHlo(dot, output_base_shape, lhs.state())
         .Reshard(output_sharding)
@@ -2922,9 +2937,10 @@ absl::StatusOr<HloInstruction*> PartitionDotGroupOnContractingImpl(
     // inner_creator will become create_sharded_dot's operator() target. Call
     // create_sharded_dot's original CreateSharded function here by setting
     // call_custom_create_sharded to false.
-    ABSL_ASSIGN_OR_RETURN(auto inner_dot,
-                     create_sharded_dot(l, r, b, conv_window,
-                                        /*call_custom_create_sharded=*/false));
+    ABSL_ASSIGN_OR_RETURN(
+        auto inner_dot,
+        create_sharded_dot(l, r, b, conv_window,
+                           /*call_custom_create_sharded=*/false));
     HloInstruction* result = inner_dot;
     if (!output_slice_dims.empty()) {
       // Create an AllReduce along slice dims first to allow a reduce-scatter.
@@ -4477,6 +4493,44 @@ FindInputNodesIfOnlyDependOnSmallOperands(HloInstruction* hlo) {
   return {std::move(nodes_found), std::move(new_operands)};
 }
 
+// Mutates `tuple` in-place by replacing the operand at `replaced_index` with
+// `new_operands[0]` and appending the remaining `new_operands` at the end.
+absl::Status ReplaceAndAppendTupleElements(
+    HloInstruction* tuple, int64_t replaced_index,
+    absl::Span<HloInstruction* const> new_operands) {
+  CHECK_EQ(tuple->opcode(), HloOpcode::kTuple);
+  CHECK_GE(replaced_index, 0);
+  CHECK_LT(replaced_index, tuple->operand_count());
+  CHECK(!new_operands.empty());
+  ABSL_RETURN_IF_ERROR(
+      tuple->ReplaceOperandWithDifferentShape(replaced_index, new_operands[0]));
+  ShapeUtil::UpdateTupleShape(new_operands[0]->shape(), replaced_index,
+                              tuple->mutable_shape());
+  tuple->AppendOperands(new_operands.subspan(1));
+  for (const HloInstruction* op : new_operands.subspan(1)) {
+    ShapeUtil::AppendShapeToTuple(op->shape(), tuple->mutable_shape());
+  }
+  return absl::OkStatus();
+}
+
+// Updates `loop`'s input tuple in-place by replacing the operand at
+// `replaced_index` with `new_operands[0]` and appending the remaining
+// `new_operands` at the end. Updates the tuple shapes on `loop` and its
+// condition and body parameters.
+absl::Status ReplaceWhileLoopInputTupleElements(
+    HloInstruction* loop, int64_t replaced_index,
+    absl::Span<HloInstruction* const> new_operands) {
+  HloInstruction* input_tuple = loop->mutable_operand(0);
+  ABSL_RETURN_IF_ERROR(
+      ReplaceAndAppendTupleElements(input_tuple, replaced_index, new_operands));
+  for (HloInstruction* tuple :
+       {loop, loop->while_condition()->parameter_instruction(0),
+        loop->while_body()->parameter_instruction(0)}) {
+    *tuple->mutable_shape() = input_tuple->shape();
+  }
+  return absl::OkStatus();
+}
+
 // Moves a cluster of memory-reducing nodes into the windowed dot-general loop
 // on contracting dimensions. Such a loop has a dynamic slice on the
 // non-windowed operand. If we move the input nodes into the loop, the
@@ -4504,30 +4558,28 @@ absl::Status SinkInputNodesIntoWindowedDotGeneralLoopOnContractingDimensions(
   if (to_sink.empty()) {
     return absl::OkStatus();
   }
-  auto computation = loop->parent();
-  // Replace the old operand with a tuple of the found small operands.
-  auto new_input_subtuple =
-      computation->AddInstruction(HloInstruction::CreateTuple(new_operands));
-  ABSL_RETURN_IF_ERROR(input_tuple->ReplaceOperandWithDifferentShape(
-      non_windowed_operand_index, new_input_subtuple));
-
+  if (new_operands.empty()) {
+    new_operands.push_back(
+        loop->parent()->AddInstruction(HloInstruction::CreateConstant(
+            LiteralUtil::Zero(old_operand->shape().element_type()))));
+  }
   auto body = loop->while_body();
   auto body_param = body->parameter_instruction(0);
-  auto old_body_param_users = body_param->users();
-  // Update all tuple shapes.
-  for (auto tuple : std::vector<HloInstruction*>{
-           input_tuple, loop, loop->while_condition()->parameter_instruction(0),
-           body_param, body->root_instruction()}) {
-    *ShapeUtil::GetMutableSubshape(tuple->mutable_shape(),
-                                   {non_windowed_operand_index}) =
-        new_input_subtuple->shape();
+  // Collect old_operand_gtes before creating new GTEs at
+  // non_windowed_operand_index.
+  std::vector<HloInstruction*> old_operand_gtes;
+  for (HloInstruction* u : body_param->users()) {
+    if (u->opcode() == HloOpcode::kGetTupleElement &&
+        u->tuple_index() == non_windowed_operand_index) {
+      old_operand_gtes.push_back(u);
+    }
   }
-  // Now update the loop body.
-  auto new_operand_tuple_inside =
-      body->AddInstruction(HloInstruction::CreateGetTupleElement(
-          new_input_subtuple->shape(), body_param, non_windowed_operand_index));
-  ABSL_RETURN_IF_ERROR(body->root_instruction()->ReplaceOperandWithDifferentShape(
-      non_windowed_operand_index, new_operand_tuple_inside));
+  const int64_t new_operands_start_index = input_tuple->operand_count();
+  // Replace the old operand at non_windowed_operand_index with new_operands[0]
+  // and append the remaining small operands as flat elements at the end of the
+  // loop tuple.
+  ABSL_RETURN_IF_ERROR(ReplaceWhileLoopInputTupleElements(
+      loop, non_windowed_operand_index, new_operands));
 
   // Create nodes inside the loop body.
   std::vector<HloInstruction*> worklist;
@@ -4542,10 +4594,14 @@ absl::Status SinkInputNodesIntoWindowedDotGeneralLoopOnContractingDimensions(
       }
     }
   };
+  std::vector<HloInstruction*> new_operand_gtes_inside(new_operands.size());
   for (int64_t i = 0; i < new_operands.size(); ++i) {
-    outside_to_inside[new_operands[i]] =
+    const int64_t tuple_index = (i == 0) ? non_windowed_operand_index
+                                         : (new_operands_start_index + i - 1);
+    new_operand_gtes_inside[i] =
         body->AddInstruction(HloInstruction::CreateGetTupleElement(
-            new_operands[i]->shape(), new_operand_tuple_inside, i));
+            new_operands[i]->shape(), body_param, tuple_index));
+    outside_to_inside[new_operands[i]] = new_operand_gtes_inside[i];
     add_users_if_available(new_operands[i]);
   }
   // HLOs to sink without operands.
@@ -4576,12 +4632,15 @@ absl::Status SinkInputNodesIntoWindowedDotGeneralLoopOnContractingDimensions(
     add_users_if_available(inst);
   }
   TF_RET_CHECK(outside_to_inside.count(old_operand) > 0);
-  for (auto ou : old_body_param_users) {
-    if (ou->opcode() == HloOpcode::kGetTupleElement &&
-        ou->tuple_index() == non_windowed_operand_index) {
-      ABSL_RETURN_IF_ERROR(ou->ReplaceAllUsesWith(outside_to_inside[old_operand]));
-      ABSL_RETURN_IF_ERROR(body->RemoveInstruction(ou));
-    }
+
+  ABSL_RETURN_IF_ERROR(ReplaceAndAppendTupleElements(body->root_instruction(),
+                                                     non_windowed_operand_index,
+                                                     new_operand_gtes_inside));
+
+  for (HloInstruction* ou : old_operand_gtes) {
+    ABSL_RETURN_IF_ERROR(
+        ou->ReplaceAllUsesWith(outside_to_inside[old_operand]));
+    ABSL_RETURN_IF_ERROR(body->RemoveInstruction(ou));
   }
   return absl::OkStatus();
 }
@@ -4631,10 +4690,11 @@ absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
     HloInstruction* loop) {
   CHECK_EQ(loop->user_count(), 1);
   // There should be a single direct user of the while loop, which is the
-  // gte for element 2, i.e., the dot output.
+  // gte for the dot output.
   auto* user_gte = loop->users().front();
   CHECK_EQ(user_gte->opcode(), HloOpcode::kGetTupleElement);
-  CHECK_EQ(user_gte->tuple_index(), 2);
+  const int64_t old_output_index = user_gte->tuple_index();
+  CHECK_EQ(old_output_index, 2);
   auto* computation = loop->parent();
 
   // Find the reduce outputs and the input nodes they depend on, if input
@@ -4771,34 +4831,20 @@ absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
     }
     auto* broadcast =
         computation->AddInstruction(HloInstruction::CreateBroadcast(
-            padded_out_shape,
-            computation->AddInstruction(HloInstruction::CreateConstant(
-                LiteralUtil::Zero(out->shape().element_type()))),
-            {}));
+            padded_out_shape, out->mutable_operand(1), {}));
     new_operands.push_back(broadcast);
   }
 
-  auto* input_tuple = loop->mutable_operand(0);
-  // Create the new input subtuple that contains the small operands and the
-  // reduce-shape result buffers.
-  auto* new_input_subtuple =
-      computation->AddInstruction(HloInstruction::CreateTuple(new_operands));
+  const int64_t new_operands_start_index = loop->operand(0)->operand_count();
+  // Replace the old output slot with new_operands[0] and append the remaining
+  // small operands and reduce-shape result buffers as flat elements at the end
+  // of the loop tuple.
   ABSL_RETURN_IF_ERROR(
-      input_tuple->ReplaceOperandWithDifferentShape(2, new_input_subtuple));
+      ReplaceWhileLoopInputTupleElements(loop, old_output_index, new_operands));
   auto* body = loop->while_body();
   auto* body_param = body->parameter_instruction(0);
   auto* body_root = body->root_instruction();
   CHECK_EQ(body_root->opcode(), HloOpcode::kTuple);
-  // Update tuple shapes.
-  for (auto* tuple : std::vector<HloInstruction*>{
-           input_tuple, loop, loop->while_condition()->parameter_instruction(0),
-           body_param, body_root}) {
-    *ShapeUtil::GetMutableSubshape(tuple->mutable_shape(), {2}) =
-        new_input_subtuple->shape();
-  }
-  auto* new_loop_input =
-      body->AddInstruction(HloInstruction::CreateGetTupleElement(
-          new_input_subtuple->shape(), body_param, 2));
 
   // Represents a cluster that's associated to a single dynamic-update-slice op,
   // which should be moved to inside of the windowed dot-general loop. There
@@ -4816,7 +4862,7 @@ absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
   // The elementwise nodes will be created with sliced shape. The original
   // loop output corresponds to the dynamic-update-slice's update slice.
   {
-    HloInstruction* dus = body_root->mutable_operand(2);
+    HloInstruction* dus = body_root->mutable_operand(old_output_index);
     while (dus->opcode() == HloOpcode::kDynamicUpdateSlice) {
       motion_clusters.emplace_back();
       motion_clusters.back().dus = dus;
@@ -4849,9 +4895,11 @@ absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
   };
 
   for (int64_t i = 0; i < new_operands.size(); ++i) {
+    const int64_t tuple_index =
+        (i == 0) ? old_output_index : (new_operands_start_index + i - 1);
     auto* operand_gte =
         body->AddInstruction(HloInstruction::CreateGetTupleElement(
-            new_operands[i]->shape(), new_loop_input, i));
+            new_operands[i]->shape(), body_param, tuple_index));
     for (MotionCluster& motion_cluster : motion_clusters) {
       motion_cluster.outside_to_inside[new_operands[i]] = operand_gte;
     }
@@ -4971,11 +5019,12 @@ absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
         -> absl::StatusOr<HloInstruction*> {
       HloInstruction* operand0 = outside_to_inside[reduce_outside->operand(0)];
       HloInstruction* operand1 = outside_to_inside[reduce_outside->operand(1)];
-      ABSL_ASSIGN_OR_RETURN(Shape reduce_shape,
-                       ShapeInference::InferReduceShape(
-                           {&operand0->shape(), &operand1->shape()},
-                           reduce_outside->dimensions(),
-                           reduce_outside->to_apply()->ComputeProgramShape()));
+      ABSL_ASSIGN_OR_RETURN(
+          Shape reduce_shape,
+          ShapeInference::InferReduceShape(
+              {&operand0->shape(), &operand1->shape()},
+              reduce_outside->dimensions(),
+              reduce_outside->to_apply()->ComputeProgramShape()));
       *reduce_shape.mutable_layout() = reduce_outside->shape().layout();
       std::vector<HloInstruction*> reduce_dus_offsets;
       // If any collapsed dimension is windowed, we need to accumulate with last
@@ -5052,22 +5101,20 @@ absl::Status MoveUsersIntoWindowedDotGeneralLoopOnNonContractingDimensions(
   }
 
   // Body output.
-  auto* new_output_inside =
-      body->AddInstruction(HloInstruction::CreateTuple(new_outputs_inside));
-  ABSL_RETURN_IF_ERROR(
-      body_root->ReplaceOperandWithDifferentShape(2, new_output_inside));
+  ABSL_RETURN_IF_ERROR(ReplaceAndAppendTupleElements(
+      body_root, old_output_index, new_outputs_inside));
   ABSL_RETURN_IF_ERROR(
       body->RemoveInstructionAndUnusedOperands(base_motion_cluster.dus));
   // Replace uses of the reduces outside the loop.
-  auto* new_output_gte =
-      computation->AddInstruction(HloInstruction::CreateGetTupleElement(
-          new_output_inside->shape(), loop, 2));
   for (int64_t i = 0; i < reduce_outputs.size(); ++i) {
     int64_t index_in_operand = new_operands.size() - reduce_outputs.size() + i;
+    const int64_t tuple_index =
+        (index_in_operand == 0)
+            ? old_output_index
+            : (new_operands_start_index + index_in_operand - 1);
     auto* new_output =
         computation->AddInstruction(HloInstruction::CreateGetTupleElement(
-            new_outputs_inside[index_in_operand]->shape(), new_output_gte,
-            index_in_operand));
+            new_outputs_inside[index_in_operand]->shape(), loop, tuple_index));
     if (!ShapeUtil::Compatible(new_output->shape(),
                                reduce_outputs[i]->shape())) {
       new_output = computation->AddInstruction(HloInstruction::CreateSlice(

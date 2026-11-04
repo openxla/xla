@@ -15,15 +15,17 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/host_memory_transfer_asyncifier.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -32,7 +34,6 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -42,7 +43,8 @@ namespace m = ::xla::match;
 class HostMemoryTransferAsyncifierTest : public HloHardwareIndependentTestBase {
  protected:
   absl::StatusOr<bool> RunAsyncifier(absl::string_view hlo_string) {
-    ABSL_ASSIGN_OR_RETURN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+    ABSL_ASSIGN_OR_RETURN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
     ABSL_ASSIGN_OR_RETURN(bool changed, RunAsyncifier(module.get()));
     return changed;
   }

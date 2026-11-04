@@ -15,18 +15,20 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/collectives/all_reduce_splitter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/transforms/reduce_scatter_creator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -36,8 +38,6 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -102,7 +102,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/4));
 
@@ -138,7 +138,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/8));
 
@@ -186,7 +186,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/8));
 
@@ -280,7 +280,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/8));
 
@@ -321,7 +321,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/8));
 
@@ -376,7 +376,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/8));
 
@@ -412,7 +412,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/8));
 
@@ -451,8 +451,8 @@ ENTRY main {
       GetModuleConfigForTest(/*replica_count=*/1, /*num_partitions=*/8);
   config.set_use_spmd_partitioning(false);
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_string, config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string, config));
 
   EXPECT_THAT(AllReduceSplitter().Run(module.get()),
               absl_testing::IsOkAndHolds(false));
@@ -486,7 +486,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/8));
 
@@ -523,7 +523,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/8));
 
@@ -564,7 +564,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/16));
 
@@ -605,7 +605,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/16));
 
@@ -646,7 +646,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/16));
 
@@ -691,7 +691,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/8));
 
@@ -742,7 +742,7 @@ ENTRY main {
 }
 )";
 
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<HloModule> module,
       PrepareModule(hlo_string, /*num_replicas=*/1, /*num_partitions=*/8));
 
@@ -761,6 +761,139 @@ ENTRY main {
     CHECK:        ROOT
     CHECK-NOT:    %[[AR1]]
     CHECK-SAME:   %[[EXISTING_AR]]
+    )"));
+}
+
+TEST_F(AllReduceSplitterTest,
+       DoesNotCrashOrRewriteWhenSliceFactorWraps32BitInt) {
+  // Quotient 4294967296 / 1 = 2^32 narrows to 0 in 32-bit int, which previously
+  // caused SIGFPE at `input_group_size % *ds_factor`.
+  constexpr absl::string_view kMultipleOf2To32Hlo = R"hlo(
+HloModule m
+
+sum {
+  a = bf16[] parameter(0)
+  b = bf16[] parameter(1)
+  ROOT _ = bf16[] add(a, b)
+}
+
+ENTRY main {
+  p = bf16[4294967296] parameter(0)
+  ar = bf16[4294967296] all-reduce(p), replica_groups={{0,1,2,3,4,5,6,7}},
+    to_apply=sum, use_global_device_ids=true, channel_id=1
+  offset = s64[] constant(0)
+  ROOT ds = bf16[1] dynamic-slice(ar, offset), dynamic_slice_sizes={1}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> mod_zero_wrap,
+                       PrepareModule(kMultipleOf2To32Hlo, /*num_replicas=*/1,
+                                     /*num_partitions=*/8));
+  EXPECT_THAT(AllReduceSplitter(/*ignore_profitability_check=*/true)
+                  .Run(mod_zero_wrap.get()),
+              absl_testing::IsOkAndHolds(false));
+  EXPECT_EQ(AllReduceCount(*mod_zero_wrap), 1);
+
+  // Quotient 4294967292 / 1 = 2^32 - 4 narrows to -4 in 32-bit int, passing
+  // `8 % -4 == 0` and crashing in `GetNewReplicaGroups` / `buckets`.
+  constexpr absl::string_view kNegativeDivisorWrapHlo = R"hlo(
+HloModule m
+
+sum {
+  a = bf16[] parameter(0)
+  b = bf16[] parameter(1)
+  ROOT _ = bf16[] add(a, b)
+}
+
+ENTRY main {
+  p = bf16[4294967292] parameter(0)
+  ar = bf16[4294967292] all-reduce(p), replica_groups={{0,1,2,3,4,5,6,7}},
+    to_apply=sum, use_global_device_ids=true, channel_id=1
+  offset = s64[] constant(0)
+  ROOT ds = bf16[1] dynamic-slice(ar, offset), dynamic_slice_sizes={1}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> mod_neg_wrap,
+      PrepareModule(kNegativeDivisorWrapHlo, /*num_replicas=*/1,
+                    /*num_partitions=*/8));
+  EXPECT_THAT(AllReduceSplitter(/*ignore_profitability_check=*/true)
+                  .Run(mod_neg_wrap.get()),
+              absl_testing::IsOkAndHolds(false));
+  EXPECT_EQ(AllReduceCount(*mod_neg_wrap), 1);
+
+  // Quotient 4294967298 / 1 = 2^32 + 2 narrows to +2 in 32-bit int, a bogus
+  // divisor of `input_group_size = 8`.
+  constexpr absl::string_view kPositiveDivisorWrapHlo = R"hlo(
+HloModule m
+
+sum {
+  a = bf16[] parameter(0)
+  b = bf16[] parameter(1)
+  ROOT _ = bf16[] add(a, b)
+}
+
+ENTRY main {
+  p = bf16[4294967298] parameter(0)
+  ar = bf16[4294967298] all-reduce(p), replica_groups={{0,1,2,3,4,5,6,7}},
+    to_apply=sum, use_global_device_ids=true, channel_id=1
+  table = s32[8]{0} constant({0,1,0,1,0,1,0,1})
+  pid = u32[] partition-id()
+  id = s32[1] dynamic-slice(table, pid), dynamic_slice_sizes={1}
+  offset = s32[] reshape(id)
+  ROOT ds = bf16[1] dynamic-slice(ar, offset), dynamic_slice_sizes={1}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> mod_pos_wrap,
+      PrepareModule(kPositiveDivisorWrapHlo, /*num_replicas=*/1,
+                    /*num_partitions=*/8));
+  EXPECT_THAT(AllReduceSplitter(/*ignore_profitability_check=*/true)
+                  .Run(mod_pos_wrap.get()),
+              absl_testing::IsOkAndHolds(false));
+  EXPECT_EQ(AllReduceCount(*mod_pos_wrap), 1);
+}
+
+TEST_F(AllReduceSplitterFilecheckTest, SplitsLargeDimensionAllReduce) {
+  constexpr absl::string_view kLargeValidSplitHlo = R"hlo(
+HloModule m
+
+sum {
+  a = bf16[] parameter(0)
+  b = bf16[] parameter(1)
+  ROOT _ = bf16[] add(a, b)
+}
+
+ENTRY main {
+  p = bf16[8589934592] parameter(0)
+  ar = bf16[8589934592] all-reduce(p), replica_groups={{0,1,2,3,4,5,6,7}},
+    to_apply=sum, use_global_device_ids=true, channel_id=1
+  table = s32[8]{0} constant({0,1,2,3,0,1,2,3})
+  pid = u32[] partition-id()
+  id = s32[1] dynamic-slice(table, pid), dynamic_slice_sizes={1}
+  reshape = s32[] reshape(id)
+  id_s64 = s64[] convert(reshape)
+  slice_size = s64[] constant(2147483648)
+  offset = s64[] multiply(id_s64, slice_size)
+  ROOT ds = bf16[2147483648] dynamic-slice(ar, offset),
+    dynamic_slice_sizes={2147483648}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       PrepareModule(kLargeValidSplitHlo, /*num_replicas=*/1,
+                                     /*num_partitions=*/8));
+  EXPECT_THAT(
+      AllReduceSplitter(/*ignore_profitability_check=*/true).Run(module.get()),
+      absl_testing::IsOkAndHolds(true));
+  EXPECT_OK(FileCheck(module->ToString(), R"(
+    CHECK:        %[[AR0:.*]] = bf16[8589934592]{0} all-reduce
+    CHECK-SAME:   replica_groups={{[{]}}{0,1,2,3},{4,5,6,7}{{[}]}}
+    CHECK:        %[[DS:.*]] = bf16[2147483648]{0} dynamic-slice(%[[AR0]],
+    CHECK-NEXT:   ROOT %[[AR1:.*]] = bf16[2147483648]{0} all-reduce(%[[DS]])
+    CHECK-SAME:   replica_groups={{[{]}}{0,4},{1,5},{2,6},{3,7}{{[}]}}
     )"));
 }
 

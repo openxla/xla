@@ -160,6 +160,13 @@ class GpuCollectives : public Collectives {
     return SplitCommunicators(comms, color, keys, config, ranks);
   }
 
+  // Attaches GXL communicators to the given communicators if supported.
+  virtual absl::Status MaybeAttachGxlCommunicators(
+      const CliqueKey& clique_key, absl::Span<const DeviceRank> ranks,
+      absl::Span<Communicator* const> comms) {
+    return absl::OkStatus();
+  }
+
   // Returns true if GPU collectives are implemented.
   virtual bool IsImplemented() const = 0;
 
@@ -190,18 +197,6 @@ class GpuCollectives : public Collectives {
   virtual absl::StatusOr<std::unique_ptr<Communicator>>
   CreateCommunicator() = 0;
 };
-
-enum class FabricHomogeneity {
-  kUnknown = 0,       // Default: Unable to determine (e.g. legacy drivers)
-  kHomogeneous = 1,   // Confirmed: All devices share the same FabricInfo
-  kHeterogeneous = 2  // Confirmed: Devices belong to different clusters/cliques
-};
-
-// Checks whether the devices in clique_key have homogeneous NVML FabricInfo.
-// This is required as a safety check before launching one-shot kernels on
-// GB200/NVL72 racks.
-FabricHomogeneity CheckFabricHomogeneity(se::StreamExecutor* executor,
-                                         const CliqueKey& clique_key);
 
 }  // namespace xla::gpu
 

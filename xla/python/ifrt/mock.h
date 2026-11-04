@@ -194,6 +194,11 @@ class MockClient : public RTTIExtends<MockClient, Client> {
                std::optional<MemoryKind> memory_kind,
                ArrayCopySemantics semantics),
               (final));
+  MOCK_METHOD(absl::StatusOr<std::vector<ArrayRef>>, CopyArraysWithDonatedDst,
+              (absl::Span<ArrayRef> arrays,
+               absl::Span<ArrayRef> donated_dst_arrays,
+               ArrayCopySemantics semantics),
+              (final));
   MOCK_METHOD(absl::StatusOr<std::vector<ArrayRef>>, RemapArrays,
               (const RemapPlan& plan, absl::Span<ArrayRef> arrays,
                ArrayCopySemantics semantics),
@@ -207,6 +212,14 @@ class MockClient : public RTTIExtends<MockClient, Client> {
   MOCK_METHOD(absl::StatusOr<std::vector<ArrayRef>>, ReshardArrays,
               (absl::Span<ArrayRef> arrays, absl::Span<const ArraySpec> specs,
                ArrayCopySemantics semantics),
+              (final));
+  MOCK_METHOD(absl::StatusOr<std::vector<ArrayRef>>, CopyArraySlices,
+              (absl::Span<const ArrayRef> arrays,
+               absl::Span<const IndexDomain> index_domains),
+              (final));
+  MOCK_METHOD(absl::StatusOr<std::vector<ArrayRef>>, UpdateArraySlices,
+              (absl::Span<ArrayRef> arrays, absl::Span<const ArrayRef> slices,
+               absl::Span<const Index> origins),
               (final));
   MOCK_METHOD(tsl::Future<>, GetReadyFuture,
               (absl::Span<const ValueRef> values), (final));
@@ -248,6 +261,11 @@ class MockClient : public RTTIExtends<MockClient, Client> {
   MOCK_METHOD(absl::StatusOr<DeviceListRef>, MakeDeviceList,
               (absl::Span<Device* const> devices), (const));
   MOCK_METHOD(Compiler*, GetDefaultCompiler, (), (final));
+  MOCK_METHOD(absl::StatusOr<std::vector<tsl::Future<LoadedExecutableRef>>>,
+              Load,
+              (absl::Span<const ExecutableRef> executables,
+               absl::Span<std::unique_ptr<LoadOptions>> options),
+              (final));
   MOCK_METHOD(absl::StatusOr<std::shared_ptr<Topology>>, GetTopologyForDevices,
               (const xla::ifrt::DeviceListRef& devices), (const, final));
   MOCK_METHOD(absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>,
@@ -403,7 +421,6 @@ class MockLoadedExecutable
   MOCK_METHOD(absl::StatusOr<std::string>, GetHumanReadableProgramText, (),
               (const, final));
   MOCK_METHOD(UserContextRef, user_context, (), (const, final));
-  MOCK_METHOD(int, num_devices, (), (const, final));
   MOCK_METHOD(int64_t, SizeOfGeneratedCodeInBytes, (), (const, final));
   MOCK_METHOD(absl::StatusOr<CompiledMemoryStats>, GetCompiledMemoryStats, (),
               (const, final));
@@ -432,8 +449,6 @@ class MockLoadedExecutable
   MOCK_METHOD(absl::StatusOr<ExecuteBundleResult>, ExecuteBundle,
               (absl::Span<BundleRef> args, const ExecuteOptions& options),
               (final));
-  MOCK_METHOD(absl::Span<Device* const>, addressable_devices, (),
-              (const, final));
   MOCK_METHOD(std::optional<DeviceListRef>, devices, (), (const, final));
   MOCK_METHOD(void, SetDeleteOptions, (const DeleteOptions& options), (final));
 
@@ -473,7 +488,6 @@ class MockMpmdLoadedExecutable
   MOCK_METHOD(absl::StatusOr<std::string>, GetHumanReadableProgramText, (),
               (const, final));
   MOCK_METHOD(UserContextRef, user_context, (), (const, final));
-  MOCK_METHOD(int, num_devices, (), (const, final));
   MOCK_METHOD(int64_t, SizeOfGeneratedCodeInBytes, (), (const, final));
   MOCK_METHOD(absl::StatusOr<CompiledMemoryStats>, GetCompiledMemoryStats, (),
               (const, final));
@@ -502,8 +516,6 @@ class MockMpmdLoadedExecutable
   MOCK_METHOD(absl::StatusOr<ExecuteBundleResult>, ExecuteBundle,
               (absl::Span<BundleRef> args, const ExecuteOptions& options),
               (final));
-  MOCK_METHOD(absl::Span<Device* const>, addressable_devices, (),
-              (const, final));
   MOCK_METHOD(std::optional<DeviceListRef>, devices, (), (const, final));
   MOCK_METHOD(void, SetDeleteOptions, (const DeleteOptions& options), (final));
 

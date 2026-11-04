@@ -15,10 +15,10 @@ limitations under the License.
 
 #include "xla/pjrt/device_event_utils.h"
 
-#include <utility>
-#include <vector>
-
 #include <gtest/gtest.h>
+
+#include <utility>
+
 #include "absl/status/status.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/tsl/concurrency/async_value.h"

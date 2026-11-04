@@ -34,8 +34,8 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/STLExtras.h"
 #include "google/protobuf/message.h"
+#include "llvm/ADT/STLExtras.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -111,10 +111,11 @@ absl::StatusOr<std::unique_ptr<HloModule>>
 HloRunnerAgnosticTestBase::HloModuleFromXlaComputation(
     const XlaComputation& computation,
     const ExecutionOptions& execution_options) const {
-  ABSL_ASSIGN_OR_RETURN(HloModuleConfig module_config,
-                   HloModule::CreateModuleConfigFromProto(
-                       computation.proto(), execution_options.debug_options(),
-                       &execution_options));
+  ABSL_ASSIGN_OR_RETURN(
+      HloModuleConfig module_config,
+      HloModule::CreateModuleConfigFromProto(computation.proto(),
+                                             execution_options.debug_options(),
+                                             &execution_options));
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<HloModule> module,
       HloModule::CreateFromProto(computation.proto(), module_config));

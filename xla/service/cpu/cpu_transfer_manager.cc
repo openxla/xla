@@ -18,6 +18,8 @@ limitations under the License.
 #include <memory>
 
 #include "absl/status/status_macros.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/compiler.h"
@@ -30,8 +32,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/types.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 
@@ -58,8 +58,9 @@ absl::Status CpuTransferManager::ReadDynamicShapes(
                                               device_shape);
   }
   ABSL_ASSIGN_OR_RETURN(auto platform,
-                   se::PlatformManager::PlatformWithId(PlatformId()));
-  ABSL_ASSIGN_OR_RETURN(auto compiler, Compiler::GetForPlatform(platform->id()));
+                        se::PlatformManager::PlatformWithId(PlatformId()));
+  ABSL_ASSIGN_OR_RETURN(auto compiler,
+                        Compiler::GetForPlatform(platform->id()));
   return ReadDynamicShapesOnCpu(device_buffer, device_shape,
                                 compiler->ShapeSizeBytesFunction());
 }

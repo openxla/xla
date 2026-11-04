@@ -15,12 +15,14 @@ limitations under the License.
 
 #include "xla/tools/hlo_extractor.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -28,7 +30,6 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -674,6 +675,36 @@ ENTRY main {
         entry->root_instruction(),
         op::AsyncDone(op::AsyncUpdate(op::AsyncStart(op::Parameter()))));
   }
+}
+
+TEST_F(HloExtractorTest, DoesNotVisitInstructionsBeyondBoundary) {
+  constexpr absl::string_view hlo = R"(
+HloModule test
+
+ENTRY main {
+  p0 = f32[4] parameter(0)
+  neg = f32[4] negate(p0)
+  tanh = f32[4] tanh(neg)
+  ROOT exp = f32[4] exponential(tanh)
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo));
+
+  HloInstruction* neg = FindInstruction(module.get(), "neg");
+  HloInstruction* exp = FindInstruction(module.get(), "exp");
+  bool visited_beyond_boundary = false;
+  auto extract_selector = [&](const HloInstruction* inst) {
+    if (inst == neg) {
+      visited_beyond_boundary = true;
+    }
+    return true;
+  };
+
+  auto extracted = ExtractModule(exp, /*height=*/0, extract_selector);
+  ASSERT_NE(extracted, nullptr);
+  EXPECT_FALSE(visited_beyond_boundary);
+  EXPECT_THAT(extracted->entry_computation()->root_instruction(),
+              op::Exp(op::Parameter(0)));
 }
 
 }  // namespace

@@ -17,11 +17,11 @@ limitations under the License.
 #define XLA_TSL_DISTRIBUTED_RUNTIME_COORDINATION_COORDINATION_SERVICE_RPC_HANDLER_H_
 
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service.h"
 #include "xla/tsl/distributed_runtime/coordination/coordination_service_agent.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/protobuf/coordination_service.pb.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 class CoordinationServiceRpcHandler {

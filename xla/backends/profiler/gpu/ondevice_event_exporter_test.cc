@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/ondevice_event_exporter.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "xla/tsl/profiler/backends/gpu/ondevice_event_receiver.h"
 #include "xla/tsl/profiler/backends/gpu/ondevice_trace_event.h"
 

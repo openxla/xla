@@ -22,10 +22,10 @@ limitations under the License.
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/test.h"
 #include "tsl/platform/cord.h"
 #include "tsl/platform/platform.h"
 #include "tsl/platform/stringpiece.h"
+#include "xla/tsl/platform/test.h"
 
 using ::tsl::tstring;
 

@@ -172,13 +172,14 @@ CreateShardedConvForDotGeneralConvolution(
     wd->set_padding_high(wd->size() - 1);
     wd->set_padding_low(wd->size() - 1);
   }
-  ABSL_ASSIGN_OR_RETURN(Shape sharded_conv_shape,
-                   ShapeInference::InferConvolveShape(
-                       sharded_lhs_hlo->shape(), sharded_rhs_hlo->shape(),
-                       /*feature_group_count=*/conv.feature_group_count(),
-                       /*batch_group_count=*/conv.batch_group_count(), window,
-                       conv_dnums, conv.sparsity_config(),
-                       /*preferred_element_type=*/conv.shape().element_type()));
+  ABSL_ASSIGN_OR_RETURN(
+      Shape sharded_conv_shape,
+      ShapeInference::InferConvolveShape(
+          sharded_lhs_hlo->shape(), sharded_rhs_hlo->shape(),
+          /*feature_group_count=*/conv.feature_group_count(),
+          /*batch_group_count=*/conv.batch_group_count(), window, conv_dnums,
+          conv.sparsity_config(),
+          /*preferred_element_type=*/conv.shape().element_type()));
   *sharded_conv_shape.mutable_layout() = conv.shape().layout();
   std::vector<HloInstruction*> operands(conv.operands().begin(),
                                         conv.operands().end());

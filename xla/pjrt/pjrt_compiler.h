@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_PJRT_PJRT_COMPILER_H_
 #define XLA_PJRT_PJRT_COMPILER_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -26,14 +27,17 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "riegeli/base/any.h"
 #include "riegeli/bytes/reader.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -43,6 +47,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_device_dimensions.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_relocatable.h"
 #include "xla/pjrt/proto/pjrt_partial_program.pb.h"
 #include "xla/pjrt/proto/topology_description.pb.h"
 #include "xla/runtime/chip_id.h"
@@ -50,7 +55,6 @@ limitations under the License.
 #include "xla/runtime/process_id.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -181,6 +185,13 @@ class PjRtCompilerRegistry {
   absl::StatusOr<PjRtCompiler*> GetCompiler(absl::string_view platform_name,
                                             absl::string_view variant_name);
 
+  // Returns true if a compiler instance or a compiler factory is registered
+  // for the given platform and variant. Unlike GetCompiler(), this never
+  // instantiates the compiler.
+  bool IsCompilerRegistered(absl::string_view platform_name,
+                            absl::string_view variant_name)
+      ABSL_LOCKS_EXCLUDED(compiler_mutex_, factory_mutex_);
+
   // Explicitly initializes a compiler with a given variant.
   absl::Status InitializeVariant(absl::string_view platform_name,
                                  absl::string_view variant_name);
@@ -246,7 +257,51 @@ absl::Status PjRtInitializeCompilerVariant(absl::string_view platform_name,
 // Initializes all compiler variants.
 absl::Status PjRtInitializeCompilerVariants();
 
+// Returns true if a compiler or a compiler factory is registered
+// for the given platform and variant, i.e. if the variant can be served by
+// this binary. Does not instantiate the compiler.
+bool PjRtIsCompilerVariantRegistered(absl::string_view platform_name,
+                                     absl::string_view variant_name);
+
 class PjRtClient;
+
+// The location and shape of a subslice within a full slice.
+struct PjRtSubsliceBounds {
+  // Chip coordinates of the subslice's minimum corner in the full slice.
+  PjRtDeviceDimensions origin;
+  PjRtDeviceDimensions chips_per_host_bounds;
+  PjRtDeviceDimensions host_bounds;
+
+  // Returns the total chip bounds of the subslice along each dimension.
+  PjRtDeviceDimensions ChipBounds() const {
+    CHECK_EQ(chips_per_host_bounds.size(), host_bounds.size());
+    std::vector<int32_t> bounds(chips_per_host_bounds.size());
+    for (size_t i = 0; i < bounds.size(); ++i) {
+      bounds[i] = chips_per_host_bounds[i] * host_bounds[i];
+    }
+    return PjRtDeviceDimensions(bounds);
+  }
+
+  friend bool operator==(const PjRtSubsliceBounds& lhs,
+                         const PjRtSubsliceBounds& rhs) {
+    return lhs.origin == rhs.origin &&
+           lhs.chips_per_host_bounds == rhs.chips_per_host_bounds &&
+           lhs.host_bounds == rhs.host_bounds;
+  }
+
+  friend bool operator!=(const PjRtSubsliceBounds& lhs,
+                         const PjRtSubsliceBounds& rhs) {
+    return !(lhs == rhs);
+  }
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const PjRtSubsliceBounds& bounds) {
+    sink.Append(absl::StrCat(
+        "{origin: ", bounds.origin.ToString(),
+        ", chips_per_host_bounds: ", bounds.chips_per_host_bounds.ToString(),
+        ", host_bounds: ", bounds.host_bounds.ToString(), "}"));
+  }
+};
 
 // Abstract interface to represent device topology that is used by the compiler.
 class PjRtTopologyDescription {
@@ -294,7 +349,8 @@ class PjRtTopologyDescription {
   // Returns the total number of cores of the default type.
   virtual absl::StatusOr<int> CoreCountOfDefaultType() const {
     ABSL_ASSIGN_OR_RETURN(int process_count, ProcessCount());
-    ABSL_ASSIGN_OR_RETURN(int cores_per_process, CoreCountOfDefaultTypePerProcess());
+    ABSL_ASSIGN_OR_RETURN(int cores_per_process,
+                          CoreCountOfDefaultTypePerProcess());
     return process_count * cores_per_process;
   }
 
@@ -302,7 +358,7 @@ class PjRtTopologyDescription {
   virtual absl::StatusOr<int> LogicalDeviceCountOfDefaultTypePerProcess()
       const {
     ABSL_ASSIGN_OR_RETURN(int logical_devices_per_chip,
-                     LogicalDeviceCountOfDefaultTypePerChip());
+                          LogicalDeviceCountOfDefaultTypePerChip());
     ABSL_ASSIGN_OR_RETURN(int chips_per_process, ChipsPerProcess());
     return chips_per_process * logical_devices_per_chip;
   }
@@ -311,7 +367,7 @@ class PjRtTopologyDescription {
   virtual absl::StatusOr<int> LogicalDeviceCountOfDefaultType() const {
     ABSL_ASSIGN_OR_RETURN(int process_count, ProcessCount());
     ABSL_ASSIGN_OR_RETURN(int logical_devices_per_process,
-                     LogicalDeviceCountOfDefaultTypePerProcess());
+                          LogicalDeviceCountOfDefaultTypePerProcess());
     return process_count * logical_devices_per_process;
   }
 
@@ -482,6 +538,35 @@ class PjRtTopologyDescription {
       const PjRtDeviceDimensions& host_bounds) const {
     return absl::UnimplementedError("Subslice is not supported.");
   }
+
+  // Returns a new `PjRtTopologyDescription` representing a subslice of the
+  // current topology, defined by `chip_bounds`.
+  virtual absl::StatusOr<std::unique_ptr<PjRtTopologyDescription>> Subslice(
+      const PjRtDeviceDimensions& chip_bounds) const {
+    return absl::UnimplementedError("Subslice is not supported.");
+  }
+
+  // Computes the subslice of this topology formed by the default-type logical
+  // devices with IDs `device_ids`.
+  //
+  // This topology must be a full physical slice (`is_subslice_topology()` must
+  // be false). A single chip and the full slice are valid subslices; callers
+  // decide whether subslicing is worthwhile.
+  virtual absl::StatusOr<PjRtSubsliceBounds> ComputeSubsliceForDevices(
+      absl::Span<const int> device_ids) const {
+    return absl::UnimplementedError(
+        "ComputeSubsliceForDevices is not supported.");
+  }
+
+  virtual absl::StatusOr<xla::Shape> UpdateLayoutForDynamicShapes(
+      int memory_space_kind_id, xla::Shape shape) const {
+    return std::move(shape);
+  }
+
+  virtual absl::StatusOr<std::unique_ptr<HloCostAnalysis>> GetHloCostAnalysis()
+      const {
+    return absl::UnimplementedError("GetHloCostAnalysis is not supported.");
+  }
 };
 
 // Returns true if it's TPU id.
@@ -506,6 +591,33 @@ inline bool IsInterpreterId(PjRtPlatformId platform_id) {
 }
 
 class PjRtPhaseCompiler;
+
+// What a deserialized executable keeps of its compiler metadata, i.e. data that
+// is not needed to run it but that profilers and debuggers read (such as the
+// HLO module and symbol tables). Compilers without such metadata ignore it.
+enum class CompilerMetadataOnLoad {
+  // All of it.
+  kKeep,
+  // Only what is read after loading. Serializing the loaded executable again
+  // may fail.
+  kStrip,
+  // kStrip, and also keep the larger retained fields compressed. Readers
+  // decompress them on demand.
+  kStripAndCompress,
+};
+
+// Flag support. The spellings are "keep", "strip" and "strip_and_compress".
+bool AbslParseFlag(absl::string_view text, CompilerMetadataOnLoad* on_load,
+                   std::string* error);
+std::string AbslUnparseFlag(CompilerMetadataOnLoad on_load);
+
+// Options for PjRtCompiler::DeserializeExecutable.
+struct DeserializeExecutableOptions {
+  // Whether to check that the executable is compatible with the topology.
+  bool compatibility_check = true;
+  CompilerMetadataOnLoad compiler_metadata_on_load =
+      CompilerMetadataOnLoad::kKeep;
+};
 
 // Abstract interface that all registered compilers must implement.
 class PjRtCompiler {
@@ -543,7 +655,8 @@ class PjRtCompiler {
   virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> DeserializeExecutable(
       const PjRtTopologyDescription& topology,
       riegeli::Any<riegeli::Reader*> reader,
-      std::optional<CompileOptions>&& options) {
+      std::optional<CompileOptions>&& options,
+      const DeserializeExecutableOptions& deserialize_options) {
     return absl::UnimplementedError(
         absl::StrCat("DeserializeExecutable is not implemented for: ",
                      topology.platform_name(), "."));
@@ -597,7 +710,8 @@ absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtCompile(
 absl::StatusOr<std::unique_ptr<PjRtExecutable>> PjRtDeserializeExecutable(
     const PjRtTopologyDescription& topology,
     riegeli::Any<riegeli::Reader*> reader,
-    std::optional<CompileOptions> options = std::nullopt);
+    std::optional<CompileOptions> options = std::nullopt,
+    const DeserializeExecutableOptions& deserialize_options = {});
 
 // Stores a compilation phase's compiler and validator functions.
 // This struct bundles the essential functional components required to define
@@ -674,6 +788,46 @@ class PjRtPhaseCompiler : public PjRtCompiler {
       const std::string& serialized_topology) override {
     return absl::UnimplementedError(
         "DeserializePjRtTopologyDescription is not implemented.");
+  }
+
+  // Compiles a StableHLO module to a relocatable.
+  //
+  // See LinkRelocatables for how to use is_entrypoint.
+  //
+  // Implementations of `PjRtPhaseCompiler` are not required to implement
+  // this method, but is grouped here because a phased compiler is a
+  // prerequisite for precompiling modules at all.
+  virtual absl::StatusOr<std::unique_ptr<PjRtRelocatable>> CompileToRelocatable(
+      CompileOptions options, MaybeOwningMlirModule module,
+      const PjRtTopologyDescription& topology, absl::string_view name,
+      bool is_entrypoint, PjRtClient* client) {
+    return absl::UnimplementedError("CompileToRelocatable is not implemented.");
+  }
+
+  // Deserializes a relocatable into a PjRtRelocatable.
+  //
+  // Implementations of `PjRtPhaseCompiler` are not required to implement
+  // this method, but is grouped here because a phased compiler is a
+  // prerequisite for precompiling modules at all.
+  virtual absl::StatusOr<std::unique_ptr<PjRtRelocatable>>
+  DeserializeRelocatable(absl::string_view serialized) const {
+    return absl::UnimplementedError(
+        "DeserializeRelocatable is not implemented.");
+  }
+
+  // Links the provided relocatables into an executable.
+  //
+  // The entrypoint relocatable must have been compiled with is_entrypoint=true,
+  // while the dependencies must have been compiled with is_entrypoint=false.
+  //
+  // Implementations of `PjRtPhaseCompiler` are not required to implement
+  // this method, but is grouped here because a phased compiler is a
+  // prerequisite for having a link phase at all.
+  virtual absl::StatusOr<std::unique_ptr<PjRtExecutable>> LinkRelocatables(
+      CompileOptions options, const PjRtTopologyDescription& topology,
+      std::shared_ptr<const PjRtRelocatable> entrypoint,
+      std::vector<std::shared_ptr<const PjRtRelocatable>> dependencies) {
+    return absl::UnimplementedError("LinkRelocatables is not implemented.");
   }
 
   PjRtPhaseCompiler* AsPhaseCompiler() override { return this; }

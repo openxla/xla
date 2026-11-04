@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/collective_permute_decomposer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
@@ -32,6 +33,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/collective_ops_utils.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {

@@ -15,10 +15,10 @@ limitations under the License.
 
 #include "xla/tools/prepare_reference_module.h"
 
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

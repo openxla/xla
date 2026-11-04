@@ -38,7 +38,7 @@ limitations under the License.
 
 namespace stream_executor {
 
-StreamCommon::StreamCommon(StreamExecutor *parent)
+StreamCommon::StreamCommon(StreamExecutor* parent)
     : parent_(parent),
       status_(absl::OkStatus()),
       stream_priority_(StreamPriority::Default) {
@@ -46,7 +46,7 @@ StreamCommon::StreamCommon(StreamExecutor *parent)
 }
 
 StreamCommon::StreamCommon(
-    StreamExecutor *parent,
+    StreamExecutor* parent,
     std::optional<std::variant<StreamPriority, int>> priority)
     : StreamCommon(parent) {
   if (priority.has_value()) {
@@ -61,7 +61,7 @@ StreamCommon::PlatformSpecificHandle StreamCommon::platform_specific_handle()
   return handle;
 }
 
-absl::StatusOr<Stream *> StreamCommon::GetOrCreateSubStream() {
+absl::StatusOr<Stream*> StreamCommon::GetOrCreateSubStream() {
   // Do not destroy bad streams when holding mu_ because ~Stream() may
   // BlockHostUntilDone and it's host callbacks might attempt to acquire mu_.
   std::vector<std::unique_ptr<Stream>> bad_streams;
@@ -71,10 +71,10 @@ absl::StatusOr<Stream *> StreamCommon::GetOrCreateSubStream() {
   // Look for the first reusable sub_stream that is ok, dropping !ok sub_streams
   // we encounter along the way.
   for (size_t index = 0; index < sub_streams_.size();) {
-    std::pair<std::unique_ptr<Stream>, bool> &pair = sub_streams_[index];
+    std::pair<std::unique_ptr<Stream>, bool>& pair = sub_streams_[index];
     if (pair.second) {
       // The sub_stream is reusable.
-      Stream *sub_stream = pair.first.get();
+      Stream* sub_stream = pair.first.get();
       if (sub_stream->ok()) {
         VLOG(1) << "stream=" << this << " reusing sub_stream=" << sub_stream;
         pair.second = false;
@@ -99,7 +99,7 @@ absl::StatusOr<Stream *> StreamCommon::GetOrCreateSubStream() {
 
   // No streams are reusable; create a new stream.
   ABSL_ASSIGN_OR_RETURN(auto stream, parent_->CreateStream());
-  Stream *sub_stream = stream.get();
+  Stream* sub_stream = stream.get();
   sub_stream->SetName(absl::StrFormat("Sub-stream of %s", GetName()));
   sub_streams_.emplace_back(std::move(stream), false);
   VLOG(1) << "stream=" << this << " created new sub_stream=" << sub_stream;
@@ -107,7 +107,7 @@ absl::StatusOr<Stream *> StreamCommon::GetOrCreateSubStream() {
   return sub_stream;
 }
 
-void StreamCommon::ReturnSubStream(Stream *sub_stream) {
+void StreamCommon::ReturnSubStream(Stream* sub_stream) {
   // Do not destroy bad streams when holding mu_ because ~Stream() may
   // BlockHostUntilDone and it's host callbacks might attempt to acquire mu_.
   std::unique_ptr<Stream> bad_stream;
@@ -116,7 +116,7 @@ void StreamCommon::ReturnSubStream(Stream *sub_stream) {
 
   // Look for the sub-stream.
   for (int64_t index = 0, end = sub_streams_.size(); index < end; ++index) {
-    std::pair<std::unique_ptr<Stream>, bool> &pair = sub_streams_[index];
+    std::pair<std::unique_ptr<Stream>, bool>& pair = sub_streams_[index];
     if (pair.first.get() != sub_stream) {
       continue;
     }

@@ -15,36 +15,59 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/cublaslt.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/time/time.h"
+#include "mlir/IR/MLIRContext.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/cuda/cublas_lt_matmul_algorithm.pb.h"
 #include "xla/stream_executor/device_description.pb.h"
+#include "xla/stream_executor/gpu/blas_lt_matmul_algorithm.pb.h"
+#include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream_executor.h"
-#include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
+namespace {
+
+using ::testing::Gt;
+using ::testing::IsEmpty;
+using ::testing::Not;
+using ::testing::Optional;
 
 using CublasLtBackendConfig = AutotuneResult::GemmKey;
+
+// Returns the first device executor of the default platform.
+se::StreamExecutor* GetDefaultStreamExecutor() {
+  absl::StatusOr<se::Platform*> platform = PlatformUtil::GetDefaultPlatform();
+  CHECK_OK(platform.status());
+  absl::StatusOr<se::StreamExecutor*> stream_executor =
+      (*platform)->ExecutorForDevice(0);
+  CHECK_OK(stream_executor.status());
+  return *stream_executor;
+}
 
 const char kCublasLtCustomCallHlo[] = R"(
 HloModule module
@@ -107,16 +130,16 @@ class CublasLtBackendTest : public HloHardwareIndependentTestBase {
   NVPTXCompiler compiler_;
   se::StreamExecutor* stream_executor_;
   Compiler::GpuTargetConfig target_config_;
+  mlir::MLIRContext mlir_context_;
   CublasLtBackend backend_;
 
   CublasLtBackendTest()
-      : stream_executor_(PlatformUtil::GetDefaultPlatform()
-                             .value()
-                             ->ExecutorForDevice(0)
-                             .value()),
+      : debug_options_(
+            HloHardwareIndependentTestBase::GetDebugOptionsForTest()),
+        stream_executor_(GetDefaultStreamExecutor()),
         target_config_(stream_executor_),
-        backend_(stream_executor_, &debug_options_, &compiler_,
-                 &target_config_) {}
+        backend_(stream_executor_, &debug_options_, &compiler_, &target_config_,
+                 &mlir_context_) {}
 
   CublasLtBackendConfig ExpectedDefaultAlgorithm() {
     auto config = AutotuneResult::GemmKey();
@@ -130,14 +153,16 @@ TEST_F(CublasLtBackendTest, CanCreateCublasBackend) {
 }
 
 TEST_F(CublasLtBackendTest, GetSupportedConfigs) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kCublasLtCustomCallHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kCublasLtCustomCallHlo));
 
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
           *hlo_module->entry_computation()->root_instruction()->operand(0));
-  EXPECT_THAT(configs,
+  ASSERT_THAT(configs,
               absl_testing::IsOkAndHolds(testing::SizeIs(testing::Gt(0))));
+  EXPECT_TRUE((*configs)[0]->gemm().has_algorithm_proto());
+  EXPECT_TRUE((*configs)[0]->gemm().algorithm_proto().has_cublaslt());
 }
 
 TEST_F(CublasLtBackendTest, GetSupportedConfigsReturnsErrorForDeviceless) {
@@ -155,8 +180,8 @@ TEST_F(CublasLtBackendTest, GetSupportedConfigsReturnsErrorForDeviceless) {
 
 TEST_F(CublasLtBackendTest,
        GetSupportedConfigsReturnsEmptyVectorForNonCublasLtCustomCall) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kUnsupportedHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kUnsupportedHlo));
 
   absl::StatusOr<std::vector<std::unique_ptr<BackendConfig>>> configs =
       backend_.GetSupportedConfigs(
@@ -165,8 +190,8 @@ TEST_F(CublasLtBackendTest,
 }
 
 TEST_F(CublasLtBackendTest, GetDefaultConfig) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kCublasLtCustomCallHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kCublasLtCustomCallHlo));
   ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<BackendConfig> config,
       backend_.GetDefaultConfig(
@@ -175,6 +200,7 @@ TEST_F(CublasLtBackendTest, GetDefaultConfig) {
   CublasLtBackendConfig config_proto = config->gemm();
   EXPECT_THAT(config_proto.algorithm(), 0);
   EXPECT_THAT(config_proto.autotune_workspace_size(), 4194304);
+  EXPECT_FALSE(config_proto.has_algorithm_proto());
 }
 
 TEST_F(CublasLtBackendTest, GetDefaultConfigFailsWithoutACublasLtCustomCall) {
@@ -188,8 +214,8 @@ TEST_F(CublasLtBackendTest, GetDefaultConfigFailsWithoutACublasLtCustomCall) {
           lhs_contracting_dims={1}, rhs_contracting_dims={0}
     })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo));
   absl::StatusOr<std::unique_ptr<BackendConfig>> config =
       backend_.GetDefaultConfig(
           (*module->entry_computation()->root_instruction()));
@@ -198,22 +224,40 @@ TEST_F(CublasLtBackendTest, GetDefaultConfigFailsWithoutACublasLtCustomCall) {
 }
 
 TEST_F(CublasLtBackendTest, ApplyConfig) {
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
-                          ParseAndReturnVerifiedModule(kCublasLtCustomCallHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kCublasLtCustomCallHlo));
   CublasLtBackendConfig config;
   config.set_algorithm(2);
   config.set_autotune_workspace_size(42);
+  config.mutable_algorithm_proto()->mutable_cublaslt()->set_algo_id(123);
   BackendConfig backend_config;
   *backend_config.mutable_gemm() = config;
-  TF_EXPECT_OK(backend_.ApplyConfig(*hlo_module->entry_computation()
-                                         ->root_instruction()
-                                         ->mutable_operands()
-                                         .at(0),
-                                    backend_config));
-  EXPECT_THAT(RunFileCheck(hlo_module->ToString(),
-                           R"(CHECK: (f32[100,100]{1,0}, s8[42]{0}) custom-call
-                              CHECK: "selected_algorithm":"2")"),
-              absl_testing::IsOkAndHolds(true));
+  HloInstruction* instr = hlo_module->entry_computation()
+                              ->root_instruction()
+                              ->mutable_operands()
+                              .at(0);
+  EXPECT_OK(backend_.ApplyConfig(*instr, backend_config));
+  EXPECT_TRUE(ShapeUtil::Equal(
+      instr->shape(),
+      ShapeUtil::MakeTupleShape({ShapeUtil::MakeShape(F32, {100, 100}),
+                                 ShapeUtil::MakeShape(S8, {42})})));
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig applied_gpu_config,
+                       instr->backend_config<GpuBackendConfig>());
+  const GemmBackendConfig& gemm_config =
+      applied_gpu_config.gemm_backend_config();
+  EXPECT_EQ(gemm_config.selected_algorithm(), 2);
+  EXPECT_EQ(gemm_config.autotune_workspace_size(), 42);
+  EXPECT_EQ(gemm_config.algorithm_proto().cublaslt().algo_id(), 123);
+
+  // Applying a config without algorithm_proto should clear any pre-existing
+  // algorithm_proto on the instruction.
+  backend_config.mutable_gemm()->clear_algorithm_proto();
+  backend_config.mutable_gemm()->set_algorithm(3);
+  EXPECT_OK(backend_.ApplyConfig(*instr, backend_config));
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_config,
+                       instr->backend_config<GpuBackendConfig>());
+  EXPECT_EQ(gpu_config.gemm_backend_config().selected_algorithm(), 3);
+  EXPECT_FALSE(gpu_config.gemm_backend_config().has_algorithm_proto());
 }
 
 TEST_F(CublasLtBackendTest, CompileFp8SwapOperands) {
@@ -250,13 +294,13 @@ TEST_F(CublasLtBackendTest, CompileFp8SwapOperands) {
     ROOT %get-tuple-element = f32[16,16]{1,0} get-tuple-element(%custom-call), index=0
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kFp8MatmulWithSwapHlo));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kFp8MatmulWithSwapHlo));
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<BackendConfig> config,
       backend_.GetDefaultConfig(
           *(module->entry_computation()->root_instruction()->operand(0))));
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Executable> executable,
       backend_.Compile(
           *(module->entry_computation()->root_instruction()->operand(0)),
@@ -308,19 +352,34 @@ HloModule module
     ROOT %get-tuple-element.1 = f32[2,512]{1,0} get-tuple-element(%cublas-lt-matmul), index=1
   }
  )";
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(kHloWith3TupleOutput));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloWith3TupleOutput));
   HloInstruction* cublas_lt_matmul =
       module->entry_computation()->GetInstructionWithName("cublas-lt-matmul");
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<BackendConfig> config,
-                          backend_.GetDefaultConfig(*cublas_lt_matmul));
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
-                          backend_.Compile(*cublas_lt_matmul, *config));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<BackendConfig> config,
+                       backend_.GetDefaultConfig(*cublas_lt_matmul));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Executable> executable,
+                       backend_.Compile(*cublas_lt_matmul, *config));
   const ProgramShape& program_shape =
       executable->compute_computation_layout().ComputeProgramShape();
   EXPECT_EQ(program_shape.parameters_size(), 2);
   EXPECT_TRUE(program_shape.result().IsTuple());
 }
 
+TEST_F(CublasLtBackendTest, GetSupportedConfigsWithEstimates) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kCublasLtCustomCallHlo));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<CodegenBackend::EstimatedConfig> estimated_configs,
+      backend_.GetSupportedConfigsWithEstimates(
+          *hlo_module->entry_computation()->root_instruction()->operand(0)));
+  ASSERT_THAT(estimated_configs, Not(IsEmpty()));
+  for (const auto& config : estimated_configs) {
+    EXPECT_THAT(config.estimated_runtime, Optional(Gt(absl::ZeroDuration())));
+  }
+}
+
+}  // namespace
 }  // namespace gpu
 }  // namespace xla

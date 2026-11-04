@@ -47,11 +47,12 @@ absl::StatusOr<std::unique_ptr<DotThunk>> DotThunk::Create(
     BufferAllocation::Slice lhs_buffer, Shape lhs_shape,
     BufferAllocation::Slice rhs_buffer, Shape rhs_shape,
     BufferAllocation::Slice out_buffer, Shape out_shape) {
-  ABSL_ASSIGN_OR_RETURN(DotShape dot_shape, GetDotShape(dot_dimensions, lhs_shape,
-                                                   rhs_shape, out_shape));
+  ABSL_ASSIGN_OR_RETURN(
+      DotShape dot_shape,
+      GetDotShape(dot_dimensions, lhs_shape, rhs_shape, out_shape));
 
   ABSL_ASSIGN_OR_RETURN(DotCanonicalDims dot_canonical_dims,
-                   GetDotCanonicalDims(dot_dimensions, dot_shape));
+                        GetDotCanonicalDims(dot_dimensions, dot_shape));
 
   DotSlices dot_slices{lhs_buffer, std::move(lhs_shape),
                        rhs_buffer, std::move(rhs_shape),

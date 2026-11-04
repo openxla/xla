@@ -37,22 +37,23 @@ limitations under the License.
 #include "absl/strings/match.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 #include "xla/backends/gpu/transforms/collectives/async_collective_annotator.h"
 #include "xla/backends/gpu/transforms/collectives/collective_domain.h"
 #include "xla/backends/gpu/transforms/collectives/collective_ops_utils.h"
 #include "xla/backends/gpu/transforms/pgle_accuracy_checker.h"
 #include "xla/backends/gpu/transforms/scheduling_instruction_annotator.h"
-#include "xla/backends/gpu/transforms/stream_attribute_async_wrapper.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
 #include "xla/hlo/transforms/collectives/async_collective_creator.h"
@@ -72,6 +73,7 @@ limitations under the License.
 #include "xla/service/gpu/model/sol_latency_estimator.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/service/hlo_profiling_utils.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/service/legalize_scheduling_annotations.h"
 #include "xla/service/p2p_schedule_preparation.h"
@@ -83,10 +85,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -103,7 +101,7 @@ absl::StatusOr<bool> UsesMultipleCollectiveDomains(const HloModule& module) {
         continue;
       }
       ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain domain,
-                       GetCollectiveCommunicationDomain(*instruction));
+                            GetCollectiveCommunicationDomain(*instruction));
       if (first_domain.has_value() && *first_domain != domain) {
         return true;
       }
@@ -286,20 +284,27 @@ HloInstructionSequence PostprocessorToScheduleSyncCollectives(
   return result;
 }
 
+// Returns the costs in `profile` that apply to the module whose fingerprint
+// before scheduling is `fingerprint`, named by instruction name alone.
+//
+// A profile can hold the costs of several modules, so the profiler prefixes
+// each instruction name with the fingerprint of its module
+// (FingerprintedCostName). Such a cost applies only to the module with that
+// fingerprint. A cost without a fingerprint, for example from a hand-written
+// profile or from a module that the profiler could not find a fingerprint for,
+// applies to any module.
 ProfiledInstructionsProto FilterWithFingerprint(
     const ProfiledInstructionsProto& profile, absl::string_view fingerprint) {
   ProfiledInstructionsProto result;
   bool merge_remat_clones = false;
   for (const auto& cost : profile.costs()) {
     std::string new_cost_name = cost.name();
-    absl::string_view cost_sep = "::";
-    if (absl::StrContains(cost.name(), cost_sep)) {
-      std::vector<absl::string_view> split_names =
-          absl::StrSplit(cost.name(), cost_sep);
-      if (split_names.size() != 2 || split_names[0] != fingerprint) {
+    if (auto split = SplitFingerprintedCostName(cost.name())) {
+      if (split->fingerprint != fingerprint) {
+        // The cost of an instruction of another module.
         continue;
       }
-      new_cost_name = split_names[1];
+      new_cost_name = split->op_name;
     }
 
     // Check if we see instructions that have ".rematX" suffix. These are clones
@@ -463,25 +468,6 @@ absl::Status RunP2PSchedulePreparation(HloModule* module) {
   HloPassPipeline prepare_pipeline("p2p-schedule-preparation");
   prepare_pipeline.AddPass<P2PSchedulePreparation>();
   return prepare_pipeline.Run(module).status();
-}
-
-// Adds fingerprint to the module before.
-//
-// Returns said fingerprint.
-std::string TagWithFingerprint(HloModule* module) {
-  std::string fingerprint =
-      module->GetFingerprint128(HloPrintOptions::Canonical()
-                                    .set_print_backend_config(true)
-                                    // The backend config can be a json string,
-                                    // and the order of keys in json is not
-                                    // guaranteed. So we need to sort the keys
-                                    // to make the fingerprint deterministic.
-                                    .set_sort_backend_config(true));
-  module->add_frontend_attribute(std::string(kFingerprintBeforeLHS),
-                                 fingerprint);
-  VLOG(1) << "Fingerprint before LHS for module " << module->name() << "("
-          << module->unique_id() << ") = " << fingerprint;
-  return fingerprint;
 }
 
 // Returns latency estimator, key abstraction used by LHS which returns how much
@@ -685,7 +671,7 @@ absl::Status RunLatencyHidingSchedulerPasses(
   HloPassPipeline pipeline("latency-hiding-scheduler");
   const DebugOptions& options = module->config().debug_options();
   ABSL_ASSIGN_OR_RETURN(bool uses_multiple_collective_domains,
-                   UsesMultipleCollectiveDomains(*module));
+                        UsesMultipleCollectiveDomains(*module));
 
   pipeline.AddPass<LegalizeSchedulingAnnotations>(
       SchedulingAnnotationsConfig());
@@ -817,11 +803,7 @@ absl::Status RunLatencyHidingSchedulerPasses(
       std::move(overlap_limit_rule));
 
   const int64_t configured_fencing_threshold_bytes =
-      // NOLINTNEXTLINE
-      options.has_xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes()
-          ? options
-                .xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes()
-          : -1;
+      options.xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes();
   if (std::optional<int64_t> fencing_threshold_bytes =
           GetSchedulerMemoryFencingThresholdBytes(
               configured_fencing_threshold_bytes, memory_limit)) {
@@ -854,7 +836,7 @@ absl::StatusOr<HloSchedule> ScheduleGpuModuleWithMemoryScheduler(
                                                PostProcessSchedule),
                         /*execution_threads=*/
                         {HloInstruction::kMainExecutionThread,
-                         StreamAttributeAsyncWrapper::kParallelExecutionThread},
+                         HloInstruction::kParallelExecutionThread},
                         peak_memory_bytes);
 }
 
@@ -898,6 +880,12 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
   config.convert_all_reduce = HloPredicateTrue;
   config.convert_all_to_all = HloPredicateTrue;
   config.convert_collective_broadcast = HloPredicateTrue;
+  config.convert_collective_reduce =
+      module->config()
+              .debug_options()
+              .xla_gpu_experimental_emit_collective_reduce()
+          ? HloPredicateTrue
+          : HloPredicateFalse;
   config.convert_collective_permute = HloPredicateTrue;
   config.convert_ragged_all_to_all = HloPredicateTrue;
   config.convert_reduce_scatter = HloPredicateTrue;
@@ -944,6 +932,8 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
           case HloOpcode::kCollectiveBroadcast:
             return !disabled_async_ops.contains(
                 DebugOptions::COLLECTIVEBROADCAST);
+          case HloOpcode::kCollectiveReduce:
+            return !disabled_async_ops.contains(DebugOptions::ALLREDUCE);
           case HloOpcode::kReduceScatter:
             return !disabled_async_ops.contains(DebugOptions::REDUCESCATTER);
           case HloOpcode::kAllToAll:
@@ -978,7 +968,8 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
 
   // Tag the module with its 128 bit fingerprint. The fingerprint should include
   // instruction name with ids.
-  std::string fingerprint = TagWithFingerprint(module);
+  std::string fingerprint =
+      TagWithFingerprint(module, HloModuleFingerprintStage::kBeforeScheduling);
   uint64_t memory_limit =
       GetSchedulerMemoryLimit(*module, gpu_device_info, pointer_size);
 
@@ -993,9 +984,10 @@ absl::StatusOr<ScheduleMetadata> ScheduleGpuModule(
   // See `xla::LatencyHidingScheduler::Run`.
   ABSL_RETURN_IF_ERROR(RunP2PSchedulePreparation(module));
   int64_t peak_memory_bytes;
-  ABSL_ASSIGN_OR_RETURN(HloSchedule schedule,
-                   ScheduleGpuModuleWithMemoryScheduler(
-                       module, alias_info, pointer_size, &peak_memory_bytes));
+  ABSL_ASSIGN_OR_RETURN(
+      HloSchedule schedule,
+      ScheduleGpuModuleWithMemoryScheduler(module, alias_info, pointer_size,
+                                           &peak_memory_bytes));
   ABSL_RETURN_IF_ERROR(module->set_schedule(std::move(schedule)));
 
   bool enable_latency_hiding_scheduler =

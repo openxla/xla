@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/while_loop_all_reduce_code_motion.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -26,8 +29,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
@@ -2397,6 +2398,66 @@ TEST_F(WhileLoopAllReduceCodeMotionTest,
               absl_testing::IsOkAndHolds(true));
 }
 
+TEST_F(WhileLoopAllReduceCodeMotionTest, LargeOffsetDUS) {
+  constexpr absl::string_view kHloModule = R"hlo(
+    HloModule large_offset_dus
+
+    %reduction {
+      ROOT %max = f32[] maximum(f32[] parameter(0), f32[] parameter(1))
+    }
+
+    %while_condition {
+      %param = (s64[], f32[16], f32[16,3000000000]) parameter(0)
+      %indvar = s64[] get-tuple-element(%param), index=0
+      ROOT %result = pred[] compare(%indvar, s64[] constant(16)), direction=LT
+    }
+
+    %while_body {
+      %param = (s64[], f32[16], f32[16,3000000000]) parameter(0)
+      %gte.0 = s64[] get-tuple-element(%param), index=0
+      %gte.1 = f32[16] get-tuple-element(%param), index=1
+      %gte.2 = f32[16,3000000000] get-tuple-element(%param), index=2
+      %next = s64[] add(%gte.0, s64[] constant(1))
+      %max.local = f32[] reduce(%gte.1, f32[] constant(0)), dimensions={0}, to_apply=%reduction
+      %max.global = f32[] all-reduce(%max.local), channel_id=1, replica_groups=[1,4]<=[4], use_global_device_ids=true, to_apply=%reduction
+      %update = f32[1,1] reshape(%max.global)
+      %col_offset = s64[] constant(2500000000)
+      %dus = f32[16,3000000000] dynamic-update-slice(%gte.2, %update, %gte.0, %col_offset)
+      ROOT %loop_result = (s64[], f32[16], f32[16,3000000000]) tuple(%next, %gte.1, %dus)
+    }
+
+    ENTRY %main {
+      %while_init = (s64[], f32[16], f32[16,3000000000]) tuple(s64[] constant(0), f32[16] parameter(0), f32[16,3000000000] parameter(1))
+      ROOT %while = (s64[], f32[16], f32[16,3000000000]) while(%while_init), condition=%while_condition, body=%while_body
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  WhileLoopAllReduceCodeMotion pass;
+  ASSERT_THAT(pass.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  ASSERT_OK(
+      HloVerifier(/*layout_sensitive=*/false, /*allow_mixed_precision=*/true)
+          .Run(module.get())
+          .status());
+
+  HloComputation* entry = module->entry_computation();
+  HloInstruction* transformed_while = find_op<HloOpcode::kWhile>(entry);
+  ASSERT_THAT(transformed_while, NotNull());
+  EXPECT_THAT(transformed_while->while_body()->instructions(),
+              Each(Not(op::AllReduce())));
+  EXPECT_THAT(RunFileCheck(entry->ToString(), R"(
+    CHECK: %[[while:.+]] = ({{.+}}) while({{.+}})
+    CHECK: %[[gte:.+]] = f32[16,3000000000]{1,0} get-tuple-element(%[[while]]), index=2
+    CHECK: %[[slice:.+]] = f32[16,1]{1,0} slice(%[[gte]]), slice={[0:16], [2500000000:2500000001]}
+    CHECK: %[[ar:.+]] = f32[16,1]{1,0} all-reduce(%[[slice]]){{.*}}, to_apply=%reduction
+    CHECK: %[[zero:.+]] = s64[] constant(0)
+    CHECK: %[[offset:.+]] = s64[] constant(2500000000)
+    CHECK: %[[dus:.+]] = f32[16,3000000000]{1,0} dynamic-update-slice(%[[gte]], %[[ar]], %[[zero]], %[[offset]])
+    CHECK: tuple({{.+}}, {{.+}}, %[[dus]])
+  )"),
+              absl_testing::IsOkAndHolds(true));
+}
+
 TEST_F(WhileLoopAllReduceCodeMotionTest, NestedAllReduceAccumulate) {
   constexpr absl::string_view kHloModule = R"(
     HloModule nested_all_reduce_accumulate
@@ -2894,6 +2955,93 @@ TEST_F(WhileLoopAllReduceCodeMotionTest, ScatterAllReduceAccumulate) {
               Each(Not(op::AllReduce())));
   VLOG(1) << transformed_while->while_body()->ToString();
 }
+
+class ScatterSelectReplicationTest
+    : public WhileLoopAllReduceCodeMotionTest,
+      public ::testing::WithParamInterface<std::tuple<bool, bool, bool>> {};
+
+TEST_P(ScatterSelectReplicationTest, ChecksCarryPredicateReplication) {
+  const auto [cross_partition, replicated_predicate, swap_select_operands] =
+      GetParam();
+  constexpr absl::string_view kHloModule = R"(
+    HloModule scatter_select_replication
+
+    sum {
+      x = f32[] parameter(0)
+      y = f32[] parameter(1)
+      ROOT result = f32[] add(x, y)
+    }
+
+    condition {
+      state = (s32[], f32[4]) parameter(0)
+      iteration = s32[] get-tuple-element(state), index=0
+      limit = s32[] constant(2)
+      ROOT result = pred[] compare(iteration, limit), direction=LT
+    }
+
+    body {
+      state = (s32[], f32[4]) parameter(0)
+      iteration = s32[] get-tuple-element(state), index=0
+      carry = f32[4] get-tuple-element(state), index=1
+      id = u32[] $0()
+      zero_id = u32[] constant(0)
+      $1
+      predicate = pred[4] broadcast(predicate_scalar), dimensions={}
+      zero_scalar = f32[] constant(0)
+      zero = f32[4] broadcast(zero_scalar), dimensions={}
+      base = f32[4] select(predicate, $2, $3)
+      indices = s32[1] constant({0})
+      updates = f32[1] constant({1})
+      scatter = f32[4] scatter(base, indices, updates),
+          update_window_dims={}, inserted_window_dims={0},
+          scatter_dims_to_operand_dims={0}, index_vector_dim=1, to_apply=sum
+      reduced = f32[4] all-reduce(scatter), $4
+          replica_groups={{0,1,2,3}}, to_apply=sum
+      one = s32[] constant(1)
+      next_iteration = s32[] add(iteration, one)
+      ROOT result = (s32[], f32[4]) tuple(next_iteration, reduced)
+    }
+
+    ENTRY main {
+      iteration = s32[] constant(0)
+      zero_scalar = f32[] constant(0)
+      carry = f32[4] broadcast(zero_scalar), dimensions={}
+      initial = (s32[], f32[4]) tuple(iteration, carry)
+      ROOT loop = (s32[], f32[4]) while(initial), condition=condition, body=body
+    }
+  )";
+  std::string hlo = absl::Substitute(
+      kHloModule, cross_partition ? "partition-id" : "replica-id",
+      replicated_predicate
+          ? (swap_select_operands ? "predicate_scalar = pred[] constant(true)"
+                                  : "predicate_scalar = pred[] constant(false)")
+          : "predicate_scalar = pred[] compare(id, zero_id), direction=EQ",
+      swap_select_operands ? "zero" : "carry",
+      swap_select_operands ? "carry" : "zero",
+      cross_partition ? "channel_id=1, use_global_device_ids=true," : "");
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(
+                           hlo, /*replica_count=*/cross_partition ? 1 : 4,
+                           /*num_partitions=*/cross_partition ? 4 : 1));
+  module->mutable_config().set_use_spmd_partitioning(cross_partition);
+  // A device-dependent select cannot be retained when the all-reduce moves
+  // outside the loop: it would discard earlier local contributions. The
+  // replicated cases reset all devices together and remain eligible.
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       WhileLoopAllReduceCodeMotion{}.Run(module.get()));
+  EXPECT_EQ(changed, replicated_predicate);
+  ASSERT_OK(HloVerifier(false, true).Run(module.get()).status());
+  HloInstruction* loop =
+      find_op<HloOpcode::kWhile>(module->entry_computation());
+  EXPECT_EQ(absl::c_count_if(loop->while_body()->instructions(),
+                             HloPredicateIsOp<HloOpcode::kAllReduce>),
+            replicated_predicate ? 0 : 1);
+}
+
+INSTANTIATE_TEST_SUITE_P(All, ScatterSelectReplicationTest,
+                         ::testing::Combine(::testing::Bool(),
+                                            ::testing::Bool(),
+                                            ::testing::Bool()));
 
 TEST_F(WhileLoopAllReduceCodeMotionTest, ScatterAllReduceWithSelectAndConvert) {
   constexpr absl::string_view kHloModule = R"(

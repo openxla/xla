@@ -14,15 +14,17 @@
 
 #include "xla/python/ifrt_proxy/client/rpc_helper.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "tsl/platform/test.h"
 #include "xla/python/ifrt/serdes_version.h"
 #include "xla/python/ifrt_proxy/client/client_session.h"
 #include "xla/python/ifrt_proxy/client/mock_client_session.h"
@@ -32,7 +34,6 @@
 #include "xla/python/ifrt_proxy/common/types.pb.h"
 #include "xla/python/ifrt_proxy/common/versions.h"
 #include "xla/tsl/concurrency/future.h"
-#include "tsl/platform/test.h"
 
 using ::testing::_;
 using ::testing::UnorderedElementsAre;

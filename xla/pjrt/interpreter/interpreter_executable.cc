@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -37,6 +38,7 @@ limitations under the License.
 #include "xla/hlo/transforms/expanders/dynamic_index_splitter.h"
 #include "xla/hlo/transforms/expanders/eigh_expander.h"
 #include "xla/hlo/transforms/expanders/qr_expander.h"
+#include "xla/hlo/transforms/simplifiers/conditional_canonicalizer.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/interpreter/interpreter_topology_description.h"
@@ -61,7 +63,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -147,7 +148,7 @@ absl::StatusOr<std::string> InterpreterExecutable::SerializeExecutable() const {
     *proto.mutable_serialized_executable() = std::move(serialized_module);
   }
   ABSL_ASSIGN_OR_RETURN(*proto.mutable_compile_options(),
-                   compile_options_.ToProto());
+                        compile_options_.ToProto());
   proto.set_pjrt_client_name(xla::InterpreterName());
   std::string serialized_proto;
   if (!tsl::SerializeToStringDeterministic(proto, &serialized_proto)) {
@@ -176,7 +177,7 @@ InterpreterExecutable::Deserialize(
     compile_options = *std::move(options);
   } else if (proto.has_compile_options()) {
     ABSL_ASSIGN_OR_RETURN(compile_options,
-                     CompileOptions::FromProto(proto.compile_options()));
+                          CompileOptions::FromProto(proto.compile_options()));
   }
   DebugOptions debug_options =
       compile_options.executable_build_options.has_debug_options()
@@ -185,8 +186,9 @@ InterpreterExecutable::Deserialize(
   ABSL_ASSIGN_OR_RETURN(
       auto hlo_module_config,
       HloModule::CreateModuleConfigFromProto(hlo_proto, debug_options));
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> hlo_module,
-                   HloModule::CreateFromProto(hlo_proto, hlo_module_config));
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<HloModule> hlo_module,
+      HloModule::CreateFromProto(hlo_proto, hlo_module_config));
 
   ABSL_ASSIGN_OR_RETURN(
       DynamicDimensionInference dynamic_dimension_inference,
@@ -219,6 +221,9 @@ absl::StatusOr<std::unique_ptr<HloModule>> RunInterpreterHloPasses(
       /*rewrite_training_op=*/true,
       /*rewrite_inference_op=*/true,
       /*rewrite_grad_op=*/true);
+  // Establishes the tuple-form invariant DynamicDimensionInference expects
+  // for conditionals, as the CPU and GPU pipelines do.
+  pipeline.AddPass<ConditionalCanonicalizer>();
   pipeline.AddPass<LayoutAssignment>(
       hlo_module->mutable_entry_computation_layout());
   pipeline.AddPass<ConvolutionTypeCanonicalizer>();
@@ -245,7 +250,8 @@ CompileInterpreterExecutableInternal(
         layout_canonicalization_callback);
   }
 
-  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape, computation.GetProgramShape());
+  ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
+                        computation.GetProgramShape());
 
   const ExecutableBuildOptions& build_options =
       options.executable_build_options;
@@ -271,7 +277,7 @@ CompileInterpreterExecutableInternal(
 
   if (!build_options.run_backend_only()) {
     ABSL_ASSIGN_OR_RETURN(hlo_module,
-                     RunInterpreterHloPasses(std::move(hlo_module)));
+                          RunInterpreterHloPasses(std::move(hlo_module)));
   }
 
   ABSL_ASSIGN_OR_RETURN(
@@ -334,13 +340,13 @@ CompileInterpreterExecutable(MaybeOwningMlirModule module,
   }
 
   ABSL_ASSIGN_OR_RETURN(std::vector<LayoutMode> arg_layout_modes,
-                   GetArgLayoutModes(module.mlir_module()));
+                        GetArgLayoutModes(module.mlir_module()));
   ABSL_ASSIGN_OR_RETURN(std::vector<LayoutMode> out_layout_modes,
-                   GetOutputLayoutModes(module.mlir_module()));
+                        GetOutputLayoutModes(module.mlir_module()));
   ABSL_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> arg_memory_spaces,
-                   GetArgMemoryKinds(module.mlir_module()));
+                        GetArgMemoryKinds(module.mlir_module()));
   ABSL_ASSIGN_OR_RETURN(std::vector<MemorySpaceColor> out_memory_spaces,
-                   GetOutputMemoryKinds(module.mlir_module()));
+                        GetOutputMemoryKinds(module.mlir_module()));
 
   // MLIR module no longer required - release any memory if owned.
   module = MaybeOwningMlirModule();

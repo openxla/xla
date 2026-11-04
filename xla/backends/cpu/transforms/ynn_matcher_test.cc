@@ -13,11 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
+#include "absl/strings/string_view.h"
+#include "xla/error_spec.h"
+#include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/xla.pb.h"
 
@@ -31,6 +35,7 @@ class YnnE2eTest : public HloTestBase {
     debug_options.add_xla_cpu_experimental_ynn_fusion_type(
         DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_CONVOLUTION);
     debug_options.clear_xla_cpu_experimental_ynn_fusion_type();
+    debug_options.set_xla_cpu_experimental_onednn_custom_call(false);
     return debug_options;
   }
 };
@@ -54,12 +59,13 @@ TEST_F(YnnE2eTest, DoNotDegroupConvolutionFeatures) {
                     "CHECK: f32[1,4,8,9]{3,2,1,0} convolution");
 }
 
-class YnnReduceTest : public HloTestBase {
+class YnnReduceTest : public HloInterpreterReferenceMixin<HloTestBase> {
  protected:
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.add_xla_cpu_experimental_ynn_fusion_type(
         DebugOptions::LIBRARY_FUSION_TYPE_REDUCE);
+    debug_options.set_xla_cpu_experimental_onednn_custom_call(false);
     return debug_options;
   }
 };
@@ -89,6 +95,31 @@ TEST_F(YnnReduceTest, ReduceWindowFollowedByReduce) {
     CHECK: kind=kCustom
     CHECK: "kind":"__ynn_fusion"
   )");
+}
+
+TEST_F(YnnReduceTest, ReduceWindowWithBaseDilationIsNotFused) {
+  // Base dilation on a size-1, stride-1 window dimension inserts init values
+  // between the input elements; the YNNPACK lowering does not implement it.
+  const char* hlo_text = R"(
+  HloModule reduce_window_base_dilation
+
+  max {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT max = f32[] maximum(lhs, rhs)
+  }
+
+  ENTRY main {
+    input = f32[64,128] parameter(0)
+    init = f32[] constant(-inf)
+    ROOT rw = f32[32,255] reduce-window(input, init), window={size=2x1 stride=2x1 lhs_dilate=1x2}, to_apply=max
+  }
+  )";
+
+  MatchOptimizedHlo(hlo_text, R"(
+    CHECK-NOT: __ynn_fusion
+  )");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{/*aabs=*/0, /*arel=*/0}));
 }
 
 TEST_F(YnnReduceTest, ReduceReshape) {
@@ -199,6 +230,33 @@ TEST_F(YnnReduceTest, ConvertReduce) {
   )");
 }
 
+TEST_F(YnnReduceTest, CopyDegenerateLayout) {
+  const char* hlo_text = R"(
+  HloModule copy_degenerate_layout
+
+  add {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT add = f32[] add(lhs, rhs)
+  }
+
+  ENTRY main {
+    input = f32[128,64,1]{1,0,2} parameter(0)
+    copied = f32[128,64,1]{2,1,0} copy(input)
+    init = f32[] constant(0)
+    ROOT result = f32[128] reduce(copied, init), dimensions={1,2}, to_apply=add
+  }
+  )";
+
+  MatchOptimizedHlo(hlo_text, R"(
+    CHECK: copy
+    CHECK: reduce
+    CHECK: ENTRY
+    CHECK: kind=kCustom
+    CHECK: "kind":"__ynn_fusion"
+  )");
+}
+
 struct DotTestConfig {
   absl::string_view lhs_dtype;
   absl::string_view rhs_dtype;
@@ -218,6 +276,7 @@ class YnnDotTest : public HloTestBase,
     DebugOptions debug_options = HloTestBase::GetDebugOptionsForTest();
     debug_options.add_xla_cpu_experimental_ynn_fusion_type(
         DebugOptions::LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT);
+    debug_options.set_xla_cpu_experimental_onednn_custom_call(false);
     return debug_options;
   }
 };
@@ -279,6 +338,7 @@ class YnnReduceEltwiseTest : public HloTestBase {
         DebugOptions::LIBRARY_FUSION_TYPE_REDUCE);
     debug_options.add_xla_cpu_experimental_ynn_fusion_type(
         DebugOptions::LIBRARY_FUSION_TYPE_ELTWISE);
+    debug_options.set_xla_cpu_experimental_onednn_custom_call(false);
     return debug_options;
   }
 };

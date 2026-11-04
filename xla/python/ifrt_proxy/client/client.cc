@@ -36,6 +36,8 @@
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_layout.h"
@@ -49,6 +51,7 @@
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/remap_plan.h"
@@ -58,6 +61,7 @@
 #include "xla/python/ifrt/value.h"
 #include "xla/python/ifrt_proxy/client/array.h"
 #include "xla/python/ifrt_proxy/client/device.h"
+#include "xla/python/ifrt_proxy/client/executable.h"
 #include "xla/python/ifrt_proxy/client/memory.h"
 #include "xla/python/ifrt_proxy/client/rpc_helper.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
@@ -68,10 +72,9 @@
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_to_from_proto.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace ifrt {
@@ -118,7 +121,8 @@ absl::StatusOr<std::unique_ptr<Client>> Client::Create(
   for (const auto& d : init_response.all_devices()) {
     absl::flat_hash_map<std::string, xla::PjRtDeviceAttribute>
         pjrt_device_attributes;
-    ABSL_ASSIGN_OR_RETURN(auto attributes, AttributeMap::FromProto(d.attributes()));
+    ABSL_ASSIGN_OR_RETURN(auto attributes,
+                          AttributeMap::FromProto(d.attributes()));
     pjrt_device_attributes = ToPjRtAttributeMap(std::move(attributes));
 
     DeviceDescription desc(d.id(), init_response.process_index(),
@@ -178,8 +182,9 @@ absl::StatusOr<std::unique_ptr<Client>> Client::Create(
 
   AttributeMap client_attributes({});
   if (init_response.has_client_attributes()) {
-    ABSL_ASSIGN_OR_RETURN(client_attributes, AttributeMap::FromProto(
-                                            init_response.client_attributes()));
+    ABSL_ASSIGN_OR_RETURN(
+        client_attributes,
+        AttributeMap::FromProto(init_response.client_attributes()));
   }
 
   auto client = absl::WrapUnique(new Client(
@@ -306,29 +311,28 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> Client::CopyArrays(
 
   for (int i = 1; i < arrays.size(); ++i) {
     const auto& sharding = arrays[i]->sharding();
-    if (*sharding.devices() != *arrays[0]->sharding().devices() ||
+    if ((devices.has_value() &&
+         *sharding.devices() != *arrays[0]->sharding().devices()) ||
         sharding.memory_kind() != arrays[0]->sharding().memory_kind()) {
       return absl::InvalidArgumentError(
           "CopyArrays only supports arrays with the same device list and "
-          "memory kind");
+          "memory kind when `devices` is specified");
     }
   }
 
   auto req = std::make_unique<CopyArraysRequest>();
   ABSL_ASSIGN_OR_RETURN(*req->mutable_array_handles(),
-                   Array::GetHandles(arrays, semantics));
+                        Array::GetHandles(arrays, semantics));
   if (devices.has_value()) {
     for (auto* const device : (*devices)->devices()) {
       req->add_device_ids(device->Id().value());
     }
   }
-  if (memory_kind.has_value()) {
-    // Use an empty string to indicate the default memory kind.
+  if (memory_kind.has_value() &&
+      *memory_kind != arrays[0]->sharding().memory_kind()) {
     // OSS requires explicit string conversion
-    if (!memory_kind->is_default()) {
-      // NOLINTNEXTLINE(*-redundant-string-conversions)
-      req->set_memory_kind(std::string(memory_kind->value()));
-    }
+    // NOLINTNEXTLINE(*-redundant-string-conversions)
+    req->set_memory_kind(std::string(memory_kind->value()));
   }
   req->set_copy_semantics(ToArrayCopySemanticsProto(semantics));
 
@@ -388,8 +392,41 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> Client::BitcastArrays(
 
 tsl::Future<std::vector<uint64_t>> Client::HashValues(
     absl::Span<const ValueRef> values, HashMode mode) {
-  return absl::UnimplementedError(
-      "HashValues is not implemented in IFRT Proxy.");
+  tsl::profiler::TraceMe traceme_ifrt_entrypoint([n_values = values.size()]() {
+    return tsl::profiler::TraceMeEncode("IfrtProxyEntrypointHashValues",
+                                        {{"n_values", n_values}});
+  });
+  if (rpc_helper_->protocol_version() < protocol_version::kClientHashValues) {
+    return absl::UnimplementedError(
+        absl::StrCat("HashValues requires protocol version ",
+                     protocol_version::kClientHashValues,
+                     ", but the server has ", rpc_helper_->protocol_version()));
+  }
+  if (values.empty()) {
+    return std::vector<uint64_t>();
+  }
+
+  auto req = std::make_unique<HashValuesRequest>();
+  req->set_hash_mode(ToHashModeProto(mode));
+  for (const ValueRef& value : values) {
+    // TODO(b/261991179): Support other Value types.
+    auto* proxy_array = dyn_cast<xla::ifrt::proxy::Array>(value.get());
+    if (proxy_array == nullptr) {
+      return absl::InvalidArgumentError(
+          "HashValues only supports values that are instances of "
+          "xla::ifrt::proxy::Array");
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        ArrayHandle handle,
+        proxy_array->GetHandle(ArrayCopySemantics::kAlwaysCopy));
+    req->add_value_handles(handle.handle);
+  }
+
+  return rpc_helper_->HashValues(std::move(req))
+      .Map([](const std::shared_ptr<HashValuesResponse>& response) {
+        return std::vector<uint64_t>(response->hashes().begin(),
+                                     response->hashes().end());
+      });
 }
 
 absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> Client::ReshardArrays(
@@ -403,10 +440,10 @@ absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> Client::ReshardArrays(
 
   auto req = std::make_unique<ReshardArraysRequest>();
   ABSL_ASSIGN_OR_RETURN(*req->mutable_array_handles(),
-                   Array::GetHandles(arrays, semantics));
+                        Array::GetHandles(arrays, semantics));
   for (const auto& spec : specs) {
     ABSL_RETURN_IF_ERROR(spec.ToProto(*req->add_array_specs(),
-                                 rpc_helper_->ifrt_serdes_version()));
+                                      rpc_helper_->ifrt_serdes_version()));
   }
   req->set_copy_semantics(ToArrayCopySemanticsProto(semantics));
 
@@ -466,6 +503,32 @@ tsl::Future<> Client::DeleteValues(absl::Span<xla::ifrt::ValueRef> values) {
     futures.push_back(value->Delete());
   }
   return tsl::JoinFutures(futures);
+}
+
+void Client::CancelExecution(
+    xla::ifrt::LoadedExecutable::CancellationHandle cancellation_handle,
+    absl::Status error) {
+  tsl::profiler::TraceMe traceme_ifrt_entrypoint(
+      "IfrtProxyEntrypointCancelExecution");
+  CHECK(!error.ok());
+  if (rpc_helper_->protocol_version() < protocol_version::kCancelExecution) {
+    return;
+  }
+  auto* proxy_handle =
+      dynamic_cast<proxy::CancellationHandle*>(cancellation_handle.get());
+  if (proxy_handle == nullptr) {
+    return;
+  }
+  auto req = std::make_unique<CancelExecutionRequest>();
+  req->set_cancellation_handle(proxy_handle->handle());
+  *req->mutable_error() = tsl::StatusToProto(error);
+  rpc_helper_->CancelExecution(std::move(req))
+      .OnReady([](absl::StatusOr<std::shared_ptr<CancelExecutionResponse>>
+                      response) {
+        if (!response.ok()) {
+          LOG(ERROR) << "Failed to cancel execution: " << response.status();
+        }
+      });
 }
 
 absl::Span<xla::ifrt::Device* const> Client::GetAllDevices() const {
@@ -532,7 +595,7 @@ Client::GetDefaultPjRtLayout(xla::ifrt::DType dtype,
   ABSL_ASSIGN_OR_RETURN(auto response, future.Await());
 
   ABSL_ASSIGN_OR_RETURN(auto layout, xla::PjRtLayout::Deserialize(
-                                    response->serialized_pjrt_layout()));
+                                         response->serialized_pjrt_layout()));
   {
     absl::MutexLock l(mu_);
     layout_cache_.insert({key, layout});
@@ -544,11 +607,12 @@ absl::StatusOr<xla::ifrt::CustomLayoutRef> Client::GetDefaultLayout(
     xla::ifrt::DType dtype, const xla::ifrt::Shape& shape,
     const xla::ifrt::ShardingRef& sharding) const {
   ABSL_ASSIGN_OR_RETURN(xla::ifrt::Shape shard_shape,
-                   sharding->GetShardShape(shape));
-  ABSL_ASSIGN_OR_RETURN(std::shared_ptr<const xla::PjRtLayout> pjrt_layout,
-                   GetDefaultPjRtLayout(dtype, shard_shape.dims(),
-                                        sharding->devices()->devices().front(),
-                                        sharding->memory_kind()));
+                        sharding->GetShardShape(shape));
+  ABSL_ASSIGN_OR_RETURN(
+      std::shared_ptr<const xla::PjRtLayout> pjrt_layout,
+      GetDefaultPjRtLayout(dtype, shard_shape.dims(),
+                           sharding->devices()->devices().front(),
+                           sharding->memory_kind()));
   return xla::ifrt::PjRtLayout::Create(std::move(pjrt_layout));
 }
 

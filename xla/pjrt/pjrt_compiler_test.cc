@@ -15,15 +15,17 @@ limitations under the License.
 
 #include "xla/pjrt/pjrt_compiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
+#include "absl/flags/marshalling.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -31,6 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/layout.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
@@ -40,7 +43,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_device_description.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -63,7 +65,8 @@ std::string CompilerVariantToString(PjRtCompilerVariant variant) {
 namespace {
 bool RegisterTestVariantPicker() {
   PjRtRegisterCompilerVariantPicker("tpu", []() -> absl::StatusOr<std::string> {
-    ABSL_ASSIGN_OR_RETURN(PjRtCompilerVariant variant, PickTpuCompilerVariant());
+    ABSL_ASSIGN_OR_RETURN(PjRtCompilerVariant variant,
+                          PickTpuCompilerVariant());
     return CompilerVariantToString(variant);
   });
   return true;
@@ -278,6 +281,35 @@ TEST(PjRtCompilerTest, VariantRegistryLookup) {
   EXPECT_TRUE(absl::IsNotFound(status.status()));
 }
 
+TEST(PjRtCompilerTest, IsCompilerVariantRegistered) {
+  const std::string platform = "has_variant_test_platform";
+  const std::string factory_variant = "factory_registered_variant";
+  const std::string compiler_variant = "compiler_registered_variant";
+
+  EXPECT_FALSE(PjRtIsCompilerVariantRegistered(platform, factory_variant));
+  EXPECT_FALSE(PjRtIsCompilerVariantRegistered(platform, compiler_variant));
+
+  bool factory_called = false;
+  PjRtRegisterCompilerFactory(
+      platform, factory_variant,
+      [&factory_called]() -> absl::StatusOr<std::unique_ptr<PjRtCompiler>> {
+        factory_called = true;
+        return std::make_unique<PjRtDeserializeCompiler>();
+      });
+  PjRtRegisterCompiler(platform, compiler_variant,
+                       std::make_unique<PjRtDeserializeCompiler>());
+
+  EXPECT_TRUE(PjRtIsCompilerVariantRegistered(platform, factory_variant));
+  EXPECT_TRUE(PjRtIsCompilerVariantRegistered(platform, compiler_variant));
+  // The query must not instantiate the compiler.
+  EXPECT_FALSE(factory_called);
+
+  EXPECT_FALSE(
+      PjRtIsCompilerVariantRegistered(platform, "unregistered_variant"));
+  EXPECT_FALSE(
+      PjRtIsCompilerVariantRegistered("wrong_platform", factory_variant));
+}
+
 TEST(PjRtTopologyDescriptionTest, DefaultMemorySpaceKindIds) {
   PjRtTestTopology topology;
   EXPECT_THAT(topology.GetMemorySpaceKindIds(), ::testing::ElementsAre(-1));
@@ -456,6 +488,33 @@ TEST(PjRtCompilerInitializationTest, RegistriesOutOfSync) {
   // Verify that the existing compiler was used and the factory was NOT called.
   // GetOrCreateCompiler should find the entry in CompilerRegistry() first.
   EXPECT_FALSE(*factory_called);
+}
+
+TEST(CompilerMetadataOnLoadTest, ParseAndUnparseRoundTrip) {
+  for (CompilerMetadataOnLoad on_load :
+       {CompilerMetadataOnLoad::kKeep, CompilerMetadataOnLoad::kStrip,
+        CompilerMetadataOnLoad::kStripAndCompress}) {
+    CompilerMetadataOnLoad parsed;
+    std::string error;
+    ASSERT_TRUE(absl::ParseFlag(absl::UnparseFlag(on_load), &parsed, &error))
+        << error;
+    EXPECT_EQ(parsed, on_load);
+  }
+}
+
+TEST(CompilerMetadataOnLoadTest, Spellings) {
+  EXPECT_EQ(absl::UnparseFlag(CompilerMetadataOnLoad::kKeep), "keep");
+  EXPECT_EQ(absl::UnparseFlag(CompilerMetadataOnLoad::kStrip), "strip");
+  EXPECT_EQ(absl::UnparseFlag(CompilerMetadataOnLoad::kStripAndCompress),
+            "strip_and_compress");
+}
+
+TEST(CompilerMetadataOnLoadTest, ParseRejectsUnknownValue) {
+  CompilerMetadataOnLoad parsed = CompilerMetadataOnLoad::kKeep;
+  std::string error;
+  EXPECT_FALSE(absl::ParseFlag("compress", &parsed, &error));
+  EXPECT_THAT(error, ::testing::HasSubstr("compress"));
+  EXPECT_EQ(parsed, CompilerMetadataOnLoad::kKeep);
 }
 
 }  // namespace

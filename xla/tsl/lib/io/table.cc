@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/tsl/lib/io/table.h"
 
 #include "absl/status/status.h"
+#include "absl/types/span.h"
+#include "tsl/platform/coding.h"
 #include "xla/tsl/lib/io/block.h"
 #include "xla/tsl/lib/io/cache.h"
 #include "xla/tsl/lib/io/format.h"
@@ -24,7 +26,6 @@ limitations under the License.
 #include "xla/tsl/lib/io/two_level_iterator.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/coding.h"
 
 namespace tsl {
 namespace table {
@@ -50,9 +51,8 @@ absl::Status Table::Open(const Options& options, RandomAccessFile* file,
 
   char footer_space[Footer::kEncodedLength];
   absl::string_view footer_input;
-  absl::Status s =
-      file->Read(size - Footer::kEncodedLength, footer_input,
-                 absl::MakeSpan(footer_space, Footer::kEncodedLength));
+  absl::Status s = file->Read(size - Footer::kEncodedLength, footer_input,
+                              absl::MakeSpan(footer_space));
   if (!s.ok()) return s;
 
   Footer footer;

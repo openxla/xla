@@ -91,6 +91,12 @@ class LocalExecutable {
   RunHelper(absl::Span<const Shape* const> argument_shapes,
             ExecutableRunOptions run_options);
 
+  // Validates execution options and prepares the service options and stream.
+  // The caller is responsible for validating argument shapes. Any returned
+  // stream owner must remain alive while the service options are in use.
+  absl::StatusOr<std::pair<ServiceExecutableRunOptions, StreamPool::Ptr>>
+  PrepareRunOptions(ExecutableRunOptions run_options);
+
  private:
   absl::StatusOr<ExecutionOutput> RunAsync(
       absl::Span<Shape const* const> argument_host_shapes,
@@ -118,7 +124,7 @@ class LocalExecutable {
       absl::Span<Shape const* const> argument_shapes,
       const ExecutableRunOptions& run_options, AsyncCallback&& async_callback) {
     ABSL_ASSIGN_OR_RETURN(auto options_and_stream,
-                     RunHelper(argument_shapes, run_options));
+                          RunHelper(argument_shapes, run_options));
     ExecutableRunOptions options = options_and_stream.first.run_options();
     options.set_device_ordinal(-1);
     absl::StatusOr<T> result = async_callback(options);

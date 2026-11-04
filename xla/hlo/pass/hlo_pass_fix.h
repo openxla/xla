@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <type_traits>
+#include <utility>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/hash/hash.h"
@@ -43,11 +44,11 @@ class HloPassFix : public Pass {
                 "Pass must be a subclass of HloPassInterface");
   using RunState = HloPassInterface::RunState;
   template <typename... Args>
-  explicit HloPassFix(Args&&... args) : Pass(args...) {}
+  explicit HloPassFix(Args&&... args) : Pass(std::forward<Args>(args)...) {}
   template <typename... Args>
   static std::unique_ptr<HloPassFix> Create(int iteration_limit,
                                             Args&&... args) {
-    auto pass = std::make_unique<HloPassFix>(args...);
+    auto pass = std::make_unique<HloPassFix>(std::forward<Args>(args)...);
     pass->iteration_limit_ = iteration_limit;
     return pass;
   }
@@ -136,7 +137,8 @@ class HloPassFix : public Pass {
     // If Pass does not override the default
     // HloPassInterface::RunOnChangedComputations that calls into
     // HloPassFix<Pass>::RunImpl, avoid infinite recursion.
-    ABSL_ASSIGN_OR_RETURN(bool changed, Pass::RunImpl(module, execution_threads));
+    ABSL_ASSIGN_OR_RETURN(bool changed,
+                          Pass::RunImpl(module, execution_threads));
     if (changed) {
       auto computations = module->computations(execution_threads);
       run_state->changed_this_iteration.insert(computations.begin(),

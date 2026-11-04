@@ -14,13 +14,14 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/codegen/triton/fusion.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "mlir/IR/MLIRContext.h"
@@ -32,13 +33,12 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/runtime/object_pool.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/target_constants.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/launch_dim.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -50,7 +50,7 @@ class TritonFusionTest : public HloHardwareIndependentTestBase {};
 
 TEST_F(TritonFusionTest,
        TritonFusionWithBlockLevelFusionConfig_LaunchConfigIsCorrect) {
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 triton_computation {
   param_0 = f32[125,127] parameter(0)
   ROOT abs = f32[125,127] abs(param_0)
@@ -88,9 +88,46 @@ ENTRY entry_computation {
               ElementsAre(4, 127));
 }
 
+TEST_F(TritonFusionTest, LaunchConfigAccountsForTilesPerProgram) {
+  for (const auto& [tiles_per_program, expected_blocks] :
+       {std::pair{1, 32}, std::pair{4, 8}, std::pair{3, 11}}) {
+    SCOPED_TRACE(tiles_per_program);
+    const std::string hlo = R"(
+triton_computation {
+  param_0 = f32[125,127] parameter(0)
+  ROOT abs = f32[125,127] abs(param_0)
+}
+
+ENTRY entry_computation {
+  param_0 = f32[125,127] parameter(0)
+  ROOT fusion = f32[125,127] fusion(param_0), kind=kCustom,
+    calls=triton_computation,
+    backend_config={"fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{"output_tiles":[{"sizes":["4","127"]}],
+                                   "num_warps":"4",
+                                   "num_tiles_per_pid":")" +
+                            std::to_string(tiles_per_program) + R"("}}}
+})";
+    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+
+    stream_executor::DeviceDescription device_info =
+        TestGpuDeviceInfo::RTXA6000DeviceInfo();
+    auto* root = module->entry_computation()->root_instruction();
+    HloFusionAnalysis analysis = HloFusionAnalysis::Create(*root, device_info);
+
+    std::optional<TritonFusion::LaunchConfig> launch_config =
+        TritonFusion::GetLaunchConfig(&analysis);
+    ASSERT_NE(launch_config, std::nullopt);
+    // The output has ceil(125 / 4) * ceil(127 / 127) = 32 tiles.
+    EXPECT_EQ(launch_config->launch_dimensions.num_blocks(), expected_blocks);
+    EXPECT_EQ(launch_config->launch_dimensions.num_threads_per_block(), 128);
+  }
+}
+
 TEST_F(TritonFusionTest,
        TritonFusionWithoutBlockLevelFusionConfig_LaunchConfigIsNullopt) {
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 triton_computation {
   param_0 = f32[125,127] parameter(0)
   ROOT abs = f32[125,127] abs(param_0)
@@ -109,10 +146,9 @@ ENTRY entry_computation {
   auto* root = module->entry_computation()->root_instruction();
   HloFusionAnalysis analysis = HloFusionAnalysis::Create(*root, device_info);
 
-  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool(
-      []() { return CreateMlirContext(); });
-  TF_ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
-                          mlir_context_pool.GetOrCreate());
+  MlirContextPool mlir_context_pool([]() { return CreateMlirContext(); });
+  ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
+                       mlir_context_pool.GetOrCreate());
 
   std::unique_ptr<FusionInterface> emitter =
       GetFusionEmitter(PreBufferAssignmentFusionInfo{analysis});
@@ -136,7 +172,7 @@ ENTRY entry_computation {
 TEST_F(
     TritonFusionTest,
     TritonFusionWithBlockLevelFusionConfig_LaunchConfigOverrideWorksCorrectly) {
-  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
 triton_computation {
   param_0 = f32[125,127] parameter(0)
   ROOT abs = f32[125,127] abs(param_0)

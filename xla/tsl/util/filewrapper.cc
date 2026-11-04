@@ -87,10 +87,10 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/MD5.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
 #include "tsl/platform/init_main.h"
 #include "tsl/platform/path.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
 
 ABSL_FLAG(std::string, align, "16", "Align embedded data to this value.");
 ABSL_FLAG(bool, allow_dir, false,

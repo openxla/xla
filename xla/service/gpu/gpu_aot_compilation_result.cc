@@ -29,7 +29,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "google/protobuf/arena.h"
 #include "riegeli/bytes/string_writer.h"
-#include "xla/debug_options_flags.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/pjrt/compiled_memory_stats.h"
@@ -46,33 +46,59 @@ limitations under the License.
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla::gpu {
 
-static absl::StatusOr<std::pair<std::unique_ptr<HloModule>, tsl::Fprint128>>
-ParseHloModuleAndFingerprint(const HloModuleProtoWithConfig& proto) {
-  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   HloModule::CreateFromProtoWithConfig(proto));
+// Fingerprint of the canonical HLO module text.
+static tsl::Fprint128 HloModuleFingerprint(const HloModule& module) {
   HighwayHashPrinter printer;
-  module->Print(&printer, HloPrintOptions::Canonical()
-                              .set_print_backend_config(true)
-                              .set_sort_backend_config(true));
-  return std::make_pair(std::move(module), printer.ToFingerprint128());
+  module.Print(&printer, HloPrintOptions::Canonical()
+                             .set_print_backend_config(true)
+                             .set_sort_backend_config(true));
+  return printer.ToFingerprint128();
+}
+
+// Fingerprint of the deterministic serialization of the executable proto.
+//
+// NOTE: This is expensive as it re-serializes the whole proto (including all
+// constants) twice, so it should only be called when its result is actually
+// needed (e.g. for logging).
+static tsl::Fprint128 ExecutableFingerprint(const GpuExecutableProto& proto) {
+  // Fingerprint twice with differents seeds to catch non-deterministic
+  // serializations.
+  return {tsl::DeterministicProtoHash64(proto),
+          tsl::DeterministicProtoHash64(proto, /*seed=*/1)};
+}
+
+// Formats a fingerprint as 32 hex digits, low64 first.
+static std::string FprintToHex(const tsl::Fprint128& fp) {
+  return absl::StrFormat("%016x%016x", fp.low64, fp.high64);
+}
+
+// Returns whether the proto has an embedded HLO module. Executables can be
+// serialized without a module (e.g. if it wasn't embedded at compile time) or
+// with only the module config.
+static bool HasHloModule(const GpuExecutableProto& proto) {
+  return proto.has_hlo_module_with_config() &&
+         proto.hlo_module_with_config().has_hlo_module();
+}
+
+// Deserializes the embedded HLO module if there is one, otherwise returns
+// nullptr.
+static absl::StatusOr<std::unique_ptr<HloModule>> MaybeCreateHloModule(
+    const GpuExecutableProto& proto) {
+  if (!HasHloModule(proto)) {
+    return nullptr;
+  }
+  return HloModule::CreateFromProtoWithConfig(proto.hlo_module_with_config());
 }
 
 absl::StatusOr<std::unique_ptr<GpuAotCompilationResult>>
 GpuAotCompilationResult::FromProto(GpuExecutableProto executable_proto) {
-  tsl::Fprint128 executable_fingerprint = {
-      tsl::DeterministicProtoHash64(executable_proto),
-      tsl::DeterministicProtoHash64(executable_proto, /*seed=*/1)};
-  ABSL_ASSIGN_OR_RETURN(
-      auto module_and_fingerprint,
-      ParseHloModuleAndFingerprint(executable_proto.hlo_module_with_config()));
-  auto& [module, hlo_fingerprint] = module_and_fingerprint;
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                        MaybeCreateHloModule(executable_proto));
   return absl::WrapUnique(new GpuAotCompilationResult(
-      std::move(executable_proto), std::move(module), hlo_fingerprint,
-      executable_fingerprint));
+      std::move(executable_proto), std::move(module)));
 }
 
 absl::StatusOr<std::unique_ptr<GpuAotCompilationResult>>
@@ -84,17 +110,12 @@ GpuAotCompilationResult::FromSerialized(
 
   ABSL_RETURN_IF_ERROR(ReadSplitProto(std::move(reader), *executable_proto));
 
-  tsl::Fprint128 executable_fingerprint = {
-      tsl::DeterministicProtoHash64(*executable_proto),
-      tsl::DeterministicProtoHash64(*executable_proto, /*seed=*/1)};
-  ABSL_ASSIGN_OR_RETURN(
-      auto module_and_fingerprint,
-      ParseHloModuleAndFingerprint(executable_proto->hlo_module_with_config()));
-  auto& [module, hlo_fingerprint] = module_and_fingerprint;
-  return absl::WrapUnique(new GpuAotCompilationResult(
-      internal::ArenaAllocatedGpuExecutableProto(std::move(arena),
-                                                 executable_proto),
-      std::move(module), hlo_fingerprint, executable_fingerprint));
+  ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
+                        MaybeCreateHloModule(*executable_proto));
+  return absl::WrapUnique(
+      new GpuAotCompilationResult(internal::ArenaAllocatedGpuExecutableProto(
+                                      std::move(arena), executable_proto),
+                                  std::move(module)));
 }
 
 absl::StatusOr<std::string> GpuAotCompilationResult::SerializeAsString() const {
@@ -116,17 +137,24 @@ GpuAotCompilationResult::LoadExecutable(
     return registry.FindSymbol(symbol_name, platform_id);
   };
 
-  VLOG(1) << absl::StrFormat(
-      "GpuAotCompilationResult::LoadExecutable: module=%s "
-      "num_instructions=%d hlo_fingerprint=%016x%016x "
-      "executable_fingerprint=%016x%016x",
-      hlo_module_->name(), hlo_module_->instruction_count(),
-      hlo_fingerprint_.low64, hlo_fingerprint_.high64,
-      executable_fingerprint_.low64, executable_fingerprint_.high64);
+  if (hlo_module_ != nullptr) {
+    VLOG(1) << absl::StrFormat(
+        "GpuAotCompilationResult::LoadExecutable: module=%s "
+        "num_instructions=%d hlo_fingerprint=%s executable_fingerprint=%s",
+        hlo_module_->name(), hlo_module_->instruction_count(),
+        FprintToHex(HloModuleFingerprint(*hlo_module_)),
+        FprintToHex(ExecutableFingerprint(GetExecutableProto())));
+  } else {
+    VLOG(1) << absl::StrFormat(
+        "GpuAotCompilationResult::LoadExecutable: module=%s (no HLO module) "
+        "executable_fingerprint=%s",
+        GetExecutableProto().module_name(),
+        FprintToHex(ExecutableFingerprint(GetExecutableProto())));
+  }
 
   return GpuExecutable::FromProto(GetExecutableProto(), device_description,
                                   platform_id->ToName(), debug_options,
-                                  symbol_resolver);
+                                  symbol_resolver, std::move(hlo_module_));
 }
 
 const GpuExecutableProto& GpuAotCompilationResult::GetExecutableProto() const {
@@ -158,13 +186,22 @@ GpuAotCompilationResult::GetCompiledMemoryStats() const {
     alloc_ptrs.push_back(&alloc);
   }
   memory_stats.PopulateBufferStatsFromAllocations(alloc_ptrs);
-  ABSL_ASSIGN_OR_RETURN(
-      auto peak_memories,
-      ComputePeakMemorySizes(
-          GetExecutableProto().buffer_assignment(),
-          GetExecutableProto().hlo_module_with_config().hlo_module()));
-  memory_stats.peak_memory_in_bytes = peak_memories.padded;
-  memory_stats.peak_unpadded_heap_bytes = peak_memories.unpadded;
+  if (HasHloModule(GetExecutableProto())) {
+    ABSL_ASSIGN_OR_RETURN(
+        auto peak_memories,
+        ComputePeakMemorySizes(
+            GetExecutableProto().buffer_assignment(),
+            GetExecutableProto().hlo_module_with_config().hlo_module()));
+    memory_stats.peak_memory_in_bytes = peak_memories.padded;
+    memory_stats.peak_unpadded_heap_bytes = peak_memories.unpadded;
+  } else {
+    // The unpadded sizes can only be derived from the HLO module, so without a
+    // module we only compute the padded peak and leave
+    // `peak_unpadded_heap_bytes` at 0, which means unknown.
+    ABSL_ASSIGN_OR_RETURN(
+        memory_stats.peak_memory_in_bytes,
+        ComputePeakMemory(GetExecutableProto().buffer_assignment()));
+  }
   memory_stats.total_allocation_bytes = ComputeTotalAllocationBytes(
       GetExecutableProto().buffer_assignment(), /*memory_color=*/0);
   memory_stats.indefinite_allocations = ComputeIndefiniteAllocationsInBytes(

@@ -19,16 +19,16 @@ limitations under the License.
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "tsl/platform/tracing.h"
+#include "tsl/profiler/lib/context_types.h"
+#include "tsl/profiler/lib/traceme_encode.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/types.h"
 #include "xla/tsl/profiler/backends/cpu/threadpool_listener_state.h"
 #include "xla/tsl/profiler/backends/cpu/traceme_recorder.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
-#include "tsl/platform/tracing.h"
-#include "tsl/profiler/lib/context_types.h"
-#include "tsl/profiler/lib/traceme_encode.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -44,11 +44,6 @@ void RegisterThreadpoolEventCollector(
   tracing::SetEventCollector(tracing::EventCategory::kScheduleClosure,
                              collector);
   tracing::SetEventCollector(tracing::EventCategory::kRunClosure, collector);
-}
-
-void UnregisterThreadpoolEventCollector() {
-  tracing::SetEventCollector(tracing::EventCategory::kScheduleClosure, nullptr);
-  tracing::SetEventCollector(tracing::EventCategory::kRunClosure, nullptr);
 }
 
 }  // namespace
@@ -89,7 +84,6 @@ absl::Status ThreadpoolProfilerInterface::Start() {
 
 absl::Status ThreadpoolProfilerInterface::Stop() {
   threadpool_listener::Deactivate();
-  UnregisterThreadpoolEventCollector();
   return absl::OkStatus();
 }
 

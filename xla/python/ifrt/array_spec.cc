@@ -46,7 +46,7 @@ absl::StatusOr<ArraySpec> ArraySpec::FromProto(Client* client,
   ABSL_ASSIGN_OR_RETURN(auto dtype, DType::FromProto(proto.dtype()));
   ABSL_ASSIGN_OR_RETURN(auto shape, Shape::FromProto(proto.shape()));
   ABSL_ASSIGN_OR_RETURN(auto sharding,
-                   Sharding::FromProto(client, proto.sharding()));
+                        Sharding::FromProto(client, proto.sharding()));
   std::shared_ptr<const xla::PjRtLayout> layout;
   if (proto.has_layout()) {
     ABSL_ASSIGN_OR_RETURN(layout, xla::PjRtLayout::Deserialize(proto.layout()));

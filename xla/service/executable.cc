@@ -106,7 +106,7 @@ absl::StatusOr<ScopedShapedBuffer> Executable::ExecuteAsyncOnStream(
     args.emplace_back(MakeMaybeOwningDeviceAddressTree(*arg));
   }
   ABSL_ASSIGN_OR_RETURN(ExecutionOutput out,
-                   ExecuteAsyncOnStream(run_options, std::move(args)));
+                        ExecuteAsyncOnStream(run_options, std::move(args)));
   return out.ConsumeResult();
 }
 
@@ -130,7 +130,8 @@ absl::StatusOr<std::vector<ScopedShapedBuffer>> Executable::ExecuteOnStreams(
   return_values.reserve(run_options.size());
 
   if (run_options.size() == 1) {
-    ABSL_ASSIGN_OR_RETURN(auto rv, ExecuteOnStream(&run_options[0], arguments[0]));
+    ABSL_ASSIGN_OR_RETURN(auto rv,
+                          ExecuteOnStream(&run_options[0], arguments[0]));
     return_values.push_back(std::move(rv));
     return std::move(return_values);
   }
@@ -140,7 +141,7 @@ absl::StatusOr<std::vector<ScopedShapedBuffer>> Executable::ExecuteOnStreams(
     // of error, since if the executions communicate, the initially launched
     // executions may never complete if not all executions are running.
     ABSL_ASSIGN_OR_RETURN(auto rv,
-                     ExecuteAsyncOnStream(&run_options[i], arguments[i]));
+                          ExecuteAsyncOnStream(&run_options[i], arguments[i]));
     return_values.push_back(std::move(rv));
   }
   for (const auto& options : run_options) {

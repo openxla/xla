@@ -860,17 +860,18 @@ HloInstructionIndexing ComputeOutputToInputConvolutionOpIndexing(
   SmallVector<SymbolicExpr> input_exprs(rank);
   int64_t current_num_dims = spatial_rank;
   int64_t new_num_dims = rank;
-  int64_t num_symbols = input_spatial_indexing.GetRangeVars().size();
   for (int i = 0; i < spatial_rank; ++i) {
     input_exprs[dnums.input_spatial_dimensions(i)] =
-        input_spatial_indexing.GetSymbolicMap().GetResult(i).ReplaceDims(
-            replacement_dims, current_num_dims, new_num_dims, num_symbols);
+        input_spatial_indexing.GetSymbolicMap()
+            .GetResult(i)
+            .ReplaceDimsAndSymbols(replacement_dims, {}, current_num_dims,
+                                   new_num_dims);
   }
   llvm::MapVector<SymbolicExpr, Interval> input_constraints;
   for (const auto& [key, val] :
        input_spatial_indexing.GetSymbolicConstraints()) {
-    input_constraints[key.ReplaceDims(replacement_dims, current_num_dims,
-                                      new_num_dims, num_symbols)] = val;
+    input_constraints[key.ReplaceDimsAndSymbols(
+        replacement_dims, {}, current_num_dims, new_num_dims)] = val;
   }
   std::vector<Interval> bounds = input_spatial_indexing.GetDimensionBounds();
   for (int i = 0; i < spatial_rank; ++i) {
@@ -1912,14 +1913,14 @@ OperandIndexing ComposeOperandIndexing(const OperandIndexing& first,
   std::vector<RuntimeVarIndexing> combined_runtime;
   combined_runtime.reserve(first.runtime_variables().size() +
                            second.runtime_variables().size());
-  combined_runtime.insert(combined_runtime.end(),
-                          first.runtime_variables().begin(),
-                          first.runtime_variables().end());
   for (const auto& rt_var : second.runtime_variables()) {
     IndexingMap combined_map = ComposeIndexingMaps(first.map(), rt_var.map);
     combined_runtime.push_back(
         RuntimeVarIndexing{rt_var.instruction_ref, combined_map});
   }
+  combined_runtime.insert(combined_runtime.end(),
+                          first.runtime_variables().begin(),
+                          first.runtime_variables().end());
 
   std::optional<IndexingMap> replica_id_map;
   if (first.replica_id_map().has_value()) {

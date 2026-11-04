@@ -19,9 +19,9 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/logging.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
-#include "tsl/platform/logging.h"
 
 namespace stream_executor {
 

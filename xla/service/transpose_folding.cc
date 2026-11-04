@@ -229,8 +229,9 @@ absl::StatusOr<bool> TransposeFolding::RunImpl(
   FunctionVisitor visit_fn([this, &foldable_dots, &foldable_convolutions](
                                HloInstruction* instruction) {
     if (instruction->opcode() == HloOpcode::kDot) {
-      // Don't fold dots with a 1D operand.
-      if ((instruction->operand(0)->shape().dimensions().size() < 2) ||
+      // Don't fold dots with extra scaling/sparsity operands or a 1D operand.
+      if (instruction->operand_count() > 2 ||
+          (instruction->operand(0)->shape().dimensions().size() < 2) ||
           (instruction->operand(1)->shape().dimensions().size() < 2)) {
         return absl::OkStatus();
       }
@@ -242,7 +243,7 @@ absl::StatusOr<bool> TransposeFolding::RunImpl(
         }
 
         ABSL_ASSIGN_OR_RETURN(bool can_fold_operand,
-                         dot_can_fold_transpose_operand_(*instruction, i));
+                              dot_can_fold_transpose_operand_(*instruction, i));
 
         if (can_fold_operand) {
           operand_indices.push_back(i);

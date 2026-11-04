@@ -28,7 +28,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/escaping.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
@@ -43,6 +42,8 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/regexp.h"
 #include "xla/codegen/ir_emission_utils.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -51,9 +52,11 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
+#include "xla/layout_util.h"
 #include "xla/permutation_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/matmul_indexing_utils.h"
@@ -64,8 +67,6 @@ limitations under the License.
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/regexp.h"
 
 namespace xla {
 namespace gpu {
@@ -87,6 +88,13 @@ bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr) {
   return false;
 }
 
+bool IsRaggedDotWgrad(const RaggedDotDimensionNumbers& dnums) {
+  const auto& lhs_contracting_dims =
+      dnums.dot_dimension_numbers().lhs_contracting_dimensions();
+  return absl::c_linear_search(lhs_contracting_dims,
+                               dnums.lhs_ragged_dimensions(0));
+}
+
 bool IsTritonSupportedRaggedDot(
     const se::GpuComputeCapability& gpu_compute_capability,
     const HloInstruction& instr) {
@@ -100,16 +108,6 @@ bool IsTritonSupportedRaggedDot(
   // Exactly one LHS ragged dimension is required: the emitter and autotuner
   // access lhs_ragged_dimensions(0) unconditionally.
   if (ragged_dims.lhs_ragged_dimensions().size() != 1) {
-    return false;
-  }
-
-  // Tiling propagation must be enabled.  TritonBackend::IsSupported gates
-  // kRaggedDot fusions on this flag — the xtile pipeline needs
-  // TiledHloComputation::Tile to drive code generation.
-  if (!instr.GetModule()
-           ->config()
-           .debug_options()
-           .xla_gpu_experimental_enable_tiling_propagation()) {
     return false;
   }
 
@@ -144,7 +142,8 @@ bool IsTritonSupportedRaggedDot(
 }
 
 absl::StatusOr<bool> IsCublasSupportedMatMul(
-    const HloInstruction& dot, bool allow_matrix_vector_multiplication) {
+    const HloInstruction& dot, bool allow_matrix_vector_multiplication,
+    bool is_normalized) {
   if (dot.opcode() != HloOpcode::kDot) {
     return false;
   }
@@ -153,25 +152,27 @@ absl::StatusOr<bool> IsCublasSupportedMatMul(
   int num_matrix_operands = 0;
   for (int operand : {0, 1}) {
     ABSL_ASSIGN_OR_RETURN(DotOperandDims dims,
-                     DotOperandDims::FromDotOperand(&dot, operand));
-    // cuBLAS only supports single contracting dimension.
-    if (dims.Rank(DotOperandDims::kContracting) != 1) {
+                          DotOperandDims::FromDotOperand(&dot, operand));
+    if (dims.Rank(DotOperandDims::kContracting) == 0) {
       return false;
     }
-    // cuBLAS doesn't support minor batch dimension.
-    if (absl::c_any_of(dims.Indices(DotOperandDims::kBatch), [&](int64_t dim) {
-          return dim == dims.shape().dimensions().size() - 1;
-        })) {
-      return false;
+    if (is_normalized) {
+      // cuBLAS only supports single contracting dimension.
+      if (dims.Rank(DotOperandDims::kContracting) > 1) {
+        return false;
+      }
+      // cuBLAS doesn't support a physically minor batch dimension.
+      if (absl::c_linear_search(dims.Indices(DotOperandDims::kBatch),
+                                LayoutUtil::Minor(dims.shape().layout(), 0))) {
+        return false;
+      }
+      // cuBLAS supports up to one non-contracting dimension.
+      if (dims.Rank(DotOperandDims::kNonContracting) > 1) {
+        return false;
+      }
     }
-    // cuBLAS supports up to one non-contracting dimension.
-    const auto& nc_dims = dims.Sizes(DotOperandDims::kNonContracting);
-    if (nc_dims.size() > 1) {
-      return false;
-    }
-    if (nc_dims.size() == 1) {
-      num_matrix_operands += (nc_dims[0] != 1);
-    }
+    num_matrix_operands +=
+        (dims.TotalSize(DotOperandDims::kNonContracting) != 1);
   }
 
   if (num_matrix_operands == 0 ||
@@ -220,26 +221,10 @@ bool IsCustomCallToMosaicGpu(const HloInstruction& hlo) {
           hlo.custom_call_target() == "mosaic_gpu_v2");
 }
 
-bool IsMosaicWithSymmetricParameter(const HloInstruction& hlo) {
-  if (!IsCustomCallToMosaicGpu(hlo)) {
-    return false;
-  }
-
-  const std::string& backend_config = hlo.raw_backend_config_string();
-  // TODO(b/546817872): Remove multimem_parameters check once backward
-  // compatibility period is over.
-  return absl::StrContains(backend_config, "symmetric_memory_parameters") ||
-         absl::StrContains(backend_config, "multimem_parameters");
-}
-
 bool IsMosaicWithCollectiveMetadata(const HloInstruction& hlo) {
   return IsCustomCallToMosaicGpu(hlo) &&
          RE2::PartialMatch(hlo.raw_backend_config_string(),
                            "uses_xla_collective_metadata\\s*=\\s*[tT]rue");
-}
-
-bool IsCollectiveMosaicGpuInstruction(const HloInstruction& hlo) {
-  return IsMosaicWithSymmetricParameter(hlo);
 }
 
 static bool IsContiguousSlice(
@@ -290,6 +275,31 @@ bool IsContiguousSlice(const HloInstruction& instr) {
     return IsContiguousSlice(full_shape, slice_shape, std::nullopt);
   }
   return false;
+}
+
+bool EmitsNoThunks(const HloInstruction& hlo) {
+  switch (hlo.opcode()) {
+    // The module is already scheduled, so instructions that only order other
+    // instructions are no-ops.
+    case HloOpcode::kAddDependency:
+    case HloOpcode::kAfterAll:
+    // Their semantics are encoded by buffer assignment.
+    case HloOpcode::kBitcast:
+    case HloOpcode::kGetTupleElement:
+    case HloOpcode::kParameter:
+    case HloOpcode::kTuple:
+    // Constants are emitted as globals that are initialized when the
+    // executable is loaded.
+    case HloOpcode::kConstant:
+      return true;
+    case HloOpcode::kCustomCall:
+      return hlo.custom_call_target() == kNopCustomCallTarget ||
+             hlo.custom_call_target() == kPinCustomCallTarget ||
+             hlo.custom_call_target() == kUnpinCustomCallTarget ||
+             hlo.custom_call_target() == kCreateBufferCustomCallTarget;
+    default:
+      return false;
+  }
 }
 
 llvm::Value* IsBlock0Thread0(llvm::IRBuilderBase* b) {

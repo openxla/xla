@@ -29,6 +29,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -38,8 +40,6 @@ limitations under the License.
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -712,7 +712,8 @@ absl::StatusOr<std::pair<int, const P2PGroup*>> ConnectP2PChain(
     }
 
     if (computation == p2p_group.ParentComputation()) {
-      ABSL_RETURN_IF_ERROR(ConnectPipelined2P2PParent(p2p_group, p2p_group_map));
+      ABSL_RETURN_IF_ERROR(
+          ConnectPipelined2P2PParent(p2p_group, p2p_group_map));
     } else {
       if (pipelined_group != nullptr) {
         return Internal(
@@ -811,7 +812,7 @@ absl::Status LinearizeCollectivesWithOtherP2P(
       if (reachability->IsReachable(start_end.first, hlo)) {
         // Order chain A before the async op.
         ABSL_RETURN_IF_ERROR(OrderBefore(reachability, start_end.second,
-                                    GetStartOpForDoneOp(hlo)));
+                                         GetStartOpForDoneOp(hlo)));
       } else {
         // Order the async op before chain A.
         ABSL_RETURN_IF_ERROR(OrderBefore(reachability, hlo, start_end.first));
@@ -928,8 +929,8 @@ absl::StatusOr<bool> P2PSchedulePreparation::RunImpl(
     // Connect P2P chains and return the number of chains and the P2P group
     // representation for pipelined P2P in the current computation as a
     // while-body.
-    ABSL_ASSIGN_OR_RETURN(auto result,
-                     ConnectP2PChain(computation, p2p_group_map, p2p_channels));
+    ABSL_ASSIGN_OR_RETURN(
+        auto result, ConnectP2PChain(computation, p2p_group_map, p2p_channels));
     if (result.first == 0) {
       continue;
     }

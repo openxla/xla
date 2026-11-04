@@ -46,12 +46,16 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/blocking_counter.h"
 #include "absl/synchronization/mutex.h"
+#include "google/protobuf/descriptor.h"
+#include "google/protobuf/text_format.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/Transforms/LocationSnapshot.h"
-#include "google/protobuf/descriptor.h"
-#include "google/protobuf/text_format.h"
 #include "riegeli/bytes/writer.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -72,10 +76,6 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/util/split_proto/split_hlo_writer.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 
 // BuildData isn't available in OSS.
 #if !TSL_IS_IN_OSS
@@ -857,7 +857,9 @@ void DumpToFileInDirOrStdout(const HloModule& module, string_view file_prefix,
                              mlir::Operation* op) {
   DumpOptions opts = GetDumpOptions(module);
   if (opts.dumping_to_stdout()) {
-    return op->dump();
+    op->print(llvm::outs(), mlir::OpPrintingFlags().useLocalScope());
+    llvm::outs() << "\n";
+    return;
   }
 
   mlir::OpPrintingFlags print_flags = mlir::OpPrintingFlags();
@@ -1236,8 +1238,15 @@ void DumpHloModuleDuringPassIfEnabled(string_view pass_name,
 
 void DumpHloSnapshotIfEnabled(const HloModule& module,
                               const HloSnapshot& snapshot) {
-  DumpOptions opts = GetDumpOptions(module);
-  if (!opts.should_dump_module(module.name()) || !opts.dump_snapshots) {
+  DumpHloSnapshotIfEnabled(module.unique_id(), module.name(),
+                           module.config().debug_options(), snapshot);
+}
+
+void DumpHloSnapshotIfEnabled(int64_t unique_id, absl::string_view module_name,
+                              const DebugOptions& debug_options,
+                              const HloSnapshot& snapshot) {
+  DumpOptions opts = GetDumpOptions(module_name, debug_options);
+  if (!opts.should_dump_module(module_name) || !opts.dump_snapshots) {
     return;
   }
   int64_t execution_count;
@@ -1246,13 +1255,13 @@ void DumpHloSnapshotIfEnabled(const HloModule& module,
     static auto& module_id_to_execution_count ABSL_GUARDED_BY(mu) =
         *new absl::flat_hash_map<int64_t, int64_t>();
     absl::MutexLock lock(mu);
-    execution_count = module_id_to_execution_count[module.unique_id()]++;
+    execution_count = module_id_to_execution_count[unique_id]++;
     auto timestamp_emplace = module_id_to_timestamp.try_emplace(
-        module.unique_id(), tsl::Env::Default()->NowMicros());
+        unique_id, tsl::Env::Default()->NowMicros());
     timestamp = timestamp_emplace.first->second;
   }
   std::string filename =
-      StrCat(FilenameFor(module, std::to_string(timestamp),
+      StrCat(FilenameFor(unique_id, module_name, std::to_string(timestamp),
                          StrFormat("execution_%04d", execution_count)),
              ".hlo_snapshot.pb");
   if (opts.dumping_to_stdout()) {

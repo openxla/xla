@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/pjrt/se/stream_executor_pjrt_abi_version.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/proto/pjrt_abi_version.pb.h"
 #include "xla/stream_executor/abi/executable_abi_version.h"

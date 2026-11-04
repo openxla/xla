@@ -23,9 +23,9 @@ limitations under the License.
 
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/numa.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/macros.h"
-#include "tsl/platform/numa.h"
 
 namespace tensorflow {
 

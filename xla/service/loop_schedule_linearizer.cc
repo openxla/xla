@@ -200,10 +200,11 @@ absl::StatusOr<bool> LoopScheduleLinearizer::RunImpl(
 
       if (alias_analysis == nullptr) {
         ABSL_ASSIGN_OR_RETURN(alias_analysis,
-                         HloAliasAnalysis::Run(module, alias_info_));
+                              HloAliasAnalysis::Run(module, alias_info_));
       }
-      ABSL_ASSIGN_OR_RETURN(bool updated_loop, AddControlEdgesForLoopWrites(
-                                              instruction, *alias_analysis));
+      ABSL_ASSIGN_OR_RETURN(
+          bool updated_loop,
+          AddControlEdgesForLoopWrites(instruction, *alias_analysis));
       changed |= updated_loop;
     }
   }

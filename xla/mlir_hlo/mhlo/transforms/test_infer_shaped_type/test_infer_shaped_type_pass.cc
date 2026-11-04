@@ -34,12 +34,12 @@ namespace mhlo {
 namespace {
 
 struct InferReturnTypesPattern : public RewritePattern {
-  explicit InferReturnTypesPattern(MLIRContext *context)
+  explicit InferReturnTypesPattern(MLIRContext* context)
       : RewritePattern("mhlo_test.get_return_types", 1, context) {}
-  LogicalResult matchAndRewrite(Operation *op,
-                                PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(Operation* op,
+                                PatternRewriter& rewriter) const override {
     if (op->getNumOperands() != 1) return failure();
-    auto *definingOp = op->getOperand(0).getDefiningOp();
+    auto* definingOp = op->getOperand(0).getDefiningOp();
     auto definingOpInt =
         llvm::dyn_cast_or_null<InferTypeOpInterface>(definingOp);
     if (!definingOpInt) return failure();
@@ -56,8 +56,8 @@ struct InferReturnTypesPattern : public RewritePattern {
     OperationState state(op->getLoc(), "mhlo_test.return_types",
                          op->getOperands(), op->getResultTypes(),
                          op->getAttrs());
-    auto *newOp = rewriter.create(state);
-    for (const auto &it : llvm::enumerate(types)) {
+    auto* newOp = rewriter.create(state);
+    for (const auto& it : llvm::enumerate(types)) {
       newOp->setAttr((StringRef("types") + Twine(it.index())).str(),
                      TypeAttr::get(it.value()));
     }
@@ -69,8 +69,8 @@ struct InferReturnTypesPattern : public RewritePattern {
 struct ReifyReturnTypeShapesPattern : public RewritePattern {
   explicit ReifyReturnTypeShapesPattern(MLIRContext* context)
       : RewritePattern("mhlo_test.reify_return_type_shapes", 1, context) {}
-  LogicalResult matchAndRewrite(Operation *op,
-                                PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(Operation* op,
+                                PatternRewriter& rewriter) const override {
     if (op->getNumOperands() != 1) return failure();
     auto definingOp =
         op->getOperand(0).getDefiningOp<InferShapedTypeOpInterface>();
@@ -88,7 +88,7 @@ struct ReifyReturnTypeShapesPattern : public RewritePattern {
 struct TestInferShapedTypeMethodsPass
     : public impl::TestInferShapedTypeMethodsPassBase<
           TestInferShapedTypeMethodsPass> {
-  void getDependentDialects(DialectRegistry &registry) const override {
+  void getDependentDialects(DialectRegistry& registry) const override {
     registry.insert<shape::ShapeDialect>();
   }
   void runOnOperation() override {

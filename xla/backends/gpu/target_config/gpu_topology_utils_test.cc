@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/backends/gpu/target_config/target_config.h"
@@ -93,6 +94,63 @@ TEST(IsCompatibleWithTargetTopologyTest, B200andH100AreIncompatible) {
   EXPECT_THAT(IsCompatibleWithTargetTopology(h100_topology.ToProto(),
                                              b200_topology.ToProto()),
               IsOkAndHolds(false));
+}
+
+TEST(IsCompatibleWithTargetTopologyTest,
+     RequiredLocalityDomainCountMustMatchTarget) {
+  ASSERT_OK_AND_ASSIGN(auto target_config_proto,
+                       gpu::GetGpuTargetConfig(GpuModel::H100_SXM));
+  ASSERT_OK_AND_ASSIGN(auto compiler_config,
+                       gpu::GpuTargetConfig::FromProto(target_config_proto));
+  auto target_config = compiler_config;
+  compiler_config.device_description.set_locality_domain_count(2);
+  target_config.device_description.set_locality_domain_count(1);
+  GpuTopology compiler_topology("same_platform", 1, 1, 1, compiler_config);
+  GpuTopology target_topology("same_platform", 1, 1, 1, target_config);
+  EXPECT_THAT(
+      IsCompatibleWithTargetTopology(compiler_topology, target_topology),
+      IsOkAndHolds(false));
+  EXPECT_THAT(IsCompatibleWithTargetTopology(compiler_topology.ToProto(),
+                                             target_topology.ToProto()),
+              IsOkAndHolds(false));
+}
+
+TEST(IsCompatibleWithTargetTopologyTest,
+     UnspecifiedLocalityDomainCountDoesNotConstrainTarget) {
+  ASSERT_OK_AND_ASSIGN(auto target_config_proto,
+                       gpu::GetGpuTargetConfig(GpuModel::H100_SXM));
+  ASSERT_OK_AND_ASSIGN(auto compiler_config,
+                       gpu::GpuTargetConfig::FromProto(target_config_proto));
+  auto target_config = compiler_config;
+  compiler_config.device_description.set_locality_domain_count(0);
+  target_config.device_description.set_locality_domain_count(2);
+  GpuTopology compiler_topology("same_platform", 1, 1, 1, compiler_config);
+  GpuTopology target_topology("same_platform", 1, 1, 1, target_config);
+  EXPECT_THAT(
+      IsCompatibleWithTargetTopology(compiler_topology, target_topology),
+      IsOkAndHolds(true));
+  EXPECT_THAT(IsCompatibleWithTargetTopology(compiler_topology.ToProto(),
+                                             target_topology.ToProto()),
+              IsOkAndHolds(true));
+}
+
+TEST(IsCompatibleWithTargetTopologyTest,
+     MatchingLocalityDomainCountIsCompatible) {
+  ASSERT_OK_AND_ASSIGN(auto target_config_proto,
+                       gpu::GetGpuTargetConfig(GpuModel::H100_SXM));
+  ASSERT_OK_AND_ASSIGN(auto compiler_config,
+                       gpu::GpuTargetConfig::FromProto(target_config_proto));
+  auto target_config = compiler_config;
+  compiler_config.device_description.set_locality_domain_count(2);
+  target_config.device_description.set_locality_domain_count(2);
+  GpuTopology compiler_topology("same_platform", 1, 1, 1, compiler_config);
+  GpuTopology target_topology("same_platform", 1, 1, 1, target_config);
+  EXPECT_THAT(
+      IsCompatibleWithTargetTopology(compiler_topology, target_topology),
+      IsOkAndHolds(true));
+  EXPECT_THAT(IsCompatibleWithTargetTopology(compiler_topology.ToProto(),
+                                             target_topology.ToProto()),
+              IsOkAndHolds(true));
 }
 
 TEST(IsCompatibleWithTargetTopoologyTest, FailsWithInvalidProto) {

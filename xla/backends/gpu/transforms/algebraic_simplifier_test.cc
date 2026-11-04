@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/filecheck.h"
@@ -28,7 +29,6 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
@@ -62,8 +62,7 @@ TEST_F(GpuAlgebraicSimplifierTest, SinkBroadcastOperandsOfChainedAdds) {
       ROOT add1 = bf16[1,2,2,1] add(add0, bcast1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   AlgebraicSimplifierOptions options;
   options.set_enable_sink_broadcast(true);
   ASSERT_TRUE(
@@ -94,8 +93,7 @@ TEST_F(GpuAlgebraicSimplifierTest,
       ROOT add1 = bf16[1,2,2,1] add(add0, bcast1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   AlgebraicSimplifierOptions options;
   options.set_enable_sink_broadcast(false);
   EXPECT_FALSE(
@@ -118,8 +116,7 @@ TEST_F(GpuAlgebraicSimplifierTest,
       ROOT add1 = bf16[4,4] add(add0, bcast1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   AlgebraicSimplifierOptions options;
   options.set_enable_sink_broadcast(true);
   EXPECT_FALSE(
@@ -147,8 +144,7 @@ TEST_F(
       ROOT add1 = bf16[1,2,2,1] add(add0, bcast1)
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto module,
-                          ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   AlgebraicSimplifierOptions options;
   options.set_enable_sink_broadcast(true);
   EXPECT_FALSE(
@@ -172,7 +168,7 @@ TEST_F(GpuAlgebraicSimplifierTest,
         algorithm=dot_bf16_bf16_f32
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   AlgebraicSimplifierOptions options;
   ASSERT_TRUE(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()).value());
 }
@@ -192,7 +188,7 @@ TEST_F(GpuAlgebraicSimplifierTest,
         algorithm=dot_bf16_bf16_f32_x3
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   AlgebraicSimplifierOptions options;
   ASSERT_TRUE(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()).value());
 }
@@ -212,7 +208,7 @@ TEST_F(GpuAlgebraicSimplifierTest,
         algorithm=dot_bf16_bf16_f32_x6
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   AlgebraicSimplifierOptions options;
   ASSERT_TRUE(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()).value());
 }
@@ -229,13 +225,13 @@ TEST_F(
       algorithm=dot_bf16_bf16_f32_x6
     }
   )";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
   AlgebraicSimplifierOptions options;
   ASSERT_TRUE(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()).value());
   constexpr absl::string_view kPattern = R"(
     CHECK-COUNT-6: %[[partial_result:.*]] = bf16[] multiply
   )";
-  TF_ASSERT_OK_AND_ASSIGN(bool matched, RunFileCheck(m->ToString(), kPattern));
+  ASSERT_OK_AND_ASSIGN(bool matched, RunFileCheck(m->ToString(), kPattern));
   EXPECT_TRUE(matched);
 }
 

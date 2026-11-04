@@ -32,10 +32,10 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/string_view.h"
 #include "re2/re2.h"
+#include "tsl/platform/numbers.h"
 #include "xla/primitive_util.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/numbers.h"
 
 namespace xla {
 namespace {

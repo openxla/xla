@@ -18,9 +18,9 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/nb_defs.h"
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"      // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"      // IWYU pragma: keep
 #include "xla/tools/collective_perf_table_gen.h"
 
 namespace nb = nanobind;

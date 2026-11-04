@@ -31,13 +31,13 @@
 #include "grpcpp/client_context.h"
 #include "grpcpp/support/client_callback.h"
 #include "grpcpp/support/sync_stream.h"
+#include "tsl/platform/threadpool.h"
+#include "tsl/platform/unbounded_work_queue.h"
 #include "xla/python/ifrt_proxy/client/client_session.h"
 #include "xla/python/ifrt_proxy/common/grpc_ifrt_service.grpc.pb.h"
 #include "xla/python/ifrt_proxy/common/grpc_ifrt_service.pb.h"
 #include "xla/python/ifrt_proxy/common/ifrt_service.pb.h"
 #include "xla/tsl/concurrency/future.h"
-#include "tsl/platform/threadpool.h"
-#include "tsl/platform/unbounded_work_queue.h"
 
 namespace xla {
 namespace ifrt {

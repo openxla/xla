@@ -14,12 +14,13 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/tsl/framework/device_id_utils.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"

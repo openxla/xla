@@ -17,8 +17,8 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "xla/stream_executor/gpu/context.h"
 #include "tsl/platform/logging.h"
+#include "xla/stream_executor/gpu/context.h"
 
 namespace stream_executor::gpu {
 

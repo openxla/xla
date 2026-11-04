@@ -41,11 +41,8 @@ absl::StatusOr<float> GetEventElapsedTime(StreamExecutor* executor,
   std::unique_ptr<ActivateContext> activation = executor->Activate();
   // The stop event must have completed in order for hipEventElapsedTime to
   // work.
-  hipError_t res = hipEventSynchronize(stop);
-  if (res != hipSuccess) {
-    LOG(ERROR) << "failed to synchronize the stop event: " << ToString(res);
-    return false;
-  }
+  ABSL_RETURN_IF_ERROR(ToStatus(hipEventSynchronize(stop),
+                                "failed to synchronize the stop event"));
   float elapsed_milliseconds;
   ABSL_RETURN_IF_ERROR(
       ToStatus(hipEventElapsedTime(&elapsed_milliseconds, start, stop),
@@ -94,8 +91,8 @@ absl::StatusOr<absl::Duration> RocmTimer::GetElapsedDuration() {
     }
   }
   ABSL_ASSIGN_OR_RETURN(float elapsed_milliseconds,
-                   GetEventElapsedTime(executor_, start_event_.GetHandle(),
-                                       stop_event_.GetHandle()));
+                        GetEventElapsedTime(executor_, start_event_.GetHandle(),
+                                            stop_event_.GetHandle()));
   is_stopped_ = true;
   return absl::Milliseconds(elapsed_milliseconds);
 }
@@ -110,9 +107,9 @@ absl::StatusOr<RocmTimer> RocmTimer::Create(StreamExecutor* executor,
   }
 
   ABSL_ASSIGN_OR_RETURN(RocmEvent start_event,
-                   RocmEvent::Create(executor, /*allow_timing=*/true));
+                        RocmEvent::Create(executor, /*allow_timing=*/true));
   ABSL_ASSIGN_OR_RETURN(RocmEvent stop_event,
-                   RocmEvent::Create(executor, /*allow_timing=*/true));
+                        RocmEvent::Create(executor, /*allow_timing=*/true));
   ABSL_RETURN_IF_ERROR(stream->RecordEvent(&start_event));
   return RocmTimer(executor, std::move(start_event), std::move(stop_event),
                    stream, std::move(semaphore));

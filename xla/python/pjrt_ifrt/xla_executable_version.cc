@@ -72,11 +72,12 @@ absl::Status XlaExecutableVersion::ToProto(
   executable_version_proto.set_version_number(SerDesVersionNumber(0).value());
   executable_version_proto.set_platform_id(platform_id);
   if (abi_version) {
-    ABSL_ASSIGN_OR_RETURN(xla::ifrt::Serialized executable_abi_version_proto,
-                     xla::ifrt::Serialize(
-                         *abi_version,
-                         std::make_unique<xla::ifrt::SerializeOptions>(
-                             xla::ifrt::SerDesWeek4OldVersionAccessor::Get())));
+    ABSL_ASSIGN_OR_RETURN(
+        xla::ifrt::Serialized executable_abi_version_proto,
+        xla::ifrt::Serialize(
+            *abi_version,
+            std::make_unique<xla::ifrt::SerializeOptions>(
+                xla::ifrt::SerDesWeek4OldVersionAccessor::Get())));
     std::string executable_abi_version;
     if (!executable_abi_version_proto.SerializeToString(
             &executable_abi_version)) {
@@ -108,10 +109,10 @@ XlaExecutableVersion::FromProto(const SerializedXlaExecutableVersion& proto) {
         "Failed to parse XlaExecutableAbiVersion from string.");
   }
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<XlaExecutableAbiVersion>
-                       xla_executable_runtime_abi_version,
-                   xla::ifrt::Deserialize<XlaExecutableAbiVersion>(
-                       executable_abi_version_proto,
-                       std::make_unique<xla::ifrt::DeserializeOptions>()));
+                            xla_executable_runtime_abi_version,
+                        xla::ifrt::Deserialize<XlaExecutableAbiVersion>(
+                            executable_abi_version_proto,
+                            std::make_unique<xla::ifrt::DeserializeOptions>()));
 
   return std::make_unique<XlaExecutableVersion>(
       proto.platform_id(), std::move(xla_executable_runtime_abi_version));

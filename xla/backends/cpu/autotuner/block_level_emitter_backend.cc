@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/cpu/custom_fusion_configs.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
@@ -49,7 +50,7 @@ absl::StatusOr<std::optional<BlockLevelFusionConfig>> GetPreExistingConfig(
     return std::nullopt;
   }
   ABSL_ASSIGN_OR_RETURN(xla::cpu::BackendConfig cpu_backend_config,
-                   instr.backend_config<xla::cpu::BackendConfig>());
+                        instr.backend_config<xla::cpu::BackendConfig>());
   if (cpu_backend_config.has_fusion_config() &&
       cpu_backend_config.fusion_config().has_block_level_fusion_config()) {
     return cpu_backend_config.fusion_config().block_level_fusion_config();
@@ -78,8 +79,9 @@ BlockLevelEmitterBackend::GetSupportedConfigs(const HloInstruction& instr) {
     return configs;
   }
 
-  ABSL_ASSIGN_OR_RETURN(std::optional<BlockLevelFusionConfig> pre_existing_config,
-                   GetPreExistingConfig(instr));
+  ABSL_ASSIGN_OR_RETURN(
+      std::optional<BlockLevelFusionConfig> pre_existing_config,
+      GetPreExistingConfig(instr));
   if (pre_existing_config.has_value()) {
     configs.push_back(Pack(pre_existing_config.value()));
     return configs;
@@ -101,8 +103,9 @@ BlockLevelEmitterBackend::GetDefaultConfig(const HloInstruction& instr) {
         absl::StrCat("BlockLevelEmitterBackend: unsupported instruction: ",
                      instr.ToString()));
   }
-  ABSL_ASSIGN_OR_RETURN(std::optional<BlockLevelFusionConfig> pre_existing_config,
-                   GetPreExistingConfig(instr));
+  ABSL_ASSIGN_OR_RETURN(
+      std::optional<BlockLevelFusionConfig> pre_existing_config,
+      GetPreExistingConfig(instr));
   if (pre_existing_config.has_value()) {
     return Pack(pre_existing_config.value());
   }
@@ -122,7 +125,7 @@ absl::Status BlockLevelEmitterBackend::ApplyConfig(
   xla::cpu::BackendConfig backend_config;
   if (instr.has_backend_config()) {
     ABSL_ASSIGN_OR_RETURN(backend_config,
-                     instr.backend_config<xla::cpu::BackendConfig>());
+                          instr.backend_config<xla::cpu::BackendConfig>());
   }
 
   xla::cpu::FusionBackendConfig* fusion_config =

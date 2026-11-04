@@ -14,10 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/codegen/emitters/computation_partitioner.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"
@@ -501,6 +502,38 @@ TEST_F(ComputationPartitionerTest, ScaleAndTranslateSamplerE2ETest) {
   ASSERT_NE(fusion, nullptr);
   PartitionedComputation computation(fusion, &mlir_context_);
   EXPECT_EQ(computation.subgraphs().size(), 1);
+}
+
+TEST_F(ComputationPartitionerTest, EmbeddedComputationSubgraphWithIndexRanges) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+    compare {
+      p0 = s32[] parameter(0)
+      p1 = s32[] parameter(1)
+      bcast = s32[3] broadcast(p0), dimensions={}
+      c = s32[1] constant({1})
+      dus = s32[3] dynamic-update-slice(bcast, c, p1)
+      slice0 = s32[1] slice(dus), slice={[0:1]}
+      slice1 = s32[1] slice(dus), slice={[1:2]}
+      v0 = s32[] reshape(slice0)
+      v1 = s32[] reshape(slice1)
+      ROOT lt = pred[] compare(v0, v1), direction=LT
+    }
+    ENTRY main {
+      x = s32[4] parameter(0)
+      ROOT sorted = s32[4] sort(x), dimensions={0}, to_apply=compare
+    })"));
+
+  auto* compare = module->GetComputationWithName("compare");
+  ASSERT_NE(compare, nullptr);
+  PartitionedComputation computation(compare, &mlir_context_);
+  mlir::ImplicitLocOpBuilder builder(mlir::UnknownLoc::get(&mlir_context_),
+                                     &mlir_context_);
+  const auto& dus_subgraph =
+      computation.FindSubgraph(compare->GetInstructionWithName("dus"));
+  EXPECT_EQ(PrintAndErase(CreateSubgraphMlirFunction(dus_subgraph, builder)),
+            "func.func private @compare_dus(i32, i32, "
+            "index {xla.range = [0 : index, 2 : index]}) -> i32");
 }
 
 }  // namespace

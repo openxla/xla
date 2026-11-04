@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/init_main.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "xla/tools/hlo_module_loader.h"
 #include "xla/tsl/util/command_line_flags.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
 
 namespace {
 const char* const kUsage = R"(
@@ -68,7 +68,7 @@ namespace {
 absl::Status CountOps(const std::string& input, const std::string& format,
                       absl::flat_hash_map<HloOpcode, int>* counts) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   LoadModuleFromFile(input, format, {}));
+                        LoadModuleFromFile(input, format, {}));
   for (const HloComputation* computation : module->computations()) {
     for (const HloInstruction* hlo : computation->instructions()) {
       HloOpcode opcode = hlo->opcode();

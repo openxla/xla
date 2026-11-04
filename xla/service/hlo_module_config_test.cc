@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/hlo_module_config.h"
 
+#include <gmock/gmock.h>
+
 #include <string>
 
-#include <gmock/gmock.h>
+#include "tsl/platform/test.h"
 #include "xla/tests/test_utils.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

@@ -231,6 +231,18 @@ mlir::stablehlo::DotAlgorithmAttr ConvertDotAlgorithm(
       lhs = rhs = accum = builder->getF64Type();
       break;
     }
+    case PrecisionConfig::ALG_DOT_BF16_BF16_FP8X3: {
+      lhs = rhs = builder->getType<mlir::Float8E4M3FNType>();
+      accum = builder->getF32Type();
+      numPrimitiveOperations = 3;
+      break;
+    }
+    case PrecisionConfig::ALG_DOT_BF16_BF16_FP8X4: {
+      lhs = rhs = builder->getType<mlir::Float8E4M3FNType>();
+      accum = builder->getF32Type();
+      numPrimitiveOperations = 4;
+      break;
+    }
     default:
       // Unset, sentinels
       return mlir::stablehlo::DotAlgorithmAttr{};
@@ -441,7 +453,7 @@ mlir::ArrayAttr ConvertOutputOperandAliasing(
 absl::StatusOr<mlir::mhlo::CustomCallApiVersion> ConvertCustomCallApiVersion(
     xla::CustomCallApiVersion api_version) {
   ABSL_ASSIGN_OR_RETURN(auto stablehlo_api_version,
-                   stablehlo::ConvertCustomCallApiVersion(api_version));
+                        stablehlo::ConvertCustomCallApiVersion(api_version));
   auto mhlo_api_version = mlir::mhlo::symbolizeCustomCallApiVersion(
       mlir::stablehlo::stringifyCustomCallApiVersion(stablehlo_api_version));
   if (!mhlo_api_version.has_value()) {

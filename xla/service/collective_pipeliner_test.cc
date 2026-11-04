@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/collective_pipeliner.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -23,8 +26,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"

@@ -14,10 +14,11 @@
 
 #include "xla/hlo/tools/hlo_diff/render/hlo_gumgraph_renderer_util.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -176,11 +177,14 @@ ENTRY test_computation {
       diff_result.right_module_unmatched_instructions.insert(instruction);
       diff_result.changed_instructions[instruction] = instruction;
       diff_result.unchanged_instructions[instruction] = instruction;
+      diff_result.moved_instructions[instruction] = instruction;
     }
   }
   absl::flat_hash_set<HloOpcode> ignored_opcodes = {HloOpcode::kParameter};
   auto filtered_diff_result =
       FilterDiffResultByOpcode(diff_result, ignored_opcodes);
+  // Every element is checked, so the iteration order doesn't matter.
+  // NOLINTBEGIN(*-custom-deterministic-iteration-order)
   EXPECT_THAT(filtered_diff_result.left_module_unmatched_instructions,
               SizeIs(2));
   for (const HloInstruction* instruction :
@@ -204,6 +208,12 @@ ENTRY test_computation {
     EXPECT_NE(left->opcode(), HloOpcode::kParameter);
     EXPECT_NE(right->opcode(), HloOpcode::kParameter);
   }
+  EXPECT_THAT(filtered_diff_result.moved_instructions, SizeIs(2));
+  for (const auto& [left, right] : filtered_diff_result.moved_instructions) {
+    EXPECT_NE(left->opcode(), HloOpcode::kParameter);
+    EXPECT_NE(right->opcode(), HloOpcode::kParameter);
+  }
+  // NOLINTEND(*-custom-deterministic-iteration-order)
 }
 
 }  // namespace

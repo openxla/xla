@@ -31,6 +31,7 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {
@@ -64,9 +64,12 @@ inline constexpr int64_t kMinTotalDimensionsToTransposeTiled = 64 * 128;
 // dimension.
 inline constexpr int64_t kMaxBitsInMostMinorDimension = 8 * 8;
 
-// Returns true if the given dot is supported by cuBLAS.
+// Returns true if the given dot is supported by cuBLAS. If `is_normalized` is
+// false, checks whether the dot will be supported after DotDimensionNormalizer
+// and GpuLayoutAssignment run.
 absl::StatusOr<bool> IsCublasSupportedMatMul(
-    const HloInstruction& dot, bool allow_matrix_vector_multiplication);
+    const HloInstruction& dot, bool allow_matrix_vector_multiplication,
+    bool is_normalized = true);
 
 // Returns true if the given instruction is supported by gpuBLASLt
 // GroupedMatMul.
@@ -75,14 +78,19 @@ bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr);
 // Returns true if the ragged-dot instruction can be lowered by the Triton
 // XTile backend.  Criteria:
 //   - Exactly one LHS ragged dimension.
-//   - Tiling propagation enabled
-//   (xla_gpu_experimental_enable_tiling_propagation).
 //   - Element types supported by the xtile emitter: F16, BF16, F32, F64,
 //     F8E5M2, F8E4M3FN; nanoo FP8 types (F8E4M3FNUZ, F8E5M2FNUZ) on ROCm only.
 //     Complex types (C64, C128) are not supported.
 bool IsTritonSupportedRaggedDot(
     const se::GpuComputeCapability& gpu_compute_capability,
     const HloInstruction& instr);
+
+// Returns true if `dnums` describes the weight-gradient (wgrad) flavor of
+// ragged-dot, i.e. the LHS ragged dimension is also one of the contracting
+// dimensions (kRaggedContracting mode), as opposed to a batch or
+// non-contracting dimension. Wgrad ragged-dots lower to cuDNN's
+// moe_grouped_matmul_bwd rather than the forward moe_grouped_matmul path.
+bool IsRaggedDotWgrad(const RaggedDotDimensionNumbers& dnums);
 
 constexpr int64_t WarpSize(const se::DeviceDescription& gpu_device_info) {
   return gpu_device_info.threads_per_warp();
@@ -123,6 +131,10 @@ inline constexpr absl::string_view kTritonNestedGemmFusionKind =
 // Fusions that use cuDNN have FusionBackendConfig.kind equal to this string.
 inline constexpr absl::string_view kCuDnnFusionKind = "__cudnn$fusion";
 
+// Fusions codegen'd through the TensorIR/CudaTile pipeline have
+// FusionBackendConfig.kind equal to this string.
+inline constexpr absl::string_view kTensorIrFusionKind = "__tensorir";
+
 inline constexpr absl::string_view kUncompilableFusion =
     "__uncompilable_fusion";
 
@@ -154,19 +166,20 @@ bool IsCustomCallToTopK(const HloInstruction& hlo);
 bool IsCustomCallToPtxKernel(const HloInstruction& hlo);
 
 // Returns true if `hlo` will be implemented as a call to a Mosaic GPU kernel
-// with parameter uses symmetric memory.
-bool IsMosaicWithSymmetricParameter(const HloInstruction& hlo);
-
-// Returns true if `hlo` will be implemented as a call to a Mosaic GPU kernel
 // with collective metadata.
 bool IsMosaicWithCollectiveMetadata(const HloInstruction& hlo);
-
-// Returns true if instruction is a Mosaic GPU collective instruction.
-bool IsCollectiveMosaicGpuInstruction(const HloInstruction& hlo);
 
 // Returns true if `instr` is a slice (or dynamic slice) instruction and
 // operates on a contiguous slice of the input buffer.
 bool IsContiguousSlice(const HloInstruction& instr);
+
+// Returns true if no thunks are emitted for `hlo`, i.e. it does no work on any
+// device stream when the executable runs: its semantics are encoded by buffer
+// assignment, by the schedule, or by data that is set up when the executable
+// is loaded. This is stricter than the latency hiding scheduler's notion of a
+// no-op, which also covers instructions whose work is negligible (e.g.
+// partition-id, a memset of 4 bytes).
+bool EmitsNoThunks(const HloInstruction& hlo);
 
 // Emits code that determines whether the current thread is thread 0 within
 // block 0 of the kernel.
@@ -316,7 +329,8 @@ template <typename ConfigType>
 absl::StatusOr<std::string> FingerprintWithBackendConfig(
     const HloInstruction& hlo) {
   ABSL_ASSIGN_OR_RETURN(const auto config, hlo.backend_config<ConfigType>());
-  ABSL_ASSIGN_OR_RETURN(const std::string fingerprint, GetProtoFingerprint(config));
+  ABSL_ASSIGN_OR_RETURN(const std::string fingerprint,
+                        GetProtoFingerprint(config));
   return absl::StrCat(hlo.ToString(HloPrintOptions::Fingerprint()),
                       ", backend_config_fingerprint=", fingerprint);
 }

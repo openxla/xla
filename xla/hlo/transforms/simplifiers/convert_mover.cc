@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/hlo/transforms/simplifiers/convert_mover.h"
 
 #include <deque>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -25,6 +27,8 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/literal.h"
@@ -32,8 +36,6 @@ limitations under the License.
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {
@@ -160,8 +162,16 @@ absl::StatusOr<bool> MoveConvertPrecisionOps(HloComputation* comp) {
     new_shape.set_element_type(src_ty);
     HloInstruction* new_instr = comp->AddInstruction(
         instr->CloneWithNewOperands(new_shape, new_operands));
+    // The new convert is the moved `convert_op`, so it keeps that convert's
+    // frontend attributes and must not inherit `instr`'s attributes, which
+    // still belong to the cloned `new_instr`.
+    std::unique_ptr<HloInstruction> new_convert =
+        HloInstruction::CreateConvert(instr->shape(), new_instr);
+    new_convert->set_frontend_attributes(convert_op->frontend_attributes());
     ABSL_RETURN_IF_ERROR(comp->ReplaceWithNewInstruction(
-        instr, HloInstruction::CreateConvert(instr->shape(), new_instr)));
+        instr, std::move(new_convert), /*preserve_sharding=*/false,
+        /*relay_control_dependency=*/false, /*remove_unused_operands=*/true,
+        /*preserve_frontend_attributes=*/false));
     changed = true;
   }
 
@@ -197,13 +207,22 @@ absl::StatusOr<bool> MoveConvertPrecisionOps(HloComputation* comp) {
     absl::InlinedVector<HloInstruction*, 8> new_operands;
     new_operands.reserve(to_convert->operand_count());
     for (HloInstruction* operand : to_convert->operands()) {
-      work_queue.push_front(MakeConvertToHlo(operand, dst_ty));
-      new_operands.push_back(work_queue.front());
+      HloInstruction* new_convert = MakeConvertToHlo(operand, dst_ty);
+      // The new converts are the moved `instr`, so they keep its frontend
+      // attributes; the cloned op below keeps `to_convert`'s own attributes.
+      if (new_convert != operand) {
+        new_convert->set_frontend_attributes(instr->frontend_attributes());
+      }
+      work_queue.push_front(new_convert);
+      new_operands.push_back(new_convert);
     }
     Shape new_shape = to_convert->shape();
     new_shape.set_element_type(dst_ty);
     ABSL_RETURN_IF_ERROR(comp->ReplaceWithNewInstruction(
-        instr, to_convert->CloneWithNewOperands(new_shape, new_operands)));
+        instr, to_convert->CloneWithNewOperands(new_shape, new_operands),
+        /*preserve_sharding=*/false, /*relay_control_dependency=*/false,
+        /*remove_unused_operands=*/true,
+        /*preserve_frontend_attributes=*/false));
     changed = true;
   }
 
@@ -218,7 +237,8 @@ absl::StatusOr<bool> ConvertMover::RunImpl(
   bool changed = false;
   for (HloComputation* comp :
        module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool changed_computation, MoveConvertPrecisionOps(comp));
+    ABSL_ASSIGN_OR_RETURN(bool changed_computation,
+                          MoveConvertPrecisionOps(comp));
     changed |= changed_computation;
   }
   return changed;

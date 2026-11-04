@@ -57,13 +57,14 @@ limitations under the License.
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/python/ifrt/ir/compilation/utils.h"
 #include "xla/python/ifrt/ir/constants.h"
 #include "xla/python/ifrt/ir/conversions/mpmd/utils.h"
+#include "xla/python/ifrt/ir/debug.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
-#include "xla/python/ifrt/ir/transforms/debug.h"
-#include "xla/python/ifrt/ir/transforms/passes.h"
-#include "xla/python/ifrt/ir/transforms/utils.h"
+#include "xla/python/ifrt/ir/import/passes.h"
+#include "xla/python/ifrt/ir/utils.h"
 
 namespace xla::ifrt::mpmd {
 namespace {
@@ -327,19 +328,19 @@ class LowerToIfrtPass
 
     // Set conversion from MeshTensorType to IFRT Array.
     mlir::TypeConverter type_converter;
-    type_converter.addConversion([&meshes, &mesh_name_to_devices_attr](
-                                     mpmd::MeshTensorType mesh_tensor_type)
-                                     -> mlir::Type {
-      auto it = absl::c_find_if(
-          meshes, [mesh_tensor_type](const mpmd::NamedMeshAttr& mesh) {
-            return mesh.getName() == mesh_tensor_type.getMeshName();
-          });
-      CHECK(it != meshes.end())
-          << "Mesh `" << mesh_tensor_type.getMeshName().str()
-          << "` not found in topology.";
-      return MeshTensorToArray(mesh_name_to_devices_attr, mesh_tensor_type,
-                               it->getMesh());
-    });
+    type_converter.addConversion(
+        [&meshes, &mesh_name_to_devices_attr](
+            mpmd::MeshTensorType mesh_tensor_type) -> mlir::Type {
+          auto it = absl::c_find_if(
+              meshes, [mesh_tensor_type](const mpmd::NamedMeshAttr& mesh) {
+                return mesh.getName() == mesh_tensor_type.getMeshName();
+              });
+          CHECK(it != meshes.end())
+              << "Mesh `" << mesh_tensor_type.getMeshName().str()
+              << "` not found in topology.";
+          return MeshTensorToArray(mesh_name_to_devices_attr, mesh_tensor_type,
+                                   it->getMesh());
+        });
 
     mlir::RewritePatternSet patterns(&ctx);
     patterns.add<FuncOpPattern, TransferOpPattern>(type_converter, &ctx);

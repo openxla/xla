@@ -35,6 +35,8 @@ limitations under the License.
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/rocprofiler-sdk/fwd.h"
 #include "rocm/include/rocprofiler-sdk/rocprofiler.h"
+#include "tsl/platform/abi.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/platform/status.h"
 #include "xla/tsl/profiler/utils/parse_annotation.h"
@@ -42,8 +44,6 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
-#include "tsl/platform/abi.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

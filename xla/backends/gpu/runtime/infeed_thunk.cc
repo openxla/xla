@@ -74,7 +74,7 @@ absl::Status InfeedThunk::ExecuteOnStream(const ExecuteParams& params) {
     se::DeviceAddressBase dest_address =
         buffer_allocations.GetDeviceAddress(dest_slices_[index++].slice);
     ABSL_RETURN_IF_ERROR(stream.Memcpy(&dest_address, buffer.address(),
-                                  buffer.address().size()));
+                                       buffer.address().size()));
   }
 
   // Make sure that all dest slices have been copied into.
@@ -113,7 +113,7 @@ absl::StatusOr<ThunkProto> InfeedThunk::ToProto() const {
   InfeedThunkProto* thunk_proto = proto.mutable_infeed_thunk();
   for (int i = 0; i < dest_slices_.size(); i++) {
     ABSL_ASSIGN_OR_RETURN(*thunk_proto->add_dest_slices(),
-                     dest_slices_[i].ToProto());
+                          dest_slices_[i].ToProto());
   }
   return proto;
 }

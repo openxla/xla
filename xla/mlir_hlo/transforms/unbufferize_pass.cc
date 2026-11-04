@@ -87,7 +87,7 @@ void UnbufferizePass::runOnOperation() {
           resultIndices, TypeRange(ValueRange(results)), resultAttrs))) {
     return signalPassFailure();
   }
-  Operation *terminator = funcOp.getBody().back().getTerminator();
+  Operation* terminator = funcOp.getBody().back().getTerminator();
   rewriter.setInsertionPoint(terminator);
   rewriter.replaceOpWithNewOp<func::ReturnOp>(terminator, results);
 }

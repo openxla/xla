@@ -21,12 +21,12 @@ limitations under the License.
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "tsl/platform/random.h"
+#include "tsl/platform/retrying_utils.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/random.h"
-#include "tsl/platform/retrying_utils.h"
 
 namespace tsl {
 

@@ -16,9 +16,10 @@ limitations under the License.
 #ifndef XLA_STREAM_EXECUTOR_CUDA_MOCK_COMPILATION_PROVIDER_H_
 #define XLA_STREAM_EXECUTOR_CUDA_MOCK_COMPILATION_PROVIDER_H_
 
+#include <gmock/gmock.h>
+
 #include <string>
 
-#include <gmock/gmock.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"

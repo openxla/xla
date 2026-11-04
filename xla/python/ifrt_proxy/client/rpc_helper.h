@@ -77,8 +77,13 @@ class RpcHelper {
     return host_buffer_store_;
   }
 
+  // Returned ResponseFuture is safe to ignore.
   template <typename T>
-  using ResponseFuture = tsl::Future<std::shared_ptr<T>>;
+  class ResponseFuture : public tsl::Future<std::shared_ptr<T>> {
+   public:
+    ResponseFuture(tsl::Future<std::shared_ptr<T>> future)
+        : tsl::Future<std::shared_ptr<T>>::Future(std::move(future)) {}
+  };
 
   class Batcher;
   enum BatchOperation { kDeleteArray, kDestructArray, kSentinelDoNotUse };
@@ -122,17 +127,13 @@ class RpcHelper {
       std::unique_ptr<RemapArraysRequest> req);
   ResponseFuture<BitcastArraysResponse> BitcastArrays(
       std::unique_ptr<BitcastArraysRequest> req);
-  ResponseFuture<ReshardArraysResponse> ReshardArrays(
-      std::unique_ptr<ReshardArraysRequest> req);
-  ResponseFuture<DisassembleIntoSingleDeviceArraysResponse>
-  DisassembleIntoSingleDeviceArrays(
+  void ReshardArrays(std::unique_ptr<ReshardArraysRequest> req);
+  void DisassembleIntoSingleDeviceArrays(
       std::unique_ptr<DisassembleIntoSingleDeviceArraysRequest> req);
   ResponseFuture<CopyToHostBufferResponse> CopyToHostBuffer(
       std::unique_ptr<CopyToHostBufferRequest> req);
-  ResponseFuture<CopyArraysResponse> CopyArrays(
-      std::unique_ptr<CopyArraysRequest> req);
-  ResponseFuture<FullyReplicatedShardResponse> FullyReplicatedShard(
-      std::unique_ptr<FullyReplicatedShardRequest> req);
+  void CopyArrays(std::unique_ptr<CopyArraysRequest> req);
+  void FullyReplicatedShard(std::unique_ptr<FullyReplicatedShardRequest> req);
   ResponseFuture<IsArrayDeletedResponse> IsArrayDeleted(
       std::unique_ptr<IsArrayDeletedRequest> req);
   ResponseFuture<DeleteArrayResponse> DeleteArray(
@@ -175,6 +176,10 @@ class RpcHelper {
 
   ResponseFuture<GetDefaultLayoutResponse> GetDefaultLayout(
       std::unique_ptr<GetDefaultLayoutRequest> req);
+  ResponseFuture<CancelExecutionResponse> CancelExecution(
+      std::unique_ptr<CancelExecutionRequest> req);
+  ResponseFuture<HashValuesResponse> HashValues(
+      std::unique_ptr<HashValuesRequest> req);
 
   // Utility functions.
 

@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/elemental_ir_emitter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,12 +25,11 @@ limitations under the License.
 #include <type_traits>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -39,7 +41,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/types.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
@@ -667,6 +668,23 @@ ENTRY main {
   Literal base = LiteralUtil::CreateR1<uint64_t>({3, 5, 3, 5});
   Literal exponent = LiteralUtil::CreateR1<uint64_t>(
       {1ull << 63, 1ull << 63, (1ull << 63) + 1, (1ull << 63) + 1});
+  RunTest(hlo_text, {&base, &exponent});
+}
+
+TEST_F(ElementalIrEmitterExecutionTest, IntegerPowEvenBaseExponentGeBitWidth) {
+  const std::string hlo_text = R"(
+HloModule IntegerPowEvenBaseExponentGeBitWidth
+
+ENTRY main {
+  base = s32[8]{0} parameter(0)
+  exponent = s32[8]{0} parameter(1)
+  ROOT power = s32[8]{0} power(base, exponent)
+}
+)";
+
+  Literal base = LiteralUtil::CreateR1<int32_t>({0, 0, 2, -2, 0, 2, -2, 0});
+  Literal exponent =
+      LiteralUtil::CreateR1<int32_t>({1, 32, 32, 33, 64, 64, 65, 1});
   RunTest(hlo_text, {&base, &exponent});
 }
 

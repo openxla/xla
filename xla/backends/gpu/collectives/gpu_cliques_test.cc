@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
@@ -95,9 +96,9 @@ AcquireCliquesWithCollectives(
   std::vector<Future<std::shared_ptr<LockableGpuClique::Lock>>> futures(n);
   for (size_t i = 0; i < n; ++i) {
     futures[i] = MakeFutureOn(exec, [=] {
-      return AcquireGpuClique(collectives, executors.at(i), run_id, clique,
-                              device_groups, DefaultCliqueId(), RankId(i),
-                              acquired_cliques.at(i));
+      return AcquireClique(collectives, executors.at(i), run_id, clique,
+                           device_groups, DefaultCliqueId(), RankId(i),
+                           acquired_cliques.at(i));
     });
   }
 

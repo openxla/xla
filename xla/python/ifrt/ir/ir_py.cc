@@ -23,16 +23,18 @@ limitations under the License.
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep; Needed to allow MlirModule -> ModuleOp.
 #include "mlir/CAPI/IR.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OperationSupport.h"
+#include "mlir/IR/OwningOpRef.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"       // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
 #include "xla/python/ifrt/ir/support/module_parsing.h"
-#include "xla/python/ifrt/ir/transforms/utils.h"
+#include "xla/python/ifrt/ir/utils.h"
 #include "xla/python/ifrt/ir/version.h"
 #include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/serdes.pb.h"
@@ -66,9 +68,9 @@ absl::StatusOr<nb::bytes> SerializeVersionedProgram(
     absl::string_view atom_program_version,
     absl::string_view atom_program_sdy_version, bool version_in_place) {
   mlir::MLIRContext context;
-  ABSL_ASSIGN_OR_RETURN(auto module,
-                   support::ParseMlirModuleString(module_str, context));
-  auto program = std::make_unique<IfrtIRProgram>(module.release());
+  ABSL_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                        support::ParseMlirModuleString(module_str, context));
+  auto program = std::make_unique<IfrtIRProgram>(*module);
   ABSL_ASSIGN_OR_RETURN(
       auto serialized,
       Serialize(

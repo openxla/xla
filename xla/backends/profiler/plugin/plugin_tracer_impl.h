@@ -22,9 +22,9 @@ limitations under the License.
 #include <optional>
 #include <vector>
 
-#include "xla/backends/profiler/plugin/profiler_c_api.h"
 #include "tsl/profiler/lib/profiler_interface.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/backends/profiler/plugin/profiler_c_api.h"
 
 struct PLUGIN_Profiler {
   std::optional<tensorflow::profiler::XSpace> space;

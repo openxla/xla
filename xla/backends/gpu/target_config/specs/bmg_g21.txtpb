@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# proto-file: third_party/tensorflow/compiler/xla/stream_executor/device_description.proto
+# proto-message: stream_executor.GpuTargetConfigProto
+
 gpu_device_info {
   threads_per_block_limit: 1024
   threads_per_warp: 32
@@ -31,7 +34,7 @@ gpu_device_info {
   registers_per_core_limit: -1
   registers_per_block_limit: -1
   oneapi_compute_capability {
-    architecture: "BMG"
+    architecture: "Xe2HPG"
   }
 }
 platform_name: "SYCL"

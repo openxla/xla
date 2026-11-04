@@ -35,7 +35,7 @@ limitations under the License.
 
 // Include NCCL after XLA headers.
 #include "third_party/nccl/nccl.h"
-#include "third_party/nccl/nccl_device.h"
+#include "third_party/nccl/nccl_device.h"  // IWYU pragma: keep
 #include "xla/tsl/concurrency/executor.h"
 
 namespace xla::gpu {
@@ -71,24 +71,51 @@ void LogInterconnectStatus(stream_executor::StreamExecutor* stream_executor) {
 NcclSymmetricMemory::NcclSymmetricMemory(
     std::shared_ptr<NcclCommState> comm_state, ncclWindow_t win,
     stream_executor::DeviceAddressBase addr,
-    std::shared_ptr<tsl::Executor> executor)
-    : comm_state_(comm_state), win_(win), addr_(addr), executor_(executor) {}
+    std::shared_ptr<tsl::Executor> executor, bool symmetric_window)
+    : comm_state_(std::move(comm_state)),
+      win_(win),
+      addr_(addr),
+      executor_(std::move(executor)),
+      symmetric_window_(symmetric_window) {}
 
 absl::StatusOr<std::unique_ptr<NcclSymmetricMemory>>
 NcclSymmetricMemory::Create(std::shared_ptr<NcclCommState> comm_state,
                             stream_executor::DeviceAddressBase addr,
                             const std::shared_ptr<tsl::Executor> executor,
-                            stream_executor::StreamExecutor* stream_executor) {
-  ncclWindow_t win;
+                            stream_executor::StreamExecutor* stream_executor,
+                            bool symmetric_window) {
+  if (comm_state == nullptr) {
+    return absl::InvalidArgumentError("NCCL comm_state is null.");
+  }
+
+  ncclWindow_t win = nullptr;
   ncclResult_t nccl_status;
   {
-    VLOG(3) << absl::StrFormat(
-        "Create NCCL symmetric memory on comm=%p from: ptr=%p; size=%ld",
-        comm_state->comm, addr.opaque(), addr.size());
     absl::MutexLock lock(comm_state->mutex);
-    nccl_status =
-        ncclCommWindowRegister(comm_state->comm, addr.opaque(), addr.size(),
-                               &win, NCCL_WIN_COLL_SYMMETRIC);
+    ncclComm_t comm = comm_state->comm;
+    if (comm == nullptr) {
+      return absl::InvalidArgumentError("NCCL comm is null.");
+    }
+    // Difference between NCCL_WIN_COLL_SYMMETRIC and NCCL_WIN_DEFAULT is purely
+    // semantic.
+    // With NCCL_WIN_COLL_SYMMETRIC user should guarantee that logical memory
+    // under the window is symmetrical at all participants. This allows NCCL to
+    // run copy engine and RMA symmetrical kernels. We are using currently
+    // NCCL_WIN_DEFAULT by default to disable these kernels because XLA runtime
+    // might cache window handlers, which causes NCCL to incorrectly choose a
+    // symmetric kernel on a default non-symmetric memory, just because another
+    // executable cached a window handler.
+    int win_flags =
+        symmetric_window ? NCCL_WIN_COLL_SYMMETRIC : NCCL_WIN_DEFAULT;
+    VLOG(3) << absl::StrFormat(
+        "Create NCCL symmetric memory on comm=%p from: ptr=%p; size=%ld; "
+        "win_flags=%d",
+        comm, addr.opaque(), addr.size(), win_flags);
+    nccl_status = ncclCommWindowRegister(comm, addr.opaque(), addr.size(), &win,
+                                         win_flags);
+    if (nccl_status == ncclSuccess && win != nullptr && symmetric_window) {
+      ++comm_state->num_symmetric_windows;
+    }
   }
 
   if (nccl_status != ncclSuccess) {
@@ -96,11 +123,22 @@ NcclSymmetricMemory::Create(std::shared_ptr<NcclCommState> comm_state,
     return XLA_NCCL_STATUS(nccl_status);
   }
 
-  return absl::WrapUnique(
-      new NcclSymmetricMemory(comm_state, win, addr, executor));
+  if (win == nullptr) {
+    LogInterconnectStatus(stream_executor);
+    return absl::FailedPreconditionError(
+        "ncclCommWindowRegister returned a null window because NCCL symmetric "
+        "memory is not supported on this communicator (e.g. P2P/NVLink or "
+        "CUMEM is unavailable on fractional/virtualized GPU slices).");
+  }
+
+  return absl::WrapUnique(new NcclSymmetricMemory(
+      std::move(comm_state), win, addr, executor, symmetric_window));
 }
 
 NcclSymmetricMemory::~NcclSymmetricMemory() {
+  if (win_ == nullptr) {
+    return;
+  }
   absl::Status status =
       Execute(
           [&] {
@@ -108,8 +146,12 @@ NcclSymmetricMemory::~NcclSymmetricMemory() {
                 "Destroy %v with addr=%p, size=%ld executor=%p", *this,
                 addr_.opaque(), addr_.size(), executor_.get());
             absl::MutexLock lock(comm_state_->mutex);
-            XLA_NCCL_LOG_IF_ERROR(
-                ncclCommWindowDeregister(comm_state_->comm, win_));
+            ncclResult_t nccl_status =
+                ncclCommWindowDeregister(comm_state_->comm, win_);
+            if (nccl_status == ncclSuccess && symmetric_window_) {
+              --comm_state_->num_symmetric_windows;
+            }
+            XLA_NCCL_LOG_IF_ERROR(nccl_status);
             return absl::OkStatus();
           },
           executor_)
@@ -126,9 +168,13 @@ stream_executor::DeviceAddressBase NcclSymmetricMemory::addr() const {
 absl::StatusOr<stream_executor::DeviceAddressBase>
 NcclSymmetricMemory::multimem_addr() const {
 #if (NCCL_VERSION_CODE >= 22900) || defined(USE_NCCL_HOST_API)
+  if (win_ == nullptr) {
+    return absl::FailedPreconditionError(
+        "Cannot get multimem address from null NCCL window.");
+  }
   void* multimem = nullptr;
   XLA_NCCL_RETURN_IF_ERROR(ncclGetLsaMultimemDevicePointer(win_, 0, &multimem));
-  if (multimem) {
+  if (multimem != nullptr) {
     return stream_executor::DeviceAddressBase(multimem, addr_.size());
   }
 #endif
@@ -139,10 +185,14 @@ NcclSymmetricMemory::multimem_addr() const {
 absl::StatusOr<stream_executor::DeviceAddressBase>
 NcclSymmetricMemory::peer_addr(RankId peer) const {
 #if (NCCL_VERSION_CODE >= 22902) || defined(USE_NCCL_HOST_API)
+  if (win_ == nullptr) {
+    return absl::FailedPreconditionError(
+        "Cannot get peer address from null NCCL window.");
+  }
   void* peer_addr = nullptr;
   XLA_NCCL_RETURN_IF_ERROR(
       ncclGetPeerDevicePointer(win_, 0, peer.value(), &peer_addr));
-  if (peer_addr) {
+  if (peer_addr != nullptr) {
     return stream_executor::DeviceAddressBase(peer_addr, addr_.size());
   }
   return absl::FailedPreconditionError(absl::StrFormat(

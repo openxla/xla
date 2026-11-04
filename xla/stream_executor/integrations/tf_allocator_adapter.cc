@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -32,6 +33,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/numbers.h"
 #include "xla/layout.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
@@ -40,7 +42,6 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/platform/logging.h"
-#include "tsl/platform/numbers.h"
 
 namespace stream_executor {
 
@@ -68,22 +69,27 @@ void StreamExecutorMemoryAllocator::DeallocateRaw(void* ptr) {
 
 TfAllocatorAdapter::TfAllocatorAdapter(tsl::Allocator* wrapped, Stream* stream,
                                        size_t min_alignment,
-                                       tsl::AllocationEnd allocation_end)
+                                       tsl::AllocationEnd allocation_end,
+                                       std::optional<int> device_ordinal)
     : DeviceAddressAllocator(CHECK_NOTNULL(stream)->parent()->GetPlatform()),
       wrapped_(wrapped),
       stream_(stream),
       min_alignment_(min_alignment),
-      allocation_end_(allocation_end) {}
+      allocation_end_(allocation_end),
+      device_ordinal_(
+          device_ordinal.value_or(stream->parent()->device_ordinal())) {}
 
 TfAllocatorAdapter::TfAllocatorAdapter(tsl::Allocator* wrapped,
                                        const Platform* platform,
                                        size_t min_alignment,
-                                       tsl::AllocationEnd allocation_end)
+                                       tsl::AllocationEnd allocation_end,
+                                       std::optional<int> device_ordinal)
     : DeviceAddressAllocator(platform),
       wrapped_(wrapped),
       stream_(nullptr),
       min_alignment_(min_alignment),
-      allocation_end_(allocation_end) {}
+      allocation_end_(allocation_end),
+      device_ordinal_(device_ordinal) {}
 
 TfAllocatorAdapter::~TfAllocatorAdapter() {}
 
@@ -114,16 +120,19 @@ absl::Status TfAllocatorAdapter::Deallocate(int device_ordinal,
 
 absl::StatusOr<Stream*> TfAllocatorAdapter::GetStream(int device_ordinal) {
   CHECK(stream_ != nullptr) << "GetStream requires a non-null stream";
-  CHECK_EQ(stream_->parent()->device_ordinal(), device_ordinal);
+  int expected_ordinal =
+      device_ordinal_.value_or(stream_->parent()->device_ordinal());
+  CHECK_EQ(expected_ordinal, device_ordinal);
   return stream_;
 }
 
 absl::StatusOr<tsl::Allocator*> TfAllocatorAdapter::GetAllocator(
     int device_ordinal) {
-  if (stream_ && stream_->parent()->device_ordinal() != device_ordinal) {
+  int expected_ordinal = device_ordinal_.value_or(
+      stream_ ? stream_->parent()->device_ordinal() : device_ordinal);
+  if (expected_ordinal != device_ordinal) {
     return absl::InternalError(
-        absl::StrCat("stream_->parent()->device_ordinal() ",
-                     stream_->parent()->device_ordinal(),
+        absl::StrCat("expected device_ordinal ", expected_ordinal,
                      " not equal to device_ordinal ", device_ordinal));
   }
   return wrapped_;
@@ -159,14 +168,14 @@ MultiDeviceAdapter::MultiDeviceAdapter(const Platform* platform,
     CHECK(!per_device_allocators[device_ordinal]);
     if (info.stream != nullptr) {
       per_device_allocators[device_ordinal] =
-          std::make_shared<TfAllocatorAdapter>(info.allocator.get(),
-                                               info.stream, info.min_alignment,
-                                               info.allocation_end);
+          std::make_shared<TfAllocatorAdapter>(
+              info.allocator.get(), info.stream, info.min_alignment,
+              info.allocation_end, device_ordinal);
     } else {
       per_device_allocators[device_ordinal] =
           std::make_shared<TfAllocatorAdapter>(
               info.allocator.get(), info.platform, info.min_alignment,
-              info.allocation_end);
+              info.allocation_end, device_ordinal);
     }
     VLOG(3) << absl::StrFormat(
         "MultiDeviceAdapter: device_ordinal=%d memory_space=%d "
@@ -188,8 +197,8 @@ absl::StatusOr<ScopedDeviceAddress<uint8_t>> MultiDeviceAdapter::Allocate(
         device_ordinal, " and memory space ", memory_space));
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto result,
-                   it->second[device_ordinal]->Allocate(
+  ABSL_ASSIGN_OR_RETURN(
+      auto result, it->second[device_ordinal]->Allocate(
                        device_ordinal, size, retry_on_failure, memory_space));
 
   absl::MutexLock lock(mu_);
@@ -224,7 +233,8 @@ absl::Status MultiDeviceAdapter::Deallocate(int device_ordinal,
       // this case we are falling back to the first allocator to deallocate
       // the memory.
       // See b/325527293 for more details.
-      ABSL_ASSIGN_OR_RETURN(auto allocator, GetDefaultAllocator(device_ordinal));
+      ABSL_ASSIGN_OR_RETURN(auto allocator,
+                            GetDefaultAllocator(device_ordinal));
       return allocator->Deallocate(device_ordinal, mem);
     }
     memory_space = it->second;

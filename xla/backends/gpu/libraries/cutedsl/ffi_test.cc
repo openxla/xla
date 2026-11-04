@@ -13,16 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
+#include "tsl/platform/path.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/error_spec.h"
-#include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla::gpu {
 namespace {
@@ -34,7 +35,7 @@ TEST_F(CuteDslCustomCallTest, RunVectorAdd) {
       tsl::io::JoinPath(tsl::testing::XlaSrcRoot(), "backends", "gpu",
                         "libraries", "cutedsl", "vector_add.hlo");
   std::string hlo_text;
-  TF_ASSERT_OK(tsl::ReadFileToString(tsl::Env::Default(), hlo_path, &hlo_text));
+  ASSERT_OK(tsl::ReadFileToString(tsl::Env::Default(), hlo_path, &hlo_text));
 
   std::string reference_hlo_text = R"(
     HloModule reference, entry_computation_layout={(f32[1024]{0}, f32[1024]{0})->f32[1024]{0}}

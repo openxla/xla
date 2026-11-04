@@ -24,10 +24,10 @@ limitations under the License.
 #include "absl/base/macros.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_module.h"
 #include "tsl/profiler/lib/nvtx_utils.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 
 namespace xla::gpu {
 
@@ -169,12 +169,6 @@ const ModuleAnnotations* GetCurrentModuleAnnotations();
 
 std::optional<tsl::profiler::ScopedAnnotation> GetInstructionAnnotation(
     absl::string_view profile_annotation);
-
-ABSL_DEPRECATE_AND_INLINE()
-inline std::optional<tsl::profiler::ScopedAnnotation> GetKernelAnnotation(
-    absl::string_view profile_annotation) {
-  return GetInstructionAnnotation(profile_annotation);
-}
 
 }  // namespace xla::gpu
 

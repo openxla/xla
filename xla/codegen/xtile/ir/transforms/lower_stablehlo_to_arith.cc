@@ -127,6 +127,9 @@ class LowerStableHloOpToArith : public mlir::OpRewritePattern<StableHloOp> {
         new_op = UnsignedIntArithOp::create(rewriter, op.getLoc(),
                                             signless_operands.front().getType(),
                                             signless_operands);
+        if constexpr (std::is_same_v<UnsignedIntArithOp, mlir::math::IPowIOp>) {
+          new_op->setAttr("xla.is_unsigned", rewriter.getUnitAttr());
+        }
 
         rewriter.replaceOpWithNewOp<mlir::UnrealizedConversionCastOp>(
             op, op.getResult().getType(), new_op->getResult(0));
@@ -371,16 +374,18 @@ absl::StatusOr<Value> LowerConvert(ImplicitLocOpBuilder& builder, Location loc,
           mlir::stablehlo::RealOp::create(builder, loc, real_src_ty, value);
       Value imag_input =
           mlir::stablehlo::ImagOp::create(builder, loc, real_src_ty, value);
-      ABSL_ASSIGN_OR_RETURN(Value real_part, LowerConvert(builder, loc, real_input,
-                                                     real_src_ty, real_ty));
-      ABSL_ASSIGN_OR_RETURN(Value imag_part, LowerConvert(builder, loc, imag_input,
-                                                     real_src_ty, real_ty));
+      ABSL_ASSIGN_OR_RETURN(
+          Value real_part,
+          LowerConvert(builder, loc, real_input, real_src_ty, real_ty));
+      ABSL_ASSIGN_OR_RETURN(
+          Value imag_part,
+          LowerConvert(builder, loc, imag_input, real_src_ty, real_ty));
       return mlir::stablehlo::ComplexOp::create(builder, loc, dst_ty, real_part,
                                                 imag_part)
           .getResult();
     }
     ABSL_ASSIGN_OR_RETURN(Value real_part,
-                     LowerConvert(builder, loc, value, src_ty, real_ty));
+                          LowerConvert(builder, loc, value, src_ty, real_ty));
     Value imag_part = ZerosLike(builder, real_part);
     return mlir::stablehlo::ComplexOp::create(builder, loc, dst_ty, real_part,
                                               imag_part)
@@ -522,6 +527,20 @@ class LowerCompareOp
   }
 };
 
+class LowerFmaOp : public mlir::OpRewritePattern<mlir::stablehlo::FmaOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+ private:
+  mlir::LogicalResult matchAndRewrite(
+      mlir::stablehlo::FmaOp op,
+      mlir::PatternRewriter& rewriter) const override {
+    rewriter.replaceOpWithNewOp<mlir::math::FmaOp>(op, op.getA(), op.getB(),
+                                                   op.getC());
+    return mlir::success();
+  }
+};
+
 struct StablehloLowerToArithPass
     : public impl::StablehloLowerToArithPassBase<StablehloLowerToArithPass> {
   using StablehloLowerToArithPassBase::StablehloLowerToArithPassBase;
@@ -557,7 +576,7 @@ struct StablehloLowerToArithPass
         LowerStableHloNegOpToArith,
         LowerStableHloUnaryOpToMath<mlir::stablehlo::RoundNearestEvenOp,
                                     mlir::math::RoundEvenOp>,
-        LowerConvertOp, LowerCompareOp>(mlir_context);
+        LowerConvertOp, LowerCompareOp, LowerFmaOp>(mlir_context);
 
     if (mlir::failed(
             mlir::applyPatternsGreedily(getOperation(), std::move(patterns)))) {

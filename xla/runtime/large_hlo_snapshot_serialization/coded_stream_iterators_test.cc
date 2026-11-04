@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/runtime/large_hlo_snapshot_serialization/coded_stream_iterators.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 
-#include <gtest/gtest.h>
 #include "tsl/platform/protobuf.h"
 
 namespace xla {

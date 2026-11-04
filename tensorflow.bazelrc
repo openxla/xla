@@ -81,13 +81,10 @@ common --@rules_python//python/config_settings:bootstrap_impl=script --repo_env=
 
 common --incompatible_default_to_explicit_init_py
 
-# Use a downloader config to mirror GitHub and Python package downloads.
+# Use a downloader config to mirror GitHub, Python package, and BCR downloads.
 # We use the experimental_ name for better compatibility with different Bazel versions.
-build --experimental_downloader_config=bazel_downloader.cfg
-test --experimental_downloader_config=bazel_downloader.cfg
-fetch --experimental_downloader_config=bazel_downloader.cfg
-sync --experimental_downloader_config=bazel_downloader.cfg
-query --experimental_downloader_config=bazel_downloader.cfg
+common --experimental_downloader_config=bazel_downloader.cfg
+common --experimental_repository_downloader_retries=5
 
 # For local build, without dependency on rbe
 common:linux_cpu --config=avx_linux
@@ -142,6 +139,13 @@ common --incompatible_enforce_config_setting_visibility
 # TODO: also enable this flag after fixing the visibility violations
 # common --incompatible_config_setting_private_default_visibility
 
+# external_include_paths feature forces passing external repositories headers
+# via -isystem alters how Clang resolves their file paths. This feature with
+# old versions of rules_cc triggering errors.
+# Following lines can be removed after rules_cc will be updated to >= 0.2.22
+common --features=-external_include_paths
+common --host_features=-external_include_paths
+
 # Print a stacktrace when a test is killed
 build --test_env="GTEST_INSTALL_FAILURE_SIGNAL_HANDLER=1"
 
@@ -180,10 +184,16 @@ common:monolithic --experimental_link_static_libraries_once=false  # b/229868128
 # Config setting to build oneDNN with Compute Library for the Arm Architecture (ACL).
 # with Eigen threadpool support
 common:mkl_aarch64_threadpool --define=build_with_mkl_aarch64=true
+common:mkl_aarch64_threadpool --@compute_library//:openmp=false
 common:mkl_aarch64_threadpool -c opt
 
 # This is an alias for the mkl_aarch64_threadpool build.
 common:mkl_aarch64 --config=mkl_aarch64_threadpool
+
+# Config setting to build oneDNN with async runtime support on AArch64.
+common:onednn_async_aarch64 --define=build_with_onednn_async=true
+common:onednn_async_aarch64 --define=ynn_enable_arm64_neonfp8=false
+common:onednn_async_aarch64 -c opt
 
 # Default CUDA, CUDNN, NCCL and NVSHMEM versions.
 common:cuda_version --repo_env=HERMETIC_CUDA_VERSION="13.2.0"
@@ -250,6 +260,8 @@ common:nvcc_clang --config=cuda_nvcc
 common:cuda_nvcc_clang_local --config=cuda_nvcc
 common:cuda_nvcc_clang_local --config=clang_local
 common:cuda_nvcc_clang_local --crosstool_top=@local_config_cuda//crosstool:toolchain
+common:cuda_nvcc_clang_local --host_linkopt="-lm"
+common:cuda_nvcc_clang_local --linkopt="-lm"
 
 # Debug config. Enables Bazel's 'dbg' compilation mode, build with debugging enabled
 common:dbg -c dbg
@@ -263,13 +275,21 @@ common:dbg --per_file_copt=+.*,-xla.*@-g0
 # AWS SDK must be compiled in release mode. see: https://github.com/tensorflow/tensorflow/issues/37498
 common:dbg --copt -DDEBUG_BUILD
 
+common:asan --features=asan
+common:asan --host_features=-asan
 common:asan --strip=never
-common:asan --copt -fsanitize=address
+common:asan --copt=-fno-omit-frame-pointer
 common:asan --copt -DADDRESS_SANITIZER
 common:asan --copt -O1
-common:asan --copt -g
-common:asan --copt -fno-omit-frame-pointer
-common:asan --linkopt -fsanitize=address
+common:asan --copt=-gmlt
+common:asan --per_file_copt=+.*,-xla.*@-g0
+common:asan --action_env=ASAN_OPTIONS=detect_leaks=0
+common:asan --host_action_env=ASAN_OPTIONS=detect_leaks=0
+common:asan --@rules_ml_toolchain//common:asan_options=detect_leaks=0
+
+common:asan_shared --config=asan
+common:asan_shared --copt=-shared-libasan
+common:asan_shared --linkopt=-shared-libasan
 
 common:rocm_base --copt=-Wno-gnu-offsetof-extensions
 common:rocm_base --define=using_rocm_hipcc=true
@@ -293,8 +313,8 @@ common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_cuda=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_sycl=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_hermetic_cc=True
 common:rocm_clang_hermetic --@local_config_rocm//rocm:rocm_path_type=hermetic
-common:rocm_clang_hermetic --strategy=CppLink=local
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:static_libcxx=False
+common:rocm_clang_hermetic --strategy=CppLink=local
 
 common:rocm --config=rocm_clang_hermetic
 common:rocm_ci --config=rocm
@@ -302,9 +322,9 @@ common:rocm_ci --@local_config_rocm//rocm:rocm_path_type=hermetic
 
 common:rocm_ci_hermetic --dynamic_mode=fully
 common:rocm_ci_hermetic --@rules_ml_toolchain//common:enable_xla_test_global_symbol_version=True
+common:rocm_ci_hermetic --@rules_ml_toolchain//common:enable_hermetic_libraries=True
 common:rocm_ci_hermetic --config=rocm_clang_hermetic
-common:rocm_ci_hermetic --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a"
-common:rocm_ci_hermetic --repo_env=ROCM_DISTRO_VERSION="rocm_7.13.0_gfx90a"
+common:rocm_ci_hermetic --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx950"
 common:rocm_ci_hermetic --repo_env=SYSROOT_DIST=linux_glibc_2_31
 common:rocm_ci_hermetic --@local_config_rocm//rocm:rocm_path_type=hermetic
 
@@ -514,7 +534,8 @@ common:rbe_base --remote_timeout=3600
 common:rbe_base --spawn_strategy=remote,worker,standalone,local
 # Attempt to minimize the amount of data transfer between bazel and the remote
 # workers:
-common:rbe_base --remote_download_toplevel
+common:rbe_base --remote_download_minimal
+common:rbe_base --nobuild_runfile_links
 build:rbe_base --test_env=USER=anon
 
 # TODO(kanglan): Check if we want to merge rbe_linux into rbe_linux_cpu.
@@ -575,14 +596,12 @@ common:rbe_win_base --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 common:rbe_win_base --shell_executable=C:\\tools\\msys64\\usr\\bin\\bash.exe
 common:rbe_win_base --remote_instance_name=projects/tensorflow-testing/instances/windows
 # Don't build the python zip archive in the RBE build.
-common:rbe_win_base --remote_download_minimal
 common:rbe_win_base --enable_runfiles
 common:rbe_win_base --nobuild_python_zip
-# Don't build the runfile links in the RBE build which is expensive on Windows.
-common:rbe_win_base --nobuild_runfile_links
 common:rbe_win_base --define=override_eigen_strong_inline=true
 
 common:rbe_windows_x86_cpu_2022 --config=rbe_win_base --config=windows_x86_cpu_2022
+common:rbe_windows_x86_cpu_2022 --features=-with_wrapper
 
 # Override the remote instance and BES instance names to use the new RBE pools
 common:rbe_windows_x86_cpu_2022 --remote_instance_name=projects/ml-oss-rbe-general/instances/default_instance
@@ -680,15 +699,6 @@ common:tf_public_macos_cache_push --config=tf_public_macos_cache --remote_upload
 # flags seem to be actually used to specify the execution platform details. It
 # seems it is this way because these flags are old and predate the distinction
 # between host and execution platform.
-common:cross_compile_base --config=clang_local
-common:cross_compile_base --host_cpu=k8
-common:cross_compile_base --host_crosstool_top=//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
-common:cross_compile_base --extra_execution_platforms=//tools/toolchains/cross_compile/config:linux_x86_64
-common:cross_compile_base --extra_toolchains=//tools/toolchains/cross_compile/cc:linux_x86_toolchain
-# Map XLA-owned cross-compile platforms to legacy --cpu values and vice versa
-# so platform-based selects remain compatible with legacy toolchain flags.
-common:cross_compile_base --platform_mappings=tools/toolchains/cross_compile/config/platform_mappings
-
 common:rbe_cross_compile_base --config=rbe_base
 common:rbe_cross_compile_base --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 common:rbe_cross_compile_base --remote_instance_name=projects/tensorflow-testing/instances/default_instance
@@ -700,13 +710,10 @@ test:rbe_cross_compile_base --strategy=TestRunner=local --build_tests_only
 test:rbe_cross_compile_base --verbose_failures=true --local_test_jobs=HOST_CPUS --test_output=errors
 
 # START LINUX AARCH64 CROSS-COMPILE CONFIGS
-common:cross_compile_linux_arm64 --config=cross_compile_base
-
-# Set the target CPU to Aarch64
-common:cross_compile_linux_arm64 --platforms=//tools/toolchains/cross_compile/config:linux_aarch64
 common:cross_compile_linux_arm64 --cpu=aarch64
-common:cross_compile_linux_arm64 --crosstool_top=//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
-common:cross_compile_linux_arm64 --extra_toolchains=//tools/toolchains/cross_compile/cc:linux_aarch64_toolchain
+common:cross_compile_linux_arm64 --platforms=//tools/toolchains:linux_aarch64
+common:cross_compile_linux_arm64 --host_cpu=k8
+common:cross_compile_linux_arm64 --extra_execution_platforms=//tools/toolchains:rbe_linux_x86_64
 common:cross_compile_linux_arm64 --define=ynn_enable_arm64_neonfp8=false
 
 # RBE cross-compile configs for Linux Aarch64
@@ -715,35 +722,6 @@ common:rbe_cross_compile_linux_arm64 --config=rbe_cross_compile_base
 test:rbe_cross_compile_linux_arm64 --config=rbe_cross_compile_base
 
 # END LINUX AARCH64 CROSS-COMPILE CONFIGS
-
-# START MACOS CROSS-COMPILE CONFIGS
-common:cross_compile_macos_x86 --config=cross_compile_base
-common:cross_compile_macos_x86 --config=nonccl
-# Target Catalina (10.15) as the minimum supported OS
-common:cross_compile_macos_x86 --action_env  MACOSX_DEPLOYMENT_TARGET=10.15
-
-# Set the target CPU to Darwin x86
-common:cross_compile_macos_x86 --platforms=//tools/toolchains/cross_compile/config:darwin_x86_64
-common:cross_compile_macos_x86 --cpu=darwin
-common:cross_compile_macos_x86 --crosstool_top=//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
-# When RBE cross-compiling for macOS, we need to explicitly register the
-# toolchain. Otherwise, oddly, RBE complains that a "docker container must be
-# specified".
-common:cross_compile_macos_x86 --extra_toolchains=//tools/toolchains/cross_compile/config:macos-x86-cross-compile-cc-toolchain
-
-# RBE cross-compile configs for Darwin x86
-common:rbe_cross_compile_macos_x86 --config=cross_compile_macos_x86 --remote_download_minimal
-common:rbe_cross_compile_macos_x86 --bes_backend="" --bes_results_url="" --bes_timeout="0s"
-common:rbe_cross_compile_macos_x86 --experimental_remote_build_event_upload="minimal"
-common:rbe_cross_compile_macos_x86 --config=rbe_cross_compile_base
-common:rbe_cross_compile_macos_x86 --bes_upload_mode=nowait_for_upload_complete
-test:rbe_cross_compile_macos_x86 --config=rbe_cross_compile_base
-# Increase the test timeout as tests often take longer on mac.
-test:rbe_cross_compile_macos_x86 --test_timeout=300,450,1200,3600
-# Limit jobs to 100 to avoid running into "out of memory" issues (b/316266643)
-common:rbe_cross_compile_macos_x86 --jobs=100
-test:rbe_cross_compile_macos_x86 --jobs=100
-# END MACOS CROSS-COMPILE CONFIGS
 # END CROSS-COMPILE CONFIGS
 
 # START PJRT RELEASE CONFIGS

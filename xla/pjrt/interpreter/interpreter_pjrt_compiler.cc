@@ -54,12 +54,13 @@ InterpreterPjRtCompiler::Compile(CompileOptions options,
                                  const XlaComputation& computation,
                                  const PjRtTopologyDescription& topology,
                                  PjRtClient* client) {
-  ABSL_ASSIGN_OR_RETURN(const InterpreterTopologyDescription* interpreter_topology,
-                   GetInterpreterTopology(topology));
+  ABSL_ASSIGN_OR_RETURN(
+      const InterpreterTopologyDescription* interpreter_topology,
+      GetInterpreterTopology(topology));
 
-  ABSL_ASSIGN_OR_RETURN(auto executable,
-                   CompileInterpreterExecutable(computation, std::move(options),
-                                                *interpreter_topology));
+  ABSL_ASSIGN_OR_RETURN(auto executable, CompileInterpreterExecutable(
+                                             computation, std::move(options),
+                                             *interpreter_topology));
   return std::unique_ptr<PjRtExecutable>(std::move(executable));
 }
 
@@ -68,12 +69,14 @@ InterpreterPjRtCompiler::Compile(CompileOptions options,
                                  MaybeOwningMlirModule module,
                                  const PjRtTopologyDescription& topology,
                                  PjRtClient* client) {
-  ABSL_ASSIGN_OR_RETURN(const InterpreterTopologyDescription* interpreter_topology,
-                   GetInterpreterTopology(topology));
+  ABSL_ASSIGN_OR_RETURN(
+      const InterpreterTopologyDescription* interpreter_topology,
+      GetInterpreterTopology(topology));
 
-  ABSL_ASSIGN_OR_RETURN(auto executable, CompileInterpreterExecutable(
-                                        std::move(module), std::move(options),
-                                        *interpreter_topology));
+  ABSL_ASSIGN_OR_RETURN(
+      auto executable,
+      CompileInterpreterExecutable(std::move(module), std::move(options),
+                                   *interpreter_topology));
   return std::unique_ptr<PjRtExecutable>(std::move(executable));
 }
 

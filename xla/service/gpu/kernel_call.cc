@@ -74,7 +74,7 @@ absl::StatusOr<KernelCall> KernelCall::Parse(absl::string_view backend_config,
   }
   auto kernel_type_str = kernel_type_attr.getValue().str();
   ABSL_ASSIGN_OR_RETURN(KernelCall::KernelType kernel_type,
-                   ParseKernelType(kernel_type_str));
+                        ParseKernelType(kernel_type_str));
 
   // Check for required "kernel_data" field
   auto kernel_data_attr = attrs.getAs<mlir::StringAttr>("kernel_data");

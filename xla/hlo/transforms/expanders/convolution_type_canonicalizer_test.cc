@@ -15,10 +15,11 @@
 
 #include "xla/hlo/transforms/expanders/convolution_type_canonicalizer.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -139,6 +140,29 @@ ENTRY main {
   ConvolutionTypeCanonicalizer pass;
   ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
   EXPECT_FALSE(changed);
+}
+
+TEST_F(ConvolutionTypeCanonicalizerTest, DotF64ToS64UsesF64Intermediate) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  p0 = f64[10,10]{1,0} parameter(0)
+  p1 = f64[10,10]{1,0} parameter(1)
+  ROOT dot = s64[10,10]{1,0} dot(p0, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  ConvolutionTypeCanonicalizer pass;
+  ASSERT_OK_AND_ASSIGN(bool changed, pass.Run(module.get()));
+  EXPECT_TRUE(changed);
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root,
+              op::Convert(AllOf(
+                  op::Dot(op::Parameter(0), op::Parameter(1)),
+                  xla::testing::opcode_matchers::Shape("f64[10,10]{1,0}"))));
+  EXPECT_THAT(root, xla::testing::opcode_matchers::Shape("s64[10,10]{1,0}"));
 }
 
 }  // namespace

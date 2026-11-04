@@ -17,9 +17,10 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include "tsl/platform/test.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/pattern_matcher.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace {

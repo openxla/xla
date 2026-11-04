@@ -191,7 +191,8 @@ absl::StatusOr<DependencyTracker> BuildDependencyTracker(
     }
     for (HloInstruction* control_pred : instruction->control_predecessors()) {
       if (control_pred == instruction) {
-        ABSL_RETURN_IF_ERROR(control_pred->RemoveControlDependencyTo(instruction));
+        ABSL_RETURN_IF_ERROR(
+            control_pred->RemoveControlDependencyTo(instruction));
       } else if (predecessors.insert(control_pred).second) {
         tracker.successors[control_pred].push_back(instruction);
       }
@@ -302,7 +303,7 @@ absl::Status HloSchedule::UpdateComputationSchedule(
 
   // Build in-degree dependency tracking for all instructions.
   ABSL_ASSIGN_OR_RETURN(DependencyTracker tracker,
-                   BuildDependencyTracker(computation, ids_in_schedule));
+                        BuildDependencyTracker(computation, ids_in_schedule));
 
   // Reconstruct schedule in topological order.
   set_sequence(computation,

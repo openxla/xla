@@ -33,14 +33,14 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "xla/stream_executor/gpu/gpu_init.h"
-#include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/test.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/test.h"
+#include "xla/stream_executor/gpu/gpu_init.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/test.h"
 
 namespace stream_executor::gpu {
 

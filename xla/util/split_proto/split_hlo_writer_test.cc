@@ -15,17 +15,18 @@ limitations under the License.
 
 #include "xla/util/split_proto/split_hlo_writer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/tsl/util/proto/parse_text_proto.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
-#include "xla/service/hlo.pb.h"
 #include "xla/util/split_proto/split_proto_reader.h"
 
 namespace xla {
@@ -43,7 +44,7 @@ TEST(SplitHloWriterTest, WriteHloProto) {
         instructions {
           name: "test_instruction"
           opcode: "add"
-          operand_ids: [0]
+          operand_ids: [ 0 ]
         }
       }
       computations {
@@ -51,17 +52,11 @@ TEST(SplitHloWriterTest, WriteHloProto) {
         instructions {
           name: "test_instruction"
           opcode: "add"
-          operand_ids: [0]
+          operand_ids: [ 0 ]
         }
       }
     }
-    buffer_assignment {
-      logical_buffers {
-        id: 1
-        size: 1024
-        color: 0
-      }
-    }
+    buffer_assignment { logical_buffers { id: 1 size: 1024 color: 0 } }
   )pb");
 
   std::string serialized;

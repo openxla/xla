@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_stream.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -356,6 +357,12 @@ TEST_F(CudaStreamTest, DoHostCallbackWithStatusError) {
 }
 
 TEST_F(CudaStreamTest, CaptureStreamIsolation) {
+  if (executor_->GetDeviceDescription().driver_version() <
+      SemanticVersion{12, 3, 0}) {
+    GTEST_SKIP()
+        << "Stream capture to graph requires CUDA driver 12.3 or newer";
+  }
+
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
                        CudaStream::Create(executor_,
                                           /*priority=*/std::nullopt));
@@ -401,6 +408,12 @@ TEST_F(CudaStreamTest, CaptureStreamIsolation) {
 }
 
 TEST_F(CudaStreamTest, NestedCaptureFails) {
+  if (executor_->GetDeviceDescription().driver_version() <
+      SemanticVersion{12, 3, 0}) {
+    GTEST_SKIP()
+        << "Stream capture to graph requires CUDA driver 12.3 or newer";
+  }
+
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
                        CudaStream::Create(executor_,
                                           /*priority=*/std::nullopt));

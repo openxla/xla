@@ -33,11 +33,11 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace primitive_util {
@@ -466,6 +466,15 @@ constexpr bool IsFloatingPointType(PrimitiveType type) {
          IsF8Type(type) || IsF6Type(type) || IsMXType(type);
 }
 
+// Returns true if `type` is a floating-point type with `exponent_bits` exponent
+// bits and `mantissa_bits` explicit mantissa bits (excluding the implicit
+// leading bit).
+inline bool HasFloatingPointPrecision(PrimitiveType type, int exponent_bits,
+                                      int mantissa_bits) {
+  return IsFloatingPointType(type) && exponent_bits == ExponentWidth(type) &&
+         mantissa_bits == SignificandWidth(type) - 1;
+}
+
 // Returns true if the given primitive type is a complex type.
 constexpr bool IsComplexType(PrimitiveType type) {
   return type == C64 || type == C128;
@@ -818,6 +827,32 @@ inline constexpr int StorageBitWidth(PrimitiveType type) {
 // if the type is not an array type.
 inline constexpr int ByteWidth(PrimitiveType type) {
   return internal::WidthForType<internal::kByteWidths>(type);
+}
+
+// If `type` is an array type, returns the result of applying polymorphic
+// functor f on a canonical PrimitiveTypeConstant<kType> value with the same
+// ByteWidth(type) (U8 for 1-byte, U16 for 2-byte, U32 for 4-byte, U64 for
+// 8-byte, and C128 for 16-byte types); otherwise crashes.
+template <typename F>
+constexpr decltype(auto) ByteWidthTypeSwitch(F&& f, PrimitiveType type) {
+  if (ABSL_PREDICT_TRUE(IsArrayType(type))) {
+    switch (ByteWidth(type)) {
+      case 1:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U8>());
+      case 2:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U16>());
+      case 4:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U32>());
+      case 8:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::U64>());
+      case 16:
+        return std::forward<F>(f)(PrimitiveTypeConstant<PrimitiveType::C128>());
+      default:
+        LOG(FATAL) << "Unexpected byte width " << ByteWidth(type)
+                   << " for type " << type;
+    }
+  }
+  LOG(FATAL) << "Not an array data type " << type;
 }
 
 // Returns the primitive type for the unsigned integral type with the given

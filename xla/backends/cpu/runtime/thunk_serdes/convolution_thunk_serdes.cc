@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/cpu/runtime/convolution_dims.h"
 #include "xla/backends/cpu/runtime/convolution_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 namespace {

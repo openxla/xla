@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/numeric/bits.h"
+#include "google/protobuf/text_format.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -45,7 +46,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "google/protobuf/text_format.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/codegen/device_spec.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/atomic_rmw_utils.h"
@@ -53,7 +54,6 @@ limitations under the License.
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace emitters {
@@ -160,8 +160,9 @@ mlir::VectorType GetVectorType(mlir::RankedTensorType tensor_type,
       !absl::has_single_bit(static_cast<unsigned int>(*vector_size))) {
     return nullptr;  // Unsupported vector size.
   }
-  if (tensor_type.getElementTypeBitWidth() * *vector_size > 256) {
-    return nullptr;  // Vector size is too large.
+  int vector_bit_width = tensor_type.getElementTypeBitWidth() * *vector_size;
+  if (vector_bit_width < 8 || vector_bit_width > 256) {
+    return nullptr;  // Vector size is not byte-aligned or is too large.
   }
   if (tensor_type.getShape().back() % *vector_size) {
     return nullptr;  // Misaligned start indices.
@@ -386,7 +387,7 @@ class VectorizeAtomicRMW : public mlir::OpRewritePattern<AtomicRMWOp> {
     b.setInsertionPoint(loop);
     auto atomic_modifier_parameters = emitters::GetAtomicModifierParameters(op);
     if (!atomic_modifier_parameters.has_value() ||
-        atomic_modifier_parameters->second != ml::AtomicBinOp::fadd) {
+        atomic_modifier_parameters->bin_op != ml::AtomicBinOp::fadd) {
       return rewriter.notifyMatchFailure(op,
                                          "atomic modifier is not vectorizable. "
                                          "Currently only supporting fadd.");
@@ -407,9 +408,12 @@ class VectorizeAtomicRMW : public mlir::OpRewritePattern<AtomicRMWOp> {
       auto induction_var =
           mlir::cast<scf::ForOp>(bbarg.front().getOwner()->getParentOp())
               .getInductionVar();
+      Value modifier = atomic_modifier_parameters->modifier;
+      if (atomic_modifier_parameters->negated) {
+        modifier = arith::NegFOp::create(yield_b, yield_loc, modifier);
+      }
       auto insert_op = mlir::vector::InsertOp::create(
-          yield_b, yield_loc, atomic_modifier_parameters->first, bbarg.front(),
-          induction_var);
+          yield_b, yield_loc, modifier, bbarg.front(), induction_var);
       return llvm::SmallVector<Value>{insert_op.getResult()};
     };
     int result_index = op->use_begin()->getOperandNumber();

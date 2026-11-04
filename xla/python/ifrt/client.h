@@ -43,10 +43,13 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/index.h"
+#include "xla/python/ifrt/index_domain.h"
 #include "xla/python/ifrt/layout.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/remap_plan.h"
 #include "xla/python/ifrt/rtti.h"
+#include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/topology.h"
@@ -64,6 +67,27 @@ using PlatformId = ::xla::PjRtPlatformId;
 // TODO(hyeontaek): Generalize DeviceAssignment or hide it from the top-level
 // API.
 using DeviceAssignment = ::xla::DeviceAssignment;
+
+// Abstract options for loading an `Executable` as `LoadedExecutable`.
+struct LoadOptions : RTTIExtends<LoadOptions, Serializable> {
+  LoadOptions() = default;
+
+  LoadOptions(DeviceListRef devices,
+              std::optional<std::vector<int>> outputs_bundle_slice_sizes)
+      : devices(std::move(devices)),
+        outputs_bundle_slice_sizes(std::move(outputs_bundle_slice_sizes)) {}
+
+  // The devices to load the executable onto.
+  DeviceListRef devices;
+
+  // When executing the program with `LoadedExecutable::ExecuteBundle()`, apply
+  // `Bundle::Slice()` to the execution output. If `std::nullopt`, the output is
+  // a single `Bundle` containing all output values. The sum of the slice sizes
+  // must match the number of output values.
+  std::optional<std::vector<int>> outputs_bundle_slice_sizes;
+
+  static char ID;  // NOLINT
+};
 
 // Represents an IFRT client. It wraps a runtime that interacts with computation
 // devices and memory attached to it.
@@ -248,9 +272,10 @@ class Client : public RTTIExtends<Client, RTTIRoot> {
   // devices without altering their physical layout.
   //
   // This API should be used only with arrays that have the same source device
-  // list and memory kind. Every IFRT implementation must enforce this by
-  // returning an `INVALID_ARGUMENT` error if `arrays` contains different device
-  // lists or memory kinds.
+  // list (when `devices` is specified) and memory kind. Every IFRT
+  // implementation must enforce this by returning an `INVALID_ARGUMENT` error
+  // if `arrays` contains different device lists (when `devices` is specified)
+  // or memory kinds.
   //
   // Implementations may return `UNIMPLEMENTED` if they do not know how to copy
   // the data as instructed.
@@ -260,6 +285,24 @@ class Client : public RTTIExtends<Client, RTTIRoot> {
   virtual absl::StatusOr<std::vector<ArrayRef>> CopyArrays(
       absl::Span<ArrayRef> arrays, std::optional<DeviceListRef> devices,
       std::optional<MemoryKind> memory_kind, ArrayCopySemantics semantics) = 0;
+
+  // Copies `arrays` to the devices and memory kinds of `donated_dst_arrays`,
+  // reusing the underlying buffers of `donated_dst_arrays` when supported by
+  // the runtime. `donated_dst_arrays` are donated.
+  // If `semantics == kDonateInput`, `arrays` are also donated (`kReuseInput` is
+  // not supported).
+  //
+  // The layouts of the resulting arrays are determined by the same rules as
+  // `CopyArrays()`, disregarding any layout information from
+  // `donated_dst_arrays`.
+  //
+  // All `arrays` must share the same source device list and memory kind, and
+  // all `donated_dst_arrays` must share the same destination device list and
+  // memory kind. For each `i`, `arrays[i]` and `donated_dst_arrays[i]` must
+  // have matching shard byte sizes on the destination devices.
+  virtual absl::StatusOr<std::vector<ArrayRef>> CopyArraysWithDonatedDst(
+      absl::Span<ArrayRef> arrays, absl::Span<ArrayRef> donated_dst_arrays,
+      ArrayCopySemantics semantics) = 0;
 
   // Remaps shards across input `Array`s to create new `Array`s based on `plan`.
   // This array remapping is a metadata-only operation that can shuffle or
@@ -337,6 +380,36 @@ class Client : public RTTIExtends<Client, RTTIRoot> {
   virtual absl::StatusOr<std::vector<ArrayRef>> ReshardArrays(
       absl::Span<ArrayRef> arrays, absl::Span<const ArraySpec> specs,
       ArrayCopySemantics semantics) = 0;
+
+  // Copies a slice of each array in `arrays` specified by the corresponding
+  // `IndexDomain` in `index_domains` into a new array.
+  //
+  // For each `i`, `index_domains[i]` must be within the bounds of
+  // `arrays[i]->shape()` and intersect with at least one shard of `arrays[i]`,
+  // and all intersecting shards must have the same sliced shard shape. The
+  // output array has the same dtype, memory kind, and layout as `arrays[i]`,
+  // shape `index_domains[i].shape()`, and a sharding formed by the shards of
+  // `arrays[i]` that intersect with `index_domains[i]` (with non-intersecting
+  // shards omitted).
+  virtual absl::StatusOr<std::vector<ArrayRef>> CopyArraySlices(
+      absl::Span<const ArrayRef> arrays,
+      absl::Span<const IndexDomain> index_domains) = 0;
+
+  // Updates a slice of each array in `arrays` with the corresponding array in
+  // `slices` at the specified `origin` in `origins`.
+  //
+  // For each `i`, the slice region `IndexDomain(origins[i],
+  // slices[i]->shape())` must be within the bounds of `arrays[i]->shape()`, and
+  // `slices[i]` must have the same dtype, memory kind, layout, and sharding on
+  // the slice region as a slice copied from `arrays[i]` at that region.
+  //
+  // `arrays` are updated in place and the original arrays in `arrays` are
+  // deleted (equivalent to `ArrayCopySemantics::kDonateInput`). `slices` are
+  // copied without being donated (equivalent to
+  // `ArrayCopySemantics::kAlwaysCopy`).
+  virtual absl::StatusOr<std::vector<ArrayRef>> UpdateArraySlices(
+      absl::Span<ArrayRef> arrays, absl::Span<const ArrayRef> slices,
+      absl::Span<const Index> origins) = 0;
 
   // Returns a future that becomes ready once all of the values become ready.
   //
@@ -438,6 +511,15 @@ class Client : public RTTIExtends<Client, RTTIRoot> {
   // TODO(hyeontaek): Potentially remove this method to encourage supporting
   // only ahead-of-time compilation.
   virtual Compiler* GetDefaultCompiler() = 0;
+
+  // Loads executables onto devices as specified by `options`.
+  //
+  // `executables` and `options` must have the same size. `executables` may
+  // contain duplicates, e.g., when loading the same executable onto different
+  // sets of devices.
+  virtual absl::StatusOr<std::vector<tsl::Future<LoadedExecutableRef>>> Load(
+      absl::Span<const ExecutableRef> executables,
+      absl::Span<std::unique_ptr<LoadOptions>> options) = 0;
 
   // Returns a topology that covers the provided devices.
   virtual absl::StatusOr<std::shared_ptr<Topology>> GetTopologyForDevices(

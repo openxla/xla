@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/hlo/tools/hlo_diff/graph/utils/cycle_detector.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/tools/hlo_diff/graph/hlo_gumgraph_node.h"

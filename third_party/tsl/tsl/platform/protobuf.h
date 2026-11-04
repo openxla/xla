@@ -22,8 +22,8 @@ limitations under the License.
 #include <utility>
 
 #include "absl/strings/cord.h"
-#include "xla/tsl/platform/types.h"
 #include "tsl/platform/platform.h"
+#include "xla/tsl/platform/types.h"
 
 // Import whatever namespace protobuf comes from into the
 // ::tsl::protobuf namespace.
@@ -32,9 +32,9 @@ limitations under the License.
 // refer to all protobuf APIs.
 
 // IWYU pragma: begin_exports
-#include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/arena.h"
 #include "google/protobuf/descriptor.h"
+#include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/dynamic_message.h"
 #include "google/protobuf/io/coded_stream.h"
 #include "google/protobuf/io/tokenizer.h"

@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/model/hlo_op_profiler.h"
 
-#include <unordered_set>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <unordered_set>
+
 #include "absl/container/flat_hash_set.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -33,9 +34,13 @@ namespace {
 class HloOpProfilerTest : public HloPjRtGpuTestBase {
  protected:
   void SetUp() override {
+    if (IsRocm()) {
+      GTEST_SKIP() << "Test timeouts in rocm";  // TODO ROCm fix timeout
+    }
+
     const auto& cap = device_description().gpu_compute_capability();
-    if (!cap.IsCuda() && !cap.IsRocm()) {
-      GTEST_SKIP() << "Not built with --config=cuda or --config=rocm";
+    if (!cap.IsCuda()) {
+      GTEST_SKIP() << "Not built with --config=cuda";
     }
   }
 
@@ -69,6 +74,14 @@ TEST_F(HloOpProfilerTest, UnsupportedCombinationsDoNotCrash) {
               absl_testing::StatusIs(tsl::error::INVALID_ARGUMENT));
 }
 
+TEST_F(HloOpProfilerTest, PowerCalibration) {
+  HloOpProfiler profiler(&test_runner(), &device_description());
+  EXPECT_FALSE(HloOpProfiler::Unsupported().count(HloOpcode::kPower));
+  auto profile = profiler.MeasureClockCyclesPerOp(HloOpcode::kPower, F32);
+  ASSERT_OK(profile);
+  EXPECT_GT(profile->clock_cycles(), 0);
+}
+
 TEST_F(HloOpProfilerTest, AllSupportedCombinationsAreMeasurable) {
   absl::flat_hash_set<HloOpcode> FloatTypes = {
       // go/keep-sorted start
@@ -85,6 +98,7 @@ TEST_F(HloOpProfilerTest, AllSupportedCombinationsAreMeasurable) {
       HloOpcode::kLog,
       HloOpcode::kLog1p,
       HloOpcode::kLogistic,
+      HloOpcode::kPower,
       HloOpcode::kReal,
       HloOpcode::kRoundNearestAfz,
       HloOpcode::kRoundNearestEven,

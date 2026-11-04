@@ -112,7 +112,8 @@ std::string ToString(const TensorTransformation* transformation) {
 }
 
 void ToProto(const TensorTransformation* transformation,
-             google::protobuf::RepeatedPtrField<TensorTransformationProto>* proto_field) {
+             google::protobuf::RepeatedPtrField<TensorTransformationProto>*
+                 proto_field) {
   while (transformation != nullptr) {
     TensorTransformationProto* proto = proto_field->Add();
     if (std::holds_alternative<Reshape>(*transformation)) {
@@ -147,7 +148,8 @@ void ToProto(const TensorTransformation* transformation,
 }
 
 ::absl::StatusOr<std::shared_ptr<const TensorTransformation>> FromProto(
-    const google::protobuf::RepeatedPtrField<TensorTransformationProto>& proto_field) {
+    const google::protobuf::RepeatedPtrField<TensorTransformationProto>&
+        proto_field) {
   std::shared_ptr<const TensorTransformation> transformation = nullptr;
   for (int i = proto_field.size() - 1; i >= 0; --i) {
     const auto& proto = proto_field.Get(i);

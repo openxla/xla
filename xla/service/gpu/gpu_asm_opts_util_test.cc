@@ -17,8 +17,9 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "xla/xla.pb.h"
+
 #include "tsl/platform/test.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {

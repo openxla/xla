@@ -63,11 +63,6 @@ SendThunk::SendThunk(ThunkInfo thunk_info, const P2PConfig& config,
       config_(config),
       hlo_name_(instr_name) {}
 
-absl::Status SendThunk::Initialize(const InitializeParams& params) {
-  ABSL_RETURN_IF_ERROR(CollectiveThunk::Initialize(params));
-  return absl::OkStatus();
-}
-
 absl::StatusOr<const se::CommandBuffer::Command*> SendThunk::Record(
     const ExecuteParams& execute_params, const RecordParams& record_params,
     RecordAction record_action, se::CommandBuffer* command_buffer) {
@@ -96,8 +91,8 @@ absl::StatusOr<std::unique_ptr<SendThunk>> SendThunk::FromProto(
     ThunkInfo thunk_info, const SendThunkProto& thunk_proto,
     absl::Span<const BufferAllocation> buffer_allocations) {
   ABSL_ASSIGN_OR_RETURN(CollectiveThunk::Buffer buffer,
-                   CollectiveThunk::Buffer::FromProto(thunk_proto.buffer(),
-                                                      buffer_allocations));
+                        CollectiveThunk::Buffer::FromProto(thunk_proto.buffer(),
+                                                           buffer_allocations));
 
   CollectiveConfig config =
       CollectiveConfig::FromProto(thunk_proto.collective_config());
@@ -166,8 +161,9 @@ absl::Status SendThunk::RunCollective(const ExecuteParams& params,
       send_buffer.source_memory_space,
       send_buffer.destination_memory_space};
 
-  ABSL_ASSIGN_OR_RETURN(const int64_t current_id,
-                   GetCollectiveCurrentId(params.collective_params, config_));
+  ABSL_ASSIGN_OR_RETURN(
+      const int64_t current_id,
+      GetCollectiveCurrentId(params.collective_params, config_));
   std::string device_string = GetDeviceString(*params.collective_params);
 
   const P2PConfig::SourceTargetMapEntry source_target =

@@ -19,7 +19,6 @@ limitations under the License.
 #include <functional>
 #include <iterator>
 #include <optional>
-#include <queue>
 #include <utility>
 #include <vector>
 
@@ -64,6 +63,8 @@ limitations under the License.
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/lowering_utils.h"
@@ -72,6 +73,7 @@ limitations under the License.
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
+#include "xla/hlo/analysis/interval.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -88,8 +90,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace emitters {
@@ -137,13 +137,14 @@ static auto& kUnsupportedOps =
                                    HloOpcode::kBatchNormInference,
                                    HloOpcode::kBatchNormTraining,
                                    HloOpcode::kCholesky,
+                                   HloOpcode::kCollectiveBroadcast,
                                    HloOpcode::kCollectivePermute,
                                    HloOpcode::kCollectivePermuteDone,
                                    HloOpcode::kCollectivePermuteStart,
+                                   HloOpcode::kCollectiveReduce,
                                    HloOpcode::kCopyDone,
                                    HloOpcode::kCopyStart,
                                    HloOpcode::kCustomCall,
-                                   HloOpcode::kDomain,
                                    HloOpcode::kDynamicReshape,
                                    HloOpcode::kFft,
                                    HloOpcode::kFusion,
@@ -152,6 +153,8 @@ static auto& kUnsupportedOps =
                                    HloOpcode::kInfeed,
                                    HloOpcode::kOutfeed,
                                    HloOpcode::kPartitionId,
+                                   HloOpcode::kRaggedAllToAll,
+                                   HloOpcode::kRaggedDot,
                                    HloOpcode::kRecv,
                                    HloOpcode::kRecvDone,
                                    HloOpcode::kReduceScatter,
@@ -159,11 +162,14 @@ static auto& kUnsupportedOps =
                                    HloOpcode::kRng,
                                    HloOpcode::kRngBitGenerator,
                                    HloOpcode::kRngGetAndUpdateState,
+                                   HloOpcode::kScaledDot,
+                                   HloOpcode::kScan,
                                    HloOpcode::kScatter,
                                    HloOpcode::kSelectAndScatter,
                                    HloOpcode::kSend,
                                    HloOpcode::kSendDone,
                                    HloOpcode::kSetDimensionSize,
+                                   HloOpcode::kShuffle,
                                    HloOpcode::kSort,
                                    HloOpcode::kTopK,
                                    HloOpcode::kTriangularSolve,
@@ -176,7 +182,7 @@ absl::StatusOr<Value> GetSingleOperandValue(
     const OperandProvider& operand_provider, const HloInstruction* instr,
     int operand_index, ValueRange indices) {
   ABSL_ASSIGN_OR_RETURN(auto operand,
-                   operand_provider(instr, operand_index, indices));
+                        operand_provider(instr, operand_index, indices));
   TF_RET_CHECK(operand.size() == 1) << "Expected operand to be a single value.";
   return operand.front();
 }
@@ -192,8 +198,9 @@ absl::StatusOr<SmallVector<Value, 1>> EmitReduce(
 
   SmallVector<Value, 1> init_values;
   for (int i = instr->operand_count() / 2; i < instr->operand_count(); ++i) {
-    ABSL_ASSIGN_OR_RETURN(init_values.emplace_back(),
-                     GetSingleOperandValue(operand_provider, instr, i, {}));
+    ABSL_ASSIGN_OR_RETURN(
+        init_values.emplace_back(),
+        GetSingleOperandValue(operand_provider, instr, i, {}));
   }
 
   auto body =
@@ -281,7 +288,7 @@ absl::StatusOr<SmallVector<Value, 1>> EmitConcat(
       operand_indices[concat_dim] = arith::SubIOp::create(
           b, indices[concat_dim], ConstantIndexOp::create(b, offsets[begin]));
       ABSL_ASSIGN_OR_RETURN(auto operand,
-                       operand_provider(instr, begin, operand_indices));
+                            operand_provider(instr, begin, operand_indices));
       return operand;
     }
 
@@ -332,8 +339,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDynamicSlice(
 
   const auto& input_shape = instr->operand(0)->shape();
   for (int i = 0; i < input_shape.dimensions().size(); ++i) {
-    ABSL_ASSIGN_OR_RETURN(auto offset,
-                     GetSingleOperandValue(operand_provider, instr, i + 1, {}));
+    ABSL_ASSIGN_OR_RETURN(
+        auto offset, GetSingleOperandValue(operand_provider, instr, i + 1, {}));
     offset =
         ClampIndex(offset,
                    primitive_util::IsUnsignedIntegralType(
@@ -358,8 +365,9 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDynamicUpdateSlice(
   const auto& updates_shape = instr->operand(1)->shape();
   for (int i = 0; i < instr->shape().dimensions().size(); ++i) {
     int64_t update_size = updates_shape.dimensions(i);
-    ABSL_ASSIGN_OR_RETURN(auto start_index,
-                     GetSingleOperandValue(operand_provider, instr, i + 2, {}));
+    ABSL_ASSIGN_OR_RETURN(
+        auto start_index,
+        GetSingleOperandValue(operand_provider, instr, i + 2, {}));
     start_index = ClampIndex(start_index,
                              primitive_util::IsUnsignedIntegralType(
                                  instr->operand(i + 2)->shape().element_type()),
@@ -387,8 +395,9 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDynamicUpdateSlice(
   YieldOp::create(b, updated_value);
 
   b.setInsertionPointToStart(if_op.getBody(1));
-  ABSL_ASSIGN_OR_RETURN(auto original_value,
-                   GetSingleOperandValue(operand_provider, instr, 0, indices));
+  ABSL_ASSIGN_OR_RETURN(
+      auto original_value,
+      GetSingleOperandValue(operand_provider, instr, 0, indices));
   YieldOp::create(b, original_value);
 
   b.setInsertionPointAfter(if_op);
@@ -420,11 +429,12 @@ absl::StatusOr<SmallVector<Value, 1>> EmitGather(
     int64_t slice_size = gather->gather_slice_sizes()[operand_dim];
     int64_t input_size = gather->operand(0)->shape().dimensions()[operand_dim];
     // Read and clamp index.
-    ABSL_ASSIGN_OR_RETURN(auto input_index,
-                     operand_provider(instr, 1,
-                                      indices_shape.dimensions().size() == 1
-                                          ? ValueRange{row}
-                                          : ValueRange{row, i_val}));
+    ABSL_ASSIGN_OR_RETURN(
+        auto input_index,
+        operand_provider(instr, 1,
+                         indices_shape.dimensions().size() == 1
+                             ? ValueRange{row}
+                             : ValueRange{row, i_val}));
     TF_RET_CHECK(input_index.size() == 1)
         << "Expected operand to be a single value.";
     operand_indices[operand_dim] =
@@ -471,16 +481,17 @@ absl::StatusOr<SmallVector<Value, 1>> EmitPad(
   auto if_op = IfOp::create(b, mlir::TypeRange{result_element_type},
                             is_in_bounds, true, true);
   b.setInsertionPointToStart(if_op.getBody(0));
-  ABSL_ASSIGN_OR_RETURN(auto input_value,
-                   GetSingleOperandValue(
-                       operand_provider, instr, 0,
-                       GetInputIndices(indexing, indices,
-                                       b)[0 /* indexing for operand 0 */]));
+  ABSL_ASSIGN_OR_RETURN(
+      auto input_value,
+      GetSingleOperandValue(
+          operand_provider, instr, 0,
+          GetInputIndices(indexing, indices,
+                          b)[0 /* indexing for operand 0 */]));
   YieldOp::create(b, input_value);
 
   b.setInsertionPointToStart(if_op.getBody(1));
   ABSL_ASSIGN_OR_RETURN(auto padding_value,
-                   GetSingleOperandValue(operand_provider, instr, 1, {}));
+                        GetSingleOperandValue(operand_provider, instr, 1, {}));
   YieldOp::create(b, padding_value);
 
   b.setInsertionPointAfter(if_op);
@@ -557,12 +568,14 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDotLoop(
         ApplyIndexing(rhs_indexing_map, dim_values,
                       symbol_values.take_front(rhs_symbol_count), b);
 
-    ABSL_ASSIGN_OR_RETURN(Value lhs_value,
-                     GetSingleOperandValue(operand_provider, instr,
-                                           /*operand_index=*/0, lhs_indices));
-    ABSL_ASSIGN_OR_RETURN(Value rhs_value,
-                     GetSingleOperandValue(operand_provider, instr,
-                                           /*operand_index=*/1, rhs_indices));
+    ABSL_ASSIGN_OR_RETURN(
+        Value lhs_value,
+        GetSingleOperandValue(operand_provider, instr,
+                              /*operand_index=*/0, lhs_indices));
+    ABSL_ASSIGN_OR_RETURN(
+        Value rhs_value,
+        GetSingleOperandValue(operand_provider, instr,
+                              /*operand_index=*/1, rhs_indices));
     Value accum = iter_args[0];
 
     if (algorithm_util::IsBf16ToF32AlgorithmRequested(instr)) {
@@ -579,8 +592,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitDotLoop(
   };
 
   ABSL_ASSIGN_OR_RETURN(ValueRange results,
-                   EmitLoopNestWithStatus(b, indices, {accum_init_value},
-                                          lhs_indexing_map, body));
+                        EmitLoopNestWithStatus(b, indices, {accum_init_value},
+                                               lhs_indexing_map, body));
   TF_RET_CHECK(results.size() == 1);
   if (result_element_type.isBF16()) {
     return {{arith::TruncFOp::create(b, b.getBF16Type(), results.front())}};
@@ -660,11 +673,11 @@ SmallVector<Value, 1> MapElementwiseOp(
 SmallVector<Value, 3> ApplyIndexing(IndexingMap map, ValueRange dims,
                                     ValueRange symbols,
                                     ImplicitLocOpBuilder& b) {
-  map.ClearConstraints();
   SmallVector<Value, 3> results;
   for (unsigned int i = 0; i < map.GetNumResults(); ++i) {
     SmallVector<Value, 1> result;
-    b.createOrFold<ApplyIndexingOp>(result, dims, symbols, map.GetSubMap(i));
+    IndexingMap sub_map = map.GetSubMap(i);
+    b.createOrFold<ApplyIndexingOp>(result, dims, symbols, std::move(sub_map));
     results.append(result);
   }
   return results;
@@ -742,7 +755,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitTuple(
     } else {
       operand_indices = indices;
     }
-    ABSL_ASSIGN_OR_RETURN(auto values, operand_provider(instr, i, operand_indices));
+    ABSL_ASSIGN_OR_RETURN(auto values,
+                          operand_provider(instr, i, operand_indices));
     operands.append(values);
   }
   return operands;
@@ -754,7 +768,7 @@ absl::StatusOr<SmallVector<Value, 1>> EmitConstant(
   mlir::Type result_element_type =
       PrimitiveTypeToMlirType(instr->shape().element_type(), builder);
   ABSL_ASSIGN_OR_RETURN(auto value_attr, CreateDenseElementsAttrFromLiteral(
-                                        instr->literal(), builder));
+                                             instr->literal(), builder));
   // Convert the constant element type if needed.
   if (primitive_util::IsUnsignedIntegralType(instr->shape().element_type())) {
     value_attr = value_attr.mapValues(result_element_type,
@@ -779,11 +793,42 @@ absl::StatusOr<SmallVector<Value, 1>> EmitConstant(
   return {{mlir::tensor::ExtractOp::create(builder, constant, indices)}};
 }
 
-absl::StatusOr<SmallVector<Value, 2>> GetOperands(
+// Returns true if `HloToMlir` lowers `opcode` with a dedicated emitter (see
+// `EmitWithDedicatedEmitter`). These emitters request their operands from the
+// operand provider themselves, so their operand indices can't be computed
+// upfront.
+bool HasDedicatedEmitter(HloOpcode opcode) {
+  switch (opcode) {
+    case HloOpcode::kConcatenate:
+    case HloOpcode::kConstant:
+    case HloOpcode::kConvolution:
+    case HloOpcode::kDot:
+    case HloOpcode::kDynamicSlice:
+    case HloOpcode::kDynamicUpdateSlice:
+    case HloOpcode::kGather:
+    case HloOpcode::kIota:
+    case HloOpcode::kPad:
+    case HloOpcode::kParameter:
+    case HloOpcode::kReduce:
+    case HloOpcode::kReduceWindow:
+    case HloOpcode::kTuple:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool CanPrecomputeOperandIndices(const HloInstruction* instr) {
+  return !HasDedicatedEmitter(instr->opcode()) &&
+         !kUnsupportedOps.contains(instr->opcode());
+}
+
+SmallVector<SmallVector<Value, 3>, 2> ComputeOperandIndices(
     const HloInstruction* instr, ValueRange indices,
-    const OperandProvider& operand_provider, ImplicitLocOpBuilder& builder,
-    MLIRContext* mlir_context) {
-  SmallVector<Value, 2> operands;
+    ImplicitLocOpBuilder& builder, MLIRContext* mlir_context) {
+  if (instr->opcode() == HloOpcode::kGetTupleElement) {
+    return {SmallVector<Value, 3>(indices.begin(), indices.end())};
+  }
   bool is_elementwise = HloInstruction::IsOpElementwise(instr->opcode()) ||
                         instr->opcode() == HloOpcode::kMap;
   if (is_elementwise && instr->shape().IsArray()) {
@@ -798,21 +843,26 @@ absl::StatusOr<SmallVector<Value, 2>> GetOperands(
 
   if (is_elementwise) {
     // Avoid materializing the input indices for elementwise ops.
-    for (int64_t operand_number = 0; operand_number < instr->operand_count();
-         ++operand_number) {
-      ABSL_ASSIGN_OR_RETURN(operands.emplace_back(),
-                       GetSingleOperandValue(operand_provider, instr,
-                                             operand_number, indices));
-    }
-  } else {
-    auto input_indices = GetInputIndices(
-        ComputeOutputToInputIndexing(instr, 0, mlir_context), indices, builder);
-    for (auto&& [operand_number, operand_indices] :
-         llvm::enumerate(input_indices)) {
-      ABSL_ASSIGN_OR_RETURN(operands.emplace_back(),
-                       GetSingleOperandValue(operand_provider, instr,
-                                             operand_number, operand_indices));
-    }
+    return SmallVector<SmallVector<Value, 3>, 2>(
+        instr->operand_count(),
+        SmallVector<Value, 3>(indices.begin(), indices.end()));
+  }
+  return GetInputIndices(ComputeOutputToInputIndexing(instr, 0, mlir_context),
+                         indices, builder);
+}
+
+absl::StatusOr<SmallVector<Value, 2>> GetOperands(
+    const HloInstruction* instr,
+    llvm::ArrayRef<SmallVector<Value, 3>> input_indices,
+    const OperandProvider& operand_provider) {
+  SmallVector<Value, 2> operands;
+  operands.reserve(input_indices.size());
+  for (auto&& [operand_number, operand_indices] :
+       llvm::enumerate(input_indices)) {
+    ABSL_ASSIGN_OR_RETURN(
+        operands.emplace_back(),
+        GetSingleOperandValue(operand_provider, instr, operand_number,
+                              operand_indices));
   }
   CHECK_NE(operands.size(), 0);
   for (auto [index, operand] : llvm::enumerate(operands)) {
@@ -864,6 +914,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitConvert(
   return {{out}};
 }
 
+}  // namespace
+
 absl::StatusOr<SmallVector<Value, 1>> EmitIota(const HloInstruction* instr,
                                                ValueRange indices,
                                                ImplicitLocOpBuilder& builder) {
@@ -881,6 +933,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitIota(const HloInstruction* instr,
       builder.getLoc(), result_type_with_sign, result_element_type,
       {index_type}, {index}, /*attributes=*/{}, &builder)}};
 }
+
+namespace {
 
 absl::StatusOr<SmallVector<Value, 1>> EmitCompare(
     const HloInstruction* instr, llvm::ArrayRef<mlir::Type> arg_types,
@@ -911,7 +965,6 @@ absl::StatusOr<SmallVector<Value, 1>> EmitReducePrecision(
       /*attributes=*/{}, builder, nullptr, properties);
 }
 
-namespace {
 // Return a named attribute that can be used to annotate an op to be eligible
 // for lowering to an approximation function in GPUToNVVM conversion.
 mlir::NamedAttribute GetFastMathFlagsForApproximationFunctions(
@@ -921,19 +974,14 @@ mlir::NamedAttribute GetFastMathFlagsForApproximationFunctions(
       mlir::arith::FastMathFlagsAttr::get(builder.getContext(),
                                           mlir::arith::FastMathFlags::afn));
 }
-}  // namespace
 
-absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
+// Handles ops that aren't elementwise and aren't just indexing transformations.
+// Must handle exactly the opcodes for which `HasDedicatedEmitter` is true.
+absl::StatusOr<SmallVector<Value, 1>> EmitWithDedicatedEmitter(
     const HloInstruction* instr, mlir::func::FuncOp this_fn, ValueRange indices,
     const OperandProvider& operand_provider,
     const CallTargetProvider& call_target_provider,
     ImplicitLocOpBuilder& builder, MLIRContext* mlir_context) {
-  CHECK(!kUnsupportedOps.contains(instr->opcode())) << instr->ToShortString();
-
-  auto element_type = instr->shape().element_type();
-
-  // Handle ops that aren't elementwise and aren't just indexing
-  // transformations.
   switch (instr->opcode()) {
     case HloOpcode::kConcatenate:
       return EmitConcat(instr, indices, operand_provider, builder);
@@ -964,17 +1012,46 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
                               call_target_provider, builder, mlir_context);
     case HloOpcode::kTuple:
       return EmitTuple(instr, indices, operand_provider, builder, mlir_context);
-    case HloOpcode::kGetTupleElement: {
-      // We have to generate the entire tuple, but since we don't support
-      // internal tuple operations (only root tuples), this will always be
-      // cached and computed together anyway (e.g. it'll be a variadic
-      // reduce).
-      ABSL_ASSIGN_OR_RETURN(auto tuple, operand_provider(instr, 0, indices));
-      return {{tuple[instr->tuple_index()]}};
-    }
     default:
-      break;
+      return absl::InternalError(
+          absl::StrCat("No dedicated emitter for ", instr->ToShortString()));
   }
+}
+
+absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
+    const HloInstruction* instr, mlir::func::FuncOp this_fn, ValueRange indices,
+    llvm::ArrayRef<SmallVector<Value, 3>> operand_indices,
+    const OperandProvider& operand_provider,
+    const CallTargetProvider& call_target_provider,
+    ImplicitLocOpBuilder& builder, MLIRContext* mlir_context) {
+  if (kUnsupportedOps.contains(instr->opcode())) {
+    return absl::UnimplementedError(
+        absl::StrCat("Unsupported: ", instr->ToShortString()));
+  }
+
+  if (HasDedicatedEmitter(instr->opcode())) {
+    return EmitWithDedicatedEmitter(instr, this_fn, indices, operand_provider,
+                                    call_target_provider, builder,
+                                    mlir_context);
+  }
+
+  // For all other ops the caller precomputes the operand indices (see
+  // `ComputeOperandIndices`).
+  TF_RET_CHECK(operand_indices.size() == instr->operand_count())
+      << "Expected indices for all operands of " << instr->ToShortString()
+      << ", got " << operand_indices.size();
+
+  if (instr->opcode() == HloOpcode::kGetTupleElement) {
+    // We have to generate the entire tuple, but since we don't support
+    // internal tuple operations (only root tuples), this will always be
+    // cached and computed together anyway (e.g. it'll be a variadic
+    // reduce).
+    ABSL_ASSIGN_OR_RETURN(auto tuple,
+                          operand_provider(instr, 0, operand_indices.front()));
+    return {{tuple[instr->tuple_index()]}};
+  }
+
+  auto element_type = instr->shape().element_type();
 
   SmallVector<mlir::Type, 2> arg_types;
   arg_types.reserve(instr->operands().size());
@@ -984,8 +1061,8 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
     arg_types.push_back(operand_element_type);
   }
 
-  ABSL_ASSIGN_OR_RETURN(auto operands, GetOperands(instr, indices, operand_provider,
-                                              builder, mlir_context));
+  ABSL_ASSIGN_OR_RETURN(auto operands,
+                        GetOperands(instr, operand_indices, operand_provider));
 
   llvm::SmallVector<mlir::NamedAttribute> attributes;
   switch (instr->opcode()) {
@@ -1041,10 +1118,20 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
       }
       return MapElementwiseOp<mhlo::ExpOp>(arg_types, operands, builder,
                                            attributes);
+    case HloOpcode::kExp2:
+      return MapElementwiseOp<mhlo::Exp2Op>(arg_types, operands, builder);
     case HloOpcode::kExpm1:
       return MapElementwiseOp<mhlo::Expm1Op>(arg_types, operands, builder);
     case HloOpcode::kFloor:
       return MapElementwiseOp<mhlo::FloorOp>(arg_types, operands, builder);
+    case HloOpcode::kFma:
+      if (element_type != F16 && element_type != BF16 && element_type != F32 &&
+          element_type != F64) {
+        return absl::UnimplementedError(absl::StrCat(
+            "Unsupported element type for fma: ",
+            primitive_util::LowercasePrimitiveTypeName(element_type)));
+      }
+      return MapElementwiseOp<mhlo::FmaOp>(arg_types, operands, builder);
     case HloOpcode::kIsFinite:
       return MapHloOp<mhlo::IsFiniteOp>(builder.getI1Type(), arg_types,
                                         operands, /*attributes=*/{}, builder);
@@ -1061,6 +1148,8 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
                                            attributes);
     case HloOpcode::kLog1p:
       return MapElementwiseOp<mhlo::Log1pOp>(arg_types, operands, builder);
+    case HloOpcode::kLog2:
+      return MapElementwiseOp<mhlo::Log2Op>(arg_types, operands, builder);
     case HloOpcode::kLogistic:
       return MapElementwiseOp<mhlo::LogisticOp>(arg_types, operands, builder);
     case HloOpcode::kMap: {
@@ -1305,8 +1394,6 @@ class SubgraphConverter {
                                                     ValueRange operand_indices);
   absl::StatusOr<SmallVector<Value>> EmitInstruction(
       const HloInstruction* instr, ValueRange indices);
-  absl::StatusOr<SmallVector<Value>> EmitElementwiseInstruction(
-      const HloInstruction* root, ValueRange indices);
 
  private:
   // Converts a ValueRange to a vector of opaque pointers.
@@ -1357,7 +1444,8 @@ absl::StatusOr<SmallVector<Value>> SubgraphConverter::Convert() {
     auto root_indices =
         ApplyIndexing(indexing, /*dims=*/indices_.take_front(num_dims),
                       /*symbols=*/indices_.drop_front(num_dims), builder_);
-    ABSL_ASSIGN_OR_RETURN(auto root_results, EmitInstruction(root, root_indices));
+    ABSL_ASSIGN_OR_RETURN(auto root_results,
+                          EmitInstruction(root, root_indices));
     results.append(root_results.begin(), root_results.end());
   }
   return results;
@@ -1380,53 +1468,69 @@ absl::StatusOr<SmallVector<Value>> SubgraphConverter::EmitInstruction(
     return *entry;
   }
 
-  if (HloInstruction::IsOpElementwise(instr->opcode())) {
-    return EmitElementwiseInstruction(instr, indices);
-  }
+  // To avoid deep recursion on long chains of ops, we emit the operands that
+  // are part of the subgraph with an explicit work stack before lowering an
+  // instruction (i.e. in post-order). Ops with dedicated emitters (see
+  // `HasDedicatedEmitter`) still request their operands from
+  // `provide_operand_fn_` while they are being lowered, which recurses into
+  // `EmitInstruction`.
+  struct WorkItem {
+    const HloInstruction* instr;
+    SmallVector<Value, 3> indices;
+    // The indices at which each operand of `instr` is accessed. Empty if
+    // `instr` requests its operands itself.
+    SmallVector<SmallVector<Value, 3>, 2> operand_indices;
+    // The next operand to visit before `instr` can be lowered.
+    int64_t next_operand_index = 0;
+  };
 
-  ABSL_ASSIGN_OR_RETURN(auto entry,
-                   HloToMlir(instr, this_fn_, indices, provide_operand_fn_,
-                             call_target_provider_, builder_, mlir_context_));
-  CHECK(!absl::c_linear_search(entry, nullptr))
-      << "Failed to lower " << instr->name();
-  return CacheInstruction(instr, indices, std::move(entry));
-}
-
-absl::StatusOr<SmallVector<Value>>
-SubgraphConverter::EmitElementwiseInstruction(const HloInstruction* root,
-                                              ValueRange indices) {
-  // `root` is elementwise, so we can emit its operands first (recursively).
-  // This reduces the size of the call stack.
-  std::queue<const HloInstruction*> worklist;
-  absl::flat_hash_set<const HloInstruction*> visited;
-  worklist.push(root);
-  SmallVector<const HloInstruction*> pre_order;
-  while (!worklist.empty()) {
-    const HloInstruction* instr = worklist.front();
-    worklist.pop();
-    pre_order.push_back(instr);
-    if (HloInstruction::IsOpElementwise(instr->opcode())) {
-      // Start with the last operand so that we will instantiate the operands
-      // in order below. Not needed for correctness, but makes the generated IR
-      // more readable.
-      for (int i = instr->operand_count() - 1; i >= 0; --i) {
-        auto* operand = instr->operand(i);
-        if (subgraph_.instructions.contains(operand) &&
-            !TryGetCachedInstruction(operand, indices, false) &&
-            visited.insert(operand).second) {
-          worklist.push(operand);
-        }
-      }
+  std::vector<WorkItem> workstack;
+  auto push_work_item = [&](const HloInstruction* target,
+                            ValueRange target_indices) {
+    WorkItem item;
+    item.instr = target;
+    item.indices.assign(target_indices.begin(), target_indices.end());
+    if (CanPrecomputeOperandIndices(target)) {
+      item.operand_indices =
+          ComputeOperandIndices(target, item.indices, builder_, mlir_context_);
+    } else {
+      item.next_operand_index = target->operand_count();
     }
+    workstack.push_back(std::move(item));
+  };
+
+  push_work_item(instr, indices);
+
+  while (!workstack.empty()) {
+    WorkItem& item = workstack.back();
+    if (item.next_operand_index < item.instr->operand_count()) {
+      int64_t operand_idx = item.next_operand_index++;
+      const HloInstruction* operand = item.instr->operand(operand_idx);
+      // Note that `push_work_item` copies the indices before `workstack` grows,
+      // so `op_indices` doesn't dangle.
+      const SmallVector<Value, 3>& op_indices =
+          item.operand_indices[operand_idx];
+      if (subgraph_.instructions.contains(operand) &&
+          !TryGetCachedInstruction(operand, op_indices)) {
+        push_work_item(operand, op_indices);
+      }
+      continue;
+    }
+
+    // Items are only pushed if they are not cached yet, and since HLO is a DAG
+    // only their transitive operands get emitted until they are popped again.
+    WorkItem completed = std::move(item);
+    workstack.pop_back();
+    ABSL_ASSIGN_OR_RETURN(
+        auto entry, HloToMlir(completed.instr, this_fn_, completed.indices,
+                              completed.operand_indices, provide_operand_fn_,
+                              call_target_provider_, builder_, mlir_context_));
+    TF_RET_CHECK(!absl::c_linear_search(entry, nullptr))
+        << "Failed to lower " << completed.instr->name();
+    CacheInstruction(completed.instr, completed.indices, std::move(entry));
   }
 
-  for (auto* instr : llvm::reverse(pre_order)) {
-    ABSL_ASSIGN_OR_RETURN(auto entry,
-                     HloToMlir(instr, this_fn_, indices, provide_operand_fn_,
-                               call_target_provider_, builder_, mlir_context_));
-    CacheInstruction(instr, indices, std::move(entry));
-  }
-  return cached_instructions_[{root, IndicesToPtrs(indices)}];
+  return cached_instructions_[{instr, IndicesToPtrs(indices)}];
 }
 
 std::vector<void*> SubgraphConverter::IndicesToPtrs(ValueRange indices) {

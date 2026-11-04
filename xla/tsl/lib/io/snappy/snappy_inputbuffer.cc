@@ -26,10 +26,10 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "xla/tsl/platform/errors.h"
-#include "xla/tsl/platform/file_system.h"
 #include "tsl/platform/snappy.h"
 #include "tsl/platform/tstring.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/file_system.h"
 
 namespace tsl {
 namespace io {
@@ -128,7 +128,12 @@ absl::Status SnappyInputBuffer::Inflate() {
   DCHECK_EQ(avail_out_, 0);
 
   // Output buffer must be large enough to fit the uncompressed block.
-  DCHECK_GE(output_buffer_capacity_, uncompressed_length);
+  if (uncompressed_length > output_buffer_capacity_) {
+    return absl::ResourceExhaustedError(
+        absl::StrCat("Output buffer(size: ", output_buffer_capacity_,
+                     " bytes) too small. Should be larger than ",
+                     uncompressed_length, " bytes."));
+  }
   next_out_ = output_buffer_.get();
 
   bool status = port::Snappy_Uncompress(next_in_, compressed_block_length,

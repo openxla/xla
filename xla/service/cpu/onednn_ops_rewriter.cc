@@ -222,39 +222,32 @@ std::optional<HloInstruction*> MatchSoftmax(HloInstruction* instr, int* axis) {
   return left_producer;
 }
 
-// ---------------------------------------------------------------------------
-// Composable layer-norm pattern builders.
-// ---------------------------------------------------------------------------
-
-// Sum-reduction predicate: single-dimension add-reduce. When `innermost` is
-// true, the reduced dimension must be the innermost one.
-bool AppliesAddReduce(const HloInstruction* reduce, bool innermost = false) {
-  if (reduce->opcode() != HloOpcode::kReduce) {
-    return false;
-  }
-  const HloComputation* reducer = reduce->to_apply();
-  if (reducer->root_instruction()->opcode() != HloOpcode::kAdd ||
-      reduce->dimensions().size() != 1) {
-    return false;
-  }
-  return !innermost ||
-         reduce->dimensions()[0] == reduce->shape().dimensions().size();
-}
-
-template <typename Pattern>
-auto AddReduce(Pattern input, bool innermost = false) {
-  return m::Reduce(input, m::Op())
-      .WithPredicate([innermost](const HloInstruction* reduce) {
-        return AppliesAddReduce(reduce, innermost);
-      });
-}
-
-// mean(x) = sum(x) / N, absorbing optional converts and reshapes.
-template <typename Pattern>
-auto Mean(Pattern x) {
-  return pu::OptionalReshape(pu::OptionalConvert(
-      m::Divide(AddReduce(pu::OptionalConvert(x)),
-                m::Broadcast(pu::OptionalConvert(m::Op())))));
+// Matches Mean(input) over the last dimension, i.e. an add reduction with zero
+// init over {rank - 1} divided by the size of that dimension. oneDNN layer
+// normalization only normalizes over the last dimension. The divisor must be
+// constant scalar.
+auto MeanPattern(HloInstruction** input) {
+  auto sum =
+      m::Reduce(m::Convert(m::Op(input)),
+                pu::OptionalConvert(m::ConstantScalar(0)))
+          .WithPredicate([](const HloInstruction* reduce) {
+            HloComputation* reducer = reduce->to_apply();
+            return (reducer->root_instruction()->opcode() == HloOpcode::kAdd &&
+                    reduce->dimensions().size() == 1 &&
+                    reduce->dimensions()[0] ==
+                        reduce->shape().dimensions().size());
+          });
+  return m::Reshape(
+      m::Convert(m::Divide(sum, m::Broadcast(m::Convert(m::ConstantScalar())))
+                     .WithPredicate([](const HloInstruction* divide) {
+                       const Shape& reduce_in_shape =
+                           divide->operand(0)->operand(0)->shape();
+                       const HloInstruction* divisor =
+                           divide->operand(1)->operand(0)->operand(0);
+                       return divisor->literal().IsEqualAt(
+                           {}, reduce_in_shape.dimensions(
+                                   reduce_in_shape.dimensions().size() - 1));
+                     })));
 }
 
 template <typename Pattern>
@@ -266,14 +259,31 @@ auto Square(Pattern pattern) {
       });
 }
 
-// rsqrt(variance + eps); epsilon add is optional.
-template <typename Pattern>
-auto NormFactor(Pattern variance, HloInstruction** epsilon) {
-  return m::Rsqrt(m::AnyOf<HloInstruction>(
-      m::Add().WithBinaryOperandsAnyOrder(
-          m::Broadcast(m::ConstantScalar(epsilon)), variance),
-      variance));
+// Matches a 1D [C] tensor broadcast along the last dimension, the only
+// scale/shift layout oneDNN layer normalization supports.
+auto LastDimBroadcast(HloInstruction** operand) {
+  return m::Broadcast(m::Op(operand))
+      .WithPredicate([](const HloInstruction* broadcast) {
+        return broadcast->operand(0)->shape().dimensions().size() == 1 &&
+               broadcast->dimensions().size() == 1 &&
+               broadcast->dimensions()[0] ==
+                   broadcast->shape().dimensions().size() - 1;
+      });
 }
+
+// Matches the mean-centered input D = X - Mean(X) shared by both variance
+// formulations below.
+auto CenteredInput(HloInstruction** input, HloInstruction** mean_input) {
+  return m::Subtract().WithBinaryOperandsAnyOrder(
+      m::Op(input), m::Broadcast(m::Reshape(MeanPattern(mean_input))));
+}
+
+std::optional<bool> MatchTFKerasLayerNorm(HloInstruction* instr,
+                                          HloInstruction** src,
+                                          HloInstruction** scale,
+                                          HloInstruction** bias, float* eps) {
+  // Z = scale / sqrt(variance + eps)
+  // LN(X) = X*Z + Bias - Mean(X)*Z
 
 // Expanded form: LN(X) = X*Z + Bias - Mean(X)*Z, Z = scale * rsqrt(var + eps).
 // Pattern found in TF/Keras models.
@@ -310,8 +320,14 @@ bool MatchExpandedLayerNorm(HloInstruction* instr, HloInstruction** src,
     return false;
   }
 
-  if (!Match(bias_node, m::Broadcast(m::Op(bias)))) {
-    return false;
+  // OneDNN only supports 2 <= rank <= 5
+  if (src_shape.dimensions().size() < 2 || src_shape.dimensions().size() > 5) {
+    return std::nullopt;
+  }
+
+  // Get bias
+  if (!Match(bias_node, LastDimBroadcast(bias))) {
+    return std::nullopt;
   }
 
   // Match Z = scale / sqrt(variance + eps).
@@ -326,20 +342,48 @@ bool MatchExpandedLayerNorm(HloInstruction* instr, HloInstruction** src,
   if (epsilon != nullptr) {
     *eps = static_cast<float>(epsilon->literal().GetAsDouble({}).value());
   }
+  // get scale
+  if (!Match(scale_node, LastDimBroadcast(scale))) return std::nullopt;
 
-  // Match variance = Mean((X - Mean(X))^2).
-  if (!Match(sqrd_diff_mean, Mean(m::Op(&sqrd_diff)))) {
-    return false;
+  // Match variance. tf.nn.moments emits one of two forms for variance
+  //   (a) variance = Mean(D^2)
+  //
+  //   (b) variance = Max(Mean(D^2) - Mean(D)^2, 0)
+  //   (https://github.com/tensorflow/tensorflow/commit/b14991de0ee209b0cc4546e80fd81f6d71927d00)
+
+  if (Match(sqrd_diff_mean, MeanPattern(&sqrd_diff))) {
+    // (a) Mean(D^2).
+    if (!Match(sqrd_diff, Square(CenteredInput(&src_a, &src_b)))) {
+      return std::nullopt;
+    }
+  } else {
+    // (b) Max(Mean(D^2) - Mean(D)^2, 0)
+    HloInstruction *mean_sqrd_diff, *sqrd_mean_diff;
+    if (!Match(sqrd_diff_mean, m::Maximum().WithBinaryOperandsAnyOrder(
+                                   pu::OptionalBroadcast(m::ConstantScalar(0)),
+                                   m::Subtract(m::Op(&mean_sqrd_diff),
+                                               m::Op(&sqrd_mean_diff))))) {
+      return std::nullopt;
+    }
+    HloInstruction *diff_a, *diff_b;
+    if (!Match(mean_sqrd_diff, MeanPattern(&sqrd_diff)) ||
+        !Match(sqrd_diff, Square(m::Op(&diff_a))) ||
+        !Match(sqrd_mean_diff, Square(MeanPattern(&diff_b)))) {
+      return std::nullopt;
+    }
+    // Both reductions have to consume the very same mean-centered input,
+    // otherwise this is not the two-pass variance of a single LayerNorm.
+    if (diff_a != diff_b) return std::nullopt;
+    if (!Match(diff_a, CenteredInput(&src_a, &src_b))) return std::nullopt;
   }
 
-  if (!Match(sqrd_diff, Square(m::Subtract().WithBinaryOperandsAnyOrder(
-                            m::Op(&src_a),
-                            m::Broadcast(m::Reshape(Mean(m::Op(&src_b)))))))) {
-    return false;
+  if (src_a != *src || src_b != *src) {
+    return std::nullopt;
   }
 
-  if (src_a != src_b && src_a != *src) {
-    return false;
+  // Match mean from Bias - Mean(X)*Z
+  if (!Match(mean0_a, MeanPattern(&src_c))) {
+    return std::nullopt;
   }
 
   // The mean feeding Bias - Mean(X)*Z must be over the same source.
@@ -493,7 +537,9 @@ class OneDnnOpsRewriterVisitor : public DfsHloRewriteVisitor {
     float eps = 1e-5;
     bool is_bf16orfp16_convert = false;
     bool is_producer_bf16orfp16 = false;
-    HloInstruction* convert_instr;
+    // Only MatchFlaxLayerNorm sets this; keep it well-defined for the read
+    // below when the TF/Keras matcher succeeds first.
+    HloInstruction* convert_instr = nullptr;
 
     bool found_ln = MatchExpandedLayerNorm(instr, &src, &scale, &bias, &eps);
 
@@ -620,7 +666,8 @@ absl::StatusOr<bool> OneDnnOpsRewriter::RunImpl(
   XLA_VLOG_LINES(
       3, "OneDnnOpsRewriter::RunImpl(), before:\n" + module->ToString());
   OneDnnOpsRewriterVisitor visitor;
-  ABSL_ASSIGN_OR_RETURN(auto result, visitor.RunOnModule(module, execution_threads));
+  ABSL_ASSIGN_OR_RETURN(auto result,
+                        visitor.RunOnModule(module, execution_threads));
   XLA_VLOG_LINES(3,
                  "OneDnnOpsRewriter::RunImpl(), after:\n" + module->ToString());
   return result;

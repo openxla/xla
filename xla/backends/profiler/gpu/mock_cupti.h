@@ -16,10 +16,11 @@ limitations under the License.
 #ifndef XLA_BACKENDS_PROFILER_GPU_MOCK_CUPTI_H_
 #define XLA_BACKENDS_PROFILER_GPU_MOCK_CUPTI_H_
 
+#include <gmock/gmock.h>
+
 #include <cstddef>
 #include <cstdint>
 
-#include <gmock/gmock.h>
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_callbacks.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_profiler_target.h"

@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/substitute.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
@@ -93,7 +94,7 @@ TEST_P(CudnnFusionCompilerConstTest,
 
   ASSERT_OK_AND_ASSIGN(int plan_count,
                        CuDnnFusionCompiler::GetAvailablePlanCount(
-                           stream_executor(),
+                           stream_executor()->AsDnn(),
                            stream_executor()->GetDeviceDescription(), *fusion));
   EXPECT_GT(plan_count, 0);
 }
@@ -157,7 +158,7 @@ TEST_P(CudnnFusionCompilerWgradTest,
 
   ASSERT_OK_AND_ASSIGN(int plan_count,
                        CuDnnFusionCompiler::GetAvailablePlanCount(
-                           stream_executor(),
+                           stream_executor()->AsDnn(),
                            stream_executor()->GetDeviceDescription(), *fusion));
   EXPECT_GT(plan_count, 0);
 }
@@ -202,7 +203,7 @@ TEST_F(CudnnFusionCompilerConstTest,
 
   ASSERT_OK_AND_ASSIGN(int plan_count,
                        CuDnnFusionCompiler::GetAvailablePlanCount(
-                           stream_executor(),
+                           stream_executor()->AsDnn(),
                            stream_executor()->GetDeviceDescription(), *fusion));
   EXPECT_GT(plan_count, 0);
 }
@@ -243,7 +244,7 @@ TEST_F(CudnnFusionCompilerConstTest,
 
   ASSERT_OK_AND_ASSIGN(int plan_count,
                        CuDnnFusionCompiler::GetAvailablePlanCount(
-                           stream_executor(),
+                           stream_executor()->AsDnn(),
                            stream_executor()->GetDeviceDescription(), *fusion));
   EXPECT_GT(plan_count, 0);
 }
@@ -284,7 +285,7 @@ TEST_F(CudnnFusionCompilerConstTest,
 
   ASSERT_OK_AND_ASSIGN(int plan_count,
                        CuDnnFusionCompiler::GetAvailablePlanCount(
-                           stream_executor(),
+                           stream_executor()->AsDnn(),
                            stream_executor()->GetDeviceDescription(), *fusion));
   EXPECT_GT(plan_count, 0);
 }

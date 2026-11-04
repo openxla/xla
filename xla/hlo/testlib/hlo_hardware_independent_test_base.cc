@@ -125,9 +125,9 @@ absl::Status HloHardwareIndependentTestBase::
         const Shape& param_shape =
             computation->parameter_instruction(i)->shape();
         ABSL_RETURN_IF_ERROR(computation->parent()
-                            ->mutable_entry_computation_layout()
-                            ->mutable_parameter_layout(i)
-                            ->CopyLayoutFromShape(param_shape));
+                                 ->mutable_entry_computation_layout()
+                                 ->mutable_parameter_layout(i)
+                                 ->CopyLayoutFromShape(param_shape));
       }
 
       ABSL_RETURN_IF_ERROR(
@@ -263,7 +263,7 @@ HloHardwareIndependentTestBase::RunAndCheckHloRewrite(
   SCOPED_TRACE("Input HLO: " + hlo_string);
   VLOG(7) << "Input HLO: " << hlo_string;
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> module,
-                   ParseAndReturnVerifiedModule(hlo_string));
+                        ParseAndReturnVerifiedModule(hlo_string));
   VLOG(7) << "Input HLO parsed. Running the pass:  + " << hlo_pass->name();
   ABSL_ASSIGN_OR_RETURN(bool changed, RunHloPass(hlo_pass, module.get()));
   VLOG(7) << "Output HLO: "

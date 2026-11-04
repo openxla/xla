@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/collectives/cpu_clique_key.h"
 #include "xla/backends/cpu/collectives/cpu_cliques.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
@@ -65,13 +66,9 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla {
 namespace cpu {
-namespace runtime {
-
-
-}  // namespace runtime
+namespace runtime {}  // namespace runtime
 }  // namespace cpu
 }  // namespace xla

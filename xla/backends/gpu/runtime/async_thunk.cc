@@ -46,11 +46,12 @@ namespace xla::gpu {
 
 AsyncStartThunk::AsyncStartThunk(ThunkInfo thunk_info,
                                  ExecutionStreamId execution_stream_id,
-                                 ThunkSequence thunks)
+                                 ThunkSequence thunks, int devices_per_host)
     : Thunk(Thunk::kAsyncStart, std::move(thunk_info)),
       execution_stream_id_(execution_stream_id),
       executor_(std::move(thunks)),
-      async_execution_(std::make_shared<AsyncExecution>(this->thunk_info())) {}
+      async_execution_(std::make_shared<AsyncExecution>(this->thunk_info(),
+                                                        devices_per_host)) {}
 
 AsyncStartThunk::AsyncStartThunk(
     ThunkInfo thunk_info, ExecutionStreamId execution_stream_id,
@@ -91,11 +92,33 @@ absl::Status AsyncStartThunk::ExecuteOnStream(const ExecuteParams& params) {
       }
       return params.additional_compute_streams[idx];
     }
+    if (execution_stream_id_.is_memcpy()) {
+      MemcpyStreamId id = execution_stream_id_.memcpy_id();
+      if (id != kMemcpyD2HStreamId && id != kMemcpyH2DStreamId) {
+        return InvalidArgument("Invalid memcpy stream id: %d", id.value());
+      }
+      bool is_d2h = id == kMemcpyD2HStreamId;
+      se::Stream* stream =
+          is_d2h ? params.device_to_host_stream : params.host_to_device_stream;
+      if (stream == nullptr) {
+        return Internal("%s stream is not available for async execution",
+                        is_d2h ? "device_to_host" : "host_to_device");
+      }
+      return stream;
+    }
+    if (execution_stream_id_.is_locality_domain()) {
+      // TODO(keshavb): Select the stream from ExecuteParams once it carries
+      // locality-domain streams.
+      return Unimplemented(
+          "Async execution on locality-domain stream %v is not supported yet",
+          execution_stream_id_);
+    }
     return params.collective_params->async_streams.at(
         execution_stream_id_.communication_id().value());
   };
 
-  ABSL_ASSIGN_OR_RETURN(se::Stream * async_stream, std::invoke(get_async_stream));
+  ABSL_ASSIGN_OR_RETURN(se::Stream * async_stream,
+                        std::invoke(get_async_stream));
   XLA_VLOG_DEVICE(1, async_stream->parent()->device_ordinal())
       << absl::StreamFormat("Execute async for `%s`: stream_id=%v, stream=%p",
                             profile_annotation(), execution_stream_id_,
@@ -104,8 +127,8 @@ absl::Status AsyncStartThunk::ExecuteOnStream(const ExecuteParams& params) {
   // Execute the nested thunks on the async stream. The guard will record the
   // completion event when it goes out of scope.
   ABSL_ASSIGN_OR_RETURN(auto guard,
-                   async_execution_->Start(params.execution_scoped_state,
-                                           params.stream, async_stream));
+                        async_execution_->Start(params.execution_scoped_state,
+                                                params.stream, async_stream));
   return executor_.ExecuteOnStream(params.WithComputeStream(async_stream));
 }
 
@@ -178,42 +201,61 @@ absl::StatusOr<ThunkProto> AsyncStartThunk::ToProto() const {
   if (execution_stream_id_.is_computation()) {
     start_proto->set_computation_stream_id(
         execution_stream_id_.computation_id().value());
-  } else {
+  } else if (execution_stream_id_.is_memcpy()) {
+    start_proto->set_memcpy_stream_id(execution_stream_id_.memcpy_id().value());
+  } else if (execution_stream_id_.is_communication()) {
     start_proto->set_communication_stream_id(
         execution_stream_id_.communication_id().value());
+  } else {
+    start_proto->set_locality_domain_stream_id(
+        execution_stream_id_.locality_domain_id().value());
   }
 
   start_proto->mutable_thunks();
   for (const auto& thunk : executor_.thunks()) {
     ABSL_ASSIGN_OR_RETURN(*start_proto->mutable_thunks()->add_thunks(),
-                     thunk->ToProto());
+                          thunk->ToProto());
   }
   return proto;
 }
 
 absl::StatusOr<std::unique_ptr<AsyncStartThunk>> AsyncStartThunk::FromProto(
     ThunkInfo thunk_info, const AsyncStartThunkProto& proto,
-    const Deserializer& deserializer, AsyncExecutionMap& async_executions) {
+    const Deserializer& deserializer, AsyncExecutionMap& async_executions,
+    int devices_per_host) {
   auto make_stream_id = [&]() -> absl::StatusOr<ExecutionStreamId> {
     switch (proto.execution_stream_id_case()) {
       case AsyncStartThunkProto::kComputationStreamId:
         return ComputationStreamId(proto.computation_stream_id());
       case AsyncStartThunkProto::kCommunicationStreamId:
         return CommunicationStreamId(proto.communication_stream_id());
+      case AsyncStartThunkProto::kMemcpyStreamId: {
+        MemcpyStreamId id(proto.memcpy_stream_id());
+        if (id != kMemcpyD2HStreamId && id != kMemcpyH2DStreamId) {
+          return InvalidArgument(
+              "Invalid memcpy stream id in AsyncStartThunk: %d", id.value());
+        }
+        return id;
+      }
+      case AsyncStartThunkProto::kLocalityDomainStreamId:
+        return LocalityDomainStreamId(proto.locality_domain_stream_id());
       default:
         return Internal("Unknown execution stream id type in AsyncStartThunk");
     }
   };
-  ABSL_ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id, make_stream_id());
+  ABSL_ASSIGN_OR_RETURN(ExecutionStreamId execution_stream_id,
+                        make_stream_id());
 
   ThunkSequence nested;
   for (const auto& thunk_proto : proto.thunks().thunks()) {
-    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Thunk> thunk, deserializer(thunk_proto));
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<Thunk> thunk,
+                          deserializer(thunk_proto));
     nested.push_back(std::move(thunk));
   }
 
   auto start_thunk = std::make_unique<AsyncStartThunk>(
-      std::move(thunk_info), execution_stream_id, std::move(nested));
+      std::move(thunk_info), execution_stream_id, std::move(nested),
+      devices_per_host);
 
   AsyncExecutionId id(proto.async_execution_id());
   async_executions[id] = start_thunk->async_execution();

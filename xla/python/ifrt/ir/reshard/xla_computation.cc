@@ -29,10 +29,10 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/hlo/builder/lib/arithmetic.h"
 #include "xla/hlo/builder/lib/constants.h"
 #include "xla/hlo/builder/xla_builder.h"
@@ -42,7 +42,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/python/ifrt/hlo/hlo_program.h"
-#include "xla/python/ifrt/ir/utils.h"
+#include "xla/python/ifrt/ir/reshard/utils.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
@@ -53,7 +53,6 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 namespace ifrt {
@@ -343,7 +342,8 @@ XlaComputationBuilder::BuildXlaReduceComputation(
     xla::LayoutUtil::SetToDefaultLayout(&reshaped_shape);
     xla::XlaOp reshaped = xla::Reshape(reshaped_shape, params[idx]);
     if (device_kind_ != "cpu") {
-      ABSL_RETURN_IF_ERROR(SetComputeType(builder, reshaped, memory_kinds[idx]));
+      ABSL_RETURN_IF_ERROR(
+          SetComputeType(builder, reshaped, memory_kinds[idx]));
     }
 
     // Reduce-sum over the first dimension.

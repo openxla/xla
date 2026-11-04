@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 
-#include <string>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <string>
+
 #include "absl/strings/string_view.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/tsl/util/proto/proto_matchers.h"

@@ -436,6 +436,19 @@ def MHLO_ExpOp: MHLO_UnaryElementwiseOp<"exponential",
   let hasVerifier = 1;
   let hasFolder = 1;
 }
+def MHLO_Exp2Op: MHLO_UnaryElementwiseOp<"exp2",
+    [Pure, HLO_CompatibleOperandsAndResultType], MHLO_FpComplexOrQuantizedIntTensor> {
+  let summary = "Exp2 operation";
+  let description = [{
+    Performs element-wise base-2 exponential operation on `operand` tensor
+    and produces a `result` tensor.
+  }];
+  let arguments = (ins MHLO_FpComplexOrQuantizedIntTensor:$operand,
+                       DefaultValuedOptionalAttr<MHLO_ResultAccuracyAttr,
+                       "::mlir::mhlo::ResultAccuracyMode::DEFAULT">:$result_accuracy);
+  let results = (outs MHLO_FpComplexOrQuantizedIntTensor:$result);
+  let hasVerifier = 1;
+}
 def MHLO_Expm1Op: MHLO_UnaryElementwiseOp<"exponential_minus_one",
     [Pure, HLO_CompatibleOperandsAndResultType], MHLO_FpComplexOrQuantizedIntTensor> {
   let summary = "Expm1 operation";
@@ -553,6 +566,19 @@ def MHLO_Log1pOp: MHLO_UnaryElementwiseOp<"log_plus_one",
     ```mlir
     %result = mhlo.log_plus_one %operand : tensor<6xf32>
     ```
+  }];
+  let arguments = (ins MHLO_FpComplexOrQuantizedIntTensor:$operand,
+                       DefaultValuedOptionalAttr<MHLO_ResultAccuracyAttr,
+                       "::mlir::mhlo::ResultAccuracyMode::DEFAULT">:$result_accuracy);
+  let results = (outs MHLO_FpComplexOrQuantizedIntTensor:$result);
+  let hasVerifier = 1;
+}
+def MHLO_Log2Op: MHLO_UnaryElementwiseOp<"log2",
+    [Pure, HLO_CompatibleOperandsAndResultType], MHLO_FpComplexOrQuantizedIntTensor> {
+  let summary = "Log2 operation";
+  let description = [{
+    Performs element-wise base-2 logarithm operation on `operand` tensor and
+    produces a `result` tensor.
   }];
   let arguments = (ins MHLO_FpComplexOrQuantizedIntTensor:$operand,
                        DefaultValuedOptionalAttr<MHLO_ResultAccuracyAttr,
@@ -2147,34 +2173,6 @@ def MHLO_DynamicUpdateSliceOp: MHLO_Op<"dynamic_update_slice",
 // MHLO Other op definitions.
 //===----------------------------------------------------------------------===//
 
-def MHLO_DomainOp : MHLO_Op<"domain", [HLO_CompatibleOperandsAndResultType, InferTypeOpInterface, Pure]> {
-  let summary = "Domain operation";
-  let description = [{
-    This operation is private to the XLA compiler, so it is does not yet have
-    a specification.
-
-    Informally, these operations are used to group instructions with the same
-    DomainMetadata property. ShardingMetadata is the main use case today to
-    group instructions on the same device. Domain instructions provide two
-    major benefits:
-      - Prevent unintentionally optimizing instructions across domains.
-      - Automatically assign the metadata of the instructions created in the domain.
-    Without domain instructions, each HLO optimization pass would have to check
-    and propagate the metadata, which would be easy to miss and also adds
-    complexity to the compiler. Since domain instructions connect two different
-    domains, each domain instruction is associated with two DomainMetadata --
-    one on the operand side and one on the user side of the domain.
-  }];
-  let arguments = (ins
-    MHLO_TensorOrToken:$operand,
-    MHLO_DomainKindAttr:$kind,
-    StrAttr:$entry_metadata,
-    StrAttr:$exit_metadata
-  );
-  let results = (outs MHLO_TensorOrToken:$result);
-  let hasCustomHLOConverter = 1;
-}
-
 def MHLO_BatchNormGradOp : MHLO_Op<"batch_norm_grad", [Pure,
     AllElementTypesMatch<["operand", "grad_operand", "grad_scale", "grad_offset"]>,
     InferTensorType]> {
@@ -3039,6 +3037,49 @@ def MHLO_FftOp: MHLO_Op<"fft", [InferTensorType, Pure]> {
   );
 
   let results = (outs MHLO_Tensor);
+}
+
+def MHLO_FmaOp : MHLO_Op<"fma",
+    [Pure, HLO_CompatibleOperandsAndResultType, InferShapedTypeOpInterface,
+     SameOperandsAndResultShape, Elementwise]> {
+  let summary = "Fma operation";
+  let description = [{
+    Performs element-wise single-rounded IEEE-754 fused multiply-add of `a`,
+    `b`, and `c` tensors and produces a `result` tensor.
+
+    See:
+    https://github.com/openxla/stablehlo/blob/main/docs/spec.md#fma
+
+    Example:
+    ```mlir
+    %result = mhlo.fma %a, %b, %c : tensor<3xf32>
+    ```
+  }];
+  let arguments = (ins
+    MHLO_FpTensor:$a,
+    MHLO_FpTensor:$b,
+    MHLO_FpTensor:$c
+  );
+
+  let results = (outs MHLO_FpTensor:$result);
+
+  let extraClassDeclaration = [{
+    LogicalResult reifyReturnTypeShapes(
+        OpBuilder& builder, ValueRange operands,
+        SmallVectorImpl<Value>& reifiedReturnShapes) {
+      return ::mlir::hlo::deriveShapeFromOperand(&builder, getOperation(),
+                                                 operands.front(),
+                                                 &reifiedReturnShapes);
+    }
+    static bool isCompatibleReturnTypes(TypeRange l, TypeRange r) {
+      return mlir::hlo::isCompatibleForHloTypeInference(l, r);
+    }
+  }];
+
+  let assemblyFormat = [{
+    $a `,` $b `,` $c attr-dict
+      `:` custom<SameOperandsAndResultType>(type($a), type($b), type($c), type($result))
+  }];
 }
 
 def MHLO_GatherOp: MHLO_Op<"gather", [InferTensorTypeWithReify, Pure]> {

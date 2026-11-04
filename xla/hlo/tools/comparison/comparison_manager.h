@@ -40,7 +40,6 @@ limitations under the License.
 #include "xla/hlo/tools/comparison/comparison_manager.pb.h"
 #include "xla/hlo/tools/comparison/comparison_options.pb.h"
 #include "xla/hlo/tools/comparison/comparison_service.pb.h"
-#include "xla/hlo/tools/comparison/comparison_service.pb.h"
 
 namespace xla::numerics::comparison {
 

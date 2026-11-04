@@ -39,13 +39,13 @@ load("//third_party/dlpack:workspace.bzl", dlpack = "repo")
 load("//third_party/ducc:workspace.bzl", ducc = "repo")
 load("//third_party/eigen3:workspace.bzl", eigen3 = "repo")
 load("//third_party/farmhash:workspace.bzl", farmhash = "repo")
+load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 load("//third_party/fmt:workspace.bzl", fmt = "repo")
 load("//third_party/FP16:workspace.bzl", FP16 = "repo")
 load("//third_party/fxdiv:workspace.bzl", fxdiv = "repo")
 load("//third_party/gemmlowp:workspace.bzl", gemmlowp = "repo")
 load("//third_party/gloo:workspace.bzl", gloo = "repo")
 load("//third_party/gpus:rocm_configure.bzl", "rocm_configure")
-load("//third_party/gutil:workspace.bzl", gutil = "repo")
 load("//third_party/highway:workspace.bzl", highway = "repo")
 load("//third_party/highwayhash:workspace.bzl", highwayhash = "repo")
 load("//third_party/hwloc:workspace.bzl", hwloc = "repo")
@@ -63,6 +63,7 @@ load("//third_party/net_zstd:workspace.bzl", net_zstd = "repo")
 load("//third_party/nvshmem:workspace.bzl", nvshmem = "repo")
 load("//third_party/nvtx:workspace.bzl", nvtx = "repo")
 load("//third_party/oneccl:workspace.bzl", oneccl_v1 = "repo_v1", oneccl_v2 = "repo_v2")
+load("//third_party/onedpl:workspace.bzl", onedpl = "repo")
 load("//third_party/pthreadpool:workspace.bzl", pthreadpool = "repo")
 load("//third_party/py:python_configure.bzl", "python_configure")
 load("//third_party/py/ml_dtypes:workspace.bzl", ml_dtypes = "repo")
@@ -81,7 +82,6 @@ load("//third_party/slinky:workspace.bzl", slinky = "repo")
 load("//third_party/spdlog:workspace.bzl", spdlog = "repo")
 load("//third_party/sqlite:workspace.bzl", sqlite = "repo")
 load("//third_party/stablehlo:workspace.bzl", stablehlo = "repo")
-load("//third_party/system_libpci:workspace.bzl", system_libpci = "repo")
 load("//third_party/tensor_ir:workspace.bzl", tensor_ir = "repo")
 load("//third_party/tensorrt:tensorrt_configure.bzl", "tensorrt_configure")
 load("//third_party/tensorrt:workspace.bzl", tensorrt = "repo")
@@ -89,6 +89,7 @@ load("//third_party/transformer_engine:workspace.bzl", transformer_engine = "rep
 load("//third_party/triton:workspace.bzl", triton = "repo")
 load("//third_party/uv:workspace.bzl", uv = "repo")
 load("//third_party/xnnpack:workspace.bzl", xnnpack = "repo")
+load("//third_party/xz:workspace.bzl", xz = "repo")
 load("//tools/def_file_filter:def_file_filter_configure.bzl", "def_file_filter_configure")
 load("//tools/toolchains:cpus/aarch64/aarch64_compiler_configure.bzl", "aarch64_compiler_configure")
 load("//tools/toolchains:cpus/arm/arm_compiler_configure.bzl", "arm_compiler_configure")
@@ -108,13 +109,15 @@ def _initialize_third_party():
     ducc()
     eigen3()
     farmhash()
+
+    # Only needed in WORKSPACE builds; bzlmod uses the BCR module.
+    flatbuffers()
     fmt()
     fxdiv()
     riegeli()
     brotli()
     gemmlowp()
     gloo()
-    gutil()
     highway()
     highwayhash()
     hwloc()
@@ -131,6 +134,7 @@ def _initialize_third_party():
     nvshmem()
     nvtx()
     onednn()
+    onedpl()
     oneccl_v1()
     oneccl_v2()
     pybind11_abseil()
@@ -141,7 +145,6 @@ def _initialize_third_party():
     rmm()
     robin_map()
     rdma_core()
-    system_libpci()  # ROCm CI image's pciutils headers (used by @roc_mori//:libpci).
     roc_mori()  # MORI: hermetic Bazel build from GitHub tarball + BUILD overlays.
     rocm_device_libs()
     shardy()
@@ -155,6 +158,7 @@ def _initialize_third_party():
     triton()
     uv()
     xnnpack()
+    xz()
     cuda_tile()
     cutlass()
     cutlass_cutedsl_runtime()
@@ -345,7 +349,6 @@ def _tf_repositories():
         patch_file = [
             "//third_party/googletest:googletest.patch",
             "//third_party/googletest:0001-Add-ASSERT_OK-EXPECT_OK-ASSERT_OK_AND_ASSIGN-macros.patch",
-            "//third_party/googletest:0002-Rename-dependencies-for-workspace.bzl-build.patch",
         ],
         urls = tf_mirror_urls("https://github.com/google/googletest/archive/28e9d1f26771c6517c3b4be10254887673c940189.zip"),
         repo_mapping = {
@@ -371,9 +374,9 @@ def _tf_repositories():
     tf_http_archive(
         name = "curl",
         build_file = "//third_party:curl.BUILD",
-        sha256 = "264537d90e58d2b09dddc50944baf3c38e7089151c8986715e2aaeaaf2b8118f",
-        strip_prefix = "curl-8.11.0",
-        urls = tf_mirror_urls("https://curl.se/download/curl-8.11.0.tar.gz"),
+        sha256 = "d54dd598bf05927a726deb38df31c6a255ba83ff1de57c5d1464dac3ed8f44a1",
+        strip_prefix = "curl-8.22.0",
+        urls = tf_mirror_urls("https://curl.se/download/curl-8.22.0.tar.gz"),
     )
 
     tf_http_archive(

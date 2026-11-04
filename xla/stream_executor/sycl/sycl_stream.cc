@@ -73,11 +73,8 @@ absl::Status LaunchSyclKernel(
     size_t num_args = num_args_ptr ? *num_args_ptr : 0;
 
     for (size_t arg_index = 0; arg_index < num_args; ++arg_index) {
-      if (arg_ptrs[arg_index] == nullptr) {
-        LOG(ERROR) << "LaunchSyclKernel: kernel argument " << arg_index
-                   << " is null, cannot set kernel argument.";
-        return;
-      }
+      // A kernel argument can be null for a zero-sized buffer (e.g. empty
+      // scatter indices).
       VLOG(2) << "Setting kernel argument " << arg_index
               << " at address: " << arg_ptrs[arg_index];
       cgh.set_arg(arg_index, arg_ptrs[arg_index]);
@@ -122,7 +119,7 @@ absl::Status SyclStream::WaitFor(Stream* other) {
 
 absl::Status SyclStream::RecordEvent(Event* event) {
   ABSL_ASSIGN_OR_RETURN(::sycl::event recent_event,
-                   SyclGetRecentEventFromStream(stream_handle_.get()));
+                        SyclGetRecentEventFromStream(stream_handle_.get()));
   // Update the event to the most recent one on the stream.
   static_cast<SyclEvent*>(event)->SetEvent(recent_event);
   VLOG(2) << "Recording SYCL event on stream " << stream_handle_.get();
@@ -147,9 +144,9 @@ absl::Status SyclStream::Memset32(DeviceAddressBase* location, uint32_t pattern,
   if (size % sizeof(uint32_t) != 0) {
     return absl::InvalidArgumentError("Size must be a multiple of 4 bytes.");
   }
-  ABSL_RETURN_IF_ERROR(SyclMemfillDeviceAsync(stream_handle_.get(),
-                                         const_cast<void*>(location->opaque()),
-                                         pattern, size / sizeof(uint32_t)));
+  ABSL_RETURN_IF_ERROR(SyclMemfillDeviceAsync(
+      stream_handle_.get(), const_cast<void*>(location->opaque()), pattern,
+      size / sizeof(uint32_t)));
   VLOG(2) << "Successfully enqueued async memset32 of "
           << size / sizeof(uint32_t) << " uint32s at " << location
           << " with value 0x" << std::hex << pattern << std::dec
@@ -237,7 +234,13 @@ absl::Status SyclStream::DoHostCallbackWithStatus(
 }
 
 absl::Status SyclStream::BlockHostUntilDone() {
-  stream_handle_->wait();
+  // Called from ~SyclStream(), so exceptions must be caught, not propagated.
+  try {
+    stream_handle_->wait();
+  } catch (const ::sycl::exception& e) {
+    return absl::InternalError(absl::StrCat(
+        "SYCL exception in SyclStream::BlockHostUntilDone: ", e.what()));
+  }
   return absl::OkStatus();
 }
 
@@ -263,9 +266,10 @@ absl::StatusOr<std::unique_ptr<SyclStream>> SyclStream::Create(
           << (enable_multiple_streams ? " with" : " without")
           << " multiple streams enabled";
 
-  ABSL_ASSIGN_OR_RETURN(StreamPtr stream_handle,
-                   SyclStreamPool::GetOrCreateStream(executor->device_ordinal(),
-                                                     enable_multiple_streams));
+  ABSL_ASSIGN_OR_RETURN(
+      StreamPtr stream_handle,
+      SyclStreamPool::GetOrCreateStream(executor->device_ordinal(),
+                                        enable_multiple_streams));
 
   ABSL_ASSIGN_OR_RETURN(SyclEvent completed_event, SyclEvent::Create(executor));
 
@@ -275,7 +279,11 @@ absl::StatusOr<std::unique_ptr<SyclStream>> SyclStream::Create(
 
 SyclStream::~SyclStream() {
   // Wait for all pending operations to complete before destroying the stream.
-  BlockHostUntilDone().IgnoreError();
+  absl::Status wait_status = BlockHostUntilDone();
+  if (!wait_status.ok()) {
+    LOG(ERROR) << "BlockHostUntilDone failed during stream destruction: "
+               << wait_status;
+  }
 
   // Remove this stream from the executor's list of allocated streams.
   executor_->DeallocateStream(this);

@@ -190,6 +190,7 @@ cc_library(
     hdrs = ["inspect_sharding.h"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service:custom_call_sharding_helper",
@@ -224,6 +225,7 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -345,10 +347,6 @@ nanobind_pywrap_extension(
         ":nb_absl_span",
         ":nb_helpers",
         ":types",
-        # placeholder for index annotation deps
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/types:span",
-        "@nanobind",
         "//xla:literal",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -365,6 +363,9 @@ nanobind_pywrap_extension(
         "//xla/hlo/builder/lib:svd",
         "//xla/pjrt:status_casters",
         "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
     ],
 )
 
@@ -378,7 +379,7 @@ nanobind_pywrap_extension(
     deps = [
         ":dlpack_types",
         ":nb_absl_span",
-        ":strides",
+        ":nb_numpy",
         ":types",
         "//xla:array",
         "//xla:debug_options_flags",
@@ -392,14 +393,11 @@ nanobind_pywrap_extension(
         "//xla/hlo/parser:hlo_parser",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:status_casters",
-        "//xla/python:nb_numpy",
         "//xla/service:hlo_graph_dumper",
         "//xla/service:hlo_module_config",
         "//xla/service/spmd/shardy/stablehlo_round_trip:stablehlo_import",
         "//xla/tsl/lib/strings:proto_serialization",
         "//xla/tsl/platform:env",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
         "//xla/tsl/python/lib/core:numpy",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/hash",
@@ -508,11 +506,6 @@ nanobind_pywrap_extension(
         ":aggregate_profile",
         ":profiler_utils",
         ":xplane_to_profile_instructions",
-        # placeholder for index annotation deps
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
-        "@nanobind",
         "//xla/backends/profiler:profiler_backends",
         "//xla/backends/profiler/cpu:python_tracer",
         "//xla/backends/profiler/plugin:plugin_tracer",
@@ -527,7 +520,10 @@ nanobind_pywrap_extension(
         "//xla/tsl/profiler/rpc:profiler_server_impl",
         "//xla/tsl/profiler/rpc/client:capture_profile",
         "//xla/tsl/profiler/rpc/client:profiler_client_impl",
-        "//xla/tsl/profiler/utils:xplane_schema",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
         "@tsl//tsl/platform:protobuf",
         "@tsl//tsl/profiler/lib:profiler_session",
         "@tsl//tsl/profiler/lib:traceme",
@@ -586,6 +582,18 @@ nanobind_pywrap_extension(
     ],
 )
 
+nanobind_pywrap_extension(
+    name = "_gpu_spec",
+    srcs = ["gpu_spec.cc"],
+    pytype_srcs = ["_gpu_spec.pyi"],
+    visibility = internal_visibility([":jax"] + XLA_PYTHON_PROFILER_USERS),
+    deps = [
+        "//xla/backends/gpu/target_config",
+        "//xla/pjrt:exceptions",
+        "@nanobind",
+    ],
+)
+
 cc_library(
     name = "logging",
     srcs = ["logging.cc"],
@@ -602,7 +610,7 @@ cc_library(
     hdrs = ["xplane_to_profile_instructions.h"],
     deps = [
         "//xla:xla_proto_cc",
-        "//xla/hlo/ir:hlo",
+        "//xla/service:hlo_profiling_utils",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:types",
@@ -612,6 +620,7 @@ cc_library(
         "//xla/tsl/profiler/utils:xplane_schema",
         "//xla/tsl/profiler/utils:xplane_utils",
         "//xla/tsl/profiler/utils:xplane_visitor",
+        "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -628,6 +637,7 @@ xla_cc_test(
     deps = [
         ":xplane_to_profile_instructions",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:hlo_profiling_utils",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:test",
         "//xla/tsl/platform:test_main",
@@ -636,6 +646,12 @@ xla_cc_test(
         "//xla/tsl/profiler/utils:file_system_utils",
         "//xla/tsl/profiler/utils:xplane_builder",
         "//xla/tsl/profiler/utils:xplane_schema",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc",
         "@tsl//tsl/profiler/protobuf:profiled_instructions_proto_cc_impl",
         "@tsl//tsl/profiler/protobuf:xplane_proto_cc",
     ],
@@ -663,6 +679,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = internal_visibility([":friends"]),
     deps = [
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@nanobind",
@@ -803,7 +820,7 @@ py_test(
     deps = [
         ":xla_extension",
         ":xla_transform",
-        "//third_party/py/numpy",
+        "//third_party/py/numpy",  # buildcleaner: keep (needed at runtime by the extension module)
         "@absl_py//absl/testing:absltest",
     ] + xla_py_test_deps(),
 )
@@ -817,7 +834,6 @@ py_test(
     deps = [
         ":_hlo",
         ":xla_client",
-        "//third_party/py/numpy",
         "@absl_py//absl/logging",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",

@@ -18,17 +18,19 @@ limitations under the License.
 
 #include "xla/tests/literal_test_util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_join.h"
+#include "tsl/platform/path.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/testlib/test_helpers.h"
 #include "xla/literal.h"
@@ -37,7 +39,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {

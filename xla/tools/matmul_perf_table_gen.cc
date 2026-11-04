@@ -29,6 +29,7 @@ limitations under the License.
 
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/functional/function_ref.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -127,8 +128,10 @@ struct StaticSpec {
     const HloInstructionProto& instr = profile.instruction();
     CHECK_EQ(instr.opcode(), HloOpcodeString(HloOpcode::kDot));
     const DotDimensionNumbers& dot_dims = instr.dot_dimension_numbers();
-    ABSL_ASSIGN_OR_RETURN(Shape lhs, Shape::FromProto(profile.operands(0).shape()));
-    ABSL_ASSIGN_OR_RETURN(Shape rhs, Shape::FromProto(profile.operands(1).shape()));
+    ABSL_ASSIGN_OR_RETURN(Shape lhs,
+                          Shape::FromProto(profile.operands(0).shape()));
+    ABSL_ASSIGN_OR_RETURN(Shape rhs,
+                          Shape::FromProto(profile.operands(1).shape()));
     int b = 1, m = 1, n = 1, k = 1;
     for (int dim : dot_dims.lhs_batch_dimensions()) {
       b *= ShapeUtil::GetDimension(lhs, dim);
@@ -192,13 +195,6 @@ std::unique_ptr<HloModule> GetModule(absl::string_view lhs_dtype,
   auto parsed = ParseAndReturnUnverifiedModule(text, config);
   CHECK_OK(parsed.status());
   return *std::move(parsed);
-}
-
-void Measure(HloRunnerInterface& runner, OpaqueExecutable* executable,
-             const std::vector<Literal>& args_small,
-             const std::vector<Literal>& args_large) {
-  CHECK_OK(runner.ExecuteWithExecutable(executable, args_small).status());
-  CHECK_OK(runner.ExecuteWithExecutable(executable, args_large).status());
 }
 
 void AddDotsFromStaticSpec(const MatmulPerfTableGen::Config& config,
@@ -383,6 +379,29 @@ int64_t GetFlops(const HloDotInstruction& dot) {
 
 }  // namespace
 
+internal::KernelExecutionTimer::KernelExecutionTimer(
+    KernelTracerFactory tracer_factory)
+    : tracer_factory_(std::move(tracer_factory)) {}
+
+uint64_t internal::KernelExecutionTimer::MeasureRepeated(
+    int num_executions,
+    absl::FunctionRef<absl::Status(int execution)> execute) {
+  std::vector<uint64_t> execution_times_ns;
+  execution_times_ns.reserve(num_executions);
+  for (int execution = 0; execution < num_executions; ++execution) {
+    std::unique_ptr<HloOpProfiler::KernelTracer> tracer = tracer_factory_();
+    CHECK_OK(execute(execution));
+    execution_times_ns.push_back(std::move(*tracer).getSumKernelTimeNs());
+  }
+
+  std::sort(execution_times_ns.begin(), execution_times_ns.end());
+  size_t i = execution_times_ns.size() / 2;
+  if (execution_times_ns.size() % 2 != 0) {
+    return execution_times_ns[i];
+  }
+  return (execution_times_ns[i - 1] + execution_times_ns[i] + 1) / 2;
+}
+
 std::unique_ptr<OpaqueExecutable> MatmulPerfTableGen::Compile(
     std::unique_ptr<HloModule> module) {
   auto compiled =
@@ -419,14 +438,17 @@ absl::Duration MatmulPerfTableGen::Profile(std::unique_ptr<HloModule> module) {
   // First run to warm up stuff.
   CHECK_OK(runner_.ExecuteWithExecutable(compiled.get(), *args_small).status());
 
-  // Trace `kNumProfilingRuns` times to get decent measurement.
-  std::unique_ptr<HloOpProfiler::KernelTracer> tracer =
-      HloOpProfiler::GetKernelTracer();
-  for (int i = 0; i < kNumProfilingRuns; i++) {
-    Measure(runner_, compiled.get(), *args_small, *args_large);
-  }
-
-  return absl::Nanoseconds(std::move(*tracer).getMedianKernelTimeNs());
+  internal::KernelExecutionTimer timer(
+      [] { return HloOpProfiler::GetKernelTracer(); });
+  return absl::Nanoseconds(
+      timer.MeasureRepeated(2 * kNumProfilingRuns, [&](int execution) {
+        if (execution % 2 == 0) {
+          return runner_.ExecuteWithExecutable(compiled.get(), *args_small)
+              .status();
+        }
+        return runner_.ExecuteWithExecutable(compiled.get(), *args_large)
+            .status();
+      }));
 }
 
 absl::StatusOr<DeviceHloInstructionProfiles> MatmulPerfTableGen::Merge(
@@ -581,7 +603,8 @@ DeviceHloInstructionProfiles MatmulPerfTableGen::ComputeTable() {
     absl::btree_map<std::array<int64_t, 4>, GemmPerfTableEntry>
         gemm_perf_table_entry;
     for (const HloInstructionProfile& profile : profile_list.entries()) {
-      ABSL_ASSIGN_OR_RETURN(StaticSpec spec, StaticSpec::FromDotProfile(profile));
+      ABSL_ASSIGN_OR_RETURN(StaticSpec spec,
+                            StaticSpec::FromDotProfile(profile));
 
       std::array<int64_t, 4> key = {spec.b, spec.m, spec.k, spec.n};
       if (!gemm_perf_table_entry.contains(key)) {

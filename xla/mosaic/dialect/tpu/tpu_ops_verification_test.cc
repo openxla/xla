@@ -13,19 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <optional>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/IR/ArithDialect.h"
+#include "mlir/Dialect/Func/IR/FuncDialect.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/MemRef/IR/MemRefDialect.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/Block.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -34,9 +39,11 @@ limitations under the License.
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/TypeRange.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Support/LLVM.h"
+#include "xla/layout.h"
 #include "xla/mlir/utils/error_util.h"
 #include "xla/mosaic/dialect/tpu/tpu_dialect.h"
 
@@ -357,6 +364,596 @@ TEST_F(TpuOpsVerificationTest, VectorStoreInvalidMemorySpace) {
               StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
 }
 
+TEST_F(TpuOpsVerificationTest, CompressStoreVregValid) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto cs = Create<CompressStoreVregOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask,
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_OK(VerifyOp(cs));
+}
+
+TEST_F(TpuOpsVerificationTest, CompressStoreVregValid2D) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8, 2}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto cs = Create<CompressStoreVregOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_OK(VerifyOp(cs));
+}
+
+// Packed types use a (lane_count, packing) vreg with a lane mask, so only
+// dimension 0 has to match the mask.
+TEST_F(TpuOpsVerificationTest, CompressStoreVregValidPacked) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref =
+      Create<memref::AllocaOp>(
+          GetMemRefType({16}, builder().getBF16Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value vector_to_store = ConstantBF16Vector(/*shape=*/{8, 2}, /*value=*/1.0f);
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto cs = Create<CompressStoreVregOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask,
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_OK(VerifyOp(cs));
+}
+
+TEST_F(TpuOpsVerificationTest, CompressStoreVregInvalidMemorySpace) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto cs = Create<CompressStoreVregOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask,
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_THAT(VerifyOp(cs),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, CompressStoreVregMismatchedMaskShape) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{4},
+                                /*values=*/{true, true, true, true});
+  auto cs = Create<CompressStoreVregOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask,
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_THAT(
+      VerifyOp(cs),
+      StatusIs(
+          _,
+          HasSubstr(
+              "Expected valueToStore dimension 0 to match mask dimension 0")));
+}
+
+TEST_F(TpuOpsVerificationTest, ExpandLoadVregValid) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto el = Create<ExpandLoadVregOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask);
+
+  ASSERT_OK(VerifyOp(el));
+}
+
+// Packed types use a (lane_count, packing) vreg with a lane mask, so only
+// dimension 0 has to match the mask.
+TEST_F(TpuOpsVerificationTest, ExpandLoadVregValidPacked) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref =
+      Create<memref::AllocaOp>(
+          GetMemRefType({16}, builder().getBF16Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto el = Create<ExpandLoadVregOp>(
+      /*result=*/VectorType::get({8, 2}, builder().getBF16Type()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask);
+
+  ASSERT_OK(VerifyOp(el));
+}
+
+TEST_F(TpuOpsVerificationTest, ExpandLoadVregInvalidMemorySpace) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kHbm);
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto el = Create<ExpandLoadVregOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask);
+
+  ASSERT_THAT(VerifyOp(el),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, ExpandLoadVregMismatchedMaskShape) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(/*shape=*/{4},
+                                /*values=*/{true, true, true, true});
+  auto el = Create<ExpandLoadVregOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask);
+
+  ASSERT_THAT(
+      VerifyOp(el),
+      StatusIs(_,
+               HasSubstr("Expected result dimension 0 to match mask dimension "
+                         "0")));
+}
+
+TEST_F(TpuOpsVerificationTest, ExpandLoadVregMismatchedIndicesCount) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({8}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(
+      /*shape=*/{8},
+      /*values=*/{true, false, true, false, true, false, true, false});
+  auto el = Create<ExpandLoadVregOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask);
+
+  ASSERT_THAT(VerifyOp(el), StatusIs(_, HasSubstr("Expected 1 indices.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreValid) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{2, 8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(1),
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_OK(VerifyOp(cs));
+}
+
+// Packed (sub-32-bit) types pass verification with a mask of the same shape as
+// valueToStore: they are rejected later, in the vector layout passes, until
+// packed compressed stores are supported.
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreValidPacked) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref =
+      Create<memref::AllocaOp>(
+          GetMemRefType({4, 16}, builder().getBF16Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value vector_to_store = ConstantBF16Vector(/*shape=*/{2, 8}, /*value=*/1.0f);
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(1),
+      /*add=*/builder().getBoolAttr(false));
+  ASSERT_OK(VerifyOp(cs));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStorePackedMismatchedMaskShape) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref =
+      Create<memref::AllocaOp>(
+          GetMemRefType({4, 16}, builder().getBF16Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value vector_to_store = ConstantBF16Vector(/*shape=*/{2, 8}, /*value=*/1.0f);
+  Value mask = ConstantI1Vector(/*shape=*/{2, 4},
+                                /*values=*/SmallVector<bool>(8, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(1),
+      /*add=*/builder().getBoolAttr(false));
+  ASSERT_THAT(
+      VerifyOp(cs),
+      StatusIs(_, HasSubstr("Expected mask shape to match value shape: (2, 8). "
+                            "Got: (2, 4).")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreInvalidMemorySpace) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kHbm);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{2, 8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(1),
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_THAT(VerifyOp(cs),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreMismatchedRank) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{8},
+                                /*values=*/SmallVector<bool>(8, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(1),
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_THAT(VerifyOp(cs),
+              StatusIs(_, HasSubstr("Expected valueToStore to have the same "
+                                    "rank as base (2). Got: 1.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreMismatchedIndicesCount) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{2, 8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(1),
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_THAT(VerifyOp(cs), StatusIs(_, HasSubstr("Expected 2 indices.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreCompressDimOutOfRange) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{2, 8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(2),
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_THAT(
+      VerifyOp(cs),
+      StatusIs(_, HasSubstr("Expected compress_dim to be in [0, 2). Got: 2.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreNonMinormostCompressDim) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{2, 8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(0),
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_OK(VerifyOp(cs));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreMismatchedMaskShape) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{2, 8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{2, 4},
+                                /*values=*/SmallVector<bool>(8, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(1),
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_THAT(
+      VerifyOp(cs),
+      StatusIs(_, HasSubstr("Expected mask shape to match value shape: (2, 8). "
+                            "Got: (2, 4).")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreNonCompressedDimOutOfBounds) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({2, 16}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{4, 8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{4, 8},
+                                /*values=*/SmallVector<bool>(32, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(1),
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_THAT(
+      VerifyOp(cs),
+      StatusIs(_, HasSubstr("Non-compressed dimension 0 of valueToStore goes "
+                            "out of bounds of base")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreDynamicIndicesAllowed) {
+  // Non-compressed dimension fits (2 <= 4), but constant index offset plus size
+  // exceeds base dimension (3 + 2 = 5 > 4). All indices are treated as dynamic,
+  // so verification passes.
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  auto c3 = Create<arith::ConstantIndexOp>(3);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{2, 8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c3, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(1),
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_OK(VerifyOp(cs));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorCompressStoreDynamicBaseDimAllowed) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({ShapedType::kDynamic, 16}, MemorySpace::kVmem);
+  Value vector_to_store = ConstantI32Vector(/*shape=*/{8, 8}, /*values=*/{1});
+  Value mask = ConstantI1Vector(/*shape=*/{8, 8},
+                                /*values=*/SmallVector<bool>(64, true));
+  auto cs = Create<VectorCompressStoreOp>(
+      /*valueToStore=*/vector_to_store,
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*compress_dim=*/builder().getI32IntegerAttr(1),
+      /*add=*/builder().getBoolAttr(false));
+
+  ASSERT_OK(VerifyOp(cs));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadValid) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({2, 8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(1));
+
+  ASSERT_OK(VerifyOp(el));
+}
+
+// Packed (sub-32-bit) types must pass verification.
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadValidPacked) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref =
+      Create<memref::AllocaOp>(
+          GetMemRefType({4, 16}, builder().getBF16Type(), MemorySpace::kVmem))
+          .getMemref();
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({2, 8}, builder().getBF16Type()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(1));
+
+  ASSERT_OK(VerifyOp(el));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadInvalidMemorySpace) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kHbm);
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({2, 8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(1));
+
+  ASSERT_THAT(VerifyOp(el),
+              StatusIs(_, HasSubstr("Expected base memref to be in VMEM.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadMismatchedRank) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(/*shape=*/{8},
+                                /*values=*/SmallVector<bool>(8, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(1));
+
+  ASSERT_THAT(VerifyOp(el),
+              StatusIs(_, HasSubstr("Expected result to have the same rank as "
+                                    "base (2). Got: 1.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadMismatchedIndicesCount) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({2, 8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(1));
+
+  ASSERT_THAT(VerifyOp(el), StatusIs(_, HasSubstr("Expected 2 indices.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadExpandDimOutOfRange) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({2, 8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(2));
+
+  ASSERT_THAT(
+      VerifyOp(el),
+      StatusIs(_, HasSubstr("Expected expand_dim to be in [0, 2). Got: 2.")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadNonMinormostExpandDim) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({2, 8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(0));
+
+  ASSERT_OK(VerifyOp(el));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadMismatchedMaskShape) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(/*shape=*/{2, 4},
+                                /*values=*/SmallVector<bool>(8, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({2, 8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(1));
+
+  ASSERT_THAT(
+      VerifyOp(el),
+      StatusIs(_, HasSubstr("Expected mask shape to match result shape")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadNonExpandedDimOutOfBounds) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({2, 16}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(/*shape=*/{4, 8},
+                                /*values=*/SmallVector<bool>(32, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({4, 8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(1));
+
+  ASSERT_THAT(VerifyOp(el),
+              StatusIs(_, HasSubstr("Non-expanded dimension 0 of result goes "
+                                    "out of bounds of base")));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadDynamicIndicesAllowed) {
+  // Non-expanded dimension fits (2 <= 4), but constant index offset plus size
+  // exceeds base dimension (3 + 2 = 5 > 4). All indices are treated as dynamic,
+  // so verification passes.
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  auto c3 = Create<arith::ConstantIndexOp>(3);
+  Value memref = AllocaI32({4, 16}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(/*shape=*/{2, 8},
+                                /*values=*/SmallVector<bool>(16, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({2, 8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c3, c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(1));
+
+  ASSERT_OK(VerifyOp(el));
+}
+
+TEST_F(TpuOpsVerificationTest, VectorExpandLoadDynamicBaseDimAllowed) {
+  auto c0 = Create<arith::ConstantIndexOp>(0);
+  Value memref = AllocaI32({ShapedType::kDynamic, 16}, MemorySpace::kVmem);
+  Value mask = ConstantI1Vector(/*shape=*/{8, 8},
+                                /*values=*/SmallVector<bool>(64, true));
+  auto el = Create<VectorExpandLoadOp>(
+      /*result=*/VectorType::get({8, 8}, i32()),
+      /*base=*/memref,
+      /*indices=*/ValueRange{c0, c0},
+      /*mask=*/mask,
+      /*expand_dim=*/builder().getI32IntegerAttr(1));
+
+  ASSERT_OK(VerifyOp(el));
+}
+
 TEST_F(TpuOpsVerificationTest, UnpackSubelementsValidIndex) {
   Value source = ConstantI8Vector(/*shape=*/{4, 8}, /*values=*/{1});
   auto unpack = Create<UnpackSubelementsOp>(
@@ -627,7 +1224,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
   Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMin, mask, 0)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMinUI, mask, 0)),
       StatusIs(
           _,
           HasSubstr(
@@ -666,6 +1263,10 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
       VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kArgMax, mask, 0)),
       StatusIs(_,
                HasSubstr("Only sum, max and min reductions are supported.")));
+  ASSERT_THAT(
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMaxF, mask, 0)),
+      StatusIs(
+          _, HasSubstr("maxf and minf reductions require float element type")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
@@ -675,7 +1276,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
   Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMin, mask, 0)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMinUI, mask, 0)),
       StatusIs(
           _,
           HasSubstr("Only sum reduction is supported for i1 vector inputs.")));
@@ -698,7 +1299,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskRank) {
   Value mask = ConstantI1Vector(/*shape=*/{1, 8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask, 0)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMaxUI, mask, 0)),
       StatusIs(
           _,
           HasSubstr(
@@ -711,7 +1312,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidMaskShape) {
   Value mask = ConstantI1Vector(/*shape=*/{16}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask, 1)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMaxUI, mask, 1)),
       StatusIs(_, HasSubstr("Mask and input mismatch. Expected mask of "
                             "length: 8, but got 16.")));
 }
@@ -722,10 +1323,10 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, ScanVerificationInvalidDimension) {
   Value mask = ConstantI1Vector(/*shape=*/{8}, /*values=*/{true});
 
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask, -1)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMaxUI, mask, -1)),
       StatusIs(_, HasSubstr("Dimension must be in [0, rank).")));
   ASSERT_THAT(
-      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMax, mask, 1)),
+      VerifyOp(Create<ScanOp>(dst, src, tpu::ReductionKind::kMaxUI, mask, 1)),
       StatusIs(_, HasSubstr("Dimension must be in [0, rank).")));
 }
 
@@ -1101,7 +1702,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
        IndirectDmaScatterAddVerificationWorks) {
   auto dma = Create<EnqueueIndirectDMAOp>(
       /*source=*/AllocaI32({64, 128}, MemorySpace::kVmem),
-      /*target=*/AllocaI32({1024, 128}, MemorySpace::kHbm),
+      /*target=*/AllocaI32({1024, 128}, MemorySpace::kVmemShared),
       /*offsets=*/AllocaI32({64}, MemorySpace::kVmem),
       /*semaphore=*/AllocaDMASemaphore(),
       /*offset_filter=*/nullptr,
@@ -1603,6 +2204,38 @@ TEST_F(TpuOpsVerificationTest, ReduceOpDuplicateDims) {
       VerifyOp(reduce),
       StatusIs(_, HasSubstr("Reduced dimension 0 is present more than once")));
 }
+
+TEST_F(TpuOpsVerificationTest, ReduceOpReductionKindElementType) {
+  Value f32_input = ConstantF32Vector(/*shape=*/{100, 200}, /*values=*/{1.0f});
+  Value i32_input = ConstantI32Vector(/*shape=*/{100, 200}, /*values=*/{1});
+  Type f32_out_ty = VectorType::get({1, 200}, builder().getF32Type());
+  Type i32_out_ty = VectorType::get({1, 200}, builder().getI32Type());
+  auto dims = builder().getDenseI64ArrayAttr({0});
+
+  ASSERT_OK(VerifyOp(Create<ReduceOp>(
+      f32_out_ty, f32_input, dims,
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kMaxF))));
+  ASSERT_OK(VerifyOp(Create<ReduceOp>(
+      i32_out_ty, i32_input, dims,
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kMaxSI))));
+  ASSERT_OK(VerifyOp(Create<ReduceOp>(
+      i32_out_ty, i32_input, dims,
+      ReductionKindAttr::get(builder().getContext(), ReductionKind::kMaxUI))));
+
+  ASSERT_THAT(
+      VerifyOp(Create<ReduceOp>(f32_out_ty, f32_input, dims,
+                                ReductionKindAttr::get(builder().getContext(),
+                                                       ReductionKind::kMaxSI))),
+      StatusIs(_, HasSubstr("maxsi, minsi, maxui and minui reductions require "
+                            "integer element type")));
+  ASSERT_THAT(
+      VerifyOp(Create<ReduceOp>(i32_out_ty, i32_input, dims,
+                                ReductionKindAttr::get(builder().getContext(),
+                                                       ReductionKind::kMaxF))),
+      StatusIs(_, HasSubstr("maxf and minf reductions require float element "
+                            "type")));
+}
+
 TEST_F(TpuOpsVerificationTest, ConvOpVerificationWorks) {
   Value lhs = ConstantF32Vector({1, 8, 128}, {1.0f});
   Value rhs = ConstantF32Vector({3, 128, 128}, {1.0f});
@@ -1941,5 +2574,241 @@ TEST_F(TpuOpsVerificationTest, ConvOpBatchGroupCountValid) {
       /*precision=*/nullptr);
   ASSERT_OK(VerifyOp(conv));
 }
+
+TEST_F(TpuOpsVerificationTest, TileSizeOpValid) {
+  Value memref = AllocaI32(/*shape=*/{16, 256});
+  auto tile_size_op = Create<TileSizeOp>(
+      /*result=*/builder().getI32Type(),
+      /*source=*/memref,
+      /*index=*/builder().getI32IntegerAttr(0));
+  EXPECT_OK(VerifyOp(tile_size_op));
+}
+
+TEST_F(TpuOpsVerificationTest, TileSizeOpIndexOutOfBoundsNegative) {
+  Value memref = AllocaI32(/*shape=*/{16, 256});
+  auto tile_size_op = Create<TileSizeOp>(
+      /*result=*/builder().getI32Type(),
+      /*source=*/memref,
+      /*index=*/builder().getI32IntegerAttr(-1));
+  EXPECT_THAT(VerifyOp(tile_size_op),
+              StatusIs(_, HasSubstr("Index out of bounds")));
+}
+
+TEST_F(TpuOpsVerificationTest, TileSizeOpIndexOutOfBoundsTooLarge) {
+  Value memref = AllocaI32(/*shape=*/{16, 256});
+  auto tile_size_op = Create<TileSizeOp>(
+      /*result=*/builder().getI32Type(),
+      /*source=*/memref,
+      /*index=*/builder().getI32IntegerAttr(2));
+  EXPECT_THAT(VerifyOp(tile_size_op),
+              StatusIs(_, HasSubstr("Index out of bounds")));
+}
+
+TEST_F(TpuOpsVerificationTest, SharedMemRefSliceOpNotSupportedOnTc) {
+  auto func_op =
+      Create<func::FuncOp>("tc_kernel", builder().getFunctionType({}, {}));
+  func_op->setAttr(TPUDialect::GetCoreTypeKey(),
+                   CoreTypeAttr::get(builder().getContext(), CoreType::kTc));
+  builder().setInsertionPointToStart(func_op.addEntryBlock());
+
+  Value source = AllocaI32({8, 128}, MemorySpace::kVmemShared);
+  auto slice = Create<SharedMemRefSliceOp>(
+      GetMemRefType({8, 8}, i32(), MemorySpace::kVmem), source);
+  EXPECT_THAT(VerifyOp(slice),
+              StatusIs(_, HasSubstr("Unsupported core type: tc")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, SharedMemRefSliceOpValid) {
+  Value source = AllocaI32({8, 128}, MemorySpace::kVmemShared);
+  auto slice = Create<SharedMemRefSliceOp>(
+      GetMemRefType({8, 8}, i32(), MemorySpace::kVmem), source);
+  EXPECT_THAT(VerifyOp(slice), absl_testing::IsOk());
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       SharedMemRefSliceOpInvalidSourceMemorySpace) {
+  Value source = AllocaI32({8, 128}, MemorySpace::kVmem);
+  auto slice = Create<SharedMemRefSliceOp>(
+      GetMemRefType({8, 8}, i32(), MemorySpace::kVmem), source);
+  EXPECT_THAT(VerifyOp(slice),
+              StatusIs(_, HasSubstr("Source memref must have memory space "
+                                    "#tpu.memory_space<vmem_shared>")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       SharedMemRefSliceOpNullSourceMemorySpace) {
+  Value source = AllocaI32({8, 128});
+  auto slice = Create<SharedMemRefSliceOp>(
+      GetMemRefType({8, 8}, i32(), MemorySpace::kVmem), source);
+  EXPECT_THAT(VerifyOp(slice),
+              StatusIs(_, HasSubstr("Source memref must have memory space "
+                                    "#tpu.memory_space<vmem_shared>")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       SharedMemRefSliceOpInvalidTargetMemorySpace) {
+  Value source = AllocaI32({8, 128}, MemorySpace::kVmemShared);
+  auto slice = Create<SharedMemRefSliceOp>(
+      GetMemRefType({8, 8}, i32(), MemorySpace::kVmemShared), source);
+  EXPECT_THAT(
+      VerifyOp(slice),
+      StatusIs(_, HasSubstr("Target memref must have memory space "
+                            "#tpu.memory_space<vmem, sc_vector_subcore>")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       SharedMemRefSliceOpNullTargetMemorySpace) {
+  Value source = AllocaI32({8, 128}, MemorySpace::kVmemShared);
+  auto slice =
+      Create<SharedMemRefSliceOp>(GetMemRefType({8, 8}, i32()), source);
+  EXPECT_THAT(
+      VerifyOp(slice),
+      StatusIs(_, HasSubstr("Target memref must have memory space "
+                            "#tpu.memory_space<vmem, sc_vector_subcore>")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       SharedMemRefSliceOpElementTypeMismatch) {
+  Value source = AllocaI32({8, 128}, MemorySpace::kVmemShared);
+  auto slice = Create<SharedMemRefSliceOp>(
+      GetMemRefType({8, 8}, builder().getF32Type(), MemorySpace::kVmem),
+      source);
+  EXPECT_THAT(
+      VerifyOp(slice),
+      StatusIs(_, HasSubstr("Source and target element types must match")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest, SharedMemRefSliceOpShapeMismatch) {
+  Value source = AllocaI32({8, 128}, MemorySpace::kVmemShared);
+  auto slice = Create<SharedMemRefSliceOp>(
+      GetMemRefType({4, 8}, i32(), MemorySpace::kVmem), source);
+  EXPECT_THAT(VerifyOp(slice),
+              StatusIs(_, HasSubstr("Target shape must match source shape")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       SharedMemRefSliceOpStripeAlignmentMismatch) {
+  Value source = AllocaI32({8, 80}, MemorySpace::kVmemShared);
+  auto slice = Create<SharedMemRefSliceOp>(
+      GetMemRefType({8, 7}, i32(), MemorySpace::kVmem), source);
+  EXPECT_THAT(
+      VerifyOp(slice),
+      StatusIs(_, HasSubstr("must be divisible by target shape's minormost")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       SharedMemRefSliceOpDynamicTrailingDimension) {
+  Value source = AllocaI32({8, ShapedType::kDynamic}, MemorySpace::kVmemShared);
+  auto slice = Create<SharedMemRefSliceOp>(
+      GetMemRefType({8, ShapedType::kDynamic}, i32(), MemorySpace::kVmem),
+      source);
+  EXPECT_THAT(
+      VerifyOp(slice),
+      StatusIs(_, HasSubstr("Source and target minormost dimension cannot be "
+                            "dynamic")));
+}
+
+TEST_F(TpuOpsVerificationTest, MemRefPadOpValid) {
+  Value untiled = AllocaI32({12, 128}, MemorySpace::kVmem);
+  EXPECT_THAT(
+      VerifyOp(Create<MemRefPadOp>(
+          GetMemRefType({16, 128}, i32(), MemorySpace::kVmem), untiled)),
+      absl_testing::IsOk());
+
+  auto layout =
+      TiledLayoutAttr::get(builder().getContext(), {xla::Tile({8, 128})},
+                           /*tile_strides=*/{2, 1, 1});
+  auto vmem = MemorySpaceAttr::get(builder().getContext(), MemorySpace::kVmem);
+  Value tiled = Create<memref::AllocaOp>(
+                    MemRefType::get({3, 10, 100}, i32(), layout, vmem))
+                    .getMemref();
+  // Dim 0 is untiled (3 -> 3), dim 1 is partially padded (10 -> 12 <= 16),
+  // dim 2 is padded to tile boundary (100 -> 128).
+  EXPECT_THAT(VerifyOp(Create<MemRefPadOp>(
+                  MemRefType::get({3, 12, 128}, i32(), layout, vmem), tiled)),
+              absl_testing::IsOk());
+}
+
+TEST_F(TpuOpsVerificationTest, MemRefPadOpInvalidBounds) {
+  auto layout =
+      TiledLayoutAttr::get(builder().getContext(), {xla::Tile({8, 128})},
+                           /*tile_strides=*/{1, 1});
+  auto vmem = MemorySpaceAttr::get(builder().getContext(), MemorySpace::kVmem);
+  Value source =
+      Create<memref::AllocaOp>(MemRefType::get({12, 128}, i32(), layout, vmem))
+          .getMemref();
+
+  EXPECT_THAT(
+      VerifyOp(Create<MemRefPadOp>(
+          MemRefType::get({8, 128}, i32(), layout, vmem), source)),
+      StatusIs(
+          _,
+          HasSubstr("must be greater than or equal to input dimension (12)")));
+  EXPECT_THAT(
+      VerifyOp(Create<MemRefPadOp>(
+          MemRefType::get({24, 128}, i32(), layout, vmem), source)),
+      StatusIs(_, HasSubstr("must not exceed the tile-aligned bound (16)")));
+}
+
+TEST_F(TpuOpsVerificationTest, ConcatenateOpValid) {
+  Value lhs = ConstantF32Vector(/*shape=*/{4, 128}, /*values=*/{1.0f});
+  Value rhs = ConstantF32Vector(/*shape=*/{8, 128}, /*values=*/{2.0f});
+  auto concat = Create<ConcatenateOp>(
+      /*output=*/VectorType::get({12, 128}, builder().getF32Type()),
+      /*sources=*/ValueRange{lhs, rhs},
+      /*dimension=*/0);
+  EXPECT_THAT(VerifyOp(concat), absl_testing::IsOk());
+}
+
+TEST_F(TpuOpsVerificationTest, ConcatenateOpRankMismatch) {
+  Value vec_2d = ConstantF32Vector(/*shape=*/{4, 128}, /*values=*/{1.0f});
+  Value vec_1d = ConstantF32Vector(/*shape=*/{4}, /*values=*/{2.0f});
+
+  // rank(operand_1) < rank(operand_0)
+  auto lower_rank = Create<ConcatenateOp>(
+      /*output=*/VectorType::get({8, 128}, builder().getF32Type()),
+      /*sources=*/ValueRange{vec_2d, vec_1d},
+      /*dimension=*/0);
+  EXPECT_THAT(
+      VerifyOp(lower_rank),
+      StatusIs(_, HasSubstr("Expected all operands to have the same rank.")));
+
+  // rank(operand_1) > rank(operand_0)
+  auto higher_rank = Create<ConcatenateOp>(
+      /*output=*/VectorType::get({8}, builder().getF32Type()),
+      /*sources=*/ValueRange{vec_1d, vec_2d},
+      /*dimension=*/0);
+  EXPECT_THAT(
+      VerifyOp(higher_rank),
+      StatusIs(_, HasSubstr("Expected all operands to have the same rank.")));
+
+  // rank(operand_2) < rank(operand_0) with concat dimension >= rank(operand_2)
+  auto lower_rank_dim1 = Create<ConcatenateOp>(
+      /*output=*/VectorType::get({4, 256}, builder().getF32Type()),
+      /*sources=*/ValueRange{vec_2d, vec_2d, vec_1d},
+      /*dimension=*/1);
+  EXPECT_THAT(
+      VerifyOp(lower_rank_dim1),
+      StatusIs(_, HasSubstr("Expected all operands to have the same rank.")));
+
+  // inferReturnTypes also rejects empty and mixed-rank operands.
+  SmallVector<Type> inferred;
+  EXPECT_TRUE(failed(ConcatenateOp::inferReturnTypes(
+      builder().getContext(), std::nullopt, ValueRange{}, DictionaryAttr(),
+      lower_rank->getPropertiesStorage(), RegionRange{}, inferred)));
+  EXPECT_TRUE(failed(ConcatenateOp::inferReturnTypes(
+      builder().getContext(), std::nullopt, ValueRange{vec_2d, vec_1d},
+      DictionaryAttr(), lower_rank->getPropertiesStorage(), RegionRange{},
+      inferred)));
+  EXPECT_TRUE(failed(ConcatenateOp::inferReturnTypes(
+      builder().getContext(), std::nullopt, ValueRange{vec_2d, vec_2d, vec_1d},
+      DictionaryAttr(), lower_rank_dim1->getPropertiesStorage(), RegionRange{},
+      inferred)));
+  EXPECT_TRUE(failed(ConcatenateOp::inferReturnTypes(
+      builder().getContext(), std::nullopt, ValueRange{vec_1d, vec_2d},
+      DictionaryAttr(), higher_rank->getPropertiesStorage(), RegionRange{},
+      inferred)));
+}
+
 }  // namespace
 }  // namespace mlir::tpu

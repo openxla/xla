@@ -35,6 +35,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/casts.h"
 #include "xla/future.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -50,7 +51,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/casts.h"
 
 namespace xla {
 
@@ -144,10 +144,6 @@ class TfPjRtExecutable : public PjRtLoadedExecutable {
   const DeviceAssignment& device_assignment() const override {
     return wrapped_->device_assignment();
   }
-  absl::Span<const LogicalDeviceIds> addressable_device_logical_ids()
-      const override {
-    return wrapped_->addressable_device_logical_ids();
-  }
   absl::Span<PjRtDevice* const> addressable_devices() const override {
     return wrapped_->addressable_devices();
   }
@@ -181,6 +177,14 @@ class TfPjRtExecutable : public PjRtLoadedExecutable {
 
   void Delete() override { return wrapped_->Delete(); }
   bool IsDeleted() const override { return wrapped_->IsDeleted(); }
+
+  PjRtExecutable* GetExecutable() const override {
+    return wrapped_->GetExecutable();
+  }
+
+  absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override {
+    return wrapped_->GetCompiledMemoryStats();
+  }
 
   absl::StatusOr<std::string> SerializeExecutable() const override {
     return wrapped_->SerializeExecutable();

@@ -50,7 +50,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "llvm/ADT/STLExtras.h"
+#include "tsl/platform/fingerprint.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/backend_config.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -66,6 +66,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/stack_frames.h"
+#include "xla/hlo/parser/hlo_lexer.h"
 #include "xla/map_util.h"
 #include "xla/printer.h"
 #include "xla/service/compilation_environments.h"
@@ -77,6 +78,7 @@ limitations under the License.
 #include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/sort_json.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/lib/gtl/map_util.h"
 #include "xla/tsl/platform/env.h"
@@ -87,7 +89,6 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/fingerprint.h"
 
 namespace xla {
 
@@ -402,6 +403,22 @@ void HloModule::Print(
     AppendCat(printer, ", frontend_attributes=",
               FrontendAttributesToString(frontend_attributes_));
   }
+  if (options.print_backend_config() && has_backend_config()) {
+    absl::string_view config = raw_backend_config_string();
+    std::string sorted_config;
+    if (options.sort_backend_config()) {
+      sorted_config = SortJson(config).value_or(std::string(config));
+      config = sorted_config;
+    }
+    printer->Append(", backend_config=");
+    if (printer->is_hasher() || LexesAsJsonDict(config)) {
+      printer->Append(config);
+    } else {
+      printer->Append("\"");
+      printer->Append(absl::CEscape(config));
+      printer->Append("\"");
+    }
+  }
   if (!original_value_recovery_table_.empty()) {
     HloPrintOptions new_options = options;
     new_options.set_indent_amount(options.indent_amount() + 1);
@@ -541,32 +558,31 @@ void HloModule::PrintStackFrameIndex(Printer* printer,
   }
   const auto& proto = stack_frames_.proto();
   printer->Append("\n\nFileNames\n");
-  for (const auto& [index, file_name] : llvm::enumerate(proto.file_names())) {
-    printer->Append(
-        absl::StrFormat("%d \"%s\"\n", index + 1, absl::CEscape(file_name)));
+  for (int i = 0; i < proto.file_names_size(); ++i) {
+    printer->Append(absl::StrFormat("%d \"%s\"\n", i + 1,
+                                    absl::CEscape(proto.file_names(i))));
   }
   printer->Append("\nFunctionNames\n");
-  for (const auto& [index, function_name] :
-       llvm::enumerate(proto.function_names())) {
-    printer->Append(absl::StrFormat("%d \"%s\"\n", index + 1,
-                                    absl::CEscape(function_name)));
+  for (int i = 0; i < proto.function_names_size(); ++i) {
+    printer->Append(absl::StrFormat("%d \"%s\"\n", i + 1,
+                                    absl::CEscape(proto.function_names(i))));
   }
   printer->Append("\nFileLocations\n");
-  for (const auto& [index, file_location] :
-       llvm::enumerate(proto.file_locations())) {
-    printer->Append(
-        absl::StrFormat("%d {file_name_id=%d function_name_id=%d line=%d "
-                        "end_line=%d column=%d end_column=%d}\n",
-                        index + 1, file_location.file_name_id(),
-                        file_location.function_name_id(), file_location.line(),
-                        file_location.end_line(), file_location.column(),
-                        file_location.end_column()));
+  for (int i = 0; i < proto.file_locations_size(); ++i) {
+    const auto& file_location = proto.file_locations(i);
+    printer->Append(absl::StrFormat(
+        "%d {file_name_id=%d function_name_id=%d line=%d "
+        "end_line=%d column=%d end_column=%d}\n",
+        i + 1, file_location.file_name_id(), file_location.function_name_id(),
+        file_location.line(), file_location.end_line(), file_location.column(),
+        file_location.end_column()));
   }
   printer->Append("\nStackFrames\n");
-  for (const auto& [index, frame] : llvm::enumerate(proto.stack_frames())) {
-    printer->Append(absl::StrFormat(
-        "%d {file_location_id=%d parent_frame_id=%d}\n", index + 1,
-        frame.file_location_id(), frame.parent_frame_id() + 1));
+  for (int i = 0; i < proto.stack_frames_size(); ++i) {
+    const auto& frame = proto.stack_frames(i);
+    printer->Append(
+        absl::StrFormat("%d {file_location_id=%d parent_frame_id=%d}\n", i + 1,
+                        frame.file_location_id(), frame.parent_frame_id() + 1));
   }
 }
 
@@ -745,6 +761,10 @@ void HloModule::ToProto(HloModuleProto* proto, HloProtoOptions options) const {
   if (!config().device_type().empty()) {
     proto->set_device_type(config().device_type());
   }
+
+  if (has_backend_config()) {
+    proto->set_backend_config(raw_backend_config_string());
+  }
 }
 
 void HloModule::ToProtoWithConfig(HloModuleProtoWithConfig* proto,
@@ -842,7 +862,7 @@ absl::StatusOr<HloModuleProto> HloModule::RemapInstructionIds(
     computation_proto.set_root_id(new_root_id);
     // Fix schedule.
     ABSL_RETURN_IF_ERROR(UpdateIdsInSchedule(proto_copy, computation_proto.id(),
-                                        old_instr_id_to_new_id));
+                                             old_instr_id_to_new_id));
   }
   return proto_copy;
 }
@@ -985,7 +1005,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
   TF_RET_CHECK(proto.has_host_program_shape())
       << "No program shape found in the proto";
   ABSL_ASSIGN_OR_RETURN(ProgramShape expected_program_shape,
-                   ProgramShape::FromProto(proto.host_program_shape()));
+                        ProgramShape::FromProto(proto.host_program_shape()));
   TF_RET_CHECK(expected_program_shape.parameters_size() ==
                module_config.entry_computation_layout().parameter_count());
   for (int i = 0; i < expected_program_shape.parameters_size(); ++i) {
@@ -1072,8 +1092,9 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
       module->input_output_alias_config_,
       HloInputOutputAliasConfig::CreateFromProto(
           entry->ComputeProgramShape().result(), proto.input_output_alias()));
-  ABSL_ASSIGN_OR_RETURN(module->buffer_donor_config_,
-                   HloBufferDonorConfig::CreateFromProto(proto.buffer_donor()));
+  ABSL_ASSIGN_OR_RETURN(
+      module->buffer_donor_config_,
+      HloBufferDonorConfig::CreateFromProto(proto.buffer_donor()));
 
   ABSL_RETURN_IF_ERROR(
       module->CheckUniqueNamesAndIdsForComputationsAndInstructions());
@@ -1110,14 +1131,14 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
 
   if (proto.has_spmd_output_sharding()) {
     ABSL_ASSIGN_OR_RETURN(HloSharding hlo_sharding,
-                     HloSharding::FromProto(proto.spmd_output_sharding()));
+                          HloSharding::FromProto(proto.spmd_output_sharding()));
     module->set_spmd_output_sharding(hlo_sharding);
   }
 
   std::vector<HloSharding> param_shardings;
   for (const auto& sharding_proto : proto.spmd_parameters_shardings()) {
     ABSL_ASSIGN_OR_RETURN(HloSharding sharding,
-                     HloSharding::FromProto(sharding_proto));
+                          HloSharding::FromProto(sharding_proto));
     param_shardings.push_back(sharding);
   }
   if (!param_shardings.empty()) {
@@ -1143,8 +1164,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
 
   if (proto.has_original_value_recovery_table()) {
     ABSL_ASSIGN_OR_RETURN(module->original_value_recovery_table_,
-                     HloModule::OriginalValueRecoveryTable::FromProto(
-                         proto.original_value_recovery_table()));
+                          HloModule::OriginalValueRecoveryTable::FromProto(
+                              proto.original_value_recovery_table()));
   }
   for (const auto& debug_attribute_table_entry : proto.debug_attributes()) {
     OriginalArray original_array =
@@ -1175,6 +1196,10 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProto(
 
   ABSL_RETURN_IF_ERROR(
       InlineMetadataPayloadsFromProtoPayloadTable(module.get(), proto));
+
+  if (!proto.backend_config().empty()) {
+    module->set_raw_backend_config_string(proto.backend_config());
+  }
 
   return module;
 }
@@ -1255,8 +1280,8 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromShape(
     }
     if (execution_options->has_device_assignment()) {
       ABSL_ASSIGN_OR_RETURN(std::unique_ptr<DeviceAssignment> device_assignment,
-                       DeviceAssignment::Deserialize(
-                           execution_options->device_assignment()));
+                            DeviceAssignment::Deserialize(
+                                execution_options->device_assignment()));
       module_config.set_static_device_assignment(*device_assignment);
       if (execution_options->num_replicas() > 0) {
         CHECK_EQ(module_config.static_device_assignment().replica_count(),
@@ -1288,8 +1313,9 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromShape(
         entry_layout->mutable_parameter_layout(i)->CopyLayoutFromShape(
             program_shape.parameters(i)));
   }
-  ABSL_RETURN_IF_ERROR(entry_layout->mutable_result_layout()->CopyLayoutFromShape(
-      program_shape.result()));
+  ABSL_RETURN_IF_ERROR(
+      entry_layout->mutable_result_layout()->CopyLayoutFromShape(
+          program_shape.result()));
   return module_config;
 }
 
@@ -1301,10 +1327,10 @@ absl::StatusOr<HloModuleConfig> HloModule::CreateModuleConfigFromProto(
     return absl::FailedPreconditionError("No program shape found in the proto");
   }
   ABSL_ASSIGN_OR_RETURN(ProgramShape program_shape,
-                   ProgramShape::FromProto(module.host_program_shape()));
+                        ProgramShape::FromProto(module.host_program_shape()));
   ABSL_ASSIGN_OR_RETURN(HloModuleConfig config,
-                   CreateModuleConfigFromShape(program_shape, debug_options,
-                                               execution_options));
+                        CreateModuleConfigFromShape(
+                            program_shape, debug_options, execution_options));
   if (!module.device_type().empty()) {
     config.set_device_type(module.device_type());
   }
@@ -1337,7 +1363,7 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModule::CreateFromProtoWithConfig(
     BufferAssignmentProto* buffer_assignment_proto) {
   const auto& hlo_module_proto = proto.hlo_module();
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModuleConfig> config_ptr,
-                   HloModuleConfig::CreateFromProto(proto.config()));
+                        HloModuleConfig::CreateFromProto(proto.config()));
   return HloModule::CreateFromProto(
       hlo_module_proto, *config_ptr, prohibit_empty_literal,
       std::move(comp_envs), preserve_instruction_ids, buffer_assignment_proto);
@@ -1545,6 +1571,9 @@ std::vector<HloComputation*> HloModule::MakeComputationPostOrder(
     absl::flat_hash_set<HloComputation*> nonroot_computations;
     nonroot_computations.reserve(computation_count() - 1);
     for (auto* computation : computations()) {
+      if (!computation->HasCalledComputations()) {
+        continue;
+      }
       for (const HloInstructionInfo& inst :
            computation->instructions_with_info()) {
         if (HloInstruction::MightHaveCalledComputations(inst.opcode())) {
@@ -1569,10 +1598,12 @@ std::vector<HloComputation*> HloModule::MakeComputationPostOrder(
       if (nonroot_computations.contains(computation)) {
         continue;
       }
-      for (HloComputation* embedded_computation :
-           computation->MakeEmbeddedComputationsList()) {
-        if (added_computations.insert(embedded_computation).second) {
-          post_order.push_back(embedded_computation);
+      if (computation->HasCalledComputations()) {
+        for (HloComputation* embedded_computation :
+             computation->MakeEmbeddedComputationsList()) {
+          if (added_computations.insert(embedded_computation).second) {
+            post_order.push_back(embedded_computation);
+          }
         }
       }
       // Root computations should only be encountered once.
@@ -1753,6 +1784,7 @@ void HloModule::Clone(const std::string& suffix, HloCloneContext* context,
   module->set_is_dynamic(is_dynamic());
   module->set_hlo_passes_started(hlo_passes_started());
   module->set_frontend_attributes(frontend_attributes());
+  module->backend_config_ = backend_config_;
   *module->metadata() = metadata();
   // The canonical module id should be the same as the unique id from the
   // module. We don't want to copy the id from the other metadata.
@@ -1838,9 +1870,15 @@ absl::Status HloModule::RemoveUnusedComputations() {
   while (!agenda.empty()) {
     HloComputation* computation = agenda.top();
     agenda.pop();
-    for (HloInstruction* instruction : computation->instructions()) {
-      for (HloComputation* called_computation :
-           instruction->called_computations()) {
+    if (!computation->HasCalledComputations()) {
+      continue;
+    }
+    for (const HloInstructionInfo& inst :
+         computation->instructions_with_info()) {
+      if (!HloInstruction::MightHaveCalledComputations(inst.opcode())) {
+        continue;
+      }
+      for (HloComputation* called_computation : inst->called_computations()) {
         if (to_remove.erase(called_computation) > 0) {
           agenda.push(called_computation);
         }
@@ -2003,10 +2041,10 @@ HloModule::OriginalValueRecoveryTable::FromProto(
     if (entry.has_recovery_module()) {
       const HloModuleProto proto = entry.recovery_module();
       ABSL_ASSIGN_OR_RETURN(HloModuleConfig config,
-                       HloModule::CreateModuleConfigFromProto(
-                           proto, GetDebugOptionsFromFlags()));
+                            HloModule::CreateModuleConfigFromProto(
+                                proto, GetDebugOptionsFromFlags()));
       ABSL_ASSIGN_OR_RETURN(recovery_module,
-                       HloModule::CreateFromProto(proto, config));
+                            HloModule::CreateFromProto(proto, config));
     }
     original_value_recovery_table.table_[old_original_array] =
         std::make_pair(new_original_array, std::move(recovery_module));

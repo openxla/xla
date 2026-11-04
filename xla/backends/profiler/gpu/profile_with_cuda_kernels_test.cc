@@ -15,26 +15,27 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/profile_with_cuda_kernels.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_version.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
 #include "xla/backends/profiler/gpu/cupti_error_manager.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
 #include "xla/backends/profiler/gpu/cupti_tracer.h"
 #include "xla/backends/profiler/gpu/cupti_wrapper.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {

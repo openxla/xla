@@ -35,10 +35,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"  // IWYU pragma: export
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -46,7 +45,9 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_pool.h"
+#include "xla/primitive_util.h"
 #include "xla/printer.h"
+#include "xla/protobuf_util.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -72,12 +73,17 @@ class HloDimensionsInstruction : public HloInstruction {
       case HloOpcode::kConcatenate:
       case HloOpcode::kReduce:
       case HloOpcode::kReverse:
+      case HloOpcode::kShuffle:
       case HloOpcode::kSort:
       case HloOpcode::kTranspose:
         return true;
       default:
         return false;
     }
+  }
+
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), dimensions());
   }
 
  protected:
@@ -346,7 +352,7 @@ class HloAsyncStartInstruction : public HloAsyncInstruction,
 
   absl::string_view async_execution_thread() const override {
     return async_execution_thread_;
-  };
+  }
   void set_async_execution_thread(
       absl::string_view async_execution_thread) override;
   void ToProto(HloInstructionProto* proto) const override;
@@ -454,14 +460,15 @@ class HloCompareInstruction : public HloInstruction {
       std::optional<ComparisonOrder> order = std::nullopt);
   ComparisonDirection direction() const { return compare_.GetDirection(); }
   ComparisonOrder order() const { return compare_.GetOrder(); }
-  [[deprecated("Use order()")]] Comparison::Type type() const {
-    return compare_.GetType();
-  }
   const Comparison& comparison() const { return compare_; }
   void ToProto(HloInstructionProto* proto) const override;
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kCompare;
+  }
+
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), direction(), order());
   }
 
  private:
@@ -1083,6 +1090,10 @@ class HloCollectivePermuteInstruction : public HloChannelInstruction {
            hlo->opcode() == HloOpcode::kCollectivePermuteStart;
   }
 
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), source_target_pairs());
+  }
+
   // Whether this is an in-place collective permute (with dynamic slice
   // operands). Derived from the presence of slice_sizes.
   bool inplace() const { return !slice_sizes_.empty(); }
@@ -1179,6 +1190,47 @@ class HloReverseInstruction : public HloDimensionsInstruction {
   std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
       const Shape& shape, absl::Span<HloInstruction* const> new_operands,
       HloCloneContext* context) const override;
+};
+
+class HloShuffleInstruction : public HloDimensionsInstruction {
+ public:
+  explicit HloShuffleInstruction(const Shape& shape, HloInstruction* operand,
+                                 absl::Span<const int64_t> dimensions,
+                                 const ShuffleMode& mode);
+
+  static bool ClassOf(const HloInstruction* hlo) {
+    return hlo->opcode() == HloOpcode::kShuffle;
+  }
+
+  const ShuffleMode& shuffle_mode() const { return mode_; }
+  ShuffleMode* mutable_shuffle_mode() { return &mode_; }
+  ShuffleMode::ModeCase mode() const { return mode_.mode_case(); }
+  void ToProto(HloInstructionProto* proto) const override;
+
+  // Accessors for the inner attributes of each mode.
+  const ShuffleMode::Rotate& rotate() const {
+    CHECK(mode_.has_rotate());
+    return mode_.rotate();
+  }
+  ShuffleMode::Rotate* mutable_rotate() {
+    CHECK(mode_.has_rotate());
+    return mode_.mutable_rotate();
+  }
+
+ private:
+  std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
+      const Shape& shape, absl::Span<HloInstruction* const> new_operands,
+      HloCloneContext* context) const override;
+
+  bool IdenticalSlowPath(
+      const HloInstruction& other,
+      absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
+          eq_computations) const override;
+
+  void PrintExtraAttributesImpl(AttributePrinter& printer,
+                                const HloPrintOptions& options) const override;
+
+  ShuffleMode mode_;
 };
 
 class HloConcatenateInstruction : public HloDimensionsInstruction {
@@ -1478,6 +1530,11 @@ class HloSliceInstruction : public HloInstruction {
     return hlo->opcode() == HloOpcode::kSlice;
   }
 
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), slice_starts(), slice_limits(),
+                             slice_strides());
+  }
+
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,
                                 const HloPrintOptions& options) const override;
@@ -1509,12 +1566,12 @@ class HloConstantInstruction : public HloInstruction {
   // Clone the literal if necessary (do not modify the shared instance).
   Literal* mutable_literal() {
     if (literal_.use_count() > 1) {
-      literal_.reset(new Literal(literal_->Clone()));
+      literal_ = std::make_shared<Literal>(literal_->Clone());
     }
     return literal_.get();
   }
   // Returns whether there is literal associated with this instruction.
-  bool HasLiteral() const { return static_cast<bool>(literal_); }
+  bool HasLiteral() const { return literal_ != nullptr; }
   void DropLiteral() { literal_ = nullptr; }
   void ToProto(HloInstructionProto* proto) const override;
 
@@ -1530,8 +1587,9 @@ class HloConstantInstruction : public HloInstruction {
 
   // Canonicalize constant literal using the given literal pool.
   bool Canonicalize(LiteralPool* literal_pool) {
-    if (literal_pool && literal_) {
-      auto canonical = literal_pool->GetCanonicalLiteral(literal_);
+    if (literal_pool != nullptr && literal_ != nullptr) {
+      std::shared_ptr<Literal> canonical =
+          literal_pool->GetCanonicalLiteral(literal_);
       if (canonical != literal_) {
         literal_ = std::move(canonical);
         return true;
@@ -1540,11 +1598,19 @@ class HloConstantInstruction : public HloInstruction {
     return false;
   }
 
-  // Add literal to the hash state.
+  // Hashes the literal the way Identical compares it: by value, ignoring the
+  // literal's layout, over at most 64 bytes. Literal equality compares sub
+  // byte types under a bit mask and dynamic arrays only up to their dynamic
+  // sizes, so their bytes stay out.
   void HashAdditionalAttributes(absl::HashState h) const override {
-    if (HasLiteral()) {
-      absl::HashState::combine(std::move(h),
-                               Literal::AbslHashable<true>(literal()));
+    if (!HasLiteral()) {
+      return;
+    }
+    const Shape& shape = literal().shape();
+    if (shape.IsArray() && shape.is_static() &&
+        !primitive_util::IsSubByteNonPredType(shape.element_type())) {
+      LiteralBase::Hash<absl::HashState, /*kIsLayoutSensitive=*/false,
+                        /*kByteLimit=*/64>(std::move(h), literal());
     }
   }
 
@@ -1937,6 +2003,10 @@ class HloGetTupleElementInstruction : public HloInstruction {
     return hlo->opcode() == HloOpcode::kGetTupleElement;
   }
 
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), tuple_index());
+  }
+
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,
                                 const HloPrintOptions& options) const override;
@@ -2128,6 +2198,11 @@ class HloConvolutionInstruction : public HloInstruction {
     return hlo->opcode() == HloOpcode::kConvolution;
   }
 
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(
+        std::move(h), protobuf_util::ProtobufHashBySerialization(window()));
+  }
+
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,
                                 const HloPrintOptions& options) const override;
@@ -2187,7 +2262,8 @@ class HloReduceWindowInstruction : public HloInstruction {
   // Returns the shapes of input tensors to be reduced.
   absl::InlinedVector<const Shape*, 2> input_shapes() const {
     absl::InlinedVector<const Shape*, 2> shapes;
-    for (const auto* op : inputs()) {
+    shapes.reserve(inputs().size());
+    for (const HloInstruction* op : inputs()) {
       shapes.push_back(&op->shape());
     }
     return shapes;
@@ -2195,7 +2271,8 @@ class HloReduceWindowInstruction : public HloInstruction {
   // Returns the init values of the reduction.
   absl::InlinedVector<const Shape*, 2> init_value_shapes() const {
     absl::InlinedVector<const Shape*, 2> shapes;
-    for (const auto* op : init_values()) {
+    shapes.reserve(init_values().size());
+    for (const HloInstruction* op : init_values()) {
       shapes.push_back(&op->shape());
     }
     return shapes;
@@ -2206,6 +2283,7 @@ class HloReduceWindowInstruction : public HloInstruction {
     if (shape().IsArray()) {
       shapes.push_back(&shape());
     } else {
+      shapes.reserve(shape().tuple_shapes().size());
       for (const Shape& tuple_element_shape : shape().tuple_shapes()) {
         shapes.push_back(&tuple_element_shape);
       }
@@ -2229,6 +2307,11 @@ class HloReduceWindowInstruction : public HloInstruction {
 
   static bool ClassOf(const HloInstruction* hlo) {
     return hlo->opcode() == HloOpcode::kReduceWindow;
+  }
+
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(
+        std::move(h), protobuf_util::ProtobufHashBySerialization(window()));
   }
 
  private:
@@ -2422,6 +2505,10 @@ class HloCustomCallInstruction : public HloCallableInstruction {
     return hlo->opcode() == HloOpcode::kCustomCall;
   }
 
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), custom_call_target());
+  }
+
   class PerInstructionStorage {
     // Abstract class for per-instruction storage.
    public:
@@ -2511,6 +2598,12 @@ class HloPadInstruction : public HloInstruction {
     return hlo->opcode() == HloOpcode::kPad;
   }
 
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(
+        std::move(h),
+        protobuf_util::ProtobufHashBySerialization(padding_config()));
+  }
+
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,
                                 const HloPrintOptions& options) const override;
@@ -2542,7 +2635,8 @@ class HloDynamicIndexInstruction : public HloInstruction {
   // Returns the shapes of the index operands.
   std::vector<Shape> index_shapes() const {
     std::vector<Shape> shapes;
-    auto indices = index_operands();
+    absl::Span<HloInstruction* const> indices = index_operands();
+    shapes.reserve(indices.size());
     for (const HloInstruction* index : indices) {
       shapes.push_back(index->shape());
     }
@@ -2753,6 +2847,10 @@ class HloIotaInstruction : public HloInstruction {
     return hlo->opcode() == HloOpcode::kIota;
   }
 
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(std::move(h), iota_dimension());
+  }
+
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,
                                 const HloPrintOptions& options) const override;
@@ -2776,6 +2874,25 @@ class HloDotInstruction : public HloInstruction {
                              HloInstruction* rhs,
                              const DotDimensionNumbers& dimension_numbers,
                              const PrecisionConfig& precision_config);
+
+  explicit HloDotInstruction(const Shape& shape,
+                             absl::Span<HloInstruction* const> operands,
+                             const DotDimensionNumbers& dimension_numbers,
+                             const PrecisionConfig& precision_config,
+                             const SparsityConfig& sparsity_config,
+                             const BlockScalingConfig& block_scaling_config);
+
+  const SparsityConfig& sparsity_config() const { return sparsity_config_; }
+  void set_sparsity_config(const SparsityConfig& sparsity_config) {
+    sparsity_config_ = sparsity_config;
+  }
+
+  const BlockScalingConfig& block_scaling_config() const {
+    return block_scaling_config_;
+  }
+  void set_block_scaling_config(const BlockScalingConfig& config) {
+    block_scaling_config_ = config;
+  }
 
   // Returns data on the dimension numbers used for a dot operation.
   const DotDimensionNumbers& dot_dimension_numbers() const {
@@ -2803,6 +2920,13 @@ class HloDotInstruction : public HloInstruction {
     return hlo->opcode() == HloOpcode::kDot;
   }
 
+  void HashAdditionalAttributes(absl::HashState h) const override {
+    absl::HashState::combine(
+        std::move(h),
+        protobuf_util::ProtobufHashBySerialization(dot_dimension_numbers()),
+        protobuf_util::ProtobufHashBySerialization(precision_config()));
+  }
+
  private:
   void PrintExtraAttributesImpl(AttributePrinter& printer,
                                 const HloPrintOptions& options) const override;
@@ -2821,6 +2945,12 @@ class HloDotInstruction : public HloInstruction {
   // Information used to communicate to the implementation about the algorithm
   // used to produce results. See the documentation on precision_config().
   PrecisionConfig precision_config_;
+
+  // The sparsity configuration used for the dot.
+  SparsityConfig sparsity_config_;
+
+  // Dot block scaling config.
+  BlockScalingConfig block_scaling_config_;
 };
 
 class HloRaggedDotInstruction : public HloInstruction {
@@ -2953,44 +3083,6 @@ class HloScaledDotInstruction : public HloInstruction {
   PrecisionConfig precision_config_;
 };
 
-class HloDomainInstruction : public HloInstruction {
- public:
-  explicit HloDomainInstruction(
-      const Shape& shape, HloInstruction* operand,
-      std::unique_ptr<DomainMetadata> operand_side_metadata,
-      std::unique_ptr<DomainMetadata> user_side_metadata);
-
-  void ToProto(HloInstructionProto* proto) const override;
-
-  // Retrieves the operand side metadata of a kDomain instruction.
-  const DomainMetadata& operand_side_metadata() const {
-    return *operand_side_metadata_;
-  }
-  // Retrieves the user side metadata of a kDomain instruction.
-  const DomainMetadata& user_side_metadata() const {
-    return *user_side_metadata_;
-  }
-
-  static bool ClassOf(const HloInstruction* hlo) {
-    return hlo->opcode() == HloOpcode::kDomain;
-  }
-
- private:
-  void PrintExtraAttributesImpl(AttributePrinter& printer,
-                                const HloPrintOptions& options) const override;
-  bool IdenticalSlowPath(
-      const HloInstruction& other,
-      absl::FunctionRef<bool(const HloComputation*, const HloComputation*)>
-          eq_computations) const override;
-  // Implementation for non-common logic of CloneWithNewOperands.
-  std::unique_ptr<HloInstruction> CloneWithNewOperandsImpl(
-      const Shape& shape, absl::Span<HloInstruction* const> new_operands,
-      HloCloneContext* context) const override;
-
-  std::unique_ptr<DomainMetadata> operand_side_metadata_;
-  std::unique_ptr<DomainMetadata> user_side_metadata_;
-};
-
 class HloGetDimensionSizeInstruction : public HloInstruction {
  public:
   explicit HloGetDimensionSizeInstruction(const Shape& shape,
@@ -3107,6 +3199,11 @@ class HloRngBitGeneratorInstruction : public HloInstruction {
 
 inline constexpr absl::string_view kPinCustomCallTarget = "Pin";
 inline constexpr absl::string_view kUnpinCustomCallTarget = "Unpin";
+// Target name of the custom call that fans out a buffer into concurrent stream
+// views.
+inline constexpr absl::string_view kFanOutCustomCallTarget = "FanOut";
+// Target name of the custom call that fans in / joins concurrent stream views.
+inline constexpr absl::string_view kFanInCustomCallTarget = "FanIn";
 inline constexpr absl::string_view kCreateBufferCustomCallTarget =
     "CreateBuffer";
 

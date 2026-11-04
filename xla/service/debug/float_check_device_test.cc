@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <utility>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <utility>
+
 #include "absl/base/log_severity.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/strings/string_view.h"

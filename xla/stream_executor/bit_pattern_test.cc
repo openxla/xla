@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/stream_executor/bit_pattern.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "xla/tsl/platform/test.h"
 
 namespace stream_executor {

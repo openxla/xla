@@ -28,7 +28,8 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
-#include "xla/hlo/analysis/tuple_points_to_analysis.h"
+#include "xla/hlo/analysis/alias_info.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -38,6 +39,7 @@
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/shape.h"
+#include "xla/shape_util.h"
 
 namespace xla {
 
@@ -189,6 +191,11 @@ class HloRematerialization : public HloPassInterface {
 
     // The high-level rematerialization algorithm to be used.
     RematAlgorithm remat_algorithm;
+
+    // Set when running after copy insertion. Recomputed instructions then
+    // never read an operand after its storage is overwritten: they run before
+    // the overwrite or, for array operands, read a copy saved before it.
+    const AliasInfo* alias_info = nullptr;
   };
 
   explicit HloRematerialization(
@@ -226,10 +233,10 @@ class HloRematerialization : public HloPassInterface {
 
   int64_t GetBlockSizeLimit() const { return options_.block_size_limit; }
 
-  // Sets points to analysis to stale. Used by Peak Priority algorithm to
-  // indicate that the points to analysis should be updated before the next
+  // Sets dataflow analysis to stale. Used by Peak Priority algorithm to
+  // indicate that the dataflow analysis should be updated before the next
   // rematerialization subpass.
-  void SetPointsToAnalysisStale();
+  void SetDataflowAnalysisStale();
 
   // Holds references to data structures and some constants that are used during
   // rematerialization. This struct is used to avoid long function signatures.
@@ -283,10 +290,10 @@ class HloRematerialization : public HloPassInterface {
     return absl::OkStatus();
   }
 
-  // Only Peak priority requires constant update of points to analysis.
+  // Only Peak priority requires constant update of dataflow analysis.
   void on_block_rematerialized(int remat_count) {
     if (remat_count > 0 && remat_algorithm() == RematAlgorithm::kPeakPriority) {
-      SetPointsToAnalysisStale();
+      SetDataflowAnalysisStale();
     }
   }
 
@@ -300,8 +307,12 @@ class HloRematerialization : public HloPassInterface {
       const HloInstructionSequence& sequence,
       const absl::flat_hash_set<absl::string_view>& execution_threads);
 
-  // Updates points to analysis if it is stale.
-  absl::Status UpdatePointsToAnalysis(HloModule* module);
+  // Updates dataflow analysis if it is stale.
+  absl::Status UpdateDataflowAnalysis(HloModule* module);
+
+  // Fills value_overwriters_ and overwriter_ids_ once per RunImpl if
+  // Options::alias_info is set.
+  absl::Status ComputeValueOverwriters(const HloModule* module);
 
   // Cleans up dead rematerialized instructions out of the module. Basically
   // runs DCE and updates the schedule.
@@ -402,7 +413,15 @@ class HloRematerialization : public HloPassInterface {
   // These values are updated as rematerialization occurs.
   absl::flat_hash_map<const HloComputation*, int64_t> computation_peak_memory_;
 
-  std::unique_ptr<TuplePointsToAnalysis> points_to_analysis_;
+  std::unique_ptr<HloDataflowAnalysis> dataflow_analysis_;
+
+  // Maps (instruction unique id, shape index) of an array position to the
+  // unique id of the instruction in the same computation that next overwrites
+  // its storage. Unique ids survive instruction deletion.
+  absl::flat_hash_map<std::pair<int64_t, ShapeIndex>, int64_t>
+      value_overwriters_;
+  absl::flat_hash_set<int64_t> overwriter_ids_;
+  bool value_overwriters_computed_ = false;
 
   // Set of computations which have had rematerialization
   // applied. Rematerialization is only applied once per computation.

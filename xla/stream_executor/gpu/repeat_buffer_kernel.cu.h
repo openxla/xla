@@ -24,7 +24,7 @@ namespace stream_executor::gpu {
 // the first `repeat_size` bytes. This should be launched with at least
 // `repeat_size` threads in total.
 __global__ void RepeatBufferKernelImpl(char* buffer, int64_t repeat_size,
-                                   int64_t buffer_size) {
+                                       int64_t buffer_size) {
   int64_t global_index = blockDim.x * blockIdx.x + threadIdx.x;
   if (global_index >= repeat_size) {
     return;

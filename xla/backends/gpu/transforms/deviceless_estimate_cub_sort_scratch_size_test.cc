@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/deviceless_estimate_cub_sort_scratch_size.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <optional>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"

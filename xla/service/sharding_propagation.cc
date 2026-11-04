@@ -40,12 +40,10 @@ limitations under the License.
 #include "xla/array.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
-#include "xla/hlo/ir/hlo_domain_metadata.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_sharding.h"
-#include "xla/hlo/ir/hlo_sharding_metadata.h"
 #include "xla/hlo/utils/hlo_sharding_util.h"
 #include "xla/protobuf_util.h"
 #include "xla/service/call_graph.h"
@@ -207,6 +205,7 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kOptimizationBarrier:
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReverse:
+    case HloOpcode::kShuffle:
     case HloOpcode::kSlice:
     case HloOpcode::kShiftLeft:
     case HloOpcode::kShiftRightArithmetic:
@@ -230,6 +229,7 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kBitcastConvert:
     case HloOpcode::kCeil:
     case HloOpcode::kClamp:
+    case HloOpcode::kFma:
     case HloOpcode::kClz:
     case HloOpcode::kCompare:
     case HloOpcode::kComplex:
@@ -248,12 +248,14 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kDivide:
     case HloOpcode::kErf:
     case HloOpcode::kExp:
+    case HloOpcode::kExp2:
     case HloOpcode::kExpm1:
     case HloOpcode::kFloor:
     case HloOpcode::kImag:
     case HloOpcode::kIsFinite:
     case HloOpcode::kLog:
     case HloOpcode::kLog1p:
+    case HloOpcode::kLog2:
     case HloOpcode::kLogistic:
     case HloOpcode::kMaximum:
     case HloOpcode::kMinimum:
@@ -326,7 +328,6 @@ const HloInstruction* PickRepresentativeOperand(
     case HloOpcode::kConvolution:
     case HloOpcode::kCopyDone:
     case HloOpcode::kCopyStart:
-    case HloOpcode::kDomain:
     case HloOpcode::kDot:
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
@@ -1059,30 +1060,6 @@ bool InferUnspecifiedDimsFromShardGroup(
   return changed;
 }
 
-// Returns whether an op is a target for CSE prevention.
-bool IsCSEPreventionTarget(const HloInstruction* instruction) {
-  // Scalar broadcasts are the most common CSE target that causes cross-layer
-  // propagation on unrelated subgraphs.
-  return instruction->opcode() == HloOpcode::kBroadcast &&
-         instruction->operand(0)->shape().dimensions().empty();
-}
-
-// Marks a sharding as for CSE prevention/
-HloSharding SetCSEPreventionSharding(const HloSharding& sharding) {
-  OpMetadata metadata;
-  metadata.set_op_name("_sharding_propagation_cse_prevention");
-  return sharding.WithMetadata({metadata}, /*overwrite=*/true);
-}
-
-// Returns if the sharding is for CSE prevention.
-bool IsCSEPreventionSharding(const HloSharding& sharding) {
-  if (sharding.metadata().size() != 1) {
-    return false;
-  }
-  return sharding.metadata()[0].op_name() ==
-         "_sharding_propagation_cse_prevention";
-}
-
 }  // namespace
 
 bool InferDotShardingFromOperands(
@@ -1272,8 +1249,7 @@ bool InferConvolutionShardingFromOperands(HloInstruction* instruction,
   if (IsConvolutionKernelSmall(instruction)) {
     // If the kernel is small compared to the input then we can generate an
     // output what is sharded the same way as the input.
-    const auto& tile_assignment = lhs->sharding().tile_assignment();
-    if (tile_assignment.dim(dnums.input_feature_dimension()) > 1) {
+    if (lhs->sharding().dimension(dnums.input_feature_dimension()) > 1) {
       return false;
     }
     return MaybeImproveInstructionSharding(get_tiled_sharding_based_on_lhs(),
@@ -1561,8 +1537,8 @@ absl::StatusOr<bool> ProcessShardingInstruction(
           auto copy = computation->AddInstruction(HloInstruction::CreateUnary(
               instruction->shape(), HloOpcode::kCopy,
               instruction->mutable_operand(0)));
-          ABSL_ASSIGN_OR_RETURN(std::ignore,
-                           computation->ReplaceInstruction(
+          ABSL_ASSIGN_OR_RETURN(
+              std::ignore, computation->ReplaceInstruction(
                                instruction, copy, /*preserve_sharding=*/false,
                                /*relay_control_dependency=*/false,
                                /*remove_unused_operands=*/false));
@@ -1582,8 +1558,8 @@ absl::StatusOr<bool> ProcessShardingInstruction(
               instruction->sharding());
         }
         if (shard_group_remove_instruction) {
-          ABSL_ASSIGN_OR_RETURN(std::ignore,
-                           computation->ReplaceInstruction(
+          ABSL_ASSIGN_OR_RETURN(
+              std::ignore, computation->ReplaceInstruction(
                                instruction, instruction->mutable_operand(0),
                                /*preserve_sharding=*/false,
                                /*relay_control_dependency=*/false,
@@ -1591,8 +1567,8 @@ absl::StatusOr<bool> ProcessShardingInstruction(
         }
       } else {
         ABSL_ASSIGN_OR_RETURN(std::ignore,
-                         process_shard_group_instruction(
-                             instruction, /*replaced_with_copy=*/false));
+                              process_shard_group_instruction(
+                                  instruction, /*replaced_with_copy=*/false));
       }
     }
   }
@@ -1630,43 +1606,6 @@ int64_t ComputeNonRootUsers(const HloInstruction* instr) {
   return non_root_users;
 }
 
-/*static*/ absl::Status ShardingPropagation::NormalizeDomain(
-    const DomainMetadata::Domain& domain, const DomainMetadata* metadata) {
-  if (metadata != nullptr) {
-    ABSL_ASSIGN_OR_RETURN(const auto& sharding_metadata,
-                     ShardingMetadata::ToShardingMetadata(metadata));
-    const auto& sharding = sharding_metadata->sharding();
-    if (sharding != nullptr) {
-      bool is_spatially_partitioned = !sharding->IsSingleDevice();
-      if (sharding->IsTuple()) {
-        is_spatially_partitioned = absl::c_any_of(
-            sharding->tuple_elements(),
-            [](const HloSharding& s) { return !s.IsSingleDevice(); });
-      }
-      if (is_spatially_partitioned) {
-        for (HloInstruction* d : domain.exit_domains) {
-          HloInstruction* operand = d->mutable_operand(0);
-          // Set sharding only if it is different. We don't overwrite the
-          // metadata if it has the same sharding besides metadata.
-          if (!operand->has_sharding() || operand->sharding() != *sharding) {
-            HloSharding operand_sharding = *sharding;
-            if (operand->shape().IsTuple() && !sharding->IsTuple()) {
-              // Expand sharding into tuple sharding per
-              // CloneShardingForDomain() in
-              // third_party/tensorflow/compiler/xla/hlo/ir/hlo_sharding_metadata.cc
-              operand_sharding =
-                  HloSharding::SingleTuple(operand->shape(), *sharding);
-            }
-            operand->set_sharding(std::move(operand_sharding));
-          }
-        }
-        return absl::OkStatus();
-      }
-    }
-  }
-  return ShardingMetadata::NormalizeShardingDomain(domain, metadata);
-}
-
 // Return the sharding that should be propagated from user to instruction.
 std::optional<HloSharding> ShardingPropagation::GetShardingFromUser(
     const HloInstruction& instruction, const HloInstruction& user,
@@ -1693,8 +1632,7 @@ std::optional<HloSharding> ShardingPropagation::GetShardingFromUser(
       }
 
       const int64_t cdim = user.concatenate_dimension();
-      auto& tile_assignment = user.sharding().tile_assignment();
-      if (tile_assignment.dim(cdim) == 1) {
+      if (user.sharding().dimension(cdim) == 1) {
         // If we are concatenating along a non-sharded dimension then the
         // operands should have the same sharding as the result.
         return user.sharding();
@@ -1705,6 +1643,12 @@ std::optional<HloSharding> ShardingPropagation::GetShardingFromUser(
         // sharding.
         return user.sharding();
       }
+
+      HloSharding user_sharding =
+          user.sharding().UseNamedShardingLeaf()
+              ? HloSharding::V3ToV2Sharding(user.sharding().named_sharding())
+              : user.sharding();
+      const auto& tile_assignment = user_sharding.tile_assignment();
 
       // If we are concatenating along a sharded dimension then we want the
       // operands to be distributed among the devices their data is used.
@@ -2391,12 +2335,10 @@ bool ShardingPropagation::InferShardingFromOperands(
           if (!AggressiveConcatOperandShardingCanPassThrough(concat_operand)) {
             return false;
           }
-          const auto& tile_assignment =
-              concat_operand->sharding().tile_assignment();
           for (int64_t i = 0; i < instruction->shape().dimensions().size();
                ++i) {
             if (absl::c_linear_search(instruction->dimensions(), i) &&
-                tile_assignment.dim(i) > 1) {
+                concat_operand->sharding().dimension(i) > 1) {
               return false;
             }
           }
@@ -3210,37 +3152,9 @@ absl::StatusOr<bool> ShardingPropagation::RunImpl(
         std::make_unique<spmd::ShardBarrierToPartitioner>());
   });
 
-  std::optional<absl::flat_hash_map<const HloInstruction*, HloSharding>>
-      original_sharding;
-  bool any_changed = false;
-  // Preprocessing for CSE prevention propagation: record the original shardings
-  // so that we can revert to them at the end, and only keep those on CSE
-  // prevention instructions.
-  if (cse_prevention_only_) {
-    original_sharding.emplace();
-    for (auto computation : module->computations(execution_threads)) {
-      for (auto instruction : computation->instructions()) {
-        if (instruction->has_sharding()) {
-          original_sharding->emplace(instruction, instruction->sharding());
-        }
-      }
-    }
-  } else {
-    // The current pass is not for CSE prevention, but we remove the shardings
-    // added by previous passes for CSE prevention.
-    for (auto computation : module->computations(execution_threads)) {
-      for (auto instruction : computation->instructions()) {
-        if (instruction->has_sharding() &&
-            IsCSEPreventionSharding(instruction->sharding())) {
-          instruction->clear_sharding();
-          any_changed = true;
-        }
-      }
-    }
-  }
-  any_changed |= propagate_metadata_
-                     ? AssignShardingMetadata(module, execution_threads)
-                     : RemoveShardingMetadata(module, execution_threads);
+  bool any_changed = propagate_metadata_
+                         ? AssignShardingMetadata(module, execution_threads)
+                         : RemoveShardingMetadata(module, execution_threads);
   absl::flat_hash_map<const HloInstruction*, std::vector<int64_t>>
       unspecified_dims;
   std::vector<HloSharding> saved_root_shardings;
@@ -3253,7 +3167,8 @@ absl::StatusOr<bool> ShardingPropagation::RunImpl(
   ABSL_ASSIGN_OR_RETURN(
       bool changed,
       ProcessShardingInstruction(
-          module, execution_threads, !cse_prevention_only_, &unspecified_dims,
+          module, execution_threads, /*replace_sharding_with_copy=*/true,
+          &unspecified_dims,
           allow_spmd_sharding_propagation_to_output_ ? &saved_root_shardings
                                                      : nullptr,
           allow_spmd_sharding_propagation_to_parameters_
@@ -3528,41 +3443,15 @@ absl::StatusOr<bool> ShardingPropagation::RunImpl(
       if (instruction->IsCustomCall(spmd::kShardBarrierFrom) ||
           instruction->IsCustomCall(spmd::kShardBarrierTo)) {
         ABSL_ASSIGN_OR_RETURN(std::ignore,
-                         computation->ReplaceInstruction(
-                             instruction, instruction->mutable_operand(0),
-                             /*preserve_sharding=*/false,
-                             /*relay_control_dependency=*/false,
-                             /*remove_unused_operands=*/false));
+                              computation->ReplaceInstruction(
+                                  instruction, instruction->mutable_operand(0),
+                                  /*preserve_sharding=*/false,
+                                  /*relay_control_dependency=*/false,
+                                  /*remove_unused_operands=*/false));
       }
     }
   }
 
-  // Post-process for CSE prevention.
-  if (cse_prevention_only_) {
-    for (auto computation : module->computations(execution_threads)) {
-      for (auto instruction : computation->instructions()) {
-        if (!instruction->has_sharding()) {
-          continue;
-        }
-        if (IsCSEPreventionTarget(instruction) && instruction->has_sharding()) {
-          if (!(*original_sharding).contains(instruction)) {
-            // Mark the propagated sharding as for CSE prevention.
-            instruction->set_sharding(
-                SetCSEPreventionSharding(instruction->sharding()));
-          }
-          continue;
-        }
-        auto it = (*original_sharding).find(instruction);
-        if (it != (*original_sharding).end()) {
-          // Revert sharding.
-          instruction->set_sharding(it->second);
-        } else {
-          // Clear sharding.
-          instruction->clear_sharding();
-        }
-      }
-    }
-  }
   HloInstruction* root_instruction =
       module->entry_computation()->root_instruction();
   if (saved_root_shardings.size() ==
@@ -3615,9 +3504,10 @@ absl::StatusOr<bool> ShardingPropagation::RunImpl(
       module, allow_spmd_sharding_propagation_to_output_vector_,
       allow_spmd_sharding_propagation_to_parameters_vector_);
 
-  ABSL_RETURN_IF_ERROR(hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
-      module, allow_spmd_sharding_propagation_to_output_vector_,
-      allow_spmd_sharding_propagation_to_parameters_vector_));
+  ABSL_RETURN_IF_ERROR(
+      hlo_sharding_util::CanonicalizeLayoutAfterShardingPropagation(
+          module, allow_spmd_sharding_propagation_to_output_vector_,
+          allow_spmd_sharding_propagation_to_parameters_vector_));
 
   VLOG(1) << "Sharding propagation completed after " << iterations
           << " iterations";

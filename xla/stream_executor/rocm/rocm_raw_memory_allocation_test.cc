@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/stream_executor/rocm/rocm_raw_memory_allocation.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <memory>
 
-#include <gmock/gmock.h>
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -29,7 +30,6 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 namespace {
-
 
 static constexpr uint64_t kTestSize = 1024 * 1024;
 

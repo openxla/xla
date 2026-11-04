@@ -29,17 +29,16 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/transforms/collectives/all_gather_combiner.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/hlo_domain_map.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
 
 std::optional<AllGatherCombiner::GroupKey> DefaultCombinerKey(
-    const HloInstruction* instruction, const HloDomainMap& domain_map,
-    bool combine_by_dim, bool combine_different_dtypes) {
+    const HloInstruction* instruction, bool combine_by_dim,
+    bool combine_different_dtypes) {
   std::optional<AllGatherCombiner::GroupKey> key =
-      AllGatherCombiner::CombineKey(instruction, domain_map, combine_by_dim,
+      AllGatherCombiner::CombineKey(instruction, combine_by_dim,
                                     combine_different_dtypes);
   if (!key.has_value()) {
     return std::nullopt;
@@ -56,10 +55,10 @@ std::optional<AllGatherCombiner::GroupKey> DefaultCombinerKey(
 
 // A combiner key to combine pipelined and synchronous collectives.
 std::optional<AllGatherCombiner::GroupKey> CustomCombinerKey(
-    const HloInstruction* instruction, const HloDomainMap& domain_map,
-    bool combine_by_dim, bool combine_different_dtypes) {
+    const HloInstruction* instruction, bool combine_by_dim,
+    bool combine_different_dtypes) {
   std::optional<AllGatherCombiner::GroupKey> key =
-      AllGatherCombiner::CombineKey(instruction, domain_map, combine_by_dim,
+      AllGatherCombiner::CombineKey(instruction, combine_by_dim,
                                     combine_different_dtypes);
   if (!key.has_value()) {
     return std::nullopt;
@@ -106,8 +105,8 @@ absl::StatusOr<bool> GpuAllGatherCombiner::RunImpl(
   if (auto suggested_threshold = SuggestedCombinerThreshold(*module)) {
     combine_threshold_in_bytes_ = *suggested_threshold;
     ABSL_ASSIGN_OR_RETURN(bool combined,
-                     RunWithKeyCombiner(module, execution_threads,
-                                        CustomCombinerKey, post_combine));
+                          RunWithKeyCombiner(module, execution_threads,
+                                             CustomCombinerKey, post_combine));
     changed |= combined;
   }
 
@@ -115,8 +114,8 @@ absl::StatusOr<bool> GpuAllGatherCombiner::RunImpl(
   // synchronous collectives.
   combine_threshold_in_bytes_ = default_combine_threshold_in_bytes_;
   ABSL_ASSIGN_OR_RETURN(bool combined,
-                   RunWithKeyCombiner(module, execution_threads,
-                                      DefaultCombinerKey, post_combine));
+                        RunWithKeyCombiner(module, execution_threads,
+                                           DefaultCombinerKey, post_combine));
   changed |= combined;
   return changed;
 }

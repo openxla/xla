@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
+#include "tsl/platform/platform.h"
 #include "xla/backends/cpu/runtime/buffer_allocations.h"
 #include "xla/backends/cpu/runtime/thread_pool_task_runner.h"
 #include "xla/backends/cpu/runtime/thunk.h"
@@ -164,10 +165,10 @@ absl::Status AddI32Thunk::Execute(const BufferAllocations* allocations,
                                   BufferAllocation::Slice src_slice,
                                   BufferAllocation::Slice dst_slice) {
   ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase src,
-                   allocations->GetDeviceAddress(src_slice));
+                        allocations->GetDeviceAddress(src_slice));
 
   ABSL_ASSIGN_OR_RETURN(se::DeviceAddressBase dst,
-                   allocations->GetDeviceAddress(dst_slice));
+                        allocations->GetDeviceAddress(dst_slice));
 
   CHECK_EQ(src.size() % sizeof(int32_t), 0);
   CHECK_EQ(dst.size() % sizeof(int32_t), 0);
@@ -202,21 +203,12 @@ tsl::AsyncValueRef<Thunk::ExecuteEvent> AddI32Thunk::Execute(
   if (params.intra_op_threadpool) {
     auto event = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
 
-    // Collective communicator resource creates only a scheduling edge,
-    // incrementing the shared resource value from the intra-op thread pool
-    // might lead to data races. ThunkExecutor will only guarantee that calls
-    // to Execute() are properly synchronized.
-    if (shared_resource_ &&
-        *shared_resource_ == Resource::kCollectiveCommunicator) {
-      shared_resource++;
-    }
-
     params.intra_op_threadpool->getPool()->Schedule([&, event, execute] {
-      // Token creates an execution edge, and it means that dependent thunks
-      // will wait for the completion of execution of all dependencies, and we
-      // verify that we don't have data races by mutating shared resource from a
-      // task that runs on a thread pool.
-      if (shared_resource_ && *shared_resource_ == Resource::kToken) {
+      // Resource uses create an execution edge, and it means that dependent
+      // thunks will wait for the completion of execution of all dependencies,
+      // and we verify that we don't have data races by mutating shared
+      // resource from a task that runs on a thread pool.
+      if (shared_resource_) {
         shared_resource++;
       }
 
@@ -776,16 +768,15 @@ TEST_P(ThunkExecutorStressTest, Execute) {
 // too long to run the tests. In optimized builds we can afford to run longer
 // thunk sequences to get more coverage.
 auto NumTestThunks() {
-#ifdef NDEBUG
-  return testing::ValuesIn({10, 50, 100});
-#else
-  return testing::ValuesIn({10, 100, 500});
-#endif
+  if constexpr (tsl::kIsDebugBuild) {
+    return testing::ValuesIn({10, 100, 500});
+  } else {
+    return testing::ValuesIn({10, 50, 100});
+  }
 }
 
 // Create aliases for all possible combinations of shared resource use.
 static constexpr auto kToken = Resource::Kind::kToken;
-static constexpr auto kComm = Resource::Kind::kCollectiveCommunicator;
 static constexpr auto kNoResource = SharedResourceUse::Kind::kNo;
 static constexpr auto kAllResource = SharedResourceUse::Kind::kAll;
 static constexpr auto kRandomResource = SharedResourceUse::Kind::kRandom;
@@ -799,10 +790,7 @@ INSTANTIATE_TEST_SUITE_P(
         /*shared_resource_use=*/
         testing::Values(SharedResourceUse{kNoResource, kToken},
                         SharedResourceUse{kAllResource, kToken},
-                        SharedResourceUse{kRandomResource, kToken},
-                        SharedResourceUse{kNoResource, kComm},
-                        SharedResourceUse{kAllResource, kComm},
-                        SharedResourceUse{kRandomResource, kComm}),
+                        SharedResourceUse{kRandomResource, kToken}),
         /*inject_errors=*/testing::Bool(),
         /*use_priority_ready_queue=*/testing::Bool()));
 

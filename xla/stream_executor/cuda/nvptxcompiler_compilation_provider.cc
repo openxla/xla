@@ -67,8 +67,8 @@ NvptxcompilerCompilationProvider::CompileToRelocatableModule(
     const CudaComputeCapability& cc, absl::string_view ptx,
     const CompilationOptions& options) const {
   ABSL_ASSIGN_OR_RETURN(Assembly assembly,
-                   CompileHelper(cc, ptx, options,
-                                 /*compile_to_relocatable_module=*/true));
+                        CompileHelper(cc, ptx, options,
+                                      /*compile_to_relocatable_module=*/true));
   return RelocatableModule{std::move(assembly.cubin),
                            std::move(assembly.compilation_log),
                            std::move(assembly.module_stats)};

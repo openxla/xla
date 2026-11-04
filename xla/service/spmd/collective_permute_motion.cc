@@ -297,7 +297,7 @@ absl::StatusOr<bool> MoveCollectivePermutes(HloComputation* computation,
       ABSL_RETURN_IF_ERROR(input->ReplaceUseWith(user, new_input));
     }
     ABSL_RETURN_IF_ERROR(root->ReplaceOperandWith(cluster->root_tuple_index,
-                                             cp->mutable_operand(0)));
+                                                  cp->mutable_operand(0)));
     ABSL_RETURN_IF_ERROR(body->RemoveInstructionAndUnusedOperands(
         cluster->reverse_order_instructions[0]));
     VLOG(2) << "Moved " << loop->name() << " index " << i;
@@ -315,7 +315,7 @@ absl::StatusOr<bool> CollectivePermuteMotion::RunImpl(
     for (HloInstruction* instr : computation->MakeInstructionPostOrder()) {
       if (instr->opcode() == HloOpcode::kWhile) {
         ABSL_ASSIGN_OR_RETURN(bool moved,
-                         MoveCollectivePermutes(computation, instr));
+                              MoveCollectivePermutes(computation, instr));
         changed |= moved;
       }
     }

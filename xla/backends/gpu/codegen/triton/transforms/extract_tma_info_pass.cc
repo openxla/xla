@@ -21,10 +21,10 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
-#include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/TMAUtilities.h"
+#include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 
 namespace mlir::triton::xla {
 

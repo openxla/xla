@@ -727,6 +727,24 @@ func.func @not_fold_itouq() -> tensor<!quant.uniform<i8:f32, 1.000000e+00:3>> {
   func.return %1 : tensor<!quant.uniform<i8:f32, 1.000000e+00:3>>
 }
 
+// CHECK-LABEL: func @fold_convert_to_unsigned_float
+func.func @fold_convert_to_unsigned_float() -> (tensor<9xf8E8M0FNU>, tensor<5xf8E8M0FNU>, tensor<4xf8E8M0FNU>, tensor<6xf8E8M0FNU>) {
+  // CHECK-DAG: %[[R0:.*]] = mhlo.constant dense<[0xFF, 0xFF, 0xFF, 5.877470e-39, 1.000000e+00, 2.000000e+00, 0xFF, 0xFF, 0xFF]> : tensor<9xf8E8M0FNU>
+  // CHECK-DAG: %[[R1:.*]] = mhlo.constant dense<[0xFF, 0xFF, 5.877470e-39, 1.000000e+00, 2.000000e+00]> : tensor<5xf8E8M0FNU>
+  // CHECK-DAG: %[[R2:.*]] = mhlo.constant dense<[5.877470e-39, 1.000000e+00, 2.000000e+00, 1.280000e+02]> : tensor<4xf8E8M0FNU>
+  // CHECK-DAG: %[[R3:.*]] = mhlo.constant dense<[0xFF, 0xFF, 5.877470e-39, 1.000000e+00, 0xFF, 0xFF]> : tensor<6xf8E8M0FNU>
+  // CHECK: return %[[R0]], %[[R1]], %[[R2]], %[[R3]]
+  %0 = mhlo.constant dense<[0x80000001, -1.0, -0.0, 0.0, 1.0, 2.0, 0xFF800000, 0xFFC00000, 0x7F800000]> : tensor<9xf32>
+  %1 = mhlo.constant dense<[-2, -1, 0, 1, 2]> : tensor<5xi32>
+  %2 = mhlo.constant dense<[0, 1, 2, 128]> : tensor<4xui8>
+  %3 = mhlo.constant dense<[-1.0, -0.0, 0.0, 1.0, 0xFF80, 0xFFC0]> : tensor<6xbf16>
+  %4 = "mhlo.convert"(%0) : (tensor<9xf32>) -> tensor<9xf8E8M0FNU>
+  %5 = "mhlo.convert"(%1) : (tensor<5xi32>) -> tensor<5xf8E8M0FNU>
+  %6 = "mhlo.convert"(%2) : (tensor<4xui8>) -> tensor<4xf8E8M0FNU>
+  %7 = "mhlo.convert"(%3) : (tensor<6xbf16>) -> tensor<6xf8E8M0FNU>
+  func.return %4, %5, %6, %7 : tensor<9xf8E8M0FNU>, tensor<5xf8E8M0FNU>, tensor<4xf8E8M0FNU>, tensor<6xf8E8M0FNU>
+}
+
 ////////
 // CosineOp
 
@@ -1061,7 +1079,7 @@ func.func @fold_negate_float() -> tensor<4xf32> {
 ////////
 // NotOp
 
-// CHECK-LABEL func @fold_not()
+// CHECK-LABEL: func @fold_not()
 func.func @fold_not() -> tensor<2x2xi1> {
   %0 = mhlo.constant dense<[[true, false], [true, false]]> : tensor<2x2xi1>
   // CHECK{LITERAL}: mhlo.constant dense<[[false, true], [false, true]]> : tensor<2x2xi1>
@@ -1069,7 +1087,7 @@ func.func @fold_not() -> tensor<2x2xi1> {
   func.return %1 : tensor<2x2xi1>
 }
 
-// CHECK-LABEL func @fold_not_i32()
+// CHECK-LABEL: func @fold_not_i32()
 func.func @fold_not_i32() -> tensor<2x2xi32> {
   %0 = mhlo.constant dense<[[42, -12], [1, 0]]> : tensor<2x2xi32>
   // CHECK{LITERAL}: mhlo.constant dense<[[-43, 11], [-2, -1]]> : tensor<2x2xi32>

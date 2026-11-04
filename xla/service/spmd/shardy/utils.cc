@@ -21,7 +21,6 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "mhlo/IR/register.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -32,6 +31,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "mhlo/IR/register.h"
 #include "mlir/Dialect/Func/Extensions/AllExtensions.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
@@ -40,6 +40,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/TypeRange.h"
@@ -58,6 +59,7 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/service/spmd/shardy/constants.h"
+#include "xla/service/spmd/shardy/extensions/custom_call_extensions.h"
 #include "xla/service/spmd/shardy/extensions/mhlo_extensions.h"
 
 namespace xla {
@@ -67,6 +69,7 @@ using ::mlir::ArrayRef;
 using ::mlir::Attribute;
 using ::mlir::DictionaryAttr;
 using ::mlir::NamedAttribute;
+using ::mlir::NamedAttrList;
 using ::mlir::Operation;
 using ::mlir::SmallVector;
 using ::mlir::StringAttr;
@@ -104,34 +107,11 @@ DictionaryAttr getFuncArgFrontendAttrs(FuncOp funcOp, unsigned int index) {
 
 namespace {
 
-mlir::StringAttr getStringAttribute(Attribute attr, mlir::OpBuilder& builder) {
-  std::string value;
+mlir::StringAttr getStringAttribute(Attribute attr) {
   if (auto stringAttr = mlir::dyn_cast<StringAttr>(attr)) {
     return stringAttr;
   }
-  return builder.getStringAttr(mlir::sdy::attributeToString(attr));
-}
-
-void setFrontendAttribute(SmallVector<NamedAttribute>& existingAttributes,
-                          StringRef name, Attribute value) {
-  mlir::OpBuilder builder(value.getContext());
-  StringAttr stringValue = getStringAttribute(value, builder);
-  for (auto* it = existingAttributes.begin(); it != existingAttributes.end();
-       ++it) {
-    if (it->getName() == name) {
-      if (it->getValue() == stringValue) {
-        return;
-      }
-      existingAttributes.erase(it);
-      break;
-    }
-  }
-  existingAttributes.emplace_back(builder.getStringAttr(name), stringValue);
-}
-
-void setFrontendAttrs(Operation* op, ArrayRef<NamedAttribute> frontendAttrs) {
-  return op->setAttr(kFrontendAttributesAttr,
-                     DictionaryAttr::get(op->getContext(), frontendAttrs));
+  return StringAttr::get(attr.getContext(), mlir::sdy::attributeToString(attr));
 }
 
 std::optional<TensorShardingAttr> adjustShardingInternal(
@@ -161,70 +141,56 @@ std::optional<TensorShardingAttr> adjustShardingInternal(
 
 }  // namespace
 
-SmallVector<NamedAttribute> getExistingFrontendAttributes(
-    DictionaryAttr frontendAttributes, StringRef excludedAttribute) {
-  SmallVector<NamedAttribute> dictEntries;
-  if (!frontendAttributes) {
-    return dictEntries;
-  }
-  for (NamedAttribute entry : frontendAttributes) {
-    if (entry.getName() != excludedAttribute) {
-      dictEntries.push_back(entry);
-    }
-  }
-  return dictEntries;
-}
-
 void setFrontendAttribute(Operation* op, StringRef name, Attribute value) {
-  SmallVector<NamedAttribute> existingAttributes =
-      getExistingFrontendAttributes(getFrontendAttrs(op), "");
-  setFrontendAttribute(existingAttributes, name, value);
-  setFrontendAttrs(op, existingAttributes);
+  NamedAttrList frontendAttrs(getFrontendAttrs(op));
+  StringAttr stringValue = getStringAttribute(value);
+  if (frontendAttrs.get(name) == stringValue) {
+    return;
+  }
+  frontendAttrs.set(name, stringValue);
+  op->setAttr(kFrontendAttributesAttr,
+              frontendAttrs.getDictionary(op->getContext()));
 }
 
 void setFrontendAttribute(FuncOp funcOp, StringRef name, Attribute value,
                           int64_t argNum) {
-  SmallVector<NamedAttribute> existingAttributes =
-      getExistingFrontendAttributes(getFuncArgFrontendAttrs(funcOp, argNum),
-                                    "");
-  setFrontendAttribute(existingAttributes, name, value);
-  setFuncArgFrontendAttrs(funcOp, argNum, existingAttributes);
-}
-
-void setFuncArgFrontendAttrs(FuncOp funcOp, unsigned int index,
-                             ArrayRef<NamedAttribute> frontendAttrs) {
-  funcOp.setArgAttr(index, kFrontendAttributesAttr,
-                    DictionaryAttr::get(funcOp.getContext(), frontendAttrs));
-}
-
-void removeFrontendAttribute(
-    DictionaryAttr frontendAttributes, StringRef attributeName,
-    std::function<void(ArrayRef<NamedAttribute>)> setAttr,
-    std::function<void()> removeAttr) {
-  SmallVector<NamedAttribute> existingAttributes =
-      getExistingFrontendAttributes(frontendAttributes, attributeName);
-  if (!existingAttributes.empty()) {
-    setAttr(existingAttributes);
-  } else {
-    removeAttr();
+  NamedAttrList frontendAttrs(getFuncArgFrontendAttrs(funcOp, argNum));
+  StringAttr stringValue = getStringAttribute(value);
+  if (frontendAttrs.get(name) == stringValue) {
+    return;
   }
+  frontendAttrs.set(name, stringValue);
+  funcOp.setArgAttr(argNum, kFrontendAttributesAttr,
+                    frontendAttrs.getDictionary(funcOp.getContext()));
 }
 
 void removeFrontendAttribute(Operation* op, StringRef attributeName) {
-  removeFrontendAttribute(
-      getFrontendAttrs(op), attributeName,
-      [&](ArrayRef<NamedAttribute> newDict) { setFrontendAttrs(op, newDict); },
-      [&]() { op->removeAttr(kFrontendAttributesAttr); });
+  if (DictionaryAttr dictAttr = getFrontendAttrs(op)) {
+    NamedAttrList frontendAttrs(dictAttr);
+    if (frontendAttrs.erase(attributeName)) {
+      if (!frontendAttrs.empty()) {
+        op->setAttr(kFrontendAttributesAttr,
+                    frontendAttrs.getDictionary(op->getContext()));
+      } else {
+        op->removeAttr(kFrontendAttributesAttr);
+      }
+    }
+  }
 }
 
 void removeFrontendAttribute(FuncOp funcOp, StringRef attributeName,
                              int64_t argNum) {
-  removeFrontendAttribute(
-      getFuncArgFrontendAttrs(funcOp, argNum), attributeName,
-      [&](ArrayRef<NamedAttribute> newDict) {
-        setFuncArgFrontendAttrs(funcOp, argNum, newDict);
-      },
-      [&]() { funcOp.removeArgAttr(argNum, kFrontendAttributesAttr); });
+  if (DictionaryAttr dictAttr = getFuncArgFrontendAttrs(funcOp, argNum)) {
+    NamedAttrList frontendAttrs(dictAttr);
+    if (frontendAttrs.erase(attributeName)) {
+      if (!frontendAttrs.empty()) {
+        funcOp.setArgAttr(argNum, kFrontendAttributesAttr,
+                          frontendAttrs.getDictionary(funcOp.getContext()));
+      } else {
+        funcOp.removeArgAttr(argNum, kFrontendAttributesAttr);
+      }
+    }
+  }
 }
 
 bool hasFrontendAttr(mlir::Operation* op, mlir::StringRef key) {
@@ -240,6 +206,7 @@ void loadAllRequiredDialects(mlir::MLIRContext* context) {
   mlir::func::registerAllExtensions(registry);
   mlir::mhlo::registerAllMhloDialects(registry);
   registerMhloExtensions(registry);
+  registerCustomCallExtensions(registry);
   mlir::sdy::registerAllDialects(registry);
   context->appendDialectRegistry(registry);
   context->loadAllAvailableDialects();
@@ -448,7 +415,7 @@ mlir::sdy::MeshAttr toSdyMeshAttr(const Mesh& mesh,
                                   mlir::MLIRContext* context) {
   if (mesh.axis_names().empty()) {
     if (mesh.device_assignment().num_elements() == 1) {
-      return mlir::sdy::MeshAttr::getMaximal(
+      return mlir::sdy::MeshAttr::getSingleDevice(
           context, mesh.device_assignment().array()(0));
     }
     return mlir::sdy::MeshAttr::get(context, {}, {});
@@ -515,8 +482,8 @@ mlir::sdy::TensorShardingAttr convertToSdyShardingAttr(
   if (namedSharding.IsSingleDevice()) {
     return mlir::sdy::TensorShardingAttr::getFullyClosed(
         context, /*rank=*/0,
-        mlir::sdy::MeshAttr::getMaximal(context,
-                                        hloSharding.GetUniqueDevice()));
+        mlir::sdy::MeshAttr::getSingleDevice(context,
+                                             hloSharding.GetUniqueDevice()));
   }
 
   mlir::sdy::MeshAttr meshAttr = toSdyMeshAttr(namedSharding.mesh(), context);
@@ -578,21 +545,56 @@ mlir::sdy::TensorShardingPerValueAttr convertToSdySharding(
     leafShardings = hloSharding.tuple_elements();
   }
 
+  // `convertToSdyShardingAttr` returns a null attribute for a replicated
+  // HloShardingV1/V2 placeholder sharding, which Shardy import ignores. A null
+  // element is not a valid `TensorShardingAttr`, and consumers of
+  // `TensorShardingPerValueAttr` dereference every element unconditionally
+  // (e.g. when exporting back to HLO shardings), so return a null attribute for
+  // the whole value instead, and let the caller skip setting it.
+
   // An op can carry a sharding without having any values, e.g. a custom call
-  // whose only result is an empty tuple. Such a sharding is maximal, so its
-  // rank is irrelevant, but we still need to keep it.
+  // whose only result is an empty tuple. Such a sharding is single-device, so
+  // its rank is irrelevant, but we still need to keep it.
   if (types.empty()) {
-    return TensorShardingPerValueAttr::get(
-        context,
-        convertToSdyShardingAttr(leafShardings.front(), /*rank=*/0, context));
+    TensorShardingAttr sdySharding =
+        convertToSdyShardingAttr(leafShardings.front(), /*rank=*/0, context);
+    if (!sdySharding) {
+      return nullptr;
+    }
+    return TensorShardingPerValueAttr::get(context, sdySharding);
   }
 
   SmallVector<TensorShardingAttr> sdyShardings;
   sdyShardings.reserve(types.size());
+
+  // Convert all elements and try to find a valid mesh.
+  mlir::Attribute meshOrRef = nullptr;
   for (auto [leafSharding, type] : llvm::zip_equal(leafShardings, types)) {
-    sdyShardings.push_back(convertToSdyShardingAttr(
-        leafSharding, mlir::sdy::getTensorRank(type), context));
+    TensorShardingAttr sdySharding = convertToSdyShardingAttr(
+        leafSharding, mlir::sdy::getTensorRank(type), context);
+
+    sdyShardings.push_back(sdySharding);
+
+    // If we found a valid sharding, extract its mesh so we can use it later.
+    if (sdySharding && !meshOrRef) {
+      meshOrRef = sdySharding.getMeshOrRef();
+    }
   }
+
+  // If EVERY element was a placeholder, we have no mesh information at all.
+  // In this case, we must still return nullptr for the entire tuple.
+  if (!meshOrRef) {
+    return nullptr;
+  }
+
+  // Fill in the gaps. Replace any null placeholders with a fully open sharding.
+  for (auto [i, type] : llvm::enumerate(types)) {
+    if (!sdyShardings[i]) {
+      sdyShardings[i] = mlir::sdy::TensorShardingAttr::getFullyOpen(
+          context, mlir::sdy::getTensorRank(type), meshOrRef);
+    }
+  }
+
   return TensorShardingPerValueAttr::get(context, sdyShardings);
 }
 

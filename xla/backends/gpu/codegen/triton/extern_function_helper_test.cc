@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/gpu/codegen/triton/extern_function_helper.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <string>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
@@ -33,12 +34,13 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/Value.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/WalkResult.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
 #include "xla/backends/gpu/codegen/triton/ir/triton_xla_ops.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/tsl/platform/logging.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace mlir::triton::xla {
 namespace {
@@ -384,15 +386,17 @@ TEST_F(ExternFunctionNameTest, CreateGetThreadIdOpsROCM) {
   EXPECT_EQ(intrinsic_op.getIntrin(), "llvm.amdgcn.workitem.id.x");
 }
 
-TEST_F(ExternFunctionNameTest, CreateAtomicWriteOpsVerifyOrdering) {
+TEST_P(AtomicInstrNameTest, CreateAtomicWriteOpsVerifyOrdering) {
   mlir::OwningOpRef<mlir::ModuleOp> module =
       CreateMlirModuleOp(mlir::UnknownLoc::get(&context_));
   mlir::OpBuilder builder(&context_);
   builder.setInsertionPointToEnd(module->getBody());
 
   auto i32_type = builder.getI32Type();
+  auto i1_type = builder.getI1Type();
   auto ptr_type = LLVM::LLVMPointerType::get(&context_);
-  auto func_type = LLVM::LLVMFunctionType::get(i32_type, {ptr_type, i32_type});
+  auto func_type =
+      LLVM::LLVMFunctionType::get(i32_type, {ptr_type, i32_type, i1_type});
   auto func = LLVM::LLVMFuncOp::create(builder, builder.getUnknownLoc(),
                                        "test_func", func_type);
   auto* entry_block = func.addEntryBlock(builder);
@@ -401,11 +405,11 @@ TEST_F(ExternFunctionNameTest, CreateAtomicWriteOpsVerifyOrdering) {
   AtomicWriteInstruction instruction{
       /* .semantic= */ triton::MemSemantic::RELEASE,
       /* .scope= */ triton::MemSyncScope::GPU,
-      /* .has_mask= */ false,
+      /* .has_mask= */ HasMask(),
   };
 
-  llvm::SmallVector<mlir::Value> operands = {entry_block->getArgument(0),
-                                             entry_block->getArgument(1)};
+  llvm::SmallVector<mlir::Value> operands(entry_block->getArguments().begin(),
+                                          entry_block->getArguments().end());
   LLVMOpCreationParams params{/* .builder= */ builder,
                               /* .loc= */ builder.getUnknownLoc(),
                               /* .target= */ TargetBackend::CUDA,
@@ -417,6 +421,7 @@ TEST_F(ExternFunctionNameTest, CreateAtomicWriteOpsVerifyOrdering) {
 
   // Add return to complete the function
   LLVM::ReturnOp::create(builder, builder.getUnknownLoc(), result);
+  EXPECT_TRUE(mlir::succeeded(mlir::verify(*module)));
 
   // Verify a store operation was created with correct ordering and syncscope
   bool found_store = false;
@@ -470,15 +475,17 @@ TEST_F(ExternFunctionNameTest, CreateAtomicWriteOpsVerifySyncscopeROCM) {
   EXPECT_TRUE(found_store) << "Should have created a store operation";
 }
 
-TEST_F(ExternFunctionNameTest, CreateAtomicSpinWaitOpsVerifyLoop) {
+TEST_P(AtomicInstrNameTest, CreateAtomicSpinWaitOpsVerifyLoop) {
   mlir::OwningOpRef<mlir::ModuleOp> module =
       CreateMlirModuleOp(mlir::UnknownLoc::get(&context_));
   mlir::OpBuilder builder(&context_);
   builder.setInsertionPointToEnd(module->getBody());
 
   auto i32_type = builder.getI32Type();
+  auto i1_type = builder.getI1Type();
   auto ptr_type = LLVM::LLVMPointerType::get(&context_);
-  auto func_type = LLVM::LLVMFunctionType::get(i32_type, {ptr_type, i32_type});
+  auto func_type =
+      LLVM::LLVMFunctionType::get(i32_type, {ptr_type, i32_type, i1_type});
   auto func = LLVM::LLVMFuncOp::create(builder, builder.getUnknownLoc(),
                                        "test_func", func_type);
   auto* entry_block = func.addEntryBlock(builder);
@@ -488,11 +495,11 @@ TEST_F(ExternFunctionNameTest, CreateAtomicSpinWaitOpsVerifyLoop) {
       /* .semantic= */ triton::MemSemantic::ACQUIRE,
       /* .scope= */ triton::MemSyncScope::GPU,
       /* .comparator= */ Comparator::EQ,
-      /* .has_mask= */ false,
+      /* .has_mask= */ HasMask(),
   };
 
-  llvm::SmallVector<mlir::Value> operands = {entry_block->getArgument(0),
-                                             entry_block->getArgument(1)};
+  llvm::SmallVector<mlir::Value> operands(entry_block->getArguments().begin(),
+                                          entry_block->getArguments().end());
   LLVMOpCreationParams params{/* .builder= */ builder,
                               /* .loc= */ builder.getUnknownLoc(),
                               /* .target= */ TargetBackend::CUDA,
@@ -504,6 +511,7 @@ TEST_F(ExternFunctionNameTest, CreateAtomicSpinWaitOpsVerifyLoop) {
 
   // Add return to complete the function
   LLVM::ReturnOp::create(builder, builder.getUnknownLoc(), result);
+  EXPECT_TRUE(mlir::succeeded(mlir::verify(*module)));
 
   // Verify loop structure: should have load, icmp, and cond_br operations
   bool found_load = false;

@@ -64,11 +64,23 @@ TSL_LIB_GTL_DEFINE_INT_TYPE(ComputationStreamId, uint64_t);
 // Additional streams for launching communication operations.
 TSL_LIB_GTL_DEFINE_INT_TYPE(CommunicationStreamId, uint64_t);
 
+// Dedicated streams for host↔device memory copies. There is exactly one D2H
+// stream (id value 0) and one H2D stream (id value 1), matching the
+// `device_to_host_stream` and `host_to_device_stream` in `ExecuteParams`.
+TSL_LIB_GTL_DEFINE_INT_TYPE(MemcpyStreamId, uint64_t);
+inline constexpr MemcpyStreamId kMemcpyD2HStreamId(0);
+inline constexpr MemcpyStreamId kMemcpyH2DStreamId(1);
+
+// Executor-owned stream associated with a CUDA locality domain.
+TSL_LIB_GTL_DEFINE_INT_TYPE(LocalityDomainStreamId, uint64_t);
+
 // Identifies an additional execution stream used by a thunk. This is either a
-// computation stream (for async fusions/calls) or a communication stream (for
-// collective operations). Default execution stream is not a computation or
-// communication stream, and it's always implicitly available. ExecutionStreamId
-// always identifies one of the additional streams used at run time.
+// computation stream (for async fusions/calls), a communication stream (for
+// collective operations), a dedicated memcpy stream (for host↔device copies),
+// or a locality-domain stream (for localized operations). Default execution
+// stream is not one of these streams, and it's always implicitly available.
+// ExecutionStreamId always identifies one of the additional streams used at
+// run time.
 class ExecutionStreamId {
  public:
   // Implicit conversions from strongly-typed stream ids for convenience.
@@ -76,6 +88,10 @@ class ExecutionStreamId {
   ExecutionStreamId(ComputationStreamId id) : id_(id) {}
   // NOLINTNEXTLINE(google-explicit-constructor)
   ExecutionStreamId(CommunicationStreamId id) : id_(id) {}
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  ExecutionStreamId(MemcpyStreamId id) : id_(id) {}
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  ExecutionStreamId(LocalityDomainStreamId id) : id_(id) {}
 
   bool is_computation() const {
     return std::holds_alternative<ComputationStreamId>(id_);
@@ -85,12 +101,24 @@ class ExecutionStreamId {
     return std::holds_alternative<CommunicationStreamId>(id_);
   }
 
+  bool is_memcpy() const { return std::holds_alternative<MemcpyStreamId>(id_); }
+
+  bool is_locality_domain() const {
+    return std::holds_alternative<LocalityDomainStreamId>(id_);
+  }
+
   ComputationStreamId computation_id() const {
     return std::get<ComputationStreamId>(id_);
   }
 
   CommunicationStreamId communication_id() const {
     return std::get<CommunicationStreamId>(id_);
+  }
+
+  MemcpyStreamId memcpy_id() const { return std::get<MemcpyStreamId>(id_); }
+
+  LocalityDomainStreamId locality_domain_id() const {
+    return std::get<LocalityDomainStreamId>(id_);
   }
 
   friend bool operator==(const ExecutionStreamId& a,
@@ -109,7 +137,9 @@ class ExecutionStreamId {
   }
 
  private:
-  std::variant<ComputationStreamId, CommunicationStreamId> id_;
+  std::variant<ComputationStreamId, CommunicationStreamId, MemcpyStreamId,
+               LocalityDomainStreamId>
+      id_;
 };
 
 template <typename Sink>
@@ -123,11 +153,26 @@ void AbslStringify(Sink& sink, CommunicationStreamId id) {
 }
 
 template <typename Sink>
+void AbslStringify(Sink& sink, MemcpyStreamId id) {
+  sink.Append(id == kMemcpyD2HStreamId ? "memcpy_d2h_stream"
+                                       : "memcpy_h2d_stream");
+}
+
+template <typename Sink>
+void AbslStringify(Sink& sink, LocalityDomainStreamId id) {
+  absl::Format(&sink, "locality_domain_stream[%v]", id.value());
+}
+
+template <typename Sink>
 void AbslStringify(Sink& sink, const ExecutionStreamId& id) {
   if (id.is_computation()) {
     absl::Format(&sink, "%v", id.computation_id());
-  } else {
+  } else if (id.is_communication()) {
     absl::Format(&sink, "%v", id.communication_id());
+  } else if (id.is_memcpy()) {
+    absl::Format(&sink, "%v", id.memcpy_id());
+  } else {
+    absl::Format(&sink, "%v", id.locality_domain_id());
   }
 }
 

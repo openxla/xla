@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/python/ifrt/array.h"
 
-#include <vector>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <vector>
+
 #include "xla/python/ifrt/mock.h"
 #include "xla/tsl/concurrency/ref_count.h"
 

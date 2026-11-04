@@ -28,7 +28,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/types/span.h"
@@ -47,6 +46,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
@@ -1472,12 +1472,9 @@ class TotalOrderTest : public ClientLibraryTestRunnerMixin<
 using Types =
     ::testing::Types<tsl::float8_e3m4, tsl::float8_e4m3, tsl::float8_e4m3fn,
                      tsl::float8_e4m3fnuz, tsl::float8_e4m3b11fnuz,
-                     tsl::float8_e5m2, tsl::float8_e5m2fnuz,
-                     Eigen::half,
-                     Eigen::bfloat16,
-                     double,
-                     tsl::float4_e2m1fn, tsl::float8_e8m0fnu,
-                     float>;
+                     tsl::float8_e5m2, tsl::float8_e5m2fnuz, Eigen::half,
+                     Eigen::bfloat16, double, tsl::float4_e2m1fn,
+                     tsl::float8_e8m0fnu, float>;
 
 TYPED_TEST_SUITE(TotalOrderTest, Types);
 
@@ -3018,6 +3015,65 @@ TEST_F(ArrayElementwiseOpTest, LogF32sVector) {
   ErrorSpec error_spec(1000 * kEpsF32, 1000 * kEpsF32);
   ComputeAndCompareR1<float>(&builder, expected_result, {&input_literal},
                              error_spec);
+}
+
+TEST_F(ArrayElementwiseOpTest, LogF64s) {
+  // Inputs are sums of two normal floats so that they are exactly
+  // representable on backends that emulate f64 with a pair of f32s and flush
+  // subnormals.
+  std::vector<double> inputs;
+  for (int e = -126; e <= 127; e += 3) {
+    for (float m : {1.0f, 1.1f, 1.3f, 1.4142135f, 1.5f, 1.9f}) {
+      float hi = std::ldexp(m, e);
+      float lo = hi * 0x1.234567p-26f;
+      inputs.push_back(static_cast<double>(hi) +
+                       (std::isnormal(lo) ? static_cast<double>(lo) : 0.0));
+    }
+  }
+  for (int n = 1; n <= 48; ++n) {
+    inputs.push_back(1.0 + std::ldexp(1.0, -n));
+    inputs.push_back(1.0 - std::ldexp(1.0, -n));
+  }
+  for (float x : {0.70710677f, 0.75f, 0.9f, 1.25f, 1.41421354f, 1.41421366f}) {
+    inputs.push_back(static_cast<double>(x) +
+                     static_cast<double>(x * -0x1.9abcdep-27f));
+  }
+  inputs.push_back(static_cast<double>(std::numeric_limits<float>::min()));
+  inputs.push_back(static_cast<double>(std::numeric_limits<float>::max()));
+
+  std::vector<double> expected;
+  expected.reserve(inputs.size());
+  for (double x : inputs) {
+    expected.push_back(std::log(x));
+  }
+  constexpr double kInf = std::numeric_limits<double>::infinity();
+  constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+  for (auto [x, y] : std::vector<std::pair<double, double>>{{1.0, 0.0},
+                                                            {0.0, -kInf},
+                                                            {-0.0, -kInf},
+                                                            {-1.0, kNaN},
+                                                            {-kInf, kNaN},
+                                                            {kInf, kInf},
+                                                            {kNaN, kNaN}}) {
+    inputs.push_back(x);
+    expected.push_back(y);
+  }
+
+  XlaBuilder builder(TestName());
+  Log(ConstantR1<double>(&builder, inputs));
+  ComputeAndCompareR1<double>(&builder, expected, {}, ErrorSpec(0, 0x1p-45));
+}
+
+// Effective scalar shapes take a different simplification path than vectors.
+// The input is a parameter so that the computation is not constant folded.
+TEST_F(ArrayElementwiseOpTest, LogF64Scalar) {
+  for (double x : {3.0, 0.75, 1e10}) {
+    XlaBuilder builder(TestName());
+    Literal arg = LiteralUtil::CreateR0<double>(x);
+    Log(Parameter(&builder, 0, arg.shape(), "x"));
+    ComputeAndCompareR0<double>(&builder, std::log(x), {&arg},
+                                ErrorSpec(0, 0x1p-45));
+  }
 }
 
 TEST_F(ArrayElementwiseOpTest, ClzU32s) {

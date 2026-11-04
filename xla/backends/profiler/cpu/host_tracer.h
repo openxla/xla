@@ -19,8 +19,8 @@ limitations under the License.
 #include <limits>
 #include <memory>
 
-#include "xla/tsl/profiler/backends/cpu/traceme_recorder.h"
 #include "tsl/profiler/lib/profiler_interface.h"
+#include "xla/tsl/profiler/backends/cpu/traceme_recorder.h"
 
 namespace xla {
 namespace profiler {

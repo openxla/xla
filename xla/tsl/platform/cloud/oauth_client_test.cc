@@ -15,18 +15,19 @@ limitations under the License.
 
 #include "xla/tsl/platform/cloud/oauth_client.h"
 
-#include <fstream>
-
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+
+#include <fstream>
+
+#include "tsl/platform/base64.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/scanner.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/cloud/http_request_fake.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/base64.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/scanner.h"
 
 namespace tsl {
 namespace {

@@ -17,18 +17,17 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
 #include "absl/types/span.h"
@@ -37,6 +36,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction_utils.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/replica_group.h"
+#include "xla/service/async_custom_call_utils.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -72,58 +72,6 @@ bool IsCollectiveCustomCall(const HloInstruction* instr,
   return absl::c_linear_search(kCollectiveBases, target);
 }
 
-std::optional<std::string> MatchingStartTarget(absl::string_view done_target) {
-  absl::string_view base = done_target;
-  if (!absl::ConsumeSuffix(&base, "-done")) {
-    return std::nullopt;
-  }
-  return absl::StrCat(base, "-start");
-}
-
-absl::Status FinishRewrite(
-    HloComputation* computation, HloInstruction* start_call,
-    HloInstruction* done_call, HloInstruction* async_start,
-    HloInstruction* async_done,
-    absl::Span<const hlo_instruction_utils::async::AsyncTraceStep> forward_path,
-    HloInstruction* final_result) {
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * done_operand,
-                   hlo_instruction_utils::async::PropagateDataflow(
-                       forward_path, async_start));
-  if (done_operand != async_done->operand(0)) {
-    ABSL_RETURN_IF_ERROR(
-        async_done->ReplaceOperandWithDifferentShape(0, done_operand));
-  }
-
-  async_start->set_metadata(start_call->metadata());
-  async_done->set_metadata(done_call->metadata());
-  if (final_result != async_done) {
-    final_result->set_metadata(done_call->metadata());
-  }
-
-  for (HloInstruction* pred : start_call->control_predecessors()) {
-    ABSL_RETURN_IF_ERROR(pred->AddControlDependencyTo(async_start));
-  }
-  for (HloInstruction* succ : start_call->control_successors()) {
-    ABSL_RETURN_IF_ERROR(async_start->AddControlDependencyTo(succ));
-  }
-  for (HloInstruction* pred : done_call->control_predecessors()) {
-    ABSL_RETURN_IF_ERROR(pred->AddControlDependencyTo(async_done));
-  }
-  for (HloInstruction* succ : done_call->control_successors()) {
-    ABSL_RETURN_IF_ERROR(final_result->AddControlDependencyTo(succ));
-  }
-
-  ABSL_RETURN_IF_ERROR(done_call->ReplaceAllUsesWith(final_result));
-  ABSL_RETURN_IF_ERROR(done_call->DropAllControlDeps());
-  ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(done_call));
-
-  if (start_call->user_count() == 0 && !start_call->IsRoot()) {
-    ABSL_RETURN_IF_ERROR(start_call->DropAllControlDeps());
-    ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(start_call));
-  }
-  return absl::OkStatus();
-}
-
 absl::StatusOr<bool> ProcessAllGather(
     HloComputation* computation, HloInstruction* start_call,
     HloInstruction* done_call,
@@ -131,7 +79,7 @@ absl::StatusOr<bool> ProcessAllGather(
     bool use_legacy_collectives) {
   std::string config_str = GetConfigString(start_call);
   ABSL_ASSIGN_OR_RETURN(AsyncCollectiveConfig config,
-                   ParseAsyncCollectiveConfig(config_str));
+                        ParseAsyncCollectiveConfig(config_str));
 
   TF_RET_CHECK(config.all_gather_dimension.has_value());
   int64_t all_gather_dim = *config.all_gather_dimension;
@@ -168,16 +116,16 @@ absl::StatusOr<bool> ProcessAllGather(
             /*constrain_layout=*/false, config.channel_id,
             config.use_global_device_ids);
 
-    ABSL_ASSIGN_OR_RETURN(async_done,
-                     computation->CreateAsyncInstructions(
-                         sync_all_gather.get(), /*context_shapes=*/{},
-                         computation->execution_thread(), /*replace=*/false));
+    ABSL_ASSIGN_OR_RETURN(
+        async_done, computation->CreateAsyncInstructions(
+                        sync_all_gather.get(), /*context_shapes=*/{},
+                        computation->execution_thread(), /*replace=*/false));
     async_start = async_done->mutable_operand(0);
   }
 
-  ABSL_RETURN_IF_ERROR(FinishRewrite(computation, start_call, done_call, async_start,
-                                async_done, forward_path,
-                                /*final_result=*/async_done));
+  ABSL_RETURN_IF_ERROR(FinishRewrite(computation, start_call, done_call,
+                                     async_start, async_done, forward_path,
+                                     /*final_result=*/async_done));
   return true;
 }
 
@@ -188,7 +136,7 @@ absl::StatusOr<bool> ProcessAllReduce(
     bool use_legacy_collectives) {
   std::string config_str = GetConfigString(start_call);
   ABSL_ASSIGN_OR_RETURN(AsyncCollectiveConfig config,
-                   ParseAsyncCollectiveConfig(config_str));
+                        ParseAsyncCollectiveConfig(config_str));
 
   TF_RET_CHECK(start_call->called_computations().size() == 1)
       << "Expected 1 called computation for AllReduce, got "
@@ -217,16 +165,16 @@ absl::StatusOr<bool> ProcessAllReduce(
             /*constrain_layout=*/false, config.channel_id,
             config.use_global_device_ids);
 
-    ABSL_ASSIGN_OR_RETURN(async_done,
-                     computation->CreateAsyncInstructions(
-                         sync_all_reduce.get(), /*context_shapes=*/{},
-                         computation->execution_thread(), /*replace=*/false));
+    ABSL_ASSIGN_OR_RETURN(
+        async_done, computation->CreateAsyncInstructions(
+                        sync_all_reduce.get(), /*context_shapes=*/{},
+                        computation->execution_thread(), /*replace=*/false));
     async_start = async_done->mutable_operand(0);
   }
 
-  ABSL_RETURN_IF_ERROR(FinishRewrite(computation, start_call, done_call, async_start,
-                                async_done, forward_path,
-                                /*final_result=*/async_done));
+  ABSL_RETURN_IF_ERROR(FinishRewrite(computation, start_call, done_call,
+                                     async_start, async_done, forward_path,
+                                     /*final_result=*/async_done));
   return true;
 }
 
@@ -237,7 +185,7 @@ absl::StatusOr<bool> ProcessReduceScatter(
         forward_path) {
   std::string config_str = GetConfigString(start_call);
   ABSL_ASSIGN_OR_RETURN(AsyncCollectiveConfig config,
-                   ParseAsyncCollectiveConfig(config_str));
+                        ParseAsyncCollectiveConfig(config_str));
 
   TF_RET_CHECK(config.scatter_dimension.has_value());
   int64_t scatter_dimension = *config.scatter_dimension;
@@ -277,10 +225,11 @@ absl::StatusOr<bool> ProcessReduceScatter(
           /*constrain_layout=*/false, config.channel_id,
           config.use_global_device_ids, scatter_dimension);
 
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * async_done,
-                   computation->CreateAsyncInstructions(
-                       sync_reduce_scatter.get(), /*context_shapes=*/{},
-                       computation->execution_thread(), /*replace=*/false));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * async_done,
+      computation->CreateAsyncInstructions(
+          sync_reduce_scatter.get(), /*context_shapes=*/{},
+          computation->execution_thread(), /*replace=*/false));
   HloInstruction* async_start = async_done->mutable_operand(0);
 
   HloInstruction* final_result = async_done;
@@ -289,8 +238,9 @@ absl::StatusOr<bool> ProcessReduceScatter(
         HloInstruction::CreateReshape(done_call->shape(), async_done));
   }
 
-  ABSL_RETURN_IF_ERROR(FinishRewrite(computation, start_call, done_call, async_start,
-                                async_done, forward_path, final_result));
+  ABSL_RETURN_IF_ERROR(FinishRewrite(computation, start_call, done_call,
+                                     async_start, async_done, forward_path,
+                                     final_result));
   return true;
 }
 
@@ -301,7 +251,7 @@ absl::StatusOr<bool> ProcessAllToAll(
         forward_path) {
   std::string config_str = GetConfigString(start_call);
   ABSL_ASSIGN_OR_RETURN(AsyncCollectiveConfig config,
-                   ParseAsyncCollectiveConfig(config_str));
+                        ParseAsyncCollectiveConfig(config_str));
 
   TF_RET_CHECK(config.split_dimension.has_value());
   int64_t split_dimension = *config.split_dimension;
@@ -328,10 +278,10 @@ absl::StatusOr<bool> ProcessAllToAll(
             shape, start_call->operands(), device_list,
             /*constrain_layout=*/false, config.channel_id, split_dimension);
 
-    ABSL_ASSIGN_OR_RETURN(async_done,
-                     computation->CreateAsyncInstructions(
-                         sync_all_to_all.get(), /*context_shapes=*/{},
-                         computation->execution_thread(), /*replace=*/false));
+    ABSL_ASSIGN_OR_RETURN(
+        async_done, computation->CreateAsyncInstructions(
+                        sync_all_to_all.get(), /*context_shapes=*/{},
+                        computation->execution_thread(), /*replace=*/false));
     final_result = async_done;
   } else {
     std::unique_ptr<HloInstruction> sync_all_to_all =
@@ -339,10 +289,10 @@ absl::StatusOr<bool> ProcessAllToAll(
             input_shape, start_call->operands(), device_list,
             /*constrain_layout=*/false, config.channel_id, split_dimension);
 
-    ABSL_ASSIGN_OR_RETURN(async_done,
-                     computation->CreateAsyncInstructions(
-                         sync_all_to_all.get(), /*context_shapes=*/{},
-                         computation->execution_thread(), /*replace=*/false));
+    ABSL_ASSIGN_OR_RETURN(
+        async_done, computation->CreateAsyncInstructions(
+                        sync_all_to_all.get(), /*context_shapes=*/{},
+                        computation->execution_thread(), /*replace=*/false));
 
     std::vector<int64_t> reshape_sizes;
     for (int64_t i = 0; i < input_shape.dimensions().size(); ++i) {
@@ -388,8 +338,9 @@ absl::StatusOr<bool> ProcessAllToAll(
   }
 
   HloInstruction* async_start = async_done->mutable_operand(0);
-  ABSL_RETURN_IF_ERROR(FinishRewrite(computation, start_call, done_call, async_start,
-                                async_done, forward_path, final_result));
+  ABSL_RETURN_IF_ERROR(FinishRewrite(computation, start_call, done_call,
+                                     async_start, async_done, forward_path,
+                                     final_result));
   return true;
 }
 
@@ -400,7 +351,7 @@ absl::StatusOr<bool> ProcessCollectivePermute(
     bool use_legacy_collectives) {
   std::string config_str = GetConfigString(start_call);
   ABSL_ASSIGN_OR_RETURN(AsyncCollectiveConfig config,
-                   ParseAsyncCollectiveConfig(config_str));
+                        ParseAsyncCollectiveConfig(config_str));
 
   HloInstruction* async_start = nullptr;
   HloInstruction* async_done = nullptr;
@@ -420,20 +371,22 @@ absl::StatusOr<bool> ProcessCollectivePermute(
             done_call->shape(), start_call->operands(), config.permutation,
             config.channel_id);
 
-    ABSL_ASSIGN_OR_RETURN(async_done,
-                     computation->CreateAsyncInstructions(
-                         sync_collective_permute.get(), /*context_shapes=*/{},
-                         computation->execution_thread(), /*replace=*/false));
+    ABSL_ASSIGN_OR_RETURN(
+        async_done, computation->CreateAsyncInstructions(
+                        sync_collective_permute.get(), /*context_shapes=*/{},
+                        computation->execution_thread(), /*replace=*/false));
     async_start = async_done->mutable_operand(0);
   }
 
-  ABSL_RETURN_IF_ERROR(FinishRewrite(computation, start_call, done_call, async_start,
-                                async_done, forward_path,
-                                /*final_result=*/async_done));
+  ABSL_RETURN_IF_ERROR(FinishRewrite(computation, start_call, done_call,
+                                     async_start, async_done, forward_path,
+                                     /*final_result=*/async_done));
   return true;
 }
 
-absl::StatusOr<bool> ProcessPair(
+}  // namespace
+
+absl::StatusOr<bool> AsyncCollectiveCustomCallRewriter::ProcessPair(
     HloComputation* computation, HloInstruction* start_call,
     HloInstruction* done_call,
     absl::Span<const hlo_instruction_utils::async::AsyncTraceStep> forward_path,
@@ -462,8 +415,6 @@ absl::StatusOr<bool> ProcessPair(
   return false;
 }
 
-}  // namespace
-
 absl::StatusOr<bool> AsyncCollectiveCustomCallRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
@@ -473,6 +424,7 @@ absl::StatusOr<bool> AsyncCollectiveCustomCallRewriter::RunImpl(
     std::vector<HloInstruction*> done_calls;
     for (HloInstruction* instr : computation->MakeInstructionPostOrder()) {
       if (IsCollectiveCustomCall(instr, "-done")) {
+        VLOG(1) << "Candidate done: " << instr->name();
         done_calls.push_back(instr);
       }
     }
@@ -481,6 +433,7 @@ absl::StatusOr<bool> AsyncCollectiveCustomCallRewriter::RunImpl(
       auto expected_start =
           MatchingStartTarget(done_call->custom_call_target());
       if (!expected_start.has_value()) {
+        VLOG(1) << "No matching start for " << done_call->name();
         continue;
       }
       auto trace = hlo_instruction_utils::async::TraceDataflowPath(
@@ -489,12 +442,13 @@ absl::StatusOr<bool> AsyncCollectiveCustomCallRewriter::RunImpl(
                    instr->IsCustomCall(*expected_start);
           });
       if (!trace.has_value()) {
+        VLOG(1) << "No trace found for " << done_call->name();
         continue;
       }
       auto [start_call, forward_path] = *std::move(trace);
       ABSL_ASSIGN_OR_RETURN(bool pair_changed,
-                       ProcessPair(computation, start_call, done_call,
-                                   forward_path, use_legacy_collectives_));
+                            ProcessPair(computation, start_call, done_call,
+                                        forward_path, use_legacy_collectives_));
       changed |= pair_changed;
     }
   }

@@ -156,7 +156,7 @@ static ProviderMap& GetProviderMap() {
   absl::MutexLock l(provider_mu);
 
   ABSL_ASSIGN_OR_RETURN(std::string canonical_name,
-                   xla::PlatformUtil::CanonicalPlatformName(platform));
+                        xla::PlatformUtil::CanonicalPlatformName(platform));
   auto it = GetProviderMap().find(canonical_name);
   if (it == GetProviderMap().end()) {
     return absl::UnimplementedError(absl::StrCat(

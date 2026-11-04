@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/add_original_value.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 
-#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 
@@ -175,6 +176,30 @@ ENTRY test {
   init = (f32[2], f32[2]) tuple(p, p)
   // CHECK: ROOT %while0 = (f32[2]{{.*}}, f32[2]{{.*}}) while(%init), condition=%cond, body=%body, origin={{[{]}}({{.*}}),["while0#$"]{{[}]}}
   ROOT while0 = (f32[2], f32[2]) while(init), condition=cond, body=body
+}
+)";
+
+  RunAndFilecheckHloRewrite(hlo_string, AddOriginalValue());
+}
+
+TEST_F(AddOriginalValueTest, Token) {
+  constexpr absl::string_view hlo_string = R"(
+HloModule test
+
+// CHECK-LABEL: test
+ENTRY test {
+  // CHECK: %[[AFTER_ALL:.*]] = token[] after-all()
+  // CHECK-NOT: origin=
+  after_all = token[] after-all()
+  // CHECK: %[[INFEED:.*]] = (f32[], token[]) infeed(%[[AFTER_ALL]]), origin={{[{]}}({"[[INFEED]]" {0}}, {}){{[}]}}
+  infeed = (f32[], token[]) infeed(after_all)
+  // CHECK: %[[GTE_DATA:.*]] = f32[] get-tuple-element(%[[INFEED]]), index=0, origin={{[{]}}{"[[INFEED]]" {0}}{{[}]}}
+  gte_data = f32[] get-tuple-element(infeed), index=0
+  // CHECK: %[[GTE_TOKEN:.*]] = token[] get-tuple-element(%[[INFEED]]), index=1
+  // CHECK-NOT: origin=
+  gte_token = token[] get-tuple-element(infeed), index=1
+  // CHECK: ROOT %[[TUPLE:.*]] = (f32[], token[]) tuple(%[[GTE_DATA]], %[[GTE_TOKEN]]), origin={{[{]}}({"[[INFEED]]" {0}}, {}){{[}]}}
+  ROOT tuple = (f32[], token[]) tuple(gte_data, gte_token)
 }
 )";
 

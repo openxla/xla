@@ -62,8 +62,9 @@ struct TypeRegistry::SerDes<xla::gpu::CustomCallResources>
   Deserialize(absl::string_view serialized) {
     stream_executor::KernelLoaderSpecProto spec_proto;
     spec_proto.ParseFromString(serialized);
-    ABSL_ASSIGN_OR_RETURN(stream_executor::KernelLoaderSpec spec,
-                     stream_executor::KernelLoaderSpec::FromProto(spec_proto));
+    ABSL_ASSIGN_OR_RETURN(
+        stream_executor::KernelLoaderSpec spec,
+        stream_executor::KernelLoaderSpec::FromProto(spec_proto));
     return std::make_unique<xla::gpu::CustomCallResources>(
         xla::gpu::CustomCallResources{std::move(spec)});
   }
@@ -97,9 +98,9 @@ XLA_FFI_DEFINE_HANDLER(
           << "Target is not a CUDA compute capability";
 
       ABSL_ASSIGN_OR_RETURN(stream_executor::KernelLoaderSpec kernel,
-                       stream_executor::cuda::FindCudaRuntimeKernel(
-                           stream_executor::cuda::GetWrite42Kernel(),
-                           *cuda_compute_capability));
+                            stream_executor::cuda::FindCudaRuntimeKernel(
+                                stream_executor::cuda::GetWrite42Kernel(),
+                                *cuda_compute_capability));
 
       return std::make_unique<CustomCallResources>(
           CustomCallResources{std::move(kernel)});
@@ -115,8 +116,8 @@ XLA_FFI_DEFINE_HANDLER(
       TF_RET_CHECK(stream != nullptr) << "Stream is null";
 
       stream_executor::StreamExecutor* executor = stream->parent();
-      ABSL_ASSIGN_OR_RETURN(auto kernel,
-                       Write42KernelFactory::Create(executor, resources->spec));
+      ABSL_ASSIGN_OR_RETURN(
+          auto kernel, Write42KernelFactory::Create(executor, resources->spec));
       return std::make_unique<CustomCallLoadedKernel>(
           CustomCallLoadedKernel{std::move(kernel)});
     },

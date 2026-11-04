@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/cpu/cpu_instruction_fusion.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/status/statusor.h"
@@ -35,7 +36,6 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal_util.h"
-#include "xla/service/cpu/cpu_options.h"
 #include "xla/service/transpose_folding.h"
 #include "xla/shape.h"
 #include "xla/tests/test_utils.h"
@@ -591,10 +591,6 @@ TEST_F(OpcodeFusionTest, DynamicSliceWithDynamicUpdateSlice) {
 
 TEST_F(OpcodeFusionTest, MessOfFusibleNodes) {
   auto module = CreateNewVerifiedModule();
-
-  if (options::UseExperimentalLoopFusion(module->config())) {
-    GTEST_SKIP() << "New fusion emitter does not support DUS yet.";
-  }
 
   HloComputation::Builder builder(TestName());
 

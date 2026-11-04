@@ -102,6 +102,8 @@ void Tile::Print(Printer* printer) const {
     } else {
       if (dim == kCombineDimension) {
         printer->Append("*");
+      } else if (dim == kMatchDimension) {
+        printer->Append("d");
       } else {
         printer->Append("Invalid value ");
         printer->Append(dim);
@@ -237,7 +239,7 @@ Layout& Layout::operator=(Layout&& other) = default;
   }
   if (proto.has_physical_shape()) {
     ABSL_ASSIGN_OR_RETURN(*layout.mutable_physical_shape(),
-                     Shape::FromProto(proto.physical_shape()));
+                          Shape::FromProto(proto.physical_shape()));
   }
   layout.set_dynamic_shape_metadata_prefix_bytes(
       proto.dynamic_shape_metadata_prefix_bytes());

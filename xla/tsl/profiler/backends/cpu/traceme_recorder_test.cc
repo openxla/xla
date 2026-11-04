@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/notification.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test.h"
@@ -33,7 +34,6 @@ limitations under the License.
 #include "xla/tsl/profiler/utils/math_utils.h"
 #include "xla/tsl/profiler/utils/time_utils.h"
 #include "xla/tsl/profiler/utils/traceme_global_flags.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace tsl {
 namespace profiler {

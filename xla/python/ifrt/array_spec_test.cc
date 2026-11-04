@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/python/ifrt/array_spec.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <tuple>
 
-#include <gtest/gtest.h>
 #include "absl/hash/hash_testing.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"

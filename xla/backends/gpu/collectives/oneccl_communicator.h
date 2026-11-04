@@ -22,12 +22,12 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "oneapi/ccl.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "oneapi/ccl.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
@@ -98,28 +98,29 @@ class OnecclCommunicator : public GpuCommunicator {
                                se::DeviceAddressBase recv_buffer,
                                PrimitiveType dtype, size_t count,
                                ReductionKind reduction_kind,
-                               const Executor& executor) final;
+                               const Executor& executor, bool is_rma) final;
 
   absl::Status LaunchBroadcast(se::DeviceAddressBase send_buffer,
                                se::DeviceAddressBase recv_buffer,
                                PrimitiveType dtype, size_t count, RankId root,
-                               const Executor& executor) final;
+                               const Executor& executor, bool is_rma) final;
 
   absl::Status LaunchReduceScatter(se::DeviceAddressBase send_buffer,
                                    se::DeviceAddressBase recv_buffer,
                                    PrimitiveType dtype, size_t count,
                                    ReductionKind reduction_kind,
-                                   const Executor& executor) final;
+                                   const Executor& executor, bool is_rma) final;
 
   absl::Status LaunchAllGather(se::DeviceAddressBase send_buffer,
                                se::DeviceAddressBase recv_buffer,
                                PrimitiveType dtype, size_t count,
-                               const Executor& executor) final;
+                               const Executor& executor, bool is_rma) final;
 
   absl::Status LaunchAllToAll(
       absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers,
       absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,
-      PrimitiveType dtype, size_t count, const Executor& executor) final;
+      PrimitiveType dtype, size_t count, const Executor& executor,
+      bool is_rma) final;
 
   absl::Status LaunchCollectivePermute(se::DeviceAddressBase send_buffer,
                                        se::DeviceAddressBase recv_buffer,

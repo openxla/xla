@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/cpu/ynn_emitter.h"
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -23,10 +22,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "ynnpack/include/ynnpack.h"
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -50,6 +49,7 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "ynnpack/include/ynnpack.h"
 
 namespace xla::cpu {
 
@@ -217,6 +217,21 @@ absl::StatusOr<uint32_t> DefineReshapeOp(ynn_subgraph_t subgraph,
   return DefineBitcastOp(subgraph, tensor_ids, instr);
 }
 
+absl::StatusOr<uint32_t> DefineCopyOp(ynn_subgraph_t subgraph,
+                                      TensorIdMap& tensor_ids,
+                                      const HloInstruction* instr) {
+  VLOG(3) << absl::StreamFormat("Define tensor value for copy op: %s",
+                                instr->ToString());
+  CHECK_EQ(instr->opcode(), HloOpcode::kCopy);
+  const HloInstruction* input = instr->operand(0);
+  CHECK_EQ(input->shape().element_type(), instr->shape().element_type());
+  ABSL_ASSIGN_OR_RETURN(auto in, FindTensorValue(tensor_ids, input));
+  ABSL_ASSIGN_OR_RETURN(auto out, DefineTensorValue(subgraph, instr));
+
+  YNN_RETURN_IF_ERROR(ynn_define_copy(subgraph, in, &out, /*flags=*/0));
+  return out;
+}
+
 absl::StatusOr<uint32_t> DefineTransposeOp(ynn_subgraph_t subgraph,
                                            TensorIdMap& tensor_ids,
                                            const HloInstruction* instr) {
@@ -323,7 +338,8 @@ absl::StatusOr<uint32_t> DefinePadOp(ynn_subgraph_t subgraph,
   const HloInstruction* input = instr->operand(0);
   const HloInstruction* padding_value = instr->operand(1);
   ABSL_ASSIGN_OR_RETURN(auto in, FindTensorValue(tensor_ids, input));
-  ABSL_ASSIGN_OR_RETURN(auto pad_val, FindTensorValue(tensor_ids, padding_value));
+  ABSL_ASSIGN_OR_RETURN(auto pad_val,
+                        FindTensorValue(tensor_ids, padding_value));
   ABSL_ASSIGN_OR_RETURN(auto out, DefineTensorValue(subgraph, instr));
 
   const PaddingConfig& config = instr->padding_config();
@@ -409,7 +425,8 @@ absl::StatusOr<uint32_t> DefineUnaryOp(ynn_subgraph_t subgraph,
                                 instr->ToString());
   ABSL_ASSIGN_OR_RETURN(auto unary_op, YnnUnaryOperator(instr->opcode()));
 
-  ABSL_ASSIGN_OR_RETURN(auto in, FindTensorValue(tensor_ids, instr->operand(0)));
+  ABSL_ASSIGN_OR_RETURN(auto in,
+                        FindTensorValue(tensor_ids, instr->operand(0)));
   ABSL_ASSIGN_OR_RETURN(auto out, DefineTensorValue(subgraph, instr));
 
   VLOG(3) << absl::StreamFormat("  tensors: in=%d, out=%d", in, out);
@@ -428,8 +445,10 @@ absl::StatusOr<uint32_t> DefineBinaryOp(ynn_subgraph_t subgraph,
 
   ABSL_ASSIGN_OR_RETURN(auto binary_op, YnnBinaryOperator(instr->opcode()));
 
-  ABSL_ASSIGN_OR_RETURN(auto lhs, FindTensorValue(tensor_ids, instr->operand(0)));
-  ABSL_ASSIGN_OR_RETURN(auto rhs, FindTensorValue(tensor_ids, instr->operand(1)));
+  ABSL_ASSIGN_OR_RETURN(auto lhs,
+                        FindTensorValue(tensor_ids, instr->operand(0)));
+  ABSL_ASSIGN_OR_RETURN(auto rhs,
+                        FindTensorValue(tensor_ids, instr->operand(1)));
   ABSL_ASSIGN_OR_RETURN(auto out, DefineTensorValue(subgraph, instr));
 
   VLOG(3) << absl::StreamFormat("  tensors: lhs=%d, rhs=%d, out=%d", lhs, rhs,
@@ -439,6 +458,19 @@ absl::StatusOr<uint32_t> DefineBinaryOp(ynn_subgraph_t subgraph,
       ynn_define_binary(subgraph, binary_op, lhs, rhs, &out, /*flags=*/0));
 
   return out;
+}
+
+uint32_t GetReduceFlags(const HloInstruction* instr) {
+  uint32_t flags = 0;
+  if (primitive_util::IsFloatingPointType(instr->shape().element_type())) {
+    if (!instr->GetModule()
+             ->config()
+             .debug_options()
+             .xla_cpu_enable_fast_min_max()) {
+      flags |= YNN_NODE_FLAG_PROPAGATE_NAN;
+    }
+  }
+  return flags;
 }
 
 absl::StatusOr<uint32_t> DefineReduceOp(ynn_subgraph_t subgraph,
@@ -455,9 +487,10 @@ absl::StatusOr<uint32_t> DefineReduceOp(ynn_subgraph_t subgraph,
   CHECK_EQ(reduce_instr->to_apply()->num_parameters(), 2);
   CHECK_EQ(reduce_instr->to_apply()->instruction_count(), 3);
 
-  ABSL_ASSIGN_OR_RETURN(auto ynn_reduce_op,
-                   YnnReduceOperator(
-                       reduce_instr->to_apply()->root_instruction()->opcode()));
+  ABSL_ASSIGN_OR_RETURN(
+      auto ynn_reduce_op,
+      YnnReduceOperator(
+          reduce_instr->to_apply()->root_instruction()->opcode()));
 
   const absl::Span<const int64_t> reduce_dims = reduce_instr->dimensions();
   const std::vector<int32_t> dims(reduce_dims.begin(), reduce_dims.end());
@@ -465,9 +498,9 @@ absl::StatusOr<uint32_t> DefineReduceOp(ynn_subgraph_t subgraph,
   ABSL_ASSIGN_OR_RETURN(auto init_id, FindTensorValue(tensor_ids, init));
   ABSL_ASSIGN_OR_RETURN(auto out, DefineTensorValue(subgraph, instr));
 
-  YNN_RETURN_IF_ERROR(
-      ynn_define_reduce(subgraph, ynn_reduce_op, /*num_axes=*/dims.size(),
-                        /*axes=*/dims.data(), in, init_id, &out, /*flags=*/0));
+  YNN_RETURN_IF_ERROR(ynn_define_reduce(
+      subgraph, ynn_reduce_op, /*num_axes=*/dims.size(),
+      /*axes=*/dims.data(), in, init_id, &out, GetReduceFlags(instr)));
   return out;
 }
 
@@ -482,37 +515,37 @@ absl::StatusOr<uint32_t> DefineDotOp(
 
   ABSL_ASSIGN_OR_RETURN(auto lhs_id, FindTensorValue(tensor_ids, lhs));
   ABSL_ASSIGN_OR_RETURN(auto rhs_id, FindTensorValue(tensor_ids, rhs));
-  ABSL_ASSIGN_OR_RETURN(output_id, DefineTensorValue(subgraph, instr, output_id));
+  ABSL_ASSIGN_OR_RETURN(output_id,
+                        DefineTensorValue(subgraph, instr, output_id));
 
   const Shape& lhs_shape = lhs->shape();
   const Shape& rhs_shape = rhs->shape();
   const Shape& out_shape = instr->shape();
 
   DotDimensionNumbers dot_dimensions = instr->dot_dimension_numbers();
-  ABSL_ASSIGN_OR_RETURN(DotShape dot_shape, GetDotShape(dot_dimensions, lhs_shape,
-                                                   rhs_shape, out_shape));
+  ABSL_ASSIGN_OR_RETURN(
+      DotShape dot_shape,
+      GetDotShape(dot_dimensions, lhs_shape, rhs_shape, out_shape));
 
   ABSL_ASSIGN_OR_RETURN(DotCanonicalDims dot_canonical_dims,
-                   GetDotCanonicalDims(dot_dimensions, dot_shape));
+                        GetDotCanonicalDims(dot_dimensions, dot_shape));
 
-  const size_t b_rank = rhs_shape.dimensions().size();
-  const bool transpose_b = !dot_canonical_dims.rhs_canonical;
+  auto transpose_last_two_dims = [](ynn_subgraph_t subgraph,
+                                    uint32_t& id) -> absl::Status {
+    const int32_t perm[2] = {-1, -2};
+    uint32_t transposed_id = YNN_INVALID_VALUE_ID;
+    YNN_RETURN_IF_ERROR(ynn_define_static_transpose(subgraph, /*num_dims=*/2,
+                                                    perm, id, &transposed_id,
+                                                    YNN_NODE_FLAG_KEEP_DIMS));
+    id = transposed_id;
+    return absl::OkStatus();
+  };
 
-  if (transpose_b) {
-    uint32_t rhs_id_transposed = YNN_INVALID_VALUE_ID;
-    std::array<int32_t, YNN_MAX_TENSOR_RANK> perm;
-    absl::c_iota(perm, 0);
-    CHECK_LT(b_rank, YNN_MAX_TENSOR_RANK);
-    CHECK_GE(b_rank, 2);
-    std::swap(perm[b_rank - 1], perm[b_rank - 2]);
-    ynn_status status = ynn_define_static_transpose(
-        subgraph,
-        /*num_dims=*/b_rank, perm.data(), rhs_id, &rhs_id_transposed,
-        /*flags=*/0);
-    if (status != ynn_status_success) {
-      return status;
-    }
-    rhs_id = rhs_id_transposed;
+  if (!dot_canonical_dims.lhs_canonical) {
+    ABSL_RETURN_IF_ERROR(transpose_last_two_dims(subgraph, lhs_id));
+  }
+  if (!dot_canonical_dims.rhs_canonical) {
+    ABSL_RETURN_IF_ERROR(transpose_last_two_dims(subgraph, rhs_id));
   }
 
   YNN_RETURN_IF_ERROR(ynn_define_dot(subgraph, /*num_k_dims=*/1, lhs_id, rhs_id,
@@ -583,7 +616,8 @@ absl::StatusOr<uint32_t> DefineReduceWindowOp(ynn_subgraph_t subgraph,
     // The padding should be the identity value of the reduction.
     PrimitiveType input_type = input->shape().element_type();
 
-    ABSL_ASSIGN_OR_RETURN(double identity_float, ReduceIdentity(to_apply_opcode));
+    ABSL_ASSIGN_OR_RETURN(double identity_float,
+                          ReduceIdentity(to_apply_opcode));
 
     ABSL_ASSIGN_OR_RETURN(
         auto identity_literal,
@@ -617,7 +651,7 @@ absl::StatusOr<uint32_t> DefineReduceWindowOp(ynn_subgraph_t subgraph,
 
   YNN_RETURN_IF_ERROR(ynn_define_reduce(
       subgraph, ynn_reduce_op, reduce_axes.size(), reduce_axes.data(),
-      stencil_id, init_id, &output_id, /*flags=*/0));
+      stencil_id, init_id, &output_id, GetReduceFlags(instr)));
 
   return output_id;
 }
@@ -636,11 +670,13 @@ absl::StatusOr<uint32_t> DefineConvolutionOp(
 
   ABSL_ASSIGN_OR_RETURN(auto lhs_id, FindTensorValue(tensor_ids, lhs));
   ABSL_ASSIGN_OR_RETURN(auto rhs_id, FindTensorValue(tensor_ids, rhs));
-  ABSL_ASSIGN_OR_RETURN(output_id, DefineTensorValue(subgraph, instr, output_id));
+  ABSL_ASSIGN_OR_RETURN(output_id,
+                        DefineTensorValue(subgraph, instr, output_id));
 
-  ABSL_ASSIGN_OR_RETURN(ynn_type ynn_lhs_type, YnnType(lhs->shape().element_type()));
+  ABSL_ASSIGN_OR_RETURN(ynn_type ynn_lhs_type,
+                        YnnType(lhs->shape().element_type()));
   ABSL_ASSIGN_OR_RETURN(ynn_type ynn_out_type,
-                   YnnType(conv->shape().element_type()));
+                        YnnType(conv->shape().element_type()));
 
   Window conv_window = conv->window();
   ConvolutionDimensionNumbers conv_dims = conv->convolution_dimension_numbers();
@@ -686,8 +722,9 @@ absl::StatusOr<uint32_t> DefineConvolutionOp(
     uint32_t split_id = YNN_INVALID_VALUE_ID;
     CHECK_EQ(rhs_dims.size(), 4);
     // [kh, kw, ci/g, co] -> [kh, kw, ci/g, g, co/g].
-    size_t filter_split[] = {feature_group_count,
-                             kernel_output_channels / feature_group_count};
+    size_t filter_split[] = {
+        feature_group_count,
+        static_cast<size_t>(kernel_output_channels / feature_group_count)};
     status = ynn_define_split_dim(subgraph, /*axis=*/-1, /*num_splits=*/2,
                                   filter_split, rhs_id, &split_id, /*flags=*/0);
     if (status != ynn_status_success) {
@@ -841,11 +878,11 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
             instr->ToString());
       }
       ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                       DefineConstant(subgraph.get(), literals, instr));
+                            DefineConstant(subgraph.get(), literals, instr));
       continue;
     }
 
-    if (instr->IsElementwise()) {
+    if (instr->IsElementwise() && instr->opcode() != HloOpcode::kCopy) {
       if (!IsElementwiseOpSupportedByYnn(instr)) {
         return InvalidArgument(
             "Unsupported elementwise instruction in YNN fusion: %s",
@@ -853,10 +890,11 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
       }
       if (instr->operand_count() == 1) {
         ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineUnaryOp(subgraph.get(), tensor_ids, instr));
+                              DefineUnaryOp(subgraph.get(), tensor_ids, instr));
       } else if (instr->operand_count() == 2) {
-        ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineBinaryOp(subgraph.get(), tensor_ids, instr));
+        ABSL_ASSIGN_OR_RETURN(
+            tensor_ids[instr],
+            DefineBinaryOp(subgraph.get(), tensor_ids, instr));
       } else {
         LOG(FATAL) << "Unexpected operand count " << instr->operand_count();
       }
@@ -871,7 +909,7 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
           data = arguments_buffers[instr->parameter_number()].opaque();
         }
         ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineParameter(subgraph.get(), instr, data));
+                              DefineParameter(subgraph.get(), instr, data));
       } break;
 
       case HloOpcode::kBitcast: {
@@ -880,8 +918,9 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
               "Unsupported bitcast instruction in YNN fusion: %s",
               instr->ToString());
         }
-        ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineBitcastOp(subgraph.get(), tensor_ids, instr));
+        ABSL_ASSIGN_OR_RETURN(
+            tensor_ids[instr],
+            DefineBitcastOp(subgraph.get(), tensor_ids, instr));
       } break;
 
       case HloOpcode::kReshape: {
@@ -890,8 +929,19 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
               "Unsupported reshape instruction in YNN fusion: %s",
               instr->ToString());
         }
+        ABSL_ASSIGN_OR_RETURN(
+            tensor_ids[instr],
+            DefineReshapeOp(subgraph.get(), tensor_ids, instr));
+      } break;
+
+      case HloOpcode::kCopy: {
+        if (!IsCopyOpSupportedByYnn(instr)) {
+          return InvalidArgument(
+              "Unsupported copy instruction in YNN fusion: %s",
+              instr->ToString());
+        }
         ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineReshapeOp(subgraph.get(), tensor_ids, instr));
+                              DefineCopyOp(subgraph.get(), tensor_ids, instr));
       } break;
 
       case HloOpcode::kTranspose: {
@@ -900,8 +950,9 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
               "Unsupported transpose instruction in YNN fusion: %s",
               instr->ToString());
         }
-        ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineTransposeOp(subgraph.get(), tensor_ids, instr));
+        ABSL_ASSIGN_OR_RETURN(
+            tensor_ids[instr],
+            DefineTransposeOp(subgraph.get(), tensor_ids, instr));
       } break;
 
       case HloOpcode::kBroadcast: {
@@ -910,8 +961,9 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
               "Unsupported broadcast instruction in YNN fusion: %s",
               instr->ToString());
         }
-        ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineBroadcastOp(subgraph.get(), tensor_ids, instr));
+        ABSL_ASSIGN_OR_RETURN(
+            tensor_ids[instr],
+            DefineBroadcastOp(subgraph.get(), tensor_ids, instr));
       } break;
 
       case HloOpcode::kConcatenate: {
@@ -932,7 +984,7 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
               instr->ToString());
         }
         ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineSliceOp(subgraph.get(), tensor_ids, instr));
+                              DefineSliceOp(subgraph.get(), tensor_ids, instr));
       } break;
 
       case HloOpcode::kPad: {
@@ -942,7 +994,7 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
               instr->ToString());
         }
         ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefinePadOp(subgraph.get(), tensor_ids, instr));
+                              DefinePadOp(subgraph.get(), tensor_ids, instr));
       } break;
 
       case HloOpcode::kIota: {
@@ -952,22 +1004,24 @@ absl::StatusOr<YnnSubgraph> EmitYnnSubgraph(
               instr->ToString());
         }
         ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineIotaOp(subgraph.get(), instr));
+                              DefineIotaOp(subgraph.get(), instr));
       } break;
 
       case HloOpcode::kDot: {
-        if (!IsDotSupportedByYnn(instr).value_or(false)) {
+        if (!IsDotSupportedByYnn(instr, /*allow_non_canonical_lhs=*/true)
+                 .value_or(false)) {
           return InvalidArgument(
               "Unsupported dot instruction in YNN fusion: %s",
               instr->ToString());
         }
         ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineDotOp(subgraph.get(), tensor_ids, instr));
+                              DefineDotOp(subgraph.get(), tensor_ids, instr));
       } break;
 
       case HloOpcode::kReduce: {
-        ABSL_ASSIGN_OR_RETURN(tensor_ids[instr],
-                         DefineReduceOp(subgraph.get(), tensor_ids, instr));
+        ABSL_ASSIGN_OR_RETURN(
+            tensor_ids[instr],
+            DefineReduceOp(subgraph.get(), tensor_ids, instr));
       } break;
 
       case HloOpcode::kReduceWindow: {

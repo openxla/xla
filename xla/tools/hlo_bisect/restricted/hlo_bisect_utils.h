@@ -41,8 +41,7 @@ class MiscompareChecker : public BugCheckerInterface {
  public:
   MiscompareChecker(HloModule* module, std::vector<Literal>&& input_data,
                     absl::string_view test_platform,
-                    absl::string_view reference_platform,
-                    ErrorSpec error_spec);
+                    absl::string_view reference_platform, ErrorSpec error_spec);
   absl::StatusOr<bool> Run(const HloModule& module) override;
   absl::flat_hash_map<std::string, Literal> GetResults() override;
 

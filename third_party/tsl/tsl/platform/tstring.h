@@ -147,7 +147,7 @@ class tstring {
   explicit tstring(const absl::string_view str);
 #ifdef PLATFORM_GOOGLE
   explicit tstring(const absl::Cord& cord);  // Zero-copy, holds reference.
-#endif  // PLATFORM_GOOGLE
+#endif                                       // PLATFORM_GOOGLE
 
   // Copy
   tstring(const tstring& str);
@@ -167,7 +167,7 @@ class tstring {
   tstring& operator=(const absl::string_view str);
 #ifdef PLATFORM_GOOGLE
   tstring& operator=(const absl::Cord& cord);  // Zero-copy, holds reference.
-#endif  // PLATFORM_GOOGLE
+#endif                                         // PLATFORM_GOOGLE
 
   // View Assignment
   tstring& operator=(const view& tsv);

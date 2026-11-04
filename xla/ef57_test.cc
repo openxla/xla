@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/ef57.h"
 
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <limits>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/random/random.h"
 #include "absl/types/span.h"
 #include "xla/hlo/testlib/test.h"

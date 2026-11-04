@@ -17,7 +17,6 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -37,6 +36,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
 
@@ -48,6 +48,8 @@ class MapTest : public ClientLibraryTestRunnerMixin<
  public:
   MapTest() {
     mutable_debug_options()->add_xla_disable_hlo_passes("algsimp");
+    mutable_debug_options()->add_xla_disable_hlo_passes(
+        "gpu-algebraic-simplifier");
     mutable_debug_options()->add_xla_disable_hlo_passes("inline");
   }
 

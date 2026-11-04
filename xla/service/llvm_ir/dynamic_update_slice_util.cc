@@ -174,7 +174,7 @@ static absl::Status EmitDynamicUpdateSliceInPlaceImpl(
     IrArray::Index output_index(output_multi_index, output_shape,
                                 b->getInt64Ty());
     ABSL_ASSIGN_OR_RETURN(llvm::Value * update_data,
-                     update_array_generator(update_index));
+                          update_array_generator(update_index));
     output_array.EmitWriteArrayElement(output_index, update_data, b);
     return absl::OkStatus();
   };
@@ -246,13 +246,13 @@ static absl::Status EmitFusedDynamicUpdateSliceInPlaceImpl(
 
     // Create element generators for update and start_indices.
     ABSL_ASSIGN_OR_RETURN(ElementGenerator update_array_generator,
-                     fused_emitter->GetGenerator(*update));
+                          fused_emitter->GetGenerator(*update));
 
     IndexGenerator start_indices_generator =
         [&](int64_t index) -> absl::StatusOr<llvm::Value*> {
       ABSL_ASSIGN_OR_RETURN(ElementGenerator element_generator,
-                       fused_emitter->GetGenerator(
-                           *dynamic_update_slice->operand(2 + index)));
+                            fused_emitter->GetGenerator(
+                                *dynamic_update_slice->operand(2 + index)));
       return element_generator(IrArray::Index(b->getInt64Ty()));
     };
     bool is_signed = ShapeUtil::ElementIsSigned(start_indices->shape());

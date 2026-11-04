@@ -45,7 +45,8 @@ namespace xla::gpu {
 
 absl::StatusOr<std::unique_ptr<ThunkBufferDebugPass>>
 ThunkBufferDebugPass::Create(Mode mode,
-                             std::vector<ShapedSlice> module_output_slices) {
+                             std::vector<ShapedSlice> module_output_slices,
+                             int devices_per_host) {
   for (const ShapedSlice& slice : module_output_slices) {
     if (slice.shape.IsTuple()) {
       return absl::InvalidArgumentError(
@@ -53,8 +54,8 @@ ThunkBufferDebugPass::Create(Mode mode,
     }
   }
 
-  return absl::WrapUnique(
-      new ThunkBufferDebugPass(mode, std::move(module_output_slices)));
+  return absl::WrapUnique(new ThunkBufferDebugPass(
+      mode, std::move(module_output_slices), devices_per_host));
 }
 
 absl::StatusOr<bool> ThunkBufferDebugPass::Run(
@@ -73,14 +74,14 @@ absl::StatusOr<bool> ThunkBufferDebugPass::Run(
 
   switch (mode_) {
     case Mode::kChecksum:
-      ABSL_RETURN_IF_ERROR(RunChecksumPassInternal(thunk_sequence, debug_options,
-                                              hlo_module, module_output_slices_,
-                                              allocator));
+      ABSL_RETURN_IF_ERROR(RunChecksumPassInternal(
+          thunk_sequence, debug_options, hlo_module, module_output_slices_,
+          allocator, devices_per_host_));
       break;
     case Mode::kFloatChecker:
-      ABSL_RETURN_IF_ERROR(
-          RunFloatCheckPassInternal(thunk_sequence, debug_options, hlo_module,
-                                    module_output_slices_, allocator));
+      ABSL_RETURN_IF_ERROR(RunFloatCheckPassInternal(
+          thunk_sequence, debug_options, hlo_module, module_output_slices_,
+          allocator, devices_per_host_));
       break;
     case Mode::kBufferSaver:
       ABSL_RETURN_IF_ERROR(RunDebugSaverInserter(
@@ -104,7 +105,7 @@ absl::StatusOr<std::vector<ShapedSlice>> GetOutputShapedBuffers(
       [&](const Shape& subshape, const ShapeIndex& index) -> absl::Status {
         if (subshape.IsArray()) {
           ABSL_ASSIGN_OR_RETURN(auto slice,
-                           buffer_assignment->GetUniqueSlice(root, index));
+                                buffer_assignment->GetUniqueSlice(root, index));
           buffers_to_check.push_back(ShapedSlice{slice, subshape});
         }
         return absl::OkStatus();

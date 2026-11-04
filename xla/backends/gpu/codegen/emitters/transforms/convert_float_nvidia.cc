@@ -19,7 +19,9 @@ limitations under the License.
 #include <utility>
 
 #include "llvm/ADT/APFloat.h"
+#include "llvm/Support/Casting.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/IR/ArithAttributes.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -27,10 +29,10 @@ limitations under the License.
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
-#include "mlir/Pass/Pass.h"
+#include "mlir/Pass/Pass.h"  // IWYU pragma: keep
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
+#include "xla/backends/gpu/codegen/emitters/transforms/passes.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace gpu {
@@ -57,10 +59,8 @@ Value ConvertToF32(Value v, mlir::ImplicitLocOpBuilder& b) {
   if (v.getType() == f32_ty) {
     return v;
   }
-  if (v.getType().getIntOrFloatBitWidth() < f32_ty.getWidth()) {
-    return ma::ExtFOp::create(b, f32_ty, v);
-  }
-  return ma::TruncFOp::create(b, f32_ty, v);
+  assert(v.getType().getIntOrFloatBitWidth() < f32_ty.getWidth());
+  return ma::ExtFOp::create(b, f32_ty, v);
 }
 
 struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
@@ -75,6 +75,11 @@ struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
     using FloatValue = mlir::TypedValue<mlir::FloatType>;
     auto src = mlir::cast<FloatValue>(op.getOperand());
     auto dst_ty = mlir::cast<mlir::FloatType>(op.getType());
+
+    if (src.getType().getWidth() > 32) {
+      return rewriter.notifyMatchFailure(
+          op, "f64 -> f8/f4 would round twice through f32");
+    }
 
     const bool is_f8 =
         llvm::isa<mlir::Float8E4M3FNType, mlir::Float8E5M2Type>(dst_ty);
@@ -109,20 +114,27 @@ struct RewriteTruncFPattern : public mlir::OpRewritePattern<ma::TruncFOp> {
       const std::string cvtIntr = llvm::isa<mlir::Float8E4M3FNType>(to_ty)
                                       ? "llvm.nvvm.f16x2.to.e4m3x2.rn"
                                       : "llvm.nvvm.f16x2.to.e5m2x2.rn";
+      Value pzo = ma::ConstantIntOp::create(b, 0, 1);
       cvtOp = ml::CallIntrinsicOp::create(b, b.getIntegerType(16),
                                           b.getStringAttr(cvtIntr),
-                                          mlir::ValueRange{vec});
+                                          mlir::ValueRange{vec, pzo});
     } else {
       // Other FP types get converted to F32 first.
       value = ConvertToF32(value, b);
-      const std::string cvtIntr = llvm::isa<mlir::Float4E2M1FNType>(to_ty)
-                                      ? "llvm.nvvm.ff.to.e2m1x2.rn.satfinite"
-                                  : llvm::isa<mlir::Float8E4M3FNType>(to_ty)
-                                      ? "llvm.nvvm.ff.to.e4m3x2.rn"
-                                      : "llvm.nvvm.ff.to.e5m2x2.rn";
-      cvtOp = ml::CallIntrinsicOp::create(b, b.getIntegerType(16),
-                                          b.getStringAttr(cvtIntr),
-                                          mlir::ValueRange{value, value});
+      Value pzo = ma::ConstantIntOp::create(b, 0, 1);
+      if (llvm::isa<mlir::Float4E2M1FNType>(to_ty)) {
+        cvtOp = ml::CallIntrinsicOp::create(
+            b, b.getIntegerType(16),
+            b.getStringAttr("llvm.nvvm.ff.to.e2m1x2.rn.satfinite"),
+            mlir::ValueRange{value, value, pzo});
+      } else {
+        const std::string cvtIntr = llvm::isa<mlir::Float8E4M3FNType>(to_ty)
+                                        ? "llvm.nvvm.ff.to.e4m3x2.rn"
+                                        : "llvm.nvvm.ff.to.e5m2x2.rn";
+        cvtOp = ml::CallIntrinsicOp::create(
+            b, b.getIntegerType(16), b.getStringAttr(cvtIntr),
+            mlir::ValueRange{value, value, pzo});
+      }
     }
 
     Value res = ml::TruncOp::create(

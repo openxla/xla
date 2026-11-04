@@ -53,7 +53,7 @@ UintType ExactUniformInt(const UintType n, const RandomBits& random) {
     // earlier check).
 
     do {
-      rnd = random();     // rnd uniform over [0, 2^{bits})
+      rnd = random();  // rnd uniform over [0, 2^{bits})
     } while (rnd < rem);  // reject [0, rem)
     // rnd is uniform over [rem, 2^{bits})
     //

@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/gpublas_lt_matmul_thunk.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -38,8 +37,11 @@ limitations under the License.
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/gpu/blas_lt_matmul_algorithm.h"
+#include "xla/stream_executor/gpu/blas_lt_matmul_algorithm.pb.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -53,7 +55,9 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
     std::optional<ShapedSlice> aux, std::optional<ShapedSlice> a_scale,
     std::optional<ShapedSlice> b_scale, std::optional<ShapedSlice> c_scale,
     std::optional<ShapedSlice> d_scale, std::optional<ShapedSlice> d_amax,
-    std::optional<const ShapedSlice> workspace)
+    std::optional<const ShapedSlice> workspace,
+    std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm,
+    bool require_exact_algorithm)
     : TracedCommand(Kind::kCublasLtMatmul, std::move(thunk_info)),
       gemm_config_(std::move(gemm_config)),
       epilogue_(epilogue),
@@ -72,7 +76,9 @@ CublasLtMatmulThunk::CublasLtMatmulThunk(
       c_scale_(c_scale),
       d_scale_(d_scale),
       d_amax_(d_amax),
-      workspace_(workspace) {}
+      workspace_(workspace),
+      blas_lt_algorithm_(std::move(blas_lt_algorithm)),
+      require_exact_algorithm_(require_exact_algorithm) {}
 
 absl::Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
   VLOG(3) << "Running cublas_lt matmul thunk";
@@ -133,25 +139,42 @@ absl::Status CublasLtMatmulThunk::ExecuteOnStream(const ExecuteParams& params) {
 absl::StatusOr<se::gpu::BlasLt::MatmulPlan*>
 CublasLtMatmulThunk::GetCachedMatmulPlan(const ExecuteParams& params) {
   ABSL_ASSIGN_OR_RETURN(auto* blas_lt,
-                   se::gpu::BlasLt::Get(params.stream->parent()));
+                        se::gpu::BlasLt::Get(params.stream->parent()));
   auto create = [&]() -> absl::StatusOr<se::gpu::BlasLt::MatmulPlanPtr> {
     VLOG(2) << this << ": Adding new " << (is_grouped() ? "grouped" : "regular")
             << " MatmulPlan for stream: " << params.stream
             << " instr: " << canonical_hlo_;
 
     ABSL_ASSIGN_OR_RETURN(auto plan, std::visit(
-                                    [&](auto&& gemm_config) {
-                                      return blas_lt->GetMatmulPlan(gemm_config,
-                                                                    epilogue_);
-                                    },
-                                    gemm_config_));
+                                         [&](auto&& gemm_config) {
+                                           return blas_lt->GetMatmulPlan(
+                                               gemm_config, epilogue_);
+                                         },
+                                         gemm_config_));
     return std::move(plan);
   };
-  // If autotuning is disabled, there is no point on retrieving all
-  // algorithms, it's enough to get the default one only.
-  size_t num_algorithms = algorithm_idx_ == 0 ? 1 : GemmConfig::kNumAlgorithms;
+  if (blas_lt_algorithm_.has_value()) {
+    absl::StatusOr<se::gpu::BlasLt::MatmulPlan*> plan =
+        blas_lt->GetOrCreateMatmulPlanWithAlgorithm(canonical_hlo_, create,
+                                                    *blas_lt_algorithm_,
+                                                    autotune_workspace_size_);
+    if (plan.ok() || require_exact_algorithm_) {
+      return plan;
+    }
+    LOG(WARNING) << "Failed to initialize BlasLt algorithm from descriptor ("
+                 << plan.status()
+                 << "); falling back to heuristic algorithm index "
+                 << algorithm_idx_;
+  } else if (require_exact_algorithm_) {
+    return absl::FailedPreconditionError(
+        "Exact BlasLt algorithm is required, but no algorithm descriptor "
+        "proto was provided.");
+  }
+
+  // Always request the full algorithm list: plans are shared across thunks by
+  // canonical_hlo_, and a varying count would invalidate the cached list.
   return blas_lt->GetOrCreateMatmulPlanWithAlgorithm(
-      canonical_hlo_, create, algorithm_idx_, num_algorithms,
+      canonical_hlo_, create, algorithm_idx_, GemmConfig::kNumAlgorithms,
       autotune_workspace_size_);
 }
 
@@ -210,7 +233,7 @@ absl::StatusOr<ThunkProto> CublasLtMatmulThunk::ToProto() const {
           *cublas_lt_matmul_thunk->mutable_grouped_gemm_config() =
               gemm_config.ToProto();
           ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_group_sizes(),
-                           group_sizes_.value().ToProto());
+                                group_sizes_.value().ToProto());
         } else {
           *cublas_lt_matmul_thunk->mutable_gemm_config() =
               gemm_config.ToProto();
@@ -229,90 +252,100 @@ absl::StatusOr<ThunkProto> CublasLtMatmulThunk::ToProto() const {
   ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_c(), c_.ToProto());
   ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d(), d_.ToProto());
   if (bias_.has_value()) {
-    ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_bias(), bias_->ToProto());
+    ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_bias(),
+                          bias_->ToProto());
   }
   if (aux_.has_value()) {
-    ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_aux(), aux_->ToProto());
+    ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_aux(),
+                          aux_->ToProto());
   }
   if (a_scale_.has_value()) {
     ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_a_scale(),
-                     a_scale_->ToProto());
+                          a_scale_->ToProto());
   }
   if (b_scale_.has_value()) {
     ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_b_scale(),
-                     b_scale_->ToProto());
+                          b_scale_->ToProto());
   }
   if (c_scale_.has_value()) {
     ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_c_scale(),
-                     c_scale_->ToProto());
+                          c_scale_->ToProto());
   }
   if (d_scale_.has_value()) {
     ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d_scale(),
-                     d_scale_->ToProto());
+                          d_scale_->ToProto());
   }
   if (d_amax_.has_value()) {
     ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_d_amax(),
-                     d_amax_->ToProto());
+                          d_amax_->ToProto());
   }
   if (workspace_.has_value()) {
     ABSL_ASSIGN_OR_RETURN(*cublas_lt_matmul_thunk->mutable_workspace(),
-                     workspace_->ToProto());
+                          workspace_->ToProto());
   }
+  if (blas_lt_algorithm_.has_value()) {
+    *cublas_lt_matmul_thunk->mutable_algorithm_proto() =
+        blas_lt_algorithm_->ToProto();
+  }
+  cublas_lt_matmul_thunk->set_require_exact_algorithm(require_exact_algorithm_);
   return proto;
 }
 
 /* static */ absl::StatusOr<std::unique_ptr<Thunk>>
 CublasLtMatmulThunk::FromProto(Thunk::ThunkInfo thunk_info,
                                const CublasLtMatmulThunkProto& proto,
-                               absl::Span<const BufferAllocation> allocations) {
+                               absl::Span<const BufferAllocation> allocations,
+                               const DebugOptions& runtime_debug_options) {
   ABSL_ASSIGN_OR_RETURN(se::gpu::BlasLt::Epilogue epilogue,
-                   se::gpu::BlasLt::EpilogueFromProto(proto.epilogue()));
+                        se::gpu::BlasLt::EpilogueFromProto(proto.epilogue()));
   ABSL_ASSIGN_OR_RETURN(ShapedSlice a,
-                   ShapedSlice::FromProto(proto.a(), allocations));
+                        ShapedSlice::FromProto(proto.a(), allocations));
   ABSL_ASSIGN_OR_RETURN(ShapedSlice b,
-                   ShapedSlice::FromProto(proto.b(), allocations));
+                        ShapedSlice::FromProto(proto.b(), allocations));
   ABSL_ASSIGN_OR_RETURN(ShapedSlice c,
-                   ShapedSlice::FromProto(proto.c(), allocations));
+                        ShapedSlice::FromProto(proto.c(), allocations));
   ABSL_ASSIGN_OR_RETURN(ShapedSlice d,
-                   ShapedSlice::FromProto(proto.d(), allocations));
+                        ShapedSlice::FromProto(proto.d(), allocations));
 
   std::optional<ShapedSlice> bias;
   if (proto.has_bias()) {
-    ABSL_ASSIGN_OR_RETURN(bias, ShapedSlice::FromProto(proto.bias(), allocations));
+    ABSL_ASSIGN_OR_RETURN(bias,
+                          ShapedSlice::FromProto(proto.bias(), allocations));
   }
   std::optional<ShapedSlice> aux;
   if (proto.has_aux()) {
-    ABSL_ASSIGN_OR_RETURN(aux, ShapedSlice::FromProto(proto.aux(), allocations));
+    ABSL_ASSIGN_OR_RETURN(aux,
+                          ShapedSlice::FromProto(proto.aux(), allocations));
   }
   std::optional<ShapedSlice> a_scale;
   if (proto.has_a_scale()) {
     ABSL_ASSIGN_OR_RETURN(a_scale,
-                     ShapedSlice::FromProto(proto.a_scale(), allocations));
+                          ShapedSlice::FromProto(proto.a_scale(), allocations));
   }
   std::optional<ShapedSlice> b_scale;
   if (proto.has_b_scale()) {
     ABSL_ASSIGN_OR_RETURN(b_scale,
-                     ShapedSlice::FromProto(proto.b_scale(), allocations));
+                          ShapedSlice::FromProto(proto.b_scale(), allocations));
   }
   std::optional<ShapedSlice> c_scale;
   if (proto.has_c_scale()) {
     ABSL_ASSIGN_OR_RETURN(c_scale,
-                     ShapedSlice::FromProto(proto.c_scale(), allocations));
+                          ShapedSlice::FromProto(proto.c_scale(), allocations));
   }
   std::optional<ShapedSlice> d_scale;
   if (proto.has_d_scale()) {
     ABSL_ASSIGN_OR_RETURN(d_scale,
-                     ShapedSlice::FromProto(proto.d_scale(), allocations));
+                          ShapedSlice::FromProto(proto.d_scale(), allocations));
   }
   std::optional<ShapedSlice> d_amax;
   if (proto.has_d_amax()) {
     ABSL_ASSIGN_OR_RETURN(d_amax,
-                     ShapedSlice::FromProto(proto.d_amax(), allocations));
+                          ShapedSlice::FromProto(proto.d_amax(), allocations));
   }
   std::optional<ShapedSlice> workspace;
   if (proto.has_workspace()) {
-    ABSL_ASSIGN_OR_RETURN(workspace,
-                     ShapedSlice::FromProto(proto.workspace(), allocations));
+    ABSL_ASSIGN_OR_RETURN(
+        workspace, ShapedSlice::FromProto(proto.workspace(), allocations));
   }
 
   // se::gpu::GemmConfig is not default constructible, so we need to use
@@ -321,14 +354,31 @@ CublasLtMatmulThunk::FromProto(Thunk::ThunkInfo thunk_info,
   std::optional<ShapedSlice> group_sizes;
   // Check if this is grouped or regular matmul
   if (proto.has_grouped_gemm_config()) {
-    ABSL_ASSIGN_OR_RETURN(group_sizes,
-                     ShapedSlice::FromProto(proto.group_sizes(), allocations));
+    ABSL_ASSIGN_OR_RETURN(
+        group_sizes, ShapedSlice::FromProto(proto.group_sizes(), allocations));
     ABSL_ASSIGN_OR_RETURN(gemm_config, se::gpu::GroupedGemmConfig::FromProto(
-                                      proto.grouped_gemm_config()));
+                                           proto.grouped_gemm_config()));
   } else {
     ABSL_ASSIGN_OR_RETURN(gemm_config,
-                     se::gpu::GemmConfig::FromProto(proto.gemm_config()));
+                          se::gpu::GemmConfig::FromProto(proto.gemm_config()));
   }
+
+  std::optional<se::gpu::BlasLtMatmulAlgorithm> blas_lt_algorithm;
+  if (proto.has_algorithm_proto()) {
+    ABSL_ASSIGN_OR_RETURN(
+        blas_lt_algorithm,
+        se::gpu::BlasLtMatmulAlgorithm::FromProto(proto.algorithm_proto()));
+  }
+
+  // `--xla_gpu_require_exact_blas_lt_algorithm` can be set either at compile
+  // time (stored in `proto.require_exact_algorithm()`) or at runtime when
+  // loading an AOT executable (via `runtime_debug_options`). Because the field
+  // in `DebugOptions` defaults to unset, an explicit runtime setting (true or
+  // false) overrides the compile-time value in the proto.
+  const bool require_exact_algorithm =
+      runtime_debug_options.has_xla_gpu_require_exact_blas_lt_algorithm()
+          ? runtime_debug_options.xla_gpu_require_exact_blas_lt_algorithm()
+          : proto.require_exact_algorithm();
 
   return std::make_unique<CublasLtMatmulThunk>(
       std::move(thunk_info), std::move(proto.canonical_hlo()),
@@ -336,7 +386,8 @@ CublasLtMatmulThunk::FromProto(Thunk::ThunkInfo thunk_info,
       proto.autotune_workspace_size(), std::move(a), std::move(b), std::move(c),
       std::move(d), std::move(group_sizes), std::move(bias), std::move(aux),
       std::move(a_scale), std::move(b_scale), std::move(c_scale),
-      std::move(d_scale), std::move(d_amax), std::move(workspace));
+      std::move(d_scale), std::move(d_amax), std::move(workspace),
+      std::move(blas_lt_algorithm), require_exact_algorithm);
 }
 
 }  // namespace gpu

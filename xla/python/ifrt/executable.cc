@@ -72,7 +72,7 @@ absl::StatusOr<ExecuteOptions> ExecuteOptions::FromProto(
   options.execution_stream_id = proto.execution_stream_id();
   if (proto.has_custom_options()) {
     ABSL_ASSIGN_OR_RETURN(options.custom_options,
-                     AttributeMap::FromProto(proto.custom_options()));
+                          AttributeMap::FromProto(proto.custom_options()));
   }
   return options;
 }

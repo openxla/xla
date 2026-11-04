@@ -13,9 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "tsl/platform/test.h"  // IWYU pragma: keep, exhaustive_binary_test_f32_instantiation.inc
 #include "xla/tests/exhaustive/exhaustive_binary_test_definitions.h"  // IWYU pragma: keep, exhaustive_binary_test_f32_instantiation.inc
 #include "xla/tests/exhaustive/exhaustive_op_test_utils.h"  // IWYU pragma: keep, exhaustive_binary_test_f32_instantiation.inc
-#include "tsl/platform/test.h"  // IWYU pragma: keep, exhaustive_binary_test_f32_instantiation.inc
 
 namespace xla {
 namespace exhaustive_op_test {

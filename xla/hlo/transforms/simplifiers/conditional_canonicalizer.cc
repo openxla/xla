@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -97,7 +98,8 @@ absl::StatusOr<bool> CanonicalizeNonTupleConditional(
     if (!operand->shape().IsTuple()) {
       auto tuple =
           parent->AddInstruction(HloInstruction::CreateTuple({operand}));
-      ABSL_RETURN_IF_ERROR(conditional->ReplaceOperandWithDifferentShape(i, tuple));
+      ABSL_RETURN_IF_ERROR(
+          conditional->ReplaceOperandWithDifferentShape(i, tuple));
       changed = true;
     }
   }
@@ -116,6 +118,10 @@ absl::StatusOr<bool> CanonicalizeNonTupleConditional(
 
   return changed;
 }
+
+const HloPassFactory* const kConditionalCanonicalizerRegistration =
+    RegisterHloPassFactory<DefaultHloPassFactory<ConditionalCanonicalizer>>(
+        "conditional-canonicalizer");
 
 }  // namespace
 

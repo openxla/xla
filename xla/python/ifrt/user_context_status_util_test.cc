@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/python/ifrt/user_context_status_util.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"

@@ -13,12 +13,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/base/thread_annotations.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
@@ -30,25 +31,27 @@ limitations under the License.
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "shardy/dialect/mpmd/ir/dialect.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
+#include "tsl/platform/init_main.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/python/ifrt/dtype.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/hlo/hlo_program.h"
 #include "xla/python/ifrt/host_callback.h"
-#include "xla/python/ifrt/ir/atom_program_compiler.h"
+#include "xla/python/ifrt/ir/compilation/atom_program_compiler.h"
+#include "xla/python/ifrt/ir/compilation/passes.h"
 #include "xla/python/ifrt/ir/conversions/mpmd/lower_to_ifrt.h"
+#include "xla/python/ifrt/ir/export/passes.h"
 #include "xla/python/ifrt/ir/ifrt_dialect.h"
 #include "xla/python/ifrt/ir/ifrt_ir_program.h"
+#include "xla/python/ifrt/ir/import/passes.h"
 #include "xla/python/ifrt/ir/support/module_parsing.h"
-#include "xla/python/ifrt/ir/transforms/passes.h"
 #include "xla/python/ifrt/mock.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/tsl/concurrency/future.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/init_main.h"
 
 namespace xla {
 namespace ifrt {
@@ -157,8 +160,10 @@ int main(int argc, char** argv) {
   auto bound_executable_map = std::make_shared<xla::ifrt::AtomExecutableMap>();
 
   mlir::registerAllPasses();
-  xla::ifrt::registerIfrtPassesAndPipelines(
+  xla::ifrt::registerIfrtPassesAndPipelines();
+  xla::ifrt::registerIfrtCompilationPassesAndPipelines(
       compiler, compile_options, atom_executable_map, bound_executable_map);
+  xla::ifrt::registerIfrtIrExportPasses();
   xla::ifrt::mpmd::RegisterLowerToIfrtPasses();
   mlir::DialectRegistry registry;
   xla::ifrt::support::InitializeMlirDialectRegistry(registry);

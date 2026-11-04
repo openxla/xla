@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
-#include "xla/tests/xla_test_backend_predicates.h"
 #include "absl/algorithm/container.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -41,6 +40,7 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
@@ -199,6 +199,28 @@ TEST_F(SelfAdjointEigTest, Test_VWVt_EQ_A_Upper_2x4x4) {
   ComputeMatmulVWVt(result, &builder);
 
   ComputeAndCompareR3<float>(&builder, batch_3d_4x4_, {&a_data},
+                             ErrorSpec(1e-3, 1e-3));
+}
+
+TEST_F(SelfAdjointEigTest, Test_VWVt_EQ_A_Lower_And_Upper_Same_Module_2x4x4) {
+  XlaBuilder builder(TestName());
+
+  XlaOp a_lower;
+  XlaOp a_upper;
+  auto a_lower_data =
+      CreateR3Parameter<float>(ExtractTriangularMatrix(batch_3d_4x4_, true), 0,
+                               "a_lower", &builder, &a_lower);
+  auto a_upper_data =
+      CreateR3Parameter<float>(ExtractTriangularMatrix(batch_3d_4x4_, false), 1,
+                               "a_upper", &builder, &a_upper);
+  auto result_lower = SelfAdjointEig(a_lower, /*lower=*/true);
+  auto result_upper = SelfAdjointEig(a_upper, /*lower=*/false);
+  Add(ComputeMatmulVWVt(result_lower, &builder),
+      ComputeMatmulVWVt(result_upper, &builder));
+
+  Array3D<float> expected = batch_3d_4x4_;
+  expected.Each([](absl::Span<const int64_t>, float* v) { *v *= 2.0f; });
+  ComputeAndCompareR3<float>(&builder, expected, {&a_lower_data, &a_upper_data},
                              ErrorSpec(1e-3, 1e-3));
 }
 

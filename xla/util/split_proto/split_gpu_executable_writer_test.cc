@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <utility>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "riegeli/base/maker.h"
 #include "riegeli/bytes/string_reader.h"
 #include "riegeli/bytes/string_writer.h"
@@ -81,6 +82,61 @@ TEST(SplitGpuExecutableWriterTest, WriteSplitGpuExecutable) {
       ->mutable_hlo_module()
       ->clear_id();
   EXPECT_THAT(deserializedExecutable, EqualsProto(initialExecutable));
+}
+
+TEST(SplitGpuExecutableWriterTest, WriteSplitGpuExecutableWithoutHloModule) {
+  auto initial_executable = ParseTextProtoOrDie<GpuExecutableProto>(R"pb(
+    asm_text: "asm_text"
+    binary: "binary_data"
+    module_name: "test_module"
+    constants {
+      symbol_name: "constant_1"
+      content { data: "constant_data" }
+      allocation_index: 0
+    }
+  )pb");
+
+  std::string serialized;
+  ASSERT_OK(WriteSplitGpuExecutable(
+      initial_executable,
+      std::make_unique<riegeli::StringWriter<>>(&serialized)));
+
+  GpuExecutableProto deserialized_executable;
+  ASSERT_OK(
+      ReadSplitProto(std::make_unique<riegeli::StringReader<>>(serialized),
+                     deserialized_executable));
+
+  // The writer must not add fields that weren't in the input. In particular an
+  // empty `hlo_module_with_config.hlo_module` would make readers try to
+  // deserialize a module that doesn't exist (and some readers even treat the
+  // presence of `hlo_module_with_config` alone as "has an embedded module").
+  EXPECT_FALSE(deserialized_executable.has_hlo_module_with_config());
+  EXPECT_THAT(deserialized_executable, EqualsProto(initial_executable));
+}
+
+TEST(SplitGpuExecutableWriterTest, WriteSplitGpuExecutableWithConfigOnly) {
+  auto initial_executable = ParseTextProtoOrDie<GpuExecutableProto>(R"pb(
+    hlo_module_with_config { config { replica_count: 2 num_partitions: 4 } }
+    asm_text: "asm_text"
+    binary: "binary_data"
+    module_name: "test_module"
+  )pb");
+
+  std::string serialized;
+  ASSERT_OK(WriteSplitGpuExecutable(
+      initial_executable,
+      std::make_unique<riegeli::StringWriter<>>(&serialized)));
+
+  GpuExecutableProto deserialized_executable;
+  ASSERT_OK(
+      ReadSplitProto(std::make_unique<riegeli::StringReader<>>(serialized),
+                     deserialized_executable));
+
+  // The config must be preserved, but the writer must not add an empty
+  // `hlo_module` next to it.
+  EXPECT_FALSE(
+      deserialized_executable.hlo_module_with_config().has_hlo_module());
+  EXPECT_THAT(deserialized_executable, EqualsProto(initial_executable));
 }
 
 TEST(SplitGpuExecutableWriterTest, JsonBackendConfigIsNormalized) {
@@ -218,6 +274,45 @@ TEST(SplitGpuExecutableWriterTest,
   // Instruction 1 should point to the other ID.
   EXPECT_NE(read_comp->instructions(0).backend_config_payload().id(),
             read_comp->instructions(1).backend_config_payload().id());
+}
+
+TEST(SplitGpuExecutableWriterTest, MetadataPayloadsArePreserved) {
+  GpuExecutableProto proto;
+  HloModuleProto* module =
+      proto.mutable_hlo_module_with_config()->mutable_hlo_module();
+
+  module->add_payloads("backend_config");  // ID 0: backend config
+  module->add_payloads("metadata_0");      // ID 1: metadata
+  module->add_payloads("metadata_1");      // ID 2: metadata
+
+  HloComputationProto* comp = module->add_computations();
+  HloInstructionProto* instr0 = comp->add_instructions();
+  instr0->mutable_backend_config_payload()->set_id(0);
+  instr0->mutable_metadata()->mutable_metadata_payload()->set_id(2);
+  HloInstructionProto* instr1 = comp->add_instructions();
+  instr1->mutable_metadata()->mutable_metadata_payload()->set_id(1);
+
+  std::string serialized;
+  ASSERT_OK(WriteSplitGpuExecutable(
+      proto, riegeli::Maker<riegeli::StringWriter>(&serialized)));
+
+  GpuExecutableProto deserialized;
+  ASSERT_OK(ReadSplitProto(riegeli::Maker<riegeli::StringReader>(serialized),
+                           deserialized));
+
+  const HloModuleProto& read_module =
+      deserialized.hlo_module_with_config().hlo_module();
+  ASSERT_EQ(read_module.payloads_size(), 3);
+  const HloComputationProto& read_comp = read_module.computations(0);
+  EXPECT_EQ(read_module.payloads(
+                read_comp.instructions(0).backend_config_payload().id()),
+            "backend_config");
+  EXPECT_EQ(read_module.payloads(
+                read_comp.instructions(0).metadata().metadata_payload().id()),
+            "metadata_1");
+  EXPECT_EQ(read_module.payloads(
+                read_comp.instructions(1).metadata().metadata_payload().id()),
+            "metadata_0");
 }
 
 }  // namespace

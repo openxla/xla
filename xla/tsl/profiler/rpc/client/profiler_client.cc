@@ -31,11 +31,11 @@ limitations under the License.
 #include "grpcpp/security/credentials.h"
 #include "grpcpp/support/channel_arguments.h"
 #include "grpcpp/support/status.h"
+#include "tsl/profiler/protobuf/profiler_analysis.grpc.pb.h"
+#include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/protobuf/error_codes.pb.h"
-#include "tsl/profiler/protobuf/profiler_analysis.grpc.pb.h"
-#include "tsl/profiler/protobuf/profiler_service.grpc.pb.h"
 
 namespace tsl {
 namespace profiler {
@@ -81,7 +81,8 @@ absl::Status ProfileGrpc(const std::string& service_address,
   ::grpc::ClientContext context;
   std::unique_ptr<tensorflow::grpc::ProfilerService::Stub> stub =
       CreateStub<tensorflow::grpc::ProfilerService>(service_address);
-  ABSL_RETURN_IF_ERROR(FromGrpcStatus(stub->Profile(&context, request, response)));
+  ABSL_RETURN_IF_ERROR(
+      FromGrpcStatus(stub->Profile(&context, request, response)));
   return absl::OkStatus();
 }
 
@@ -136,7 +137,8 @@ absl::Status MonitorGrpc(const std::string& service_address,
   ::grpc::ClientContext context;
   std::unique_ptr<tensorflow::grpc::ProfilerService::Stub> stub =
       CreateStub<tensorflow::grpc::ProfilerService>(service_address);
-  ABSL_RETURN_IF_ERROR(FromGrpcStatus(stub->Monitor(&context, request, response)));
+  ABSL_RETURN_IF_ERROR(
+      FromGrpcStatus(stub->Monitor(&context, request, response)));
   return absl::OkStatus();
 }
 

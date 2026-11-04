@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/ir/collective_op_group_mode.h"
 
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 
@@ -99,7 +100,7 @@ std::vector<TestCase> GetTestCases() {
 class GetCollectOpGroupModeTest : public testing::TestWithParam<TestCase> {};
 
 TEST_P(GetCollectOpGroupModeTest, Test) {
-  const TestCase &tc = GetParam();
+  const TestCase& tc = GetParam();
   absl::StatusOr<CollectiveOpGroupMode> actual =
       GetCollectiveOpGroupMode(tc.has_channel_id, tc.use_global_device_ids);
   if (tc.expected) {

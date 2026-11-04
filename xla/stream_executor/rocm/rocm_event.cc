@@ -35,16 +35,17 @@ limitations under the License.
 namespace stream_executor {
 namespace gpu {
 namespace {
-absl::Status WaitStreamOnEvent(StreamExecutor *executor, hipStream_t stream,
+absl::Status WaitStreamOnEvent(StreamExecutor* executor, hipStream_t stream,
                                hipEvent_t event) {
   std::unique_ptr<ActivateContext> activation = executor->Activate();
-  ABSL_RETURN_IF_ERROR(ToStatus(hipStreamWaitEvent(stream, event, 0 /* = flags */),
-                           "could not wait stream on event"));
+  ABSL_RETURN_IF_ERROR(
+      ToStatus(hipStreamWaitEvent(stream, event, 0 /* = flags */),
+               "could not wait stream on event"));
   return absl::OkStatus();
 }
 
 enum class EventFlags { kDefault, kDisableTiming };
-absl::StatusOr<hipEvent_t> InitEvent(StreamExecutor *executor,
+absl::StatusOr<hipEvent_t> InitEvent(StreamExecutor* executor,
                                      EventFlags flags) {
   int hipflags;
   switch (flags) {
@@ -73,7 +74,7 @@ absl::StatusOr<hipEvent_t> InitEvent(StreamExecutor *executor,
       absl::StrCat("could not create ROCM event: ", ToString(res)));
 }
 
-void DestroyEvent(StreamExecutor *executor, hipEvent_t event) {
+void DestroyEvent(StreamExecutor* executor, hipEvent_t event) {
   if (event == nullptr) {
     return;
   }
@@ -114,7 +115,7 @@ absl::Status RocmEvent::Synchronize() {
                   "could not synchronize on ROCm event");
 }
 
-absl::StatusOr<RocmEvent> RocmEvent::Create(StreamExecutor *executor,
+absl::StatusOr<RocmEvent> RocmEvent::Create(StreamExecutor* executor,
                                             bool allow_timing) {
   ABSL_ASSIGN_OR_RETURN(
       hipEvent_t event_handle,
@@ -126,7 +127,7 @@ absl::StatusOr<RocmEvent> RocmEvent::Create(StreamExecutor *executor,
 
 RocmEvent::~RocmEvent() { DestroyEvent(executor_, handle_); }
 
-RocmEvent::RocmEvent(RocmEvent &&other)
+RocmEvent::RocmEvent(RocmEvent&& other)
     : executor_(other.executor_), handle_(other.handle_) {
   other.executor_ = nullptr;
   other.handle_ = nullptr;

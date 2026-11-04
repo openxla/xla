@@ -28,10 +28,10 @@ limitations under the License.
 
 #include <cstdint>
 
-#include "absl/base/casts.h"
 #include "Eigen/Core"
-#include "xla/types.h"
+#include "absl/base/casts.h"
 #include "tsl/platform/bfloat16.h"
+#include "xla/types.h"
 
 namespace xla {
 

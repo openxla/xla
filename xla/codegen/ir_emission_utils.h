@@ -40,6 +40,9 @@ namespace xla {
 // Checks if the instruction is elementwise.
 bool IsIntermediate(const HloInstruction* instr, int allowed_operand_count = 1);
 
+// Checks if the node is not a tuple, parameter or intermediate op.
+bool IsNonTrivialHeroUser(const HloInstructionAdaptor& node);
+
 // Find the first hero that satisfies the given predicate.
 std::optional<HloInstructionAdaptor> FindHero(
     const HloInstructionAdaptor& root,
@@ -55,6 +58,11 @@ bool IsDynamicUpdateSliceFusion(const HloFusionSpec& fusion_spec);
 // handled as a no-op.
 std::vector<HloInstructionAdaptor> GetOutputDefiningDynamicUpdateSlices(
     absl::Span<HloInstructionAdaptor const> roots);
+
+// Returns whether the fusion represented by 'fusion_adaptor' can be emitted
+// with the dynamic update slice emitter.
+absl::StatusOr<bool> CanEmitFusedDynamicUpdateSlice(
+    const HloFusionAdaptor& fusion_adaptor);
 
 // Returns whether the fusion represented by 'fusion_adaptor' can be emitted
 // with the dynamic update slice in-place emitter. If 'fusion_adaptor'

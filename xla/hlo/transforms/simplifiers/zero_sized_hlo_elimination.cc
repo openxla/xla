@@ -19,9 +19,11 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/service/spmd/shardy/constants.h"
@@ -29,7 +31,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/util.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 
@@ -89,5 +90,13 @@ absl::StatusOr<bool> ZeroSizedHloElimination::RunImpl(
   }
   return changed;
 }
+
+namespace {
+
+const HloPassFactory* const kZeroSizedHloEliminationRegistration =
+    RegisterHloPassFactory<DefaultHloPassFactory<ZeroSizedHloElimination>>(
+        "zero_sized_hlo_elimination");
+
+}  // namespace
 
 }  // namespace xla

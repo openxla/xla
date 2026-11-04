@@ -18,10 +18,10 @@ limitations under the License.
 #include <string>
 
 #include "json/json.h"
-#include "xla/tsl/platform/test.h"
-#include "xla/tsl/profiler/convert/trace_container.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/profiler/protobuf/trace_events.pb.h"
+#include "xla/tsl/platform/test.h"
+#include "xla/tsl/profiler/convert/trace_container.h"
 
 namespace tsl {
 namespace profiler {

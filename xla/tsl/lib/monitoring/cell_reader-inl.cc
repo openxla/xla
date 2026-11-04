@@ -99,7 +99,7 @@ absl::StatusOr<Point> GetLatestPoint(const CollectedMetrics& metrics,
                                      const std::string& metric_name,
                                      const std::vector<std::string>& labels) {
   ABSL_ASSIGN_OR_RETURN(std::vector<Point> points,
-                   GetPoints(metrics, metric_name, labels));
+                        GetPoints(metrics, metric_name, labels));
   if (points.empty()) {
     return absl::UnavailableError(
         absl::StrCat("No data collected for metric ", metric_name,

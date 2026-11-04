@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# proto-file: third_party/tensorflow/compiler/xla/stream_executor/device_description.proto
+# proto-message: stream_executor.GpuTargetConfigProto
+
 gpu_device_info {
   threads_per_block_limit: 1024
   threads_per_warp: 32
@@ -26,7 +29,7 @@ gpu_device_info {
   memory_bandwidth: 7672320000000
   l2_cache_size: 132644864
   clock_rate_ghz: 1.965
-  device_memory_size: 191514411008
+  device_memory_size: 191502876672
   shared_memory_per_block_optin: 232448
   cuda_compute_capability {
     major: 10
@@ -235,10 +238,9 @@ gpu_device_info {
   mem_clock_ghz: 3.996
   reserved_shared_memory_per_block: 1024
   max_blocks_per_multiprocessor: 32
-  driver_version: "13.0.0"
-  runtime_version: "12.8.0"
-  compile_time_toolkit_version: "12.8.0"
-  dnn_version: "9.10.0"
+  runtime_version: "13.2.0"
+  compile_time_toolkit_version: "13.2.0"
+  dnn_version: "9.23.0"
   cub_version: "3.1.2"
   device_interconnect_info {
     active_links: 18

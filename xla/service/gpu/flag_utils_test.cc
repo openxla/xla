@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/flag_utils.h"
 
 #include <gtest/gtest.h>
+
 #include "xla/backends/gpu/transforms/double_buffer_loop_unrolling.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"

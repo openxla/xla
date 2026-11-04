@@ -19,9 +19,9 @@ limitations under the License.
 #include <functional>
 
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/thread_annotations.h"
 #include "xla/tsl/platform/macros.h"
 #include "xla/tsl/platform/types.h"
-#include "tsl/platform/thread_annotations.h"
 
 namespace tsl {
 

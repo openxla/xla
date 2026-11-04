@@ -17,15 +17,15 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>  // IWYU pragma: keep
 
+#include "absl/status/status.h"
+#include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
 #include "cub/agent/agent_scan.cuh"
 #include "cub/block/block_load.cuh"
 #include "cub/block/block_reduce.cuh"
 #include "cub/block/block_scan.cuh"
 #include "cub/block/block_store.cuh"
 #include "cub/device/device_scan.cuh"
-#include "absl/status/status.h"
-#include "absl/status/status_macros.h"
-#include "absl/status/statusor.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_bf16.h"  // IWYU pragma: keep
 #include "third_party/gpus/cuda/include/cuda_fp16.h"  // IWYU pragma: keep
@@ -274,9 +274,9 @@ absl::StatusOr<size_t> CubScanGetScratchSize(
     xla::PrimitiveType type, int64_t vector_length, int64_t row_length,
     int64_t column_length, CubScanKind kind, bool is_reverse) {
   size_t temp_bytes = 0;
-  ABSL_RETURN_IF_ERROR(CubScanDispatch(type, nullptr, &temp_bytes, nullptr, nullptr,
-                                  vector_length, row_length, column_length,
-                                  kind, is_reverse, nullptr));
+  ABSL_RETURN_IF_ERROR(CubScanDispatch(
+      type, nullptr, &temp_bytes, nullptr, nullptr, vector_length, row_length,
+      column_length, kind, is_reverse, nullptr));
   return temp_bytes;
 }
 

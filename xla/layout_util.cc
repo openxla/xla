@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
@@ -36,7 +35,6 @@ limitations under the License.
 #include "xla/printer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"  // IWYU pragma: keep
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
@@ -57,6 +55,16 @@ void SetDefaultLayoutToContainer(T* minor_to_major) {
   }
 }
 
+// Internal helper that creates a default layout for an array of the given
+// number of dimensions.
+Layout CreateDefaultLayoutForRank(int64_t num_dims) {
+  Layout layout;
+  DimensionVector* minor_to_major = layout.mutable_minor_to_major();
+  minor_to_major->resize(num_dims, 0);
+  SetDefaultLayoutToContainer(minor_to_major);
+  return layout;
+}
+
 }  // namespace
 
 /* static */ Layout LayoutUtil::MakeLayout(
@@ -68,16 +76,15 @@ void SetDefaultLayoutToContainer(T* minor_to_major) {
     std::optional<Shape> physical_shape,
     int64_t dynamic_shape_metadata_prefix_bytes) {
   Layout layout;
-  for (int64_t dimension_number : minor_to_major) {
-    layout.add_minor_to_major(dimension_number);
-  }
+  layout.mutable_minor_to_major()->assign(minor_to_major.begin(),
+                                          minor_to_major.end());
   for (const Tile& tile : tiles) {
     for (int64_t dim : tile.dimensions()) {
-      if (dim < 0 && dim != Tile::kCombineDimension) {
-        LOG(FATAL)
-            << "Tile dimension size needs to be minimum int64_t value if "
-               "it's negative. Value is "
-            << dim;
+      if (dim < 0 && dim != Tile::kCombineDimension &&
+          dim != Tile::kMatchDimension) {
+        LOG(FATAL) << "Tile dimension size needs to be kCombineDimension or "
+                      "kMatchDimension if it's negative. Value is "
+                   << dim;
       }
     }
     *layout.add_tiles() = tile;
@@ -100,9 +107,7 @@ void SetDefaultLayoutToContainer(T* minor_to_major) {
 }
 
 /* static */ Layout LayoutUtil::MakeDescendingLayout(int64_t num_dims) {
-  std::vector<int64_t> layout(num_dims);
-  std::iota(layout.rbegin(), layout.rend(), 0);
-  return MakeLayout(layout);
+  return CreateDefaultLayoutForRank(num_dims);
 }
 
 /* static */ bool LayoutUtil::HasDescendingLayout(const Layout& layout) {
@@ -110,9 +115,11 @@ void SetDefaultLayoutToContainer(T* minor_to_major) {
 }
 
 /* static */ Layout LayoutUtil::MakeAscendingLayout(int64_t num_dims) {
-  std::vector<int64_t> layout(num_dims);
-  absl::c_iota(layout, 0);
-  return MakeLayout(layout);
+  Layout layout;
+  DimensionVector* minor_to_major = layout.mutable_minor_to_major();
+  minor_to_major->resize(num_dims);
+  absl::c_iota(*minor_to_major, 0);
+  return layout;
 }
 
 /* static */ bool LayoutUtil::HasAscendingLayout(const Layout& layout) {
@@ -127,20 +134,6 @@ void SetDefaultLayoutToContainer(T* minor_to_major) {
   }
   return layout;
 }
-
-namespace {
-
-// Internal helper that creates a default layout for an array of the given
-// number of dimensions.
-Layout CreateDefaultLayoutForRank(int64_t num_dims) {
-  Layout layout;
-  auto* minor_to_major = layout.mutable_minor_to_major();
-  minor_to_major->resize(num_dims, 0);
-  SetDefaultLayoutToContainer(minor_to_major);
-  return layout;
-}
-
-}  // namespace
 
 /* static */ Layout LayoutUtil::GetDefaultLayoutForShape(const Shape& shape) {
   if (shape.IsOpaque() || shape.IsToken()) {
@@ -287,10 +280,11 @@ Layout CreateDefaultLayoutForRank(int64_t num_dims) {
       return InvalidArgument("layout has invalid tiles: %s", shape.ToString());
     }
     for (int64_t dim : tile.dimensions()) {
-      if (dim <= 0 && dim != Tile::kCombineDimension) {
+      if (dim <= 0 && dim != Tile::kCombineDimension &&
+          dim != Tile::kMatchDimension) {
         return InvalidArgument(
-            "layout has invalid tiles: tile dimension %d must be positive or "
-            "kCombineDimension: %s",
+            "layout has invalid tiles: tile dimension %d must be positive, "
+            "kCombineDimension, or kMatchDimension: %s",
             dim, shape.ToString());
       }
     }
@@ -494,14 +488,15 @@ absl::Status CopyLayoutInternal(const Shape& src, Shape* dst) {
     }
     for (int64_t i = 0; i < ShapeUtil::TupleElementCount(src); ++i) {
       ABSL_RETURN_IF_ERROR(CopyLayoutInternal(src.tuple_shapes(i),
-                                         dst->mutable_tuple_shapes(i)));
+                                              dst->mutable_tuple_shapes(i)));
     }
   } else if (src.IsArray()) {
     if (src.has_layout()) {
       if (src.dimensions().size() != dst->dimensions().size()) {
         return InvalidArgument("cannot copy layout from shape: ranks differs");
       }
-      ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutForShape(src.layout(), *dst));
+      ABSL_RETURN_IF_ERROR(
+          LayoutUtil::ValidateLayoutForShape(src.layout(), *dst));
       *dst->mutable_layout() = src.layout();
     } else {
       dst->clear_layout();
@@ -618,11 +613,38 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
     tile = shape.layout().tiles()[0];
   }
 
+  auto resolve_match_dim = [&](int64_t i, int64_t dim_size) {
+    absl::Span<const int64_t> tile_dims = tile.dimensions();
+    absl::Span<const int64_t> sub_tile_dims =
+        shape.layout().tiles().size() > 1 ? shape.layout().tiles(1).dimensions()
+                                          : absl::Span<const int64_t>();
+    int64_t sub_tile_offset = static_cast<int64_t>(sub_tile_dims.size()) -
+                              static_cast<int64_t>(tile_dims.size());
+    int64_t packing = 1;
+    if (i + sub_tile_offset >= 0 &&
+        static_cast<int64_t>(sub_tile_dims.size()) > i + sub_tile_offset) {
+      packing = std::max<int64_t>(1, sub_tile_dims[i + sub_tile_offset]);
+    } else if (i == static_cast<int64_t>(tile_dims.size()) - 2 &&
+               !sub_tile_dims.empty()) {
+      packing = std::max<int64_t>(1, sub_tile_dims[0]);
+    }
+    return RoundUpTo(std::max<int64_t>(dim_size, 1), packing);
+  };
+
   int64_t linear_index = 0;
   int64_t tile_multiplier = 1;
   // Initialize to number of elements in a tile.
-  for (int64_t i : tile.dimensions()) {
-    tile_multiplier *= i;
+  for (int64_t d_idx = 0; d_idx < tile.dimensions().size(); ++d_idx) {
+    int64_t tile_dim_size = tile.dimensions()[d_idx];
+    if (tile_dim_size == Tile::kMatchDimension) {
+      int64_t minor = tile.dimensions().size() - 1 - d_idx;
+      if (minor >= shape.layout().minor_to_major().size()) {
+        continue;
+      }
+      int64_t logical_dim = Minor(shape.layout(), minor);
+      tile_dim_size = resolve_match_dim(d_idx, shape.dimensions(logical_dim));
+    }
+    tile_multiplier *= tile_dim_size;
   }
   int64_t within_tile_multiplier = 1;
 
@@ -633,8 +655,11 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
     int64_t index = indices[logical_dim];
 
     if (minor < tile.dimensions().size()) {
-      int64_t tile_dim_size =
-          tile.dimensions()[tile.dimensions().size() - 1 - minor];
+      int64_t d_idx = tile.dimensions().size() - 1 - minor;
+      int64_t tile_dim_size = tile.dimensions()[d_idx];
+      if (tile_dim_size == Tile::kMatchDimension) {
+        tile_dim_size = resolve_match_dim(d_idx, shape_dim_size);
+      }
       linear_index += tile_multiplier * (index / tile_dim_size) +
                       within_tile_multiplier * (index % tile_dim_size);
       tile_multiplier *= CeilOfRatio(shape_dim_size, tile_dim_size);
@@ -703,6 +728,9 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
       int64_t d = current_shape[suffix_start + i];
       int64_t e = current_indices[suffix_start + i];
       int64_t t = tile.dimension(i);
+      if (t == Tile::kMatchDimension) {
+        t = d == 0 ? 1 : d;
+      }
       next_shape.push_back(CeilOfRatio(d, t));
       next_indices.push_back(e / t);
     }
@@ -710,8 +738,12 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
     // Inner tile dimensions: t.
     // Inner tile indices: e mod t.
     for (int i = 0; i < tile_rank; ++i) {
+      int64_t d = current_shape[suffix_start + i];
       int64_t e = current_indices[suffix_start + i];
       int64_t t = tile.dimension(i);
+      if (t == Tile::kMatchDimension) {
+        t = d == 0 ? 1 : d;
+      }
       next_shape.push_back(t);
       next_indices.push_back(e % t);
     }
@@ -740,6 +772,9 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
 
   if (num_dims == 0) {
     return {};
+  }
+  if (ShapeUtil::IsZeroElementArray(shape)) {
+    return std::vector<int64_t>(num_dims, 0);
   }
 
   // 1. Determine the final expanded physical shape (major-to-minor).
@@ -777,12 +812,21 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
     }
     // Outer tile dimensions: ceil(d/t).
     for (int i = 0; i < tile_rank; ++i) {
-      next_shape.push_back(
-          CeilOfRatio(current_shape[suffix_start + i], tile.dimension(i)));
+      int64_t d = current_shape[suffix_start + i];
+      int64_t t = tile.dimension(i);
+      if (t == Tile::kMatchDimension) {
+        t = d == 0 ? 1 : d;
+      }
+      next_shape.push_back(CeilOfRatio(d, t));
     }
     // Inner tile dimensions: t.
     for (int i = 0; i < tile_rank; ++i) {
-      next_shape.push_back(tile.dimension(i));
+      int64_t d = current_shape[suffix_start + i];
+      int64_t t = tile.dimension(i);
+      if (t == Tile::kMatchDimension) {
+        t = d == 0 ? 1 : d;
+      }
+      next_shape.push_back(t);
     }
     current_shape = std::move(next_shape);
   }
@@ -817,6 +861,10 @@ Layout LayoutUtil::MoveDimToMinor(const Layout& layout, const int64_t dim) {
       int64_t outer_idx = current_indices[suffix_start + i];
       int64_t inner_idx = current_indices[suffix_start + tile_rank + i];
       int64_t tile_dim = step.tile.dimension(i);
+      if (tile_dim == Tile::kMatchDimension) {
+        int64_t d = step.shape_before[suffix_start + i];
+        tile_dim = d == 0 ? 1 : d;
+      }
       prev_indices.push_back(outer_idx * tile_dim + inner_idx);
     }
     current_indices = std::move(prev_indices);

@@ -48,28 +48,28 @@ namespace interpreter {
 // A HostStream that is used for the interpreter.
 class InterpreterStream : public host::HostStream {
  public:
-  explicit InterpreterStream(StreamExecutor *executor)
+  explicit InterpreterStream(StreamExecutor* executor)
       : host::HostStream(executor) {}
-  absl::Status WaitFor(Stream *stream) override {
+  absl::Status WaitFor(Stream* stream) override {
     return host::HostStream::WaitFor(stream);
   }
-  absl::Status WaitFor(Event *event) override {
+  absl::Status WaitFor(Event* event) override {
     return absl::UnimplementedError("Not implemented.");
   }
-  absl::Status RecordEvent(Event *event) override {
+  absl::Status RecordEvent(Event* event) override {
     return absl::UnimplementedError("Not implemented.");
   }
 
   absl::Status Memcpy(void* host_dst, const DeviceAddressBase& gpu_src,
                       uint64_t size) override {
-    void *src_mem = gpu_src.opaque();
+    void* src_mem = gpu_src.opaque();
     memcpy(host_dst, src_mem, size);
     return absl::OkStatus();
   }
 
   absl::Status Memcpy(DeviceAddressBase* gpu_dst, const void* host_src,
                       uint64_t size) override {
-    void *dst_mem = gpu_dst->opaque();
+    void* dst_mem = gpu_dst->opaque();
     memcpy(dst_mem, host_src, size);
     return absl::OkStatus();
   }
@@ -77,7 +77,7 @@ class InterpreterStream : public host::HostStream {
 
 class XlaInterpreterExecutor : public StreamExecutorCommon {
  public:
-  XlaInterpreterExecutor(int device_ordinal, Platform *platform)
+  XlaInterpreterExecutor(int device_ordinal, Platform* platform)
       : StreamExecutorCommon(platform), device_ordinal_(device_ordinal) {}
 
   absl::Status Init() override { return absl::OkStatus(); }
@@ -89,10 +89,10 @@ class XlaInterpreterExecutor : public StreamExecutorCommon {
 
   absl::StatusOr<std::unique_ptr<MemoryAllocation>> HostMemoryAllocate(
       uint64_t size) override {
-    void *ptr = new char[size];
+    void* ptr = new char[size];
     return std::make_unique<GenericMemoryAllocation>(
         ptr, size,
-        [](void *ptr, uint64_t size) { delete[] static_cast<char *>(ptr); });
+        [](void* ptr, uint64_t size) { delete[] static_cast<char*>(ptr); });
   }
 
   // No "synchronize all activity" implemented for this platform at the moment.
@@ -104,9 +104,9 @@ class XlaInterpreterExecutor : public StreamExecutorCommon {
                                  const DeviceAddressBase& dev_src,
                                  uint64_t size) override;
 
-  void DeallocateStream(Stream *stream) override {}
+  void DeallocateStream(Stream* stream) override {}
 
-  bool DeviceMemoryUsage(int64_t *free, int64_t *total) const override {
+  bool DeviceMemoryUsage(int64_t* free, int64_t* total) const override {
     return false;
   }
 
@@ -118,11 +118,11 @@ class XlaInterpreterExecutor : public StreamExecutorCommon {
   static absl::StatusOr<std::unique_ptr<DeviceDescription>>
   CreateDeviceDescription(int device_ordinal);
 
-  absl::Status EnablePeerAccessTo(StreamExecutor *other) override {
+  absl::Status EnablePeerAccessTo(StreamExecutor* other) override {
     return absl::OkStatus();
   }
 
-  bool CanEnablePeerAccessTo(StreamExecutor *other) override { return true; }
+  bool CanEnablePeerAccessTo(StreamExecutor* other) override { return true; }
   absl::StatusOr<std::unique_ptr<Event>> CreateEvent() override {
     return std::make_unique<Event>();
   }
@@ -137,10 +137,10 @@ class XlaInterpreterExecutor : public StreamExecutorCommon {
       return std::make_unique<GenericMemoryAllocator>(
           [](uint64_t size)
               -> absl::StatusOr<std::unique_ptr<MemoryAllocation>> {
-            void *ptr = new char[size];
+            void* ptr = new char[size];
             return std::make_unique<GenericMemoryAllocation>(
-                ptr, size, [](void *location, uint64_t size) {
-                  delete[] static_cast<char *>(location);
+                ptr, size, [](void* location, uint64_t size) {
+                  delete[] static_cast<char*>(location);
                 });
           });
     }

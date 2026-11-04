@@ -38,6 +38,7 @@ limitations under the License.
 #include "mlir/Parser/Parser.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -56,7 +57,6 @@ limitations under the License.
 #include "xla/service/hlo_proto_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -90,8 +90,8 @@ absl::StatusOr<std::unique_ptr<HloModule>> HloModuleFromProto(
     const HloProto& hlo_proto) {
   const HloModuleProto& module_proto = hlo_proto.hlo_module();
   ABSL_ASSIGN_OR_RETURN(const HloModuleConfig module_config,
-                   HloModule::CreateModuleConfigFromProto(
-                       module_proto, GetDebugOptionsFromFlags()));
+                        HloModule::CreateModuleConfigFromProto(
+                            module_proto, GetDebugOptionsFromFlags()));
   return HloModule::CreateFromProto(module_proto, module_config);
 }
 

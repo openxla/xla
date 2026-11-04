@@ -37,6 +37,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
+#include "tsl/platform/path.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/tools/comparison/comparison_manager.pb.h"
@@ -46,7 +47,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/env.h"
-#include "tsl/platform/path.h"
 
 namespace xla::numerics::comparison {
 
@@ -315,15 +315,19 @@ absl::Status ComparisonManager::RegisterHloModule(ComparisonVariant variant,
   }
   hlo_module_map_.erase(module_name);
 
-  ABSL_ASSIGN_OR_RETURN(hlo_diff::HloGumgraphDiffResults diff_results,
-                   hlo_diff::ComputeDiff(*baseline_module, *target_module));
+  ABSL_ASSIGN_OR_RETURN(
+      hlo_diff::HloGumgraphDiffResults diff_results,
+      hlo_diff::ComputeDiff(*baseline_module, *target_module));
 
   auto& state = comparison_states_[module_name];
-  for (const auto& instructions :
-       {diff_results.diff_result->unchanged_instructions,
-        diff_results.diff_result->changed_instructions}) {
+  // Moved instructions are unchanged themselves but used differently, so they
+  // are compared too.
+  for (const auto* instructions :
+       {&diff_results.diff_result->unchanged_instructions,
+        &diff_results.diff_result->changed_instructions,
+        &diff_results.diff_result->moved_instructions}) {
     // NOLINTNEXTLINE
-    for (const auto& [baseline_inst, target_inst] : instructions) {
+    for (const auto& [baseline_inst, target_inst] : *instructions) {
       LOG(INFO) << "[Comparison Tool] diff pair: " << baseline_inst->name()
                 << " vs " << target_inst->name();
       state.instruction_diff_map_left.insert(

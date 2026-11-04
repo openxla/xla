@@ -45,6 +45,9 @@ limitations under the License.
 #include "xla/service/source_target_pairs.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/util.h"
+#include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -189,9 +192,9 @@ static absl::StatusOr<DecomposedCp> DecomposeCollectivePermute(
       ABSL_RETURN_IF_ERROR(recv_done->AddControlDependencyTo(send));
       break;
     default:
-      return absl::InvalidArgumentError(
-          absl::StrCat("Unsupported pipeline parallelism opt level: ",
-                       pipeline_parallelism_opt_level));
+      return InvalidArgumentStrCat(
+          "Unsupported pipeline parallelism opt level: ",
+          pipeline_parallelism_opt_level);
   }
 
   if (!pipeline_decision.empty()) {
@@ -437,8 +440,9 @@ absl::StatusOr<bool> CollectivePermuteDecomposer::RunImpl(
     // so that these cannot be scheduled in between the send/recv, which would
     // also lead to deadlocks.
     ABSL_RETURN_IF_ERROR(EnforceOrderOfSendRecvChain(deco_post_order));
-    ABSL_RETURN_IF_ERROR(EnforceOrderOfSendRecvChainRelativeToConflictingCollectives(
-        deco_post_order, conflicing_collectives));
+    ABSL_RETURN_IF_ERROR(
+        EnforceOrderOfSendRecvChainRelativeToConflictingCollectives(
+            deco_post_order, conflicing_collectives));
 
     if (!cps_to_decompose.empty()) {
       changed = true;

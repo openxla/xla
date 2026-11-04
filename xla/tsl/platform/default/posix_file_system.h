@@ -17,8 +17,8 @@ limitations under the License.
 #define XLA_TSL_PLATFORM_DEFAULT_POSIX_FILE_SYSTEM_H_
 
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/env.h"
 #include "tsl/platform/path.h"
+#include "xla/tsl/platform/env.h"
 
 namespace tsl {
 
@@ -51,6 +51,10 @@ class PosixFileSystem : public FileSystem {
 
   absl::Status GetMatchingPaths(const std::string& pattern,
                                 std::vector<std::string>* results) override;
+
+  absl::Status GetMatchingPaths(const std::string& pattern,
+                                std::vector<std::string>* results,
+                                bool multithreaded) override;
 
   absl::Status DeleteFile(const std::string& fname) override;
 

@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/gemv_rewriter.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <optional>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -89,6 +90,34 @@ TEST_P(GemvRewriterTest, RewriteVectorMatrixMultiplicationToGemm) {
 // CHECK:  %[[DOT:.*]] = f32[1,32]{1,0} dot(%[[RESHAPE_OR_BITCAST]], %[[P1]]),
 // CHECK-SAME: lhs_contracting_dims={0}, rhs_contracting_dims={0}
 // CHECK:  ROOT %[[ROOT:.*]].1 = f32[32]{0}
+// CHECK-SAME: )", reshape_or_bitcast_, R"((%[[DOT]])
+)");
+  // clang-format on
+
+  RunAndFilecheckHloRewrite(hlo, GemvRewriter(is_layout_sensitive_), expected);
+}
+
+TEST_P(GemvRewriterTest,
+       RewriteVectorMatrixMultiplicationWithLargeNonContractingDim) {
+  const char* hlo = R"hlo(
+  HloModule m
+
+  ENTRY e {
+    p0 = f32[7] parameter(0)
+    p1 = f32[7,2147483648] parameter(1)
+    ROOT d = f32[2147483648] dot(p0, p1),
+      lhs_contracting_dims={0}, rhs_contracting_dims={0}
+  })hlo";
+
+  // clang-format off
+  std::string expected = absl::StrCat(R"(
+// CHECK:  %[[P0:.*]] = f32[7]{0} parameter(0)
+// CHECK:  %[[RESHAPE_OR_BITCAST:.*]] = f32[7,1]{1,0}
+// CHECK-SAME: )", reshape_or_bitcast_, R"((%[[P0]])
+// CHECK:  %[[P1:.*]] = f32[7,2147483648]{1,0} parameter(1)
+// CHECK:  %[[DOT:.*]] = f32[1,2147483648]{1,0} dot(%[[RESHAPE_OR_BITCAST]], %[[P1]]),
+// CHECK-SAME: lhs_contracting_dims={0}, rhs_contracting_dims={0}
+// CHECK:  ROOT %[[ROOT:.*]] = f32[2147483648]{0}
 // CHECK-SAME: )", reshape_or_bitcast_, R"((%[[DOT]])
 )");
   // clang-format on

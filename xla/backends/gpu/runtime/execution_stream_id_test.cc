@@ -16,6 +16,8 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 
 #include <gtest/gtest.h>
+
+#include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_cat.h"
 
 namespace xla::gpu {
@@ -31,6 +33,11 @@ TEST(CommunicationStreamIdTest, AbslStringify) {
   EXPECT_EQ(absl::StrCat(id), "communication_stream[7]");
 }
 
+TEST(LocalityDomainStreamIdTest, AbslStringify) {
+  LocalityDomainStreamId id(9);
+  EXPECT_EQ(absl::StrCat(id), "locality_domain_stream[9]");
+}
+
 TEST(ExecutionStreamIdTest, AbslStringifyComputation) {
   ExecutionStreamId id(ComputationStreamId(42));
   EXPECT_EQ(absl::StrCat(id), "computation_stream[42]");
@@ -41,16 +48,29 @@ TEST(ExecutionStreamIdTest, AbslStringifyCommunication) {
   EXPECT_EQ(absl::StrCat(id), "communication_stream[7]");
 }
 
+TEST(ExecutionStreamIdTest, AbslStringifyLocalityDomain) {
+  ExecutionStreamId id(LocalityDomainStreamId(9));
+  EXPECT_EQ(absl::StrCat(id), "locality_domain_stream[9]");
+}
+
 TEST(ExecutionStreamIdTest, Accessors) {
   ExecutionStreamId compute(ComputationStreamId(3));
   EXPECT_TRUE(compute.is_computation());
   EXPECT_FALSE(compute.is_communication());
+  EXPECT_FALSE(compute.is_locality_domain());
   EXPECT_EQ(compute.computation_id(), ComputationStreamId(3));
 
   ExecutionStreamId comm(CommunicationStreamId(5));
   EXPECT_TRUE(comm.is_communication());
   EXPECT_FALSE(comm.is_computation());
+  EXPECT_FALSE(comm.is_locality_domain());
   EXPECT_EQ(comm.communication_id(), CommunicationStreamId(5));
+
+  ExecutionStreamId locality(LocalityDomainStreamId(7));
+  EXPECT_TRUE(locality.is_locality_domain());
+  EXPECT_FALSE(locality.is_computation());
+  EXPECT_FALSE(locality.is_communication());
+  EXPECT_EQ(locality.locality_domain_id(), LocalityDomainStreamId(7));
 }
 
 TEST(ExecutionStreamIdTest, Equality) {
@@ -60,6 +80,68 @@ TEST(ExecutionStreamIdTest, Equality) {
             ExecutionStreamId(ComputationStreamId(2)));
   EXPECT_NE(ExecutionStreamId(ComputationStreamId(1)),
             ExecutionStreamId(CommunicationStreamId(1)));
+  EXPECT_NE(ExecutionStreamId(ComputationStreamId(1)),
+            ExecutionStreamId(LocalityDomainStreamId(1)));
+  EXPECT_EQ(ExecutionStreamId(LocalityDomainStreamId(1)),
+            ExecutionStreamId(LocalityDomainStreamId(1)));
+}
+
+TEST(ExecutionStreamIdTest, HashDistinguishesVariants) {
+  absl::flat_hash_set<ExecutionStreamId> ids = {
+      ExecutionStreamId(ComputationStreamId(1)),
+      ExecutionStreamId(CommunicationStreamId(1)),
+      ExecutionStreamId(LocalityDomainStreamId(1))};
+  EXPECT_EQ(ids.size(), 3);
+}
+
+// ---- MemcpyStreamId tests ------------------------------------------------
+
+TEST(MemcpyStreamIdTest, Constants) {
+  EXPECT_EQ(kMemcpyD2HStreamId.value(), 0u);
+  EXPECT_EQ(kMemcpyH2DStreamId.value(), 1u);
+  EXPECT_NE(kMemcpyD2HStreamId, kMemcpyH2DStreamId);
+}
+
+TEST(MemcpyStreamIdTest, AbslStringifyD2H) {
+  EXPECT_EQ(absl::StrCat(kMemcpyD2HStreamId), "memcpy_d2h_stream");
+}
+
+TEST(MemcpyStreamIdTest, AbslStringifyH2D) {
+  EXPECT_EQ(absl::StrCat(kMemcpyH2DStreamId), "memcpy_h2d_stream");
+}
+
+TEST(ExecutionStreamIdTest, MemcpyAccessors) {
+  ExecutionStreamId d2h(kMemcpyD2HStreamId);
+  EXPECT_TRUE(d2h.is_memcpy());
+  EXPECT_FALSE(d2h.is_computation());
+  EXPECT_FALSE(d2h.is_communication());
+  EXPECT_EQ(d2h.memcpy_id(), kMemcpyD2HStreamId);
+
+  ExecutionStreamId h2d(kMemcpyH2DStreamId);
+  EXPECT_TRUE(h2d.is_memcpy());
+  EXPECT_FALSE(h2d.is_computation());
+  EXPECT_FALSE(h2d.is_communication());
+  EXPECT_EQ(h2d.memcpy_id(), kMemcpyH2DStreamId);
+}
+
+TEST(ExecutionStreamIdTest, AbslStringifyMemcpy) {
+  EXPECT_EQ(absl::StrCat(ExecutionStreamId(kMemcpyD2HStreamId)),
+            "memcpy_d2h_stream");
+  EXPECT_EQ(absl::StrCat(ExecutionStreamId(kMemcpyH2DStreamId)),
+            "memcpy_h2d_stream");
+}
+
+TEST(ExecutionStreamIdTest, EqualityWithMemcpy) {
+  EXPECT_EQ(ExecutionStreamId(kMemcpyD2HStreamId),
+            ExecutionStreamId(kMemcpyD2HStreamId));
+  EXPECT_EQ(ExecutionStreamId(kMemcpyH2DStreamId),
+            ExecutionStreamId(kMemcpyH2DStreamId));
+  EXPECT_NE(ExecutionStreamId(kMemcpyD2HStreamId),
+            ExecutionStreamId(kMemcpyH2DStreamId));
+  EXPECT_NE(ExecutionStreamId(kMemcpyD2HStreamId),
+            ExecutionStreamId(ComputationStreamId(0)));
+  EXPECT_NE(ExecutionStreamId(kMemcpyD2HStreamId),
+            ExecutionStreamId(CommunicationStreamId(0)));
 }
 
 }  // namespace

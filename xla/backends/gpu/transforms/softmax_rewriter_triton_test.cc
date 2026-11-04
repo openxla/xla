@@ -14,17 +14,19 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/transforms/softmax_rewriter_triton.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <variant>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -35,14 +37,15 @@ limitations under the License.
 #include "xla/service/gpu/alias_info.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
-#include "xla/xla.pb.h"
-#include "xla/xla_data.pb.h"
+#include "xla/tsl/platform/threadpool.h"
 
 namespace xla {
 namespace gpu {
@@ -62,33 +65,18 @@ bool HasBlockLevelFusionConfig(const HloInstruction* fusion) {
              .has_block_level_fusion_config();
 }
 
-class SoftmaxRewriterTritonTest
-    : public HloHardwareIndependentTestBase,
-      // The parameter controls whether experimental tiling is enabled.
-      public ::testing::WithParamInterface<bool> {
+class SoftmaxRewriterTritonTest : public HloHardwareIndependentTestBase {
  protected:
   SoftmaxRewriterTritonTest() { RegisterSymbolicExprStorage(&mlir_context_); }
   se::DeviceDescription device_info_{TestGpuDeviceInfo::RTXA6000DeviceInfo()};
   mlir::MLIRContext mlir_context_;
   GpuAliasInfo alias_info_{device_info_};
   SoftmaxRewriterTriton fusion_rewriter_{
-      device_info_,
-      HloCostAnalysis::DefaultShapeSize,
-      &alias_info_,
-      &mlir_context_,
-      /*only_fuse_if_profitable=*/false,
-      /*use_experimental_tiling=*/GetParam()};
-
-  DebugOptions GetDebugOptionsForTest() const override {
-    DebugOptions debug_options =
-        HloHardwareIndependentTestBase::GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_experimental_enable_tiling_propagation(
-        GetParam());
-    return debug_options;
-  }
+      device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
+      &mlir_context_, /*only_fuse_if_profitable=*/false};
 };
 
-TEST_P(SoftmaxRewriterTritonTest, CanFuseSingleNormalizationF32) {
+TEST_F(SoftmaxRewriterTritonTest, CanFuseSingleNormalizationF32) {
   const std::string hlo_string = R"(
 HloModule softmax
 max_computation {
@@ -120,7 +108,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanFuseSingleNormalizationWithNonF32DataType) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -151,7 +139,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, CanFuseSingleNormalizationDiamond) {
+TEST_F(SoftmaxRewriterTritonTest, CanFuseSingleNormalizationDiamond) {
   const std::string hlo_string = R"(
 HloModule softmax
 max_computation {
@@ -176,7 +164,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        DoesNotFuseDiamondInvolvingUnsupportedTritonInstruction) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -201,7 +189,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        DoesNotFuseInstructionsUnsupportedByTritonIntoDiamonds) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -233,7 +221,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig))));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, CanNotFuseSoftmaxDiamondWithWrongLayout) {
+TEST_F(SoftmaxRewriterTritonTest, CanNotFuseSoftmaxDiamondWithWrongLayout) {
   const std::string hlo_string = R"(
 HloModule softmax
 max_computation {
@@ -253,7 +241,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanNotFuseSoftmaxDiamondWithWrongReduceDimension) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -274,7 +262,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanNotFuseSoftmaxDiamondWithWrongBroadcastDimension) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -295,7 +283,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanNotFuseSoftmaxDiamondWithExtraBroadcastUsage) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -317,7 +305,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, DoesNotFuseReductionOnNonMinorAxis) {
+TEST_F(SoftmaxRewriterTritonTest, DoesNotFuseReductionOnNonMinorAxis) {
   const std::string hlo_string = R"(
 max_computation {
   arg_0 = f32[] parameter(0)
@@ -336,7 +324,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, DoesNotFuseReductionOnMultipleReductionAxes) {
+TEST_F(SoftmaxRewriterTritonTest, DoesNotFuseReductionOnMultipleReductionAxes) {
   const std::string hlo_string = R"(
 max_computation {
   arg_0 = f32[] parameter(0)
@@ -355,7 +343,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, CanFuseDiamondWithUnaryElementwisePrefix) {
+TEST_F(SoftmaxRewriterTritonTest, CanFuseDiamondWithUnaryElementwisePrefix) {
   const std::string hlo_string = R"(
 HloModule softmax
 max_computation {
@@ -381,7 +369,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanFuseDiamondWithMultipleBroadcastDimensions) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -408,7 +396,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanNotFuseSoftmaxDiamondWithParameterReducerIdentity) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -431,7 +419,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanNotFuseSoftmaxDiamondWithTritonIncompatibleReducer) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -455,7 +443,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanFuseSoftmaxDiamondWithLastDimensionBitcastAfterReduce) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -485,7 +473,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanNotFuseSoftmaxDiamondWithTransposeBitcast) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -509,7 +497,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanNotFuseSoftmaxDiamondWithNonFusibleBitcastBetweenReduceAndProducer) {
   const std::string hlo_string = R"(
 HloModule softmax
@@ -534,7 +522,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, CanFuseSoftmaxDiamondWithBitcastsOnEachUse) {
+TEST_F(SoftmaxRewriterTritonTest, CanFuseSoftmaxDiamondWithBitcastsOnEachUse) {
   const std::string hlo_string = R"(
 HloModule softmax
 
@@ -563,7 +551,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, RewriterBailsOutOnPreAmpereCudaGpu) {
+TEST_F(SoftmaxRewriterTritonTest, RewriterBailsOutOnPreAmpereCudaGpu) {
   const std::string hlo_string = R"(
 HloModule softmax
 max_computation {
@@ -587,8 +575,7 @@ ENTRY main {
           TestGpuDeviceInfo::RTXA6000DeviceInfo(
               se::CudaComputeCapability{se::CudaComputeCapability::kVolta, 0}),
           HloCostAnalysis::DefaultShapeSize, &alias_info_, &mlir_context_,
-          /*only_fuse_if_profitable=*/false,
-          /*use_experimental_tiling=*/GetParam())
+          /*only_fuse_if_profitable=*/false)
           .Run(module.get()),
       absl_testing::StatusIs(
           tsl::error::FAILED_PRECONDITION,
@@ -596,7 +583,7 @@ ENTRY main {
                                "(compute capability 8.0) and up, but got")));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, RewriterSucceedsOnNonCudaGpu) {
+TEST_F(SoftmaxRewriterTritonTest, RewriterSucceedsOnNonCudaGpu) {
   const std::string hlo_string = R"(
 HloModule softmax
 max_computation {
@@ -618,13 +605,12 @@ ENTRY main {
   EXPECT_TRUE(SoftmaxRewriterTriton(TestGpuDeviceInfo::AMDMI210DeviceInfo(),
                                     HloCostAnalysis::DefaultShapeSize,
                                     &alias_info_, &mlir_context_,
-                                    /*only_fuse_if_profitable=*/false,
-                                    /*use_experimental_tiling=*/GetParam())
+                                    /*only_fuse_if_profitable=*/false)
                   .Run(module.get())
                   .ok());
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     CanFuseIntermediateBinaryElementwiseWithinDiamondWhenBothOperandsAreTheSame) {  // NOLINT(whitespace/line_length)
   const std::string hlo_string = R"(
@@ -652,7 +638,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     DoesNotFuseIntermediateBinaryElementwiseWithBothSplatOperandsIntoDiamond) {
   const std::string hlo_string = R"(
@@ -681,7 +667,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     DoesNotFuseIntermediateBinaryElementwiseWithSameSplatOperandsIntoDiamond) {
   const std::string hlo_string = R"(
@@ -706,12 +692,11 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   SoftmaxRewriterTriton fusion_rewriter(
       device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
-      &mlir_context_, /*only_fuse_if_profitable=*/false,
-      /*use_experimental_tiling=*/GetParam());
+      &mlir_context_, /*only_fuse_if_profitable=*/false);
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, CanFuseRMSNormDiamond) {
+TEST_F(SoftmaxRewriterTritonTest, CanFuseRMSNormDiamond) {
   const std::string hlo_string = R"(
 HloModule rms_norm
 add_computation {
@@ -744,7 +729,7 @@ ENTRY main.30 {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     CanFuseBinaryElementwiseWhereTheFirstOperandIsASplatConstantWithinDiamond) {
   const std::string hlo_string = R"(
@@ -774,7 +759,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        CanFuseBinaryElementwiseOperationWhereOneOperandIsASharedSplatProducer) {
   const std::string hlo_string = R"(
 HloModule nonfusible_diamond
@@ -805,7 +790,7 @@ ENTRY main {
           m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     DoesNotFuseBinaryElementwiseOperationWhereFirstOperandIsASplatAndSecondOperandIsASharedSplatProducer) {  // NOLINT(whitespace/line_length)
   const std::string hlo_string = R"(
@@ -834,7 +819,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, FusionDecisionIsCapturedExplicitly) {
+TEST_F(SoftmaxRewriterTritonTest, FusionDecisionIsCapturedExplicitly) {
   const std::string hlo_string = R"(
 HloModule softmax
 max_computation {
@@ -855,8 +840,7 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   SoftmaxRewriterTriton softmax_rewriter_triton(
       device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
-      &mlir_context_, /*only_fuse_if_profitable=*/false,
-      /*use_experimental_tiling=*/GetParam());
+      &mlir_context_, /*only_fuse_if_profitable=*/false);
   int unmatched = 0, matched = 0;
   for (HloInstruction* instruction :
        module->entry_computation()->MakeInstructionPostOrder()) {
@@ -880,7 +864,7 @@ ENTRY main {
   EXPECT_EQ(matched, 0);
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     FusesBinaryElementwiseIfIntermediateDiamondOpWithBroadcastAlongReductionDimAsParameter) {  // NOLINT(whitespace/line_length)
   const std::string hlo_string = R"(
@@ -907,7 +891,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(true));
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     FusesBinaryElementwiseIfIntermediateDiamondOpWithBroadcastAlongBatchDimAsParameter) {  // NOLINT(whitespace/line_length)
   const std::string hlo_string = R"(
@@ -934,7 +918,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(true));
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     FusesBinaryElementwiseIfIntermediateDiamondOpWithMultiDimTensorBroadcastAlongBatchDimAsParameter) {  // NOLINT(whitespace/line_length)
   const std::string hlo_string = R"(
@@ -961,7 +945,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(true));
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     FusesBinaryElementwiseIfIntermediateDiamondOpWithZeroDimTensorBroadcastAsParameter) {  // NOLINT(whitespace/line_length)
   const std::string hlo_string = R"(
@@ -988,7 +972,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(true));
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     FusesBinaryElementwiseIfIntermediateDiamondOpIsBroadcastOf1DParameterAlongNonReductionDimensions) {  // NOLINT(whitespace/line_length)
   const std::string hlo_string = R"(
@@ -1015,7 +999,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(true));
 }
 
-TEST_P(SoftmaxRewriterTritonTest,
+TEST_F(SoftmaxRewriterTritonTest,
        FusesBinaryElementwiseIfIntermediateDiamondOpIsBroadcastOfParameter) {
   const std::string hlo_string = R"(
 HloModule h1
@@ -1041,7 +1025,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(true));
 }
 
-TEST_P(
+TEST_F(
     SoftmaxRewriterTritonTest,
     FusesBinaryElementwiseIfIntermediateDiamondOpWithMultipleDimensionsAsParameter) {  // NOLINT(whitespace/line_length)
   const std::string hlo_string = R"(
@@ -1070,7 +1054,7 @@ ENTRY main {
 
 // Triton has a requirement that any tile in the program should not have more
 // than 1048576 elements.
-TEST_P(SoftmaxRewriterTritonTest, DoesNotFuseIfResultingFusionCannotBeTiled) {
+TEST_F(SoftmaxRewriterTritonTest, DoesNotFuseIfResultingFusionCannotBeTiled) {
   const std::string hlo_string = R"(
 HloModule softmax
 max_computation {
@@ -1090,7 +1074,7 @@ ENTRY main {
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
-TEST_P(SoftmaxRewriterTritonTest, DoesNotFuseNormalizationWithVeryLongRows) {
+TEST_F(SoftmaxRewriterTritonTest, DoesNotFuseNormalizationWithVeryLongRows) {
   const std::string hlo_string = R"(
 HloModule softmax
 max_computation {
@@ -1111,12 +1095,9 @@ ENTRY main {
     // normalization diamond, because the row size is too large to fit in
     // registers.
     SoftmaxRewriterTriton fusion_rewriter_without_cost_model{
-        device_info_,
-        HloCostAnalysis::DefaultShapeSize,
-        &alias_info_,
+        device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
         &mlir_context_,
-        /*only_fuse_if_profitable=*/false,
-        /*use_experimental_tiling=*/GetParam()};
+        /*only_fuse_if_profitable=*/false};
 
     ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
     EXPECT_THAT(fusion_rewriter_without_cost_model.Run(module.get()),
@@ -1127,12 +1108,9 @@ ENTRY main {
     // SoftmaxRewriterTriton with Cost Model will discard the normalization
     // diamond, because row size is too large.
     SoftmaxRewriterTriton fusion_rewriter_with_cost_model{
-        device_info_,
-        HloCostAnalysis::DefaultShapeSize,
-        &alias_info_,
+        device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
         &mlir_context_,
-        /*only_fuse_if_profitable=*/true,
-        /*use_experimental_tiling=*/GetParam()};
+        /*only_fuse_if_profitable=*/true};
 
     ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
     EXPECT_THAT(fusion_rewriter_with_cost_model.Run(module.get()),
@@ -1140,7 +1118,7 @@ ENTRY main {
   }
 }
 
-TEST_P(SoftmaxRewriterTritonTest, DoesNotCrashOnScalarBroadcast) {
+TEST_F(SoftmaxRewriterTritonTest, DoesNotCrashOnScalarBroadcast) {
   const std::string hlo_string = R"(
 HloModule softmax
 max_computation {
@@ -1166,12 +1144,42 @@ ENTRY main {
                              .WithPredicate(HasBlockLevelFusionConfig)));
 }
 
-INSTANTIATE_TEST_SUITE_P(SoftmaxRewriterTritonTestSuite,
-                         SoftmaxRewriterTritonTest, ::testing::Bool(),
-                         [](const ::testing::TestParamInfo<bool>& info) {
-                           return info.param ? "ExperimentalTiling"
-                                             : "SymbolicTiling";
-                         });
+TEST_F(SoftmaxRewriterTritonTest, CanFuseWithParallelTilingSearch) {
+  const std::string hlo_string = R"(
+HloModule softmax
+max_computation {
+  arg_0 = f32[] parameter(0)
+  arg_1 = f32[] parameter(1)
+  ROOT maximum = f32[] maximum(arg_0, arg_1)
+}
+add_computation {
+  arg_0 = f32[] parameter(0)
+  arg_1 = f32[] parameter(1)
+  ROOT add = f32[] add(arg_0, arg_1)
+}
+ENTRY main {
+  param_0 = f32[127,125]{1,0} parameter(0)
+  constant_neg_inf = f32[] constant(-inf)
+  reduce = f32[127]{0} reduce(param_0, constant_neg_inf), dimensions={1}, to_apply=max_computation
+  broadcast = f32[127,125]{1,0} broadcast(reduce), dimensions={0}
+  ROOT subtract = f32[127,125]{1,0} subtract(param_0, broadcast)
+})";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "test_pool", 4);
+  // Same contexts as GpuCompiler pools. They are single-threaded, so the cost
+  // model must give each candidate its own context.
+  MlirContextPool mlir_context_pool(CreateMlirContext, /*preallocate=*/4);
+  SoftmaxRewriterTriton rewriter(
+      device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
+      &mlir_context_,
+      /*only_fuse_if_profitable=*/false, &thread_pool, &mlir_context_pool);
+  EXPECT_THAT(rewriter.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_TRUE(verifier().Run(module.get()).status().ok());
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(
+          m::Fusion(m::Parameter()).WithPredicate(HasBlockLevelFusionConfig)));
+}
 
 }  // anonymous namespace
 }  // namespace gpu

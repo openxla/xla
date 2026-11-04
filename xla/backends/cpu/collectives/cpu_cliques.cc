@@ -100,9 +100,10 @@ absl::StatusOr<std::unique_ptr<Communicator>> CreateCommunicator(
 
   CpuCollectives::DeviceRank device_rank(/*device=*/nullptr, rank);
   CpuCollectives::Config config;
-  ABSL_ASSIGN_OR_RETURN(std::vector<std::unique_ptr<Communicator>> communicators,
-                   collectives->CreateCommunicators(clique_key, std::nullopt,
-                                                    {device_rank}, config));
+  ABSL_ASSIGN_OR_RETURN(
+      std::vector<std::unique_ptr<Communicator>> communicators,
+      collectives->CreateCommunicators(clique_key, std::nullopt, {device_rank},
+                                       config));
 
   if (communicators.size() != 1) {
     // We expect to create communicators lazily, one at a time.

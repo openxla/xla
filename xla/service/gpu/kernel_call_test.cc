@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/service/gpu/kernel_call.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/tsl/platform/statusor.h"

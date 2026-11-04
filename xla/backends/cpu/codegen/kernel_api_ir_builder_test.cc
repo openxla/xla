@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -218,7 +219,7 @@ TEST_F(KernelApiIrBuilderTest, BuildKernelPrototype) {
     CHECK-DAG: ![[SCOPE3]] = !{![[RES1]]}
     CHECK-DAG: ![[RES0]] = !{!"{{.*}}, offset:512, {{.*}}", ![[DOMAIN:.+]]}
     CHECK-DAG: ![[RES1]] = !{!"{{.*}}, offset:768, {{.*}}", ![[DOMAIN]]}
-    CHECK-DAG: ![[DOMAIN]] = !{!"XLA host kernel test AA domain"}
+    CHECK-DAG: ![[DOMAIN]] = !{!"XLA host kernel test AA domain", i1 false}
   )")));
   // clang-format on
 
@@ -432,7 +433,7 @@ TEST_F(KernelApiIrBuilderTestNoBufferValidation, PartialOverlap) {
     #0 = { uwtable "frame-pointer"="all" "prefer-vector-width"="256" }
     CHECK-DAG: ![[ALIGNMENT]] = !{i64 )", MinAlign(), R"(}
     CHECK-DAG: ![[EMPTY_NODE]] = !{}
-    CHECK-DAG: ![[DOMAIN:.+]] = !{!"XLA host kernel test AA domain"}
+    CHECK-DAG: ![[DOMAIN:.+]] = !{!"XLA host kernel test AA domain", i1 false}
     CHECK-DAG: ![[RES0:.+]] = !{!"{{.*}}, offset:288, size:512}", ![[DOMAIN]]}
     CHECK-DAG: ![[RES1:.+]] = !{!"{{.*}}, offset:768, size:256}", ![[DOMAIN]]}
     CHECK-DAG: ![[RES2:.+]] = !{!"{{.*}}, offset:1024, size:256}", ![[DOMAIN]]}

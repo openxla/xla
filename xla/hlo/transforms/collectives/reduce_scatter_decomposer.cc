@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/collective_decomposer_utils.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -77,9 +78,10 @@ absl::StatusOr<bool> ReduceScatterDecomposer::RunImpl(
 
       // Create start indices for a dynamic slice to decompose the all-reduce
       // results.
-      ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                       GetCollectiveOpGroupMode(rs->channel_id().has_value(),
-                                                rs->use_global_device_ids()));
+      ABSL_ASSIGN_OR_RETURN(
+          CollectiveOpGroupMode group_mode,
+          GetCollectiveOpGroupMode(rs->channel_id().has_value(),
+                                   rs->use_global_device_ids()));
       ABSL_ASSIGN_OR_RETURN(
           std::vector<HloInstruction*> start_indices,
           CreateStartIndicesForCollectiveDecomposition(

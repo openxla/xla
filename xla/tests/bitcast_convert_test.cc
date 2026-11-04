@@ -17,10 +17,10 @@ limitations under the License.
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <utility>
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/builder/xla_builder.h"
 #include "xla/pjrt/interpreter/interpreter_client.h"
@@ -30,7 +30,6 @@ limitations under the License.
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
@@ -40,6 +39,8 @@ class BitcastConvertTest : public ClientLibraryTestRunnerMixin<
  public:
   BitcastConvertTest() {
     mutable_debug_options()->add_xla_disable_hlo_passes("algsimp");
+    mutable_debug_options()->add_xla_disable_hlo_passes(
+        "gpu-algebraic-simplifier");
     mutable_debug_options()->add_xla_disable_hlo_passes("inline");
   }
 };

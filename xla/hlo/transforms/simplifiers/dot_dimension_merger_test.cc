@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/dot_dimension_merger.h"
 
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gtest/gtest.h>
+#include "tsl/platform/statusor.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace {

@@ -36,6 +36,8 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/human_readable_json.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/python/ifrt/basic_device_list.h"
@@ -50,8 +52,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/tsl/platform/errors.h"
-#include "tsl/platform/fingerprint.h"
-#include "tsl/platform/human_readable_json.h"
 
 namespace xla {
 namespace ifrt {
@@ -104,7 +104,8 @@ absl::StatusOr<uint64_t> IfrtIRCompileOptions::Fingerprint(
     for (const std::string& key : keys) {
       const LoadedExecutableRef& exec = loaded_exec_binding.at(key);
       CHECK_NE(exec, nullptr) << "LoadedExecutable for '" << key << "' is null";
-      ABSL_ASSIGN_OR_RETURN(std::optional<std::string> exec_fp, exec->Fingerprint());
+      ABSL_ASSIGN_OR_RETURN(std::optional<std::string> exec_fp,
+                            exec->Fingerprint());
       if (!exec_fp.has_value()) {
         return absl::InvalidArgumentError(absl::StrCat(
             "LoadedExecutable for '", key, "' does not have a fingerprint"));
@@ -152,7 +153,7 @@ IfrtIRCompileOptions::FromProto(const IfrtIrCompileOptionsProto& proto) {
 
   for (const auto& [key, value] : proto.compile_option_overrides()) {
     ABSL_ASSIGN_OR_RETURN(xla::CompileOptions compile_options,
-                     xla::CompileOptions::FromProto(value));
+                          xla::CompileOptions::FromProto(value));
     // TODO(emilyaf): XlaCompileOptions should be built with the correct
     // devices. Pass `ifrt::Client*` to `IfrtIRCompileOptions::FromProto` and
     // look up the IFRT devices corresponding to `device_ids`.
@@ -208,9 +209,10 @@ absl::Status IfrtIRCompileOptions::ToProto(IfrtIrCompileOptionsProto& proto,
             "compile_options must be XlaCompileOptions");
       }
 
-      ABSL_ASSIGN_OR_RETURN(CompileOptionsProto compile_options_proto,
-                       static_cast<XlaCompileOptions*>(compile_options.get())
-                           ->compile_options.ToProto());
+      ABSL_ASSIGN_OR_RETURN(
+          CompileOptionsProto compile_options_proto,
+          static_cast<XlaCompileOptions*>(compile_options.get())
+              ->compile_options.ToProto());
       proto.mutable_compile_option_overrides()->insert(
           {id, compile_options_proto});
     }

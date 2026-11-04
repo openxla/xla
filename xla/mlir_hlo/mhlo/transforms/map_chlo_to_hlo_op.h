@@ -29,7 +29,7 @@ namespace chlo {
 template <typename FromOpTy, typename ToOpTy>
 struct HloNaryElementwiseAdaptor {
   static ToOpTy createOp(FromOpTy fromOp, Type resultType,
-                         ValueRange broadcastedOperands, OpBuilder &builder) {
+                         ValueRange broadcastedOperands, OpBuilder& builder) {
     return builder.create<ToOpTy>(fromOp.getLoc(), resultType,
                                   broadcastedOperands);
   }
@@ -67,6 +67,8 @@ inline std::optional<mhlo::ComparisonType> mhloComparisonType(
       return mhlo::ComparisonType::SIGNED;
     case chlo::ComparisonType::UNSIGNED:
       return mhlo::ComparisonType::UNSIGNED;
+    case chlo::ComparisonType::WEAKORDER:
+      return mhlo::ComparisonType::WEAKORDER;
   }
   return {};
 }
@@ -74,7 +76,7 @@ inline std::optional<mhlo::ComparisonType> mhloComparisonType(
 struct HloCompareAdaptor {
   static mhlo::CompareOp createOp(BroadcastCompareOp fromOp, Type resultType,
                                   ValueRange broadcastedOperands,
-                                  OpBuilder &builder) {
+                                  OpBuilder& builder) {
     auto chloDirection = fromOp.getComparisonDirection();
     auto mhloDirection = mhloComparisonDirection(chloDirection);
     if (!mhloDirection) return nullptr;
@@ -95,9 +97,9 @@ struct HloCompareAdaptor {
 // to take a ChloOpTy, NonBroadcastingOpTy, and an Adaptor as templated values.
 template <template <typename, typename, typename> class Pattern,
           typename... ConstructorArgs>
-void populateForBroadcastingBinaryOp(MLIRContext *context,
-                                     RewritePatternSet *patterns,
-                                     ConstructorArgs &&...args) {
+void populateForBroadcastingBinaryOp(MLIRContext* context,
+                                     RewritePatternSet* patterns,
+                                     ConstructorArgs&&... args) {
 #define POPULATE_BCAST(ChloOp, HloOp)                                          \
   patterns                                                                     \
       ->add<Pattern<ChloOp, HloOp, HloNaryElementwiseAdaptor<ChloOp, HloOp>>>( \

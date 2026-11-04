@@ -90,7 +90,7 @@ struct CheckShapeAssertionsPass
     this->enable_shape_assertions = enable_shape_assertions;
   }
 
-  CheckShapeAssertionsPass(const CheckShapeAssertionsPass &pass) {
+  CheckShapeAssertionsPass(const CheckShapeAssertionsPass& pass) {
     enable_shape_assertions = pass.enable_shape_assertions;
   }
 
@@ -144,7 +144,7 @@ struct CheckShapeAssertionsPass
     int nrErrorMessageInputs = op.getNumOperands() - 1;
     if (op->getNumResults() != 0)
       return op.emitError("expects size(results) = 0");
-    for (const auto &attr : op->getAttrs()) {
+    for (const auto& attr : op->getAttrs()) {
       if (attr.getName() != "api_version" &&
           attr.getName() != "backend_config" &&
           attr.getName() != "call_target_name" &&
@@ -222,7 +222,7 @@ struct CheckShapeAssertionsPass
 
   std::string formatErrorMessage(
       llvm::StringRef errorMessage,
-      const mlir::SmallVector<int64_t> &errorMessageInputs) const {
+      const mlir::SmallVector<int64_t>& errorMessageInputs) const {
     int nrErrorMessageInputs = errorMessageInputs.size();
     auto errorMessageFormat = errorMessage.data();
     if (nrErrorMessageInputs == 0) return errorMessageFormat;
@@ -257,7 +257,7 @@ struct CheckShapeAssertionsPass
 
 absl::Status RefinePolymorphicShapes(mlir::ModuleOp module,
                                      bool enable_shape_assertions) {
-  mlir::MLIRContext *context = module->getContext();
+  mlir::MLIRContext* context = module->getContext();
   if (VLOG_IS_ON(3)) context->disableMultithreading();
 
   // Verify the module before running passes on it.
@@ -273,8 +273,8 @@ absl::Status RefinePolymorphicShapes(mlir::ModuleOp module,
 
   mlir::PassManager pm(context);
   if (VLOG_IS_ON(3)) {
-    auto print_before = [](mlir::Pass *, mlir::Operation *) { return true; };
-    auto print_after = [](mlir::Pass *, mlir::Operation *) { return true; };
+    auto print_before = [](mlir::Pass*, mlir::Operation*) { return true; };
+    auto print_after = [](mlir::Pass*, mlir::Operation*) { return true; };
     pm.enableIRPrinting(print_before, print_after, /*printModuleScope=*/true,
                         /*printAfterOnlyOnChange=*/true);
   }
@@ -299,7 +299,7 @@ absl::Status RefinePolymorphicShapes(mlir::ModuleOp module,
 }
 
 absl::Status RefinePolymorphicShapes(llvm::StringRef module_str,
-                                     llvm::raw_ostream &os,
+                                     llvm::raw_ostream& os,
                                      bool enable_shape_assertions,
                                      bool validate_static_shapes,
                                      bool enable_shardy) {
@@ -321,8 +321,10 @@ absl::Status RefinePolymorphicShapes(llvm::StringRef module_str,
     return absl::InvalidArgumentError("Cannot parse module.");
   }
 
-  ABSL_RETURN_IF_ERROR(RefinePolymorphicShapes(*module, enable_shape_assertions));
-  if (validate_static_shapes) ABSL_RETURN_IF_ERROR(ValidateStaticShapes(*module));
+  ABSL_RETURN_IF_ERROR(
+      RefinePolymorphicShapes(*module, enable_shape_assertions));
+  if (validate_static_shapes)
+    ABSL_RETURN_IF_ERROR(ValidateStaticShapes(*module));
   if (mlir::failed(mlir::writeBytecodeToFile(*module, os))) {
     return absl::InternalError("Cannot serialize module.");
   }
@@ -348,7 +350,7 @@ absl::Status ValidateStaticShapes(mlir::ModuleOp module) {
   bool moduleHasDynamicShapes = false;
   bool moduleHasShapeAssertions = false;
 
-  module->walk([&](mlir::Operation *op) {
+  module->walk([&](mlir::Operation* op) {
     // It's sufficient to only check results because operands either come from
     // results or from block arguments which are checked below.
     auto hasDynamicShape = [](mlir::Value value) {
@@ -357,7 +359,7 @@ absl::Status ValidateStaticShapes(mlir::ModuleOp module) {
     };
     bool opHasDynamicShapes = false;
     opHasDynamicShapes |= llvm::any_of(op->getResults(), hasDynamicShape);
-    for (mlir::Region &region : op->getRegions()) {
+    for (mlir::Region& region : op->getRegions()) {
       opHasDynamicShapes |=
           llvm::any_of(region.getArguments(), hasDynamicShape);
     }

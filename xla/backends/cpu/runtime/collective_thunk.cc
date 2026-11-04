@@ -172,9 +172,10 @@ absl::StatusOr<RendezvousKey> CollectiveThunk::GetRendezvousKey(
                                                 ? RendezvousKey::kCrossModule
                                                 : RendezvousKey::kCrossReplica;
 
-  ABSL_ASSIGN_OR_RETURN(CollectiveOpGroupMode group_mode,
-                   GetCollectiveOpGroupMode(op_params_.has_channel_id,
-                                            op_params_.use_global_device_ids));
+  ABSL_ASSIGN_OR_RETURN(
+      CollectiveOpGroupMode group_mode,
+      GetCollectiveOpGroupMode(op_params_.has_channel_id,
+                               op_params_.use_global_device_ids));
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<GlobalDeviceId> participating_devices,
@@ -214,13 +215,14 @@ Future<> CollectiveThunk::ExecuteWithCommunicator(
   // Find out rendezvous key and rank in global devices for the current device.
   ABSL_ASSIGN_OR_RETURN(RendezvousKey key, GetRendezvousKey(*params));
   ABSL_ASSIGN_OR_RETURN(int32_t rank,
-                   RankInGlobalDevices(key, params->global_device_id));
+                        RankInGlobalDevices(key, params->global_device_id));
 
   VLOG(3) << absl::StreamFormat("  rank=%d, key=%s", rank, key.ToString());
 
   CpuCliqueKey clique_key(key.global_devices);
-  ABSL_ASSIGN_OR_RETURN(Communicator * communicator,
-                   AcquireCommunicator(collectives, clique_key, RankId(rank)));
+  ABSL_ASSIGN_OR_RETURN(
+      Communicator * communicator,
+      AcquireCommunicator(collectives, clique_key, RankId(rank)));
 
   return callback(key, *communicator);
 }

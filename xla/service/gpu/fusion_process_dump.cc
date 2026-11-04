@@ -26,6 +26,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/text_format.h"
+#include "tsl/platform/path.h"
+#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -36,8 +38,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/path.h"
-#include "tsl/platform/protobuf.h"  // IWYU pragma: keep
 
 namespace xla {
 namespace gpu {
@@ -138,8 +138,8 @@ absl::StatusOr<FusionProcessDump> FusionProcessDump::LoadFromProto(
                          /*format=*/"txt"));
 
   ABSL_ASSIGN_OR_RETURN(se::DeviceDescription gpu_device_info,
-                   se::DeviceDescription::FromProto(
-                       fusion_process_dump_proto.gpu_device_info()));
+                        se::DeviceDescription::FromProto(
+                            fusion_process_dump_proto.gpu_device_info()));
 
   absl::flat_hash_map<std::string, HloComputation*>
       instruction_name_to_computation_map;

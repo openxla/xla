@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/service/shape_inference.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -24,15 +27,16 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
+#include "tsl/platform/errors.h"
 #include "xla/hlo/builder/padding.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -42,8 +46,8 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/shuffle.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
 
 namespace xla {
 namespace {
@@ -276,6 +280,28 @@ TEST_F(ShapeInferenceTest, BitcastConvertPredToF32) {
       << " expected: " << ShapeUtil::HumanString(expected);
 }
 
+TEST_F(ShapeInferenceTest, BitcastConvertWithDynamicMajorDimension) {
+  TF_ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[<=10,2]"));
+  TF_ASSERT_OK_AND_ASSIGN(
+      const Shape inferred_shape,
+      ShapeInference::InferBitcastConvertShape(operand, PrimitiveType::S64));
+  TF_ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("s64[<=10]"));
+  EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, expected))
+      << "inferred: " << ShapeUtil::HumanString(inferred_shape)
+      << " expected: " << ShapeUtil::HumanString(expected);
+}
+
+TEST_F(ShapeInferenceTest, BitcastConvertWithDynamicContractedDimension) {
+  // Narrowing to a wider element type consumes the minor dimension, which
+  // must be static: fewer than ratio valid elements cannot form an element.
+  TF_ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[10,<=2]"));
+  const absl::StatusOr<Shape> inferred_shape =
+      ShapeInference::InferBitcastConvertShape(operand, PrimitiveType::S64);
+  EXPECT_FALSE(inferred_shape.ok());
+  EXPECT_THAT(inferred_shape.status().message(),
+              HasSubstr("Last dimension of input shape must be static"));
+}
+
 TEST_F(ShapeInferenceTest, ClampAllMatrix) {
   const absl::StatusOr<Shape> inferred_shape =
       ShapeInference::InferTernaryOpShape(HloOpcode::kClamp, matrix_64_48_,
@@ -372,6 +398,32 @@ TEST_F(ShapeInferenceTest, ClampBadShapes) {
                    .ok());
   ASSERT_FALSE(ShapeInference::InferTernaryOpShape(HloOpcode::kClamp, f32_,
                                                    vector_64_, vector_32_)
+                   .ok());
+}
+
+TEST_F(ShapeInferenceTest, FmaShapes) {
+  ASSERT_OK_AND_ASSIGN(
+      Shape inferred_matrix,
+      ShapeInference::InferTernaryOpShape(HloOpcode::kFma, matrix_64_48_,
+                                          matrix_64_48_, matrix_64_48_));
+  EXPECT_TRUE(ShapeUtil::Equal(matrix_64_48_, inferred_matrix));
+
+  ASSERT_OK_AND_ASSIGN(
+      Shape inferred_scalar,
+      ShapeInference::InferTernaryOpShape(HloOpcode::kFma, f32_, f32_, f32_));
+  EXPECT_TRUE(ShapeUtil::Equal(f32_, inferred_scalar));
+
+  // Integer inputs are rejected.
+  EXPECT_FALSE(
+      ShapeInference::InferTernaryOpShape(HloOpcode::kFma, s32_, s32_, s32_)
+          .ok());
+  // Mismatched shapes are rejected.
+  EXPECT_FALSE(ShapeInference::InferTernaryOpShape(HloOpcode::kFma, vector_64_,
+                                                   vector_32_, vector_64_)
+                   .ok());
+  // Scalar broadcasting is not allowed for HLO fma.
+  EXPECT_FALSE(ShapeInference::InferTernaryOpShape(HloOpcode::kFma, f32_,
+                                                   matrix_64_48_, matrix_64_48_)
                    .ok());
 }
 
@@ -3073,6 +3125,57 @@ TEST_F(ShapeInferenceTest, ReverseInvalidDimension) {
               HasSubstr("Expected array argument"));
 }
 
+TEST_F(ShapeInferenceTest, ShuffleRotate) {
+  const Shape input_shape = ShapeUtil::MakeShape(F32, {10, 25});
+
+  ASSERT_THAT(ShapeInference::InferShuffleShape(input_shape, {0, 1},
+                                                shuffle::Rotate({2, 5})),
+              absl_testing::IsOkAndHolds(input_shape));
+}
+
+TEST_F(ShapeInferenceTest, ShuffleInvalidDimension) {
+  const Shape input_shape = ShapeUtil::MakeShape(F32, {10, 25});
+
+  ASSERT_THAT(ShapeInference::InferShuffleShape(input_shape, {0, 2},
+                                                shuffle::Rotate({2, 5})),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("out-of-bounds")));
+
+  ASSERT_THAT(ShapeInference::InferShuffleShape(input_shape, {0, -1},
+                                                shuffle::Rotate({2, 5})),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("out-of-bounds")));
+
+  ASSERT_THAT(ShapeInference::InferShuffleShape(input_shape, {0, 0},
+                                                shuffle::Rotate({2, 5})),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("duplicated")));
+
+  ASSERT_THAT(ShapeInference::InferShuffleShape(input_shape, {0, 1},
+                                                shuffle::Rotate({2})),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("dimensions and shifts must "
+                                               "have the same size")));
+}
+
+TEST_F(ShapeInferenceTest, ShuffleWithoutMode) {
+  const Shape input_shape = ShapeUtil::MakeShape(F32, {10, 25});
+
+  ASSERT_THAT(
+      ShapeInference::InferShuffleShape(input_shape, {0, 1}, ShuffleMode()),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             HasSubstr("must specify a mode")));
+}
+
+TEST_F(ShapeInferenceTest, ShuffleWithoutDimensions) {
+  const Shape input_shape = ShapeUtil::MakeShape(F32, {10, 25});
+
+  ASSERT_THAT(
+      ShapeInference::InferShuffleShape(input_shape, {}, shuffle::Rotate({})),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             HasSubstr("must shuffle at least one dimension")));
+}
+
 TEST_F(ShapeInferenceTest, Call) {
   const absl::StatusOr<Shape> inferred_shape0 =
       ShapeInference::InferCallShape({}, ShapeUtil::MakeProgramShape({}, f32_));
@@ -3452,7 +3555,45 @@ TEST_F(ShapeInferenceTest, ConvWithSparsityFail) {
       /*preferred_element_type=*/std::nullopt);
   EXPECT_FALSE(status_or.ok());
   EXPECT_THAT(status_or.status().message(),
-              HasSubstr("Only 1:N sparsity is currently supported."));
+              HasSubstr("num_non_zero and block_size must be positive"));
+}
+
+TEST_F(ShapeInferenceTest, ConvAndDotWithMtoNSparsity) {
+  const Shape lhs = ShapeUtil::MakeShape(F32, {256, 256});
+  const Shape rhs = ShapeUtil::MakeShape(F32, {128, 256});
+  SparsityConfig sp;
+  auto* rhs_sp = sp.mutable_rhs();
+  rhs_sp->set_num_non_zero(2);
+  rhs_sp->set_block_size(4);
+  rhs_sp->set_dimension(0);
+  rhs_sp->set_stride(1);
+
+  ConvolutionDimensionNumbers cdnums;
+  cdnums.set_input_batch_dimension(0);
+  cdnums.set_input_feature_dimension(1);
+  cdnums.set_kernel_input_feature_dimension(0);
+  cdnums.set_kernel_output_feature_dimension(1);
+  cdnums.set_output_batch_dimension(0);
+  cdnums.set_output_feature_dimension(1);
+  ASSERT_OK_AND_ASSIGN(Shape conv_shape,
+                       ShapeInference::InferConvolveShape(
+                           lhs, rhs, 1, 1, Window(), cdnums, sp, std::nullopt));
+  EXPECT_TRUE(ShapeUtil::Equal(conv_shape, lhs));
+
+  DotDimensionNumbers ddnums;
+  ddnums.add_lhs_contracting_dimensions(1);
+  ddnums.add_rhs_contracting_dimensions(0);
+  ASSERT_OK_AND_ASSIGN(
+      Shape dot_shape,
+      ShapeInference::InferDotOpShape(lhs, rhs, ddnums, std::nullopt, sp));
+  EXPECT_TRUE(ShapeUtil::Equal(dot_shape, lhs));
+
+  const Shape bad_rhs = ShapeUtil::MakeShape(F32, {127, 256});
+  auto bad_status =
+      ShapeInference::InferDotOpShape(lhs, bad_rhs, ddnums, std::nullopt, sp);
+  EXPECT_FALSE(bad_status.ok());
+  EXPECT_THAT(bad_status.status().message(),
+              HasSubstr("must be divisible by num_non_zero"));
 }
 
 TEST_F(ShapeInferenceTest, InferStochasticConvertShape) {
@@ -5408,6 +5549,34 @@ TEST_F(ShapeInferenceTest, UnboundedDynamicSlice) {
       << " expected: " << ShapeUtil::HumanString(expected);
 }
 
+TEST_F(ShapeInferenceTest, DynamicSliceOnBufferOperand) {
+  // Tests that ShapeInference::InferDynamicSliceShape accepts a buffer shaped
+  // input operand and infers a standard array output shape while still
+  // rejecting tuple inputs. Calls InferDynamicSliceShape on b(f32[4, 10]) to
+  // check that the inferred shape is f32[2, 5] (not a buffer), and on a tuple
+  // shape to check that InvalidArgument is returned.
+  ASSERT_OK_AND_ASSIGN(const Shape array_shape, ParseShape("f32[4, 10]"));
+  ASSERT_OK_AND_ASSIGN(const Shape buffer_operand, ParseShape("b(f32[4, 10])"));
+  ASSERT_OK_AND_ASSIGN(const Shape start_index, ParseShape("s32[]"));
+  ASSERT_OK_AND_ASSIGN(const Shape expected, ParseShape("f32[2, 5]"));
+  ASSERT_OK_AND_ASSIGN(
+      const Shape inferred_shape,
+      ShapeInference::InferDynamicSliceShape(
+          buffer_operand, /*start_index_shapes=*/{start_index, start_index},
+          /*slice_sizes=*/{2, 5}, /*allow_scalar_indices=*/true));
+  EXPECT_FALSE(inferred_shape.IsBuffer());
+  EXPECT_TRUE(ShapeUtil::Equal(inferred_shape, expected))
+      << "inferred: " << ShapeUtil::HumanString(inferred_shape)
+      << " expected: " << ShapeUtil::HumanString(expected);
+
+  const Shape tuple_operand = ShapeUtil::MakeTupleShape({array_shape});
+  EXPECT_THAT(
+      ShapeInference::InferDynamicSliceShape(
+          tuple_operand, /*start_index_shapes=*/{start_index, start_index},
+          /*slice_sizes=*/{2, 5}, /*allow_scalar_indices=*/true),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
 TEST_F(ShapeInferenceTest, UnboundedDynamicUpdateSlice) {
   ASSERT_OK_AND_ASSIGN(const Shape operand, ParseShape("f32[?, 10]"));
   ASSERT_OK_AND_ASSIGN(const Shape update, ParseShape("f32[?, 5]"));
@@ -6327,5 +6496,33 @@ INSTANTIATE_TEST_SUITE_P(UnboundedDynamism, UnboundedUnaryOpShapeInferenceTest,
                               {"f32[?]", "f32[?]", HloOpcode::kSinh},
                               {"f32[?]", "f32[?]", HloOpcode::kSqrt},
                               {"f32[?]", "f32[?]", HloOpcode::kTanh}}));
+
+TEST_F(ShapeInferenceTest, MulhiRequiresIntegralType) {
+  const Shape s32_vec = ShapeUtil::MakeShape(S32, {4});
+  const Shape u32_vec = ShapeUtil::MakeShape(U32, {4});
+  ASSERT_OK_AND_ASSIGN(Shape s32_out, ShapeInference::InferBinaryOpShape(
+                                          HloOpcode::kMulhi, s32_vec, s32_vec,
+                                          /*broadcast_dimensions=*/{}));
+  EXPECT_TRUE(ShapeUtil::Equal(s32_out, s32_vec));
+  ASSERT_OK_AND_ASSIGN(Shape u32_out, ShapeInference::InferBinaryOpShape(
+                                          HloOpcode::kMulhi, u32_vec, u32_vec,
+                                          /*broadcast_dimensions=*/{}));
+  EXPECT_TRUE(ShapeUtil::Equal(u32_out, u32_vec));
+
+  EXPECT_THAT(
+      ShapeInference::InferBinaryOpShape(HloOpcode::kMulhi, vector_32_,
+                                         vector_32_,
+                                         /*broadcast_dimensions=*/{}),
+      absl_testing::StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          HasSubstr("Expected integral type in argument to mulhi operation")));
+  EXPECT_THAT(
+      ShapeInference::InferBinaryOpShape(HloOpcode::kMulhi, pred_, pred_,
+                                         /*broadcast_dimensions=*/{}),
+      absl_testing::StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          HasSubstr("Expected integral type in argument to mulhi operation")));
+}
+
 }  // namespace
 }  // namespace xla

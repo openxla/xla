@@ -54,6 +54,7 @@ limitations under the License.
 #include "xla/side_effect_util.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/xla.pb.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -91,6 +92,9 @@ bool IsNopInstruction(const HloInstruction& hlo) {
     case HloOpcode::kReplicaId:
     case HloOpcode::kOptimizationBarrier:
       return true;
+    case HloOpcode::kCustomCall:
+      // Only reserves a buffer; launches nothing.
+      return hlo.IsCustomCall("AllocateBuffer");
     default:
       return hlo.IsEffectiveBitcast();
   }
@@ -222,8 +226,8 @@ absl::StatusOr<ParticipatingDeviceGroups> GetParticipatingDevicesGroups(
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(ParticipatingDeviceGroups instruction_groups,
-                     GetParticipatingDevicesGroupsForAsyncStart(
-                         *instruction, device_assignment));
+                          GetParticipatingDevicesGroupsForAsyncStart(
+                              *instruction, device_assignment));
     for (std::vector<GlobalDeviceId>& group : instruction_groups) {
       groups.push_back(std::move(group));
     }
@@ -551,6 +555,51 @@ static bool IsPartiallyPipelinedSendRecv(const HloInstruction* instr) {
              instr->users().front());
 }
 
+// Fills below this size are cheap to keep live, and pinning them next to their
+// users would only take scheduling freedom away from the ready-set heuristics.
+static constexpr int64_t kMinForceEarlyFillBytes = 1024 * 1024;
+
+// Returns true if `instr` is a large fill: a loop fusion with no operands, such
+// as a broadcast of a scalar constant or an iota, whose outputs total at least
+// kMinForceEarlyFillBytes. Multi-output fills count, too: copy insertion and
+// copy fusion leave behind fusions that emit a broadcast together with a copy
+// of it, and at scheduling time those are the largest fills in the module.
+// Fills that carry an explicit placement constraint are excluded.
+static bool IsLargeIndependentFill(const HloInstruction& instr) {
+  if (instr.opcode() != HloOpcode::kFusion ||
+      instr.fusion_kind() != HloInstruction::FusionKind::kLoop ||
+      instr.operand_count() != 0) {
+    return false;
+  }
+  int64_t output_bytes = 0;
+  ShapeUtil::ForEachSubshape(
+      instr.shape(), [&output_bytes](const Shape& subshape, const ShapeIndex&) {
+        if (subshape.IsArray()) {
+          output_bytes += ShapeUtil::ByteSizeOfElements(subshape);
+        }
+      });
+  if (output_bytes < kMinForceEarlyFillBytes) {
+    return false;
+  }
+  // Scheduling groups are placed as a unit by the annotation scheduler.
+  if (instr.frontend_attributes().map().contains(kXlaSchedulingGroupIdAttr)) {
+    return false;
+  }
+  if (instr.has_backend_config()) {
+    absl::StatusOr<GpuBackendConfig> gpu_config =
+        instr.backend_config<GpuBackendConfig>();
+    // ForceEarly takes precedence over ForceDelay in the ready-set comparison,
+    // so a fill with force_earliest_schedule must keep its explicit placement.
+    // Fills on an explicit stream or on the host are left alone as well.
+    if (!gpu_config.ok() || gpu_config->force_earliest_schedule() ||
+        gpu_config->operation_queue_id() != 0 ||
+        gpu_config->device_type() == DEVICE_TYPE_HOST) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void GpuAsyncTrackerBase::PostProcessScheduleGraph(
     HloScheduleGraph* schedule_graph,
     const LatencyEstimator* latency_estimator) const {
@@ -597,6 +646,20 @@ void GpuAsyncTrackerBase::PostProcessScheduleGraph(
         node.SetForceDelay(gpu_config->force_earliest_schedule());
         VLOG(5) << "Setting force delay for instruction: " << inst->ToString();
       }
+    }
+
+    // A large fill has no operands to anchor it near its users. The bottom-up
+    // ready-set heuristics (async depth, number of nodes made ready, original
+    // order) keep passing it over, so it floats to the top of the schedule and
+    // its buffer stays live across everything that follows. The fill becomes
+    // ready as soon as its earliest user is scheduled, so forcing it early
+    // places it immediately before that user. Doing this inside the scheduler
+    // keeps the memory and overlap accounting accurate, which a post-scheduling
+    // rewrite of the sequence would not.
+    if (IsLargeIndependentFill(*inst)) {
+      HloGraphNode& node = schedule_graph->GetNode(inst);
+      node.SetForceEarly(true);
+      VLOG(5) << "Setting force early for fill: " << inst->ToString();
     }
 
     if (config_.enable_selective_resources) {
@@ -687,7 +750,7 @@ ResourcesVector GpuAsyncTracker::GetResourcesFromInstructionImpl(
 absl::flat_hash_map<int64_t, int64_t>
 GpuAsyncTracker::GetNumResourcesPerInstruction(
     const HloInstruction& instr) const {
-  if (!IsCollectivesGroupAsyncOp(instr)) {
+  if (!IsCollectivesGroupAsyncOp(instr) && !IsCustomCollectiveOp(&instr)) {
     return GpuAsyncTrackerBase::GetNumResourcesPerInstruction(instr);
   }
 
@@ -945,11 +1008,41 @@ ApproximateLatencyEstimator::TimeCost GpuLatencyEstimator::GetLatencyBetween(
 // GPUProfileStatisticsAggregator
 //===----------------------------------------------------------------------===//
 
+namespace {
+
+// Whether `instruction` is in the condition of while loops that all have a
+// known trip count. The GPU runtime runs the body of such a loop the given
+// number of times without evaluating the condition, so its instructions are
+// never profiled.
+bool IsInUnevaluatedLoopCondition(const HloInstruction& instruction) {
+  const HloComputation* computation = instruction.parent();
+  if (computation == nullptr) {
+    return false;
+  }
+  bool is_loop_condition = false;
+  for (const HloInstruction* loop :
+       computation->caller_instructions(HloOpcode::kWhile)) {
+    if (loop->while_condition() != computation) {
+      continue;
+    }
+    is_loop_condition = true;
+    absl::StatusOr<WhileLoopBackendConfig> config =
+        loop->backend_config<WhileLoopBackendConfig>();
+    if (!config.ok() || !config->has_known_trip_count()) {
+      return false;
+    }
+  }
+  return is_loop_condition;
+}
+
+}  // namespace
+
 void GPUProfileStatisticsAggregator::HandleMissingInstructionCost(
     const HloInstruction& instruction) {
   if (!IsNopInstruction(instruction) &&
       HloPredicateIsNotOp<HloOpcode::kWhile>(&instruction) &&
-      HloPredicateIsNotOp<HloOpcode::kCopy>(&instruction)) {
+      HloPredicateIsNotOp<HloOpcode::kCopy>(&instruction) &&
+      !IsInUnevaluatedLoopCondition(instruction)) {
     missing_instructions_.insert(&instruction);
   }
 }

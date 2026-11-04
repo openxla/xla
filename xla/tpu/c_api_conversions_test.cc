@@ -15,15 +15,17 @@ limitations under the License.
 
 #include "xla/tpu/c_api_conversions.h"
 
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -36,7 +38,6 @@ limitations under the License.
 #include "xla/tpu/proto_helper.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace ApiConverter {
 

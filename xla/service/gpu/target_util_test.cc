@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/gpu/target_util.h"
 
 #include <gtest/gtest.h>
+
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"

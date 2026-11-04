@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
@@ -44,6 +45,24 @@ TEST_F(CudnnPadForConvolutionsTest, DoNotPadF16ForwardConvWhenGrouped) {
       , window={size=1x50 pad=0_0x64_64}
       , dim_labels=fb01_io01->01bf
       , feature_group_count=16
+      , custom_call_target="__cudnn$convForward"
+  })")
+                    .value();
+  EXPECT_FALSE(CudnnPadForConvolutions({7, 5}).Run(module.get()).value());
+}
+
+TEST_F(CudnnPadForConvolutionsTest, DoNotPadIntForwardConvWhenGrouped) {
+  auto module = ParseAndReturnVerifiedModule(R"(
+  HloModule TestModule
+
+  ENTRY TestComputation {
+    input = s8[1,4,1,1]{3,2,1,0} parameter(0)
+    filter = s8[4,2,1,1]{3,2,1,0} parameter(1)
+    ROOT result = (s8[1,4,1,1]{3,2,1,0}, u8[0]{0})
+      custom-call(input, filter)
+      , window={size=1x1}
+      , dim_labels=bf01_oi01->bf01
+      , feature_group_count=2
       , custom_call_target="__cudnn$convForward"
   })")
                     .value();

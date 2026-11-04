@@ -82,13 +82,15 @@ class TfAllocatorAdapter : public DeviceAddressAllocator {
   TfAllocatorAdapter(
       tsl::Allocator* wrapped, Stream* stream,
       size_t min_alignment = tsl::Allocator::kAllocatorAlignment,
-      tsl::AllocationEnd allocation_end = tsl::AllocationEnd::kLower);
+      tsl::AllocationEnd allocation_end = tsl::AllocationEnd::kLower,
+      std::optional<int> device_ordinal = std::nullopt);
 
   // Constructor for cases where `stream` is not available.
   TfAllocatorAdapter(
       tsl::Allocator* wrapped, const Platform* platform,
       size_t min_alignment = tsl::Allocator::kAllocatorAlignment,
-      tsl::AllocationEnd allocation_end = tsl::AllocationEnd::kLower);
+      tsl::AllocationEnd allocation_end = tsl::AllocationEnd::kLower,
+      std::optional<int> device_ordinal = std::nullopt);
 
   ~TfAllocatorAdapter() override;
 
@@ -116,6 +118,7 @@ class TfAllocatorAdapter : public DeviceAddressAllocator {
   Stream* stream_;
   size_t min_alignment_;
   tsl::AllocationEnd allocation_end_;
+  std::optional<int> device_ordinal_;
 };
 
 // Adapter class that wraps per-device TF allocators with corresponding streams
@@ -148,8 +151,10 @@ class MultiDeviceAdapter : public DeviceAddressAllocator {
   //
   // allocation_end: which end of a spatially partitioned allocator to serve
   //                 from. When one BFC allocator backs both kDefault and
-  //                 kCollective, the kCollective entry uses kUpper so its
-  //                 offsets stay independent of default-memory activity.
+  //                 kCollective, the kCollective entry uses kLower so its
+  //                 offsets from the fixed range base stay independent of
+  //                 default-memory activity, and the kDefault entry uses
+  //                 kUpper.
   struct AllocatorInfo {
     std::shared_ptr<tsl::Allocator> allocator;
     Stream* stream;

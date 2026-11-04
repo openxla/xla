@@ -224,7 +224,7 @@ absl::StatusOr<bool> WhileLoopTripCountAnnotator::RunImpl(
       }
 
       ABSL_ASSIGN_OR_RETURN(WhileLoopBackendConfig existing_config,
-                       instr->backend_config<WhileLoopBackendConfig>());
+                            instr->backend_config<WhileLoopBackendConfig>());
       if (existing_config.ByteSizeLong() != 0) {
         LOG(WARNING) << absl::StrFormat(
             "WhileLoopTripCountAnnotator is overwriting an existing non-empty "

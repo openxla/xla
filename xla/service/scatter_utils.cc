@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
@@ -105,7 +106,7 @@ absl::StatusOr<HloInstruction*> CanonicalizeScatterIndices(
     auto new_shape =
         ShapeUtil::DeleteDimension(index_vector_dim, scatter_indices->shape());
     ABSL_ASSIGN_OR_RETURN(scatter_indices,
-                     MakeReshapeHlo(new_shape, scatter_indices));
+                          MakeReshapeHlo(new_shape, scatter_indices));
   }
   bool indices_are_scalar =
       index_vector_dim == scatter_indices->shape().dimensions().size();

@@ -15,12 +15,13 @@ limitations under the License.
 
 #include "xla/service/rendezvous.h"
 
+#include <gmock/gmock.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"

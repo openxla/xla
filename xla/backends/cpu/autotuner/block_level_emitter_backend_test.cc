@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/backends/cpu/autotuner/block_level_emitter_backend.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/autotuner/backends.pb.h"

@@ -50,6 +50,9 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_callbacks.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "tsl/platform/host_info.h"
+#include "tsl/platform/thread_annotations.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cuda_version_variants.h"
 #include "xla/backends/profiler/gpu/cupti_buffer_events.h"
 #include "xla/backends/profiler/gpu/cupti_collector.h"
@@ -58,15 +61,13 @@ limitations under the License.
 #include "xla/backends/profiler/gpu/cupti_pm_sampler.h"
 #include "xla/backends/profiler/gpu/cupti_pm_sampler_factory.h"
 #include "xla/backends/profiler/gpu/cupti_utils.h"
+#include "xla/stream_executor/cuda/cuda_graph_annotation_registry.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
 #include "xla/tsl/profiler/utils/per_thread.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
-#include "tsl/platform/host_info.h"
-#include "tsl/platform/thread_annotations.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -356,7 +357,9 @@ void SetKernelEventUponApiExit(CuptiTracerEvent& event, uint32_t device_id,
                                uint64_t start_time, uint64_t end_time) {
   event.type = CuptiTracerEventType::Kernel;
   event.source = CuptiTracerEventSource::DriverCallback;
-  event.name = cbdata->symbolName ? cbdata->symbolName : cbdata->functionName;
+  event.name = cbdata->symbolName
+                   ? cbdata->symbolName
+                   : (cbdata->functionName ? cbdata->functionName : "");
   event.start_time_ns = start_time;
   event.end_time_ns = end_time;
   event.thread_id = Env::Default()->GetCurrentThreadId();
@@ -728,12 +731,27 @@ void SetCudaGraphEventUponApiExit(
     GuardedCallbackAnnotationsAndEvents& guarded_annotations_and_events,
     CuptiTracer* tracer) {
   GraphResourceCreationInfo& graph_id_info = GetGraphResourceCreationInfo();
+  uint32_t graph_id = graph_id_info.graph_id;
+  uint32_t orig_graph_id = graph_id_info.orig_graph_id;
   if (cbid == CUPTI_DRIVER_TRACE_CBID_cuGraphLaunch ||
       cbid == CUPTI_DRIVER_TRACE_CBID_cuGraphLaunch_ptsz) {
+    graph_id = 0;
+    orig_graph_id = 0;
     const auto* params =
         static_cast<const cuGraphLaunch_params*>(cbdata->functionParams);
-    cupti_interface->GetGraphExecId(params->hGraph, &graph_id_info.graph_id);
-    graph_id_info.orig_graph_id = 0;
+    if (params->hGraph != nullptr &&
+        cupti_interface->GetGraphExecId(params->hGraph, &graph_id) !=
+            CUPTI_SUCCESS) {
+      graph_id = 0;
+    }
+    uint32_t stream_id = 0;
+    const uint8_t per_thread_stream =
+        (cbid == CUPTI_DRIVER_TRACE_CBID_cuGraphLaunch_ptsz) ? 1 : 0;
+    if (cupti_interface->GetStreamIdEx(cbdata->context, params->hStream,
+                                       per_thread_stream,
+                                       &stream_id) == CUPTI_SUCCESS) {
+      event.stream_id = stream_id;
+    }
   }
   // Create multiple events for cuGraphClone/cuGraphInstantiateWithFlags.
   // The multiple events are created for each node in the graph.
@@ -780,8 +798,8 @@ void SetCudaGraphEventUponApiExit(
   event.context_id = cbdata->contextUid;
   event.correlation_id = cbdata->correlationId;
   event.cuda_graph_info.cbid = cbid;
-  event.graph_id = graph_id_info.graph_id;
-  event.cuda_graph_info.orig_graph_id = graph_id_info.orig_graph_id;
+  event.graph_id = graph_id;
+  event.cuda_graph_info.orig_graph_id = orig_graph_id;
   VLOG(3) << "Observed CudaGraph API exit."
           << " name=" << cbdata->functionName;
 }
@@ -807,10 +825,12 @@ void SetCudaGraphNodeEventUponApiExit(CuptiTracerEvent& event,
   event.graph_id = graph_id_info.graph_id;
   // TODO(rahulnayar): Re-enable this check once the bug is fixed.
   // DCHECK_EQ(graph_id_info.node_id_map.size(), 1);
-  event.graph_node_id = graph_id_info.node_id_map.begin()->first;
   event.cuda_graph_info.orig_graph_id = graph_id_info.orig_graph_id;
-  event.cuda_graph_info.orig_graph_node_id =
-      graph_id_info.node_id_map.begin()->second;
+  if (!graph_id_info.node_id_map.empty()) {
+    event.graph_node_id = graph_id_info.node_id_map.begin()->first;
+    event.cuda_graph_info.orig_graph_node_id =
+        graph_id_info.node_id_map.begin()->second;
+  }
   VLOG(3) << "Observed CudaGraphNode API exit."
           << " name=" << cbdata->functionName;
   graph_id_info.node_id_map.clear();
@@ -834,18 +854,8 @@ void SetGenericEventUponApiExit(CuptiTracerEvent& event, uint32_t device_id,
           << " name=" << cbdata->functionName;
 }
 
-// Supporting CUPTI paired with CUDA, and hence the value of
-// CUPTI_DRIVER_TRACE_CBID_SIZE in cupti_driver_cbid.h are as follows
-// corresponding to different CUDA version: CUDA version -->
-// CUPTI_DRIVER_TRACE_CBID_SIZE
-//   11.0 --> 579
-//   12.0 --> 701
-//   12.8 --> 782
-//   12.9 --> 784
-//   13.0 -->
-// CUDA versions that are impacting code logic here are
-// (11.0), 12.0, 12.8 with their corresponding
-// CUPTI_DRIVER_TRACE_CBID_SIZE value (579), 701, 782 respectively.
+// CUDA 11.0 callbacks are handled by the switch below. Later callbacks are
+// categorized by the CUDA 12.0 and 12.3 version helpers.
 
 // As this is the call back function, no need to check the CUDA
 // runtime/driver version. CBIDs are naturally valid here.
@@ -858,7 +868,7 @@ void SetCallbackEventUponApiExit(
   static absl::NoDestructor<
       std::vector<cuda_versions::CbidCategoryMap const*>> const
       kExtraCbidCategories(
-          {&cuda_versions::GetExtraCallbackIdCategories12080(),
+          {&cuda_versions::GetExtraCallbackIdCategories12030(),
            &cuda_versions::GetExtraCallbackIdCategories12000()});
 
   // Find the category of the CBID, checking newer CUDA version earlier than
@@ -1048,7 +1058,7 @@ class CuptiDriverApiHookWithActivityApi : public CuptiDriverApiHook {
     // Stash away the current Cupti timestamp into cbdata.
     *cbdata->correlationData = kInvalidCallbackTimestamp;
     ABSL_ASSIGN_OR_RETURN(*cbdata->correlationData,
-                     tracer_->GetTimestampForSubscriber());
+                          tracer_->GetTimestampForSubscriber());
     return absl::OkStatus();
   }
   absl::Status OnDriverApiExit(int device_id, CUpti_CallbackDomain domain,
@@ -1060,7 +1070,8 @@ class CuptiDriverApiHookWithActivityApi : public CuptiDriverApiHook {
       return absl::FailedPreconditionError(
           "CUPTI callback entry timestamp was unavailable");
     }
-    ABSL_ASSIGN_OR_RETURN(uint64_t end_tsc, tracer_->GetTimestampForSubscriber());
+    ABSL_ASSIGN_OR_RETURN(uint64_t end_tsc,
+                          tracer_->GetTimestampForSubscriber());
     TrackContext(cbid, cbdata->context);
     return AddDriverApiCallbackEvent(tracer_, cupti_interface_, device_id,
                                      start_tsc, end_tsc, domain, cbid, cbdata);
@@ -1120,6 +1131,26 @@ const char* GetCuptiErrorString(CuptiInterface* cupti_interface,
   return err_str;
 }
 
+// Warns once per process if a session selects graph-level tracing while
+// command buffer telemetry has recorded node annotations. CUPTI then reports
+// one record per graph launch instead of one per graph node, so the collector
+// has no node records to resolve the annotations for.
+void WarnIfGraphTraceHidesNodeAnnotations(
+    absl::Span<const CUpti_ActivityKind> activities) {
+  // Only graphs recorded before the session starts are registered at this
+  // point. That covers the usual flow, where command buffers are recorded
+  // during warmup and a profiler attaches later, but not graphs that are first
+  // recorded during the session.
+  if (absl::c_contains(activities, CUPTI_ACTIVITY_KIND_GRAPH_TRACE) &&
+      !::stream_executor::gpu::CudaGraphAnnotationRegistry::Default().empty()) {
+    LOG_FIRST_N(WARNING, 1)
+        << "CUPTI graph-level tracing (CUPTI_ACTIVITY_KIND_GRAPH_TRACE) "
+           "reports one record per CUDA graph launch, so the per-node HLO "
+           "annotations recorded by --xla_gpu_enable_command_buffer_telemetry "
+           "can't be used.";
+  }
+}
+
 }  // namespace
 
 CuptiTracer::CuptiTracer(CuptiInterface* cupti_interface)
@@ -1156,6 +1187,14 @@ absl::Status CuptiTracer::Enable(
   option_ = option;
   collector_ = collector;
 
+  // Take the harvest hold before any tracing is enabled, so that it covers
+  // every record of the session. If an earlier Enable() left a hold behind,
+  // emplace() releases it only after the new one is taken, so the registry
+  // never purges in between.
+  annotation_harvest_hold_.emplace(
+      ::stream_executor::gpu::CudaGraphAnnotationRegistry::Default()
+          .AcquireHarvestHold());
+
   // For nvtx tracking, utilize CUPTI activity marker and marker_data.
   if (option_->enable_nvtx_tracking) {
     VLOG(1) << "NVTX tracking Enabled.";
@@ -1177,7 +1216,11 @@ absl::Status CuptiTracer::Enable(
   cupti_driver_api_hook_ = std::make_unique<CuptiDriverApiHookWithActivityApi>(
       *option_, cupti_interface_, this);
 
+  // Callers don't call Disable() after a failed Enable(), so reset session
+  // state (including releasing annotation_harvest_hold_) on every error return
+  // after tracing has been disabled.
   absl::Cleanup api_tracing_cleanup = [&] {
+    const bool was_api_tracing_enabled = api_tracing_enabled_;
     if (cupti_interface_->Disabled()) {
       api_tracing_enabled_ = false;
       // A subscriber created by this session is owned by the error manager
@@ -1186,14 +1229,14 @@ absl::Status CuptiTracer::Enable(
     } else {
       DisableApiTracing(/*unsubscribe=*/true).IgnoreError();
     }
-    using_v2_subscriber_api_ = false;
+    if (was_api_tracing_enabled) {
+      GatherCallbackAnnotationsAndEvents(/*stop_recording=*/true);
+    }
     cupti_interface_->CleanUp();
+    ResetSessionState();
   };
 
   tsl::profiler::AnnotationStack::Enable(true);
-  absl::Cleanup annotation_cleanup = [] {
-    tsl::profiler::AnnotationStack::Enable(false);
-  };
 
   absl::Status api_status = EnableApiTracing();
   need_root_access_ |= api_status.code() == tsl::error::PERMISSION_DENIED;
@@ -1245,13 +1288,40 @@ absl::Status CuptiTracer::Enable(
     std::move(pm_sampler_cleanup).Cancel();
   }
 
-  std::move(annotation_cleanup).Cancel();
+  WarnIfGraphTraceHidesNodeAnnotations(option_->activities_selected);
+
   std::move(activity_tracing_cleanup).Cancel();
   std::move(api_tracing_cleanup).Cancel();
   return absl::OkStatus();
 }
 
+void CuptiTracer::ResetSessionState() {
+  annotation_harvest_hold_.reset();
+  activity_buffers_.reset();
+  cupti_pm_sampler_.reset();
+  collector_ = nullptr;
+  option_.reset();
+  cupti_driver_api_hook_.reset();
+  using_v2_subscriber_api_ = false;
+  subscriber_prepared_for_current_session_ = false;
+  tsl::profiler::AnnotationStack::Enable(false);
+}
+
 void CuptiTracer::Disable() {
+  if (!api_tracing_enabled_ && !activity_tracing_enabled_ &&
+      !pm_sampling_enabled_) {
+    if (subscriber_ != nullptr) {
+      if (cupti_interface_->Disabled()) {
+        ClearSubscriberState();
+      } else {
+        UnsubscribeAndClearSubscriber().IgnoreError();
+      }
+      cupti_interface_->CleanUp();
+    }
+    ResetSessionState();
+    return;
+  }
+
   // Disables the PM Sampling before Cupti Tracer is disabled.
   if (pm_sampling_enabled_) {
     if (absl::Status status = cupti_pm_sampler_->StopSampler(); !status.ok()) {
@@ -1354,12 +1424,12 @@ void CuptiTracer::Disable() {
   }
 
   collector_->Flush();
-  collector_ = nullptr;
-  option_.reset();
-  cupti_driver_api_hook_.reset();
-  using_v2_subscriber_api_ = false;
-  subscriber_prepared_for_current_session_ = false;
-  tsl::profiler::AnnotationStack::Enable(false);
+  // The collector has resolved every record of the session, so the registry
+  // can purge the annotations it kept for graphs destroyed during the session.
+  VLOG(1) << "Command buffer annotation registry at the end of the session: "
+          << ::stream_executor::gpu::CudaGraphAnnotationRegistry::Default()
+                 .GetStats();
+  ResetSessionState();
 }
 
 // Generate default callback ids list that tracer needs to enable them.
@@ -1446,7 +1516,7 @@ CuptiTracer::CreateDefaultCallbackIds() {
   // Adding default Callback cbids according to the CUDA version, considering
   // both compilation and runtime/driver version.
   for (const auto& id_categories :
-       {cuda_versions::GetExtraCallbackIdCategories12080(),
+       {cuda_versions::GetExtraCallbackIdCategories12030(),
         cuda_versions::GetExtraCallbackIdCategories12000()}) {
     for (const auto& [cbid, category] : id_categories) {
       if (category != cuda_versions::CbidCategory::kNone) {
@@ -1546,6 +1616,7 @@ absl::Status CuptiTracer::PrepareSubscriberForSession(
   }
   if (!use_v2_subscriber) {
     if (subscribe_status == CUPTI_ERROR_NOT_SUPPORTED ||
+        subscribe_status == CUPTI_ERROR_NOT_COMPATIBLE ||
         subscribe_status == CUPTI_ERROR_UNKNOWN) {
       subscribe_status = cupti_interface_->Subscribe(
           &subscriber_, (CUpti_CallbackFunc)ApiCallback, this);
@@ -1555,10 +1626,24 @@ absl::Status CuptiTracer::PrepareSubscriberForSession(
     }
   }
   if (ABSL_PREDICT_FALSE(subscribe_status != CUPTI_SUCCESS)) {
+    ClearSubscriberState();
     const char* errstr = "";
     cupti_interface_->GetResultString(subscribe_status, &errstr);
+    if (subscribe_status == CUPTI_ERROR_MULTIPLE_SUBSCRIBERS_NOT_SUPPORTED ||
+        subscribe_status == CUPTI_ERROR_MAX_LIMIT_REACHED) {
+      LOG(WARNING)
+          << "Skip enabling CUPTI tracer for this profiling session because an "
+             "external CUPTI subscriber (such as Nsight Systems or Nsight "
+             "Compute) is active: "
+          << errstr;
+      return absl::UnavailableError(absl::StrCat(
+          "Cannot enable CUPTI tracer because another CUPTI subscriber (such "
+          "as Nsight Systems or Nsight Compute) is active: ",
+          errstr));
+    }
     LOG(ERROR) << "function Subscribe failed with error " << errstr;
     if (subscribe_status == CUPTI_ERROR_INSUFFICIENT_PRIVILEGES) {
+      need_root_access_ = true;
       return absl::PermissionDeniedError("CUPTI needs root access");
     }
     return absl::InternalError(absl::StrCat("CUPTI call error: ", errstr));
@@ -1573,9 +1658,9 @@ absl::Status CuptiTracer::EnableApiTracing() {
     return absl::OkStatus();
   }
 
-  PrepareCallbackStart();
   using_v2_subscriber_api_ = false;
   ABSL_RETURN_IF_ERROR(PrepareSubscriberForSession(*option_));
+  PrepareCallbackStart();
   using_v2_subscriber_api_ = subscriber_is_v2_;
   api_tracing_enabled_ = true;
 
@@ -1718,7 +1803,7 @@ absl::Status CuptiTracer::DisableActivityTracing() {
       // bug (https://partners.nvidia.com/Bug/ViewBug/5350647). Re-enable after
       // the fix. CUDA 13.0 has the fix, so no longer skip.
       if (activity == CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL &&
-          cuda_versions::GetSafeCudaVersion() < 13000) {
+          !CanDisableConcurrentKernelActivity()) {
         VLOG(1) << "Skip disabling activity tracing for: " << activity
                 << " due to deadlock";
         continue;
@@ -1868,11 +1953,11 @@ absl::Status CuptiTracer::HandleDriverApiCallback(
   }
 
   if (cbdata->callbackSite == CUPTI_API_ENTER) {
-    ABSL_RETURN_IF_ERROR(cupti_driver_api_hook_->OnDriverApiEnter(device_id, domain,
-                                                             cbid, cbdata));
+    ABSL_RETURN_IF_ERROR(cupti_driver_api_hook_->OnDriverApiEnter(
+        device_id, domain, cbid, cbdata));
   } else if (cbdata->callbackSite == CUPTI_API_EXIT) {
-    ABSL_RETURN_IF_ERROR(cupti_driver_api_hook_->OnDriverApiExit(device_id, domain,
-                                                            cbid, cbdata));
+    ABSL_RETURN_IF_ERROR(cupti_driver_api_hook_->OnDriverApiExit(
+        device_id, domain, cbid, cbdata));
   }
   return absl::OkStatus();
 }
@@ -2039,6 +2124,10 @@ absl::Status CuptiTracer::ProcessActivityBuffer(CUcontext context,
         "Insufficient privilege to run libcupti (you need root permission).");
   }
   return "";
+}
+
+/*static*/ bool CuptiTracer::CanDisableConcurrentKernelActivity() {
+  return cuda_versions::GetSafeCudaVersion() >= 13000;
 }
 
 /*static*/ absl::Status CuptiTracer::EnableHES() {

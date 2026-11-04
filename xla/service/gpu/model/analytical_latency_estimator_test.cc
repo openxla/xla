@@ -15,14 +15,15 @@ limitations under the License.
 
 #include "xla/service/gpu/model/analytical_latency_estimator.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/status/status_macros.h"
@@ -30,6 +31,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "mlir/IR/MLIRContext.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -42,7 +44,6 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 namespace {
@@ -84,9 +85,10 @@ absl::StatusOr<bool> RunScheduler(
           alias_info, shape_size_bytes);
   auto scheduler_core =
       std::make_unique<DefaultSchedulerCore>(scheduling_context, sched_config);
-  ABSL_ASSIGN_OR_RETURN(bool value, LatencyHidingScheduler(scheduling_context,
-                                                      std::move(scheduler_core))
-                                   .Run(module));
+  ABSL_ASSIGN_OR_RETURN(
+      bool value,
+      LatencyHidingScheduler(scheduling_context, std::move(scheduler_core))
+          .Run(module));
 
   return value;
 }

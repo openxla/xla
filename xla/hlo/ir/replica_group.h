@@ -28,13 +28,13 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
 #include "google/protobuf/repeated_ptr_field.h"
+#include "tsl/platform/protobuf.h"
 #include "xla/array.h"
 #include "xla/hlo/ir/mesh_and_axis.h"
 #include "xla/hlo/ir/tile_assignment.h"
 #include "xla/printer.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -63,13 +63,7 @@ class CollectiveDeviceListBase {
   // IotaReplicaGroup and a CollectiveDeviceList may correspond to the same
   // underlying set of device groups, they will compare as unequal).
   friend bool operator==(const CollectiveDeviceListBase& lhs,
-                         const CollectiveDeviceListBase& rhs) {
-    if (typeid(lhs) != typeid(rhs)) {
-      return false;
-    }
-    // If types are the same, delegate to the derived implementation
-    return lhs.isEqual(rhs);
-  }
+                         const CollectiveDeviceListBase& rhs);
 
   virtual int64_t num_replica_groups() const = 0;
   virtual int64_t num_devices_per_group() const = 0;

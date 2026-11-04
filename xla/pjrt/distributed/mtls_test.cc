@@ -15,22 +15,23 @@ limitations under the License.
 
 #include "xla/pjrt/distributed/mtls.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <memory>
 #include <string>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "tsl/platform/path.h"
 #include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/distributed.h"
 #include "xla/pjrt/distributed/service.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -82,7 +83,8 @@ class MtlsTest : public ::testing::Test {
     options.init_timeout = absl::Milliseconds(100);
     options.extra_error_propagation_time = absl::ZeroDuration();
     options.missed_heartbeat_callback = [](const absl::Status&) {};
-    ABSL_ASSIGN_OR_RETURN(options.credentials, GetMtlsClientCredentials(config));
+    ABSL_ASSIGN_OR_RETURN(options.credentials,
+                          GetMtlsClientCredentials(config));
     std::shared_ptr<DistributedRuntimeClient> client =
         GetDistributedRuntimeClient(absl::StrCat(host, ":", port_), options);
     ABSL_RETURN_IF_ERROR(client->Connect());

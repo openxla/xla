@@ -26,6 +26,8 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/numbers.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
 #include "xla/backends/gpu/collectives/gpu_cliques.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -38,8 +40,6 @@ limitations under the License.
 #include "xla/tsl/framework/allocator.h"
 #include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
-#include "tsl/platform/numbers.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -127,9 +127,9 @@ absl::Status AllocatorMemoryRegistration::RegisterWithClique(
 
     for (Allocation& allocation : allocs) {
       ABSL_ASSIGN_OR_RETURN(std::unique_ptr<RegisteredMemory> registered,
-                       gpu_comm->CreateRegisteredMemory(allocation.range));
+                            gpu_comm->CreateRegisteredMemory(allocation.range));
       ABSL_ASSIGN_OR_RETURN(tsl::TiedRef<RegisteredMemory> tied,
-                       clique.Tie(std::move(registered)));
+                            clique.Tie(std::move(registered)));
       allocation.registrations.push_back(std::move(tied));
     }
 

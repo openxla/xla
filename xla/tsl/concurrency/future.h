@@ -40,12 +40,12 @@ limitations under the License.
 #include "absl/status/status_builder.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tsl/platform/context.h"
 #include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/executor.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/logging.h"
-#include "tsl/platform/context.h"
 
 namespace tsl {
 
@@ -53,7 +53,7 @@ namespace tsl {
 // semantics. This is alternative to AsyncValueRef<T> which has a smart-pointer
 // semantics.
 //
-// Key differences between Future<t> and AsyncValueRef<T>:
+// Key differences between Future<T> and AsyncValueRef<T>:
 //
 // 1. Reading and writing asynchronous value is split between Future<T> and
 //    Promise<T>.
@@ -116,8 +116,8 @@ Future<std::vector<T>> JoinFutures(absl::Span<Future<T>> futures);
 // Example:
 //
 //   Future<std::string> f0 = ...;
-//   Future<std::string> f1 = ...;
-//   Future<std::tuple<std::string, int32_t> joined = JoinFutures(f0, f1);
+//   Future<int32_t> f1 = ...;
+//   Future<std::tuple<std::string, int32_t>> joined = JoinFutures(f0, f1);
 //
 //
 // Example with custom joined type:
@@ -653,7 +653,7 @@ class PromiseOnceMaker;
 // Future<T> is a copyable type, although all copies share the same underlying
 // async value.
 template <class T>
-class Future : public internal::FutureBase<absl::StatusOr<T>> {
+class [[nodiscard]] Future : public internal::FutureBase<absl::StatusOr<T>> {
   using Base = internal::FutureBase<absl::StatusOr<T>>;
 
   static constexpr bool is_move_only = Base::IsMoveOnly();  // NOLINT
@@ -1719,7 +1719,7 @@ Future<std::vector<T>> JoinFutures(absl::Span<const Future<T>> futures) {
   VLOG(2) << "tsl::JoinFutures: " << futures.size() << " futures";
 
   if (futures.empty()) {
-    return Future<std::vector<T>>({});
+    return Future<std::vector<T>>(std::vector<T>{});
   }
 
   auto [promise, future] = MakePromise<std::vector<T>>();
@@ -1743,7 +1743,7 @@ Future<std::vector<T>> JoinFutures(absl::Span<Future<T>> futures) {
   VLOG(2) << "tsl::JoinFutures: " << futures.size() << " futures";
 
   if (futures.empty()) {
-    return Future<std::vector<T>>({});
+    return Future<std::vector<T>>(std::vector<T>{});
   }
 
   auto [promise, future] = MakePromise<std::vector<T>>();

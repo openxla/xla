@@ -21,9 +21,9 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
+#include "tsl/platform/retrying_utils.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/status.h"
-#include "tsl/platform/retrying_utils.h"
 #ifndef _WIN32
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -238,9 +238,13 @@ void GcsDnsCache::WorkerThread() {
     {
       // Don't immediately re-resolve the addresses.
       absl::MutexLock l(mu_);
-      if (cancelled_) return;
+      if (cancelled_) {
+        return;
+      }
       cond_var_.WaitWithTimeout(&mu_, absl::Seconds(refresh_rate_secs_));
-      if (cancelled_) return;
+      if (cancelled_) {
+        return;
+      }
     }
 
     // Resolve DNS values

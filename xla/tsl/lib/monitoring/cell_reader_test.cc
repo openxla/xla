@@ -15,11 +15,12 @@ limitations under the License.
 
 #include "xla/tsl/lib/monitoring/cell_reader.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "xla/tsl/lib/monitoring/counter.h"
 #include "xla/tsl/lib/monitoring/counter_gauge.h"
 #include "xla/tsl/lib/monitoring/gauge.h"

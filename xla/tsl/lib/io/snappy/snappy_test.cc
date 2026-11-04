@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "tsl/platform/snappy.h"
 
+#include <gmock/gmock.h>
+
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -24,9 +26,11 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/tstring.h"
 #include "xla/tsl/lib/io/random_inputstream.h"
 #include "xla/tsl/lib/io/snappy/snappy_inputbuffer.h"
 #include "xla/tsl/lib/io/snappy/snappy_inputstream.h"
@@ -35,7 +39,6 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/test.h"
-#include "tsl/platform/tstring.h"
 
 namespace tsl {
 
@@ -104,7 +107,8 @@ absl::Status TestMultipleWritesWriteFile(size_t compress_input_buf_size,
     std::string corrupt_fname =
         testing::TmpDir() + "/snappy_buffers_test_corrupt";
     std::unique_ptr<WritableFile> corrupt_file_writer;
-    ABSL_RETURN_IF_ERROR(env->NewWritableFile(corrupt_fname, &corrupt_file_writer));
+    ABSL_RETURN_IF_ERROR(
+        env->NewWritableFile(corrupt_fname, &corrupt_file_writer));
 
     std::unique_ptr<RandomAccessFile> file_reader;
     ABSL_RETURN_IF_ERROR(env->NewRandomAccessFile(fname, &file_reader));
@@ -418,4 +422,37 @@ TEST(SnappyBuffers, TellInputStream) {
   TestTellInputStream(10000, 10000, 2000, 10000, 2);
 }
 
+namespace {
+
+using ::absl_testing::IsOk;
+using ::absl_testing::StatusIs;
+using ::testing::HasSubstr;
+
+TEST(SnappyBuffers, UncompressedBlockFitsOutputBufferSucceeds) {
+  if (!SnappyCompressionSupported()) {
+    GTEST_SKIP() << "Snappy compression is unavailable";
+  }
+  const size_t block_size = GetRecord().size();
+  for (size_t capacity : {block_size, block_size + 1}) {
+    SCOPED_TRACE(capacity);
+    EXPECT_THAT(TestMultipleWrites(10000, 10000, 10000, capacity, 2, true),
+                IsOk());
+  }
+}
+
+TEST(SnappyBuffers, UncompressedBlockExceedsOutputBuffer) {
+  if (!SnappyCompressionSupported()) {
+    GTEST_SKIP() << "Snappy compression is unavailable";
+  }
+  const size_t capacity = GetRecord().size() - 1;
+  EXPECT_THAT(
+      TestMultipleWrites(10000, 10000, 10000, capacity),
+      StatusIs(absl::StatusCode::kResourceExhausted,
+               HasSubstr(absl::StrCat("Output buffer(size: ", capacity,
+                                      " bytes) too small. Should be larger "
+                                      "than ",
+                                      GetRecord().size(), " bytes."))));
+}
+
+}  // namespace
 }  // namespace tsl

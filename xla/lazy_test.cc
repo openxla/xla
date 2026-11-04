@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/lazy.h"
 
+#include <gtest/gtest.h>
+
 #include <string>
 #include <utility>
 
-#include <gtest/gtest.h>
 #include "absl/base/attributes.h"
 #include "xla/tsl/platform/test_benchmark.h"
 

@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "tsl/platform/casts.h"
 #include "xla/backends/cpu/runtime/copy_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/runtime/thunk.pb.h"
@@ -34,7 +35,6 @@ limitations under the License.
 #include "xla/service/buffer_assignment.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
-#include "tsl/platform/casts.h"
 
 namespace xla::cpu {
 
@@ -57,12 +57,14 @@ static absl::StatusOr<std::unique_ptr<Thunk>> CopyThunkFromProto(
     const std::vector<std::shared_ptr<Resource>>* resources) {
   ABSL_ASSIGN_OR_RETURN(Thunk::Info info, ThunkInfoFromProto(proto.info()));
 
-  ABSL_ASSIGN_OR_RETURN(auto src_slice_shape,
-                   DeserializeSliceShapeFromProto(
-                       proto.copy_thunk().src_buffer_shape(), allocations));
-  ABSL_ASSIGN_OR_RETURN(auto dst_slice_shape,
-                   DeserializeSliceShapeFromProto(
-                       proto.copy_thunk().dst_buffer_shape(), allocations));
+  ABSL_ASSIGN_OR_RETURN(
+      auto src_slice_shape,
+      DeserializeSliceShapeFromProto(proto.copy_thunk().src_buffer_shape(),
+                                     allocations));
+  ABSL_ASSIGN_OR_RETURN(
+      auto dst_slice_shape,
+      DeserializeSliceShapeFromProto(proto.copy_thunk().dst_buffer_shape(),
+                                     allocations));
 
   const auto& [src_buffer, src_shape] = src_slice_shape;
   const auto& [dst_buffer, dst_shape] = dst_slice_shape;

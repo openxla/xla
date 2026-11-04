@@ -22,8 +22,11 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tsl/platform/logging.h"
 #include "xla/debug_options_flags.h"
 #include "xla/executable_run_options.h"
 #include "xla/hlo/builder/xla_computation.h"
@@ -46,7 +49,6 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 

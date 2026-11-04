@@ -23,8 +23,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
-#include "xla/tsl/platform/file_system.h"
 #include "tsl/platform/path.h"
+#include "xla/tsl/platform/file_system.h"
 
 #ifdef PLATFORM_WINDOWS
 #undef CopyFile
@@ -60,6 +60,10 @@ class WindowsFileSystem : public FileSystem {
 
   absl::Status GetMatchingPaths(const std::string& pattern,
                                 std::vector<std::string>* result) override;
+
+  absl::Status GetMatchingPaths(const std::string& pattern,
+                                std::vector<std::string>* result,
+                                bool multithreaded) override;
 
   bool Match(absl::string_view filename, absl::string_view pattern) override;
 

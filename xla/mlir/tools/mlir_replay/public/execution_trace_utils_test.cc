@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "xla/mlir/tools/mlir_replay/public/execution_trace_utils.h"
 
+#include <gtest/gtest.h>
+
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -22,7 +24,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Support/LLVM.h"
 #include "xla/literal.h"

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/context_map.h"
 
 #include <gtest/gtest.h>
+
 #include "tsl/platform/test.h"
 
 namespace stream_executor::gpu {
@@ -24,23 +25,23 @@ namespace {
 // Test context.
 class TestContext {
  public:
-  TestContext(void *context, int device_ordinal)
+  TestContext(void* context, int device_ordinal)
       : context_(context), device_ordinal_(device_ordinal) {}
 
-  void *context() const { return context_; }
+  void* context() const { return context_; }
   int device_ordinal() const { return device_ordinal_; }
 
  private:
-  void *context_;
+  void* context_;
   int device_ordinal_;
 };
 
 TEST(ContextMapTest, AddRemoveAndHasWorks) {
   int device_ordinal = 1;
-  void *context = &device_ordinal;
-  auto ordinal_finder = [device_ordinal](void *ptr) { return device_ordinal; };
-  ContextMap<void *, TestContext> map(ordinal_finder);
-  auto *test_context = map.Add(context, device_ordinal);
+  void* context = &device_ordinal;
+  auto ordinal_finder = [device_ordinal](void* ptr) { return device_ordinal; };
+  ContextMap<void*, TestContext> map(ordinal_finder);
+  auto* test_context = map.Add(context, device_ordinal);
   EXPECT_EQ(test_context->context(), context);
   EXPECT_EQ(test_context->device_ordinal(), device_ordinal);
   EXPECT_TRUE(map.Has(context));
@@ -49,25 +50,25 @@ TEST(ContextMapTest, AddRemoveAndHasWorks) {
 }
 
 TEST(ContextMapTest, AddTwiceReturnsSameContext) {
-  void *context = reinterpret_cast<void *>(2);
+  void* context = reinterpret_cast<void*>(2);
   constexpr int device_ordinal = 1;
-  auto ordinal_finder = [](void *ptr) { return device_ordinal; };
-  ContextMap<void *, TestContext> map(ordinal_finder);
-  auto *test_context1 = map.Add(context, device_ordinal);
-  auto *test_context2 = map.Add(context, device_ordinal);
+  auto ordinal_finder = [](void* ptr) { return device_ordinal; };
+  ContextMap<void*, TestContext> map(ordinal_finder);
+  auto* test_context1 = map.Add(context, device_ordinal);
+  auto* test_context2 = map.Add(context, device_ordinal);
   EXPECT_EQ(test_context1, test_context2);
 }
 
 TEST(ContextMapTest, GetAnyContextReturnsCorrectContext) {
   // Add two contexts.
-  void *context1 = reinterpret_cast<void *>(2);
-  void *context2 = reinterpret_cast<void *>(3);
+  void* context1 = reinterpret_cast<void*>(2);
+  void* context2 = reinterpret_cast<void*>(3);
   constexpr int device_ordinal1 = 1;
   constexpr int device_ordinal2 = 2;
 
   // Make the first call to GetAnyContext return device_ordinal1, everything
   // after device_ordinal2.
-  auto ordinal_finder = [](void *ptr) {
+  auto ordinal_finder = [](void* ptr) {
     static int calls = 0;
     ++calls;
     if (calls <= 1) {
@@ -76,9 +77,9 @@ TEST(ContextMapTest, GetAnyContextReturnsCorrectContext) {
       return device_ordinal2;
     }
   };
-  ContextMap<void *, TestContext> map(ordinal_finder);
-  auto *test_context1 = map.Add(context1, device_ordinal1);
-  auto *test_context2 = map.Add(context2, device_ordinal2);
+  ContextMap<void*, TestContext> map(ordinal_finder);
+  auto* test_context1 = map.Add(context1, device_ordinal1);
+  auto* test_context2 = map.Add(context2, device_ordinal2);
   EXPECT_NE(test_context1, test_context2);
   auto first_context = map.GetAnyContext(context1);
   EXPECT_EQ(first_context, context1);
@@ -88,14 +89,14 @@ TEST(ContextMapTest, GetAnyContextReturnsCorrectContext) {
 
 TEST(ContextMapTest, GetAnyContextShouldDieWithBadInput) {
   // Add two contexts.
-  void *context1 = reinterpret_cast<void *>(2);
-  void *context2 = reinterpret_cast<void *>(3);
+  void* context1 = reinterpret_cast<void*>(2);
+  void* context2 = reinterpret_cast<void*>(3);
   constexpr int device_ordinal1 = 1;
   constexpr int device_ordinal2 = 2;
 
   // Make the first call to GetAnyContext return device_ordinal1, everything
   // after device_ordinal2.
-  auto ordinal_finder = [](void *ptr) {
+  auto ordinal_finder = [](void* ptr) {
     static int calls = 0;
     ++calls;
     if (calls <= 1) {
@@ -104,9 +105,9 @@ TEST(ContextMapTest, GetAnyContextShouldDieWithBadInput) {
       return device_ordinal2;
     }
   };
-  ContextMap<void *, TestContext> map(ordinal_finder);
-  auto *test_context1 = map.Add(context1, device_ordinal1);
-  auto *test_context2 = map.Add(context2, device_ordinal2);
+  ContextMap<void*, TestContext> map(ordinal_finder);
+  auto* test_context1 = map.Add(context1, device_ordinal1);
+  auto* test_context2 = map.Add(context2, device_ordinal2);
   EXPECT_NE(test_context1, test_context2);
   auto first_context = map.GetAnyContext(context1);
   EXPECT_EQ(first_context, context1);

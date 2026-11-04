@@ -38,11 +38,11 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "tsl/profiler/lib/traceme.h"
 #include "xla/python/transfer/event_loop.h"
 #include "xla/python/transfer/streaming.h"
 #include "xla/python/transfer/transfer_socket.pb.h"
 #include "xla/tsl/concurrency/ref_count.h"
-#include "tsl/profiler/lib/traceme.h"
 
 namespace aux {
 

@@ -15,10 +15,11 @@ limitations under the License.
 
 #include "xla/codegen/emitters/kernel_api_builder.h"
 
-#include <memory>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
+#include <memory>
+
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/MLIRContext.h"

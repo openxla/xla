@@ -14,12 +14,13 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/hlo/utils/hlo_traversal.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <optional>
 #include <string>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"

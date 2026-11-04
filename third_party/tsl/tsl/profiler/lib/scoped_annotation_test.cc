@@ -95,7 +95,9 @@ void BM_ScopedAnnotationEnabled_Nested(::testing::benchmark::State& state) {
   AnnotationStack::Enable(true);
   for (auto s : state) {
     ScopedAnnotation trace(annotation);
-    { ScopedAnnotation trace(annotation); }
+    {
+      ScopedAnnotation trace(annotation);
+    }
   }
   AnnotationStack::Enable(false);
 }

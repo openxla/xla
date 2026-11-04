@@ -96,16 +96,16 @@ class HloProgramSerDes : public RTTIExtends<HloProgramSerDes, SerDes> {
     std::string serialized;
     if (version.version_number() >= SerDesVersionNumber(3)) {
       ABSL_ASSIGN_OR_RETURN(serialized,
-                       xla::SerializeUsingVersionedStablehlo(
-                           *module, xla::GetDefaultStablehloVersion(),
-                           xla::GetDefaultSdyVersion(),
-                           /*inplace=*/false,
-                           /*allow_mixed_serialization=*/true));
+                            xla::SerializeUsingVersionedStablehlo(
+                                *module, xla::GetDefaultStablehloVersion(),
+                                xla::GetDefaultSdyVersion(),
+                                /*inplace=*/false,
+                                /*allow_mixed_serialization=*/true));
     } else {
       ABSL_ASSIGN_OR_RETURN(serialized,
-                       xla::SerializeUsingVersionedStablehlo(
-                           *module, xla::GetDefaultStablehloVersion(),
-                           xla::GetDefaultSdyVersion()));
+                            xla::SerializeUsingVersionedStablehlo(
+                                *module, xla::GetDefaultStablehloVersion(),
+                                xla::GetDefaultSdyVersion()));
     }
     return absl::Cord(std::move(serialized));
   }

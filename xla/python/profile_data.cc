@@ -19,9 +19,9 @@ limitations under the License.
 #include "nanobind/make_iterator.h"  // IWYU pragma: keep
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
-#include "xla/python/profiler/profile_data_lib.h"
 #include "tsl/platform/protobuf.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
+#include "xla/python/profiler/profile_data_lib.h"
 
 namespace xla {
 

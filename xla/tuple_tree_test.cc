@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/tuple_tree.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
@@ -46,12 +47,14 @@ namespace {
 TEST_F(TupleTreeTest, SingleLeafConstructor) {
   TupleTree<int> tree(42);
   EXPECT_TRUE(tree.IsLeaf({}));
+  EXPECT_EQ(tree.num_children(), 0);
   EXPECT_EQ(tree.element({}), 42);
 }
 
 TEST_F(TupleTreeTest, EmptyConstructor) {
   TupleTree<int> tree;
   EXPECT_FALSE(tree.IsLeaf({}));
+  EXPECT_EQ(tree.num_children(), 0);
   EXPECT_THAT(tree.nodes(), ElementsAre(Pair(ShapeIndex({}), 0)));
   EXPECT_THAT(tree.leaves(), ElementsAre());
   EXPECT_EQ(tree.element({}), 0);
@@ -71,12 +74,15 @@ TEST_F(TupleTreeTest, NodeWithValueAndChildren) {
   // Node with value and empty children (empty tuple)
   TupleTree<int> tree1(Node::Tuple(100));
   EXPECT_FALSE(tree1.IsLeaf({}));  // It's a tuple, not a leaf
+  EXPECT_EQ(tree1.num_children(), 0);
   EXPECT_THAT(tree1.nodes(), ElementsAre(Pair(ShapeIndex({}), 100)));
   EXPECT_THAT(tree1.leaves(), ElementsAre());
 
   // Node with value and non-empty children
   TupleTree<int> tree2(Node::Tuple(200, {Node::Leaf(1), Node::Leaf(2)}));
   EXPECT_FALSE(tree2.IsLeaf({}));
+  EXPECT_EQ(tree2.num_children(), 2);
+  EXPECT_EQ(tree2.num_children({0}), 0);
   EXPECT_TRUE(tree2.IsLeaf({0}));
   EXPECT_EQ(tree2.element({0}), 1);
   EXPECT_TRUE(tree2.IsLeaf({1}));

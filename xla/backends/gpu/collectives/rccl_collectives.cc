@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "rocm/include/rccl/rccl.h"
 #include "rocm/rocm_config.h"
+#include "tsl/platform/numbers.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
@@ -67,7 +68,6 @@ limitations under the License.
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
-#include "tsl/platform/numbers.h"
 
 namespace xla::gpu {
 
@@ -109,8 +109,9 @@ class RcclIdStore {
       ABSL_RETURN_IF_ERROR(
           kv_store_->Set(gpu_key->ToString(), clique_id.ToString()));
     } else {
-      ABSL_ASSIGN_OR_RETURN(std::string id_str,
-                       kv_store_->Get(gpu_key->ToString(), absl::Minutes(10)));
+      ABSL_ASSIGN_OR_RETURN(
+          std::string id_str,
+          kv_store_->Get(gpu_key->ToString(), absl::Minutes(10)));
       clique_id = CliqueId(id_str);
     }
 
@@ -246,13 +247,13 @@ RcclCollectives::CreateCommunicatorsWithCancel(
     auto activate_context = device->stream_executor()->Activate();
 
     ABSL_ASSIGN_OR_RETURN(ncclConfig_t comm_config,
-                     AsRcclConfig(gpu_config, device->stream_executor()));
+                          AsRcclConfig(gpu_config, device->stream_executor()));
 
     std::vector<ncclUniqueId> rccl_unique_ids;
     rccl_unique_ids.reserve(clique_ids->data().size());
     for (const CliqueId& clique_id : clique_ids->data()) {
       ABSL_ASSIGN_OR_RETURN(rccl_unique_ids.emplace_back(),
-                       AsRcclUniqueId(clique_id));
+                            AsRcclUniqueId(clique_id));
     }
 
     ncclComm_t comm;
@@ -320,7 +321,7 @@ RcclCollectives::SplitCommunicatorsWithCancel(
     TF_RET_CHECK(device != nullptr);
 
     ABSL_ASSIGN_OR_RETURN(ncclConfig_t comm_config,
-                     AsRcclConfig(gpu_config, device->stream_executor()));
+                          AsRcclConfig(gpu_config, device->stream_executor()));
 
     VLOG(1) << "Split NCCL communicator " << comms[i] << " with color " << color
             << " and key " << keys[i];

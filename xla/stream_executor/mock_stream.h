@@ -46,7 +46,7 @@ class MockStream : public Stream {
               (const, override));
   MOCK_METHOD(bool, ok, (), (const, override));
   MOCK_METHOD(absl::Status, RefreshStatus, (), (override));
-  MOCK_METHOD(absl::StatusOr<Stream *>, GetOrCreateSubStream, (), (override));
+  MOCK_METHOD(absl::StatusOr<Stream*>, GetOrCreateSubStream, (), (override));
   MOCK_METHOD(void, ReturnSubStream, (Stream * sub_stream), (override));
   MOCK_METHOD(absl::Status, WaitFor, (Stream * other), (override));
   MOCK_METHOD(absl::Status, WaitFor, (Event * event), (override));
@@ -70,7 +70,7 @@ class MockStream : public Stream {
   MOCK_METHOD(absl::Status, BlockHostUntilDone, (), (override));
   MOCK_METHOD(absl::Status, DoHostCallbackWithStatus,
               (absl::AnyInvocable<absl::Status() &&> callback), (override));
-  MOCK_METHOD(StreamExecutor *, parent, (), (const, override));
+  MOCK_METHOD(StreamExecutor*, parent, (), (const, override));
   MOCK_METHOD(CudaComputeCapability, GetCudaComputeCapability, (),
               (const, override));
   MOCK_METHOD(RocmComputeCapability, GetRocmComputeCapability, (),
@@ -85,7 +85,7 @@ class MockStream : public Stream {
                absl::string_view name, void** args, int64_t shmem_bytes,
                bool use_pdl),
               (override));
-  MOCK_METHOD(const std::string &, GetName, (), (const, override));
+  MOCK_METHOD(const std::string&, GetName, (), (const, override));
   MOCK_METHOD(void, SetName, (std::string name), (override));
   MOCK_METHOD(absl::StatusOr<std::unique_ptr<EventBasedTimer>>,
               CreateEventBasedTimer, (bool use_delay_kernel), (override));

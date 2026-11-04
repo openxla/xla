@@ -15,9 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/stable_sort_expander.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdint>
 
-#include <gtest/gtest.h>
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -256,8 +257,7 @@ TEST_F(StableSortExpanderTest,
   StableSortExpander stabilizer;
   EXPECT_TRUE(stabilizer.Run(module.get()).value());
   // Simplify away the "wrapper" tuple around the new sort.
-  AlgebraicSimplifier simplifier(AlgebraicSimplifierOptions(
-      [](const Shape&, const Shape&) { return false; }));
+  AlgebraicSimplifier simplifier(AlgebraicSimplifierOptions{});
   ASSERT_TRUE(simplifier.Run(module.get()).value());
 
   auto root = module->entry_computation()->root_instruction();
@@ -293,8 +293,7 @@ TEST_F(StableSortExpanderTest, StabilizeSortDontReuseIotaOperandWrongType) {
   StableSortExpander stabilizer;
   EXPECT_TRUE(stabilizer.Run(module.get()).value());
   // Simplify away the "wrapper" tuple around the new sort.
-  AlgebraicSimplifier simplifier(AlgebraicSimplifierOptions(
-      [](const Shape&, const Shape&) { return false; }));
+  AlgebraicSimplifier simplifier(AlgebraicSimplifierOptions{});
   ASSERT_TRUE(simplifier.Run(module.get()).value());
 
   auto root = module->entry_computation()->root_instruction();

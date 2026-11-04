@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/util.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -24,21 +27,21 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/status/status.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "ml_dtypes/include/float8.h"
+#include "tsl/platform/denormal.h"
+#include "tsl/platform/ml_dtypes.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test_benchmark.h"
 #include "xla/types.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
@@ -220,6 +223,17 @@ TEST(UtilTest, RoundTripFpToString) {
             "nan(0x1)");
   EXPECT_EQ(RoundTripFpToString(NanWithSignAndPayload<double>(true, 0x1)),
             "-nan(0x1)");
+}
+
+TEST(UtilTest, RoundTripFpToStringOnFlushDenormalThread) {
+  // tsl::thread::ThreadPool workers run their tasks in this mode.
+  tsl::port::ScopedFlushDenormal flush;
+  EXPECT_EQ(RoundTripFpToString(std::numeric_limits<float>::denorm_min()),
+            "1.4013e-45");
+  EXPECT_EQ(RoundTripFpToString(std::numeric_limits<double>::denorm_min()),
+            "4.94065645841247e-324");
+  EXPECT_EQ(RoundTripFpToString(std::numeric_limits<bfloat16>::denorm_min()),
+            "9.184e-41");
 }
 
 namespace {
@@ -659,6 +673,25 @@ TEST(UtilTest, ScopedLoggingTimerLazyEvaluation) {
     XLA_SCOPED_LOGGING_TIMER_LEVEL(get_label(), 100);
   }
   EXPECT_EQ(counter, 0);
+}
+
+TEST(UtilTest, ErrorWithStrCatAndBacktrace) {
+  absl::Status invalid_arg = InvalidArgumentStrCat("bad arg: ", 42);
+  EXPECT_EQ(invalid_arg.code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(invalid_arg.message(), ::testing::HasSubstr("bad arg: 42"));
+
+  absl::Status internal = InternalStrCat("internal failure: ", "oom");
+  EXPECT_EQ(internal.code(), absl::StatusCode::kInternal);
+  EXPECT_THAT(internal.message(),
+              ::testing::HasSubstr("internal failure: oom"));
+
+  absl::Status precondition = FailedPreconditionStrCat("state=", 1);
+  EXPECT_EQ(precondition.code(), absl::StatusCode::kFailedPrecondition);
+  EXPECT_THAT(precondition.message(), ::testing::HasSubstr("state=1"));
+
+  absl::Status not_found = NotFoundStrCat("missing key: ", "foo");
+  EXPECT_EQ(not_found.code(), absl::StatusCode::kNotFound);
+  EXPECT_THAT(not_found.message(), ::testing::HasSubstr("missing key: foo"));
 }
 
 void BM_PackIntN(::testing::benchmark::State& state) {

@@ -121,7 +121,8 @@ absl::Status ValidateMtlsConfig(const MtlsConfig& config) {
       ValidateReadableFile("certificate (cert_file)", config.cert_file));
   ABSL_RETURN_IF_ERROR(
       ValidateReadableFile("private key (key_file)", config.key_file));
-  ABSL_RETURN_IF_ERROR(ValidateReadableFile("root CA (ca_file)", config.ca_file));
+  ABSL_RETURN_IF_ERROR(
+      ValidateReadableFile("root CA (ca_file)", config.ca_file));
   return absl::OkStatus();
 }
 

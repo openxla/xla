@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
+#include "tsl/platform/statusor.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/computation_placer.h"
 #include "xla/service/hlo.pb.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_layout.h"
 #include "xla/xla.pb.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 
@@ -352,8 +352,9 @@ HloModuleConfig::CreateFromProto(const HloModuleConfigProto& proto) {
   auto config = std::make_unique<HloModuleConfig>();
 
   if (proto.has_entry_computation_layout()) {
-    ABSL_ASSIGN_OR_RETURN(auto comp_layout,
-                     ProgramShape::FromProto(proto.entry_computation_layout()));
+    ABSL_ASSIGN_OR_RETURN(
+        auto comp_layout,
+        ProgramShape::FromProto(proto.entry_computation_layout()));
     config->SetComputationLayoutIfExists(comp_layout);
   } else {
     config->clear_entry_computation_layout();

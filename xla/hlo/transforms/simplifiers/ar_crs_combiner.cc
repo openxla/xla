@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/platform.h"
 #include "xla/hlo/analysis/hlo_replication_analysis.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -143,13 +144,13 @@ bool HasCombinableReplicaGroup(HloInstruction* hlo, int64_t num_partitions) {
       // seen iff we see a replica id in the range [0, num_partitions) for the
       // first time. So, there is no need to check that all `seen_partition_ids`
       // values are equal to `marker`.
-#ifndef NDEBUG
-      for (int64_t i = 0; i < num_partitions; ++i) {
-        CHECK_EQ(seen_partition_ids[i], marker)
-            << "Programming error: seen_partition_ids[" << i
-            << "] != " << marker;
+      if constexpr (tsl::kIsDebugBuild) {
+        for (int64_t i = 0; i < num_partitions; ++i) {
+          CHECK_EQ(seen_partition_ids[i], marker)
+              << "Programming error: seen_partition_ids[" << i
+              << "] != " << marker;
+        }
       }
-#endif  // NDEBUG
     }
   }
   return true;
@@ -181,8 +182,13 @@ std::optional<ArCrsCombiner::ArCrsPair> ArCrsCombiner::MatchesArCrsPattern(
       case HloOpcode::kAdd:
       case HloOpcode::kSubtract:
       case HloOpcode::kMultiply:
-        // Only supported for floating point operands.
-        return ShapeUtil::ElementIsFloating(instruction->shape());
+        // Only supported for floating point operands with distinct inputs.
+        // Moving the reduction past identical operands would pass the unreduced
+        // shard to both inputs: rewriting (a + b)^2 into a^2 + b^2 for
+        // multiply, or dividing both operands by the partition count for add
+        // and subtract.
+        return instruction->operand(0) != instruction->operand(1) &&
+               ShapeUtil::ElementIsFloating(instruction->shape());
       default:
         return false;
     }
@@ -265,9 +271,6 @@ std::optional<std::vector<HloInstruction*>> ArCrsCombiner::GetAllTuples(
   switch (instruction->opcode()) {
     case HloOpcode::kTuple: {
       return std::vector<HloInstruction*>({instruction});
-    }
-    case HloOpcode::kDomain: {
-      return GetAllTuples(instruction->operands()[0], visited);
     }
     case HloOpcode::kParameter: {
       auto maybe_while = WhileFromBodyParameter(instruction);
@@ -536,6 +539,9 @@ absl::Status ArCrsCombiner::KeepProvablyEqualInstructionGroupsMPMD() {
 
 absl::Status ArCrsCombiner::KeepProvablyEqualInstructionGroupsSPMD(
     HloModule* module) {
+  if (all_reduce_map_.empty()) {
+    return absl::OkStatus();
+  }
   // For SPMD mode, use HloReplicationAnalysis to figure out HLO value
   // equivalence across partitions.
   ABSL_ASSIGN_OR_RETURN(
@@ -641,7 +647,9 @@ absl::StatusOr<bool> ArCrsCombiner::RewriteGraph() {
 absl::StatusOr<bool> ArCrsCombiner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  call_graph_ = CallGraph::Build(module);
+  if (!spmd_partition_) {
+    call_graph_ = CallGraph::Build(module);
+  }
 
   GroupAllReducesById(module);
 
@@ -655,7 +663,7 @@ absl::StatusOr<bool> ArCrsCombiner::RunImpl(
 
   if (module->config().replica_count() > 1 && spmd_partition_) {
     ABSL_ASSIGN_OR_RETURN(auto replaced, ReplaceReplicatedAllReduce(
-                                        module, num_spatial_partitions_));
+                                             module, num_spatial_partitions_));
     changed |= replaced;
   }
 

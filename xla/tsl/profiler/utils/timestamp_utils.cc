@@ -20,11 +20,11 @@ limitations under the License.
 #include <utility>
 
 #include "absl/log/log.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/profiler/utils/xplane_builder.h"
 #include "xla/tsl/profiler/utils/xplane_schema.h"
 #include "xla/tsl/profiler/utils/xplane_utils.h"
 #include "xla/tsl/profiler/utils/xplane_visitor.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace tsl {
 namespace profiler {

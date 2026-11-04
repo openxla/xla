@@ -70,24 +70,6 @@ def MHLO_CustomCallScheduleAttr : EnumAttr<MHLO_Dialect, MHLO_CustomCallSchedule
 }
 
 //===----------------------------------------------------------------------===//
-// Domain Metadata Kind  enum definitions.
-//===----------------------------------------------------------------------===//
-
-// These mirror the XLA FftType proto enum.
-def MHLO_DOMAIN_KIND_SHARDING : I32EnumAttrCase<"sharding", 0>;
-
-def MHLO_DomainKind : I32EnumAttr<"DomainKind",
-    "Kind of domain metatdata attached to an HLO domain.",
-    [MHLO_DOMAIN_KIND_SHARDING]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::mhlo";
-}
-
-def MHLO_DomainKindAttr : EnumAttr<MHLO_Dialect, MHLO_DomainKind, "kind"> {
-  let assemblyFormat = "$value";
-}
-
-//===----------------------------------------------------------------------===//
 // Fast Fourier Transform Type enum definitions.
 //===----------------------------------------------------------------------===//
 
@@ -172,6 +154,7 @@ def MHLO_COMPARISON_TYPE_FLOAT : I32EnumAttrCase<"FLOAT", 1>;
 def MHLO_COMPARISON_TYPE_FLOAT_TOTAL_ORDER : I32EnumAttrCase<"TOTALORDER", 2>;
 def MHLO_COMPARISON_TYPE_SIGNED : I32EnumAttrCase<"SIGNED", 3>;
 def MHLO_COMPARISON_TYPE_UNSIGNED : I32EnumAttrCase<"UNSIGNED", 4>;
+def MHLO_COMPARISON_TYPE_WEAK_ORDER : I32EnumAttrCase<"WEAKORDER", 5>;
 
 def MHLO_ComparisonType : I32EnumAttr<"ComparisonType",
     "Which comparison type to use.",
@@ -180,7 +163,8 @@ def MHLO_ComparisonType : I32EnumAttr<"ComparisonType",
       MHLO_COMPARISON_TYPE_FLOAT,
       MHLO_COMPARISON_TYPE_FLOAT_TOTAL_ORDER,
       MHLO_COMPARISON_TYPE_SIGNED,
-      MHLO_COMPARISON_TYPE_UNSIGNED
+      MHLO_COMPARISON_TYPE_UNSIGNED,
+      MHLO_COMPARISON_TYPE_WEAK_ORDER
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::mhlo";
