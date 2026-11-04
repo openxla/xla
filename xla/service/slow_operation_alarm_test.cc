@@ -27,6 +27,23 @@ limitations under the License.
 namespace xla {
 namespace {
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+
+TEST(SlowOperationAlarmTest, DisabledWithoutPthreads) {
+  bool callback_called = false;
+  {
+    SlowOperationAlarm alarm(absl::ZeroDuration(), [&] {
+      callback_called = true;
+      return "msg";
+    });
+    alarm.cancel();
+    EXPECT_FALSE(alarm.fired());
+  }
+  EXPECT_FALSE(callback_called);
+}
+
+#else
+
 TEST(SlowOperationAlarmTest, MsgFnIsCalledOnlyOnce) {
   absl::Notification alarm_fired;
 
@@ -67,6 +84,8 @@ TEST(SlowOperationAlarmTest, CancelIsNotRacy) {
     unblock_alarm_thread.join();
   }
 }
+
+#endif
 
 }  // namespace
 }  // namespace xla

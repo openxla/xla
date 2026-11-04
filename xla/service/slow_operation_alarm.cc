@@ -91,6 +91,9 @@ void SlowOperationAlarm::AlarmLoop() {
 }
 
 void SlowOperationAlarm::ScheduleAlarm(SlowOperationAlarm* alarm) {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+  return;
+#endif
   absl::call_once(init_flag, [] {
     ready = new absl::CondVar();
     outstanding_alarms = new std::list<SlowOperationAlarm*>();
@@ -104,6 +107,9 @@ void SlowOperationAlarm::ScheduleAlarm(SlowOperationAlarm* alarm) {
 }
 
 void SlowOperationAlarm::UnscheduleAlarm(const SlowOperationAlarm* alarm) {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+  return;
+#endif
   absl::MutexLock lock(mu);
   CHECK(outstanding_alarms != nullptr);
   auto it = absl::c_find(*outstanding_alarms, alarm);
