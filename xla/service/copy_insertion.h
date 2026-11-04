@@ -68,9 +68,14 @@ class CopyInsertion : public HloModulePass {
   // `view_color` is the layout memory space color of view values (address
   // stand ins with no storage of their own that alias their operand 0's
   // buffer, see BufferAssigner::Options::dus_view_color). When set, copy
-  // removal counts the readers of a value's views as uses of that value, so
-  // no producer is merged into the viewed buffer between a view and its
-  // readers.
+  // removal counts the readers of a value's views as uses of that value, and
+  // a write through a view takes a copy of the viewed buffer, shared with the
+  // write back of the written window, that copy removal elides only when the
+  // reads of each side precede the other side's writes through views. This
+  // assumes what the pass that makes views guarantees: a view written through
+  // feeds only its writer, through bitcasts at most, which aliases it to its
+  // output or a top level tuple element; the view's operand 0 is not view
+  // colored; and its window has at most one write back, at the view's offset.
   //
   // TODO(b/80315712): Find a better way to tell whether a fusion can share
   // buffer.

@@ -398,6 +398,9 @@ class CopyRemover {
     // readers of its views (see AddViewUses).
     std::vector<const HloUse*> uses;
 
+    // The windows written in place through views of the value (AddViewUses).
+    std::vector<HloPosition> view_writes;
+
     // next/prev elements in the linked list. The list is circularly linked so
     // these values are never null for elements in the list.
     ValueNode* prev = nullptr;
@@ -409,7 +412,9 @@ class CopyRemover {
   // (BufferAssigner::Options::dus_view_color). A reader of such a value reads
   // the viewed buffer at its own position, so it counts as a use of the
   // viewed value; otherwise a producer merged into that buffer between the
-  // view and its reader would be read through the view.
+  // view and its reader would be read through the view. A write through one
+  // writes the viewed buffer, so merges are ordered against it
+  // (ViewWritesOrdered).
   CopyRemover(const HloModule& module, const HloAliasAnalysis& alias_analysis,
               const AliasInfo* alias_info, HloOrdering* ordering,
               const absl::flat_hash_set<absl::string_view>& execution_threads,
@@ -429,15 +434,18 @@ class CopyRemover {
   // ExtendViewBaseLiveRanges in hlo_live_range.cc).
   //
   // The walk is flat, and correct only under a contract the pass that creates
-  // views enforces: a view colored value never escapes into a tuple, a called
+  // views enforces: a view colored value never escapes into a tuple (except
+  // as the output of a writer through it, whose window is followed), a called
   // computation (while, call, conditional) or an async pair, where the reads
-  // would happen later than the position recorded here; a reader never
-  // writes through it; and its operand 0 is never itself view colored (views
+  // would happen later than the position recorded here; a writer through it
+  // aliases it in place; and its operand 0 is never itself view colored (views
   // are one level deep, so the readers found here read `value`'s own buffer).
-  // A view colored user that is not a bitcast or copy is recorded as a reader
-  // at its own position on purpose: an in place writer through a view is
-  // ordered only when its write is also a dataflow use of the viewed buffer.
   void AddViewUses(const HloValue* value, ValueNode* node);
+
+  // True if merging `src` and `dest` keeps each side's reads before the other's
+  // view writes and lands none in an enclosing root, a while condition's
+  // parameter or a read only input; `pin` pins the orders.
+  bool ViewWritesOrdered(const ValueNode& src, const ValueNode& dest, bool pin);
 
   // Returns true if `use` was synthesized by AddViewUses rather than taken
   // from an HloValue: such a use reads the value through a view, not as the
@@ -577,6 +585,9 @@ class CopyRemover {
   std::deque<HloUse> view_uses_;
   absl::flat_hash_set<const HloUse*> view_uses_by_pointer_;
 };
+
+// True for a constant or an entry parameter that no output aliases.
+bool ValueIsReadOnly(const HloValue& value);
 };  // namespace xla
 
 #endif  // XLA_SERVICE_COPY_REMOVAL_H_

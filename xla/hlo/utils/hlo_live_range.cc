@@ -592,6 +592,21 @@ std::string HloLiveRange::ToString() const {
   return output;
 }
 
+std::vector<const HloInstruction*> InstructionsHoldingOutput(
+    const HloInstruction* instruction, const ShapeIndex& index) {
+  std::vector<const HloInstruction*> holders;
+  if (index.empty()) {
+    holders.push_back(instruction);
+  }
+  for (const HloInstruction* user : instruction->users()) {
+    if (index.size() == 1 && user->opcode() == HloOpcode::kGetTupleElement &&
+        user->tuple_index() == index.front()) {
+      holders.push_back(user);
+    }
+  }
+  return holders;
+}
+
 int64_t ViewExtendedTransitiveUseTime(
     const HloInstruction* view, int64_t view_color,
     const absl::flat_hash_map<const HloInstruction*, int64_t>&
@@ -622,6 +637,16 @@ int64_t ViewExtendedTransitiveUseTime(
         auto user_time_it = instruction_schedule.find(user);
         if (user_time_it != instruction_schedule.end()) {
           use_time = std::max(use_time, user_time_it->second);
+        }
+      }
+      for (const auto& [operand, output] :
+           HloDataflowAnalysis::GetInPlaceInputOutputPairs(user)) {
+        for (const HloInstruction* holder :
+             InstructionsHoldingOutput(user, output)) {
+          if (user->operand(operand.operand_number) == current &&
+              is_view_colored(holder) && visited.insert(holder).second) {
+            worklist.push_back(holder);
+          }
         }
       }
     }
