@@ -338,7 +338,7 @@ TEST(CollectivesFfiTest, GetCommunicatorPropagatesCallbackError) {
   EXPECT_EQ(handle.error().errc(), ErrorCode::kInvalidArgument);
   EXPECT_EQ(handle.error().message(), "invalid communicator group");
 
-  ErrorOr<CommunicatorInfo> info =
+  ErrorOr<CommunicatorWithRankInfo> info =
       Communicator(Api(), &ext)
           .GetCommunicatorWithRankInfo(GroupMode::kCrossReplica, {},
                                        /*communication_id=*/0);
@@ -358,7 +358,7 @@ TEST(CollectivesFfiTest, GetCommunicatorWithRankInfoRequiresMetadataSupport) {
     return static_cast<XLA_FFI_Error*>(nullptr);
   };
 
-  ErrorOr<CommunicatorInfo> info =
+  ErrorOr<CommunicatorWithRankInfo> info =
       Communicator(Api(), &ext)
           .GetCommunicatorWithRankInfo(GroupMode::kCrossReplica, {},
                                        /*communication_id=*/0);
@@ -371,7 +371,7 @@ TEST(CollectivesFfiTest, GetCommunicatorWithRankInfoRequiresMetadataSupport) {
 
 TEST(CollectivesFfiTest, RequestAndGetCommunicatorWithRankInfo) {
   bool called = false;
-  CommunicatorInfo got = {};
+  CommunicatorWithRankInfo got = {};
 
   auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
       [&](Communicator comm) -> Error {
@@ -382,9 +382,10 @@ TEST(CollectivesFfiTest, RequestAndGetCommunicatorWithRankInfo) {
             status.failure()) {
           return status;
         }
-        ErrorOr<CommunicatorInfo> comm_or = comm.GetCommunicatorWithRankInfo(
-            GroupMode::kFlattenedId, {{5, 1, 3}, {2, 0, 4}},
-            /*communication_id=*/7);
+        ErrorOr<CommunicatorWithRankInfo> comm_or =
+            comm.GetCommunicatorWithRankInfo(GroupMode::kFlattenedId,
+                                             {{5, 1, 3}, {2, 0, 4}},
+                                             /*communication_id=*/7);
         if (comm_or.has_error()) {
           return comm_or.error();
         }

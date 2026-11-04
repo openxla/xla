@@ -54,7 +54,7 @@ struct LogicalDeviceInfo {
   int32_t partition_count;
 };
 
-struct CommunicatorInfo {
+struct CommunicatorWithRankInfo {
   XLA_FFI_Communicator* communicator;
   int32_t rank;
   int32_t size;
@@ -139,12 +139,12 @@ class CommunicatorContextBase {
 
   // Returns the handle, rank, and participant counts for the current device's
   // group.
-  StatusOr<CommunicatorInfo> GetCommunicatorWithRankInfo(
+  StatusOr<CommunicatorWithRankInfo> GetCommunicatorWithRankInfo(
       GroupMode group_mode, const std::vector<std::vector<int64_t>>& groups,
       int64_t communication_id) {
     // Before 0.3, the callback fills only the communicator handle.
     if (ext_->extension_base.id.minor_version < 3) {
-      return StatusOr<CommunicatorInfo>(ErrorPolicy::FromErrorCode(
+      return StatusOr<CommunicatorWithRankInfo>(ErrorPolicy::FromErrorCode(
           XLA_FFI_Error_Code_UNIMPLEMENTED,
           "Communicator metadata requires collectives extension 0.3 or newer"));
     }
@@ -156,10 +156,11 @@ class CommunicatorContextBase {
     args.num_groups = raw_groups.size();
     args.communication_id = communication_id;
     if (XLA_FFI_Error* err = ext_->get_communicator(ext_, &args)) {
-      return StatusOr<CommunicatorInfo>(ErrorPolicy::TakeError(api_, err));
+      return StatusOr<CommunicatorWithRankInfo>(
+          ErrorPolicy::TakeError(api_, err));
     }
-    return CommunicatorInfo{args.communicator, args.rank, args.size,
-                            args.local_participant_count};
+    return CommunicatorWithRankInfo{args.communicator, args.rank, args.size,
+                                    args.local_participant_count};
   }
 
   //===--------------------------------------------------------------------===//

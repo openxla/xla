@@ -145,7 +145,7 @@ static XLA_FFI_Collectives_Extension MakeFakeCollectivesExtension(
 
 TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
   bool called = false;
-  CommunicatorInfo got = {};
+  CommunicatorWithRankInfo got = {};
 
   auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
       [&](Communicator comm) -> absl::Status {
@@ -161,7 +161,7 @@ TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
           return handle.status();
         }
         EXPECT_EQ(*handle, kFakeCommunicator);
-        absl::StatusOr<CommunicatorInfo> comm_or =
+        absl::StatusOr<CommunicatorWithRankInfo> comm_or =
             comm.GetCommunicatorWithRankInfo(
                 GroupMode::kFlattenedId, {{2, 0, 1}}, /*communication_id=*/7);
         if (!comm_or.ok()) {
