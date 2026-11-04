@@ -44,8 +44,6 @@ limitations under the License.
 #include "xla/backends/gpu/transforms/priority_fusion.h"
 #include "xla/codegen/tiling/tiled_hlo.h"
 #include "xla/codegen/tiling/tiling_space.h"
-#include "xla/codegen/tiling/symbolic_tile_analysis.h"
-#include "xla/codegen/tiling/tiling_specification.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -692,8 +690,7 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
   // the generic Triton fusion kind. Only claim those: all other
   // kTritonFusionKind fusions are tuned by BlockLevelEmitterBackend.
   if (backend_config.kind() == kTritonFusionKind) {
-    return hlo_query::ContainsInstrWithOpcode(
-        instr.fused_instructions_computation(), {HloOpcode::kRaggedDot});
+    return IsRaggedDotTritonFusion(instr);
   }
 
   if (backend_config.kind() != kTritonGemmFusionKind &&
