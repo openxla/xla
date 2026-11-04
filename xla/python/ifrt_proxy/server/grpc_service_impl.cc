@@ -113,9 +113,40 @@ namespace proxy {
     return xla::ToGrpcStatus(initialization_data.status());
   }
 
+  // The factory can block for minutes, and the read loop below notices a
+  // departed client only after it returns.
+  absl::Notification backend_returned;
+  std::unique_ptr<tsl::Thread> departure_watchdog;
+  if (const absl::Duration timeout = options_.session_teardown_timeout;
+      timeout != absl::InfiniteDuration()) {
+    departure_watchdog.reset(tsl::Env::Default()->StartThread(
+        tsl::ThreadOptions(), "ifrt_session_departure_watchdog",
+        [&backend_returned, context, session_id, timeout] {
+          while (!backend_returned.WaitForNotificationWithTimeout(
+              absl::Milliseconds(100))) {
+            if (!context->IsCancelled()) {
+              continue;
+            }
+            LOG(INFO) << "Client of IFRT session " << session_id
+                      << " left while its backend was being created.";
+            if (timeout == absl::ZeroDuration()) {
+              LOG(QFATAL) << "Exiting since IFRT session ended";
+            }
+            if (!backend_returned.WaitForNotificationWithTimeout(timeout)) {
+              LOG(FATAL) << "Creating the backend of IFRT session "
+                         << session_id << " did not finish within " << timeout
+                         << " after its client left; crashing so that the "
+                            "server can be restarted.";
+            }
+            return;
+          }
+        }));
+  }
   auto backend = backend_factory_(metadata.version(), session_id,
                                   std::move(host_buffer_store),
                                   *std::move(initialization_data));
+  backend_returned.Notify();
+  departure_watchdog.reset();
   if (!backend.ok()) {
     LOG(INFO) << "Creating IFRT backend " << session_id
               << " failed: " << backend.status();

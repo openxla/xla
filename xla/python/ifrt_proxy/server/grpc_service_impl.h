@@ -53,7 +53,8 @@ class GrpcServiceImpl : public grpc::GrpcIfrtService::Service {
           AttributeMap initialization_data)>;
 
   struct Options {
-    // After a client disconnects, maximum time to wait for session teardown.
+    // After a client disconnects, maximum time to wait for session teardown,
+    // or for a backend creation that is still running when the client leaves.
     // There will be a LOG(FATAL) if timeout is exceeded.
     absl::Duration session_teardown_timeout = absl::InfiniteDuration();
   };
