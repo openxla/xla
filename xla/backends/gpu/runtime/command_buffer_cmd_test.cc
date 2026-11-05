@@ -69,6 +69,7 @@ limitations under the License.
 
 namespace xla::gpu {
 
+// Return the default GPU StreamExecutor for device 0.
 static se::StreamExecutor* GpuExecutor() {
   auto name =
       absl::AsciiStrToUpper(PlatformUtil::CanonicalPlatformName("gpu").value());
