@@ -18,7 +18,10 @@ limitations under the License.
 
 #include <cstdint>
 
+#include "absl/status/statusor.h"
 #include "absl/types/span.h"
+#include "xla/literal.h"
+#include "xla/shape.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -27,9 +30,21 @@ namespace shuffle {
 // The mode of a shuffle is the pattern in which it moves the elements of its
 // shuffled dimensions, and the attributes that parameterize the pattern.
 
+// Returns the mode of a shuffle that permutes the shuffled dimensions
+// according to `indices`. See `ShuffleMode::Permute` in `xla_data.proto` for
+// the layout that `indices` is expected to have.
+ShuffleMode Permute(const LiteralSlice& indices);
+
 // Returns the mode of a shuffle that rotates each shuffled dimension to the
 // left by the corresponding entry of `shifts`.
 ShuffleMode Rotate(absl::Span<const int64_t> shifts);
+
+// Returns the indices of permute `mode`. This decodes and copies the indices;
+// prefer `GetPermuteIndicesShape` when only their shape is needed.
+absl::StatusOr<Literal> GetPermuteIndices(const ShuffleMode& mode);
+
+// Returns the shape of the indices of permute `mode`.
+absl::StatusOr<Shape> GetPermuteIndicesShape(const ShuffleMode& mode);
 
 // Returns the normalized shift in `[0, dim_size)`. Returns 0 if `dim_size` is
 // 0, because every rotation of an empty dimension is a no-op.
