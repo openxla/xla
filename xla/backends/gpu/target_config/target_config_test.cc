@@ -18,6 +18,8 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
 #include "absl/status/status.h"
@@ -104,6 +106,62 @@ TEST(TargetConfigTest, CompareEqualFromSameProto) {
   ASSERT_OK_AND_ASSIGN(auto config1, GpuTargetConfig::FromProto(config_proto));
   ASSERT_OK_AND_ASSIGN(auto config2, GpuTargetConfig::FromProto(config_proto));
   EXPECT_THAT(config1, ::testing::Eq(config2));
+}
+
+TEST(TargetConfigTest, MatchesTargetConfigMemoryBusWidth) {
+  const struct {
+    std::optional<int64_t> local_width;
+    std::optional<int64_t> target_width;
+    bool matches;
+  } cases[] = {
+      {std::nullopt, std::nullopt, true},
+      {5120, std::nullopt, true},
+      {0, std::nullopt, true},
+      {std::nullopt, 5120, false},
+      {std::nullopt, 0, false},
+      {5120, 5120, true},
+      {5120, 4096, false},
+      {5120, 0, false},
+      {0, 5120, false},
+      {0, 0, true},
+  };
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(::testing::Message()
+                 << "local=" << ::testing::PrintToString(test_case.local_width)
+                 << ", target="
+                 << ::testing::PrintToString(test_case.target_width));
+    ASSERT_OK_AND_ASSIGN(auto local, GpuTargetConfig::FromProto({}));
+    local.device_description.set_memory_bus_width(test_case.local_width);
+    auto target = local;
+    target.device_description.set_memory_bus_width(test_case.target_width);
+    const auto local_before = local;
+    const auto target_before = target;
+
+    EXPECT_EQ(local.MatchesTargetConfig(target), test_case.matches);
+    EXPECT_EQ(local, local_before);
+    EXPECT_EQ(target, target_before);
+    EXPECT_EQ(local == target, test_case.local_width == test_case.target_width);
+  }
+}
+
+TEST(TargetConfigTest, LegacyTargetStillRequiresOtherFieldsToMatch) {
+  ASSERT_OK_AND_ASSIGN(auto local, GpuTargetConfig::FromProto({}));
+  local.device_description.set_memory_bus_width(5120);
+  local.device_description.set_core_count(80);
+  local.platform_name = "CUDA";
+  local.device_description_str = "test GPU";
+  auto target = local;
+  target.device_description.set_memory_bus_width(std::nullopt);
+  ASSERT_TRUE(local.MatchesTargetConfig(target));
+
+  target.device_description.set_core_count(81);
+  EXPECT_FALSE(local.MatchesTargetConfig(target));
+  target.device_description.set_core_count(80);
+  target.platform_name = "ROCM";
+  EXPECT_FALSE(local.MatchesTargetConfig(target));
+  target.platform_name = "CUDA";
+  target.device_description_str = "different GPU";
+  EXPECT_FALSE(local.MatchesTargetConfig(target));
 }
 
 TEST(TargetConfigTest, GetTargetConfigFromFile) {

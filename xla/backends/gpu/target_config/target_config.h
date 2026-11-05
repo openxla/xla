@@ -66,6 +66,11 @@ struct GpuTargetConfig {
 
   bool operator==(const GpuTargetConfig& other) const;
 
+  // Compares this config with a compilation target, ignoring memory bus width
+  // only when the target omits it. Unlike operator==, this is directional and
+  // preserves compatibility with legacy targets without changing either config.
+  bool MatchesTargetConfig(const GpuTargetConfig& target) const;
+
   std::string ToString() { return ToProto().DebugString(); }
 
   stream_executor::DeviceDescription device_description;
