@@ -103,22 +103,11 @@ class GemmBroadcastFoldingVisitor : public DfsHloRewriteVisitor {
   }
 };
 
-static absl::StatusOr<bool> RunOnComputation(HloComputation* computation) {
+absl::StatusOr<bool> GemmBroadcastFoldingRewriter::RunOnComputation(
+    HloComputation* computation) {
   GemmBroadcastFoldingVisitor visitor;
   ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));
   return visitor.changed();
-}
-
-absl::StatusOr<bool> GemmBroadcastFoldingRewriter::RunImpl(
-    HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  bool changed = false;
-  for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool result, RunOnComputation(computation));
-    changed |= result;
-  }
-  return changed;
 }
 
 }  // namespace gpu
