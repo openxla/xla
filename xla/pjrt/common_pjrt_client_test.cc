@@ -18,15 +18,20 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <ios>
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -38,6 +43,8 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
+#include "xla/pjrt/tiled_linearizer.h"
+#include "xla/pjrt/transpose.h"
 #include "xla/primitive_util.h"
 #include "xla/runtime/device_id.h"
 #include "xla/shape.h"
@@ -353,6 +360,208 @@ TEST(CommonPjRtClientDelinearizeTest,
     ASSERT_OK(col_major_buffer->ToLiteral(&col_major_literal).Await());
     EXPECT_EQ(col_major_literal, expected.Relayout(col_major_device_layout));
   }
+}
+
+// Returns a literal of `shape` holding small integer values (no NaNs), so that
+// literals that round-trip through linearization compare equal.
+Literal MakeLinearizerTestLiteral(const Shape& shape) {
+  Literal literal(shape);
+  primitive_util::ArrayTypeSwitch(
+      [&](auto ptype) {
+        using NativeT = primitive_util::NativeTypeOf<ptype>;
+        absl::Span<NativeT> data = literal.data<NativeT>();
+        for (size_t i = 0; i < data.size(); ++i) {
+          const int value = static_cast<int>(i % 7);
+          if constexpr (ptype == PRED) {
+            data[i] = value % 2 == 1;
+          } else if constexpr (primitive_util::IsComplexType(ptype)) {
+            data[i] = NativeT(value + 1, value - 3);
+          } else if constexpr (primitive_util::IsUnsignedIntegralType(ptype)) {
+            data[i] = static_cast<NativeT>(value);
+          } else {
+            data[i] = static_cast<NativeT>(value - 3);
+          }
+        }
+      },
+      shape.element_type());
+  return literal;
+}
+
+// Returns the byte strides of a dense major-to-minor array of `shape`.
+std::vector<int64_t> MajorToMinorByteStrides(const Shape& shape) {
+  std::vector<int64_t> strides(shape.dimensions().size());
+  int64_t stride = primitive_util::ByteWidth(shape.element_type());
+  for (int64_t i = static_cast<int64_t>(strides.size()) - 1; i >= 0; --i) {
+    strides[i] = stride;
+    stride *= shape.dimensions(i);
+  }
+  return strides;
+}
+
+// Linearizes `literal` into a buffer of `num_bytes` bytes that initially holds
+// copies of `initial_word`, and returns the resulting bytes.
+absl::StatusOr<std::vector<uint8_t>> LinearizeIntoInitializedBuffer(
+    const Literal& literal, const Layout& device_layout, size_t num_bytes,
+    bool set_padding_to_nan,
+    const TiledLinearizer::ParallelismOptions& parallelism_options,
+    uint32_t initial_word) {
+  std::vector<uint32_t> buffer(CeilOfRatio(num_bytes, sizeof(uint32_t)),
+                               initial_word);
+  absl::Span<uint8_t> dest(reinterpret_cast<uint8_t*>(buffer.data()),
+                           num_bytes);
+  ABSL_RETURN_IF_ERROR(TiledLinearizer::LinearizeUsingTransposeInto(
+      dest, literal.untyped_data(), literal.shape(),
+      MajorToMinorByteStrides(literal.shape()), device_layout,
+      set_padding_to_nan, /*dynamic_sizes=*/{}, parallelism_options));
+  return std::vector<uint8_t>(dest.begin(), dest.end());
+}
+
+// Returns the offset of the first byte at which `a` and `b` differ, or
+// `std::nullopt` if they are identical.
+std::optional<size_t> FirstDifference(absl::Span<const uint8_t> a,
+                                      absl::Span<const uint8_t> b) {
+  if (a.size() != b.size()) {
+    return std::min(a.size(), b.size());
+  }
+  const auto mismatch = absl::c_mismatch(a, b);
+  if (mismatch.first == a.end()) {
+    return std::nullopt;
+  }
+  return static_cast<size_t>(mismatch.first - a.begin());
+}
+
+struct LinearizeIntoCase {
+  PrimitiveType type;
+  std::vector<int64_t> dims;
+  std::vector<Tile> tiles;
+  std::vector<int64_t> minor_to_major = {};  // Empty means major-to-minor.
+  int64_t element_size_in_bits = 0;
+};
+
+// `LinearizeUsingTransposeInto` fills only the padding that `TransposePlan`
+// does not write. Checks that together they write every byte of `dest`, by
+// linearizing into buffers that initially hold the padding pattern (which
+// reproduces filling all of `dest` with padding first) or one of two poison
+// patterns: a byte that is left unwritten keeps its initial value and makes the
+// results differ. (Sub-tile packed sub-byte types are transposed into an
+// internal scratch buffer, which MSAN checks instead.)
+TEST(TiledLinearizerTest, LinearizeUsingTransposeIntoWritesEveryByte) {
+  constexpr uint32_t kNanPadWord = 0x7fc07fc0;
+  const Tile k8x128({8, 128});
+  const std::vector<LinearizeIntoCase> cases = {
+      // Rank 0 and 1: the elements are contiguous, only the tail is padding.
+      {F32, {}, {Tile({128})}},
+      {F32, {7}, {Tile({128})}},
+      {BF16, {1025}, {Tile({1024})}},
+      {S8, {130}, {Tile({1024})}},
+      // 1D tiling: each row ends with a partial tile.
+      {F32, {5, 130}, {Tile({128})}},
+      {F32, {3, 2, 127}, {Tile({128})}},
+      {BF16, {3, 300}, {Tile({256})}},
+      // 2D tiling, with and without a partial tile-row (dim0 % t0 != 0) and a
+      // partial tile-column (dim1 % t1 != 0).
+      {F32, {8, 128}, {k8x128}},
+      {F32, {19, 260}, {k8x128}},
+      {F32, {16, 260}, {k8x128}},
+      {F32, {19, 256}, {k8x128}},
+      {F32, {2, 19, 260}, {k8x128}},
+      {S32, {2, 3, 9, 129}, {k8x128}},
+      // 2D tiling without any complete tile, or without elements.
+      {F32, {3, 5}, {k8x128}},
+      {F32, {3, 300}, {k8x128}},
+      {F32, {20, 100}, {k8x128}},
+      {F32, {0, 7}, {k8x128}},
+      // Transposing layouts and other tile shapes.
+      {U32, {300, 260}, {k8x128}, {0, 1}},
+      {F32, {3, 260, 140}, {k8x128}, {1, 2, 0}},
+      {F32, {19, 260}, {Tile({2, 128})}},
+      {F32, {5, 260}, {Tile({4, 128})}},
+      {F32, {6, 260}, {Tile({Tile::kMatchDimension, 128})}},
+      // Sub-tile packing, repacked in place after the transpose.
+      {BF16, {19, 260}, {k8x128, Tile({2, 1})}},
+      {F16, {2, 33, 130}, {Tile({16, 128}), Tile({2, 1})}},
+      {S8, {40, 260}, {Tile({32, 128}), Tile({4, 1})}},
+      {PRED, {40, 129}, {Tile({32, 128}), Tile({4, 1})}},
+      // 8- and 16-byte elements, linearized as 4-byte components.
+      {S64, {}, {Tile({256})}},
+      {U64, {1000}, {Tile({1024})}},
+      {S64, {11, 130}, {k8x128}},
+      {F64, {11, 130}, {k8x128}},
+      {C64, {11, 130}, {k8x128}},
+      {C128, {11, 130}, {k8x128}},
+      // Sub-byte elements: sub-tile packed ones go through a scratch buffer,
+      // the others are packed by `TransposePlan`.
+      {S4, {19, 260}, {k8x128, Tile({8, 1})}, {}, 4},
+      {U4, {2, 9, 129}, {k8x128, Tile({8, 1})}, {}, 4},
+      {S4, {7}, {Tile({1024})}, {}, 4},
+      {U4, {5, 130}, {Tile({128})}, {}, 4},
+      // Large enough for `TransposePlan` to split the work into chunks.
+      {F32, {2, 1030, 260}, {k8x128}},
+  };
+  TiledLinearizer::ParallelismOptions serial;
+  TiledLinearizer::ParallelismOptions parallel;
+  parallel.max_parallelism = 4;
+  int max_chunks = 1;
+  parallel.run_plan = [&max_chunks](const TransposePlan& plan, const void* a,
+                                    void* b) {
+    max_chunks = std::max(max_chunks, plan.Parallelism());
+    plan.Execute(a, b);
+  };
+  for (const LinearizeIntoCase& c : cases) {
+    const Shape host_shape = ShapeUtil::MakeShape(c.type, c.dims);
+    const Layout device_layout = LayoutUtil::MakeLayout(
+        c.minor_to_major.empty() ? host_shape.layout().minor_to_major()
+                                 : absl::MakeConstSpan(c.minor_to_major),
+        c.tiles, /*tail_padding_alignment_in_elements=*/1,
+        /*index_primitive_type=*/PRIMITIVE_TYPE_INVALID,
+        /*pointer_primitive_type=*/PRIMITIVE_TYPE_INVALID,
+        c.element_size_in_bits);
+    Shape device_shape = host_shape;
+    *device_shape.mutable_layout() = device_layout;
+    const size_t array_bytes =
+        RoundUpTo<size_t>(ShapeUtil::ArraySize(device_shape), sizeof(uint32_t));
+    const Literal literal = MakeLinearizerTestLiteral(host_shape);
+    for (size_t tail_bytes : {0, 2048}) {
+      for (bool set_padding_to_nan : {false, true}) {
+        for (const TiledLinearizer::ParallelismOptions* parallelism :
+             {&serial, &parallel}) {
+          SCOPED_TRACE(::testing::Message()
+                       << ShapeUtil::HumanStringWithLayout(device_shape)
+                       << " tail_bytes=" << tail_bytes
+                       << " set_padding_to_nan=" << set_padding_to_nan
+                       << " max_parallelism=" << parallelism->max_parallelism);
+          const size_t num_bytes = array_bytes + tail_bytes;
+          ASSERT_OK_AND_ASSIGN(
+              std::vector<uint8_t> expected,
+              LinearizeIntoInitializedBuffer(
+                  literal, device_layout, num_bytes, set_padding_to_nan,
+                  *parallelism, set_padding_to_nan ? kNanPadWord : 0));
+          for (uint32_t poison : {0xa5a5a5a5u, 0x5a5a5a5au}) {
+            ASSERT_OK_AND_ASSIGN(std::vector<uint8_t> actual,
+                                 LinearizeIntoInitializedBuffer(
+                                     literal, device_layout, num_bytes,
+                                     set_padding_to_nan, *parallelism, poison));
+            const std::optional<size_t> diff =
+                FirstDifference(actual, expected);
+            EXPECT_FALSE(diff.has_value())
+                << "byte " << diff.value_or(0) << " of " << num_bytes
+                << " was not written (initial word 0x" << std::hex << poison
+                << ")";
+          }
+          if (tail_bytes == 0) {
+            Literal round_trip(host_shape);
+            EXPECT_THAT(
+                TiledLinearizer::Delinearize(
+                    host_shape, expected, device_layout, &round_trip, serial),
+                IsOk());
+            EXPECT_EQ(round_trip, literal);
+          }
+        }
+      }
+    }
+  }
+  // Some case must have been split into several chunks.
+  EXPECT_GT(max_chunks, 1);
 }
 
 // NOLINTBEGIN(misc-include-cleaner): benchmark/benchmark.h is the public
