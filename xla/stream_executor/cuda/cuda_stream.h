@@ -70,6 +70,9 @@ class CudaStream : public StreamCommon {
                       uint64_t size) override;
   absl::Status Memcpy(DeviceAddressBase* gpu_dst,
                       const DeviceAddressBase& gpu_src, uint64_t size) override;
+  absl::Status Memcpy2D(DeviceAddressBase* gpu_dst, uint64_t dst_pitch,
+                        const DeviceAddressBase& gpu_src, uint64_t src_pitch,
+                        uint64_t width, uint64_t height) override;
   absl::Status DoHostCallbackWithStatus(
       absl::AnyInvocable<absl::Status() &&> callback) override;
   absl::Status DoHostCallbackWithStatus(
