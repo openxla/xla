@@ -3372,6 +3372,7 @@ GetMeshAxesPartitionGroupsAcrossTargetDims(
   if (axis_refs.empty()) {
     return std::nullopt;
   }
+  MergeAxes(axis_refs, mesh);
   return MeshAxesReplicaGroupList(mesh, axis_refs);
 }
 
