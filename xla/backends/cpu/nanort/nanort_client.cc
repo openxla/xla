@@ -90,6 +90,7 @@ absl::StatusOr<std::unique_ptr<NanoRtExecutable>> NanoRtClient::Compile(
                                   optimized_hlo_program_shape);
 }
 
+// Export the compiled CPU executable for AOT serialization.
 absl::StatusOr<std::unique_ptr<CompiledModule>> NanoRtClient::Export(
     NanoRtExecutable* executable) {
   cpu::CpuCompiler compiler;

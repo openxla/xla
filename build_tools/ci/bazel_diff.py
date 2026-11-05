@@ -476,9 +476,11 @@ def dict_to_cli_options(options_dict: Any) -> List[str]:
 def get_cquery_command_options(build: BuildConfig) -> List[str]:
   """Extracts --config, tag/universe filters, --repo_env, and build flags."""
   options = [f"--config={config}" for config in build.configs]
-  tag_filters = ",".join(build.build_tag_filters)
-  if tag_filters:
-    options.append(f"--build_tag_filters={tag_filters}")
+  if build.build_tag_filters:
+    effective_tag_filters = list(build.build_tag_filters)
+    if "-manual" not in effective_tag_filters:
+      effective_tag_filters.append("-manual")
+    options.append(f"--build_tag_filters={','.join(effective_tag_filters)}")
   universe_scope = ",".join(build.target_patterns)
   if universe_scope:
     options.append(f"--universe_scope={universe_scope}")
@@ -653,6 +655,21 @@ def compute_impacted_targets(
 
   if head_sha == "HEAD":
     head_sha = original_head
+  else:
+    merge_first_parent = change_detector.get_merge_commit_first_parent(
+        original_head, head_sha, cwd=workspace_dir
+    )
+    if merge_first_parent:
+      logging.info(
+          "Checked-out HEAD %s merges %s into %s; diffing against first"
+          " parent %s",
+          original_head,
+          head_sha,
+          merge_first_parent,
+          merge_first_parent,
+      )
+      base_sha = merge_first_parent
+      head_sha = original_head
 
   change_detector.ensure_base_fetched(base_sha, head_sha, cwd=workspace_dir)
 

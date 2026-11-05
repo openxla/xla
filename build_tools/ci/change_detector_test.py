@@ -366,6 +366,55 @@ class ChangeDetectorTest(parameterized.TestCase):
   @mock.patch.object(
       change_detector, "get_changed_files", autospec=True, spec_set=True
   )
+  @mock.patch.object(
+      change_detector, "run_git_best_effort", autospec=True, spec_set=True
+  )
+  def test_evaluate_skip_pr_merge_commit_diffs_against_first_parent(
+      self, mock_git, mock_changed, mock_fetch
+  ):
+    mock_git.side_effect = [
+        subprocess.CompletedProcess(
+            args=["git", "rev-parse", "HEAD"],
+            returncode=0,
+            stdout="merge_commit_sha\n",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "cat-file", "-p", "merge_commit_sha"],
+            returncode=0,
+            stdout=(
+                "tree 1111111111111111111111111111111111111111\n"
+                "parent main_first_parent_sha\n"
+                "parent pr_head_sha\n"
+                "\n"
+                "Merge pr_head_sha into main_first_parent_sha\n"
+            ),
+        ),
+    ]
+    mock_changed.return_value = ["README.md"]
+    decision = change_detector.evaluate_skip(
+        "stale_base_sha",
+        "pr_head_sha",
+        cwd="/workspace/openxla/xla",
+        is_jax_build=False,
+    )
+    self.assertTrue(decision.should_skip)
+    mock_fetch.assert_called_once_with(
+        "main_first_parent_sha",
+        "merge_commit_sha",
+        cwd="/workspace/openxla/xla",
+    )
+    mock_changed.assert_called_once_with(
+        "main_first_parent_sha",
+        "merge_commit_sha",
+        cwd="/workspace/openxla/xla",
+    )
+
+  @mock.patch.object(
+      change_detector, "ensure_base_fetched", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "get_changed_files", autospec=True, spec_set=True
+  )
   def test_evaluate_skip_git_fail_open(self, mock_changed, mock_fetch):
     mock_changed.side_effect = OSError("git failure")
     decision = change_detector.evaluate_skip(
