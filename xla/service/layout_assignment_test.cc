@@ -3670,6 +3670,42 @@ ENTRY main {
   ASSERT_OK(verifier.Run(module.get()).status());
 }
 
+TEST_F(LayoutAssignmentTest, AsyncStartPropagatesRank1LayoutToParameter) {
+  // Operand constraints on rank 1 operands are not propagated back to their
+  // defining buffers, so the caller's tiled layout must reach the async
+  // parameter directly.
+  const char* hlo = R"hlo(
+HloModule AsyncStartPropagatesRank1LayoutToParameter,
+  entry_computation_layout={(f32[256]{0:T(128)})->f32[256]{0:T(128)}}
+
+body {
+  p = f32[256] parameter(0)
+  ROOT op = f32[256] negate(p)
+}
+
+ENTRY main {
+  input = f32[256]{0:T(128)} parameter(0)
+  start = ((f32[256]), f32[256], s32[]) async-start(input), calls=body
+  ROOT done = f32[256] async-done(start)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  LayoutAssignment assignment(module->mutable_entry_computation_layout());
+  ASSERT_OK(assignment.Run(module.get()).status());
+
+  const HloComputation* body = module->GetComputationWithName("body");
+  ASSERT_NE(body, nullptr);
+  const HloInstruction* input =
+      module->entry_computation()->parameter_instruction(0);
+  EXPECT_EQ(body->parameter_instruction(0)->shape().layout(),
+            input->shape().layout());
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kCopy), nullptr);
+
+  HloVerifier verifier(/*layout_sensitive=*/true,
+                       /*allow_mixed_precision=*/false);
+  ASSERT_OK(verifier.Run(module.get()).status());
+}
+
 TEST_F(LayoutAssignmentTest, AsyncParameterConstraintDoesNotPropagateToRoot) {
   const char* hlo = R"hlo(
 HloModule AsyncParameterConstraintDoesNotPropagateToRoot,

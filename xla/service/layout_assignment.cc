@@ -2523,7 +2523,10 @@ absl::Status LayoutAssignment::PropagateAcrossEdge(
   // single root. When a parameter feeds the root, redirect to an operand
   // constraint on the root. The parameter buffers then follow the root's
   // accepted operand layouts.
+  // Rank <= 1 shapes are constrained directly instead, because operand
+  // constraints on them are never propagated back to the parameter buffers.
   bool redirect_to_root = dst_instruction->opcode() == HloOpcode::kParameter &&
+                          !IsAtMostRank1(dst_instruction->shape()) &&
                           IsSingleInstructionAsyncComputation(computation) &&
                           root->IsUserOf(dst_instruction);
 
