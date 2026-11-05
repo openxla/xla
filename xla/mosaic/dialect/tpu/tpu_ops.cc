@@ -2492,9 +2492,10 @@ LogicalResult verifyCommonDmaParams(
                "Not implemented: only support priority 0 or 1, but got ")
            << priority;
   }
-  if (priority != 0 && is_remote) {
+  if (priority != 0 && (is_remote || (!is_sc && source_sem != nullptr))) {
     return op->emitOpError(
-        "Not implemented: non-zero priority is not supported for remote DMA");
+        "Not implemented: non-zero priority is not supported for DMA with "
+        "source semaphore (e.g. remote DMA)");
   }
   if (source_sem &&
       getRefCoreType(source_sem).value_or(issuing_core) != issuing_core) {
@@ -2585,11 +2586,6 @@ LogicalResult EnqueueDMAOp::verify() {
   } else {
     if (getTargetSemaphore() == nullptr) {
       return emitOpError("DMA target semaphore must be specified");
-    }
-    if (!is_remote && getSourceSemaphore() != nullptr) {
-      return emitOpError(
-          "DMA destination device_id or core_id must be specified when source "
-          "semaphore is specified");
     }
   }
 
@@ -2716,11 +2712,6 @@ LogicalResult WaitDMAOp::verify() {
     if (wait_destination) {
       if (getTargetSemaphore() == nullptr) {
         return emitOpError("DMA target semaphore must be specified");
-      }
-      if (!is_remote && getSourceSemaphore() != nullptr) {
-        return emitOpError(
-            "DMA destination device_id or core_id must be specified when "
-            "source semaphore is specified");
       }
     } else {
       if (getSourceSemaphore() == nullptr) {
