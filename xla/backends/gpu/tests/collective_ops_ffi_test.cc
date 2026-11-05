@@ -62,7 +62,6 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/literal.h"
 #include "xla/runtime/device_id.h"
-#include "xla/service/device_assignment.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/rendezvous.h"
 #include "xla/status_macros.h"
@@ -333,7 +332,8 @@ std::vector<std::vector<int64_t>> PublicApiReplicaGroups() {
 // Prepare handler: requests the XLA-owned collective clique via the public
 // collectives FFI extension, using the C++ Communicator wrapper.
 absl::Status PreparePublicApiAllReduce(ffi::Communicator comm) {
-  return comm.RequestCommunicator(ffi::GroupMode::kFlattenedId, {{1, 0}},
+  return comm.RequestCommunicator(ffi::GroupMode::kFlattenedId,
+                                  PublicApiReplicaGroups(),
                                   /*communication_id=*/0);
 }
 
@@ -342,18 +342,30 @@ absl::Status PreparePublicApiAllReduce(ffi::Communicator comm) {
 // library (see CommunicatorAllReduceU32).
 absl::Status PublicApiAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
                                 ffi::Result<ffi::BufferR0<U32>> dst,
-                                ffi::Communicator comm,
-                                const XLA_FFI_Collectives_Extension* extension,
-                                const CollectiveParams* collective_params) {
+                                ffi::Communicator comm) {
+  ABSL_ASSIGN_OR_RETURN(XLA_FFI_Communicator * communicator,
+                        comm.GetCommunicator(ffi::GroupMode::kFlattenedId,
+                                             PublicApiReplicaGroups(),
+                                             /*communication_id=*/0));
+  TF_RET_CHECK(communicator != nullptr);
+  return CommunicatorAllReduceU32(
+      stream, communicator, src.device_memory().opaque(),
+      dst->device_memory().opaque(), src.element_count());
+}
+
+absl::Status PreparePublicApiCommunicatorRank(ffi::Communicator comm) {
+  return comm.RequestCommunicator(ffi::GroupMode::kFlattenedId, {{1, 0}},
+                                  /*communication_id=*/0);
+}
+
+absl::Status CheckPublicApiCommunicatorRank(
+    se::Stream* stream, ffi::Result<ffi::BufferR0<S32>> rank,
+    ffi::Communicator comm, const XLA_FFI_Collectives_Extension* extension) {
   ABSL_ASSIGN_OR_RETURN(
       ffi::CommunicatorWithRankInfo info,
       comm.GetCommunicatorWithRankInfo(ffi::GroupMode::kFlattenedId, {{1, 0}},
                                        /*communication_id=*/0));
-  ABSL_ASSIGN_OR_RETURN(DeviceAssignment::LogicalID logical_id,
-                        collective_params->device_assn->LogicalIdForDevice(
-                            collective_params->global_device_id));
   TF_RET_CHECK(info.communicator != nullptr);
-  EXPECT_EQ(info.rank, kNumReplicas - 1 - logical_id.replica_id);
   EXPECT_EQ(info.size, kNumReplicas);
 
   const int64_t ids[] = {1, 0};
@@ -383,9 +395,9 @@ absl::Status PublicApiAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
                   absl::StatusCode::kInvalidArgument,
                   ::testing::HasSubstr(
                       "Unexpected XLA_FFI_Communicator_Get_Args size")));
-  return CommunicatorAllReduceU32(
-      stream, info.communicator, src.device_memory().opaque(),
-      dst->device_memory().opaque(), src.element_count());
+  se::DeviceAddressBase output = rank->device_memory();
+  return stream->Memset32(&output, static_cast<uint32_t>(info.rank),
+                          output.size());
 }
 
 absl::Status PreparePublicApiWindow(ffi::BufferR0<U32> src,
@@ -948,9 +960,19 @@ XLA_FFI_DEFINE_HANDLER(kPublicApiAllReduce, PublicApiAllReduce,
                            .Ctx<ffi::Stream>()
                            .Arg<ffi::BufferR0<U32>>()  // src
                            .Ret<ffi::BufferR0<U32>>()  // dst
+                           .Ctx<ffi::Extension<ffi::Collectives>>());
+
+XLA_FFI_DEFINE_HANDLER(
+    kPreparePublicApiCommunicatorRank, PreparePublicApiCommunicatorRank,
+    ffi::Ffi::BindPrepare().Ctx<ffi::Extension<ffi::Collectives>>());
+
+XLA_FFI_DEFINE_HANDLER(kCheckPublicApiCommunicatorRank,
+                       CheckPublicApiCommunicatorRank,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::Stream>()
+                           .Ret<ffi::BufferR0<S32>>()
                            .Ctx<ffi::Extension<ffi::Collectives>>()
-                           .Ctx<ffi::Extension<RawCollectives>>()
-                           .Ctx<ffi::CollectiveParams>());
+                           .Ctx<ffi::Extension<RawCollectives>>());
 
 XLA_FFI_DEFINE_HANDLER(kPreparePublicApiWindow, PreparePublicApiWindow,
                        ffi::Ffi::BindPrepare()
@@ -1150,6 +1172,15 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
                              /*prepare=*/kPreparePublicApiAllReduce,
                              /*initialize=*/nullptr,
                              /*execute=*/kPublicApiAllReduce,
+                         });
+
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
+                         "__xla_test$$public_api_communicator_rank", "gpu",
+                         XLA_FFI_Handler_Bundle{
+                             /*instantiate=*/nullptr,
+                             /*prepare=*/kPreparePublicApiCommunicatorRank,
+                             /*initialize=*/nullptr,
+                             /*execute=*/kCheckPublicApiCommunicatorRank,
                          });
 
 // Register handler bundle for the public collectives FFI window test.
@@ -1453,6 +1484,34 @@ TEST_F(CollectiveOpsTestFFI, PublicApiAllReduce) {
   const uint32_t expected = kNumReplicas * (kNumReplicas - 1) / 2;
   for (int i = 0; i < kNumReplicas; ++i) {
     LiteralTestUtil::ExpectR0Equal<uint32_t>(expected, results[i]);
+  }
+}
+
+TEST_F(CollectiveOpsTestFFI, PublicApiCommunicatorRankWithReversedGroup) {
+  if (device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << device_count() << " available)";
+  }
+
+  constexpr absl::string_view hlo_string = R"hlo(
+      HloModule m, replica_count=2
+      ENTRY test_computation {
+        ROOT rank = s32[] custom-call(),
+          custom_call_target="__xla_test$$public_api_communicator_rank",
+          api_version=API_VERSION_TYPED_FFI
+      }
+    )hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo_string, kNumReplicas));
+  ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                       ExecuteReplicated(std::move(module),
+                                         /*arguments=*/std::vector<Literal*>(),
+                                         /*run_hlo_passes=*/false));
+  ASSERT_EQ(execution_result.results.size(), kNumReplicas);
+  for (int32_t replica = 0; replica < kNumReplicas; ++replica) {
+    LiteralTestUtil::ExpectR0Equal<int32_t>(kNumReplicas - 1 - replica,
+                                            execution_result.results[replica]);
   }
 }
 
