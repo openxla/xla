@@ -225,7 +225,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_hlo_evaluator_use_fast_path(false);
   opts.set_xla_llvm_enable_alias_scope_metadata(true);
   opts.set_xla_llvm_enable_noalias_metadata(true);
-  opts.set_xla_llvm_enable_invariant_load_metadata(true);
   opts.set_xla_llvm_disable_expensive_passes(false);
   opts.set_xla_backend_optimization_level(3);
   opts.set_xla_gpu_autotune_level(4);
@@ -421,7 +420,6 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_triton_gemm_any(true);
   opts.set_xla_gpu_experimental_gemm_fusion_v2(true);
   opts.set_xla_gpu_verify_triton_fusion_numerics(false);
-  opts.set_xla_gpu_experimental_enable_tiling_propagation(true);
   opts.set_xla_gpu_experimental_cost_model_gemm_tiling_default(false);
 
   // Moving reduce-scatter out of while loops can increase memory footprint, so
@@ -441,6 +439,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_collect_cost_model_stats(false);
   opts.set_xla_gpu_cublas_fallback(true);
   opts.set_xla_gpu_cudnn_gemm_fusion_level(0);
+  opts.set_xla_gpu_cudnn_non_gemm_fusion_level(0);
   opts.set_xla_gpu_enable_while_loop_double_buffering(false);
   opts.set_xla_gpu_enable_while_loop_unrolling(
       DebugOptions::WHILE_LOOP_UNROLLING_AUTO_UNROLL);
@@ -1512,13 +1511,9 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_llvm_enable_noalias_metadata(),
       "In LLVM-based backends, enable the emission of !noalias metadata in the "
       "generated IR."));
-  flag_list->push_back(tsl::Flag(
-      "xla_llvm_enable_invariant_load_metadata",
-      bool_setter_for(
-          &DebugOptions::set_xla_llvm_enable_invariant_load_metadata),
-      debug_options->xla_llvm_enable_invariant_load_metadata(),
-      "In LLVM-based backends, enable the emission of !invariant.load metadata "
-      "in the generated IR."));
+  flag_list->push_back(tsl::Flag("xla_llvm_enable_invariant_load_metadata",
+                                 noop_flag_setter<bool>, false,
+                                 "[Deprecated, do not use]"));
   flag_list->push_back(tsl::Flag(
       "xla_llvm_disable_expensive_passes",
       bool_setter_for(&DebugOptions::set_xla_llvm_disable_expensive_passes),
@@ -2906,6 +2901,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_cudnn_gemm_fusion_level(),
       "cuDNN GEMM fusion level; higher level corresponds to more kinds of "
       "fused operations."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_cudnn_non_gemm_fusion_level",
+      int32_setter_for(&DebugOptions::set_xla_gpu_cudnn_non_gemm_fusion_level),
+      debug_options->xla_gpu_cudnn_non_gemm_fusion_level(),
+      "Lets cuDNN compile non-GEMM fusions. Current levels: 0: Disabled. 1: "
+      "Compile pointwise fusions with cuDNN."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_mock_custom_calls",
                 bool_setter_for(&DebugOptions::set_xla_gpu_mock_custom_calls),
@@ -4108,6 +4109,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "If true, require that BlasLt matmuls execute the exact algorithm "
       "described by BlasLtMatmulAlgorithmProto rather than falling back to the "
       "heuristic algorithm index."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_enable_horizontal_fusion",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_enable_horizontal_fusion),
+      debug_options->xla_gpu_experimental_enable_horizontal_fusion(),
+      "Enable experimental thread-block specialized horizontal fusion of "
+      "independent small-grid GPU kernels."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

@@ -105,12 +105,12 @@ func.func @main(%arg0: !array, %arg1: !array {ifrt.donated}) -> (!array, !array)
 }
 
 
-def IfrtMergeCopiesAndReshardsPass :
-    Pass<"ifrt-merge-copies-and-reshards", "mlir::func::FuncOp"> {
-  let summary = "Merge copies and reshards into a single op.";
+def IfrtMergeOpsPass :
+    Pass<"ifrt-merge-ops", "mlir::func::FuncOp"> {
+  let summary = "Merge compatible CopyArrays, Reshard, and BitcastArrays ops.";
   let description = [{
-Merges copies and reshards from a source op which flow into the same destination
-op, ignoring control dependencies.
+Merges compatible `ifrt.CopyArrays`, `ifrt.Reshard`, and `ifrt.BitcastArrays`
+ops while respecting dominance order, ignoring control dependencies.
 
 E.g.
 
@@ -251,7 +251,26 @@ func.func @main(%arg0: !array0, %arg1: !array1) -> (!array1, !array2)
   return %0, %1: !array1, !array2
 }
 ```
+
+By default (`on-remaining-reshards=none`), this pass does not check for
+remaining `ifrt.Reshard` ops after conversion. Set
+`on-remaining-reshards=warning` to emit a warning for each remaining
+`ifrt.Reshard` op, or `on-remaining-reshards=error` to emit an error and fail.
   }];
+  let options = [
+    Option<"on_remaining_reshards", "on-remaining-reshards",
+           "xla::ifrt::ReshardOpAction",
+           /*default=*/"xla::ifrt::ReshardOpAction::kNone",
+           "Action to take if `ifrt.Reshard` ops remain after conversion.",
+           [{::llvm::cl::values(
+               clEnumValN(xla::ifrt::ReshardOpAction::kNone, "none",
+                          "Do nothing (do not check for remaining reshards)."),
+               clEnumValN(xla::ifrt::ReshardOpAction::kWarning, "warning",
+                          "Emit a warning if reshards remain."),
+               clEnumValN(xla::ifrt::ReshardOpAction::kError, "error",
+                          "Emit an error and fail if reshards remain.")
+           )}]>,
+  ];
 }
 
 def IfrtDumpAtomProgramsPass
@@ -268,6 +287,19 @@ The pass dumps:
     Option<"dump_dir", "dump_dir", "std::string", "",
            "The directory to dump the atom programs and the main function to.">,
   ];
+}
+
+def IfrtCopyConstantsPass :
+    Pass<"ifrt-copy-constants", "mlir::ModuleOp"> {
+  let summary = "Copies constants produced in one atom program to their consumers.";
+  let description = [{
+Copies `ConstantLike` ops returned by producer `ifrt.Call` atom programs into
+consumer `ifrt.Call` atom programs, tracing across zero or more `ifrt.Reshard`
+or `ifrt.CopyArrays` ops.
+
+Note: this pass does not clean up dead arguments, results, or transfers left
+behind after copying constants.
+  }];
 }
 
 #endif  // XLA_PYTHON_IFRT_IR_IMPORT_PASSES_TD_
