@@ -42,7 +42,11 @@ class MemorySpacePropagation : public HloModulePass {
 
   // Propagates the memory space (and associated split config) in the layout to
   // a given fusion computation. Returns true if the computation is modified.
-  bool RunOnComputation(HloComputation* computation);
+  // If `output_shape` is set, the root is propagated from it after the
+  // parameters, as Run does with the calling fusion's shape, so the output
+  // memory space wins on a root element that forwards a parameter.
+  bool RunOnComputation(HloComputation* computation,
+                        const Shape* output_shape = nullptr);
 
  protected:
   absl::StatusOr<bool> RunImpl(

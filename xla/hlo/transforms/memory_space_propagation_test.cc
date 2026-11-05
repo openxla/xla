@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/hlo/transforms/memory_space_propagation.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <memory>
@@ -22,6 +23,7 @@ limitations under the License.
 
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -596,6 +598,61 @@ TEST_F(MemorySpacePropagationTest, RunOnComputationPropagateFromOutput) {
   TF_ASSERT_OK_AND_ASSIGN(auto ref,
                           ParseAndReturnVerifiedModule(expected_hlo_string));
   EXPECT_EQ(absl::HashOf(*module), absl::HashOf(*ref));
+}
+
+// With the calling fusion's output shape, RunOnComputation propagates the
+// output memory space after the parameters, as Run does. The root element {0}
+// forwards %p0, so it and %p0 end up in the output's memory space S(1).
+TEST_F(MemorySpacePropagationTest,
+       RunOnComputationOutputShapeWinsOnForwardedTupleRootParameter) {
+  absl::string_view hlo_string = R"(
+    HloModule ForwardedTupleRoot
+
+    %fused_computation {
+      %p0 = s32[6]{0:T(128)} parameter(0)
+      %p1 = s32[6]{0:T(128)} parameter(1)
+      %neg = s32[6]{0:T(128)} negate(%p1)
+      ROOT %root = (s32[6]{0:T(128)}, s32[6]{0:T(128)}) tuple(%p0, %neg)
+    }
+    ENTRY %entry {
+      %param0 = s32[6]{0:T(128)} parameter(0)
+      %param1 = s32[6]{0:T(128)} parameter(1)
+      ROOT %fusion = (s32[6]{0:T(128)S(1)}, s32[6]{0:T(128)}) fusion(%param0, %param1), kind=kLoop, calls=%fused_computation
+    }
+  )";
+  absl::string_view expected_hlo_string = R"(
+    HloModule ForwardedTupleRoot
+
+    %fused_computation {
+      %p0 = s32[6]{0:T(128)S(1)} parameter(0)
+      %p1 = s32[6]{0:T(128)} parameter(1)
+      %neg = s32[6]{0:T(128)} negate(%p1)
+      ROOT %root = (s32[6]{0:T(128)S(1)}, s32[6]{0:T(128)}) tuple(%p0, %neg)
+    }
+    ENTRY %entry {
+      %param0 = s32[6]{0:T(128)} parameter(0)
+      %param1 = s32[6]{0:T(128)} parameter(1)
+      ROOT %fusion = (s32[6]{0:T(128)S(1)}, s32[6]{0:T(128)}) fusion(%param0, %param1), kind=kLoop, calls=%fused_computation
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  auto dataflow_analysis = GetDataflowAnalysis(*module);
+  MemorySpacePropagation memory_space_propagation(std::move(dataflow_analysis));
+  HloComputation* computation =
+      module->GetComputationWithName("fused_computation");
+  ASSERT_NE(computation, nullptr);
+  EXPECT_TRUE(memory_space_propagation.RunOnComputation(
+      computation, &computation->FusionInstruction()->shape()));
+  ASSERT_OK_AND_ASSIGN(auto ref,
+                       ParseAndReturnVerifiedModule(expected_hlo_string));
+  EXPECT_EQ(absl::HashOf(*module), absl::HashOf(*ref));
+
+  // Run yields the same fused computation.
+  ASSERT_OK_AND_ASSIGN(auto run_module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  EXPECT_THAT(MemorySpacePropagation().Run(run_module.get()),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_EQ(absl::HashOf(*run_module), absl::HashOf(*ref));
 }
 
 // This test tests that the memory space propagation works correctly when there
