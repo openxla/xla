@@ -91,6 +91,7 @@ TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotFusion) {
       bool changed,
       RaggedDotRewriter(GetCudaComputeCapability(),
                         kMinCudnnVersionForRaggedDotFusion,
+                        se::SemanticVersion{0, 0, 0},
                         [](const HloInstruction*) { return Decision::Allow(); })
           .Run(module.get()));
   EXPECT_FALSE(changed);
@@ -148,7 +149,7 @@ TEST_F(RaggedDotRewriterTest, RewriteIfPreAmpereForRaggedDotFusion) {
       bool changed,
       RaggedDotRewriter(
           se::CudaComputeCapability{se::CudaComputeCapability::kVolta, 0},
-          kMinCudnnVersionForRaggedDotFusion,
+          kMinCudnnVersionForRaggedDotFusion, se::SemanticVersion{0, 0, 0},
           [&](const HloInstruction*) {
             ++calls;
             return Decision::Allow();
@@ -182,6 +183,7 @@ TEST_F(RaggedDotRewriterTest, RewriteIfCudnnVersionTooOldForRaggedDotFusion) {
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(GetCudaComputeCapability(), se::dnn::VersionInfo{9, 21},
+                        se::SemanticVersion{0, 0, 0},
                         [&](const HloInstruction*) {
                           ++calls;
                           return Decision::Allow();
@@ -243,9 +245,12 @@ TEST_F(RaggedDotRewriterTest, RaggedDotWgradFusionGate) {
     module->mutable_config()
         .mutable_debug_options()
         .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
-    ASSERT_OK_AND_ASSIGN(
-        bool changed,
-        RaggedDotRewriter(tc.cc, tc.cudnn, tc.toolkit).Run(module.get()));
+    ASSERT_OK_AND_ASSIGN(bool changed,
+                         RaggedDotRewriter(tc.cc, tc.cudnn, tc.toolkit,
+                                           [](const HloInstruction*) {
+                                             return Decision::Allow();
+                                           })
+                             .Run(module.get()));
     EXPECT_EQ(changed, tc.expected_changed);
   }
   EXPECT_FALSE(SupportsCudnnRaggedDotWgrad(

@@ -51,7 +51,7 @@ Decision IsRaggedDotSupportedByCuDnn(
   // Resolve the cuDNN handle the same way CuDnnFusionCompiler will: this honors
   // xla_gpu_cudnn_deviceless_compilation_mode (e.g. forced deviceless) and
   // returns nullptr for deviceless compilation.
-  absl::StatusOr<stream_executor::dnn::DnnSupport* absl_nullable> dnn_support =
+  absl::StatusOr<stream_executor::dnn::DnnSupport * absl_nullable> dnn_support =
       ResolveCudnnSupport(debug_options, stream_exec,
                           device_description.dnn_version());
   if (!dnn_support.ok()) {
