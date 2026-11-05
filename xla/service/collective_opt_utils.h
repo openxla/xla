@@ -161,6 +161,35 @@ struct CollectiveUsers {
   HloInstruction* reshape = nullptr;
 };
 
+// The blocks of a dynamic-slice of an all-reduce result that the devices of
+// each replica group receive. The dynamic-slice may slice several dimensions;
+// blocks are numbered in row-major order over the sliced dimensions.
+struct SliceBlockAssignment {
+  // Dimensions whose slice size is smaller than the operand size, increasing.
+  std::vector<int64_t> split_dims;
+  // Operand size divided by slice size, for each dimension in `split_dims`.
+  std::vector<int64_t> blocks_per_split_dim;
+  // devices_by_block[g][b] is the id of the device of replica group `g` that
+  // receives block `b`. Ids use the group mode of the all-reduce, as in its
+  // replica groups (a single iota group when it has none).
+  std::vector<std::vector<int64_t>> devices_by_block;
+};
+
+// Computes which block of `dynamic_slice` each device of each replica group
+// of the all-reduce `ar` receives, where `dynamic_slice` slices the result of
+// `ar`. Unlike MatchReduceScatter, this accepts slices of several dimensions
+// with any slice size, any assignment of blocks to positions in the replica
+// group, and offsets that are clamps, multiplies, subtracts and table lookups
+// of the device id. Every offset along a sliced dimension must evaluate to an
+// in bounds multiple of the slice size, and the devices of each replica group
+// must receive distinct blocks that together cover the operand. Returns
+// nullopt otherwise.
+std::optional<SliceBlockAssignment> GetAllReduceSliceBlockAssignment(
+    const HloAllReduceInstructionBase* ar, const HloInstruction* dynamic_slice,
+    int64_t num_partitions, int64_t num_replicas,
+    HloPredicate match_partition_id = HloPredicateIsOp<HloOpcode::kPartitionId>,
+    HloPredicate match_replica_id = HloPredicateIsOp<HloOpcode::kReplicaId>);
+
 // Extracts the dynamic-slice user from a collective instruction, potentially
 // looking through reshapes and bitcasts.
 std::optional<CollectiveUsers> FindUniqueDynamicSliceUserFromCollective(

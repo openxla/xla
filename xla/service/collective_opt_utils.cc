@@ -20,12 +20,14 @@ limitations under the License.
 #include <limits>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/strings/str_cat.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -108,6 +110,11 @@ int64_t GetIndexForId(const HloInstruction* index, int64_t id,
   int64_t inner_index = GetIndexForId(index->operand(1), id, map_id);
   if (inner_index < 0) {
     VLOG(2) << "Failed to get inner index.";
+    return -1;
+  }
+  if (inner_index >= index->operand(0)->shape().dimensions(0)) {
+    VLOG(2) << "Index " << inner_index << " is out of bounds of "
+            << index->operand(0)->ToString();
     return -1;
   }
   if (index->operand(0)->opcode() == HloOpcode::kIota) {
@@ -346,7 +353,8 @@ std::optional<int64_t> EvaluateOffset(
 
   if (IsTableLookup(expr)) {
     int64_t table_index = GetIndexForId(expr->operand(1), id, map_id);
-    if (table_index < 0) {
+    if (table_index < 0 ||
+        table_index >= expr->operand(0)->shape().dimensions(0)) {
       return std::nullopt;
     }
     if (expr->operand(0)->opcode() == HloOpcode::kIota) {
@@ -673,6 +681,109 @@ BuildDSSplitReplicaGroups(const HloChannelInstruction* instruction,
 
   return std::make_pair(std::move(outer_groups), std::move(inner_groups));
 }
+
+std::optional<SliceBlockAssignment> GetAllReduceSliceBlockAssignment(
+    const HloAllReduceInstructionBase* ar, const HloInstruction* dynamic_slice,
+    int64_t num_partitions, int64_t num_replicas,
+    HloPredicate match_partition_id, HloPredicate match_replica_id) {
+  if (ar->opcode() != HloOpcode::kAllReduce ||
+      dynamic_slice->opcode() != HloOpcode::kDynamicSlice ||
+      !ar->shape().IsArray() ||
+      dynamic_slice->operand(0)->shape().dimensions() !=
+          ar->shape().dimensions()) {
+    return std::nullopt;
+  }
+  const Shape& shape = ar->shape();
+  SliceBlockAssignment result;
+  for (int64_t dim = 0; dim < shape.dimensions().size(); ++dim) {
+    const int64_t size = shape.dimensions(dim);
+    const int64_t slice_size = dynamic_slice->dynamic_slice_sizes()[dim];
+    if (slice_size == size) {
+      // The start index is clamped to 0 along an unsliced dimension.
+      continue;
+    }
+    if (slice_size <= 0 || size % slice_size != 0) {
+      VLOG(2) << "Slice size " << slice_size << " does not divide " << size
+              << " in " << dynamic_slice->ToString();
+      return std::nullopt;
+    }
+    result.split_dims.push_back(dim);
+    result.blocks_per_split_dim.push_back(size / slice_size);
+  }
+  if (result.split_dims.empty()) {
+    return std::nullopt;
+  }
+
+  const bool is_cross_module = ar->channel_id().has_value();
+  const bool use_global_device_ids = ar->use_global_device_ids();
+  if (!CheckUniformReplicaGroups(ar) ||
+      (use_global_device_ids && ar->replica_groups().empty())) {
+    return std::nullopt;
+  }
+  if (is_cross_module && !use_global_device_ids &&
+      (ar->replica_groups().size() != num_replicas ||
+       ar->replica_groups()[0].replica_ids_size() != 1)) {
+    // Same restriction as MatchWithDynamicSlice: such groups refer to
+    // replicas, and the all-reduce spans all partitions.
+    return std::nullopt;
+  }
+  const int64_t group_size = GetGroupSize(
+      is_cross_module, use_global_device_ids, num_partitions, num_replicas, ar);
+  const int64_t num_blocks = Product(result.blocks_per_split_dim);
+  if (group_size != num_blocks) {
+    VLOG(2) << "Group size " << group_size << " differs from block count "
+            << num_blocks << " of " << dynamic_slice->ToString();
+    return std::nullopt;
+  }
+
+  const MapIdToTableOffset map_id =
+      CreateMapIdFn(is_cross_module, use_global_device_ids, num_partitions,
+                    num_replicas, ar, match_partition_id, match_replica_id);
+  absl::flat_hash_map<const HloInstruction*, const HloInstruction*>
+      backtrack_cache;
+  std::vector<const HloInstruction*> offsets;
+  offsets.reserve(result.split_dims.size());
+  for (int64_t dim : result.split_dims) {
+    offsets.push_back(
+        BacktrackToBase(dynamic_slice->operand(dim + 1), &backtrack_cache));
+  }
+
+  const bool iota_group = ar->replica_groups().empty() ||
+                          (is_cross_module && !use_global_device_ids);
+  const int64_t num_groups = iota_group ? 1 : ar->replica_groups().size();
+  result.devices_by_block.assign(num_groups,
+                                 std::vector<int64_t>(num_blocks, -1));
+  for (int64_t g = 0; g < num_groups; ++g) {
+    std::vector<int64_t>& devices = result.devices_by_block[g];
+    for (int64_t j = 0; j < group_size; ++j) {
+      const int64_t id =
+          iota_group ? j : ar->replica_groups()[g].replica_ids(j);
+      int64_t block = 0;
+      for (int64_t i = 0; i < offsets.size(); ++i) {
+        const int64_t dim = result.split_dims[i];
+        const int64_t slice_size = dynamic_slice->dynamic_slice_sizes()[dim];
+        const std::optional<int64_t> offset =
+            EvaluateOffset(offsets[i], id, map_id, &backtrack_cache);
+        if (!offset.has_value() || *offset < 0 || *offset % slice_size != 0 ||
+            *offset + slice_size > shape.dimensions(dim)) {
+          VLOG(2) << "Offset of device " << id << " along dimension " << dim
+                  << " is not an in bounds multiple of " << slice_size << ": "
+                  << (offset.has_value() ? absl::StrCat(*offset) : "unknown");
+          return std::nullopt;
+        }
+        block = block * result.blocks_per_split_dim[i] + *offset / slice_size;
+      }
+      if (devices[block] != -1) {
+        VLOG(2) << "Devices " << devices[block] << " and " << id
+                << " receive the same block " << block;
+        return std::nullopt;
+      }
+      devices[block] = id;
+    }
+  }
+  return result;
+}
+
 bool IsDynamicSlicingLocalDeviceFromAllGather(
     HloInstruction* ds, HloAllGatherInstruction* all_gather,
     int64_t num_partitions, int64_t num_replicas, bool is_cross_module,

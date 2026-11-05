@@ -1041,5 +1041,332 @@ TEST_F(MatchWithDynamicSliceClampReshapeTest, ClampWithNonConstantBounds) {
   EXPECT_FALSE(spec.has_value());
 }
 
+class GetAllReduceSliceBlockAssignmentTest
+    : public HloHardwareIndependentTestBase {
+ protected:
+  std::optional<SliceBlockAssignment> Run(const HloModule& module,
+                                          int64_t num_partitions) {
+    const auto* ar = Cast<HloAllReduceInstructionBase>(
+        module.entry_computation()->GetInstructionWithName("ar"));
+    const HloInstruction* ds =
+        module.entry_computation()->GetInstructionWithName("ds");
+    return GetAllReduceSliceBlockAssignment(ar, ds, num_partitions,
+                                            /*num_replicas=*/1);
+  }
+};
+
+// Rows and positions split over two mesh axes, the positions offset formed as
+// a difference of two lookups, as the SPMD partitioner emits for the
+// gradient of gathered decode activations.
+TEST_F(GetAllReduceSliceBlockAssignmentTest, TwoDimsWithSubtractedOffset) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+
+    ENTRY entry {
+      param = f32[4,8,128] parameter(0)
+      ar = f32[4,8,128] all-reduce(param), channel_id=1,
+        replica_groups={{0,1,2,3},{4,5,6,7}}, use_global_device_ids=true,
+        to_apply=sum
+      pid = u32[] partition-id()
+      rows = s32[8] constant({0,0,2,2,0,0,2,2})
+      row = s32[1] dynamic-slice(rows, pid), dynamic_slice_sizes={1}
+      row_offset = s32[] bitcast(row)
+      pos_a = s32[8] constant({4,8,4,8,4,8,4,8})
+      pos_b = s32[8] constant({4,4,4,4,4,4,4,4})
+      a = s32[1] dynamic-slice(pos_a, pid), dynamic_slice_sizes={1}
+      b = s32[1] dynamic-slice(pos_b, pid), dynamic_slice_sizes={1}
+      pos = s32[1] subtract(a, b)
+      pos_offset = s32[] bitcast(pos)
+      zero = s32[] constant(0)
+      ROOT ds = f32[2,4,128] dynamic-slice(ar, row_offset, pos_offset, zero),
+        dynamic_slice_sizes={2,4,128}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  std::optional<SliceBlockAssignment> blocks =
+      Run(*module, /*num_partitions=*/8);
+  ASSERT_TRUE(blocks.has_value());
+  EXPECT_THAT(blocks->split_dims, ElementsAre(0, 1));
+  EXPECT_THAT(blocks->blocks_per_split_dim, ElementsAre(2, 2));
+  EXPECT_THAT(blocks->devices_by_block,
+              ElementsAre(ElementsAre(0, 1, 2, 3), ElementsAre(4, 5, 6, 7)));
+
+  // The reduce-scatter matcher rejects this pair: with several sliced
+  // dimensions it requires every offset to be a plain table lookup.
+  const auto* ar = Cast<HloAllReduceInstructionBase>(
+      module->entry_computation()->GetInstructionWithName("ar"));
+  EXPECT_FALSE(MatchReduceScatter(ar, /*num_partitions=*/8, /*num_replicas=*/1,
+                                  /*allow_multiple_split_dims=*/true)
+                   .has_value());
+}
+
+// The second sliced dimension is split over the major mesh axis, so blocks
+// are assigned in an order that differs from the replica group order.
+TEST_F(GetAllReduceSliceBlockAssignmentTest, PermutedBlockOrder) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    sum {
+      a = bf16[] parameter(0)
+      b = bf16[] parameter(1)
+      ROOT add = bf16[] add(a, b)
+    }
+
+    ENTRY entry {
+      param = bf16[8,256] parameter(0)
+      ar = bf16[8,256] all-reduce(param), channel_id=1,
+        replica_groups={{0,1,2,3,4,5,6,7}}, use_global_device_ids=true,
+        to_apply=sum
+      pid = u32[] partition-id()
+      rows = s32[8] constant({0,2,4,6,0,2,4,6})
+      row = s32[1] dynamic-slice(rows, pid), dynamic_slice_sizes={1}
+      row_offset = s32[] reshape(row)
+      cols = s32[8] constant({0,0,0,0,128,128,128,128})
+      col = s32[1] dynamic-slice(cols, pid), dynamic_slice_sizes={1}
+      col_offset = s32[] reshape(col)
+      ROOT ds = bf16[2,128] dynamic-slice(ar, row_offset, col_offset),
+        dynamic_slice_sizes={2,128}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  std::optional<SliceBlockAssignment> blocks =
+      Run(*module, /*num_partitions=*/8);
+  ASSERT_TRUE(blocks.has_value());
+  EXPECT_THAT(blocks->split_dims, ElementsAre(0, 1));
+  EXPECT_THAT(blocks->blocks_per_split_dim, ElementsAre(4, 2));
+  EXPECT_THAT(blocks->devices_by_block,
+              ElementsAre(ElementsAre(0, 4, 1, 5, 2, 6, 3, 7)));
+}
+
+// Offsets built from clamps, a multiply and an unsigned table converted to
+// signed, partly on rank 1 shapes, as emitted for the acoustic codebook
+// gradient.
+TEST_F(GetAllReduceSliceBlockAssignmentTest, ClampMultiplyConvertOffsets) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    sum {
+      a = bf16[] parameter(0)
+      b = bf16[] parameter(1)
+      ROOT add = bf16[] add(a, b)
+    }
+
+    ENTRY entry {
+      param = bf16[2,256,16] parameter(0)
+      ar = bf16[2,256,16] all-reduce(param), channel_id=1,
+        replica_groups={{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}},
+        use_global_device_ids=true, to_apply=sum
+      pid = u32[] partition-id()
+      zero = s32[] constant(0)
+      d_table = s32[16] constant({0,128,0,128,0,128,0,128,0,128,0,128,0,128,0,128})
+      d_lookup = s32[1] dynamic-slice(d_table, pid), dynamic_slice_sizes={1}
+      d = s32[] bitcast(d_lookup)
+      d_limit = s32[] constant(128)
+      d_offset = s32[] clamp(zero, d, d_limit)
+      v_table = u32[16] constant({0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7})
+      v_lookup = u32[1] dynamic-slice(v_table, pid), dynamic_slice_sizes={1}
+      v_low = u32[1] constant({0})
+      v_high = u32[1] constant({7})
+      v_index = u32[1] clamp(v_low, v_lookup, v_high)
+      v_signed = s32[1] convert(v_index)
+      v_size = s32[1] constant({2})
+      v_start = s32[1] multiply(v_signed, v_size)
+      v_min = s32[1] constant({0})
+      v_max = s32[1] constant({14})
+      v_clamped = s32[1] clamp(v_min, v_start, v_max)
+      v_offset = s32[] bitcast(v_clamped)
+      ROOT ds = bf16[2,128,2] dynamic-slice(ar, zero, d_offset, v_offset),
+        dynamic_slice_sizes={2,128,2}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  std::optional<SliceBlockAssignment> blocks =
+      Run(*module, /*num_partitions=*/16);
+  ASSERT_TRUE(blocks.has_value());
+  EXPECT_THAT(blocks->split_dims, ElementsAre(1, 2));
+  EXPECT_THAT(blocks->blocks_per_split_dim, ElementsAre(2, 8));
+  EXPECT_THAT(blocks->devices_by_block,
+              ElementsAre(ElementsAre(0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9,
+                                      11, 13, 15)));
+}
+
+TEST_F(GetAllReduceSliceBlockAssignmentTest, OverlappingBlocks) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+
+    ENTRY entry {
+      param = f32[4,8,128] parameter(0)
+      ar = f32[4,8,128] all-reduce(param), channel_id=1,
+        replica_groups={{0,1,2,3},{4,5,6,7}}, use_global_device_ids=true,
+        to_apply=sum
+      pid = u32[] partition-id()
+      rows = s32[8] constant({0,0,2,2,0,0,2,2})
+      row = s32[1] dynamic-slice(rows, pid), dynamic_slice_sizes={1}
+      row_offset = s32[] bitcast(row)
+      cols = s32[8] constant({0,0,4,0,0,4,0,4})
+      col = s32[1] dynamic-slice(cols, pid), dynamic_slice_sizes={1}
+      col_offset = s32[] bitcast(col)
+      zero = s32[] constant(0)
+      ROOT ds = f32[2,4,128] dynamic-slice(ar, row_offset, col_offset, zero),
+        dynamic_slice_sizes={2,4,128}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  EXPECT_FALSE(Run(*module, /*num_partitions=*/8).has_value());
+}
+
+TEST_F(GetAllReduceSliceBlockAssignmentTest, OffsetNotMultipleOfSliceSize) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+
+    ENTRY entry {
+      param = f32[4,8,128] parameter(0)
+      ar = f32[4,8,128] all-reduce(param), channel_id=1,
+        replica_groups={{0,1,2,3},{4,5,6,7}}, use_global_device_ids=true,
+        to_apply=sum
+      pid = u32[] partition-id()
+      rows = s32[8] constant({0,0,2,2,0,0,2,2})
+      row = s32[1] dynamic-slice(rows, pid), dynamic_slice_sizes={1}
+      row_offset = s32[] bitcast(row)
+      cols = s32[8] constant({0,2,0,4,0,4,0,4})
+      col = s32[1] dynamic-slice(cols, pid), dynamic_slice_sizes={1}
+      col_offset = s32[] bitcast(col)
+      zero = s32[] constant(0)
+      ROOT ds = f32[2,4,128] dynamic-slice(ar, row_offset, col_offset, zero),
+        dynamic_slice_sizes={2,4,128}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  EXPECT_FALSE(Run(*module, /*num_partitions=*/8).has_value());
+}
+
+// Eight devices reduce, but the slice only has four blocks.
+TEST_F(GetAllReduceSliceBlockAssignmentTest, GroupLargerThanBlockCount) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+
+    ENTRY entry {
+      param = f32[4,8,128] parameter(0)
+      ar = f32[4,8,128] all-reduce(param), channel_id=1,
+        replica_groups={{0,1,2,3,4,5,6,7}}, use_global_device_ids=true,
+        to_apply=sum
+      pid = u32[] partition-id()
+      rows = s32[8] constant({0,0,2,2,0,0,2,2})
+      row = s32[1] dynamic-slice(rows, pid), dynamic_slice_sizes={1}
+      row_offset = s32[] bitcast(row)
+      cols = s32[8] constant({0,4,0,4,0,4,0,4})
+      col = s32[1] dynamic-slice(cols, pid), dynamic_slice_sizes={1}
+      col_offset = s32[] bitcast(col)
+      zero = s32[] constant(0)
+      ROOT ds = f32[2,4,128] dynamic-slice(ar, row_offset, col_offset, zero),
+        dynamic_slice_sizes={2,4,128}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  EXPECT_FALSE(Run(*module, /*num_partitions=*/8).has_value());
+}
+
+// The offset tables have fewer entries than devices, so the lookups of the
+// last devices are clamped by the dynamic-slice; such offsets are rejected
+// rather than read past the end of the table.
+TEST_F(GetAllReduceSliceBlockAssignmentTest, TableSmallerThanGroup) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+
+    ENTRY entry {
+      param = f32[4,8,128] parameter(0)
+      ar = f32[4,8,128] all-reduce(param), channel_id=1,
+        replica_groups={{0,1,2,3},{4,5,6,7}}, use_global_device_ids=true,
+        to_apply=sum
+      pid = u32[] partition-id()
+      rows = s32[4] constant({0,0,2,2})
+      row = s32[1] dynamic-slice(rows, pid), dynamic_slice_sizes={1}
+      row_offset = s32[] bitcast(row)
+      cols = s32[4] constant({0,4,0,4})
+      col = s32[1] dynamic-slice(cols, pid), dynamic_slice_sizes={1}
+      col_offset = s32[] bitcast(col)
+      zero = s32[] constant(0)
+      ROOT ds = f32[2,4,128] dynamic-slice(ar, row_offset, col_offset, zero),
+        dynamic_slice_sizes={2,4,128}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  EXPECT_FALSE(Run(*module, /*num_partitions=*/8).has_value());
+}
+
+// The offset tables are indexed through a table of positions with fewer
+// entries than devices; such indices are rejected rather than read past the
+// end of the position table.
+TEST_F(GetAllReduceSliceBlockAssignmentTest, IndexTableSmallerThanGroup) {
+  constexpr absl::string_view hlo_string = R"(
+    HloModule module
+
+    sum {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      ROOT add = f32[] add(a, b)
+    }
+
+    ENTRY entry {
+      param = f32[4,8,128] parameter(0)
+      ar = f32[4,8,128] all-reduce(param), channel_id=1,
+        replica_groups={{0,1,2,3},{4,5,6,7}}, use_global_device_ids=true,
+        to_apply=sum
+      pid = u32[] partition-id()
+      positions = s32[4] constant({0,1,2,3})
+      position = s32[1] dynamic-slice(positions, pid), dynamic_slice_sizes={1}
+      rows = s32[8] constant({0,0,2,2,0,0,2,2})
+      row = s32[1] dynamic-slice(rows, position), dynamic_slice_sizes={1}
+      row_offset = s32[] bitcast(row)
+      cols = s32[8] constant({0,4,0,4,0,4,0,4})
+      col = s32[1] dynamic-slice(cols, position), dynamic_slice_sizes={1}
+      col_offset = s32[] bitcast(col)
+      zero = s32[] constant(0)
+      ROOT ds = f32[2,4,128] dynamic-slice(ar, row_offset, col_offset, zero),
+        dynamic_slice_sizes={2,4,128}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(hlo_string));
+  EXPECT_FALSE(Run(*module, /*num_partitions=*/8).has_value());
+}
+
 }  // namespace
 }  // namespace xla
