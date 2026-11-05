@@ -2103,7 +2103,8 @@ namespace {
 void AddGemmRewriterPasses(HloPassPipeline& pipeline,
                            const DebugOptions& debug_options,
                            const se::GpuComputeCapability gpu_version,
-                           const se::SemanticVersion& toolkit_version) {
+                           const se::SemanticVersion& toolkit_version,
+                           const se::dnn::VersionInfo& cudnn_version) {
   // Adding bias to GEMMs is helpful for skipping kernel launches for `add`
   // operations. However, the bias term can add dependencies between the GEMMs
   // that could otherwise be parallelized. Because of this, we disable bias
@@ -2121,7 +2122,8 @@ void AddGemmRewriterPasses(HloPassPipeline& pipeline,
 
   GemmRewriterOptions fp8_options{GemmRewriterOptions::DType::kFp8Only,
                                   bias_mode};
-  pipeline.AddPass<GemmRewriter>(gpu_version, toolkit_version, fp8_options);
+  pipeline.AddPass<GemmRewriter>(gpu_version, toolkit_version, fp8_options,
+                                 cudnn_version);
 
   // Rewrite dots with the algorithms that cannot be handled by cublas directly.
   // I.e. transform single dot into a chain of dots with the default algorithm
@@ -2138,7 +2140,8 @@ void AddGemmRewriterPasses(HloPassPipeline& pipeline,
 
   pipeline.AddPass<GemmRewriter>(
       gpu_version, toolkit_version,
-      GemmRewriterOptions{GemmRewriterOptions::DType::kNonFp8Only, bias_mode});
+      GemmRewriterOptions{GemmRewriterOptions::DType::kNonFp8Only, bias_mode},
+      cudnn_version);
 }
 }  // namespace
 
@@ -2241,7 +2244,9 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // Rewrite GEMMs into custom calls.
     AddGemmRewriterPasses(
         pipeline, debug_options, gpu_version,
-        gpu_target_config.device_description.runtime_version());
+        gpu_target_config.device_description.runtime_version(),
+        se::dnn::VersionInfo(
+            gpu_target_config.device_description.dnn_version()));
 
     // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
     pipeline.AddPass<GemmBroadcastFoldingRewriter>();

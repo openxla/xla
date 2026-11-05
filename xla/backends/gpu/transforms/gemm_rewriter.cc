@@ -71,6 +71,7 @@ limitations under the License.
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/gpu/gpu_blas_lt.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -794,10 +795,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
  public:
   explicit GemmRewriterVisitor(const se::GpuComputeCapability& gpu_version,
                                se::SemanticVersion toolkit_version,
-                               const GemmRewriterOptions options)
+                               const GemmRewriterOptions options,
+                               se::dnn::VersionInfo cudnn_version)
       : gpu_version_(gpu_version),
         toolkit_version_(toolkit_version),
-        options_(options) {}
+        options_(options),
+        cudnn_version_(cudnn_version) {}
 
   absl::Status HandleDot(HloInstruction* instr) override {
     ABSL_ASSIGN_OR_RETURN(
@@ -918,56 +921,21 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
   absl::Status HandleRaggedDot(HloInstruction* instr) override {
-    // Backend selection priority for ragged-dot:
-    //   1. cuDNN (NVIDIA/CUDA targets) or hipBLASLt (AMD/ROCm targets)
-    //      when enabled and configuration is supported.
-    //   2. Triton XTile when enabled.
-    //   3. Default backend.
-    const DebugOptions& debug_options =
-        instr->GetModule()->config().debug_options();
-
-    // Priority 1a: cuDNN group-gemm backend (NVIDIA/CUDA targets only).
-    // The actual rewrite is performed by the RaggedDotFusionRewriter pass that
-    // runs before GemmRewriter.  Return early here to prevent further
-    // rewriting.
-    bool ragged_dot_fusion_enabled =
-        gpu_version_.IsCuda() &&
-        debug_options.xla_gpu_experimental_use_ragged_dot_fusion();
-    if (ragged_dot_fusion_enabled) {
-      return absl::OkStatus();
-    }
-
     HloRaggedDotInstruction* ragged_dot = Cast<HloRaggedDotInstruction>(instr);
-
-    // Priority 1b: hipBLASLt group-gemm backend (AMD/ROCm targets only; the
-    // target and element type checks live in
-    // IsGpublasLtSupportedGroupedMatMul).
-    bool grouped_gemm_enabled =
-        debug_options.xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
-        // NOLINTNEXTLINE(clang-diagnostic-deprecated-declarations)
-        debug_options.xla_gpu_enable_cublaslt();
-    if (grouped_gemm_enabled &&
-        IsGpublasLtSupportedGroupedMatMul(gpu_version_, *ragged_dot)) {
-      return RewriteRaggedDotAsGroupedGemmCustomCall(ragged_dot);
+    switch (SelectRaggedDotBackend(
+        *ragged_dot, gpu_version_, cudnn_version_, toolkit_version_,
+        instr->GetModule()->config().debug_options())) {
+      case RaggedDotBackend::kGpuBlasLt:
+        return RewriteRaggedDotAsGroupedGemmCustomCall(ragged_dot);
+      case RaggedDotBackend::kTriton:
+        return RewriteRaggedDotAsTritonFusion(ragged_dot);
+      case RaggedDotBackend::kCuDnn:
+      case RaggedDotBackend::kDefault:
+        // kCuDnn is rewritten by RaggedDotFusionRewriter, which runs later in
+        // the fusion pipeline; kDefault was expanded into a regular dot by
+        // RaggedDotRewriter, which runs earlier.  Leave both alone.
+        break;
     }
-
-    // Priority 2: Triton XTile backend.
-    // Requires --xla_gpu_experimental_triton_ragged_dot=true.
-    //
-    // Default tile sizes embedded in the fusion's BlockLevelFusionConfig:
-    //   output_tile_sizes = [[BLOCK_M, BLOCK_N]]  (for kRaggedNonContracting)
-    //   num_warps=4, num_stages=1
-    // Sequential-dim tile sizes stored on the ragged_dot's Tile backend_config:
-    //   Tile.sizes = [1, BLOCK_K]  (G=1 per G-loop iter, K tile = BLOCK_K)
-    bool triton_ragged_dot_enabled =
-        debug_options.xla_gpu_experimental_triton_ragged_dot();
-    if (triton_ragged_dot_enabled &&
-        IsTritonSupportedRaggedDot(gpu_version_, *ragged_dot)) {
-      return RewriteRaggedDotAsTritonFusion(ragged_dot);
-    }
-
-    // Priority 3: Default backend.  RaggedDotRewriter already expanded every
-    // ragged-dot that no higher-priority backend claims.
     return absl::OkStatus();
   }
 
@@ -1039,22 +1007,14 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     xtile::Tile inner_tile_config =
         BuildRaggedDotSequentialTile(dot_dims, ragged_mode);
 
-    // Build the fused computation: parameters + ragged_dot.
-    // Pattern follows RaggedToCuDNNFusion: one builder creates fused params
-    // and clones the ragged_dot; fusion_params holds the external operands.
-    std::string fusion_name =
-        absl::StrCat("triton_ragged_dot_fusion_", ragged_dot->name());
-    HloComputation::Builder builder(absl::StrCat(fusion_name, "_computation"));
-
-    // Collect external operands for the fusion instruction.
-    std::vector<HloInstruction*> fusion_params;
-    fusion_params.reserve(ragged_dot->operand_count());
-    // Build fused parameters inside the computation.
+    // Build the fused computation: one parameter per ragged-dot operand, plus
+    // a clone of the ragged_dot itself.
+    HloComputation::Builder builder(absl::StrCat(
+        "triton_ragged_dot_fusion_", ragged_dot->name(), "_computation"));
     std::vector<HloInstruction*> param_instrs;
     param_instrs.reserve(ragged_dot->operand_count());
     for (int i = 0; i < ragged_dot->operand_count(); ++i) {
-      HloInstruction* operand = ragged_dot->mutable_operand(i);
-      fusion_params.push_back(operand);
+      const HloInstruction* operand = ragged_dot->operand(i);
       param_instrs.push_back(
           builder.AddInstruction(HloInstruction::CreateParameter(
               i, operand->shape(), operand->name())));
@@ -1074,14 +1034,14 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // fusion kind.  The XTile emitter compiles such fusions through the
     // TileAndEmitXTileModule path when they carry a block_level_fusion_config.
     std::unique_ptr<HloInstruction> fusion_instr = HloInstruction::CreateFusion(
-        ragged_dot->shape(), HloInstruction::FusionKind::kCustom, fusion_params,
-        new_computation);
+        ragged_dot->shape(), HloInstruction::FusionKind::kCustom,
+        ragged_dot->operands(), new_computation);
 
     // Set fusion backend config: kTritonFusionKind + default tile sizes.
     GpuBackendConfig gpu_backend_config;
     FusionBackendConfig* fusion_config =
         gpu_backend_config.mutable_fusion_backend_config();
-    fusion_config->set_kind(std::string(kTritonFusionKind));
+    fusion_config->set_kind(kTritonFusionKind);
     xtile::BlockLevelFusionConfig* blk_cfg =
         fusion_config->mutable_block_level_fusion_config();
 
@@ -1094,8 +1054,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     ABSL_RETURN_IF_ERROR(fusion_instr->set_backend_config(gpu_backend_config));
     fusion_instr->set_metadata(ragged_dot->metadata());
 
-    return ragged_dot->parent()->ReplaceWithNewInstruction(
-        ragged_dot, std::move(fusion_instr));
+    return ReplaceWithNewInstruction(ragged_dot, std::move(fusion_instr));
   }
 
   absl::Status TurnDotIntoConvertAndDotForBF16BF16F32(
@@ -2718,6 +2677,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   se::GpuComputeCapability gpu_version_;
   stream_executor::SemanticVersion toolkit_version_;
   GemmRewriterOptions options_;
+  se::dnn::VersionInfo cudnn_version_;
 
   // Choose cublas or cublasLt for the target of the custom call that instr will
   // be rewritten into.
@@ -3294,8 +3254,10 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
 absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
                                       se::GpuComputeCapability gpu_version,
                                       se::SemanticVersion toolkit_version,
-                                      GemmRewriterOptions options) {
-  GemmRewriterVisitor visitor(gpu_version, toolkit_version, options);
+                                      GemmRewriterOptions options,
+                                      se::dnn::VersionInfo cudnn_version) {
+  GemmRewriterVisitor visitor(gpu_version, toolkit_version, options,
+                              cudnn_version);
   ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));
   GemmWorkspaceRewriteVisitor workspace_visitor(gpu_version);
   ABSL_RETURN_IF_ERROR(computation->Accept(&workspace_visitor));
@@ -3306,10 +3268,12 @@ absl::StatusOr<bool> RunOnComputation(HloComputation* computation,
 
 GemmRewriter::GemmRewriter(se::GpuComputeCapability gpu_version,
                            se::SemanticVersion toolkit_version,
-                           GemmRewriterOptions options)
+                           GemmRewriterOptions options,
+                           se::dnn::VersionInfo cudnn_version)
     : gpu_version_(gpu_version),
       toolkit_version_(toolkit_version),
-      options_(options) {}
+      options_(options),
+      cudnn_version_(cudnn_version) {}
 
 absl::StatusOr<bool> GemmRewriter::RunImpl(
     HloModule* module,
@@ -3317,9 +3281,10 @@ absl::StatusOr<bool> GemmRewriter::RunImpl(
   bool changed = false;
   for (HloComputation* computation :
        GetFusibleComputations(*module, execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool result,
-                          RunOnComputation(computation, gpu_version_,
-                                           toolkit_version_, options_));
+    ABSL_ASSIGN_OR_RETURN(
+        bool result,
+        RunOnComputation(computation, gpu_version_, toolkit_version_, options_,
+                         cudnn_version_));
     changed |= result;
   }
   return changed;
