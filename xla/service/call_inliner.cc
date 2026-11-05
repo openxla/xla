@@ -109,10 +109,18 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     }
 
     // The newly inlined instructions should honor the control predecessors of
-    // the previous call instruction.
+    // the previous call instruction, and any non-root sink instruction must
+    // also honor its control successors.
     for (HloInstruction* control_predecessor : call_->control_predecessors()) {
       ABSL_RETURN_IF_ERROR(control_predecessor->AddControlDependencyTo(
           /*instruction=*/new_hlo_pointer));
+    }
+    if (hlo->user_count() == 0 && hlo->control_successors().empty() &&
+        hlo != hlo->parent()->root_instruction()) {
+      for (HloInstruction* control_successor : call_->control_successors()) {
+        ABSL_RETURN_IF_ERROR(
+            new_hlo_pointer->AddControlDependencyTo(control_successor));
+      }
     }
 
     return absl::OkStatus();
@@ -137,10 +145,6 @@ class SubcomputationInsertionVisitor : public DfsHloVisitorWithDefault {
     // We must relay the control dependencies from this call instruction to
     // the successors too after inlining. The will now depend on the newly
     // inlined root.
-    // If new_root is an operand of call_ (e.g. an identity function call(x) ->
-    // x), do not propagate call-level frontend attributes backward onto
-    // existing caller operands. Otherwise, newly cloned instructions inherit
-    // the call's frontend attributes.
     auto result =
         outer_
             ->ReplaceInstruction(
@@ -416,6 +420,49 @@ bool CallInliner::ShouldInline(const CallGraph& call_graph,
   return true;
 }
 
+namespace {
+
+void CopyClonedCalledComputationSchedules(HloModule* module,
+                                          const HloInstruction* orig_inst,
+                                          HloInstruction* cloned_inst) {
+  const auto& orig_callees = orig_inst->called_computations();
+  const auto& cloned_callees = cloned_inst->called_computations();
+  if (!module->has_schedule() || orig_callees.size() != cloned_callees.size()) {
+    return;
+  }
+  for (size_t i = 0; i < orig_callees.size(); ++i) {
+    HloComputation* orig_sub = orig_callees[i];
+    HloComputation* cloned_sub = cloned_callees[i];
+    if (orig_sub == cloned_sub ||
+        orig_sub->instruction_count() != cloned_sub->instruction_count()) {
+      continue;
+    }
+    absl::flat_hash_map<const HloInstruction*, HloInstruction*> sub_inst_map;
+    auto orig_it = orig_sub->instructions().begin();
+    auto cloned_it = cloned_sub->instructions().begin();
+    for (; orig_it != orig_sub->instructions().end(); ++orig_it, ++cloned_it) {
+      sub_inst_map[*orig_it] = *cloned_it;
+      CopyClonedCalledComputationSchedules(module, *orig_it, *cloned_it);
+    }
+    if (module->schedule().is_computation_scheduled(orig_sub)) {
+      std::vector<HloInstruction*> cloned_seq;
+      cloned_seq.reserve(orig_sub->instruction_count());
+      for (HloInstruction* inst :
+           module->schedule().sequence(orig_sub).instructions()) {
+        if (auto it = sub_inst_map.find(inst); it != sub_inst_map.end()) {
+          cloned_seq.push_back(it->second);
+        }
+      }
+      if (cloned_seq.size() == cloned_sub->instruction_count()) {
+        module->schedule().GetOrCreateSequence(cloned_sub) =
+            HloInstructionSequence(cloned_seq);
+      }
+    }
+  }
+}
+
+}  // namespace
+
 absl::StatusOr<bool> CallInliner::InlineAndLegalize(
     const CallGraph& call_graph, HloComputation* computation,
     absl::Span<HloInstruction* const> instruction_sequence,
@@ -435,13 +482,20 @@ absl::StatusOr<bool> CallInliner::InlineAndLegalize(
       ABSL_ASSIGN_OR_RETURN(InlinedInstructionMap inline_map_cur_call,
                             Inline(instruction, propagate_metadata_));
       if (module->has_schedule()) {
+        if (!module->schedule().is_computation_scheduled(callee)) {
+          module->schedule().GetOrCreateSequence(callee) =
+              HloInstructionSequence(callee->MakeInstructionPostOrder());
+        }
         for (HloInstruction* inlined_instruction :
              module->schedule().sequence(callee).instructions()) {
           // Parameters were already added to sequence as operands to the
           // call.
           if (inlined_instruction->opcode() != HloOpcode::kParameter) {
-            inlined_instructions.push_back(
-                inline_map_cur_call[inlined_instruction]);
+            HloInstruction* cloned_instruction =
+                inline_map_cur_call[inlined_instruction];
+            CopyClonedCalledComputationSchedules(module, inlined_instruction,
+                                                 cloned_instruction);
+            inlined_instructions.push_back(cloned_instruction);
           }
         }
       }
