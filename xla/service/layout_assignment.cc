@@ -192,9 +192,12 @@ bool OperandLayoutConstraint::UpdateLayout(int64_t new_priority,
     return false;
   }
   if (!mandatory) {
-    // Do not update if this constraint has been updated too many times, to
-    // make sure the propagation can terminate.
-    if (shape_layout_.size() > kMaxLayoutProp) {
+    // Do not update if:
+    // 1. We are trying to update a tuple, since NegotiateOperandLayout only
+    //    supports arrays.
+    // 2. This constraint has been updated too many times, since we want to make
+    //    sure the propagation can terminate.
+    if (!new_shape.IsArray() || shape_layout_.size() > kMaxLayoutProp) {
       return false;
     }
     if (!assignment->OperandLayoutAlwaysPropagateForward(instruction_) ||
@@ -2553,10 +2556,8 @@ absl::Status LayoutAssignment::PropagateAcrossEdge(
   for (int64_t operand_no : root->OperandIndices(dst_instruction)) {
     const OperandLayoutConstraint* existing =
         constraints.GetOperandLayoutConstraint(root, operand_no);
-    // Keep existing mandatory constraints. Also keep existing tuple
-    // constraints, since operand layout negotiation only handles arrays.
-    if (existing != nullptr &&
-        (existing->mandatory() || operand_shape.IsTuple())) {
+    // Keep existing mandatory constraints.
+    if (existing != nullptr && existing->mandatory()) {
       continue;
     }
     const bool already_matches =
