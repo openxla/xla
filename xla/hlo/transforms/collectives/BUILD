@@ -708,6 +708,8 @@ xla_cc_test(
     name = "all_reduce_reassociate_test",
     srcs = ["all_reduce_reassociate_test.cc"],
     deps = [
+        ":all_reduce_combiner",
+        ":all_reduce_contiguous",
         ":all_reduce_reassociate",
         "//xla:util",
         "//xla:xla_data_proto_cc",

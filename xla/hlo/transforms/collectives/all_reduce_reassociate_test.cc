@@ -15,14 +15,13 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/all_reduce_reassociate.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <memory>
 #include <optional>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -34,6 +33,8 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
+#include "xla/hlo/transforms/collectives/all_reduce_combiner.h"
+#include "xla/hlo/transforms/collectives/all_reduce_contiguous.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/tsl/platform/logging.h"
@@ -642,6 +643,162 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(auto module,
                        RunPass(hlo_string, /*expect_change=*/false));
   SCOPED_TRACE(module->ToString());
+}
+
+TEST_F(AllReduceSimplifierTest, LossyConvertsBehindReshapesAreNotReassociated) {
+  constexpr absl::string_view hlo = R"(
+HloModule m
+sum {
+  a = f64[] parameter(0)
+  b = f64[] parameter(1)
+  ROOT add = f64[] add(a, b)
+}
+ENTRY main {
+  p0 = f64[2,4] parameter(0)
+  p1 = f64[2,4] parameter(1)
+  ar0 = f64[2,4] all-reduce(p0), replica_groups={}, to_apply=sum
+  ar1 = f64[2,4] all-reduce(p1), replica_groups={}, to_apply=sum
+  c0 = f32[2,4] convert(ar0)
+  c1 = f32[2,4] convert(ar1)
+  r0 = f32[8] reshape(c0)
+  r1 = f32[8] reshape(c1)
+  ROOT result = f32[8] add(r0, r1)
+}
+)";
+  for (bool allow_converted : {false, true}) {
+    SCOPED_TRACE(allow_converted);
+    ASSERT_OK_AND_ASSIGN(
+        auto module, RunPass(hlo, /*expect_change=*/false, allow_converted));
+    ASSERT_OK(verifier().Run(module.get()).status());
+    for (const HloInstruction* instruction :
+         module->entry_computation()->instructions()) {
+      if (instruction->opcode() == HloOpcode::kAllReduce) {
+        EXPECT_EQ(instruction->operand(0)->shape().element_type(),
+                  instruction->to_apply()
+                      ->parameter_instruction(0)
+                      ->shape()
+                      .element_type());
+      }
+    }
+    EXPECT_EQ(AllReduceCount(module), 2);
+  }
+}
+
+TEST_F(AllReduceSimplifierTest, ConvertsAboveReshapesAreNotReassociated) {
+  constexpr absl::string_view hlo = R"(
+HloModule m
+sum {
+  a = f64[] parameter(0)
+  b = f64[] parameter(1)
+  ROOT add = f64[] add(a, b)
+}
+ENTRY main {
+  p0 = f64[2,4] parameter(0)
+  p1 = f64[2,4] parameter(1)
+  ar0 = f64[2,4] all-reduce(p0), replica_groups={}, to_apply=sum
+  ar1 = f64[2,4] all-reduce(p1), replica_groups={}, to_apply=sum
+  r0 = f64[8] reshape(ar0)
+  r1 = f64[8] reshape(ar1)
+  c0 = f32[8] convert(r0)
+  c1 = f32[8] convert(r1)
+  ROOT result = f32[8] add(c0, c1)
+}
+)";
+  for (bool allow_converted : {false, true}) {
+    SCOPED_TRACE(allow_converted);
+    ASSERT_OK_AND_ASSIGN(
+        auto module, RunPass(hlo, /*expect_change=*/false, allow_converted));
+    EXPECT_EQ(AllReduceCount(module), 2);
+  }
+}
+
+TEST_F(AllReduceSimplifierTest,
+       WideningConvertsBehindReshapesAreNotReassociated) {
+  constexpr absl::string_view hlo = R"(
+HloModule m
+sum {
+  a = bf16[] parameter(0)
+  b = bf16[] parameter(1)
+  ROOT add = bf16[] add(a, b)
+}
+ENTRY main {
+  p0 = bf16[2,4] parameter(0)
+  p1 = bf16[2,4] parameter(1)
+  ar0 = bf16[2,4] all-reduce(p0), replica_groups={}, to_apply=sum
+  ar1 = bf16[2,4] all-reduce(p1), replica_groups={}, to_apply=sum
+  c0 = f32[2,4] convert(ar0)
+  c1 = f32[2,4] convert(ar1)
+  r0 = f32[8] reshape(c0)
+  r1 = f32[8] reshape(c1)
+  ROOT result = f32[8] add(r0, r1)
+}
+)";
+  for (bool allow_converted : {false, true}) {
+    SCOPED_TRACE(allow_converted);
+    ASSERT_OK_AND_ASSIGN(
+        auto module, RunPass(hlo, /*expect_change=*/false, allow_converted));
+    EXPECT_EQ(AllReduceCount(module), 2);
+  }
+}
+
+TEST_F(AllReduceSimplifierTest, MixedPrecisionCollectivePipelineKeepsTypes) {
+  constexpr absl::string_view hlo = R"(
+HloModule m, replica_count=2
+sum {
+  a = f64[] parameter(0)
+  b = f64[] parameter(1)
+  ROOT add = f64[] add(a, b)
+}
+ENTRY main {
+  p0 = f64[2,4] parameter(0)
+  p1 = f64[2,4] parameter(1)
+  p2 = f64[8] parameter(2)
+  ar0 = f64[2,4] all-reduce(p0), replica_groups={{0,1}}, to_apply=sum
+  ar1 = f64[2,4] all-reduce(p1), replica_groups={{0,1}}, to_apply=sum
+  ar2 = f64[8] all-reduce(p2), replica_groups={{0,1}}, to_apply=sum
+  c0 = f32[2,4] convert(ar0)
+  c1 = f32[2,4] convert(ar1)
+  r0 = f32[8] reshape(c0)
+  r1 = f32[8] reshape(c1)
+  result = f32[8] add(r0, r1)
+  ROOT outputs = (f32[8], f64[8]) tuple(result, ar2)
+}
+)";
+  for (bool allow_converted : {false, true}) {
+    SCOPED_TRACE(allow_converted);
+    ASSERT_OK_AND_ASSIGN(
+        auto module, RunPass(hlo, /*expect_change=*/false, allow_converted));
+    ASSERT_OK_AND_ASSIGN(bool combined,
+                         AllReduceCombiner(1024 * 1024, 256).Run(module.get()));
+    EXPECT_TRUE(combined);
+    EXPECT_EQ(AllReduceCount(module), 1);
+    for (const HloInstruction* instruction :
+         module->entry_computation()->instructions()) {
+      if (instruction->opcode() == HloOpcode::kAllReduce) {
+        ASSERT_EQ(instruction->operand_count(), 3);
+        for (const HloInstruction* operand : instruction->operands()) {
+          ASSERT_EQ(operand->shape().element_type(), F64);
+        }
+      }
+    }
+    ASSERT_OK_AND_ASSIGN(bool packed, AllReduceContiguous().Run(module.get()));
+    EXPECT_TRUE(packed);
+    ASSERT_OK(verifier().Run(module.get()).status());
+    EXPECT_EQ(AllReduceCount(module), 1);
+    for (const HloInstruction* instruction :
+         module->entry_computation()->instructions()) {
+      if (instruction->opcode() == HloOpcode::kAllReduce) {
+        EXPECT_EQ(instruction->operand_count(), 1);
+        EXPECT_EQ(instruction->shape().element_type(), F64);
+        EXPECT_EQ(instruction->shape().dimensions(0), 24);
+        EXPECT_EQ(instruction->to_apply()
+                      ->parameter_instruction(0)
+                      ->shape()
+                      .element_type(),
+                  F64);
+      }
+    }
+  }
 }
 
 TEST_F(AllReduceSimplifierTest, AllReduceDynamicSlicePattern) {
