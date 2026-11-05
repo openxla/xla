@@ -21,6 +21,8 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/collectives_api.h"
 #include "xla/ffi/api/collectives_c_api.h"
@@ -31,7 +33,9 @@ limitations under the License.
 namespace xla::ffi {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
+using ::testing::HasSubstr;
 
 static const XLA_FFI_Api* Api() { return GetXlaFfiApi(); }
 
@@ -149,6 +153,66 @@ static XLA_FFI_Collectives_Extension MakeFakeCollectivesExtension(
   return ext;
 }
 
+TEST(CollectivesFfiTest, ExtensionVersionCompatibility) {
+  auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
+      [](Communicator comm) -> Error {
+        if (Error status =
+                comm.RequestCommunicator(GroupMode::kCrossReplica, {},
+                                         /*communication_id=*/0);
+            status.failure()) {
+          return status;
+        }
+        ErrorOr<XLA_FFI_Communicator*> handle = comm.GetCommunicator(
+            GroupMode::kCrossReplica, {}, /*communication_id=*/0);
+        if (handle.has_error()) {
+          return handle.error();
+        }
+        EXPECT_EQ(*handle, kFakeCommunicator);
+        return Error::Success();
+      });
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  const struct {
+    int32_t major;
+    int32_t minor;
+    bool supported;
+  } cases[] = {
+      {Collectives::kMajorVersion, 2, true},
+      {Collectives::kMajorVersion, Collectives::kMinorVersion, true},
+      {Collectives::kMajorVersion, Collectives::kMinorVersion + 1, true},
+      {Collectives::kMajorVersion, 1, false},
+      {Collectives::kMajorVersion + 1, Collectives::kMinorVersion, false},
+  };
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(test_case.major);
+    SCOPED_TRACE(test_case.minor);
+    FakeBackend backend;
+    XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
+        reinterpret_cast<XLA_FFI_CollectivesState*>(&backend),
+        FakeRequestCommunicator, nullptr);
+    ext.extension_base.id.major_version = test_case.major;
+    ext.extension_base.id.minor_version = test_case.minor;
+    ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
+                              XLA_FFI_Communicator_Get_Args* args) {
+      EXPECT_EQ(
+          args->struct_size,
+          XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator));
+      args->communicator = kFakeCommunicator;
+      return static_cast<XLA_FFI_Error*>(nullptr);
+    };
+    InvokeContext context;
+    context.extension_start = &ext.extension_base;
+
+    absl::Status status = Invoke(Api(), *handler, call_frame, context);
+    if (test_case.supported) {
+      EXPECT_OK(status);
+    } else {
+      EXPECT_THAT(status, StatusIs(absl::StatusCode::kInvalidArgument,
+                                   HasSubstr("Extension version mismatch")));
+    }
+    EXPECT_EQ(backend.request_called, test_case.supported);
+  }
+}
+
 TEST(CollectivesFfiTest, GetCommunicatorPropagatesCallbackError) {
   XLA_FFI_Collectives_Extension ext =
       MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
@@ -173,6 +237,28 @@ TEST(CollectivesFfiTest, GetCommunicatorPropagatesCallbackError) {
   ASSERT_TRUE(info.has_error());
   EXPECT_EQ(info.error().errc(), ErrorCode::kInvalidArgument);
   EXPECT_EQ(info.error().message(), "invalid communicator group");
+}
+
+TEST(CollectivesFfiTest, GetCommunicatorWithRankInfoRequiresMetadataSupport) {
+  XLA_FFI_Collectives_Extension ext =
+      MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
+  ext.extension_base.id.minor_version = 2;
+  ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
+                            XLA_FFI_Communicator_Get_Args* args) {
+    ADD_FAILURE() << "Metadata lookup must not call a 0.2 callback";
+    args->communicator = kFakeCommunicator;
+    return static_cast<XLA_FFI_Error*>(nullptr);
+  };
+
+  ErrorOr<CommunicatorWithRankInfo> info =
+      Communicator(Api(), &ext)
+          .GetCommunicatorWithRankInfo(GroupMode::kCrossReplica, {},
+                                       /*communication_id=*/0);
+  ASSERT_TRUE(info.has_error());
+  EXPECT_EQ(info.error().errc(), ErrorCode::kUnimplemented);
+  EXPECT_THAT(
+      info.error().message(),
+      HasSubstr("Communicator metadata requires collectives extension"));
 }
 
 TEST(CollectivesFfiTest, RequestAndGetCommunicatorWithRankInfo) {
