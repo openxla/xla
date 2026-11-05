@@ -470,6 +470,7 @@ cc_library(
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/service/gpu:backend_configs_cc",
@@ -497,6 +498,7 @@ xla_cc_test(
     deps = [
         ":ragged_dot_rewriter",
         "//xla/hlo/ir:hlo",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/utils:hlo_matchers",
         "//xla/stream_executor:device_description",
