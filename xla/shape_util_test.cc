@@ -792,6 +792,9 @@ TEST(ShapeUtilTest, ForEachIndexWithStatus) {
 
 TEST(ShapeUtilTest, GetForEachIndexParallelThreadCount) {
   const int kThreadCount = ShapeUtil::GetForEachIndexParallelThreadCount();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+  EXPECT_EQ(kThreadCount, 1);
+#endif
 
   Shape shape = ShapeUtil::MakeShape(F32, {10, 100});
   auto check_func = [kThreadCount](absl::Span<const int64_t> /*indexes*/,
