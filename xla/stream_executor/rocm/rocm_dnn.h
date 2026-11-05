@@ -23,6 +23,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -229,6 +230,49 @@ class MIOpenSupport : public dnn::DnnSupport {
       const dnn::FilterDescriptor& filter_descriptor,
       const dnn::BatchDescriptor& output_descriptor,
       const dnn::ConvolutionDescriptor& convolution_descriptor) override;
+
+  // The graph convolution entry points are backed by hipDNN rather than
+  // MIOpen, and are implemented in hipdnn_dnn.cc.
+  absl::Status GetGraphConvolveRunners(
+      dnn::ConvolutionKind kind, dnn::DataType input_type,
+      dnn::DataType output_type, Stream* stream,
+      const dnn::BatchDescriptor& input_descriptor,
+      const dnn::FilterDescriptor& filter_descriptor,
+      const dnn::BatchDescriptor& output_descriptor,
+      const dnn::ConvolutionDescriptor& convolution_descriptor,
+      bool use_fallback, const EngineOptions& engine_options,
+      std::vector<std::unique_ptr<const dnn::GraphConvRunner>>* out_exec_plans,
+      std::string serialized_graph) override;
+
+  absl::StatusOr<std::unique_ptr<const dnn::GraphConvRunner>>
+  GraphConvolveRunnerFromDesc(
+      Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
+      dnn::ConvolutionKind kind, dnn::DataType input_type,
+      dnn::DataType output_type, const dnn::BatchDescriptor& input_descriptor,
+      const dnn::FilterDescriptor& filter_descriptor,
+      const dnn::BatchDescriptor& output_descriptor,
+      const dnn::ConvolutionDescriptor& convolution_descriptor,
+      std::string serialized_graph) override;
+
+  // Layer normalization, also backed by hipDNN rather than MIOpen.
+  absl::StatusOr<std::unique_ptr<const dnn::NormRunner>> NormRunnerFromDesc(
+      Stream* stream, const dnn::AlgorithmDesc& algorithm_desc,
+      dnn::NormKind kind, double epsilon,
+      const dnn::TensorDescriptor& x_descriptor,
+      const dnn::TensorDescriptor& scale_descriptor,
+      const dnn::TensorDescriptor& y_or_dx_descriptor,
+      std::optional<dnn::TensorDescriptor> bias_descriptor,
+      std::optional<dnn::TensorDescriptor> dy_descriptor,
+      std::optional<dnn::TensorDescriptor> expectation_descriptor,
+      std::optional<dnn::TensorDescriptor> norm_factor_descriptor,
+      std::optional<dnn::TensorDescriptor> dscale_descriptor,
+      std::optional<dnn::TensorDescriptor> dbias_descriptor) override;
+
+  // Rebuilds a graph serialized by SerializeHipdnnGraph(), for CuDnnThunk.
+  absl::StatusOr<std::unique_ptr<dnn::DnnGraph>> DeserializeGraph(
+      Stream& stream, absl::string_view serialized_data) const override;
+
+  StreamExecutor* parent() const { return parent_; }
 
   absl::StatusOr<std::unique_ptr<const dnn::FusedConvRunner>>
   FusedConvolveRunnerFromDesc(
@@ -582,6 +626,33 @@ class MIOpenSupport : public dnn::DnnSupport {
   MIOpenSupport(const MIOpenSupport&) = delete;
   void operator=(const MIOpenSupport&) = delete;
 };
+
+// Version of the hipDNN runtime that backs the graph entry points, in
+// "MAJOR.MINOR.PATCH.TWEAK" form. Defined in hipdnn_dnn.cc.
+std::string HipdnnVersionString();
+absl::StatusOr<dnn::VersionInfo> HipdnnVersion();
+
+// Builds and compiles a hipDNN flash-attention forward graph for an XLA
+// __cudnn$fmha* Custom Call. Tensor UIDs are 1-based operand positions, which
+// is the convention HipdnnGraph::Execute and so CuDnnThunk rely on. Returns an
+// error for the attention variants hipDNN has no engine for, rather than
+// quietly dropping the unsupported option. Defined in hipdnn_dnn.cc.
+absl::StatusOr<std::unique_ptr<dnn::DnnGraph>>
+GetHipdnnFlashAttentionOperationGraph(
+    dnn::DnnSupport* dnn_support, const DeviceDescription& gpu_device_info,
+    const dnn::MatmulTensorDescriptor& q_descriptor,
+    const dnn::MatmulTensorDescriptor& k_descriptor,
+    const dnn::MatmulTensorDescriptor& v_descriptor,
+    const dnn::TensorDescriptor& o_descriptor,
+    std::optional<dnn::TensorDescriptor> bias_descriptor,
+    std::optional<dnn::TensorDescriptor> stats_descriptor, double scale,
+    bool use_dropout, dnn::FMHAMaskKind mask_type, int sliding_window_length,
+    int max_seg_per_batch, bool is_paged_attention, bool has_score_mod);
+
+// Graph properties the compiler needs without seeing the hipDNN frontend
+// types. Both expect a graph produced by the builder above.
+absl::StatusOr<std::string> SerializeHipdnnGraph(const dnn::DnnGraph& graph);
+absl::StatusOr<int64_t> HipdnnGraphWorkspaceSize(const dnn::DnnGraph& graph);
 
 // A helper function for the front frameworks.
 // e.g., TF(tensorflow/core/kernels/conv_ops.cc, fused_batch_norm_op.cc

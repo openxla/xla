@@ -22,6 +22,7 @@ limitations under the License.
 #include <limits>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -44,6 +45,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_description.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/types.h"
 #include "xla/util.h"
@@ -99,14 +101,34 @@ using NormMetadataMap = absl::flat_hash_map<HloInstruction*, NormMetadata>;
 // Returns an architecture-specific constant for the calculation of an upper
 // bound for the size of the scratch space for layer norm kernels.
 absl::StatusOr<int64_t> CConstant(
-    se::CudaComputeCapability cuda_compute_capability) {
-  if (cuda_compute_capability.major == se::CudaComputeCapability::kAmpere) {
-    return 32 * 128;
-  } else if (cuda_compute_capability.major ==
-             se::CudaComputeCapability::kHopper) {
+    const se::GpuComputeCapability& gpu_compute_capability) {
+  if (const auto* cc = gpu_compute_capability.cuda_compute_capability()) {
+    if (cc->major == se::CudaComputeCapability::kAmpere) {
+      return 32 * 128;
+    }
+    if (cc->major == se::CudaComputeCapability::kHopper) {
+      return 32 * 144;
+    }
+    return xla::Internal("Norm kernels require Ampere or Hopper architecture.");
+  }
+  if (gpu_compute_capability.IsRocm()) {
+    // hipDNN sizes its own workspace; this only has to be an upper bound, so
+    // take the larger of the two NVIDIA values.
     return 32 * 144;
   }
-  return xla::Internal("Norm kernels require Ampere or Hopper architecture.");
+  return xla::Internal("Norm kernels are not supported on this platform.");
+}
+
+// Whether the platform has a norm library behind the Custom Call at all. On
+// ROCm that is hipDNN, which the caller has already opted into by adding this
+// pass; on CUDA the kernels exist only for Ampere and Hopper.
+bool SupportsNormCustomCalls(
+    const se::GpuComputeCapability& gpu_compute_capability) {
+  if (const auto* cc = gpu_compute_capability.cuda_compute_capability()) {
+    return cc->major == se::CudaComputeCapability::kAmpere ||
+           cc->major == se::CudaComputeCapability::kHopper;
+  }
+  return gpu_compute_capability.IsRocm();
 }
 
 // Returns whether the element type of instr is compatible with layer norm
@@ -817,8 +839,8 @@ auto F2(UniqueHloInstruction* fused_norm_factor, UniqueHloInstruction* scale,
 class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
  public:
   explicit CudnnNormRewriterVisitor(
-      const se::CudaComputeCapability cuda_compute_capability)
-      : cuda_compute_capability_(cuda_compute_capability) {}
+      const se::GpuComputeCapability gpu_compute_capability)
+      : gpu_compute_capability_(gpu_compute_capability) {}
 
   absl::Status HandleAdd(HloInstruction* instr) override {
     ABSL_RETURN_IF_ERROR(MatchLayerNorm(instr));
@@ -856,13 +878,9 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
         return absl::OkStatus();
       }
 
-      // Layer norm kernels require Ampere or Hopper architectures.
-      if (cuda_compute_capability_.major !=
-              se::CudaComputeCapability::kAmpere &&
-          cuda_compute_capability_.major !=
-              se::CudaComputeCapability::kHopper) {
+      if (!SupportsNormCustomCalls(gpu_compute_capability_)) {
         VLOG(1) << "Layer norm Custom Calls require Ampere or Hopper "
-                   "architectures.";
+                   "architectures on CUDA, or any GPU on ROCm.";
         return absl::OkStatus();
       }
 
@@ -1030,7 +1048,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // Set the workspace size to its upper bound.
       // TODO(philipphack): Consider autotuning the norm kernels.
       ABSL_ASSIGN_OR_RETURN(const int64_t c_constant,
-                            CConstant(cuda_compute_capability_));
+                            CConstant(gpu_compute_capability_));
       const int64_t workspace_size =
           (2 * c_constant * (4 + 256)) + (2 * reshaped_dims[0] * 4) + 64;
       algorithm->mutable_workspace_size()->set_value(workspace_size);
@@ -1156,7 +1174,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
 
       // Update the workspace size.
       ABSL_ASSIGN_OR_RETURN(const int64_t c_constant,
-                            CConstant(cuda_compute_capability_));
+                            CConstant(gpu_compute_capability_));
       const int64_t workspace_size = (2 * c_constant * (4 + 256)) + 32;
       backend_config.mutable_algorithm()->mutable_workspace_size()->set_value(
           workspace_size);
@@ -1424,7 +1442,7 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
       // Set the workspace size to its upper bound.
       // TODO(philipphack): Consider autotuning the norm kernels.
       ABSL_ASSIGN_OR_RETURN(const int64_t c_constant,
-                            CConstant(cuda_compute_capability_));
+                            CConstant(gpu_compute_capability_));
       const int64_t workspace_size =
           (2 * c_constant * (4 + 256)) +
           (2 * x.instr()->shape().dimensions(0) * 4) + 64;
@@ -1481,14 +1499,14 @@ class CudnnNormRewriterVisitor : public DfsHloRewriteVisitor {
   }
 
  private:
-  se::CudaComputeCapability cuda_compute_capability_;
+  se::GpuComputeCapability gpu_compute_capability_;
   NormMetadataMap norm_metadata_;
 };
 
 absl::StatusOr<bool> RunOnComputation(
     HloComputation* computation,
-    se::CudaComputeCapability cuda_compute_capability) {
-  CudnnNormRewriterVisitor visitor(cuda_compute_capability);
+    const se::GpuComputeCapability& gpu_compute_capability) {
+  CudnnNormRewriterVisitor visitor(gpu_compute_capability);
   ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));
   return visitor.changed();
 }
@@ -1496,8 +1514,8 @@ absl::StatusOr<bool> RunOnComputation(
 }  // anonymous namespace
 
 CudnnNormRewriter::CudnnNormRewriter(
-    const se::CudaComputeCapability& cuda_compute_capability)
-    : cuda_compute_capability_(cuda_compute_capability) {}
+    const se::GpuComputeCapability& gpu_compute_capability)
+    : gpu_compute_capability_(gpu_compute_capability) {}
 
 absl::StatusOr<bool> CudnnNormRewriter::RunImpl(
     HloModule* module,
@@ -1506,7 +1524,7 @@ absl::StatusOr<bool> CudnnNormRewriter::RunImpl(
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     ABSL_ASSIGN_OR_RETURN(
-        bool result, RunOnComputation(computation, cuda_compute_capability_));
+        bool result, RunOnComputation(computation, gpu_compute_capability_));
     changed |= result;
   }
   return changed;

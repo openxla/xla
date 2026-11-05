@@ -126,6 +126,24 @@ cc_library(
     ],
 )
 
+# The hipDNN frontend is header-only and its headers include each other with
+# angle brackets rooted at the per-component directories (Graph.hpp does
+# `#include <hipdnn_backend.h>` and `<hipdnn_data_sdk/...>`), so it cannot go
+# through :rocm_headers, which prefixes every include path with "rocm/".
+cc_library(
+    name = "hipdnn_headers",
+    hdrs = glob(["%{rocm_root}/include/hipdnn/**"]),
+    includes = [
+        "%{rocm_root}/include/hipdnn/backend",
+        "%{rocm_root}/include/hipdnn/data_sdk",
+        "%{rocm_root}/include/hipdnn/flatbuffers_sdk",
+        "%{rocm_root}/include/hipdnn/frontend",
+        "%{rocm_root}/include/hipdnn/plugin_sdk",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":rocm_headers"],
+)
+
 cc_library(
     name = "rocm_rpath",
     linkopts = select({
@@ -320,6 +338,28 @@ rocm_lib_import(
         ":rocblas_libs",
         ":rocm_core_libs",
         ":roctx_libs",
+        ":system_libs",
+    ],
+)
+
+rocm_lib_import(
+    name = "hipdnn",
+    data = glob([
+        "%{rocm_root}/lib/libhipdnn_backend.so*",
+    ]) + glob([
+        "%{rocm_root}/lib/hipdnn_plugins/**",
+    ]),
+    interface_library = "%{rocm_root}/lib/libhipdnn_backend.so",
+    # The engine plugins dlopened out of lib/hipdnn_plugins/engines pull in
+    # MIOpen, hipBLASLt and hipRTC, so they have to be present at runtime even
+    # though libhipdnn_backend.so itself only links against HIP.
+    deps = [
+        ":amd_comgr_libs",
+        ":hip_runtime_libs",
+        ":hipblaslt_libs",
+        ":hiprtc_libs",
+        ":miopen_libs",
+        ":rocm_core_libs",
         ":system_libs",
     ],
 )

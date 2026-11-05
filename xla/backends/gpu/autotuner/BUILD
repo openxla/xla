@@ -798,6 +798,7 @@ cc_library(
         ":factory",
         ":fission_backend",
         ":hipblaslt",
+        ":hipdnn",
         ":miopen",
         ":native_emitter",
         ":triton",
@@ -997,6 +998,41 @@ xla_test(
     ]) + if_rocm_is_configured([
         ":hipblaslt",
     ]),
+)
+
+cc_library(
+    name = "hipdnn",
+    srcs = ["hipdnn.cc"],
+    hdrs = ["hipdnn.h"],
+    deps = [
+        ":gpu_codegen_backend",
+        "//xla:autotuning_proto_cc",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:backends_proto_cc",
+        "//xla/backends/autotuner:codegen_backend",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:compiler",
+        "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:cublas_cudnn",
+        "//xla/service/gpu:gpu_conv_runner",
+        "//xla/service/gpu:stream_executor_util",
+        "//xla/stream_executor:device_address_allocator",
+        "//xla/stream_executor:dnn",
+        "//xla/stream_executor:engine_options",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "//xla/tsl/platform:errors",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/protobuf:dnn_proto_cc",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
 )
 
 cc_library(

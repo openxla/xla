@@ -4103,6 +4103,13 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_enable_horizontal_fusion(),
       "Enable experimental thread-block specialized horizontal fusion of "
       "independent small-grid GPU kernels."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_enable_hipdnn",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_hipdnn),
+      debug_options->xla_gpu_enable_hipdnn(),
+      "On ROCm, route the operations hipDNN can serve through its graph API "
+      "instead of MIOpen. Off by default, in which case convolutions, "
+      "normalizations and attention all keep using the legacy MIOpen path."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

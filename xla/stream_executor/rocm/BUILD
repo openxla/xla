@@ -655,13 +655,52 @@ cc_library(
 )
 
 cc_library(
+    name = "hipdnn_if_static",
+    tags = [
+        "gpu",
+        "rocm-only",
+    ],
+    deps = if_static([
+        "@local_config_rocm//rocm:hipdnn",
+    ]),
+)
+
+cc_library(
     name = "miopen_plugin",
-    srcs = ["rocm_dnn.cc"],
-    hdrs = ["rocm_dnn.h"],
+    srcs = [
+        "hipdnn_dnn.cc",
+        "rocm_dnn.cc",
+    ],
+    hdrs = [
+        "hipdnn_frontend_helpers.h",
+        "rocm_dnn.h",
+    ],
     copts = [
         # STREAM_EXECUTOR_CUDNN_WRAP would fail on Clang with the default
         # setting of template depth 256
         "-ftemplate-depth-512",
+        # Graph::sdpa() and the attention attribute types are compiled out of
+        # the hipDNN frontend headers unless this is set.
+        "-DHIPDNN_ENABLE_SDPA",
+        # The header-only hipDNN frontend instantiates libstdc++ templates such
+        # as std::filesystem::path's converting constructor. Exporting those
+        # lets libhipdnn_backend.so's own calls bind back into this binary,
+        # where they were compiled against different libstdc++ headers, and the
+        # resulting layout mismatch corrupts the heap. Keeping them hidden
+        # leaves the library bound to its own definitions.
+        "-fvisibility=hidden",
+        "-fvisibility-inlines-hidden",
+    ],
+    linkopts = [
+        # -fvisibility only covers this target's own objects. std::filesystem
+        # was not in the GCC 8 sysroot's libstdc++.so, so its out-of-line
+        # definitions get pulled from that libstdc++.a and re-exported with
+        # default visibility. hipblaslt and librocblas resolve against the
+        # modern system libstdc++, whose std::filesystem::path has a different
+        # layout, and binding them to the GCC 8 copies segfaults inside
+        # _M_split_cmpts(). Keep the archive's symbols out of the dynamic table
+        # so each library uses the implementation it was compiled against.
+        "-Wl,--exclude-libs,libstdc++fs.a",
     ],
     tags = [
         "gpu",
@@ -669,6 +708,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":hipdnn_if_static",  # build_cleaner: keep
         ":miopen_if_static",  # build_cleaner: keep
         ":rocm_executor",
         ":rocm_helpers",
@@ -703,7 +743,9 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@eigen_archive//:eigen3",
+        "@local_config_rocm//rocm:hipdnn_headers",
         "@local_config_rocm//rocm:rocm_headers",
         "@tsl//tsl/platform:hash",
     ],

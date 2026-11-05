@@ -24,12 +24,16 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "llvm/IR/Module.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/transforms/algebraic_simplifier.h"
 #include "xla/backends/gpu/transforms/conv_padding_legalization.h"
 #include "xla/backends/gpu/transforms/conv_rewriter.h"
 #include "xla/backends/gpu/transforms/cudnn_fused_conv_rewriter.h"
+#include "xla/backends/gpu/transforms/cudnn_norm_rewriter.h"
+#include "xla/backends/gpu/transforms/hipdnn_conv_rewriter.h"
+#include "xla/backends/gpu/transforms/hipdnn_custom_call_compiler.h"
 #include "xla/backends/gpu/transforms/triangular_solve_rewriter.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -48,6 +52,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/float_support.h"
 #include "xla/service/gpu/alias_info.h"
+#include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/gpu_compiler.h"
 #include "xla/service/gpu/llvm_gpu_backend/amdgpu_backend.h"
 #include "xla/service/gpu/target_constants.h"
@@ -120,6 +125,11 @@ absl::Status AMDGPUCompiler::OptimizeHloConvolutionCanonicalization(
     pipeline.AddPass<ConvPaddingLegalization>();
     pipeline.AddPass<CudnnFusedConvRewriter>(gpu_version, dnn_version,
                                              toolkit_version);
+    // Must run after CudnnFusedConvRewriter so that only the convolutions it
+    // left unfused -- the ones hipDNN has an engine for -- are promoted.
+    if (hlo_module->config().debug_options().xla_gpu_enable_hipdnn()) {
+      pipeline.AddPass<HipdnnConvRewriter>();
+    }
   }
 
   // The conv padding/vectorization passes which we need to get rid of.  They
@@ -178,6 +188,25 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
     const CompileOptions& options, const GpuTopology& gpu_topology,
     const GpuAliasInfo* alias_info, tsl::thread::ThreadPool* thread_pool,
     CompilationStats* compilation_stats, mlir::MLIRContext* mlir_context) {
+  const DebugOptions& debug_options = hlo_module->config().debug_options();
+
+  // Rewrite normalization patterns into Custom Calls served by hipDNN. MIOpen
+  // has no equivalent, so this only runs with hipDNN enabled. Like on NVPTX it
+  // has to see the module before GemmRewriter, which runs as part of
+  // GpuCompiler::OptimizeHloPostLayoutAssignment().
+  if (debug_options.xla_gpu_enable_hipdnn() &&
+      debug_options.xla_gpu_enable_cudnn_layer_norm() &&
+      !debug_options.xla_gpu_experimental_disable_binary_libraries()) {
+    HloPassPipeline pre_pipeline("AMDGPU post-layout_assignment part 1",
+                                 compilation_stats);
+    pre_pipeline.AddPass<CudnnNormRewriter>(
+        gpu_topology.gpu_target_config()
+            .device_description.gpu_compute_capability());
+    ABSL_RETURN_IF_ERROR(
+        pre_pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
+            .status());
+  }
+
   ABSL_RETURN_IF_ERROR(GpuCompiler::OptimizeHloPostLayoutAssignment(
       hlo_module, stream_exec, options, gpu_topology, alias_info, thread_pool,
       compilation_stats, mlir_context));
@@ -196,6 +225,36 @@ absl::Status AMDGPUCompiler::OptimizeHloPostLayoutAssignment(
           .status());
 
   return absl::OkStatus();
+}
+
+absl::Status AMDGPUCompiler::RunCudnnCompilerPasses(
+    HloModule* module, se::StreamExecutor* stream_exec,
+    const GpuTargetConfig& gpu_target_config, BinaryMap* dnn_compiled_graphs) {
+  const DebugOptions& debug_options = module->config().debug_options();
+  if (!debug_options.xla_gpu_enable_hipdnn() ||
+      debug_options.xla_gpu_experimental_disable_binary_libraries()) {
+    // Without hipDNN there is nothing behind these Custom Calls on ROCm --
+    // MIOpen has no attention entry point -- so say so here rather than let
+    // the thunk fail at initialization with a missing-graph error.
+    for (const HloComputation* computation : module->computations()) {
+      for (const HloInstruction* instr : computation->instructions()) {
+        if (IsCustomCallTofMHA(*instr) || IsCustomCallTofMHAF8(*instr)) {
+          return absl::UnimplementedError(absl::StrCat(
+              instr->custom_call_target(),
+              " needs hipDNN on ROCm; enable it with --xla_gpu_enable_hipdnn."));
+        }
+      }
+    }
+    return absl::OkStatus();
+  }
+  // Stream-annotated calls are wrapped into async computations on the parallel
+  // execution thread, and their graphs must be compiled as well.
+  const absl::flat_hash_set<absl::string_view> execution_threads = {
+      HloInstruction::kMainExecutionThread,
+      HloInstruction::kParallelExecutionThread};
+  HipdnnCustomCallCompiler call_compiler(
+      stream_exec, gpu_target_config.device_description, *dnn_compiled_graphs);
+  return call_compiler.Run(module, execution_threads).status();
 }
 
 AMDGPUCompiler::AMDGPUCompiler()
