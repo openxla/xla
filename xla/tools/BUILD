@@ -1511,11 +1511,20 @@ xla_cc_binary(
 )
 
 bzl_library(
+    name = "source_hash_rules_bzl",
+    srcs = ["source_hash_rules.bzl"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "@rules_cc//cc/common",
+    ],
+)
+
+bzl_library(
     name = "source_hash_bzl",
     srcs = ["source_hash.bzl"],
     visibility = ["//visibility:public"],
     deps = [
+        ":source_hash_rules_bzl",
         "//xla:xla_bzl",
-        "@rules_cc//cc/common",
     ],
 )
