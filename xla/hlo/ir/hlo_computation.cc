@@ -815,6 +815,20 @@ absl::Status HloComputation::RemoveInstructionAndUnusedOperands(
       }
       auto operand = caller->mutable_operand(parameter_number);
       caller->RemoveOperandAt(parameter_number);
+      if (auto* callable = DynCast<HloCallableInstruction>(caller);
+          callable != nullptr &&
+          !callable->output_to_operand_aliasing().empty()) {
+        auto aliasing = callable->output_to_operand_aliasing();
+        std::erase_if(aliasing, [parameter_number](const auto& entry) {
+          return entry.second.first == parameter_number;
+        });
+        for (auto& entry : aliasing) {
+          if (entry.second.first > parameter_number) {
+            --entry.second.first;
+          }
+        }
+        callable->set_output_to_operand_aliasing(std::move(aliasing));
+      }
       // Another parameter of the caller may still read the operand.
       if (!absl::c_linear_search(caller->operands(), operand)) {
         caller->DetachFrom(operand);

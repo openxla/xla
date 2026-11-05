@@ -1558,5 +1558,94 @@ ENTRY e {
   EXPECT_THAT(defused_ftup->operands(),
               ::testing::ElementsAre(defused_fadd, p1, p2));
 }
+
+TEST_F(HloInstructionTest,
+       CallableOutputToOperandAliasingUpdatedAcrossMutations) {
+  const char* const kHlo = R"(
+HloModule m
+
+fused_comp {
+  fp0 = f32[8] parameter(0)
+  fp1 = f32[8] parameter(1)
+  fp2 = f32[8] parameter(2)
+  sum01 = f32[8] add(fp0, fp1)
+  ROOT out = f32[8] add(sum01, fp2)
+}
+
+dead_param_comp {
+  dp0 = f32[8] parameter(0)
+  dp1 = f32[8] parameter(1)
+  dsum = f32[8] add(dp0, dp1)
+  ROOT dneg = f32[8] negate(dsum)
+}
+
+ENTRY e {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  p2 = f32[8] parameter(2)
+  neg1 = f32[8] negate(p1)
+  extra = f32[8] multiply(p0, p2)
+  fus = f32[8] fusion(p0, neg1, p2), kind=kCustom, calls=fused_comp,
+      output_to_operand_aliasing={{}: (2, {})}
+  dead_fus = f32[8] fusion(p0, p1), kind=kCustom, calls=dead_param_comp,
+      output_to_operand_aliasing={{}: (1, {})}
+  ROOT root = (f32[8], f32[8], f32[8]) tuple(fus, extra, dead_fus)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  HloInstruction* fus = FindInstruction(module.get(), "fus");
+  HloInstruction* neg1 = FindInstruction(module.get(), "neg1");
+  HloInstruction* extra = FindInstruction(module.get(), "extra");
+  HloInstruction* dead_fus = FindInstruction(module.get(), "dead_fus");
+  ASSERT_TRUE(fus != nullptr);
+  ASSERT_TRUE(neg1 != nullptr);
+  ASSERT_TRUE(extra != nullptr);
+  ASSERT_TRUE(dead_fus != nullptr);
+
+  auto* fus_callable = Cast<HloCallableInstruction>(fus);
+  // Appending `neg1` (sole user is `fus` operand 1) removes operand 1 and
+  // shifts operand 2 (`p2`) down to operand 1.
+  fus_callable->CloneAndAppendInstructionIntoCalledComputation(neg1);
+  ASSERT_EQ(fus_callable->output_to_operand_aliasing().size(), 1);
+  EXPECT_EQ(
+      fus_callable->output_to_operand_aliasing()[0],
+      std::make_pair(ShapeIndex{}, std::make_pair(int64_t{1}, ShapeIndex{})));
+
+  // Appending `extra` (`add_output=true` via external user) wraps the array
+  // root into a multi-output tuple, prefixing the output ShapeIndex with 0.
+  fus_callable->CloneAndAppendInstructionIntoCalledComputation(
+      extra, /*add_output=*/true);
+  ASSERT_EQ(fus_callable->output_to_operand_aliasing().size(), 1);
+  EXPECT_EQ(
+      fus_callable->output_to_operand_aliasing()[0],
+      std::make_pair(ShapeIndex{0}, std::make_pair(int64_t{1}, ShapeIndex{})));
+
+  // Permuting fusion operands `{1, 0, 2}` remaps operand 1 -> 0.
+  auto* fusion_inst = Cast<HloFusionInstruction>(fus);
+  ASSERT_OK(fusion_inst->PermuteFusionOperands({1, 0, 2}));
+  ASSERT_EQ(fus_callable->output_to_operand_aliasing().size(), 1);
+  EXPECT_EQ(
+      fus_callable->output_to_operand_aliasing()[0],
+      std::make_pair(ShapeIndex{0}, std::make_pair(int64_t{0}, ShapeIndex{})));
+
+  // Make `dp0` dead after verification, then run HloDCE to invoke
+  // CleanupUnusedOperandsAndParameters on `dead_param_comp`, removing unused
+  // parameter 0 and shifting aliased operand 1 -> 0.
+  HloInstruction* dp1 = FindInstruction(module.get(), "dp1");
+  HloInstruction* dsum = FindInstruction(module.get(), "dsum");
+  HloInstruction* dneg = FindInstruction(module.get(), "dneg");
+  ASSERT_TRUE(dp1 != nullptr && dsum != nullptr && dneg != nullptr);
+  ASSERT_OK(dneg->ReplaceOperandWith(0, dp1));
+  ASSERT_OK(dneg->parent()->RemoveInstruction(dsum));
+  HloDCE dce;
+  ASSERT_OK_AND_ASSIGN(bool dce_changed, dce.Run(module.get()));
+  EXPECT_TRUE(dce_changed);
+  auto* dead_callable = Cast<HloCallableInstruction>(dead_fus);
+  ASSERT_EQ(dead_callable->output_to_operand_aliasing().size(), 1);
+  EXPECT_EQ(
+      dead_callable->output_to_operand_aliasing()[0],
+      std::make_pair(ShapeIndex{}, std::make_pair(int64_t{0}, ShapeIndex{})));
+}
 }  // namespace
 }  // namespace xla
