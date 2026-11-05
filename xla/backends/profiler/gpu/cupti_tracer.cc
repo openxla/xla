@@ -51,6 +51,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "tsl/platform/host_info.h"
+#include "tsl/platform/mem.h"
 #include "tsl/platform/thread_annotations.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cuda_version_variants.h"
@@ -1399,7 +1400,8 @@ void CuptiTracer::Disable() {
     DisableApiTracing(/*unsubscribe=*/true).IgnoreError();
     DisableActivityTracing().IgnoreError();
     cupti_interface_->CleanUp();
-    Finalize().IgnoreError();
+    // CUPTI stays attached unless cuptiFinalize() actually ran and succeeded.
+    const bool cupti_finalized = option_->cupti_finalize && Finalize().ok();
     cupti_driver_api_hook_->SyncAndFlush().IgnoreError();
     collector_->SetTracingEndTimeNs(GetTimestamp());
 
@@ -1409,7 +1411,11 @@ void CuptiTracer::Disable() {
 
     if (activity_buffers_) {
       auto cached_buffers = activity_buffers_->PopCachedBuffers();
-      activity_buffers_.reset();
+      // While CUPTI is attached, its activity thread can still request and
+      // return buffers after Disable(), so the buffer manager must outlive it.
+      if (cupti_finalized) {
+        activity_buffers_.reset();
+      }
       collector_->OnTracerCachedActivityBuffers(std::move(cached_buffers));
     }
   }
@@ -2061,15 +2067,25 @@ absl::Status CuptiTracer::ProcessActivityBuffer(CUcontext context,
                                                 uint32_t stream_id,
                                                 uint8_t* buffer, size_t size) {
   absl::Cleanup buffer_cleanup = [&]() {
-    if (buffer) {
+    if (buffer == nullptr) {
+      return;
+    }
+    if (activity_buffers_ != nullptr) {
       activity_buffers_->ReclaimBuffer(buffer);
+    } else {
+      // The buffer was returned after its manager was destroyed.
+      tsl::port::AlignedFree(buffer);
     }
   };
   if (size == 0 || buffer == nullptr) {
     return absl::OkStatus();
   }
   if (!activity_tracing_enabled_) {
-    LOG(WARNING) << "CUPTI activity buffer is reclaimed after flush.";
+    // Expected while CUPTI stays attached after a session that skipped
+    // cuptiFinalize().
+    LOG_EVERY_N(WARNING, 1000) << "CUPTI activity buffer is reclaimed after "
+                                  "flush. This warning is logged once per "
+                                  "1000 occurrences.";
     return absl::OkStatus();
   }
   if (cupti_interface_->Disabled()) {
@@ -2218,8 +2234,16 @@ void CuptiTracer::PrepareCallbackStart() {
 }
 
 void CuptiTracer::PrepareActivityStart() {
-  activity_buffers_ = std::make_unique<CuptiActivityBufferManager>(
-      kBufferSizeInBytes, subscriber_, using_v2_subscriber_api_);
+  // Reuse a legacy-API buffer manager kept by a session that skipped
+  // cuptiFinalize(): CUPTI may still hold buffers from it. Drop buffers it
+  // cached after the previous session's Disable().
+  if (activity_buffers_ == nullptr || using_v2_subscriber_api_ ||
+      activity_buffers_->UsesV2Records()) {
+    activity_buffers_ = std::make_unique<CuptiActivityBufferManager>(
+        kBufferSizeInBytes, subscriber_, using_v2_subscriber_api_);
+  } else {
+    activity_buffers_->PopCachedBuffers();
+  }
   cupti_dropped_activity_event_count_ = 0;
   num_activity_events_in_cached_buffer_ = 0;
   num_activity_events_in_dropped_buffer_ = 0;

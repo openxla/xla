@@ -17,15 +17,20 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <fstream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/strings/match.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_activity.h"
@@ -231,6 +236,96 @@ TEST(ProfilerCudaKernelSanityTest, SimpleAddSubWithHESDisabled) {
 TEST(ProfilerCudaKernelSanityTest, SimpleAddSubWithHESEnabled) {
   SimpleAddSubWithProfilerTest(/*enable_activity_hardware_tracing=*/true,
                                /*enable_pm_sampling=*/false);
+}
+
+// Returns the resident set size of this process in bytes.
+int64_t ResidentBytes() {
+  std::ifstream statm("/proc/self/statm");
+  int64_t total_pages = 0;
+  int64_t resident_pages = 0;
+  statm >> total_pages >> resident_pages;
+  return resident_pages * sysconf(_SC_PAGESIZE);
+}
+
+// Returns the number of device events and the longest one in `space`.
+std::pair<int64_t, int64_t> DeviceEventCountAndMaxDurationPs(
+    const tensorflow::profiler::XSpace& space) {
+  int64_t count = 0;
+  int64_t max_duration_ps = 0;
+  for (const auto& plane : space.planes()) {
+    if (!absl::StartsWith(plane.name(), "/device:GPU:")) continue;
+    for (const auto& line : plane.lines()) {
+      for (const auto& event : line.events()) {
+        ++count;
+        max_duration_ps = std::max(max_duration_ps, event.duration_ps());
+      }
+    }
+  }
+  return {count, max_duration_ps};
+}
+
+// Many sessions that skip cuptiFinalize() in one process must keep collecting
+// kernels without growing host memory or slowing kernels after profiling.
+TEST(ProfilerCudaKernelSanityTest, RepeatedSessionsWithoutFinalize) {
+  if (!CuptiTracer::CanDisableConcurrentKernelActivity()) {
+    GTEST_SKIP() << "Skipping cuptiFinalize() requires CUDA 13.0+.";
+  }
+  constexpr int kNumElements = 256 * 1024;
+  constexpr int kWarmupSessions = 10;
+  constexpr int kSessions = 100;
+  constexpr int kNumKernels = 20000;
+
+  const double baseline_us = AverageEmptyKernelTimeUs(kNumKernels, false);
+  const double baseline_graph_us = AverageEmptyKernelTimeUs(kNumKernels, true);
+
+  CuptiTracerCollectorOptions collector_options{};
+  collector_options.num_gpus = CuptiTracer::NumGpus();
+  // CUPTI's activity buffer callbacks always go to the singleton.
+  CuptiTracer& tracer = *CuptiTracer::GetCuptiTracerSingleton();
+  int64_t warm_rss = 0;
+  for (int session = 0; session < kSessions; ++session) {
+    if (session == kWarmupSessions) warm_rss = ResidentBytes();
+    CuptiTracerOptions tracer_options{};
+    tracer_options.enable_nvtx_tracking = false;
+    tracer_options.activities_selected.push_back(
+        CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL);
+    tracer_options.cupti_finalize = false;
+    ASSERT_OK(tracer.PrepareForProfilerStart(tracer_options));
+    ASSERT_OK_AND_ASSIGN(uint64_t start_gputime_ns,
+                         tracer.GetTimestampForSubscriber());
+    auto collector = CreateCuptiCollector(
+        collector_options, absl::GetCurrentTimeNanos(), start_gputime_ns);
+    std::vector<std::unique_ptr<tensorflow::profiler::XPlane>> xplanes;
+    for (int i = 0; i < collector_options.num_gpus; ++i) {
+      xplanes.push_back(std::make_unique<tensorflow::profiler::XPlane>());
+    }
+    ASSERT_OK(tracer.Enable(tracer_options, collector.get(), xplanes));
+    std::vector<double> vec = SimpleAddSubWithProfiler(kNumElements);
+    AverageEmptyKernelTimeUs(/*num_kernels=*/1000, /*use_cuda_graph=*/true);
+    tracer.Disable();
+    EXPECT_THAT(vec, Each(DistanceFrom(0, Lt(0.001))));
+
+    tensorflow::profiler::XSpace space;
+    ASSERT_OK_AND_ASSIGN(uint64_t end_gpu_ns, collector->GetTracingEndTimeNs());
+    collector->Export(&space, end_gpu_ns);
+    const auto [num_events, max_duration_ps] =
+        DeviceEventCountAndMaxDurationPs(space);
+    EXPECT_GE(num_events, 4) << "session " << session;
+    EXPECT_LT(max_duration_ps, int64_t{1'000'000'000'000})
+        << "session " << session;
+  }
+  const int64_t final_rss = ResidentBytes();
+  const double after_us = AverageEmptyKernelTimeUs(kNumKernels, false);
+  const double after_graph_us = AverageEmptyKernelTimeUs(kNumKernels, true);
+  LOG(INFO) << "RSS after " << kWarmupSessions
+            << " sessions: " << warm_rss / (1 << 20) << " MiB, after "
+            << kSessions << " sessions: " << final_rss / (1 << 20)
+            << " MiB. Empty kernel us before/after profiling: " << baseline_us
+            << "/" << after_us << ", in a CUDA graph: " << baseline_graph_us
+            << "/" << after_graph_us;
+  EXPECT_LT(final_rss - warm_rss, int64_t{64} << 20);
+  EXPECT_LT(after_us, baseline_us * 1.5 + 1.0);
+  EXPECT_LT(after_graph_us, baseline_graph_us * 1.5 + 1.0);
 }
 
 }  // namespace

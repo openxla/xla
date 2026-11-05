@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/profile_with_cuda_kernels.h"
 
+#include <chrono>  // NOLINT(build/c++11)
 #include <cstddef>
 #include <vector>
 
@@ -36,6 +37,8 @@ __global__ void VecSub(const double* a, const double* b, double* c, int n) {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
   if (i < n) c[i] = a[i] - b[i];
 }
+
+__global__ void EmptyKernel() {}
 
 }  // namespace
 
@@ -104,9 +107,54 @@ std::vector<double> SimpleAddSubWithProfiler(int num_elements) {
   {
     cudaStreamSynchronize(stream);
     cudaStreamDestroy(stream);
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_c);
   }
 
   return vec_c;
+}
+
+double AverageEmptyKernelTimeUs(int num_kernels, bool use_cuda_graph) {
+  constexpr int kKernelsPerGraph = 100;
+  cudaStream_t stream = nullptr;
+  cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+  cudaGraphExec_t graph_exec = nullptr;
+  if (use_cuda_graph) {
+    cudaGraph_t graph = nullptr;
+    cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal);
+    for (int i = 0; i < kKernelsPerGraph; ++i) {
+      EmptyKernel<<<1, 1, 0, stream>>>();
+    }
+    cudaStreamEndCapture(stream, &graph);
+    cudaGraphInstantiate(&graph_exec, graph, 0);
+    cudaGraphDestroy(graph);
+  }
+  auto run = [&](int n) {
+    if (use_cuda_graph) {
+      for (int i = 0; i < n / kKernelsPerGraph; ++i) {
+        cudaGraphLaunch(graph_exec, stream);
+      }
+    } else {
+      for (int i = 0; i < n; ++i) {
+        EmptyKernel<<<1, 1, 0, stream>>>();
+      }
+    }
+    cudaStreamSynchronize(stream);
+  };
+  run(kKernelsPerGraph);  // Warm up.
+  double best_us = 0;
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    const auto start = std::chrono::steady_clock::now();
+    run(num_kernels);
+    const std::chrono::duration<double, std::micro> elapsed =
+        std::chrono::steady_clock::now() - start;
+    const double us = elapsed.count() / num_kernels;
+    if (attempt == 0 || us < best_us) best_us = us;
+  }
+  if (graph_exec != nullptr) cudaGraphExecDestroy(graph_exec);
+  cudaStreamDestroy(stream);
+  return best_us;
 }
 
 }  // namespace test

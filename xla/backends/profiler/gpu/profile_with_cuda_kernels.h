@@ -25,6 +25,11 @@ namespace test {
 // If runs correctly, the returned vector will only contain num_elements of 0.
 std::vector<double> SimpleAddSubWithProfiler(int num_elements);
 
+// Returns the best of 5 runs of the average wall time in microseconds per empty
+// kernel when launching `num_kernels` empty kernels, either directly or
+// replayed from a CUDA graph.
+double AverageEmptyKernelTimeUs(int num_kernels, bool use_cuda_graph);
+
 }  // namespace test
 }  // namespace profiler
 }  // namespace xla
