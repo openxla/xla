@@ -930,11 +930,8 @@ CommonPjRtClient::CompileAndLoad(MaybeOwningMlirModule module,
         std::move(fulfill_cb)(std::move(make_executable)());
       });
 
-  auto loaded_executable = std::make_unique<CommonPjRtLoadedExecutable>(
-      this, std::move(async_executable), std::move(info),
-      std::move(load_state));
-
-  return std::unique_ptr<PjRtLoadedExecutable>(std::move(loaded_executable));
+  return CreateLoadedExecutable(std::move(async_executable), std::move(info),
+                                std::move(load_state));
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
@@ -1236,10 +1233,17 @@ CommonPjRtClient::LoadInternal(
   if (IsCpuId(platform_id())) {
     dispatch_info.parameter_memory_space_kind_ids.clear();
   }
-  auto loaded_executable = std::make_unique<CommonPjRtLoadedExecutable>(
-      this, raw_client()->ToAsyncExecutable(std::move(executable)),
+  return CreateLoadedExecutable(
+      raw_client()->ToAsyncExecutable(std::move(executable)),
       std::move(dispatch_info), std::move(load_state));
-  return std::unique_ptr<PjRtLoadedExecutable>(std::move(loaded_executable));
+}
+
+std::unique_ptr<PjRtLoadedExecutable> CommonPjRtClient::CreateLoadedExecutable(
+    tsl::AsyncValueRef<PjRtExecutable> executable,
+    PjRtLoadedExecutableDispatchInfo info,
+    tsl::RCReference<PjRtExecutableLoadState> load_state) {
+  return std::make_unique<CommonPjRtLoadedExecutable>(
+      this, std::move(executable), std::move(info), std::move(load_state));
 }
 
 absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeHostBufferInto(

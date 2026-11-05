@@ -746,6 +746,11 @@ class CommonPjRtClient : public PjRtClient {
   }
 
  protected:
+  virtual std::unique_ptr<PjRtLoadedExecutable> CreateLoadedExecutable(
+      tsl::AsyncValueRef<PjRtExecutable> executable,
+      PjRtLoadedExecutableDispatchInfo info,
+      tsl::RCReference<PjRtExecutableLoadState> load_state);
+
   absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>> LoadInternal(
       std::shared_ptr<PjRtExecutable> executable,
       CompileOptions&& compile_options,
