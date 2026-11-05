@@ -36,26 +36,29 @@ namespace {
 class CudnnNormRewriterTest
     : public HloInterpreterReferenceMixin<HloPjRtGpuTestBase> {
  public:
-  se::CudaComputeCapability GetCudaComputeCapability() {
-    return device_description().cuda_compute_capability();
-  }
-
   DebugOptions GetDebugOptionsForTest() const override {
     DebugOptions debug_options = HloPjRtGpuTestBase::GetDebugOptionsForTest();
     debug_options.set_xla_gpu_enable_cudnn_layer_norm(true);
+    // On ROCm these Custom Calls are served by hipDNN, which is opt-in.
+    debug_options.set_xla_gpu_enable_hipdnn(true);
     return debug_options;
   }
 
  protected:
   void SetUp() override {
+    const se::GpuComputeCapability& cc =
+        device_description().gpu_compute_capability();
+    if (cc.IsRocm()) {
+      return;
+    }
     if (device_description().runtime_version() <
         stream_executor::SemanticVersion(12, 0, 0)) {
       GTEST_SKIP() << "Layer norm kernels require CUDA 12.";
     }
-    if (!(GetCudaComputeCapability().major ==
-          se::CudaComputeCapability::kAmpere) &&
-        !(GetCudaComputeCapability().major ==
-          se::CudaComputeCapability::kHopper)) {
+    const se::CudaComputeCapability* cuda_cc = cc.cuda_compute_capability();
+    if (cuda_cc == nullptr ||
+        (cuda_cc->major != se::CudaComputeCapability::kAmpere &&
+         cuda_cc->major != se::CudaComputeCapability::kHopper)) {
       GTEST_SKIP()
           << "Layer norm kernels require Ampere or Hopper architectures.";
     }
@@ -688,9 +691,10 @@ TEST_F(CudnnNormRewriterTest, LayerNorm2D1ReduceOperandRankMismatch) {
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
-  EXPECT_THAT(
-      RunHloPass(CudnnNormRewriter(GetCudaComputeCapability()), module.get()),
-      absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(RunHloPass(CudnnNormRewriter(
+                             device_description().gpu_compute_capability()),
+                         module.get()),
+              absl_testing::IsOkAndHolds(false));
 }
 
 // The reductions are applied to a reshape of the input that moves the
@@ -739,9 +743,10 @@ TEST_F(CudnnNormRewriterTest,
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
-  EXPECT_THAT(
-      RunHloPass(CudnnNormRewriter(GetCudaComputeCapability()), module.get()),
-      absl_testing::IsOkAndHolds(false));
+  EXPECT_THAT(RunHloPass(CudnnNormRewriter(
+                             device_description().gpu_compute_capability()),
+                         module.get()),
+              absl_testing::IsOkAndHolds(false));
 }
 
 // The reductions are applied to a reshape of the input with an additional
@@ -789,9 +794,10 @@ TEST_F(CudnnNormRewriterTest, LayerNorm2D1ReduceOperandDegenerateDimension) {
     })";
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
-  EXPECT_THAT(
-      RunHloPass(CudnnNormRewriter(GetCudaComputeCapability()), module.get()),
-      absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(RunHloPass(CudnnNormRewriter(
+                             device_description().gpu_compute_capability()),
+                         module.get()),
+              absl_testing::IsOkAndHolds(true));
 }
 
 TEST_F(CudnnNormRewriterTest, LayerNormTrain2D1) {

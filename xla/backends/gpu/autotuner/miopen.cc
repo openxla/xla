@@ -271,7 +271,9 @@ absl::Status ApplyConfigToFusedMIOpenCustomCall(
 }  // namespace
 
 bool MIOpenBackend::IsSupported(const HloInstruction& instr) {
-  return IsCustomCallToDnnConvolution(instr);
+  // Graph convolutions have no MIOpen runner; HipdnnBackend claims them.
+  return IsCustomCallToDnnConvolution(instr) &&
+         instr.custom_call_target() != kCudnnConvForwardGraphCallTarget;
 }
 
 absl::StatusOr<std::unique_ptr<BackendConfig>> MIOpenBackend::GetDefaultConfig(

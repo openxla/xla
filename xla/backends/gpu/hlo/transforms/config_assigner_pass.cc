@@ -502,6 +502,7 @@ std::vector<autotuner::Backend> GetEnabledBackendTypes(
     disabled_autotune_backends.push_back(autotuner::Backend::CUDNN_FISSION);
     disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT);
     disabled_autotune_backends.push_back(autotuner::Backend::MIOPEN);
+    disabled_autotune_backends.push_back(autotuner::Backend::HIPDNN);
     disabled_autotune_backends.push_back(autotuner::Backend::HIPBLASLT_FISSION);
   }
 
