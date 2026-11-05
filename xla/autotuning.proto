@@ -90,6 +90,19 @@ message AutotuneResult {
     // indexes the algorithms of the wider GEMM.
     bool unfuse_fp8_output = 3;
     stream_executor.gpu.BlasLtMatmulAlgorithmProto algorithm_proto = 4;
+
+    // The scale layout of an MX GEMM candidate, stored with the algorithm
+    // because the algorithm index is local to the layout's algorithm table.
+    // Unset means NATURAL.
+    enum MxScaleLayout {
+      // The scale tensor as given, row-major [MN, K/32]
+      // VEC32_UE8M0 scale mode in hipBLASLt
+      MX_SCALE_LAYOUT_NATURAL = 0;
+      // XLA permutes the scales into hipBLASLt's 32-row by 8-block tile order
+      // BLK32_UE8M0_32_8_EXT scale mode in hipBLASLt
+      MX_SCALE_LAYOUT_SWIZZLED_32X8 = 1;
+    }
+    MxScaleLayout mx_scale_layout = 5;
   }
 
   // Legacy and unused in new data; superseded by AlgorithmProto.

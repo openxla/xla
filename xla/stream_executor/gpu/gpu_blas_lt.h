@@ -127,9 +127,11 @@ bool MakeOutputColumnMajor(MatrixLayout& lhs, MatrixLayout& rhs,
                            MatrixLayout& output, MatrixLayout* c = nullptr);
 
 enum class ScaleMode {
-  kNone,
-  kTensorScaling,
-  kBlockScaling,
+  kNone = 0,
+  kTensorScaling = 1,
+  kBlockScaling = 2,
+  // Block scales in hipBLASLt's swizzled 32x8 tile order.
+  kBlockScalingSwizzled32x8 = 3,
 };
 
 struct GemmConfig {  // plain GemmConfig which is extended with create functions

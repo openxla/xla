@@ -15,29 +15,36 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/hipblaslt.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/layout.h"
+#include "xla/layout_util.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/amdgpu_compiler.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/platform_util.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/blas.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/platform.h"
@@ -419,6 +426,149 @@ CHECK:        ROOT {{.*}} = f8e4m3fn[32,16]{1,0} fusion({{.*}}), kind=kLoop
 )"),
               absl_testing::IsOkAndHolds(true));
 }
+
+std::string SwizzledScaledDotFusionHlo(bool fp4, int n = 96) {
+  return absl::Substitute(R"(
+HloModule SwizzledScaledDotFusion
+fusion_dot {
+  a = $0[64,512]{1,0$1} parameter(0)
+  b = $0[$2,512]{1,0$1} parameter(1)
+  sa = f8e8m0fnu[64,16]{1,0} parameter(2)
+  sb = f8e8m0fnu[$2,16]{1,0} parameter(3)
+  ROOT dot = f32[64,$2]{1,0} scaled-dot(a, b, sa, sb),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+ENTRY main {
+  a = $0[64,512]{1,0$1} parameter(0)
+  b = $0[$2,512]{1,0$1} parameter(1)
+  sa = f8e8m0fnu[64,16]{1,0} parameter(2)
+  sb = f8e8m0fnu[$2,16]{1,0} parameter(3)
+  ROOT fusion = f32[64,$2]{1,0} fusion(a,b,sa,sb), kind=kCustom,
+      calls=fusion_dot, backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+})",
+                          fp4 ? "f4e2m1fn" : "f8e4m3fn", fp4 ? ":E(4)" : "", n);
+}
+
+class HipblasLtSwizzledScaleTest : public HipblasLtBackendTest {
+ protected:
+  void SetUp() override {
+    const auto* rocm =
+        target_config_.device_description.gpu_compute_capability()
+            .rocm_compute_capability();
+    if (rocm == nullptr || !rocm->gfx9_mi350()) {
+      GTEST_SKIP() << "Swizzled scale tests require gfx950";
+    }
+  }
+};
+
+class HipblasLtSwizzledScaleTypeTest
+    : public HipblasLtSwizzledScaleTest,
+      public ::testing::WithParamInterface<bool> {};
+
+TEST_P(HipblasLtSwizzledScaleTypeTest, EnumeratesLayoutsByPolicyAndShape) {
+  debug_options_.set_xla_gpu_blas_max_algorithms(4);
+  debug_options_.set_xla_gpu_experimental_hipblaslt_mx_scale_layout(
+      DebugOptions::HIPBLASLT_MX_SCALE_LAYOUT_AUTO);
+  // n = 96 admits the swizzled layout, n = 16 does not.
+  for (int n : {96, 16}) {
+    auto module_or =
+        ParseAndReturnVerifiedModule(SwizzledScaledDotFusionHlo(GetParam(), n));
+    ASSERT_THAT(module_or, absl_testing::IsOk());
+    auto module = std::move(module_or).value();
+    auto configs_or = backend_.GetSupportedConfigs(
+        *module->entry_computation()->root_instruction());
+    ASSERT_THAT(configs_or, absl_testing::IsOk());
+    auto configs = std::move(configs_or).value();
+    ASSERT_FALSE(configs.empty());
+    bool has_natural = false;
+    bool has_swizzled = false;
+    for (const auto& config : configs) {
+      has_natural |= config->gemm().mx_scale_layout() ==
+                     HipblasLtBackendConfig::MX_SCALE_LAYOUT_NATURAL;
+      has_swizzled |= config->gemm().mx_scale_layout() ==
+                      HipblasLtBackendConfig::MX_SCALE_LAYOUT_SWIZZLED_32X8;
+    }
+    EXPECT_TRUE(has_natural) << n;
+    EXPECT_EQ(has_swizzled, n == 96) << n;
+  }
+}
+
+TEST_P(HipblasLtSwizzledScaleTypeTest, AppliesKeyLayoutNotCurrentFlag) {
+  debug_options_.set_xla_gpu_experimental_hipblaslt_mx_scale_layout(
+      DebugOptions::HIPBLASLT_MX_SCALE_LAYOUT_NATURAL);
+  auto module_or =
+      ParseAndReturnVerifiedModule(SwizzledScaledDotFusionHlo(GetParam()));
+  ASSERT_THAT(module_or, absl_testing::IsOk());
+  auto module = std::move(module_or).value();
+  BackendConfig key;
+  key.mutable_gemm()->set_algorithm(0);
+  key.mutable_gemm()->set_autotune_workspace_size(64 * 1024 * 1024);
+  key.mutable_gemm()->set_mx_scale_layout(
+      HipblasLtBackendConfig::MX_SCALE_LAYOUT_SWIZZLED_32X8);
+  ASSERT_THAT(backend_.ApplyConfig(
+                  *module->entry_computation()->root_instruction(), key),
+              absl_testing::IsOk());
+  const HloInstruction* call =
+      module->entry_computation()->root_instruction()->operand(0);
+  auto config_or = call->backend_config<GpuBackendConfig>();
+  ASSERT_THAT(config_or, absl_testing::IsOk());
+  auto config = std::move(config_or).value();
+  EXPECT_EQ(config.gemm_backend_config().scale_mode(), 3);
+  for (int operand : {0, 1}) {
+    EXPECT_EQ(call->operand(operand),
+              module->entry_computation()->parameter_instruction(operand));
+    EXPECT_EQ(call->operand(operand)->shape().layout().element_size_in_bits(),
+              GetParam() ? 4 : 0);
+  }
+  EXPECT_EQ(call->operand(2)->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(call->operand(3)->opcode(), HloOpcode::kFusion);
+  EXPECT_EQ(call->operand(2)->operand(0),
+            module->entry_computation()->parameter_instruction(2));
+  EXPECT_EQ(call->operand(3)->operand(0),
+            module->entry_computation()->parameter_instruction(3));
+}
+
+TEST_P(HipblasLtSwizzledScaleTypeTest,
+       RejectsMaterializingReshapeWithIdenticalEndpointShapes) {
+  // A bitcast to column-major and a materializing reshape back: equal
+  // endpoint shapes, but eliding the chain would change the inputs.
+  for (int operand_index : {0, 2}) {
+    auto module_or =
+        ParseAndReturnVerifiedModule(SwizzledScaledDotFusionHlo(GetParam()));
+    ASSERT_THAT(module_or, absl_testing::IsOk());
+    auto module = std::move(module_or).value();
+    HloInstruction* fusion = module->entry_computation()->root_instruction();
+    HloComputation* fused = fusion->fused_instructions_computation();
+    HloInstruction* parameter = fused->parameter_instruction(operand_index);
+    Shape column_major = parameter->shape();
+    *column_major.mutable_layout() = LayoutUtil::MakeLayout({0, 1});
+    column_major.mutable_layout()->set_element_size_in_bits(
+        parameter->shape().layout().element_size_in_bits());
+    HloInstruction* bitcast = fused->AddInstruction(
+        HloInstruction::CreateBitcast(column_major, parameter));
+    HloInstruction* reshape = fused->AddInstruction(
+        HloInstruction::CreateReshape(parameter->shape(), bitcast));
+    ASSERT_FALSE(
+        ShapeUtil::ReshapeIsBitcast(bitcast->shape(), reshape->shape()));
+    ASSERT_THAT(
+        fused->root_instruction()->ReplaceOperandWith(operand_index, reshape),
+        absl_testing::IsOk());
+    ASSERT_THAT(module->Verify(), absl_testing::IsOk());
+
+    BackendConfig config;
+    config.mutable_gemm()->set_mx_scale_layout(
+        HipblasLtBackendConfig::MX_SCALE_LAYOUT_SWIZZLED_32X8);
+    EXPECT_THAT(backend_.ApplyConfig(*fusion, config),
+                absl_testing::StatusIs(absl::StatusCode::kInvalidArgument));
+    EXPECT_EQ(module->entry_computation()->root_instruction(), fusion);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(MxTypes, HipblasLtSwizzledScaleTypeTest,
+                         ::testing::Bool(),
+                         [](const ::testing::TestParamInfo<bool>& info) {
+                           return info.param ? "Fp4" : "Fp8";
+                         });
 
 }  // namespace gpu
 }  // namespace xla

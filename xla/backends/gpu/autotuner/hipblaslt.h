@@ -65,7 +65,12 @@ class HipblasLtBackend : public GpuCodegenBackend {
                            const BackendConfig& config) override;
 
   std::string version() const override {
-    return target_config().device_description.runtime_version().ToString();
+    // The candidate set depends on the layout policy, so key the cache by it.
+    return target_config().device_description.runtime_version().ToString() +
+           ":mx-scale-layout:" +
+           DebugOptions::HipblasLtMxScaleLayout_Name(
+               debug_options()
+                   .xla_gpu_experimental_hipblaslt_mx_scale_layout());
   }
 
  private:

@@ -139,7 +139,9 @@ message GemmBackendConfig {
   // The workspace size used during autotuning when the algorithm was selected.
   int64 autotune_workspace_size = 20;
 
-  // Scale mode: 0=none, 1=tensor_scaling (fp8), 2=block_scaling (MX).
+  // Scale mode: 0=none, 1=tensor_scaling (fp8), 2=block_scaling (MX),
+  // 3=block_scaling (MX) with the scales permuted into hipBLASLt's 32-row by
+  // 8-block tile order.
   int32 scale_mode = 21;
 
   // Whether the last operand of an FP8-output `__cublas$lt$matmul$f8` is the
