@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/custom_call_thunk.h"
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -24,8 +27,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -50,7 +51,6 @@ limitations under the License.
 #include "xla/ffi/api/record_api.h"
 #include "xla/ffi/api/record_c_api.h"
 #include "xla/ffi/attribute_map.h"
-#include "xla/ffi/collectives_ffi.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/record_ffi.h"
@@ -60,16 +60,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
-#include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/service_executable_run_options.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape_util.h"
-#include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
@@ -320,110 +317,6 @@ TEST(CustomCallThunkTest, CustomCallWithOwnedHandlers) {
   EXPECT_EQ(instantiate_calls, 1);
   EXPECT_EQ(prepare_calls, 1);
   EXPECT_EQ(execute_calls, 1);
-}
-
-TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfoToAllRuntimeStages) {
-  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> stream,
-                       executor->CreateStream());
-
-  int handler_calls = 0;
-  auto check_device_info = [&](ffi::Communicator comm) -> absl::Status {
-    ABSL_ASSIGN_OR_RETURN(ffi::LogicalDeviceInfo info,
-                          comm.GetLogicalDeviceInfo());
-    EXPECT_EQ(info.replica_id, 1);
-    EXPECT_EQ(info.partition_id, 2);
-    EXPECT_EQ(info.replica_count, 2);
-    EXPECT_EQ(info.partition_count, 3);
-    ++handler_calls;
-    return absl::OkStatus();
-  };
-  CustomCallThunk::OwnedHandlerBundle bundle;
-  bundle.prepare =
-      ffi::Ffi::BindPrepare().Ctx<ffi::Extension<ffi::Collectives>>().To(
-          check_device_info);
-  bundle.initialize =
-      ffi::Ffi::BindInitialize().Ctx<ffi::Extension<ffi::Collectives>>().To(
-          check_device_info);
-  bundle.execute =
-      ffi::Ffi::BindExecute().Ctx<ffi::Extension<ffi::Collectives>>().To(
-          check_device_info);
-  bundle.record =
-      ffi::Ffi::BindRecord().Ctx<ffi::Extension<ffi::Collectives>>().To(
-          check_device_info);
-  ASSERT_OK_AND_ASSIGN(
-      auto thunk,
-      CustomCallThunk::Create(
-          Thunk::ThunkInfo(), "logical_device_info", std::move(bundle),
-          /*operands=*/{}, /*results=*/{}, /*attributes=*/{},
-          /*called_computation=*/nullptr, se::GpuComputeCapability()));
-
-  DeviceAssignment assignment(/*replica_count=*/2, /*computation_count=*/3);
-  assignment(0, 0) = 9;
-  assignment(0, 1) = 4;
-  assignment(0, 2) = 8;
-  assignment(1, 0) = 3;
-  assignment(1, 1) = 6;
-  assignment(1, 2) = 7;
-  GpuExecutableRunOptions gpu_options;
-  gpu_options.set_gpu_global_device_ids(GpuExecutableRunOptions::DeviceIdMap{
-      {LocalDeviceId(executor->device_ordinal()), GlobalDeviceId(7)}});
-  ServiceExecutableRunOptions run_options;
-  run_options.mutable_run_options()->set_stream(stream.get());
-  run_options.mutable_run_options()->set_device_assignment(&assignment);
-  run_options.mutable_run_options()->set_gpu_executable_run_options(
-      &gpu_options);
-  ASSERT_OK_AND_ASSIGN(
-      CollectiveParams collective_params,
-      CollectiveParams::Create(run_options, /*async_streams=*/{},
-                               LocalDeviceId(executor->device_ordinal())));
-
-  se::StreamExecutorAddressAllocator allocator(executor);
-  BufferAllocations buffer_allocations({}, executor->device_ordinal(),
-                                       &allocator);
-  CommandBufferRequests command_buffer_requests;
-  Thunk::PrepareParams prepare_params;
-  prepare_params.collective_params = &collective_params;
-  prepare_params.executor = executor;
-  prepare_params.buffer_allocations = &buffer_allocations;
-  prepare_params.command_buffer_requests = &command_buffer_requests;
-  ASSERT_OK(thunk->Prepare(prepare_params));
-  EXPECT_EQ(handler_calls, 1);
-
-  Thunk::InitializeParams initialize_params;
-  initialize_params.stream = stream.get();
-  initialize_params.buffer_allocations = &buffer_allocations;
-  initialize_params.collective_params = &collective_params;
-  ASSERT_OK(thunk->Initialize(initialize_params));
-  EXPECT_EQ(handler_calls, 2);
-
-  Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
-      run_options, buffer_allocations, stream.get(), stream.get(),
-      &collective_params, /*collective_cliques=*/nullptr,
-      /*collective_memory=*/nullptr);
-  ASSERT_OK(thunk->ExecuteOnStream(execute_params));
-  EXPECT_EQ(handler_calls, 3);
-
-  CommandStateManager state;
-  Command::RecordParams record_params = {state};
-  ASSERT_OK_AND_ASSIGN(
-      auto command_buffer,
-      executor->CreateCommandBuffer(se::CommandBuffer::Mode::kPrimary));
-  ASSERT_OK(thunk->Record(execute_params, record_params,
-                          Command::RecordCreate{/*dependencies=*/{}},
-                          command_buffer.get()));
-  EXPECT_EQ(handler_calls, 4);
-
-  collective_params.device_assn = nullptr;
-  EXPECT_THAT(thunk->Prepare(prepare_params),
-              StatusIs(absl::StatusCode::kFailedPrecondition,
-                       HasSubstr("Device assignment is required")));
-  collective_params.device_assn = &assignment;
-  collective_params.global_device_id = GlobalDeviceId(42);
-  EXPECT_THAT(thunk->Prepare(prepare_params),
-              StatusIs(absl::StatusCode::kInternal,
-                       HasSubstr("Device 42 doesn't appear")));
-  EXPECT_EQ(handler_calls, 4);
 }
 
 TEST(CustomCallThunkTest, CustomCallWithOwnedHandlersWithoutOptionalOnes) {

@@ -44,7 +44,6 @@ limitations under the License.
 #include "xla/ffi/ffi_interop.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/device_assignment.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/util.h"
@@ -225,16 +224,14 @@ absl::Status CommunicatorGetImpl(const XLA_FFI_Collectives_Extension* self,
 
   args->communicator =
       reinterpret_cast<XLA_FFI_Communicator*>(platform_comm.handle);
-  if (args->struct_size >= XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args,
-                                               local_participant_count)) {
+  if (args->struct_size >=
+      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, size)) {
     if (clique_key.num_devices() >
         static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
       return absl::OutOfRangeError("Communicator size exceeds int32 range");
     }
     args->rank = static_cast<int32_t>(rank->value());
     args->size = static_cast<int32_t>(clique_key.num_devices());
-    args->local_participant_count =
-        static_cast<int32_t>(clique_key.num_local_participants());
   }
   return absl::OkStatus();
 }
@@ -359,40 +356,6 @@ XLA_FFI_Error* WindowGet(const XLA_FFI_Collectives_Extension* self,
   return ffi::CreateError(WindowGetImpl(self, args));
 }
 
-absl::Status LogicalDeviceInfoGetImpl(
-    const XLA_FFI_Collectives_Extension* self,
-    XLA_FFI_LogicalDeviceInfo_Get_Args* args) {
-  if (args == nullptr) {
-    return InvalidArgument("XLA_FFI_LogicalDeviceInfo_Get_Args is null");
-  }
-  ABSL_RETURN_IF_ERROR(ActualStructSizeIsGreaterOrEqual(
-      "XLA_FFI_LogicalDeviceInfo_Get_Args",
-      XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE, args->struct_size));
-
-  GpuCollectivesState* state = AsState(self);
-  if (state == nullptr || state->collective_params == nullptr) {
-    return InvalidArgument("Collective params are not available");
-  }
-  const CollectiveParams& params = *state->collective_params;
-  if (params.device_assn == nullptr) {
-    return FailedPrecondition(
-        "Device assignment is required for logical device info");
-  }
-  ABSL_ASSIGN_OR_RETURN(
-      DeviceAssignment::LogicalID logical_id,
-      params.device_assn->LogicalIdForDevice(params.global_device_id));
-  args->replica_id = logical_id.replica_id;
-  args->partition_id = logical_id.computation_id;
-  args->replica_count = params.device_assn->replica_count();
-  args->partition_count = params.device_assn->computation_count();
-  return absl::OkStatus();
-}
-
-XLA_FFI_Error* LogicalDeviceInfoGet(const XLA_FFI_Collectives_Extension* self,
-                                    XLA_FFI_LogicalDeviceInfo_Get_Args* args) {
-  return ffi::CreateError(LogicalDeviceInfoGetImpl(self, args));
-}
-
 }  // namespace
 
 XLA_FFI_Collectives_Extension MakeCollectivesExtension(
@@ -412,7 +375,6 @@ XLA_FFI_Collectives_Extension MakeCollectivesExtension(
   ext.get_communicator = CommunicatorGet;
   ext.request_window = WindowRequest;
   ext.get_window = WindowGet;
-  ext.get_logical_device_info = LogicalDeviceInfoGet;
   return ext;
 }
 

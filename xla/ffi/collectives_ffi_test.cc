@@ -85,11 +85,10 @@ static XLA_FFI_Error* FakeGetCommunicator(
     const XLA_FFI_Collectives_Extension* self,
     XLA_FFI_Communicator_Get_Args* args) {
   args->communicator = kFakeCommunicator;
-  if (args->struct_size >= XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args,
-                                               local_participant_count)) {
+  if (args->struct_size >=
+      XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, size)) {
     args->rank = 2;
     args->size = 3;
-    args->local_participant_count = 1;
   }
   return nullptr;
 }
@@ -190,7 +189,6 @@ TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
   EXPECT_EQ(got.communicator, kFakeCommunicator);
   EXPECT_EQ(got.rank, 2);
   EXPECT_EQ(got.size, 3);
-  EXPECT_EQ(got.local_participant_count, 1);
   EXPECT_TRUE(backend.request_called);
   EXPECT_EQ(backend.requested_group_mode, XLA_FFI_GROUP_FLATTENED_ID);
   EXPECT_EQ(backend.requested_num_groups, 1u);

@@ -62,6 +62,7 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/literal.h"
 #include "xla/runtime/device_id.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/rendezvous.h"
 #include "xla/status_macros.h"
@@ -339,20 +340,21 @@ absl::Status PreparePublicApiAllReduce(ffi::Communicator comm) {
 // Execute handler: gets the XLA-owned communicator via the public collectives
 // FFI extension and runs an all-reduce on it via the platform collective
 // library (see CommunicatorAllReduceU32).
-absl::Status PublicApiAllReduce(
-    se::Stream* stream, ffi::BufferR0<U32> src,
-    ffi::Result<ffi::BufferR0<U32>> dst, ffi::Communicator comm,
-    const XLA_FFI_Collectives_Extension* extension) {
+absl::Status PublicApiAllReduce(se::Stream* stream, ffi::BufferR0<U32> src,
+                                ffi::Result<ffi::BufferR0<U32>> dst,
+                                ffi::Communicator comm,
+                                const XLA_FFI_Collectives_Extension* extension,
+                                const CollectiveParams* collective_params) {
   ABSL_ASSIGN_OR_RETURN(
       ffi::CommunicatorWithRankInfo info,
       comm.GetCommunicatorWithRankInfo(ffi::GroupMode::kFlattenedId, {{1, 0}},
                                        /*communication_id=*/0));
-  ABSL_ASSIGN_OR_RETURN(ffi::LogicalDeviceInfo logical_info,
-                        comm.GetLogicalDeviceInfo());
+  ABSL_ASSIGN_OR_RETURN(DeviceAssignment::LogicalID logical_id,
+                        collective_params->device_assn->LogicalIdForDevice(
+                            collective_params->global_device_id));
   TF_RET_CHECK(info.communicator != nullptr);
-  EXPECT_EQ(info.rank, kNumReplicas - 1 - logical_info.replica_id);
+  EXPECT_EQ(info.rank, kNumReplicas - 1 - logical_id.replica_id);
   EXPECT_EQ(info.size, kNumReplicas);
-  EXPECT_EQ(info.local_participant_count, kNumReplicas);
 
   const int64_t ids[] = {1, 0};
   XLA_FFI_ReplicaGroup group{ids, 2};
@@ -362,12 +364,9 @@ absl::Status PublicApiAllReduce(
   args.num_groups = 1;
   args.rank = -1;
   args.size = -1;
-  args.local_participant_count = -1;
   for (size_t struct_size : {
            XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator),
-           XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args,
-                               local_participant_count) -
-               1,
+           XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, size) - 1,
        }) {
     args.struct_size = struct_size;
     ABSL_RETURN_IF_ERROR(
@@ -375,7 +374,6 @@ absl::Status PublicApiAllReduce(
     EXPECT_EQ(args.communicator, info.communicator);
     EXPECT_EQ(args.rank, -1);
     EXPECT_EQ(args.size, -1);
-    EXPECT_EQ(args.local_participant_count, -1);
   }
 
   args.struct_size =
@@ -951,7 +949,8 @@ XLA_FFI_DEFINE_HANDLER(kPublicApiAllReduce, PublicApiAllReduce,
                            .Arg<ffi::BufferR0<U32>>()  // src
                            .Ret<ffi::BufferR0<U32>>()  // dst
                            .Ctx<ffi::Extension<ffi::Collectives>>()
-                           .Ctx<ffi::Extension<RawCollectives>>());
+                           .Ctx<ffi::Extension<RawCollectives>>()
+                           .Ctx<ffi::CollectiveParams>());
 
 XLA_FFI_DEFINE_HANDLER(kPreparePublicApiWindow, PreparePublicApiWindow,
                        ffi::Ffi::BindPrepare()
