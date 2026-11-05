@@ -4241,6 +4241,30 @@ TEST_F(LiteralUtilTest, MakeFakeLiteralWideF64BoundsDoNotOverflow) {
   EXPECT_LT(clamped_max_count, 64);
 }
 
+TEST_F(LiteralUtilTest, MakeFakeLiteralThreeArgMatchesDefaultConstrained) {
+  for (PrimitiveType type :
+       {S8, S32, U32, S4, F32, BF16, F4E2M1FN, C64, PRED}) {
+    for (int64_t num_elements : {64, 32768}) {
+      Shape shape = ShapeUtil::MakeShape(type, {num_elements});
+      for (bool use_large_range : {false, true}) {
+        ASSERT_OK_AND_ASSIGN(
+            Literal three_arg,
+            MakeFakeLiteral(shape, /*pseudo_random=*/true, use_large_range));
+        std::minstd_rand0 engine;
+        ASSERT_OK_AND_ASSIGN(
+            Literal eleven_arg,
+            MakeFakeLiteral(shape, &engine, /*limit=*/std::nullopt,
+                            /*is_sorted=*/false, /*no_duplicates=*/false,
+                            use_large_range,
+                            /*max_bits_of_precision=*/std::nullopt));
+        EXPECT_EQ(three_arg, eleven_arg)
+            << PrimitiveType_Name(type) << " n=" << num_elements
+            << " large_range=" << use_large_range;
+      }
+    }
+  }
+}
+
 }  // namespace
 
 }  // namespace xla
