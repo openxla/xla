@@ -135,7 +135,7 @@ XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Extension, next);
 // Minor changes include:
 // * Adding a new field to the XLA_FFI_Api or argument structs
 // * Renaming a method or argument (doesn't affect ABI)
-#define XLA_FFI_API_MINOR 5
+#define XLA_FFI_API_MINOR 6
 
 struct XLA_FFI_Api_Version {
   size_t struct_size;
@@ -806,6 +806,29 @@ typedef XLA_FFI_Error* XLA_FFI_DeviceOrdinal_Get(
     XLA_FFI_DeviceOrdinal_Get_Args* args);
 
 //===----------------------------------------------------------------------===//
+// LogicalDeviceInfo
+//===----------------------------------------------------------------------===//
+
+struct XLA_FFI_LogicalDeviceInfo_Get_Args {
+  size_t struct_size;
+  XLA_FFI_InternalExtension* extension_start;
+  XLA_FFI_InvokeContext* ctx;
+  int32_t replica_id;       // out
+  int32_t partition_id;     // out
+  int32_t replica_count;    // out
+  int32_t partition_count;  // out
+};
+
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_LogicalDeviceInfo_Get_Args,
+                             partition_count);
+
+// Returns this invocation's coordinates and dimensions in the executable's
+// device assignment. These are not physical device IDs or communicator ranks.
+// Returns an error when no device assignment is available (e.g. Instantiate).
+typedef XLA_FFI_Error* XLA_FFI_LogicalDeviceInfo_Get(
+    XLA_FFI_LogicalDeviceInfo_Get_Args* args);
+
+//===----------------------------------------------------------------------===//
 // Metadata extension
 //===----------------------------------------------------------------------===//
 
@@ -865,11 +888,12 @@ struct XLA_FFI_Api {
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_DeviceOrdinal_Get);
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_InvokeContext_FindExtension);
   _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_CustomOptions_Get);
+  _XLA_FFI_API_STRUCT_FIELD(XLA_FFI_LogicalDeviceInfo_Get);
 };
 
 #undef _XLA_FFI_API_STRUCT_FIELD
 
-XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Api, XLA_FFI_CustomOptions_Get);
+XLA_FFI_DEFINE_STRUCT_TRAITS(XLA_FFI_Api, XLA_FFI_LogicalDeviceInfo_Get);
 
 const XLA_FFI_Api* XLA_FFI_GetApi();
 

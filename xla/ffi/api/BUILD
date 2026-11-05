@@ -200,6 +200,8 @@ xla_cc_test(
         "//xla/ffi:ffi_api",  # buildcleaner: keep
         "//xla/ffi:invoke",
         "//xla/ffi:type_registry",
+        "//xla/runtime:device_id",
+        "//xla/service:device_assignment",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",
         "//xla/tsl/concurrency:async_value",
