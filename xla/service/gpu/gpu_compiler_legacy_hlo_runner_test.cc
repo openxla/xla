@@ -206,6 +206,48 @@ TEST_P(AotCompilationTest, EarlyExitWithLayouts) {
                                &CompiledModule::optimized_module, NotNull()))));
 }
 
+using HloRunnerLegacyWithoutModuleTest = HloLegacyGpuTestBase;
+
+TEST_F(HloRunnerLegacyWithoutModuleTest, ExecutesExecutableWithoutModule) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+    ENTRY e {
+      p0 = s32[4] parameter(0)
+      p1 = s32[4] parameter(1)
+      ROOT add = s32[4] add(p0, p1)
+    })hlo",
+                                                    GetModuleConfigForTest()));
+  // The first output aliases the first parameter.
+  ASSERT_OK(module->input_output_alias_config().SetUpAlias(
+      /*output_index=*/{}, /*param_number=*/0, /*param_index=*/{}));
+
+  Compiler::CompileOptions compile_options;
+  compile_options.gpu_topology = GetSingleDeviceGpuTopology(
+      /*platform_version=*/"", gpu_target_config());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> optimized_module,
+      compiler()->RunHloPasses(std::move(module), /*executor=*/nullptr,
+                               compile_options));
+  compile_options.embed_hlo_module = false;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler()->RunBackend(std::move(optimized_module), /*executor=*/nullptr,
+                             compile_options));
+  ASSERT_FALSE(executable->has_module());
+
+  auto hlo_runner = std::make_unique<HloRunnerLegacy>(GpuPlatform());
+  std::unique_ptr<OpaqueExecutable> wrapped_executable =
+      hlo_runner->WrapExecutable(std::move(executable));
+
+  const Literal lhs = LiteralUtil::CreateR1<int32_t>({1, 2, 3, 4});
+  const Literal rhs = LiteralUtil::CreateR1<int32_t>({10, 20, 30, 40});
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       hlo_runner->ExecuteWithExecutable(
+                           wrapped_executable.get(), {&lhs, &rhs}));
+  EXPECT_TRUE(LiteralTestUtil::Equal(
+      LiteralUtil::CreateR1<int32_t>({11, 22, 33, 44}), result));
+}
+
 class KernelCacheTest : public HloLegacyGpuTestBase {
  public:
   void SetUp() override {

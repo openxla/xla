@@ -359,6 +359,62 @@ ENTRY main {
               absl_testing::IsOkAndHolds(false));
 }
 
+TEST_F(GpuCompilerTest, ExecutableMetadataWithoutEmbeddedModule) {
+  // `p2` doesn't match any output, so it stays a buffer donor during
+  // optimization.
+  constexpr absl::string_view kHloText = R"(
+HloModule test, input_output_alias={ {0}: (0, {}, must-alias) }, buffer_donor={ (2, {}) }
+
+ENTRY main {
+  p0 = f32[16]{0} parameter(0)
+  p1 = f32[16]{0} parameter(1)
+  p2 = s32[4]{0} parameter(2)
+  add = f32[16]{0} add(p0, p1)
+  neg = f32[16]{0} negate(p1)
+  ROOT result = (f32[16]{0}, f32[16]{0}) tuple(add, neg)
+}
+)";
+  HloModuleConfig config = GetModuleConfigForTest();
+  DeviceAssignment device_assignment(/*replica_count=*/1,
+                                     /*computation_count=*/1);
+  device_assignment(0, 0) = 0;
+  config.set_static_device_assignment(device_assignment);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText, config));
+
+  Compiler::CompileOptions compile_options;
+  compile_options.gpu_topology =
+      GetSingleDeviceGpuTopology(/*platform_version=*/"", gpu_target_config());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> optimized_module,
+      compiler()->RunHloPasses(std::move(module),
+                               /*executor=*/nullptr, compile_options));
+  ASSERT_TRUE(
+      optimized_module->input_output_alias_config().OutputHasAlias({0}));
+  ASSERT_FALSE(optimized_module->buffer_donor_config().buffer_donor().empty());
+  // Something other than the default, so that we notice if it gets lost.
+  optimized_module->mutable_config().set_partition_size(2);
+
+  compile_options.embed_hlo_module = false;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      compiler()->RunBackend(optimized_module->Clone(), /*executor=*/nullptr,
+                             compile_options));
+  ASSERT_FALSE(executable->has_module());
+
+  // The executable knows the module's metadata without having the module.
+  EXPECT_EQ(executable->input_output_alias_config().ToShortString(),
+            optimized_module->input_output_alias_config().ToShortString());
+  EXPECT_EQ(executable->buffer_donor_config().ToShortString(),
+            optimized_module->buffer_donor_config().ToShortString());
+  ASSERT_NE(executable->static_device_assignment(), nullptr);
+  EXPECT_EQ(executable->static_device_assignment()->ToString(),
+            device_assignment.ToString());
+  EXPECT_EQ(executable->entry_computation_layout().ToString(),
+            optimized_module->config().entry_computation_layout().ToString());
+  EXPECT_EQ(static_cast<GpuExecutable*>(executable.get())->partition_size(), 2);
+}
+
 TEST_F(GpuCompilerTest, CopyInsertionFusion) {
   const char* hlo_text = R"(
 HloModule cluster
