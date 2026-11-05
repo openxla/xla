@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_GPU_GPU_MEMORY_SPACE_ASSIGNMENT_H_
 
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -85,6 +86,16 @@ bool RequiresCollectiveOutput(const HloValue& value,
 //    requested memory space
 //  - Everything else → kDefault
 BufferAssigner::Colorer CreateColorer(const DebugOptions& option);
+
+// Keeps values of collectives recorded into command buffers out of output
+// allocations, so they are not re-recorded on every initialization. Costs temp
+// memory. nullopt unless COLLECTIVES is enabled with SKIP_TEMP or
+// SKIP_PROFILED.
+std::optional<BufferAssigner::MustNotLiveOut> CreateMustNotLiveOut(
+    const DebugOptions& option);
+
+// `option` must outlive the returned options.
+BufferAssigner::Options CreateBufferAssignerOptions(const DebugOptions& option);
 
 }  // namespace xla::gpu
 
