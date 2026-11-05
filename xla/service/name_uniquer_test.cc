@@ -15,6 +15,10 @@ limitations under the License.
 
 #include "xla/service/name_uniquer.h"
 
+#include <gtest/gtest.h>
+
+#include <string>
+
 #include "tsl/platform/test.h"
 
 namespace xla {

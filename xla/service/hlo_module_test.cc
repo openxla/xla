@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "google/protobuf/message_lite.h"
+#include "google/protobuf/util/message_differencer.h"
 #include "tsl/platform/casts.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"

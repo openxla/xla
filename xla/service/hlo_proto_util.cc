@@ -24,7 +24,9 @@ limitations under the License.
 #include "google/protobuf/repeated_ptr_field.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 

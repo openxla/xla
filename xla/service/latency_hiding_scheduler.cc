@@ -32,7 +32,6 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/optimization.h"
-#include "absl/cleanup/cleanup.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"

@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/latency_hiding_scheduler.h"
+#include "xla/xla.pb.h"
 
 namespace xla {
 

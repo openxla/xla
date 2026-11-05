@@ -40,6 +40,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "google/protobuf/io/zero_copy_stream_impl_lite.h"
 #include "google/protobuf/message.h"
 #include "tsl/platform/fingerprint.h"
 #include "tsl/platform/path.h"
@@ -72,6 +73,7 @@ limitations under the License.
 #include "xla/tsl/platform/file_system.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
