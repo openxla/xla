@@ -381,10 +381,12 @@ TEST(CustomCallThunkTest, ForwardsLogicalDeviceInfoToAllRuntimeStages) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({}, executor->device_ordinal(),
                                        &allocator);
+  CommandBufferRequests command_buffer_requests;
   Thunk::PrepareParams prepare_params;
   prepare_params.collective_params = &collective_params;
   prepare_params.executor = executor;
   prepare_params.buffer_allocations = &buffer_allocations;
+  prepare_params.command_buffer_requests = &command_buffer_requests;
   ASSERT_OK(thunk->Prepare(prepare_params));
   EXPECT_EQ(handler_calls, 1);
 
