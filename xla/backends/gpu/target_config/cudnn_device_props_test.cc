@@ -16,11 +16,9 @@ limitations under the License.
 #include "xla/backends/gpu/target_config/cudnn_device_props.h"
 
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -47,22 +45,6 @@ namespace xla::gpu {
 namespace {
 
 namespace se = ::stream_executor;
-
-Json::Value ParseProps(
-    const std::shared_ptr<cudnn_frontend::DeviceProperties>& props) {
-  std::vector<uint8_t> buf;
-  auto err = props->serialize(buf);
-  EXPECT_FALSE(err.is_bad()) << err.get_message();
-  std::string str(buf.begin(), buf.end());
-  Json::Value value;
-  Json::CharReaderBuilder builder;
-  std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
-  std::string errors;
-  EXPECT_TRUE(
-      reader->parse(str.data(), str.data() + str.size(), &value, &errors))
-      << errors;
-  return value;
-}
 
 TEST(CudnnDevicePropsTest, PreservesMemoryBusWidth) {
   if (cudnn_frontend::detail::get_backend_version() < 92600) {
