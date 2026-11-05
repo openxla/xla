@@ -15,20 +15,19 @@ limitations under the License.
 
 #include "xla/backends/gpu/target_config/target_config.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <optional>
 #include <string>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "google/protobuf/text_format.h"
-#include "tsl/platform/path.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/status_matchers.h"
+#include "tsl/platform/path.h"
 
 namespace xla::gpu {
 namespace {
