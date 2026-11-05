@@ -31,7 +31,6 @@ limitations under the License.
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_print_options.h"
@@ -40,9 +39,12 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 namespace gpu {
@@ -84,12 +86,21 @@ bool IsGpublasLtSupportedGroupedMatMul(
 //   - Ampere or later on NVIDIA targets.
 //   - Exactly one LHS ragged dimension.
 //   - Exactly one contracting dimension on each of the LHS and the RHS.
-//   - Element types supported by the xtile emitter: F16, BF16, F32, F64,
-//     F8E5M2, F8E4M3FN; nanoo FP8 types (F8E4M3FNUZ, F8E5M2FNUZ) on ROCm only.
-//     Complex types (C64, C128) are not supported.
+//   - Element types supported by the xtile emitter: F16, BF16, F32 and F64
+//     everywhere; the OCP FP8 types (F8E5M2, F8E4M3FN) on Hopper or later and
+//     on ROCm targets with OCP FP8 support; the nanoo FP8 types (F8E4M3FNUZ,
+//     F8E5M2FNUZ) on ROCm targets with nanoo FP8 support only.  Complex types
+//     (C64, C128) are not supported.
 bool IsTritonSupportedRaggedDot(
     const se::GpuComputeCapability& gpu_compute_capability,
     const HloInstruction& instr);
+
+// Returns true for the ragged-dot fusions that GemmRewriter emits for the
+// Triton XTile backend: a kCustom fusion carrying the generic Triton fusion
+// kind whose computation contains a kRaggedDot.  Such fusions have a fixed
+// structure that the emitter relies on, so passes that treat generic Triton
+// fusions as malleable must skip them.
+bool IsRaggedDotTritonFusion(const HloInstruction& instr);
 
 // Returns true if `dnums` describes the weight-gradient (wgrad) flavor of
 // ragged-dot, i.e. the LHS ragged dimension is also one of the contracting
@@ -97,6 +108,48 @@ bool IsTritonSupportedRaggedDot(
 // non-contracting dimension. Wgrad ragged-dots lower to cuDNN's
 // moe_grouped_matmul_bwd rather than the forward moe_grouped_matmul path.
 bool IsRaggedDotWgrad(const RaggedDotDimensionNumbers& dnums);
+
+inline const se::dnn::VersionInfo kMinCudnnVersionForRaggedDotFusion(9, 22);
+
+// The ragged-dot wgrad path for kRaggedContracting lowers to cuDNN
+// moe_grouped_matmul_bwd, which requires cuDNN 9.24 or newer, cuBLASLt 13.5 or
+// newer from CUDA Toolkit 13.3, and compute capability SM90 through SM119.
+inline const se::dnn::VersionInfo kMinCudnnVersionForRaggedDotWgradFusion(9,
+                                                                          24);
+inline constexpr se::SemanticVersion
+    kMinCudaToolkitVersionForRaggedDotWgradFusion{13, 3, 0};
+
+bool SupportsCudnnRaggedDotWgrad(
+    const se::GpuComputeCapability& gpu_compute_capability,
+    se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version);
+
+// Returns true if the ragged-dot can be lowered through the cuDNN fusion path,
+// i.e. if RaggedDotFusionRewriter will rewrite it.
+bool IsCudnnSupportedRaggedDot(
+    const se::GpuComputeCapability& gpu_compute_capability,
+    se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version,
+    const HloInstruction& ragged_dot);
+
+// The backend that lowers a ragged-dot, in priority order.
+enum class RaggedDotBackend {
+  // Rewritten by RaggedDotFusionRewriter, later in the fusion pipeline.
+  kCuDnn,
+  // Rewritten by GemmRewriter into a gpuBLASLt grouped-matmul custom call.
+  kGpuBlasLt,
+  // Rewritten by GemmRewriter into a Triton XTile fusion.
+  kTriton,
+  // Expanded into a regular dot by RaggedDotRewriter.
+  kDefault,
+};
+
+// Picks the backend for `ragged_dot`.  RaggedDotRewriter and GemmRewriter must
+// agree on the choice: the former expands the ragged-dots that select
+// kDefault, the latter rewrites the rest, so both call this.
+RaggedDotBackend SelectRaggedDotBackend(
+    const HloInstruction& ragged_dot,
+    const se::GpuComputeCapability& gpu_compute_capability,
+    se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version,
+    const DebugOptions& debug_options);
 
 constexpr int64_t WarpSize(const se::DeviceDescription& gpu_device_info) {
   return gpu_device_info.threads_per_warp();

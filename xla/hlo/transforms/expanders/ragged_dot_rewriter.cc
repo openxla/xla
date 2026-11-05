@@ -48,33 +48,12 @@ limitations under the License.
 #include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
 
 namespace se = ::stream_executor;
-
-bool SupportsCudnnRaggedDotWgrad(
-    const se::GpuComputeCapability& gpu_compute_capability,
-    se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version) {
-  const se::CudaComputeCapability* cuda_cc =
-      gpu_compute_capability.cuda_compute_capability();
-  // RaggedDotRewriter is the only pass that expands ragged-dot into a dense
-  // dot, and downstream cuDNN fusion passes have no fallback if plan creation
-  // fails. cuDNN moe_grouped_matmul_bwd uses a TMA-based cuBLASLt grouped GEMM
-  // kernel. That kernel requires CUDA SM90 through SM119, cuDNN 9.24 or newer,
-  // and cuBLASLt 13.5 from CUDA Toolkit 13.3 or newer.
-  //
-  // The major < kBlackwell_12 check excludes consumer-grade Blackwell GPUs with
-  // SM120 and SM121.
-  // Datacenter Blackwell and Rubin GPUs use major version 10 and satisfy
-  // major < kBlackwell_12.
-  return cuda_cc != nullptr &&
-         cuda_cc->major >= se::CudaComputeCapability::kHopper &&
-         cuda_cc->major < se::CudaComputeCapability::kBlackwell_12 &&
-         cudnn_version >= kMinCudnnVersionForRaggedDotWgradFusion &&
-         toolkit_version >= kMinCudaToolkitVersionForRaggedDotWgradFusion;
-}
 
 namespace {
 
@@ -440,91 +419,24 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> RaggedToGeneral(
                                    ragged_dot->precision_config());
 }
 
-bool CanBeHandledByCuDNNFusion(
-    const HloInstruction* instruction,
-    const se::GpuComputeCapability& gpu_compute_capability,
-    se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version) {
-  const HloRaggedDotInstruction* ragged_dot =
-      DynCast<HloRaggedDotInstruction>(instruction);
-  const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
-  if (ragged_dims.lhs_ragged_dimensions().size() != 1 ||
-      (ragged_dot->shape().element_type() != F16 &&
-       ragged_dot->shape().element_type() != BF16)) {
-    return false;
-  }
-  int lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
-  RaggedDotMode mode =
-      GetRaggedDotMode(lhs_ragged_dim, ragged_dims.dot_dimension_numbers());
-  if (mode == RaggedDotMode::kRaggedContracting) {
-    return SupportsCudnnRaggedDotWgrad(gpu_compute_capability, cudnn_version,
-                                       toolkit_version);
-  }
-  return mode == RaggedDotMode::kRaggedNonContracting;
-}
-
 }  // namespace
 
 absl::StatusOr<bool> RaggedDotRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  // Backend selection priority for ragged-dot (mirrors GemmRewriter):
-  //   1. cuDNN (NVIDIA/CUDA targets) or hipBLASLt (AMD/ROCm targets)
-  //      when enabled and configuration is supported.
-  //   2. Triton XTile when enabled.
-  //   3. Default backend (expand to a regular dot here).
-  const se::CudaComputeCapability* cuda_cc =
-      gpu_compute_capability_.cuda_compute_capability();
-  // Priority 1a: cuDNN (NVIDIA/CUDA targets only).
-  const bool ragged_dot_fusion_enabled =
-      module->config()
-          .debug_options()
-          .xla_gpu_experimental_use_ragged_dot_fusion() &&
-      cudnn_version_ >= kMinCudnnVersionForRaggedDotFusion &&
-      cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere();
-  // Priority 1b: hipBLASLt group-gemm backend (AMD/ROCm targets only; the
-  // target and element type checks live in IsGpublasLtSupportedGroupedMatMul).
-  const bool has_grouped_gemm =
-      module->config()
-          .debug_options()
-          .xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
-      // NOLINTNEXTLINE(clang-diagnostic-deprecated-declarations)
-      module->config().debug_options().xla_gpu_enable_cublaslt();
-  // Priority 2: Triton XTile backend.
-  // When enabled, GemmRewriter will wrap every kRaggedDot in a
-  // kTritonGemmFusionKind fusion.  Do not expand them here.
-  const bool triton_ragged_dot_enabled =
-      module->config().debug_options().xla_gpu_experimental_triton_ragged_dot();
-
-  // Gather all Ragged Dot operations that need to be expanded into regular
-  // dots. Ragged-dots that can be lowered through Gpublaslt GroupGemm or
-  // cuDNN fusion are left as-is for those later passes to handle.
+  // Gather the ragged-dots that no other backend claims; see
+  // SelectRaggedDotBackend for the priority order.  The ones left behind are
+  // rewritten later by GemmRewriter or RaggedDotFusionRewriter.
+  const DebugOptions& debug_options = module->config().debug_options();
   std::vector<HloRaggedDotInstruction*> ragged_dots;
   for (auto* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     for (auto* instruction : computation->instructions()) {
-      if (instruction->opcode() == HloOpcode::kRaggedDot) {
-        // Only ragged-dots that cannot be lowered by a higher-priority backend
-        // are expanded here as regular dots (default / Priority 3 backend).
-        // Priority 1a: cuDNN (NVIDIA/CUDA targets).
-        if (ragged_dot_fusion_enabled &&
-            CanBeHandledByCuDNNFusion(instruction, gpu_compute_capability_,
-                                      cudnn_version_, toolkit_version_)) {
-          continue;
-        }
-        // Priority 1b: hipBLASLt (AMD/ROCm targets).
-        if (has_grouped_gemm && gpu::IsGpublasLtSupportedGroupedMatMul(
-                                    gpu_compute_capability_, *instruction)) {
-          continue;
-        }
-        // Priority 2: Triton XTile backend (when enabled and configuration
-        // supported: single LHS ragged dim, tiling propagation on, supported
-        // element types).
-        if (triton_ragged_dot_enabled &&
-            gpu::IsTritonSupportedRaggedDot(gpu_compute_capability_,
-                                            *instruction)) {
-          continue;
-        }
-        // Priority 3: Default backend — expand to a regular dot.
+      if (instruction->opcode() == HloOpcode::kRaggedDot &&
+          gpu::SelectRaggedDotBackend(*instruction, gpu_compute_capability_,
+                                      cudnn_version_, toolkit_version_,
+                                      debug_options) ==
+              gpu::RaggedDotBackend::kDefault) {
         ragged_dots.push_back(Cast<HloRaggedDotInstruction>(instruction));
       }
     }
