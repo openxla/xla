@@ -876,6 +876,8 @@ absl::StatusOr<std::shared_ptr<LockableGpuClique::Lock>> AcquireClique(
 
             // An abandoned clique is destroyed only after we release
             // `state.mu`. Destroying communicators can block on peers
+            // refer to
+            // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api/comms.html#ncclcommdestroy
             // , and those peers might be waiting for `state.mu` to
             // abandon their own cliques.
             std::shared_ptr<LockableGpuClique> abandoned;

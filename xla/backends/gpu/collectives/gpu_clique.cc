@@ -145,7 +145,9 @@ void LockableGpuClique::Cancel() { mutable_value().Cancel(); }
 bool LockableGpuClique::IsParentSupersetOf(
     const GpuCliqueKey& clique_key) const {
   const std::optional<GpuCliqueKey>& parent_key = this->value().parent_key();
-  if (!parent_key.has_value()) return false;
+  if (!parent_key.has_value()) {
+    return false;
+  }
   return clique_key.IsSubsetOf(*parent_key);
 }
 
