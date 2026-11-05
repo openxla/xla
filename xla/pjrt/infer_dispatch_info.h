@@ -45,6 +45,7 @@ struct PjRtLoadedExecutableDispatchInfo {
   std::shared_ptr<DeviceAssignment> device_assignment;
   std::vector<int> parameters_that_may_be_donated;
   std::vector<int64_t> input_buffer_sizes_in_bytes;
+  HloInputOutputAliasConfig input_output_alias_config;
   // Executable shape information that is computable from the PjRtExecutable*.
   struct Extras {
     std::string name;
@@ -59,7 +60,6 @@ struct PjRtLoadedExecutableDispatchInfo {
     std::vector<absl::string_view> parameter_memory_kinds;
     std::vector<absl::string_view> output_memory_kinds;
     absl::StatusOr<std::string> fingerprint;
-    HloInputOutputAliasConfig input_output_alias_config;
   };
   struct InputHloSnapshotBits {
     xla::HloModuleProto hlo_module;
@@ -77,7 +77,7 @@ std::vector<Shape> GetParameterShapes(const ComputationLayout& layout);
 absl::StatusOr<PjRtLoadedExecutableDispatchInfo> InferDispatchInfo(
     const PjRtTopologyDescription* topology,
     std::vector<Shape> parameter_device_shapes, Shape output_device_shape,
-    const HloInputOutputAliasConfig& alias_config,
+    HloInputOutputAliasConfig alias_config,
     std::shared_ptr<DeviceAssignment> device_assignment,
     std::vector<PjRtLoadedExecutable::LogicalDeviceIds>
         addressable_device_logical_ids,

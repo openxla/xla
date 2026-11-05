@@ -81,7 +81,7 @@ std::vector<Shape> GetParameterShapes(const ComputationLayout& layout) {
 absl::StatusOr<PjRtLoadedExecutableDispatchInfo> InferDispatchInfo(
     const PjRtTopologyDescription* topology,
     std::vector<Shape> parameter_device_shapes, Shape output_device_shape,
-    const HloInputOutputAliasConfig& alias_config,
+    HloInputOutputAliasConfig alias_config,
     std::shared_ptr<DeviceAssignment> device_assignment,
     std::vector<PjRtLoadedExecutable::LogicalDeviceIds>
         addressable_device_logical_ids,
@@ -124,6 +124,7 @@ absl::StatusOr<PjRtLoadedExecutableDispatchInfo> InferDispatchInfo(
       result.parameters_that_may_be_donated,
       ComputeParametersThatMayBeDonated(
           alias_config, result.parameter_device_shapes.size(), tuple_inputs));
+  result.input_output_alias_config = std::move(alias_config);
   result.input_buffer_sizes_in_bytes.reserve(
       result.parameter_device_shapes.size());
   for (const Shape& shape : result.parameter_device_shapes) {
@@ -294,18 +295,16 @@ absl::StatusOr<PjRtLoadedExecutableDispatchInfo> InferDispatchInfo(
                                   : xla::Shape(std::move(result_shapes));
 
   // TODO(parkers): implement aliasing.
-  extras->input_output_alias_config =
-      HloInputOutputAliasConfig(output_device_shape);
+  HloInputOutputAliasConfig input_output_alias_config(output_device_shape);
 
-  const auto& input_output_alias_config = extras->input_output_alias_config;
   ABSL_ASSIGN_OR_RETURN(
       auto result,
-      InferDispatchInfo(topology, std::move(parameter_device_shapes),
-                        std::move(output_device_shape),
-                        input_output_alias_config, std::move(device_assignment),
-                        std::move(addressable_device_logical_ids),
-                        std::move(addressable_devices), std::move(extras),
-                        tuple_inputs));
+      InferDispatchInfo(
+          topology, std::move(parameter_device_shapes),
+          std::move(output_device_shape), std::move(input_output_alias_config),
+          std::move(device_assignment),
+          std::move(addressable_device_logical_ids),
+          std::move(addressable_devices), std::move(extras), tuple_inputs));
 
   result.extras->fingerprint = "";
   result.extras->parameter_memory_kinds.reserve(

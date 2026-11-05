@@ -467,6 +467,7 @@ xla_test(
         "//xla/service:gpu_topology",
         "//xla/service:gpu_topology_proto_cc",
         "//xla/service:platform_util",
+        "//xla/service/gpu:gpu_executable_proto_cc",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:gpu_memory_space_assignment",
         "//xla/stream_executor:device_address_allocator",
@@ -782,6 +783,32 @@ xla_test(
 )
 
 cc_library(
+    name = "se_gpu_executable_metadata_provider",
+    srcs = ["se_gpu_executable_metadata_provider.cc"],
+    hdrs = ["se_gpu_executable_metadata_provider.h"],
+    # XLA:GPU executables are not available in all build environments, so this
+    # library is only linked through the GPU compiler registrations.
+    compatible_with = [],
+    tags = ["gpu"],
+    deps = [
+        ":se_gpu_pjrt_compiler_impl",
+        "//xla/hlo/ir:hlo",
+        "//xla/pjrt/se:stream_executor_executable",
+        "//xla/service:compiled_module",
+        "//xla/service:executable",
+        "//xla/service:hlo_proto_cc",
+        "//xla/service/gpu:gpu_aot_compilation_result",
+        "//xla/service/gpu:gpu_executable",
+        "//xla/service/gpu:gpu_executable_proto_cc",
+        "//xla/stream_executor/platform:initialize",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
     name = "se_gpu_pjrt_compiler_impl",
     srcs = ["se_gpu_pjrt_compiler.cc"],
     hdrs = ["se_gpu_pjrt_compiler.h"],
@@ -848,6 +875,7 @@ cc_library(
         "//xla/stream_executor/platform:initialize",
         "@com_google_absl//absl/log:check",
     ] + if_cuda([
+        ":se_gpu_executable_metadata_provider",  # buildcleaner: keep
         "//xla/service/gpu:nvptx_compiler",  # buildcleaner: keep
     ]),
     alwayslink = 1,
@@ -862,6 +890,7 @@ cc_library(
         "rocm-only",
     ],
     deps = [
+        ":se_gpu_executable_metadata_provider",  # buildcleaner: keep
         ":se_gpu_pjrt_compiler_impl",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt/se:stream_executor_platform_id_mapping",
@@ -887,6 +916,7 @@ cc_library(
         "manual",
     ]),
     deps = [
+        ":se_gpu_executable_metadata_provider",  # buildcleaner: keep
         ":se_gpu_pjrt_compiler_impl",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt/se:stream_executor_platform_id_mapping",
@@ -914,6 +944,7 @@ cc_library(
         "//xla/pjrt:pjrt_common",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
+        "//xla/pjrt/se:stream_executor_executable",
         "//xla/service:compiler",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_id",
@@ -1005,6 +1036,7 @@ xla_test(
     srcs = ["se_gpu_pjrt_compiler_aot_test.cc"],
     backends = ["gpu"],
     deps = [
+        ":se_gpu_executable_metadata_provider",
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_compiler",
         "//xla:literal",
@@ -1016,21 +1048,32 @@ xla_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/parser:hlo_parser",
         "//xla/mlir_hlo",
+        "//xla/pjrt:common_pjrt_client",
         "//xla/pjrt:compiled_memory_stats",
+        "//xla/pjrt:infer_dispatch_info",
         "//xla/pjrt:maybe_owning_mlir_module",
         "//xla/pjrt:pjrt_client",
         "//xla/pjrt:pjrt_compiler",
         "//xla/pjrt:pjrt_executable",
+        "//xla/pjrt:pjrt_layout",
         "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
+        "//xla/pjrt/proto:compile_options_proto_cc",
         "//xla/pjrt/se:stream_executor_executable",
+        "//xla/service:compiled_module",
         "//xla/service:compiler",
+        "//xla/service:executable",
+        "//xla/service/gpu:gpu_aot_compilation_result",
+        "//xla/service/gpu:gpu_executable_proto_cc",
         "//xla/tests:literal_test_util",
         "//xla/tsl/platform:statusor",
+        "//xla/tsl/util/proto:proto_matchers",
+        "//xla/util/split_proto:split_proto_reader",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",

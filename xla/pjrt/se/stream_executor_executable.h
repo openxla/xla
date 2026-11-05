@@ -34,17 +34,72 @@ limitations under the License.
 #include "riegeli/bytes/reader.h"
 #include "xla/client/local_client.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/service/compiled_module.h"
+#include "xla/service/executable.h"
 #include "xla/service/hlo.pb.h"
+#include "xla/shape.h"
 #include "xla/stream_executor/abi/executable_abi_version.h"
 
 namespace xla {
+
+// Lets a backend answer metadata queries of a `StreamExecutorExecutable`
+// without requiring the HLO module of the underlying executable to exist up
+// front. Backends that can build the module on demand install a provider when
+// they create a `StreamExecutorExecutable`. Without a provider the module of
+// the `CompiledModule` or `Executable` is used.
+//
+// Once loaded, a `StreamExecutorExecutable` with a provider reads the layouts
+// and the output shape from `Executable::entry_computation_layout()` and
+// `Executable::result_shape()`, and PJRT reads the parameter shapes and the
+// aliasing from `Executable::compute_computation_layout()` and
+// `Executable::input_output_alias_config()`. So a provider must only be
+// installed for executables that answer those without their module.
+class StreamExecutorExecutableMetadataProvider {
+ public:
+  // Metadata of a compiled module that hasn't been loaded yet.
+  struct CompiledModuleMetadata {
+    std::string name;
+    int num_replicas = 1;
+    int num_partitions = 1;
+    // The fingerprint of the optimized HLO module (as returned by
+    // `HloModule::GetFingerprint128()`). Empty if it isn't known.
+    std::string fingerprint;
+  };
+
+  // The SPMD shardings of the entry computation, as returned by
+  // `HloModule::spmd_parameters_shardings()` and
+  // `HloModule::spmd_output_sharding()`. std::nullopt means that the module
+  // has no such sharding.
+  struct SpmdShardings {
+    std::optional<std::vector<HloSharding>> parameters;
+    std::optional<HloSharding> output;
+  };
+
+  virtual ~StreamExecutorExecutableMetadataProvider() = default;
+
+  // Returns the optimized HLO module of `executable`, building it if needed.
+  // `reason` describes why the module is needed.
+  virtual absl::StatusOr<std::shared_ptr<HloModule>> GetHloModule(
+      const Executable& executable, absl::string_view reason) const = 0;
+
+  // Returns the metadata of `compiled_module` if it is available without the
+  // HLO module, and std::nullopt otherwise.
+  virtual std::optional<CompiledModuleMetadata> GetCompiledModuleMetadata(
+      const CompiledModule& compiled_module) const = 0;
+
+  // Returns the SPMD shardings of `executable` if they are available without
+  // the HLO module, and std::nullopt otherwise.
+  virtual std::optional<SpmdShardings> GetSpmdShardings(
+      const Executable& executable) const = 0;
+};
 
 class StreamExecutorExecutable : public PjRtExecutable {
  public:
@@ -55,13 +110,13 @@ class StreamExecutorExecutable : public PjRtExecutable {
       int num_replicas, int num_partitions, absl::string_view name,
       absl::string_view fingerprint, absl::string_view default_memory_kind);
 
-  StreamExecutorExecutable(PjRtPlatformId platform_id,
-                           const CompileOptions& compile_options,
-                           std::unique_ptr<CompiledModule> executable,
-                           int num_replicas, int num_partitions,
-                           absl::string_view name,
-                           absl::string_view fingerprint,
-                           absl::string_view default_memory_kind);
+  StreamExecutorExecutable(
+      PjRtPlatformId platform_id, const CompileOptions& compile_options,
+      std::unique_ptr<CompiledModule> executable, int num_replicas,
+      int num_partitions, absl::string_view name, absl::string_view fingerprint,
+      absl::string_view default_memory_kind,
+      std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+          metadata_provider = nullptr);
 
   StreamExecutorExecutable(
       PjRtPlatformId platform_id, const CompileOptions& compile_options,
@@ -69,7 +124,9 @@ class StreamExecutorExecutable : public PjRtExecutable {
       std::shared_ptr<LocalExecutable> local_executable,
       LocalClient* local_client, int num_replicas, int num_partitions,
       absl::string_view name, absl::string_view fingerprint,
-      absl::string_view default_memory_kind);
+      absl::string_view default_memory_kind,
+      std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+          metadata_provider = nullptr);
 
   absl::StatusOr<std::string> SerializeExecutable() const override;
 
@@ -79,13 +136,26 @@ class StreamExecutorExecutable : public PjRtExecutable {
   absl::StatusOr<CompileOptions> GetCompileOptions() const override {
     return compile_options_;
   }
-  absl::StatusOr<std::shared_ptr<HloModule>> GetHloModule() const override {
-    return hlo_module_;
-  }
-
-  const std::shared_ptr<HloModule>& hlo_module() const { return hlo_module_; }
+  // Returns the optimized HLO module. Executables loaded from a serialized
+  // form might build the module on the first call.
+  absl::StatusOr<std::shared_ptr<HloModule>> GetHloModule() const override;
 
   absl::StatusOr<CompiledMemoryStats> GetCompiledMemoryStats() const override;
+
+  // The following methods don't need the HLO module once the executable is
+  // loaded if a metadata provider is installed. Otherwise they read the
+  // module.
+  absl::StatusOr<std::vector<Shape>> GetOutputShapes() const override;
+
+  absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
+  GetParameterLayouts() const override;
+
+  absl::StatusOr<std::vector<std::shared_ptr<const PjRtLayout>>>
+  GetOutputLayouts() const override;
+
+  std::optional<std::vector<OpSharding>> GetParameterShardings() const override;
+
+  std::optional<std::vector<OpSharding>> GetOutputShardings() const override;
 
   absl::StatusOr<std::vector<std::vector<absl::string_view>>>
   GetParameterMemoryKinds() const override;
@@ -118,17 +188,32 @@ class StreamExecutorExecutable : public PjRtExecutable {
   absl::StatusOr<std::unique_ptr<PjRtExecutableAbiVersion>> GetAbiVersion()
       const override;
 
+  // Deserializes an executable serialized with `SerializeExecutable`. If
+  // `metadata_provider` is set, it is installed in the returned executable and
+  // used to read the module metadata.
   static absl::StatusOr<std::unique_ptr<StreamExecutorExecutable>> Deserialize(
       riegeli::Any<riegeli::Reader*> reader,
       const PjRtTopologyDescription& topology,
-      std::optional<CompileOptions> options = std::nullopt);
+      std::optional<CompileOptions> options = std::nullopt,
+      std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+          metadata_provider = nullptr);
 
   static absl::StatusOr<absl::string_view> GetDefaultMemoryKind(
       const PjRtTopologyDescription& topology);
 
+  // Returns the loaded executable if its metadata can be read without the HLO
+  // module, i.e. if this executable is loaded and has a metadata provider.
+  // Returns nullptr otherwise.
+  std::shared_ptr<LocalExecutable> GetLocalExecutableWithMetadata() const;
+
  private:
   int64_t SizeOfGeneratedCodeInBytesLocked() const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  // Returns the SPMD shardings from the metadata provider, or std::nullopt if
+  // they have to be read from the HLO module.
+  std::optional<StreamExecutorExecutableMetadataProvider::SpmdShardings>
+  GetSpmdShardings() const;
 
   PjRtPlatformId platform_id_;
 
@@ -141,7 +226,8 @@ class StreamExecutorExecutable : public PjRtExecutable {
                std::shared_ptr<LocalExecutable>>
       executables_ ABSL_GUARDED_BY(mu_);
   LocalClient* local_client_ = nullptr;
-  std::shared_ptr<HloModule> hlo_module_;
+  std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+      metadata_provider_;
   int num_replicas_;
   int num_partitions_;
   std::string name_;

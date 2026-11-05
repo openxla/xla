@@ -1071,7 +1071,6 @@ CommonPjRtClient::LoadInternal(
 
   ABSL_ASSIGN_OR_RETURN(const PjRtTopologyDescription* topology,
                         GetTopologyDescription());
-  ABSL_ASSIGN_OR_RETURN(auto hlo_module, executable->GetHloModule());
   if (IsEarlyExitCompilation(compile_options)) {
     return InvalidArgument(
         "Executable compiled with xla_early_exit_with_layouts cannot be "
@@ -1118,7 +1117,24 @@ CommonPjRtClient::LoadInternal(
   const bool xla_dump_hlo_unoptimized_snapshots =
       ex_options.has_debug_options() &&
       ex_options.debug_options().xla_dump_hlo_unoptimized_snapshots();
-  if (dump) {
+  // TPU canonicalizes the shapes based on the entry computation of the HLO
+  // module below, so it always needs the module.
+  std::optional<PjRtExecutableLoadState::EntryComputationInfo> entry_info;
+  if (!IsTpuId(platform_id())) {
+    entry_info = load_state->GetEntryComputationInfo(executable.get());
+  }
+  // Dumping needs the HLO module, so only ask for it if the dump is enabled.
+  // Without explicit debug options the dump uses the debug options of the
+  // module itself.
+  const bool dump_module =
+      dump && (!ex_options.has_debug_options() ||
+               DumpingEnabledForHloModule(executable->name(),
+                                          ex_options.debug_options()));
+  std::shared_ptr<HloModule> hlo_module;
+  if (!entry_info.has_value() || dump_module) {
+    ABSL_ASSIGN_OR_RETURN(hlo_module, executable->GetHloModule());
+  }
+  if (dump_module) {
     VLOG(1) << "Dumping deserialized executable";
     // Override the debug_options() embedded in the module with those
     // explicitly passed in when deserializing. This allows options such as
@@ -1130,7 +1146,9 @@ CommonPjRtClient::LoadInternal(
         ex_options.has_debug_options() ? &ex_options.debug_options() : nullptr);
   }
   xla::Shape result_shape;
-  if (IsGpuId(platform_id())) {
+  if (entry_info.has_value()) {
+    result_shape = std::move(entry_info->result_shape);
+  } else if (IsGpuId(platform_id())) {
     // TODO(parkers): GPU isn't properly setting entry_computation_layout?
     result_shape = hlo_module->result_shape();
   } else {
@@ -1159,11 +1177,16 @@ CommonPjRtClient::LoadInternal(
     }
   }
 
-  // TODO(parkers): get to the bottom of this...
-  auto parameter_shapes =
-      IsTpuId(platform_id())
-          ? GetParameterShapes(hlo_module->entry_computation_layout())
-          : GetParameterShapes(hlo_module->compute_computation_layout());
+  std::vector<Shape> parameter_shapes;
+  if (entry_info.has_value()) {
+    parameter_shapes = std::move(entry_info->parameter_shapes);
+  } else {
+    // TODO(parkers): get to the bottom of this...
+    parameter_shapes =
+        IsTpuId(platform_id())
+            ? GetParameterShapes(hlo_module->entry_computation_layout())
+            : GetParameterShapes(hlo_module->compute_computation_layout());
+  }
   if (IsTpuId(platform_id())) {
     auto canonicalize_shapes =
         [&](absl::Span<xla::Shape> shapes) -> absl::Status {
@@ -1221,11 +1244,14 @@ CommonPjRtClient::LoadInternal(
     }
   }
 
+  HloInputOutputAliasConfig input_output_alias_config =
+      entry_info.has_value() ? std::move(entry_info->input_output_alias_config)
+                             : hlo_module->input_output_alias_config();
   ABSL_ASSIGN_OR_RETURN(
       auto dispatch_info,
       InferDispatchInfo(
           topology, std::move(parameter_shapes), std::move(result_shape),
-          hlo_module->input_output_alias_config(), std::move(device_assignment),
+          std::move(input_output_alias_config), std::move(device_assignment),
           std::move(addressable_device_logical_ids),
           std::move(addressable_devices), nullptr,
           compile_options.parameter_is_tupled_arguments,

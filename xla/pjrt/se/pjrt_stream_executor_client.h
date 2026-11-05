@@ -415,6 +415,12 @@ class PjRtStreamExecutorExecutableLoadState : public PjRtExecutableLoadState {
 
   absl::Status Preload(PjRtExecutable* executable) override;
 
+  // Reads the entry computation info from the loaded executable if
+  // `executable` has a metadata provider (see
+  // `StreamExecutorExecutableMetadataProvider`).
+  std::optional<EntryComputationInfo> GetEntryComputationInfo(
+      PjRtExecutable* executable) const override;
+
   absl::StatusOr<std::unique_ptr<PjRtRawLoadedExecutable>> LoadRawExecutable(
       tsl::AsyncValueRef<PjRtExecutable> executable,
       const ExecuteOptions& options, size_t host_callback_idx,

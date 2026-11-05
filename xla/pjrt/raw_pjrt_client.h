@@ -34,6 +34,7 @@ limitations under the License.
 #include "tsl/platform/numa.h"
 #include "xla/executable_run_options.h"
 #include "xla/future.h"
+#include "xla/hlo/ir/hlo_input_output_alias_config.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/distributed/coordination/coordination_service.pb.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -41,6 +42,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/runtime/device_id.h"
+#include "xla/shape.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 
@@ -139,6 +141,25 @@ class PjRtExecutableLoadState
 
   virtual absl::Status Preload(PjRtExecutable* executable) {
     return absl::OkStatus();
+  }
+
+  // Shapes and aliasing of the entry computation of a loaded executable, as
+  // needed to dispatch executions.
+  struct EntryComputationInfo {
+    // The shape of the result as produced by the executable.
+    Shape result_shape;
+    // The shapes of the parameters (tuple parameters flattened, see
+    // `GetParameterShapes`).
+    std::vector<Shape> parameter_shapes;
+    HloInputOutputAliasConfig input_output_alias_config;
+  };
+
+  // Returns the entry computation info of `executable` if it is available
+  // without the HLO module, and std::nullopt otherwise (in which case the
+  // caller reads it from the HLO module). Must only be called after `Preload`.
+  virtual std::optional<EntryComputationInfo> GetEntryComputationInfo(
+      PjRtExecutable* executable) const {
+    return std::nullopt;
   }
 
   virtual absl::Status SetupMultiSliceConfig(
