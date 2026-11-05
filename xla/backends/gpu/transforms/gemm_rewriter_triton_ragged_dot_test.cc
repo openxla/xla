@@ -26,10 +26,28 @@ limitations under the License.
 
 #include <memory>
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/status/status_macros.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "xla/backends/gpu/transforms/gemm_rewriter.h"
 #include "xla/backends/gpu/transforms/gemm_rewriter_test_lib.h"
+#include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_module_config.h"
+#include "xla/status_macros.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
+#include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla.pb.h"
@@ -37,6 +55,8 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 namespace {
+
+using ::testing::ElementsAre;
 
 class TritonRaggedDotTest
     : public HloPjRtInterpreterReferenceMixin<GemmRewriteTestBase> {
@@ -1394,6 +1414,220 @@ ENTRY main {
 }
 )";
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
+}
+
+// ============================================================================
+// Pass-level tests: what GemmRewriter itself produces, before the autotuner
+// gets a chance to replace the configuration.  The end-to-end tests above run
+// the whole pipeline, so they cannot observe the defaults that GemmRewriter
+// writes.
+// ============================================================================
+
+class TritonRaggedDotRewriteTest : public HloHardwareIndependentTestBase {
+ protected:
+  // Parses `hlo` with only the Triton ragged-dot backend enabled, so neither
+  // the cuDNN nor the hipBLASLt path can claim the ragged-dot.
+  absl::StatusOr<std::unique_ptr<VerifiedHloModule>> ParseWithTritonRaggedDot(
+      absl::string_view hlo) {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+    DebugOptions& debug_options =
+        module->mutable_config().mutable_debug_options();
+    debug_options.set_xla_gpu_experimental_triton_ragged_dot(true);
+    debug_options.set_xla_gpu_experimental_use_ragged_dot_fusion(false);
+    debug_options.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(false);
+    return module;
+  }
+
+  absl::StatusOr<bool> RunGemmRewriter(
+      HloModule* module,
+      se::GpuComputeCapability cc = se::CudaComputeCapability::Ampere()) {
+    GemmRewriter rewriter(cc, se::SemanticVersion{12, 8, 0});
+    return rewriter.Run(module);
+  }
+
+  // Checks that `fusion` is a Triton XTile fusion and returns its block-level
+  // config, which holds the parallel tile sizes.
+  absl::StatusOr<xtile::BlockLevelFusionConfig> GetBlockLevelConfig(
+      const HloInstruction& fusion) {
+    TF_RET_CHECK(fusion.opcode() == HloOpcode::kFusion);
+    TF_RET_CHECK(fusion.fusion_kind() == HloInstruction::FusionKind::kCustom);
+    ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
+                          fusion.backend_config<GpuBackendConfig>());
+    TF_RET_CHECK(gpu_config.fusion_backend_config().kind() ==
+                 kTritonFusionKind);
+    return gpu_config.fusion_backend_config().block_level_fusion_config();
+  }
+
+  // Returns the sequential tile sizes carried by the ragged-dot inside
+  // `fusion`.
+  absl::StatusOr<xtile::Tile> GetSequentialTile(const HloInstruction& fusion) {
+    const HloInstruction* ragged_dot = hlo_query::GetFirstInstructionWithOpcode(
+        *fusion.fused_instructions_computation(), HloOpcode::kRaggedDot);
+    TF_RET_CHECK(ragged_dot != nullptr);
+    return ragged_dot->backend_config<xtile::Tile>();
+  }
+};
+
+TEST_F(TritonRaggedDotRewriteTest, NonContractingDefaultTiles) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseWithTritonRaggedDot(R"(
+HloModule m
+
+ENTRY entry {
+  lhs = bf16[64,9] parameter(0)
+  rhs = bf16[2,9,8] parameter(1)
+  gs = s64[2] parameter(2)
+  ROOT rd = bf16[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)"));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunGemmRewriter(module.get()));
+  EXPECT_TRUE(changed);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  // The fusion takes the ragged-dot operands unchanged.
+  EXPECT_EQ(root->operand_count(), 3);
+
+  ASSERT_OK_AND_ASSIGN(xtile::BlockLevelFusionConfig block_config,
+                       GetBlockLevelConfig(*root));
+  ASSERT_EQ(block_config.output_tiles_size(), 1);
+  // Parallel output dims are [M, N].
+  EXPECT_THAT(block_config.output_tiles(0).sizes(), ElementsAre(32, 32));
+  EXPECT_EQ(block_config.num_warps(), 4);
+  EXPECT_EQ(block_config.num_ctas(), 1);
+  EXPECT_EQ(block_config.num_stages(), 1);
+
+  // Sequential dims are [G, K]: one group per outer loop iteration.
+  ASSERT_OK_AND_ASSIGN(xtile::Tile tile, GetSequentialTile(*root));
+  EXPECT_THAT(tile.sizes(), ElementsAre(1, 32));
+}
+
+TEST_F(TritonRaggedDotRewriteTest, ContractingDefaultTiles) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseWithTritonRaggedDot(R"(
+HloModule m
+
+ENTRY entry {
+  lhs = bf16[64,9] parameter(0)
+  rhs = bf16[64,8] parameter(1)
+  gs = s64[2] parameter(2)
+  ROOT rd = bf16[2,9,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={0}, rhs_contracting_dims={0},
+      lhs_ragged_dims={0}
+}
+)"));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunGemmRewriter(module.get()));
+  EXPECT_TRUE(changed);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(xtile::BlockLevelFusionConfig block_config,
+                       GetBlockLevelConfig(*root));
+  ASSERT_EQ(block_config.output_tiles_size(), 1);
+  // Parallel output dims are [G, K, N]; one group per program.
+  EXPECT_THAT(block_config.output_tiles(0).sizes(), ElementsAre(1, 32, 32));
+
+  // The ragged (M) dimension is the sequential accumulation loop.
+  ASSERT_OK_AND_ASSIGN(xtile::Tile tile, GetSequentialTile(*root));
+  EXPECT_THAT(tile.sizes(), ElementsAre(32));
+}
+
+TEST_F(TritonRaggedDotRewriteTest, BatchDefaultTiles) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseWithTritonRaggedDot(R"(
+HloModule m
+
+ENTRY entry {
+  lhs = bf16[2,64,9] parameter(0)
+  rhs = bf16[2,9,8] parameter(1)
+  gs = s64[2] parameter(2)
+  ROOT rd = bf16[2,64,8] ragged-dot(lhs, rhs, gs),
+      lhs_batch_dims={0}, rhs_batch_dims={0},
+      lhs_contracting_dims={2}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}
+}
+)"));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunGemmRewriter(module.get()));
+  EXPECT_TRUE(changed);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(xtile::BlockLevelFusionConfig block_config,
+                       GetBlockLevelConfig(*root));
+  ASSERT_EQ(block_config.output_tiles_size(), 1);
+  // Parallel output dims are [B, M, N]; one batch element per program.
+  EXPECT_THAT(block_config.output_tiles(0).sizes(), ElementsAre(1, 32, 32));
+
+  // Only the contraction is sequential.
+  ASSERT_OK_AND_ASSIGN(xtile::Tile tile, GetSequentialTile(*root));
+  EXPECT_THAT(tile.sizes(), ElementsAre(32));
+}
+
+TEST_F(TritonRaggedDotRewriteTest, UnsupportedElementTypeIsNotRewritten) {
+  // S8 is not supported by the xtile emitter, so no backend claims the
+  // ragged-dot and GemmRewriter leaves it for RaggedDotRewriter to expand.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseWithTritonRaggedDot(R"(
+HloModule m
+
+ENTRY entry {
+  lhs = s8[64,9] parameter(0)
+  rhs = s8[2,9,8] parameter(1)
+  gs = s64[2] parameter(2)
+  ROOT rd = s8[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)"));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunGemmRewriter(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kRaggedDot);
+}
+
+TEST_F(TritonRaggedDotRewriteTest, PreAmpereIsNotRewritten) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseWithTritonRaggedDot(R"(
+HloModule m
+
+ENTRY entry {
+  lhs = bf16[64,9] parameter(0)
+  rhs = bf16[2,9,8] parameter(1)
+  gs = s64[2] parameter(2)
+  ROOT rd = bf16[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)"));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunGemmRewriter(module.get(), se::CudaComputeCapability::Volta()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kRaggedDot);
+}
+
+TEST_F(TritonRaggedDotRewriteTest, DisabledFlagIsNotRewritten) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseWithTritonRaggedDot(R"(
+HloModule m
+
+ENTRY entry {
+  lhs = bf16[64,9] parameter(0)
+  rhs = bf16[2,9,8] parameter(1)
+  gs = s64[2] parameter(2)
+  ROOT rd = bf16[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)"));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_triton_ragged_dot(false);
+  ASSERT_OK_AND_ASSIGN(bool changed, RunGemmRewriter(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_EQ(module->entry_computation()->root_instruction()->opcode(),
+            HloOpcode::kRaggedDot);
 }
 
 }  // namespace
