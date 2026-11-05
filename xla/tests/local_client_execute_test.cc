@@ -19,6 +19,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/test_benchmark.h"
@@ -26,9 +28,14 @@ limitations under the License.
 #include "xla/client/local_client.h"
 #include "xla/hlo/builder/sharding_builder.h"
 #include "xla/hlo/builder/xla_builder.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/test_helpers.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/service/backend.h"
+#include "xla/service/compiler.h"
+#include "xla/service/executable.h"
 #include "xla/service/platform_util.h"
 #include "xla/service/shaped_buffer.h"
 #include "xla/service/transfer_manager.h"
@@ -48,6 +55,7 @@ namespace xla {
 namespace {
 
 using ::testing::ContainsRegex;
+using ::testing::HasSubstr;
 
 class LocalClientExecuteTest : public LocalClientTestBase {
  protected:
@@ -1081,6 +1089,55 @@ TEST_F(LocalClientExecuteTest, ValidateMemoryFittingLevel) {
             ExecutionOptions::EFFORT_O3);
   auto proto = compiled_module.ToProtoWithConfig();
   EXPECT_EQ(proto.config().memory_fitting_level(), ExecutionOptions::EFFORT_O3);
+}
+
+// GPU executables that are compiled with `embed_hlo_module=false` don't have an
+// HloModule, so running them must not need it. (Other backends ignore this
+// option and keep the module.)
+TEST_F(LocalClientExecuteTest, RunExecutableCompiledWithoutEmbeddedModule) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    HloModule add, entry_computation_layout={(f32[2,2]{0,1}, f32[2,2]{1,0})->f32[2,2]{1,0}}
+
+    ENTRY main {
+      x = f32[2,2]{0,1} parameter(0)
+      y = f32[2,2]{1,0} parameter(1)
+      ROOT add = f32[2,2]{1,0} add(x, y)
+    })"));
+  Backend* backend = local_client_->mutable_backend();
+  Compiler::CompileOptions compile_options;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> optimized_module,
+      backend->compiler()->RunHloPasses(std::move(module), stream_executor_,
+                                        compile_options));
+  compile_options.embed_hlo_module = false;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Executable> executable,
+      backend->compiler()->RunBackend(std::move(optimized_module),
+                                      stream_executor_, compile_options));
+  ExecutableBuildOptions build_options = DefaultExecutableBuildOptions();
+  build_options.set_device_ordinal(stream_executor_->device_ordinal());
+  LocalExecutable local_executable(std::move(executable), backend,
+                                   build_options);
+
+  ScopedShapedBuffer x = LiteralToShapedBuffer(LiteralUtil::CreateR2WithLayout(
+      {{1.0f, 2.0f}, {3.0f, 4.0f}}, LayoutUtil::MakeLayout({0, 1})));
+  ScopedShapedBuffer y = LiteralToShapedBuffer(LiteralUtil::CreateR2WithLayout(
+      {{10.0f, 20.0f}, {30.0f, 40.0f}}, LayoutUtil::MakeLayout({1, 0})));
+  std::vector<const ShapedBuffer*> args = {&x, &y};
+  ASSERT_OK_AND_ASSIGN(
+      ScopedShapedBuffer result,
+      local_executable.Run(args, DefaultExecutableRunOptions()));
+  LiteralTestUtil::ExpectR2Near<float>({{11.0f, 22.0f}, {33.0f, 44.0f}},
+                                       ShapedBufferToLiteral(result),
+                                       error_spec_);
+
+  // The argument layouts are still checked against the entry computation
+  // layout.
+  std::vector<const ShapedBuffer*> swapped_args = {&y, &x};
+  EXPECT_THAT(local_executable.Run(swapped_args, DefaultExecutableRunOptions()),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     HasSubstr("does not match")));
 }
 
 BENCHMARK(BM_LocalClientOverhead);

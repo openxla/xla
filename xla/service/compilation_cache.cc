@@ -67,7 +67,7 @@ absl::StatusOr<std::shared_ptr<Executable>> CompilationCache::LookUp(
     return InvalidArgumentStrCat("can not find executable with handle ", key);
   }
   auto& result = cache_.at(key);
-  VLOG(2) << "hit executable: " << result->module().name();
+  VLOG(2) << "hit executable: " << result->name();
   return result;
 }
 
