@@ -3690,6 +3690,7 @@ cc_library(
         ":launch_dimensions",
         "//xla:future",
         "//xla:status_macros",
+        "//xla/backends/gpu/codegen:gpu_kernel_spec",
         "//xla/codegen/emitters:computation_fingerprint",
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/hlo/ir:hlo",
@@ -3721,6 +3722,7 @@ xla_cc_test(
     deps = [
         ":kernel_reuse_cache",
         ":kernel_reuse_cache_proto_cc",
+        "//xla/codegen/emitters:kernel_arguments",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/concurrency:future",
         "//xla/tsl/platform:env",
