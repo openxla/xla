@@ -454,31 +454,6 @@ work recorded with earlier option values. Custom calls whose recorded work
 depends on options that change between executions must stay out of GPU command
 buffers until this is supported.
 
-### Logical Device Information
-
-Bind `Ctx<LogicalDeviceInfo>()` to read the executing device's `replica_id`,
-`partition_id`, `replica_count`, and `partition_count` from the executable's
-device assignment:
-
-```c++
-auto handler = Ffi::Bind().Ctx<LogicalDeviceInfo>().To(
-    [](LogicalDeviceInfo info) -> Error {
-      int64_t flattened_id =
-          int64_t{info.replica_id} * info.partition_count + info.partition_id;
-      // Use flattened_id when setting up the device's work.
-      return Error::Success();
-    });
-```
-
-These logical coordinates are not physical device IDs, communicator ranks, or
-JAX mesh coordinates. The lookup reads host runtime metadata and does not
-require a communicator or a device-to-host transfer. It is available during
-GPU Prepare, Initialize, Execute, and Record, and CPU Execute. Instantiate has
-no executing device assignment and returns an error.
-
-This accessor requires FFI API 0.6 or newer. Handlers compiled with these
-headers advertise that API version and cannot register with older runtimes.
-
 ### User-defined Struct Attributes
 
 XLA FFI can decode dictionary attributes into user-defined structs.
