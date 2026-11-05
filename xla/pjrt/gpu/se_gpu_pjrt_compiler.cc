@@ -22,6 +22,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/const_init.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -126,7 +128,29 @@ absl::StatusOr<stream_executor::StreamExecutor*> GetStreamExecutor(
       "autotuning.");
 }
 
+ABSL_CONST_INIT absl::Mutex metadata_provider_mutex(absl::kConstInit);
+
+std::shared_ptr<const StreamExecutorExecutableMetadataProvider>&
+RegisteredMetadataProvider()
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(metadata_provider_mutex) {
+  static auto* provider =
+      new std::shared_ptr<const StreamExecutorExecutableMetadataProvider>();
+  return *provider;
+}
+
+std::shared_ptr<const StreamExecutorExecutableMetadataProvider>
+GetRegisteredMetadataProvider() {
+  absl::MutexLock lock(metadata_provider_mutex);
+  return RegisteredMetadataProvider();
+}
+
 }  // namespace
+
+void StreamExecutorGpuCompiler::RegisterMetadataProvider(
+    std::shared_ptr<const StreamExecutorExecutableMetadataProvider> provider) {
+  absl::MutexLock lock(metadata_provider_mutex);
+  RegisteredMetadataProvider() = std::move(provider);
+}
 
 StreamExecutorGpuCompiler::StreamExecutorGpuCompiler(
     PjRtPlatformId pjrt_platform_id, stream_executor::Platform::Id platform_id)
@@ -380,7 +404,8 @@ StreamExecutorGpuCompiler::Compile(
       pjrt_platform_id_, std::move(input_options),
       aot_results.empty() ? nullptr : std::move(aot_results[0]), num_replicas,
       num_partitions, name, fingerprint,
-      /*default_memory_kind=*/StreamExecutorGpuHbmMemorySpace::kKind);
+      /*default_memory_kind=*/StreamExecutorGpuHbmMemorySpace::kKind,
+      GetRegisteredMetadataProvider());
 }
 
 absl::StatusOr<std::unique_ptr<PjRtExecutable>>
@@ -512,7 +537,8 @@ StreamExecutorGpuCompiler::DeserializeExecutable(
     std::optional<CompileOptions>&& options,
     const DeserializeExecutableOptions& deserialize_options) {
   return StreamExecutorExecutable::Deserialize(std::move(reader), topology,
-                                               std::move(options));
+                                               std::move(options),
+                                               GetRegisteredMetadataProvider());
 }
 
 absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>>

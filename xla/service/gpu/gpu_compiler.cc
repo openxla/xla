@@ -176,6 +176,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/pass/hlo_pass_context.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
 #include "xla/hlo/pass/hlo_pass_pipeline.h"
@@ -2992,6 +2993,22 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   // The module is being moved into the GpuExecutable below and we need to
   // read a few config values from the module, before it becomes invalid.
   bool embed_debug_info = debug_opts.xla_gpu_executable_embed_debug_info();
+  // Only used by the executable if the module isn't embedded.
+  std::optional<DeviceAssignment> static_device_assignment;
+  if (module->config().has_static_device_assignment()) {
+    static_device_assignment = module->config().static_device_assignment();
+  }
+  HloBufferDonorConfig buffer_donor_config = module->buffer_donor_config();
+  ComputationLayout entry_computation_layout =
+      module->config().entry_computation_layout();
+  std::optional<std::vector<HloSharding>> spmd_parameters_shardings;
+  if (module->has_spmd_parameters_shardings()) {
+    spmd_parameters_shardings = module->spmd_parameters_shardings();
+  }
+  std::optional<HloSharding> spmd_output_sharding;
+  if (module->has_spmd_output_sharding()) {
+    spmd_output_sharding = module->spmd_output_sharding();
+  }
 
   tsl::profiler::ScopedAnnotation annotation([&] {
     return absl::StrFormat("XlaCreateGpuExecutable:#module=%s#",
@@ -3022,6 +3039,13 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
     }
   }
 
+  // Without the module the executable can't compute the fingerprint, so we
+  // pass it along.
+  std::string fingerprint;
+  if (!options.embed_hlo_module) {
+    fingerprint = module->GetFingerprint128();
+  }
+
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<GpuExecutable> gpu_executable,
       GpuExecutable::Create(GpuExecutable::Params{
@@ -3042,7 +3066,7 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*alias_info=*/std::move(alias_info),
           /*debug_options=*/debug_opts,
           /*device_description=*/gpu_device_info,
-          /*debug_module=*/options.embed_hlo_module
+          /*hlo_module=*/options.embed_hlo_module
               ? std::move(module)
               : std::unique_ptr<HloModule>(),
           /*enable_debug_info_manager=*/embed_debug_info,
@@ -3055,7 +3079,13 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*buffer_assignment_proto=*/std::move(buffer_assignment_proto),
           /*buffer_allocations_debug_summary=*/
           std::move(buffer_allocations_debug_summary),
-          /*gpu_topology=*/gpu_topology}));
+          /*gpu_topology=*/gpu_topology,
+          /*static_device_assignment=*/std::move(static_device_assignment),
+          /*buffer_donor_config=*/std::move(buffer_donor_config),
+          /*entry_computation_layout=*/std::move(entry_computation_layout),
+          /*spmd_parameters_shardings=*/std::move(spmd_parameters_shardings),
+          /*spmd_output_sharding=*/std::move(spmd_output_sharding),
+          /*fingerprint=*/std::move(fingerprint)}));
   IncrementCompiledProgramsCount();
 
   if (gpu_executable->has_module() && gpu_executable->module()

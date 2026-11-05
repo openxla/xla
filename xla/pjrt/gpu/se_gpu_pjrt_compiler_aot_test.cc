@@ -16,6 +16,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,6 +28,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -43,19 +45,28 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
 #include "xla/pjrt/compiled_memory_stats.h"
+#include "xla/pjrt/gpu/se_gpu_executable_metadata_provider.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_client.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_compiler.h"
 #include "xla/pjrt/maybe_owning_mlir_module.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_client_options.h"
+#include "xla/pjrt/proto/compile_options.pb.h"
 #include "xla/pjrt/se/stream_executor_executable.h"
+#include "xla/service/compiled_module.h"
 #include "xla/service/compiler.h"
+#include "xla/service/executable.h"
+#include "xla/service/gpu/gpu_aot_compilation_result.h"
+#include "xla/service/gpu/gpu_executable.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/literal_test_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/util/proto/proto_matchers.h"
+#include "xla/util/split_proto/split_proto_reader.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -63,6 +74,7 @@ namespace {
 
 using ::absl_testing::IsOkAndHolds;
 using ::testing::SizeIs;
+using ::tsl::proto_testing::EqualsProto;
 
 constexpr absl::string_view kProgram = R"(HloModule Computation
 
@@ -352,6 +364,306 @@ TEST(StreamExecutorGpuCompilerTest, AutoLayoutIsSupported) {
   // Check that the assigned layouts are not default.
   EXPECT_NE(layouts[0]->ToString(), "{2,1,0}");
   EXPECT_NE(layouts[1]->ToString(), "{2,1,0}");
+}
+
+// The metadata provider reads the name, replica and partition counts and the
+// fingerprint of a deserialized executable from the serialized proto. They have
+// to be the same as the values derived from the deserialized HLO module.
+TEST(StreamExecutorGpuCompilerTest, DeserializedMetadataMatchesModule) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  StreamExecutorGpuCompiler compiler(
+      client->platform_id(), GetLocalClient(client.get())->platform()->id());
+  TF_ASSERT_OK_AND_ASSIGN(const PjRtTopologyDescription* topology,
+                          client->GetTopologyDescription());
+
+  for (absl::string_view program : {kProgram, kProgramIdentity}) {
+    for (int num_replicas : {1, 2}) {
+      SCOPED_TRACE(absl::StrCat(program, " num_replicas=", num_replicas));
+      xla::CompileOptions opts;
+      opts.gpu_target_config = Compiler::GpuTargetConfig(
+          GetLocalClient(client.get())->backend().default_stream_executor());
+      opts.executable_build_options.set_num_replicas(num_replicas);
+      TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation,
+                              GetXlaComputation(program));
+      TF_ASSERT_OK_AND_ASSIGN(
+          std::unique_ptr<PjRtExecutable> executable,
+          compiler.Compile(opts, computation, *topology, /*client=*/nullptr));
+      TF_ASSERT_OK_AND_ASSIGN(std::string serialized,
+                              executable->SerializeExecutable());
+
+      // The provider reads the metadata from the proto.
+      TF_ASSERT_OK_AND_ASSIGN(ExecutableAndOptionsProto executable_and_options,
+                              SerializedGpuExecutableFromString(serialized));
+      gpu::GpuExecutableProto gpu_executable_proto;
+      ASSERT_OK(
+          ReadSplitProto(std::make_unique<riegeli::StringReader<>>(
+                             executable_and_options.serialized_executable()),
+                         gpu_executable_proto));
+      TF_ASSERT_OK_AND_ASSIGN(
+          std::unique_ptr<gpu::GpuAotCompilationResult> aot_result,
+          gpu::GpuAotCompilationResult::FromProto(gpu_executable_proto));
+      std::optional<
+          StreamExecutorExecutableMetadataProvider::CompiledModuleMetadata>
+          metadata =
+              GpuExecutableMetadataProvider::Get()->GetCompiledModuleMetadata(
+                  *aot_result);
+      ASSERT_TRUE(metadata.has_value());
+      const HloModule* module = aot_result->optimized_module();
+      ASSERT_NE(module, nullptr);
+      EXPECT_EQ(metadata->name, module->name());
+      EXPECT_EQ(metadata->num_replicas, module->config().replica_count());
+      EXPECT_EQ(metadata->num_partitions, module->config().num_partitions());
+      EXPECT_EQ(metadata->fingerprint, module->GetFingerprint128());
+      EXPECT_EQ(metadata->num_replicas, num_replicas);
+
+      // Deserializing with and without the provider gives the same executable
+      // metadata.
+      TF_ASSERT_OK_AND_ASSIGN(
+          std::unique_ptr<StreamExecutorExecutable> with_provider,
+          StreamExecutorExecutable::Deserialize(
+              riegeli::StringReader<>(serialized), *topology, std::nullopt,
+              GpuExecutableMetadataProvider::Get()));
+      TF_ASSERT_OK_AND_ASSIGN(
+          std::unique_ptr<StreamExecutorExecutable> without_provider,
+          StreamExecutorExecutable::Deserialize(
+              riegeli::StringReader<>(serialized), *topology, std::nullopt));
+      EXPECT_EQ(with_provider->name(), without_provider->name());
+      EXPECT_EQ(with_provider->num_replicas(),
+                without_provider->num_replicas());
+      EXPECT_EQ(with_provider->num_partitions(),
+                without_provider->num_partitions());
+      TF_ASSERT_OK_AND_ASSIGN(std::string fingerprint,
+                              without_provider->FingerprintExecutable());
+      EXPECT_THAT(with_provider->FingerprintExecutable(),
+                  IsOkAndHolds(fingerprint));
+      EXPECT_THAT(with_provider->GetHloModules(), IsOkAndHolds(SizeIs(1)));
+    }
+  }
+}
+
+// After loading, the module of a deserialized executable comes from the loaded
+// `GpuExecutable`, and it is the module of the compiled module.
+TEST(StreamExecutorGpuCompilerTest,
+     LoadedExecutableKeepsTheDeserializedModule) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  StreamExecutorGpuCompiler compiler(
+      client->platform_id(), GetLocalClient(client.get())->platform()->id());
+  xla::CompileOptions opts;
+  opts.gpu_target_config = Compiler::GpuTargetConfig(
+      GetLocalClient(client.get())->backend().default_stream_executor());
+  TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation,
+                          GetXlaComputation(kProgram));
+  TF_ASSERT_OK_AND_ASSIGN(const PjRtTopologyDescription* topology,
+                          client->GetTopologyDescription());
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> executable,
+      compiler.Compile(opts, computation, *topology, /*client=*/nullptr));
+  TF_ASSERT_OK_AND_ASSIGN(std::string serialized,
+                          executable->SerializeExecutable());
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtExecutable> deserialized,
+      compiler.DeserializeExecutable(
+          *topology, riegeli::StringReader<>(serialized), std::nullopt, {}));
+  auto* se_executable =
+      absl::down_cast<StreamExecutorExecutable*>(deserialized.get());
+  TF_ASSERT_OK_AND_ASSIGN(std::shared_ptr<HloModule> module_before_load,
+                          se_executable->GetHloModule());
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::shared_ptr<LocalExecutable> local_executable,
+      se_executable->GetOrLoadExecutable(GetLocalClient(client.get())));
+  EXPECT_THAT(se_executable->GetHloModule(), IsOkAndHolds(module_before_load));
+  EXPECT_EQ(local_executable->executable()->shared_module(),
+            module_before_load);
+}
+
+// Forwards to `GpuExecutableMetadataProvider` and counts how often the HLO
+// module is requested.
+class CountingMetadataProvider final
+    : public StreamExecutorExecutableMetadataProvider {
+ public:
+  absl::StatusOr<std::shared_ptr<HloModule>> GetHloModule(
+      const Executable& executable, absl::string_view reason) const override {
+    ++num_hlo_module_requests_;
+    return GpuExecutableMetadataProvider::Get()->GetHloModule(executable,
+                                                              reason);
+  }
+
+  std::optional<CompiledModuleMetadata> GetCompiledModuleMetadata(
+      const CompiledModule& compiled_module) const override {
+    return GpuExecutableMetadataProvider::Get()->GetCompiledModuleMetadata(
+        compiled_module);
+  }
+
+  std::optional<SpmdShardings> GetSpmdShardings(
+      const Executable& executable) const override {
+    return GpuExecutableMetadataProvider::Get()->GetSpmdShardings(executable);
+  }
+
+  int num_hlo_module_requests() const { return num_hlo_module_requests_; }
+
+ private:
+  mutable std::atomic<int> num_hlo_module_requests_ = 0;
+};
+
+constexpr absl::string_view kProgramWithAliasing = R"(
+  HloModule Aliasing, input_output_alias={ {0}: (0, {}, may-alias) }
+
+  ENTRY main {
+    p0 = f32[4] parameter(0)
+    p1 = f32[2,3] parameter(1)
+    add = f32[4] add(p0, p0)
+    ROOT tuple = (f32[4], f32[2,3]) tuple(add, p1)
+  })";
+
+constexpr absl::string_view kSpmdProgram = R"(
+  HloModule Spmd
+
+  ENTRY main {
+    p0 = f32[8,4] parameter(0), sharding={devices=[2,1]<=[2]}
+    p1 = f32[8,4] parameter(1), sharding={replicated}
+    add = f32[8,4] add(p0, p1), sharding={devices=[2,1]<=[2]}
+    ROOT tuple = (f32[8,4], f32[8,4]) tuple(add, p1),
+        sharding={{devices=[2,1]<=[2]}, {replicated}}
+  })";
+
+std::vector<std::string> LayoutStrings(
+    const std::vector<std::shared_ptr<const PjRtLayout>>& layouts) {
+  std::vector<std::string> result;
+  result.reserve(layouts.size());
+  for (const std::shared_ptr<const PjRtLayout>& layout : layouts) {
+    result.push_back(layout->ToString());
+  }
+  return result;
+}
+
+void ExpectSameShardings(
+    const std::optional<std::vector<OpSharding>>& actual,
+    const std::optional<std::vector<OpSharding>>& expected) {
+  ASSERT_EQ(actual.has_value(), expected.has_value());
+  if (!expected.has_value()) {
+    return;
+  }
+  ASSERT_EQ(actual->size(), expected->size());
+  for (int i = 0; i < expected->size(); ++i) {
+    EXPECT_THAT((*actual)[i], EqualsProto((*expected)[i]));
+  }
+}
+
+struct MetadataTestCase {
+  std::string name;
+  absl::string_view program;
+  int num_partitions = 1;
+  std::optional<Shape> result_layout;
+};
+
+// Once loaded, an executable with the metadata provider reads its layouts,
+// shardings, memory kinds and output shapes from the `GpuExecutable` instead of
+// the HLO module. They have to be the same as the values that an executable
+// without a provider derives from the module.
+TEST(StreamExecutorGpuCompilerTest, LoadedMetadataMatchesModule) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  StreamExecutorGpuCompiler compiler(
+      client->platform_id(), GetLocalClient(client.get())->platform()->id());
+  TF_ASSERT_OK_AND_ASSIGN(const PjRtTopologyDescription* topology,
+                          client->GetTopologyDescription());
+
+  Shape device_shape = ShapeUtil::MakeShapeWithDenseLayout(S32, {4}, {0});
+  Shape host_shape = device_shape;
+  host_shape.mutable_layout()->set_memory_space(Layout::kHostMemorySpace);
+  const std::vector<MetadataTestCase> test_cases = {
+      {"constant", kProgram},
+      {"identity", kProgramIdentity},
+      {"aliasing", kProgramWithAliasing},
+      {"spmd", kSpmdProgram, /*num_partitions=*/2},
+      {"host_output", kD2HProgramTupleOutput, /*num_partitions=*/1,
+       ShapeUtil::MakeTupleShape({device_shape, host_shape})},
+  };
+
+  for (const MetadataTestCase& test_case : test_cases) {
+    SCOPED_TRACE(test_case.name);
+    xla::CompileOptions opts;
+    opts.gpu_target_config = Compiler::GpuTargetConfig(
+        GetLocalClient(client.get())->backend().default_stream_executor());
+    if (test_case.num_partitions > 1) {
+      opts.executable_build_options.set_num_partitions(
+          test_case.num_partitions);
+      opts.executable_build_options.set_use_spmd_partitioning(true);
+    }
+    if (test_case.result_layout.has_value()) {
+      opts.executable_build_options.set_result_layout(*test_case.result_layout);
+    }
+    TF_ASSERT_OK_AND_ASSIGN(XlaComputation computation,
+                            GetXlaComputation(test_case.program));
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PjRtExecutable> executable,
+        compiler.Compile(opts, computation, *topology, /*client=*/nullptr));
+    TF_ASSERT_OK_AND_ASSIGN(std::string serialized,
+                            executable->SerializeExecutable());
+
+    auto provider = std::make_shared<CountingMetadataProvider>();
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<StreamExecutorExecutable> with_provider,
+        StreamExecutorExecutable::Deserialize(
+            riegeli::StringReader<>(serialized), *topology, std::nullopt,
+            provider));
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<StreamExecutorExecutable> without_provider,
+        StreamExecutorExecutable::Deserialize(
+            riegeli::StringReader<>(serialized), *topology, std::nullopt));
+    ASSERT_OK(with_provider->GetOrLoadExecutable(GetLocalClient(client.get())));
+    ASSERT_OK(
+        without_provider->GetOrLoadExecutable(GetLocalClient(client.get())));
+
+    TF_ASSERT_OK_AND_ASSIGN(std::vector<Shape> output_shapes,
+                            without_provider->GetOutputShapes());
+    EXPECT_THAT(with_provider->GetOutputShapes(), IsOkAndHolds(output_shapes));
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<std::shared_ptr<const PjRtLayout>> parameter_layouts,
+        without_provider->GetParameterLayouts());
+    TF_ASSERT_OK_AND_ASSIGN(std::vector<std::shared_ptr<const PjRtLayout>>
+                                parameter_layouts_from_provider,
+                            with_provider->GetParameterLayouts());
+    EXPECT_EQ(LayoutStrings(parameter_layouts_from_provider),
+              LayoutStrings(parameter_layouts));
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<std::shared_ptr<const PjRtLayout>> output_layouts,
+        without_provider->GetOutputLayouts());
+    TF_ASSERT_OK_AND_ASSIGN(std::vector<std::shared_ptr<const PjRtLayout>>
+                                output_layouts_from_provider,
+                            with_provider->GetOutputLayouts());
+    EXPECT_EQ(LayoutStrings(output_layouts_from_provider),
+              LayoutStrings(output_layouts));
+
+    ExpectSameShardings(with_provider->GetParameterShardings(),
+                        without_provider->GetParameterShardings());
+    ExpectSameShardings(with_provider->GetOutputShardings(),
+                        without_provider->GetOutputShardings());
+    if (test_case.num_partitions > 1) {
+      // Make sure that we don't only compare missing shardings.
+      EXPECT_TRUE(without_provider->GetParameterShardings().has_value());
+      EXPECT_TRUE(without_provider->GetOutputShardings().has_value());
+    }
+
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<std::vector<absl::string_view>> parameter_memory_kinds,
+        without_provider->GetParameterMemoryKinds());
+    EXPECT_THAT(with_provider->GetParameterMemoryKinds(),
+                IsOkAndHolds(parameter_memory_kinds));
+    TF_ASSERT_OK_AND_ASSIGN(
+        std::vector<std::vector<absl::string_view>> output_memory_kinds,
+        without_provider->GetOutputMemoryKinds());
+    EXPECT_THAT(with_provider->GetOutputMemoryKinds(),
+                IsOkAndHolds(output_memory_kinds));
+
+    // None of the above needed the HLO module.
+    EXPECT_EQ(provider->num_hlo_module_requests(), 0);
+  }
 }
 
 }  // namespace

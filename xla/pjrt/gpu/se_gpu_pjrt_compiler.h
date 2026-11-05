@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_executable.h"
+#include "xla/pjrt/se/stream_executor_executable.h"
 #include "xla/service/compiler.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/platform.h"
@@ -83,6 +84,12 @@ class StreamExecutorGpuCompiler : public PjRtCompiler {
   // be compatible with.
   absl::StatusOr<std::unique_ptr<PjRtRuntimeAbiVersion>>
   GetTargetRuntimeAbiVersion() override;
+
+  // Registers the metadata provider of the `StreamExecutorExecutable`s that
+  // this compiler creates. XLA:GPU registers its provider when it's linked in.
+  // Without a provider, executables get their metadata from the HLO module.
+  static void RegisterMetadataProvider(
+      std::shared_ptr<const StreamExecutorExecutableMetadataProvider> provider);
 
  private:
   using LayoutCanonicalizationCallback =

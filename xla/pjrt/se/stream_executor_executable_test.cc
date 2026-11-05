@@ -21,6 +21,8 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/pjrt/pjrt_abi_version.h"
 #include "xla/pjrt/pjrt_common.h"
@@ -36,6 +38,8 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::IsOkAndHolds;
+using ::absl_testing::StatusIs;
 using ::testing::Return;
 using ::tsl::proto_testing::EqualsProto;
 
@@ -72,6 +76,39 @@ TEST(StreamExecutorExecutableTest, GetAbiVersion) {
       proto.version()));
   EXPECT_THAT(reconstructed_executable_abi_version_proto,
               EqualsProto(executable_abi_version_proto));
+}
+
+TEST(StreamExecutorExecutableTest, GetHloModuleAsksTheCompiledModule) {
+  auto module = std::make_unique<MockCompiledModule>();
+  auto hlo_module = std::make_shared<HloModule>("name", HloModuleConfig());
+  EXPECT_CALL(*module, shared_optimized_module()).WillOnce(Return(hlo_module));
+  StreamExecutorExecutable executable(/*platform_id=*/42, CompileOptions(),
+                                      std::move(module), 1, 1, "name",
+                                      "fingerprint", "memory_kind");
+
+  EXPECT_THAT(executable.GetHloModule(), IsOkAndHolds(hlo_module));
+}
+
+TEST(StreamExecutorExecutableTest, GetHloModuleFailsWithoutModule) {
+  auto module = std::make_unique<MockCompiledModule>();
+  EXPECT_CALL(*module, shared_optimized_module())
+      .WillRepeatedly(Return(nullptr));
+  StreamExecutorExecutable executable(/*platform_id=*/42, CompileOptions(),
+                                      std::move(module), 1, 1, "name",
+                                      "fingerprint", "memory_kind");
+
+  EXPECT_THAT(executable.GetHloModule(), StatusIs(absl::StatusCode::kNotFound));
+  EXPECT_THAT(executable.GetHloModules(),
+              StatusIs(absl::StatusCode::kNotFound));
+}
+
+TEST(StreamExecutorExecutableTest, GetHloModuleFailsWithoutCompiledModule) {
+  StreamExecutorExecutable executable(
+      /*platform_id=*/42, CompileOptions(), /*executable=*/nullptr, 1, 1,
+      "name", "fingerprint", "memory_kind");
+
+  EXPECT_THAT(executable.GetHloModule(),
+              StatusIs(absl::StatusCode::kFailedPrecondition));
 }
 
 }  // namespace
