@@ -18,9 +18,11 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/client/executable_build_options.h"
@@ -60,6 +62,36 @@ TEST(CompileOptionsTest, Serialization) {
   EXPECT_EQ(proto.SerializeAsString(), output_proto.SerializeAsString());
   EXPECT_EQ(src.individually_defined_output_indices,
             output.individually_defined_output_indices);
+}
+
+class FakeMultiSliceConfig : public MultiSliceConfig {
+ public:
+  explicit FakeMultiSliceConfig(std::string serialized)
+      : serialized_(std::move(serialized)) {}
+
+  int32_t NumSlices() const override { return 2; }
+  int32_t SliceId() const override { return 0; }
+  absl::flat_hash_map<int32_t, int32_t> NumDevicesPerSlice() const override {
+    return {{0, 4}, {1, 4}};
+  }
+  std::string Serialize() const override { return serialized_; }
+
+ private:
+  std::string serialized_;
+};
+
+TEST(CompileOptionsTest, SharedMultiSliceConfigOutlivesOriginalPointer) {
+  CompileOptions copied_options;
+  {
+    auto config = std::make_shared<FakeMultiSliceConfig>("serialized_topology");
+    CompileOptions src;
+    src.multi_slice_config = std::move(config);
+    copied_options = src;
+  }
+
+  ASSERT_NE(copied_options.multi_slice_config, nullptr);
+  ASSERT_OK_AND_ASSIGN(CompileOptionsProto proto, copied_options.ToProto());
+  EXPECT_EQ(proto.serialized_multi_slice_config(), "serialized_topology");
 }
 
 TEST(CompileOptionsTest, DeserializeSerializedMultiSliceConfig) {

@@ -111,7 +111,7 @@ struct CompileOptions {
 
   // Set multi_slice_config to trigger compilation for DCN connected multi
   // slice operation.
-  const MultiSliceConfig* multi_slice_config = nullptr;
+  std::shared_ptr<const MultiSliceConfig> multi_slice_config;
   std::string serialized_multi_slice_config = "";
 
   // Key-value string pairs, parsed in order to set miscellaneous options,
