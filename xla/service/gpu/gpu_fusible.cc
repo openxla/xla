@@ -1025,8 +1025,7 @@ bool IsGenericTritonFusion(const HloInstruction& instr) {
   // Ragged-dot XTile fusions are built by GemmRewriter with a fixed shape: the
   // emitter resolves the ragged-dot operands to buffer arguments of the
   // fusion, so they must not be fused with anything else either.
-  return !absl::c_any_of(instr.fused_instructions_computation()->instructions(),
-                         HloPredicateIsOp<HloOpcode::kRaggedDot>);
+  return !IsRaggedDotTritonFusion(instr);
 }
 
 bool MayCausePerformanceDropIfUnrolled(const HloFusionAdaptor& fusion) {
