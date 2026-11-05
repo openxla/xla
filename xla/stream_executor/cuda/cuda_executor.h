@@ -139,6 +139,9 @@ class CudaExecutor : public GpuExecutor {
       uint64_t size) override;
 
   bool HostMemoryRegister(void* location, uint64_t size) override;
+  // cuMemHostUnregister may synchronize with work in flight on the context
+  // that owns the registration.
+  bool HostMemoryUnregisterMaySynchronize() const override { return true; }
   bool HostMemoryUnregister(void* location) override;
   bool IsHostMemoryPinned(const void* ptr, uint64_t size) override;
 
