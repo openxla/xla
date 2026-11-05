@@ -1631,8 +1631,6 @@ xla_test(
     srcs = ["dot_operand_converter_test.cc"],
     backends = [
         "a100",
-        "p100",
-        "v100",
         "b200",
         "amdgpu_any",
     ],
