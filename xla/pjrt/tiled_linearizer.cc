@@ -484,6 +484,164 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   return tiling_vec;
 }
 
+// Little-endian bytes of `kPadValue`, repeated so that the 4 bytes starting at
+// any index `i < 4` are `kPadValue` rotated to start at its byte `i`.
+constexpr uint8_t kPadValueBytes[8] = {
+    static_cast<uint8_t>(kPadValue),
+    static_cast<uint8_t>(kPadValue >> 8),
+    static_cast<uint8_t>(kPadValue >> 16),
+    static_cast<uint8_t>(kPadValue >> 24),
+    static_cast<uint8_t>(kPadValue),
+    static_cast<uint8_t>(kPadValue >> 8),
+    static_cast<uint8_t>(kPadValue >> 16),
+    static_cast<uint8_t>(kPadValue >> 24),
+};
+
+// Fills `dst[offset, offset + num_bytes)` with the bytes that filling all of
+// `dst` with 32-bit padding words would have put there: zeros, or the
+// little-endian bytes of `kPadValue` such that `dst[k]` holds byte `k % 4`
+// (i.e. the padding words line up with `dst.data()`). There are no alignment
+// requirements on `dst.data()`, `offset` or `num_bytes`.
+void FillPadRange(absl::Span<uint8_t> dst, size_t offset, size_t num_bytes,
+                  bool set_padding_to_nan) {
+  if (num_bytes == 0) {
+    return;
+  }
+  DCHECK_LE(offset + num_bytes, dst.size());
+  uint8_t* ptr = dst.data() + offset;
+  if (!set_padding_to_nan) {
+    std::memset(ptr, 0, num_bytes);
+    return;
+  }
+  // `memset` can only replicate a single byte, and `kPadValue` is made of two
+  // different bytes. Store single bytes up to the first 4-byte aligned address,
+  // whole words from there with `std::fill_n` (which vectorizes), and single
+  // bytes again for the remainder.
+  size_t i = 0;
+  for (; i < num_bytes &&
+         reinterpret_cast<uintptr_t>(ptr + i) % alignof(uint32_t) != 0;
+       ++i) {
+    ptr[i] = kPadValueBytes[(offset + i) % sizeof(uint32_t)];
+  }
+  // `kPadValue` rotated to the phase of `offset + i`.
+  uint32_t word;
+  std::memcpy(&word, kPadValueBytes + (offset + i) % sizeof(word),
+              sizeof(word));
+  const size_t num_words = (num_bytes - i) / sizeof(word);
+  std::fill_n(tsl::safe_reinterpret_cast<uint32_t*>(ptr + i), num_words, word);
+  for (i += num_words * sizeof(word); i < num_bytes; ++i) {
+    ptr[i] = kPadValueBytes[(offset + i) % sizeof(uint32_t)];
+  }
+}
+
+// Initializes the bytes of `dst` that `plan.Execute` will not write, without
+// first writing the bytes that it overwrites anyway.
+//
+// `plan` writes every input element exactly once, at its position in the
+// output, whose dimensions are `plan.OutputDims()` with `output_tiling` applied
+// to the minor-most ones (see `ComputeStrides` in transpose.cc). The bytes it
+// may leave alone are padding: tile positions past the end of a dimension, and
+// `dst` past the end of the tiled array. Rather than locating every padding
+// byte, this only skips regions that consist entirely of elements, and fills
+// everything else:
+//
+//   * Rank 1 or untiled: elements occupy `[0, written_bytes)`.
+//   * 1D tiling `(t0)`: each row of `RoundUpTo(dim0, t0)` elements starts with
+//     its `dim0` elements.
+//   * 2D tiling `(t0, t1)`: each plane is a row-major grid of tiles of
+//     `t0 * t1` contiguous elements, whose `c0 x c1` complete tiles at the
+//     top-left (`c0 = dim0 / t0`, `c1 = dim1 / t1`) are all elements. This
+//     leaves the partial tile at the end of each complete tile-row and the
+//     partial tile-row at the bottom to fill.
+//   * Anything else (other tilings, or sub-byte packing with a tiling): all of
+//     `dst` is filled.
+//
+// Skipping is only correct if this geometry is the plan's, so the padded size
+// computed here is checked against `plan.OutputNumElems()`; on any mismatch,
+// all of `dst` is filled.
+void FillPaddingOnly(const TransposePlan& plan,
+                     absl::Span<int64_t const> output_tiling,
+                     bool packs_subbyte, size_t written_bytes,
+                     bool set_padding_to_nan, absl::Span<uint8_t> dst) {
+  const auto fill = [&](size_t offset, size_t num_bytes) {
+    FillPadRange(dst, offset, num_bytes, set_padding_to_nan);
+  };
+  absl::Span<int64_t const> output_dims = plan.OutputDims();
+  const size_t ndim = output_dims.size();
+  if (written_bytes == 0 || ndim == 0) {
+    fill(0, dst.size());
+    return;
+  }
+  if (ndim == 1 || output_tiling.empty()) {
+    // With sub-byte packing, the last written byte may be only partly made of
+    // elements, so it is filled too before `plan` writes its elements.
+    const size_t start = packs_subbyte ? written_bytes - 1 : written_bytes;
+    fill(start, dst.size() - start);
+    return;
+  }
+  const size_t elem_bytes = plan.ElemSizeInBytes();
+  const size_t plan_output_bytes =
+      static_cast<size_t>(plan.OutputNumElems()) * elem_bytes;
+  if (!packs_subbyte && output_tiling.size() == 1) {
+    const size_t t0 = static_cast<size_t>(output_tiling[0]);
+    const size_t dim0 = static_cast<size_t>(output_dims[ndim - 1]);
+    const size_t num_rows =
+        static_cast<size_t>(Product(output_dims.first(ndim - 1)));
+    const size_t row_bytes = RoundUpTo(dim0, t0) * elem_bytes;
+    const size_t grid_bytes = num_rows * row_bytes;
+    if (grid_bytes != plan_output_bytes || grid_bytes > dst.size()) {
+      fill(0, dst.size());
+      return;
+    }
+    const size_t row_element_bytes = dim0 * elem_bytes;
+    if (row_element_bytes < row_bytes) {
+      for (size_t row = 0; row < grid_bytes; row += row_bytes) {
+        fill(row + row_element_bytes, row_bytes - row_element_bytes);
+      }
+    }
+    fill(grid_bytes, dst.size() - grid_bytes);
+    return;
+  }
+  if (!packs_subbyte && output_tiling.size() == 2) {
+    const size_t t0 = static_cast<size_t>(output_tiling[0]);
+    const size_t t1 = static_cast<size_t>(output_tiling[1]);
+    const size_t dim0 = static_cast<size_t>(output_dims[ndim - 2]);
+    const size_t dim1 = static_cast<size_t>(output_dims[ndim - 1]);
+    const size_t num_planes =
+        static_cast<size_t>(Product(output_dims.first(ndim - 2)));
+    const size_t tile_bytes = t0 * t1 * elem_bytes;
+    const size_t tile_row_bytes = CeilOfRatio(dim1, t1) * tile_bytes;
+    const size_t plane_bytes = CeilOfRatio(dim0, t0) * tile_row_bytes;
+    const size_t grid_bytes = num_planes * plane_bytes;
+    if (grid_bytes != plan_output_bytes || grid_bytes > dst.size()) {
+      fill(0, dst.size());
+      return;
+    }
+    // Bytes of the complete tile-rows at the top of each plane, and of the
+    // complete tiles at the start of each of those tile-rows.
+    const size_t complete_rows_bytes = (dim0 / t0) * tile_row_bytes;
+    const size_t complete_tiles_bytes = (dim1 / t1) * tile_bytes;
+    if (complete_rows_bytes == 0 || complete_tiles_bytes == 0) {
+      // There are no complete tiles to skip.
+      fill(0, dst.size());
+      return;
+    }
+    for (size_t plane = 0; plane < grid_bytes; plane += plane_bytes) {
+      if (complete_tiles_bytes < tile_row_bytes) {
+        for (size_t row = plane; row < plane + complete_rows_bytes;
+             row += tile_row_bytes) {
+          fill(row + complete_tiles_bytes,
+               tile_row_bytes - complete_tiles_bytes);
+        }
+      }
+      fill(plane + complete_rows_bytes, plane_bytes - complete_rows_bytes);
+    }
+    fill(grid_bytes, dst.size() - grid_bytes);
+    return;
+  }
+  fill(0, dst.size());
+}
+
 }  // namespace
 
 /* static */ absl::Status TiledLinearizer::LinearizeUsingTransposeInto(
@@ -514,7 +672,6 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
           ? 0
           : device_layout.dynamic_shape_metadata_prefix_bytes();
   TF_RET_CHECK(prefix_size % sizeof(uint32_t) == 0);
-  int64_t prefix_u32_size = prefix_size / sizeof(uint32_t);
   TF_RET_CHECK(dest.size() >= prefix_size);
   int64_t size_in_bytes = dest.size() - prefix_size;
   TF_RET_CHECK(size_in_bytes % sizeof(uint32_t) == 0);
@@ -624,30 +781,28 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   TF_RET_CHECK(elements_in_the_packed_data * sizeof(uint32_t) >= written_bytes);
   const bool has_padding =
       written_bytes < elements_in_the_packed_data * sizeof(uint32_t);
-  const uint32_t pad_u32 = set_padding_to_nan ? kPadValue : uint32_t{0};
+  // Initialize the dynamic-shape metadata prefix header (if any) before
+  // populating `dynamic_sizes` at the end of linearization.
+  if (prefix_size > 0) {
+    FillPadRange(dest, 0, prefix_size, set_padding_to_nan);
+  }
 
   std::optional<Buffer> scratch;
   absl::Span<uint8_t> dst;
   if (has_subtile_packing && bits_per_pack < 8) {
-    if (prefix_u32_size > 0) {
-      std::fill_n(tsl::safe_reinterpret_cast<uint32_t*>(dest.data()),
-                  prefix_u32_size, pad_u32);
-    }
-    scratch.emplace(
-        elements_in_the_packed_data,
-        /*value=*/has_padding ? std::make_optional(pad_u32) : std::nullopt,
-        &tensorflow::tpu::DefaultAllocator);
+    // Deliberately uninitialized: `FillPaddingOnly` and `plan->Execute`
+    // together write every byte. This constructor does not zero the buffer
+    // even under MSAN, so MSAN can check that.
+    scratch.emplace(elements_in_the_packed_data * sizeof(uint32_t),
+                    &tensorflow::tpu::DefaultAllocator);
     dst = scratch->mutable_data<uint8_t>();
   } else {
-    auto dest_u32 =
-        absl::MakeSpan(tsl::safe_reinterpret_cast<uint32_t*>(dest.data()),
-                       elements_in_the_packed_data + prefix_u32_size);
-    if (has_padding) {
-      absl::c_fill(dest_u32, pad_u32);
-    } else if (prefix_u32_size > 0) {
-      std::fill_n(dest_u32.data(), prefix_u32_size, pad_u32);
-    }
     dst = dest.subspan(prefix_size);
+  }
+  if (has_padding) {
+    FillPaddingOnly(*plan, output_tiling_vec,
+                    /*packs_subbyte=*/options.dest_bits_per_element.has_value(),
+                    written_bytes, set_padding_to_nan, dst);
   }
   if (plan->Parallelism() <= 1) {
     plan->Execute(data, dst.data());
