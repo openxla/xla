@@ -510,9 +510,6 @@ NcclCollectives::SplitCommunicatorsWithCancel(
 
   const auto& gpu_config =
       absl::down_cast<const GpuCollectives::Config&>(config);
-  if (cancel == nullptr) {
-    cancel = std::make_shared<CancellationToken>();
-  }
 
   auto make_comm = [&](int i) -> absl::StatusOr<ncclComm_t> {
     int32_t device_ordinal = DeviceOrdinal(ranks[i]);
@@ -537,9 +534,8 @@ NcclCollectives::SplitCommunicatorsWithCancel(
                           AsNcclConfig(gpu_config, stream_executors[i]));
 
     const auto* parent = absl::down_cast<const NcclCommunicator*>(comms[i]);
-    ABSL_ASSIGN_OR_RETURN(
-        ncclComm_t split_comm,
-        parent->Split(color, key.value(), comm_config, *cancel));
+    ABSL_ASSIGN_OR_RETURN(ncclComm_t split_comm,
+                          parent->Split(color, key.value(), comm_config));
 
     absl::Time split_done = absl::Now();
     VLOG(1) << absl::StreamFormat(
@@ -559,6 +555,8 @@ NcclCollectives::SplitCommunicatorsWithCancel(
   std::vector<Future<std::unique_ptr<Communicator>>> futures(comms.size());
   for (size_t i = 0; i < comms.size(); ++i) {
     futures[i] = MakeFutureOn(*pool.AsExecutor(), [&, i] {
+      // Split waits for the parent to publish a valid child handle. Create
+      // must still poll that child, whose initialization may be in progress.
       absl::StatusOr<std::unique_ptr<NcclCommunicator>> comm =
           NcclCommunicator::Create(stream_executors[i], std::bind(make_comm, i),
                                    cancel, gpu_config.async_execution);

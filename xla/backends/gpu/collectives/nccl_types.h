@@ -31,12 +31,13 @@ limitations under the License.
 
 namespace xla::gpu {
 
-struct NcclCommState {
+class NcclCommState {
+ public:
   explicit NcclCommState(ncclComm_t comm) : comm(comm) {}
   ~NcclCommState();
 
   // Call only after the parent has been successfully aborted or destroyed.
-  // Then abort any children produced by interrupted splits and free the memory
+  // Then abort any children produced by failed splits and free the memory
   // that held their handles. A child whose abort fails stays in
   // pending_split_comms (its handle is never freed, see the destructor) and the
   // first failure is returned. `abort_fn` exists so tests can fake NCCL.
@@ -45,7 +46,7 @@ struct NcclCommState {
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
   // Keeps the memory holding child communicator handles alive after a split
-  // is interrupted, because NCCL may still write to it.
+  // fails with uncertain completion, because NCCL may still write to it.
   // AbortPendingSplits() then cleans up the children and frees this memory.
   std::vector<std::unique_ptr<ncclComm_t>> pending_split_comms
       ABSL_GUARDED_BY(mutex);

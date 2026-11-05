@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/nccl_errors.h"
 
+#include "absl/functional/function_ref.h"
 #include "absl/log/log.h"
 #include "absl/log/vlog_is_on.h"
 #include "absl/status/status.h"
@@ -26,12 +27,18 @@ limitations under the License.
 
 namespace xla::gpu {
 
-absl::Status PollUntilDone(ncclComm_t comm, const CancellationToken& cancel) {
-  auto poll = [](ncclComm_t comm,
-                 const CancellationToken& cancel) -> absl::Status {
+absl::Status PollUntilDone(
+    ncclComm_t comm, const CancellationToken& cancel,
+    absl::FunctionRef<ncclResult_t(ncclComm_t, ncclResult_t*)>
+        get_async_error) {
+  auto poll = [&]() -> absl::Status {
     ncclResult_t state = ncclInProgress;
     while (state == ncclInProgress && !cancel.IsCancelled()) {
-      XLA_NCCL_RETURN_IF_ERROR(ncclCommGetAsyncError(comm, &state));
+      absl::Status status = XLA_NCCL_STATUS(get_async_error(comm, &state));
+      if (!status.ok()) {
+        return Internal("ncclCommGetAsyncError failed while polling: %s",
+                        status.message());
+      }
     }
     if (cancel.IsCancelled()) {
       return Cancelled("NcclCommunicator cancelled");
@@ -40,11 +47,11 @@ absl::Status PollUntilDone(ncclComm_t comm, const CancellationToken& cancel) {
   };
 
   if (!VLOG_IS_ON(1)) {
-    return poll(comm, cancel);
+    return poll();
   }
 
   absl::Time start = absl::Now();
-  absl::Status s = poll(comm, cancel);
+  absl::Status s = poll();
   absl::Time stop = absl::Now();
   VLOG(1) << "Polled NCCL communicator " << comm << " for " << (stop - start)
           << ": " << s;

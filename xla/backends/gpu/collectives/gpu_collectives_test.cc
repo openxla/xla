@@ -104,8 +104,8 @@ TEST(GpuCollectivesTest, SplitCommunicators) {
   ASSERT_OK_AND_ASSIGN(
       auto split_comms,
       SplitCommunicators(executors, comms, {kD0, kD1}, /*blocking=*/true));
-  EXPECT_TRUE(split_comms[0]->platform_comm().handle);
-  EXPECT_TRUE(split_comms[1]->platform_comm().handle);
+  EXPECT_NE(split_comms[0]->platform_comm().handle, nullptr);
+  EXPECT_NE(split_comms[1]->platform_comm().handle, nullptr);
 }
 
 // Verifies that nonblocking splits return non-null child communicators.
@@ -126,8 +126,10 @@ TEST(GpuCollectivesTest, SplitCommunicatorsNonblocking) {
   ASSERT_OK_AND_ASSIGN(
       auto split_comms,
       SplitCommunicators(executors, comms, {kD0, kD1}, /*blocking=*/false));
-  EXPECT_TRUE(split_comms[0]->platform_comm().handle);
-  EXPECT_TRUE(split_comms[1]->platform_comm().handle);
+  EXPECT_NE(split_comms[0]->platform_comm().handle, nullptr);
+  EXPECT_NE(split_comms[1]->platform_comm().handle, nullptr);
+  EXPECT_OK(split_comms[0]->HealthCheck());
+  EXPECT_OK(split_comms[1]->HealthCheck());
 }
 
 TEST(GpuCollectivesTest, GroupLaunchMultipleCommunicators) {

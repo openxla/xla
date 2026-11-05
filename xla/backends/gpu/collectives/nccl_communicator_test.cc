@@ -12,7 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-#include "xla/backends/gpu/collectives/nccl_communicator.h"
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -25,8 +26,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
@@ -44,7 +43,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/nccl/nccl.h"
-#include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/collectives_test_util.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -157,58 +155,6 @@ absl::StatusOr<CapturedGraphInfo> CaptureCollectiveGraph(
     }
   }
   return info;
-}
-
-// Signals only after the split has been launched and NCCL reports it pending.
-class SplitWaitEnv : public tsl::EnvWrapper {
- public:
-  SplitWaitEnv() : tsl::EnvWrapper(tsl::Env::Default()) {}
-
-  void SleepForMicroseconds(int64_t micros) override {
-    if (!pending.HasBeenNotified()) {
-      pending.Notify();
-    }
-    tsl::EnvWrapper::SleepForMicroseconds(micros);
-  }
-
-  absl::Notification pending;
-};
-
-// Only rank 0 calls Split(); rank 1 never participates, preventing completion.
-// Verify that aborting the parent cancels the split wait.
-TEST(NcclCommunicatorTest, AbortDuringSplit) {
-  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
-                       se::PlatformManager::PlatformWithName("CUDA"));
-  if (platform->VisibleDeviceCount() < 2) {
-    GTEST_SKIP() << "Test requires at least 2 GPUs";
-  }
-
-  ASSERT_OK_AND_ASSIGN(auto executors, CreateExecutors(platform, 2));
-  ASSERT_OK_AND_ASSIGN(auto comms, CreateCommunicators(executors, {kD0, kD1},
-                                                       /*blocking=*/false));
-
-  SplitWaitEnv env;
-  tsl::thread::ThreadPool pool(tsl::Env::Default(), "split", 1);
-  auto split = MakeFutureOn(*pool.AsExecutor(), [&] {
-    auto context = executors[0]->Activate();
-    ncclConfig_t config = NCCL_CONFIG_INITIALIZER;
-    config.blocking = 0;
-    CancellationToken cancel;
-    auto* parent = static_cast<NcclCommunicator*>(comms[0].get());
-    return NcclCommunicator::Create(
-        executors[0], [&] { return parent->Split(0, 0, config, cancel, env); },
-        std::make_shared<CancellationToken>());
-  });
-
-  // A timeout fails the test but still aborts both parents and joins the task.
-  EXPECT_TRUE(env.pending.WaitForNotificationWithTimeout(absl::Seconds(10)));
-  EXPECT_OK(comms[0]->Abort());
-  EXPECT_THAT(
-      std::move(split).Await(),
-      StatusIs(absl::StatusCode::kCancelled,
-               testing::HasSubstr("NCCL communicator split cancelled")));
-  // Destroying the peer after rank 0 was aborted would block.
-  EXPECT_OK(comms[1]->Abort());
 }
 
 // Test checks that there are no deadlocks when NCCL API is used concurrently

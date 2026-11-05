@@ -46,7 +46,9 @@ absl::Status NcclCommState::AbortPendingSplits(
   std::vector<std::unique_ptr<ncclComm_t>> failed;
   for (auto& output : pending_split_comms) {
     // A null handle means NCCL never published a child, nothing to abort.
-    if (*output == nullptr) continue;
+    if (*output == nullptr) {
+      continue;
+    }
     ncclResult_t result = abort_fn(*output);
     if (result != ncclSuccess) {
       first_error.Update(

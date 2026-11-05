@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_COLLECTIVES_NCCL_ERRORS_H_
 #define XLA_BACKENDS_GPU_COLLECTIVES_NCCL_ERRORS_H_
 
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "third_party/nccl/nccl.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
@@ -70,7 +71,12 @@ namespace xla::gpu {
 // scheduled on the GPU but has not yet executed. Refer to the NCCL
 // documentation and exercise caution when reasoning about whether an operation
 // is really "done".
-absl::Status PollUntilDone(ncclComm_t comm, const CancellationToken& cancel);
+// A query failure is reported separately from a terminal asynchronous error
+// and does not establish that the operation has stopped writing its outputs.
+absl::Status PollUntilDone(
+    ncclComm_t comm, const CancellationToken& cancel,
+    absl::FunctionRef<ncclResult_t(ncclComm_t, ncclResult_t*)> get_async_error =
+        ncclCommGetAsyncError);
 
 }  // namespace xla::gpu
 

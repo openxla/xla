@@ -407,6 +407,8 @@ absl::StatusOr<std::unique_ptr<NcclCommunicator>> NcclCommunicator::Create(
   }
   auto f = [cancel, &make_comm]() -> absl::StatusOr<ncclComm_t> {
     ABSL_ASSIGN_OR_RETURN(ncclComm_t comm, make_comm());
+    // For a split, make_comm waits for parent completion to publish the child
+    // handle. The child can still be initializing, so wait for its readiness.
     if (cancel) {
       ABSL_RETURN_IF_ERROR(::xla::gpu::PollUntilDone(comm, *cancel));
     } else {
@@ -481,55 +483,38 @@ NcclCommunicator::~NcclCommunicator() {
   }
 }
 
-absl::StatusOr<ncclComm_t> NcclCommunicator::Split(
-    int color, int key, ncclConfig_t config, const CancellationToken& cancel,
-    tsl::Env& env) const {
+absl::StatusOr<ncclComm_t> NcclCommunicator::Split(int color, int key,
+                                                   ncclConfig_t config) const {
   absl::MutexLock lock(comm_->mutex);
-  if (cancel_->IsCancelled() || cancel.IsCancelled()) {
-    return Cancelled("NCCL communicator split cancelled");
+  if (cancel_->IsCancelled()) {
+    return FailedPrecondition("Cannot split an aborted NCCL communicator");
   }
   if (comm_->comm == nullptr) {
     return FailedPrecondition("Cannot split a null NCCL communicator");
   }
 
-  // In nonblocking mode, ncclCommSplit can return ncclSuccess before writing
-  // the child handle. Cancellation stops the XLA runtime from waiting,
-  // but NCCL may still write the handle. In that case, keep its storage until
-  // parent abort/destroy completes successfully.
+  // NCCL can publish the child handle after ncclCommSplit returns. Keep the
+  // output on the heap so it can outlive an error with uncertain completion.
   auto child = std::make_unique<ncclComm_t>(nullptr);
   absl::Status status = XLA_NCCL_STATUS(
       ncclCommSplit(comm_->comm, color, key, child.get(), &config));
   if (status.ok()) {
-    // Completion is reported on the parent; the child may still be NULL.
-    // Polling stops on either token so a parent Abort() can take the mutex.
-    ncclResult_t state = ncclInProgress;
-    while (state == ncclInProgress && !cancel_->IsCancelled() &&
-           !cancel.IsCancelled()) {
-      status = XLA_NCCL_STATUS(ncclCommGetAsyncError(comm_->comm, &state));
-      if (!status.ok()) {
-        break;
-      }
-      if (state == ncclInProgress) {
-        env.SleepForMicroseconds(50);
-      }
-    }
-    if (status.ok()) {
-      status = cancel_->IsCancelled() || cancel.IsCancelled()
-                   ? Cancelled("NCCL communicator split cancelled")
-                   : XLA_NCCL_STATUS(state);
-    }
+    // Only parent success establishes that the child handle is valid. Split
+    // cancellation is deferred; do not interrupt this wait with either token.
+    CancellationToken never_cancelled;
+    status = ::xla::gpu::PollUntilDone(comm_->comm, never_cancelled);
   }
   if (!status.ok()) {
-    // NCCL may still write the child handle, so retain its storage in the
-    // parent. Returning releases the mutex so parent abort/destroy can proceed.
+    // A failed query does not establish that NCCL stopped writing. Parent
+    // teardown must complete before inspecting or freeing this output.
     comm_->pending_split_comms.push_back(std::move(child));
     return status;
   }
   if (*child == nullptr && color != NCCL_SPLIT_NOCOLOR) {
     return Internal("NCCL split completed with a null child communicator");
   }
-  // Return a copy of the handle. Freeing its storage does not destroy the
-  // child communicator.
+  // Parent completion publishes the handle. Create() still waits for the
+  // child's readiness before use.
   return *child;
 }
 
