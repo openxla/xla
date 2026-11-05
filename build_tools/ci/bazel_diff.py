@@ -653,6 +653,13 @@ def compute_impacted_targets(
 
   if head_sha == "HEAD":
     head_sha = original_head
+  else:
+    base_sha, head_sha = change_detector.resolve_pr_merge_refs(
+        base_sha,
+        head_sha,
+        original_head=original_head,
+        cwd=workspace_dir,
+    )
 
   change_detector.ensure_base_fetched(base_sha, head_sha, cwd=workspace_dir)
 

@@ -207,18 +207,32 @@ class ChangeDetectorTest(parameterized.TestCase):
   )
   def test_ensure_base_fetched_shallow_fetch_succeeds(self, mock_mb, mock_git):
     mock_mb.side_effect = [None, "merge_base_sha"]
+    mock_git.side_effect = [
+        subprocess.CompletedProcess(
+            args=["git", "cat-file", "commit", "head_sha"],
+            returncode=0,
+            stdout="tree 0\nparent other_sha\n\nmsg\n",
+        ),
+        subprocess.CompletedProcess(args=["git", "fetch"], returncode=0),
+    ]
     change_detector.ensure_base_fetched("base_sha", "head_sha", cwd="/repo")
-    mock_git.assert_called_once_with(
+    self.assertEqual(
+        mock_git.call_args_list,
         [
-            "fetch",
-            "--no-tags",
-            "--depth=50",
-            "--",
-            "origin",
-            "base_sha",
-            "head_sha",
+            mock.call(["cat-file", "commit", "head_sha"], cwd="/repo"),
+            mock.call(
+                [
+                    "fetch",
+                    "--no-tags",
+                    "--depth=50",
+                    "--",
+                    "origin",
+                    "base_sha",
+                    "head_sha",
+                ],
+                cwd="/repo",
+            ),
         ],
-        cwd="/repo",
     )
 
   @mock.patch.object(
@@ -229,10 +243,20 @@ class ChangeDetectorTest(parameterized.TestCase):
   )
   def test_ensure_base_fetched_falls_back_to_unshallow(self, mock_mb, mock_git):
     mock_mb.side_effect = [None, None]
+    mock_git.side_effect = [
+        subprocess.CompletedProcess(
+            args=["git", "cat-file", "commit", "HEAD"],
+            returncode=0,
+            stdout="tree 0\nparent other_sha\n\nmsg\n",
+        ),
+        subprocess.CompletedProcess(args=["git", "fetch"], returncode=0),
+        subprocess.CompletedProcess(args=["git", "fetch"], returncode=0),
+    ]
     change_detector.ensure_base_fetched("base_sha", "HEAD", cwd="/repo")
     self.assertEqual(
         mock_git.call_args_list,
         [
+            mock.call(["cat-file", "commit", "HEAD"], cwd="/repo"),
             mock.call(
                 [
                     "fetch",
@@ -244,6 +268,90 @@ class ChangeDetectorTest(parameterized.TestCase):
                 ],
                 cwd="/repo",
             ),
+            mock.call(["fetch", "--unshallow", "origin"], cwd="/repo"),
+        ],
+    )
+
+  @mock.patch.object(
+      change_detector, "run_git_best_effort", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "get_merge_base", autospec=True, spec_set=True
+  )
+  def test_ensure_base_fetched_direct_parent_fetches_depth_one(
+      self, mock_mb, mock_git
+  ):
+    mock_mb.return_value = None
+    mock_git.side_effect = [
+        subprocess.CompletedProcess(
+            args=["git", "cat-file", "commit", "merge_sha"],
+            returncode=0,
+            stdout="tree 0\nparent base_sha\nparent pr_sha\n\nMerge\n",
+        ),
+        subprocess.CompletedProcess(args=["git", "cat-file"], returncode=1),
+        subprocess.CompletedProcess(args=["git", "fetch"], returncode=0),
+        subprocess.CompletedProcess(args=["git", "cat-file"], returncode=0),
+    ]
+    change_detector.ensure_base_fetched("base_sha", "merge_sha", cwd="/repo")
+    self.assertEqual(
+        mock_git.call_args_list,
+        [
+            mock.call(["cat-file", "commit", "merge_sha"], cwd="/repo"),
+            mock.call(["cat-file", "-e", "base_sha^{commit}"], cwd="/repo"),
+            mock.call(
+                [
+                    "fetch",
+                    "--no-tags",
+                    "--depth=1",
+                    "--",
+                    "origin",
+                    "base_sha",
+                ],
+                cwd="/repo",
+            ),
+            mock.call(["cat-file", "-e", "base_sha^{commit}"], cwd="/repo"),
+        ],
+    )
+
+  @mock.patch.object(
+      change_detector, "run_git_best_effort", autospec=True, spec_set=True
+  )
+  @mock.patch.object(
+      change_detector, "get_merge_base", autospec=True, spec_set=True
+  )
+  def test_ensure_base_fetched_direct_parent_falls_back_to_unshallow(
+      self, mock_mb, mock_git
+  ):
+    mock_mb.return_value = None
+    mock_git.side_effect = [
+        subprocess.CompletedProcess(
+            args=["git", "cat-file", "commit", "merge_sha"],
+            returncode=0,
+            stdout="tree 0\nparent base_sha\nparent pr_sha\n\nMerge\n",
+        ),
+        subprocess.CompletedProcess(args=["git", "cat-file"], returncode=1),
+        subprocess.CompletedProcess(args=["git", "fetch"], returncode=128),
+        subprocess.CompletedProcess(args=["git", "cat-file"], returncode=1),
+        subprocess.CompletedProcess(args=["git", "fetch"], returncode=0),
+    ]
+    change_detector.ensure_base_fetched("base_sha", "merge_sha", cwd="/repo")
+    self.assertEqual(
+        mock_git.call_args_list,
+        [
+            mock.call(["cat-file", "commit", "merge_sha"], cwd="/repo"),
+            mock.call(["cat-file", "-e", "base_sha^{commit}"], cwd="/repo"),
+            mock.call(
+                [
+                    "fetch",
+                    "--no-tags",
+                    "--depth=1",
+                    "--",
+                    "origin",
+                    "base_sha",
+                ],
+                cwd="/repo",
+            ),
+            mock.call(["cat-file", "-e", "base_sha^{commit}"], cwd="/repo"),
             mock.call(["fetch", "--unshallow", "origin"], cwd="/repo"),
         ],
     )
@@ -426,6 +534,245 @@ class ChangeDetectorTest(parameterized.TestCase):
       ])
     self.assertEqual(rc, 0)
     self.assertEqual(output_file.read_text(), "should_skip=false\n")
+
+
+class _FakeGitRepo:
+  """In-memory fake Git repository backing subprocess.run in tests."""
+
+  def __init__(
+      self,
+      *,
+      origin_commits: dict[str, tuple[tuple[str, ...], dict[str, str]]],
+      checked_out_sha: str,
+      shallow: bool = False,
+  ):
+    self.origin_commits = origin_commits
+    self.head = checked_out_sha
+    self.unshallow_called = False
+    if shallow:
+      self.local_commits = {checked_out_sha: origin_commits[checked_out_sha]}
+      self.shallow_commits = {checked_out_sha}
+    else:
+      self.local_commits = dict(origin_commits)
+      self.shallow_commits = set()
+
+  def _ancestors(self, start: str) -> dict[str, int]:
+    if start not in self.local_commits:
+      return {}
+    distances = {start: 0}
+    queue = [start]
+    while queue:
+      curr = queue.pop(0)
+      if curr in self.shallow_commits:
+        continue
+      parents, _ = self.local_commits[curr]
+      for parent in parents:
+        if parent in self.local_commits and parent not in distances:
+          distances[parent] = distances[curr] + 1
+          queue.append(parent)
+    return distances
+
+  def run(
+      self,
+      cmd: list[str],
+      *,
+      cwd: str = ".",
+      capture_output: bool = False,
+      text: bool = False,
+      check: bool = False,
+  ) -> subprocess.CompletedProcess[str]:
+    del cwd, capture_output, text
+    assert cmd[0] == "git", f"Unexpected command: {cmd}"
+    args = cmd[1:]
+
+    def _finish(
+        returncode: int, stdout: str = "", stderr: str = ""
+    ) -> subprocess.CompletedProcess[str]:
+      if check and returncode != 0:
+        raise subprocess.CalledProcessError(returncode, cmd, stdout, stderr)
+      return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
+    if args == ["rev-parse", "HEAD"]:
+      return _finish(0, f"{self.head}\n")
+
+    if len(args) == 3 and args[:2] == ["rev-parse", "--verify"]:
+      target = args[2].removesuffix("^{commit}")
+      resolved = self.head if target == "HEAD" else target
+      if resolved in self.local_commits:
+        return _finish(0, f"{resolved}\n")
+      return _finish(128, stderr="unknown revision\n")
+
+    if len(args) == 3 and args[:2] == ["cat-file", "-e"]:
+      target = args[2].removesuffix("^{commit}")
+      resolved = self.head if target == "HEAD" else target
+      return _finish(0 if resolved in self.local_commits else 1)
+
+    if len(args) == 3 and args[:2] == ["cat-file", "commit"]:
+      resolved = self.head if args[2] == "HEAD" else args[2]
+      if resolved not in self.local_commits:
+        return _finish(128, stderr="bad object\n")
+      parents, _ = self.local_commits[resolved]
+      header_lines = ["tree " + "0" * 40]
+      header_lines.extend(f"parent {p}" for p in parents)
+      header_lines.append("author Test <test@example.com> 1700000000 +0000")
+      header_lines.append("")
+      header_lines.append("commit message with parent fake_line")
+      return _finish(0, "\n".join(header_lines) + "\n")
+
+    if len(args) == 4 and args[:2] == ["merge-base", "--"]:
+      a_ref = self.head if args[2] == "HEAD" else args[2]
+      b_ref = self.head if args[3] == "HEAD" else args[3]
+      if a_ref not in self.local_commits or b_ref not in self.local_commits:
+        return _finish(128)
+      anc_a = self._ancestors(a_ref)
+      anc_b = self._ancestors(b_ref)
+      common = set(anc_a) & set(anc_b)
+      if not common:
+        return _finish(1)
+      best = min(common, key=lambda c: anc_a[c] + anc_b[c])
+      return _finish(0, f"{best}\n")
+
+    if args[:2] == ["fetch", "--unshallow"]:
+      self.unshallow_called = True
+      self.local_commits = dict(self.origin_commits)
+      self.shallow_commits.clear()
+      return _finish(0)
+
+    if args and args[0] == "fetch":
+      sep = args.index("--")
+      refs = args[sep + 2 :]
+      is_depth_one = "--depth=1" in args
+      for ref in refs:
+        if ref not in self.origin_commits:
+          return _finish(128, stderr=f"not our ref {ref}\n")
+        self.local_commits[ref] = self.origin_commits[ref]
+        if is_depth_one:
+          self.shallow_commits.add(ref)
+      return _finish(0)
+
+    if args[:3] == ["diff", "--name-only", "--end-of-options"]:
+      a_ref = self.head if args[3] == "HEAD" else args[3]
+      b_ref = self.head if args[4] == "HEAD" else args[4]
+      if a_ref not in self.local_commits or b_ref not in self.local_commits:
+        return _finish(128, stderr="bad revision\n")
+      _, files_a = self.local_commits[a_ref]
+      _, files_b = self.local_commits[b_ref]
+      changed = sorted(
+          path
+          for path in set(files_a) | set(files_b)
+          if files_a.get(path) != files_b.get(path)
+      )
+      return _finish(0, "".join(f"{p}\n" for p in changed))
+
+    raise AssertionError(f"Unhandled git args: {args}")
+
+
+class ChangeDetectorPrMergeCommitTest(absltest.TestCase):
+
+  def test_shallow_pr_merge_checkout_ignores_already_merged_changes(self):
+    m0_sha = "0" * 40
+    pr_sha = "1" * 40
+    main_sha = "2" * 40
+    merge_sha = "3" * 40
+    repo = _FakeGitRepo(
+        origin_commits={
+            m0_sha: ((), {"xla/foo.cc": "v1\n", "README.md": "v1\n"}),
+            pr_sha: (
+                (m0_sha,),
+                {"xla/foo.cc": "v2\n", "README.md": "v2\n"},
+            ),
+            main_sha: (
+                (m0_sha,),
+                {
+                    "xla/foo.cc": "v2\n",
+                    "xla/bar.cc": "main_only\n",
+                    "README.md": "v1\n",
+                },
+            ),
+            merge_sha: (
+                (main_sha, pr_sha),
+                {
+                    "xla/foo.cc": "v2\n",
+                    "xla/bar.cc": "main_only\n",
+                    "README.md": "v2\n",
+                },
+            ),
+        },
+        checked_out_sha=merge_sha,
+        shallow=True,
+    )
+    self.enter_context(
+        mock.patch.object(
+            change_detector.subprocess,
+            "run",
+            autospec=True,
+            spec_set=True,
+            side_effect=repo.run,
+        )
+    )
+
+    decision = change_detector.evaluate_skip(
+        main_sha, pr_sha, cwd="/repo", is_jax_build=False
+    )
+
+    self.assertTrue(decision.should_skip)
+    self.assertEqual(decision.changed_files_count, 1)
+    self.assertFalse(repo.unshallow_called)
+
+  def test_resolve_pr_merge_refs_uses_merge_commit_first_parent(self):
+    stale_base_sha = "0" * 40
+    pr_sha = "1" * 40
+    main_sha = "2" * 40
+    merge_sha = "3" * 40
+    other_sha = "4" * 40
+    repo = _FakeGitRepo(
+        origin_commits={
+            stale_base_sha: ((), {}),
+            pr_sha: ((stale_base_sha,), {}),
+            main_sha: ((stale_base_sha,), {}),
+            merge_sha: ((main_sha, pr_sha), {}),
+            other_sha: ((main_sha,), {}),
+        },
+        checked_out_sha=merge_sha,
+        shallow=True,
+    )
+    self.enter_context(
+        mock.patch.object(
+            change_detector.subprocess,
+            "run",
+            autospec=True,
+            spec_set=True,
+            side_effect=repo.run,
+        )
+    )
+
+    # Resolves to (main_sha, merge_sha) even when base_sha was an older commit.
+    self.assertEqual(
+        change_detector.resolve_pr_merge_refs(
+            stale_base_sha, pr_sha.upper(), cwd="/repo"
+        ),
+        (main_sha, merge_sha),
+    )
+    # Non-matching PR head SHA is left untouched.
+    self.assertEqual(
+        change_detector.resolve_pr_merge_refs(
+            stale_base_sha, other_sha, cwd="/repo"
+        ),
+        (stale_base_sha, other_sha),
+    )
+    # Explicit HEAD or checked-out commit equal to head_sha is left untouched.
+    self.assertEqual(
+        change_detector.resolve_pr_merge_refs(
+            stale_base_sha, "HEAD", cwd="/repo"
+        ),
+        (stale_base_sha, "HEAD"),
+    )
+    self.assertEqual(
+        change_detector.resolve_pr_merge_refs(
+            stale_base_sha, merge_sha, cwd="/repo"
+        ),
+        (stale_base_sha, merge_sha),
+    )
 
 
 if __name__ == "__main__":

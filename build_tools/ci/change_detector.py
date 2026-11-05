@@ -66,6 +66,9 @@ GLOBAL_BAZEL_CONFIG_PATTERNS: Tuple[str, ...] = (
 # or alphanumeric ref names not starting with '-') to prevent flag injection.
 SAFE_GIT_REF_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./~^-]*$")
 
+# Regex matching full 40-character SHA-1 or 64-character SHA-256 commit hashes.
+_FULL_SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$")
+
 # Regex matching files that only contain documentation or repository metadata.
 DOCS_OR_METADATA_PATTERN = re.compile(
     r"(\.(md|rst|png|jpg|jpeg|svg|webp|gif)$"
@@ -206,16 +209,132 @@ def get_diff_base(base_sha: str, head_sha: str = "HEAD", cwd: str = ".") -> str:
   return validate_git_ref(merge_base) if merge_base else safe_base
 
 
+def _commit_exists(commit_ref: str, cwd: str = ".") -> bool:
+  """Returns True if commit_ref resolves to a local commit object."""
+  try:
+    safe_ref = validate_git_ref(commit_ref)
+  except ValueError:
+    return False
+  result = run_git_best_effort(
+      ["cat-file", "-e", f"{safe_ref}^{{commit}}"], cwd=cwd
+  )
+  return bool(result and result.returncode == 0)
+
+
+def _get_commit_parents(commit_ref: str, cwd: str = ".") -> Tuple[str, ...]:
+  """Returns the parent commit SHAs recorded on commit_ref, or () on error."""
+  try:
+    safe_ref = validate_git_ref(commit_ref)
+  except ValueError:
+    return ()
+  result = run_git_best_effort(["cat-file", "commit", safe_ref], cwd=cwd)
+  if not result or result.returncode != 0:
+    return ()
+  parents = []
+  for line in result.stdout.splitlines():
+    if not line:
+      break
+    if line.startswith("parent "):
+      try:
+        parents.append(validate_git_ref(line[len("parent ") :].strip()))
+      except ValueError:
+        return ()
+  return tuple(parents)
+
+
+def resolve_pr_merge_refs(
+    base_sha: str,
+    head_sha: str = "HEAD",
+    *,
+    original_head: Optional[str] = None,
+    cwd: str = ".",
+) -> Tuple[str, str]:
+  """Resolves comparison refs to merge-commit parents on PR merge checkouts.
+
+  GitHub Actions pull_request checkouts detach HEAD at refs/pull/<PR>/merge
+  (whose parents are the target branch tip and the PR head commit) while
+  workflows pass the unmerged PR branch SHA as head_sha. Diffing base_parent
+  against the checked-out merge commit evaluates the PR's net delta in the same
+  build graph where Bazel executes.
+
+  Args:
+    base_sha: Base git commit SHA or ref.
+    head_sha: Head git commit SHA or ref.
+    original_head: Already-resolved SHA of checked-out HEAD, if available.
+    cwd: Directory where git commands should be executed.
+
+  Returns:
+    Tuple of (resolved_base_sha, resolved_head_sha).
+  """
+  safe_base = validate_git_ref(base_sha)
+  safe_head = validate_git_ref(head_sha or "HEAD")
+  if safe_head == "HEAD":
+    return safe_base, safe_head
+
+  if original_head is not None:
+    try:
+      checked_out_head = validate_git_ref(original_head)
+    except ValueError:
+      return safe_base, safe_head
+  else:
+    head_result = run_git_best_effort(["rev-parse", "HEAD"], cwd=cwd)
+    if not head_result or head_result.returncode != 0:
+      return safe_base, safe_head
+    try:
+      checked_out_head = validate_git_ref(head_result.stdout.strip())
+    except ValueError:
+      return safe_base, safe_head
+
+  if (
+      checked_out_head == "HEAD"
+      or checked_out_head.lower() == safe_head.lower()
+  ):
+    return safe_base, safe_head
+
+  parents = _get_commit_parents(checked_out_head, cwd=cwd)
+  if len(parents) != 2:
+    return safe_base, safe_head
+
+  base_parent, pr_parent = parents
+  if pr_parent.lower() == safe_head.lower():
+    return base_parent, checked_out_head
+
+  if not _FULL_SHA_PATTERN.fullmatch(safe_head):
+    verified_head = run_git_best_effort(
+        ["rev-parse", "--verify", f"{safe_head}^{{commit}}"], cwd=cwd
+    )
+    if (
+        verified_head
+        and verified_head.returncode == 0
+        and verified_head.stdout.strip().lower() == pr_parent.lower()
+    ):
+      return base_parent, checked_out_head
+
+  return safe_base, safe_head
+
+
 def ensure_base_fetched(
     base_sha: str, head_sha: str = "HEAD", cwd: str = "."
 ) -> None:
-  """Best-effort fetches base_sha/head_sha and unshallows if merge-base is missing."""
+  """Best-effort fetches comparison commits if missing from shallow clones."""
   try:
     safe_base = validate_git_ref(base_sha)
     safe_head = validate_git_ref(head_sha)
   except ValueError:
     return
   if get_merge_base(safe_base, safe_head, cwd=cwd):
+    return
+  if any(
+      parent.lower() == safe_base.lower()
+      for parent in _get_commit_parents(safe_head, cwd=cwd)
+  ):
+    if not _commit_exists(safe_base, cwd=cwd):
+      run_git_best_effort(
+          ["fetch", "--no-tags", "--depth=1", "--", "origin", safe_base],
+          cwd=cwd,
+      )
+    if not _commit_exists(safe_base, cwd=cwd):
+      run_git_best_effort(["fetch", "--unshallow", "origin"], cwd=cwd)
     return
   fetch_refs = [safe_base]
   if safe_head != "HEAD" and safe_head != safe_base:
@@ -326,6 +445,7 @@ def evaluate_skip(
         elapsed_seconds=time.time() - start_time,
     )
 
+  base_sha, head_sha = resolve_pr_merge_refs(base_sha, head_sha, cwd=cwd)
   ensure_base_fetched(base_sha, head_sha, cwd=cwd)
 
   try:
