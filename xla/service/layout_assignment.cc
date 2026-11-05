@@ -2314,6 +2314,15 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToUses(
   const HloValue& buffer = buffer_constraint.buffer();
   TF_RET_CHECK(buffer.IsArray());
 
+  // In async computations that must contain only parameters and a root,
+  // parameters must conform to the root's constraints, so do not propagate
+  // any constraints from the parameter to the root to avoid promoting any root
+  // constraints.
+  if (buffer.instruction()->opcode() == HloOpcode::kParameter &&
+      IsSingleInstructionAsyncComputation(buffer.instruction()->parent())) {
+    return absl::OkStatus();
+  }
+
   // Propagate the layout to all array uses of the logical buffer. This skips
   // uses of the buffer where the buffer is the element of a tuple.
   for (const auto& user_operand_no : GetArrayUsesOfBuffer(buffer)) {

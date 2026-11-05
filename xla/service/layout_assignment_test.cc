@@ -3670,6 +3670,60 @@ ENTRY main {
   ASSERT_OK(verifier.Run(module.get()).status());
 }
 
+TEST_F(LayoutAssignmentTest, AsyncParameterConstraintDoesNotPropagateToRoot) {
+  const char* hlo = R"hlo(
+HloModule AsyncParameterConstraintDoesNotPropagateToRoot,
+  entry_computation_layout={(f32[2,3]{0,1})->f32[2,3]{0,1}}
+
+body {
+  p = f32[2,3] parameter(0)
+  ROOT op = f32[2,3] negate(p)
+}
+
+ENTRY main {
+  input = f32[2,3]{0,1} parameter(0)
+  start = ((f32[2,3]), f32[2,3], s32[]) async-start(input), calls=body
+  ROOT done = f32[2,3] async-done(start)
+}
+)hlo";
+
+  // Give the async parameter a non-mandatory constraint that conflicts with
+  // the caller. Parameters follow the root, so this constraint must not reach
+  // the root and block the caller's constraints from shaping the body.
+  class NonMandatoryParameterLayoutAssignment : public LayoutAssignment {
+   public:
+    using LayoutAssignment::LayoutAssignment;
+
+   protected:
+    absl::Status AddBackendConstraints(
+        LayoutConstraints* constraints) override {
+      HloComputation* computation = constraints->computation();
+      if (!computation->IsAsyncComputation()) {
+        return absl::OkStatus();
+      }
+      return SetInstructionLayout(LayoutUtil::MakeLayout({1, 0}),
+                                  computation->parameter_instruction(0),
+                                  /*mandatory=*/false, /*dfs=*/true,
+                                  /*allow_alias=*/false);
+    }
+  };
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  NonMandatoryParameterLayoutAssignment assignment(
+      module->mutable_entry_computation_layout());
+  ASSERT_OK(assignment.Run(module.get()).status());
+
+  const HloComputation* body = module->GetComputationWithName("body");
+  ASSERT_NE(body, nullptr);
+  ExpectLayoutIs(body->parameter_instruction(0)->shape(), {0, 1});
+  ExpectLayoutIs(body->root_instruction()->shape(), {0, 1});
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kCopy), nullptr);
+
+  HloVerifier verifier(/*layout_sensitive=*/true,
+                       /*allow_mixed_precision=*/false);
+  ASSERT_OK(verifier.Run(module.get()).status());
+}
+
 TEST_F(LayoutAssignmentTest, AsyncComputationWithWhileRoot) {
   const char* hlo = R"hlo(
 HloModule AsyncComputationWithWhileRoot,
