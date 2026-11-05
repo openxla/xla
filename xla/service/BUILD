@@ -2718,6 +2718,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/utils:hlo_query",
         "//xla/tsl/lib/core:bitmap",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
