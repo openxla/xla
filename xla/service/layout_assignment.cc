@@ -182,13 +182,20 @@ bool OperandLayoutConstraint::UpdateLayout(int64_t new_priority,
                                            const Shape& new_shape,
                                            bool mandatory, bool dfs,
                                            LayoutAssignment* assignment) {
+  // A mandatory constraint replaces a non-mandatory one regardless of priority.
+  const bool upgrade_to_mandatory = mandatory && !mandatory_;
   if (shape_layout().MatchesLayoutInShape(new_shape,
                                           /*minor_to_major_only=*/true)) {
     if (priority_ < new_priority) {
       priority_ = new_priority;
     }
     VLOG(3) << "SUCC b/c the new layout matches the existing one.";
-    // New constraint matches existing constraint. Nothing to do.
+    // New constraint matches existing constraint. Only an upgrade to
+    // mandatory needs to be recorded.
+    if (upgrade_to_mandatory) {
+      mandatory_ = true;
+      return true;
+    }
     return false;
   }
   if (!mandatory) {
@@ -212,7 +219,7 @@ bool OperandLayoutConstraint::UpdateLayout(int64_t new_priority,
       return false;
     }
   }
-  if (priority() > new_priority) {
+  if (!upgrade_to_mandatory && priority() > new_priority) {
     if (mandatory) {
       VLOG(5) << absl::StrFormat(
           "Cannot constrain layout of operand %d of instruction %s because "

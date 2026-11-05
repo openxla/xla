@@ -3785,6 +3785,46 @@ ENTRY main {
 }
 
 TEST_F(LayoutAssignmentTest,
+       MandatoryOperandConstraintOverridesHigherPriorityNonMandatory) {
+  const char* hlo = R"hlo(
+HloModule MandatoryOperandConstraintOverridesHigherPriorityNonMandatory,
+  entry_computation_layout={(f32[2,3]{0,1})->f32[2,3]{1,0}}
+
+ENTRY main {
+  p = f32[2,3] parameter(0)
+  ROOT op = f32[2,3]{1,0} custom-call(p), custom_call_target="test",
+    operand_layout_constraints={f32[2,3]{1,0}}
+}
+)hlo";
+
+  // Put a high-priority, non-mandatory constraint on the custom call operand.
+  // The mandatory custom call constraint added afterwards at a lower priority
+  // must replace it.
+  class HighPriorityOperandLayoutAssignment : public LayoutAssignment {
+   public:
+    using LayoutAssignment::LayoutAssignment;
+
+   protected:
+    absl::Status AddBackendConstraints(
+        LayoutConstraints* constraints) override {
+      return SetArrayOperandLayout(
+          LayoutUtil::MakeLayout({0, 1}),
+          constraints->computation()->root_instruction(), /*operand_no=*/0,
+          /*mandatory=*/false, /*dfs=*/true, /*priority=*/10000);
+    }
+  };
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  HighPriorityOperandLayoutAssignment assignment(
+      module->mutable_entry_computation_layout());
+  ASSERT_OK(assignment.Run(module.get()).status());
+
+  const HloInstruction* op = FindInstruction(module.get(), "op");
+  ASSERT_NE(op, nullptr);
+  ExpectLayoutIs(op->operand(0)->shape(), {1, 0});
+}
+
+TEST_F(LayoutAssignmentTest,
        PropagateDefaultConstantLayoutAcrossCallDuringUnconstrainedAssignment) {
   const char* module_str = R"hlo(
 HloModule PropagateDefaultConstantLayoutAcrossCallDuringUnconstrainedAssignment
