@@ -124,6 +124,19 @@ class PjRtStreamExecutorRawBuffer : public CommonPjRtRawBufferImpl {
       PjRtDeviceEventPromiseRef definition_event_promise,
       PjRtDeviceEventPromiseRef src_usage_event_promise,
       absl::AnyInvocable<void(absl::Status) &&> allocation_event) override;
+
+  void ScheduleCopySliceTo(
+      PjRtDeviceEventRefVector transfer_dependency_events,
+      const StridedGather& gather, PjRtRawBufferRef dst_raw_buffer,
+      PjRtDeviceEventPromiseRef definition_event_promise,
+      PjRtDeviceEventPromiseRef src_usage_event_promise,
+      absl::AnyInvocable<void(absl::Status) &&> allocation_event) override;
+
+  void ScheduleUpdateSlice(
+      PjRtDeviceEventRefVector transfer_dependency_events,
+      const StridedGather& gather, PjRtRawBufferRef src_raw_buffer,
+      PjRtDeviceEventPromiseRef definition_event_promise,
+      PjRtDeviceEventPromiseRef src_usage_event_promise) override;
   PjRtDeviceEventPtr GetRawBufferAsyncValue() override {
     return PjRtDeviceEventPtr::FromAsyncValue(device_buffer_.GetAsyncValue());
   }

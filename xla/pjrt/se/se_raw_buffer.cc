@@ -15,9 +15,11 @@ limitations under the License.
 
 #include "xla/pjrt/se/se_raw_buffer.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "absl/functional/any_invocable.h"
@@ -25,6 +27,9 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "tsl/platform/casts.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/pjrt/async_work_runner.h"
@@ -39,6 +44,7 @@ limitations under the License.
 #include "xla/pjrt/se/local_device_state.h"
 #include "xla/pjrt/se/pjrt_stream_executor_client.h"
 #include "xla/pjrt/se/tracked_device_buffer.h"
+#include "xla/pjrt/strided_gather.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/concurrency/async_value.h"
@@ -572,6 +578,290 @@ void PjRtStreamExecutorRawBuffer::IntraClientCopyToWithDependencies(
 
   definition_event_promise.Set(PjRtDeviceEventRef(usage_event));
   src_usage_event_promise.Set(PjRtDeviceEventRef(std::move(usage_event)));
+}
+
+namespace {
+
+enum class StridedCopyDirection { kGatherToCompact, kScatterFromCompact };
+
+absl::Status EnqueueStridedCopyD2D(se::Stream* stream,
+                                   const StridedGather& gather,
+                                   StridedCopyDirection direction,
+                                   const se::DeviceAddressBase& strided_mem,
+                                   const se::DeviceAddressBase& compact_mem) {
+  if (gather.num_chunks() == 0 || gather.chunk_size() == 0) {
+    return absl::OkStatus();
+  }
+
+  const StridedGather::Spec& spec = gather.spec();
+
+  if (gather.num_chunks() == 1) {
+    se::DeviceAddressBase strided_addr =
+        strided_mem.GetByteSlice(spec.src_byte_offset, gather.chunk_size());
+    se::DeviceAddressBase compact_addr =
+        compact_mem.GetByteSlice(0, gather.chunk_size());
+    if (direction == StridedCopyDirection::kGatherToCompact) {
+      return stream->MemcpyD2D(&compact_addr, strided_addr,
+                               gather.chunk_size());
+    }
+    return stream->MemcpyD2D(&strided_addr, compact_addr, gather.chunk_size());
+  }
+
+  if (spec.src_byte_strides.back() >= gather.chunk_size()) {
+    const int num_dims = spec.counts.size();
+    const uint64_t width = gather.chunk_size();
+    const uint64_t height = spec.counts.back();
+    const uint64_t strided_pitch = spec.src_byte_strides.back();
+    const uint64_t compact_pitch = width;
+    const uint64_t strided_span = (height - 1) * strided_pitch + width;
+    const uint64_t slice_2d_bytes = height * compact_pitch;
+
+    auto copy_2d = [&](int64_t strided_offset,
+                       int64_t compact_offset) -> absl::Status {
+      se::DeviceAddressBase strided_addr =
+          strided_mem.GetByteSlice(strided_offset, strided_span);
+      se::DeviceAddressBase compact_addr =
+          compact_mem.GetByteSlice(compact_offset, slice_2d_bytes);
+      if (direction == StridedCopyDirection::kGatherToCompact) {
+        return stream->Memcpy2D(&compact_addr, compact_pitch, strided_addr,
+                                strided_pitch, width, height);
+      }
+      return stream->Memcpy2D(&strided_addr, strided_pitch, compact_addr,
+                              compact_pitch, width, height);
+    };
+
+    const int64_t num_slices = gather.num_chunks() / spec.counts.back();
+    for (int64_t slice_index = 0; slice_index < num_slices; ++slice_index) {
+      int64_t rem = slice_index;
+      int64_t strided_offset = spec.src_byte_offset;
+      for (int d = num_dims - 2; d >= 0; --d) {
+        strided_offset += (rem % spec.counts[d]) * spec.src_byte_strides[d];
+        rem /= spec.counts[d];
+      }
+      ABSL_RETURN_IF_ERROR(
+          copy_2d(strided_offset, slice_index * slice_2d_bytes));
+    }
+    return absl::OkStatus();
+  }
+
+  // Fallback when stride is smaller than chunk size.
+  int64_t chunk_idx = 0;
+  for (const StridedGather::Chunk& chunk : gather.chunks()) {
+    int64_t compact_offset = chunk_idx * gather.chunk_size();
+    se::DeviceAddressBase strided_addr =
+        strided_mem.GetByteSlice(chunk.offset, chunk.size);
+    se::DeviceAddressBase compact_addr =
+        compact_mem.GetByteSlice(compact_offset, chunk.size);
+    if (direction == StridedCopyDirection::kGatherToCompact) {
+      ABSL_RETURN_IF_ERROR(
+          stream->MemcpyD2D(&compact_addr, strided_addr, chunk.size));
+    } else {
+      ABSL_RETURN_IF_ERROR(
+          stream->MemcpyD2D(&strided_addr, compact_addr, chunk.size));
+    }
+    ++chunk_idx;
+  }
+  return absl::OkStatus();
+}
+
+void ScheduleIntraClientStridedCopy(
+    PjRtStreamExecutorRawClient* client, LocalDeviceState* local_device,
+    tsl::RCReference<PjRtStreamExecutorRawBuffer> strided_raw_buffer,
+    tsl::AsyncValueRef<RawSEDeviceMemory> strided_buffer,
+    PjRtRawBufferRef compact_raw_buffer,
+    PjRtDeviceEventRefVector transfer_dependency_events,
+    const StridedGather& gather, StridedCopyDirection direction,
+    PjRtDeviceEventPromiseRef definition_event_promise,
+    PjRtDeviceEventPromiseRef src_usage_event_promise,
+    absl::AnyInvocable<void(absl::Status) &&> allocation_event) {
+  auto notify_error = [&](absl::Status status) {
+    if (allocation_event) {
+      std::move(allocation_event)(status);
+    }
+    definition_event_promise.SetError(status);
+    src_usage_event_promise.SetError(status);
+  };
+
+  const bool is_gather = (direction == StridedCopyDirection::kGatherToCompact);
+  const absl::string_view op_name =
+      is_gather ? "ScheduleCopySliceTo" : "ScheduleUpdateSlice";
+  const absl::string_view compact_arg_name =
+      is_gather ? "dst_raw_buffer" : "src_raw_buffer";
+
+  if (compact_raw_buffer == nullptr) {
+    notify_error(absl::InvalidArgumentError(
+        absl::StrCat(compact_arg_name, " cannot be null.")));
+    return;
+  }
+  if (compact_raw_buffer->memory_space() !=
+      strided_raw_buffer->memory_space()) {
+    const absl::string_view src_space =
+        is_gather ? strided_raw_buffer->memory_space()->DebugString()
+                  : compact_raw_buffer->memory_space()->DebugString();
+    const absl::string_view dst_space =
+        is_gather ? compact_raw_buffer->memory_space()->DebugString()
+                  : strided_raw_buffer->memory_space()->DebugString();
+    notify_error(absl::InvalidArgumentError(absl::StrFormat(
+        "%s requires source and destination to be in the same memory space, "
+        "got %s and %s.",
+        op_name, src_space, dst_space)));
+    return;
+  }
+  auto* const compact_se_buffer =
+      compact_raw_buffer->down_cast<const PjRtStreamExecutorRawBuffer>();
+  if (compact_se_buffer == nullptr) {
+    notify_error(absl::InvalidArgumentError(
+        absl::StrCat(is_gather ? "Destination" : "Source",
+                     " buffer is not a StreamExecutor raw buffer")));
+    return;
+  }
+  if (absl::Status status = gather.ValidateBounds(
+          static_cast<int64_t>(strided_raw_buffer->GetOnDeviceSizeInBytes()));
+      !status.ok()) {
+    notify_error(std::move(status));
+    return;
+  }
+  const int64_t slice_size = gather.num_chunks() * gather.chunk_size();
+  if (static_cast<int64_t>(compact_raw_buffer->GetOnDeviceSizeInBytes()) <
+      slice_size) {
+    notify_error(absl::InvalidArgumentError(
+        absl::StrCat(compact_arg_name, " size (",
+                     compact_raw_buffer->GetOnDeviceSizeInBytes(),
+                     ") is smaller than slice size (", slice_size, ")")));
+    return;
+  }
+
+  client->MaterializeAllocationEvent(*strided_raw_buffer);
+  client->MaterializeAllocationEvent(*compact_raw_buffer);
+
+  BufferSequencingEventRef usage_event =
+      BufferSequencingEvent::Create(client->async_work_runner());
+
+  PjRtDeviceEventSpan deps_span(transfer_dependency_events);
+
+  auto task = [client, local_device, strided_buffer = std::move(strided_buffer),
+               compact_buffer = compact_se_buffer->device_buffer(),
+               compact_raw_buffer = std::move(compact_raw_buffer),
+               strided_raw_buffer = std::move(strided_raw_buffer), usage_event,
+               dependencies = std::move(transfer_dependency_events), gather,
+               direction,
+               allocation_event = std::move(allocation_event)]() mutable {
+    se::Stream* stream = local_device->GetDeviceToDeviceStream();
+    bool allocation_set = false;
+    auto status = [&]() -> absl::Status {
+      for (size_t i = 0; i < dependencies.size(); ++i) {
+        const PjRtDeviceEventPtr dep = dependencies[i];
+        if (auto event_ref = dep.down_cast<BufferSequencingEvent>()) {
+          if (const absl::Status* error =
+                  event_ref->event().GetErrorIfPresent()) {
+            return *error;
+          }
+        } else if (std::optional<absl::Status> error =
+                       dep.GetErrorIfPresent()) {
+          return *error;
+        }
+      }
+
+      for (size_t i = 0; i < dependencies.size(); ++i) {
+        const PjRtDeviceEventPtr dep = dependencies[i];
+        if (auto event_ref = dep.down_cast<BufferSequencingEvent>()) {
+          event_ref->WaitForEventOnStream(stream);
+        } else {
+          xla::BlockUntilReady(dep);
+        }
+      }
+
+      ABSL_ASSIGN_OR_RETURN(
+          EventPool::Handle event,
+          local_device->event_pool().AllocateEvent(stream->parent()));
+
+      if (allocation_event) {
+        allocation_set = true;
+        std::move(allocation_event)(absl::OkStatus());
+      }
+
+      ABSL_RETURN_IF_ERROR(
+          client->WaitForAllocation(stream, *strided_raw_buffer));
+      ABSL_RETURN_IF_ERROR(
+          client->WaitForAllocation(stream, *compact_raw_buffer));
+
+      ABSL_RETURN_IF_ERROR(EnqueueStridedCopyD2D(stream, gather, direction,
+                                                 strided_buffer->mem(),
+                                                 compact_buffer->mem()));
+
+      client->ThenRecordEvent(usage_event, local_device, std::move(event),
+                              stream);
+      usage_event.AndThen([strided_buffer, compact_raw_buffer]() {});
+      return absl::OkStatus();
+    }();
+    if (!status.ok()) {
+      client->SetEventAsError(usage_event, status);
+      if (allocation_event && !allocation_set) {
+        std::move(allocation_event)(status);
+      }
+      return;
+    }
+  };
+
+  {
+    ScopedLauncher launcher(std::move(task), client->async_work_runner());
+    for (size_t i = 0; i < deps_span.size(); ++i) {
+      const PjRtDeviceEventPtr dep = deps_span[i];
+      if (auto event_ref = dep.down_cast<BufferSequencingEvent>()) {
+        launcher.AddDependency(event_ref->event().GetAsyncValue());
+      } else {
+        launcher.AddDependency(dep);
+      }
+    }
+  }
+
+  definition_event_promise.Set(PjRtDeviceEventRef(usage_event));
+  src_usage_event_promise.Set(PjRtDeviceEventRef(std::move(usage_event)));
+}
+
+}  // namespace
+
+void PjRtStreamExecutorRawBuffer::ScheduleCopySliceTo(
+    PjRtDeviceEventRefVector transfer_dependency_events,
+    const StridedGather& gather, PjRtRawBufferRef dst_raw_buffer,
+    PjRtDeviceEventPromiseRef definition_event_promise,
+    PjRtDeviceEventPromiseRef src_usage_event_promise,
+    absl::AnyInvocable<void(absl::Status) &&> allocation_event) {
+  if (client_->IsOnCpu(memory_space())) {
+    CommonPjRtRawBufferImpl::ScheduleCopySliceTo(
+        std::move(transfer_dependency_events), gather,
+        std::move(dst_raw_buffer), std::move(definition_event_promise),
+        std::move(src_usage_event_promise), std::move(allocation_event));
+    return;
+  }
+
+  ScheduleIntraClientStridedCopy(
+      client_, local_device_, tsl::FormRef(this), device_buffer_,
+      std::move(dst_raw_buffer), std::move(transfer_dependency_events), gather,
+      StridedCopyDirection::kGatherToCompact,
+      std::move(definition_event_promise), std::move(src_usage_event_promise),
+      std::move(allocation_event));
+}
+
+void PjRtStreamExecutorRawBuffer::ScheduleUpdateSlice(
+    PjRtDeviceEventRefVector transfer_dependency_events,
+    const StridedGather& gather, PjRtRawBufferRef src_raw_buffer,
+    PjRtDeviceEventPromiseRef definition_event_promise,
+    PjRtDeviceEventPromiseRef src_usage_event_promise) {
+  if (client_->IsOnCpu(memory_space())) {
+    CommonPjRtRawBufferImpl::ScheduleUpdateSlice(
+        std::move(transfer_dependency_events), gather,
+        std::move(src_raw_buffer), std::move(definition_event_promise),
+        std::move(src_usage_event_promise));
+    return;
+  }
+
+  ScheduleIntraClientStridedCopy(
+      client_, local_device_, tsl::FormRef(this), device_buffer_,
+      std::move(src_raw_buffer), std::move(transfer_dependency_events), gather,
+      StridedCopyDirection::kScatterFromCompact,
+      std::move(definition_event_promise), std::move(src_usage_event_promise),
+      /*allocation_event=*/nullptr);
 }
 
 }  // namespace xla
