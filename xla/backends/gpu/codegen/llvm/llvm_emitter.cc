@@ -459,13 +459,17 @@ EmitSliceToDynamicLLVMIR(const HloCustomCallInstruction* hlo,
     // Set IR builder insertion point to the body of the if
     // structure.
     llvm_ir::SetToFirstInsertPoint(if_in_dyn_bounds.true_block, &b);
-    llvm_ir::IrArray::Index dyn_index(linearIndex, input_shape,
+    // The dynamic elements are stored densely in the output's layout, which
+    // can differ from the operand's, so delinearize in the output's layout.
+    llvm_ir::IrArray::Index dyn_index(linearIndex, data_shape,
                                       absl::MakeSpan(dynamic_dims), &b);
 
     data_array.EmitWriteArrayElement(
         array_index,
-        ir_arrays[0].EmitReadArrayElement(dyn_index, &b, /*name=*/"",
-                                          /*use_linear_index=*/false),
+        ir_arrays[0].EmitReadArrayElement(
+            llvm_ir::IrArray::Index(dyn_index.multidim(), input_shape,
+                                    dyn_index.GetType()),
+            &b, /*name=*/"", /*use_linear_index=*/false),
         &b);
     return absl::OkStatus();
   };

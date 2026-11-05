@@ -1447,8 +1447,12 @@ absl::Status IrEmitter::EmitSliceToDynamic(
   //     dest[dest_index] = source[i]
   auto loop_body_emitter =
       [&](const llvm_ir::IrArray::Index& array_index) -> absl::Status {
-    llvm::Value* source_element =
-        source_arrays[0].EmitReadArrayElement(array_index, b());
+    // The source's layout can differ from the target's.
+    llvm::Value* source_element = source_arrays[0].EmitReadArrayElement(
+        llvm_ir::IrArray::Index(array_index.multidim(),
+                                source_arrays[0].GetShape(),
+                                array_index.GetType()),
+        b());
     llvm::Value* linear_index = array_index.Linearize(dynamic_dims, b());
     // Delinearize the index based on the static shape.
     llvm_ir::IrArray::Index dest_index(linear_index, target_array.GetShape(),
