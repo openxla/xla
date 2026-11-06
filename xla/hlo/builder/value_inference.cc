@@ -1005,6 +1005,7 @@ absl::StatusOr<PostorderDFSNode> PostorderDFSVisitor::AnalyzeConstant(
     case HloOpcode::kSubtract:
     case HloOpcode::kCos:
     case HloOpcode::kSin:
+    case HloOpcode::kTan:
     case HloOpcode::kNegate:
     case HloOpcode::kAbs:
     case HloOpcode::kDivide: {
