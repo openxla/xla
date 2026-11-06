@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep.
@@ -303,10 +302,6 @@ int64_t getUntiledRank(ArrayRef<xla::Tile> tiles, const int64_t rank) {
 }
 }  // namespace
 
-int64_t TiledLayoutAttr::getUntiledRank() const {
-  return mlir::tpu::getUntiledRank(getTiles(), getRank());
-}
-
 FailureOr<SmallVector<int64_t>> getExpandedShape(
     const ArrayRef<int64_t> untiled_shape, const ArrayRef<xla::Tile> tiles,
     const bool require_alignment) {
@@ -401,13 +396,6 @@ int64_t TiledLayoutAttr::getNumTrailingDimsWithContiguousTiles(
     }
   }
   return shape.size() - 1 - d;
-}
-
-SmallVector<int64_t> TiledLayoutAttr::getExpandedShape(
-    ArrayRef<int64_t> untiled_shape) const {
-  // getExpandedShape should never fail without require_alignment
-  return *mlir::tpu::getExpandedShape(untiled_shape, getTiles(),
-                                      /*require_alignment=*/false);
 }
 
 FailureOr<SmallVector<int64_t>> getExpandedStrides(
@@ -548,12 +536,7 @@ DotDimensionNumbersAttr defaultDimensionNumbers(Builder& builder,
 }
 
 const ::llvm::fltSemantics& Float8EXMYType::getFloatSemantics() const {
-  if (mlir::isa<Float6E3M2FNType>(getUnderlyingType())) {
-    return llvm::APFloat::Float6E3M2FN();
-  } else if (mlir::isa<Float6E2M3FNType>(getUnderlyingType())) {
-    return llvm::APFloat::Float6E2M3FN();
-  }
-  return cast<FloatType>(getUnderlyingType()).getFloatSemantics();
+  return getUnderlyingType().getFloatSemantics();
 }
 
 namespace {
