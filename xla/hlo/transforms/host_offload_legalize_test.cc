@@ -692,6 +692,75 @@ ENTRY main {
   EXPECT_EQ(FindInstruction(module.get(), "cp"), nullptr);
 }
 
+TEST_F(HostOffloadLegalizeTest,
+       SplitStackedMoveToHostConcatDynamicUpdateSlice) {
+  // Verifies that a `dynamic-update-slice` whose update operand is a
+  // concatenation of `MoveToHost` slices is split into per-slice
+  // `dynamic-update-slice` instructions.
+  absl::string_view hlo_string = R"(
+HloModule scan_unroll_concat
+
+ENTRY main {
+  base = bf16[5,2,1,16,128]{4,3,1,2,0} parameter(0)
+  update0 = bf16[1,16,128]{2,1,0} parameter(1)
+  update1 = bf16[1,16,128]{2,1,0} parameter(2)
+  idx = s32[] parameter(3)
+  zero = s32[] constant(0)
+  mth0 = bf16[1,16,128]{2,1,0} custom-call(update0), custom_call_target="MoveToHost"
+  bc0 = bf16[1,1,16,128]{3,2,1,0} bitcast(mth0)
+  mth1 = bf16[1,16,128]{2,1,0} custom-call(update1), custom_call_target="MoveToHost"
+  bc1 = bf16[1,1,16,128]{3,2,1,0} bitcast(mth1)
+  concat = bf16[2,1,16,128]{3,2,1,0} concatenate(bc0, bc1), dimensions={0}
+  bc_concat = bf16[1,2,1,16,128]{4,3,1,2,0} bitcast(concat)
+  ROOT dus = bf16[5,2,1,16,128]{4,3,1,2,0} dynamic-update-slice(base, bc_concat, idx, zero, zero, zero, zero)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloadLegalize(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kConcatenate), nullptr);
+
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kDynamicUpdateSlice);
+  EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kDynamicUpdateSlice);
+}
+
+TEST_F(HostOffloadLegalizeTest,
+       SplitStackedMoveToHostPadMaxDynamicUpdateSlice) {
+  absl::string_view hlo_string = R"(
+HloModule scan_unroll_pad_max
+
+ENTRY main {
+  base = bf16[5,2,1,16,128]{4,3,1,2,0} parameter(0)
+  update0 = bf16[1,16,128]{2,1,0} parameter(1)
+  update1 = bf16[1,16,128]{2,1,0} parameter(2)
+  idx = s32[] parameter(3)
+  zero = s32[] constant(0)
+  neg_inf = bf16[] constant(-inf)
+  mth0 = bf16[1,16,128]{2,1,0} custom-call(update0), custom_call_target="MoveToHost"
+  bc0 = bf16[1,1,16,128]{3,2,1,0} bitcast(mth0)
+  pad0 = bf16[2,1,16,128]{3,2,1,0} pad(bc0, neg_inf), padding=0_1x0_0x0_0x0_0
+  mth1 = bf16[1,16,128]{2,1,0} custom-call(update1), custom_call_target="MoveToHost"
+  bc1 = bf16[1,1,16,128]{3,2,1,0} bitcast(mth1)
+  pad1 = bf16[2,1,16,128]{3,2,1,0} pad(bc1, neg_inf), padding=1_0x0_0x0_0x0_0
+  max_concat = bf16[2,1,16,128]{3,2,1,0} maximum(pad0, pad1)
+  bc_concat = bf16[1,2,1,16,128]{4,3,1,2,0} bitcast(max_concat)
+  ROOT dus = bf16[5,2,1,16,128]{4,3,1,2,0} dynamic-update-slice(base, bc_concat, idx, zero, zero, zero, zero)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloadLegalize(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kPad), nullptr);
+  EXPECT_EQ(FindInstruction(module.get(), HloOpcode::kMaximum), nullptr);
+
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kDynamicUpdateSlice);
+  EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kDynamicUpdateSlice);
+}
+
 }  // namespace
 
 }  // namespace xla
