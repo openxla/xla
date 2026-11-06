@@ -1258,6 +1258,178 @@ TEST_F(CollectiveBlockLevelConfigTest,
   EXPECT_EQ(launch_config->launch_dimensions.num_threads_per_block(), 512);
 }
 
+TEST_F(CollectiveEmitterTest, LowerAllReduceWithReductionPrologue) {
+  constexpr absl::string_view kHloStr = R"(
+    HloModule test
+    add_f32 {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+    add_bf16 {
+      lhs = bf16[] parameter(0)
+      rhs = bf16[] parameter(1)
+      ROOT add = bf16[] add(lhs, rhs)
+    }
+    fused_computation {
+      param_0 = f32[2,4,16] parameter(0)
+      zero = f32[] constant(0)
+      red = f32[4,16] reduce(param_0, zero), dimensions={0}, to_apply=add_f32
+      conv = bf16[4,16] convert(red)
+      ROOT ar = bf16[4,16] all-reduce(conv), replica_groups={{0,1}},
+        to_apply=add_bf16,
+        backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_ONE_SHOT"}}
+    }
+    ENTRY test_computation {
+      param_0 = f32[2,4,16] parameter(0)
+      ROOT fusion = bf16[4,16] fusion(param_0), kind=kCustom,
+        calls=fused_computation
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kHloStr, /*replica_count=*/2,
+                                   /*num_partitions=*/1));
+  auto* fusion = Cast<HloFusionInstruction>(
+      module->entry_computation()->root_instruction());
+  ASSERT_OK(TrySetGpuBackendConfigForCollective(*gpu_topology_, fusion));
+
+  HloFusionAnalysis analysis = HloFusionAnalysis::Create(*fusion, device_info_);
+  auto llvm_compiler =
+      [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+          const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
+    return std::vector<uint8_t>{1};
+  };
+  DebugOptions debug_options;
+  CubinCustomKernelCompiler kernel_compiler(llvm_compiler, device_info_,
+                                            debug_options, *gpu_topology_);
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool(
+      []() { return CreateMlirContext(); });
+  ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
+                       mlir_context_pool.GetOrCreate());
+  TritonFusion emitter(analysis);
+  EXPECT_OK(emitter
+                .GenerateTritonKernelAndWrapper(
+                    *fusion, "test-all-reduce-prologue", device_info_,
+                    llvm::Triple(""), /*data_layout=*/"",
+                    std::move(borrowed_context), &kernel_compiler)
+                .Await()
+                .status());
+}
+
+TEST_F(CollectiveEmitterTest, LowerReduceScatterWithReductionPrologue) {
+  constexpr absl::string_view kHloStr = R"(
+    HloModule test
+    add_f32 {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+    add_bf16 {
+      lhs = bf16[] parameter(0)
+      rhs = bf16[] parameter(1)
+      ROOT add = bf16[] add(lhs, rhs)
+    }
+    fused_computation {
+      param_0 = f32[2,8,16] parameter(0)
+      zero = f32[] constant(0)
+      red = f32[8,16] reduce(param_0, zero), dimensions={0}, to_apply=add_f32
+      conv = bf16[8,16] convert(red)
+      ROOT rs = bf16[4,16] reduce-scatter(conv), replica_groups={{0,1}},
+        dimensions={0}, to_apply=add_bf16,
+        backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_ONE_SHOT"}}
+    }
+    ENTRY test_computation {
+      param_0 = f32[2,8,16] parameter(0)
+      ROOT fusion = bf16[4,16] fusion(param_0), kind=kCustom,
+        calls=fused_computation
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kHloStr, /*replica_count=*/2,
+                                   /*num_partitions=*/1));
+  auto* fusion = Cast<HloFusionInstruction>(
+      module->entry_computation()->root_instruction());
+  ASSERT_OK(TrySetGpuBackendConfigForCollective(*gpu_topology_, fusion));
+
+  HloFusionAnalysis analysis = HloFusionAnalysis::Create(*fusion, device_info_);
+  auto llvm_compiler =
+      [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+          const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
+    return std::vector<uint8_t>{1};
+  };
+  DebugOptions debug_options;
+  CubinCustomKernelCompiler kernel_compiler(llvm_compiler, device_info_,
+                                            debug_options, *gpu_topology_);
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool(
+      []() { return CreateMlirContext(); });
+  ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
+                       mlir_context_pool.GetOrCreate());
+  TritonFusion emitter(analysis);
+  EXPECT_OK(emitter
+                .GenerateTritonKernelAndWrapper(
+                    *fusion, "test-reduce-scatter-prologue", device_info_,
+                    llvm::Triple(""), /*data_layout=*/"",
+                    std::move(borrowed_context), &kernel_compiler)
+                .Await()
+                .status());
+}
+
+TEST_F(CollectiveEmitterTest, LowerAllReduceWithBinaryPrologue) {
+  constexpr absl::string_view kHloStr = R"(
+    HloModule test
+    add_bf16 {
+      lhs = bf16[] parameter(0)
+      rhs = bf16[] parameter(1)
+      ROOT add = bf16[] add(lhs, rhs)
+    }
+    fused_computation {
+      param_0 = bf16[4,16] parameter(0)
+      param_1 = bf16[4,16] parameter(1)
+      sum = bf16[4,16] add(param_0, param_1)
+      ROOT ar = bf16[4,16] all-reduce(sum), replica_groups={{0,1}},
+        to_apply=add_bf16,
+        backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_ONE_SHOT"}}
+    }
+    ENTRY test_computation {
+      param_0 = bf16[4,16] parameter(0)
+      param_1 = bf16[4,16] parameter(1)
+      ROOT fusion = bf16[4,16] fusion(param_0, param_1), kind=kCustom,
+        calls=fused_computation
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kHloStr, /*replica_count=*/2,
+                                   /*num_partitions=*/1));
+  auto* fusion = Cast<HloFusionInstruction>(
+      module->entry_computation()->root_instruction());
+  ASSERT_OK(TrySetGpuBackendConfigForCollective(*gpu_topology_, fusion));
+
+  HloFusionAnalysis analysis = HloFusionAnalysis::Create(*fusion, device_info_);
+  auto llvm_compiler =
+      [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+          const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
+    return std::vector<uint8_t>{1};
+  };
+  DebugOptions debug_options;
+  CubinCustomKernelCompiler kernel_compiler(llvm_compiler, device_info_,
+                                            debug_options, *gpu_topology_);
+  ObjectPool<std::unique_ptr<mlir::MLIRContext>> mlir_context_pool(
+      []() { return CreateMlirContext(); });
+  ASSERT_OK_AND_ASSIGN(BorrowedMlirContext borrowed_context,
+                       mlir_context_pool.GetOrCreate());
+  TritonFusion emitter(analysis);
+  EXPECT_OK(emitter
+                .GenerateTritonKernelAndWrapper(
+                    *fusion, "test-all-reduce-binary-prologue", device_info_,
+                    llvm::Triple(""), /*data_layout=*/"",
+                    std::move(borrowed_context), &kernel_compiler)
+                .Await()
+                .status());
+}
+
 }  // namespace
 
 }  // namespace xla::gpu
