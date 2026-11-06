@@ -212,8 +212,11 @@ absl::StatusOr<bool> RemoveMultiOutputFusionsUnusedOutputs(
     }
     auto new_tuple =
         computation->AddInstruction(HloInstruction::CreateTuple(new_operands));
-    ABSL_RETURN_IF_ERROR(computation->ReplaceInstructionWithDifferentShape(
-        computation->root_instruction(), new_tuple));
+    ABSL_ASSIGN_OR_RETURN(
+        std::ignore,
+        computation->ReplaceInstructionWithDifferentShape(
+            computation->root_instruction(), new_tuple,
+            /*preserve_sharding=*/false, /*relay_control_dependency=*/true));
   } else {
     ABSL_RETURN_IF_ERROR(
         computation->root_instruction()->ReplaceAllUsesWithDifferentShape(
@@ -237,7 +240,7 @@ bool CanRemoveInstruction(
 
   if (!instruction->parent()->IsSafelyRemovable(
           instruction,
-          /*ignore_control_dependency=*/false,
+          /*ignore_control_dependency=*/true,
           /*computation_callers=*/computation_callers)) {
     return false;
   }
@@ -313,7 +316,7 @@ absl::StatusOr<bool> RemoveDeadRoots(
             << " and its unused operands";
     ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(
         instruction, /*cleanup=*/std::nullopt,
-        /*ignore_control_dependencies=*/false,
+        /*ignore_control_dependencies=*/true,
         /*computation_callers=*/computation_callers));
     changed = true;
   }
@@ -356,7 +359,7 @@ absl::StatusOr<bool> RemoveDeadParameters(
     if (parameter->IsDead() &&
         computation->IsSafelyRemovable(
             parameter,
-            /*ignore_control_dependency=*/false,
+            /*ignore_control_dependency=*/true,
             /*computation_callers=*/computation_callers,
             remove_dead_parameters_from_entry_computation)) {
       VLOG(1) << "Removing dead parameter " << parameter->ToString()
@@ -365,7 +368,7 @@ absl::StatusOr<bool> RemoveDeadParameters(
       int64_t parameter_number = parameter->parameter_number();
       ABSL_RETURN_IF_ERROR(computation->RemoveInstructionAndUnusedOperands(
           parameter, /*cleanup=*/std::nullopt,
-          /*ignore_control_dependencies=*/false,
+          /*ignore_control_dependencies=*/true,
           /*computation_callers=*/computation_callers,
           remove_dead_parameters_from_entry_computation));
       if (computation->num_parameters() < num_parameters) {
