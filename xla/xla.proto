@@ -166,7 +166,7 @@ message DebugOptions {
   }
 
   enum HipblasLtMxScaleLayout {
-    // The scale tensor as given, row-major [MN, K/32]
+    // The scale tensor as given, row-major [M or N, K/32]
     // VEC32_UE8M0 scale mode in hipBLASLt
     HIPBLASLT_MX_SCALE_LAYOUT_NATURAL = 0;
     // XLA permutes the scales into hipBLASLt's 32-row by 8-block tile order

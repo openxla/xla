@@ -95,7 +95,7 @@ message AutotuneResult {
     // because the algorithm index is local to the layout's algorithm table.
     // Unset means NATURAL.
     enum MxScaleLayout {
-      // The scale tensor as given, row-major [MN, K/32]
+      // The scale tensor as given, row-major [M or N, K/32]
       // VEC32_UE8M0 scale mode in hipBLASLt
       MX_SCALE_LAYOUT_NATURAL = 0;
       // XLA permutes the scales into hipBLASLt's 32-row by 8-block tile order

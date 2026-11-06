@@ -21,9 +21,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/layout.h"
-#include "xla/layout_util.h"
-#include "xla/service/decision.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
@@ -33,92 +30,65 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
-Decision IsContiguousLayout(const Shape& shape, int64_t element_size_in_bits) {
-  if (!shape.has_layout()) {
-    return Decision::Forbid("32x8 scales require assigned layouts");
+bool IsSupportedScaleShape(const Shape& shape) {
+  if (shape.element_type() != F8E8M0FNU) {
+    return false;
   }
-  const Layout& layout = shape.layout();
-  return Decision(
-      LayoutUtil::IsMonotonicWithDim0Major(layout) && layout.tiles().empty() &&
-          (layout.element_size_in_bits() == element_size_in_bits ||
-           (element_size_in_bits == 8 && layout.element_size_in_bits() == 0)),
-      "32x8 scales require contiguous, untiled layouts with "
-      "native element storage");
-}
-
-Decision IsSupportedScaleShape(const Shape& shape) {
+  // [M or N, K/32], or the same with a leading 1.
   int64_t rank = shape.dimensions().size();
-  if (shape.element_type() != F8E8M0FNU || (rank != 2 && rank != 3) ||
-      (rank == 3 && shape.dimensions(0) != 1) ||
-      !IsContiguousLayout(shape, 8).IsAllowed() || shape.is_dynamic()) {
-    return Decision::Forbid(
-        "32x8 scales require static row-major E8M0 "
-        "[MN, K/32] or [1, MN, K/32]");
+  if (rank != 2 && rank != 3) {
+    return false;
   }
-  int64_t rows = shape.dimensions(rank - 2);
-  int64_t cols = shape.dimensions(rank - 1);
-  return Decision(rows > 0 && rows % 32 == 0 && cols > 0 && cols % 8 == 0,
-                  "32x8 scales require MN divisible by 32 and K divisible by "
-                  "256; padding is not supported");
+  if (rank == 3 && shape.dimensions(0) != 1) {
+    return false;
+  }
+  // M or N in whole tiles of 32 rows.
+  if (shape.dimensions(rank - 2) % 32 != 0) {
+    return false;
+  }
+  // K/32 in whole tiles of 8 blocks.
+  if (shape.dimensions(rank - 1) % 8 != 0) {
+    return false;
+  }
+  return true;
 }
 
 }  // namespace
 
-Decision CanUseHipblasLtScale32x8(
+bool CanUseHipblasLtScale32x8(
     const HloInstruction& scaled_dot,
     const stream_executor::GpuComputeCapability& gpu_version) {
   const auto* rocm = gpu_version.rocm_compute_capability();
   if (rocm == nullptr || !rocm->gfx9_mi350()) {
-    return Decision::Forbid("hipBLASLt 32x8 scales require gfx950");
+    return false;
   }
   PrimitiveType input_type = scaled_dot.operand(0)->shape().element_type();
   if ((input_type != F8E4M3FN && input_type != F4E2M1FN) ||
       scaled_dot.operand(1)->shape().element_type() != input_type) {
-    return Decision::Forbid(
-        "32x8 scales require matching E4M3FN or E2M1FN inputs");
+    return false;
   }
-  // FP4 operands must be packed, E(4); an unset element size means bytes.
-  int64_t input_element_size_in_bits = input_type == F4E2M1FN ? 4 : 8;
   const DotDimensionNumbers& dims = scaled_dot.dot_dimension_numbers();
-  for (int side = 0; side != 2; ++side) {
-    const Shape& input = scaled_dot.operand(side)->shape();
-    const Shape& scale = scaled_dot.operand(side + 2)->shape();
-    Decision scale_supported = IsSupportedScaleShape(scale);
-    if (!scale_supported.IsAllowed()) return scale_supported;
-    int64_t rank = input.dimensions().size();
+  for (int side = 0; side < 2; ++side) {
+    int64_t rank = scaled_dot.operand(side)->shape().dimensions().size();
     const auto& contracting = side == 0 ? dims.lhs_contracting_dimensions()
                                         : dims.rhs_contracting_dimensions();
-    const auto& batch =
-        side == 0 ? dims.lhs_batch_dimensions() : dims.rhs_batch_dimensions();
-    if (rank != scale.dimensions().size() || input.is_dynamic() ||
-        !IsContiguousLayout(input, input_element_size_in_bits).IsAllowed() ||
-        contracting.size() != 1 || contracting[0] != rank - 1 ||
-        (rank == 2 && !batch.empty()) ||
-        (rank == 3 && (batch.size() != 1 || batch[0] != 0)) ||
-        input.dimensions(rank - 1) != scale.dimensions(rank - 1) * 32) {
-      return Decision::Forbid(
-          "32x8 scales require row-major E4M3FN or packed E2M1FN inputs "
-          "with the final dimension contracting");
-    }
-    for (int64_t dim = 0; dim < rank - 1; ++dim) {
-      if (input.dimensions(dim) != scale.dimensions(dim)) {
-        return Decision::Forbid("32x8 scale and input free dimensions differ");
-      }
+    // Scales must be [M or N, K/32]: K is the last dimension.
+    if (contracting.size() != 1 || contracting[0] != rank - 1 ||
+        !IsSupportedScaleShape(scaled_dot.operand(side + 2)->shape())) {
+      return false;
     }
   }
-  return Decision::Allow();
+  return true;
 }
 
 absl::StatusOr<HloInstruction*> SwizzleHipblasLtScale32x8(
     HloInstruction* scale) {
   const Shape& shape = scale->shape();
-  TF_RET_CHECK(IsSupportedScaleShape(shape).IsAllowed());
+  TF_RET_CHECK(IsSupportedScaleShape(shape));
   int64_t rank = shape.dimensions().size();
   int64_t rows = shape.dimensions(rank - 2);
   int64_t cols = shape.dimensions(rank - 1);
 
-  // hipBLASLt's 32x8 tile order, AITER's e8m0_shuffle:
-  // [rows/32, 2, 16, cols/8, 2, 4] -> permute(0, 3, 5, 2, 4, 1), bytes copied.
   HloComputation::Builder builder("hipblaslt_mx_scale_32x8");
   HloInstruction* input = builder.AddInstruction(
       HloInstruction::CreateParameter(0, shape, "scale"));
@@ -133,7 +103,6 @@ absl::StatusOr<HloInstruction*> SwizzleHipblasLtScale32x8(
       builder.AddInstruction(HloInstruction::CreateReshape(shape, transpose));
   HloComputation* computation =
       scale->GetModule()->AddEmbeddedComputation(builder.Build(result));
-  // Named at insertion so the module's name uniquer keeps the fusions distinct.
   return scale->parent()->AddInstruction(
       HloInstruction::CreateFusion(shape, HloInstruction::FusionKind::kLoop,
                                    {scale}, computation),

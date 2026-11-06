@@ -36,7 +36,6 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
-#include "xla/layout.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/compiler.h"
@@ -79,12 +78,12 @@ absl::StatusOr<se::gpu::ScaleMode> MxScaleMode(MxScaleLayout layout) {
   }
 }
 
-absl::StatusOr<absl::InlinedVector<MxScaleLayout, 2>> MxScaleLayoutsToTune(
+absl::StatusOr<std::vector<MxScaleLayout>> MxScaleLayoutsToTune(
     const HloInstruction& scaled_dot, const DebugOptions& options,
     const se::GpuComputeCapability& gpu_version) {
   const bool swizzled_allowed =
-      CanUseHipblasLtScale32x8(scaled_dot, gpu_version).IsAllowed();
-  absl::InlinedVector<MxScaleLayout, 2> layouts;
+      CanUseHipblasLtScale32x8(scaled_dot, gpu_version);
+  std::vector<MxScaleLayout> layouts;
   switch (options.xla_gpu_experimental_hipblaslt_mx_scale_layout()) {
     case DebugOptions::HIPBLASLT_MX_SCALE_LAYOUT_NATURAL:
       layouts.push_back(HipblasLtBackendConfig::MX_SCALE_LAYOUT_NATURAL);
@@ -506,7 +505,7 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     }
 
     ABSL_ASSIGN_OR_RETURN(
-        auto layouts,
+        std::vector<MxScaleLayout> layouts,
         MxScaleLayoutsToTune(
             *scaled_dot, debug_options(),
             target_config().device_description.gpu_compute_capability()));
@@ -735,12 +734,6 @@ absl::Status HipblasLtBackend::ApplyConfig(HloInstruction& instr,
                      user->opcode() == HloOpcode::kReshape)
             << "Unexpected op between fusion parameter and scaled-dot: "
             << user->ToString();
-        // The path is elided below; a materializing reshape would be lost.
-        if (user->opcode() == HloOpcode::kReshape &&
-            !ShapeUtil::ReshapeIsBitcast(cur->shape(), user->shape())) {
-          return absl::InvalidArgumentError(
-              "hipBLASLt MX lowering cannot discard a materializing reshape");
-        }
         cur = user;
       }
       TF_RET_CHECK(cur->user_count() == 1 && cur->users()[0] == scaled_dot)

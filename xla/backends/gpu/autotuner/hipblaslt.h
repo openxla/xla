@@ -22,6 +22,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/autotuner/gpu_codegen_backend.h"
@@ -66,11 +67,11 @@ class HipblasLtBackend : public GpuCodegenBackend {
 
   std::string version() const override {
     // The candidate set depends on the layout policy, so key the cache by it.
-    return target_config().device_description.runtime_version().ToString() +
-           ":mx-scale-layout:" +
-           DebugOptions::HipblasLtMxScaleLayout_Name(
-               debug_options()
-                   .xla_gpu_experimental_hipblaslt_mx_scale_layout());
+    return absl::StrCat(
+        target_config().device_description.runtime_version().ToString(),
+        ":mx-scale-layout:",
+        DebugOptions::HipblasLtMxScaleLayout_Name(
+            debug_options().xla_gpu_experimental_hipblaslt_mx_scale_layout()));
   }
 
  private:
