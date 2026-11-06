@@ -15,12 +15,15 @@ limitations under the License.
 
 #include "xla/backends/cpu/runtime/kernel_thunk.h"
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <array>
 #include <cstdint>
+#include <memory>
 
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
@@ -33,9 +36,13 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/runtime/work_group.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 namespace {
@@ -224,6 +231,152 @@ TEST(KernelThunkInvariantBuffersTest,
   EXPECT_EQ(status.code(), absl::StatusCode::kInternal);
   EXPECT_TRUE(absl::StrContains(
       status.message(), "Argument marked as invariant aliases with a result"));
+}
+
+TEST(KernelThunkInvariantBuffersTest,
+     DonatedParameterMayAliasEntryParameterAtRuntime) {
+  if constexpr (!tsl::kIsDebugBuild) {
+    GTEST_SKIP() << "Invariant buffers check is disabled in optimized build.";
+  }
+
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
+  BufferAllocation donated(/*index=*/0, /*size=*/16, /*color=*/0);
+  donated.set_entry_computation_parameter(
+      /*parameter_number=*/0, /*param_shape_index=*/{},
+      /*parameter_aliased_with_output=*/true);
+  BufferAllocation entry_param(/*index=*/1, /*size=*/16, /*color=*/0);
+  entry_param.set_entry_computation_parameter(
+      /*parameter_number=*/1, /*param_shape_index=*/{},
+      /*parameter_aliased_with_output=*/false);
+  BufferAllocation temp(/*index=*/2, /*size=*/16, /*color=*/0);
+
+  BufferAllocation::Slice donated_slice(&donated, 0, 16);
+  BufferAllocation::Slice entry_slice(&entry_param, 0, 16);
+  BufferAllocation::Slice temp_slice(&temp, 0, 16);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Thunk> thunk,
+      KernelThunk::Create({"add_f32"},
+                          {{entry_slice, shape}, {temp_slice, shape}},
+                          {{donated_slice, shape}}, "add_f32", NumWorkGroups{4},
+                          /*invariant_arguments=*/{0, 1}));
+
+  AddF32HostKernel host_kernels;
+  alignas(64) std::array<float, 4> shared = {1.0f, 2.0f, 3.0f, 4.0f};
+  alignas(64) std::array<float, 4> scratch = {5.0f, 6.0f, 7.0f, 8.0f};
+
+  // Passing the donated buffer as another entry parameter is valid.
+  BufferAllocations valid_allocations(
+      BufferAllocations::Buffers{se::DeviceAddressBase(shared.data(), 16),
+                                 se::DeviceAddressBase(shared.data(), 16),
+                                 se::DeviceAddressBase(scratch.data(), 16)});
+  Thunk::ExecuteParams valid_params = {&host_kernels, &valid_allocations};
+  auto ok_event = thunk->Execute(valid_params);
+  tsl::BlockUntilReady(ok_event);
+  EXPECT_FALSE(ok_event.IsError()) << ok_event.GetError();
+
+  // Overlapping a temporary with the donated output is still rejected.
+  BufferAllocations bad_allocations(
+      BufferAllocations::Buffers{se::DeviceAddressBase(shared.data(), 16),
+                                 se::DeviceAddressBase(scratch.data(), 16),
+                                 se::DeviceAddressBase(shared.data(), 16)});
+  Thunk::ExecuteParams bad_params = {&host_kernels, &bad_allocations};
+  auto bad_event = thunk->Execute(bad_params);
+  tsl::BlockUntilReady(bad_event);
+  ASSERT_TRUE(bad_event.IsError());
+  EXPECT_THAT(bad_event.GetError(),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInternal,
+                  ::testing::HasSubstr(
+                      "Argument marked as invariant aliases with a result")));
+
+  // Marking the in place donated buffer itself invariant is still rejected.
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Thunk> in_place_thunk,
+      KernelThunk::Create({"add_f32"},
+                          {{donated_slice, shape}, {temp_slice, shape}},
+                          {{donated_slice, shape}}, "add_f32", NumWorkGroups{4},
+                          /*invariant_arguments=*/{0, 1}));
+  auto in_place_event = in_place_thunk->Execute(valid_params);
+  tsl::BlockUntilReady(in_place_event);
+  ASSERT_TRUE(in_place_event.IsError());
+  EXPECT_THAT(in_place_event.GetError(),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInternal,
+                  ::testing::HasSubstr(
+                      "Argument marked as invariant aliases with a result")));
+
+  // Overlapping two distinct donated parameter allocations is still rejected.
+  BufferAllocation other_donated(/*index=*/3, /*size=*/16, /*color=*/0);
+  other_donated.set_entry_computation_parameter(
+      /*parameter_number=*/2, /*param_shape_index=*/{},
+      /*parameter_aliased_with_output=*/true);
+  BufferAllocation::Slice other_donated_slice(&other_donated, 0, 16);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Thunk> dual_donated_thunk,
+      KernelThunk::Create({"add_f32"},
+                          {{other_donated_slice, shape}, {temp_slice, shape}},
+                          {{donated_slice, shape}}, "add_f32", NumWorkGroups{4},
+                          /*invariant_arguments=*/{0, 1}));
+  BufferAllocations dual_donated_allocations(
+      BufferAllocations::Buffers{se::DeviceAddressBase(shared.data(), 16),
+                                 se::DeviceAddressBase(scratch.data(), 16),
+                                 se::DeviceAddressBase(shared.data(), 16),
+                                 se::DeviceAddressBase(shared.data(), 16)});
+  Thunk::ExecuteParams dual_donated_params = {&host_kernels,
+                                              &dual_donated_allocations};
+  auto dual_donated_event = dual_donated_thunk->Execute(dual_donated_params);
+  tsl::BlockUntilReady(dual_donated_event);
+  ASSERT_TRUE(dual_donated_event.IsError());
+  EXPECT_THAT(dual_donated_event.GetError(),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInternal,
+                  ::testing::HasSubstr(
+                      "Argument marked as invariant aliases with a result")));
+}
+
+TEST(KernelThunkInvariantBuffersTest,
+     EntryParameterMustNotAliasResultThatIsNotDonated) {
+  if constexpr (!tsl::kIsDebugBuild) {
+    GTEST_SKIP() << "Invariant buffers check is disabled in optimized build.";
+  }
+
+  Shape shape = ShapeUtil::MakeShape(F32, {2, 2});
+  BufferAllocation entry_param(/*index=*/0, /*size=*/16, /*color=*/0);
+  entry_param.set_entry_computation_parameter(
+      /*parameter_number=*/0, /*param_shape_index=*/{},
+      /*parameter_aliased_with_output=*/false);
+  BufferAllocation temp(/*index=*/1, /*size=*/16, /*color=*/0);
+  BufferAllocation result(/*index=*/2, /*size=*/16, /*color=*/0);
+
+  BufferAllocation::Slice entry_slice(&entry_param, 0, 16);
+  BufferAllocation::Slice temp_slice(&temp, 0, 16);
+  BufferAllocation::Slice result_slice(&result, 0, 16);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Thunk> thunk,
+      KernelThunk::Create({"add_f32"},
+                          {{entry_slice, shape}, {temp_slice, shape}},
+                          {{result_slice, shape}}, "add_f32", NumWorkGroups{4},
+                          /*invariant_arguments=*/{0, 1}));
+
+  AddF32HostKernel host_kernels;
+  alignas(64) std::array<float, 4> shared = {1.0f, 2.0f, 3.0f, 4.0f};
+  alignas(64) std::array<float, 4> scratch = {5.0f, 6.0f, 7.0f, 8.0f};
+
+  BufferAllocations allocations(
+      BufferAllocations::Buffers{se::DeviceAddressBase(shared.data(), 16),
+                                 se::DeviceAddressBase(scratch.data(), 16),
+                                 se::DeviceAddressBase(shared.data(), 16)});
+  Thunk::ExecuteParams params = {&host_kernels, &allocations};
+  auto event = thunk->Execute(params);
+  tsl::BlockUntilReady(event);
+  ASSERT_TRUE(event.IsError());
+  EXPECT_THAT(event.GetError(),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kInternal,
+                  ::testing::HasSubstr(
+                      "Argument marked as invariant aliases with a result")));
 }
 
 }  // namespace

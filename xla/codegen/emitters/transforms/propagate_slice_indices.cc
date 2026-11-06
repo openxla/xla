@@ -64,6 +64,9 @@ void PropagateSliceIndicesPass::runOnOperation() {
         if (auto not_invariant = entry.getArgAttr(i, kXlaNotInvariantAttr)) {
           func.setArgAttr(i, kXlaNotInvariantAttr, not_invariant);
         }
+        if (auto aliased = entry.getArgAttr(i, kXlaAliasedAttr)) {
+          func.setArgAttr(i, kXlaAliasedAttr, aliased);
+        }
       } else {
         break;
       }

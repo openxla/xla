@@ -160,7 +160,6 @@ func.func @mixed_invariance_reversed(
 // CHECK-SAME:    %[[ARG0:[a-z0-9]+]]: !llvm.ptr,
 // CHECK-SAME:    %[[ARG1:[a-z0-9]+]]: !llvm.ptr,
 // CHECK-SAME:    %[[IDX:[a-z0-9]+]]: index) -> f32 attributes {xla.entry}
-
 // -----
 
 // Merging an invariant argument with a written slice drops readonly while
@@ -226,3 +225,28 @@ module {
 // CHECK-SAME:    %[[A3:[a-z0-9]+]]: !llvm.ptr,
 // CHECK-SAME:    %[[AIDX:[a-z0-9]+]]: index) -> f32 attributes {xla.entry}
 // CHECK:         call @private_mixed(%[[A0]], %[[A2]], %[[AIDX]])
+
+// -----
+
+// xla.aliased suppresses llvm.noalias while keeping llvm.readonly on an
+// invariant argument, and propagates across merged duplicate slice arguments.
+
+func.func @aliased_readonly(
+    %arg0: tensor<43xf32> {xla.slice_index = 0, xla.invariant},
+    %arg1: tensor<43xf32> {xla.slice_index = 0, xla.invariant, xla.aliased},
+    %arg2: tensor<43xf32> {xla.slice_index = 1, xla.invariant},
+    %idx: index) -> f32 attributes {xla.entry} {
+  %v0 = tensor.extract %arg0[%idx] : tensor<43xf32>
+  %v1 = tensor.extract %arg1[%idx] : tensor<43xf32>
+  %v2 = tensor.extract %arg2[%idx] : tensor<43xf32>
+  %s0 = arith.addf %v0, %v1 : f32
+  %s1 = arith.addf %s0, %v2 : f32
+  func.return %s1 : f32
+}
+
+// CHECK-LABEL: func.func @aliased_readonly(
+// CHECK-SAME:    %[[ARG0:[a-z0-9]+]]: !llvm.ptr {llvm.readonly, xla.invariant},
+// CHECK-SAME:    %[[ARG1:[a-z0-9]+]]: !llvm.ptr {llvm.readonly, xla.invariant},
+// CHECK-SAME:    %[[ARG2:[a-z0-9]+]]: !llvm.ptr {llvm.noalias, llvm.readonly, xla.invariant},
+// CHECK-SAME:    %[[IDX:[a-z0-9]+]]: index) -> f32 attributes {xla.entry}
+// CHECK-NOT:     xla.aliased

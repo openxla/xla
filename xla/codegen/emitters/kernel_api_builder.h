@@ -37,6 +37,7 @@ namespace xla::emitters {
 
 inline constexpr absl::string_view kXlaInvariantAttr = "xla.invariant";
 inline constexpr absl::string_view kXlaNotInvariantAttr = "xla.not_invariant";
+inline constexpr absl::string_view kXlaAliasedAttr = "xla.aliased";
 
 // Emits and return the kernel entry function into the provided module it for
 // the given HLO instruction.

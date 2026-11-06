@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -247,14 +248,18 @@ KernelThunk<num_arguments, num_results>::ExecuteInternal(
   return OkExecuteEvent();
 }
 
+static bool Overlaps(const XLA_CPU_KernelArg& a, const XLA_CPU_KernelArg& b) {
+  const std::byte* a_data = static_cast<const std::byte*>(a.data);
+  const std::byte* b_data = static_cast<const std::byte*>(b.data);
+  std::less<const std::byte*> less;
+  return less(a_data, b_data + b.size) && less(b_data, a_data + a.size);
+}
+
 // Check if memory overlaps with any of the elements in the container.
 static bool Contains(absl::Span<const XLA_CPU_KernelArg> container,
                      const XLA_CPU_KernelArg& memory) {
   return absl::c_any_of(container, [&memory](const XLA_CPU_KernelArg& element) {
-    const std::byte* element_data = static_cast<std::byte*>(element.data);
-    const std::byte* memory_data = static_cast<std::byte*>(memory.data);
-    return (element.data < memory_data + memory.size) &&
-           (element_data + element.size > memory.data);
+    return Overlaps(element, memory);
   });
 }
 
@@ -278,9 +283,26 @@ KernelThunk<num_arguments, num_results>::CheckInvariantBuffersMemory(
   for (int64_t i = 0; i < arguments.size(); ++i) {
     const XLA_CPU_KernelArg& argument = arguments[i];
     if (invariant_arguments_.contains(i)) {
-      // This argument should be read only, i.e. not one of the results.
-      if (Contains(results, argument)) {
-        return Internal("Argument marked as invariant aliases with a result");
+      // This argument should be read only, i.e. not one of the results, except
+      // that a caller may pass one buffer as both a donated entry parameter and
+      // an unaliased entry parameter.
+      const BufferAllocation* arg_alloc =
+          arguments_buffers_[i].slice.allocation();
+      bool is_unaliased_entry_param =
+          arg_alloc->is_entry_computation_parameter() &&
+          !arg_alloc->is_parameter_aliased_with_output();
+      for (int64_t j = 0; j < results.size(); ++j) {
+        if (is_unaliased_entry_param &&
+            results_buffers_[j]
+                .slice.allocation()
+                ->is_parameter_aliased_with_output() &&
+            !arguments_buffers_[i].slice.OverlapsWith(
+                results_buffers_[j].slice)) {
+          continue;
+        }
+        if (Overlaps(results[j], argument)) {
+          return Internal("Argument marked as invariant aliases with a result");
+        }
       }
     } else {
       // For completeness, we check that a read write buffer is one of the
