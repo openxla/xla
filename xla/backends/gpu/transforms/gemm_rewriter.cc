@@ -705,8 +705,8 @@ se::gpu::RaggedDotMode GetRaggedDotMode(
   return se::gpu::RaggedDotMode::kRaggedNonContracting;
 }
 
-// Default XTile tile sizes for a ragged-dot fusion (M=32, N=32, G=1, K=32).
-// These can later be overridden by an autotuner.
+// Default XTile tile sizes for a ragged-dot fusion; an autotuner may later
+// override them.
 constexpr int64_t kDefaultRaggedDotBlockM = 32;
 constexpr int64_t kDefaultRaggedDotBlockN = 32;
 constexpr int64_t kDefaultRaggedDotBlockK = 32;
@@ -718,19 +718,16 @@ xtile::Tile BuildRaggedDotSequentialTile(const DotDimensionNumbers& dot_dims,
   xtile::Tile tile;
   switch (ragged_mode) {
     case se::gpu::RaggedDotMode::kRaggedBatch:
-      // Batched GEMM [B,M,K]×[B,K,N]→[B,M,N]; sequential dims: K (inner
-      // contraction).
+      // A plain batched GEMM: only the contraction is sequential.
       for (int i = 0; i < dot_dims.lhs_contracting_dimensions_size(); ++i) {
         tile.add_sizes(kDefaultRaggedDotBlockK);
       }
       break;
     case se::gpu::RaggedDotMode::kRaggedNonContracting:
-      // G=1 per outer loop iteration, K=BLOCK_K inner.
       tile.add_sizes(1);                        // G sequential dim
       tile.add_sizes(kDefaultRaggedDotBlockK);  // K sequential dim
       break;
     case se::gpu::RaggedDotMode::kRaggedContracting:
-      // M=BLOCK_M inner accumulation.
       tile.add_sizes(kDefaultRaggedDotBlockM);  // M sequential dim
       break;
   }
@@ -742,13 +739,11 @@ xtile::Tile BuildRaggedDotSequentialTile(const DotDimensionNumbers& dot_dims,
 xtile::Tile BuildRaggedDotOutputTile(const DotDimensionNumbers& dot_dims,
                                      se::gpu::RaggedDotMode ragged_mode) {
   xtile::Tile tile;
-  // Grid dims = G × K_tiles × N_tiles for kRaggedContracting; G=1 per tile.
   if (ragged_mode == se::gpu::RaggedDotMode::kRaggedContracting) {
     tile.add_sizes(1);  // G dim tile size = 1
   }
-  // Batch dims use tile size 1 so that each tile processes one batch element.
   for (int i = 0; i < dot_dims.lhs_batch_dimensions_size(); ++i) {
-    tile.add_sizes(1);
+    tile.add_sizes(1);  // one batch element per tile
   }
   if (ragged_mode == se::gpu::RaggedDotMode::kRaggedContracting) {
     tile.add_sizes(kDefaultRaggedDotBlockK);  // K output tile
@@ -939,7 +934,6 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     return absl::OkStatus();
   }
 
-  // Rewrites `ragged_dot` into a gpublasLt grouped-matmul custom call.
   absl::Status RewriteRaggedDotAsGroupedGemmCustomCall(
       HloRaggedDotInstruction* ragged_dot) {
     const RaggedDotDimensionNumbers& ragged_dims =
@@ -987,28 +981,24 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     return ReplaceInstruction(ragged_dot, grouped_gemm_call);
   }
 
-  // Rewrites `ragged_dot` into a kCustom fusion handled by the Triton XTile
-  // emitter, carrying default tile sizes that an autotuner may later override.
+  // Carries default tile sizes that an autotuner may later override.
   absl::Status RewriteRaggedDotAsTritonFusion(
       HloRaggedDotInstruction* ragged_dot) {
     VLOG(2) << "HandleRaggedDot Triton: " << ragged_dot->name()
             << " operand_count=" << ragged_dot->operand_count()
             << " gs_shape=" << ragged_dot->operand(2)->shape().ToString();
 
-    // Determine the ragged mode first — it drives both the inner Tile (set on
-    // fused_ragged_dot before the fused computation is finalised) and the
-    // outer BlockLevelFusionConfig (set on the fusion instruction).
+    // The ragged mode drives both the inner Tile (set on fused_ragged_dot
+    // before the fused computation is finalised) and the outer
+    // BlockLevelFusionConfig (set on the fusion instruction).
     const RaggedDotDimensionNumbers& ragged_dims =
         ragged_dot->ragged_dot_dimension_numbers();
     const DotDimensionNumbers& dot_dims = ragged_dims.dot_dimension_numbers();
     se::gpu::RaggedDotMode ragged_mode = GetRaggedDotMode(ragged_dims);
 
-    // Sequential-dim tile sizes stored on the inner ragged_dot.
     xtile::Tile inner_tile_config =
         BuildRaggedDotSequentialTile(dot_dims, ragged_mode);
 
-    // Build the fused computation: one parameter per ragged-dot operand, plus
-    // a clone of the ragged_dot itself.
     HloComputation::Builder builder(absl::StrCat(
         "triton_ragged_dot_fusion_", ragged_dot->name(), "_computation"));
     std::vector<HloInstruction*> param_instrs;
@@ -1019,10 +1009,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
           builder.AddInstruction(HloInstruction::CreateParameter(
               i, operand->shape(), operand->name())));
     }
-    // Clone the ragged_dot inside the fused computation.
     HloInstruction* fused_ragged_dot = builder.AddInstruction(
         ragged_dot->CloneWithNewOperands(ragged_dot->shape(), param_instrs));
-    // Apply the sequential-dim Tile to the inner ragged_dot instruction.
     ABSL_RETURN_IF_ERROR(
         fused_ragged_dot->set_backend_config(inner_tile_config));
 
@@ -1030,14 +1018,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         ragged_dot->GetModule()->AddComputationAndUnifyNamesAndIds(
             builder.Build(fused_ragged_dot), /*is_entry=*/false);
 
-    // Create the kCustom fusion with kTritonFusionKind, the generic Triton
-    // fusion kind.  The XTile emitter compiles such fusions through the
-    // TileAndEmitXTileModule path when they carry a block_level_fusion_config.
+    // The XTile emitter compiles a generic Triton fusion through the
+    // TileAndEmitXTileModule path when it carries a block_level_fusion_config.
     std::unique_ptr<HloInstruction> fusion_instr = HloInstruction::CreateFusion(
         ragged_dot->shape(), HloInstruction::FusionKind::kCustom,
         ragged_dot->operands(), new_computation);
 
-    // Set fusion backend config: kTritonFusionKind + default tile sizes.
     GpuBackendConfig gpu_backend_config;
     FusionBackendConfig* fusion_config =
         gpu_backend_config.mutable_fusion_backend_config();
