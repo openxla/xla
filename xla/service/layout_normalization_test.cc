@@ -15,18 +15,20 @@ limitations under the License.
 
 #include "xla/service/layout_normalization.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <functional>
 #include <optional>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/service/hlo_verifier.h"
 #include "xla/service/scatter_simplifier.h"
 
 namespace xla {
@@ -1101,6 +1103,90 @@ ENTRY main {
 // CHECK: %[[OP1:.*]] = f32[32,1,1,1]{3,2,1,0} bitcast(%[[P1]])
 // CHECK: %[[CONV:.*]] = f32[2,3,3,32]{3,2,1,0} convolution(%[[P0:.*]], {{.*}}), window={size=1x1}, dim_labels=b01f_oi10->b01f
 )");
+}
+
+TEST_F(LayoutNormalizationTest, NoBitcastsInMainThreadAsyncComputation) {
+  const char* hlo = R"(
+HloModule module
+
+async_comp {
+  p = f32[5,4]{0,1} parameter(0)
+  ROOT abs = f32[5,4]{0,1} abs(p)
+}
+
+ENTRY main {
+  p0 = f32[5,4]{0,1} parameter(0)
+  start = ((f32[5,4]{0,1}), f32[5,4]{0,1}, s32[]) async-start(p0), calls=async_comp
+  done = f32[5,4]{0,1} async-done(start)
+  ROOT neg = f32[5,4]{0,1} negate(done)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(bool changed, LayoutNormalization{}.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  EXPECT_OK(HloVerifier(HloVerifierOpts{}.MakeLayoutSensitive())
+                .Run(module.get())
+                .status());
+}
+
+TEST_F(LayoutNormalizationTest, NonMainThreadAsyncComputationIsNormalized) {
+  const char* hlo = R"(
+HloModule module
+
+async_comp {
+  p = f32[5,4]{0,1} parameter(0)
+  ROOT abs = f32[5,4]{0,1} abs(p)
+}, execution_thread="parallel"
+
+ENTRY main {
+  p0 = f32[5,4]{0,1} parameter(0)
+  start = ((f32[5,4]{0,1}), f32[5,4]{0,1}, s32[]) async-start(p0), calls=async_comp, async_execution_thread="parallel"
+  ROOT done = f32[5,4]{0,1} async-done(start)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(bool changed, LayoutNormalization{}.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  HloComputation* async_comp = module->GetComputationWithName("async_comp");
+  ASSERT_NE(async_comp, nullptr);
+  EXPECT_FALSE(async_comp->CanExpandIntoSingleInstruction());
+  EXPECT_EQ(async_comp->root_instruction()->opcode(), HloOpcode::kBitcast);
+
+  EXPECT_OK(HloVerifier(HloVerifierOpts{}.MakeLayoutSensitive())
+                .Run(module.get())
+                .status());
+}
+
+TEST_F(LayoutNormalizationTest, CollectivesGroupAsyncComputationIsNormalized) {
+  const char* hlo = R"(
+HloModule module
+
+async_comp {
+  p = f32[5,4]{0,1} parameter(0)
+  abs = f32[5,4]{0,1} abs(p)
+  ROOT neg = f32[5,4]{0,1} negate(abs)
+}
+
+ENTRY main {
+  p0 = f32[5,4]{0,1} parameter(0)
+  start = ((f32[5,4]{0,1}), f32[5,4]{0,1}, s32[]) async-start(p0), calls=async_comp, frontend_attributes={_collectives_group=""}
+  ROOT done = f32[5,4]{0,1} async-done(start)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(bool changed, LayoutNormalization{}.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  EXPECT_EQ(module->GetComputationWithName("async_comp")
+                ->root_instruction()
+                ->opcode(),
+            HloOpcode::kBitcast);
+
+  EXPECT_OK(HloVerifier(HloVerifierOpts{}.MakeLayoutSensitive())
+                .Run(module.get())
+                .status());
 }
 
 }  // namespace

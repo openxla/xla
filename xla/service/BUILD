@@ -5661,6 +5661,7 @@ cc_library(
         "//xla:literal",
         "//xla:permutation_util",
         "//xla:shape_util",
+        "//xla:side_effect_util",
         "//xla:status_macros",
         "//xla:util",
         "//xla:xla_data_proto_cc",
@@ -5759,6 +5760,7 @@ xla_cc_test(
         "layout_normalization_test.cc",
     ],
     deps = [
+        ":hlo_verifier",
         ":layout_normalization",
         ":scatter_simplifier",
         "//xla/hlo/ir:hlo",
