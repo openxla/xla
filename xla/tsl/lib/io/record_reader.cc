@@ -105,6 +105,18 @@ inline const char* GetChecksumErrorSuffix(uint64_t offset) {
   }
   return "";
 }
+
+absl::Status ValidateRecordBounds(uint64_t offset, uint64_t length) {
+  constexpr uint64_t kRecordOverhead =
+      RecordReader::kHeaderSize + RecordReader::kFooterSize;
+  constexpr uint64_t kMaxStreamPosition = INT64_MAX;
+  if (offset > kMaxStreamPosition - kRecordOverhead ||
+      length > kMaxStreamPosition - kRecordOverhead - offset) {
+    return absl::DataLossError(absl::StrCat(
+        "record size too large at ", offset, GetChecksumErrorSuffix(offset)));
+  }
+  return absl::OkStatus();
+}
 }  // namespace
 
 // Read n+4 bytes from file, verify that checksum of first n bytes is
@@ -174,6 +186,7 @@ absl::Status RecordReader::GetMetadata(Metadata* md) {
 
       // Read the length of the data.
       const uint64_t length = core::DecodeFixed64(record.data());
+      ABSL_RETURN_IF_ERROR(ValidateRecordBounds(offset, length));
 
       // Skip reading the actual data since we just want the number
       // of records and the size of the data.
@@ -221,6 +234,11 @@ absl::Status RecordReader::ReadRecord(uint64_t* offset, tstring* record) {
     return s;
   }
   const uint64_t length = core::DecodeFixed64(record->data());
+  s = ValidateRecordBounds(*offset, length);
+  if (!s.ok()) {
+    last_read_failed_ = true;
+    return s;
+  }
 
   // Read data
   s = ReadChecksummed(*offset + kHeaderSize, length, record);
@@ -252,6 +270,7 @@ absl::Status RecordReader::SkipRecords(uint64_t* offset, int num_to_skip,
       return s;
     }
     const uint64_t length = core::DecodeFixed64(record.data());
+    ABSL_RETURN_IF_ERROR(ValidateRecordBounds(*offset, length));
 
     // Skip data
     s = input_stream_->SkipNBytes(length + kFooterSize);

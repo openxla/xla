@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <limits>
+
 #include "absl/status/status.h"
 #include "tsl/platform/coding.h"
 #include "tsl/platform/str_util.h"
@@ -191,6 +193,103 @@ class RecordioTest : public ::testing::Test {
 };
 
 TEST_F(RecordioTest, Empty) { ASSERT_EQ("EOF", Read()); }
+
+TEST(RecordReaderTest, RejectsWrappedRecordLength) {
+  const uint64_t length = std::numeric_limits<uint64_t>::max() - 1;
+  std::string contents(RecordReader::kHeaderSize + 2, '\0');
+  core::EncodeFixed64(contents.data(), length);
+  core::EncodeFixed32(
+      contents.data() + sizeof(uint64_t),
+      crc32c::Mask(crc32c::Value(contents.data(), sizeof(uint64_t))));
+
+  StringSource metadata_source(&contents);
+  RecordReader metadata_reader(&metadata_source);
+  RecordReader::Metadata metadata;
+  EXPECT_TRUE(absl::IsDataLoss(metadata_reader.GetMetadata(&metadata)));
+
+  StringSource skip_source(&contents);
+  RecordReader skip_reader(&skip_source);
+  uint64_t offset = 0;
+  int num_skipped = -1;
+  EXPECT_TRUE(absl::IsDataLoss(
+      skip_reader.SkipRecords(&offset, 1, &num_skipped)));
+  EXPECT_EQ(offset, 0);
+  EXPECT_EQ(num_skipped, 0);
+}
+
+// A reader positioned at kHeaderSize in a Snappy-compressed file decodes the
+// payload of the first record as its own stream, so the payload can carry a
+// record header that the writer would never emit.
+namespace {
+std::string MakeRecordHeader(uint64_t length) {
+  std::string header(RecordReader::kHeaderSize, '\0');
+  core::EncodeFixed64(header.data(), length);
+  core::EncodeFixed32(
+      header.data() + sizeof(uint64_t),
+      crc32c::Mask(crc32c::Value(header.data(), sizeof(uint64_t))));
+  return header;
+}
+
+std::string MakeSnappyFileWithPayload(const std::string& payload) {
+  std::string contents;
+  StringDest dst(&contents);
+  RecordWriter writer(
+      &dst, RecordWriterOptions::CreateRecordWriterOptions("SNAPPY"));
+  EXPECT_TRUE(writer.WriteRecord(payload).ok());
+  EXPECT_TRUE(writer.Close().ok());
+  return contents;
+}
+}  // namespace
+
+TEST(RecordReaderTest, SnappyReadRecordAcceptsGenuineRecord) {
+  const RecordReaderOptions options =
+      RecordReaderOptions::CreateRecordReaderOptions("SNAPPY");
+  const std::string body = "abc";
+  std::string footer(RecordReader::kFooterSize, '\0');
+  core::EncodeFixed32(footer.data(),
+                      crc32c::Mask(crc32c::Value(body.data(), body.size())));
+  std::string contents = MakeSnappyFileWithPayload(
+      MakeRecordHeader(body.size()) + body + footer);
+  StringSource file(&contents);
+  RecordReader reader(&file, options);
+  uint64_t offset = RecordReader::kHeaderSize;
+  tstring record;
+  TF_ASSERT_OK(reader.ReadRecord(&offset, &record));
+  EXPECT_EQ(record, body);
+  EXPECT_EQ(offset, RecordReader::kHeaderSize + RecordReader::kHeaderSize +
+                        body.size() + RecordReader::kFooterSize);
+}
+
+TEST(RecordReaderTest, SnappyReadRecordTruncatedLengthIsDataLoss) {
+  const RecordReaderOptions options =
+      RecordReaderOptions::CreateRecordReaderOptions("SNAPPY");
+  std::string contents = MakeSnappyFileWithPayload(MakeRecordHeader(1000));
+  StringSource file(&contents);
+  RecordReader reader(&file, options);
+  uint64_t offset = RecordReader::kHeaderSize;
+  tstring record;
+  EXPECT_TRUE(absl::IsDataLoss(reader.ReadRecord(&offset, &record)));
+  EXPECT_EQ(offset, RecordReader::kHeaderSize);
+}
+
+TEST(RecordReaderTest, SnappyReadRecordRejectsLengthPastInt64) {
+  const RecordReaderOptions options =
+      RecordReaderOptions::CreateRecordReaderOptions("SNAPPY");
+  const uint64_t int64_max = std::numeric_limits<int64_t>::max();
+  // Every value is below SIZE_MAX - sizeof(uint32_t), so ReadChecksummed does
+  // not reject it, but length + sizeof(uint32_t) exceeds INT64_MAX.
+  for (uint64_t length : {int64_max, int64_max + 1,
+                          std::numeric_limits<uint64_t>::max() - 5}) {
+    std::string contents = MakeSnappyFileWithPayload(MakeRecordHeader(length));
+    StringSource file(&contents);
+    RecordReader reader(&file, options);
+    uint64_t offset = RecordReader::kHeaderSize;
+    tstring record;
+    absl::Status s = reader.ReadRecord(&offset, &record);
+    EXPECT_TRUE(absl::IsDataLoss(s)) << length << ": " << s;
+    EXPECT_EQ(offset, RecordReader::kHeaderSize) << length;
+  }
+}
 
 TEST_F(RecordioTest, ReadWrite) {
   Write("foo");
