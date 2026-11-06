@@ -154,7 +154,7 @@ bool BufferLayoutConstraint::UpdateLayout(int64_t priority,
 }
 
 OperandLayoutConstraint::OperandLayoutConstraint(
-    const ShapeLayout& shape_layout, const HloInstruction* instruction,
+    ShapeLayout shape_layout, const HloInstruction* instruction,
     int64_t operand_no, bool mandatory, bool dfs, int64_t priority)
     : LayoutConstraint(mandatory, dfs, priority),
       instruction_(instruction),
@@ -166,18 +166,30 @@ OperandLayoutConstraint::OperandLayoutConstraint(
       << shape_layout.shape() << " is not compatible with "
       << instruction->operand(operand_no)->shape() << " (for operand "
       << operand_no << " of instruction " << instruction->ToString() << ")";
-  shape_layout_.push_back(shape_layout);
+  shape_layout_.push_back(std::move(shape_layout));
+}
+
+bool OperandLayoutConstraint::IsSatisfiedBy(const Layout& layout) const {
+  // The layout half of shape_layout().MatchesLayoutInShape(shape,
+  // /*minor_to_major_only=*/true) for an array shape. The shape half holds
+  // for the operand the constraint was built from, whose shape does not
+  // change while the constraint is alive.
+  return Layout::Equal()
+      .IgnoreTiles()
+      .IgnoreElementSize()
+      .IgnoreMemorySpace()
+      .IgnoreTailPaddingAlignmentInElements()
+      .IgnoreSplitConfigs()(layout, shape_layout().layout());
 }
 
 bool OperandLayoutConstraint::UpdateLayout(int64_t new_priority,
                                            const Shape& new_shape,
                                            bool mandatory, bool dfs,
                                            LayoutAssignment* assignment) {
-  if (shape_layout().MatchesLayoutInShape(new_shape,
-                                          /*minor_to_major_only=*/true)) {
-    if (priority_ < new_priority) {
-      priority_ = new_priority;
-    }
+  if (new_shape.IsArray() ? IsSatisfiedBy(new_shape.layout())
+                          : shape_layout().MatchesLayoutInShape(
+                                new_shape, /*minor_to_major_only=*/true)) {
+    RaisePriority(new_priority);
     VLOG(3) << "SUCC b/c the new layout matches the existing one.";
     // New constraint matches existing constraint. Nothing to do.
     return false;
@@ -368,6 +380,15 @@ absl::Status LayoutAssignment::SetOperandLayout(
   }
   LayoutConstraints& constraints =
       *FindOrDie(computation_layouts_, instruction->parent());
+  return SetOperandLayout(
+      shape_with_layout, instruction, operand_no, mandatory, dfs, priority,
+      constraints.MutableOperandLayoutConstraint(instruction, operand_no));
+}
+
+absl::Status LayoutAssignment::SetOperandLayout(
+    const Shape& shape_with_layout, const HloInstruction* instruction,
+    int64_t operand_no, bool mandatory, bool dfs, int64_t priority,
+    std::unique_ptr<OperandLayoutConstraint>& constraint_slot) {
   // The second and third operands (operand_no > 0) of a dynamic-update-slice
   // operation typically have much smaller sizes than the first (operand_no==0)
   // operand. It is necessary to downgrade the importance of the smaller
@@ -388,25 +409,23 @@ absl::Status LayoutAssignment::SetOperandLayout(
           << ShapeUtil::HumanStringWithLayout(shape_with_layout)
           << " : priority = " << priority << "; mandatory = " << mandatory
           << "; dfs = " << dfs << "\n";
-  std::unique_ptr<OperandLayoutConstraint>& curr_shape_layout =
-      constraints.MutableOperandLayoutConstraint(instruction, operand_no);
-  if (curr_shape_layout) {
-    if (!curr_shape_layout->UpdateLayout(priority, shape_with_layout, mandatory,
-                                         dfs, this)) {
+  if (constraint_slot) {
+    if (!constraint_slot->UpdateLayout(priority, shape_with_layout, mandatory,
+                                       dfs, this)) {
       return absl::OkStatus();
     }
-    priority = curr_shape_layout->priority();
+    priority = constraint_slot->priority();
   }
-  if (curr_shape_layout == nullptr) {
-    curr_shape_layout = std::make_unique<OperandLayoutConstraint>(
+  if (constraint_slot == nullptr) {
+    constraint_slot = std::make_unique<OperandLayoutConstraint>(
         ShapeLayout(shape_with_layout), instruction, operand_no, mandatory, dfs,
         priority);
   } else {
-    *curr_shape_layout =
+    *constraint_slot =
         OperandLayoutConstraint(ShapeLayout(shape_with_layout), instruction,
                                 operand_no, mandatory, dfs, priority);
   }
-  PushAddedConstraints(curr_shape_layout.get());
+  PushAddedConstraints(constraint_slot.get());
   return absl::OkStatus();
 }
 
@@ -439,11 +458,24 @@ absl::Status LayoutAssignment::SetArrayOperandLayout(
     bool mandatory, bool dfs, int64_t priority) {
   const HloInstruction* operand = instruction->operand(operand_no);
   TF_RET_CHECK(operand->shape().IsArray());
+  ABSL_RETURN_IF_ERROR(
+      LayoutUtil::ValidateLayoutForShape(layout, operand->shape()));
+  if (operand->shape().dimensions().empty()) {
+    return absl::OkStatus();  // SetOperandLayout ignores scalars.
+  }
+  // SetOperandLayout leaves a constraint that already holds this layout
+  // untouched; decide that here, before copying the operand shape for it.
+  std::unique_ptr<OperandLayoutConstraint>& constraint_slot =
+      FindOrDie(computation_layouts_, instruction->parent())
+          ->MutableOperandLayoutConstraint(instruction, operand_no);
+  if (constraint_slot != nullptr && constraint_slot->IsSatisfiedBy(layout)) {
+    constraint_slot->RaisePriority(priority);
+    return absl::OkStatus();
+  }
   Shape shape(operand->shape());
   *shape.mutable_layout() = layout;
-  ABSL_RETURN_IF_ERROR(LayoutUtil::ValidateLayoutInShape(shape));
   return SetOperandLayout(shape, instruction, operand_no, mandatory, dfs,
-                          priority);
+                          priority, constraint_slot);
 }
 
 absl::Status LayoutAssignment::LayoutConstraints::SetResultLayout(
