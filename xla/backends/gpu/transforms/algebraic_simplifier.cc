@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -27,6 +28,7 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/backends/gpu/transforms/conv_rewriter.h"
 #include "xla/backends/gpu/transforms/one_hot_gather_utils.h"
 #include "xla/comparison_util.h"
@@ -40,12 +42,16 @@ limitations under the License.
 #include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier.h"
 #include "xla/hlo/transforms/simplifiers/algebraic_simplifier_options.pb.h"
+#include "xla/layout_util.h"
 #include "xla/primitive_util.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/xla_data.pb.h"
 
@@ -322,6 +328,140 @@ absl::Status GpuAlgebraicSimplifierVisitor::HandleReduce(
   return AlgebraicSimplifierVisitor::HandleReduce(reduce);
 }
 
+absl::StatusOr<bool>
+GpuAlgebraicSimplifierVisitor::TryFoldExactWideningConvertsIntoDot(
+    HloInstruction* dot) {
+  if (dot->opcode() != HloOpcode::kDot || dot->operand_count() != 2) {
+    return false;
+  }
+  if (dot->sparsity_config().ByteSizeLong() != 0 ||
+      dot->block_scaling_config().ByteSizeLong() != 0) {
+    return false;
+  }
+  if (dot->shape().element_type() != PrimitiveType::F32) {
+    return false;
+  }
+
+  const PrecisionConfig& precision_config = dot->precision_config();
+  if (precision_config.algorithm() != PrecisionConfig::ALG_UNSET) {
+    return false;
+  }
+  for (int precision : precision_config.operand_precision()) {
+    if (precision != PrecisionConfig::DEFAULT) {
+      return false;
+    }
+  }
+
+  HloInstruction* lhs = dot->mutable_operand(0);
+  HloInstruction* rhs = dot->mutable_operand(1);
+  if (lhs->opcode() != HloOpcode::kConvert ||
+      rhs->opcode() != HloOpcode::kConvert) {
+    return false;
+  }
+  if (lhs->shape().element_type() != PrimitiveType::F32 ||
+      rhs->shape().element_type() != PrimitiveType::F32) {
+    return false;
+  }
+
+  HloInstruction* lhs_src = lhs->mutable_operand(0);
+  HloInstruction* rhs_src = rhs->mutable_operand(0);
+  PrimitiveType type = lhs_src->shape().element_type();
+  if (type != rhs_src->shape().element_type()) {
+    return false;
+  }
+  if (type != PrimitiveType::BF16 && type != PrimitiveType::F16) {
+    return false;
+  }
+
+  // Only rewrite dots that can be handled by cuBLAS without undoing
+  // OperandUpcaster.
+  ABSL_ASSIGN_OR_RETURN(
+      bool is_cublas_supported,
+      gpu::IsCublasSupportedMatMul(
+          *dot, /*allow_matrix_vector_multiplication=*/false));
+  if (!is_cublas_supported) {
+    return false;
+  }
+
+  // Skip tiny dots that will be skipped by GemmFusion/GemmRewriter and lowered
+  // via elemental emitters.
+  int64_t threshold = 100;
+  if (dot->GetModule() != nullptr) {
+    threshold = dot->GetModule()
+                    ->config()
+                    .debug_options()
+                    .xla_gpu_gemm_rewrite_size_threshold();
+  }
+  if (threshold > 0) {
+    ABSL_ASSIGN_OR_RETURN(
+        bool is_matmul_tiny,
+        IsMatrixMultiplicationTooSmallForRewriting(*dot, threshold));
+    if (is_matmul_tiny) {
+      return false;
+    }
+  }
+
+  if (compute_capability_.IsCuda()) {
+    // When TensorFloat-32 execution is globally disabled, do not route F32 dots
+    // onto Tensor Cores.
+    if (!tsl::tensor_float_32_execution_enabled()) {
+      return false;
+    }
+    const se::CudaComputeCapability* cuda_cc =
+        compute_capability_.cuda_compute_capability();
+    if (cuda_cc == nullptr) {
+      return false;
+    }
+    if (type == PrimitiveType::BF16 && !cuda_cc->IsAtLeastAmpere()) {
+      return false;
+    }
+    if (type == PrimitiveType::F16 && !cuda_cc->IsAtLeastVolta()) {
+      return false;
+    }
+  } else if (compute_capability_.IsRocm()) {
+    const se::RocmComputeCapability* rocm_cc =
+        compute_capability_.rocm_compute_capability();
+    if (rocm_cc == nullptr) {
+      return false;
+    }
+    // On older CDNA1/CDNA2 architectures (MI100/MI200), BF16 MFMA flushes
+    // subnormals to zero. Only fold BF16 converts on MI300 series or RDNA3/4
+    // (gfx11/gfx12) where IEEE subnormals are preserved.
+    if (type == PrimitiveType::BF16 &&
+        !(rocm_cc->gfx9_mi300_series() || rocm_cc->gfx11() ||
+          rocm_cc->gfx12())) {
+      return false;
+    }
+    if (type == PrimitiveType::F16 && !rocm_cc->has_fast_fp16_support()) {
+      return false;
+    }
+  } else {
+    return false;
+  }
+
+  if (options_.is_layout_sensitive()) {
+    if (!LayoutUtil::LayoutsInShapesEqual(lhs_src->shape(), lhs->shape()) ||
+        !LayoutUtil::LayoutsInShapesEqual(rhs_src->shape(), rhs->shape())) {
+      return false;
+    }
+  }
+
+  std::unique_ptr<HloInstruction> new_dot = HloInstruction::CreateDot(
+      dot->shape(), lhs_src, rhs_src, dot->dot_dimension_numbers(),
+      dot->precision_config());
+  new_dot->CopyBackendConfigFrom(dot);
+  ABSL_RETURN_IF_ERROR(ReplaceWithNewInstruction(dot, std::move(new_dot)));
+  return true;
+}
+
+absl::Status GpuAlgebraicSimplifierVisitor::HandleDot(HloInstruction* dot) {
+  ABSL_ASSIGN_OR_RETURN(bool changed, TryFoldExactWideningConvertsIntoDot(dot));
+  if (changed) {
+    return absl::OkStatus();
+  }
+
+  return AlgebraicSimplifierVisitor::HandleDot(dot);
+}
 bool GpuAlgebraicSimplifierVisitor::SupportedDotPrecisionConfig(
     const PrecisionConfig& config, bool has_contracting_dim) {
   if (!has_contracting_dim) {

@@ -23,8 +23,10 @@ limitations under the License.
 
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
@@ -34,6 +36,7 @@ limitations under the License.
 #include "xla/service/pattern_matcher.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/tests/literal_test_util.h"
 
 namespace xla::gpu {
@@ -43,11 +46,29 @@ namespace m = ::xla::match;
 
 class GpuAlgebraicSimplifierTest : public HloHardwareIndependentTestBase {
  public:
+  se::CudaComputeCapability Pascal() {
+    return se::CudaComputeCapability::Pascal();
+  }
+  se::CudaComputeCapability Volta() {
+    return se::CudaComputeCapability::Volta();
+  }
   se::CudaComputeCapability Ampere() {
     return se::CudaComputeCapability::Ampere();
   }
   se::CudaComputeCapability Hopper() {
     return se::CudaComputeCapability::Hopper();
+  }
+  se::GpuComputeCapability RocmMI200() {
+    return se::GpuComputeCapability(se::RocmComputeCapability("gfx90a"));
+  }
+  se::GpuComputeCapability RocmMI300() {
+    return se::GpuComputeCapability(se::RocmComputeCapability("gfx942"));
+  }
+  se::GpuComputeCapability RocmGfx11() {
+    return se::GpuComputeCapability(se::RocmComputeCapability("gfx1100"));
+  }
+  se::GpuComputeCapability RocmNoBF16() {
+    return se::GpuComputeCapability(se::RocmComputeCapability("gfx900"));
   }
 };
 
@@ -423,5 +444,378 @@ TEST_F(GpuAlgebraicSimplifierTest,
   EXPECT_TRUE(LiteralTestUtil::Equal(expected, actual));
 }
 
+TEST_F(GpuAlgebraicSimplifierTest, FoldExactWideningConvertsBf16ToF32Dot) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64] parameter(0)
+      b = bf16[64,32] parameter(1)
+      c_a = f32[16,64] convert(a)
+      c_b = f32[64,32] convert(b)
+      ROOT dot = f32[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  ASSERT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kDot);
+  EXPECT_EQ(root->shape().element_type(), PrimitiveType::F32);
+  EXPECT_EQ(root->operand(0)->shape().element_type(), PrimitiveType::BF16);
+  EXPECT_EQ(root->operand(1)->shape().element_type(), PrimitiveType::BF16);
+  EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kParameter);
+  EXPECT_EQ(root->operand(1)->opcode(), HloOpcode::kParameter);
+  EXPECT_EQ(root->dot_dimension_numbers().lhs_contracting_dimensions(0), 1);
+  EXPECT_EQ(root->dot_dimension_numbers().rhs_contracting_dimensions(0), 0);
+}
+
+TEST_F(GpuAlgebraicSimplifierTest, FoldExactWideningConvertsF16ToF32Dot) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = f16[16,64] parameter(0)
+      b = f16[64,32] parameter(1)
+      c_a = f32[16,64] convert(a)
+      c_b = f32[64,32] convert(b)
+      ROOT dot = f32[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  ASSERT_THAT(GpuAlgebraicSimplifier(options, Volta()).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kDot);
+  EXPECT_EQ(root->shape().element_type(), PrimitiveType::F32);
+  EXPECT_EQ(root->operand(0)->shape().element_type(), PrimitiveType::F16);
+  EXPECT_EQ(root->operand(1)->shape().element_type(), PrimitiveType::F16);
+  EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kParameter);
+  EXPECT_EQ(root->operand(1)->opcode(), HloOpcode::kParameter);
+}
+
+TEST_F(GpuAlgebraicSimplifierTest,
+       FoldExactWideningConvertsPreservesOtherUsers) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64] parameter(0)
+      b = bf16[64,32] parameter(1)
+      c_a = f32[16,64] convert(a)
+      c_b = f32[64,32] convert(b)
+      d = f32[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+      ROOT result = (f32[16,32], f32[16,64]) tuple(d, c_a)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  ASSERT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kTuple);
+  const HloInstruction* dot = root->operand(0);
+  EXPECT_EQ(dot->opcode(), HloOpcode::kDot);
+  EXPECT_EQ(dot->operand(0)->shape().element_type(), PrimitiveType::BF16);
+  EXPECT_EQ(dot->operand(1)->shape().element_type(), PrimitiveType::BF16);
+  const HloInstruction* surviving_convert = root->operand(1);
+  EXPECT_EQ(surviving_convert->opcode(), HloOpcode::kConvert);
+  EXPECT_EQ(surviving_convert->shape().element_type(), PrimitiveType::F32);
+}
+
+TEST_F(GpuAlgebraicSimplifierTest, DoNotFoldConvertsWithHighPrecision) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64] parameter(0)
+      b = bf16[64,32] parameter(1)
+      c_a = f32[16,64] convert(a)
+      c_b = f32[64,32] convert(b)
+      ROOT dot = f32[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0},
+        operand_precision={HIGHEST, HIGHEST}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  EXPECT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(GpuAlgebraicSimplifierTest, DoNotFoldConvertsWithExplicitAlgorithm) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64] parameter(0)
+      b = bf16[64,32] parameter(1)
+      c_a = f32[16,64] convert(a)
+      c_b = f32[64,32] convert(b)
+      ROOT dot = f32[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0},
+        algorithm=dot_bf16_bf16_f32_x3
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  EXPECT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(GpuAlgebraicSimplifierTest, DoNotFoldConvertsWithMixedDtypes) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64] parameter(0)
+      b = f16[64,32] parameter(1)
+      c_a = f32[16,64] convert(a)
+      c_b = f32[64,32] convert(b)
+      ROOT dot = f32[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  EXPECT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(GpuAlgebraicSimplifierTest,
+       DoNotFoldConvertsWhenOnlyOneOperandConverted) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64] parameter(0)
+      b = f32[64,32] parameter(1)
+      c_a = f32[16,64] convert(a)
+      ROOT dot = f32[16,32] dot(c_a, b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  EXPECT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(GpuAlgebraicSimplifierTest, DoNotFoldConvertsWithNonF32Output) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64] parameter(0)
+      b = bf16[64,32] parameter(1)
+      c_a = f64[16,64] convert(a)
+      c_b = f64[64,32] convert(b)
+      ROOT dot = f64[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  EXPECT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(GpuAlgebraicSimplifierTest, DoNotFoldConvertsOnUnsupportedHardware) {
+  constexpr char kModuleBf16[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64] parameter(0)
+      b = bf16[64,32] parameter(1)
+      c_a = f32[16,64] convert(a)
+      c_b = f32[64,32] convert(b)
+      ROOT dot = f32[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+  AlgebraicSimplifierOptions options;
+
+  // BF16 on Volta: unsupported (requires Ampere+).
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleBf16));
+    EXPECT_THAT(GpuAlgebraicSimplifier(options, Volta()).Run(m.get()),
+                absl_testing::IsOkAndHolds(false));
+  }
+
+  // BF16 on Pascal: unsupported.
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleBf16));
+    EXPECT_THAT(GpuAlgebraicSimplifier(options, Pascal()).Run(m.get()),
+                absl_testing::IsOkAndHolds(false));
+  }
+
+  constexpr char kModuleF16[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = f16[16,64] parameter(0)
+      b = f16[64,32] parameter(1)
+      c_a = f32[16,64] convert(a)
+      c_b = f32[64,32] convert(b)
+      ROOT dot = f32[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+
+  // F16 on Pascal: unsupported (requires Volta+).
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleF16));
+    EXPECT_THAT(GpuAlgebraicSimplifier(options, Pascal()).Run(m.get()),
+                absl_testing::IsOkAndHolds(false));
+  }
+
+  // ROCm tests:
+  // BF16 on ROCm without bf16 support: unsupported.
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleBf16));
+    EXPECT_THAT(GpuAlgebraicSimplifier(options, RocmNoBF16()).Run(m.get()),
+                absl_testing::IsOkAndHolds(false));
+  }
+  // BF16 on older ROCm CDNA2 (MI200 / gfx90a) flushes subnormals: unsupported.
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleBf16));
+    EXPECT_THAT(GpuAlgebraicSimplifier(options, RocmMI200()).Run(m.get()),
+                absl_testing::IsOkAndHolds(false));
+  }
+  // BF16 on ROCm MI300 (gfx942): supported.
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleBf16));
+    EXPECT_THAT(GpuAlgebraicSimplifier(options, RocmMI300()).Run(m.get()),
+                absl_testing::IsOkAndHolds(true));
+  }
+  // BF16 on ROCm gfx11 (RDNA3): supported.
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleBf16));
+    EXPECT_THAT(GpuAlgebraicSimplifier(options, RocmGfx11()).Run(m.get()),
+                absl_testing::IsOkAndHolds(true));
+  }
+  // F16 on ROCm MI200: supported.
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleF16));
+    EXPECT_THAT(GpuAlgebraicSimplifier(options, RocmMI200()).Run(m.get()),
+                absl_testing::IsOkAndHolds(true));
+  }
+}
+
+TEST_F(GpuAlgebraicSimplifierTest, DoNotFoldWhenTensorFloat32Disabled) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64] parameter(0)
+      b = bf16[64,32] parameter(1)
+      c_a = f32[16,64] convert(a)
+      c_b = f32[64,32] convert(b)
+      ROOT dot = f32[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  bool prev_enabled = tsl::tensor_float_32_execution_enabled();
+  tsl::enable_tensor_float_32_execution(false);
+  EXPECT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+  tsl::enable_tensor_float_32_execution(prev_enabled);
+}
+
+TEST_F(GpuAlgebraicSimplifierTest, DoNotFoldSmallMatMul) {
+  // (4 + 4) * 4 = 32 < 100
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = f16[4,4] parameter(0)
+      b = f16[4,4] parameter(1)
+      c_a = f32[4,4] convert(a)
+      c_b = f32[4,4] convert(b)
+      ROOT dot = f32[4,4] dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  EXPECT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(GpuAlgebraicSimplifierTest,
+       DoNotFoldNonCublasSupportedMultipleContractingDims) {
+  // cuBLAS does not support multiple contracting dimensions.
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = f16[16,8,8] parameter(0)
+      b = f16[8,8,32] parameter(1)
+      c_a = f32[16,8,8] convert(a)
+      c_b = f32[8,8,32] convert(b)
+      ROOT dot = f32[16,32] dot(c_a, c_b),
+        lhs_contracting_dims={1,2},
+        rhs_contracting_dims={0,1}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  EXPECT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kDot);
+  EXPECT_EQ(root->operand(0)->shape().element_type(), PrimitiveType::F32);
+  EXPECT_EQ(root->operand(1)->shape().element_type(), PrimitiveType::F32);
+}
+
+TEST_F(GpuAlgebraicSimplifierTest, LayoutSensitiveModeMismatchedLayouts) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64]{0,1} parameter(0)
+      b = bf16[64,32]{1,0} parameter(1)
+      c_a = f32[16,64]{1,0} convert(a)
+      c_b = f32[64,32]{1,0} convert(b)
+      ROOT dot = f32[16,32]{1,0} dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  EXPECT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(false));
+}
+
+TEST_F(GpuAlgebraicSimplifierTest, LayoutSensitiveModeMatchingLayouts) {
+  constexpr char kModuleStr[] = R"(
+    HloModule test
+    ENTRY dot {
+      a = bf16[16,64]{1,0} parameter(0)
+      b = bf16[64,32]{1,0} parameter(1)
+      c_a = f32[16,64]{1,0} convert(a)
+      c_b = f32[64,32]{1,0} convert(b)
+      ROOT dot = f32[16,32]{1,0} dot(c_a, c_b),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={0}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  AlgebraicSimplifierOptions options;
+  options.set_is_layout_sensitive(true);
+  EXPECT_THAT(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* root = m->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kDot);
+  EXPECT_EQ(root->operand(0)->shape().element_type(), PrimitiveType::BF16);
+  EXPECT_EQ(root->operand(1)->shape().element_type(), PrimitiveType::BF16);
+}
 }  // namespace
 }  // namespace xla::gpu

@@ -718,6 +718,42 @@ TEST_F(ElementalHloToMlirTest, DotWithBF16Type) {
   )"));
 }
 
+TEST_F(ElementalHloToMlirTest, DotWithMixedBF16ToF32Type) {
+  EXPECT_OK(Run(R"(
+    ENTRY main {
+      p0 = bf16[3, 4] parameter(0)
+      p1 = bf16[4, 5] parameter(1)
+      ROOT dot = f32[3, 5] dot(p0, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })",
+                R"(
+    // CHECK:      @main_dot(
+    // CHECK-SAME: %[[A:.*]]: tensor<3x4xbf16>, %[[B:.*]]: tensor<4x5xbf16>
+    // CHECK-DAG:    arith.extf {{.*}} : bf16 to f32
+    // CHECK-DAG:    arith.extf {{.*}} : bf16 to f32
+    // CHECK-DAG:    arith.mulf {{.*}} : f32
+    // CHECK-DAG:    arith.addf {{.*}} : f32
+    // CHECK:        return {{.*}} : f32
+  )"));
+}
+
+TEST_F(ElementalHloToMlirTest, DotWithMixedF16ToF32Type) {
+  EXPECT_OK(Run(R"(
+    ENTRY main {
+      p0 = f16[3, 4] parameter(0)
+      p1 = f16[4, 5] parameter(1)
+      ROOT dot = f32[3, 5] dot(p0, p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    })",
+                R"(
+    // CHECK:      @main_dot(
+    // CHECK-SAME: %[[A:.*]]: tensor<3x4xf16>, %[[B:.*]]: tensor<4x5xf16>
+    // CHECK-DAG:    arith.extf {{.*}} : f16 to f32
+    // CHECK-DAG:    arith.extf {{.*}} : f16 to f32
+    // CHECK-DAG:    arith.mulf {{.*}} : f32
+    // CHECK-DAG:    arith.addf {{.*}} : f32
+    // CHECK:        return {{.*}} : f32
+  )"));
+}
+
 TEST_F(ElementalHloToMlirTest, DotWithS32Type) {
   EXPECT_OK(Run(R"(
     ENTRY main {

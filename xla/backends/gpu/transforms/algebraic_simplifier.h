@@ -41,6 +41,7 @@ class GpuAlgebraicSimplifierVisitor : public AlgebraicSimplifierVisitor {
         compute_capability_(std::move(compute_capability)) {}
 
   absl::Status HandleAdd(HloInstruction* add) override;
+  absl::Status HandleDot(HloInstruction* dot) override;
   absl::Status HandleReduce(HloInstruction* reduce) override;
 
  private:
@@ -72,6 +73,10 @@ class GpuAlgebraicSimplifierVisitor : public AlgebraicSimplifierVisitor {
   absl::StatusOr<bool> TryToSimplifyOneHotReduceToGather(
       HloInstruction* reduce);
 
+  // Try to fold widening converts from bf16 or f16 into an f32 dot operation:
+  // f32 dot(convert<f32>(x:T), convert<f32>(y:T)) -> f32 dot(x:T, y:T)
+  // where T in {bf16, f16}.
+  absl::StatusOr<bool> TryFoldExactWideningConvertsIntoDot(HloInstruction* dot);
   se::GpuComputeCapability compute_capability_;
 };
 
