@@ -45,8 +45,9 @@ void AliasAnalysis::AddAliasingInformationToIrArray(const HloInstruction& hlo,
   BufferAllocation::Slice buffer_slice;
   if (hlo.opcode() == HloOpcode::kParameter &&
       hlo.parent() == module_.entry_computation()) {
-    // Entry computation parameters may alias with each other but may not alias
-    // with our temporary buffers.
+    // Non donated entry computation parameters may alias with each other but
+    // may not alias with our temporary buffers. A donated parameter aliases no
+    // other parameter; see BufferAllocation::is_parameter_aliased_with_output.
     buffer_slice = BufferAllocation::Slice(kParameterAllocation, 0, 0);
   } else {
     auto unique_slice = assignment_.GetUniqueSlice(&hlo, index);

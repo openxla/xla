@@ -144,6 +144,14 @@ class BufferAllocation {
     return is_entry_computation_parameter_;
   }
 
+  // Whether this entry parameter allocation is donated: some output aliases it
+  // (input_output_alias), so the computation may write it in place.
+  //
+  // A donated buffer is exclusive to its parameter for the whole execution.
+  // Callers must not pass it, or memory overlapping it, as any other
+  // parameter. Non donated entry parameters may share memory with each other,
+  // since none of them is written. Codegen may rely on this: buffers backing
+  // other parameters may be marked noalias against a donated one.
   bool is_parameter_aliased_with_output() const {
     return is_parameter_aliased_with_output_;
   }
