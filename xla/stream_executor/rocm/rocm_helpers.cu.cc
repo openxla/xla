@@ -207,7 +207,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
         uint32_t strideA2, uint32_t strideB1, uint32_t strideB2,
         uint32_t strideC1, uint32_t strideC2, uint32_t strideD1,
         uint32_t strideD2, uint32_t num_gemms, int32_t activation_type,
-        int8_t bias_type, bool has_matrix_bias) {
+        int32_t bias_type, bool has_matrix_bias) {
   __builtin_assume(num_gemms != 0);
   const T* typed_group_sizes = static_cast<const T*>(group_sizes);
 
@@ -317,6 +317,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
       arg.scaleAlphaVec = nullptr;
       arg.bias = const_cast<void*>(bias);
       arg.biasType = bias_type;
+      arg.reserved = 0;
       arg.e = nullptr;
       // Use activation parameters (always 0.0 from hipBLASLt defaults)
       arg.act0 = 0.0f;
@@ -352,7 +353,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
         uint32_t strideA2, uint32_t strideB1, uint32_t strideB2,
         uint32_t strideC1, uint32_t strideC2, uint32_t strideD1,
         uint32_t strideD2, uint32_t num_gemms, int32_t activation_type,
-        int8_t bias_type, bool has_matrix_bias) {
+        int32_t bias_type, bool has_matrix_bias) {
   __builtin_assume(num_gemms != 0);
   const T* typed_group_sizes = static_cast<const T*>(group_sizes);
 
@@ -449,6 +450,7 @@ __launch_bounds__(BLOCK_SIZE) __global__
       arg.scaleAlphaVec = nullptr;
       arg.bias = const_cast<void*>(bias);
       arg.biasType = bias_type;
+      arg.reserved = 0;
       arg.e = nullptr;
       // Use activation parameters (always 0.0 from hipBLASLt defaults)
       arg.act0 = 0.0f;
@@ -482,7 +484,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ void SetUserArgsKernelRaggedInBatchDim(
     uint32_t n, uint32_t k, uint32_t batch, uint32_t strideA1,
     uint32_t strideA2, uint32_t strideB1, uint32_t strideB2, uint32_t strideC1,
     uint32_t strideC2, uint32_t strideD1, uint32_t strideD2, uint32_t num_gemms,
-    int32_t activation_type, int8_t bias_type, bool has_matrix_bias) {
+    int32_t activation_type, int32_t bias_type, bool has_matrix_bias) {
   __builtin_assume(num_gemms != 0);
   const T* typed_group_sizes = static_cast<const T*>(group_sizes);
 
@@ -579,6 +581,7 @@ __launch_bounds__(BLOCK_SIZE) __global__ void SetUserArgsKernelRaggedInBatchDim(
       arg.scaleAlphaVec = nullptr;
       arg.bias = const_cast<void*>(bias);
       arg.biasType = bias_type;
+      arg.reserved = 0;
       arg.e = nullptr;
       // Use activation parameters (always 0.0 from hipBLASLt defaults)
       arg.act0 = 0.0f;
@@ -614,7 +617,7 @@ void GroupGemmUpdateArgs(
     uint32_t strideA2, uint32_t strideB1, uint32_t strideB2, uint32_t strideC1,
     uint32_t strideC2, uint32_t strideD1, uint32_t strideD2,
     gpu::RaggedDotMode ragged_mode, uint32_t num_gemms, int32_t activation_type,
-    int8_t bias_type, bool has_matrix_bias) {
+    int32_t bias_type, bool has_matrix_bias) {
   const uint32_t block_sz = BLOCK_SIZE;
   auto kernel = SetUserArgsKernelRaggedInNonContractingDim<uint64_t>;
   switch (ragged_mode) {
