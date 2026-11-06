@@ -310,6 +310,7 @@ cc_library(
         "//xla:shape_util",
         "//xla:side_effect_util",
         "//xla:util",
+        "//xla/hlo/ir:dfs_hlo_visitor_with_default",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_value",
         "@com_google_absl//absl/algorithm:container",
@@ -350,6 +351,7 @@ cc_library(
     deps = [
         "//xla:shape_tree",
         "//xla:shape_util",
+        "//xla/hlo/ir:dfs_hlo_visitor_with_default",
         "//xla/hlo/ir:hlo",
         "//xla/service:hlo_value",
         "//xla/tsl/platform:errors",
