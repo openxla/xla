@@ -239,6 +239,25 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "zeroed_outputs",
+    srcs = ["zeroed_outputs.cc"],
+    hdrs = ["zeroed_outputs.h"],
+    deps = [
+        ":command",
+        ":command_state",
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla/stream_executor:command_buffer",
+        "//xla/stream_executor:device_address",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
 xla_cc_test(
     name = "command_executor_test",
     srcs = ["command_executor_test.cc"],
@@ -279,6 +298,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":command",
+        ":command_buffer_requests",
         ":command_executor",
         ":command_state",
         ":copy_thunk",
@@ -482,6 +502,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":async_thunk",
+        ":command_buffer_requests",
         ":command_state",
         ":device_to_device_copy_thunk",
         ":execution_stream_id",
@@ -560,6 +581,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":command",
+        ":command_buffer_requests",
         ":command_buffer_thunk",
         ":command_executor",
         ":device_to_device_copy_thunk",
@@ -740,6 +762,7 @@ xla_cc_test(
     srcs = ["conditional_thunk_test.cc"],
     deps = [
         ":command",
+        ":command_buffer_requests",
         ":command_executor",
         ":command_state",
         ":conditional_thunk",
@@ -1331,6 +1354,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":command",
+        ":command_buffer_requests",
         ":command_state",
         ":gemm_thunk",
         ":thunk",
@@ -1394,6 +1418,7 @@ xla_test(
     use_legacy_runtime = True,
     deps = [
         ":command",
+        ":command_buffer_requests",
         ":command_state",
         ":gpublas_lt_matmul_thunk",
         ":thunk",
@@ -1519,6 +1544,7 @@ cc_library(
         ":print_buffer_contents",
         ":thunk",
         ":thunk_proto_cc",
+        ":zeroed_outputs",
         "//xla:shape_util",
         "//xla:types",
         "//xla:util",
@@ -1590,6 +1616,7 @@ xla_test(
         "//xla/tsl/util/proto:parse_text_proto",
         "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
@@ -1720,6 +1747,7 @@ xla_test(
     ],
     deps = [
         ":command",
+        ":command_buffer_requests",
         ":command_buffer_thunk",
         ":command_executor",
         ":custom_call_thunk",
@@ -2023,6 +2051,7 @@ xla_test(
         ":collective_memory_requests",
         ":collective_params",
         ":collective_thunk",
+        ":command_buffer_requests",
         ":command_state",
         ":thunk",
         "//xla:future",
@@ -2219,6 +2248,7 @@ cc_library(
         ":collective_params",
         ":collective_thunk",
         ":command",
+        ":command_buffer_requests",
         ":command_state",
         ":thunk",
         "//xla:future",
@@ -2285,6 +2315,7 @@ xla_test(
         ":all_to_all_thunk",
         ":collective_thunk",
         ":collective_thunk_multigpu_test_utils",
+        ":command_buffer_requests",
         ":thunk",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -2476,6 +2507,7 @@ xla_test(
         ":collective_thunk",
         ":command",
         ":command_buffer_cmd_emitter",
+        ":command_buffer_requests",
         ":command_buffer_thunk",
         ":command_executor",
         ":command_state",
@@ -2548,6 +2580,7 @@ xla_test(
         ":collective_params",
         ":collective_thunk",
         ":collective_thunk_multigpu_test_utils",
+        ":command_buffer_requests",
         ":ragged_all_to_all_thunk",
         ":thunk",
         "//xla:shape_util",
@@ -4012,6 +4045,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":command",
+        ":command_buffer_requests",
         ":command_executor",
         ":command_state",
         ":thunk",
@@ -4058,6 +4092,7 @@ cc_library(
         ":thunk",
         ":thunk_proto_cc",
         ":traced_command",
+        ":zeroed_outputs",
         "//xla:util",
         "//xla/runtime:buffer_use",
         "//xla/service:buffer_assignment",
@@ -5044,6 +5079,7 @@ xla_test(
     srcs = ["host_execute_thunk_test.cc"],
     backends = ["gpu"],
     deps = [
+        ":command_buffer_requests",
         ":command_state",
         ":host_execute_thunk",
         ":thunk",
@@ -5488,6 +5524,7 @@ xla_test(
         ":collective_clique_requests",
         ":collective_memory_requests",
         ":collective_params",
+        ":command_buffer_requests",
         ":thunk",
         ":thunk_id",
         ":thunk_proto_cc",
@@ -5569,6 +5606,7 @@ xla_test(
         ":collective_clique_requests",
         ":collective_memory_requests",
         ":collective_params",
+        ":command_buffer_requests",
         ":thunk",
         ":thunk_id",
         "//xla:types",
@@ -5782,6 +5820,7 @@ cc_library(
         ":print_buffer_contents",
         ":thunk",
         ":thunk_proto_cc",
+        ":zeroed_outputs",
         "//xla:util",
         "//xla/backends/gpu/codegen/kernels:custom_kernel",
         "//xla/codegen/emitters:kernel_arguments",
@@ -5820,6 +5859,7 @@ xla_test(
     backends = ["gpu"],
     deps = [
         ":command",
+        ":command_buffer_requests",
         ":command_state",
         ":custom_kernel_thunk",
         ":thunk",

@@ -1196,6 +1196,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:hlo",
+        "//xla/runtime:device_id",
         "//xla/service:device_assignment",
         "//xla/service:hlo_cost_analysis",
         "@com_google_absl//absl/base",
@@ -1258,7 +1259,9 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:denormal",
         "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:setround",
     ],
 )
 
