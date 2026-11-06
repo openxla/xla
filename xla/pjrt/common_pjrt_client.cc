@@ -1044,7 +1044,7 @@ CommonPjRtClient::MakeLoadStateAndResolveAddressableDevices(
     }
   }
 
-  return raw_client()->MakeLoadState();
+  return raw_client()->MakeLoadState(load_options);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
