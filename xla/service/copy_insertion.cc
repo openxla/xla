@@ -16,8 +16,10 @@ limitations under the License.
 #include "xla/service/copy_insertion.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -35,6 +37,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/frontend_attributes.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -765,16 +768,121 @@ absl::Status AddCopiesForWhile(const HloDataflowAnalysis& dataflow,
   return absl::OkStatus();
 }
 
+// Adds a control dependency to `copy` from each instruction in `readers` that
+// is already a (transitive) predecessor of `in_place_op`. Such readers must
+// execute before `in_place_op` anyway, so this does not constrain the
+// schedule beyond what `in_place_op` already requires. It does, however, order
+// the readers before `copy`, which allows RemoveUnnecessaryCopies to prove that
+// `copy` is redundant even while other in-place copies of the same buffer are
+// still present. Without it, chains of "read, then update in place" steps on a
+// loop-carried buffer (e.g. gather + scatter optimizer updates of an embedding
+// table across unrolled training steps) keep every copy: eliding each copy
+// requires the reader of the next step to be ordered before the next copy.
+//
+// `post_order_index` maps instructions of the computation to their position in
+// a post order computed before any copies were added, and must contain every
+// instruction in `readers`. It is used to bound the predecessor search: an
+// instruction positioned before every reader cannot lie on a path from a reader
+// to `in_place_op`.
+absl::Status OrderPredecessorReadersBeforeCopy(
+    HloInstruction* in_place_op, absl::Span<HloInstruction* const> readers,
+    HloInstruction* copy,
+    const absl::flat_hash_map<const HloInstruction*, int64_t>&
+        post_order_index) {
+  if (readers.empty()) {
+    return absl::OkStatus();
+  }
+  int64_t min_reader_index = std::numeric_limits<int64_t>::max();
+  for (const HloInstruction* reader : readers) {
+    auto it = post_order_index.find(reader);
+    TF_RET_CHECK(it != post_order_index.end()) << reader->name();
+    min_reader_index = std::min(min_reader_index, it->second);
+  }
+  // Instructions added after `post_order_index` was computed (e.g. copies of
+  // earlier in-place operations) have no index and are never pruned.
+  constexpr int64_t kNoIndex = -1;
+  auto index_of = [&](const HloInstruction* instruction) {
+    auto it = post_order_index.find(instruction);
+    return it == post_order_index.end() ? kNoIndex : it->second;
+  };
+  absl::flat_hash_set<const HloInstruction*> readers_set(readers.begin(),
+                                                         readers.end());
+  absl::flat_hash_set<const HloInstruction*> visited;
+  std::vector<HloInstruction*> worklist;
+  auto visit = [&](HloInstruction* instruction) {
+    if (instruction == copy) {
+      return;
+    }
+    const int64_t index = index_of(instruction);
+    if (index != kNoIndex && index < min_reader_index) {
+      return;
+    }
+    if (visited.insert(instruction).second) {
+      worklist.push_back(instruction);
+    }
+  };
+  auto visit_predecessors = [&](const HloInstruction* instruction) {
+    for (HloInstruction* operand : instruction->operands()) {
+      visit(operand);
+    }
+    for (HloInstruction* predecessor : instruction->control_predecessors()) {
+      visit(predecessor);
+    }
+  };
+  visit_predecessors(in_place_op);
+  size_t num_found = 0;
+  while (!worklist.empty() && num_found < readers_set.size()) {
+    HloInstruction* instruction = worklist.back();
+    worklist.pop_back();
+    if (readers_set.contains(instruction)) {
+      ++num_found;
+    }
+    visit_predecessors(instruction);
+  }
+  for (HloInstruction* reader : readers) {
+    if (visited.contains(reader)) {
+      VLOG(3) << "Ordering " << reader->name() << " before " << copy->name();
+      ABSL_RETURN_IF_ERROR(reader->AddControlDependencyTo(copy));
+    }
+  }
+  return absl::OkStatus();
+}
+
 // Add copies for the operands of in-place operations. RemoveUnnecessaryCopies
-// will remove the unnecessary copies.
-absl::Status AddCopiesForInPlaceOperation(HloInstruction* in_place_op,
-                                          int64_t operand_number) {
+// will remove the unnecessary copies. If `post_order_index` is not null, the
+// copy is ordered after the other readers of the operand that are predecessors
+// of `in_place_op` (see OrderPredecessorReadersBeforeCopy).
+absl::Status AddCopiesForInPlaceOperation(
+    HloInstruction* in_place_op, int64_t operand_number,
+    const absl::flat_hash_map<const HloInstruction*, int64_t>*
+        post_order_index) {
   VLOG(2) << "Adding copies for in-place operation " << in_place_op->name();
   HloInstruction* operand = in_place_op->mutable_operand(operand_number);
+  // Other readers of `operand`, collected before the copy becomes a user. Only
+  // readers that existed before copy insertion started (i.e. that are in
+  // `post_order_index`) and that are not copies are considered:
+  // - Ordering a copy (e.g. one added for another in-place user of `operand`)
+  //   before this copy does not help copy removal, since removing either copy
+  //   would make two in-place ops write the same buffer.
+  // - Instructions added by copy insertion are copies or the tuple plumbing of
+  //   deep copies, and have no post order index to bound the search with.
+  std::vector<HloInstruction*> other_readers;
+  if (post_order_index != nullptr) {
+    for (HloInstruction* user : operand->users()) {
+      if (user != in_place_op && user->opcode() != HloOpcode::kCopy &&
+          post_order_index->contains(user)) {
+        other_readers.push_back(user);
+      }
+    }
+  }
   ABSL_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
                         in_place_op->parent()->DeepCopyInstruction(operand));
   ABSL_RETURN_IF_ERROR(
       operand->ReplaceUseWith(in_place_op, operand_number, deep_copy));
+  if (post_order_index != nullptr && deep_copy->opcode() == HloOpcode::kCopy) {
+    ABSL_RETURN_IF_ERROR(OrderPredecessorReadersBeforeCopy(
+        in_place_op, other_readers, deep_copy, *post_order_index));
+  }
   return absl::OkStatus();
 }
 
@@ -1515,8 +1623,16 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
     if (computation->IsAsyncComputation()) {
       continue;
     }
-    for (HloInstruction* instruction :
-         computation->MakeInstructionPostOrder()) {
+    const std::vector<HloInstruction*> post_order =
+        computation->MakeInstructionPostOrder();
+    absl::flat_hash_map<const HloInstruction*, int64_t> post_order_index;
+    if (order_predecessor_readers_before_in_place_copies_) {
+      post_order_index.reserve(post_order.size());
+      for (int64_t i = 0; i < post_order.size(); ++i) {
+        post_order_index[post_order[i]] = i;
+      }
+    }
+    for (HloInstruction* instruction : post_order) {
       if (instruction->opcode() == HloOpcode::kWhile) {
         ABSL_RETURN_IF_ERROR(
             AddCopiesForWhile(*dataflow, alias_analysis.get(), instruction));
@@ -1624,7 +1740,10 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
           }
           copied_operands.insert(operand_index_in_this_intr);
           ABSL_RETURN_IF_ERROR(AddCopiesForInPlaceOperation(
-              instruction, operand_index_in_this_intr));
+              instruction, operand_index_in_this_intr,
+              order_predecessor_readers_before_in_place_copies_
+                  ? &post_order_index
+                  : nullptr));
         }
       }
     }
