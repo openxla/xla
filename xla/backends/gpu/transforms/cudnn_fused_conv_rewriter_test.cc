@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -907,6 +908,38 @@ TEST_F(CudnnFusedConvRewriterTest, TestConvF8) {
       R"(
 // CHECK: "serialized_graph":"[[CONV_UID:[0-9]+]]:[f8e4m3fn]conv();"
       )");
+}
+
+// cuDNN has no FP8 graph engine for grouped convolutions with fewer than four
+// input channels per group, so those keep the default lowering. Four or more
+// input channels per group still become an FP8 graph.
+TEST_F(CudnnFusedConvRewriterTest, TestConvF8FewInputChannelsPerGroup) {
+  if (!IsCuda()) return;
+  const se::CudaComputeCapability cc{se::CudaComputeCapability::kHopper, 0};
+  for (int per_group : {1, 2, 4, 8}) {
+    const int groups = 64 / per_group;
+    const std::string hlo = absl::StrFormat(R"(
+    HloModule Test
+
+    ENTRY Test {
+      input = f8e4m3fn[1,16,16,64] parameter(0)
+      filter = f8e4m3fn[3,3,%d,64] parameter(1)
+      ROOT conv = f32[1,16,16,64] convolution(input, filter), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f, feature_group_count=%d
+    })",
+                                            per_group, groups);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                         ParseAndReturnVerifiedModule(hlo));
+    ASSERT_OK_AND_ASSIGN(bool changed,
+                         RunHloPass(ConvRewriter(cc), module.get()));
+    ASSERT_TRUE(changed);
+    ASSERT_OK(RunHloPass(CudnnFusedConvRewriter(cc, se::dnn::VersionInfo{9, 8, 0},
+                                                se::SemanticVersion{12, 0, 0}),
+                         module.get())
+                  .status());
+    const bool graph = absl::StrContains(module->ToString(),
+                                         kCudnnConvForwardGraphCallTarget);
+    EXPECT_EQ(graph, per_group >= 4) << "input channels per group " << per_group;
+  }
 }
 
 // The pass used to stop after the first computation in which an FP8
