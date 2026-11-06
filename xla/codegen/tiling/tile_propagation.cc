@@ -1376,6 +1376,10 @@ absl::Status PropagateTileThroughMinimalReshape(
     }
     // n-to-1 mapping of the "significant" dimensions (size > 1).
     case MinimalReshapeCategory::kCollapseShape: {
+      if (!tiling_space.IsSymbolic()) {
+        SimplifyDimTiles(source_info.tiles, tiling_space,
+                         source_tile.constraints());
+      }
       llvm::SmallVector<SymbolicExpr> offsets, upper_bounds_inclusive;
       SymbolicExpr total_tile_elements =
           CreateSymbolicConstant(1, mlir_context);
@@ -1394,13 +1398,35 @@ absl::Status PropagateTileThroughMinimalReshape(
       // innermost tiled dimension (with tile size > 1) multiplied by the sizes
       // of all dimensions inner to it.
       SymbolicExpr collapsed_stride = source_info.tiles.back().stride;
-      int64_t multiplier = 1;
-      for (int64_t idx = source_info.tiles.size() - 1; idx >= 0; --idx) {
-        if (!IsConstantValue(source_info.tiles[idx].size, 1)) {
-          collapsed_stride = source_info.tiles[idx].stride * multiplier;
-          break;
+      if (tiling_space.IsSymbolic()) {
+        int64_t multiplier = 1;
+        for (int64_t dim : source_info.dims) {
+          multiplier *= dim;
         }
-        multiplier *= source_info.dims[idx];
+        for (int64_t idx = 0; idx < source_info.tiles.size(); ++idx) {
+          multiplier /= source_info.dims[idx];
+          SymbolicExpr stride_if_tiled =
+              source_info.tiles[idx].stride * multiplier;
+          if (stride_if_tiled != collapsed_stride) {
+            SymbolicExpr is_tiled =
+                (source_info.tiles[idx].size - 1).max(0).min(1);
+            // Use `is_tiled * -1` instead of `- is_tiled` because
+            // `SymbolicExpr::operator-` calls `Canonicalize()`, which
+            // distributes products over sums of `is_tiled` terms
+            // exponentially.
+            collapsed_stride = is_tiled * stride_if_tiled +
+                               (1 + is_tiled * -1) * collapsed_stride;
+          }
+        }
+      } else {
+        int64_t multiplier = 1;
+        for (int64_t idx = source_info.tiles.size() - 1; idx >= 0; --idx) {
+          if (!IsConstantValue(source_info.tiles[idx].size, 1)) {
+            collapsed_stride = source_info.tiles[idx].stride * multiplier;
+            break;
+          }
+          multiplier *= source_info.dims[idx];
+        }
       }
       target_dim_tiles[target_id].stride = collapsed_stride;
       target_dim_tiles[target_id].size = total_tile_elements;
@@ -1434,8 +1460,10 @@ absl::Status PropagateTileThroughMinimalReshape(
         target_dim_tiles[target_id].offset = offsets[i];
         target_dim_tiles[target_id].stride =
             CreateSymbolicConstant(1, mlir_context);
+        // Avoid `SymbolicExpr::operator-` so symbolic mode does not call
+        // `Canonicalize()` on delinearized collapsed strides.
         target_dim_tiles[target_id].size =
-            upper_bounds_inclusive[i] - offsets[i] + 1;
+            upper_bounds_inclusive[i] + offsets[i] * -1 + 1;
         target_dim_tiles[target_id].upper_bound = upper_bounds_inclusive[i] + 1;
       }
 
@@ -1586,6 +1614,16 @@ absl::StatusOr<Tiles> PropagateTileToOutputForBitcastOp(
   return Tiles{std::move(output_tile)};
 }
 
+// In symbolic mode, a collapsed reshape stride is a symbolic expression that
+// may evaluate to 1 once tile sizes are assigned, so only reject strides that
+// are already known constants != 1 (and avoid `IsConstantValue`'s
+// `Canonicalize()`).
+bool HasKnownNonUnitStride(SymbolicExpr stride, bool is_symbolic) {
+  return is_symbolic ? (stride.GetType() == SymbolicExprType::kConstant &&
+                        stride.GetValue() != 1)
+                     : !IsConstantValue(stride, 1);
+}
+
 // Calculates the required input tile for a ReduceScatter operation.
 //
 // In a ReduceScatter, the input tensor is divided into "shards" along the
@@ -1629,7 +1667,7 @@ absl::StatusOr<Tiles> PropagateTileToInputForReduceScatterOp(
 
   SmallVector<DimTile> dim_tiles(output_tile.dim_tiles());
   DimTile& scatter_tile = dim_tiles[scatter_dim];
-  if (!IsConstantValue(scatter_tile.stride, 1)) {
+  if (HasKnownNonUnitStride(scatter_tile.stride, tiling_space.IsSymbolic())) {
     return absl::UnimplementedError(
         absl::StrCat("Non-unit stride on the scatter dimension of ",
                      reduce_scatter.ToString()));
@@ -1644,14 +1682,17 @@ absl::StatusOr<Tiles> PropagateTileToInputForReduceScatterOp(
                                     total_result_dims + output_index);
   SymbolicExpr replica_id =
       CreateDimExpr(replica_dim_info.id.value(), tiling_space.mlir_context());
-  scatter_tile.offset = (scatter_tile.offset + replica_id * shard_size -
-                         replica_id * scatter_tile.size)
-                            .Canonicalize();
-  scatter_tile.size = (scatter_tile.size * num_replicas).Canonicalize();
-  scatter_tile.upper_bound =
-      (scatter_tile.upper_bound * num_replicas).Canonicalize();
+  // Avoid `SymbolicExpr::operator-` in `shard_size - scatter_tile.size` so
+  // symbolic mode does not call `Canonicalize()` on collapsed strides.
+  scatter_tile.offset = scatter_tile.offset + replica_id * shard_size +
+                        replica_id * (scatter_tile.size * -1);
+  scatter_tile.size = scatter_tile.size * num_replicas;
+  scatter_tile.upper_bound = scatter_tile.upper_bound * num_replicas;
 
   if (!tiling_space.IsSymbolic()) {
+    scatter_tile.offset = scatter_tile.offset.Canonicalize();
+    scatter_tile.size = scatter_tile.size.Canonicalize();
+    scatter_tile.upper_bound = scatter_tile.upper_bound.Canonicalize();
     std::optional<int64_t> size = TryGetConstantValue(scatter_tile.size);
     if (!size.has_value() || shard_size % *size != 0 ||
         !scatter_tile.offset.IsMultipleOf(*size)) {
@@ -1788,7 +1829,8 @@ absl::StatusOr<Tiles> PropagateTileToInputForAllToAllOp(
   int64_t shard_size = input_shape.dimensions(split_dim) / num_replicas;
 
   const DimTile& output_dim_tile = output_tile.dim_tiles()[split_dim];
-  if (!IsConstantValue(output_dim_tile.stride, 1)) {
+  if (HasKnownNonUnitStride(output_dim_tile.stride,
+                            tiling_space.IsSymbolic())) {
     return absl::UnimplementedError(absl::StrCat(
         "Non-unit stride on the split dimension of ", all_to_all.ToString()));
   }

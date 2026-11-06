@@ -589,7 +589,7 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfReduceScatterOp) {
                                             tiling_space->tiled_roots()[0], 0));
   EXPECT_THAT(tiled_operands, MatchToString(R"(
     0) (tid_0, tid_1, tid_2)
-      -> offsets [tid_0 * ts_0 * 2 + tid_2 * 64, tid_1 * ts_1]
+      -> offsets [tid_0 * ts_0 * 2 + tid_2 * ts_0 + tid_2 * 64 + tid_2 * -ts_0, tid_1 * ts_1]
          sizes [ts_0 * 2, ts_1]
          strides [1, 1]
          upper bounds [128, 256]
@@ -629,7 +629,7 @@ TEST_F(TilePropagationTest, CanPropagateFromReduceScatterToDotOp) {
                                             rs_operands[0], 0));
   EXPECT_THAT(dot_operands, MatchToString(R"(
     0) (tid_0, tid_1, tid_2, tid_3)
-      -> offsets [tid_0 * ts_0 * 2 + tid_2 * 64, tid_3 * ts_3]
+      -> offsets [tid_0 * ts_0 * 2 + tid_2 * ts_0 + tid_2 * 64 + tid_2 * -ts_0, tid_3 * ts_3]
          sizes [ts_0 * 2, ts_3]
          strides [1, 1]
          upper bounds [128, 256]
@@ -663,7 +663,7 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfReduceScatterOpScatterDim1) {
                                             tiling_space->tiled_roots()[0], 0));
   EXPECT_THAT(tiled_operands, MatchToString(R"(
     0) (tid_0, tid_1, tid_2)
-      -> offsets [tid_0 * ts_0, tid_1 * ts_1 * 2 + tid_2 * 128]
+      -> offsets [tid_0 * ts_0, tid_1 * ts_1 * 2 + tid_2 * ts_1 + tid_2 * 128 + tid_2 * -ts_1]
          sizes [ts_0, ts_1 * 2]
          strides [1, 1]
          upper bounds [128, 256]
@@ -692,6 +692,100 @@ TEST_F(TilePropagationTest, ReduceScatterRejectsNonUnitScatterStride) {
                   *tiling_space, *root,
                   GetTestTile(*tiling_space, root->shape().dimensions()), 0),
               StatusIs(absl::StatusCode::kUnimplemented));
+}
+
+TEST_F(TilePropagationTest, CollapseShapeSymbolicStrideMatchesConcrete) {
+  HloInstruction* root = ParseAndGetRoot(R"hlo(
+    HloModule m
+    ENTRY e {
+      p0 = f32[8192] parameter(0)
+      ROOT reshape = f32[2,1,32,128] reshape(p0)
+    })hlo");
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<TilingSpace> symbolic_space,
+      TilingSpace::Create(*HloFusionAdaptor::ForInstruction(root),
+                          &mlir_context_));
+  ASSERT_OK_AND_ASSIGN(
+      Tiles symbolic_tiles,
+      PropagateTileToInput(*symbolic_space, *root,
+                           symbolic_space->tiled_roots()[0], 0));
+  SymbolicExpr symbolic_stride = symbolic_tiles[0].dim_tiles()[0].stride;
+
+  for (const auto& [tile_sizes, expected_stride] :
+       std::vector<std::pair<std::vector<int64_t>, int64_t>>{
+           {{1, 1, 16, 1}, 128},
+           {{1, 1, 1, 4}, 1},
+           {{1, 1, 16, 128}, 1},
+           {{2, 1, 1, 1}, 4096},
+           {{1, 1, 1, 1}, 1},
+       }) {
+    std::unique_ptr<TilingSpace> concrete_space = symbolic_space->Clone();
+    ASSERT_OK(concrete_space->AssignTileSizes(tile_sizes));
+    ASSERT_OK_AND_ASSIGN(
+        Tiles concrete_tiles,
+        PropagateTileToInput(*concrete_space, *root,
+                             concrete_space->tiled_roots()[0], 0));
+    EXPECT_EQ(concrete_tiles[0].dim_tiles()[0].stride,
+              CreateSymbolicConstant(expected_stride, &mlir_context_));
+    EXPECT_EQ(
+        symbolic_stride.Evaluate({0, 0, 0, 0, tile_sizes[0], tile_sizes[1],
+                                  tile_sizes[2], tile_sizes[3]}),
+        expected_stride);
+  }
+}
+
+TEST_F(TilePropagationTest, ReduceScatterAcceptsSymbolicCollapsedStride) {
+  HloInstruction* root = ParseAndGetRoot(R"hlo(
+    HloModule m
+    add {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT add = f32[] add(lhs, rhs)
+    }
+    ENTRY e {
+      p0 = f32[2,2,32] parameter(0)
+      in_collapse = f32[2,64] reshape(p0)
+      rs = f32[2,32] reduce-scatter(in_collapse), replica_groups={{0,1}}, dimensions={1}, to_apply=add
+      rs_3d = f32[2,2,16] reshape(rs)
+      flat = f32[64] reshape(rs_3d)
+      expanded = f32[2,2,2,2,2,2] reshape(flat)
+      ROOT recollapsed = f32[2,32] reshape(expanded)
+    })hlo");
+  HloComputation* comp = root->parent();
+  const HloInstruction* in_collapse =
+      comp->GetInstructionWithName("in_collapse");
+  const HloInstruction* rs = comp->GetInstructionWithName("rs");
+  const HloInstruction* rs_3d = comp->GetInstructionWithName("rs_3d");
+  const HloInstruction* flat = comp->GetInstructionWithName("flat");
+  const HloInstruction* expanded = comp->GetInstructionWithName("expanded");
+  auto propagate_to_p0 = [&](TilingSpace& space, Tile& out) {
+    ASSERT_OK_AND_ASSIGN(
+        Tiles t, PropagateTileToInput(space, *root, space.tiled_roots()[0], 0));
+    ASSERT_OK_AND_ASSIGN(t, PropagateTileToInput(space, *expanded, t[0], 0));
+    ASSERT_OK_AND_ASSIGN(t, PropagateTileToInput(space, *flat, t[0], 0));
+    ASSERT_OK_AND_ASSIGN(t, PropagateTileToInput(space, *rs_3d, t[0], 0));
+    ASSERT_OK_AND_ASSIGN(t, PropagateTileToInput(space, *rs, t[0], 0));
+    ASSERT_OK_AND_ASSIGN(t, PropagateTileToInput(space, *in_collapse, t[0], 0));
+    out = t[0];
+  };
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<TilingSpace> tiling_space,
+      TilingSpace::Create(*HloFusionAdaptor::ForInstruction(rs),
+                          &mlir_context_));
+  Tile symbolic_p0_tile = tiling_space->tiled_roots()[0];
+  propagate_to_p0(*tiling_space, symbolic_p0_tile);
+
+  int64_t size_nodes = 0;
+  symbolic_p0_tile.dim_tiles()[2].size.Walk(
+      [&](SymbolicExpr) { ++size_nodes; });
+  EXPECT_LT(size_nodes, 30000);
+
+  ASSERT_OK(tiling_space->AssignTileSizes({1, 8}));
+  Tile valid_p0_tile = tiling_space->tiled_roots()[0];
+  propagate_to_p0(*tiling_space, valid_p0_tile);
+  EXPECT_EQ(symbolic_p0_tile.dim_tiles()[2].size.Evaluate({0, 0, 0, 1, 8}), 16);
+  EXPECT_EQ(symbolic_p0_tile.dim_tiles()[2].offset.Evaluate({0, 1, 1, 1, 8}),
+            valid_p0_tile.dim_tiles()[2].offset.Evaluate({0, 1, 1}));
 }
 
 TEST_F(TilePropagationTest, ReduceScatterRejectsTileCrossingShards) {
@@ -756,7 +850,7 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfVariadicReduceScatterOp) {
                            /*output_index=*/0));
   EXPECT_THAT(operand_0_tiles, MatchToString(R"(
     0) (tid_0, tid_1, tid_2, tid_3, tid_4, tid_5)
-      -> offsets [tid_0 * ts_0 * 2 + tid_4 * 2, tid_1 * ts_1]
+      -> offsets [tid_0 * ts_0 * 2 + tid_4 * ts_0 + tid_4 * 2 + tid_4 * -ts_0, tid_1 * ts_1]
          sizes [ts_0 * 2, ts_1]
          strides [1, 1]
          upper bounds [4, 64]
@@ -768,7 +862,7 @@ TEST_F(TilePropagationTest, CanPropagateToInputsOfVariadicReduceScatterOp) {
                            /*output_index=*/1));
   EXPECT_THAT(operand_1_tiles, MatchToString(R"(
     0) (tid_0, tid_1, tid_2, tid_3, tid_4, tid_5)
-      -> offsets [tid_2 * ts_2 * 2 + tid_5 * 2, tid_3 * ts_3]
+      -> offsets [tid_2 * ts_2 * 2 + tid_5 * ts_2 + tid_5 * 2 + tid_5 * -ts_2, tid_3 * ts_3]
          sizes [ts_2 * 2, ts_3]
          strides [1, 1]
          upper bounds [4, 1]
@@ -822,7 +916,7 @@ TEST_F(TilePropagationTest, CanPropagateFromVariadicReduceScatterToDotOps) {
       PropagateTileToInput(*tiling_space, *rs->operand(0), rs_operand_0[0], 0));
   EXPECT_THAT(dot0_operands, MatchToString(R"(
     0) (tid_0, tid_1, tid_2, tid_3, tid_4, tid_5, tid_6, tid_7)
-      -> offsets [tid_0 * ts_0 * 2 + tid_4 * 64, tid_7 * ts_7]
+      -> offsets [tid_0 * ts_0 * 2 + tid_4 * ts_0 + tid_4 * 64 + tid_4 * -ts_0, tid_7 * ts_7]
          sizes [ts_0 * 2, ts_7]
          strides [1, 1]
          upper bounds [128, 256]
@@ -842,7 +936,7 @@ TEST_F(TilePropagationTest, CanPropagateFromVariadicReduceScatterToDotOps) {
       PropagateTileToInput(*tiling_space, *rs->operand(1), rs_operand_1[0], 0));
   EXPECT_THAT(dot1_operands, MatchToString(R"(
     0) (tid_0, tid_1, tid_2, tid_3, tid_4, tid_5, tid_6, tid_7)
-      -> offsets [tid_2 * ts_2 * 2 + tid_5 * 32, tid_6 * ts_6]
+      -> offsets [tid_2 * ts_2 * 2 + tid_5 * ts_2 + tid_5 * 32 + tid_5 * -ts_2, tid_6 * ts_6]
          sizes [ts_2 * 2, ts_6]
          strides [1, 1]
          upper bounds [64, 128]
@@ -1692,6 +1786,55 @@ TEST_F(TilePropagationTest, AllToAllRejectsNonUnitSplitStride) {
   EXPECT_THAT(PropagateTileToInput(
                   *tiling_space, *root,
                   GetTestTile(*tiling_space, root->shape().dimensions()), 0),
+              StatusIs(absl::StatusCode::kUnimplemented));
+}
+
+TEST_F(TilePropagationTest, AllToAllAcceptsSymbolicCollapsedStride) {
+  HloInstruction* root = ParseAndGetRoot(R"hlo(
+    HloModule m
+    ENTRY e {
+      p0 = f32[10, 64, 5] parameter(0)
+      a2a = f32[10, 64, 5] all-to-all(p0), replica_groups={{0,1}}, dimensions={1}
+      ROOT reshape = f32[10, 4, 16, 5] reshape(a2a)
+    }
+  )hlo");
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<TilingSpace> tiling_space,
+      TilingSpace::Create(
+          *HloFusionAdaptor::ForProducerConsumer(root->operand(0), root),
+          &mlir_context_));
+  ASSERT_OK_AND_ASSIGN(Tiles a2a_tiles,
+                       PropagateTileToInput(*tiling_space, *root,
+                                            tiling_space->tiled_roots()[0], 0));
+  ASSERT_OK_AND_ASSIGN(
+      Tiles symbolic_p0_tiles,
+      PropagateTileToInput(*tiling_space, *root->operand(0), a2a_tiles[0], 0));
+
+  // Valid concrete tiling (unit stride on split dimension: size 8 divides 32).
+  std::unique_ptr<TilingSpace> valid_space = tiling_space->Clone();
+  ASSERT_OK(valid_space->AssignTileSizes({10, 1, 8, 5}));
+  ASSERT_OK_AND_ASSIGN(Tiles valid_a2a_tiles,
+                       PropagateTileToInput(*valid_space, *root,
+                                            valid_space->tiled_roots()[0], 0));
+  ASSERT_OK_AND_ASSIGN(Tiles valid_p0_tiles,
+                       PropagateTileToInput(*valid_space, *root->operand(0),
+                                            valid_a2a_tiles[0], 0));
+  EXPECT_EQ(valid_p0_tiles[0].dim_tiles()[1].size,
+            CreateSymbolicConstant(8, &mlir_context_));
+  EXPECT_EQ(symbolic_p0_tiles[0].dim_tiles()[1].size.Evaluate(
+                {0, 0, 0, 0, 10, 1, 8, 5}),
+            8);
+  EXPECT_EQ(symbolic_p0_tiles[0].dim_tiles()[1].offset.Evaluate(
+                {0, 1, 1, 0, 10, 1, 8, 5}),
+            valid_p0_tiles[0].dim_tiles()[1].offset.Evaluate({0, 1, 1, 0}));
+
+  // Invalid concrete tiling (collapsed stride 16 > 1 on split dimension).
+  ASSERT_OK(tiling_space->AssignTileSizes({10, 2, 1, 5}));
+  ASSERT_OK_AND_ASSIGN(Tiles concrete_a2a_tiles,
+                       PropagateTileToInput(*tiling_space, *root,
+                                            tiling_space->tiled_roots()[0], 0));
+  EXPECT_THAT(PropagateTileToInput(*tiling_space, *root->operand(0),
+                                   concrete_a2a_tiles[0], 0),
               StatusIs(absl::StatusCode::kUnimplemented));
 }
 
