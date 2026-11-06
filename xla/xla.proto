@@ -1203,6 +1203,11 @@ message DebugOptions {
 
   optional bool xla_gpu_experimental_stream_annotation = 342;
 
+  // If true, lower supported kRaggedDot ops not handled by cuDNN or hipBLASLt
+  // through the experimental Triton (XTile) backend instead of expanding them
+  // to dense dots.
+  optional bool xla_gpu_experimental_triton_ragged_dot = 566;
+
   // Experimental: filter specifying which collective operations should use
   // custom kernels (e.g. Triton one-shot / two-shot) instead of NCCL.
   // Accepted values: "all-reduce", "all-gather", "reduce-scatter".
@@ -1997,7 +2002,7 @@ message DebugOptions {
   // independent small-grid GPU kernels.
   optional bool xla_gpu_experimental_enable_horizontal_fusion = 565;
 
-  // Next id: 566
+  // Next id: 567
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

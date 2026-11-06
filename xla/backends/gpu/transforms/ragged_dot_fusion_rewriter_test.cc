@@ -223,7 +223,7 @@ class RaggedDotFusionRewriterIntegrationTest
   // Uses the same hardware and version check as RaggedDotRewriter to decide
   // whether the cuDNN fusion path supports ragged dot wgrad.
   bool SupportsCudnnRaggedDotWgrad() const {
-    return xla::SupportsCudnnRaggedDotWgrad(
+    return SupportsCudnnRaggedDotWgrad(
         device_description().gpu_compute_capability(), GetDnnVersion(),
         GetToolkitVersion());
   }

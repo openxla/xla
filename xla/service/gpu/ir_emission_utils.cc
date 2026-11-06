@@ -71,19 +71,35 @@ limitations under the License.
 namespace xla {
 namespace gpu {
 
-bool IsGpublasLtSupportedGroupedMatMul(const HloInstruction& instr) {
-  if (instr.opcode() == HloOpcode::kRaggedDot) {
-    switch (instr.shape().element_type()) {
-      // Only float 16 and bf 16 are supported by HipBlasLt GroupGemm
-      case F16:
-      case BF16:
-        return (((instr.operand(0)->shape().element_type() == F16) ||
-                 (instr.operand(0)->shape().element_type() == BF16)) &&
-                ((instr.operand(1)->shape().element_type() == F16) ||
-                 (instr.operand(1)->shape().element_type() == BF16)));
-      default:
-        return false;
-    }
+bool IsGpublasLtSupportedGroupedMatMul(
+    const se::GpuComputeCapability& gpu_compute_capability,
+    const HloInstruction& instr) {
+  if (instr.opcode() != HloOpcode::kRaggedDot) {
+    return false;
+  }
+
+  // Only hipBLASLt supports grouped GEMM, and the supported element types
+  // depend on the target:
+  //   MI300 (gfx942):     F16 and BF16
+  //   MI350/355 (gfx950): F16 only
+  const se::RocmComputeCapability* rocm_cc =
+      gpu_compute_capability.rocm_compute_capability();
+  if (rocm_cc == nullptr) {
+    return false;
+  }
+
+  // Operands and output must all have the same element type.
+  PrimitiveType element_type = instr.shape().element_type();
+  if (instr.operand(0)->shape().element_type() != element_type ||
+      instr.operand(1)->shape().element_type() != element_type) {
+    return false;
+  }
+
+  if (rocm_cc->gfx9_mi300()) {  // gfx942
+    return element_type == F16 || element_type == BF16;
+  }
+  if (rocm_cc->gfx9_mi350()) {  // gfx950
+    return element_type == F16;
   }
   return false;
 }
@@ -102,6 +118,12 @@ bool IsTritonSupportedRaggedDot(
     return false;
   }
 
+  // Triton requires Ampere or later on NVIDIA targets.
+  if (gpu_compute_capability.IsCuda() &&
+      !gpu_compute_capability.cuda_compute_capability()->IsAtLeastAmpere()) {
+    return false;
+  }
+
   const auto* ragged_dot = Cast<HloRaggedDotInstruction>(&instr);
   const auto& ragged_dims = ragged_dot->ragged_dot_dimension_numbers();
 
@@ -111,26 +133,42 @@ bool IsTritonSupportedRaggedDot(
     return false;
   }
 
+  // The emitter handles a single contracting dimension per operand.
+  const DotDimensionNumbers& dot_dims = ragged_dims.dot_dimension_numbers();
+  if (dot_dims.lhs_contracting_dimensions_size() != 1 ||
+      dot_dims.rhs_contracting_dimensions_size() != 1) {
+    return false;
+  }
+
   // The xtile emitter's PrimitiveTypeToMlirType conversion supports the
-  // following element types for ragged-dot operands and output.
-  // Complex types (C64, C128) fall to the default branch and return
-  // UnimplementedError.  Nanoo FP8 types (F8E4M3FNUZ, F8E5M2FNUZ) are
-  // ROCm-only (NaNo format not supported on NVIDIA GPUs).
-  // Triton uses power-of-two block sizes (16..256) internally; problem
-  // dimensions need not be powers of two — masking handles boundary tiles.
-  const bool is_rocm = gpu_compute_capability.IsRocm();
+  // following element types for ragged-dot operands and output.  Complex
+  // types (C64, C128) fall to the default branch and return
+  // UnimplementedError.  Triton uses power-of-two block sizes (16..256)
+  // internally; problem dimensions need not be powers of two — masking
+  // handles boundary tiles.
+  const se::CudaComputeCapability* cuda_cc =
+      gpu_compute_capability.cuda_compute_capability();
+  const se::RocmComputeCapability* rocm_cc =
+      gpu_compute_capability.rocm_compute_capability();
   auto is_supported_element_type = [&](PrimitiveType type) -> bool {
     switch (type) {
       case F16:
       case BF16:
       case F32:
       case F64:
+        return true;
+      // FP8 matmuls need Hopper or later on NVIDIA; on ROCm the OCP formats
+      // require gfx950 or later.
       case F8E5M2:
       case F8E4M3FN:
-        return true;
+        if (cuda_cc != nullptr) {
+          return cuda_cc->IsAtLeastHopper();
+        }
+        return rocm_cc != nullptr && rocm_cc->has_ocp_fp8_support();
+      // The nanoo FP8 formats are ROCm-only (gfx942).
       case F8E4M3FNUZ:
       case F8E5M2FNUZ:
-        return is_rocm;
+        return rocm_cc != nullptr && rocm_cc->has_nanoo_fp8_support();
       default:
         return false;
     }
@@ -139,6 +177,97 @@ bool IsTritonSupportedRaggedDot(
   return is_supported_element_type(instr.operand(0)->shape().element_type()) &&
          is_supported_element_type(instr.operand(1)->shape().element_type()) &&
          is_supported_element_type(instr.shape().element_type());
+}
+
+bool SupportsCudnnRaggedDotWgrad(
+    const se::GpuComputeCapability& gpu_compute_capability,
+    se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version) {
+  const se::CudaComputeCapability* cuda_cc =
+      gpu_compute_capability.cuda_compute_capability();
+  // RaggedDotRewriter is the only pass that expands ragged-dot into a dense
+  // dot, and downstream cuDNN fusion passes have no fallback if plan creation
+  // fails. cuDNN moe_grouped_matmul_bwd uses a TMA-based cuBLASLt grouped GEMM
+  // kernel. That kernel requires CUDA SM90 through SM119, cuDNN 9.24 or newer,
+  // and cuBLASLt 13.5 from CUDA Toolkit 13.3 or newer.
+  //
+  // The major < kBlackwell_12 check excludes consumer-grade Blackwell GPUs with
+  // SM120 and SM121.
+  // Datacenter Blackwell and Rubin GPUs use major version 10 and satisfy
+  // major < kBlackwell_12.
+  return cuda_cc != nullptr &&
+         cuda_cc->major >= se::CudaComputeCapability::kHopper &&
+         cuda_cc->major < se::CudaComputeCapability::kBlackwell_12 &&
+         cudnn_version >= kMinCudnnVersionForRaggedDotWgradFusion &&
+         toolkit_version >= kMinCudaToolkitVersionForRaggedDotWgradFusion;
+}
+
+bool IsCudnnSupportedRaggedDot(
+    const se::GpuComputeCapability& gpu_compute_capability,
+    se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version,
+    const HloInstruction& ragged_dot) {
+  const se::CudaComputeCapability* cuda_cc =
+      gpu_compute_capability.cuda_compute_capability();
+  if (cuda_cc == nullptr || !cuda_cc->IsAtLeastAmpere() ||
+      cudnn_version < kMinCudnnVersionForRaggedDotFusion) {
+    return false;
+  }
+  if (ragged_dot.shape().element_type() != F16 &&
+      ragged_dot.shape().element_type() != BF16) {
+    return false;
+  }
+  const RaggedDotDimensionNumbers& ragged_dims =
+      Cast<HloRaggedDotInstruction>(&ragged_dot)
+          ->ragged_dot_dimension_numbers();
+  if (ragged_dims.lhs_ragged_dimensions().size() != 1) {
+    return false;
+  }
+  // The wgrad flavor needs a newer cuDNN than the forward one.
+  if (IsRaggedDotWgrad(ragged_dims)) {
+    return SupportsCudnnRaggedDotWgrad(gpu_compute_capability, cudnn_version,
+                                       toolkit_version);
+  }
+  // Only the ragged-non-contracting flavor is supported; ragged-batch is not.
+  return !absl::c_linear_search(
+      ragged_dims.dot_dimension_numbers().lhs_batch_dimensions(),
+      ragged_dims.lhs_ragged_dimensions(0));
+}
+
+RaggedDotBackend SelectRaggedDotBackend(
+    const HloInstruction& ragged_dot,
+    const se::GpuComputeCapability& gpu_compute_capability,
+    se::dnn::VersionInfo cudnn_version, se::SemanticVersion toolkit_version,
+    const DebugOptions& debug_options) {
+  if (debug_options.xla_gpu_experimental_use_ragged_dot_fusion() &&
+      IsCudnnSupportedRaggedDot(gpu_compute_capability, cudnn_version,
+                                toolkit_version, ragged_dot)) {
+    return RaggedDotBackend::kCuDnn;
+  }
+  if (debug_options.xla_gpu_experimental_use_ragged_dot_grouped_gemm() &&
+      // NOLINTNEXTLINE(clang-diagnostic-deprecated-declarations)
+      debug_options.xla_gpu_enable_cublaslt() &&
+      IsGpublasLtSupportedGroupedMatMul(gpu_compute_capability, ragged_dot)) {
+    return RaggedDotBackend::kGpuBlasLt;
+  }
+  if (debug_options.xla_gpu_experimental_triton_ragged_dot() &&
+      IsTritonSupportedRaggedDot(gpu_compute_capability, ragged_dot)) {
+    return RaggedDotBackend::kTriton;
+  }
+  return RaggedDotBackend::kDefault;
+}
+
+bool IsRaggedDotTritonFusion(const HloInstruction& instr) {
+  if (instr.opcode() != HloOpcode::kFusion ||
+      instr.fusion_kind() != HloInstruction::FusionKind::kCustom) {
+    return false;
+  }
+  absl::StatusOr<GpuBackendConfig> gpu_config =
+      instr.backend_config<GpuBackendConfig>();
+  if (!gpu_config.ok() ||
+      gpu_config->fusion_backend_config().kind() != kTritonFusionKind) {
+    return false;
+  }
+  return absl::c_any_of(instr.fused_instructions_computation()->instructions(),
+                        HloPredicateIsOp<HloOpcode::kRaggedDot>);
 }
 
 absl::StatusOr<bool> IsCublasSupportedMatMul(

@@ -15,16 +15,16 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/ragged_dot_rewriter.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
@@ -87,10 +87,10 @@ TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotFusion) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed,
-                          RaggedDotRewriter(GetCudaComputeCapability(),
-                                            kMinCudnnVersionForRaggedDotFusion)
-                              .Run(module.get()));
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed, RaggedDotRewriter(GetCudaComputeCapability(),
+                                      gpu::kMinCudnnVersionForRaggedDotFusion)
+                        .Run(module.get()));
   EXPECT_FALSE(changed);
 }
 
@@ -118,7 +118,7 @@ TEST_F(RaggedDotRewriterTest, RewriteIfPreAmpereForRaggedDotFusion) {
       bool changed,
       RaggedDotRewriter(
           se::CudaComputeCapability{se::CudaComputeCapability::kVolta, 0},
-          kMinCudnnVersionForRaggedDotFusion)
+          gpu::kMinCudnnVersionForRaggedDotFusion)
           .Run(module.get()));
   EXPECT_TRUE(changed);
 }
@@ -169,8 +169,8 @@ TEST_F(RaggedDotRewriterTest, RaggedDotWgradFusionGate) {
   };
   const TestCase cases[] = {
       {se::CudaComputeCapability::Hopper(),
-       kMinCudnnVersionForRaggedDotWgradFusion,
-       kMinCudaToolkitVersionForRaggedDotWgradFusion, false},
+       gpu::kMinCudnnVersionForRaggedDotWgradFusion,
+       gpu::kMinCudaToolkitVersionForRaggedDotWgradFusion, false},
       {se::CudaComputeCapability::Blackwell(),
        se::dnn::VersionInfo{9, 25, 1},
        {13, 3, 0},
@@ -193,7 +193,7 @@ TEST_F(RaggedDotRewriterTest, RaggedDotWgradFusionGate) {
        true},
   };
   for (const TestCase& tc : cases) {
-    EXPECT_EQ(SupportsCudnnRaggedDotWgrad(tc.cc, tc.cudnn, tc.toolkit),
+    EXPECT_EQ(gpu::SupportsCudnnRaggedDotWgrad(tc.cc, tc.cudnn, tc.toolkit),
               !tc.expected_changed);
     ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
                          ParseAndReturnVerifiedModule(kWgradModule));
@@ -205,7 +205,7 @@ TEST_F(RaggedDotRewriterTest, RaggedDotWgradFusionGate) {
         RaggedDotRewriter(tc.cc, tc.cudnn, tc.toolkit).Run(module.get()));
     EXPECT_EQ(changed, tc.expected_changed);
   }
-  EXPECT_FALSE(SupportsCudnnRaggedDotWgrad(
+  EXPECT_FALSE(gpu::SupportsCudnnRaggedDotWgrad(
       GetRocmComputeCapability(), se::dnn::VersionInfo{9, 25, 1}, {13, 3, 0}));
 }
 
