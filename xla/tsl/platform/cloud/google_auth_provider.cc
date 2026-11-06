@@ -164,7 +164,7 @@ absl::Status ParseNonNegativeIntEnvVar(const char* env_var_name,
 
 GoogleAuthProvider::GoogleAuthProvider(
     std::shared_ptr<ComputeEngineMetadataClient> compute_engine_metadata_client)
-    : GoogleAuthProvider(std::unique_ptr<OAuthClient>(new OAuthClient()),
+    : GoogleAuthProvider(std::make_unique<OAuthClient>(),
                          std::move(compute_engine_metadata_client),
                          Env::Default()) {}
 
