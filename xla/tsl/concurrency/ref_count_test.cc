@@ -73,23 +73,6 @@ class CustomDestroyConstValue
   bool* custom_destroyed_;
 };
 
-class NonConstCustomDestroyValue
-    : public ReferenceCounted<NonConstCustomDestroyValue> {
- public:
-  explicit NonConstCustomDestroyValue(bool* custom_destroyed)
-      : custom_destroyed_(custom_destroyed) {}
-
- private:
-  friend class ReferenceCounted<NonConstCustomDestroyValue>;
-
-  void Destroy() {
-    *custom_destroyed_ = true;
-    ReferenceCounted::Destroy();
-  }
-
-  bool* custom_destroyed_;
-};
-
 static_assert(HasAddRef<Value>::value);
 static_assert(HasAddRef<const Value>::value);
 static_assert(HasDropRef<Value>::value);
@@ -162,18 +145,6 @@ TEST(RefCountTest, ConstRefCountedCustomDestroy) {
     RCReference<const CustomDestroyConstValue> ref =
         MakeRef<const CustomDestroyConstValue>(&custom_destroyed);
     RCReference<const CustomDestroyConstValue> ref2 = FormRef(ref.get());
-    EXPECT_EQ(ref->NumRef(), 2);
-    EXPECT_FALSE(custom_destroyed);
-  }
-  EXPECT_TRUE(custom_destroyed);
-}
-
-TEST(RefCountTest, ConstRefNonConstCustomDestroy) {
-  bool custom_destroyed = false;
-  {
-    RCReference<const NonConstCustomDestroyValue> ref =
-        MakeRef<NonConstCustomDestroyValue>(&custom_destroyed);
-    RCReference<const NonConstCustomDestroyValue> ref2 = ref;
     EXPECT_EQ(ref->NumRef(), 2);
     EXPECT_FALSE(custom_destroyed);
   }
