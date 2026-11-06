@@ -73,10 +73,15 @@ namespace xla::gpu {
 // is really "done".
 // A query failure is reported separately from a terminal asynchronous error
 // and does not establish that the operation has stopped writing its outputs.
-absl::Status PollUntilDone(
+absl::Status PollUntilDone(ncclComm_t comm, const CancellationToken& cancel);
+
+namespace internal {
+// Implementation of PollUntilDone. The query function is injectable so tests
+// can simulate query failures and asynchronous errors.
+absl::Status PollUntilDoneWithQuery(
     ncclComm_t comm, const CancellationToken& cancel,
-    absl::FunctionRef<ncclResult_t(ncclComm_t, ncclResult_t*)> get_async_error =
-        ncclCommGetAsyncError);
+    absl::FunctionRef<ncclResult_t(ncclComm_t, ncclResult_t*)> get_async_error);
+}  // namespace internal
 
 }  // namespace xla::gpu
 

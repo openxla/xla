@@ -505,13 +505,18 @@ absl::StatusOr<ncclComm_t> NcclCommunicator::Split(int color, int key,
     status = ::xla::gpu::PollUntilDone(comm_->comm, never_cancelled);
   }
   if (!status.ok()) {
-    // A failed query does not establish that NCCL stopped writing. Parent
-    // teardown must complete before inspecting or freeing this output.
+    // When PollUntilDone returns an error, ncclCommGetAsyncError itself may
+    // have failed. In that case we do not know whether the split completed,
+    // and NCCL might still write to the memory pointed to by `child`.
+    // Therefore, hold on to this memory until the parent communicator is
+    // successfully aborted or destroyed.
     comm_->pending_split_comms.push_back(std::move(child));
     return status;
   }
   if (*child == nullptr && color != NCCL_SPLIT_NOCOLOR) {
-    return Internal("NCCL split completed with a null child communicator");
+    return Internal(
+        "NCCL split completed with ncclSuccess, but child communicator is "
+        "null");
   }
   // Parent completion publishes the handle. Create() still waits for the
   // child's readiness before use.

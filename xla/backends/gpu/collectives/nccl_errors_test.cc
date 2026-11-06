@@ -39,7 +39,7 @@ TEST(NcclErrorsTest, ReportsQueryFailureWithUnderlyingError) {
     return ncclSystemError;
   };
 
-  EXPECT_THAT(PollUntilDone(nullptr, cancel, query),
+  EXPECT_THAT(internal::PollUntilDoneWithQuery(nullptr, cancel, query),
               StatusIs(absl::StatusCode::kInternal,
                        AllOf(HasSubstr("ncclCommGetAsyncError failed"),
                              HasSubstr(ncclGetErrorString(ncclSystemError)))));
@@ -52,7 +52,7 @@ TEST(NcclErrorsTest, DistinguishesAsyncOperationErrorFromQueryFailure) {
     return ncclSuccess;
   };
 
-  EXPECT_THAT(PollUntilDone(nullptr, cancel, query),
+  EXPECT_THAT(internal::PollUntilDoneWithQuery(nullptr, cancel, query),
               StatusIs(absl::StatusCode::kInternal,
                        AllOf(HasSubstr(ncclGetErrorString(ncclRemoteError)),
                              Not(HasSubstr("ncclCommGetAsyncError failed")))));

@@ -27,7 +27,11 @@ limitations under the License.
 
 namespace xla::gpu {
 
-absl::Status PollUntilDone(
+absl::Status PollUntilDone(ncclComm_t comm, const CancellationToken& cancel) {
+  return internal::PollUntilDoneWithQuery(comm, cancel, ncclCommGetAsyncError);
+}
+
+absl::Status internal::PollUntilDoneWithQuery(
     ncclComm_t comm, const CancellationToken& cancel,
     absl::FunctionRef<ncclResult_t(ncclComm_t, ncclResult_t*)>
         get_async_error) {
