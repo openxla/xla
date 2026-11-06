@@ -16,9 +16,11 @@ limitations under the License.
 #include "xla/hlo/transforms/host_offload_legalize.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <string>
 #include <utility>
@@ -42,6 +44,8 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/hlo_value.h"
 #include "xla/service/host_offload_utils.h"
@@ -837,7 +841,8 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
             FindToHostAnnotationToUpdate(annotation->mutable_operand(1));
         // Check if this dynamic-update-slice doesn't have an annotation
         // attached.
-        if (!real_annotation->IsCustomCall(
+        if (real_annotation == nullptr ||
+            !real_annotation->IsCustomCall(
                 memory_annotations::kMoveToHostCustomCallTarget)) {
           return false;
         }
@@ -993,6 +998,298 @@ absl::StatusOr<bool> FixupInterveningCopies(
   return changed;
 }
 
+struct StackedSlicePiece {
+  HloInstruction* slice_instr;
+  int64_t offset;
+  int64_t size;
+};
+
+struct MatchedStackedPieces {
+  int64_t concat_dim;
+  std::vector<StackedSlicePiece> pieces;
+};
+
+HloInstruction* UnwrapSingleUserBitcastOrReshape(HloInstruction* instr) {
+  while ((instr->opcode() == HloOpcode::kBitcast ||
+          instr->opcode() == HloOpcode::kReshape) &&
+         instr->mutable_operand(0)->user_count() == 1) {
+    instr = instr->mutable_operand(0);
+  }
+  return instr;
+}
+
+bool CollectPadPiecesFromBinaryTree(HloInstruction* instr,
+                                    HloOpcode root_opcode,
+                                    const Shape& root_shape,
+                                    std::vector<HloInstruction*>* pads) {
+  if (instr->opcode() == root_opcode) {
+    if (instr->operand_count() != 2) {
+      return false;
+    }
+    for (HloInstruction* op : instr->operands()) {
+      if (op->user_count() != 1) {
+        return false;
+      }
+      if (!CollectPadPiecesFromBinaryTree(op, root_opcode, root_shape, pads)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (instr->opcode() == HloOpcode::kPad &&
+      ShapeUtil::Compatible(instr->shape(), root_shape)) {
+    pads->push_back(instr);
+    return true;
+  }
+  return false;
+}
+
+std::optional<MatchedStackedPieces> MatchStackedMoveToHostPieces(
+    HloInstruction* concat_like) {
+  if (concat_like->user_count() != 1) {
+    return std::nullopt;
+  }
+  int64_t concat_dim = -1;
+  std::vector<StackedSlicePiece> pieces;
+  if (concat_like->opcode() == HloOpcode::kConcatenate) {
+    if (concat_like->operand_count() < 2) {
+      return std::nullopt;
+    }
+    concat_dim = concat_like->concatenate_dimension();
+    int64_t offset = 0;
+    for (HloInstruction* op : concat_like->operands()) {
+      if (op->user_count() != 1) {
+        return std::nullopt;
+      }
+      const int64_t piece_size = op->shape().dimensions(concat_dim);
+      if (piece_size <= 0) {
+        return std::nullopt;
+      }
+      pieces.push_back({op, offset, piece_size});
+      offset += piece_size;
+    }
+  } else if (concat_like->opcode() == HloOpcode::kMaximum ||
+             concat_like->opcode() == HloOpcode::kAdd ||
+             concat_like->opcode() == HloOpcode::kOr) {
+    std::vector<HloInstruction*> pads;
+    if (!CollectPadPiecesFromBinaryTree(concat_like, concat_like->opcode(),
+                                        concat_like->shape(), &pads) ||
+        pads.size() < 2) {
+      return std::nullopt;
+    }
+    const int64_t rank = concat_like->shape().dimensions().size();
+    for (HloInstruction* pad : pads) {
+      const PaddingConfig& padding = pad->padding_config();
+      if (padding.dimensions_size() != rank) {
+        return std::nullopt;
+      }
+      for (int64_t d = 0; d < rank; ++d) {
+        const auto& dim_pad = padding.dimensions(d);
+        if (dim_pad.interior_padding() != 0 || dim_pad.edge_padding_low() < 0 ||
+            dim_pad.edge_padding_high() < 0) {
+          return std::nullopt;
+        }
+        if (dim_pad.edge_padding_low() > 0 || dim_pad.edge_padding_high() > 0) {
+          if (concat_dim != -1 && concat_dim != d) {
+            return std::nullopt;
+          }
+          concat_dim = d;
+        }
+      }
+    }
+    if (concat_dim == -1) {
+      return std::nullopt;
+    }
+    const int64_t total_concat_size =
+        concat_like->shape().dimensions(concat_dim);
+    for (HloInstruction* pad : pads) {
+      HloInstruction* op = pad->mutable_operand(0);
+      if (op->user_count() != 1) {
+        return std::nullopt;
+      }
+      for (int64_t d = 0; d < rank; ++d) {
+        if (d != concat_dim &&
+            op->shape().dimensions(d) != concat_like->shape().dimensions(d)) {
+          return std::nullopt;
+        }
+      }
+      const auto& dim_pad = pad->padding_config().dimensions(concat_dim);
+      const int64_t low = dim_pad.edge_padding_low();
+      const int64_t high = dim_pad.edge_padding_high();
+      const int64_t size = op->shape().dimensions(concat_dim);
+      if (size <= 0 || low + size + high != total_concat_size) {
+        return std::nullopt;
+      }
+      pieces.push_back({op, low, size});
+    }
+    absl::c_sort(pieces,
+                 [](const StackedSlicePiece& a, const StackedSlicePiece& b) {
+                   return a.offset < b.offset;
+                 });
+    int64_t expected_offset = 0;
+    for (const StackedSlicePiece& piece : pieces) {
+      if (piece.offset != expected_offset) {
+        return std::nullopt;
+      }
+      expected_offset += piece.size;
+    }
+    if (expected_offset != total_concat_size) {
+      return std::nullopt;
+    }
+  } else {
+    return std::nullopt;
+  }
+
+  for (StackedSlicePiece& piece : pieces) {
+    HloInstruction* mth = FindToHostAnnotationToUpdate(piece.slice_instr);
+    if (mth == nullptr ||
+        !mth->IsCustomCall(memory_annotations::kMoveToHostCustomCallTarget)) {
+      return std::nullopt;
+    }
+    piece.slice_instr = UnwrapSingleUserBitcastOrReshape(piece.slice_instr);
+  }
+  return MatchedStackedPieces{concat_dim, std::move(pieces)};
+}
+
+std::optional<int64_t> MapConcatDimToUpdateDim(const Shape& concat_shape,
+                                               int64_t concat_dim,
+                                               const Shape& update_shape) {
+  std::vector<int64_t> concat_non_unit_dims;
+  for (int64_t d = 0; d < concat_shape.dimensions().size(); ++d) {
+    if (concat_shape.dimensions(d) != 1) {
+      concat_non_unit_dims.push_back(d);
+    }
+  }
+  std::vector<int64_t> update_non_unit_dims;
+  for (int64_t d = 0; d < update_shape.dimensions().size(); ++d) {
+    if (update_shape.dimensions(d) != 1) {
+      update_non_unit_dims.push_back(d);
+    }
+  }
+  if (concat_non_unit_dims.size() != update_non_unit_dims.size()) {
+    return std::nullopt;
+  }
+  std::optional<int64_t> mapped_dim;
+  for (size_t i = 0; i < concat_non_unit_dims.size(); ++i) {
+    const int64_t cd = concat_non_unit_dims[i];
+    const int64_t ud = update_non_unit_dims[i];
+    if (concat_shape.dimensions(cd) != update_shape.dimensions(ud)) {
+      return std::nullopt;
+    }
+    if (cd == concat_dim) {
+      mapped_dim = ud;
+    }
+  }
+  return mapped_dim;
+}
+
+// Splits a dynamic-update-slice whose update operand is a concatenation (or
+// TpuConcatDecomposer pad + maximum/add/or tree) of MoveToHost-annotated slices
+// into a sequence of per-slice dynamic-update-slice instructions so each
+// MoveToHost feeds a dynamic-update-slice directly without intermediate host
+// compute.
+absl::StatusOr<bool> SplitStackedMoveToHostDynamicUpdateSlices(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  bool changed = false;
+  for (HloComputation* computation :
+       module->MakeNonfusionComputations(execution_threads)) {
+    std::vector<HloInstruction*> dus_instructions;
+    for (HloInstruction* instr : computation->MakeInstructionPostOrder()) {
+      if (instr->opcode() == HloOpcode::kDynamicUpdateSlice) {
+        dus_instructions.push_back(instr);
+      }
+    }
+    for (HloInstruction* dus : dus_instructions) {
+      HloInstruction* update_op = dus->mutable_operand(1);
+      if (update_op->user_count() != 1) {
+        continue;
+      }
+      HloInstruction* concat_like = UnwrapSingleUserBitcastOrReshape(update_op);
+      std::optional<MatchedStackedPieces> matched_pieces =
+          MatchStackedMoveToHostPieces(concat_like);
+      if (!matched_pieces.has_value()) {
+        continue;
+      }
+      std::optional<int64_t> dus_concat_dim_opt = MapConcatDimToUpdateDim(
+          concat_like->shape(), matched_pieces->concat_dim, update_op->shape());
+      if (!dus_concat_dim_opt.has_value()) {
+        continue;
+      }
+      const int64_t dus_concat_dim = *dus_concat_dim_opt;
+      bool valid_bitcasts = true;
+      for (const StackedSlicePiece& piece : matched_pieces->pieces) {
+        Shape piece_update_shape = update_op->shape();
+        piece_update_shape.set_dimensions(dus_concat_dim, piece.size);
+        if (ShapeUtil::ElementsIn(piece.slice_instr->shape()) !=
+            ShapeUtil::ElementsIn(piece_update_shape)) {
+          valid_bitcasts = false;
+          break;
+        }
+        if (piece.slice_instr->shape().has_layout() &&
+            piece_update_shape.has_layout() &&
+            !ShapeUtil::ReshapeIsBitcast(piece.slice_instr->shape(),
+                                         piece_update_shape)) {
+          valid_bitcasts = false;
+          break;
+        }
+      }
+      if (!valid_bitcasts) {
+        continue;
+      }
+
+      HloInstruction* current_base = dus->mutable_operand(0);
+      HloInstruction* base_index = dus->mutable_operand(2 + dus_concat_dim);
+      const Shape& index_shape = base_index->shape();
+      const bool base_index_is_zero =
+          base_index->opcode() == HloOpcode::kConstant &&
+          base_index->literal().IsAll(0);
+
+      for (const StackedSlicePiece& piece : matched_pieces->pieces) {
+        Shape piece_update_shape = update_op->shape();
+        piece_update_shape.set_dimensions(dus_concat_dim, piece.size);
+        HloInstruction* piece_update = piece.slice_instr;
+        if (!ShapeUtil::Equal(piece_update->shape(), piece_update_shape)) {
+          piece_update = computation->AddInstruction(
+              HloInstruction::CreateBitcast(piece_update_shape, piece_update));
+        }
+
+        std::vector<HloInstruction*> indices(dus->operands().begin() + 2,
+                                             dus->operands().end());
+        if (piece.offset != 0) {
+          Literal offset_literal =
+              LiteralUtil::CreateR0(index_shape.element_type(), piece.offset);
+          HloInstruction* offset_const = computation->AddInstruction(
+              HloInstruction::CreateConstant(std::move(offset_literal)));
+          if (index_shape.has_layout()) {
+            *offset_const->mutable_shape()->mutable_layout() =
+                index_shape.layout();
+          }
+          if (base_index_is_zero) {
+            indices[dus_concat_dim] = offset_const;
+          } else {
+            indices[dus_concat_dim] =
+                computation->AddInstruction(HloInstruction::CreateBinary(
+                    index_shape, HloOpcode::kAdd, base_index, offset_const));
+          }
+        }
+
+        current_base = computation->AddInstruction(
+            HloInstruction::CreateDynamicUpdateSlice(dus->shape(), current_base,
+                                                     piece_update, indices));
+        current_base->set_metadata(dus->metadata());
+        if (dus->has_sharding()) {
+          current_base->copy_sharding(dus);
+        }
+      }
+
+      ABSL_RETURN_IF_ERROR(computation->ReplaceInstruction(dus, current_base));
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 }  // namespace
 
 std::vector<HloInstruction*>
@@ -1030,6 +1327,11 @@ absl::StatusOr<bool> HostOffloadLegalize::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
+  ABSL_ASSIGN_OR_RETURN(
+      bool split_stacked_dus,
+      SplitStackedMoveToHostDynamicUpdateSlices(module, execution_threads));
+  changed |= split_stacked_dus;
+
   // Look for layout changing copies which happen during host memory offload. If
   // any are found, move them outside of the offload section.
   std::vector<HloInstruction*> starting_instructions =

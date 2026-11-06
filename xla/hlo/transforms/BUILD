@@ -276,6 +276,8 @@ cc_library(
     srcs = ["host_offload_legalize.cc"],
     hdrs = ["host_offload_legalize.h"],
     deps = [
+        "//xla:literal",
+        "//xla:literal_util",
         "//xla:shape_util",
         "//xla:util",
         "//xla/hlo/analysis:hlo_alias_analysis",
