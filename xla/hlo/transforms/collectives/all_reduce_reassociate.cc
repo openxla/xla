@@ -80,6 +80,7 @@ bool AreCompatible(const HloAllReduceInstruction* ar0,
 // dynamic-slice).
 HloInstruction* LookThroughForAllReduce(HloInstruction* instr,
                                         const Literal& reduction_identity) {
+  const HloInstruction* original = instr;
   // Match reduce-scatter pattern. Support only the non-formatted case at the
   // moment.
   if (instr->opcode() == HloOpcode::kDynamicSlice) {
@@ -107,6 +108,14 @@ HloInstruction* LookThroughForAllReduce(HloInstruction* instr,
       if (instr->operand(1)->literal() != reduction_identity) {
         return nullptr;
       }
+    }
+    // Conversion validation below only recognizes convert(all-reduce).
+    // Looking through other conversion chains can bypass the precision check
+    // and retain a reducer whose type differs from the new all-reduce operand.
+    if (instr->opcode() == HloOpcode::kConvert &&
+        (instr != original ||
+         instr->operand(0)->opcode() != HloOpcode::kAllReduce)) {
+      return nullptr;
     }
     instr = instr->mutable_operand(0);
   }
