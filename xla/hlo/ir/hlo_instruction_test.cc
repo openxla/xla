@@ -80,7 +80,6 @@ TEST_F(HloInstructionTest, SparsityConfigToString_RHSOnly) {
   sparsity_config.mutable_rhs()->set_block_size(4);
   sparsity_config.mutable_rhs()->set_num_non_zero(1);
   sparsity_config.mutable_rhs()->set_dimension(0);
-  sparsity_config.mutable_rhs()->set_stride(1);
   sparsity_config.mutable_rhs()->set_idx(2);
   ConvolutionDimensionNumbers dnums;
   dnums.set_input_batch_dimension(0);
@@ -104,7 +103,7 @@ TEST_F(HloInstructionTest, SparsityConfigToString_RHSOnly) {
 
   EXPECT_EQ(
       conv->ToString(),
-      R"(%convolution = bf16[256,256]{1,0} convolution(%lhs, %rhs, %rhs_indices), dim_labels=bf_io->bf, sparsity_config={rhs={sparsity=1x4 dimension=0 stride=1 idx=2}})");
+      R"(%convolution = bf16[256,256]{1,0} convolution(%lhs, %rhs, %rhs_indices), dim_labels=bf_io->bf, sparsity_config={rhs={sparsity=1x4 dimension=0 idx=2}})");
 }
 
 TEST_F(HloInstructionTest, SparsityConfigToString_LHSAndRHS) {
@@ -126,12 +125,10 @@ TEST_F(HloInstructionTest, SparsityConfigToString_LHSAndRHS) {
   sparsity_config.mutable_rhs()->set_block_size(4);
   sparsity_config.mutable_rhs()->set_num_non_zero(1);
   sparsity_config.mutable_rhs()->set_dimension(0);
-  sparsity_config.mutable_rhs()->set_stride(1);
   sparsity_config.mutable_rhs()->set_idx(3);
   sparsity_config.mutable_lhs()->set_block_size(4);
   sparsity_config.mutable_lhs()->set_num_non_zero(1);
   sparsity_config.mutable_lhs()->set_dimension(0);
-  sparsity_config.mutable_lhs()->set_stride(1);
   sparsity_config.mutable_lhs()->set_idx(2);
   ConvolutionDimensionNumbers dnums;
   dnums.set_input_batch_dimension(0);
@@ -156,7 +153,7 @@ TEST_F(HloInstructionTest, SparsityConfigToString_LHSAndRHS) {
 
   EXPECT_EQ(
       conv->ToString(),
-      R"(%convolution = bf16[256,256]{1,0} convolution(%lhs, %rhs, %lhs_indices, %rhs_indices), dim_labels=bf_io->bf, sparsity_config={lhs={sparsity=1x4 dimension=0 stride=1 idx=2} rhs={sparsity=1x4 dimension=0 stride=1 idx=3}})");
+      R"(%convolution = bf16[256,256]{1,0} convolution(%lhs, %rhs, %lhs_indices, %rhs_indices), dim_labels=bf_io->bf, sparsity_config={lhs={sparsity=1x4 dimension=0 idx=2} rhs={sparsity=1x4 dimension=0 idx=3}})");
 }
 
 TEST_F(HloInstructionTest, BlockScalingConfigToString) {
@@ -234,7 +231,6 @@ TEST_F(HloInstructionTest, DotBlockScalingAndSparsityToString) {
   sp.mutable_lhs()->set_num_non_zero(2);
   sp.mutable_lhs()->set_block_size(4);
   sp.mutable_lhs()->set_dimension(1);
-  sp.mutable_lhs()->set_stride(1);
 
   BlockScalingConfig bs;
   bs.mutable_lhs()->set_scale_idx(2);
@@ -249,7 +245,7 @@ TEST_F(HloInstructionTest, DotBlockScalingAndSparsityToString) {
 
   EXPECT_EQ(
       dot->ToString(),
-      R"(%dot = bf16[64,64]{1,0} dot(%lhs, %rhs, %lhs_scale, %lhs_indices), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity_config={lhs={sparsity=2x4 dimension=1 stride=1 idx=3}}, block_scaling_config={lhs={scale_idx=2 strides=1x32 steps=1x1}})");
+      R"(%dot = bf16[64,64]{1,0} dot(%lhs, %rhs, %lhs_scale, %lhs_indices), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sparsity_config={lhs={sparsity=2x4 dimension=1 idx=3}}, block_scaling_config={lhs={scale_idx=2 strides=1x32 steps=1x1}})");
 }
 
 TEST_F(HloInstructionTest, GetStackTraceStringFromStackFrameId) {
