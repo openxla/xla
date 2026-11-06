@@ -48,10 +48,12 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "xla/backends/cpu/alignment.h"
+#include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_scatter_emitter.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/backends/cpu/codegen/symbol_name_util.h"
 #include "xla/backends/cpu/codegen/tiled/tiled_fusion_emitter.h"
+#include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/concatenate_kernel_emitter.h"
 #include "xla/codegen/emitters/dynamic_update_slice_kernel_emitter.h"
@@ -144,6 +146,26 @@ emitters::KernelArguments::BufferAlignment GetDefaultBufferAlignment() {
   buffer_alignment.constant_buffer_align_bytes = MinAlign();
 
   return buffer_alignment;
+}
+
+absl::StatusOr<std::string> GetFusionFingerprint(
+    const HloFusionInstruction& fusion,
+    const BufferAssignment& buffer_assignment,
+    const emitters::KernelArguments::BufferAlignment& buffer_alignment) {
+  ABSL_ASSIGN_OR_RETURN(emitters::KernelArguments args,
+                        emitters::KernelArguments::Create(
+                            buffer_assignment, buffer_alignment, &fusion));
+  std::string discriminator;
+  if (WritesDonatedParameter(args)) {
+    for (const emitters::KernelArgument& arg : args.args()) {
+      bool is_entry_param =
+          arg.kind() == emitters::KernelArgument::Kind::kManaged &&
+          arg.slice().allocation()->is_entry_computation_parameter();
+      absl::StrAppend(&discriminator, is_entry_param ? "e" : "_");
+    }
+  }
+  return emitters::GetComputationFingerprint(
+      fusion.fused_instructions_computation(), args.args(), discriminator);
 }
 
 static int64_t GetWorkGroupCount(const HloFusionInstruction& fusion) {
@@ -304,6 +326,8 @@ static absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitLoopFusionKernel(
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
   ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
                         loop_fusion_emitter.EmitKernelDefinition());
+  ABSL_RETURN_IF_ERROR(MarkEntryParametersAliasedIfDonatedWritten(
+      mlir_kernel_definition.source().module(), fusion, buffer_assignment));
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -328,6 +352,8 @@ EmitConcatenateFusionKernel(MLIRContext& context,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
   ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
                         concatenate_fusion_emitter.EmitKernelDefinition());
+  ABSL_RETURN_IF_ERROR(MarkEntryParametersAliasedIfDonatedWritten(
+      mlir_kernel_definition.source().module(), fusion, buffer_assignment));
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(
@@ -353,6 +379,8 @@ EmitDynamicUpdateSliceFusionKernel(MLIRContext& context,
       GetDefaultBufferAlignment(), work_dimensions, name, BackendKind::kCpu);
   ABSL_ASSIGN_OR_RETURN(auto mlir_kernel_definition,
                         emitter.EmitKernelDefinition());
+  ABSL_RETURN_IF_ERROR(MarkEntryParametersAliasedIfDonatedWritten(
+      mlir_kernel_definition.source().module(), fusion, buffer_assignment));
 
   mlir::OpBuilder builder(&context);
   mlir_kernel_definition.source().module().getOperation()->setAttr(

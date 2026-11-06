@@ -63,7 +63,12 @@ class NanoRtExecutable {
   // NanoRtExecutable can be asynchronous and return unavailable async value
   // that becomes available after the execution is complete. It is the caller's
   // responsibility to make sure that arguments, results and temp buffers are
-  // alive during execution.
+  // alive during execution. Temp buffers must not overlap any other buffer,
+  // result buffers must not overlap each other, unaliased result buffers must
+  // not overlap any argument, and each aliased result buffer must use its
+  // aliased argument's buffer. A donated argument's buffer may also be passed
+  // as an unaliased argument, unless a layout changing copy reads or writes it;
+  // values read through that argument are unspecified.
   using ExecuteEvent = tsl::Chain;
 
   class ExecuteOptions {
