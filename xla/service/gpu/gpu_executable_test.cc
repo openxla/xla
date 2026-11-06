@@ -25,8 +25,11 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "absl/base/log_severity.h"
+#include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -383,9 +386,10 @@ TEST_F(GpuExecutableTest, RunThunkPasses) {
     device_description.set_runtime_version({12, 3, 0});
     params.device_description = device_description;
     params.enable_debug_info_manager = false;
-    params.debug_module =
+    auto hlo_module =
         std::make_unique<HloModule>(params.module_name, HloModuleConfig());
-    params.debug_module->mutable_config().set_debug_options(debug_options);
+    hlo_module->mutable_config().set_debug_options(debug_options);
+    params.hlo_module = std::move(hlo_module);
     return GpuExecutable::Create(std::move(params));
   };
 
@@ -678,7 +682,7 @@ TEST_F(GpuExecutableTest, ThunkChecksumPassAddsAllocation) {
   };
 
   GpuExecutable::Params params_without_pass;
-  params_without_pass.debug_module = make_test_hlo_module();
+  params_without_pass.hlo_module = make_test_hlo_module();
   params_without_pass.executable =
       std::make_unique<ThunkExecutor>(make_test_thunk_sequence());
   SetDummyBufferAssignment(params_without_pass);
@@ -689,7 +693,7 @@ TEST_F(GpuExecutableTest, ThunkChecksumPassAddsAllocation) {
       executable_without_pass->GetAllocations().size();
 
   GpuExecutable::Params params_with_pass;
-  params_with_pass.debug_module = make_test_hlo_module();
+  params_with_pass.hlo_module = make_test_hlo_module();
   params_with_pass.executable =
       std::make_unique<ThunkExecutor>(make_test_thunk_sequence());
   params_with_pass.debug_options
@@ -742,9 +746,10 @@ TEST_F(GpuExecutableTest, DumpsMetadataListProto) {
     device_description.set_runtime_version({12, 3, 0});
     params.device_description = device_description;
     params.enable_debug_info_manager = false;
-    params.debug_module =
+    auto hlo_module =
         std::make_unique<HloModule>(params.module_name, HloModuleConfig());
-    params.debug_module->mutable_config().set_debug_options(debug_options);
+    hlo_module->mutable_config().set_debug_options(debug_options);
+    params.hlo_module = std::move(hlo_module);
     SetDummyBufferAssignment(params);
     return GpuExecutable::Create(std::move(params));
   };
@@ -871,6 +876,355 @@ TEST_F(GpuExecutableTest, FromProtoWithoutGpuTopology) {
   EXPECT_FALSE(reconstructed_executable->gpu_topology().has_value());
 }
 
+// Returns a module with a single constant and the given config.
+std::unique_ptr<HloModule> MakeModuleWithConfig(const HloModuleConfig& config) {
+  HloComputation::Builder builder("test_computation");
+  HloInstruction* root = builder.AddInstruction(
+      HloInstruction::CreateConstant(LiteralUtil::CreateR0(1)));
+  // The name needs sanitizing, so that the tests check that the executable
+  // uses the module's (sanitized) name.
+  auto hlo_module = std::make_unique<HloModule>("my module-1", config);
+  hlo_module->AddEntryComputation(builder.Build(/*root_instruction=*/root));
+  return hlo_module;
+}
+
+// Returns a module config with non-default runtime metadata.
+HloModuleConfig MakeConfigWithRuntimeMetadata() {
+  HloModuleConfig config;
+  DebugOptions compile_time_options = GetDebugOptionsFromFlags();
+  compile_time_options.set_xla_gpu_nccl_collective_max_nchannels(7);
+  config.set_debug_options(compile_time_options);
+  DeviceAssignment device_assignment(/*replica_count=*/1,
+                                     /*computation_count=*/2);
+  device_assignment(0, 0) = 1;
+  device_assignment(0, 1) = 0;
+  config.set_static_device_assignment(device_assignment);
+  return config;
+}
+
+se::DeviceDescription MakeVoltaDeviceDescription() {
+  se::DeviceDescription device_description;
+  device_description.set_gpu_compute_capability(
+      se::GpuComputeCapability{se::CudaComputeCapability::Volta()});
+  device_description.set_driver_version({12, 3, 0});
+  device_description.set_runtime_version({12, 3, 0});
+  return device_description;
+}
+
+GpuExecutable::Params MakeParamsWithModule(const HloModuleConfig& config) {
+  GpuExecutable::Params params;
+  params.executable = std::make_unique<ThunkExecutor>(ThunkSequence{});
+  params.device_description = MakeVoltaDeviceDescription();
+  params.enable_debug_info_manager = false;
+  std::shared_ptr<HloModule> module = MakeModuleWithConfig(config);
+  params.module_name = module->name();
+  params.hlo_module = std::move(module);
+  // Load-time options that differ from the compile-time options.
+  params.debug_options = GetDebugOptionsFromFlags();
+  params.gpu_topology =
+      GpuTopology("test_platform", /*num_partitions=*/1,
+                  /*num_hosts_per_partition=*/1, /*num_devices_per_host=*/4);
+  SetDummyBufferAssignment(params);
+  return params;
+}
+
+TEST_F(GpuExecutableTest, RuntimeMetadataFromModuleConfig) {
+  HloModuleConfig config = MakeConfigWithRuntimeMetadata();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                       GpuExecutable::Create(MakeParamsWithModule(config)));
+  ASSERT_TRUE(executable->has_module());
+
+  EXPECT_THAT(executable->runtime_debug_options(),
+              EqualsProto(executable->module_config().debug_options()));
+  EXPECT_EQ(executable->runtime_debug_options()
+                .xla_gpu_nccl_collective_max_nchannels(),
+            7);
+  ASSERT_TRUE(executable->static_device_assignment().has_value());
+  EXPECT_EQ(executable->static_device_assignment()->ToString(),
+            config.static_device_assignment().ToString());
+  EXPECT_EQ(executable->name(), executable->module().name());
+  EXPECT_EQ(executable->name(), "my_module-1");
+}
+
+TEST_F(GpuExecutableTest, RuntimeMetadataWithoutModuleUsesGivenOptions) {
+  GpuExecutable::Params params =
+      MakeParamsWithModule(MakeConfigWithRuntimeMetadata());
+  // This is what `GpuCompiler` does with `embed_hlo_module=false`: it passes
+  // the compile-time options but no module.
+  params.hlo_module = std::monostate();
+  params.debug_options.set_xla_gpu_nccl_collective_max_nchannels(5);
+  DebugOptions compile_time_options = params.debug_options;
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                       GpuExecutable::Create(std::move(params)));
+  ASSERT_FALSE(executable->has_module());
+
+  EXPECT_THAT(executable->runtime_debug_options(),
+              EqualsProto(compile_time_options));
+  EXPECT_FALSE(executable->static_device_assignment().has_value());
+}
+
+TEST_F(GpuExecutableTest, RuntimeMetadataSurvivesProtoRoundTrip) {
+  ASSERT_OK_AND_ASSIGN(
+      tsl::testing::TemporaryDirectory dump_dir,
+      tsl::testing::TemporaryDirectory::CreateForCurrentTestcase());
+  HloModuleConfig config = MakeConfigWithRuntimeMetadata();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> reference_executable,
+                       GpuExecutable::Create(MakeParamsWithModule(config)));
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto,
+                       reference_executable->ToProto());
+
+  DebugOptions load_time_options = GetDebugOptionsFromFlags();
+  load_time_options.set_xla_dump_to(dump_dir.path());
+  load_time_options.set_xla_gpu_experimental_nccl_window_symmetric(true);
+  load_time_options.set_xla_gpu_nccl_collective_max_nchannels(3);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> loaded_executable,
+      GpuExecutable::FromProto(proto, MakeVoltaDeviceDescription(),
+                               "TEST_PLATFORM", load_time_options));
+  ASSERT_TRUE(loaded_executable->has_module());
+
+  // The stored metadata matches what the deserialized module says.
+  EXPECT_THAT(loaded_executable->runtime_debug_options(),
+              EqualsProto(loaded_executable->module_config().debug_options()));
+  ASSERT_TRUE(loaded_executable->static_device_assignment().has_value());
+  EXPECT_EQ(
+      loaded_executable->static_device_assignment()->ToString(),
+      loaded_executable->module_config().static_device_assignment().ToString());
+
+  // Compile-time options with the load-time overrides applied.
+  const DebugOptions& runtime_options =
+      loaded_executable->runtime_debug_options();
+  EXPECT_EQ(runtime_options.xla_gpu_nccl_collective_max_nchannels(), 7);
+  EXPECT_EQ(runtime_options.xla_dump_to(), dump_dir.path());
+  EXPECT_TRUE(runtime_options.xla_gpu_experimental_nccl_window_symmetric());
+  EXPECT_EQ(loaded_executable->static_device_assignment()->ToString(),
+            config.static_device_assignment().ToString());
+
+  EXPECT_EQ(loaded_executable->name(), reference_executable->name());
+  EXPECT_EQ(loaded_executable->name(), loaded_executable->module().name());
+  EXPECT_EQ(loaded_executable->name(), "my_module-1");
+}
+
+TEST_F(GpuExecutableTest, RuntimeMetadataFromProtoUsesHloModuleProtoFallbacks) {
+  HloModuleConfig config = MakeConfigWithRuntimeMetadata();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> reference_executable,
+                       GpuExecutable::Create(MakeParamsWithModule(config)));
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto,
+                       reference_executable->ToProto());
+
+  // Move the device assignment from the config to the module proto and drop
+  // the debug options from the config.
+  HloModuleProtoWithConfig& module_with_config =
+      *proto.mutable_hlo_module_with_config();
+  ASSERT_TRUE(module_with_config.config().has_static_device_assignment());
+  *module_with_config.mutable_hlo_module()->mutable_device_assignment() =
+      module_with_config.config().static_device_assignment();
+  module_with_config.mutable_config()->clear_static_device_assignment();
+  module_with_config.mutable_config()->clear_debug_options();
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> loaded_executable,
+      GpuExecutable::FromProto(proto, MakeVoltaDeviceDescription(),
+                               "TEST_PLATFORM", GetDebugOptionsFromFlags()));
+  ASSERT_TRUE(loaded_executable->has_module());
+
+  EXPECT_THAT(loaded_executable->runtime_debug_options(),
+              EqualsProto(loaded_executable->module_config().debug_options()));
+  EXPECT_EQ(loaded_executable->runtime_debug_options()
+                .xla_gpu_nccl_collective_max_nchannels(),
+            DefaultDebugOptionsIgnoringFlags()
+                .xla_gpu_nccl_collective_max_nchannels());
+  ASSERT_TRUE(loaded_executable->static_device_assignment().has_value());
+  EXPECT_EQ(
+      loaded_executable->static_device_assignment()->ToString(),
+      loaded_executable->module_config().static_device_assignment().ToString());
+  EXPECT_EQ(loaded_executable->static_device_assignment()->ToString(),
+            config.static_device_assignment().ToString());
+}
+
+TEST_F(GpuExecutableTest, RuntimeMetadataFromProtoWithoutModuleConfig) {
+  // This is what an executable compiled with `embed_hlo_module=false`
+  // serializes to: a proto without `hlo_module_with_config`.
+  GpuExecutable::Params params =
+      MakeParamsWithModule(MakeConfigWithRuntimeMetadata());
+  params.hlo_module = std::monostate();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> reference_executable,
+                       GpuExecutable::Create(std::move(params)));
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto,
+                       reference_executable->ToProto());
+  ASSERT_FALSE(proto.has_hlo_module_with_config());
+
+  DebugOptions load_time_options = GetDebugOptionsFromFlags();
+  load_time_options.set_xla_gpu_nccl_collective_max_nchannels(3);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> loaded_executable,
+      GpuExecutable::FromProto(proto, MakeVoltaDeviceDescription(),
+                               "TEST_PLATFORM", load_time_options));
+  ASSERT_FALSE(loaded_executable->has_module());
+
+  // Without a module config the compile-time options are unknown, so the
+  // executable runs with the load-time options.
+  EXPECT_THAT(loaded_executable->runtime_debug_options(),
+              EqualsProto(load_time_options));
+  EXPECT_FALSE(loaded_executable->static_device_assignment().has_value());
+
+  // Module-less executables used to run without any debug options, which
+  // disabled highest-priority communication streams. Now they get the default.
+  ASSERT_TRUE(DefaultDebugOptionsIgnoringFlags()
+                  .xla_gpu_enable_highest_priority_async_stream());
+  EXPECT_TRUE(loaded_executable->runtime_debug_options()
+                  .xla_gpu_enable_highest_priority_async_stream());
+}
+
+constexpr absl::string_view kHloWithoutCollectives = R"(
+  HloModule test_module
+  ENTRY comp {
+    p0 = f32[] parameter(0)
+    p1 = f32[] parameter(1)
+    ROOT add = f32[] add(p0, p1)
+  })";
+
+constexpr absl::string_view kHloWithSyncCollective = R"(
+  HloModule test_module
+  add {
+    a = f32[] parameter(0)
+    b = f32[] parameter(1)
+    ROOT add = f32[] add(a, b)
+  }
+  ENTRY comp {
+    p0 = f32[8] parameter(0)
+    ROOT all-reduce = f32[8] all-reduce(p0), replica_groups={}, to_apply=add,
+      backend_config={"collective_backend_config":{"is_sync":true}}
+  })";
+
+// Creates an executable without thunks that owns `module` (which may be null).
+absl::StatusOr<std::unique_ptr<GpuExecutable>> CreateExecutableWithModule(
+    std::unique_ptr<HloModule> module) {
+  GpuExecutable::Params params;
+  params.module_name = "test_module";
+  params.executable = std::make_unique<ThunkExecutor>(ThunkSequence{});
+  params.device_description = MakeVoltaDeviceDescription();
+  params.enable_debug_info_manager = false;
+  params.hlo_module = std::shared_ptr<HloModule>(std::move(module));
+  SetDummyBufferAssignment(params);
+  return GpuExecutable::Create(std::move(params));
+}
+
+TEST_F(GpuExecutableTest, FingerprintAndCollectiveFlagRoundTrip) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHloWithoutCollectives));
+  const std::string expected_fingerprint = module->GetFingerprint128();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                       CreateExecutableWithModule(std::move(module)));
+  EXPECT_EQ(executable->fingerprint(), expected_fingerprint);
+
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto, executable->ToProto());
+  EXPECT_EQ(proto.fingerprint(), expected_fingerprint);
+  // A module without collectives uses minimal collective resources.
+  ASSERT_TRUE(proto.has_collective_use_minimal_resource());
+  EXPECT_TRUE(proto.collective_use_minimal_resource());
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> reconstructed_executable,
+      GpuExecutable::FromProto(proto, MakeVoltaDeviceDescription(),
+                               "TEST_PLATFORM", GetDebugOptionsFromFlags()));
+  EXPECT_EQ(reconstructed_executable->fingerprint(), expected_fingerprint);
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto reserialized_proto,
+                       reconstructed_executable->ToProto());
+  EXPECT_EQ(reserialized_proto.fingerprint(), expected_fingerprint);
+  ASSERT_TRUE(reserialized_proto.has_collective_use_minimal_resource());
+  EXPECT_TRUE(reserialized_proto.collective_use_minimal_resource());
+}
+
+TEST_F(GpuExecutableTest, SyncCollectiveFlagRoundTrip) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHloWithSyncCollective));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                       CreateExecutableWithModule(std::move(module)));
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto, executable->ToProto());
+  ASSERT_TRUE(proto.has_collective_use_minimal_resource());
+  EXPECT_FALSE(proto.collective_use_minimal_resource());
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> reconstructed_executable,
+      GpuExecutable::FromProto(proto, MakeVoltaDeviceDescription(),
+                               "TEST_PLATFORM", GetDebugOptionsFromFlags()));
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto reserialized_proto,
+                       reconstructed_executable->ToProto());
+  ASSERT_TRUE(reserialized_proto.has_collective_use_minimal_resource());
+  EXPECT_FALSE(reserialized_proto.collective_use_minimal_resource());
+}
+
+TEST_F(GpuExecutableTest,
+       FromProtoWithoutFingerprintAndCollectiveFlagUsesHloModule) {
+  for (absl::string_view hlo :
+       {kHloWithoutCollectives, kHloWithSyncCollective}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnUnverifiedModule(hlo));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                         CreateExecutableWithModule(std::move(module)));
+    ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto, executable->ToProto());
+    const std::string expected_fingerprint = proto.fingerprint();
+    const bool expected_collective_use_minimal_resource =
+        proto.collective_use_minimal_resource();
+
+    // Executables serialized before these fields were introduced don't have
+    // them set. The values are then computed from the HLO module instead.
+    proto.clear_fingerprint();
+    proto.clear_collective_use_minimal_resource();
+
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<GpuExecutable> reconstructed_executable,
+        GpuExecutable::FromProto(proto, MakeVoltaDeviceDescription(),
+                                 "TEST_PLATFORM", GetDebugOptionsFromFlags()));
+    EXPECT_EQ(reconstructed_executable->fingerprint(), expected_fingerprint);
+    ASSERT_OK_AND_ASSIGN(GpuExecutableProto reserialized_proto,
+                         reconstructed_executable->ToProto());
+    EXPECT_EQ(reserialized_proto.fingerprint(), expected_fingerprint);
+    EXPECT_EQ(reserialized_proto.collective_use_minimal_resource(),
+              expected_collective_use_minimal_resource);
+  }
+}
+
+TEST_F(GpuExecutableTest, FromProtoPrefersStoredFingerprintAndCollectiveFlag) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHloWithoutCollectives));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                       CreateExecutableWithModule(std::move(module)));
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto, executable->ToProto());
+  ASSERT_TRUE(proto.collective_use_minimal_resource());
+  // Values that differ from what the HLO module yields show that the stored
+  // values are used.
+  proto.set_fingerprint("stored_fingerprint");
+  proto.set_collective_use_minimal_resource(false);
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<GpuExecutable> reconstructed_executable,
+      GpuExecutable::FromProto(proto, MakeVoltaDeviceDescription(),
+                               "TEST_PLATFORM", GetDebugOptionsFromFlags()));
+  EXPECT_EQ(reconstructed_executable->fingerprint(), "stored_fingerprint");
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto reserialized_proto,
+                       reconstructed_executable->ToProto());
+  EXPECT_EQ(reserialized_proto.fingerprint(), "stored_fingerprint");
+  ASSERT_TRUE(reserialized_proto.has_collective_use_minimal_resource());
+  EXPECT_FALSE(reserialized_proto.collective_use_minimal_resource());
+}
+
+TEST_F(GpuExecutableTest, FingerprintWithoutHloModule) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
+                       CreateExecutableWithModule(/*module=*/nullptr));
+  EXPECT_TRUE(executable->fingerprint().empty());
+
+  ASSERT_OK_AND_ASSIGN(GpuExecutableProto proto, executable->ToProto());
+  EXPECT_FALSE(proto.has_hlo_module_with_config());
+  EXPECT_TRUE(proto.fingerprint().empty());
+  ASSERT_TRUE(proto.has_collective_use_minimal_resource());
+  EXPECT_FALSE(proto.collective_use_minimal_resource());
+}
+
 TEST_F(GpuExecutableTest, ToProtoFailsWithoutGpuTopology) {
   se::DeviceDescription device_description;
   device_description.set_gpu_compute_capability(
@@ -919,7 +1273,7 @@ TEST_F(GpuExecutableTest, ProtoConversionWithBackendConfigInterning) {
 
   p0->set_raw_backend_config_string("tokamax:{\"data\": 1}");
   p1->CopyBackendConfigFrom(p0);  // Force in-memory sharing to test fast path.
-  params.debug_module = std::move(debug_module);
+  params.hlo_module = std::move(debug_module);
   SetDummyBufferAssignment(params);
 
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> executable,
@@ -985,9 +1339,10 @@ TEST_F(GpuExecutableTest, GpuExecutableDump) {
     params.debug_options = debug_options;
 
     params.module_name = "test_module";
-    params.debug_module =
+    auto hlo_module =
         std::make_unique<HloModule>(params.module_name, HloModuleConfig());
-    params.debug_module->mutable_config().set_debug_options(debug_options);
+    hlo_module->mutable_config().set_debug_options(debug_options);
+    params.hlo_module = std::move(hlo_module);
     SetDummyBufferAssignment(params);
     return GpuExecutable::Create(std::move(params));
   };
@@ -1460,6 +1815,83 @@ class Exec1CollectiveThunk : public Thunk {
   absl::Notification* exec1_collective_done_;
 };
 
+TEST_F(GpuExecutableTest, LogsErrorForNonIotaStaticDeviceAssignment) {
+  ASSERT_OK_AND_ASSIGN(
+      se::Platform * platform,
+      se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+  const se::GpuComputeCapability& compute_capability =
+      device_description().gpu_compute_capability();
+
+  // Runs `executable` until it fails to load its (fake) binary, which happens
+  // right after the static device assignment check.
+  auto run_until_module_loading = [&](GpuExecutable& executable) {
+    se::MockStreamExecutor executor;
+    se::MockStream stream;
+    EXPECT_CALL(executor, GetPlatform()).WillRepeatedly(Return(platform));
+    EXPECT_CALL(executor, device_ordinal()).WillRepeatedly(Return(0));
+    EXPECT_CALL(executor, Activate()).WillRepeatedly([]() { return nullptr; });
+    EXPECT_CALL(executor, LoadModule(::testing::_))
+        .WillOnce(Return(absl::InternalError("No module loading in tests")));
+    EXPECT_CALL(stream, parent()).WillRepeatedly(Return(&executor));
+    if (const se::CudaComputeCapability* cuda_cc =
+            compute_capability.cuda_compute_capability()) {
+      EXPECT_CALL(stream, GetCudaComputeCapability())
+          .WillRepeatedly(Return(*cuda_cc));
+    }
+    if (const se::RocmComputeCapability* rocm_cc =
+            compute_capability.rocm_compute_capability()) {
+      EXPECT_CALL(stream, GetRocmComputeCapability())
+          .WillRepeatedly(Return(*rocm_cc));
+    }
+
+    FakeDeviceAddressAllocator allocator(platform);
+    ExecutableRunOptions exec_run_options;
+    exec_run_options.set_stream(&stream);
+    exec_run_options.set_allocator(&allocator);
+    ServiceExecutableRunOptions run_options(exec_run_options);
+    EXPECT_THAT(executable.ExecuteAsyncOnStream(&run_options,
+                                                std::vector<ExecutionInput>{}),
+                absl_testing::StatusIs(absl::StatusCode::kInternal));
+  };
+
+  auto make_executable = [&](const HloModuleConfig& config) {
+    GpuExecutable::Params params = MakeParamsWithModule(config);
+    params.device_description = device_description();
+    params.binary = {1, 2, 3, 4};
+    return GpuExecutable::Create(std::move(params));
+  };
+
+  // `MakeConfigWithRuntimeMetadata` has a non-iota device assignment.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> non_iota_executable,
+                       make_executable(MakeConfigWithRuntimeMetadata()));
+  {
+    absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kError, ::testing::_,
+                         ::testing::HasSubstr(
+                             "XLA:GPU only supports iota device assignment")))
+        .Times(1);
+    log.StartCapturingLogs();
+    run_until_module_loading(*non_iota_executable);
+  }
+
+  HloModuleConfig iota_config = MakeConfigWithRuntimeMetadata();
+  DeviceAssignment iota_device_assignment(/*replica_count=*/1,
+                                          /*computation_count=*/2);
+  iota_device_assignment.FillIota(0);
+  iota_config.set_static_device_assignment(iota_device_assignment);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> iota_executable,
+                       make_executable(iota_config));
+  {
+    absl::ScopedMockLog log(absl::MockLogDefault::kIgnoreUnexpected);
+    EXPECT_CALL(log, Log(absl::LogSeverity::kError, ::testing::_,
+                         ::testing::HasSubstr(
+                             "XLA:GPU only supports iota device assignment")))
+        .Times(0);
+    log.StartCapturingLogs();
+    run_until_module_loading(*iota_executable);
+  }
+}
+
 TEST_F(GpuExecutableTest,
        RendezvousAfterExecutionPreventsDriverLockDeadlockAcrossExecutables) {
   ASSERT_OK_AND_ASSIGN(
@@ -1488,6 +1920,9 @@ TEST_F(GpuExecutableTest,
   params1.module_name = "exec1";
   params1.executable = std::make_unique<ThunkExecutor>(std::move(thunks1));
   params1.device_description = device_description();
+  // Without a module the executable runs with these options, and the
+  // rendezvous timeouts must not be 0.
+  params1.debug_options = GetDebugOptionsFromFlags();
   params1.enable_debug_info_manager = false;
   SetDummyBufferAssignment(params1);
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec1,
@@ -1500,6 +1935,7 @@ TEST_F(GpuExecutableTest,
   params2.binary = {1, 2, 3, 4};
   params2.executable = std::make_unique<ThunkExecutor>(ThunkSequence{});
   params2.device_description = device_description();
+  params2.debug_options = GetDebugOptionsFromFlags();
   params2.enable_debug_info_manager = false;
   SetDummyBufferAssignment(params2);
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<GpuExecutable> exec2,
