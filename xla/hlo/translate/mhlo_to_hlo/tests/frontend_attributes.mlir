@@ -44,3 +44,51 @@ func.func private @add(%arg0: tensor<f32>, %arg1: tensor<f32>) -> tensor<f32> {
 // CHECK:  ENTRY
 // CHECK:       %[[CALL:.*]] = f32[] call
 // CHECK-SAME:  frontend_attributes={_xla_compute_type="dense"}
+
+// -----
+
+// Tests that the get-tuple-elements unpacking a multi-result call do not
+// inherit the call's frontend_attributes.
+
+func.func @main(%arg0: tensor<f32>) -> tensor<f32> {
+  %0:2 = call @two(%arg0) {mhlo.frontend_attributes = {_xla_stream_annotation = "collective"}} : (tensor<f32>) -> (tensor<f32>, tensor<f32>)
+  %1 = mhlo.add %0#0, %0#1 : tensor<f32>
+  func.return %1 : tensor<f32>
+}
+func.func private @two(%arg0: tensor<f32>) -> (tensor<f32>, tensor<f32>) {
+  %0 = mhlo.negate %arg0 : tensor<f32>
+  return %arg0, %0 : tensor<f32>, tensor<f32>
+}
+
+// CHECK:  ENTRY
+// CHECK:       %[[CALL:.*]] = (f32[], f32[]) call
+// CHECK-SAME:  frontend_attributes={_xla_stream_annotation="collective"}
+// CHECK:       get-tuple-element(%[[CALL]]), index=0
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       get-tuple-element(%[[CALL]]), index=1
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       ROOT
+
+// -----
+
+// Tests that the get-tuple-elements unpacking a multi-result op other than a
+// call do not inherit its frontend_attributes either.
+
+func.func @main(%arg0: tensor<8xf32>, %arg1: tensor<f32>) -> tensor<f32> {
+  %0:2 = "mhlo.all_reduce"(%arg0, %arg1) ({
+  ^bb0(%arg2: tensor<f32>, %arg3: tensor<f32>):
+    %2 = mhlo.add %arg2, %arg3 : tensor<f32>
+    mhlo.return %2 : tensor<f32>
+  }) {replica_groups = dense<> : tensor<0x0xi64>, mhlo.frontend_attributes = {_xla_stream_annotation = "collective"}} : (tensor<8xf32>, tensor<f32>) -> (tensor<8xf32>, tensor<f32>)
+  %1 = mhlo.add %0#1, %0#1 : tensor<f32>
+  func.return %1 : tensor<f32>
+}
+
+// CHECK:  ENTRY
+// CHECK:       %[[ALL_REDUCE:.*]] = (f32[8], f32[]) all-reduce
+// CHECK-SAME:  frontend_attributes={_xla_stream_annotation="collective"}
+// CHECK:       get-tuple-element(%[[ALL_REDUCE]]), index=0
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       get-tuple-element(%[[ALL_REDUCE]]), index=1
+// CHECK-NOT:   frontend_attributes={
+// CHECK:       ROOT

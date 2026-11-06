@@ -1477,6 +1477,12 @@ void BuildGetTupleElementsForTupleResults(
     mlir::Operation* op, xla::XlaOp tuple, xla::XlaBuilder* builder,
     llvm::DenseMap<mlir::Value, xla::XlaOp>& values,
     unsigned num_implicit_results = 0) {
+  // The get-tuple-elements only unpack the results of `op`, so they must not
+  // inherit its frontend attributes. Attributes such as
+  // `_xla_stream_annotation` would otherwise apply to every result extraction
+  // as well as to `op`.
+  xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
+      builder, xla::FrontendAttributes());
   const std::optional<xla::OpSharding>& sharding = builder->sharding();
   if (sharding.has_value()) {
     bool is_tuple_sharding = sharding->type() == xla::OpSharding::TUPLE;
@@ -3169,15 +3175,6 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
 
   if (op->getNumResults() == 1 && !return_tuple) {
     value_map[op.getResult(0)] = custom_call;
-  } else if (op.getCallTargetName() ==
-                 xla::sdy::kGlobalToLocalShapeCallTargetName ||
-             op.getCallTargetName() ==
-                 xla::sdy::kLocalToGlobalShapeCallTargetName) {
-    // ShardyXLA has the hlo -> stablehlo -> hlo round trip. These
-    // get-tuple-elements do not need to hold the frontend attributes.
-    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
-        ctx.builder, xla::FrontendAttributes());
-    BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   } else {
     BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   }
@@ -4717,15 +4714,6 @@ LogicalResult ExportXlaOp(CustomCallOp op, OpLoweringContext ctx) {
 
   if (op->getNumResults() == 1 && !return_tuple) {
     value_map[op.getResult(0)] = custom_call;
-  } else if (op.getCallTargetName() ==
-                 xla::sdy::kGlobalToLocalShapeCallTargetName ||
-             op.getCallTargetName() ==
-                 xla::sdy::kLocalToGlobalShapeCallTargetName) {
-    // ShardyXLA has the hlo -> stablehlo -> hlo round trip. These
-    // get-tuple-elements do not need to hold the frontend attributes.
-    xla::XlaScopedFrontendAttributesAssignment frontend_attributes_scope(
-        ctx.builder, xla::FrontendAttributes());
-    BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   } else {
     BuildGetTupleElementsForTupleResults(op, custom_call, ctx);
   }
