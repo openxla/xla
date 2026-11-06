@@ -2500,9 +2500,9 @@ absl::Status AlgebraicSimplifierVisitor::HandleSubtract(HloInstruction* sub) {
 }
 namespace {
 template <typename T>
-absl::Status InvertConstant(const HloInstruction& constant, Literal* result) {
+absl::Status InvertConstant(const Literal& constant, Literal* result) {
   return result->Populate<T>([&](absl::Span<const int64_t> indices) {
-    return T{1.0} / constant.literal().Get<T>(indices);
+    return T{1.0} / constant.Get<T>(indices);
   });
 }
 
@@ -2636,18 +2636,56 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
   if (Match(divide, m::Divide(m::Op(&a), m::Sqrt(m::Op(&b)).WithOneUse()))) {
     auto* rsqrt = divide->mutable_operand(1)->AddInstruction(
         HloInstruction::CreateUnary(divide->shape(), HloOpcode::kRsqrt, b));
+    if (IsAll(a, 1) && ReplaceInstructionIfCompatible(divide, rsqrt)) {
+      return absl::OkStatus();
+    }
     return ReplaceWithNewInstruction(
         divide, HloInstruction::CreateBinary(rsqrt->shape(),
                                              HloOpcode::kMultiply, a, rsqrt));
+  }
+
+  // A/broadcast(sqrt(B)) => A*broadcast(rsqrt(B)).
+  if (Match(divide, m::Divide(m::Op(&a),
+                              m::Broadcast(&c, m::Sqrt(m::Op(&b)).WithOneUse())
+                                  .WithOneUse()))) {
+    auto* rsqrt = b->AddInstruction(
+        HloInstruction::CreateUnary(b->shape(), HloOpcode::kRsqrt, b));
+    auto* bcast = c->AddInstruction(
+        HloInstruction::CreateBroadcast(c->shape(), rsqrt, c->dimensions()));
+    if (IsAll(a, 1) && ReplaceInstructionIfCompatible(divide, bcast)) {
+      return absl::OkStatus();
+    }
+    return ReplaceWithNewInstruction(
+        divide, HloInstruction::CreateBinary(divide->shape(),
+                                             HloOpcode::kMultiply, a, bcast));
   }
 
   // A/rsqrt(B) => A*sqrt(B).
   if (Match(divide, m::Divide(m::Op(&a), m::Rsqrt(m::Op(&b)).WithOneUse()))) {
     auto* sqrt = divide->mutable_operand(1)->AddInstruction(
         HloInstruction::CreateUnary(divide->shape(), HloOpcode::kSqrt, b));
+    if (IsAll(a, 1) && ReplaceInstructionIfCompatible(divide, sqrt)) {
+      return absl::OkStatus();
+    }
     return ReplaceWithNewInstruction(
         divide, HloInstruction::CreateBinary(sqrt->shape(),
                                              HloOpcode::kMultiply, a, sqrt));
+  }
+
+  // A/broadcast(rsqrt(B)) => A*broadcast(sqrt(B)).
+  if (Match(divide, m::Divide(m::Op(&a),
+                              m::Broadcast(&c, m::Rsqrt(m::Op(&b)).WithOneUse())
+                                  .WithOneUse()))) {
+    auto* sqrt = b->AddInstruction(
+        HloInstruction::CreateUnary(b->shape(), HloOpcode::kSqrt, b));
+    auto* bcast = c->AddInstruction(
+        HloInstruction::CreateBroadcast(c->shape(), sqrt, c->dimensions()));
+    if (IsAll(a, 1) && ReplaceInstructionIfCompatible(divide, bcast)) {
+      return absl::OkStatus();
+    }
+    return ReplaceWithNewInstruction(
+        divide, HloInstruction::CreateBinary(divide->shape(),
+                                             HloOpcode::kMultiply, a, bcast));
   }
 
   // Simplifying integral division would produce unexpected results.
@@ -2659,9 +2697,36 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
   //
   // (Backends can do this transformation, but generally only if the constant is
   // a scalar.)
-  if (Match(divide, m::Divide(m::NonConstant(&a), m::Op(&b))) &&
-      (Match(b, m::Constant(&c)) || Match(b, m::Broadcast(m::Constant(&c))))) {
-    Shape result_shape = c->literal().shape();
+  c = nullptr;
+  std::optional<absl::Span<const int64_t>> broadcast_dimensions;
+  bool is_constant_divisor = false;
+  if (Match(b, m::Constant(&c))) {
+    is_constant_divisor = true;
+  } else if (Match(b, m::Broadcast(m::Constant(&c)))) {
+    broadcast_dimensions = b->dimensions();
+    is_constant_divisor = true;
+  } else if (Match(b, m::Convert(m::Constant(&c)))) {
+    is_constant_divisor = true;
+  } else if (Match(b, m::Broadcast(m::Convert(m::Constant(&c))))) {
+    broadcast_dimensions = b->dimensions();
+    is_constant_divisor = true;
+  }
+
+  if (is_constant_divisor && c != nullptr &&
+      Cast<HloConstantInstruction>(c)->HasLiteral()) {
+    Literal converted_literal;
+    const Literal* target_literal = &c->literal();
+    if (c->shape().element_type() != divide->shape().element_type()) {
+      absl::StatusOr<Literal> converted =
+          c->literal().Convert(divide->shape().element_type());
+      if (!converted.ok()) {
+        return absl::OkStatus();
+      }
+      converted_literal = std::move(*converted);
+      target_literal = &converted_literal;
+    }
+
+    Shape result_shape = target_literal->shape();
     Literal new_literal(result_shape);
     return primitive_util::PrimitiveTypeSwitch<absl::Status>(
         [&](auto primitive_type_constant) -> absl::Status {
@@ -2670,14 +2735,20 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
                         primitive_util::IsComplexType(
                             primitive_type_constant)) {
             using NativeT = NativeTypeOf<primitive_type_constant>;
-            ABSL_RETURN_IF_ERROR(InvertConstant<NativeT>(*c, &new_literal));
+            ABSL_RETURN_IF_ERROR(
+                InvertConstant<NativeT>(*target_literal, &new_literal));
 
             auto inverse =
-                c->AddInstruction(simplifier_->CreateConstantWithLayoutUpdated(
-                    new_literal.Clone()));
-            if (b != c) {
+                b->AddInstruction(simplifier_->CreateConstantWithLayoutUpdated(
+                    std::move(new_literal)));
+            if (broadcast_dimensions.has_value() &&
+                !ShapeUtil::Equal(inverse->shape(), b->shape())) {
               inverse = b->AddInstruction(HloInstruction::CreateBroadcast(
-                  b->shape(), inverse, b->dimensions()));
+                  b->shape(), inverse, *broadcast_dimensions));
+            }
+            if (IsAll(a, 1) &&
+                ReplaceInstructionIfCompatible(divide, inverse)) {
+              return absl::OkStatus();
             }
             ABSL_ASSIGN_OR_RETURN(
                 auto new_divide,

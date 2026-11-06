@@ -16591,5 +16591,98 @@ TEST_F(AlgebraicSimplifierTest, CanonicalizesMultiDimShuffleRotate) {
   EXPECT_EQ(shuffle->rotate().shifts(1), 3);
 }
 
+TEST_F(AlgebraicSimplifierTest, DivideOneByConstant) {
+  const std::string hlo_text = R"(
+    HloModule m
+    ENTRY test {
+      one = f32[] constant(1.0)
+      c = f32[] constant(4.0)
+      ROOT div = f32[] divide(one, c)
+    }
+  )";
+  auto module = ParseAndReturnVerifiedModule(hlo_text).value();
+  EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(module.get()).value());
+  EXPECT_THAT(module->entry_computation()->root_instruction(), op::Constant());
+  EXPECT_FLOAT_EQ(
+      module->entry_computation()->root_instruction()->literal().Get<float>({}),
+      0.25f);
+}
+
+TEST_F(AlgebraicSimplifierTest, DivideConstantByBroadcastedConstant) {
+  const std::string hlo_text = R"(
+    HloModule m
+    ENTRY test {
+      c1 = f32[2,3] constant({{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}})
+      c2 = f32[] constant(4.0)
+      c2_bcast = f32[2,3] broadcast(c2), dimensions={}
+      ROOT div = f32[2,3] divide(c1, c2_bcast)
+    }
+  )";
+  auto module = ParseAndReturnVerifiedModule(hlo_text).value();
+  EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(module.get()).value());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Multiply(op::Constant(), op::Broadcast(op::Constant())));
+}
+
+TEST_F(AlgebraicSimplifierTest, DivideByConvertedAndBroadcastedConstant) {
+  const std::string hlo_text = R"(
+    HloModule m
+    ENTRY test {
+      p = f32[2,3] parameter(0)
+      c_s32 = s32[] constant(4)
+      c_f32 = f32[] convert(c_s32)
+      c_bcast = f32[2,3] broadcast(c_f32), dimensions={}
+      ROOT div = f32[2,3] divide(p, c_bcast)
+    }
+  )";
+  auto module = ParseAndReturnVerifiedModule(hlo_text).value();
+  EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(module.get()).value());
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Multiply(op::Parameter(0), op::Broadcast(op::Constant())));
+  const HloInstruction* const_inst =
+      module->entry_computation()->root_instruction()->operand(1)->operand(0);
+  EXPECT_FLOAT_EQ(const_inst->literal().Get<float>({}), 0.25f);
+}
+
+TEST_F(AlgebraicSimplifierTest, DivideByBroadcastedSqrt) {
+  const std::string hlo_text = R"(
+    HloModule m
+    ENTRY test {
+      p = f32[2,3] parameter(0)
+      v = f32[2] parameter(1)
+      s = f32[2] sqrt(v)
+      s_bcast = f32[2,3] broadcast(s), dimensions={0}
+      ROOT div = f32[2,3] divide(p, s_bcast)
+    }
+  )";
+  auto module = ParseAndReturnVerifiedModule(hlo_text).value();
+  EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(module.get()).value());
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kMultiply);
+  EXPECT_EQ(root->operand(0)->opcode(), HloOpcode::kParameter);
+  EXPECT_EQ(root->operand(1)->opcode(), HloOpcode::kBroadcast);
+  EXPECT_EQ(root->operand(1)->operand(0)->opcode(), HloOpcode::kRsqrt);
+  EXPECT_EQ(root->operand(1)->operand(0)->operand(0),
+            module->entry_computation()->parameter_instruction(1));
+}
+
+TEST_F(AlgebraicSimplifierTest, DivideOneBySqrt) {
+  const std::string hlo_text = R"(
+    HloModule m
+    ENTRY test {
+      one = f32[2] broadcast(f32[] constant(1.0)), dimensions={}
+      v = f32[2] parameter(0)
+      s = f32[2] sqrt(v)
+      ROOT div = f32[2] divide(one, s)
+    }
+  )";
+  auto module = ParseAndReturnVerifiedModule(hlo_text).value();
+  EXPECT_TRUE(AlgebraicSimplifier(default_options_).Run(module.get()).value());
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_EQ(root->opcode(), HloOpcode::kRsqrt);
+  EXPECT_EQ(root->operand(0),
+            module->entry_computation()->parameter_instruction(0));
+}
+
 }  // namespace
 }  // namespace xla
