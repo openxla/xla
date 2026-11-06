@@ -49,7 +49,8 @@ struct RaggedAllToAllDeviceKernel {
       int64_t,                             // input_buffer_offset_bytes
       int64_t,                             // output_buffer_offset_bytes
       int32_t,                             // local_write_cost
-      int32_t>;                            // remote_write_cost
+      int32_t,                             // remote_write_cost
+      bool>;                               // cft_granted
 };
 
 }  // namespace stream_executor::gpu

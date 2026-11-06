@@ -606,7 +606,6 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -2665,6 +2664,7 @@ cc_library(
         "//xla:status_macros",
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_sharding",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
@@ -6114,6 +6114,9 @@ xla_cc_test(
 xla_test(
     name = "xla_aot_compile_gpu_test",
     srcs = ["xla_aot_compile_gpu_test.cc"],
+    backend_tags = {
+        "b200": ["full"],
+    },
     backends = [
         "h100",
         "b200",
