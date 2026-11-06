@@ -15,7 +15,6 @@
 
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
-load("@config_rocm_hipcc//rocm:build_defs.bzl", "hipcc_config")
 load("@local_config_rocm//rocm:build_defs.bzl", "rocm_gpu_architectures", "rocm_info", "rocm_lib_import", "rocm_path")
 load("@rules_cc//cc:cc_import.bzl", "cc_import")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")

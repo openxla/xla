@@ -279,7 +279,6 @@ def _create_dummy_repository(repository_ctx):
             "%{rocm_lib_paths}": "",
             "%{rocm_rbe_docker_image}": repository_ctx.os.environ.get(_TF_ROCM_RBE_DOCKER_IMAGE, _DEFAULT_TF_ROCM_RBE_DOCKER_IMAGE),
             "%{rocm_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_POOL, _DEFAULT_TF_ROCM_RBE_POOL),
-            "%{rocm_repo_name}": repository_ctx.name,
         },
     )
     _tpl(repository_ctx, "rocm:BUILD")
@@ -426,7 +425,6 @@ def _create_local_rocm_repository(repository_ctx):
             "%{rocm_lib_paths}": _rocm_lib_paths(repository_ctx),
             "%{rocm_rbe_docker_image}": repository_ctx.os.environ.get(_TF_ROCM_RBE_DOCKER_IMAGE, _DEFAULT_TF_ROCM_RBE_DOCKER_IMAGE),
             "%{rocm_rbe_pool}": repository_ctx.os.environ.get(_TF_ROCM_RBE_POOL, _DEFAULT_TF_ROCM_RBE_POOL),
-            "%{rocm_repo_name}": repository_ctx.name,
         },
     )
 

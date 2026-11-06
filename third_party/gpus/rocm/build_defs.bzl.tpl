@@ -39,7 +39,7 @@ def rocm_info():
         rocm_rbe_docker_image = "%{rocm_rbe_docker_image}",
         rocm_rbe_pool = "%{rocm_rbe_pool}",
         rocm_runfiles_path = "../{}/rocm/{}".format(
-            "%{rocm_repo_name}",
+            Label("//rocm:build_defs.bzl").repo_name,
             _ROCM_ROOT,
         ),
         rocm_execroot_path = "{}/rocm/{}".format(
