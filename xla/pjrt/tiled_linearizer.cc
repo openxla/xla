@@ -16,9 +16,11 @@ limitations under the License.
 #include "xla/pjrt/tiled_linearizer.h"
 
 #include <algorithm>
+#include <bit>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -844,6 +846,88 @@ absl::Status
       lane_tile_dims.back());
 }
 
+class ScratchBufferPool {
+ public:
+  static constexpr size_t kMaxBuffers = 16;
+  static constexpr size_t kMinAllocBytes = size_t{1} << 20;     // 1 MiB
+  static constexpr size_t kMaxScratchBytes = size_t{32} << 20;  // 32 MiB
+
+  static tensorflow::tpu::OwnedDataPtr Allocate(size_t size) {
+    if (kSanitizerEnabled || size == 0 || size > kMaxScratchBytes) {
+      return tensorflow::tpu::DefaultAllocator(size);
+    }
+    static ScratchBufferPool* const pool = new ScratchBufferPool();
+    return pool->Acquire(size);
+  }
+
+ private:
+#if defined(ABSL_HAVE_ADDRESS_SANITIZER) ||                              \
+    defined(ABSL_HAVE_HWADDRESS_SANITIZER) ||                            \
+    defined(ABSL_HAVE_MEMORY_SANITIZER) ||                               \
+    defined(ABSL_HAVE_THREAD_SANITIZER) || defined(ADDRESS_SANITIZER) || \
+    defined(MEMORY_SANITIZER) || defined(THREAD_SANITIZER)
+  static constexpr bool kSanitizerEnabled = true;
+#else
+  static constexpr bool kSanitizerEnabled = false;
+#endif
+
+  struct Entry {
+    uint8_t* ptr = nullptr;
+    size_t capacity = 0;
+  };
+
+  tensorflow::tpu::OwnedDataPtr Acquire(size_t size) {
+    Entry chosen;
+    {
+      absl::MutexLock lock(mu_);
+      auto it = absl::c_lower_bound(
+          buffers_, size,
+          [](const Entry& e, size_t target) { return e.capacity < target; });
+      if (it != buffers_.end()) {
+        chosen = *it;
+        buffers_.erase(it);
+      }
+    }
+    if (chosen.ptr == nullptr) {
+      chosen.capacity = std::max(kMinAllocBytes, std::bit_ceil(size));
+      chosen.ptr = static_cast<uint8_t*>(std::malloc(chosen.capacity));
+      if (chosen.ptr == nullptr) {
+        return tensorflow::tpu::DefaultAllocator(size);
+      }
+    }
+    const size_t capacity = chosen.capacity;
+    return tensorflow::tpu::OwnedDataPtr(
+        chosen.ptr, [this, capacity](void* ptr) {
+          Release(static_cast<uint8_t*>(ptr), capacity);
+        });
+  }
+
+  void Release(uint8_t* ptr, size_t capacity) {
+    uint8_t* to_free = ptr;
+    {
+      absl::MutexLock lock(mu_);
+      if (buffers_.size() == kMaxBuffers &&
+          capacity > buffers_.front().capacity) {
+        to_free = buffers_.front().ptr;
+        buffers_.erase(buffers_.begin());
+      }
+      if (buffers_.size() < kMaxBuffers) {
+        auto it = absl::c_lower_bound(
+            buffers_, capacity,
+            [](const Entry& e, size_t cap) { return e.capacity < cap; });
+        buffers_.insert(it, {ptr, capacity});
+        if (to_free == ptr) {
+          to_free = nullptr;
+        }
+      }
+    }
+    std::free(to_free);
+  }
+
+  absl::Mutex mu_;
+  absl::InlinedVector<Entry, kMaxBuffers> buffers_ ABSL_GUARDED_BY(mu_);
+};
+
 absl::Status DelinearizeUsingTranspose(
     const Shape& literal_shape, absl::Span<const uint8_t> data,
     const Layout& device_layout, MutableLiteralBase* literal,
@@ -961,7 +1045,8 @@ absl::Status DelinearizeUsingTranspose(
                       CeilOfRatio<size_t>(kPackingFactor, sizeof(uint32_t));
                   unpacked_values =
                       Buffer(values.size() * kTpuToCpuExpansionFactor *
-                             sizeof(uint32_t));
+                                 sizeof(uint32_t),
+                             ScratchBufferPool::Allocate);
                   RepackToHostLayout<kPackingFactor, kTcLaneCount>(
                       values, unpacked_values.mutable_data<uint8_t>());
                   values = unpacked_values.const_data<uint32_t>();
@@ -976,8 +1061,9 @@ absl::Status DelinearizeUsingTranspose(
           if constexpr (kPackingFactor > 4) {
             constexpr int kTpuToCpuExpansionFactor =
                 CeilOfRatio<size_t>(kPackingFactor, sizeof(uint32_t));
-            unpacked_values = Buffer(values.size() * kTpuToCpuExpansionFactor *
-                                     sizeof(uint32_t));
+            unpacked_values = Buffer(
+                values.size() * kTpuToCpuExpansionFactor * sizeof(uint32_t),
+                ScratchBufferPool::Allocate);
             RepackFromSparseCoreLayout<kPackingFactor>(
                 values, unpacked_values.mutable_data<uint8_t>());
             values = unpacked_values.const_data<uint32_t>();
