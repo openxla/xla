@@ -135,12 +135,18 @@ class UnrollLoops : public mlir::OpRewritePattern<mlir::scf::ForOp> {
  public:
   using mlir::OpRewritePattern<mlir::scf::ForOp>::OpRewritePattern;
 
-  UnrollLoops(mlir::MLIRContext* context, int max_unroll_factor)
+  UnrollLoops(mlir::MLIRContext* context, int max_unroll_factor,
+              bool only_inner_loops)
       : mlir::OpRewritePattern<mlir::scf::ForOp>(context),
-        max_unroll_factor_(max_unroll_factor) {}
+        max_unroll_factor_(max_unroll_factor),
+        only_inner_loops_(only_inner_loops) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::scf::ForOp op, mlir::PatternRewriter& rewriter) const override {
+    if (only_inner_loops_ &&
+        op->getParentOfType<mlir::scf::ForOp>() == nullptr) {
+      return rewriter.notifyMatchFailure(op, "not an inner loop");
+    }
     if (int factor = GetUnrollingFactor(op, max_unroll_factor_); factor > 1) {
       return mlir::loopUnrollByFactor(op, factor);
     }
@@ -149,6 +155,7 @@ class UnrollLoops : public mlir::OpRewritePattern<mlir::scf::ForOp> {
 
  private:
   int max_unroll_factor_;
+  bool only_inner_loops_;
 };
 
 class OptimizeLoopsPass
@@ -163,7 +170,8 @@ class OptimizeLoopsPass
       max_unroll_factor = MaxUnrollFactor();
     }
     mlir::RewritePatternSet unroll_patterns(&getContext());
-    unroll_patterns.add<UnrollLoops>(&getContext(), max_unroll_factor);
+    unroll_patterns.add<UnrollLoops>(&getContext(), max_unroll_factor,
+                                     only_inner_loops_);
     if (mlir::failed(mlir::applyPatternsGreedily(getOperation(),
                                                  std::move(unroll_patterns)))) {
       signalPassFailure();
