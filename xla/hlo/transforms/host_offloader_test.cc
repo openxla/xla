@@ -5359,5 +5359,89 @@ ENTRY main {
       Layout::kHostMemorySpace);
 }
 
+TEST_F(HostOffloaderTest, WhileBodyHostComputeIntoDeviceStateElement) {
+  const absl::string_view hlo_string = R"(
+HloModule test_module
+
+while_condition {
+  param = (s32[], f32[128]) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  limit = s32[] constant(10)
+  ROOT cmp = pred[] compare(i, limit), direction=LT
+}
+
+while_body {
+  param = (s32[], f32[128]) parameter(0)
+  i = s32[] get-tuple-element(param), index=0
+  one = s32[] constant(1)
+  next_i = s32[] add(i, one)
+
+  dummy = f32[128] constant({...})
+  offload = f32[128] custom-call(dummy), custom_call_target="MoveToHost"
+  host_compute = f32[128] add(offload, offload)
+
+  ROOT body_root = (s32[], f32[128]) tuple(next_i, host_compute)
+}
+
+ENTRY main {
+  zero = s32[] constant(0)
+  dev_data = f32[128] parameter(0)
+  init = (s32[], f32[128]) tuple(zero, dev_data)
+  loop = (s32[], f32[128]) while(init), condition=while_condition, body=while_body
+  ROOT res = f32[128] get-tuple-element(loop), index=1
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  HostOffloader host_offloader(&alias_info_);
+  ASSERT_OK_AND_ASSIGN(bool changed, host_offloader.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  auto* while_op = FindInstruction(module.get(), HloOpcode::kWhile);
+  ASSERT_NE(while_op, nullptr);
+  TestShapeHasMemorySpace(while_op->shape().tuple_shapes(1),
+                          Layout::kDefaultMemorySpace);
+  TestShapeHasMemorySpace(
+      while_op->while_body()->parameter_instruction(0)->shape().tuple_shapes(1),
+      Layout::kDefaultMemorySpace);
+  TestShapeHasMemorySpace(
+      while_op->while_body()->root_instruction()->shape().tuple_shapes(1),
+      Layout::kDefaultMemorySpace);
+
+  auto* body_root = while_op->while_body()->root_instruction();
+  EXPECT_EQ(body_root->operand(1)->opcode(), HloOpcode::kCopy);
+  TestShapeHasMemorySpace(body_root->operand(1)->shape(),
+                          Layout::kDefaultMemorySpace);
+}
+
+TEST_F(HostOffloaderTest, HostOffloadDoesNotFeedDeviceFusion) {
+  const absl::string_view hlo_string = R"(
+HloModule test_module
+
+fused_computation {
+  fused_p0 = f32[128] parameter(0)
+  ROOT fused_root = f32[128] negate(fused_p0)
+}
+
+ENTRY main {
+  data = f32[128] parameter(0)
+  offload = f32[128] custom-call(data), custom_call_target="MoveToHost"
+  host_add = f32[128] add(offload, offload)
+  ROOT fusion = f32[128] fusion(host_add), kind=kLoop, calls=fused_computation
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  HostOffloader host_offloader(&alias_info_);
+  ASSERT_OK_AND_ASSIGN(bool changed, host_offloader.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  auto* fusion = FindInstruction(module.get(), HloOpcode::kFusion);
+  ASSERT_NE(fusion, nullptr);
+  EXPECT_EQ(fusion->operand(0)->opcode(), HloOpcode::kCopy);
+  TestShapeHasMemorySpace(fusion->operand(0)->shape(),
+                          Layout::kDefaultMemorySpace);
+}
+
 }  // namespace
 }  // namespace xla
