@@ -545,14 +545,14 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     std::vector<std::unique_ptr<BackendConfig>> configs;
     for (MxScaleLayout layout : layouts) {
       ABSL_ASSIGN_OR_RETURN(gemm_config_or->scale_mode, MxScaleMode(layout));
-      auto plan_or =
+      absl::StatusOr<BlasLt::MatmulPlanPtr> plan_or =
           blas_lt->GetMatmulPlan(*gemm_config_or, BlasLt::Epilogue::kDefault);
       if (!plan_or.ok()) {
         VLOG(2) << "hipBLASLt MX: GetMatmulPlan failed for scale layout "
                 << layout << ": " << plan_or.status();
         continue;
       }
-      auto algorithms_or =
+      absl::StatusOr<std::vector<BlasLt::MatmulAlgorithm>> algorithms_or =
           (*plan_or)->GetAlgorithms(max_algorithms, workspace_size);
       if (!algorithms_or.ok()) {
         VLOG(2) << "hipBLASLt MX: GetAlgorithms failed for scale layout "

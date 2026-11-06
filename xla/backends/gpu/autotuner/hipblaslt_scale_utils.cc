@@ -35,7 +35,7 @@ bool IsSupportedScaleShape(const Shape& shape) {
     return false;
   }
   // [M or N, K/32], or the same with a leading 1.
-  int64_t rank = shape.dimensions().size();
+  const int64_t rank = shape.dimensions().size();
   if (rank != 2 && rank != 3) {
     return false;
   }
@@ -62,14 +62,15 @@ bool CanUseHipblasLtScale32x8(
   if (rocm == nullptr || !rocm->gfx9_mi350()) {
     return false;
   }
-  PrimitiveType input_type = scaled_dot.operand(0)->shape().element_type();
+  const PrimitiveType input_type =
+      scaled_dot.operand(0)->shape().element_type();
   if ((input_type != F8E4M3FN && input_type != F4E2M1FN) ||
       scaled_dot.operand(1)->shape().element_type() != input_type) {
     return false;
   }
   const DotDimensionNumbers& dims = scaled_dot.dot_dimension_numbers();
   for (int side = 0; side < 2; ++side) {
-    int64_t rank = scaled_dot.operand(side)->shape().dimensions().size();
+    const int64_t rank = scaled_dot.operand(side)->shape().dimensions().size();
     const auto& contracting = side == 0 ? dims.lhs_contracting_dimensions()
                                         : dims.rhs_contracting_dimensions();
     // Scales must be [M or N, K/32]: K is the last dimension.
@@ -85,9 +86,9 @@ absl::StatusOr<HloInstruction*> SwizzleHipblasLtScale32x8(
     HloInstruction* scale) {
   const Shape& shape = scale->shape();
   TF_RET_CHECK(IsSupportedScaleShape(shape));
-  int64_t rank = shape.dimensions().size();
-  int64_t rows = shape.dimensions(rank - 2);
-  int64_t cols = shape.dimensions(rank - 1);
+  const int64_t rank = shape.dimensions().size();
+  const int64_t rows = shape.dimensions(rank - 2);
+  const int64_t cols = shape.dimensions(rank - 1);
 
   HloComputation::Builder builder("hipblaslt_mx_scale_32x8");
   HloInstruction* input = builder.AddInstruction(
