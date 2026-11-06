@@ -1845,6 +1845,45 @@ ENTRY main {
   EXPECT_EQ(param_buffer.index(), neg_2_buffer.index());
 }
 
+TEST_F(BufferAssignmentTest,
+       TempBufferColorRecolorsSingleDefaultTempAllocation) {
+  const char* const hlo_text = R"(
+HloModule test, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[100]{0} parameter(0)
+  neg0 = f32[100]{0} negate(p0)
+  neg1 = f32[100]{0:S(7)} negate(neg0)
+  ROOT out = f32[10]{0} slice(neg1), slice={[0:10]}
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_text));
+
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  opts.temp_buffer_color = 7;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  HloInstruction* neg0 = FindInstruction(module.get(), "neg0");
+  HloInstruction* neg1 = FindInstruction(module.get(), "neg1");
+
+  const BufferAllocation& neg0_alloc = GetAllocation(*buffers, neg0, {});
+  const BufferAllocation& neg1_alloc = GetAllocation(*buffers, neg1, {});
+
+  EXPECT_TRUE(neg0_alloc.IsPreallocatedTempBuffer());
+  EXPECT_TRUE(neg1_alloc.IsPreallocatedTempBuffer());
+  EXPECT_EQ(neg0_alloc.color(), 7);
+  EXPECT_EQ(neg1_alloc.color(), 7);
+  EXPECT_NE(neg0_alloc.index(), neg1_alloc.index());
+}
+
 TEST_F(BufferAssignmentTest, CanUseAllocationReusesCrossColorTempAllocation) {
   // AllowCrossColorReuse enables directional temp reuse: an S(0) temp may be
   // placed in already-free space inside an S(1) temp allocation, while keeping
