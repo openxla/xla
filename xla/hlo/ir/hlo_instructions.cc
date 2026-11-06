@@ -2689,6 +2689,18 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
         // from their respective vectors.
         CHECK_OK(called_computation()->RemoveParameter(operand_num));
         RemoveOperandAt(operand_num);
+        if (!output_to_operand_aliasing().empty()) {
+          auto aliasing = output_to_operand_aliasing();
+          std::erase_if(aliasing, [operand_num](const auto& entry) {
+            return entry.second.first == operand_num;
+          });
+          for (auto& entry : aliasing) {
+            if (entry.second.first > operand_num) {
+              --entry.second.first;
+            }
+          }
+          set_output_to_operand_aliasing(std::move(aliasing));
+        }
         break;
       }
     }
@@ -2803,6 +2815,13 @@ HloCallableInstruction::CloneAndAppendInstructionIntoCalledComputation(
     // If this is a newly created multioutput instruction, we need to update
     // the use of the original callable instruction.
     if (newly_created_tuple_instr) {
+      if (!output_to_operand_aliasing().empty()) {
+        auto aliasing = output_to_operand_aliasing();
+        for (auto& entry : aliasing) {
+          entry.first.push_front(0);
+        }
+        set_output_to_operand_aliasing(std::move(aliasing));
+      }
       HloInstruction* new_instr = AddInstruction(
           HloInstruction::CreateGetTupleElement(root->shape(), this, 0));
       CHECK_OK(ReplaceAllUsesWithDifferentShape(new_instr));
@@ -3285,6 +3304,13 @@ absl::Status HloFusionInstruction::PermuteFusionOperands(
   }
   RemoveAllOperands();
   AppendOperands(new_operands);
+  if (!output_to_operand_aliasing().empty()) {
+    auto aliasing = output_to_operand_aliasing();
+    for (auto& entry : aliasing) {
+      entry.second.first = permutation[entry.second.first];
+    }
+    set_output_to_operand_aliasing(std::move(aliasing));
+  }
   return absl::OkStatus();
 }
 
