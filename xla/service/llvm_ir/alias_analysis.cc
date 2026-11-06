@@ -57,6 +57,9 @@ void AliasAnalysis::AddAliasingInformationToIrArray(const HloInstruction& hlo,
       return;
     }
     buffer_slice = unique_slice.value();
+    if (buffer_slice.allocation()->is_entry_computation_parameter()) {
+      buffer_slice = BufferAllocation::Slice(kParameterAllocation, 0, 0);
+    }
   }
 
   if (module_.config().debug_options().xla_llvm_enable_alias_scope_metadata()) {
@@ -170,6 +173,9 @@ llvm::MDNode* AliasAnalysis::GetNoaliasMetadataForBuffer(
   for (const HloValue* buffer : worklist) {
     const BufferAllocation::Slice noalias_slice =
         assignment.GetAssignedSlice(*buffer);
+    if (noalias_slice.allocation()->is_entry_computation_parameter()) {
+      continue;
+    }
     // Our buffer must not overlap with the noalias slice.
     if (!buffer_slice.OverlapsWith(noalias_slice)) {
       buffers.insert(noalias_slice);

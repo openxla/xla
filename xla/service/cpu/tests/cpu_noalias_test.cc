@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -69,6 +72,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/service/logical_buffer.h"
 #include "xla/service/platform_util.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/tsl/platform/test.h"
@@ -451,6 +455,61 @@ TEST_F(CpuNoAliasTest, InlinedKernelsDoNotFoldLoadsAcrossWrites) {
     CHECK:         load i32, ptr [[STATE]]
   )"));
   EXPECT_TRUE(filecheck_match) << optimized_ir;
+}
+
+TEST_F(CpuNoAliasTest, DonatedParameterDoesNotNoAliasEntryParameterSubshape) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule donated, input_output_alias={ {}: (0, {}, may-alias) }
+
+    ENTRY main {
+      p0 = f32[4] parameter(0)
+      p1 = (f32[4]) parameter(1)
+      gte = f32[4] get-tuple-element(p1), index=0
+      ROOT sum = f32[4] add(p0, gte)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  AliasInfo alias_info;
+  auto compiler = GetCpuCompiler();
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffer_assn,
+      BufferAssigner::Run(
+          hlo_module.get(),
+          std::make_unique<DependencyHloOrdering>(hlo_module.get()),
+          compiler->BufferSizeBytesFunction(), &alias_info,
+          [](LogicalBuffer::Color) { return /*alignment=*/1; },
+          BufferAssigner::Options{}));
+
+  llvm::LLVMContext context;
+  llvm_ir::AliasAnalysis aa(*hlo_module, *buffer_assn, &context);
+  llvm::Module ir_module("test", context);
+  llvm::Function* func = llvm::dyn_cast<llvm::Function>(
+      ir_module.getOrInsertFunction("test_fn", llvm::Type::getVoidTy(context))
+          .getCallee());
+  llvm::BasicBlock* bb = llvm::BasicBlock::Create(context, "body", func);
+  llvm::IRBuilder<> b(bb);
+  auto* zero = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0);
+  llvm::ArrayType* array_type =
+      llvm::ArrayType::get(llvm::Type::getFloatTy(context), 4);
+  Shape shape = ShapeUtil::MakeShape(F32, {4});
+
+  const HloInstruction* sum =
+      hlo_module->entry_computation()->root_instruction();
+  const HloInstruction* gte = sum->operand(1);
+  for (const HloInstruction* instr : {gte, sum}) {
+    auto* gv = llvm::cast<llvm::GlobalVariable>(
+        ir_module.getOrInsertGlobal(instr->name(), array_type));
+    llvm_ir::IrArray arr(gv, gv->getValueType(), shape);
+    aa.AddAliasingInformationToIrArray(*instr, &arr);
+    llvm_ir::IrArray::Index idx({zero}, shape, zero->getType());
+    arr.EmitReadArrayElement(idx, &b);
+  }
+  b.CreateRetVoid();
+
+  std::string ir = llvm_ir::DumpToString(&ir_module);
+  EXPECT_EQ(ir.find("!alias.scope"), std::string::npos);
+  EXPECT_EQ(ir.find("!noalias"), std::string::npos);
 }
 
 }  // namespace

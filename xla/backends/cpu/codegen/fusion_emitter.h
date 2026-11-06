@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef XLA_BACKENDS_CPU_CODEGEN_FUSION_EMITTER_H_
 #define XLA_BACKENDS_CPU_CODEGEN_FUSION_EMITTER_H_
 
+#include <string>
+
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
@@ -29,6 +31,11 @@ limitations under the License.
 namespace xla::cpu {
 
 emitters::KernelArguments::BufferAlignment GetDefaultBufferAlignment();
+
+absl::StatusOr<std::string> GetFusionFingerprint(
+    const HloFusionInstruction& fusion,
+    const BufferAssignment& buffer_assignment,
+    const emitters::KernelArguments::BufferAlignment& buffer_alignment);
 
 absl::StatusOr<KernelDefinition<MlirKernelSource>> EmitFusionKernel(
     mlir::MLIRContext& mlir_context, const HloFusionInstruction& fusion,

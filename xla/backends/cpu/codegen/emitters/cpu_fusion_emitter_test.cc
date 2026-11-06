@@ -23,12 +23,17 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Pass/PassManager.h"
@@ -38,11 +43,14 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/fusion_emitter.h"
 #include "xla/codegen/kernel_definition.h"
+#include "xla/codegen/kernel_spec.h"
 #include "xla/codegen/llvm_kernel_source.h"
 #include "xla/codegen/mlir_kernel_source.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/filecheck.h"
@@ -177,6 +185,70 @@ TEST_F(CpuFusionEmitterTest, ScatterLlvm) {
   EXPECT_TRUE(filecheck_matched);
 }
 
+TEST_F(CpuFusionEmitterTest,
+       ScatterReorderedOperandsWritesToResultSliceAndHonorsNonInvariant) {
+  constexpr absl::string_view kHlo = R"(
+    add {
+      lhs = s32[] parameter(0)
+      rhs = s32[] parameter(1)
+      ROOT sum = s32[] add(lhs, rhs)
+    }
+
+    scatter_computation {
+      indices = s32[2,1] parameter(0)
+      updates = s32[2,1] parameter(1)
+      operand = s32[4] parameter(2)
+      ROOT s = s32[4] scatter(operand, indices, updates),
+        update_window_dims={1},
+        inserted_window_dims={},
+        scatter_dims_to_operand_dims={0},
+        index_vector_dim=1,
+        to_apply=add
+    }
+
+    ENTRY main {
+      p0 = s32[2,1] parameter(0)
+      p1 = s32[2,1] parameter(1)
+      p2 = s32[4] parameter(2)
+      ROOT wrapped_scatter = s32[4] fusion(p0, p1, p2),
+        kind=kLoop, calls=scatter_computation,
+        frontend_attributes={xla.no_invariant_operands="0"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<BufferAssignment> buffer_assignment,
+                       RunBufferAssignment(*hlo_module));
+  const auto* fusion = Cast<HloFusionInstruction>(
+      hlo_module->entry_computation()->root_instruction());
+  auto mlir_context = FusionCompiler::CreateContext();
+  CpuScatterFusion emitter(*buffer_assignment, fusion, mlir_context.get());
+  ASSERT_OK_AND_ASSIGN(KernelDefinition<MlirKernelSource> kernel_definition,
+                       emitter.EmitKernelDefinition());
+  EXPECT_FALSE(kernel_definition.spec().invariant_arguments().contains(0));
+  EXPECT_TRUE(kernel_definition.spec().invariant_arguments().contains(1));
+  EXPECT_FALSE(kernel_definition.spec().invariant_arguments().contains(2));
+  FusionCompiler compiler(mlir_context.get(),
+                          FusionCompiler::Options{512, 1, true});
+  ASSERT_OK_AND_ASSIGN(
+      LlvmKernelSource llvm_source,
+      compiler.Compile(std::move(kernel_definition).TakeSource()));
+  const llvm::Function* wrapped =
+      llvm_source.module()->getFunction("wrapped_scatter_wrapped");
+  ASSERT_NE(wrapped, nullptr);
+  // Operand 0 is marked not invariant, operand 1 is read only, operand 2 and
+  // arg 3 share the writable result slice, and args 4..6 are the workgroup IDs.
+  ASSERT_EQ(wrapped->arg_size(), 7);
+  EXPECT_FALSE(wrapped->getArg(0)->onlyReadsMemory());
+  EXPECT_FALSE(wrapped->getArg(0)->hasNoAliasAttr());
+  EXPECT_TRUE(wrapped->getArg(1)->onlyReadsMemory());
+  EXPECT_TRUE(wrapped->getArg(1)->hasNoAliasAttr());
+  EXPECT_FALSE(wrapped->getArg(2)->onlyReadsMemory());
+  EXPECT_TRUE(wrapped->getArg(2)->hasNoAliasAttr());
+  EXPECT_FALSE(wrapped->getArg(2)->use_empty());
+  EXPECT_TRUE(wrapped->getArg(3)->use_empty());
+}
+
 TEST_F(CpuFusionEmitterTest, SortComparatorMlirAndLlvm) {
   constexpr absl::string_view kSortHlo = R"(
     HloModule sort_module
@@ -222,6 +294,196 @@ TEST_F(CpuFusionEmitterTest, SortComparatorMlirAndLlvm) {
                        compiler.Compile(std::move(mlir_source)));
   EXPECT_THAT(RunFileCheck(llvm_source.ToString(), kExpectedLlvm),
               absl_testing::IsOkAndHolds(true));
+}
+
+TEST_F(CpuFusionEmitterTest, WrittenDonatedParameterDropsEntryNoAlias) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m, input_output_alias={ {0}: (0, {}, may-alias), {1}: (2, {}, may-alias) }
+
+    fused_a {
+      p0 = f32[8] parameter(0)
+      p1 = f32[8] parameter(1)
+      ROOT sum = f32[8] add(p0, p1)
+    }
+
+    fused_b {
+      p0 = f32[8] parameter(0)
+      p1 = f32[8] parameter(1)
+      ROOT sum = f32[8] add(p0, p1)
+    }
+
+    ENTRY main {
+      p0 = f32[8] parameter(0)
+      p1 = f32[8] parameter(1)
+      p2 = f32[8] parameter(2)
+      f0 = f32[8] fusion(p0, p1), kind=kLoop, calls=fused_a
+      t1 = f32[8] negate(p1)
+      f1 = f32[8] fusion(p2, t1), kind=kLoop, calls=fused_b
+      ROOT out = (f32[8], f32[8]) tuple(f0, f1)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<BufferAssignment> buffer_assignment,
+                       RunBufferAssignment(*hlo_module));
+  const HloInstruction* root =
+      hlo_module->entry_computation()->root_instruction();
+  const auto* f0 = Cast<HloFusionInstruction>(root->operand(0));
+  const auto* f1 = Cast<HloFusionInstruction>(root->operand(1));
+
+  ASSERT_OK_AND_ASSIGN(std::string fp0,
+                       GetFusionFingerprint(*f0, *buffer_assignment,
+                                            GetDefaultBufferAlignment()));
+  ASSERT_OK_AND_ASSIGN(std::string fp1,
+                       GetFusionFingerprint(*f1, *buffer_assignment,
+                                            GetDefaultBufferAlignment()));
+  EXPECT_NE(fp0, fp1);
+
+  auto compile =
+      [&](const HloFusionInstruction* f) -> absl::StatusOr<LlvmKernelSource> {
+    auto mlir_context = FusionCompiler::CreateContext();
+    ABSL_ASSIGN_OR_RETURN(
+        KernelDefinition<MlirKernelSource> def,
+        EmitFusionKernel(*mlir_context, *f, buffer_assignment.get(),
+                         /*use_unique_c_name=*/false,
+                         /*enable_tiled_emitter=*/false));
+    FusionCompiler compiler(mlir_context.get(),
+                            FusionCompiler::Options{512, 1, true});
+    return compiler.Compile(std::move(def).TakeSource());
+  };
+
+  // In f0, both p0 (written donated) and p1 (read entry parameter) omit
+  // noalias, while p1 stays readonly.
+  ASSERT_OK_AND_ASSIGN(LlvmKernelSource src0, compile(f0));
+  const llvm::Function* wrapped0 = src0.module()->getFunction("f0_wrapped");
+  ASSERT_NE(wrapped0, nullptr);
+  EXPECT_FALSE(wrapped0->getArg(0)->hasNoAliasAttr());
+  EXPECT_FALSE(wrapped0->getArg(1)->hasNoAliasAttr());
+  EXPECT_TRUE(wrapped0->getArg(1)->onlyReadsMemory());
+
+  // In f1, p2 (written donated) omits noalias, while t1 (temporary) keeps
+  // noalias and readonly.
+  ASSERT_OK_AND_ASSIGN(LlvmKernelSource src1, compile(f1));
+  const llvm::Function* wrapped1 = src1.module()->getFunction("f1_wrapped");
+  ASSERT_NE(wrapped1, nullptr);
+  EXPECT_FALSE(wrapped1->getArg(0)->hasNoAliasAttr());
+  EXPECT_TRUE(wrapped1->getArg(1)->hasNoAliasAttr());
+  EXPECT_TRUE(wrapped1->getArg(1)->onlyReadsMemory());
+}
+
+TEST_F(CpuFusionEmitterTest,
+       WrittenDonatedParameterDropsEntryNoAliasOnConcatDusAndScatter) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m, input_output_alias={
+      {0}: (0, {}, may-alias),
+      {1}: (1, {}, may-alias),
+      {2}: (2, {}, may-alias),
+      {3}: (3, {}, may-alias)
+    }
+
+    add_scalar {
+      lhs = f32[] parameter(0)
+      rhs = f32[] parameter(1)
+      ROOT sum = f32[] add(lhs, rhs)
+    }
+
+    concat_fn {
+      a = f32[4] parameter(0)
+      b = f32[4] parameter(1)
+      ROOT c = f32[8] concatenate(a, b), dimensions={0}
+    }
+
+    dus_fn {
+      dst = f32[8] parameter(0)
+      upd = f32[4] parameter(1)
+      ROOT d = f32[8] dynamic-update-slice(dst, upd, s32[] constant(2))
+    }
+
+    scatter_fn_a {
+      op = f32[8] parameter(0)
+      idx = s32[2,1] parameter(1)
+      upd = f32[2,1] parameter(2)
+      ROOT s = f32[8] scatter(op, idx, upd),
+        update_window_dims={1},
+        inserted_window_dims={},
+        scatter_dims_to_operand_dims={0},
+        index_vector_dim=1,
+        to_apply=add_scalar
+    }
+
+    scatter_fn_b {
+      op = f32[8] parameter(0)
+      idx = s32[2,1] parameter(1)
+      upd = f32[2,1] parameter(2)
+      ROOT s = f32[8] scatter(op, idx, upd),
+        update_window_dims={1},
+        inserted_window_dims={},
+        scatter_dims_to_operand_dims={0},
+        index_vector_dim=1,
+        to_apply=add_scalar
+    }
+
+    ENTRY main {
+      d_concat = f32[8] parameter(0)
+      d_dus = f32[8] parameter(1)
+      d_scatter_a = f32[8] parameter(2)
+      d_scatter_b = f32[8] parameter(3)
+      e_half = f32[4] parameter(4)
+      e_idx = s32[2,1] parameter(5)
+      e_upd = f32[2,1] parameter(6)
+
+      f_concat = f32[8] fusion(e_half, e_half), kind=kLoop, calls=concat_fn
+      f_dus = f32[8] fusion(d_dus, e_half), kind=kLoop, calls=dus_fn
+      f_scatter_a = f32[8] fusion(d_scatter_a, e_idx, e_upd), kind=kLoop, calls=scatter_fn_a
+      t_upd = f32[2,1] negate(e_upd)
+      f_scatter_b = f32[8] fusion(d_scatter_b, e_idx, t_upd), kind=kLoop, calls=scatter_fn_b
+      ROOT out = (f32[8], f32[8], f32[8], f32[8]) tuple(
+          f_concat, f_dus, f_scatter_a, f_scatter_b)
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<BufferAssignment> buffer_assignment,
+                       RunBufferAssignment(*hlo_module));
+  const HloInstruction* root =
+      hlo_module->entry_computation()->root_instruction();
+  const auto* f_concat = Cast<HloFusionInstruction>(root->operand(0));
+  const auto* f_dus = Cast<HloFusionInstruction>(root->operand(1));
+  const auto* f_scatter_a = Cast<HloFusionInstruction>(root->operand(2));
+  const auto* f_scatter_b = Cast<HloFusionInstruction>(root->operand(3));
+
+  auto compile =
+      [&](const HloFusionInstruction* f) -> absl::StatusOr<LlvmKernelSource> {
+    auto mlir_context = FusionCompiler::CreateContext();
+    ABSL_ASSIGN_OR_RETURN(
+        KernelDefinition<MlirKernelSource> def,
+        EmitFusionKernel(*mlir_context, *f, buffer_assignment.get(),
+                         /*use_unique_c_name=*/false,
+                         /*enable_tiled_emitter=*/false));
+    FusionCompiler compiler(mlir_context.get(),
+                            FusionCompiler::Options{512, 1, true});
+    return compiler.Compile(std::move(def).TakeSource());
+  };
+
+  for (const HloFusionInstruction* f : {f_concat, f_dus, f_scatter_a}) {
+    ASSERT_OK_AND_ASSIGN(LlvmKernelSource src, compile(f));
+    const llvm::Function* wrapped =
+        src.module()->getFunction(absl::StrCat(f->name(), "_wrapped"));
+    ASSERT_NE(wrapped, nullptr);
+    for (const llvm::Argument& arg : wrapped->args()) {
+      if (arg.getType()->isPointerTy()) {
+        EXPECT_FALSE(arg.hasNoAliasAttr()) << f->name();
+      }
+    }
+  }
+
+  ASSERT_OK_AND_ASSIGN(std::string fp_a,
+                       GetFusionFingerprint(*f_scatter_a, *buffer_assignment,
+                                            GetDefaultBufferAlignment()));
+  ASSERT_OK_AND_ASSIGN(std::string fp_b,
+                       GetFusionFingerprint(*f_scatter_b, *buffer_assignment,
+                                            GetDefaultBufferAlignment()));
+  EXPECT_NE(fp_a, fp_b);
 }
 
 TEST_F(CpuFusionEmitterTest, SortComparatorUnsupportedOp) {
