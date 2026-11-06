@@ -82,7 +82,7 @@ class MockExecutable : public Executable {
   MockExecutable(std::shared_ptr<HloModule> module,
                  std::vector<int> durations_ns, bool should_fail = false,
                  bool write_past_allocated_buffer = false)
-      : Executable(module),
+      : Executable(std::move(module)),
         durations_ns_(std::move(durations_ns)),
         should_fail_(should_fail),
         write_past_allocated_buffer_(write_past_allocated_buffer) {}
@@ -211,6 +211,21 @@ class RecordingAllocator : public se::DeviceAddressAllocator {
   std::vector<AllocationRecord> allocations_;
 };
 
+int CountCacheFlushAllocations(const RecordingAllocator& allocator,
+                               const se::StreamExecutor* stream_exec) {
+  const uint64_t min_flush_bytes = std::max<uint64_t>(
+      2 * stream_exec->GetDeviceDescription().l2_cache_size(), 64ULL << 20);
+  int count = 0;
+  for (const RecordingAllocator::AllocationRecord& alloc :
+       allocator.allocations()) {
+    if (alloc.size >= min_flush_bytes) {
+      ++count;
+      EXPECT_FALSE(alloc.retry_on_failure);
+    }
+  }
+  return count;
+}
+
 absl::StatusOr<ScopedShapedBuffer> CreateTestBuffer(
     se::DeviceAddressAllocator* allocator, se::StreamExecutor* stream_exec,
     se::Stream* stream, int32_t value) {
@@ -306,6 +321,172 @@ TEST_F(GpuProfilerTest, CreateInputBuffersAndProfile) {
   EXPECT_EQ(profile.output_buffer->on_device_shape(),
             ShapeUtil::MakeShape(S32, {}));
   EXPECT_EQ(profile.scratch_bytes, 0);
+  EXPECT_EQ(mock_executable.num_profiled_runs(), 1);
+}
+
+class GpuProfilerSingleRunEarlyStopTest
+    : public GpuProfilerTest,
+      public ::testing::WithParamInterface<int> {};
+
+TEST_P(GpuProfilerSingleRunEarlyStopTest,
+       StopsAfterFirstRunAndFlushesCacheOnce) {
+  constexpr absl::string_view kHloModule = R"hlo(
+    HloModule module
+    ENTRY main {
+      ROOT c = s32[] constant(1)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  const int duration_ns = GetParam();
+  MockExecutable mock_executable(module, duration_ns);
+  RecordingAllocator allocator(allocator_.get(),
+                               /*allows_async_deallocation=*/true);
+  ProfileOptions options;
+  options.flush_caches = true;
+  options.num_timed_runs = 3;
+  auto profiler = GpuProfiler::Create(stream_exec_, options, &allocator);
+  ASSERT_NE(profiler, nullptr);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<InputBuffers> buffers,
+                       profiler->CreateInputBuffers(&mock_executable));
+  ASSERT_OK_AND_ASSIGN(ProfileResult profile,
+                       profiler->Profile(&mock_executable, *buffers));
+  EXPECT_EQ(mock_executable.num_profiled_runs(), 1);
+  EXPECT_EQ(CountCacheFlushAllocations(allocator, stream_exec_), 1);
+  EXPECT_EQ(profile.duration, absl::Nanoseconds(duration_ns));
+  EXPECT_EQ(profile.output_buffer->on_device_shape(),
+            ShapeUtil::MakeShape(S32, {}));
+}
+
+INSTANTIATE_TEST_SUITE_P(GpuProfilerSingleRunEarlyStopTest,
+                         GpuProfilerSingleRunEarlyStopTest,
+                         ::testing::Values(500'000, 0, -1));
+
+TEST_F(GpuProfilerTest,
+       CompetitiveMarginEarlyStoppingRetainsContendersAndStopsDominated) {
+  constexpr absl::string_view kHloModule = R"hlo(
+    HloModule module
+    ENTRY main {
+      ROOT c = s32[] constant(1)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  RecordingAllocator allocator(allocator_.get(),
+                               /*allows_async_deallocation=*/true);
+  ProfileOptions options;
+  options.flush_caches = true;
+  options.num_timed_runs = 3;
+  auto profiler = GpuProfiler::Create(stream_exec_, options, &allocator);
+  ASSERT_NE(profiler, nullptr);
+
+  // Candidate 1 (first candidate on `buffers`, <500 us): runs all 3 passes and
+  // establishes `best_duration_ns = 20,000 ns`. At `best = 20,000 ns` and
+  // `N = 3`, the 3-sigma contender upper bound is ~25,533 ns.
+  MockExecutable leader(module, std::vector<int>{22'000, 19'000, 19'000});
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<InputBuffers> buffers,
+                       profiler->CreateInputBuffers(&leader));
+  ASSERT_OK_AND_ASSIGN(ProfileResult leader_profile,
+                       profiler->Profile(&leader, *buffers));
+  EXPECT_EQ(leader.num_profiled_runs(), 3);
+  EXPECT_EQ(leader_profile.duration, absl::Nanoseconds(20'000));
+  EXPECT_EQ(CountCacheFlushAllocations(allocator, stream_exec_), 3);
+
+  // Candidate 2 (`first_run = 26,000 ns > 25,533 ns`): outside the competitive
+  // margin, so it stops after `run == 0` and performs only 1 cache flush.
+  MockExecutable dominated(module, std::vector<int>{26'000, 18'000, 18'000});
+  ASSERT_OK_AND_ASSIGN(ProfileResult dominated_profile,
+                       profiler->Profile(&dominated, *buffers));
+  EXPECT_EQ(dominated.num_profiled_runs(), 1);
+  EXPECT_EQ(dominated_profile.duration, absl::Nanoseconds(26'000));
+  EXPECT_EQ(CountCacheFlushAllocations(allocator, stream_exec_), 4);
+
+  // Candidate 3 (`first_run = 24,500 ns <= 25,533 ns` due to a first-run idle
+  // spike, steady state 17,300 ns): retained within the competitive margin,
+  // runs all 3 passes, and beats `leader` with mean 19,700 ns.
+  MockExecutable contender(module, std::vector<int>{24'500, 17'300, 17'300});
+  ASSERT_OK_AND_ASSIGN(ProfileResult contender_profile,
+                       profiler->Profile(&contender, *buffers));
+  EXPECT_EQ(contender.num_profiled_runs(), 3);
+  EXPECT_EQ(contender_profile.duration, absl::Nanoseconds(19'700));
+  EXPECT_EQ(CountCacheFlushAllocations(allocator, stream_exec_), 7);
+
+  // A new `InputBuffers` instance resets the competitive baseline for the next
+  // HLO instruction.
+  MockExecutable next_instr(module, std::vector<int>{40'000, 38'000, 39'000});
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<InputBuffers> next_buffers,
+                       profiler->CreateInputBuffers(&next_instr));
+  ASSERT_OK_AND_ASSIGN(ProfileResult next_profile,
+                       profiler->Profile(&next_instr, *next_buffers));
+  EXPECT_EQ(next_instr.num_profiled_runs(), 3);
+  EXPECT_EQ(next_profile.duration, absl::Nanoseconds(39'000));
+  EXPECT_EQ(CountCacheFlushAllocations(allocator, stream_exec_), 10);
+}
+
+TEST_F(GpuProfilerTest, ZeroOrFailedCandidatesDoNotPoisonCompetitiveBaseline) {
+  constexpr absl::string_view kHloModule = R"hlo(
+    HloModule module
+    ENTRY main {
+      ROOT c = s32[] constant(1)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  ProfileOptions options;
+  options.num_timed_runs = 3;
+  auto profiler = GpuProfiler::Create(stream_exec_, options, allocator_.get());
+
+  MockExecutable zero_exec(module, 0);
+  MockExecutable failing_exec(module, 1'000, /*should_fail=*/true);
+  MockExecutable valid_exec(module, std::vector<int>{30'000, 27'000, 27'000});
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<InputBuffers> buffers,
+                       profiler->CreateInputBuffers(&zero_exec));
+  ASSERT_OK(profiler->Profile(&zero_exec, *buffers));
+  EXPECT_THAT(profiler->Profile(&failing_exec, *buffers),
+              StatusIs(absl::StatusCode::kInternal));
+
+  ASSERT_OK_AND_ASSIGN(ProfileResult valid_profile,
+                       profiler->Profile(&valid_exec, *buffers));
+  EXPECT_EQ(valid_exec.num_profiled_runs(), 3);
+  EXPECT_EQ(valid_profile.duration, absl::Nanoseconds(28'000));
+}
+
+TEST_F(GpuProfilerTest, DisablingAdaptiveEarlyStoppingRunsAllTimedPasses) {
+  constexpr absl::string_view kHloModule = R"hlo(
+    HloModule module
+    ENTRY main {
+      ROOT c = s32[] constant(1)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::shared_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  RecordingAllocator allocator(allocator_.get(),
+                               /*allows_async_deallocation=*/true);
+  ProfileOptions options;
+  options.flush_caches = true;
+  options.num_timed_runs = 3;
+  options.adaptive_early_stopping = false;
+  auto profiler = GpuProfiler::Create(stream_exec_, options, &allocator);
+  ASSERT_NE(profiler, nullptr);
+
+  MockExecutable long_exec(module, std::vector<int>{600'000, 580'000, 590'000});
+  MockExecutable fast_exec(module, std::vector<int>{10'000, 10'000, 10'000});
+  MockExecutable slow_exec(module, std::vector<int>{100'000, 95'000, 96'000});
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<InputBuffers> buffers,
+                       profiler->CreateInputBuffers(&long_exec));
+  ASSERT_OK_AND_ASSIGN(ProfileResult long_profile,
+                       profiler->Profile(&long_exec, *buffers));
+  EXPECT_EQ(long_exec.num_profiled_runs(), 3);
+  EXPECT_EQ(long_profile.duration, absl::Nanoseconds(590'000));
+
+  ASSERT_OK(profiler->Profile(&fast_exec, *buffers));
+  ASSERT_OK_AND_ASSIGN(ProfileResult slow_profile,
+                       profiler->Profile(&slow_exec, *buffers));
+  EXPECT_EQ(slow_exec.num_profiled_runs(), 3);
+  EXPECT_EQ(slow_profile.duration, absl::Nanoseconds(97'000));
+  EXPECT_EQ(CountCacheFlushAllocations(allocator, stream_exec_), 9);
 }
 
 TEST_F(GpuProfilerTest, RejectsCandidateThatWritesPastAllocatedBuffer) {
