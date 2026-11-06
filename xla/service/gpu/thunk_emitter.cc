@@ -111,8 +111,10 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/topk.h"
 #include "xla/backends/gpu/runtime/triangular_solve_thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
+#include "xla/backends/gpu/target_config/cudnn_device_props_json.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_copy.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
+#include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/kernel_spec.h"
@@ -586,13 +588,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConstant(
 
 Future<ThunkSequence> ThunkEmitter::EmitConditional(
     const HloInstruction* instr) {
+  ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
+                        GetAllocationSlice(instr->operand(0), {}));
   std::vector<Future<ThunkSequence>> branch_thunks;
   branch_thunks.reserve(instr->branch_count());
   for (HloComputation* comp : instr->branch_computations()) {
     branch_thunks.emplace_back(EmitHloComputation(comp));
   }
-  ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                        GetAllocationSlice(instr->operand(0), {}));
 
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
@@ -1178,7 +1180,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCuDnn(
           instr, ir_emitter_context_->GetNextThunkId()),
       kernel_arguments.GetArgumentShapedSlices(),
       kernel_arguments.GetArgumentOutputFlags(),
-      /*should_memzero=*/IsCustomCallTofMHA(*instr), dropout_seed);
+      /*should_memzero=*/IsCustomCallTofMHA(*instr), dropout_seed,
+      GetCudnnGraphTargetDevice(ir_emitter_context_->gpu_device_info()));
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitPtxCustomCall(
@@ -1715,7 +1718,10 @@ Future<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
 
   auto [status_or_entry, was_cached] =
       ir_emitter_context_->kernel_cache().GetWithStatus(
-          instr->raw_backend_config_string(), generate);
+          absl::StrCat(
+              "(", emitters::GetArgumentFingerprint(kernel_arguments.args()),
+              ")", instr->raw_backend_config_string()),
+          generate);
 
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());

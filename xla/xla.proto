@@ -1203,6 +1203,15 @@ message DebugOptions {
 
   optional bool xla_gpu_experimental_stream_annotation = 342;
 
+  // Whether to use the autotune cache even when deterministic ops are required
+  // (xla_gpu_deterministic_ops or xla_gpu_exclude_nondeterministic_ops). Cached
+  // entries may come from timing-based autotuning in other modules.
+  //
+  // TODO(b/582688534): Remove this flag once autotuner cache keys respect
+  // flags or deviceless cudnn compilation works by default.
+  optional bool
+      xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops = 566;
+
   // Experimental: filter specifying which collective operations should use
   // custom kernels (e.g. Triton one-shot / two-shot) instead of NCCL.
   // Accepted values: "all-reduce", "all-gather", "reduce-scatter".
@@ -1569,9 +1578,9 @@ message DebugOptions {
   // generated IR.
   optional bool xla_llvm_enable_noalias_metadata = 71;
 
-  // If true, in LLVM-based backends, emit !invariant.load metadata in
-  // the generated IR.
-  optional bool xla_llvm_enable_invariant_load_metadata = 72;
+  // Deprecated, has no effect. XLA no longer emits !invariant.load metadata.
+  optional bool xla_llvm_enable_invariant_load_metadata = 72
+      [deprecated = true];
 
   // If true, a set of expensive LLVM optimization passes will not be run.
   optional bool xla_llvm_disable_expensive_passes = 73;
@@ -2002,9 +2011,9 @@ message DebugOptions {
   // for. Covers NCCL, ragged all-to-all and XLA collective kernels and needs
   // NCCL 2.32 and driver 12.3. Not collective permute, send, recv, NVSHMEM or
   // command buffers.
-  optional bool xla_gpu_explicit_launch_ordering = 566;
+  optional bool xla_gpu_explicit_launch_ordering = 567;
 
-  // Next id: 567
+  // Next id: 568
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

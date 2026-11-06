@@ -28,6 +28,7 @@ limitations under the License.
 #include "absl/strings/ascii.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -216,7 +217,14 @@ TEST(GemmThunkTest, RecordCommandBuffer) {
   BufferAllocations allocations({lhs, rhs, out, workspace}, 0, &allocator);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  ASSERT_OK(thunk.Initialize({executor, source, &allocations, stream.get()}));
+  CommandBufferRequests command_buffer_requests;
+  ASSERT_OK(
+      thunk.Initialize({/*executor=*/executor,
+                        /*src=*/source,
+                        /*buffer_allocations=*/&allocations,
+                        /*stream=*/stream.get(),
+                        /*command_buffer_trace_stream=*/nullptr,
+                        /*command_buffer_requests=*/&command_buffer_requests}));
 
   ServiceExecutableRunOptions run_options;
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(
@@ -305,7 +313,14 @@ TEST(GemmThunkTest, RecordCommandBufferUpdate) {
   BufferAllocations allocations({lhs, rhs, out, workspace}, 0, &allocator);
 
   Thunk::ExecutableSource source = {/*text=*/"", /*binary=*/{}};
-  ASSERT_OK(thunk.Initialize({executor, source, &allocations, stream.get()}));
+  CommandBufferRequests command_buffer_requests;
+  ASSERT_OK(
+      thunk.Initialize({/*executor=*/executor,
+                        /*src=*/source,
+                        /*buffer_allocations=*/&allocations,
+                        /*stream=*/stream.get(),
+                        /*command_buffer_trace_stream=*/nullptr,
+                        /*command_buffer_requests=*/&command_buffer_requests}));
 
   ServiceExecutableRunOptions run_options;
   Thunk::ExecuteParams params = Thunk::ExecuteParams::Create(

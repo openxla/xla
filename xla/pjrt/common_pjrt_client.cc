@@ -1044,7 +1044,7 @@ CommonPjRtClient::MakeLoadStateAndResolveAddressableDevices(
     }
   }
 
-  return raw_client()->MakeLoadState();
+  return raw_client()->MakeLoadState(load_options);
 }
 
 absl::StatusOr<std::unique_ptr<PjRtLoadedExecutable>>
@@ -3562,7 +3562,6 @@ CommonPjRtClient::LookupDeviceAndAssignment(
     const int64_t device_id = (*device_assignment)(replica, partition);
     GlobalDeviceId global_device_id(device_id);
     ABSL_ASSIGN_OR_RETURN(device, LookupDevice(global_device_id));
-    result.device_assignment = device_assignment;
   } else {
     if (device_assignment != nullptr) {
       return InvalidArgument(
@@ -3570,8 +3569,6 @@ CommonPjRtClient::LookupDeviceAndAssignment(
     }
     CHECK_EQ(replica, 0);
     CHECK_EQ(partition, 0);
-    result.device_assignment = std::make_shared<DeviceAssignment>(1, 1);
-    (*result.device_assignment)(0, 0) = device->id();
   }
   CHECK_EQ(device->process_index(), process_index());
   result.device = device;
@@ -5993,8 +5990,9 @@ void CommonPjRtClient::AttachDevices(
 
   for (const std::unique_ptr<PjRtDevice>& device : owned_devices_) {
     devices_.push_back(device.get());
-    CHECK(id_to_device_.insert({device->id(), device.get()}).second)
-        << "Duplicate device id: " << device->id();
+    CHECK(
+        id_to_device_.insert({device->global_device_id(), device.get()}).second)
+        << "Duplicate device id: " << device->global_device_id();
 
     if (device->IsAddressable()) {
       addressable_devices_.push_back(device.get());

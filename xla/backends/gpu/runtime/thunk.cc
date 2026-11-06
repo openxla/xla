@@ -25,6 +25,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -35,6 +36,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
@@ -67,6 +69,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
     ExecutionScopedState* execution_scoped_state,
     std::optional<absl::Span<const BufferAllocation::Index>>
         persistent_alloc_indices,
+    absl::flat_hash_map<LocalityDomainStreamId, se::Stream*>
+        locality_domain_streams,
     LaunchOrdering* launch_ordering) {
   const gpu::GpuExecutableRunOptions* gpu_opts =
       run_options.run_options().gpu_executable_run_options();
@@ -77,18 +81,18 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
   uint64_t rng_seed =
       static_cast<uint64_t>(run_options.run_options().rng_seed());
 
-  ExecuteParams params(&buffer_allocations, stream, command_buffer_trace_stream,
-                       collective_params, collective_cliques, collective_memory,
-                       run_options.run_options().device_to_host_stream(),
-                       run_options.run_options().host_to_device_stream(),
-                       run_options.run_options().send_device_memory_function(),
-                       run_options.run_options().recv_device_memory_function(),
-                       run_options.run_options().custom_options(),
-                       run_options.run_options().ffi_execution_context(),
-                       additional_compute_streams, execution_scoped_state,
-                       enable_mock_collectives,
-                       run_options.run_options().run_id().ToInt(), rng_seed,
-                       persistent_alloc_indices);
+  ExecuteParams params(
+      &buffer_allocations, stream, command_buffer_trace_stream,
+      collective_params, collective_cliques, collective_memory,
+      run_options.run_options().device_to_host_stream(),
+      run_options.run_options().host_to_device_stream(),
+      run_options.run_options().send_device_memory_function(),
+      run_options.run_options().recv_device_memory_function(),
+      run_options.run_options().custom_options(),
+      run_options.run_options().ffi_execution_context(),
+      additional_compute_streams, execution_scoped_state,
+      enable_mock_collectives, run_options.run_options().run_id().ToInt(),
+      rng_seed, persistent_alloc_indices, std::move(locality_domain_streams));
   params.launch_ordering = launch_ordering;
   return params;
 }
@@ -122,7 +126,9 @@ Thunk::ExecuteParams::ExecuteParams(
     ExecutionScopedState* execution_scoped_state, bool mock_collectives,
     int64_t execution_id, uint64_t rng_seed,
     std::optional<absl::Span<const BufferAllocation::Index>>
-        persistent_alloc_indices)
+        persistent_alloc_indices,
+    absl::flat_hash_map<LocalityDomainStreamId, se::Stream*>
+        locality_domain_streams)
     : buffer_allocations(buffer_allocations),
       stream(stream),
       command_buffer_trace_stream(command_buffer_trace_stream),
@@ -136,6 +142,7 @@ Thunk::ExecuteParams::ExecuteParams(
       custom_options(custom_options),
       ffi_execution_context(ffi_execution_context),
       additional_compute_streams(additional_compute_streams),
+      locality_domain_streams(std::move(locality_domain_streams)),
       execution_scoped_state(execution_scoped_state),
       mock_collectives(mock_collectives),
       execution_id(execution_id),
