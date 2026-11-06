@@ -25,6 +25,7 @@ limitations under the License.
 //   --xla_gpu_experimental_triton_ragged_dot=true
 
 #include <memory>
+#include <string>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -665,6 +666,111 @@ ENTRY main {
   CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-3, 1e-3});
 }
 
+// Two batch dimensions.
+TEST_F(TritonRaggedDotTest, TwoBatchDims) {
+  const char* hlo_text = R"(
+HloModule TritonRaggedDotTwoBatchDims
+
+ENTRY main {
+  lhs = f32[2,3,64,16] parameter(0)
+  rhs = f32[2,3,2,16,8] parameter(1)
+  gs  = s32[2,3,2] constant({{{32,32},{32,32},{32,32}},
+                             {{32,32},{32,32},{32,32}}})
+  ROOT rd = f32[2,3,64,8] ragged-dot(lhs, rhs, gs),
+      lhs_batch_dims={0,1}, rhs_batch_dims={0,1},
+      lhs_contracting_dims={3}, rhs_contracting_dims={3},
+      lhs_ragged_dims={2}, rhs_group_dims={2}
+}
+)";
+  CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-3, 1e-3});
+}
+
+// The rhs group dimension is not the leading one.
+TEST_F(TritonRaggedDotTest, NonLeadingRhsGroupDim) {
+  const char* hlo_text = R"(
+HloModule TritonRaggedDotNonLeadingRhsGroupDim
+
+ENTRY main {
+  lhs = f32[64,16] parameter(0)
+  rhs = f32[16,2,8] parameter(1)
+  gs  = s32[2] constant({32, 32})
+  ROOT rd = f32[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={0},
+      lhs_ragged_dims={0}, rhs_group_dims={1}
+}
+)";
+  CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-3, 1e-3});
+}
+
+// A single group covering the whole ragged dimension.
+TEST_F(TritonRaggedDotTest, SingleGroup) {
+  const char* hlo_text = R"(
+HloModule TritonRaggedDotSingleGroup
+
+ENTRY main {
+  lhs = f32[64,16] parameter(0)
+  rhs = f32[1,16,8] parameter(1)
+  gs  = s32[1] constant({64})
+  ROOT rd = f32[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-3, 1e-3});
+}
+
+// An empty leading group: the first tile is fully masked out.
+TEST_F(TritonRaggedDotTest, EmptyLeadingGroup) {
+  const char* hlo_text = R"(
+HloModule TritonRaggedDotEmptyLeadingGroup
+
+ENTRY main {
+  lhs = f32[64,16] parameter(0)
+  rhs = f32[3,16,8] parameter(1)
+  gs  = s32[3] constant({0, 32, 32})
+  ROOT rd = f32[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-3, 1e-3});
+}
+
+// An empty trailing group.
+TEST_F(TritonRaggedDotTest, EmptyTrailingGroup) {
+  const char* hlo_text = R"(
+HloModule TritonRaggedDotEmptyTrailingGroup
+
+ENTRY main {
+  lhs = f32[64,16] parameter(0)
+  rhs = f32[3,16,8] parameter(1)
+  gs  = s32[3] constant({32, 32, 0})
+  ROOT rd = f32[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-3, 1e-3});
+}
+
+// kRaggedContracting with an empty group: the prefix sum must still land on
+// the right M offset for the groups that follow.
+TEST_F(TritonRaggedDotTest, ContractingEmptyGroup) {
+  const char* hlo_text = R"(
+HloModule TritonRaggedDotContractingEmptyGroup
+
+ENTRY main {
+  lhs = f32[64,9] parameter(0)
+  rhs = f32[64,8] parameter(1)
+  gs  = s32[3] constant({0, 32, 32})
+  ROOT rd = f32[3,9,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={0}, rhs_contracting_dims={0},
+      lhs_ragged_dims={0}
+}
+)";
+  CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-3, 1e-3});
+}
+
 // ============================================================================
 // Autotuning integration tests
 //
@@ -1252,6 +1358,24 @@ ENTRY main {
   CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-3, 1e-3});
 }
 
+// Two batch dimensions.
+TEST_F(TritonRaggedDotBatchTest, TwoBatchDims) {
+  const char* hlo_text = R"(
+HloModule TritonRaggedDotBatchTwoBatchDims
+
+ENTRY main {
+  lhs = f32[2,3,16,9] parameter(0)
+  rhs = f32[2,3,9,8] parameter(1)
+  gs  = s32[2] constant({1, 1})
+  ROOT rd = f32[2,3,16,8] ragged-dot(lhs, rhs, gs),
+      lhs_batch_dims={0,1}, rhs_batch_dims={0,1},
+      lhs_contracting_dims={3}, rhs_contracting_dims={2},
+      lhs_ragged_dims={0}
+}
+)";
+  CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-3, 1e-3});
+}
+
 // kRaggedBatch autotuner.
 class TritonRaggedDotBatchAutotunedTest
     : public HloPjRtInterpreterReferenceMixin<GemmRewriteTestBase> {
@@ -1629,6 +1753,111 @@ ENTRY entry {
   EXPECT_EQ(module->entry_computation()->root_instruction()->opcode(),
             HloOpcode::kRaggedDot);
 }
+
+// ============================================================================
+// Ragged-dot shapes the XTile emitter does not handle.  They are rejected by
+// IsTritonSupportedRaggedDot and expanded into dense dots by RaggedDotRewriter
+// instead; the requirement is that the compiler neither crashes nor returns a
+// wrong answer.
+//
+// These assert correctness rather than the absence of a Triton fusion, so they
+// stay valid once the emitter grows support for a shape.
+//
+// group_sizes are constants with valid partitions, so RunAndCompare is
+// meaningful.
+// ============================================================================
+
+struct UnsupportedRaggedDotCase {
+  absl::string_view name;
+  absl::string_view hlo;
+};
+
+class TritonRaggedDotUnsupportedShapeTest
+    : public TritonRaggedDotTest,
+      public ::testing::WithParamInterface<UnsupportedRaggedDotCase> {};
+
+TEST_P(TritonRaggedDotUnsupportedShapeTest, CompilesAndIsCorrect) {
+  EXPECT_TRUE(RunAndCompare(GetParam().hlo, ErrorSpec{1e-3, 1e-3}));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    UnsupportedShapes, TritonRaggedDotUnsupportedShapeTest,
+    ::testing::ValuesIn<UnsupportedRaggedDotCase>({
+        // kRaggedContracting with a batch dimension: the emitter's prefix sum
+        // over the groups cannot index a batch prefix.
+        {"BatchedContracting", R"(
+HloModule batched_ragged_contracting
+
+ENTRY main {
+  lhs = f32[2,11,5] parameter(0)
+  rhs = f32[2,5,7] parameter(1)
+  gs = s32[3] constant({2, 2, 1})
+  ROOT rd = f32[3,2,11,7] ragged-dot(lhs, rhs, gs),
+    lhs_contracting_dims={2}, rhs_contracting_dims={1},
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_ragged_dims={2}
+}
+)"},
+        // The batch dimension is not the leading one.
+        {"NonLeadingBatchDim", R"(
+HloModule non_leading_batch_dim
+
+ENTRY main {
+  lhs = f32[64,2,16] parameter(0)
+  rhs = f32[3,2,16,8] parameter(1)
+  gs = s32[2,3] constant({{20, 20, 24}, {32, 16, 16}})
+  ROOT rd = f32[2,64,8] ragged-dot(lhs, rhs, gs),
+    lhs_contracting_dims={2}, rhs_contracting_dims={2},
+    lhs_batch_dims={1}, rhs_batch_dims={1},
+    lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)"},
+        // Batched kRaggedNonContracting whose group_sizes lack the per-batch
+        // row the emitter indexes.
+        {"BatchedWith1DGroupSizes", R"(
+HloModule batched_1d_group_sizes
+
+ENTRY main {
+  lhs = f32[3,64,16] parameter(0)
+  rhs = f32[3,2,16,8] parameter(1)
+  gs = s32[2] constant({32, 32})
+  ROOT rd = f32[3,64,8] ragged-dot(lhs, rhs, gs),
+    lhs_contracting_dims={2}, rhs_contracting_dims={2},
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_ragged_dims={1}, rhs_group_dims={1}
+}
+)"},
+        // More than one non-contracting dimension on the rhs: the emitter
+        // builds a single [M, N] output tile.
+        {"MultipleRhsNonContractingDims", R"(
+HloModule multi_rhs_non_contracting_dims
+
+ENTRY main {
+  lhs = f32[64,16] parameter(0)
+  rhs = f32[2,16,4,8] parameter(1)
+  gs = s32[2] constant({32, 32})
+  ROOT rd = f32[64,4,8] ragged-dot(lhs, rhs, gs),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1},
+    lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)"},
+        // The same, on the lhs.
+        {"MultipleLhsNonContractingDims", R"(
+HloModule multi_lhs_non_contracting_dims
+
+ENTRY main {
+  lhs = f32[64,4,16] parameter(0)
+  rhs = f32[2,16,8] parameter(1)
+  gs = s32[2] constant({32, 32})
+  ROOT rd = f32[64,4,8] ragged-dot(lhs, rhs, gs),
+    lhs_contracting_dims={2}, rhs_contracting_dims={1},
+    lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)"},
+    }),
+    [](const ::testing::TestParamInfo<UnsupportedRaggedDotCase>& info) {
+      return std::string(info.param.name);
+    });
 
 }  // namespace
 }  // namespace gpu
