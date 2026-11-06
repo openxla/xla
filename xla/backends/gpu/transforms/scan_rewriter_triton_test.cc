@@ -23,11 +23,15 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
 #include "absl/strings/string_view.h"
+#include "mlir/IR/MLIRContext.h"
+#include "xla/codegen/xtile/xtile_config.pb.h"
+#include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
+#include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 
@@ -37,7 +41,10 @@ namespace {
 
 class ScanRewriterTritonTest : public HloHardwareIndependentTestBase {
  protected:
+  ScanRewriterTritonTest() { RegisterSymbolicExprStorage(&mlir_context_); }
+
   se::DeviceDescription device_info_{TestGpuDeviceInfo::RTXA6000DeviceInfo()};
+  mlir::MLIRContext mlir_context_;
 };
 
 TEST_F(ScanRewriterTritonTest, BasicScanRewrittenToTritonFusion) {
@@ -61,7 +68,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_TRUE(changed);
 
@@ -70,6 +78,13 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(GpuBackendConfig backend_config,
                        root->backend_config<GpuBackendConfig>());
   EXPECT_EQ(backend_config.fusion_backend_config().kind(), "__triton");
+  // The fusion is tiled, with the scan dimension as its sequential dimension.
+  ASSERT_TRUE(
+      backend_config.fusion_backend_config().has_block_level_fusion_config());
+  EXPECT_EQ(backend_config.fusion_backend_config()
+                .block_level_fusion_config()
+                .sequential_tile_sizes_size(),
+            1);
 }
 
 TEST_F(ScanRewriterTritonTest, ScanWithMultipleGte0UsersRewritten) {
@@ -95,7 +110,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_TRUE(changed);
 
@@ -128,7 +144,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -154,7 +171,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -180,7 +198,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -205,7 +224,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -231,7 +251,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -257,7 +278,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -283,7 +305,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_TRUE(changed);
 
@@ -292,8 +315,8 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(GpuBackendConfig backend_config,
                        root->backend_config<GpuBackendConfig>());
   EXPECT_EQ(backend_config.fusion_backend_config().kind(), "__triton");
-  // The tiling is left to the cost model.
-  EXPECT_FALSE(
+  // The tiling is assigned from the cost model.
+  EXPECT_TRUE(
       backend_config.fusion_backend_config().has_block_level_fusion_config());
 }
 
@@ -318,7 +341,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_TRUE(changed);
 }
@@ -347,7 +371,8 @@ ENTRY main {
   EXPECT_THAT(
       ScanRewriterTriton(
           TestGpuDeviceInfo::RTXA6000DeviceInfo(
-              se::CudaComputeCapability{se::CudaComputeCapability::kVolta, 0}))
+              se::CudaComputeCapability{se::CudaComputeCapability::kVolta, 0}),
+          HloCostAnalysis::DefaultShapeSize, &mlir_context_)
           .Run(module.get()),
       absl_testing::StatusIs(
           absl::StatusCode::kFailedPrecondition,
@@ -377,7 +402,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_TRUE(changed);
 }
@@ -404,7 +430,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -430,7 +457,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -456,7 +484,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -482,7 +511,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -510,7 +540,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -543,7 +574,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_FALSE(changed);
 }
@@ -579,7 +611,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_TRUE(changed);
 }
@@ -609,7 +642,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_TRUE(changed);
 }
@@ -636,7 +670,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_TRUE(changed);
 }
@@ -668,7 +703,8 @@ ENTRY main {
 
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
 
-  ScanRewriterTriton rewriter(device_info_);
+  ScanRewriterTriton rewriter(device_info_, HloCostAnalysis::DefaultShapeSize,
+                              &mlir_context_);
   ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
   EXPECT_TRUE(changed);
 }
