@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -311,10 +312,11 @@ TEST(CustomKernelThunkTest, RecordCommandBuffer) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  Thunk::InitializeParams init_params;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
   init_params.executor = executor;
-  init_params.stream = stream.get();
   init_params.buffer_allocations = &buffer_allocations;
+  init_params.stream = stream.get();
   ASSERT_OK(thunk->Initialize(init_params));
 
   ServiceExecutableRunOptions run_options;
@@ -371,10 +373,11 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdate) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  Thunk::InitializeParams init_params;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
   init_params.executor = executor;
-  init_params.stream = stream.get();
   init_params.buffer_allocations = &buffer_allocations;
+  init_params.stream = stream.get();
   ASSERT_OK(thunk->Initialize(init_params));
 
   ServiceExecutableRunOptions run_options;
@@ -448,10 +451,11 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdateWithNewOutputBuffer) {
   se::StreamExecutorAddressAllocator allocator(executor);
 
   BufferAllocations alloc1({a_dev, b_dev, c_dev}, 0, &allocator);
-  Thunk::InitializeParams init_params;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
   init_params.executor = executor;
-  init_params.stream = stream.get();
   init_params.buffer_allocations = &alloc1;
+  init_params.stream = stream.get();
   ASSERT_OK(thunk->Initialize(init_params));
 
   ServiceExecutableRunOptions run_options;
@@ -538,10 +542,11 @@ TEST(CustomKernelThunkTest, ExecuteOnStreamZeroed) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  Thunk::InitializeParams init_params;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
   init_params.executor = executor;
-  init_params.stream = stream.get();
   init_params.buffer_allocations = &buffer_allocations;
+  init_params.stream = stream.get();
   ASSERT_OK(thunk->Initialize(init_params));
 
   ServiceExecutableRunOptions run_options;
@@ -587,10 +592,11 @@ TEST(CustomKernelThunkTest, RecordCommandBufferZeroed) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  Thunk::InitializeParams init_params;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
   init_params.executor = executor;
-  init_params.stream = stream.get();
   init_params.buffer_allocations = &buffer_allocations;
+  init_params.stream = stream.get();
   ASSERT_OK(thunk->Initialize(init_params));
 
   ServiceExecutableRunOptions run_options;
@@ -648,10 +654,11 @@ TEST(CustomKernelThunkTest, RecordCommandBufferUpdateZeroed) {
   se::StreamExecutorAddressAllocator allocator(executor);
   BufferAllocations buffer_allocations({a_dev, b_dev, c_dev}, 0, &allocator);
 
-  Thunk::InitializeParams init_params;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
   init_params.executor = executor;
-  init_params.stream = stream.get();
   init_params.buffer_allocations = &buffer_allocations;
+  init_params.stream = stream.get();
   ASSERT_OK(thunk->Initialize(init_params));
 
   ServiceExecutableRunOptions run_options;
@@ -746,10 +753,11 @@ TEST(CustomKernelThunkTest, RecordCommandBufferTwoRecordingsZeroed) {
   BufferAllocations allocations_0_new({a0, b0_new, c0}, 0, &allocator);
   BufferAllocations allocations_1_new({a1, b1_new, c1}, 0, &allocator);
 
-  Thunk::InitializeParams init_params;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
   init_params.executor = executor;
-  init_params.stream = stream.get();
   init_params.buffer_allocations = &allocations_0;
+  init_params.stream = stream.get();
   ASSERT_OK(thunk->Initialize(init_params));
 
   ServiceExecutableRunOptions run_options;

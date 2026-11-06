@@ -30,7 +30,9 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
+#include "tsl/platform/denormal.h"
 #include "tsl/platform/logging.h"
+#include "tsl/platform/setround.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/future.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -57,6 +59,10 @@ class HostCallbackScope {
   ~HostCallbackScope();
   HostCallbackScope(const HostCallbackScope& o) = delete;
   HostCallbackScope& operator=(const HostCallbackScope& o) = delete;
+
+ private:
+  tsl::port::ScopedDontFlushDenormal dont_flush_denormal_;
+  tsl::port::ScopedSetRound set_round_;
 };
 
 // A thread-safe queue for passing PjRtChunk objects for e.g. from Send ops to

@@ -1203,6 +1203,15 @@ message DebugOptions {
 
   optional bool xla_gpu_experimental_stream_annotation = 342;
 
+  // Whether to use the autotune cache even when deterministic ops are required
+  // (xla_gpu_deterministic_ops or xla_gpu_exclude_nondeterministic_ops). Cached
+  // entries may come from timing-based autotuning in other modules.
+  //
+  // TODO(b/582688534): Remove this flag once autotuner cache keys respect
+  // flags or deviceless cudnn compilation works by default.
+  optional bool
+      xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops = 566;
+
   // Experimental: filter specifying which collective operations should use
   // custom kernels (e.g. Triton one-shot / two-shot) instead of NCCL.
   // Accepted values: "all-reduce", "all-gather", "reduce-scatter".
@@ -2002,9 +2011,9 @@ message DebugOptions {
   // work assignment (0.0-1.0). Higher value => remote writes score higher
   // cost => more CTAs are routed to remote work. Default 0.22 was fitted
   // empirically on GB200; values outside (0, 1] fall back to the default.
-  optional float xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight = 566;
+  optional float xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight = 567;
 
-  // Next id: 567
+  // Next id: 568
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

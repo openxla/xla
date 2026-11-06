@@ -1369,7 +1369,8 @@ CreateBufferTable(const BufferAssignment& assignment,
   return std::move(buffer_table);
 }
 
-tsl::RCReference<PjRtExecutableLoadState> PjRtCpuRawClient::MakeLoadState() {
+absl::StatusOr<tsl::RCReference<PjRtExecutableLoadState>>
+PjRtCpuRawClient::MakeLoadState(const LoadOptions& load_options) {
   return tsl::MakeRef<CpuExecutableLoadState>(this);
 }
 
