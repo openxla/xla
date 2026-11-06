@@ -25,6 +25,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -41,6 +42,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/runtime/device_id.h"
+#include "xla/shape.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/concurrency/ref_count.h"
 
@@ -194,6 +196,16 @@ class PjRtRawClient {
     return AllocateRawBuffer(memory_space, on_device_bytes_count, retry_on_oom,
                              {});
   }
+
+  // Allocates a batch of raw buffers in `memory_space` for the execute path.
+  // `shapes` must either be empty or have the same size as
+  // `on_device_bytes_counts`, providing optional per-buffer shape metadata for
+  // memory profiling. Each returned buffer has an independent lifetime.
+  virtual absl::StatusOr<absl::InlinedVector<PjRtRawBufferRef, 4>>
+  AllocateRawBuffersForExecute(PjRtMemorySpace* memory_space,
+                               absl::Span<const size_t> on_device_bytes_counts,
+                               absl::Span<const Shape* const> shapes,
+                               bool retry_on_oom);
 
   // Creates a raw buffer channel. Returns a tuple containing:
   // 1.  A PjRtRawBufferRef which is an alias for a future
