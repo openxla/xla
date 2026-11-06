@@ -133,6 +133,53 @@ bool IsTritonSupportedRaggedDot(
     return false;
   }
 
+  // The emitter indexes the batch dimensions as a leading flat prefix.
+  auto is_leading_prefix = [](const auto& dims) {
+    for (int i = 0; i < dims.size(); ++i) {
+      if (dims[i] != i) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!is_leading_prefix(dot_dims.lhs_batch_dimensions()) ||
+      !is_leading_prefix(dot_dims.rhs_batch_dimensions())) {
+    return false;
+  }
+
+  // Exactly one non-contracting dimension per side: M on the lhs and N on the
+  // rhs.  The emitter builds a single [M, N] output tile.
+  const int64_t num_batch_dims = dot_dims.lhs_batch_dimensions_size();
+  const int64_t lhs_rank = instr.operand(0)->shape().dimensions().size();
+  const int64_t rhs_rank = instr.operand(1)->shape().dimensions().size();
+  if (lhs_rank - num_batch_dims - 1 != 1 ||
+      rhs_rank - dot_dims.rhs_batch_dimensions_size() - 1 -
+              ragged_dims.rhs_group_dimensions_size() !=
+          1) {
+    return false;
+  }
+
+  const int64_t lhs_ragged_dim = ragged_dims.lhs_ragged_dimensions(0);
+  const int64_t group_sizes_rank =
+      instr.operand(2)->shape().dimensions().size();
+  if (IsRaggedDotWgrad(ragged_dims)) {
+    // The kRaggedContracting emitter reconstructs the group offsets with a
+    // prefix sum that cannot index a batch prefix yet.
+    if (num_batch_dims != 0 || group_sizes_rank != 1) {
+      return false;
+    }
+  } else if (absl::c_linear_search(dot_dims.lhs_batch_dimensions(),
+                                   lhs_ragged_dim)) {
+    // kRaggedBatch: the groups partition the leading batch dimension, so
+    // group_sizes is a flat [G].
+    if (lhs_ragged_dim != 0 || group_sizes_rank != 1) {
+      return false;
+    }
+  } else if (group_sizes_rank != num_batch_dims + 1) {
+    // kRaggedNonContracting: group_sizes holds one [G] row per batch element.
+    return false;
+  }
+
   // Element types the xtile emitter's PrimitiveTypeToMlirType conversion
   // accepts; anything else, complex types included, returns
   // UnimplementedError there.
