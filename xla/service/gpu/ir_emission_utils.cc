@@ -78,17 +78,13 @@ bool IsGpublasLtSupportedGroupedMatMul(
     return false;
   }
 
-  // Only hipBLASLt supports grouped GEMM, and the supported element types
-  // depend on the target:
-  //   MI300 (gfx942):     F16 and BF16
-  //   MI350/355 (gfx950): F16 only
+  // Only hipBLASLt implements grouped GEMM.
   const se::RocmComputeCapability* rocm_cc =
       gpu_compute_capability.rocm_compute_capability();
   if (rocm_cc == nullptr) {
     return false;
   }
 
-  // Operands and output must all have the same element type.
   PrimitiveType element_type = instr.shape().element_type();
   if (instr.operand(0)->shape().element_type() != element_type ||
       instr.operand(1)->shape().element_type() != element_type) {
@@ -118,7 +114,6 @@ bool IsTritonSupportedRaggedDot(
     return false;
   }
 
-  // Triton requires Ampere or later on NVIDIA targets.
   if (gpu_compute_capability.IsCuda() &&
       !gpu_compute_capability.cuda_compute_capability()->IsAtLeastAmpere()) {
     return false;
@@ -133,19 +128,15 @@ bool IsTritonSupportedRaggedDot(
     return false;
   }
 
-  // The emitter handles a single contracting dimension per operand.
   const DotDimensionNumbers& dot_dims = ragged_dims.dot_dimension_numbers();
   if (dot_dims.lhs_contracting_dimensions_size() != 1 ||
       dot_dims.rhs_contracting_dimensions_size() != 1) {
     return false;
   }
 
-  // The xtile emitter's PrimitiveTypeToMlirType conversion supports the
-  // following element types for ragged-dot operands and output.  Complex
-  // types (C64, C128) fall to the default branch and return
-  // UnimplementedError.  Triton uses power-of-two block sizes (16..256)
-  // internally; problem dimensions need not be powers of two — masking
-  // handles boundary tiles.
+  // Element types the xtile emitter's PrimitiveTypeToMlirType conversion
+  // accepts; anything else, complex types included, returns
+  // UnimplementedError there.
   const se::CudaComputeCapability* cuda_cc =
       gpu_compute_capability.cuda_compute_capability();
   const se::RocmComputeCapability* rocm_cc =
@@ -157,15 +148,12 @@ bool IsTritonSupportedRaggedDot(
       case F32:
       case F64:
         return true;
-      // FP8 matmuls need Hopper or later on NVIDIA; on ROCm the OCP formats
-      // require gfx950 or later.
       case F8E5M2:
       case F8E4M3FN:
         if (cuda_cc != nullptr) {
           return cuda_cc->IsAtLeastHopper();
         }
         return rocm_cc != nullptr && rocm_cc->has_ocp_fp8_support();
-      // The nanoo FP8 formats are ROCm-only (gfx942).
       case F8E4M3FNUZ:
       case F8E5M2FNUZ:
         return rocm_cc != nullptr && rocm_cc->has_nanoo_fp8_support();
