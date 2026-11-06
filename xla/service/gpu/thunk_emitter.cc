@@ -144,6 +144,7 @@ limitations under the License.
 #include "xla/service/call_graph.h"
 #include "xla/service/collective_opt_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/custom_kernel_emitter.h"
 #include "xla/service/gpu/dense_data_intermediate.h"
@@ -395,16 +396,16 @@ Future<ThunkSequence> ThunkEmitter::DispatchCustomCall(
     const HloInstruction* hlo) {
   auto* custom_call = Cast<HloCustomCallInstruction>(hlo);
 
-  if (IsCublasLtMatmul(*hlo)) {
+  if (IsBlasLtMatmul(*hlo)) {
     return EmitCublasLtMatmul(custom_call);
   }
-  if (IsCublasLtMatmulF8(*hlo)) {
+  if (IsBlasLtMatmulF8(*hlo)) {
     return EmitCublasLtMatmulF8(custom_call);
   }
-  if (IsCublasLtGroupedMatmul(*hlo)) {
+  if (IsBlasLtGroupedMatmul(*hlo)) {
     return EmitCublasLtGroupedMatmul(custom_call);
   }
-  if (IsCublasLtMatmulMx(*hlo)) {
+  if (IsBlasLtMatmulMx(*hlo)) {
     return EmitCublasLtMatmulMx(custom_call);
   }
   if (IsCudnnConvolutionReorder(*hlo)) {

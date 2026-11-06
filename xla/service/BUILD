@@ -4329,6 +4329,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:blas_lt_custom_calls",
         "//xla/service/gpu:cublas_cudnn",
         "//xla/stream_executor:dnn",
         "//xla/tsl/lib/gtl:map_util",

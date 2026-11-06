@@ -448,6 +448,7 @@ cc_library(
     tags = ["gpu"],
     deps = [
         ":backend_configs_cc",
+        ":blas_lt_custom_calls",
         ":cublas_cudnn",
         ":dense_data_intermediate",
         ":execution_stream_assignment",
@@ -1208,6 +1209,33 @@ cc_library(
 )
 
 cc_library(
+    name = "hipblaslt_custom_calls",
+    srcs = ["hipblaslt_custom_calls.cc"],
+    hdrs = ["hipblaslt_custom_calls.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
+    name = "blas_lt_custom_calls",
+    srcs = ["blas_lt_custom_calls.cc"],
+    hdrs = ["blas_lt_custom_calls.h"],
+    compatible_with = get_compatible_with_portable(),
+    deps = [
+        ":backend_configs_cc",
+        ":cublas_cudnn",
+        ":hipblaslt_custom_calls",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_library(
     name = "dynamic_slicing_utils",
     srcs = ["dynamic_slicing_utils.cc"],
     hdrs = ["dynamic_slicing_utils.h"],
@@ -1899,6 +1927,7 @@ cc_library(
         ":backend_configs_cc",
         ":compile_module_to_llvm_ir",
         ":conv_layout_normalization",
+        ":blas_lt_custom_calls",
         ":cublas_cudnn",
         ":cudnn_support_utils",
         ":dense_data_intermediate",
@@ -2242,6 +2271,7 @@ xla_test(
     shard_count = 2,
     deps = [
         ":backend_configs_cc",
+        ":blas_lt_custom_calls",
         ":export_hlo",
         ":gpu_compiler",
         ":gpu_executable",
@@ -3738,6 +3768,7 @@ xla_test(
     deps = [
         "//xla:literal",
         "//xla:xla_proto_cc",
+        ":blas_lt_custom_calls",
         "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/ir:hlo",
@@ -3755,6 +3786,7 @@ xla_test(
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
@@ -3819,6 +3851,7 @@ cc_library(
     hdrs = ["gpu_latency_hiding_scheduler.h"],
     deps = [
         ":backend_configs_cc",
+        ":blas_lt_custom_calls",
         ":cublas_cudnn",
         "//xla:shape_util",
         "//xla:side_effect_util",

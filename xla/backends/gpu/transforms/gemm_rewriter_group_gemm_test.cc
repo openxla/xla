@@ -67,7 +67,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -122,7 +122,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -159,7 +159,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -197,7 +197,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -241,7 +241,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -278,7 +278,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -323,7 +323,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -380,7 +380,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -416,7 +416,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -454,7 +454,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -499,7 +499,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -556,7 +556,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -593,7 +593,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -630,7 +630,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -674,7 +674,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-                    ; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+                    ; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
                     ; CHECK-SAME: backend_config={"operation_queue_id":"0",
                     ; CHECK-SAME: "force_earliest_schedule":false,"reification_cost":[],
                     ; CHECK-SAME: "device_type":"DEVICE_TYPE_INVALID",
@@ -714,7 +714,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"BIAS"
 )");
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
@@ -738,7 +738,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -767,7 +767,7 @@ ENTRY test {
   // Verify that bias is NOT fused (epilogue should be DEFAULT, not BIAS)
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"DEFAULT"
 ; CHECK-NOT: "epilogue":"BIAS"
 )");
@@ -792,7 +792,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -818,7 +818,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"BIAS"
 )");
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
@@ -841,7 +841,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -867,7 +867,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -895,7 +895,7 @@ ENTRY test {
   // Verify that bias is NOT fused (epilogue should be DEFAULT, not BIAS)
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"DEFAULT"
 ; CHECK-NOT: "epilogue":"BIAS"
 )");
@@ -919,7 +919,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -946,7 +946,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -980,7 +980,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -1006,7 +1006,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"RELU"
 )");
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
@@ -1034,7 +1034,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"BIAS_RELU"
 )");
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
@@ -1073,7 +1073,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"GELU"
 )");
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
@@ -1115,7 +1115,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"BIAS_GELU"
 )");
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
@@ -1142,7 +1142,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"RELU"
 )");
@@ -1176,7 +1176,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"SILU"
 )");
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-3, 1e-3}));
@@ -1218,7 +1218,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"DEFAULT"
 ; CHECK-NOT: "epilogue":"GELU_AUX"
 )");
@@ -1255,7 +1255,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "epilogue":"DEFAULT"
 ; CHECK-NOT: "epilogue":"SILU"
 )");
@@ -1281,7 +1281,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -1306,7 +1306,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -1334,7 +1334,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -1361,7 +1361,7 @@ ENTRY test {
 )";
   MatchOptimizedHlo(hlo_text,
                     R"(
-; CHECK: custom_call_target="__cublas$lt$groupedMatmul",
+; CHECK: custom_call_target="__hipblaslt$groupedMatmul",
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"DEFAULT"
 )");
@@ -1403,7 +1403,7 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 ; CHECK: custom-call(%p0, %p1, %p2{{[._0-9]*}}, %matrix_bias, %vector_bias),
-; CHECK-SAME: custom_call_target="__cublas$lt$groupedMatmul"
+; CHECK-SAME: custom_call_target="__hipblaslt$groupedMatmul"
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"BIAS"
 )");
@@ -1439,7 +1439,7 @@ ENTRY test {
   MatchOptimizedHlo(hlo_text,
                     R"(
 ; CHECK: custom-call(%p0, %p1, %p2{{[._0-9]*}}, %matrix_bias, %vector_bias),
-; CHECK-SAME: custom_call_target="__cublas$lt$groupedMatmul"
+; CHECK-SAME: custom_call_target="__hipblaslt$groupedMatmul"
 ; CHECK-SAME: "beta":1
 ; CHECK-SAME: "epilogue":"BIAS"
 )");
@@ -1470,7 +1470,7 @@ class GroupedGemmRewriteDisabledCublasLtTest
 };
 
 // When xla_gpu_enable_cublaslt=false the ragged-dot must NOT be rewritten into
-// a __cublas$lt$groupedMatmul custom call.
+// a __hipblaslt$groupedMatmul custom call.
 TEST_F(GroupedGemmRewriteDisabledCublasLtTest,
        NoGroupedGemmCustomCallWhenCublasLtDisabled) {
   const char* hlo_text = R"(
@@ -1487,7 +1487,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(
       hlo_text,
-      R"(; CHECK-NOT: custom_call_target="__cublas$lt$groupedMatmul")");
+      R"(; CHECK-NOT: custom_call_target="__hipblaslt$groupedMatmul")");
 }
 
 // Tests verifying that grouped GEMM rewriting is skipped when
@@ -1515,7 +1515,7 @@ class GroupedGemmRewriteDisabledFlagTest
 };
 
 // When xla_gpu_experimental_use_ragged_dot_grouped_gemm=false the ragged-dot
-// must NOT be rewritten into a __cublas$lt$groupedMatmul custom call.
+// must NOT be rewritten into a __hipblaslt$groupedMatmul custom call.
 TEST_F(GroupedGemmRewriteDisabledFlagTest,
        NoGroupedGemmCustomCallWhenFlagDisabled) {
   const char* hlo_text = R"(
@@ -1532,7 +1532,7 @@ ENTRY AddRaggedDotsFunc {
 )";
   MatchOptimizedHlo(
       hlo_text,
-      R"(; CHECK-NOT: custom_call_target="__cublas$lt$groupedMatmul")");
+      R"(; CHECK-NOT: custom_call_target="__hipblaslt$groupedMatmul")");
 }
 
 }  // namespace

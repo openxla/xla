@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/primitive_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/service/simple_viewer_html.h"
@@ -1461,7 +1462,7 @@ std::string HloDotDumper::GetInstructionNodeBackendConfig(
       props = ExtractCudnnConvBackendConfigProps(
           config->cudnn_conv_backend_config());
     }
-  } else if (gpu::IsCublasLtGemm(*instr)) {
+  } else if (gpu::IsBlasLtGemm(*instr)) {
     absl::StatusOr<gpu::GpuBackendConfig> config =
         instr->backend_config<gpu::GpuBackendConfig>();
     if (config.ok()) {

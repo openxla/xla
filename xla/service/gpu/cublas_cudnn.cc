@@ -37,7 +37,7 @@ constexpr absl::string_view kCuDnnFusionKind = "__cudnn$fusion";
 
 bool IsCublasLtGemm(const HloInstruction& hlo) {
   return IsCublasLtMatmul(hlo) || IsCublasLtMatmulF8(hlo) ||
-         IsCublasLtMatmulMx(hlo) || IsCublasLtGroupedMatmul(hlo);
+         IsCublasLtGroupedMatmul(hlo);
 }
 
 bool IsCublasGemm(const HloInstruction& hlo) {
@@ -74,11 +74,6 @@ bool IsCublasLtGroupedMatmul(const HloInstruction& hlo) {
 bool IsCublasLtMatmulF8(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kCustomCall &&
          hlo.custom_call_target() == kCublasLtMatmulF8CallTarget;
-}
-
-bool IsCublasLtMatmulMx(const HloInstruction& hlo) {
-  return hlo.opcode() == HloOpcode::kCustomCall &&
-         hlo.custom_call_target() == kCublasLtMatmulMxCallTarget;
 }
 
 bool IsTriangularSolve(const HloInstruction& hlo) {

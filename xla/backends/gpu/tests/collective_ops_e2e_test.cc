@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/hlo_runner_interface.h"
 #include "xla/service/pattern_matcher.h"
@@ -179,7 +180,9 @@ class CollectiveOpsTestE2E : public CollectiveOpsE2ETestBase {
     std::vector<HloInstruction*> gemm_ops =
         FindInstructions(hlo_module, HloOpcode::kCustomCall);
     for (HloInstruction* gemm_op : gemm_ops) {
-      EXPECT_EQ(gemm_op->custom_call_target(), "__cublas$lt$matmul$f8");
+      EXPECT_TRUE(gpu::IsBlasLtMatmulF8(*gemm_op))
+          << "unexpected custom call target: "
+          << gemm_op->custom_call_target();
     }
   }
 };

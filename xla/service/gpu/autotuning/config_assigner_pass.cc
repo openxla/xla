@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/decision.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/gpu_indexing_performance_model.h"
@@ -92,7 +93,7 @@ AutotuneDecision AllowRegSpillsForGpuInstruction(
     return AutotuneDecision::Allow();
   }
   if (instruction.opcode() == HloOpcode::kCustomCall) {
-    if (IsCublasLtGemm(instruction) ||
+    if (IsBlasLtGemm(instruction) ||
         IsCustomCallToDnnConvolution(instruction)) {
       return AutotuneDecision::Forbid(
           "Register spilling is not allowed for GEMM/Conv custom calls");
@@ -118,7 +119,7 @@ AutotuneDecision ShouldAssignConfigToCustomCall(
     bool do_not_autotune_cublas, bool do_not_autotune_cudnn,
     const HloInstruction& instruction) {
   auto gpu_config = instruction.backend_config<GpuBackendConfig>();
-  if (IsCublasLtGemm(instruction)) {
+  if (IsBlasLtGemm(instruction)) {
     if (do_not_autotune_cublas) {
       return AutotuneDecision::Forbid("Autotuning cuBLAS is disabled");
     }
@@ -126,7 +127,7 @@ AutotuneDecision ShouldAssignConfigToCustomCall(
       // Grouped matmul stores the selected algorithm in the nested
       // grouped_gemm_backend_config, not the top-level gemm_backend_config.
       const GemmBackendConfig& gemm_config =
-          IsCublasLtGroupedMatmul(instruction)
+          IsBlasLtGroupedMatmul(instruction)
               ? gpu_config->grouped_gemm_backend_config().gemm_backend_config()
               : gpu_config->gemm_backend_config();
       if (gemm_config.has_selected_algorithm()) {

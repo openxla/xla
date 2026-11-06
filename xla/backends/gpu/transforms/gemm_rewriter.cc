@@ -56,8 +56,10 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/gpu_fusible.h"
+#include "xla/service/gpu/hipblaslt_custom_calls.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/service/hlo_creation_utils.h"
@@ -88,7 +90,7 @@ namespace m = match;
 
 // Give this instruction a more useful name than "custom-call.42".
 absl::Status SetName(HloModule* module, HloInstruction* gemm) {
-  if (IsCublasLtMatmul(*gemm)) {
+  if (IsBlasLtMatmul(*gemm)) {
     module->SetAndUniquifyInstrName(gemm, "cublas-lt-matmul");
     return absl::OkStatus();
   }
@@ -477,23 +479,31 @@ HloInstruction* MaybeConstantFoldBias(HloInstruction* bias) {
   return bias;
 }
 
-auto CublasLtMatmul(HloInstruction** instr) {
-  return m::CustomCall(instr, {kCublasLtMatmulCallTarget});
-}
-
-auto CublasLtMatmulF8(HloInstruction** instr) {
-  return m::CustomCall(instr, {kCublasLtMatmulF8CallTarget});
-}
-
-auto CublasLtMatmulMaybeF8(HloInstruction** instr) {
-  return m::CustomCall(
-      instr, {kCublasLtMatmulCallTarget, kCublasLtMatmulF8CallTarget});
-}
-
-auto CublasLtMatmulMaybeF8OrGrouped(HloInstruction** instr) {
+// These matchers are free functions with no access to the compute capability,
+// so they list both the cuBLASLt and the hipBLASLt spellings. A module is only
+// ever rewritten for one backend, so no module can contain both.
+auto BlasLtMatmul(HloInstruction** instr) {
   return m::CustomCall(instr,
-                       {kCublasLtMatmulCallTarget, kCublasLtMatmulF8CallTarget,
-                        kCublasLtGroupedMatmulCallTarget});
+                       {kCublasLtMatmulCallTarget, kHipblasLtMatmulCallTarget});
+}
+
+auto BlasLtMatmulF8(HloInstruction** instr) {
+  return m::CustomCall(
+      instr, {kCublasLtMatmulF8CallTarget, kHipblasLtMatmulF8CallTarget});
+}
+
+auto BlasLtMatmulMaybeF8(HloInstruction** instr) {
+  return m::CustomCall(
+      instr, {kCublasLtMatmulCallTarget, kCublasLtMatmulF8CallTarget,
+              kHipblasLtMatmulCallTarget, kHipblasLtMatmulF8CallTarget});
+}
+
+auto BlasLtMatmulMaybeF8OrGrouped(HloInstruction** instr) {
+  return m::CustomCall(
+      instr, {kCublasLtMatmulCallTarget, kCublasLtMatmulF8CallTarget,
+              kCublasLtGroupedMatmulCallTarget, kHipblasLtMatmulCallTarget,
+              kHipblasLtMatmulF8CallTarget,
+              kHipblasLtGroupedMatmulCallTarget});
 }
 
 auto BcastConstScalar(HloInstruction** instr, double value) {
@@ -896,7 +906,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     HloInstruction* grouped_gemm_call =
         instr->AddInstruction(HloInstruction::CreateCustomCall(
             ragged_dot->shape(), ragged_dot->mutable_operands(),
-            gpu::kCublasLtGroupedMatmulCallTarget));
+            gpu::BlasLtGroupedMatmulCallTarget(gpu_version_)));
 
     // Create a GroupedGemmBackendConfig based on the instruction.
     ABSL_ASSIGN_OR_RETURN(
@@ -955,7 +965,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     HloInstruction *alpha, *existing_gemm;
     if (Match(instr,
               m::MultiplyAnyOrder(
-                  CublasLtMatmulMaybeF8(&existing_gemm).WithOneUser(),
+                  BlasLtMatmulMaybeF8(&existing_gemm).WithOneUser(),
                   m::Broadcast(m::ConstantScalar(&alpha)).WithOneUser()))) {
       ABSL_ASSIGN_OR_RETURN(auto gpu_config,
                             existing_gemm->backend_config<GpuBackendConfig>());
@@ -981,7 +991,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     HloInstruction* d_scale;
     if (Match(instr, m::MultiplyAnyOrder(
-                         CublasLtMatmulF8(&existing_gemm).WithOneUser(),
+                         BlasLtMatmulF8(&existing_gemm).WithOneUser(),
                          m::Broadcast(m::Op(&d_scale)).WithOneUser()))) {
       return F8ScaleD(instr, existing_gemm, d_scale);
     }
@@ -997,11 +1007,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
               m::MultiplyAnyOrder(
                   m::AnyOf<HloInstruction>(
                       m::Slice(&slice_or_bitcast,
-                               CublasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
+                               BlasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
                       m::Bitcast(
                           &slice_or_bitcast,
-                          CublasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
-                      CublasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
+                          BlasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
+                      BlasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
                   m::Op(&cdf).WithOneUser())) &&
           Match(
               cdf,
@@ -1051,11 +1061,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
               m::MultiplyAnyOrder(
                   m::AnyOf<HloInstruction>(
                       m::Slice(&slice_or_bitcast,
-                               CublasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
+                               BlasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
                       m::Bitcast(
                           &slice_or_bitcast,
-                          CublasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
-                      CublasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
+                          BlasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
+                      BlasLtMatmulMaybeF8OrGrouped(&existing_gemm)),
                   m::Op(&sigmoid).WithOneUser())) &&
           Match(sigmoid,
                 m::Divide(BcastConstScalar(1.0),
@@ -1074,7 +1084,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
   // Fuse the scaling of an FP8 GEMM into the Custom Call.
   absl::Status HandleDivide(HloInstruction* instr) override {
     HloInstruction *existing_gemm, *d_scale;
-    if (Match(instr, m::Divide(CublasLtMatmulF8(&existing_gemm).WithOneUser(),
+    if (Match(instr, m::Divide(BlasLtMatmulF8(&existing_gemm).WithOneUser(),
                                m::Broadcast(m::Op(&d_scale)).WithOneUser()))) {
       return F8ScaleD(instr, existing_gemm, d_scale);
     }
@@ -1098,7 +1108,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
               m::AddAnyOrder(
                   OptionalBitcast(&optional_bitcast,
                                   OptionalSlice(&optional_slice,
-                                                CublasLtMatmulMaybeF8OrGrouped(
+                                                BlasLtMatmulMaybeF8OrGrouped(
                                                     &existing_gemm)
                                                     .WithOneUser())
                                       .WithOneUser())
@@ -1122,7 +1132,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     //
     if (Match(instr,
               m::AddAnyOrder(
-                  m::Bitcast(CublasLtMatmulMaybeF8OrGrouped(&existing_gemm)
+                  m::Bitcast(BlasLtMatmulMaybeF8OrGrouped(&existing_gemm)
                                  .WithOneUser())
                       .WithOneUser(),
                   m::Broadcast(&bias, m::Op()).WithOneUser()))) {
@@ -1155,7 +1165,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (Match(
             instr,
             m::AddAnyOrder(
-                m::Bitcast(CublasLtMatmulMaybeF8(&existing_gemm).WithOneUser())
+                m::Bitcast(BlasLtMatmulMaybeF8(&existing_gemm).WithOneUser())
                     .WithOneUser(),
                 m::Op(&bias).WithPredicate(is_not_broadcast)))) {
       HloInstruction* new_bitcast =
@@ -1176,8 +1186,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     if (Match(instr,
               m::AddAnyOrder(
                   m::AnyOf<HloInstruction>(
-                      CublasLtMatmul(&existing_gemm).WithOneUser(),
-                      m::Convert(CublasLtMatmul(&existing_gemm).WithOneUser())
+                      BlasLtMatmul(&existing_gemm).WithOneUser(),
+                      m::Convert(BlasLtMatmul(&existing_gemm).WithOneUser())
                           .WithOneUser()),
                   m::Op(&bias).WithPredicate(is_not_broadcast)))) {
       ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_backend_config,
@@ -1211,7 +1221,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
               m::AddAnyOrder(
                   OptionalBitcast(&optional_bitcast_matrix,
                                   OptionalSlice(&optional_slice_matrix,
-                                                CublasLtMatmulMaybeF8OrGrouped(
+                                                BlasLtMatmulMaybeF8OrGrouped(
                                                     &existing_gemm)
                                                     .WithOneUser()))
                       .WithOneUser(),
@@ -1238,12 +1248,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
               m::MaximumAnyOrder(
                   m::AnyOf<HloInstruction>(
                       m::Slice(&optional_slice_or_bitcast,
-                               CublasLtMatmulMaybeF8OrGrouped(&existing_gemm)
+                               BlasLtMatmulMaybeF8OrGrouped(&existing_gemm)
                                    .WithOneUser()),
                       m::Bitcast(&optional_slice_or_bitcast,
-                                 CublasLtMatmulMaybeF8OrGrouped(&existing_gemm)
+                                 BlasLtMatmulMaybeF8OrGrouped(&existing_gemm)
                                      .WithOneUser()),
-                      CublasLtMatmulMaybeF8OrGrouped(&existing_gemm))
+                      BlasLtMatmulMaybeF8OrGrouped(&existing_gemm))
                       .WithOneUser(),
                   m::Broadcast(&zeros, m::ConstantScalar(0))))) {
       ABSL_RETURN_IF_ERROR(FuseReluActivation(instr, zeros, existing_gemm,
@@ -1263,11 +1273,11 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                   m::Clamp(
                       m::Broadcast(m::ConstantScalar(&clamp_lower)),
                       m::AnyOf<HloInstruction>(
-                          CublasLtMatmulF8(&existing_gemm),
-                          m::Divide(&binary, CublasLtMatmulF8(&existing_gemm),
+                          BlasLtMatmulF8(&existing_gemm),
+                          m::Divide(&binary, BlasLtMatmulF8(&existing_gemm),
                                     m::Broadcast(m::Op(&d_scale))),
                           m::MultiplyAnyOrder(&binary,
-                                              CublasLtMatmulF8(&existing_gemm),
+                                              BlasLtMatmulF8(&existing_gemm),
                                               m::Broadcast(m::Op(&d_scale)))),
                       m::Broadcast(m::ConstantScalar(&clamp_upper)))
                       .WithOneUser()))) {
@@ -1625,7 +1635,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
             ShapeUtil::MakeShapeWithDenseLayout(
                 instr->shape().element_type(), new_output_shape.dimensions(),
                 instr->shape().layout().minor_to_major()),
-            operands_list, kCublasLtMatmulF8CallTarget));
+            operands_list, BlasLtMatmulF8CallTarget(gpu_version_)));
     ABSL_RETURN_IF_ERROR(
         new_custom_call->set_backend_config(gpu_backend_config));
     ABSL_RETURN_IF_ERROR(SetName(instr->GetModule(), new_custom_call));
@@ -2089,8 +2099,8 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                                                    /*param_index=*/{});
     }();
     bool want_to_fuse_bias =
-        IsCublasLtMatmulF8(*gemm) || IsCublasLtMatmul(*gemm) ||
-        IsCublasLtGroupedMatmul(*gemm) || can_overwrite_bias;
+        IsBlasLtMatmulF8(*gemm) || IsBlasLtMatmul(*gemm) ||
+        IsBlasLtGroupedMatmul(*gemm) || can_overwrite_bias;
 
     auto gpu_config = gemm->backend_config<GpuBackendConfig>().value();
     GemmBackendConfig& config = GetMutableGemmBackendConfig(gpu_config);
@@ -2132,7 +2142,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // Inserting at position 3 shifts any already-fused vector bias to index 4.
     // For regular GEMM, insert at position 2 (before any other operands).
     bool is_grouped_gemm =
-        gemm->custom_call_target() == kCublasLtGroupedMatmulCallTarget;
+        IsBlasLtGroupedMatmul(*gemm);
 
     // Save the bias index (for aliasing)
     int bias_operand_index;
@@ -2227,7 +2237,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     // For grouped GEMM, subtract the group dimension from num_col_dims
     bool is_grouped_gemm =
-        gemm->custom_call_target() == kCublasLtGroupedMatmulCallTarget;
+        IsBlasLtGroupedMatmul(*gemm);
     if (is_grouped_gemm && gpu_config.has_grouped_gemm_backend_config()) {
       const auto& ragged_dims = gpu_config.grouped_gemm_backend_config()
                                     .ragged_dot_dimension_numbers();
@@ -2270,12 +2280,12 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                                           gemm->operands().end());
     // When (non-trivial) matrix and vector bias co-exist for FP8 matmul, just
     // fuse matrix bias.
-    if (gemm->custom_call_target() == kCublasLtMatmulF8CallTarget &&
+    if (IsBlasLtMatmulF8(*gemm) &&
         config.beta() != 0.0) {
       return true;
     }
 
-    if (gemm->custom_call_target() == kCublasLtMatmulF8CallTarget &&
+    if (IsBlasLtMatmulF8(*gemm) &&
         bias->shape().element_type() == F32) {
       if (convert == nullptr) {
         return false;
@@ -2313,7 +2323,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     // In the case of high rank input for FP8, it is necessary to consider
     // potential padding for the bias.
-    if (gemm->custom_call_target() == kCublasLtMatmulF8CallTarget && bitcast) {
+    if (IsBlasLtMatmulF8(*gemm) && bitcast) {
       bias = PadOperandToMultipleOf16(
           config.dot_dimension_numbers().rhs_batch_dimensions(), bias);
     }
@@ -2396,7 +2406,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // CUDA versions less than 12.4.
     if (gpu_version_.IsCuda() &&
         toolkit_version_ < stream_executor::SemanticVersion{12, 4, 0} &&
-        IsCublasLtMatmulF8(*gemm)) {
+        IsBlasLtMatmulF8(*gemm)) {
       return absl::OkStatus();
     }
 
@@ -2414,7 +2424,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     // For grouped GEMM (Hipblaslt), aux output is not supported yet.
     // Do not fuse activation if aux output is required.
-    if (has_aux && IsCublasLtGroupedMatmul(*gemm) && gpu_version_.IsRocm()) {
+    if (has_aux && IsBlasLtGroupedMatmul(*gemm) && gpu_version_.IsRocm()) {
       return absl::OkStatus();
     }
 
@@ -2488,7 +2498,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // CUDA versions less than 12.4.
     if (gpu_version_.IsCuda() &&
         toolkit_version_ < stream_executor::SemanticVersion{12, 4, 0} &&
-        IsCublasLtMatmulF8(*gemm)) {
+        IsBlasLtMatmulF8(*gemm)) {
       return absl::OkStatus();
     }
 
@@ -2502,7 +2512,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     // For grouped GEMM (Hipblaslt), aux output is not supported yet.
     // Do not fuse activation if aux output is required.
-    if (has_aux && IsCublasLtGroupedMatmul(*gemm) && gpu_version_.IsRocm()) {
+    if (has_aux && IsBlasLtGroupedMatmul(*gemm) && gpu_version_.IsRocm()) {
       return absl::OkStatus();
     }
 
@@ -2556,7 +2566,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // TODO(intel-tf): For SYCL, we currently route all GEMMs to cublasLt.
     // We should check the capabilities and route accordingly.
     if (gpu_version_.IsOneAPI()) {
-      return absl::string_view(kCublasLtMatmulCallTarget);
+      return BlasLtMatmulCallTarget(gpu_version_);
     }
 
     // All internal conditions are met, check if we meet the requirements of
@@ -2565,7 +2575,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
         bool gemm_is_supported_by_cublas_lt,
         GemmIsSupportedByCublasLt(instr, gemm_backend_config));
     if (gemm_is_supported_by_cublas_lt) {
-      return absl::string_view(kCublasLtMatmulCallTarget);
+      return BlasLtMatmulCallTarget(gpu_version_);
     }
 
     return absl::InternalError(
@@ -3007,8 +3017,7 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleCustomCall(HloInstruction* instr) override {
     bool has_aux_output = false;
-    if (instr->custom_call_target() == kCublasLtMatmulCallTarget ||
-        instr->custom_call_target() == kCublasLtMatmulF8CallTarget) {
+    if (IsBlasLtMatmul(*instr) || IsBlasLtMatmulF8(*instr)) {
       ABSL_ASSIGN_OR_RETURN(
           const auto gpu_config,
           instr->backend_config<xla::gpu::GpuBackendConfig>());
@@ -3025,8 +3034,7 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
             instr->shape().IsArray())) {
         return absl::OkStatus();
       }
-    } else if (instr->custom_call_target() ==
-               kCublasLtGroupedMatmulCallTarget) {
+    } else if (IsBlasLtGroupedMatmul(*instr)) {
       if (!instr->shape().IsArray()) {
         return absl::OkStatus();
       }
@@ -3068,7 +3076,7 @@ class GemmWorkspaceRewriteVisitor : public DfsHloRewriteVisitor {
     }
 
     // For grouped matmul, add workspace for user args updates
-    if (instr->custom_call_target() == kCublasLtGroupedMatmulCallTarget) {
+    if (IsBlasLtGroupedMatmul(*instr)) {
       size_t num_groups = instr->operand(2)->shape().dimensions().back();
       workspace = GroupedGemmConfig::kUserArgsSizeBytes * num_groups;
     }

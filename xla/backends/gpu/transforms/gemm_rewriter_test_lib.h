@@ -18,9 +18,16 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <functional>
+#include <optional>
+#include <string>
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -55,6 +62,53 @@ class GemmRewriteTestBase : public HloPjRtGpuTestBase {
 
   bool HasCudaComputeCapability(
       const stream_executor::CudaComputeCapability& cc) const;
+
+  // Custom call target placeholders. Write these in HLO and FileCheck patterns
+  // instead of a literal "__cublas$lt$matmul" / "__hipblaslt$matmul": Subst()
+  // expands them to the spelling the GPU under test actually emits, so the
+  // same test source works on CUDA, ROCm and SYCL.
+  static constexpr absl::string_view kMatmulTargetPlaceholder =
+      "<<BLASLT_MATMUL_TARGET>>";
+  static constexpr absl::string_view kMatmulF8TargetPlaceholder =
+      "<<BLASLT_MATMUL_F8_TARGET>>";
+  static constexpr absl::string_view kMatmulMxTargetPlaceholder =
+      "<<BLASLT_MATMUL_MX_TARGET>>";
+  static constexpr absl::string_view kGroupedMatmulTargetPlaceholder =
+      "<<BLASLT_GROUPED_MATMUL_TARGET>>";
+  // Same as kMatmulTargetPlaceholder, but with '$' escaped so the result can
+  // be used inside a FileCheck `{{...}}` regex, where a bare '$' would mean
+  // end-of-line.
+  static constexpr absl::string_view kMatmulTargetRegexPlaceholder =
+      "<<BLASLT_MATMUL_TARGET_RE>>";
+
+  // The custom call targets emitted for the GPU under test.
+  absl::string_view MatmulTarget() const;
+  absl::string_view MatmulF8Target() const;
+  absl::string_view MatmulMxTarget() const;
+  absl::string_view GroupedMatmulTarget() const;
+
+  // Expands the placeholders above in `text`.
+  std::string Subst(absl::string_view text) const;
+
+  // The following shadow their base-class counterparts purely to run Subst()
+  // over the HLO and FileCheck text first, so that tests can write the
+  // placeholders above instead of a backend-specific target. They delegate
+  // unchanged otherwise. Both RunAndFilecheckHloRewrite overloads are
+  // redeclared because declaring one would hide the other.
+  void MatchOptimizedHlo(absl::string_view hlo, absl::string_view pattern,
+                         bool print_operand_shape = false);
+
+  void RunAndFilecheckHloRewrite(
+      absl::string_view hlo_with_checks, HloPassInterface&& hlo_pass,
+      std::function<void(HloModule*)> after_pass_checks = nullptr,
+      const HloModuleConfig* config = nullptr) const;
+
+  void RunAndFilecheckHloRewrite(
+      absl::string_view hlo_with_filecheck_lines, HloPassInterface&& hlo_pass,
+      std::optional<absl::string_view> expected,
+      std::function<void(HloModule*)> after_pass_checks = nullptr,
+      const HloModuleConfig* config = nullptr,
+      absl::Span<const absl::string_view> additional_check_prefixes = {}) const;
 };
 
 // A test fixture class for tests which should have similar results with legacy

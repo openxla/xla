@@ -106,9 +106,6 @@ bool IsNonFusedCublasLtMatmul(const HloInstruction& hlo);
 // Scaled matrix multiplication in FP8. Calls into cublasLt.
 bool IsCublasLtMatmulF8(const HloInstruction& hlo);
 
-// Block-scaled matrix multiplication in MX formats. Calls into hipBLASLt.
-bool IsCublasLtMatmulMx(const HloInstruction& hlo);
-
 // Matrix multiplication that calls into cublasLt-ext.
 bool IsCublasLtGroupedMatmul(const HloInstruction& hlo);
 
@@ -125,10 +122,6 @@ inline constexpr absl::string_view kCublasLtMatmulCallTarget =
 // A call to cuBLASLt for scaled matrix multiplication in FP8.
 inline constexpr absl::string_view kCublasLtMatmulF8CallTarget =
     "__cublas$lt$matmul$f8";
-
-// A call to hipBLASLt for block-scaled matrix multiplication in MX formats.
-inline constexpr absl::string_view kCublasLtMatmulMxCallTarget =
-    "__cublas$lt$matmul$mx";
 
 // A call to cuBLAS Lt Ext API Grouped matrix multiplication.
 inline constexpr absl::string_view kCublasLtGroupedMatmulCallTarget =

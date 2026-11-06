@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/hipblaslt_custom_calls.h"
 #include "xla/service/pattern_matcher.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -43,11 +44,15 @@ class GemmBroadcastFoldingVisitor : public DfsHloRewriteVisitor {
   absl::Status HandleCustomCall(HloInstruction* instr) override {
     HloInstruction* existing_gemm;
     HloInstruction* bcast;
+    // This visitor has no compute capability, so match both the cuBLASLt and
+    // the hipBLASLt spelling. A module is only ever rewritten for one backend.
     if (Match(instr, m::CustomCall(&existing_gemm,
-                                   {kGemmCallTarget, kCublasLtMatmulCallTarget})
+                                   {kGemmCallTarget, kCublasLtMatmulCallTarget,
+                                    kHipblasLtMatmulCallTarget})
                          .WithOperand(0, m::Broadcast(&bcast, m::Op()))) ||
-        (Match(instr, m::CustomCall(&existing_gemm, {kGemmCallTarget,
-                                                     kCublasLtMatmulCallTarget})
+        (Match(instr, m::CustomCall(&existing_gemm,
+                                    {kGemmCallTarget, kCublasLtMatmulCallTarget,
+                                     kHipblasLtMatmulCallTarget})
                           .WithOperand(1, m::Broadcast(&bcast, m::Op()))))) {
       ABSL_ASSIGN_OR_RETURN(auto gpu_config,
                             existing_gemm->backend_config<GpuBackendConfig>());

@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/map_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
 #include "xla/service/hlo_cost_analysis.h"
@@ -336,7 +337,7 @@ bool GpuHloCostAnalysis::ProducerConsumerMergedTooLarge(
 
 absl::Status GpuHloCostAnalysis::HandleCustomCall(
     const HloInstruction* custom_call) {
-  if (IsCublasLtGemm(*custom_call)) {
+  if (IsBlasLtGemm(*custom_call)) {
     // The naming conventions and meanings of gemm parameters are documented
     // here:
     // https://docs.nvidia.com/cuda/cublas/index.html#cublas-lt-t-gt-gemm
