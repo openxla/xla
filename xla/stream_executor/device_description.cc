@@ -94,6 +94,8 @@ absl::StatusOr<DeviceDescription> DeviceDescription::FromProto(
   device_description.device_address_bits_ = proto.device_address_bits();
   device_description.l2_cache_size_ = proto.l2_cache_size();
   device_description.memory_bandwidth_ = proto.memory_bandwidth();
+  // TODO(yeliu): Remove this check once every supported serialized device
+  // description contains memory_bus_width.
   if (proto.has_memory_bus_width()) {
     device_description.memory_bus_width_ = proto.memory_bus_width();
   }
@@ -217,6 +219,8 @@ GpuDeviceInfoProto DeviceDescription::ToProto() const {
   proto.set_block_dim_limit_y(block_dim_limit().y);
   proto.set_block_dim_limit_z(block_dim_limit().z);
   proto.set_memory_bandwidth(memory_bandwidth_);
+  // TODO(yeliu): Remove this check once memory_bus_width is guaranteed present
+  // in every supported device description, including results of live discovery.
   if (memory_bus_width_.has_value()) {
     proto.set_memory_bus_width(*memory_bus_width_);
   }
