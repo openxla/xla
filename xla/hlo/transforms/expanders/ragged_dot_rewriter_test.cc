@@ -365,6 +365,133 @@ TEST_F(RaggedDotRewriterTest, RaggedNonContractingWithBatchDimensions) {
   )");
 }
 
+TEST_F(RaggedDotRewriterTest, RaggedNonContractingWithNonLeadingBatchDim) {
+  // The batch dimension is not the leading one, so the group dimension the
+  // expansion inserts shifts it.
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = f32[64,2,16]{2,1,0} parameter(0)
+    p1 = f32[3,2,16,8]{3,2,1,0} parameter(1)
+    p2 = s32[2,3]{1,0} parameter(2)
+    ROOT ragged-dot = f32[2,64,8]{2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={2}, rhs_contracting_dims={2},
+                      lhs_batch_dims={1}, rhs_batch_dims={1},
+                      lhs_ragged_dims={0}, rhs_group_dims={0}
+  })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RaggedDotRewriter(GetCudaComputeCapability()).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Dot(op::Select(), op::Parameter()));
+  RunAndFilecheckHloRewrite(module_string,
+                            RaggedDotRewriter(GetCudaComputeCapability()), R"(
+  // CHECK: ROOT [[dot:%[^ ]+]] = f32[2,64,8]{2,1,0}
+  // CHECK-SAME: lhs_batch_dims={2}, lhs_contracting_dims={1,3},
+  // CHECK-SAME: rhs_batch_dims={1}, rhs_contracting_dims={0,2}
+  )");
+}
+
+TEST_F(RaggedDotRewriterTest, RaggedNonContractingWithFlatGroupSizes) {
+  // group_sizes is a flat [G] shared by every batch element, rather than
+  // carrying one row per batch element.
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = f32[3,64,16]{2,1,0} parameter(0)
+    p1 = f32[3,2,16,8]{3,2,1,0} parameter(1)
+    p2 = s32[2]{0} parameter(2)
+    ROOT ragged-dot = f32[3,64,8]{2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={2}, rhs_contracting_dims={2},
+                      lhs_batch_dims={0}, rhs_batch_dims={0},
+                      lhs_ragged_dims={1}, rhs_group_dims={1}
+  })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RaggedDotRewriter(GetCudaComputeCapability()).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Dot(op::Select(), op::Parameter()));
+  RunAndFilecheckHloRewrite(module_string,
+                            RaggedDotRewriter(GetCudaComputeCapability()), R"(
+  // CHECK: ROOT [[dot:%[^ ]+]] = f32[3,64,8]{2,1,0}
+  // CHECK-SAME: lhs_batch_dims={0}, lhs_contracting_dims={1,3},
+  // CHECK-SAME: rhs_batch_dims={0}, rhs_contracting_dims={1,2}
+  )");
+}
+
+TEST_F(RaggedDotRewriterTest, RaggedNonContractingWithExtraLhsDim) {
+  // group_sizes ranges over the lhs non-contracting dimension outer to the
+  // ragged one, not over a batch dimension.
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = f32[2,6,4]{2,1,0} parameter(0)
+    p1 = f32[3,4,5]{2,1,0} parameter(1)
+    p2 = s64[2,3]{1,0} parameter(2)
+    ROOT ragged-dot = f32[2,6,5]{2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={2}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={1}, rhs_group_dims={0}
+  })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RaggedDotRewriter(GetCudaComputeCapability()).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Dot(op::Select(), op::Parameter()));
+  RunAndFilecheckHloRewrite(module_string,
+                            RaggedDotRewriter(GetCudaComputeCapability()), R"(
+  // CHECK: ROOT [[dot:%[^ ]+]] = f32[2,6,5]{2,1,0}
+  // CHECK-SAME: lhs_contracting_dims={1,3}, rhs_contracting_dims={0,1}
+  )");
+}
+
+TEST_F(RaggedDotRewriterTest, RaggedContractingWithExtraContractingDim) {
+  // group_sizes ranges over the contracting dimension outer to the ragged
+  // one, which the group dimension the expansion inserts shifts.
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = f32[2,11,3,5]{3,2,1,0} parameter(0)
+    p1 = f32[2,7,3,5]{3,2,1,0} parameter(1)
+    p2 = s64[2,3,2]{2,1,0} parameter(2)
+    ROOT ragged-dot = f32[2,2,11,7]{3,2,1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={2,3}, rhs_contracting_dims={2,3},
+                      lhs_batch_dims={0}, rhs_batch_dims={0},
+                      lhs_ragged_dims={3}
+  })";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RaggedDotRewriter(GetCudaComputeCapability()).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      op::Dot(op::Transpose(op::Select()), op::Transpose(op::Select())));
+  RunAndFilecheckHloRewrite(module_string,
+                            RaggedDotRewriter(GetCudaComputeCapability()), R"(
+  // CHECK: ROOT [[dot:%[^ ]+]] = f32[2,2,11,7]{3,2,1,0}
+  // CHECK-SAME: lhs_batch_dims={0,1}, lhs_contracting_dims={3,4},
+  // CHECK-SAME: rhs_batch_dims={0,1}, rhs_contracting_dims={3,4}
+  )");
+}
+
 TEST_F(RaggedDotRewriterTest, RaggedContracting) {
   absl::string_view module_string = R"(
   HloModule module
