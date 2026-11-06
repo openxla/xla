@@ -5359,5 +5359,218 @@ ENTRY main {
       Layout::kHostMemorySpace);
 }
 
+TEST_F(HostOffloaderTest, SharedWhileConditionComputation) {
+  const std::string& hlo_string = R"(
+HloModule optimized_module
+
+%opt_cond (p: (s32[])) -> pred[] {
+  %p = (s32[]) parameter(0)
+  ROOT %c = pred[] constant(true)
+}
+
+%opt_inner_body (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+}
+
+%opt_outer_body (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+  %gep0 = s32[] get-tuple-element(%p), index=0
+  %inner_p = (s32[]) tuple(%gep0)
+  ROOT %inner_while = (s32[]) while(%inner_p), condition=%opt_cond, body=%opt_inner_body
+}
+
+ENTRY %main (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+  ROOT %outer_while = (s32[]) while(%p), condition=%opt_cond, body=%opt_outer_body
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  HostOffloader host_offloader(&alias_info_);
+
+  ASSERT_OK_AND_ASSIGN(bool changed, host_offloader.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  const HloInstruction* outer_while =
+      module->entry_computation()->root_instruction();
+  ASSERT_EQ(outer_while->opcode(), HloOpcode::kWhile);
+  const HloInstruction* inner_while =
+      outer_while->while_body()->root_instruction();
+  ASSERT_EQ(inner_while->opcode(), HloOpcode::kWhile);
+  EXPECT_EQ(outer_while->while_condition(), inner_while->while_condition());
+}
+
+TEST_F(HostOffloaderTest, SharedWhileConditionComputationRanTwice) {
+  const std::string& hlo_string = R"(
+HloModule optimized_module
+
+%opt_cond (p: (s32[])) -> pred[] {
+  %p = (s32[]) parameter(0)
+  ROOT %c = pred[] constant(true)
+}
+
+%opt_inner_body (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+}
+
+%opt_outer_body (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+  %gep0 = s32[] get-tuple-element(%p), index=0
+  %inner_p = (s32[]) tuple(%gep0)
+  ROOT %inner_while = (s32[]) while(%inner_p), condition=%opt_cond, body=%opt_inner_body
+}
+
+ENTRY %main (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+  ROOT %outer_while = (s32[]) while(%p), condition=%opt_cond, body=%opt_outer_body
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  HostOffloader host_offloader(&alias_info_);
+
+  ASSERT_OK_AND_ASSIGN(bool changed_1, host_offloader.Run(module.get()));
+  EXPECT_FALSE(changed_1);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  ASSERT_OK_AND_ASSIGN(bool changed_2, host_offloader.Run(module.get()));
+  EXPECT_FALSE(changed_2);
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HostOffloaderTest, DistinctWhileConditionsControl) {
+  const std::string& hlo_string = R"(
+HloModule distinct_conds
+
+%cond_a (p: (s32[])) -> pred[] {
+  %p = (s32[]) parameter(0)
+  ROOT %c_a = pred[] constant(true)
+}
+
+%cond_b (p: (s32[])) -> pred[] {
+  %p = (s32[]) parameter(0)
+  ROOT %c_b = pred[] constant(true)
+}
+
+%body_a (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+}
+
+%body_b (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+}
+
+ENTRY %main (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+  %while_a = (s32[]) while(%p), condition=%cond_a, body=%body_a
+  ROOT %while_b = (s32[]) while(%while_a), condition=%cond_b, body=%body_b
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  HostOffloader host_offloader(&alias_info_);
+
+  ASSERT_OK_AND_ASSIGN(bool changed, host_offloader.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HostOffloaderTest, SingleWhileLoopBaselineControl) {
+  const std::string& hlo_string = R"(
+HloModule single_while
+
+%cond (p: (s32[])) -> pred[] {
+  %p = (s32[]) parameter(0)
+  ROOT %c = pred[] constant(true)
+}
+
+%body (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+}
+
+ENTRY %main (p: (s32[])) -> (s32[]) {
+  %p = (s32[]) parameter(0)
+  ROOT %w = (s32[]) while(%p), condition=%cond, body=%body
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  HostOffloader host_offloader(&alias_info_);
+
+  ASSERT_OK_AND_ASSIGN(bool changed, host_offloader.Run(module.get()));
+  EXPECT_FALSE(changed);
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HostOffloaderTest, SharedWhileConditionWithEligibleHostMemoryDus) {
+  const std::string& hlo_string = R"(
+HloModule shared_cond_with_dus
+
+%cond (p: (s32[], f32[10]{0:S(5)}, f32[1]{0})) -> pred[] {
+  %p = (s32[], f32[10]{0:S(5)}, f32[1]{0}) parameter(0)
+  %i = s32[] get-tuple-element(%p), index=0
+  %limit = s32[] constant(5)
+  ROOT %cmp = pred[] compare(%i, %limit), direction=LT
+}
+
+%body1 (p: (s32[], f32[10]{0:S(5)}, f32[1]{0})) -> (s32[], f32[10]{0:S(5)}, f32[1]{0}) {
+  %p = (s32[], f32[10]{0:S(5)}, f32[1]{0}) parameter(0)
+  %i = s32[] get-tuple-element(%p), index=0
+  %buf = f32[10]{0:S(5)} get-tuple-element(%p), index=1
+  %val = f32[1]{0} get-tuple-element(%p), index=2
+  %dus = f32[10]{0:S(5)} dynamic-update-slice(%buf, %val, %i)
+  %one = s32[] constant(1)
+  %next_i = s32[] add(%i, %one)
+  ROOT %res = (s32[], f32[10]{0:S(5)}, f32[1]{0}) tuple(%next_i, %dus, %val)
+}
+
+%body2 (p: (s32[], f32[10]{0:S(5)}, f32[1]{0})) -> (s32[], f32[10]{0:S(5)}, f32[1]{0}) {
+  %p = (s32[], f32[10]{0:S(5)}, f32[1]{0}) parameter(0)
+  %i = s32[] get-tuple-element(%p), index=0
+  %buf = f32[10]{0:S(5)} get-tuple-element(%p), index=1
+  %val = f32[1]{0} get-tuple-element(%p), index=2
+  %one = s32[] constant(1)
+  %next_i = s32[] add(%i, %one)
+  ROOT %res = (s32[], f32[10]{0:S(5)}, f32[1]{0}) tuple(%next_i, %buf, %val)
+}
+
+ENTRY %main {
+  %zero = s32[] constant(0)
+  %init_buf = f32[10]{0:S(5)} parameter(0)
+  %init_val = f32[1]{0} parameter(1)
+  %t0 = (s32[], f32[10]{0:S(5)}, f32[1]{0}) tuple(%zero, %init_buf, %init_val)
+  %w1 = (s32[], f32[10]{0:S(5)}, f32[1]{0}) while(%t0), condition=%cond, body=%body1
+  ROOT %w2 = (s32[], f32[10]{0:S(5)}, f32[1]{0}) while(%w1), condition=%cond, body=%body2
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  HostOffloader host_offloader(&alias_info_);
+
+  ASSERT_OK_AND_ASSIGN(bool changed, host_offloader.Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  const HloInstruction* w2 = module->entry_computation()->root_instruction();
+  ASSERT_EQ(w2->opcode(), HloOpcode::kWhile);
+  const HloInstruction* w1 = w2->operand(0);
+  ASSERT_EQ(w1->opcode(), HloOpcode::kWhile);
+
+  // Call graph flattening must have given each while loop its own condition computation.
+  EXPECT_NE(w1->while_condition(), w2->while_condition());
+
+  // DynamicUpdateSlice's 1st operand must have been wrapped in a copy for scheduling.
+  const HloInstruction* dus =
+      FindInstruction(module.get(), HloOpcode::kDynamicUpdateSlice);
+  ASSERT_NE(dus, nullptr);
+  EXPECT_EQ(dus->operand(1)->opcode(), HloOpcode::kCopy);
+}
+
 }  // namespace
 }  // namespace xla
