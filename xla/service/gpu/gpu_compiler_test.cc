@@ -2996,12 +2996,12 @@ auto SelectKTestParams() {
       std::make_tuple("f32", 8192, 24, true, TopKImpl::kSelectKWithU64Adapter),
       std::make_tuple("f32", 8192, 512, false, TopKImpl::kSort),
       std::make_tuple("f32", 8192, 512, true, TopKImpl::kSort),
-      // f32: exact upper bound of max_k
-      std::make_tuple("f32", 8192, 128, false, TopKImpl::kSelectK),
-      std::make_tuple("f32", 8192, 128, true, TopKImpl::kSelectKWithU64Adapter),
+      // f32: exact upper bound of k for n=8192, batch=8
+      std::make_tuple("f32", 8192, 192, false, TopKImpl::kSelectK),
+      std::make_tuple("f32", 8192, 192, true, TopKImpl::kSelectKWithU64Adapter),
       // f32: just over the upper bound
-      std::make_tuple("f32", 8192, 129, false, TopKImpl::kSort),
-      std::make_tuple("f32", 8192, 129, true, TopKImpl::kSort),
+      std::make_tuple("f32", 8192, 193, false, TopKImpl::kSort),
+      std::make_tuple("f32", 8192, 193, true, TopKImpl::kSort),
       // bf16 and size <= 2**16 - use sort(s32) + slice.
       std::make_tuple("bf16", 1023, 4, false, TopKImpl::kSortWithS32Adapter),
       std::make_tuple("bf16", 1023, 4, true, TopKImpl::kSortWithS32Adapter),
@@ -3015,15 +3015,16 @@ auto SelectKTestParams() {
       std::make_tuple("bf16", 65540, 24, false, TopKImpl::kSelectK),
       std::make_tuple("bf16", 65540, 24, true,
                       TopKImpl::kSelectKWithU64Adapter),
-      std::make_tuple("bf16", 65540, 512, false, TopKImpl::kSort),
-      std::make_tuple("bf16", 65540, 512, true, TopKImpl::kSort),
-      // bf16: exact upper bound of max_k for batch=8
-      std::make_tuple("bf16", 65540, 128, false, TopKImpl::kSelectK),
-      std::make_tuple("bf16", 65540, 128, true,
+      std::make_tuple("bf16", 65540, 512, false, TopKImpl::kSelectK),
+      std::make_tuple("bf16", 65540, 512, true,
+                      TopKImpl::kSelectKWithU64Adapter),
+      // bf16: exact upper bound of k for n=65540, batch=8
+      std::make_tuple("bf16", 65540, 1024, false, TopKImpl::kSelectK),
+      std::make_tuple("bf16", 65540, 1024, true,
                       TopKImpl::kSelectKWithU64Adapter),
       // bf16: just over the upper bound
-      std::make_tuple("bf16", 65540, 129, false, TopKImpl::kSort),
-      std::make_tuple("bf16", 65540, 129, true, TopKImpl::kSort));
+      std::make_tuple("bf16", 65540, 1025, false, TopKImpl::kSort),
+      std::make_tuple("bf16", 65540, 1025, true, TopKImpl::kSort));
 }
 // Instantiate the test suite with (n, k, expected_kind) pairs.
 INSTANTIATE_TEST_SUITE_P(SelectKOrCustomKernel, GpuCompilerSelectKTest,
@@ -3046,12 +3047,12 @@ auto ApproxTopKSelectKTestParams() {
       std::make_tuple("f32", 8192, 24, true, TopKImpl::kSelectKWithU64Adapter),
       std::make_tuple("f32", 8192, 512, false, TopKImpl::kSort),
       std::make_tuple("f32", 8192, 512, true, TopKImpl::kSort),
-      // f32: exact upper bound of max_k
-      std::make_tuple("f32", 8192, 128, false, TopKImpl::kSelectK),
-      std::make_tuple("f32", 8192, 128, true, TopKImpl::kSelectKWithU64Adapter),
+      // f32: exact upper bound of k for n=8192, batch=8
+      std::make_tuple("f32", 8192, 192, false, TopKImpl::kSelectK),
+      std::make_tuple("f32", 8192, 192, true, TopKImpl::kSelectKWithU64Adapter),
       // f32: just over the upper bound
-      std::make_tuple("f32", 8192, 129, false, TopKImpl::kSort),
-      std::make_tuple("f32", 8192, 129, true, TopKImpl::kSort),
+      std::make_tuple("f32", 8192, 193, false, TopKImpl::kSort),
+      std::make_tuple("f32", 8192, 193, true, TopKImpl::kSort),
       // bf16 and size <= 2**16.
       std::make_tuple("bf16", 1023, 4, false, TopKImpl::kSelectK),
       std::make_tuple("bf16", 1023, 4, true, TopKImpl::kSort),
@@ -3059,21 +3060,33 @@ auto ApproxTopKSelectKTestParams() {
       std::make_tuple("bf16", 1024, 4, true, TopKImpl::kCustomKernel),
       std::make_tuple("bf16", 1024, 16, false, TopKImpl::kSelectK),
       std::make_tuple("bf16", 1024, 16, true, TopKImpl::kCustomKernel),
+      std::make_tuple("bf16", 8192, 24, false, TopKImpl::kSelectK),
+      std::make_tuple("bf16", 8192, 24, true, TopKImpl::kSelectKWithU64Adapter),
+      std::make_tuple("bf16", 8192, 512, false, TopKImpl::kSort),
+      std::make_tuple("bf16", 8192, 512, true, TopKImpl::kSort),
+      // bf16: exact upper bound of k for n=8192, batch=8
+      std::make_tuple("bf16", 8192, 192, false, TopKImpl::kSelectK),
+      std::make_tuple("bf16", 8192, 192, true,
+                      TopKImpl::kSelectKWithU64Adapter),
+      // bf16: just over the upper bound for n=8192, batch=8
+      std::make_tuple("bf16", 8192, 193, false, TopKImpl::kSort),
+      std::make_tuple("bf16", 8192, 193, true, TopKImpl::kSort),
       // bf16 and size > 2**16.
       std::make_tuple("bf16", 65540, 16, false, TopKImpl::kSelectK),
       std::make_tuple("bf16", 65540, 16, true, TopKImpl::kCustomKernel),
       std::make_tuple("bf16", 65540, 24, false, TopKImpl::kSelectK),
       std::make_tuple("bf16", 65540, 24, true,
                       TopKImpl::kSelectKWithU64Adapter),
-      std::make_tuple("bf16", 65540, 512, false, TopKImpl::kSort),
-      std::make_tuple("bf16", 65540, 512, true, TopKImpl::kSort),
-      // bf16: exact upper bound of max_k for batch=8
-      std::make_tuple("bf16", 65540, 128, false, TopKImpl::kSelectK),
-      std::make_tuple("bf16", 65540, 128, true,
+      std::make_tuple("bf16", 65540, 512, false, TopKImpl::kSelectK),
+      std::make_tuple("bf16", 65540, 512, true,
                       TopKImpl::kSelectKWithU64Adapter),
-      // bf16: just over the upper bound
-      std::make_tuple("bf16", 65540, 129, false, TopKImpl::kSort),
-      std::make_tuple("bf16", 65540, 129, true, TopKImpl::kSort));
+      // bf16: exact upper bound of k for n=65540, batch=8
+      std::make_tuple("bf16", 65540, 1024, false, TopKImpl::kSelectK),
+      std::make_tuple("bf16", 65540, 1024, true,
+                      TopKImpl::kSelectKWithU64Adapter),
+      // bf16: just over the upper bound for n=65540, batch=8
+      std::make_tuple("bf16", 65540, 1025, false, TopKImpl::kSort),
+      std::make_tuple("bf16", 65540, 1025, true, TopKImpl::kSort));
 }
 INSTANTIATE_TEST_SUITE_P(ApproxTopKSelectKOrCustomKernel,
                          GpuCompilerApproxTopKSelectKTest,

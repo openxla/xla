@@ -240,24 +240,109 @@ absl::StatusOr<HloInstruction*> BuildUnpackU64ToF32(HloInstruction* u64_values,
       HloInstruction::CreateBitcastConvert(f32_shape, original_u32));
 }
 
-// Upper bounds for using RAFT select_k.
-// The heuristic for deciding when to use Raft select_k versus Sort + Slice
-// was developed as part of the initial research in b/409009349.
-size_t GetRaftSelectKMaxK(PrimitiveType dtype, size_t batch, size_t n) {
-  size_t max_k = 128;
-  if (dtype == F32) {
-    if (batch >= 64 && n >= 16384) {
-      max_k = 256;
+// Decision-tree heuristic for routing F32 TopK to RAFT select_k vs Sort+Slice.
+// The heuristic generation process is described in b/409009349.
+bool ShouldUseRaftSelectKF32(size_t batch, size_t n, size_t k) {
+  if (k > 1024) {
+    return false;
+  }
+  if (n > 4608) {
+    if (n > 24576) {
+      if (batch > 1) {
+        return true;
+      } else {
+        if (k > 96) {
+          if (n > 229376) {
+            return true;
+          } else {
+            return false;
+          }
+        } else {
+          return true;
+        }
+      }
+    } else {
+      if (k > 96) {
+        if (k > 384) {
+          if (batch > 48) {
+            return true;
+          } else {
+            return false;
+          }
+        } else {
+          if (k > 192) {
+            return false;
+          } else {
+            if (batch > 24) {
+              return false;
+            } else {
+              return true;
+            }
+          }
+        }
+      } else {
+        return true;
+      }
     }
-  } else if (dtype == BF16) {
-    if (batch >= 16 && n >= 65536) {
-      max_k = 256;
-    }
-    if (batch >= 64 && batch <= 128 && n >= 8192 && n <= 32768) {
-      max_k = 64;
+  } else {
+    if (k > 96) {
+      return false;
+    } else {
+      return true;
     }
   }
-  return max_k;
+}
+
+// Decision-tree heuristic for routing BF16 TopK to RAFT select_k vs Sort+Slice.
+// The heuristic generation process is described in b/409009349.
+bool ShouldUseRaftSelectKBF16(size_t batch, size_t n, size_t k) {
+  if (k > 1024) {
+    return false;
+  }
+  if (n > 4608) {
+    if (n > 12288) {
+      if (n > 24576) {
+        return true;
+      } else {
+        if (batch > 48) {
+          return true;
+        } else {
+          if (k > 96) {
+            return false;
+          } else {
+            return true;
+          }
+        }
+      }
+    } else {
+      if (k > 192) {
+        if (batch > 96) {
+          return true;
+        } else {
+          return false;
+        }
+      } else {
+        return true;
+      }
+    }
+  } else {
+    if (k > 96) {
+      return false;
+    } else {
+      return true;
+    }
+  }
+}
+
+bool ShouldUseRaftSelectK(PrimitiveType dtype, size_t batch, size_t n,
+                          size_t k) {
+  if (dtype == F32) {
+    return ShouldUseRaftSelectKF32(batch, n, k);
+  }
+  if (dtype == BF16) {
+    return ShouldUseRaftSelectKBF16(batch, n, k);
+  }
+  return false;
 }
 
 // Checks if we can safely route stable TopK to RAFT using the Uint64 adapter.
@@ -302,7 +387,7 @@ bool ShouldRewriteStableTopKToUint64(HloCustomCallInstruction* topk) {
     return false;
   }
 
-  return k <= GetRaftSelectKMaxK(dtype, batch, n);
+  return ShouldUseRaftSelectK(dtype, batch, n, k);
 }
 
 absl::StatusOr<HloInstruction*> RewriteStableTopKToUint64(
@@ -386,10 +471,7 @@ absl::StatusOr<HloInstruction*> SmallBufferOptimization(
   bool has_batch = data_shape.dimensions().size() == 2;
   size_t max_k = 16;  // CustomCall TopK requires k <= 16 and n >= 1024
   size_t min_n = 1024;
-  size_t batch = 0;
-  if (has_batch) {
-    batch = data_shape.dimensions(0);
-  }
+  size_t batch = has_batch ? data_shape.dimensions(0) : 1;
   size_t n = data_shape.dimensions(has_batch ? 1 : 0);
   size_t k = topk->shape().tuple_shapes(0).dimensions(has_batch ? 1 : 0);
   double ratio = static_cast<double>(k) / n;
@@ -402,15 +484,19 @@ absl::StatusOr<HloInstruction*> SmallBufferOptimization(
   bool use_raft = !hlo_instruction_utils::IsTopKStable(topk);
 
   if (is_cuda && use_raft) {
-    min_n = 1;
-    max_k = GetRaftSelectKMaxK(dtype, batch, n);
-  }
-
-  if (k > max_k) {
-    return InvalidArgument("k too large (%d), must be <= %d", k, max_k);
-  }
-  if (n < min_n) {
-    return InvalidArgument("Input too small (n=%d, min_n=%d)", n, min_n);
+    if (!ShouldUseRaftSelectK(dtype, batch, n, k)) {
+      return InvalidArgument(
+          "RAFT select_k heuristic rejected shape (dtype=%s, batch=%d, n=%d, "
+          "k=%d)",
+          primitive_util::LowercasePrimitiveTypeName(dtype), batch, n, k);
+    }
+  } else {
+    if (k > max_k) {
+      return InvalidArgument("k too large (%d), must be <= %d", k, max_k);
+    }
+    if (n < min_n) {
+      return InvalidArgument("Input too small (n=%d, min_n=%d)", n, min_n);
+    }
   }
   Shape cc_shape = topk->shape();
   if (is_cuda && use_raft) {
