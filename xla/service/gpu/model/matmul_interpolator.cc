@@ -41,7 +41,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/model/default_matmul_perf_table.h"
 #include "xla/service/gpu/model/hlo_op_profile.pb.h"
 #include "xla/service/gpu/model/hlo_op_profiles.h"
@@ -160,7 +160,7 @@ InterpolationSpecification Spec(const HloDotInstruction& dot,
 
 InterpolationSpecification Spec(const HloCustomCallInstruction& dot,
                                 const Shape& out_shape) {
-  CHECK(IsCublasLtGemm(dot));
+  CHECK(IsBlasLtGemm(dot));
   const Shape& lhs_shape = dot.operand(0)->shape();
   const Shape& rhs_shape = dot.operand(1)->shape();
   DotDimensionNumbers dot_dims = dot.backend_config<GpuBackendConfig>()
@@ -206,7 +206,7 @@ std::optional<InterpolationSpecification> GetInterpolationSpec(
   if (instr.opcode() == HloOpcode::kDot) {
     auto* dot = Cast<HloDotInstruction>(&instr);
     spec = Spec(*dot, instr.shape());
-  } else if (IsCublasLtGemm(instr)) {
+  } else if (IsBlasLtGemm(instr)) {
     auto* dot = Cast<HloCustomCallInstruction>(&instr);
     spec = Spec(*dot, instr.shape().IsTuple()
                           ? ShapeUtil::GetTupleElementShape(instr.shape(), 0)

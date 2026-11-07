@@ -75,7 +75,7 @@ ENTRY AddDotsFunc {
   DebugOptions debug_options = GetDebugOptionsForTest();
   if (debug_options.xla_gpu_enable_cublaslt()) {
     MatchOptimizedHlo(hlo_text,
-                      R"(; CHECK: custom_call_target="__cublas$lt$matmul")");
+                      R"(; CHECK: custom_call_target="<<BLASLT_MATMUL_TARGET>>")");
   } else {
     MatchOptimizedHlo(hlo_text,
                       R"(; CHECK: custom_call_target="__cublas$gemm")");
@@ -103,7 +103,7 @@ ENTRY test {
 CHECK-NOT: bitcast
 CHECK-DAG: %[[LHS:[a-zA-Z0-9_.-]+]] = f32[2,3,16,10240]{3,2,1,0} parameter(0)
 CHECK-DAG: %[[RHS:[a-zA-Z0-9_.-]+]] = f32[2,3,10240,128]{3,2,1,0} parameter(1)
-CHECK: %[[GEMM:[a-zA-Z0-9_.-]+]] = (f32[2,3,16,128]{3,2,1,0}, s8[{{[0-9]+}}]{0}) custom-call(%[[LHS]], %[[RHS]]), custom_call_target="__cublas{{.*}}matmul"
+CHECK: %[[GEMM:[a-zA-Z0-9_.-]+]] = (f32[2,3,16,128]{3,2,1,0}, s8[{{[0-9]+}}]{0}) custom-call(%[[LHS]], %[[RHS]]), custom_call_target="<<BLASLT_MATMUL_TARGET>>"
 CHECK: ROOT {{.*}} = f32[2,3,16,128]{3,2,1,0} get-tuple-element(%[[GEMM]]), index=0
 )");
 }
@@ -135,10 +135,10 @@ ENTRY e {
     ; CHECK: __cublas$gemm
     )");
   } else {
-    filecheck_result = RunFileCheck(optimized_module->ToString(), R"(
+    filecheck_result = RunFileCheck(optimized_module->ToString(), Subst(R"(
     ; CHECK-NOT: convert
-    ; CHECK: __cublas$lt$matmul
-    )");
+    ; CHECK: <<BLASLT_MATMUL_TARGET>>
+    )"));
   }
   ASSERT_OK(filecheck_result.status());
   EXPECT_TRUE(filecheck_result.value());
@@ -199,9 +199,9 @@ ENTRY AddDotsFunc {
 
   absl::StatusOr<bool> filecheck_result =
       RunFileCheck(optimized_module->ToString(),
-                   R"(
-; CHECK:    custom_call_target="__cublas${{(lt\$matmul|gemm)}}"
-    )");
+                   Subst(R"(
+; CHECK:    custom_call_target="{{(<<BLASLT_MATMUL_TARGET_RE>>|__cublas\$gemm)}}"
+    )"));
   ASSERT_OK(filecheck_result.status());
   EXPECT_TRUE(filecheck_result.value());
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
@@ -313,7 +313,7 @@ ENTRY main {
   // simplifier simplification which could turn the dot into a non-canonical dot
   // late in the pipeline, which will make it unsupported by the GemmRewriter.
   MatchOptimizedHlo(hlo_string, R"(
-  // CHECK: custom_call_target="__cublas${{gemm|lt\$matmul}}"
+  // CHECK: custom_call_target="{{(__cublas\$gemm|<<BLASLT_MATMUL_TARGET_RE>>)}}"
   )");
 }
 
@@ -438,7 +438,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[Y:%[^ ]+]] = f32[2,2]{1,0} parameter(1)
 ; CHECK-DAG:     [[BIAS:%[^ ]+]] = f32[2,2]{1,0} parameter(2)
 ; CHECK-NEXT:    [[GEMM:%[^ ]+]] = (f32[2,2]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[X]], [[Y]], [[BIAS]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":3
 ; CHECK-DAG:         "alpha_imag":0
@@ -485,7 +485,7 @@ ENTRY BF16GemmWithBias {
 ; CHECK-DAG:    [[Y:%[^ ]+]] = bf16[8,8]{1,0} parameter(1)
 ; CHECK-DAG:    [[BIAS:%[^ ]+]] = bf16[8,8]{1,0} parameter(2)
 ; CHECK-NEXT:   [[GEMM:%[^ ]+]] = (bf16[8,8]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[X]], [[Y]], [[BIAS]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -526,7 +526,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2,4]{1,0} parameter(2)
 ; CHECK:         [[GEMM:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -570,7 +570,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2,3]{1,0} parameter(2)
 ; CHECK-DAG:     [[P3:%[^ ]+]] = f32[3,4]{1,0} parameter(3)
 ; CHECK-NEXT:    [[FIRST_GEMM_TUPLE:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -588,7 +588,7 @@ ENTRY test {
 ; CHECK:           }
 ; CHECK:         [[FIRST_GEMM:%[^ ]+]] = f32[2,4]{1,0} get-tuple-element([[FIRST_GEMM_TUPLE]]), index=0
 ; CHECK-NEXT:    [[SECOND_GEMM:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P2]], [[P3]], [[FIRST_GEMM]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           output_to_operand_aliasing={
 ; CHECK:              {0}: (2, {})
 ; CHECK:           }
@@ -633,7 +633,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -726,7 +726,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
 ; CHECK:         [[GEMM:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "beta":0
@@ -758,7 +758,7 @@ ENTRY test {
 
 ; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3,4], {{.*}}: f32[4,5,6], {{.*}}: f32[3,5,6]) -> f32[2,3,5,6] {
 ; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[6,30]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           output_to_operand_aliasing={
 ; CHECK:              {0}: (2, {})
 ; CHECK:           }
@@ -803,7 +803,7 @@ ENTRY test {
 
 ; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3,4], {{.*}}: f32[4,5,6], {{.*}}: f32[6]) -> f32[2,3,5,6] {
 ; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[6,30]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           output_to_operand_aliasing={
 ; CHECK:              {0}: (2, {})
 ; CHECK:           }
@@ -851,7 +851,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2]{0} parameter(2)
 ; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[2,4]{0,1}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -901,7 +901,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[3]{0} parameter(2)
 ; CHECK:         [[MATMUL:%[^ ]+]] = (f32[4,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -951,7 +951,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2]{0} parameter(2)
 ; CHECK:         [[MATMUL0_TUPLE:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -968,7 +968,7 @@ ENTRY test {
 ; CHECK-DAG:         "epilogue":"DEFAULT"
 ; CHECK:           }
 ; CHECK:         [[MATMUL1_TUPLE:%[^ ]+]] = (f32[2,2]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -986,7 +986,7 @@ ENTRY test {
 ; CHECK:           }
 ; CHECK:         [[MATMUL1:%[^ ]+]] = f32[2,2]{1,0} get-tuple-element([[MATMUL1_TUPLE]]), index=0
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,2]{1,0}, s8[{{[0-9]+}}]{0}) custom-call{{.*}}[[MATMUL1]]
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1027,7 +1027,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2_BCAST:%[^ ]+]] = f32[2,4]{1,0} parameter(3)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2_BCAST]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1072,7 +1072,7 @@ ENTRY test {
 ; CHECK-DAG:     [[VECTOR_BIAS:%[^ ]+]] = f32[4]{0} parameter(2)
 ; CHECK-DAG:     [[MATRIX_BIAS:%[^ ]+]] = f32[2,4]{1,0} parameter(3)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[MATRIX_BIAS]], [[VECTOR_BIAS]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1121,7 +1121,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = bf16[24,32]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = bf16[32]{0} parameter(2)
 ; CHECK:         [[OUT:%[^ ]+]] = (bf16[16,32]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1196,7 +1196,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1240,7 +1240,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[4,5,6]{2,1,0} parameter(1)
 ; CHECK-DAG:     [[P1_BITCAST:%[^ ]+]] = f32[4,30]{1,0} bitcast([[P1]])
 ; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[6,30]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_BITCAST]], [[P1_BITCAST]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1289,7 +1289,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1337,7 +1337,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2,4]{1,0} parameter(2)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1382,7 +1382,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[4,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4,4]{1,0} parameter(2)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[4,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1428,7 +1428,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1475,7 +1475,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[4,5,6]{{{.*}}} parameter(1)
 ; CHECK-DAG:     [[P1_BITCAST:%[^ ]+]] = f32[4,30]{{{.*}}} bitcast([[P1]])
 ; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[6,30]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_BITCAST]], [[P1_BITCAST]], {{.*}}),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1524,7 +1524,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[2]{0} parameter(2)
 ; CHECK:         [[MATMUL_TUPLE:%[^ ]+]] = (f32[2,4]{0,1}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:       "alpha_real":1
 ; CHECK-DAG:       "alpha_imag":0
@@ -1575,7 +1575,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
 ; CHECK-DAG:     [[P3:%[^ ]+]] = f32[2,4]{1,0} parameter(3)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P3]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1631,7 +1631,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1794,7 +1794,7 @@ ENTRY test {
 ; CHECK-DAG:    [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:    [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:        [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1854,11 +1854,11 @@ ENTRY test (x: bf16[49152,11008], y: bf16[11008,11008]) -> (bf16[12,4096,11008],
   EXPECT_TRUE(changed);
 
   ASSERT_OK_AND_ASSIGN(bool filecheck_result,
-                       RunFileCheck(module->ToString(), R"(
+                       RunFileCheck(module->ToString(), Subst(R"(
 ; CHECK:           [[GEMM_TUPLE:%[^ ]+]] = {{.*}} custom-call
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK-DAG:         "epilogue":"DEFAULT"
-      )"));
+      )")));
   EXPECT_TRUE(filecheck_result);
 }
 
@@ -1903,7 +1903,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1966,7 +1966,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2027,13 +2027,13 @@ ENTRY test {
   GemmRewriterOptions options;
   GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   RunAndFilecheckHloRewrite(hlo_text, std::move(pass),
-                            R"(
+                            Subst(R"(
 
 ; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> (f32[8], f32[8]) {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2054,7 +2054,7 @@ ENTRY test {
 ; CHECK-DAG:     [[GELU_BITCAST:%[^ ]+]] = f32[8]{0} bitcast([[GELU_OUTPUT]])
 ; CHECK-DAG:     [[DOT_BITCAST:%[^ ]+]] = f32[8]{0} bitcast([[DOT_OUTPUT]])
 ; CHECK-DAG:     ROOT [[RESULT:%[^ ]+]] = (f32[8]{0}, f32[8]{0}) tuple([[GELU_BITCAST]], [[DOT_BITCAST]])
-      )");
+      )"));
 }
 
 TEST_F(CublasLtGemmRewriteTest,
@@ -2099,13 +2099,13 @@ ENTRY test {
   GemmRewriterOptions options;
   GemmRewriter pass(Capability(), GetToolkitVersion(), options);
   RunAndFilecheckHloRewrite(hlo_text, std::move(pass),
-                            R"(
+                            Subst(R"(
 
 ; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[2,3], {{.*}}: f32[3,4]) -> (f32[8], f32[2,4]) {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2125,7 +2125,7 @@ ENTRY test {
 ; CHECK-DAG:     [[DOT_OUTPUT:%[^ ]+]] = f32[2,4]{1,0} get-tuple-element([[OUT]]), index=1
 ; CHECK-DAG:     [[GELU_BITCAST:%[^ ]+]] = f32[8]{0} bitcast([[GELU_OUTPUT]])
 ; CHECK-DAG:     ROOT [[RESULT:%[^ ]+]] = (f32[8]{0}, f32[2,4]{1,0}) tuple([[GELU_BITCAST]], [[DOT_OUTPUT]])
-      )");
+      )"));
 }
 
 TEST_F(CublasLtGemmRewriteTest, VectorBiasThenApproxGeluActivationWithAux) {
@@ -2176,7 +2176,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f32[4]{0} parameter(2)
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[2,4]{1,0}, f32[2,4]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2284,7 +2284,7 @@ ENTRY test {
       module->entry_computation()->root_instruction(),
       GmockMatch(
           m::Bitcast(m::GetTupleElement(
-                         m::CustomCall({"__cublas$lt$matmul"},
+                         m::CustomCall({MatmulTarget()},
                                        m::Parameter(0).WithShape(F32, {2, 3}),
                                        m::Parameter(1).WithShape(F32, {3, 4})),
                          0))
@@ -2314,7 +2314,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f16[16,8]{1,0} parameter(1)
 ; CHECK-DAG:     [[P2:%[^ ]+]] = f16[8,8]{1,0} parameter(2)
 ; CHECK:         [[OUT:%[^ ]+]] = (f16[8,8]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[P2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2352,7 +2352,7 @@ ENTRY test {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2390,7 +2390,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2432,7 +2432,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[BITCAST0:%[^ ]+]] = f32[12,2]{1,0} bitcast([[P0]])
 ; CHECK-DAG:     [[BITCAST1:%[^ ]+]] = f32[12,5]{1,0} bitcast([[P1]])
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[BITCAST0]], [[BITCAST1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2471,7 +2471,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[3,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2510,7 +2510,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[4,3]{1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2549,7 +2549,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[5,3,2]{2,1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[5,3,4]{2,1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2588,7 +2588,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,5,3]{2,1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[5,3,4]{2,1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2627,7 +2627,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[3,2,5]{2,1,0} parameter(0)
 ; CHECK-DAG:     [[FUSION:%[^ ]+]] = f32[5,2,3]{2,1,0} fusion([[P0]])
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[5,3,4]{2,1,0} parameter(1)
-; CHECK:         {{[^ ]+}} = {{.*}} custom-call([[FUSION]], [[P1]]), custom_call_target="__cublas$lt$matmul",
+; CHECK:         {{[^ ]+}} = {{.*}} custom-call([[FUSION]], [[P1]]), custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2665,7 +2665,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[20000,4,3,2]{3,2,1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[20000,4,3,4]{3,2,1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = (f32[20000,4,2,4]{3,2,1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2704,7 +2704,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[3,4]{1,0} parameter(1)
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,3]{1,0} parameter(0)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P1]], [[P0]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2743,7 +2743,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[5,2,3]{2,1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[5,3,4]{2,1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2783,7 +2783,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[5,2,3]{2,1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[5,3,4]{2,1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2825,7 +2825,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[2,2]{1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":3
 ; CHECK-DAG:         "alpha_imag":0
@@ -3089,7 +3089,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = c64[2,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = c64[2,2]{1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":3
 ; CHECK-DAG:         "alpha_imag":3
@@ -3128,7 +3128,7 @@ ENTRY AddDotsFunc {
   MatchOptimizedHlo(hlo_text,
                     R"(
 ; CHECK:    {{[^ ]+}} = {{.*}} custom-call({{[^,]+}}, {{[^)]+}}),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -3168,7 +3168,7 @@ ENTRY AddDotsFunc {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[2,2]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[2,2]{1,0} parameter(1)
 ; CHECK:         [[GEMM:%[^ ]+]] = {{.*}} custom-call([[P0]], [[P1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -3202,13 +3202,13 @@ ENTRY bf16gemm {
   if (IsRocm()) {
     MatchOptimizedHlo(hlo_text,
                       R"(
-; CHECK: {{.*}} custom-call(bf16[12,4]{1,0} {{.*}}, bf16[4,8]{1,0} {{.*}}), custom_call_target="__cublas$lt$matmul"
+; CHECK: {{.*}} custom-call(bf16[12,4]{1,0} {{.*}}, bf16[4,8]{1,0} {{.*}}), custom_call_target="<<BLASLT_MATMUL_TARGET>>"
   )",
                       /*print_operand_shape=*/true);
   } else if (HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
     MatchOptimizedHlo(hlo_text,
                       R"(
-; CHECK: {{.*}} custom-call(bf16[16,8]{1,0} {{.*}}, bf16[8,8]{1,0} {{.*}}), custom_call_target="__cublas$lt$matmul"
+; CHECK: {{.*}} custom-call(bf16[16,8]{1,0} {{.*}}, bf16[8,8]{1,0} {{.*}}), custom_call_target="<<BLASLT_MATMUL_TARGET>>"
   )",
                       /*print_operand_shape=*/true);
   } else {
@@ -3232,13 +3232,13 @@ ENTRY bf16gemm {
   if (IsRocm()) {
     MatchOptimizedHlo(hlo_text,
                       R"(
-    ; CHECK: {{.*}} custom-call(bf16[3,3,4]{2,1,0} {{.*}}, bf16[3,3,2]{2,1,0} {{.*}}), custom_call_target="__cublas$lt$matmul"
+    ; CHECK: {{.*}} custom-call(bf16[3,3,4]{2,1,0} {{.*}}, bf16[3,3,2]{2,1,0} {{.*}}), custom_call_target="<<BLASLT_MATMUL_TARGET>>"
     )",
                       /*print_operand_shape=*/true);
   } else if (HasCudaComputeCapability(se::CudaComputeCapability::Ampere())) {
     MatchOptimizedHlo(hlo_text,
                       R"(
-    ; CHECK: {{.*}} custom-call(bf16[3,8,8]{2,1,0} {{.*}}, bf16[3,8,8]{2,1,0} {{.*}}), custom_call_target="__cublas$lt$matmul"
+    ; CHECK: {{.*}} custom-call(bf16[3,8,8]{2,1,0} {{.*}}, bf16[3,8,8]{2,1,0} {{.*}}), custom_call_target="<<BLASLT_MATMUL_TARGET>>"
     )",
                       /*print_operand_shape=*/true);
   } else {
@@ -3262,7 +3262,7 @@ ENTRY int8gemm {
       HasCudaComputeCapability(se::CudaComputeCapability::Volta())) {
     MatchOptimizedHlo(hlo_text,
                       R"(
-; CHECK: {{.*}} custom-call(s8[12,4]{1,0} [[A:%[^ ]+]], s8[4,8]{0,1} [[B:%[^ ]+]]), custom_call_target="__cublas$lt$matmul"
+; CHECK: {{.*}} custom-call(s8[12,4]{1,0} [[A:%[^ ]+]], s8[4,8]{0,1} [[B:%[^ ]+]]), custom_call_target="<<BLASLT_MATMUL_TARGET>>"
   )",
                       /*print_operand_shape=*/true);
   } else {
@@ -3291,8 +3291,8 @@ ENTRY main.4 {
 
   DebugOptions debug_options = GetDebugOptionsForTest();
   std::string custom_call_target = debug_options.xla_gpu_enable_cublaslt()
-                                       ? "__cublas$lt$matmul"
-                                       : "__cublas$gemm";
+                                       ? std::string(MatmulTarget())
+                                       : std::string("__cublas$gemm");
 
   if (IsRocm()) {
     // ROCm does not pad Int8 GEMM operands to multiples of 4.
@@ -3336,7 +3336,7 @@ ENTRY int8gemm {
     MatchOptimizedHlo(hlo_text,
                       R"(
 ; CHECK: {{.*}} custom-call(s8[12,4]{1,0} [[A:%[^ ]+]], s8[4,8]{0,1} [[B:%[^ ]+]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:       "alpha_real":1
 ; CHECK-DAG:       "alpha_imag":0
@@ -3371,7 +3371,7 @@ ENTRY int8gemm {
     MatchOptimizedHlo(hlo_text,
                       R"(
 ; CHECK: {{.*}} custom-call(s8[12,4]{1,0} [[A:%[^ ]+]], s8[4,8]{0,1} [[B:%[^ ]+]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:       "alpha_real":1
 ; CHECK-DAG:       "alpha_imag":0
@@ -3402,8 +3402,8 @@ ENTRY int8gemm {
 
   DebugOptions debug_options = GetDebugOptionsForTest();
   std::string custom_call_target = debug_options.xla_gpu_enable_cublaslt()
-                                       ? "__cublas$lt$matmul"
-                                       : "__cublas$gemm";
+                                       ? std::string(MatmulTarget())
+                                       : std::string("__cublas$gemm");
 
   if (IsRocm()) {
     // ROCm does not pad Int8 GEMM operands to multiples of 4.
@@ -3692,7 +3692,7 @@ TEST_F(SmallDotGemmRewriteTest, RewriteForALG_BF16_BF16_F32) {
 ; CHECK-LABEL: ENTRY %{{.*}} ({{.*}}: f32[1024,1024], {{.*}}: f32[1024,1024]) -> f32[1024,1024] {
 ; CHECK-DAG:     [[P0:%[^ ]+]] = f32[1024,1024]{1,0} parameter(0)
 ; CHECK-DAG:     [[P1:%[^ ]+]] = f32[1024,1024]{1,0} parameter(1)
-; CHECK:        [[GEMM:%[^ ]+]] = {{.*}} custom-call({{.*}}), custom_call_target="__cublas${{gemm|lt\$matmul}}", {{.*}},"algorithm":"ALG_UNSET"
+; CHECK:        [[GEMM:%[^ ]+]] = {{.*}} custom-call({{.*}}), custom_call_target="{{(__cublas\$gemm|<<BLASLT_MATMUL_TARGET_RE>>)}}", {{.*}},"algorithm":"ALG_UNSET"
 )");
 }
 

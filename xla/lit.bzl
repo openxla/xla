@@ -231,6 +231,9 @@ def lit_test_suite_for_gpus(
         gpu_args = args + [
             "--param=PTX=%s" % ("GCN" if is_rocm else "PTX"),
             "--param=GPU=%s" % (gpu),
+            # The BlasLt matmul custom call target for this GPU. Lets a single
+            # .hlo file be shared across backends that spell it differently.
+            "--param=BLASLT_MATMUL=%s" % ("__hipblaslt$matmul" if is_rocm else "__cublas$lt$matmul"),
         ]
         gpu_data = data + [
             "//xla/backends/gpu/target_config:all_gpu_specs",

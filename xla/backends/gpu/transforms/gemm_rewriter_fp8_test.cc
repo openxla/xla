@@ -124,7 +124,7 @@ class ParameterizedFp8GemmRewriteTest
     const HloInstruction* call =
         FindInstruction(optimized_module.get(), HloOpcode::kCustomCall);
     ASSERT_NE(call, nullptr);
-    EXPECT_EQ(call->custom_call_target(), "__cublas$lt$matmul$f8");
+    EXPECT_EQ(call->custom_call_target(), MatmulF8Target());
   }
 
   // Runs `hlo_text` with the F32 scales in parameters 2-4 set to 4, 8 and 0.25.
@@ -232,7 +232,7 @@ e {
 ; CHECK:         [[RHS_BITCAST:%[^ ]+]] = <<F8E4M3>>[16,2,8]{{.*}} bitcast([[RHS_TRANSPOSE]])
 ; CHECK:         [[RHS_PAD:%[^ ]+]] = <<F8E4M3>>[16,2,16]{{.*}} pad([[RHS_BITCAST]]
 ; CHECK:         {{.*}} custom-call([[LHS_PAD]], [[RHS_PAD]]
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8"
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>"
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "lhs_contracting_dimensions":["2"]
 ; CHECK-DAG:         "rhs_contracting_dimensions":["0"]
@@ -348,7 +348,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDF8) {
       R"(; CHECK-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C1]], [[C1]]),
 )");
   checks.append(
-      R"(; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+      R"(; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -405,7 +405,7 @@ TEST_F(Fp8GemmRewriteUnfusedOutputTest, UnscaledABUnscaledDF8) {
   CheckFp8IfSupported(hlo_text);
   MatchOptimizedHlo(hlo_text, R"(
 ; CHECK:         (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
-; CHECK-SAME:      custom_call_target="__cublas$lt$matmul$f8"
+; CHECK-SAME:      custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>"
 ; CHECK:         <<F8E4M3>>[16,16]{1,0} fusion(
 ; CHECK-SAME:      kind=kLoop
       )");
@@ -438,7 +438,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDMatrixBiasF8) {
 ; CHECK-NEXT:    [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[16,32]{1,0} transpose([[P1]]), dimensions={1,0}
 ; CHECK-NEXT:    [[C1:[^ ]+]] = f32[] constant(1)
 ; CHECK-NEXT:    [[DOT_TUPLE:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C1]], [[C1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -493,7 +493,7 @@ HloModule test
 ; CHECK-NEXT:    [[DQ:%[^ ]+]] = f32[] multiply([[P2]], [[P3]])
 ; CHECK-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[2,64,16]{2,1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_BT1]], [[P1_TRANSPOSE]], [[DQ]], [[C1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -545,7 +545,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -606,7 +606,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDNormalizedBF16F8) {
 ; CHECK-DAG:     [[P3:%[^ ]+]] = bf16[] parameter(3)
 ; CHECK-DAG:     [[P3_CV:%[^ ]+]] = f32[] convert([[P3]])
 ; CHECK:         [[OUT:%[^ ]+]] = (bf16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_CV]], [[P3_CV]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
       )");
 }
 
@@ -652,7 +652,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, InvScaledABUnscaledDNormalizedBF16F8) {
     EXPECT_TRUE(
         RunAndCompare(std::move(module), arg_ptrs, ErrorSpec{1e-2, 1e-2}));
     MatchOptimizedHlo(hlo_text, R"(
-; CHECK: custom_call_target="__cublas$lt$matmul$f8"
+; CHECK: custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>"
     )");
   }
   RunAndFilecheckHloRewrite(
@@ -671,7 +671,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, InvScaledABUnscaledDNormalizedBF16F8) {
 ; CHECK-DAG:     [[P3_CV:%[^ ]+]] = f32[] convert([[P3]])
 ; CHECK-DAG:     [[P3_INV:%[^ ]+]] = f32[] divide({{.*}}, [[P3_CV]])
 ; CHECK:         [[OUT:%[^ ]+]] = (bf16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_INV]], [[P3_INV]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
       )");
 }
 
@@ -703,7 +703,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDNormalizedBF16F8) {
 ; CHECK-DAG:     [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[16,32]{1,0} transpose([[P1]])
 ; CHECK-DAG:     [[C1:[^ ]+]] = f32[] constant(1)
 ; CHECK:         [[OUT:%[^ ]+]] = (bf16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C1]], [[C1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
       )");
 }
 
@@ -809,7 +809,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDPaddedF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[DOT_TUPLE:%[^ ]+]] = (f32[16,32]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_PADDED]], [[P1_TRANSPOSE_PADDED]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -860,7 +860,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDBitcastF8) {
 
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
-      GmockMatch(m::GetTupleElement(m::CustomCall({"__cublas$lt$matmul$f8"}), 0)
+      GmockMatch(m::GetTupleElement(m::CustomCall({MatmulF8Target()}), 0)
                      .WithShape(F32, {16, 16})));
 }
 
@@ -892,7 +892,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABUnscaledDWithConvertF8) {
 ; CHECK-NEXT:    [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[16,32]{1,0} transpose([[P1]]), dimensions={1,0}
 ; CHECK-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C1]], [[C1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -956,7 +956,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDUnaryOpsF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_U3]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1014,7 +1014,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
 ; CHECK-NEXT:    [[P1_TRANSPOSE:%[^ ]+]] = <<F8E4M3>>[16,32]{1,0} transpose([[P1]]), dimensions={1,0}
 ; CHECK-NEXT:    [[C2:%[^ ]+]] = f32[] constant(1)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_U3]], [[P1_TRANSPOSE]], [[C2]], [[C2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1075,7 +1075,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDDynamicSliceF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[DYN_SLICE]], [[P1]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1141,7 +1141,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDSelectF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[SELECT]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1225,7 +1225,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, BatchedScaledABUnscaledDF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[10,16,16]{2,1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1281,7 +1281,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABAlphaDF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":3
 ; CHECK-DAG:         "alpha_imag":0
@@ -1337,7 +1337,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDReluActivationF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1415,7 +1415,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
     checks += R"(; CHECK-NEXT:    [[B:%[^ ]+]] = bf16[16]{0} parameter(4)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (bf16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[XS]], [[XS1]], [[B]]),
 )";
-    checks += R"(; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+    checks += R"(; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1502,7 +1502,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
     checks +=
         R"(; CHECK-NEXT:    [[OUT:%[^ ]+]] = (bf16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[XS]], [[XS1]]),
 )";
-    checks += R"(; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+    checks += R"(; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1555,7 +1555,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, InvScaledABUnscaledDF8) {
       GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                    GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
       R"(
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
       )");
 }
 
@@ -1599,7 +1599,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C0]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           output_to_operand_aliasing={
 ; CHECK-SAME:        {0}: (2, {})
 ; CHECK-SAME:      }
@@ -1664,7 +1664,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDMatrixBiasPaddedF8) {
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[P4:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-NEXT:    [[DOT_TUPLE:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_PADDED]], [[P1_TRANSPOSE_PADDED]], [[P2_PADDED]], [[P3]], [[P4]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1723,7 +1723,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABScaledDF8) {
 ; CHECK-PTX-NEXT:    [[C2:%[^ ]+]] = f32[] constant(1)
 ; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_INV]], [[C1]], [[C2]]),
 ; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_INV]], [[C1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1772,7 +1772,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABScaledF32DF8) {
 ; CHECK-NEXT:    [[P2_INV:%[^ ]+]] = f32[] divide([[C0]], [[P2]])
 ; CHECK-NEXT:    [[C1:%[^ ]+]] = f32[] constant(1)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_INV]], [[C1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1819,7 +1819,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABInvScaledF32DF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-NEXT:    [[C0:%[^ ]+]] = f32[] constant(1)
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[C0]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1870,7 +1870,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, UnscaledABScaledF32DMatrixBiasF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[16,16]{1,0} parameter(2)
 ; CHECK-NEXT:    [[C0:%[^ ]+]] = f32[] constant(1)
 ; CHECK-NEXT:    [[GEMM_TUPLE:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[C0]], [[C0]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -1944,7 +1944,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDF8) {
 ; CHECK-GCN-NEXT:    [[A_SCALE:%[^ ]+]] = f32[] multiply([[P2]], [[P4_INV]])
 ; CHECK-GCN-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[A_SCALE]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2002,7 +2002,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABInvScaledDF8) {
 
 ; CHECK-NOT:     divide
 
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 
       )");
 }
@@ -2053,7 +2053,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDReluActivationF8) {
 ; CHECK-NEXT:    [[P4:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-NEXT:    [[P4_INV:%[^ ]+]] = f32[] divide([[C2]], [[P4]])
 ; CHECK-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[P4_INV]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2134,7 +2134,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDMatrixBiasWithDAmaxF8) {
 ; CHECK-PTX:       [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, f32[], s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C0]], [[DUMMY0:%[^ ]+]], [[DUMMY1:%[^ ]+]], /*index=5*/[[DUMMY2:%[^ ]+]]),
 ; CHECK-NOT:       output_to_operand_aliasing
 ; CHECK-GCN:       [[OUT:%[^ ]+]] = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[C0]], [[DUMMY0:%[^ ]+]], [[DUMMY1:%[^ ]+]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2206,7 +2206,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDVectorBiasF8) {
 ; CHECK-NEXT:    [[DV:%[^ ]+]] = f16[] divide([[C2]], [[P4]])
 ; CHECK-NEXT:    [[CV2:%[^ ]+]] = f32[] convert([[DV]])
 ; CHECK:     [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[CV]], [[CV1]], [[VB]], /*index=5*/[[CV2]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2266,7 +2266,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF32VectorBiasF8) {
 ; CHECK-NEXT:    [[VB:%[^ ]+]] = f32[16]{0} parameter(2)
 ; CHECK-NEXT:    [[VBC:%[^ ]+]] = bf16[16]{0} convert([[VB]])
 ; CHECK:         [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[VBC]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2327,7 +2327,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
 ; CHECK-NEXT:    [[CV1:%[^ ]+]] = f32[] convert([[P3]])
 ; CHECK-NEXT:    [[VB:%[^ ]+]] = f16[16]{0} parameter(2)
 ; CHECK     :    ROOT [[OUT:%[^ ]+]] = f16[16,16]{1,0} custom-call([[P0]], [[P1_TRANSPOSE]], [[CV]], [[CV1]], [[VB]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2380,7 +2380,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDVectorBiasF8) {
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Bitcast(m::GetTupleElement(
-                                m::CustomCall({"__cublas$lt$matmul$f8"}), 0)
+                                m::CustomCall({MatmulF8Target()}), 0)
                                 .WithShape(F16, {64, 32}))
                      .WithShape(F16, {4, 16, 32})));
 
@@ -2401,7 +2401,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDVectorBiasF8) {
 ; CHECK-NEXT:    [[B:%[^ ]+]] = f32[32]{0} parameter(2)
 ; CHECK-NEXT:    [[B_F16:%[^ ]+]] = f16[32]{0} convert([[B]])
 ; CHECK-NEXT:    [[GEMM_TUPLE:%[^ ]+]] = (f16[64,32]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_BITCAST]], [[P1_TRANSPOSE]], [[P2_CV]], [[P3_CV]], [[B_F16]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2458,7 +2458,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
       module->entry_computation()->root_instruction(),
       GmockMatch(
           m::Bitcast(m::Slice(m::GetTupleElement(
-                                  m::CustomCall({"__cublas$lt$matmul$f8"}), 0)
+                                  m::CustomCall({MatmulF8Target()}), 0)
                                   .WithShape(F16, {64, 32}))
                          .WithShape(F16, {60, 31}))
               .WithShape(F16, {4, 15, 31})));
@@ -2486,7 +2486,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
 ; CHECK-NEXT:    [[C3:%[^ ]+]] = f16[] constant(0)
 ; CHECK-NEXT:    [[P2_PAD:%[^ ]+]] = f16[32]{0} pad([[B_F16]], [[C3]]), padding=0_1
 ; CHECK-NEXT:    [[GEMM_TUPLE:%[^ ]+]] = (f16[64,32]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_PAD]], [[P1_PAD]], [[P2_CV]], [[P3_CV]], [[P2_PAD]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2540,7 +2540,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDMatrixBiasF8) {
   EXPECT_THAT(
       module->entry_computation()->root_instruction(),
       GmockMatch(m::Bitcast(m::GetTupleElement(
-                                m::CustomCall({"__cublas$lt$matmul$f8"}), 0)
+                                m::CustomCall({MatmulF8Target()}), 0)
                                 .WithShape(F32, {64, 32}))
                      .WithShape(F32, {4, 16, 32})));
 
@@ -2559,7 +2559,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, Rank3ScaledABUnscaledDMatrixBiasF8) {
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-NEXT:    [[GEMM_TUPLE:%[^ ]+]] = (f32[64,32]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_BITCAST]], [[P1_TRANSPOSE]], [[B_BITCAST]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2614,7 +2614,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
       module->entry_computation()->root_instruction(),
       GmockMatch(
           m::Bitcast(m::Slice(m::GetTupleElement(
-                                  m::CustomCall({"__cublas$lt$matmul$f8"}), 0)
+                                  m::CustomCall({MatmulF8Target()}), 0)
                                   .WithShape(F32, {48, 32}))
                          .WithShape(F32, {45, 31}))
               .WithShape(F32, {3, 15, 31})));
@@ -2640,7 +2640,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-NEXT:    [[GEMM_TUPLE:%[^ ]+]] = (f32[48,32]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0_PADDED]], [[P1_PADDED]], [[P2_PADDED]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2705,7 +2705,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
 ; CHECK-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(4)
 ; CHECK-NEXT:    [[GEMM_TUPLE:%[^ ]+]] = (f32[48,32]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2770,7 +2770,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
 ; CHECK-NEXT:    [[P3:%[^ ]+]] = f16[] parameter(5)
 ; CHECK-NEXT:    [[CV1:%[^ ]+]] = f32[] convert([[P3]])
 ; CHECK:         [[GEMMOUT_TUPLE:%[^ ]+]] = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[MB]], [[CV0]], [[CV1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -2818,7 +2818,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
       GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                    GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
       R"(
-; CHECK:         custom-call({{[^,]+}}, {{[^,]+}}, {{[^,]+}}, {{[^,)]+}}), custom_call_target="__cublas$lt$matmul$f8"
+; CHECK:         custom-call({{[^,]+}}, {{[^,]+}}, {{[^,]+}}, {{[^,)]+}}), custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>"
 ; CHECK-SAME:      "epilogue":"DEFAULT"
 ; CHECK:         add(
       )");
@@ -2882,7 +2882,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDGeluF8) {
   RunAndCompareWithScales(hlo_text);
   MatchOptimizedHlo(hlo_text, R"(
 ; CHECK:         (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call({{[^,]+}}, {{[^,]+}}, {{[^,]+}}, {{[^,]+}}, {{[^,)]+}}),
-; CHECK-SAME:      custom_call_target="__cublas$lt$matmul$f8"
+; CHECK-SAME:      custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>"
 ; CHECK-SAME:      "epilogue":"GELU"
 ; CHECK-SAME:      "has_d_scale":true
       )");
@@ -2921,7 +2921,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDNotFusedOnRocm) {
                      GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
         R"(
 ; CHECK:         = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call(
-; CHECK-SAME:      custom_call_target="__cublas$lt$matmul$f8"
+; CHECK-SAME:      custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>"
       )");
   }
 }
@@ -2982,7 +2982,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABScaledDWithDAmaxF8) {
 ; CHECK-PTX-NEXT:    [[P4_INV:%[^ ]+]] = f32[] divide([[C2]], [[P4]])
 ; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, f32[], s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[P4_INV]]),
 ; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -3063,7 +3063,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
 ; CHECK-PTX-NEXT:    [[P4_INV_CONVERT:%[^ ]+]] = f32[] convert([[P4_INV]])
 ; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, f32[], s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_CONVERT]], [[P3_CONVERT]], [[P4_INV_CONVERT]]),
 ; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f16[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2_CONVERT]], [[P3_CONVERT]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -3141,7 +3141,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest,
 ; CHECK-PTX-NEXT:    [[P4_INV:%[^ ]+]] = f32[] divide([[C2]], [[P4]])
 ; CHECK-PTX-NEXT:    [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, f32[], s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]], [[P4_INV]]),
 ; CHECK-GCN-NEXT:    [[OUT:%[^ ]+]] = (f32[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1_TRANSPOSE]], [[P2]], [[P3]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -3254,7 +3254,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8Parameterized) {
         GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                      GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
         R"(
-    ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+    ; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
           )");
   }
 }
@@ -3322,7 +3322,7 @@ ENTRY f {
         GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                      GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
         R"(
-    ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+    ; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
           )");
   }
 }
@@ -3353,7 +3353,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, ScaledABUnscaledDF8TF32E5M2) {
       GemmRewriter(CudaHopperOrRocmCapability(), GetToolkitVersion(),
                    GemmRewriterOptions{GemmRewriterOptions::DType::kFp8Only}),
       R"(
-    ; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+    ; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
           )");
 }
 
@@ -3401,7 +3401,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, FnuzTypeF8) {
 ; CHECK-GCN-NEXT:    [[P2:%[^ ]+]] = f32[] parameter(2)
 ; CHECK-GCN-NEXT:    [[P3:%[^ ]+]] = f32[] parameter(3)
 ; CHECK-PTX:           custom_call_target="<<CUBLAS_CUSTOM_CALL_TARGET_PLACEHOLDER>>",
-; CHECK-GCN:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK-GCN:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0
@@ -3455,7 +3455,7 @@ TEST_F(ParameterizedFp8GemmRewriteTest, NoTransposeOnBlackwellF8) {
 ; CHECK-DAG:     [[P1:%[^ ]+]] = <<F8E4M3>>[32,16]{1,0} parameter(1)
 ; CHECK-DAG:     [[C1:[^ ]+]] = f32[] constant(1)
 ; CHECK:         [[OUT:%[^ ]+]] = (<<F8E4M3>>[16,16]{1,0}, s8[{{[0-9]+}}]{0}) custom-call([[P0]], [[P1]], [[C1]], [[C1]]),
-; CHECK:           custom_call_target="__cublas$lt$matmul$f8",
+; CHECK:           custom_call_target="<<BLASLT_MATMUL_F8_TARGET>>",
 ; CHECK:           backend_config={
 ; CHECK-DAG:         "alpha_real":1
 ; CHECK-DAG:         "alpha_imag":0

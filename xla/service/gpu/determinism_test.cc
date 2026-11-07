@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
@@ -33,6 +34,7 @@ limitations under the License.
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/literal.h"
 #include "xla/service/gpu/autotuning/autotuner_cache.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/mock_stream_executor.h"
@@ -171,6 +173,11 @@ class DeterminismTest : public HloPjRtGpuTestBase {
   bool HasHipblasLt() const {
     return device_description().rocm_compute_capability().has_hipblaslt();
   }
+
+  // The BlasLt matmul custom call target emitted for the GPU under test.
+  absl::string_view MatmulTarget() const {
+    return BlasLtMatmulCallTarget(device_description().gpu_compute_capability());
+  }
 };
 
 TEST_F(DeterminismTest, CublasLtDot) {
@@ -197,7 +204,8 @@ ENTRY e {
 
   EXPECT_THAT(
       MatchOptimizedHlo(kHloText,
-                        R"(; CHECK: custom_call_target="__cublas$lt$matmul")",
+                        absl::StrCat(R"(; CHECK: custom_call_target=")",
+                                     MatmulTarget(), R"(")"),
                         TimerCreation::kForbidden),
       absl_testing::IsOkAndHolds(true));
   AssertDeterminism(kHloText);
@@ -228,10 +236,10 @@ ENTRY e {
   AutotunerCache::ClearAutotuneResults();
   // Deterministic GEMM should use the first config from the list and with the
   // current backend order this should be cuBLAS LT.
-  EXPECT_THAT(MatchOptimizedHlo(kHloText, R"(
+  EXPECT_THAT(MatchOptimizedHlo(kHloText, absl::StrCat(R"(
     CHECK: ENTRY
-    CHECK: __cublas$lt$matmul
-  )",
+    CHECK: )",
+                                                       MatmulTarget()),
                                 TimerCreation::kForbidden),
               absl_testing::IsOkAndHolds(true));
   AssertDeterminism(kHloText, /*num_runs=*/3);
@@ -257,10 +265,10 @@ ENTRY e {
     lhs_contracting_dims={1},
     rhs_contracting_dims={0}
 })hlo",
-                                R"(
+                                absl::StrCat(R"(
     CHECK: ENTRY
-    CHECK: __cublas$lt$matmul
-  )",
+    CHECK: )",
+                                             MatmulTarget()),
                                 TimerCreation::kAllowed),
               absl_testing::IsOkAndHolds(true));
 }

@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/time/time.h"
@@ -55,6 +56,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
 #include "xla/service/gpu/alias_info.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -480,7 +482,10 @@ INSTANTIATE_TEST_SUITE_P(
          /*expected_module_substrings_fn=*/
          [](const se::DeviceDescription& device_description) {
            return std::vector<std::string>{
-               "custom_call_target=\"__cublas$lt$matmul\"",
+               absl::StrCat("custom_call_target=\"",
+                            BlasLtMatmulCallTarget(
+                                device_description.gpu_compute_capability()),
+                            "\""),
                "\"selected_algorithm\":\"0\""};
          },
          /*expected_backend_name=*/"CUBLASLT_FISSION"},
@@ -492,8 +497,10 @@ INSTANTIATE_TEST_SUITE_P(
            bool is_hopper = !comp.IsRocm() &&
                             comp.cuda_compute_capability()->IsAtLeastHopper();
            return std::vector<std::string>{
-               is_hopper ? "custom_call_target=\"__cublas$lt$matmul$f8\""
-                         : "custom_call_target=\"__cublas$lt$matmul\"",
+               absl::StrCat("custom_call_target=\"",
+                            is_hopper ? BlasLtMatmulF8CallTarget(comp)
+                                      : BlasLtMatmulCallTarget(comp),
+                            "\""),
                "\"selected_algorithm\":\"0\""};
          },
          /*expected_backend_name=*/"CUBLASLT_FISSION"},
@@ -502,7 +509,10 @@ INSTANTIATE_TEST_SUITE_P(
          /*expected_module_substrings_fn=*/
          [](const se::DeviceDescription& device_description) {
            return std::vector<std::string>{
-               "custom_call_target=\"__cublas$lt$matmul\"",
+               absl::StrCat("custom_call_target=\"",
+                            BlasLtMatmulCallTarget(
+                                device_description.gpu_compute_capability()),
+                            "\""),
                "\"selected_algorithm\":\"0\""};
          },
          /*expected_backend_name=*/"CUBLASLT_FISSION"},
@@ -686,7 +696,7 @@ TEST_F(CublasFissionBackendTest, ApplyConfigRewritesNormalizedBf16DequantToF8) {
   const HloInstruction* f8_gemm = nullptr;
   for (const HloInstruction* instr :
        module->entry_computation()->instructions()) {
-    if (instr->IsCustomCall("__cublas$lt$matmul$f8")) {
+    if (IsBlasLtMatmulF8(*instr)) {
       f8_gemm = instr;
     }
   }

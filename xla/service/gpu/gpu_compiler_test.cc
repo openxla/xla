@@ -85,6 +85,7 @@ limitations under the License.
 #include "xla/service/executable.h"
 #include "xla/service/gpu/autotuning/autotuner_cache.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/export_hlo.h"
 #include "xla/service/gpu/gpu_executable.h"
 #include "xla/service/gpu/metrics.h"
@@ -1057,8 +1058,12 @@ class CublasPaddingTest : public GpuCompilerTest {
                          GetOptimizedModuleForExecutable(hlo, config));
     std::string optimized = module_and_executable.first->ToString();
     EXPECT_THAT(optimized, HasSubstr(expected_pad));
-    EXPECT_THAT(optimized,
-                HasSubstr(R"(custom_call_target="__cublas$lt$matmul")"));
+    EXPECT_THAT(
+        optimized,
+        HasSubstr(absl::StrCat(
+            R"(custom_call_target=")",
+            BlasLtMatmulCallTarget(device_description().gpu_compute_capability()),
+            R"(")")));
     ASSERT_OK_AND_ASSIGN(auto module,
                          ParseAndReturnVerifiedModule(hlo, config));
     EXPECT_TRUE(RunAndCompare(std::move(module), ErrorSpec{1e-2, 1e-2}));

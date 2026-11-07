@@ -69,7 +69,7 @@ ENTRY main {
   p0 = f32[100,100] parameter(0)
   p1 = f32[100,100] parameter(1)
   %custom-call.1 = (f32[100,100]{1,0}, s8[4194304]{0}) custom-call(p0, p1),
-    custom_call_target="__cublas$lt$matmul",
+    custom_call_target="__hipblaslt$matmul",
     backend_config={
       "gemm_backend_config":{
         "selected_algorithm":"0",
@@ -316,7 +316,7 @@ TEST_F(HipblasLtScaledDotTest, ApplyConfig) {
 
     EXPECT_THAT(RunFileCheck(module->ToString(),
                              R"(CHECK: custom-call
-                        CHECK-SAME: custom_call_target="__cublas$lt$matmul$mx"
+                        CHECK-SAME: custom_call_target="__hipblaslt$matmul$mx"
                         CHECK: "scale_mode":2)"),
                 absl_testing::IsOkAndHolds(true));
   }
@@ -346,7 +346,7 @@ ENTRY main {
   b_scale = f32[] parameter(3)
   d_scale = f32[] parameter(4)
   gemm = (f8e4m3fn[32,16]{1,0}, s8[67108864]{0}) custom-call(a, b, a_scale, b_scale<<D_SCALE>>),
-    custom_call_target="__cublas$lt$matmul$f8",
+    custom_call_target="__hipblaslt$matmul$f8",
     backend_config={"gemm_backend_config":{"alpha_real":1,"alpha_imag":0,"beta":0,"dot_dimension_numbers":{"lhs_contracting_dimensions":["1"],"rhs_contracting_dimensions":["1"],"lhs_batch_dimensions":[],"rhs_batch_dimensions":[]},"precision_config":{"operand_precision":["DEFAULT","DEFAULT"],"algorithm":"ALG_UNSET"},"epilogue":"DEFAULT","scale_mode":1<<HAS_D_SCALE>>}}
   ROOT out = f8e4m3fn[32,16]{1,0} get-tuple-element(gemm), index=0
 })";
@@ -412,7 +412,7 @@ CHECK-DAG:    clamp(
 CHECK:        ROOT {{.*}} = f8e4m3fn[32,16]{1,0} convert(
 CHECK:      ENTRY
 CHECK:        (f32[32,16]{1,0}, s8[42]{0}) custom-call({{[^)]*}} %b_scale)
-CHECK-SAME:     custom_call_target="__cublas$lt$matmul$f8"
+CHECK-SAME:     custom_call_target="__hipblaslt$matmul$f8"
 CHECK-SAME:     "selected_algorithm":"2"
 CHECK-NOT:      has_d_scale
 CHECK:        ROOT {{.*}} = f8e4m3fn[32,16]{1,0} fusion({{.*}}), kind=kLoop

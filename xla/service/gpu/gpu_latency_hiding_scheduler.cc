@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/device_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/latency_hiding_scheduler.h"
@@ -339,7 +340,7 @@ bool IsMemoryBoundKernel(const HloInstruction& hlo) {
     case HloOpcode::kConvolution:
       return false;
     case HloOpcode::kCustomCall:
-      return !IsCublasGemm(hlo) && !IsCustomCallToDnnConvolution(hlo);
+      return !IsBlasGemm(hlo) && !IsCustomCallToDnnConvolution(hlo);
     default:
       return true;
   }
@@ -944,7 +945,7 @@ ApproximateLatencyEstimator::TimeCost GpuLatencyEstimator::NodeCost(
             GetLatencyFromMetadata(*instr)) {
       return *latency;
     }
-    if (IsCublasLtGemm(*instr) || IsCustomCallToDnnConvolution(*instr)) {
+    if (IsBlasLtGemm(*instr) || IsCustomCallToDnnConvolution(*instr)) {
       return ApproximateLatencyEstimator::kMediumCost;
     }
     // consider other custom calls as medium cost for now. Keeping the case

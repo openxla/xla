@@ -284,6 +284,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/compile_module_to_llvm_ir.h"
 #include "xla/service/gpu/conv_layout_normalization.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/cudnn_support_utils.h"
 #include "xla/service/gpu/dense_data_intermediate.h"
@@ -1759,7 +1760,7 @@ absl::Status RunAsyncDotPasses(HloModule* hlo_module,
     pipeline.AddPass<AsyncWrapper>([](HloInstruction* instruction) {
       // TODO(b/339654953): Use a better heuristic to determine whether a
       // `dot` operation should be wrapped in an async computation.
-      if (IsCublasLtGemm(*instruction)) {
+      if (IsBlasLtGemm(*instruction)) {
         return true;
       }
       if (instruction->called_computations().size() == 1 &&
@@ -1800,7 +1801,7 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
   if (opts.xla_gpu_enable_dynamic_slice_fusion()) {
     DynamicSliceFusionRewriterV2::Options opts;
     opts.predicate = [platform_id](const HloInstruction* instr) {
-      return IsNonFusedCublasLtMatmul(*instr) ||
+      return IsNonFusedBlasLtMatmul(*instr) ||
              IsFfiCustomCall(instr, platform_id);
     };
     pipeline.AddPass<DynamicSliceFusionRewriterV2>(platform_id,
@@ -2247,7 +2248,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
     pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
-    // GemmRewriter pins "__cublas$lt$matmul" output layouts to {n-1,...,1,0},
+    // GemmRewriter pins the BlasLt matmul output layouts to {n-1,...,1,0},
     // which can leave a downstream reshape no longer bitcast-compatible.
     // Decompose any such reshape so LayoutNormalization's ReshapeIsBitcast
     // precondition holds.
@@ -2346,7 +2347,7 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   // Rewrite GEMMs with broadcasted inputs as strided GEMMs.
   pipeline.AddPass<GemmBroadcastFoldingRewriter>();
 
-  // GemmRewriter pins "__cublas$lt$matmul" output layouts to {n-1,...,1,0},
+  // GemmRewriter pins the BlasLt matmul output layouts to {n-1,...,1,0},
   // which can leave a downstream reshape no longer bitcast-compatible.
   // Decompose any such reshape so LayoutNormalization's ReshapeIsBitcast
   // precondition holds.
