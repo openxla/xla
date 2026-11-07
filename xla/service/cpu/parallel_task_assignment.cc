@@ -51,7 +51,7 @@ class SimpleCostModel : public ParallelCostModel {
   SimpleCostModel(const int64_t max_parallelism,
                   const HloCostAnalysis::ShapeSizeFunction& shape_size)
       : max_parallelism_(max_parallelism), shape_size_(shape_size) {}
-  ~SimpleCostModel() override {}
+  ~SimpleCostModel() override = default;
 
   int64_t GetParallelTaskCount(HloInstruction* instruction) override {
     // Simple cost model based on hlo size and typical L2 cache size.
@@ -76,7 +76,7 @@ class DefaultCostModel : public ParallelCostModel {
       : max_parallelism_(max_parallelism),
         shape_size_(shape_size),
         cost_analysis_(std::move(cost_analysis)) {}
-  ~DefaultCostModel() override {}
+  ~DefaultCostModel() override = default;
 
   int64_t GetParallelTaskCount(HloInstruction* instruction) override {
     // Parameters for parallel task count computation.
