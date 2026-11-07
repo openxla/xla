@@ -3130,7 +3130,18 @@ absl::Status EmitGeneric(ImplicitLocOpBuilder& b,
     ABSL_ASSIGN_OR_RETURN(auto tile_info,
                           TileInfo::Construct(emitter_ctx, *root));
 
-    xtile::InsertTileOp::create(b, result, arg, tile_info.offsets(),
+    Value dest_buffer = arg;
+    if (!tile_info.replica_id_offsets().empty()) {
+      TF_RET_CHECK(tile_info.replica_id_offsets().size() == 1)
+          << "Expected a single replica ID for root buffer selection";
+      ABSL_ASSIGN_OR_RETURN(
+          mlir::MemRefType spatial_memref_type,
+          GetMemRefType(root->hlo()->shape(), tile_info.storage_type()));
+      dest_buffer =
+          xtile::SelectBufferOp::create(b, spatial_memref_type, dest_buffer,
+                                        tile_info.replica_id_offsets().front());
+    }
+    xtile::InsertTileOp::create(b, result, dest_buffer, tile_info.offsets(),
                                 tile_info.padded_tile_sizes(),
                                 tile_info.tile_strides());
   }
@@ -3170,8 +3181,9 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
   b.setInsertionPointToEnd(xtile_module->getBody());
 
   // Compute function argument types.
-  ABSL_ASSIGN_OR_RETURN(SmallVector<Type> fn_arg_types,
-                        GetFnArgTypes(b, fusion, opaque_args_types, gpu_cc));
+  ABSL_ASSIGN_OR_RETURN(
+      SmallVector<Type> fn_arg_types,
+      GetFnArgTypes(b, fusion, tiled_computation, opaque_args_types, gpu_cc));
   // Metadata arguments are opaque to the tiling infra.
   llvm::SmallVector<mlir::NamedAttribute> named_attributes{b.getNamedAttr(
       "num_opaque_args", b.getI32IntegerAttr(opaque_args_types.size()))};
