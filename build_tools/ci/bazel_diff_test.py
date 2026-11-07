@@ -16,6 +16,7 @@
 
 import dataclasses
 import hashlib
+import json
 import os
 import subprocess
 import tempfile
@@ -807,6 +808,11 @@ class ComputeImpactedTargetsCheckoutTest(parameterized.TestCase):
             stdout="merge_commit_sha\n",
         ),
         subprocess.CompletedProcess(
+            args=["git", "cat-file", "commit", "merge_commit_sha"],
+            returncode=0,
+            stdout="tree 0\nparent other_parent_sha\n\nNon-PR commit\n",
+        ),
+        subprocess.CompletedProcess(
             args=["git", "checkout", "-f", "merge_commit_sha"],
             returncode=0,
             stdout="",
@@ -884,10 +890,421 @@ class ComputeImpactedTargetsCheckoutTest(parameterized.TestCase):
         [
             mock.call(["rev-parse", "HEAD"], cwd="/workspace"),
             mock.call(
+                ["cat-file", "commit", "merge_commit_sha"], cwd="/workspace"
+            ),
+            mock.call(
                 ["checkout", "-f", "merge_commit_sha"], cwd="/workspace"
             ),
         ],
     )
+
+  def test_compute_impacted_targets_pr_merge_commit_uses_merge_parents(self):
+    main_tip_sha = "a" * 40
+    pr_head_sha = "b" * 40
+    merge_commit_sha = "c" * 40
+    self.mock_git_best_effort.side_effect = [
+        subprocess.CompletedProcess(
+            args=["git", "rev-parse", "HEAD"],
+            returncode=0,
+            stdout=f"{merge_commit_sha}\n",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "cat-file", "commit", merge_commit_sha],
+            returncode=0,
+            stdout=(
+                f"tree 0\nparent {main_tip_sha}\nparent {pr_head_sha}\n\n"
+                "Merge PR into main\n"
+            ),
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "checkout", "-f", merge_commit_sha],
+            returncode=0,
+            stdout="",
+        ),
+    ]
+    self.mock_changed_files.return_value = ["xla/service/cpu/cpu_compiler.cc"]
+    self.mock_diff_base.return_value = main_tip_sha
+    self.mock_subprocess_run.side_effect = [
+        subprocess.CompletedProcess(
+            args=["git", "checkout", "-f", main_tip_sha],
+            returncode=0,
+            stdout="",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "checkout", "-f", merge_commit_sha],
+            returncode=0,
+            stdout="",
+        ),
+    ]
+    self.mock_download_jar.return_value = "/tmp/bazel-diff.jar"
+    self.mock_get_impacted.side_effect = _write_impacted_targets
+
+    decision = bazel_diff.compute_impacted_targets(
+        _FakeBuildConfig(),
+        "stale_base_sha",
+        pr_head_sha,
+        workspace_dir="/workspace",
+    )
+
+    self.assertEqual(
+        decision.decision, bazel_diff.BazelDiffDecisionType.IMPACTED
+    )
+    self.mock_changed_files.assert_called_once_with(
+        main_tip_sha, merge_commit_sha, cwd="/workspace"
+    )
+    self.assertEqual(
+        self.mock_subprocess_run.call_args_list,
+        [
+            mock.call(
+                ["git", "checkout", "-f", main_tip_sha],
+                cwd="/workspace",
+                check=True,
+                capture_output=True,
+            ),
+            mock.call(
+                ["git", "checkout", "-f", merge_commit_sha],
+                cwd="/workspace",
+                check=True,
+                capture_output=True,
+            ),
+        ],
+    )
+
+
+class _FakeGitWorkspace:
+  """In-memory fake Git repository materializing checked-out files on disk."""
+
+  def __init__(
+      self,
+      workspace_dir: str,
+      *,
+      origin_commits: dict[str, tuple[tuple[str, ...], dict[str, str]]],
+      checked_out_sha: str,
+      shallow: bool = False,
+  ):
+    self.workspace_dir = workspace_dir
+    self.origin_commits = origin_commits
+    self.head = checked_out_sha
+    self.unshallow_called = False
+    if shallow:
+      self.local_commits = {checked_out_sha: origin_commits[checked_out_sha]}
+      self.shallow_commits = {checked_out_sha}
+    else:
+      self.local_commits = dict(origin_commits)
+      self.shallow_commits = set()
+    self._materialize(checked_out_sha)
+
+  def _materialize(self, sha: str) -> None:
+    for entry in os.listdir(self.workspace_dir):
+      full = os.path.join(self.workspace_dir, entry)
+      if os.path.isdir(full):
+        for root, dirs, files in os.walk(full, topdown=False):
+          for name in files:
+            os.remove(os.path.join(root, name))
+          for name in dirs:
+            os.rmdir(os.path.join(root, name))
+        os.rmdir(full)
+      else:
+        os.remove(full)
+    _, tree = self.local_commits[sha]
+    for rel_path, content in tree.items():
+      dest = os.path.join(self.workspace_dir, rel_path)
+      os.makedirs(os.path.dirname(dest), exist_ok=True)
+      with open(dest, "w", encoding="utf-8") as f:
+        f.write(content)
+
+  def _ancestors(self, start: str) -> dict[str, int]:
+    if start not in self.local_commits:
+      return {}
+    distances = {start: 0}
+    queue = [start]
+    while queue:
+      curr = queue.pop(0)
+      if curr in self.shallow_commits:
+        continue
+      parents, _ = self.local_commits[curr]
+      for parent in parents:
+        if parent in self.local_commits and parent not in distances:
+          distances[parent] = distances[curr] + 1
+          queue.append(parent)
+    return distances
+
+  def run(
+      self,
+      cmd: list[str],
+      *,
+      cwd: str = ".",
+      capture_output: bool = False,
+      text: bool = False,
+      check: bool = False,
+  ) -> subprocess.CompletedProcess[str]:
+    del cwd, capture_output, text
+    assert cmd[0] == "git", f"Unexpected command: {cmd}"
+    args = cmd[1:]
+
+    def _finish(
+        returncode: int, stdout: str = "", stderr: str = ""
+    ) -> subprocess.CompletedProcess[str]:
+      if check and returncode != 0:
+        raise subprocess.CalledProcessError(returncode, cmd, stdout, stderr)
+      return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
+    if args == ["rev-parse", "HEAD"]:
+      return _finish(0, f"{self.head}\n")
+
+    if len(args) == 3 and args[:2] == ["rev-parse", "--verify"]:
+      target = args[2].removesuffix("^{commit}")
+      resolved = self.head if target == "HEAD" else target
+      if resolved in self.local_commits:
+        return _finish(0, f"{resolved}\n")
+      return _finish(128, stderr="unknown revision\n")
+
+    if len(args) == 3 and args[:2] == ["cat-file", "-e"]:
+      target = args[2].removesuffix("^{commit}")
+      resolved = self.head if target == "HEAD" else target
+      return _finish(0 if resolved in self.local_commits else 1)
+
+    if len(args) == 3 and args[:2] == ["cat-file", "commit"]:
+      resolved = self.head if args[2] == "HEAD" else args[2]
+      if resolved not in self.local_commits:
+        return _finish(128, stderr="bad object\n")
+      parents, _ = self.local_commits[resolved]
+      header_lines = ["tree " + "0" * 40]
+      header_lines.extend(f"parent {p}" for p in parents)
+      header_lines.append("author Test <test@example.com> 1700000000 +0000")
+      header_lines.append("")
+      header_lines.append("Merge PR into main")
+      return _finish(0, "\n".join(header_lines) + "\n")
+
+    if len(args) == 4 and args[:2] == ["merge-base", "--"]:
+      a_ref = self.head if args[2] == "HEAD" else args[2]
+      b_ref = self.head if args[3] == "HEAD" else args[3]
+      if a_ref not in self.local_commits or b_ref not in self.local_commits:
+        return _finish(128)
+      anc_a = self._ancestors(a_ref)
+      anc_b = self._ancestors(b_ref)
+      common = set(anc_a) & set(anc_b)
+      if not common:
+        return _finish(1)
+      best = min(common, key=lambda c: anc_a[c] + anc_b[c])
+      return _finish(0, f"{best}\n")
+
+    if args[:2] == ["fetch", "--unshallow"]:
+      self.unshallow_called = True
+      self.local_commits = dict(self.origin_commits)
+      self.shallow_commits.clear()
+      return _finish(0)
+
+    if args and args[0] == "fetch":
+      sep = args.index("--")
+      refs = args[sep + 2 :]
+      is_depth_one = "--depth=1" in args
+      for ref in refs:
+        if ref not in self.origin_commits:
+          return _finish(128, stderr=f"not our ref {ref}\n")
+        self.local_commits[ref] = self.origin_commits[ref]
+        if is_depth_one:
+          self.shallow_commits.add(ref)
+      return _finish(0)
+
+    if args[:3] == ["diff", "--name-only", "--end-of-options"]:
+      a_ref = self.head if args[3] == "HEAD" else args[3]
+      b_ref = self.head if args[4] == "HEAD" else args[4]
+      if a_ref not in self.local_commits or b_ref not in self.local_commits:
+        return _finish(128, stderr="bad revision\n")
+      _, files_a = self.local_commits[a_ref]
+      _, files_b = self.local_commits[b_ref]
+      changed = sorted(
+          path
+          for path in set(files_a) | set(files_b)
+          if files_a.get(path) != files_b.get(path)
+      )
+      return _finish(0, "".join(f"{p}\n" for p in changed))
+
+    if len(args) == 3 and args[:2] == ["checkout", "-f"]:
+      target = self.head if args[2] == "HEAD" else args[2]
+      if target not in self.local_commits:
+        return _finish(128, stderr=f"unknown revision {target}\n")
+      self.head = target
+      self._materialize(target)
+      return _finish(0)
+
+    raise AssertionError(f"Unhandled git args: {args}")
+
+
+def _fake_generate_hashes(
+    jar_path: str,
+    workspace_dir: str,
+    output_json: str,
+    *,
+    cquery_options: object = None,
+    use_cquery: bool = False,
+    startup_options: object = None,
+    target_patterns: object = None,
+) -> None:
+  del jar_path, cquery_options, use_cquery, startup_options, target_patterns
+  lib_path = os.path.join(workspace_dir, "xla", "lib.cc")
+  with open(lib_path, "r", encoding="utf-8") as f:
+    lib_hash = hashlib.sha256(f.read().encode("utf-8")).hexdigest()
+  hashes = {"//xla:lib": lib_hash}
+  if os.path.exists(os.path.join(workspace_dir, "xla", "old_test.cc")):
+    hashes["//xla:old_test"] = f"old:{lib_hash}"
+  if os.path.exists(os.path.join(workspace_dir, "xla", "new_test.cc")):
+    hashes["//xla:new_test"] = f"new:{lib_hash}"
+  with open(output_json, "w", encoding="utf-8") as f:
+    json.dump(hashes, f)
+
+
+def _fake_get_impacted_targets(
+    jar_path: str,
+    workspace_dir: str,
+    base_hashes: str,
+    head_hashes: str,
+    output_path: str,
+    startup_options: object = None,
+) -> None:
+  del jar_path, workspace_dir, startup_options
+  with open(base_hashes, "r", encoding="utf-8") as f:
+    base_map = json.load(f)
+  with open(head_hashes, "r", encoding="utf-8") as f:
+    head_map = json.load(f)
+  impacted = sorted(
+      target
+      for target, digest in head_map.items()
+      if base_map.get(target) != digest
+  )
+  with open(output_path, "w", encoding="utf-8") as f:
+    for target in impacted:
+      f.write(f"{target}\n")
+
+
+class BazelDiffPrMergeCommitTest(absltest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    self.enter_context(
+        mock.patch.object(
+            bazel_diff,
+            "download_and_verify_jar",
+            autospec=True,
+            spec_set=True,
+            return_value="/tmp/bazel-diff.jar",
+        )
+    )
+    self.enter_context(
+        mock.patch.object(
+            bazel_diff,
+            "run_generate_hashes",
+            autospec=True,
+            spec_set=True,
+            side_effect=_fake_generate_hashes,
+        )
+    )
+    self.enter_context(
+        mock.patch.object(
+            bazel_diff,
+            "run_get_impacted_targets",
+            autospec=True,
+            spec_set=True,
+            side_effect=_fake_get_impacted_targets,
+        )
+    )
+
+  def _create_pr_merge_workspace(
+      self, *, update_global_config_on_main: bool, shallow: bool
+  ) -> tuple[_FakeGitWorkspace, str, str, str]:
+    work_dir = self.create_tempdir("work").full_path
+    m0_sha = "0" * 40
+    pr_sha = "1" * 40
+    main_sha = "2" * 40
+    merge_sha = "3" * 40
+    main_mod = "v2\n" if update_global_config_on_main else "v1\n"
+    repo = _FakeGitWorkspace(
+        work_dir,
+        origin_commits={
+            m0_sha: (
+                (),
+                {
+                    "MODULE.bazel": "v1\n",
+                    "xla/lib.cc": "v1\n",
+                    "xla/old_test.cc": "test\n",
+                },
+            ),
+            pr_sha: (
+                (m0_sha,),
+                {
+                    "MODULE.bazel": "v1\n",
+                    "xla/lib.cc": "v2\n",
+                    "xla/old_test.cc": "test\n",
+                },
+            ),
+            main_sha: (
+                (m0_sha,),
+                {
+                    "MODULE.bazel": main_mod,
+                    "xla/lib.cc": "v1\n",
+                    "xla/new_test.cc": "test\n",
+                },
+            ),
+            merge_sha: (
+                (main_sha, pr_sha),
+                {
+                    "MODULE.bazel": main_mod,
+                    "xla/lib.cc": "v2\n",
+                    "xla/new_test.cc": "test\n",
+                },
+            ),
+        },
+        checked_out_sha=merge_sha,
+        shallow=shallow,
+    )
+    self.enter_context(
+        mock.patch.object(
+            bazel_diff.subprocess,
+            "run",
+            autospec=True,
+            spec_set=True,
+            side_effect=repo.run,
+        )
+    )
+    return repo, main_sha, pr_sha, merge_sha
+
+  def test_pr_merge_checkout_tracks_renamed_targets_on_main(self):
+    repo, main_sha, pr_sha, merge_sha = self._create_pr_merge_workspace(
+        update_global_config_on_main=False, shallow=False
+    )
+
+    decision = bazel_diff.compute_impacted_targets(
+        _FakeBuildConfig(), main_sha, pr_sha, workspace_dir=repo.workspace_dir
+    )
+
+    self.assertEqual(
+        decision.decision, bazel_diff.BazelDiffDecisionType.IMPACTED
+    )
+    self.assertEqual(
+        decision.impacted_targets, ("//xla:lib", "//xla:new_test")
+    )
+    self.assertEqual(repo.head, merge_sha)
+
+  def test_shallow_pr_merge_checkout_avoids_main_config_skew_and_unshallow(
+      self,
+  ):
+    repo, main_sha, pr_sha, merge_sha = self._create_pr_merge_workspace(
+        update_global_config_on_main=True, shallow=True
+    )
+
+    decision = bazel_diff.compute_impacted_targets(
+        _FakeBuildConfig(), main_sha, pr_sha, workspace_dir=repo.workspace_dir
+    )
+
+    self.assertEqual(
+        decision.decision, bazel_diff.BazelDiffDecisionType.IMPACTED
+    )
+    self.assertEqual(
+        decision.impacted_targets, ("//xla:lib", "//xla:new_test")
+    )
+    self.assertFalse(repo.unshallow_called)
+    self.assertEqual(repo.head, merge_sha)
 
 
 if __name__ == "__main__":
