@@ -29,7 +29,6 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/buffer_assignment.h"
-#include "xla/service/cpu/ir_emitter.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -52,8 +51,6 @@ namespace xla::cpu {
 //
 // At run time thunks resolve kernel functions by name in the compiled LLVM
 // module.
-//
-// WARNING: This is under construction and will eventually replace IrEmitter.
 class IrEmitter2 {
  public:
   friend class IrEmitter2Test;
@@ -64,7 +61,7 @@ class IrEmitter2 {
 
  public:
   IrEmitter2(const HloModule& hlo_module, llvm::Module* module,
-             IrEmitter* nested_ir_emitter);
+             const BufferAssignment* assignment);
 
   // Emitted kernel information that defines how to launch it at run time.
   struct KernelInfo {
@@ -107,10 +104,7 @@ class IrEmitter2 {
 
   const HloModule& hlo_module_;
   llvm::Module* module_;
-
-  // Nested IrEmitter to emit embedded computations (e.g. computations attached
-  // to reductions inside fusions).
-  IrEmitter* nested_ir_emitter_;
+  const BufferAssignment* assignment_;
 
   KernelApiIrBuilder kernel_api_ir_builder_;
 

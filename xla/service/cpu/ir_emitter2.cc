@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/cpu/ir_emitter2.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -23,21 +24,34 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/service/cpu/ir_emitter.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/service/llvm_ir/ir_array.h"
+#include "xla/service/llvm_ir/llvm_loop.h"
+#include "xla/service/llvm_ir/llvm_util.h"
+#include "xla/service/llvm_ir/loop_emitter.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::cpu {
 
@@ -57,13 +71,15 @@ std::string SortCsv(absl::string_view csv) {
 //===----------------------------------------------------------------------===//
 
 IrEmitter2::IrEmitter2(const HloModule& hlo_module, llvm::Module* module,
-                       IrEmitter* nested_ir_emitter)
+                       const BufferAssignment* assignment)
     : hlo_module_(hlo_module),
       module_(module),
-      nested_ir_emitter_(nested_ir_emitter),
+      assignment_(assignment),
       kernel_api_ir_builder_(module_->getContext(),
                              KernelApiIrBuilder::Options::FromHloModuleConfig(
-                                 hlo_module_.config())) {}
+                                 hlo_module_.config())) {
+  SetModuleMemoryRegionName(*module_, "ir_emitter2");
+}
 
 IrEmitter2::KernelInfo::KernelInfo(KernelPrototype prototype,
                                    const se::BlockDim& block_dims,
@@ -87,6 +103,24 @@ IrEmitter2::KernelInfo::KernelInfo(
 absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitPadHostKernel(
     const HloInstruction* pad) {
   VLOG(2) << "Emit Pad host kernel.";
+  if (pad->operand_count() != 2) {
+    return Internal("Pad instruction must have 2 operands, got %d.",
+                    pad->operand_count());
+  }
+
+  // CPU backend does not properly handle negative padding, which should be
+  // eliminated at the HLO level by AlgebraicSimplifier.
+  const PaddingConfig& padding_config =
+      Cast<HloPadInstruction>(pad)->padding_config();
+  for (const auto& padding_dimension : padding_config.dimensions()) {
+    if (padding_dimension.edge_padding_low() < 0 ||
+        padding_dimension.edge_padding_high() < 0) {
+      return InternalStrCat(
+          "Encountered negative padding in IrEmitter2 on CPU. "
+          "This should have been eliminated at the HLO level. ",
+          pad->ToString());
+    }
+  }
 
   ABSL_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
                         EmitKernelPrototype(pad));
@@ -97,16 +131,55 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitPadHostKernel(
 
   llvm::LLVMContext& ctx = module_->getContext();
   llvm::IRBuilder<> b(ctx);
-  auto builder_overwrite = nested_ir_emitter_->WithBuilder(b);
+  b.SetInsertPoint(kernel_prototype.function->getEntryBlock().getTerminator());
 
-  nested_ir_emitter_->PushComputeFunction(
-      &b, module_, kernel_prototype.function, kernel_prototype.return_block);
+  const HloInstruction* padding_value = pad->operand(1);
+  llvm_ir::IrArray::Index index(b.getInt64Ty());
+  llvm::Value* padding_value_addr = padvalue_array.EmitArrayElementAddress(
+      index, &b, "padding_value_addr", true, nullptr);
+  llvm::Type* padding_value_type =
+      llvm_ir::ShapeToIrType(padding_value->shape(), ctx);
+  llvm_ir::ElementGenerator element_generator =
+      [&b, padding_value_type,
+       padding_value_addr](const llvm_ir::IrArray::Index& target_index) {
+        return b.CreateLoad(padding_value_type, padding_value_addr);
+      };
 
-  ABSL_RETURN_IF_ERROR(nested_ir_emitter_->HandlePad(
-      const_cast<HloInstruction*>(pad), operand_array, padvalue_array,
-      output_array));
+  // Fill output with the padding value first, then overwrite with operand
+  // elements at their padded coordinates.
+  ABSL_RETURN_IF_ERROR(llvm_ir::LoopEmitter(element_generator, output_array, &b)
+                           .EmitLoop(llvm_ir::IrName(pad, "initialize")));
 
-  nested_ir_emitter_->PopComputeFunction();
+  llvm_ir::ForLoopNest loops(llvm_ir::IrName(pad, "assign"), &b);
+  const HloInstruction* operand = pad->operand(0);
+  llvm_ir::IrArray::Index operand_index =
+      loops.AddLoopsForShape(operand->shape(), "operand");
+
+  if (!ShapeUtil::IsScalar(operand->shape())) {
+    llvm_ir::SetToFirstInsertPoint(loops.GetInnerLoopBodyBasicBlock(), &b);
+  }
+
+  llvm::Value* operand_data =
+      operand_array.EmitReadArrayElement(operand_index, &b);
+
+  std::vector<llvm::Value*> output_multi_index;
+  output_multi_index.reserve(operand_index.size());
+  for (size_t i = 0; i < operand_index.size(); ++i) {
+    llvm::Value* offset = b.CreateMul(
+        operand_index[i],
+        b.getInt64(padding_config.dimensions(i).interior_padding() + 1));
+    llvm::Value* idx = b.CreateAdd(
+        offset, b.getInt64(padding_config.dimensions(i).edge_padding_low()));
+    output_multi_index.push_back(idx);
+  }
+
+  llvm_ir::IrArray::Index output_index(
+      output_multi_index, output_array.GetShape(), operand_index.GetType());
+  output_array.EmitWriteArrayElement(output_index, operand_data, &b);
+
+  if (!ShapeUtil::IsScalar(operand->shape())) {
+    llvm_ir::SetToFirstInsertPoint(loops.GetOuterLoopExitBasicBlock(), &b);
+  }
 
   return kernels_.emplace_back(
       KernelInfo(std::move(kernel_prototype), se::BlockDim(), se::ThreadDim()));
@@ -118,14 +191,48 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitSliceToDynamicHostKernel(
 
   ABSL_ASSIGN_OR_RETURN(KernelPrototype kernel_prototype,
                         EmitKernelPrototype(instr));
-  llvm::IRBuilder<> ir_builder(module_->getContext());
+  llvm::LLVMContext& ctx = module_->getContext();
+  llvm::IRBuilder<> ir_builder(ctx);
   ir_builder.SetInsertPoint(
       kernel_prototype.function->getEntryBlock().getTerminator());
 
   llvm_ir::IrArray output_array = kernel_prototype.results[0];
-  auto guard = nested_ir_emitter_->WithBuilder(ir_builder);
-  ABSL_RETURN_IF_ERROR(nested_ir_emitter_->EmitSliceToDynamic(
-      instr, kernel_prototype.arguments, output_array));
+  std::vector<llvm::Value*> dynamic_dims;
+  int32_t raw_data_size =
+      ShapeUtil::ByteSizeOf(ShapeUtil::MakeStaticShape(instr->shape()));
+  llvm::Value* dest_buffer = output_array.GetBasePointer();
+  for (int64_t i = 1; i < instr->operand_count(); ++i) {
+    const int64_t dim_index = i - 1;
+    llvm::Value* source_buffer = kernel_prototype.arguments[i].GetBasePointer();
+    llvm::LoadInst* dyn_dim_size = ir_builder.CreateLoad(
+        llvm_ir::ShapeToIrType(instr->operand(i)->shape(), ctx), source_buffer,
+        "dyn_dim_size");
+
+    llvm::Value* metadata = ir_builder.CreateConstInBoundsGEP1_32(
+        ir_builder.getInt8Ty(), dest_buffer,
+        raw_data_size + dim_index * sizeof(int32_t));
+    ir_builder.CreateStore(dyn_dim_size, metadata);
+    dynamic_dims.push_back(
+        ir_builder.CreateIntCast(dyn_dim_size, ir_builder.getInt64Ty(),
+                                 /*isSigned=*/true, "i64_dyn_dim_size"));
+  }
+
+  auto loop_body_emitter =
+      [&](const llvm_ir::IrArray::Index& array_index) -> absl::Status {
+    llvm::Value* source_element =
+        kernel_prototype.arguments[0].EmitReadArrayElement(array_index,
+                                                           &ir_builder);
+    llvm::Value* linear_index =
+        array_index.Linearize(dynamic_dims, &ir_builder);
+    llvm_ir::IrArray::Index dest_index(linear_index, output_array.GetShape(),
+                                       &ir_builder);
+    output_array.EmitWriteArrayElement(dest_index, source_element, &ir_builder);
+    return absl::OkStatus();
+  };
+  ABSL_RETURN_IF_ERROR(llvm_ir::LoopEmitter(loop_body_emitter,
+                                            output_array.GetShape(),
+                                            dynamic_dims, &ir_builder)
+                           .EmitLoop(llvm_ir::IrName(instr)));
   return kernels_.emplace_back(
       KernelInfo(std::move(kernel_prototype), se::BlockDim(), se::ThreadDim()));
 }
@@ -136,8 +243,8 @@ absl::StatusOr<IrEmitter2::KernelInfo> IrEmitter2::EmitSliceToDynamicHostKernel(
 
 absl::StatusOr<IrEmitter2::KernelPrototype> IrEmitter2::EmitKernelPrototype(
     const HloInstruction* instr) {
-  return kernel_api_ir_builder_.EmitKernelPrototype(
-      *module_, instr, &nested_ir_emitter_->assignment(), "ir_emitter2");
+  return kernel_api_ir_builder_.EmitKernelPrototype(*module_, instr,
+                                                    assignment_, "ir_emitter2");
 }
 
 }  // namespace xla::cpu
