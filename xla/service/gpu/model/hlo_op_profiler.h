@@ -62,7 +62,8 @@ class HloOpProfiler {
 
  private:
   static std::unique_ptr<HloModule> MakeModuleForMeasurements(
-      HloOpcode op, PrimitiveType data_type, int chain_length);
+      HloOpcode op, PrimitiveType data_type, int chain_length,
+      int64_t num_elements);
 
   absl::StatusOr<absl::Duration> MeasureOpChainDuration(HloOpcode op,
                                                         PrimitiveType data_type,
