@@ -197,30 +197,37 @@ static std::optional<ComparisonOrder> MatchNanSafeGt(HloComputation* comp) {
     return false;
   };
 
-  if (Match(comp->root_instruction(),
-            m::Gt(match_generic_iec559(0, F32, S32),
-                  match_generic_iec559(1, F32, S32))) ||
-      Match(comp->root_instruction(),
-            m::Gt(match_generic_iec559(0, BF16, S16),
-                  match_generic_iec559(1, BF16, S16))) ||
-      Match(comp->root_instruction(),
+  HloInstruction* root = comp->root_instruction();
+  // If the sort comparator was expanded by StableSortExpander, the root is
+  // Select(Eq(old_root, cloned_root), Lt(Parameter(2), Parameter(3)),
+  // old_root).
+  const HloInstruction* eq = nullptr;
+  HloInstruction* old_root = nullptr;
+  if (Match(root, m::Select(m::Eq(&eq, m::Op(), m::Op()),
+                            m::Lt(m::Parameter(2), m::Parameter(3)),
+                            m::Op(&old_root))) &&
+      (eq->operand(0) == old_root || eq->operand(1) == old_root)) {
+    root = old_root;
+  }
+
+  if (Match(root, m::Gt(match_generic_iec559(0, F32, S32),
+                        match_generic_iec559(1, F32, S32))) ||
+      Match(root, m::Gt(match_generic_iec559(0, BF16, S16),
+                        match_generic_iec559(1, BF16, S16))) ||
+      Match(root,
             m::Gt(match_generic_iec559_with_convert(0, BF16, F32, S32),
                   match_generic_iec559_with_convert(1, BF16, F32, S32))) ||
-      Match(comp->root_instruction(),
-            m::Gt(match_bitcast_f32(0), match_bitcast_f32(1))) ||
-      Match(comp->root_instruction(),
-            m::Gt(match_bitcast_bf16(0), match_bitcast_bf16(1))) ||
-      Match(comp->root_instruction(),
-            m::Gt(match_bitcast_f32_with_convert(0),
-                  match_bitcast_f32_with_convert(1))) ||
-      Match(comp->root_instruction(),
-            m::Gt(match_bitcast_bf16_with_convert(0),
-                  match_bitcast_bf16_with_convert(1))) ||
-      Match(comp->root_instruction(), m::Gt(match_s32(0), match_s32(1)))) {
+      Match(root, m::Gt(match_bitcast_f32(0), match_bitcast_f32(1))) ||
+      Match(root, m::Gt(match_bitcast_bf16(0), match_bitcast_bf16(1))) ||
+      Match(root, m::Gt(match_bitcast_f32_with_convert(0),
+                        match_bitcast_f32_with_convert(1))) ||
+      Match(root, m::Gt(match_bitcast_bf16_with_convert(0),
+                        match_bitcast_bf16_with_convert(1))) ||
+      Match(root, m::Gt(match_s32(0), match_s32(1)))) {
     return ComparisonOrder::kTotal;
   }
-  if ((match_all_types(comp->root_instruction(), match_compare) ||
-       match_all_types(comp->root_instruction(), match_default_compare)) &&
+  if ((match_all_types(root, match_compare) ||
+       match_all_types(root, match_default_compare)) &&
       cmp != nullptr) {
     return cmp->comparison_order();
   }
@@ -374,8 +381,14 @@ TopKCustomCall CreateTopKCustomCall(HloSortInstruction* sort, const int64_t k,
                                        ShapeUtil::MakeShape(S32, {k})});
   HloInstruction* topk = sort->AddInstruction(HloInstruction::CreateCustomCall(
       topk_shape, {input}, sort->to_apply(), "TopK"));
+  const bool is_stable =
+      sort->is_stable() ||
+      Match(sort->to_apply()->root_instruction(),
+            match::Select(match::Eq(match::Op(), match::Op()),
+                          match::Lt(match::Parameter(2), match::Parameter(3)),
+                          match::Op()));
   topk->set_raw_backend_config_string(absl::StrFormat(
-      "{is_stable = %s, order = \"%s\"}", sort->is_stable() ? "true" : "false",
+      "{is_stable = %s, order = \"%s\"}", is_stable ? "true" : "false",
       ComparisonOrderToShortString(order)));
   HloInstruction* value_gte =
       sort->AddInstruction(HloInstruction::CreateGetTupleElement(
