@@ -287,7 +287,6 @@ PjRtStreamExecutorRawClient::PjRtStreamExecutorRawClient(
     std::unique_ptr<HostMemoryAllocator> host_memory_allocator,
     bool should_stage_host_to_device_transfers,
     std::unique_ptr<AsyncWorkRunner> async_work_runner,
-    se::StreamExecutor* executor,
     std::unique_ptr<gpu::GpuExecutableRunOptions> gpu_run_options,
     bool confidential_computing_enabled)
     : owned_allocator_(std::move(allocator)),
@@ -299,7 +298,6 @@ PjRtStreamExecutorRawClient::PjRtStreamExecutorRawClient(
       should_stage_host_to_device_transfers_(
           should_stage_host_to_device_transfers),
       confidential_computing_enabled_(confidential_computing_enabled),
-      executor_(executor),
       gpu_run_options_(std::move(gpu_run_options)),
       compile_thread_pool_(
           tsl::Env::Default(), "pjrt_compile_thread_pool",
@@ -333,6 +331,21 @@ PjRtStreamExecutorRawClient::~PjRtStreamExecutorRawClient() {
       local_device_state->async_dispatch_thread()->Drain();
     }
   }
+  // Join async_work_runner_ so that tasks already scheduled on it (e.g. staged
+  // transfers) finish enqueueing onto device streams.
+  async_work_runner_.reset();
+  // Wait for all device work and callbacks so that all in-flight host staging
+  // buffers are released before host_memory_allocator_ is destroyed.
+  for (const auto& local_device_state : local_device_states_) {
+    absl::Status status = local_device_state->SynchronizeAllActivity();
+    if (!status.ok()) {
+      LOG(ERROR) << "Error when synchronizing device: " << status;
+    }
+  }
+  // Destroy host_memory_allocator_ while local_device_states_ is still alive so
+  // that any cached host buffers unmapped in ~HostMemoryAllocator() can still
+  // call LocalDeviceState::HostMemoryUnregister().
+  host_memory_allocator_.reset();
 }
 
 namespace {
@@ -589,16 +602,11 @@ absl::Status PjRtStreamExecutorRawClient::DmaMap(void* data,
     return absl::OkStatus();
   }
   tsl::profiler::TraceMe trace_me("PjRtStreamExecutorRawClient::DmaMap");
-  if (executor_ == nullptr) {
+  if (local_device_states_.empty()) {
     return absl::InternalError(
-        "se::StreamExecutor is null in PjRtStreamExecutorRawClient.");
+        "No local devices in PjRtStreamExecutorRawClient.");
   }
-  bool success = executor_->HostMemoryRegister(data, buffer_size);
-  if (!success) {
-    return absl::InternalError(absl::StrFormat(
-        "Failed to register host memory at address: %ps", data));
-  }
-  return absl::OkStatus();
+  return local_device_states_.front()->HostMemoryRegister(data, buffer_size);
 }
 
 absl::Status PjRtStreamExecutorRawClient::DmaUnmap(void* data) {
@@ -606,16 +614,11 @@ absl::Status PjRtStreamExecutorRawClient::DmaUnmap(void* data) {
     return absl::OkStatus();
   }
   tsl::profiler::TraceMe trace_me("PjRtStreamExecutorRawClient::DmaUnmap");
-  if (executor_ == nullptr) {
+  if (local_device_states_.empty()) {
     return absl::InternalError(
-        "se::StreamExecutor is null in PjRtStreamExecutorRawClient.");
+        "No local devices in PjRtStreamExecutorRawClient.");
   }
-  bool success = executor_->HostMemoryUnregister(data);
-  if (!success) {
-    return absl::InternalError(absl::StrFormat(
-        "Failed to unregister host memory at address: %ps", data));
-  }
-  return absl::OkStatus();
+  return local_device_states_.front()->HostMemoryUnregister(data);
 }
 
 absl::StatusOr<PjRtRawBufferRef>
@@ -2157,7 +2160,9 @@ PjRtStreamExecutorRawClient::CreateLinkedExecutablePromise() const {
 
 bool PjRtStreamExecutorRawClient::IsHostMemoryPinned(const void* ptr,
                                                      uint64_t size) const {
-  return executor_->IsHostMemoryPinned(ptr, size);
+  return !local_device_states_.empty() &&
+         local_device_states_.front()->executor()->IsHostMemoryPinned(ptr,
+                                                                      size);
 }
 
 absl::Status PjRtStreamExecutorRawClient::WaitOnStream(

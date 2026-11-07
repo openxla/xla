@@ -2471,6 +2471,115 @@ TEST(StreamExecutorGpuClientTest, PinnedHostWithCustomHostMemoryAllocator) {
                                      *literal));
 }
 
+// State of a LiveCountingHostMemoryAllocator that outlives the allocator, so
+// that buffers freed after the allocator is destroyed can be detected.
+struct LiveCountingHostMemoryAllocatorState {
+  HostMemoryAllocator::Options options;
+  std::atomic<int> num_allocations = 0;
+  std::atomic<int> num_live = 0;
+  std::atomic<bool> destroyed = false;
+  std::atomic<int> num_live_at_destruction = -1;
+  std::atomic<int> num_freed_after_destruction = 0;
+};
+
+// HostMemoryAllocator that counts live allocations.
+class LiveCountingHostMemoryAllocator : public HostMemoryAllocator {
+ public:
+  explicit LiveCountingHostMemoryAllocator(
+      LiveCountingHostMemoryAllocatorState* state)
+      : state_(state) {}
+
+  ~LiveCountingHostMemoryAllocator() override {
+    state_->num_live_at_destruction = state_->num_live.load();
+    state_->destroyed = true;
+  }
+
+  OwnedPtr Allocate(size_t size, const AllocateOptions& options) override {
+    auto* const buffer = static_cast<uint8_t*>(operator new(size));
+    CHECK_OK(state_->options.map_fn(std::nullopt, buffer, size));
+    ++state_->num_allocations;
+    ++state_->num_live;
+    return xla::HostMemoryAllocator::OwnedPtr(
+        buffer,
+        xla::HostMemoryAllocator::Deleter{
+            /*deleter=*/
+            [](void* ptr, void* arg) {
+              auto* const state =
+                  static_cast<LiveCountingHostMemoryAllocatorState*>(arg);
+              if (state->destroyed) {
+                // The client may already be destroyed, so don't call
+                // unmap_fn; leak the buffer instead.
+                ++state->num_freed_after_destruction;
+                return;
+              }
+              --state->num_live;
+              CHECK_OK(state->options.unmap_fn(std::nullopt, ptr));
+              operator delete(ptr);
+            },
+            /*arg=*/state_});
+  }
+
+ private:
+  LiveCountingHostMemoryAllocatorState* state_;
+};
+
+// Verifies that destroying the client releases the host staging buffers of
+// in-flight host-to-device transfers before destroying the host memory
+// allocator they were allocated from.
+TEST(StreamExecutorGpuClientTest,
+     ClientTeardownReleasesStagingBuffersBeforeHostMemoryAllocator) {
+  LiveCountingHostMemoryAllocatorState state;
+  GpuClientOptions options = GetTestGpuClientOptions();
+  options.should_stage_host_to_device_transfers = true;
+  options.host_memory_allocator_factory =
+      [&](HostMemoryAllocator::Options alloc_options)
+      -> absl::StatusOr<std::unique_ptr<HostMemoryAllocator>> {
+    state.options = std::move(alloc_options);
+    return std::make_unique<LiveCountingHostMemoryAllocator>(&state);
+  };
+
+  ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+  auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      common_client->raw_client());
+  LocalDeviceState* local_device = raw_client->device_state(LocalDeviceId(0));
+  ASSERT_NE(local_device, nullptr);
+  PjRtDevice* device = client->addressable_devices()[0];
+  ASSERT_EQ(device->local_device_id(), LocalDeviceId(0));
+
+  // Stall the host-to-device stream so that the staged transfer below is still
+  // in flight when client teardown starts.
+  absl::Notification unblock_h2d;
+  ASSERT_OK(local_device->host_to_device_stream()->DoHostCallback(
+      [&]() { unblock_h2d.WaitForNotification(); }));
+
+  std::vector<int32_t> data(1024, 42);
+  Shape shape = ShapeUtil::MakeShape(S32, {1024});
+  ASSERT_OK_AND_ASSIGN(PjRtMemorySpace * memory_space,
+                       device->default_memory_space());
+  ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableUntilTransferCompletes,
+          /*on_done_with_host_buffer=*/nullptr, memory_space,
+          /*device_layout=*/nullptr));
+
+  // Unblock the host-to-device stream only after client teardown has started.
+  WorkerThread unblocker(tsl::Env::Default(), "unblocker");
+  unblocker.Schedule([&]() {
+    absl::SleepFor(absl::Milliseconds(500));
+    unblock_h2d.Notify();
+  });
+  buffer.reset();
+  client.reset();
+
+  EXPECT_GE(state.num_allocations, 1);
+  EXPECT_EQ(state.num_live_at_destruction, 0);
+  EXPECT_EQ(state.num_freed_after_destruction, 0);
+}
+
 TEST(StreamExecutorGpuClientTest, OpaqueDeviceMemoryDataPointer) {
   TF_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PjRtClient> client,
