@@ -92,6 +92,12 @@ struct CollectiveParams {
       bool nccl_window_symmetric = false);
 };
 
+// Returns the number of devices in `device_assn` that run in this process,
+// according to `global_device_id_map`, or all of them if it is null.
+int64_t CountLocalParticipants(
+    const DeviceAssignment& device_assn,
+    const CollectiveParams::GlobalDeviceIdMap* global_device_id_map);
+
 // The type of a kernel argument used by a collective kernel.
 enum class KernelArgType : uint8_t {
   // Pointer to an input buffer.
