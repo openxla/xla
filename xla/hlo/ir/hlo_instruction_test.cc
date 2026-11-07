@@ -48,7 +48,6 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/side_effect_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -492,6 +491,35 @@ TEST_F(HloInstructionTest, SetFrontendAttributes) {
   EXPECT_EQ(instr.get_frontend_attribute("key2").value(), "value2");
 }
 
+TEST_F(HloInstructionTest, HasFrontendAttribute) {
+  HloConstantInstruction instr(ShapeUtil::MakeShape(U32, {3, 2}));
+  EXPECT_FALSE(instr.has_frontend_attribute("key1"));
+  EXPECT_FALSE(instr.has_any_frontend_attribute({"key1", "key2"}));
+  EXPECT_FALSE(instr.has_any_frontend_attribute({}));
+
+  instr.set_frontend_attribute("key1", "value1");
+  EXPECT_TRUE(instr.has_frontend_attribute("key1"));
+  EXPECT_FALSE(instr.has_frontend_attribute("key2"));
+
+  EXPECT_TRUE(instr.has_any_frontend_attribute({"key1", "key2"}));
+  EXPECT_TRUE(instr.has_any_frontend_attribute({"key2", "key1"}));
+  EXPECT_FALSE(instr.has_any_frontend_attribute({"key2", "key3"}));
+  EXPECT_FALSE(instr.has_any_frontend_attribute({}));
+}
+
+TEST_F(HloInstructionTest, EraseFrontendAttribute) {
+  HloConstantInstruction instr(ShapeUtil::MakeShape(U32, {3, 2}));
+  EXPECT_EQ(instr.erase_frontend_attribute("key1"), 0);
+  EXPECT_FALSE(instr.has_frontend_attributes());
+
+  instr.set_frontend_attribute("key1", "value1");
+  instr.set_frontend_attribute("key2", "value2");
+  EXPECT_EQ(instr.erase_frontend_attribute("key1"), 1);
+  EXPECT_EQ(instr.erase_frontend_attribute("key1"), 0);
+  EXPECT_FALSE(instr.has_frontend_attribute("key1"));
+  EXPECT_EQ(instr.get_frontend_attribute("key2").value(), "value2");
+}
+
 TEST_F(HloInstructionTest, AddFrontendAttributes) {
   HloConstantInstruction instr(ShapeUtil::MakeShape(U32, {3, 2}));
   instr.add_frontend_attribute("key1", "value1");
@@ -506,26 +534,27 @@ TEST_F(HloInstructionTest, AddFrontendAttributes) {
 
 TEST_F(HloInstructionTest, DisjointReadWriteRegionsAttributes) {
   HloConstantInstruction instr(ShapeUtil::MakeShape(U32, {3, 2}));
-  EXPECT_FALSE(HasDisjointReadWriteRegionsAttr(&instr));
-  EXPECT_FALSE(HasDisjointReadWriteRegionsAttr(nullptr));
-  SetDisjointReadWriteRegionsAttr(nullptr);  // Should be a no-op and not crash.
+  EXPECT_FALSE(frontend::HasDisjointReadWriteRegionsAttr(&instr));
+  EXPECT_FALSE(frontend::HasDisjointReadWriteRegionsAttr(nullptr));
+  frontend::SetDisjointReadWriteRegionsAttr(
+      nullptr);  // Should be a no-op and not crash.
 
-  SetDisjointReadWriteRegionsAttr(&instr);
-  EXPECT_TRUE(HasDisjointReadWriteRegionsAttr(&instr));
+  frontend::SetDisjointReadWriteRegionsAttr(&instr);
+  EXPECT_TRUE(frontend::HasDisjointReadWriteRegionsAttr(&instr));
 
   // Test different key variations and case-insensitive values.
-  for (absl::string_view key :
-       {kXlaDisjointReadWriteRegions, "xla.disjoint_read_write_regions"}) {
+  for (absl::string_view key : {frontend::kXlaDisjointReadWriteRegions,
+                                "xla.disjoint_read_write_regions"}) {
     for (absl::string_view val : {"true", "True", "1", "yes", "YES"}) {
       HloConstantInstruction test_instr(ShapeUtil::MakeShape(U32, {3, 2}));
       test_instr.set_frontend_attribute(key, val);
-      EXPECT_TRUE(HasDisjointReadWriteRegionsAttr(&test_instr))
+      EXPECT_TRUE(frontend::HasDisjointReadWriteRegionsAttr(&test_instr))
           << "Failed for key: " << key << " and val: " << val;
     }
     for (absl::string_view val : {"false", "0", "no", "invalid", ""}) {
       HloConstantInstruction test_instr(ShapeUtil::MakeShape(U32, {3, 2}));
       test_instr.set_frontend_attribute(key, val);
-      EXPECT_FALSE(HasDisjointReadWriteRegionsAttr(&test_instr))
+      EXPECT_FALSE(frontend::HasDisjointReadWriteRegionsAttr(&test_instr))
           << "Expected false for key: " << key << " and val: " << val;
     }
   }

@@ -29,6 +29,7 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+namespace frontend {
 namespace {
 
 bool IsTrueVal(absl::string_view val) {
@@ -40,20 +41,18 @@ bool IsTrueVal(absl::string_view val) {
 
 void SetDisjointReadWriteRegionsAttr(HloInstruction* instruction) {
   if (instruction != nullptr) {
-    instruction->set_frontend_attribute(xla::kXlaDisjointReadWriteRegions,
-                                        "true");
+    instruction->set_frontend_attribute(kXlaDisjointReadWriteRegions, "true");
   }
 }
 
 bool HasDisjointReadWriteRegionsAttr(const HloInstruction* instruction) {
-  if (instruction == nullptr || !instruction->has_frontend_attributes()) {
+  if (instruction == nullptr) {
     return false;
   }
-  const auto& map = instruction->frontend_attributes().map();
   for (absl::string_view key :
        {kXlaDisjointReadWriteRegions, "xla.disjoint_read_write_regions"}) {
-    auto it = map.find(key);
-    if (it != map.end() && IsTrueVal(it->second)) {
+    if (auto val = instruction->get_frontend_attribute(key);
+        val.has_value() && IsTrueVal(*val)) {
       return true;
     }
   }
@@ -64,14 +63,11 @@ bool HasDisableWhileLoopCopiesAttr(const HloInstruction* instruction) {
   if (instruction == nullptr) {
     return false;
   }
-  if (instruction->has_frontend_attributes()) {
-    const auto& map = instruction->frontend_attributes().map();
-    for (absl::string_view key :
-         {kXlaDisableWhileLoopCopies, "xla.disable_while_loop_copies"}) {
-      auto it = map.find(key);
-      if (it != map.end() && IsTrueVal(it->second)) {
-        return true;
-      }
+  for (absl::string_view key :
+       {kXlaDisableWhileLoopCopies, "xla.disable_while_loop_copies"}) {
+    if (auto val = instruction->get_frontend_attribute(key);
+        val.has_value() && IsTrueVal(*val)) {
+      return true;
     }
   }
   if (instruction->GetModule() != nullptr) {
@@ -94,15 +90,12 @@ bool HasDisableWhileLoopDceAttr(const HloInstruction* instruction) {
   if (instruction == nullptr) {
     return false;
   }
-  if (instruction->has_frontend_attributes()) {
-    const auto& map = instruction->frontend_attributes().map();
-    for (absl::string_view key :
-         {kXlaDisableWhileLoopDce, "xla.disable_while_loop_dce",
-          kXlaPreserveTupleIndices, "xla.preserve_tuple_indices"}) {
-      auto it = map.find(key);
-      if (it != map.end() && IsTrueVal(it->second)) {
-        return true;
-      }
+  for (absl::string_view key :
+       {kXlaDisableWhileLoopDce, "xla.disable_while_loop_dce",
+        kXlaPreserveTupleIndices, "xla.preserve_tuple_indices"}) {
+    if (auto val = instruction->get_frontend_attribute(key);
+        val.has_value() && IsTrueVal(*val)) {
+      return true;
     }
   }
   if (instruction->GetModule() != nullptr) {
@@ -123,21 +116,16 @@ bool HasDisableWhileLoopDceAttr(const HloInstruction* instruction) {
 }
 
 bool DoesPdlLaunch(const HloInstruction& instruction) {
-  return instruction.has_frontend_attributes() &&
-         instruction.frontend_attributes().map().contains(kXlaPdlLaunch);
+  return instruction.has_frontend_attribute(kXlaPdlLaunch);
 }
 
 absl::flat_hash_set<int> NonInvariantOperands(
     const HloInstruction& instruction) {
   absl::flat_hash_set<int> no_invariant_operands;
-  if (instruction.has_frontend_attributes()) {
-    auto it =
-        instruction.frontend_attributes().map().find(kXlaNoInvariantOperands);
-    if (it != instruction.frontend_attributes().map().end()) {
-      for (absl::string_view s : absl::StrSplit(it->second, ',')) {
-        if (int idx; absl::SimpleAtoi(s, &idx)) {
-          no_invariant_operands.insert(idx);
-        }
+  if (auto val = instruction.get_frontend_attribute(kXlaNoInvariantOperands)) {
+    for (absl::string_view s : absl::StrSplit(*val, ',')) {
+      if (int idx; absl::SimpleAtoi(s, &idx)) {
+        no_invariant_operands.insert(idx);
       }
     }
   }
@@ -164,4 +152,5 @@ std::optional<int64_t> GetLatencyMetadataNs(const HloInstruction& instruction) {
   return latency_ns;
 }
 
+}  // namespace frontend
 }  // namespace xla
