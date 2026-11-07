@@ -37,6 +37,7 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/IR/ArithAttributes.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -45,6 +46,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -638,13 +640,45 @@ absl::StatusOr<PrimitiveType> GetPrimitiveType(Type t) {
 }
 
 Type StorageType(Type t) {
-  if (auto i = mlir::dyn_cast<mlir::IntegerType>(t); i && i.getWidth() == 1) {
-    return i.get(i.getContext(), 8, i.getSignedness());
-  }
   if (mlir::isa<mlir::Float4E2M1FNType>(t)) {
     return mlir::IntegerType::get(t.getContext(), 8);
   }
   return t;
+}
+
+Type MemoryStorageType(Type elem_type) {
+  if (elem_type.isInteger(1)) {
+    return mlir::IntegerType::get(elem_type.getContext(), 8);
+  }
+  return StorageType(elem_type);
+}
+
+Value UnpackFromMemoryStorage(mlir::OpBuilder& b, mlir::Location loc,
+                              Value storage_value, Type logical_elem_type) {
+  if (!logical_elem_type.isInteger(1)) {
+    return storage_value;
+  }
+  if (auto shaped_type = mlir::dyn_cast<ShapedType>(storage_value.getType())) {
+    Value zero = ma::ConstantOp::create(
+        b, loc,
+        mlir::DenseElementsAttr::get(shaped_type, b.getI8IntegerAttr(0)));
+    return ma::CmpIOp::create(b, loc, ma::CmpIPredicate::ne, storage_value,
+                              zero);
+  }
+  Value zero = ma::ConstantIntOp::create(b, loc, 0, 8);
+  return ma::CmpIOp::create(b, loc, ma::CmpIPredicate::ne, storage_value, zero);
+}
+
+Value PackToMemoryStorage(mlir::OpBuilder& b, mlir::Location loc,
+                          Value logical_value) {
+  if (!mlir::getElementTypeOrSelf(logical_value.getType()).isInteger(1)) {
+    return logical_value;
+  }
+  if (auto shaped_type = mlir::dyn_cast<ShapedType>(logical_value.getType())) {
+    return ma::ExtUIOp::create(b, loc, shaped_type.clone(b.getI8Type()),
+                               logical_value);
+  }
+  return ma::ExtUIOp::create(b, loc, b.getI8Type(), logical_value);
 }
 
 Type GetSignlessType(Type t) {

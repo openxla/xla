@@ -11,8 +11,8 @@ fusion {
   and = pred[15] and(compare, param_0)
   ROOT select = f32[15] select(and, param_1, param_2)
 }
-// CHECK:      %[[I8_PARAM:.*]] = xtile.extract {{.*}} -> tensor<4xi8>
-// CHECK:      arith.cmpi ne, %[[I8_PARAM]], {{.*}} : tensor<4xi8>
+// CHECK: %[[I1_PARAM:.*]] = xtile.extract {{.*}} : memref<15xi1> -> tensor<4xi1>
+// CHECK: arith.andi {{.*}}, %[[I1_PARAM]] : tensor<4xi1>
 
 ENTRY main {
   param_0 = pred[15] parameter(0)

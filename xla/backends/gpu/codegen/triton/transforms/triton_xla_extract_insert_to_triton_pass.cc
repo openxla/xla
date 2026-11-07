@@ -86,7 +86,7 @@ bool HasBroadcastConsumer(Operation* op) {
 }
 
 PointerType GetTensorPtrType(Type type) {
-  return PointerType::get(xtile::StorageType(type));
+  return PointerType::get(xtile::MemoryStorageType(type));
 }
 
 // Canonicalizes tile strides. Currently this converts zero strides to 1.
@@ -614,7 +614,9 @@ class RewriteScalarInsert : public mlir::OpRewritePattern<tensor::InsertOp> {
     auto cast_dst_to_tensor_ptr_type = mlir::UnrealizedConversionCastOp::create(
                                            builder, ptr_type, op.getDest())
                                            .getResult(0);
-    StoreOp::create(builder, cast_dst_to_tensor_ptr_type, op.getScalar());
+    mlir::Value scalar_to_store =
+        xtile::PackToMemoryStorage(builder, op.getLoc(), op.getScalar());
+    StoreOp::create(builder, cast_dst_to_tensor_ptr_type, scalar_to_store);
     rewriter.replaceOp(op, op.getDest());
     return mlir::success();
   }
@@ -638,7 +640,9 @@ class RewriteScalarExtract : public mlir::OpRewritePattern<tensor::ExtractOp> {
                                            .getResult(0);
     auto scalar = LoadOp::create(builder, cast_src_to_tensor_ptr_type,
                                  /*isVolatile=*/false);
-    rewriter.replaceOp(op, scalar.getResult());
+    rewriter.replaceOp(
+        op, xtile::UnpackFromMemoryStorage(builder, op.getLoc(),
+                                           scalar.getResult(), op.getType()));
     return mlir::success();
   }
 };
