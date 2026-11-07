@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/copy_insertion.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -36,6 +37,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/frontend_attributes.h"
+#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/hlo_operand_index.h"
@@ -53,6 +55,7 @@ limitations under the License.
 #include "xla/hlo/ir/ptrvec.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
+#include "xla/hlo/utils/hlo_live_range.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/compile_time_cap.h"
 #include "xla/service/copy_removal.h"
@@ -83,9 +86,13 @@ bool IsConstantValue(const HloValue& value) {
   return value.defining_instruction()->opcode() == HloOpcode::kConstant;
 }
 
+}  // namespace
+
 bool ValueIsReadOnly(const HloValue& value) {
   return IsConstantValue(value) || IsReadonlyEntryParameterValue(value);
 }
+
+namespace {
 
 // Data structure describing the action which should be taken on parts of a
 // computation buffers, with respect to the adding of special case copies.
@@ -775,6 +782,39 @@ absl::Status AddCopiesForInPlaceOperation(HloInstruction* in_place_op,
                         in_place_op->parent()->DeepCopyInstruction(operand));
   ABSL_RETURN_IF_ERROR(
       operand->ReplaceUseWith(in_place_op, operand_number, deep_copy));
+  return absl::OkStatus();
+}
+
+// A view owns no storage, so a write through it writes the viewed buffer: the
+// view and each write back of the written window take one copy of that buffer.
+absl::Status AddCopiesForViewWrite(
+    const AliasInfo* alias_info, HloInstruction* writer, HloInstruction* view,
+    const ShapeIndex& output_index,
+    absl::flat_hash_set<const HloInstruction*>* view_copies) {
+  while (view->opcode() == HloOpcode::kBitcast) {
+    view = view->mutable_operand(0);
+  }
+  HloInstruction* viewed = view->mutable_operand(0);
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * copy,
+                        view->parent()->DeepCopyInstruction(viewed));
+  ABSL_RETURN_IF_ERROR(viewed->ReplaceUseWith(view, 0, copy));
+  view_copies->insert(copy);
+  std::vector<const HloInstruction*> windows =
+      InstructionsHoldingOutput(writer, output_index);
+  for (size_t i = 0; i < windows.size(); ++i) {
+    for (HloInstruction* user : windows[i]->users()) {
+      if (user->opcode() == HloOpcode::kBitcast) {
+        windows.push_back(user);
+      }
+      for (const auto& pair : alias_info->GetInPlaceInputOutputPairs(user)) {
+        const int64_t in_place_operand = pair.first.operand_number;
+        if (user->operand(in_place_operand) == viewed) {
+          ABSL_RETURN_IF_ERROR(
+              viewed->ReplaceUseWith(user, in_place_operand, copy));
+        }
+      }
+    }
+  }
   return absl::OkStatus();
 }
 
@@ -1510,6 +1550,7 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
                                               /*bitcast_defines_value=*/false));
     dataflow = owned_dataflow.get();
   }
+  absl::flat_hash_set<const HloInstruction*> view_copies;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     if (computation->IsAsyncComputation()) {
@@ -1590,6 +1631,20 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
               operand_index_in_this_intr == 0) {
             continue;
           }
+          copied_operands.insert(operand_index_in_this_intr);
+          // A disjoint regions claim does not cover writes through views.
+          HloInstruction* operand =
+              instruction->mutable_operand(operand_index_in_this_intr);
+          if (view_copies.contains(operand)) {
+            continue;
+          }
+          if (operand->shape().has_layout() &&
+              operand->shape().layout().memory_space() == view_color_) {
+            ABSL_RETURN_IF_ERROR(AddCopiesForViewWrite(
+                alias_info_, instruction, operand,
+                operand_and_output_index.second, &view_copies));
+            continue;
+          }
 
           // Skip copies for aliasing input/output pairs when the instruction or
           // its enclosing while loop is annotated with
@@ -1622,7 +1677,6 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
               operand_index.operand_number == 0) {
             continue;
           }
-          copied_operands.insert(operand_index_in_this_intr);
           ABSL_RETURN_IF_ERROR(AddCopiesForInPlaceOperation(
               instruction, operand_index_in_this_intr));
         }
