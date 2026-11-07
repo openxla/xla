@@ -22,16 +22,19 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/compiler.h"
 #include "xla/service/executable.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -116,6 +119,7 @@ class GpuCodegenBackend : public CodegenBackend {
       instruction_to_tune = hlo_module->entry_computation()->root_instruction();
     }
     ABSL_RETURN_IF_ERROR(ApplyConfig(*instruction_to_tune, config));
+    ABSL_RETURN_IF_ERROR(ClearLoopDependentDynamicSliceConfigs(*hlo_module));
 
     hlo_module->mutable_config().set_debug_options(debug_options_);
     AdjustDebugOptionsForAutotuning(
@@ -131,6 +135,40 @@ class GpuCodegenBackend : public CodegenBackend {
   }
 
   bool CanProduceWrongResults() const override { return false; }
+
+  // Clears loop-dependent `DynamicSliceConfig`s in `module`. Extracted
+  // autotuning modules have no enclosing while loop, so these configs would
+  // make the runtime ignore the offset operands and use loop iteration 0.
+  static absl::Status ClearLoopDependentDynamicSliceConfigs(HloModule& module) {
+    for (HloComputation* computation : module.computations()) {
+      for (HloInstruction* instr : computation->instructions()) {
+        if (instr->opcode() != HloOpcode::kDynamicSlice &&
+            instr->opcode() != HloOpcode::kDynamicUpdateSlice) {
+          continue;
+        }
+        if (!instr->has_backend_config()) {
+          continue;
+        }
+        ABSL_ASSIGN_OR_RETURN(GpuBackendConfig backend_config,
+                              instr->backend_config<GpuBackendConfig>());
+        if (!backend_config.has_dynamic_slice_config()) {
+          continue;
+        }
+        const DynamicSliceConfig& ds_config =
+            backend_config.dynamic_slice_config();
+        bool is_loop_dependent =
+            ds_config.has_loop_index() &&
+            (ds_config.has_table() || ds_config.linear().byte_stride() != 0 ||
+             ds_config.byte_stride() != 0);
+        if (!is_loop_dependent) {
+          continue;
+        }
+        backend_config.clear_dynamic_slice_config();
+        ABSL_RETURN_IF_ERROR(instr->set_backend_config(backend_config));
+      }
+    }
+    return absl::OkStatus();
+  }
 
   static void AdjustDebugOptionsForAutotuning(DebugOptions& debug_options) {
     debug_options.set_xla_enable_dumping(false);

@@ -24,8 +24,10 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "xla/autotune_results.pb.h"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/autotuner/backend_config.pb.h"
@@ -33,9 +35,13 @@ limitations under the License.
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/debug_options_flags.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/literal_util.h"
 #include "xla/service/compiler.h"
+#include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/xla.pb.h"
 
@@ -107,6 +113,90 @@ TEST_F(GpuCodegenBackendTest, GetSupportedConfigsWithEstimates) {
   ASSERT_EQ(configs.size(), 1);
   EXPECT_EQ(configs[0].config->gemm().algorithm(), 42);
   EXPECT_EQ(configs[0].estimated_runtime, std::nullopt);
+}
+
+bool HasDynamicSliceConfig(const HloModule& module,
+                           absl::string_view instr_name) {
+  const HloInstruction* instr =
+      module.entry_computation()->GetInstructionWithName(instr_name);
+  CHECK(instr != nullptr) << instr_name;
+  absl::StatusOr<GpuBackendConfig> config =
+      instr->backend_config<GpuBackendConfig>();
+  CHECK_OK(config);
+  return config->has_dynamic_slice_config();
+}
+
+TEST_F(GpuCodegenBackendTest, ClearLoopDependentDynamicSliceConfigs) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    ENTRY e {
+      p0 = bf16[4,128,128] parameter(0)
+      p1 = s32[] parameter(1)
+      p2 = bf16[1,128,128] parameter(2)
+      c0 = s32[] constant(0)
+      loop_ds = bf16[1,128,128] dynamic-slice(p0, p1, c0, c0),
+        dynamic_slice_sizes={1,128,128},
+        backend_config={"dynamic_slice_config":{"loop_index":"0",
+          "linear":{"byte_offset":"0","byte_stride":"32768"}}}
+      table_ds = bf16[1,128,128] dynamic-slice(p0, p1, c0, c0),
+        dynamic_slice_sizes={1,128,128},
+        backend_config={"dynamic_slice_config":{"loop_index":"0",
+          "table":{"offsets":["0","32768"]}}}
+      static_ds = bf16[1,128,128] dynamic-slice(p0, c0, c0, c0),
+        dynamic_slice_sizes={1,128,128},
+        backend_config={"dynamic_slice_config":{
+          "linear":{"byte_offset":"0","byte_stride":"0"}}}
+      loop_dus = bf16[4,128,128] dynamic-update-slice(p0, p2, p1, c0, c0),
+        backend_config={"dynamic_slice_config":{"loop_index":"1",
+          "linear":{"byte_offset":"32768","byte_stride":"32768"}}}
+      ROOT t = (bf16[1,128,128], bf16[1,128,128], bf16[1,128,128],
+                bf16[4,128,128]) tuple(loop_ds, table_ds, static_ds, loop_dus)
+    })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHlo));
+
+  ASSERT_OK(GpuCodegenBackend::ClearLoopDependentDynamicSliceConfigs(*module));
+
+  EXPECT_FALSE(HasDynamicSliceConfig(*module, "loop_ds"));
+  EXPECT_FALSE(HasDynamicSliceConfig(*module, "table_ds"));
+  EXPECT_TRUE(HasDynamicSliceConfig(*module, "static_ds"));
+  EXPECT_FALSE(HasDynamicSliceConfig(*module, "loop_dus"));
+}
+
+TEST_F(GpuCodegenBackendTest,
+       ClearLoopDependentDynamicSliceConfigsInFusedComputations) {
+  constexpr absl::string_view kHlo = R"(
+    HloModule m
+
+    fused_computation {
+      p0 = bf16[4,128,128] parameter(0)
+      p1 = s32[] parameter(1)
+      c0 = s32[] constant(0)
+      ROOT ds = bf16[1,128,128] dynamic-slice(p0, p1, c0, c0),
+        dynamic_slice_sizes={1,128,128},
+        backend_config={"dynamic_slice_config":{"loop_index":"0",
+          "linear":{"byte_offset":"0","byte_stride":"32768"}}}
+    }
+
+    ENTRY e {
+      p0 = bf16[4,128,128] parameter(0)
+      p1 = s32[] parameter(1)
+      ROOT fusion = bf16[1,128,128] fusion(p0, p1), kind=kLoop,
+        calls=fused_computation
+    })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHlo));
+
+  ASSERT_OK(GpuCodegenBackend::ClearLoopDependentDynamicSliceConfigs(*module));
+
+  const HloInstruction* ds = module->entry_computation()
+                                 ->root_instruction()
+                                 ->fused_instructions_computation()
+                                 ->root_instruction();
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig config,
+                       ds->backend_config<GpuBackendConfig>());
+  EXPECT_FALSE(config.has_dynamic_slice_config());
 }
 
 }  // namespace
