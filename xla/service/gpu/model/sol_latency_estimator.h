@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -50,6 +51,9 @@ namespace gpu {
 // module contains only supported collective operations.
 class SolLatencyEstimator : public LatencyEstimator {
  public:
+  // Name of this estimator, e.g. in OpMetadata.scheduler_cost_source.
+  static constexpr absl::string_view kName = "SOL";
+
   TimeCost GetLatencyBetween(const HloGraphNode& from,
                              const HloGraphNode& target) const override;
   TimeCost NodeCost(const HloInstruction* instr) const override;

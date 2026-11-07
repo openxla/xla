@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 
+#include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -35,6 +36,9 @@ namespace gpu {
 // GPUPerformanceModel to estimate latencies for instructions.
 class AnalyticalLatencyEstimator : public LatencyEstimator {
  public:
+  // Name of this estimator, e.g. in OpMetadata.scheduler_cost_source.
+  static constexpr absl::string_view kName = "ANALYTICAL";
+
   AnalyticalLatencyEstimator(
       const SchedulerConfig& config,
       std::unique_ptr<LatencyEstimator> latency_estimator,
