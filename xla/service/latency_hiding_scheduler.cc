@@ -321,8 +321,7 @@ struct HbmUsageEstimate {
 // limits typically apply to: HloBuffers containing an entry computation
 // parameter get size 0 (HeapSimulator requires every value it allocates to be
 // assigned, so they are zero-sized instead of being filtered out), sizes come
-// from `shape_size_bytes`, and fast-merge packing is used, as in TPU buffer
-// assignment.
+// from `shape_size_bytes`, and spatial packing is used.
 absl::StatusOr<HbmUsageEstimate> EstimateHbmUsage(
     const HloModule& module, const HloAliasAnalysis& alias_analysis,
     const AliasInfo* alias_info, bool fragmentation_only,
@@ -360,25 +359,9 @@ absl::StatusOr<HbmUsageEstimate> EstimateHbmUsage(
   ABSL_ASSIGN_OR_RETURN(
       HeapSimulator::Result<HloValue> result,
       HeapSimulator::Run(
-          std::make_unique<Heap>(/*alignment=*/1, fragmentation_only
-                                                      ? Heap::kSpatial
-                                                      : Heap::kFastMerge),
-          module, module.schedule(), alias_analysis, alias_info, &size_fn));
+          std::make_unique<Heap>(/*alignment=*/1, Heap::kSpatial), module,
+          module.schedule(), alias_analysis, alias_info, &size_fn));
   return HbmUsageEstimate{result.heap_size, result.fragmentation_size};
-}
-
-int64_t EstimateFragmentationSize(HloModule* module,
-                                  const HloAliasAnalysis& alias_analysis,
-                                  const AliasInfo* alias_info) {
-  // Run heap simulator on the whole module to estimate the fragmentation size.
-  absl::StatusOr<HbmUsageEstimate> estimate =
-      EstimateHbmUsage(*module, alias_analysis, alias_info,
-                       /*fragmentation_only=*/true);
-  CHECK_OK(estimate.status());
-  int64_t fragmentation_size = estimate->fragmentation_size;
-  VLOG(3) << module->name() << ": Heap simulator estimated fragmentation size: "
-          << fragmentation_size;
-  return fragmentation_size > 0 ? fragmentation_size : 0;
 }
 
 }  // namespace
@@ -4552,14 +4535,15 @@ absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
     }
   }
   AsyncTracker* async_tracker = scheduling_context_->GetAsyncTracker().get();
-  const bool use_heap_simulator =
-      async_tracker->GetConfig().enable_schedule_by_structure;
-  // With schedule-by-structure, the first rerun starts from the same input
-  // schedule as the first try, so that it only differs in the scheduler
-  // configuration.
+  uint64_t initial_memory_limit = scheduler_core_->GetMemoryLimit();
+  const bool can_rerun =
+      scheduler_core_->GetRerunTimes() > 0 &&
+      initial_memory_limit < std::numeric_limits<uint64_t>::max();
+  // Every rerun starts from the same input schedule as the first try, so that
+  // it only differs in the scheduler configuration.
   std::vector<std::pair<HloComputation*, HloInstructionSequence>>
       input_sequences;
-  if (use_heap_simulator && scheduler_core_->GetRerunTimes() > 0) {
+  if (can_rerun) {
     input_sequences.reserve(computations_to_schedule_.size());
     for (HloComputation* computation : computations_to_schedule_) {
       input_sequences.emplace_back(computation,
@@ -4579,22 +4563,9 @@ absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
         scheduler_core_->GetSchedulingState().get());
     scheduling_context_->GetAsyncTracker()->InvalidateCache(computation);
   }
-  uint64_t initial_memory_limit = scheduler_core_->GetMemoryLimit();
-  // Returns the memory usage of the current schedule that decides whether to
-  // rerun with a tighter memory limit. With schedule-by-structure, the LHS
-  // memory peak is not a reliable measure of the final memory usage, so a
-  // HeapSimulator estimate of the non-parameter memory (the part the memory
-  // limit applies to) is used instead.
+  // Returns a HeapSimulator estimate of the non-parameter memory usage of the
+  // current schedule that decides whether to rerun with a tighter memory limit.
   auto estimate_memory_usage = [&]() -> absl::StatusOr<int64_t> {
-    if (!use_heap_simulator) {
-      int64_t fragmentation_size =
-          async_tracker->GetConfig().estimate_fragmentation_size
-              ? EstimateFragmentationSize(
-                    module, *scheduling_context_->GetAliasAnalysis(),
-                    scheduling_context_->GetAliasInfo())
-              : 0;
-      return scheduler_core_->GetMemoryPeak() + fragmentation_size;
-    }
     const absl::Time start = absl::Now();
     ABSL_ASSIGN_OR_RETURN(
         HbmUsageEstimate estimate,
@@ -4611,24 +4582,38 @@ absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
               << absl::FormatDuration(absl::Now() - start);
     return estimate.heap_size;
   };
-  for (int64_t iter = 0; iter < scheduler_core_->GetRerunTimes(); iter++) {
-    ABSL_ASSIGN_OR_RETURN(int64_t memory_usage, estimate_memory_usage());
+  int64_t final_lhs_peak = scheduler_core_->GetMemoryPeak();
+  int64_t memory_usage = 0;
+  int64_t best_memory_usage = 0;
+  uint64_t best_memory_limit = initial_memory_limit;
+  std::vector<std::pair<HloComputation*, HloInstructionSequence>>
+      best_sequences;
+  for (int64_t iter = 0; can_rerun && iter < scheduler_core_->GetRerunTimes();
+       iter++) {
+    if (iter == 0) {
+      ABSL_ASSIGN_OR_RETURN(memory_usage, estimate_memory_usage());
+      best_memory_usage = memory_usage;
+    }
     if (static_cast<uint64_t>(memory_usage) <= initial_memory_limit) {
       break;
     }
-    uint64_t new_limit =
-        static_cast<uint64_t>(scheduler_core_->GetMemoryLimit() * 0.9);
-    if (use_heap_simulator) {
-      async_tracker->SetEnableCpdForSyncCollective(false);
-      if (iter == 0) {
-        // Restart from the original schedule when we changed the scheduler
-        // config.
-        for (const auto& [computation, sequence] : input_sequences) {
-          module->schedule().set_sequence(computation, sequence);
-        }
-        async_tracker->InvalidateCache();
+    if (best_sequences.empty()) {
+      best_sequences.reserve(computations_to_schedule_.size());
+      for (HloComputation* computation : computations_to_schedule_) {
+        best_sequences.emplace_back(computation,
+                                    module->schedule().sequence(computation));
       }
     }
+    uint64_t new_limit =
+        static_cast<uint64_t>(scheduler_core_->GetMemoryLimit() * 0.9);
+    if (async_tracker->GetConfig().enable_schedule_by_structure) {
+      async_tracker->SetEnableCpdForSyncCollective(false);
+    }
+    // Restart from the original schedule when we changed the scheduler config.
+    for (const auto& [computation, sequence] : input_sequences) {
+      module->schedule().set_sequence(computation, sequence);
+    }
+    async_tracker->InvalidateCache();
     LOG(INFO) << "[" << name()
               << "] LatencyHidingScheduler current memory usage: "
               << memory_usage << " bytes, does not fit in initial limit: "
@@ -4647,10 +4632,29 @@ absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
           scheduler_core_->GetSchedulingState().get());
       scheduling_context_->GetAsyncTracker()->InvalidateCache(computation);
     }
+    ABSL_ASSIGN_OR_RETURN(memory_usage, estimate_memory_usage());
+    if (memory_usage < best_memory_usage) {
+      best_memory_usage = memory_usage;
+      best_memory_limit = new_limit;
+      final_lhs_peak = scheduler_core_->GetMemoryPeak();
+      best_sequences.clear();
+    }
+  }
+  if (!best_sequences.empty()) {
+    LOG(INFO) << "[" << name()
+              << "] Restoring earlier LatencyHidingScheduler trial with lower "
+                 "HeapSimulator memory estimate: "
+              << best_memory_usage << " bytes (limit: " << best_memory_limit
+              << ").";
+    for (const auto& [computation, sequence] : best_sequences) {
+      module->schedule().set_sequence(computation, sequence);
+    }
+    async_tracker->InvalidateCache();
+    scheduler_core_->SetMemoryLimit(best_memory_limit);
   }
   LOG(INFO) << "[" << name() << "]"
             << " LatencyHidingScheduler current memory usage: "
-            << scheduler_core_->GetMemoryPeak()
+            << final_lhs_peak
             << " bytes. Current limit: " << scheduler_core_->GetMemoryLimit();
   if (VLOG_IS_ON(1)) {
     // Log the statistics after scheduling.
