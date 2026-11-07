@@ -666,6 +666,12 @@ TEST_P(TritonGemmTest, SplitKReductionDoesNotTransposeDotResult) {
           << instr->ToString();
       EXPECT_TRUE(LayoutUtil::IsMonotonicWithDim0Major(instr->shape().layout()))
           << instr->ToString();
+      // Each branch (q and kv) should slice the merged (4 + 2) * 64 = 384
+      // dimension before reducing, rather than reducing the full merged dot
+      // output twice.
+      EXPECT_THAT(instr->shape().dimensions(),
+                  ::testing::Not(::testing::Contains((4 + 2) * 64)))
+          << instr->ToString();
     }
   }
   EXPECT_GT(num_reduces, 0);

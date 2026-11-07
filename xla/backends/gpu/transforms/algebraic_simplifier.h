@@ -42,6 +42,7 @@ class GpuAlgebraicSimplifierVisitor : public AlgebraicSimplifierVisitor {
 
   absl::Status HandleAdd(HloInstruction* add) override;
   absl::Status HandleReduce(HloInstruction* reduce) override;
+  absl::Status HandleSlice(HloInstruction* slice) override;
 
  private:
   bool ConvIsLowerable(HloInstruction* conv) const override;
@@ -71,6 +72,13 @@ class GpuAlgebraicSimplifierVisitor : public AlgebraicSimplifierVisitor {
   // select(in_bounds, gather(on_true, ...), broadcast(0)).
   absl::StatusOr<bool> TryToSimplifyOneHotReduceToGather(
       HloInstruction* reduce);
+
+  // Sinks an unstrided slice (and an optional unary elementwise operation such
+  // as convert) through a reduce into its input operand when all consumers of
+  // the reduce are unstrided slices whose total element count does not exceed
+  // the reduce output size. This allows each consumer branch to fuse its own
+  // reduction over only the sliced subset of elements.
+  absl::StatusOr<bool> TryToSinkReduceThroughSlice(HloInstruction* slice);
 
   se::GpuComputeCapability compute_capability_;
 };
