@@ -70,6 +70,7 @@ deviceless_tests = [
     "concat/concat_prune_inactive.hlo",
     "constraints/max_tensor_elements_violation.hlo",
     "dot/duplicate_dot_operand.hlo",
+    "normalization/take_last_reducer.hlo",
     "reduce/reduce_minor_extra_out.hlo",
     "reduce/reduce_to_scalar_extra_out.hlo",
     "slice/slice_extra_out_padding.hlo",

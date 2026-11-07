@@ -1,0 +1,33 @@
+// RUN: fusion_to_triton %s | FileCheck %s
+// A reducer that only returns one of its parameters must be emitted as-is: the
+// reduction must not collapse to the init value, and must not fail to compile.
+// CHECK: "tt.reduce"(%{{.*}}) <{axis = 1 : i32}>
+// CHECK: tt.reduce.return %{{.*}} : f32
+// CHECK: tt.broadcast
+
+take_last {
+  a = f32[] parameter(0)
+  ROOT b = f32[] parameter(1)
+}
+
+fusion {
+  p = f32[8,16] parameter(0)
+  c = f32[] constant(0)
+  reduce = f32[8] reduce(p, c), dimensions={1}, to_apply=take_last
+  broadcast = f32[8,16] broadcast(reduce), dimensions={0}
+  ROOT mul = f32[8,16] multiply(p, broadcast)
+}
+
+ENTRY main {
+  p = f32[8,16] parameter(0)
+  ROOT fusion = f32[8,16] fusion(p), kind=kCustom,
+    calls=fusion,
+    backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tiles":[{"sizes":["1","16"]}],
+          "num_warps":"1",
+          "num_ctas":"1",
+          "num_stages":"1"}}}
+}
