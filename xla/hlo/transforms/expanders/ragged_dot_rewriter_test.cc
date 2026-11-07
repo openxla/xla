@@ -15,16 +15,16 @@ limitations under the License.
 
 #include "xla/hlo/transforms/expanders/ragged_dot_rewriter.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/utils/hlo_matchers.h"
+#include "xla/service/decision.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
@@ -87,11 +87,40 @@ TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotFusion) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RaggedDotRewriter(GetCudaComputeCapability(),
+                        kMinCudnnVersionForRaggedDotFusion,
+                        se::SemanticVersion{0, 0, 0},
+                        [](const HloInstruction*) { return Decision::Allow(); })
+          .Run(module.get()));
+  EXPECT_FALSE(changed);
+}
+
+TEST_F(RaggedDotRewriterTest, RewriteIfNoCudnnSupportCallback) {
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = bf16[64,9]{1,0} parameter(0)
+    p1 = bf16[2,9,8]{2,1,0} parameter(1)
+    p2 = s64[2]{0} parameter(2)
+    ROOT ragged-dot = bf16[64,8]{1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, rhs_group_dims={0}
+  })";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                          ParseAndReturnVerifiedModule(module_string));
+  module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  // Without a support callback nothing vouches for cuDNN, so expand.
   TF_ASSERT_OK_AND_ASSIGN(bool changed,
                           RaggedDotRewriter(GetCudaComputeCapability(),
                                             kMinCudnnVersionForRaggedDotFusion)
                               .Run(module.get()));
-  EXPECT_FALSE(changed);
+  EXPECT_TRUE(changed);
 }
 
 TEST_F(RaggedDotRewriterTest, RewriteIfPreAmpereForRaggedDotFusion) {
@@ -112,14 +141,21 @@ TEST_F(RaggedDotRewriterTest, RewriteIfPreAmpereForRaggedDotFusion) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
-  // Volta is pre-Ampere, so even with a recent cuDNN the fusion gate must
-  // fail and the rewriter must fall back to expansion.
+  // Volta is pre-Ampere, so even with a recent cuDNN and a support callback
+  // that allows everything, the fusion gate must fail and the rewriter must
+  // fall back to expansion.
+  int calls = 0;
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(
           se::CudaComputeCapability{se::CudaComputeCapability::kVolta, 0},
-          kMinCudnnVersionForRaggedDotFusion)
+          kMinCudnnVersionForRaggedDotFusion, se::SemanticVersion{0, 0, 0},
+          [&](const HloInstruction*) {
+            ++calls;
+            return Decision::Allow();
+          })
           .Run(module.get()));
+  EXPECT_EQ(calls, 0);
   EXPECT_TRUE(changed);
 }
 
@@ -141,10 +177,19 @@ TEST_F(RaggedDotRewriterTest, RewriteIfCudnnVersionTooOldForRaggedDotFusion) {
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+  // The support callback allows everything, so the expansion is caused by the
+  // cuDNN version gate alone.
+  int calls = 0;
   TF_ASSERT_OK_AND_ASSIGN(
       bool changed,
-      RaggedDotRewriter(GetCudaComputeCapability(), se::dnn::VersionInfo{9, 21})
+      RaggedDotRewriter(GetCudaComputeCapability(), se::dnn::VersionInfo{9, 21},
+                        se::SemanticVersion{0, 0, 0},
+                        [&](const HloInstruction*) {
+                          ++calls;
+                          return Decision::Allow();
+                        })
           .Run(module.get()));
+  EXPECT_EQ(calls, 0);
   EXPECT_TRUE(changed);
 }
 
@@ -200,13 +245,52 @@ TEST_F(RaggedDotRewriterTest, RaggedDotWgradFusionGate) {
     module->mutable_config()
         .mutable_debug_options()
         .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
-    ASSERT_OK_AND_ASSIGN(
-        bool changed,
-        RaggedDotRewriter(tc.cc, tc.cudnn, tc.toolkit).Run(module.get()));
+    ASSERT_OK_AND_ASSIGN(bool changed,
+                         RaggedDotRewriter(tc.cc, tc.cudnn, tc.toolkit,
+                                           [](const HloInstruction*) {
+                                             return Decision::Allow();
+                                           })
+                             .Run(module.get()));
     EXPECT_EQ(changed, tc.expected_changed);
   }
   EXPECT_FALSE(SupportsCudnnRaggedDotWgrad(
       GetRocmComputeCapability(), se::dnn::VersionInfo{9, 25, 1}, {13, 3, 0}));
+}
+
+TEST_F(RaggedDotRewriterTest, CudnnSupportCallbackDecidesFusionOrExpansion) {
+  absl::string_view module_string = R"(
+  HloModule module
+
+  ENTRY main {
+    p0 = bf16[64,9]{1,0} parameter(0)
+    p1 = bf16[2,9,8]{2,1,0} parameter(1)
+    p2 = s64[2]{0} parameter(2)
+    ROOT ragged-dot = bf16[64,8]{1,0} ragged-dot(p0, p1, p2),
+                      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+                      lhs_ragged_dims={0}, rhs_group_dims={0}
+  })";
+
+  for (bool cudnn_supported : {true, false}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(module_string));
+    module->mutable_config()
+        .mutable_debug_options()
+        .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
+    int calls = 0;
+    ASSERT_OK_AND_ASSIGN(
+        bool changed,
+        RaggedDotRewriter(GetCudaComputeCapability(),
+                          kMinCudnnVersionForRaggedDotFusion,
+                          kMinCudaToolkitVersionForRaggedDotWgradFusion,
+                          [&](const HloInstruction* ragged_dot) {
+                            ++calls;
+                            return Decision(cudnn_supported, "unsupported");
+                          })
+            .Run(module.get()));
+    EXPECT_EQ(calls, 1);
+    // Supported: left for the cuDNN fusion. Unsupported: expanded.
+    EXPECT_EQ(changed, !cudnn_supported);
+  }
 }
 
 TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotFusionRocm) {

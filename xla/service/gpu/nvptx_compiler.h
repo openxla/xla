@@ -74,6 +74,10 @@ class NVPTXCompiler : public GpuCompiler {
       const se::SemanticVersion& toolkit_version,
       CompilationStats* compilation_stats) override;
 
+  Decision IsRaggedDotSupportedByCuDnn(
+      const HloInstruction* instr, const GpuTargetConfig& gpu_target_config,
+      se::StreamExecutor* absl_nullable stream_exec) const override;
+
   absl::Status OptimizeHloPostLayoutAssignment(
       HloModule* hlo_module, se::StreamExecutor* stream_exec,
       const CompileOptions& options, const GpuTopology& gpu_topology,
