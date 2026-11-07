@@ -111,10 +111,7 @@ class ReferenceCounted {
         ref_count_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
       // Make assert in ~ReferenceCounted happy
       assert((ref_count_.store(0, std::memory_order_relaxed), true));
-      // Destroying an object is allowed regardless of its constness (as with
-      // `delete` of a pointer to const), so we const_cast to support custom
-      // `Destroy()` implementations that are not `const`.
-      const_cast<SubClass*>(static_cast<const SubClass*>(this))->Destroy();
+      static_cast<const SubClass*>(this)->Destroy();
     }
   }
 
