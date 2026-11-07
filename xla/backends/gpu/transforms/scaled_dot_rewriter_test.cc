@@ -302,6 +302,40 @@ INSTANTIATE_TEST_SUITE_P(
                           PrimitiveType_Name(info.param.scale_type));
     });
 
+TEST_F(ScaledDotRewriterElementSizeTest, RewrittenDotKeepsFrontendAttributes) {
+  const std::string hlo_string = R"(
+    HloModule module
+
+    ENTRY main {
+      lhs = f8e4m3fn[1024,512] parameter(0)
+      rhs = f8e4m3fn[64,512] parameter(1)
+      lhs_scale = f8e8m0fnu[1024,16] parameter(2)
+      rhs_scale = f8e8m0fnu[64,16] parameter(3)
+      ROOT dot = f32[1024,64] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+        lhs_contracting_dims={1},
+        rhs_contracting_dims={1},
+        frontend_attributes={_scheduling_group_id="1"}
+    }
+  )";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  ScaledDotRewriter rewriter;
+  ASSERT_OK_AND_ASSIGN(bool changed, rewriter.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  int num_dots = 0;
+  for (const HloInstruction* instruction :
+       module->entry_computation()->instructions()) {
+    if (instruction->opcode() != HloOpcode::kDot) {
+      continue;
+    }
+    ++num_dots;
+    EXPECT_EQ(instruction->get_frontend_attribute("_scheduling_group_id"), "1")
+        << instruction->ToString();
+  }
+  EXPECT_EQ(num_dots, 1);
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

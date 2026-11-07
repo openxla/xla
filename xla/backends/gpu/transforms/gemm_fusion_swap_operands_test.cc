@@ -484,6 +484,37 @@ TEST_F(SwapOperandsTest, RejectsTooManyOperandPrecisionEntries) {
               "Dot has 3 operand precision entries; expected at most 2.")));
 }
 
+TEST_F(SwapOperandsTest, SwappedDotKeepsFrontendAttributes) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule DotLayout
+
+fcomp {
+    p0 = bf16[64,768,320]{2,1,0} parameter(0)
+
+    p1 = s4[64,448,320]{2,1,0} parameter(1)
+    p1.c = bf16[64,448,320]{2,1,0} convert(p1)
+
+    ROOT dot = bf16[64,768,448]{2,1,0} dot(p0, p1.c),
+      lhs_batch_dims={0}, lhs_contracting_dims={2},
+      rhs_batch_dims={0}, rhs_contracting_dims={2},
+      frontend_attributes={_scheduling_group_id="1"}
+}
+
+ENTRY main {
+  p0 = bf16[64,768,320]{2,1,0} parameter(0)
+  p1 = s4[64,448,320]{2,1,0} parameter(1)
+  ROOT fusion = bf16[64,768,448]{2,1,0} fusion(p0, p1),
+    kind=kCustom, calls=fcomp,
+    backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+})"));
+  ASSERT_THAT(GemmFusionSwapOperands().Run(module.get()), IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(module->ToString(), R"(
+CHECK: bf16[64,448,768]{1,2,0} dot
+CHECK-SAME: frontend_attributes={_scheduling_group_id="1"}
+CHECK-NEXT: bf16[64,768,448]{2,1,0} bitcast)"),
+              IsOkAndHolds(true));
+}
+
 }  // namespace
 }  // namespace gpu
 }  // namespace xla

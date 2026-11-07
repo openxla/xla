@@ -216,6 +216,7 @@ void RewriteF32ToBF16(HloInstruction* instr) {
   HloInstruction* result =
       computation->AddInstruction(HloInstruction::CreateDot(
           shape, lhs_bf16, rhs_bf16, dnums, precision_config));
+  original_dot->SetupDerivedInstruction(result);
   CHECK_OK(original_dot->ReplaceAllUsesWith(result));
   CHECK_OK(original_dot->parent()->RemoveInstruction(original_dot));
 }
@@ -245,8 +246,10 @@ void RewriteDotWithOperandPairs(
   std::vector<HloInstruction*> partial_dots;
   partial_dots.reserve(operand_pairs.size());
   for (auto [lhs, rhs] : operand_pairs) {
-    partial_dots.push_back(computation->AddInstruction(
-        HloInstruction::CreateDot(shape, lhs, rhs, dnums, precision_config)));
+    HloInstruction* partial_dot = computation->AddInstruction(
+        HloInstruction::CreateDot(shape, lhs, rhs, dnums, precision_config));
+    original_dot->SetupDerivedInstruction(partial_dot);
+    partial_dots.push_back(partial_dot);
   }
 
   HloInstruction* result = AccumulatePartialProducts(
@@ -254,6 +257,7 @@ void RewriteDotWithOperandPairs(
         return computation->AddInstruction(
             HloInstruction::CreateBinary(shape, HloOpcode::kAdd, lhs, rhs));
       });
+  original_dot->SetupDerivedInstruction(result);
   CHECK_OK(original_dot->ReplaceAllUsesWith(result));
   CHECK_OK(computation->RemoveInstruction(original_dot));
 }

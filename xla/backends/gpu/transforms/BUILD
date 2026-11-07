@@ -2250,6 +2250,7 @@ xla_cc_test(
     srcs = ["gemm_fusion_swap_operands_test.cc"],
     deps = [
         ":gemm_fusion_swap_operands",
+        "//xla/hlo/ir:hlo",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "@com_google_absl//absl/status",
