@@ -124,6 +124,17 @@ TEST(DumpTest, GetDumpSubdirPathEmptyPath) {
   EXPECT_EQ(dump_subdir, "");
 }
 
+TEST(DumpTest, GetDumpSubdirPathSanitizesModuleName) {
+  const std::string temp_dir = tsl::testing::TmpDir();
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::string dump_subdir,
+      pjrt::GetDumpSubdirPath(temp_dir, "../../traversal_module", 0));
+  EXPECT_THAT(dump_subdir, HasSubstr(temp_dir));
+  EXPECT_THAT(dump_subdir, testing::Not(HasSubstr("/../")));
+  EXPECT_THAT(dump_subdir, HasSubstr(".._.._traversal_module"));
+  EXPECT_THAT(tsl::Env::Default()->IsDirectory(dump_subdir), IsOk());
+}
+
 TEST(DumpTest, DumpCompileInputs) {
   const std::string temp_test_dir = tsl::testing::TmpDir();
   const std::string temp_test_subdir =
@@ -197,6 +208,35 @@ TEST(DumpTest, DumpCompileInputsAsProto) {
               testing::UnorderedElementsAre(HasSubstr("module.mlir"),
                                             HasSubstr("compile_options.pb"),
                                             HasSubstr("topology.pb")));
+}
+
+TEST(DumpTest, DumpCompileInputsSanitizesModuleName) {
+  const std::string temp_test_dir = tsl::testing::TmpDir();
+  const std::string temp_test_subdir =
+      tsl::io::JoinPath(temp_test_dir, "compile_dump_traversal_test",
+                        absl::StrCat(absl::ToUnixMillis(absl::Now())));
+  TF_ASSERT_OK(tsl::Env::Default()->RecursivelyCreateDir(temp_test_subdir));
+  xla::CompileOptions compile_options;
+  mlir::MLIRContext context;
+  mlir::OpBuilder builder(&context);
+  mlir::OwningOpRef<mlir::ModuleOp> module =
+      xla::llvm_ir::CreateMlirModuleOp(builder.getUnknownLoc());
+  module->setName("../../traversal_module");
+  auto topology = std::make_unique<TestTopology>();
+
+  compile_options.executable_build_options.mutable_debug_options()
+      ->set_xla_dump_to(temp_test_subdir);
+
+  TF_ASSERT_OK(pjrt::DumpCompileInputs(temp_test_subdir, compile_options,
+                                       *module, *topology.get(), 0));
+  std::vector<std::string> files;
+  TF_ASSERT_OK(tsl::Env::Default()->GetMatchingPaths(
+      tsl::io::JoinPath(temp_test_subdir, "*"), &files));
+
+  ASSERT_EQ(files.size(), 1);
+  std::string dump_subdir = files[0];
+  EXPECT_THAT(dump_subdir, HasSubstr(".._.._traversal_module"));
+  EXPECT_THAT(tsl::Env::Default()->IsDirectory(dump_subdir), IsOk());
 }
 
 TEST(MaybeDumpCompileInputsTest, XlaDumpToNotSet) {
