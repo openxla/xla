@@ -100,7 +100,7 @@ void FillKernelArgumentAttributes(
     kernel_argument.set_written(
         buffers_written.contains(kernel_argument.slice()));
 
-    kernel_argument.set_aliased([&] {
+    kernel_argument.set_aliased(kernel_argument.written() && [&] {
       for (size_t j = 0; j < kernel_arguments.size(); ++j) {
         if (i == j ||
             kernel_arguments[j].kind() == KernelArgument::Kind::kUnmanaged) {
@@ -112,9 +112,7 @@ void FillKernelArgumentAttributes(
           continue;
         }
 
-        if ((kernel_argument.written() ||
-             buffers_written.contains(other_kernel_argument.slice())) &&
-            kernel_argument.slice().OverlapsWith(
+        if (kernel_argument.slice().OverlapsWith(
                 other_kernel_argument.slice())) {
           return true;
         }
