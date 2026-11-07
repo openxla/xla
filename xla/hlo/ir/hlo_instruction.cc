@@ -674,6 +674,9 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       TF_RET_CHECK(proto.called_computation_ids_size() == 1)
           << "Scan instruction should have 1 called computation but sees "
           << proto.called_computation_ids_size();
+      TF_RET_CHECK(proto.dimensions().size() == 1)
+          << "Scan instruction should have 1 dimension but sees "
+          << proto.dimensions().size();
       int64_t num_carries = proto.num_carries();
       TF_RET_CHECK(num_carries >= 0 && num_carries <= proto.operand_ids_size());
       int64_t num_inputs = proto.operand_ids_size() - num_carries;
@@ -911,9 +914,32 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                      << "but got " << opcode;
         }
       } else {
+        TF_RET_CHECK(proto.operand_ids_size() == 4)
+            << proto.opcode()
+            << " instruction with dynamic_slice_sizes should have 4 operands "
+               "but sees "
+            << proto.operand_ids_size();
         std::vector<std::vector<int64_t>> slice_sizes;
         HloInstruction* input = operands(0);
         HloInstruction* input_start_indices = operands(2);
+        const Shape& start_indices_shape = input_start_indices->shape();
+        TF_RET_CHECK(start_indices_shape.IsTuple() &&
+                     !start_indices_shape.tuple_shapes().empty())
+            << proto.opcode()
+            << " input start indices should be a non-empty tuple but got "
+            << start_indices_shape.ToString();
+        if (input->shape().IsTuple()) {
+          TF_RET_CHECK(
+              start_indices_shape.tuple_shapes().size() ==
+                  input->shape().tuple_shapes().size() &&
+              absl::c_all_of(start_indices_shape.tuple_shapes(),
+                             [](const Shape& s) { return s.IsTuple(); }) &&
+              !start_indices_shape.tuple_shapes(0).tuple_shapes().empty())
+              << proto.opcode()
+              << " input start indices should be a tuple of tuples matching "
+                 "the input tuple but got "
+              << start_indices_shape.ToString();
+        }
         if (input->shape().IsTuple() &&
             input->shape().tuple_shapes().size() > 1) {
           slice_sizes.resize(input->shape().tuple_shapes().size());
@@ -933,16 +959,20 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
               for (int j = 0;
                    j < input->shape().tuple_shapes(i).dimensions().size();
                    ++j) {
-                CHECK_GE(proto.dynamic_slice_sizes_size(), proto_index);
+                TF_RET_CHECK(proto_index < proto.dynamic_slice_sizes_size())
+                    << "Too few dynamic_slice_sizes in " << proto.opcode();
                 slice_sizes[i][j] = proto.dynamic_slice_sizes(proto_index);
                 proto_index += 1;
               }
             }
           } else {
-            slice_sizes.resize(
-                input->shape().tuple_shapes().size() *
-                ShapeUtil::TupleElementCount(
-                    input_start_indices->shape().tuple_shapes(0)));
+            // Each input buffer may be read at a different number of offsets.
+            int64_t num_slices = 0;
+            for (const Shape& indices_shape :
+                 start_indices_shape.tuple_shapes()) {
+              num_slices += ShapeUtil::TupleElementCount(indices_shape);
+            }
+            slice_sizes.resize(num_slices);
             int slice_sizes_count = 0;
             for (int i = 0; i < input->shape().tuple_shapes().size(); ++i) {
               for (int j = 0;
@@ -954,7 +984,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                 for (int k = 0;
                      k < input->shape().tuple_shapes(i).dimensions().size();
                      ++k) {
-                  CHECK_GE(proto.dynamic_slice_sizes_size(), proto_index);
+                  TF_RET_CHECK(proto_index < proto.dynamic_slice_sizes_size())
+                      << "Too few dynamic_slice_sizes in " << proto.opcode();
                   slice_sizes[slice_sizes_count][k] =
                       proto.dynamic_slice_sizes(proto_index);
                   proto_index += 1;
@@ -972,6 +1003,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
                  ++i) {
               slice_sizes[i].resize(input->shape().dimensions().size());
               for (int j = 0; j < input->shape().dimensions().size(); ++j) {
+                TF_RET_CHECK(proto_index < proto.dynamic_slice_sizes_size())
+                    << "Too few dynamic_slice_sizes in " << proto.opcode();
                 slice_sizes[i][j] = proto.dynamic_slice_sizes(proto_index);
                 proto_index += 1;
               }
@@ -980,6 +1013,8 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
             slice_sizes.resize(1);
             slice_sizes[0].resize(input->shape().dimensions().size());
             for (int j = 0; j < input->shape().dimensions().size(); ++j) {
+              TF_RET_CHECK(proto_index < proto.dynamic_slice_sizes_size())
+                  << "Too few dynamic_slice_sizes in " << proto.opcode();
               slice_sizes[0][j] = proto.dynamic_slice_sizes(proto_index);
               proto_index += 1;
             }
@@ -1192,6 +1227,10 @@ absl::StatusOr<std::unique_ptr<HloInstruction>> HloInstruction::CreateFromProto(
       TF_RET_CHECK(proto.called_computation_ids_size() == 1)
           << "Scatter instruction should have 1 called computation but sees "
           << proto.called_computation_ids_size();
+      TF_RET_CHECK(proto.operand_ids_size() % 2 == 1)
+          << "Scatter instruction should have an odd number of operands but "
+             "sees "
+          << proto.operand_ids_size();
       auto scatter_dimension_numbers =
           std::make_unique<ScatterDimensionNumbers>(
               proto.scatter_dimension_numbers());
