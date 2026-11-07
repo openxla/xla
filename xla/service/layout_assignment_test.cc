@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -27,10 +28,13 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -121,6 +125,73 @@ class LayoutAssignmentTest : public HloHardwareIndependentTestBase {
           << ", actual " << actual;
       ++i;
     }
+  }
+
+  class CustomBackendPass : public LayoutAssignment {
+   public:
+    using Callback = absl::Status (*)(CustomBackendPass*, LayoutConstraints*);
+    CustomBackendPass(ComputationLayout* cl, Callback cb)
+        : LayoutAssignment(cl), callback_(cb) {}
+    absl::Status SetBuf(const HloInstruction* inst,
+                        absl::Span<const int64_t> m2m, bool mandatory, bool dfs,
+                        int64_t priority) {
+      return SetBufferLayout(LayoutUtil::MakeLayout(m2m),
+                             dataflow_analysis_->GetUniqueValueAt(inst, {}),
+                             mandatory, dfs, priority);
+    }
+    absl::Status SetOp(const HloInstruction* inst, int64_t op_no,
+                       absl::Span<const int64_t> m2m, bool mandatory, bool dfs,
+                       int64_t priority) {
+      return SetArrayOperandLayout(LayoutUtil::MakeLayout(m2m), inst, op_no,
+                                   mandatory, dfs, priority);
+    }
+
+   protected:
+    absl::Status AddBackendConstraints(LayoutConstraints* c) override {
+      return callback_ != nullptr ? callback_(this, c) : absl::OkStatus();
+    }
+    Callback callback_;
+  };
+
+  absl::StatusOr<std::unique_ptr<VerifiedHloModule>> ParseAutoModule(
+      absl::string_view hlo) {
+    HloParserOptions opts;
+    opts.set_keep_module_auto_layouts(true);
+    return ParseAndReturnVerifiedModule(hlo, GetModuleConfigForTest(), opts);
+  }
+
+  void RunAndVerify(HloModule* m, ComputationLayout* saved_cl = nullptr,
+                    CustomBackendPass::Callback cb = nullptr) {
+    ComputationLayout* cl = m->mutable_entry_computation_layout();
+    ASSERT_OK(CustomBackendPass(cl, cb).Run(m).status());
+    if (saved_cl != nullptr) {
+      *saved_cl = *cl;
+    }
+    auto strip = [](ShapeLayout* sl) {
+      Shape s = sl->shape();
+      ShapeUtil::ForEachMutableSubshape(&s, [](Shape* sub, const ShapeIndex&) {
+        if (sub->IsArray() && sub->has_layout()) {
+          sub->mutable_layout()->set_memory_space(Layout::kDefaultMemorySpace);
+        }
+      });
+      CHECK_OK(sl->CopyLayoutFromShape(s));
+    };
+    for (int64_t i = 0; i < cl->parameter_count(); ++i) {
+      strip(cl->mutable_parameter_layout(i));
+    }
+    strip(cl->mutable_result_layout());
+    EXPECT_OK(HloVerifier(/*layout_sensitive=*/true,
+                          /*allow_mixed_precision=*/false)
+                  .Run(m)
+                  .status());
+  }
+
+  absl::StatusOr<std::unique_ptr<VerifiedHloModule>> ParseAndRun(
+      absl::string_view hlo, ComputationLayout* saved_cl = nullptr,
+      CustomBackendPass::Callback cb = nullptr) {
+    ABSL_ASSIGN_OR_RETURN(auto m, ParseAutoModule(hlo));
+    RunAndVerify(m.get(), saved_cl, cb);
+    return m;
   }
 };
 
@@ -3808,6 +3879,676 @@ ENTRY %main (x: f32[1024,32], y: f32[1024,32], v: f32[1024]) -> (f32[1024,96], f
   ExpectLayoutIs(add->shape(), {0, 1});
   ExpectLayoutIs(add->operand(0)->shape(), {0, 1});
   ExpectLayoutIs(add->operand(1)->shape(), {0, 1});
+}
+
+TEST_F(LayoutAssignmentTest,
+       BroadcastOperandPriorityAcrossCallsAndPinnedBranch) {
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(R"hlo(
+HloModule BroadcastMandatoryOperand,
+  entry_computation_layout={(f32[4,8])->(f32[2,4,8],f32[4,8])}
+callee {
+  ROOT pinned = f32[4,8]{0,1} custom-call(f32[4,8] parameter(0)),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{0,1}}
+}
+bcast_callee {
+  ROOT bcast = f32[2,4,8] broadcast(f32[4,8] parameter(0)), dimensions={1,2}
+}
+ENTRY main {
+  call = f32[4,8] call(f32[4,8] parameter(0)), to_apply=callee
+  hint = f32[4,8]{1,0} custom-call(call), custom_call_target="Hint",
+    operand_layout_constraints={f32[4,8]{1,0}}
+  bcast_call = f32[2,4,8] call(call), to_apply=bcast_callee
+  ROOT out = (f32[2,4,8], f32[4,8]) tuple(bcast_call, hint)
+}
+)hlo"));
+    const HloInstruction* bcast = FindInstruction(m.get(), "bcast");
+    ExpectLayoutIs(bcast->shape(), {2, 1, 0});
+    ExpectLayoutIs(bcast->operand(0)->shape(), {1, 0});
+  }
+  {
+    ASSERT_OK_AND_ASSIGN(
+        auto m, ParseAndRun(
+                    R"hlo(
+HloModule ConditionalPinnedBroadcast,
+  entry_computation_layout={(pred[],f32[2,4,8]{2,1,0},f32[4,8]{0,1})->f32[2,4,8]}
+then_branch {
+  u = f32[2,4,8] abs(f32[2,4,8] negate(f32[2,4,8] parameter(0)))
+  ROOT pinned = f32[2,4,8]{2,1,0} custom-call(u), custom_call_target="Pinned",
+    operand_layout_constraints={f32[2,4,8]{2,1,0}}
+}
+else_branch {
+  ROOT bcast = f32[2,4,8] broadcast(f32[4,8] parameter(0)), dimensions={1,2}
+  hint = f32[2,4,8]{2,0,1} custom-call(bcast), custom_call_target="Hint",
+    operand_layout_constraints={f32[2,4,8]{2,0,1}}, custom_call_has_side_effect=true
+}
+ENTRY main {
+  ROOT cond = f32[2,4,8] conditional(pred[] parameter(0),
+    f32[2,4,8]{2,1,0} parameter(1), f32[4,8]{0,1} parameter(2)),
+    true_computation=then_branch, false_computation=else_branch
+}
+)hlo",
+                    /*saved_cl=*/nullptr,
+                    [](CustomBackendPass* p,
+                       LayoutAssignment::LayoutConstraints* c) -> absl::Status {
+                      if (c->computation()->name() == "else_branch") {
+                        return p->SetBuf(
+                            c->computation()->parameter_instruction(0), {0, 1},
+                            false, true, LayoutConstraint::kGivenPriority);
+                      }
+                      return absl::OkStatus();
+                    }));
+    const HloInstruction* bcast = FindInstruction(m.get(), "bcast");
+    ExpectLayoutIs(bcast->shape(), {2, 1, 0});
+    ExpectLayoutIs(bcast->operand(0)->shape(), {1, 0});
+  }
+}
+
+TEST_F(LayoutAssignmentTest,
+       EntryComputationLayoutPreservesHostMemorySpacesAndAliases) {
+  struct Case {
+    absl::string_view entry_layout;
+    int64_t m0, m1, res0_mem;
+    bool expect_copy;
+  };
+  for (const Case& tc : {
+           Case{"{(f32[8,128]{:S(5)},f32[8,128]{0,1})->"
+                "(f32[8,128]{0,1:S(5)},f32[8,128])}",
+                0, 1, Layout::kHostMemorySpace, true},
+           Case{
+               "{(f32[8,128]{:S(5)},f32[8,128]{0,1})->(f32[8,128],f32[8,128])}",
+               1, 0, Layout::kDefaultMemorySpace, false},
+           Case{"{(f32[8,128]{0,1:S(5)},f32[8,128]{0,1})->"
+                "(f32[8,128]{0,1:S(5)},f32[8,128])}",
+                0, 1, Layout::kHostMemorySpace, true},
+       }) {
+    ComputationLayout cl(ProgramShape{});
+    std::string hlo = absl::StrCat(
+        "HloModule AliasHostTuple, input_output_alias={{0}: (0, {}, "
+        "may-alias)}, entry_computation_layout=",
+        tc.entry_layout, R"hlo(
+ENTRY main {
+  p0 = f32[8,128]{:S(5)} parameter(0)
+  p1 = f32[8,128]{0,1} parameter(1)
+  cc = f32[8,128]{1,0} custom-call(p0), custom_call_target="Pinned",
+    operand_layout_constraints={f32[8,128]{0,1}}
+  ROOT tuple = (f32[8,128], f32[8,128]) tuple(cc, f32[8,128] negate(p1))
+}
+)hlo");
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(hlo, &cl));
+    const Layout& p0_l = cl.parameter_shape(0).layout();
+    const Layout& r0_l = cl.result_shape().tuple_shapes(0).layout();
+    EXPECT_THAT(p0_l.minor_to_major(), ElementsAre(tc.m0, tc.m1));
+    EXPECT_EQ(p0_l.memory_space(), Layout::kHostMemorySpace);
+    ExpectTupleLayoutIs(m->entry_computation()->root_instruction()->shape(),
+                        {{tc.m0, tc.m1}, {0, 1}});
+    EXPECT_THAT(r0_l.minor_to_major(), ElementsAre(tc.m0, tc.m1));
+    EXPECT_THAT(cl.result_shape().tuple_shapes(1).layout().minor_to_major(),
+                ElementsAre(0, 1));
+    EXPECT_EQ(r0_l.memory_space(), tc.res0_mem);
+    if (tc.expect_copy) {
+      EXPECT_NE(FindInstruction(m.get(), HloOpcode::kCopy), nullptr);
+    }
+  }
+  {
+    ComputationLayout cl(ProgramShape{});
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(R"hlo(
+HloModule AutoEntryMemorySpaces,
+  entry_computation_layout={(f32[4,8]{:S(5)})->(f32[4,8]{:S(5)},f32[4,8]{:S(5)})}
+ENTRY main {
+  p0 = f32[4,8] parameter(0)
+  ROOT out = (f32[4,8], f32[4,8]) tuple(p0, f32[4,8] negate(p0))
+}
+)hlo",
+                                             &cl));
+    EXPECT_TRUE(cl.MinorToMajorInLayoutIsSet());
+    EXPECT_EQ(cl.parameter_shape(0).layout().memory_space(),
+              Layout::kHostMemorySpace);
+    for (int i : {0, 1}) {
+      EXPECT_EQ(cl.result_shape().tuple_shapes(i).layout().memory_space(),
+                Layout::kHostMemorySpace);
+    }
+    const HloInstruction* p0 = m->entry_computation()->parameter_instruction(0);
+    EXPECT_EQ(p0->shape().layout().memory_space(), Layout::kDefaultMemorySpace);
+  }
+}
+
+TEST_F(LayoutAssignmentTest,
+       CopyDisabledWhileConditionalBranchesMatchPreferredOrConstrainedRoot) {
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(R"hlo(
+HloModule CopyDisabledWhileConditionalBranches
+then_branch {
+  n = f32[1,8,8] negate(f32[1,8,8] abs(f32[1,8,8] negate(f32[1,8,8] parameter(0))))
+  ROOT out = (f32[1,8,8]) tuple(n)
+}
+else_branch {
+  c0 = s32[] constant(0)
+  ds = f32[1,8,8] dynamic-slice(f32[4,16,8] parameter(0), c0, c0, c0),
+    dynamic_slice_sizes={1,8,8}
+  ROOT out = (f32[1,8,8]) tuple(ds)
+}
+nested_callee { ROOT q = f32[2,8] parameter(0) }
+branch_large {
+  ROOT c01 = f32[2,8]{0,1} custom-call(f32[2,8] abs(f32[2,8] negate(f32[2,8] parameter(0)))),
+    custom_call_target="Pinned", operand_layout_constraints={f32[2,8]{0,1}}
+}
+branch_constrained_root {
+  sub_call = f32[2,8] call(f32[2,8] parameter(0)), to_apply=nested_callee
+  ROOT c10 = f32[2,8]{1,0} custom-call(sub_call), custom_call_target="Pinned",
+    operand_layout_constraints={f32[2,8]{1,0}}
+}
+while_cond {
+  s = (f32[4,16,8], f32[1,8,8], f32[2,8]) parameter(0)
+  ROOT c = pred[] constant(false)
+}
+while_body {
+  s = (f32[4,16,8], f32[1,8,8], f32[2,8]) parameter(0)
+  buf = f32[4,16,8] get-tuple-element(s), index=0
+  a0 = f32[1,8,8] get-tuple-element(s), index=1
+  v = f32[2,8] get-tuple-element(s), index=2
+  fa = f32[1,8,8]{1,2,0} custom-call(a0), custom_call_target="LayoutConstraint",
+    operand_layout_constraints={f32[1,8,8]{1,2,0}}
+  p_true = pred[] constant(true)
+  cond = (f32[1,8,8]) conditional(p_true, fa, buf),
+    true_computation=then_branch, false_computation=else_branch
+  cv = f32[1,8,8] get-tuple-element(cond), index=0
+  z = s32[] constant(0)
+  dus = f32[4,16,8] dynamic-update-slice(buf, cv, z, z, z)
+  cd = f32[2,8] conditional(p_true, v, v),
+    true_computation=branch_large, false_computation=branch_constrained_root
+  ROOT next_s = (f32[4,16,8], f32[1,8,8], f32[2,8]) tuple(dus, fa, cd)
+}
+ENTRY main {
+  init = (f32[4,16,8]{2,1,0}, f32[1,8,8]{1,2,0}, f32[2,8]{1,0}) parameter(0)
+  loop = (f32[4,16,8], f32[1,8,8], f32[2,8]) while(init), condition=while_cond,
+    body=while_body, frontend_attributes={xla_disable_while_loop_copies="true"}
+  o0 = f32[4,16,8]{2,1,0} get-tuple-element(loop), index=0
+  o2 = f32[2,8]{1,0} get-tuple-element(loop), index=2
+  ROOT out = (f32[4,16,8]{2,1,0}, f32[2,8]{1,0}) tuple(o0, o2)
+}
+)hlo"));
+  HloInstruction* cond = FindInstruction(m.get(), "cond");
+  for (const HloInstruction* inst :
+       {cond, cond->branch_computation(0)->root_instruction(),
+        cond->branch_computation(1)->root_instruction()}) {
+    ExpectTupleLayoutIs(inst->shape(), {{1, 2, 0}});
+  }
+  ExpectLayoutIs(FindInstruction(m.get(), "c10")->shape(), {1, 0});
+}
+
+TEST_F(LayoutAssignmentTest,
+       VariadicTupleOpsAndPairedCollectivesPropagateLayouts) {
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(R"hlo(
+HloModule VariadicTupleOpsAndPairedCollectives,
+  entry_computation_layout={(f32[8,8],s32[8,8],f32[8,8],f32[4,8,16]{1,0,2},f32[4,8,16],f32[4,8]{0,1},f32[4,8]{1,0},f32[8,8]{0,1},f32[8,8]{1,0})->(f32[8,8]{0,1},f32[8,4]{0,1},(f32[4,16],f32[4,16]),(f32[4,8],f32[4,8]),(f32[8,8],f32[8,8]),(f32[4,8],f32[4,8]))}
+compare {
+  v0 = s32[] parameter(2)
+  v1 = s32[] parameter(3)
+  ROOT cmp = pred[] compare(f32[] parameter(0), f32[] parameter(1)), direction=LT
+}
+reducer {
+  ROOT t = (f32[], f32[]) tuple(
+    f32[] add(f32[] parameter(0), f32[] parameter(2)),
+    f32[] add(f32[] parameter(1), f32[] parameter(3)))
+}
+sum { ROOT add = f32[] add(f32[] parameter(0), f32[] parameter(1)) }
+ENTRY main {
+  sort = (f32[8,8], s32[8,8]) sort(f32[8,8] parameter(0), s32[8,8] parameter(1)),
+    dimensions={0}, to_apply=compare
+  topk = (f32[8,4], s32[8,4]) topk(f32[8,8] parameter(2)), k=4, largest=true
+  z = f32[] constant(0)
+  red = (f32[4,16], f32[4,16]) reduce(
+    f32[4,8,16]{1,0,2} parameter(3), f32[4,8,16] parameter(4), z, z),
+    dimensions={1}, to_apply=reducer
+  p5 = f32[4,8]{0,1} parameter(5)
+  p6 = f32[4,8]{1,0} parameter(6)
+  ar = (f32[4,8], f32[4,8]) all-reduce(p5, p6), replica_groups={{0,1}}, to_apply=sum
+  ag = (f32[8,8], f32[8,8]) all-gather(p5, p6), dimensions={0}, replica_groups={{0,1}}
+  rs = (f32[4,8], f32[4,8]) reduce-scatter(
+    f32[8,8]{0,1} parameter(7), f32[8,8]{1,0} parameter(8)),
+    dimensions={0}, replica_groups={{0,1}}, to_apply=sum
+  s0 = f32[8,8] get-tuple-element(sort), index=0
+  t0 = f32[8,4] get-tuple-element(topk), index=0
+  ROOT out = (f32[8,8], f32[8,4], (f32[4,16], f32[4,16]), (f32[4,8], f32[4,8]),
+    (f32[8,8], f32[8,8]), (f32[4,8], f32[4,8])) tuple(s0, t0, red, ar, ag, rs)
+}
+)hlo"));
+  const HloInstruction* sort = FindInstruction(m.get(), "sort");
+  const HloInstruction* topk = FindInstruction(m.get(), "topk");
+  const HloInstruction* red = FindInstruction(m.get(), "red");
+  for (int i : {0, 1}) {
+    ExpectLayoutIs(sort->operand(i)->shape(), {0, 1});
+    ExpectLayoutIs(red->operand(i)->shape(), {1, 0, 2});
+  }
+  ExpectLayoutIs(topk->operand(0)->shape(), {0, 1});
+  for (const HloInstruction* inst : {sort, topk, red}) {
+    ExpectTupleLayoutIs(inst->shape(), {{0, 1}, {0, 1}});
+  }
+  for (absl::string_view name : {"ar", "ag", "rs"}) {
+    const HloInstruction* inst = FindInstruction(m.get(), name);
+    ExpectLayoutIs(inst->operand(0)->shape(), {0, 1});
+    ExpectLayoutIs(inst->operand(1)->shape(), {1, 0});
+    ExpectTupleLayoutIs(inst->shape(), {{0, 1}, {1, 0}});
+  }
+  EXPECT_EQ(FindInstruction(m.get(), HloOpcode::kCopy), nullptr);
+}
+
+TEST_F(LayoutAssignmentTest,
+       ShiftRegisterWhileLoopConvergesParameterAndResultLayouts) {
+  for (bool disable_copies : {false, true}) {
+    std::string hlo = absl::StrCat(
+        R"hlo(
+HloModule ShiftRegisterWhileLoop
+cond {
+  s = (f32[4,8], f32[4,8], f32[4,8]) parameter(0)
+  ROOT c = pred[] constant(false)
+}
+body {
+  s = (f32[4,8], f32[4,8], f32[4,8]) parameter(0)
+  v0 = f32[4,8] get-tuple-element(s), index=0
+  v1 = f32[4,8] get-tuple-element(s), index=1
+  v2 = f32[4,8] get-tuple-element(s), index=2
+  nv2 = f32[4,8]{0,1} custom-call(f32[4,8] add(v0, v2)),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{0,1}}
+  ROOT next = (f32[4,8], f32[4,8], f32[4,8]) tuple(v1, v2, nv2)
+}
+ENTRY main {
+  init = (f32[4,8]{1,0}, f32[4,8]{1,0}, f32[4,8]{1,0}) parameter(0)
+  loop = (f32[4,8], f32[4,8], f32[4,8]) while(init), condition=cond, body=body)hlo",
+        disable_copies
+            ? ", frontend_attributes={xla_disable_while_loop_copies=\"true\"}"
+            : "",
+        "\n  ROOT out = f32[4,8]{1,0} get-tuple-element(loop), index=0\n}\n");
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(hlo));
+    HloComputation* body = m->GetComputationWithName("body");
+    for (const HloInstruction* inst :
+         {body->parameter_instruction(0), body->root_instruction(),
+          m->GetComputationWithName("cond")->parameter_instruction(0)}) {
+      ExpectTupleLayoutIs(inst->shape(), {{0, 1}, {0, 1}, {0, 1}});
+    }
+    if (disable_copies) {
+      for (const HloInstruction* inst : body->instructions()) {
+        EXPECT_NE(inst->opcode(), HloOpcode::kCopy);
+      }
+    }
+  }
+}
+
+TEST_F(LayoutAssignmentTest,
+       AsyncChainPartialResultMemorySpaceIntermediaryAndLateBoundUpdate) {
+  auto sub = [](const HloInstruction* inst, ShapeIndex idx) -> const Shape& {
+    return ShapeUtil::GetSubshape(inst->shape(), idx);
+  };
+  {
+    ComputationLayout cl(ProgramShape{});
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(R"hlo(
+HloModule AsyncPartialTupleAndBarrier,
+  entry_computation_layout={(f32[4,8]{1,0})->(f32[4,8]{1,0:S(5)},f32[4,8]{:S(5)})}
+async_comp {
+  pinned = f32[4,8]{0,1} custom-call(f32[4,8] parameter(0)),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{0,1}}
+  ROOT res = (f32[4,8], f32[4,8]) tuple(pinned, f32[4,8] negate(pinned))
+}, execution_thread="parallel"
+ENTRY main {
+  start = ((f32[4,8]{1,0}), (f32[4,8]{1,0}, f32[4,8]{1,0}), f32[2,4]{1,0})
+    async-start(f32[4,8]{1,0} parameter(0)),
+    async_execution_thread="parallel", calls=async_comp
+  barrier = ((f32[4,8]), (f32[4,8], f32[4,8]), f32[2,4]) opt-barrier(start)
+  ctx = f32[2,4] get-tuple-element(barrier), index=2
+  ctx_u = f32[2,4]{0,1} custom-call(ctx), custom_call_target="Hint",
+    operand_layout_constraints={f32[2,4]{0,1}}, custom_call_has_side_effect=true
+  ROOT done = (f32[4,8], f32[4,8]) async-done(barrier),
+    async_execution_thread="parallel", calls=async_comp
+}
+)hlo",
+                                             &cl));
+    const Layout& r0 = cl.result_shape().tuple_shapes(0).layout();
+    const Layout& r1 = cl.result_shape().tuple_shapes(1).layout();
+    EXPECT_EQ(r0.memory_space(), Layout::kHostMemorySpace);
+    EXPECT_EQ(r1.memory_space(), Layout::kHostMemorySpace);
+    EXPECT_THAT(r0.minor_to_major(), ElementsAre(1, 0));
+    EXPECT_THAT(r1.minor_to_major(), ElementsAre(0, 1));
+    const HloInstruction* start = FindInstruction(m.get(), "start");
+    const HloInstruction* done = FindInstruction(m.get(), "done");
+    ExpectLayoutIs(sub(start, {0, 0}), {0, 1});
+    ExpectLayoutIs(sub(FindInstruction(m.get(), "barrier"), {0, 0}), {0, 1});
+    ExpectLayoutIs(sub(start, {2}), {0, 1});
+    ExpectTupleLayoutIs(sub(start, {1}), {{1, 0}, {0, 1}});
+    ExpectTupleLayoutIs(done->shape(), {{1, 0}, {0, 1}});
+    EXPECT_EQ(done->shape().tuple_shapes(0).layout().memory_space(),
+              Layout::kDefaultMemorySpace);
+  }
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(R"hlo(
+HloModule AsyncLateBoundUpdate,
+  entry_computation_layout={(f32[4,8]{1,0},f32[4,8]{1,0})->f32[4,8]{1,0}}
+par_comp {
+  cc = f32[4,8]{0,1} custom-call(f32[4,8] parameter(0), f32[4,8] parameter(1)),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{0,1},f32[4,8]{0,1}}
+  ROOT sum = f32[4,8] negate(cc)
+}, execution_thread="parallel"
+ENTRY main {
+  s_par = ((f32[4,8]), (), s32[]) call-start(f32[4,8]{1,0} parameter(0)),
+    async_execution_thread="parallel", to_apply=par_comp
+  update = ((f32[4,8], f32[4,8]), f32[4,8], ()) call-update(
+    s_par, f32[4,8]{1,0} parameter(1)), async_execution_thread="parallel"
+  tup = (((f32[4,8], f32[4,8]), f32[4,8], ())) tuple(update)
+  gte = ((f32[4,8], f32[4,8]), f32[4,8], ()) get-tuple-element(tup), index=0
+  ROOT d_par = f32[4,8] call-done(gte), async_execution_thread="parallel"
+}
+)hlo"));
+    const HloInstruction* update = FindInstruction(m.get(), "update");
+    ExpectLayoutIs(sub(FindInstruction(m.get(), "s_par"), {0, 0}), {0, 1});
+    ExpectLayoutIs(sub(update, {0, 0}), {0, 1});
+    ExpectLayoutIs(sub(update, {0, 1}), {0, 1});
+    ExpectLayoutIs(sub(update, {1}), {1, 0});
+    ExpectLayoutIs(sub(FindInstruction(m.get(), "gte"), {0, 1}), {0, 1});
+    ExpectLayoutIs(FindInstruction(m.get(), "d_par")->shape(), {1, 0});
+  }
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(R"hlo(
+HloModule AsyncMainThreadConstrainedRoot,
+  entry_computation_layout={(f32[4,8]{1,0})->(f32[4,8]{1,0},f32[4,8])}
+async_comp {
+  ROOT cc = (f32[4,8]{0,1}, f32[4,8]{0,1}) custom-call(f32[4,8] parameter(0)),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{0,1}}
+}
+ENTRY main {
+  start = ((f32[4,8]), (f32[4,8], f32[4,8]), s32[]) async-start(
+    f32[4,8]{1,0} parameter(0)), calls=async_comp
+  ROOT done = (f32[4,8], f32[4,8]) async-done(start)
+}
+)hlo"));
+    ExpectTupleLayoutIs(m->entry_computation()->root_instruction()->shape(),
+                        {{1, 0}, {0, 1}});
+    EXPECT_TRUE(m->GetComputationWithName("async_comp")
+                    ->CanExpandIntoSingleInstruction());
+  }
+}
+
+TEST_F(LayoutAssignmentTest,
+       TwiceUpdatedHintAndPriorityZeroTransposeRespectMandatoryPriority3) {
+  ASSERT_OK_AND_ASSIGN(
+      auto m,
+      ParseAndRun(
+          R"hlo(
+HloModule PriorityProtection,
+  entry_computation_layout={(f32[4,8],f32[4,8],f32[4,8],f32[8,4])->(f32[4,8],f32[4,8],f32[4,8],f32[4,8],f32[4,8])}
+ENTRY main {
+  a = f32[4,8] parameter(0)
+  b = f32[4,8] parameter(1)
+  c = f32[4,8] parameter(2)
+  d = f32[8,4] parameter(3)
+  add_op = f32[4,8] add(a, b)
+  clamp_op = f32[4,8] clamp(a, b, c)
+  hint = f32[4,8]{1,0} custom-call(b, d), custom_call_target="Hint",
+    operand_layout_constraints={f32[4,8]{1,0},f32[8,4]{0,1}},
+    custom_call_has_side_effect=true
+  tr_op = f32[4,8] transpose(d), dimensions={1,0}
+  prod = f32[4,8]{1,0} custom-call(a), custom_call_target="Pinned",
+    operand_layout_constraints={f32[4,8]{1,0}}
+  sib_op = f32[4,8] multiply(prod, c)
+  sub_op = f32[4,8] subtract(prod, c)
+  ROOT out = (f32[4,8], f32[4,8], f32[4,8], f32[4,8], f32[4,8])
+    tuple(add_op, clamp_op, tr_op, sib_op, sub_op)
+}
+)hlo",
+          /*saved_cl=*/nullptr,
+          [](CustomBackendPass* p,
+             LayoutAssignment::LayoutConstraints* c) -> absl::Status {
+            constexpr int64_t kBegin = LayoutConstraint::kBeginningPriority;
+            constexpr int64_t kGiven = LayoutConstraint::kGivenPriority;
+            for (const HloInstruction* inst :
+                 c->computation()->instructions()) {
+              if (inst->name() == "add_op") {
+                ABSL_RETURN_IF_ERROR(
+                    p->SetOp(inst, 1, {0, 1}, true, true, kGiven));
+                ABSL_RETURN_IF_ERROR(
+                    p->SetBuf(inst, {0, 1}, false, false, kBegin));
+                ABSL_RETURN_IF_ERROR(
+                    p->SetBuf(inst, {1, 0}, false, true, kBegin + 1));
+              } else if (inst->name() == "clamp_op") {
+                ABSL_RETURN_IF_ERROR(
+                    p->SetOp(inst, 0, {1, 0}, true, false, kBegin));
+                ABSL_RETURN_IF_ERROR(
+                    p->SetOp(inst, 2, {0, 1}, true, false, kGiven));
+              } else if (inst->name() == "tr_op" || inst->name() == "sub_op") {
+                ABSL_RETURN_IF_ERROR(
+                    p->SetBuf(inst, {0, 1}, true, false, kGiven));
+              } else if (inst->name() == "sib_op") {
+                ABSL_RETURN_IF_ERROR(
+                    p->SetOp(inst, 1, {0, 1}, true, true, kBegin));
+              }
+            }
+            return absl::OkStatus();
+          }));
+  for (absl::string_view name : {"add_op", "clamp_op", "sib_op", "sub_op"}) {
+    const HloInstruction* inst = FindInstruction(m.get(), name);
+    ExpectLayoutIs(inst->shape(), {0, 1});
+    for (const HloInstruction* op : inst->operands()) {
+      ExpectLayoutIs(op->shape(), {0, 1});
+    }
+  }
+  ExpectLayoutIs(FindInstruction(m.get(), "tr_op")->shape(), {0, 1});
+}
+
+TEST_F(LayoutAssignmentTest, SharedAndAliasedSubcomputations) {
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(R"hlo(
+HloModule SharedConditionals,
+  entry_computation_layout={(s32[],pred[],f32[4,8]{0,1},f32[4,8]{1,0})->(f32[4,8],f32[4,8],f32[4,8])}
+comp_large {
+  ROOT out = f32[4,8]{1,0} custom-call(f32[4,8] negate(f32[4,8] parameter(0))),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{1,0}}
+}
+comp_shared {
+  ROOT cc = f32[4,8]{1,0} custom-call(f32[4,8] parameter(0)),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{1,0}}
+}
+inner_shared { ROOT p = f32[4,8] parameter(0) }
+inner_other { ROOT p = f32[4,8] parameter(0) }
+outer_shared {
+  val = f32[4,8] parameter(0)
+  ROOT inner = f32[4,8] conditional(pred[] constant(true), val, val),
+    true_computation=inner_shared, false_computation=inner_other
+}
+outer_force_01 {
+  ROOT cc = f32[4,8]{0,1} custom-call(f32[4,8] negate(f32[4,8] negate(f32[4,8] parameter(0)))),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{0,1}}
+}
+outer_force_10 {
+  ROOT cc = f32[4,8]{1,0} custom-call(f32[4,8] negate(f32[4,8] negate(f32[4,8] parameter(0)))),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{1,0}}
+}
+ENTRY main {
+  c0 = pred[] parameter(1)
+  x = f32[4,8]{0,1} parameter(2)
+  y = f32[4,8]{1,0} parameter(3)
+  op1 = f32[4,8]{0,1} custom-call(y), custom_call_target="Pinned",
+    operand_layout_constraints={f32[4,8]{1,0}}
+  cond_reuse = f32[4,8] conditional(s32[] parameter(0), y, op1, f32[4,8] negate(y)),
+    branch_computations={comp_large, comp_shared, comp_shared}
+  cond1 = f32[4,8] conditional(c0, x, x),
+    true_computation=outer_force_01, false_computation=outer_shared
+  cond2 = f32[4,8] conditional(c0, y, y),
+    true_computation=outer_force_10, false_computation=outer_shared
+  ROOT res = (f32[4,8], f32[4,8], f32[4,8]) tuple(cond_reuse, cond1, cond2)
+}
+)hlo"));
+    const HloInstruction* cond = FindInstruction(m.get(), "cond_reuse");
+    EXPECT_EQ(cond->operand(2)->opcode(), HloOpcode::kCopy);
+    ExpectLayoutIs(cond->operand(2)->shape(), {1, 0});
+    ExpectLayoutIs(cond->operand(3)->shape(), {1, 0});
+    ExpectLayoutIs(
+        cond->branch_computation(1)->parameter_instruction(0)->shape(), {1, 0});
+    const HloInstruction* cond1 = FindInstruction(m.get(), "cond1");
+    const HloInstruction* cond2 = FindInstruction(m.get(), "cond2");
+    ExpectLayoutIs(cond1->shape(), {0, 1});
+    ExpectLayoutIs(cond2->shape(), {1, 0});
+    const HloComputation* b1 = cond1->branch_computation(1);
+    const HloComputation* b2 = cond2->branch_computation(1);
+    EXPECT_NE(b1, b2);
+    EXPECT_NE(b1->root_instruction()->branch_computation(0),
+              b2->root_instruction()->branch_computation(0));
+  }
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAutoModule(R"hlo(
+HloModule CallOutputOperandAliasing,
+  entry_computation_layout={(f32[4,8]{1,0})->f32[4,8]{1,0}}
+b_pref {
+  ROOT cc = f32[4,8]{0,1} custom-call(f32[4,8] parameter(0)),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{0,1}}
+}
+b_other { ROOT q = f32[4,8] parameter(0) }
+callee {
+  pp = f32[4,8]{0,1} custom-call(f32[4,8] parameter(0)),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{0,1}}
+  ROOT c = f32[4,8] conditional(pred[] constant(true), pp, pp),
+    true_computation=b_pref, false_computation=b_other
+}
+ENTRY main {
+  call = f32[4,8] call(f32[4,8]{1,0} parameter(0)), to_apply=callee
+  ROOT consumer = f32[4,8]{1,0} custom-call(call), custom_call_target="Pinned",
+    operand_layout_constraints={f32[4,8]{1,0}}
+}
+)hlo"));
+    HloInstruction* call = FindInstruction(m.get(), "call");
+    Cast<HloCallableInstruction>(call)->set_output_to_operand_aliasing(
+        {{{}, {0, {}}}});
+    RunAndVerify(m.get());
+    ExpectLayoutIs(call->operand(0)->shape(), {0, 1});
+    ExpectLayoutIs(call->shape(), {0, 1});
+  }
+}
+
+TEST_F(LayoutAssignmentTest, ConstantAssignedNonDefaultLayoutRelayoutsLiteral) {
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(R"hlo(
+HloModule ConstantNonDefaultLayout,
+  entry_computation_layout={()->(f32[2,3]{0,1},f32[2,3]{0,1},s32[])}
+ENTRY main {
+  c_arr = f32[2,3] constant({{1, 2, 3}, {4, 5, 6}})
+  c_tup = (f32[2,3], s32[]) constant(({{10, 20, 30}, {40, 50, 60}}, 7))
+  t0 = f32[2,3] get-tuple-element(c_tup), index=0
+  t1 = s32[] get-tuple-element(c_tup), index=1
+  ROOT out = (f32[2,3], f32[2,3], s32[]) tuple(c_arr, t0, t1)
+}
+)hlo"));
+  EXPECT_EQ(FindInstruction(m.get(), HloOpcode::kCopy), nullptr);
+  const HloInstruction* c_arr = FindInstruction(m.get(), "c_arr");
+  const HloInstruction* c_tup = FindInstruction(m.get(), "c_tup");
+  ExpectLayoutIs(c_arr->shape(), {0, 1});
+  ExpectLayoutIs(c_arr->literal().shape(), {0, 1});
+  ExpectLayoutIs(ShapeUtil::GetSubshape(c_tup->shape(), {0}), {0, 1});
+  ExpectLayoutIs(ShapeUtil::GetSubshape(c_tup->literal().shape(), {0}), {0, 1});
+  LiteralSlice tup_elem0(c_tup->literal(), {0});
+  const float expected[2][3] = {{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}};
+  for (int64_t r = 0; r < 2; ++r) {
+    for (int64_t c = 0; c < 3; ++c) {
+      EXPECT_EQ(c_arr->literal().Get<float>({r, c}), expected[r][c]);
+      EXPECT_EQ(tup_elem0.Get<float>({r, c}), 10.0f * expected[r][c]);
+    }
+  }
+}
+
+TEST_F(LayoutAssignmentTest, ChainedWhileLoopsWithConflictingBodyLayouts) {
+  {
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndRun(R"hlo(
+HloModule ChainedWhileConflictingLayouts,
+  entry_computation_layout={((s32[],f32[4,8]{1,0}))->(s32[],f32[4,8]{0,1})}
+cond0 {
+  p = (s32[], f32[4,8]) parameter(0)
+  ROOT c = pred[] constant(false)
+}
+body0 {
+  p = (s32[], f32[4,8]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[4,8] get-tuple-element(p), index=1
+  y = f32[4,8]{1,0} custom-call(x), custom_call_target="Pinned0",
+    operand_layout_constraints={f32[4,8]{1,0}}
+  ROOT t = (s32[], f32[4,8]) tuple(i, y)
+}
+cond1 {
+  p = (s32[], f32[4,8]) parameter(0)
+  ROOT c = pred[] constant(false)
+}
+body1 {
+  p = (s32[], f32[4,8]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[4,8] get-tuple-element(p), index=1
+  y = f32[4,8]{0,1} custom-call(x), custom_call_target="Pinned1",
+    operand_layout_constraints={f32[4,8]{0,1}}
+  ROOT t = (s32[], f32[4,8]) tuple(i, y)
+}
+ENTRY main {
+  init = (s32[], f32[4,8]{1,0}) parameter(0)
+  w0 = (s32[], f32[4,8]) while(init), condition=cond0, body=body0
+  i0 = s32[] get-tuple-element(w0), index=0
+  x0 = f32[4,8] get-tuple-element(w0), index=1
+  mid = (s32[], f32[4,8]) tuple(i0, x0)
+  ROOT w1 = (s32[], f32[4,8]) while(mid), condition=cond1, body=body1
+}
+)hlo"));
+    const HloInstruction* w0 = FindInstruction(m.get(), "w0");
+    const HloInstruction* w1 = FindInstruction(m.get(), "w1");
+    ExpectLayoutIs(ShapeUtil::GetSubshape(w0->shape(), {1}), {1, 0});
+    ExpectLayoutIs(ShapeUtil::GetSubshape(
+                       w0->while_body()->root_instruction()->shape(), {1}),
+                   {1, 0});
+    ExpectLayoutIs(ShapeUtil::GetSubshape(w1->shape(), {1}), {0, 1});
+    ExpectLayoutIs(ShapeUtil::GetSubshape(w1->operand(0)->shape(), {1}),
+                   {0, 1});
+    EXPECT_NE(FindInstruction(m.get(), HloOpcode::kCopy), nullptr);
+  }
+  {
+    ASSERT_OK_AND_ASSIGN(
+        auto m, ParseAndRun(
+                    R"hlo(
+HloModule ElevatedPrioritySubcomputationCallsites,
+  entry_computation_layout={(f32[4,8]{1,0})->(f32[4,8]{0,1},f32[4,8]{0,1})}
+callee10 {
+  ROOT cc = f32[4,8]{1,0} custom-call(f32[4,8] parameter(0)),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{1,0}}
+}
+async10 {
+  ROOT cc = f32[4,8]{1,0} custom-call(f32[4,8] parameter(0)),
+    custom_call_target="Pinned", operand_layout_constraints={f32[4,8]{1,0}}
+}
+ENTRY main {
+  p0 = f32[4,8]{1,0} parameter(0)
+  c0 = f32[4,8] call(p0), to_apply=callee10
+  start = ((f32[4,8]), f32[4,8], s32[]) async-start(p0), calls=async10
+  done = f32[4,8] async-done(start)
+  use_c0 = f32[4,8]{0,1} custom-call(c0), custom_call_target="Pinned",
+    operand_layout_constraints={f32[4,8]{0,1}}
+  use_done = f32[4,8]{0,1} custom-call(done), custom_call_target="Pinned",
+    operand_layout_constraints={f32[4,8]{0,1}}
+  ROOT out = (f32[4,8], f32[4,8]) tuple(use_c0, use_done)
+}
+)hlo",
+                    /*saved_cl=*/nullptr,
+                    [](CustomBackendPass* p,
+                       LayoutAssignment::LayoutConstraints* c) -> absl::Status {
+                      if (c->computation()->IsEntryComputation()) {
+                        for (const HloInstruction* inst :
+                             c->computation()->instructions()) {
+                          if (inst->name() == "c0" || inst->name() == "done") {
+                            ABSL_RETURN_IF_ERROR(
+                                p->SetBuf(inst, {0, 1}, true, true,
+                                          LayoutConstraint::kGivenPriority));
+                          }
+                        }
+                      }
+                      return absl::OkStatus();
+                    }));
+    const HloInstruction* c0 = FindInstruction(m.get(), "c0");
+    const HloInstruction* done = FindInstruction(m.get(), "done");
+    ExpectLayoutIs(c0->shape(), {1, 0});
+    ExpectLayoutIs(done->shape(), {1, 0});
+    EXPECT_EQ(FindInstruction(m.get(), "use_c0")->operand(0)->opcode(),
+              HloOpcode::kCopy);
+    EXPECT_EQ(FindInstruction(m.get(), "use_done")->operand(0)->opcode(),
+              HloOpcode::kCopy);
+  }
 }
 
 }  // namespace
