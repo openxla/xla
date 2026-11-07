@@ -636,9 +636,10 @@ absl::StatusOr<CommandExecutor::SynchronizationMode> GetSynchronizationMode(
   }
 }
 
-// The two options are independent: telemetry only records annotations while
-// command buffers are recorded or updated, and graph nodes appear in a profile
-// only if command buffers also stay enabled during profiling.
+// The profiling and telemetry options are independent: telemetry only records
+// annotations while command buffers are recorded or updated, and graph nodes
+// appear in a profile only if command buffers also stay enabled during
+// profiling.
 CommandBufferThunkOptions CommandBufferThunkOptionsFrom(
     const DebugOptions& debug_options) {
   CommandBufferThunkOptions options;
@@ -646,6 +647,8 @@ CommandBufferThunkOptions CommandBufferThunkOptionsFrom(
       debug_options.xla_enable_command_buffers_during_profiling();
   options.enable_command_buffer_telemetry =
       debug_options.xla_gpu_enable_command_buffer_telemetry();
+  options.skip_unchanged_collectives =
+      debug_options.xla_gpu_command_buffer_skip_unchanged_collectives();
   return options;
 }
 

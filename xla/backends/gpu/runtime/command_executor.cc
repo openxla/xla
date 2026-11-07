@@ -197,12 +197,21 @@ CommandExecutor::CommandExecutor(
       execution_graph_(std::move(execution_graph)),
       extra_resources_(std::move(extra_resources)) {
   // Walk all nested commands and collect all buffers used by this executor.
+  absl::btree_set<BufferAllocation::Index> update_on_initialize_allocs_indices;
   commands_.Walk([&](const Command* command) {
     Command::BufferUses buffer_uses = command->buffer_uses();
     buffer_uses_.insert(buffer_uses.begin(), buffer_uses.end());
     requires_update_on_initialize_ |= command->requires_update_on_initialize();
     requires_update_on_execute_ |= command->requires_update_on_execute();
+    if (command->requires_update_on_initialize()) {
+      for (const BufferUse& buffer_use : buffer_uses) {
+        update_on_initialize_allocs_indices.insert(buffer_use.slice().index());
+      }
+    }
   });
+  update_on_initialize_allocs_indices_.assign(
+      update_on_initialize_allocs_indices.begin(),
+      update_on_initialize_allocs_indices.end());
 
   // Buffer allocations referenced by all buffer uses.
   absl::btree_set<BufferAllocation::Index> allocs_indices;
@@ -672,6 +681,11 @@ const absl::flat_hash_set<BufferUse>& CommandExecutor::buffer_uses() const {
 absl::Span<const BufferAllocation::Index> CommandExecutor::allocs_indices()
     const {
   return allocs_indices_;
+}
+
+absl::Span<const BufferAllocation::Index>
+CommandExecutor::update_on_initialize_allocs_indices() const {
+  return update_on_initialize_allocs_indices_;
 }
 
 absl::StatusOr<std::string> CommandExecutor::RenderExecutionGraph() const {
