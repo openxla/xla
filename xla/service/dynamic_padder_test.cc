@@ -2071,6 +2071,48 @@ ENTRY entry {
   EXPECT_EQ(result, expected);
 }
 
+TEST_F(ExecutionTest, DynamicBinaryOpOverZeroSizedDimension) {
+  // Regression test for https://github.com/openxla/xla/issues/49925.
+  //
+  // Both operands of an elementwise binary op have a dynamic dimension whose
+  // static bound is zero, so the dimension is always empty and the two dynamic
+  // sizes can never differ. The implicit broadcast rewrite used to slice a
+  // size-1 window out of the empty dimension anyway, which produced an
+  // out-of-bounds slice that failed HLO verification.
+  const std::string hlo_text = R"(
+HloModule module
+
+and_pred (lhs: pred[], rhs: pred[]) -> pred[] {
+  lhs = pred[] parameter(0)
+  rhs = pred[] parameter(1)
+  ROOT and = pred[] and(lhs, rhs)
+}
+
+ENTRY entry {
+  zero_f32 = f32[] constant(0)
+  init = pred[] constant(true)
+  size_0 = s32[] parameter(0)
+  size_1 = s32[] parameter(1)
+  a = f32[0, 2] broadcast(zero_f32), dimensions={}
+  b = f32[0, 2] broadcast(zero_f32), dimensions={}
+  a_dynamic = f32[<=0, 2] set-dimension-size(a, size_0), dimensions={0}
+  b_dynamic = f32[<=0, 2] set-dimension-size(b, size_1), dimensions={0}
+  cmp = pred[<=0, 2] compare(a_dynamic, b_dynamic), direction=EQ
+  ROOT result = pred[2] reduce(cmp, init), dimensions={0}, to_apply=and_pred
+}
+)";
+
+  auto module = GetHloModule(hlo_text);
+
+  Literal size_0 = LiteralUtil::CreateR0<int32_t>(0);
+  Literal size_1 = LiteralUtil::CreateR0<int32_t>(0);
+  ASSERT_OK_AND_ASSIGN(Literal result,
+                       PadAndExecute(std::move(module), {&size_0, &size_1}));
+
+  Literal expected = LiteralUtil::CreateR1<bool>({true, true});
+  EXPECT_EQ(result, expected);
+}
+
 TEST_F(ExecutionTest, DynamicStackPop) {
   // This tests the case where a static sized stack is popped by a dynamic
   // number of times.
