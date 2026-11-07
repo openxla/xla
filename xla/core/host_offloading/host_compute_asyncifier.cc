@@ -15,8 +15,14 @@ limitations under the License.
 
 #include "xla/core/host_offloading/host_compute_asyncifier.h"
 
+#include <utility>
+#include <vector>
+
+#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
@@ -29,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/tuple_simplifier.h"
 #include "xla/layout.h"
@@ -60,19 +67,109 @@ void RemoveTilesAndMemorySpaces(HloComputation* computation) {
         });
   }
 }
+
+// Clones `computation` into `module`, preserving its instruction schedule if
+// scheduled.
+HloComputation* CloneComputation(HloModule* module,
+                                 HloComputation* computation) {
+  if (!module->has_schedule() ||
+      !module->schedule().is_computation_scheduled(computation)) {
+    return module->AddEmbeddedComputation(
+        computation->Clone(/*suffix=*/"host"));
+  }
+  auto [clone, clone_sequence] =
+      computation->CloneWithSchedule(/*suffix=*/"host");
+  HloComputation* clone_ptr = module->AddEmbeddedComputation(std::move(clone));
+  module->schedule().set_sequence(clone_ptr, clone_sequence);
+  return clone_ptr;
+}
+
+// Specializes computations in `execution_threads` that are reachable via both
+// pure non-host call paths and paths containing at least one host device-type
+// call, ensuring each computation has at most two versions:
+// - Non-host version: all call paths from the entry computation consist solely
+//   of non-host device-type calls.
+// - Host version: every call path from the entry computation contains at least
+//   one host device-type call.
+void SpecializeComputationsForHost(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads,
+    absl::FunctionRef<bool(HloInstruction*)> is_host_call) {
+  if (!module->has_entry_computation()) {
+    return;
+  }
+
+  absl::flat_hash_set<const HloComputation*> non_host_comps;
+  absl::flat_hash_set<const HloComputation*> host_comps;
+  non_host_comps.insert(module->entry_computation());
+
+  std::vector<HloComputation*> post_order =
+      module->MakeComputationPostOrder(execution_threads);
+  for (auto it = post_order.rbegin(); it != post_order.rend(); ++it) {
+    HloComputation* computation = *it;
+    if (computation == module->entry_computation()) {
+      continue;
+    }
+
+    absl::InlinedVector<HloInstruction*, 1> callers =
+        computation->caller_instructions();
+    bool is_non_host_comp = false;
+    bool is_host_comp = false;
+    for (HloInstruction* caller : callers) {
+      const HloComputation* caller_comp = caller->parent();
+      const bool host_call = is_host_call(caller);
+      if (non_host_comps.contains(caller_comp) && !host_call) {
+        is_non_host_comp = true;
+      }
+      if (host_comps.contains(caller_comp) || host_call) {
+        is_host_comp = true;
+      }
+    }
+
+    if (is_non_host_comp && is_host_comp) {
+      HloComputation* host_clone = CloneComputation(module, computation);
+      non_host_comps.insert(computation);
+      host_comps.insert(host_clone);
+
+      // Sort callers by unique_id for deterministic topological sort edge
+      // insertion.
+      absl::c_sort(callers,
+                   [](const HloInstruction* a, const HloInstruction* b) {
+                     return a->unique_id() < b->unique_id();
+                   });
+      for (HloInstruction* caller : callers) {
+        const HloComputation* caller_comp = caller->parent();
+        if (host_comps.contains(caller_comp) || is_host_call(caller)) {
+          caller->ReplaceCalledComputations([&](HloComputation* callee) {
+            return callee == computation ? host_clone : callee;
+          });
+        }
+      }
+    } else if (is_non_host_comp) {
+      non_host_comps.insert(computation);
+    } else if (is_host_comp) {
+      host_comps.insert(computation);
+    }
+  }
+}
+
 }  // namespace
 
 absl::StatusOr<bool> HostComputeAsyncifier::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  auto is_host_call = [&](HloInstruction* instr) {
+    return instr->opcode() == HloOpcode::kCall &&
+           backend_config_device_type_is_host_fn_(instr);
+  };
+
+  SpecializeComputationsForHost(module, execution_threads, is_host_call);
+
   bool modified = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* call : computation->instructions()) {
-      if (call->opcode() != HloOpcode::kCall) {
-        continue;
-      }
-      if (!backend_config_device_type_is_host_fn_(call)) {
+      if (!is_host_call(call)) {
         continue;
       }
       VLOG(1) << "Host Call: " << call->name();
