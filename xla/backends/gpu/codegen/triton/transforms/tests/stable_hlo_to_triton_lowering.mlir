@@ -139,8 +139,10 @@ func.func @reduce_with_multiple_inputs(%arg0: tensor<16x8xf32>, %arg1: tensor<16
   // CHECK: %[[REDUCE_RESULT:.*]] = "tt.reduce"(%[[ARG0]], %[[ARG1]]) <{axis = 0 : i32}> ({
   %1, %2 = "stablehlo.reduce"(%arg0, %arg1, %0, %0) ({
   ^bb0(%arg0_reducer: tensor<f32>, %arg1_reducer: tensor<f32>, %arg2_reducer: tensor<f32>, %arg3_reducer: tensor<f32>):
-    %add0 = arith.addf %arg0_reducer, %arg1_reducer : tensor<f32>
-    %add1 = arith.addf %arg2_reducer, %arg3_reducer : tensor<f32>
+    // Reducer arguments are (accumulator_0, accumulator_1, element_0,
+    // element_1), so pair each accumulator with its own element.
+    %add0 = arith.addf %arg0_reducer, %arg2_reducer : tensor<f32>
+    %add1 = arith.addf %arg1_reducer, %arg3_reducer : tensor<f32>
     stablehlo.return %add0, %add1 : tensor<f32>, tensor<f32>
   }) {dimensions = array<i64: 0>} : (tensor<16x8xf32>, tensor<16x8xf32>, tensor<f32>, tensor<f32>) -> (tensor<8xf32>, tensor<8xf32>)
   return %1 : tensor<8xf32>

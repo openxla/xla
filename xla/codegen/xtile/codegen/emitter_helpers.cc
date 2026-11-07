@@ -1300,7 +1300,16 @@ absl::Status EmitReduceComputation(mlir::ImplicitLocOpBuilder& b,
     }
   }
 
-  TF_RET_CHECK(!to_emit.empty());
+  // A reducer that only selects one of its parameters, e.g. the `(a, b) -> b`
+  // combiner emitted for "take last" reductions, contains no instruction to
+  // emit: its result already is one of the reducer block arguments.
+  if (to_emit.empty()) {
+    auto it = region_values.find(reduction_computation->root_instruction());
+    TF_RET_CHECK(it != region_values.end());
+    mlir::stablehlo::ReturnOp::create(b, SmallVector<Value>({it->second}));
+    b.setInsertionPointAfter(reduction);
+    return absl::OkStatus();
+  }
 
   ABSL_ASSIGN_OR_RETURN(TensorValue result,
                         EmitScope(b, to_emit, region_values));
