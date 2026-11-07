@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -1256,15 +1257,16 @@ bool HloDataflowAnalysis::UpdateGetTupleElementValueSet(HloInstruction* gte) {
 
 bool HloDataflowAnalysis::UpdateParameterValueSet(HloInstruction* parameter) {
   CHECK_EQ(parameter->opcode(), HloOpcode::kParameter);
+  if (!propagate_through_calls_ && !propagate_through_control_flow_) {
+    return false;
+  }
   const CallGraphNode& call_graph_node =
       call_graph_->GetNode(parameter->parent());
 
-  // Subcomputations called in a parallel context (eg, map), dead computations,
-  // or computations when cross computation propagation is disabled do not have
-  // dataflow from the caller operands.
+  // Subcomputations called in a parallel context (eg, map) or dead computations
+  // do not have dataflow from the caller operands.
   if (call_graph_node.context() == CallContext::kEmbedded ||
-      call_graph_node.caller_callsites().empty() ||
-      (!propagate_through_calls_ && !propagate_through_control_flow_)) {
+      call_graph_node.caller_callsites().empty()) {
     return false;
   }
   CHECK_EQ(call_graph_node.context(), CallContext::kControlFlow);
@@ -1757,7 +1759,8 @@ void HloDataflowAnalysis::Propagate() {
 
     // If instruction is a root instruction, then propagate out to any calling
     // instruction and across any while backedge.
-    if (instruction == instruction->parent()->root_instruction()) {
+    if (instruction == instruction->parent()->root_instruction() &&
+        (propagate_through_calls_ || propagate_through_control_flow_)) {
       const CallGraphNode& call_graph_node =
           call_graph_->GetNode(instruction->parent());
       for (const CallSite& callsite : call_graph_node.caller_callsites()) {
@@ -1829,263 +1832,412 @@ absl::Status HloDataflowAnalysis::InitializeInstructionValueSets() {
                                           execution_threads_)) {
       continue;
     }
-    const CallGraphNode& call_graph_node = call_graph_->GetNode(computation);
-    for (HloInstruction* instruction :
-         computation->MakeInstructionPostOrder()) {
-      // Create an empty shape tree.
-      value_sets_.insert({instruction, std::make_unique<InstructionValueSet>(
-                                           &instruction->shape())});
+    ABSL_RETURN_IF_ERROR(InitializeComputationValueSets(computation).status());
+  }
+  return absl::OkStatus();
+}
 
-      // For each sub-shape of the instruction shape, add a new HloValue to its
-      // HloValueSet. should_define may be provided to define a subset of
-      // values.
-      auto define_all_values =
-          [this, &instruction](
-              absl::FunctionRef<bool(const ShapeIndex&)> should_define =
-                  [](const ShapeIndex&) { return true; }) {
-            for (auto& pair : GetInstructionValueSet(instruction)) {
-              const ShapeIndex& index = pair.first;
-              if (should_define(index)) {
-                HloValue* value =
-                    NewHloValue(instruction, index, /*is_phi=*/false);
-                GetMutableValueSet(instruction, index).AddValue(value);
-              }
+absl::StatusOr<HloDataflowAnalysis::ComputationState*>
+HloDataflowAnalysis::InitializeComputationValueSets(
+    const HloComputation* computation, std::vector<HloValue*>* new_values) {
+  const std::vector<HloInstruction*> post_order =
+      computation->MakeInstructionPostOrder();
+  ComputationState* comp_state = nullptr;
+  if (CanReanalyzeComputations()) {
+    comp_state = &computation_states_[computation];
+    comp_state->instructions.reserve(post_order.size());
+    comp_state->value_ids.reserve(post_order.size());
+  }
+  for (HloInstruction* instruction : post_order) {
+    // Create an empty shape tree. Allocate the new InstructionValueSet before
+    // replacing any stale map entry so its address is distinct even if a
+    // deleted HloInstruction's heap address was reused.
+    auto ivs = std::make_unique<InstructionValueSet>(&instruction->shape());
+    if (comp_state != nullptr) {
+      comp_state->instructions.emplace_back(instruction, ivs.get());
+      if (!cache_share_buffer_with_user_.empty()) {
+        cache_share_buffer_with_user_.erase(instruction);
+      }
+    }
+    value_sets_[instruction] = std::move(ivs);
+
+    auto record_new_value = [&](HloValue* value) {
+      if (comp_state != nullptr) {
+        comp_state->value_ids.push_back(value->id());
+      }
+      if (new_values != nullptr) {
+        new_values->push_back(value);
+      }
+    };
+
+    // For each sub-shape of the instruction shape, add a new HloValue to its
+    // HloValueSet. should_define may be provided to define a subset of
+    // values.
+    auto define_all_values =
+        [this, &instruction, &record_new_value](
+            absl::FunctionRef<bool(const ShapeIndex&)> should_define =
+                [](const ShapeIndex&) { return true; }) {
+          for (auto& pair : GetInstructionValueSet(instruction)) {
+            const ShapeIndex& index = pair.first;
+            if (should_define(index)) {
+              HloValue* value =
+                  NewHloValue(instruction, index, /*is_phi=*/false);
+              record_new_value(value);
+              GetMutableValueSet(instruction, index).AddValue(value);
             }
-          };
+          }
+        };
 
-      // Add a new HloValue to the HloValueSet corresponding to the given index
-      // of the instruction shape.
-      auto define_value_at = [this, &instruction](const ShapeIndex& index) {
-        HloValue* value = NewHloValue(instruction, index, /*is_phi=*/false);
-        GetMutableValueSet(instruction, index).AddValue(value);
-      };
+    // Add a new HloValue to the HloValueSet corresponding to the given index
+    // of the instruction shape.
+    auto define_value_at = [this, &instruction,
+                            &record_new_value](const ShapeIndex& index) {
+      HloValue* value = NewHloValue(instruction, index, /*is_phi=*/false);
+      record_new_value(value);
+      GetMutableValueSet(instruction, index).AddValue(value);
+    };
 
-      switch (instruction->opcode()) {
-        case HloOpcode::kBitcast:
-          if (bitcast_defines_value_) {
-            define_all_values();
-          }
-          break;
-        case HloOpcode::kCall:
-          if (!propagate_through_calls_) {
-            define_all_values();
-          }
-          break;
-        case HloOpcode::kWhile:
-        case HloOpcode::kConditional:
-          if (!propagate_through_control_flow_) {
-            define_all_values();
-          }
-          break;
-        case HloOpcode::kAddDependency:
-        case HloOpcode::kGetTupleElement:
-        case HloOpcode::kOptimizationBarrier:
-          // These instructions define no values. The values in their output
-          // flow from their operands or from cross computation dataflow.
-          break;
-        case HloOpcode::kParameter: {
-          if (!propagate_through_calls_ && !propagate_through_control_flow_) {
-            define_all_values();
-            break;
-          }
-          if (call_graph_node.context() == CallContext::kBoth) {
-            // We do not support a subcomputation that is called from both a
-            // parallel and sequential context. In this case, the parameter
-            // would both define a value and propagate a value from its
-            // caller. This limitation is not really a problem because the call
-            // graph is typically flattened.
-            return Unimplemented(
-                "Computation %s is called in both a parallel (eg, kMap) and "
-                "sequential (eg, kCall) context",
-                computation->name());
-          }
-          const bool is_regular_call_computation =
-              IsRegularCallComputation(call_graph_node);
-          const bool is_control_flow_computation =
-              !call_graph_node.caller_callsites().empty() &&
-              !is_regular_call_computation;
-          if (call_graph_node.caller_callsites().empty() ||
-              call_graph_node.context() == CallContext::kEmbedded ||
-              (!propagate_through_calls_ && is_regular_call_computation) ||
-              (!propagate_through_control_flow_ &&
-               is_control_flow_computation)) {
-            // Parameters of computations called in a parallel context (eg, map
-            // and reduce) as well as parameters of dead computations define all
-            // values in their output. Otherwise the values of the parameter
-            // come from the caller (eg, operands to the kCall instruction).
-            define_all_values();
-          }
+    switch (instruction->opcode()) {
+      case HloOpcode::kBitcast:
+        if (bitcast_defines_value_) {
+          define_all_values();
+        }
+        break;
+      case HloOpcode::kCall:
+        if (!propagate_through_calls_) {
+          define_all_values();
+        }
+        break;
+      case HloOpcode::kWhile:
+      case HloOpcode::kConditional:
+        if (!propagate_through_control_flow_) {
+          define_all_values();
+        }
+        break;
+      case HloOpcode::kAddDependency:
+      case HloOpcode::kGetTupleElement:
+      case HloOpcode::kOptimizationBarrier:
+        // These instructions define no values. The values in their output
+        // flow from their operands or from cross computation dataflow.
+        break;
+      case HloOpcode::kParameter: {
+        if (!propagate_through_calls_ && !propagate_through_control_flow_) {
+          define_all_values();
           break;
         }
-        case HloOpcode::kCopy:
-        case HloOpcode::kTuple:
-          // These instructions only define their top-level values. Any other
-          // values flow from their operands.
+        const CallGraphNode& call_graph_node =
+            call_graph_->GetNode(computation);
+        if (call_graph_node.context() == CallContext::kBoth) {
+          // We do not support a subcomputation that is called from both a
+          // parallel and sequential context. In this case, the parameter
+          // would both define a value and propagate a value from its
+          // caller. This limitation is not really a problem because the call
+          // graph is typically flattened.
+          return Unimplemented(
+              "Computation %s is called in both a parallel (eg, kMap) and "
+              "sequential (eg, kCall) context",
+              computation->name());
+        }
+        const bool is_regular_call_computation =
+            IsRegularCallComputation(call_graph_node);
+        const bool is_control_flow_computation =
+            !call_graph_node.caller_callsites().empty() &&
+            !is_regular_call_computation;
+        if (call_graph_node.caller_callsites().empty() ||
+            call_graph_node.context() == CallContext::kEmbedded ||
+            (!propagate_through_calls_ && is_regular_call_computation) ||
+            (!propagate_through_control_flow_ && is_control_flow_computation)) {
+          // Parameters of computations called in a parallel context (eg, map
+          // and reduce) as well as parameters of dead computations define all
+          // values in their output. Otherwise the values of the parameter
+          // come from the caller (eg, operands to the kCall instruction).
+          define_all_values();
+        }
+        break;
+      }
+      case HloOpcode::kCopy:
+      case HloOpcode::kTuple:
+        // These instructions only define their top-level values. Any other
+        // values flow from their operands.
+        define_value_at(/*index=*/{});
+        break;
+      case HloOpcode::kCustomCall:
+        if (instruction->custom_call_target() == kCallMarkerBeforeTarget) {
           define_value_at(/*index=*/{});
-          break;
-        case HloOpcode::kCustomCall:
-          if (instruction->custom_call_target() == kCallMarkerBeforeTarget) {
-            define_value_at(/*index=*/{});
-          } else if (instruction->custom_call_target() !=
-                     kCallMarkerAfterTarget) {
-            define_all_values();
+        } else if (instruction->custom_call_target() !=
+                   kCallMarkerAfterTarget) {
+          define_all_values();
+        }
+        break;
+      case HloOpcode::kAsyncStart: {
+        // AsyncStart produces a tuple of {{aliased operands}, {destination},
+        // contexts}. It defines all of the tuple-shaped values and the
+        // contexts.
+        //
+        // If the thread is excluded, then we don't track the contained
+        // dataflow, and define the destination values too.
+        bool thread_included =
+            propagate_through_control_flow_ &&
+            HloInstruction::IsThreadIncluded(
+                instruction->async_execution_thread(), execution_threads_);
+        define_all_values([&](const ShapeIndex& index) {
+          return ShapeUtil::GetSubshape(instruction->shape(), index)
+                     .IsTuple() ||
+                 (!thread_included && index.front() == 1) ||
+                 (index.front() > 1);
+        });
+        break;
+      }
+      case HloOpcode::kAsyncUpdate: {
+        // AsyncUpdate produces a tuple of {{aliased operands}, {destination},
+        // contexts}. It defines all of the tuple values and the contexts.
+        // When the async thread is excluded (or control flow propagation is
+        // disabled) and the output at {1, ...} is late bound, AsyncUpdate
+        // also defines the newly bound output values.
+        bool thread_included =
+            propagate_through_control_flow_ &&
+            HloInstruction::IsThreadIncluded(
+                instruction->async_execution_thread(), execution_threads_);
+        const Shape& prev_shape = instruction->operand(0)->shape();
+        define_all_values([&](const ShapeIndex& index) {
+          if (ShapeUtil::GetSubshape(instruction->shape(), index).IsTuple() ||
+              index.front() > 1) {
+            return true;
           }
-          break;
-        case HloOpcode::kAsyncStart: {
-          // AsyncStart produces a tuple of {{aliased operands}, {destination},
-          // contexts}. It defines all of the tuple-shaped values and the
-          // contexts.
-          //
-          // If the thread is excluded, then we don't track the contained
-          // dataflow, and define the destination values too.
-          bool thread_included =
-              propagate_through_control_flow_ &&
-              HloInstruction::IsThreadIncluded(
-                  instruction->async_execution_thread(), execution_threads_);
-          define_all_values([&](const ShapeIndex& index) {
-            return ShapeUtil::GetSubshape(instruction->shape(), index)
-                       .IsTuple() ||
-                   (!thread_included && index.front() == 1) ||
-                   (index.front() > 1);
-          });
-          break;
-        }
-        case HloOpcode::kAsyncUpdate: {
-          // AsyncUpdate produces a tuple of {{aliased operands}, {destination},
-          // contexts}. It defines all of the tuple values and the contexts.
-          // When the async thread is excluded (or control flow propagation is
-          // disabled) and the output at {1, ...} is late bound, AsyncUpdate
-          // also defines the newly bound output values.
-          bool thread_included =
-              propagate_through_control_flow_ &&
-              HloInstruction::IsThreadIncluded(
-                  instruction->async_execution_thread(), execution_threads_);
-          const Shape& prev_shape = instruction->operand(0)->shape();
-          define_all_values([&](const ShapeIndex& index) {
-            if (ShapeUtil::GetSubshape(instruction->shape(), index).IsTuple() ||
-                index.front() > 1) {
-              return true;
-            }
-            if (!thread_included && index.front() == 1) {
-              return !ShapeUtil::IndexIsValid(prev_shape, index) ||
-                     !ShapeUtil::Compatible(
-                         ShapeUtil::GetSubshape(instruction->shape(), index),
-                         ShapeUtil::GetSubshape(prev_shape, index));
-            }
-            return false;
-          });
-          break;
-        }
-        case HloOpcode::kAsyncDone: {
-          // AsyncDone's output aliases its output. It defines all remaining
-          // tuple values, plus any late bound output values when the async
-          // thread is excluded (or control flow propagation is disabled).
-          bool thread_included =
-              propagate_through_control_flow_ &&
-              HloInstruction::IsThreadIncluded(
-                  instruction->async_execution_thread(), execution_threads_);
-          const Shape& prev_shape = instruction->operand(0)->shape();
-          define_all_values([&](const ShapeIndex& index) {
-            if (ShapeUtil::GetSubshape(instruction->shape(), index).IsTuple()) {
-              return true;
-            }
-            if (!thread_included) {
-              ShapeIndex src_index = {1};
-              src_index.insert(src_index.end(), index.begin(), index.end());
-              return !ShapeUtil::IndexIsValid(prev_shape, src_index) ||
-                     !ShapeUtil::Compatible(
-                         ShapeUtil::GetSubshape(instruction->shape(), index),
-                         ShapeUtil::GetSubshape(prev_shape, src_index));
-            }
-            return false;
-          });
-          break;
-        }
-        case HloOpcode::kCopyStart:
-          // CopyStart produces a tuple of {destination buffer, aliased operand,
-          // U32 context}.
+          if (!thread_included && index.front() == 1) {
+            return !ShapeUtil::IndexIsValid(prev_shape, index) ||
+                   !ShapeUtil::Compatible(
+                       ShapeUtil::GetSubshape(instruction->shape(), index),
+                       ShapeUtil::GetSubshape(prev_shape, index));
+          }
+          return false;
+        });
+        break;
+      }
+      case HloOpcode::kAsyncDone: {
+        // AsyncDone's output aliases its output. It defines all remaining
+        // tuple values, plus any late bound output values when the async
+        // thread is excluded (or control flow propagation is disabled).
+        bool thread_included =
+            propagate_through_control_flow_ &&
+            HloInstruction::IsThreadIncluded(
+                instruction->async_execution_thread(), execution_threads_);
+        const Shape& prev_shape = instruction->operand(0)->shape();
+        define_all_values([&](const ShapeIndex& index) {
+          if (ShapeUtil::GetSubshape(instruction->shape(), index).IsTuple()) {
+            return true;
+          }
+          if (!thread_included) {
+            ShapeIndex src_index = {1};
+            src_index.insert(src_index.end(), index.begin(), index.end());
+            return !ShapeUtil::IndexIsValid(prev_shape, src_index) ||
+                   !ShapeUtil::Compatible(
+                       ShapeUtil::GetSubshape(instruction->shape(), index),
+                       ShapeUtil::GetSubshape(prev_shape, src_index));
+          }
+          return false;
+        });
+        break;
+      }
+      case HloOpcode::kCopyStart:
+        // CopyStart produces a tuple of {destination buffer, aliased operand,
+        // U32 context}.
+        define_value_at(/*index=*/{});
+        define_value_at(/*index=*/{0});
+        define_value_at(/*index=*/{2});
+        break;
+      case HloOpcode::kCopyDone:
+        // CopyDone consumes a tuple produced by CopyStart and produces an
+        // element. Its output aliases its input tuple element {0}.
+        break;
+      case HloOpcode::kAllGatherStart:
+        // AllGatherStart produces a tuple of
+        // {aliased operands, destination buffers}. If there is more than
+        // one operand, then both aliased operands and destination buffers
+        // will be tuples themselves. all-gather-start will define all tuples
+        // and all tuple leaves (arrays) in tuple sub-index 1 (destination
+        // buffers).
+        define_all_values([&](const ShapeIndex& index) {
+          return ShapeUtil::GetSubshape(instruction->shape(), index)
+                     .IsTuple() ||
+                 index.front() == 1;
+        });
+        break;
+      case HloOpcode::kAllGatherDone:
+        // AllGatherDone's output aliases its input tuple element {1}.
+        if (instruction->shape().IsTuple()) {
           define_value_at(/*index=*/{});
-          define_value_at(/*index=*/{0});
-          define_value_at(/*index=*/{2});
-          break;
-        case HloOpcode::kCopyDone:
-          // CopyDone consumes a tuple produced by CopyStart and produces an
-          // element. Its output aliases its input tuple element {0}.
-          break;
-        case HloOpcode::kAllGatherStart:
-          // AllGatherStart produces a tuple of
-          // {aliased operands, destination buffers}. If there is more than
-          // one operand, then both aliased operands and destination buffers
-          // will be tuples themselves. all-gather-start will define all tuples
-          // and all tuple leaves (arrays) in tuple sub-index 1 (destination
-          // buffers).
-          define_all_values([&](const ShapeIndex& index) {
-            return ShapeUtil::GetSubshape(instruction->shape(), index)
-                       .IsTuple() ||
-                   index.front() == 1;
-          });
-          break;
-        case HloOpcode::kAllGatherDone:
-          // AllGatherDone's output aliases its input tuple element {1}.
-          if (instruction->shape().IsTuple()) {
-            define_value_at(/*index=*/{});
-          }
-          break;
-        case HloOpcode::kAllReduceDone:
-          // AllReduceDone's output aliases its input.
-          break;
-        case HloOpcode::kCollectivePermuteStart:
-          // CollectivePermuteStart produces a tuple of {{aliased operand(s)},
-          // {destination buffer(s)}, contexts}, where the context data are
-          // optional.
-          define_value_at(/*index=*/{});
-          define_value_at(/*index=*/{1});
-          for (int i = 2; i < instruction->shape().tuple_shapes().size(); ++i) {
-            define_value_at(/*index=*/{i});
-          }
+        }
+        break;
+      case HloOpcode::kAllReduceDone:
+        // AllReduceDone's output aliases its input.
+        break;
+      case HloOpcode::kCollectivePermuteStart:
+        // CollectivePermuteStart produces a tuple of {{aliased operand(s)},
+        // {destination buffer(s)}, contexts}, where the context data are
+        // optional.
+        define_value_at(/*index=*/{});
+        define_value_at(/*index=*/{1});
+        for (int i = 2; i < instruction->shape().tuple_shapes().size(); ++i) {
+          define_value_at(/*index=*/{i});
+        }
 
-          if (Cast<HloCollectivePermuteInstruction>(instruction)->inplace()) {
-            CHECK_EQ(instruction->operand_count(), 4);
-            if (instruction->operand(1)->shape().IsTuple()) {
-              for (int i = 0; i < ShapeUtil::TupleElementCount(
-                                      instruction->operand(1)->shape());
-                   ++i) {
-                define_value_at(/*index=*/{1, i});
-              }
-            }
-          } else if (instruction->operand_count() > 1) {
-            for (int i = 0; i < instruction->operand_count(); ++i) {
+        if (Cast<HloCollectivePermuteInstruction>(instruction)->inplace()) {
+          CHECK_EQ(instruction->operand_count(), 4);
+          if (instruction->operand(1)->shape().IsTuple()) {
+            for (int i = 0; i < ShapeUtil::TupleElementCount(
+                                    instruction->operand(1)->shape());
+                 ++i) {
               define_value_at(/*index=*/{1, i});
             }
           }
-          break;
-        case HloOpcode::kCollectivePermuteDone:
-          // CollectivePermuteDone's output aliases its input tuple element {1}.
-          if (instruction->shape().IsTuple()) {
-            define_value_at(/*index=*/{});
+        } else if (instruction->operand_count() > 1) {
+          for (int i = 0; i < instruction->operand_count(); ++i) {
+            define_value_at(/*index=*/{1, i});
           }
-          break;
-        case HloOpcode::kRecvDone:
-          // RecvDone produces a two-element tuple. Element zero aliases its
-          // input tuple element {0}; element one is a token.
+        }
+        break;
+      case HloOpcode::kCollectivePermuteDone:
+        // CollectivePermuteDone's output aliases its input tuple element {1}.
+        if (instruction->shape().IsTuple()) {
           define_value_at(/*index=*/{});
-          define_value_at(/*index=*/{1});
-          break;
-        case HloOpcode::kSend:
-          // Send produces a tuple of {aliased operand, U32 context, token},
-          // therefore only defines the top-level tuple and the tuple elements
-          // at {1} and {2}.
-          define_value_at(/*index=*/{});
-          define_value_at(/*index=*/{1});
-          define_value_at(/*index=*/{2});
-          break;
-        default:
-          define_all_values();
-          break;
-      }
+        }
+        break;
+      case HloOpcode::kRecvDone:
+        // RecvDone produces a two-element tuple. Element zero aliases its
+        // input tuple element {0}; element one is a token.
+        define_value_at(/*index=*/{});
+        define_value_at(/*index=*/{1});
+        break;
+      case HloOpcode::kSend:
+        // Send produces a tuple of {aliased operand, U32 context, token},
+        // therefore only defines the top-level tuple and the tuple elements
+        // at {1} and {2}.
+        define_value_at(/*index=*/{});
+        define_value_at(/*index=*/{1});
+        define_value_at(/*index=*/{2});
+        break;
+      default:
+        define_all_values();
+        break;
     }
   }
 
+  return comp_state;
+}
+
+absl::Status HloDataflowAnalysis::ReanalyzeComputation(
+    const HloComputation* computation,
+    std::optional<absl::FunctionRef<bool(const HloValue&)>> precompute_uses) {
+  TF_RET_CHECK(computation != nullptr);
+  if (!CanReanalyzeComputations()) {
+    return FailedPrecondition(
+        "ReanalyzeComputation requires ssa_form=false, "
+        "propagate_through_calls=false, and "
+        "propagate_through_control_flow=false");
+  }
+  if (auto it = computation_states_.find(computation);
+      it != computation_states_.end()) {
+    for (const auto& [instruction, expected_ivs] : it->second.instructions) {
+      if (auto vs_it = value_sets_.find(instruction);
+          vs_it != value_sets_.end() && vs_it->second.get() == expected_ivs) {
+        value_sets_.erase(vs_it);
+        if (!cache_share_buffer_with_user_.empty()) {
+          cache_share_buffer_with_user_.erase(instruction);
+        }
+      }
+    }
+    if (!it->second.value_ids.empty()) {
+      const HloValue::Id min_id = it->second.value_ids.front();
+      const HloValue::Id max_id = it->second.value_ids.back();
+      auto first_it = std::lower_bound(
+          values_vector_.begin(), values_vector_.end(), min_id,
+          [](const HloValue* v, HloValue::Id id) { return v->id() < id; });
+      auto last_it = std::upper_bound(
+          first_it, values_vector_.end(), max_id,
+          [](HloValue::Id id, const HloValue* v) { return id < v->id(); });
+      if (static_cast<size_t>(last_it - first_it) ==
+          it->second.value_ids.size()) {
+        values_vector_.erase(first_it, last_it);
+      } else {
+        auto new_mid =
+            std::remove_if(first_it, last_it, [&](const HloValue* v) {
+              return std::binary_search(it->second.value_ids.begin(),
+                                        it->second.value_ids.end(), v->id());
+            });
+        values_vector_.erase(new_mid, last_it);
+      }
+      for (HloValue::Id id : it->second.value_ids) {
+        values_.erase(id);
+      }
+    }
+    computation_states_.erase(it);
+  }
+  std::vector<HloValue*> new_values;
+  absl::flat_hash_set<const HloComputation*> visited;
+  ABSL_RETURN_IF_ERROR(
+      AnalyzeNewComputation(computation, &new_values, &visited));
+  if (precompute_uses.has_value()) {
+    std::vector<HloValue*> values_to_precompute;
+    values_to_precompute.reserve(new_values.size());
+    for (HloValue* value : new_values) {
+      if ((*precompute_uses)(*value)) {
+        values_to_precompute.push_back(value);
+      }
+    }
+    HloValue::PrecomputeUses(values_to_precompute);
+  }
+  return absl::OkStatus();
+}
+
+absl::Status HloDataflowAnalysis::AnalyzeNewComputation(
+    const HloComputation* computation, std::vector<HloValue*>* new_values,
+    absl::flat_hash_set<const HloComputation*>* visited) {
+  if (!visited->insert(computation).second ||
+      computation_states_.contains(computation)) {
+    return absl::OkStatus();
+  }
+  if (HloInstruction::IsThreadIncluded(computation->execution_thread(),
+                                       execution_threads_)) {
+    const size_t first_new_idx = new_values->size();
+    ABSL_ASSIGN_OR_RETURN(
+        ComputationState * comp_state,
+        InitializeComputationValueSets(computation, new_values));
+    for (const auto& [instruction, _] : comp_state->instructions) {
+      UpdateInstructionValueSet(instruction);
+    }
+    absl::flat_hash_map<HloValue::Id, std::vector<HloPosition>> value_positions;
+    for (HloInstruction* instruction : computation->instructions()) {
+      for (const auto& [index, value_set] :
+           GetInstructionValueSet(instruction)) {
+        for (const HloValue* value : value_set.values()) {
+          if (value->defining_instruction() != instruction) {
+            value_positions[value->id()].push_back(
+                HloPosition{instruction, index});
+          }
+        }
+      }
+    }
+    for (size_t i = first_new_idx; i < new_values->size(); ++i) {
+      HloValue* value = (*new_values)[i];
+      if (auto pos_it = value_positions.find(value->id());
+          pos_it != value_positions.end()) {
+        value->SetPositions(pos_it->second);
+      } else {
+        value->SetPositions({});
+      }
+      values_vector_.push_back(value);
+    }
+    if constexpr (tsl::kIsDebugBuild) {
+      DCHECK_EQ(values_vector_.size(), values_.size());
+      DCHECK(absl::c_is_sorted(values_vector_, HloValue::IdLessThan));
+    }
+  }
+  for (const HloInstruction* instruction : computation->instructions()) {
+    for (const HloComputation* callee : instruction->called_computations()) {
+      ABSL_RETURN_IF_ERROR(AnalyzeNewComputation(callee, new_values, visited));
+    }
+  }
   return absl::OkStatus();
 }
 

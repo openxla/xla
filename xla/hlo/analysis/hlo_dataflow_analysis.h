@@ -93,6 +93,17 @@ class HloDataflowAnalysis {
           std::nullopt,
       bool propagate_through_control_flow = true);
 
+  // Updates the analysis after instructions of `computation` were added,
+  // removed, or rewired, and analyzes any computations called from it that were
+  // not yet analyzed (such as computations cloned with an instruction).
+  // Requires `ssa_form=false`, `propagate_through_calls=false`, and
+  // `propagate_through_control_flow=false`, so that each computation's value
+  // sets depend only on its own instructions.
+  absl::Status ReanalyzeComputation(
+      const HloComputation* computation,
+      std::optional<absl::FunctionRef<bool(const HloValue&)>> precompute_uses =
+          std::nullopt);
+
   // Returns true if 'instruction' defines an HLO value at the given shape index
   // of its output.
   bool ValueIsDefinedAt(const HloInstruction* instruction,
@@ -263,10 +274,26 @@ class HloDataflowAnalysis {
   // propagation is complete.
   void DeleteMarkedValues();
 
+  struct ComputationState {
+    std::vector<std::pair<HloInstruction*, const InstructionValueSet*>>
+        instructions;
+    std::vector<HloValue::Id> value_ids;
+  };
+
   // Constructs and initializes the InstructionValueSets of all instructions to
   // contain exactly the HloValues defined by each instruction. These values can
   // then propagated throughout the HLO graph by calling Propagate.
   absl::Status InitializeInstructionValueSets();
+  absl::StatusOr<ComputationState*> InitializeComputationValueSets(
+      const HloComputation* computation,
+      std::vector<HloValue*>* new_values = nullptr);
+  absl::Status AnalyzeNewComputation(
+      const HloComputation* computation, std::vector<HloValue*>* new_values,
+      absl::flat_hash_set<const HloComputation*>* visited);
+  bool CanReanalyzeComputations() const {
+    return !ssa_form_ && !propagate_through_calls_ &&
+           !propagate_through_control_flow_;
+  }
 
   // Updates the value set of the given instruction based on the values flowing
   // into the instruction (operands and cross-computation dataflow).
@@ -376,6 +403,9 @@ class HloDataflowAnalysis {
 
   // An explicit graph holding phi values and edges.
   PhiGraph phi_graph_;
+
+  absl::flat_hash_map<const HloComputation*, ComputationState>
+      computation_states_;
 
   // Cache for CanShareOperandBufferWithUser.
   mutable absl::flat_hash_map<

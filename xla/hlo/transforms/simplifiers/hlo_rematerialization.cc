@@ -2864,8 +2864,8 @@ absl::StatusOr<InstructionsAdded> RematerializeBestBlock(
                                   rematerializable_map));
   }
 
-  rematerialization->on_block_rematerialized(
-      num_instructions_added.remat_count);
+  rematerialization->on_block_rematerialized(num_instructions_added.remat_count,
+                                             memory_tracker->computation());
   return num_instructions_added;
 }
 }  // namespace
@@ -2940,10 +2940,7 @@ HloRematerialization::UpdateScheduleFromSequence(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   schedule->set_sequence(computation, sequence);
 
-  // TODO(b/398843357): This is expensive and we shouldn't need to recompute
-  // the dataflow_analysis_ after rematerializing each computation. Recompute
-  // dataflow_analysis_ since the older analysis does not include
-  // rematerialized instructions.
+  // Bring dataflow_analysis_ up to date with the rematerialized instructions.
   ABSL_RETURN_IF_ERROR(UpdateDataflowAnalysis(computation->parent()));
   ABSL_ASSIGN_OR_RETURN(
       MemoryUsageAndInstruction peak_memory_result,
@@ -2955,22 +2952,30 @@ HloRematerialization::UpdateScheduleFromSequence(
 }
 
 absl::Status HloRematerialization::UpdateDataflowAnalysis(HloModule* module) {
+  auto precompute_all = [](const HloValue&) { return true; };
   if (dataflow_analysis_ == nullptr) {
+    stale_computations_.clear();
     ABSL_ASSIGN_OR_RETURN(
         dataflow_analysis_,
-        HloDataflowAnalysis::Run(
-            *module, /*ssa_form=*/false,
-            /*bitcast_defines_value=*/false,
-            /*execution_threads=*/{},
-            /*propagate_through_calls=*/false,
-            /*precompute_uses=*/[](const HloValue&) { return true; },
-            /*propagate_through_control_flow=*/false));
+        HloDataflowAnalysis::Run(*module, /*ssa_form=*/false,
+                                 /*bitcast_defines_value=*/false,
+                                 /*execution_threads=*/{},
+                                 /*propagate_through_calls=*/false,
+                                 /*precompute_uses=*/precompute_all,
+                                 /*propagate_through_control_flow=*/false));
+    return absl::OkStatus();
   }
+  for (const HloComputation* computation : stale_computations_) {
+    ABSL_RETURN_IF_ERROR(dataflow_analysis_->ReanalyzeComputation(
+        computation, /*precompute_uses=*/precompute_all));
+  }
+  stale_computations_.clear();
   return absl::OkStatus();
 }
 
 void HloRematerialization::SetDataflowAnalysisStale() {
   dataflow_analysis_ = nullptr;
+  stale_computations_.clear();
 }
 
 absl::Status HloRematerialization::ComputeValueOverwriters(
@@ -3497,6 +3502,7 @@ absl::StatusOr<bool> HloRematerialization::RematerializeComputation(
   CHECK(!ContainsKey(rematerialized_computations_, computation));
 
   ABSL_RETURN_IF_ERROR(ComputeValueOverwriters(computation->parent()));
+  ABSL_RETURN_IF_ERROR(UpdateDataflowAnalysis(computation->parent()));
   HloRematInstructionList instruction_list(schedule->sequence(computation));
   MemoryUsageTracker memory_tracker(options_, computation, *dataflow_analysis_,
                                     instruction_list, &value_overwriters_,

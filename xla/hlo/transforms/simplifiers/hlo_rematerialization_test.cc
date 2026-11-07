@@ -32,9 +32,11 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/time/clock.h"
@@ -44,8 +46,10 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
@@ -58,6 +62,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test_benchmark.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -3458,10 +3463,161 @@ ENTRY %entry {
   ExpectNoReadAfterOverwrite(device, "x", "dus");
 }
 
+TEST_P(RematWithAliasInfoTest,
+       RematerializesFusionsAcrossCallerAndNestedWhileBody) {
+  constexpr absl::string_view kHloStr = R"hlo(
+HloModule fused_nested_remat, is_scheduled=true
+
+%entry_fused_op (p0: f32[]) -> f32[4096] {
+  %p0 = f32[] parameter(0)
+  %b = f32[4096]{0} broadcast(%p0), dimensions={}
+  ROOT %neg = f32[4096]{0} negate(%b)
+}
+
+%body_fused_op (p0: f32[]) -> f32[2048] {
+  %p0 = f32[] parameter(0)
+  %b = f32[2048]{0} broadcast(%p0), dimensions={}
+  ROOT %abs = f32[2048]{0} abs(%b)
+}
+
+%w_cond (wp: (f32[16], f32[16])) -> pred[] {
+  %wp = (f32[16]{0}, f32[16]{0}) parameter(0)
+  ROOT %c = pred[] constant(false)
+}
+
+%w_body (wp: (f32[16], f32[16])) -> (f32[16], f32[16]) {
+  %wp = (f32[16]{0}, f32[16]{0}) parameter(0)
+  %wg0 = f32[16]{0} get-tuple-element(%wp), index=0
+  %wg1 = f32[16]{0} get-tuple-element(%wp), index=1
+  %wz = f32[] constant(0)
+  %wf = f32[2048]{0} fusion(%wz), kind=kLoop, calls=%body_fused_op
+  %wf_early = f32[16]{0} slice(%wf), slice={[0:16]}
+  %wpeak = f32[4096]{0} custom-call(%wf_early), custom_call_target="WPeak"
+  %wsink = f32[16]{0} slice(%wpeak), slice={[0:16]}
+  %wf_late = f32[16]{0} slice(%wf), slice={[16:32]}
+  %wnext = f32[16]{0} add(%wg0, %wsink)
+  %wout = f32[16]{0} add(%wnext, %wf_late)
+  ROOT %wr = (f32[16]{0}, f32[16]{0}) tuple(%wout, %wg1)
+}
+
+ENTRY %entry {
+  %p = f32[16]{0} parameter(0)
+  %z = f32[] constant(0)
+  %ef = f32[4096]{0} fusion(%z), kind=kLoop, calls=%entry_fused_op
+  %ef_early = f32[16]{0} slice(%ef), slice={[0:16]}
+  %init = (f32[16]{0}, f32[16]{0}) tuple(%ef_early, %p)
+  %w = (f32[16]{0}, f32[16]{0}) while(%init), condition=%w_cond, body=%w_body
+  %w0 = f32[16]{0} get-tuple-element(%w), index=0
+  %ef_late = f32[16]{0} slice(%ef), slice={[16:32]}
+  ROOT %out = f32[16]{0} add(%w0, %ef_late)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloStr));
+  HloRematerialization::RematerializationSizes sizes;
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       Run(module.get(), /*memory_limit_bytes=*/20 * 1024,
+                           /*block_size_limit=*/1, &sizes));
+  EXPECT_TRUE(changed);
+  EXPECT_LE(sizes.after_bytes, 20 * 1024);
+  EXPECT_EQ(module->entry_computation()
+                ->GetInstructionWithName("ef_late")
+                ->operand(0)
+                ->name(),
+            "ef.remat");
+  EXPECT_EQ(module->GetComputationWithName("w_body")
+                ->GetInstructionWithName("wf_late")
+                ->operand(0)
+                ->name(),
+            "wf.remat");
+}
+
 INSTANTIATE_TEST_SUITE_P(
     Algorithms, RematWithAliasInfoTest,
     ::testing::Values(HloRematerialization::RematAlgorithm::kAlwaysRemat,
                       HloRematerialization::RematAlgorithm::kPeakPriority));
+
+std::string MakePeakPriorityFusedModuleHlo(int num_fusions, int num_peaks) {
+  std::string hlo = "HloModule bm_peak_priority, is_scheduled=true\n\n";
+  for (int f = 0; f < num_fusions; ++f) {
+    absl::StrAppend(&hlo, "%fused_comp_", f,
+                    " (fp0: f32[16], fp1: f32[16]) -> f32[16] {\n",
+                    "  %fp0 = f32[16]{0} parameter(0)\n",
+                    "  %fp1 = f32[16]{0} parameter(1)\n",
+                    "  %v0 = f32[16]{0} add(%fp0, %fp1)\n");
+    for (int k = 1; k < 32; ++k) {
+      absl::StrAppend(&hlo, "  %v", k, " = f32[16]{0} multiply(%v", k - 1,
+                      ", %fp1)\n");
+    }
+    absl::StrAppend(&hlo, "  ROOT %fout = f32[16]{0} negate(%v31)\n}\n\n");
+  }
+
+  hlo += "ENTRY %entry {\n  %p = f32[16]{0} parameter(0)\n";
+  hlo += "  %zero = f32[] constant(0)\n";
+  std::string acc = "%p";
+  for (int f = 0; f < num_fusions; ++f) {
+    absl::StrAppend(&hlo, "  %fus_", f, " = f32[16]{0} fusion(", acc,
+                    ", %p), kind=kLoop, calls=%fused_comp_", f, "\n");
+    acc = absl::StrCat("%fus_", f);
+  }
+  for (int i = 0; i < num_peaks; ++i) {
+    absl::StrAppend(&hlo, "  %cand_", i,
+                    " = f32[4096]{0} broadcast(%zero), dimensions={}\n",
+                    "  %early_", i, " = f32[16]{0} slice(%cand_", i,
+                    "), slice={[0:16]}\n");
+    absl::StrAppend(&hlo, "  %acc_early_", i, " = f32[16]{0} add(", acc,
+                    ", %early_", i, ")\n");
+    acc = absl::StrCat("%acc_early_", i);
+  }
+  for (int i = 0; i < num_peaks; ++i) {
+    absl::StrAppend(&hlo, "  %peak_", i, " = f32[8192]{0} custom-call(", acc,
+                    "), custom_call_target=\"Peak\"\n", "  %sink_", i,
+                    " = f32[16]{0} slice(%peak_", i, "), slice={[0:16]}\n",
+                    "  %late_", i, " = f32[16]{0} slice(%cand_", i,
+                    "), slice={[16:32]}\n", "  %acc_late_", i,
+                    " = f32[16]{0} add(%sink_", i, ", %late_", i, ")\n");
+    acc = absl::StrCat("%acc_late_", i);
+  }
+  absl::StrAppend(&hlo, "  ROOT %out = f32[16]{0} copy(", acc, ")\n}\n");
+  return hlo;
+}
+
+void BM_PeakPriorityRematMultiComputation(::testing::benchmark::State& state) {
+  const std::string hlo =
+      MakePeakPriorityFusedModuleHlo(/*num_fusions=*/state.range(0),
+                                     /*num_peaks=*/16);
+  absl::StatusOr<std::unique_ptr<HloModule>> template_module =
+      ParseAndReturnUnverifiedModule(hlo);
+  CHECK_OK(template_module.status());
+  auto shape_size = [](const Shape& shape) {
+    return ShapeUtil::ByteSizeOf(shape, /*pointer_size=*/8);
+  };
+  for (auto s : state) {
+    state.PauseTiming();
+    std::unique_ptr<HloModule> module = (*template_module)->Clone();
+    HloCostAnalysis cost_analysis(shape_size);
+    HloRematerialization::RematerializationModeConfig mode_config(
+        /*recompute=*/true, /*compress=*/false, /*host_offload=*/false);
+    HloRematerialization::Options options(
+        cost_analysis, mode_config, /*memory_limit_bytes=*/64 * 1024,
+        /*block_size_limit=*/1, /*block_rematerialization_factor=*/1,
+        /*min_remat_size=*/0, /*compact_shape_function=*/nullptr,
+        /*host_memory_offload_config=*/std::nullopt,
+        /*async_computation_parallelism=*/{},
+        HloRematerialization::RematAlgorithm::kPeakPriority);
+    HloRematerialization::RematerializationSizes sizes;
+    HloRematerialization pass(options, sizes);
+    state.ResumeTiming();
+
+    absl::StatusOr<bool> changed =
+        pass.Run(module.get(), {HloInstruction::kMainExecutionThread});
+    CHECK_OK(changed.status());
+    CHECK(*changed);
+    tsl::testing::DoNotOptimize(sizes);
+  }
+}
+// NOLINTNEXTLINE(misc-include-cleaner)
+BENCHMARK(BM_PeakPriorityRematMultiComputation)->Arg(16)->Arg(64)->Arg(256);
 
 }  // namespace
 }  // namespace xla
