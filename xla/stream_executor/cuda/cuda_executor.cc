@@ -975,6 +975,7 @@ std::unique_ptr<ActivateContext> CudaExecutor::Activate() {
 }
 
 CudaExecutor::~CudaExecutor() {
+  DestroyResources();
   CHECK(kernel_to_gpu_binary_.empty()) << "CudaExecutor has live kernels.";
   CHECK(gpu_binary_to_module_.empty()) << "CudaExecutor has loaded modules.";
 }

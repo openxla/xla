@@ -41,6 +41,18 @@ StreamExecutor::StreamExecutor()
 
 StreamExecutor::~StreamExecutor() = default;
 
+void StreamExecutor::DestroyResources() {
+  if (!resources_) {
+    return;
+  }
+  absl::flat_hash_map<ResourceTypeId, std::unique_ptr<Resource>> to_destroy;
+  {
+    absl::MutexLock lock(resources_->mu);
+    to_destroy = std::move(resources_->map);
+  }
+  to_destroy.clear();
+}
+
 StreamExecutor::ResourceTypeId StreamExecutor::GetNextResourceTypeId() {
   static std::atomic<int64_t> counter(1);
   return ResourceTypeId(counter.fetch_add(1));

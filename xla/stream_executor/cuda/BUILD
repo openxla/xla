@@ -815,10 +815,10 @@ xla_test(
     ],
 )
 
-cc_library(
+cuda_library(
     name = "command_buffer_kernels",
     srcs = [
-        "command_buffer_kernels.cc",
+        "command_buffer_kernels.cu.cc",
     ],
     hdrs = ["command_buffer_kernels.h"],
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
@@ -828,8 +828,9 @@ cc_library(
     ],
     deps = [
         "//xla/stream_executor:kernel_spec",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:string_view",
+        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 
@@ -1754,6 +1755,7 @@ xla_test(
         "//xla:debug_options_flags",
         "//xla:xla_proto_cc",
         "//xla/stream_executor:activate_context",
+        "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:kernel",
@@ -1771,6 +1773,7 @@ xla_test(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",  # build_cleaner: keep
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
@@ -2168,7 +2171,7 @@ cc_library(
         "gpu",
     ],
     deps = [
-        "//xla/stream_executor/cuda:cuda_graph_annotation_registry",
+        ":cuda_graph_annotation_registry",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
@@ -2190,7 +2193,7 @@ cc_library(
     ],
     deps = [
         ":cuda_command_buffer_telemetry",
-        "//xla/stream_executor/cuda:cuda_graph_annotation_registry",
+        ":cuda_graph_annotation_registry",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -2215,6 +2218,7 @@ cc_library(
         ":cuda_command_buffer_telemetry",
         ":cuda_command_buffer_telemetry_pre_13_4",
         ":cuda_context",
+        ":cuda_graph_annotation_registry",
         ":cuda_kernel",
         ":cuda_status",
         ":cuda_stream",
@@ -2227,18 +2231,19 @@ cc_library(
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_args",
+        "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:typed_kernel_factory",
-        "//xla/stream_executor/cuda:cuda_graph_annotation_registry",
         "//xla/stream_executor/gpu:gpu_command_buffer",
         "//xla/stream_executor/gpu:scoped_command_buffer_annotation",
         "//xla/tsl/platform:env",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/debugging:leak_check",
@@ -2252,6 +2257,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@local_config_cuda//cuda:cuda_headers",
         "@tsl//tsl/platform:path",
@@ -2264,6 +2270,7 @@ xla_test(
     backends = ["gpu"],
     tags = ["cuda-only"],
     deps = [
+        ":command_buffer_kernels",
         ":cuda_command_buffer",
         ":cuda_compute_capability",
         ":cudnn_plugin",
@@ -2274,6 +2281,7 @@ xla_test(
         "//xla/stream_executor:engine_options",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_args",
+        "//xla/stream_executor:kernel_spec",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
@@ -2290,7 +2298,9 @@ xla_test(
         "@com_google_absl//absl/log:log_sink",
         "@com_google_absl//absl/log:log_sink_registry",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",  # build_cleaner: keep
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
@@ -2310,6 +2320,7 @@ cc_library(
     ],
     deps = [
         ":cuda_command_buffer_telemetry",
+        ":cuda_graph_annotation_registry",
         ":cuda_status",
         "//xla/service:platform_util",
         "//xla/stream_executor:command_buffer",
@@ -2323,7 +2334,6 @@ cc_library(
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/cuda:cuda_graph_annotation_registry",
         "//xla/stream_executor/gpu:gpu_command_buffer",
         "//xla/stream_executor/gpu:gpu_test_kernels",
         "//xla/stream_executor/gpu:scoped_command_buffer_annotation",
@@ -2347,6 +2357,7 @@ xla_test(
     tags = ["cuda-only"],
     deps = [
         ":cuda_command_buffer_telemetry_test_util",
+        ":cuda_graph_annotation_registry",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:kernel_args",
@@ -2354,7 +2365,6 @@ xla_test(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor:trace_command_buffer_factory",
-        "//xla/stream_executor/cuda:cuda_graph_annotation_registry",
         "//xla/stream_executor/gpu:scoped_command_buffer_annotation",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/status",
@@ -2376,11 +2386,11 @@ xla_test(
         ":cuda_command_buffer_telemetry",
         ":cuda_command_buffer_telemetry_pre_13_4",
         ":cuda_command_buffer_telemetry_test_util",
+        ":cuda_graph_annotation_registry",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:stream_executor_h",
-        "//xla/stream_executor/cuda:cuda_graph_annotation_registry",
         "//xla/stream_executor/gpu:scoped_command_buffer_annotation",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/cleanup",

@@ -414,6 +414,10 @@ class StreamExecutor {
         [&] { return std::make_unique<R>(std::forward<Args>(args)...); });
   }
 
+ protected:
+  // Destroys all attached resources while the derived executor is still alive.
+  void DestroyResources();
+
  private:
   Resource* GetOrNullResource(ResourceTypeId type_id);
   Resource* GetOrCreateResource(
