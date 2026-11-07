@@ -575,6 +575,44 @@ ENTRY main {
   EXPECT_TRUE(analysis->IsOriginalAbsoluteTensorKeyRecoverable(abs_key));
 }
 
+TEST_F(HloOriginalValueAnalysisTest, SyntheticFusionCallHierarchyTracking) {
+  const char* module_str = R"(
+HloModule TestModule
+
+fused_comp {
+  p = f32[2] parameter(0)
+  ROOT fused_res = f32[2] copy(p), origin={{"fused_res"}}
+}
+
+mid_comp {
+  p = f32[2] parameter(0)
+  ROOT fusion = f32[2] fusion(p), kind=kLoop, calls=fused_comp, origin={(),[""]}
+}
+
+ENTRY main {
+  src = f32[2] parameter(0)
+  ROOT caller = f32[2] call(src), to_apply=mid_comp, origin={{"outer_scope"}}
+}
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(module_str));
+  ASSERT_OK_AND_ASSIGN(auto analysis,
+                       HloOriginalValueAnalysis::Create(module.get()));
+
+  auto fusion_call_it = analysis->call_map().find("fusion");
+  ASSERT_NE(fusion_call_it, analysis->call_map().end());
+  EXPECT_TRUE(fusion_call_it->second.empty());
+
+  EXPECT_TRUE(analysis->IsOriginalAbsoluteTensorKeyRecoverable(
+      AbsoluteScopedTensorKey::FromString("outer_scope/fused_res")));
+  EXPECT_EQ(AbsoluteScopedTensorKey::Create(
+                {ScopeInstruction{"fusion", 0}},
+                RelativeScopedTensorKey::FromString("fused_res", {}),
+                analysis->call_map())
+                .ToString(),
+            "fused_res ({})");
+}
+
 TEST_F(HloOriginalValueAnalysisTest, RequestedOriginalArraysFiltering) {
   const char* module_str = R"(
 HloModule TestModule

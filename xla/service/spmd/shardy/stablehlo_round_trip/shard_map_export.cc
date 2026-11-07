@@ -60,6 +60,7 @@ limitations under the License.
 #include "shardy/dialect/sdy/ir/utils.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"  // for CopyOp
+#include "xla/mlir_hlo/utils/unregistered_attributes.h"
 #include "xla/service/spmd/shardy/constants.h"
 #include "xla/xla_data.pb.h"
 
@@ -393,6 +394,25 @@ void convertManualComputationOp(
   setNonEmptyManualAxes(callOp, regionManualAxesAttr);
   sdy::inlineRegionAndConvertTerminatorOp<mlir::func::ReturnOp>(
       op.getBody(), funcOp.getBody());
+  bool hasOriginalValue = op->hasAttr(xla::kMhloOriginalValueAttr);
+  if (!hasOriginalValue) {
+    funcOp.getBody().walk([&](Operation* bodyOp) {
+      if (bodyOp->hasAttr(xla::kMhloOriginalValueAttr)) {
+        hasOriginalValue = true;
+        return mlir::WalkResult::interrupt();
+      }
+      return mlir::WalkResult::advance();
+    });
+  }
+  if (hasOriginalValue) {
+    callOp->setAttr(
+        xla::kMhloOriginalValueAttr,
+        mlir::mhlo::OriginalValueAttr::get(
+            context, /*is_synthetic_call=*/true,
+            /*elements=*/
+            llvm::ArrayRef<mlir::mhlo::OriginalValueElementAttr>()));
+  }
+
   auto setShardingAndManualAxes = [&](ArrayRef<TensorShardingAttr> shardings) {
     return [&, shardings](mlir::NamedAttrList& attrs, int64_t index) {
       if (TensorShardingAttr sharding = shardings[index]) {

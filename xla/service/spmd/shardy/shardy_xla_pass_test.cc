@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/python/inspect_sharding.h"
+#include "xla/service/call_inliner.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/spmd/sharding_format_picker.h"
 #include "xla/service/spmd/shardy/constants.h"
@@ -914,6 +915,53 @@ TEST_P(ShardyXLATest, ShardMap) {
               op::Sharding("{devices=[4,1,2]<=[8] last_tile_dim_replicate}"));
 }
 
+TEST_P(ShardyXLATest, ShardMapPreservesOriginalValueAcrossCallInliner) {
+  const char* const hloString = R"(
+    HloModule shard_map
+
+    xla.sdy.manual_computation_body.11 {
+      Arg_0.12 = f32[2,8] parameter(0), origin={{"Arg_0.12"}}
+      add.14 = f32[2,8] add(Arg_0.12, Arg_0.12), origin={{"add.14"}}
+      Arg_1.13 = f32[8,32] parameter(1), origin={{"Arg_1.13"}}
+      dot.15 = f32[2,32] dot(add.14, Arg_1.13), lhs_contracting_dims={1}, rhs_contracting_dims={0}, origin={{"dot.15"}}
+      ROOT tuple.16 = (f32[2,8], f32[2,32]) tuple(add.14, dot.15), origin={({"add.14"}, {"dot.15"})}
+    }
+
+    ENTRY main {
+      p0 = f32[8,16] parameter(0), origin={{"p0"}}
+      p1 = f32[16,32] parameter(1), origin={{"p1"}}
+      %custom-call.2 = (f32[2,8], f32[8,32]) custom-call(p0, p1), custom_call_target="xla.sdy.GlobalToLocalShape", frontend_attributes={xla.sdy.in_shardings="#sdy.sharding_per_value<[<mesh<[\"a\"=4, \"b\"=2]>, [{\"a\"}, {\"b\"}]>, <mesh<[\"a\"=4, \"b\"=2]>, [{\"b\"}, {}], replicated={\"a\"}>]>",xla.sdy.manual_axes="#sdy<manual_axes{\"a\", \"b\"}>"}, origin={({},{"custom-call.2" {1}})}
+      %get-tuple-element.2 = f32[2,8] get-tuple-element(%custom-call.2), index=0
+      %get-tuple-element.3 = f32[8,32] get-tuple-element(%custom-call.2), index=1
+      %call.1 = (f32[2,8], f32[2,32]) call(%get-tuple-element.2, %get-tuple-element.3), to_apply=xla.sdy.manual_computation_body.11, origin={({"call.1" {0}}, {"call.1" {1}}),["call.1"]}
+      %gte.out0 = f32[2,8] get-tuple-element(%call.1), index=0
+      %gte.out1 = f32[2,32] get-tuple-element(%call.1), index=1
+      ROOT %custom-call.3 = (f32[8,16], f32[8,32]) custom-call(%gte.out0, %gte.out1), custom_call_target="xla.sdy.LocalToGlobalShape", frontend_attributes={xla.sdy.manual_axes="#sdy<manual_axes{\"a\", \"b\"}>",xla.sdy.out_shardings="#sdy.sharding_per_value<[<mesh<[\"a\"=4, \"b\"=2]>, [{\"a\"}, {\"b\"}]>, <mesh<[\"a\"=4, \"b\"=2]>, [{\"a\"}, {}], replicated={\"b\"}>]>"}
+    })";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hloString));
+  runShardyWithSdyImport(module.get());
+
+  HloInstruction* call = FindInstruction(module.get(), xla::HloOpcode::kCall);
+  ASSERT_NE(call, nullptr);
+  ASSERT_NE(call->original_value(), nullptr);
+  EXPECT_TRUE(call->original_value()->is_synthetic_call());
+
+  CallInliner call_inliner;
+  ASSERT_THAT(call_inliner.Run(module.get()),
+              ::absl_testing::IsOkAndHolds(true));
+
+  HloInstruction* add = FindInstruction(module.get(), xla::HloOpcode::kAdd);
+  ASSERT_NE(add, nullptr);
+  ASSERT_NE(add->original_value(), nullptr);
+  EXPECT_EQ(add->original_value()->ToString(), R"({"add.14"})");
+
+  HloInstruction* dot = FindInstruction(module.get(), xla::HloOpcode::kDot);
+  ASSERT_NE(dot, nullptr);
+  ASSERT_NE(dot->original_value(), nullptr);
+  EXPECT_EQ(dot->original_value()->ToString(), R"({"dot.15"})");
+}
+
 // Be able to handle an empty computation layout and input_output_alias_config.
 TEST_P(ShardyXLATest, EmptyModule) {
   const char* const hloString = R"(
@@ -1426,6 +1474,26 @@ TEST_P(ShardyXLATest, PreserveOriginalValueRecoveryTable) {
   runShardyWithSdyImport(module.get());
   EXPECT_TRUE(*RunFileCheck(module->original_value_recovery_table().ToString(),
                             expected));
+}
+
+TEST_P(ShardyXLATest, ShardingCustomCallRecordsOriginalValueRecovery) {
+  const char* const hloString = R"(
+  HloModule test, frontend_attributes={xla.sdy.meshes={mesh = #sdy.mesh<["x"=2, "y"=2]>}}
+
+  ENTRY %entry {
+    %p0 = f32[2,4] parameter(0), origin={{"p0"}}
+    %p1 = f32[2,4] parameter(1), origin={{"p1"}}
+    %mul.4 = f32[2,4] multiply(%p0, %p1), origin={{"mul.4"}}
+    ROOT %mul.5 = f32[2,4] custom-call(%mul.4), custom_call_target="Sharding", frontend_attributes={xla.sdy.sharding="#sdy.sharding_per_value<[<@mesh, [{?}, {?}]>]>"}, origin={{"mul.5"}}
+  }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hloString));
+  runShardyWithSdyImport(module.get());
+
+  EXPECT_TRUE(*RunFileCheck(module->original_value_recovery_table().ToString(),
+                            R"(// CHECK: {"mul.5"} : {"mul.4"})"));
 }
 
 TEST_P(ShardyXLATest, ManualComputationInlineableFalseErasedAndRenamed) {

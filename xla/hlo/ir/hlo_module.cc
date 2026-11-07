@@ -2098,13 +2098,17 @@ void HloModule::OriginalValueRecoveryTable::AddRecoveryComputation(
   CHECK(ShapeUtil::EqualStructure(old_inst->shape(), new_inst->shape()));
   std::shared_ptr<OriginalValue> old_original_value =
       old_inst->original_value();
-  if (old_original_value == nullptr ||
-      old_original_value->is_synthetic_call()) {
+  if (old_original_value == nullptr) {
+    return;
+  }
+  if (old_original_value->is_synthetic_call()) {
+    new_inst->set_original_value(old_original_value);
     return;
   }
   if (new_inst->original_value() == nullptr) {
     new_inst->set_original_value(std::make_shared<OriginalValue>(
-        TupleTree<std::optional<OriginalArray>>(new_inst->shape())));
+        TupleTree<std::optional<OriginalArray>>(new_inst->shape()),
+        old_original_value->call_hierarchy()));
   }
   for (const auto& [shape_index, old_original_array] :
        old_original_value->original_arrays()) {
