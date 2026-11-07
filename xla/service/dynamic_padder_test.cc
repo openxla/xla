@@ -1265,6 +1265,33 @@ ENTRY main {
   EXPECT_EQ(empty_result.ToStatic(), LiteralUtil::CreateR1<int32_t>({}));
 }
 
+TEST_F(ExecutionTest, SliceToDynamicWithDifferentOperandLayout) {
+  // A column-major operand sliced to a row-major dynamic output.
+  // The interpreter cannot execute the SliceToDynamic custom call.
+  if (test::DeviceIs(test::kInterpreter)) {
+    GTEST_SKIP();
+  }
+  const std::string hlo_text = R"(
+HloModule SliceToDynamicWithDifferentOperandLayout
+
+ENTRY main {
+  param = s32[3,4]{0,1} parameter(0)
+  size0 = s32[] constant(2)
+  size1 = s32[] constant(3)
+  ROOT dynamic = s32[<=3,<=4]{1,0} custom-call(param, size0, size1),
+    custom_call_target="SliceToDynamic",
+    operand_layout_constraints={s32[3,4]{0,1}, s32[], s32[]}
+}
+)";
+  Literal operand = LiteralUtil::CreateR2<int32_t>(
+      {{0, 1, 2, 3}, {4, 5, 6, 7}, {8, 9, 10, 11}});
+  auto module = GetHloModule(hlo_text);
+  TF_ASSERT_OK_AND_ASSIGN(Literal result,
+                          Execute(std::move(module), {&operand}));
+  EXPECT_EQ(result.ToStatic(),
+            LiteralUtil::CreateR2<int32_t>({{0, 1, 2}, {4, 5, 6}}));
+}
+
 TEST_F(ExecutionTest, DynamicConcat) {
   // Concatting a list of {dynamic_operand, static_operand, dynamic_operand}.
   const std::string hlo_text = R"(
