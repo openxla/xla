@@ -117,6 +117,8 @@ toc:
 - title: Contributing
   # This is the default tab for the Contributing section.
   section:
+  - title: Contributor onboarding guide
+    path: /xla/xla_contributor_guide
   - title: Developer guide
     path: /xla/developer_guide
   - title: Set up development environment
