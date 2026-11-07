@@ -1240,6 +1240,16 @@ cc_library(
 )
 
 cc_library(
+    name = "latency_estimator",
+    srcs = ["latency_estimator.cc"],
+    hdrs = ["latency_estimator.h"],
+    deps = [
+        "//xla:frontend_attributes",
+        "//xla/hlo/ir:hlo",
+    ],
+)
+
+cc_library(
     name = "latency_hiding_scheduler",
     srcs = ["latency_hiding_scheduler.cc"],
     hdrs = ["latency_hiding_scheduler.h"],
@@ -1250,8 +1260,8 @@ cc_library(
         ":hlo_buffer",
         ":hlo_cost_analysis",
         ":hlo_value",
+        ":latency_estimator",
         ":scheduling_annotations_util",
-        "//xla:frontend_attributes",
         "//xla:shape_util",
         "//xla:side_effect_util",
         "//xla:status_macros",
@@ -1267,7 +1277,6 @@ cc_library(
         "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:btree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -1320,6 +1329,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@com_google_benchmark//:benchmark",
         "@com_google_googletest//:gtest",
     ],
 )
@@ -2898,6 +2908,7 @@ cc_library(
         "//xla/hlo/pass:hlo_pass_registry",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/hlo/utils:hlo_query",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -3734,8 +3745,7 @@ cc_library(
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/transforms/simplifiers:hlo_dce",
         "//xla/hlo/transforms/simplifiers:tuple_simplifier",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -3743,6 +3753,7 @@ cc_library(
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
