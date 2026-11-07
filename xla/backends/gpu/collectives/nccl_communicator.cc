@@ -60,7 +60,9 @@ limitations under the License.
 #include "xla/future.h"
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
@@ -113,14 +115,26 @@ ncclCollConfig_t MakeNonCollectiveMemoryConfig(
 }
 #endif  // NCCL_VERSION_CODE >= 23200
 
+cudaEvent_t LaunchCompletionEvent(const Communicator::Executor& executor) {
+  se::Event* event =
+      absl::down_cast<const GpuCollectives::Executor&>(executor).launch_event();
+  return event == nullptr
+             ? nullptr
+             : absl::down_cast<se::gpu::CudaEvent*>(event)->GetHandle();
+}
+
 ncclResult_t LaunchNcclAllReduce(const void* sendbuff, void* recvbuff,
                                  size_t count, ncclDataType_t datatype,
                                  ncclRedOp_t op, ncclComm_t comm,
                                  CUstream stream,
-                                 [[maybe_unused]] bool disable_rma) {
+                                 [[maybe_unused]] bool disable_rma,
+                                 [[maybe_unused]] cudaEvent_t launch_event) {
 #if NCCL_VERSION_CODE >= 23200
-  if (disable_rma && GetRuntimeNcclVersion() >= 23200) {
-    ncclCollConfig_t config = MakeNonCollectiveMemoryConfig();
+  if ((disable_rma || launch_event != nullptr) &&
+      GetRuntimeNcclVersion() >= 23200) {
+    ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
+    if (disable_rma) config = MakeNonCollectiveMemoryConfig();
+    config.launchCompletionEvent = launch_event;
     return ncclAllReduceConfig(sendbuff, recvbuff, count, datatype, op, comm,
                                stream, &config);
   }
@@ -131,10 +145,14 @@ ncclResult_t LaunchNcclAllReduce(const void* sendbuff, void* recvbuff,
 ncclResult_t LaunchNcclBroadcast(const void* sendbuff, void* recvbuff,
                                  size_t count, ncclDataType_t datatype,
                                  int root, ncclComm_t comm, CUstream stream,
-                                 [[maybe_unused]] bool disable_rma) {
+                                 [[maybe_unused]] bool disable_rma,
+                                 [[maybe_unused]] cudaEvent_t launch_event) {
 #if NCCL_VERSION_CODE >= 23200
-  if (disable_rma && GetRuntimeNcclVersion() >= 23200) {
-    ncclCollConfig_t config = MakeNonCollectiveMemoryConfig();
+  if ((disable_rma || launch_event != nullptr) &&
+      GetRuntimeNcclVersion() >= 23200) {
+    ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
+    if (disable_rma) config = MakeNonCollectiveMemoryConfig();
+    config.launchCompletionEvent = launch_event;
     return ncclBroadcastConfig(sendbuff, recvbuff, count, datatype, root, comm,
                                stream, &config);
   }
@@ -146,10 +164,14 @@ ncclResult_t LaunchNcclReduce(const void* sendbuff, void* recvbuff,
                               size_t count, ncclDataType_t datatype,
                               ncclRedOp_t op, int root, ncclComm_t comm,
                               CUstream stream,
-                              [[maybe_unused]] bool disable_rma) {
+                              [[maybe_unused]] bool disable_rma,
+                              [[maybe_unused]] cudaEvent_t launch_event) {
 #if NCCL_VERSION_CODE >= 23200
-  if (disable_rma && GetRuntimeNcclVersion() >= 23200) {
-    ncclCollConfig_t config = MakeNonCollectiveMemoryConfig();
+  if ((disable_rma || launch_event != nullptr) &&
+      GetRuntimeNcclVersion() >= 23200) {
+    ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
+    if (disable_rma) config = MakeNonCollectiveMemoryConfig();
+    config.launchCompletionEvent = launch_event;
     return ncclReduceConfig(sendbuff, recvbuff, count, datatype, op, root, comm,
                             stream, &config);
   }
@@ -158,14 +180,17 @@ ncclResult_t LaunchNcclReduce(const void* sendbuff, void* recvbuff,
                     stream);
 }
 
-ncclResult_t LaunchNcclReduceScatter(const void* sendbuff, void* recvbuff,
-                                     size_t recvcount, ncclDataType_t datatype,
-                                     ncclRedOp_t op, ncclComm_t comm,
-                                     CUstream stream,
-                                     [[maybe_unused]] bool disable_rma) {
+ncclResult_t LaunchNcclReduceScatter(
+    const void* sendbuff, void* recvbuff, size_t recvcount,
+    ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm, CUstream stream,
+    [[maybe_unused]] bool disable_rma,
+    [[maybe_unused]] cudaEvent_t launch_event) {
 #if NCCL_VERSION_CODE >= 23200
-  if (disable_rma && GetRuntimeNcclVersion() >= 23200) {
-    ncclCollConfig_t config = MakeNonCollectiveMemoryConfig();
+  if ((disable_rma || launch_event != nullptr) &&
+      GetRuntimeNcclVersion() >= 23200) {
+    ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
+    if (disable_rma) config = MakeNonCollectiveMemoryConfig();
+    config.launchCompletionEvent = launch_event;
     return ncclReduceScatterConfig(sendbuff, recvbuff, recvcount, datatype, op,
                                    comm, stream, &config);
   }
@@ -177,10 +202,14 @@ ncclResult_t LaunchNcclReduceScatter(const void* sendbuff, void* recvbuff,
 ncclResult_t LaunchNcclAllGather(const void* sendbuff, void* recvbuff,
                                  size_t sendcount, ncclDataType_t datatype,
                                  ncclComm_t comm, CUstream stream,
-                                 [[maybe_unused]] bool disable_rma) {
+                                 [[maybe_unused]] bool disable_rma,
+                                 [[maybe_unused]] cudaEvent_t launch_event) {
 #if NCCL_VERSION_CODE >= 23200
-  if (disable_rma && GetRuntimeNcclVersion() >= 23200) {
-    ncclCollConfig_t config = MakeNonCollectiveMemoryConfig();
+  if ((disable_rma || launch_event != nullptr) &&
+      GetRuntimeNcclVersion() >= 23200) {
+    ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
+    if (disable_rma) config = MakeNonCollectiveMemoryConfig();
+    config.launchCompletionEvent = launch_event;
     return ncclAllGatherConfig(sendbuff, recvbuff, sendcount, datatype, comm,
                                stream, &config);
   }
@@ -192,11 +221,16 @@ ncclResult_t LaunchNcclAllGather(const void* sendbuff, void* recvbuff,
 ncclResult_t LaunchNcclAllToAll(const void* sendbuff, void* recvbuff,
                                 size_t count, ncclDataType_t datatype,
                                 ncclComm_t comm, CUstream stream,
-                                [[maybe_unused]] bool disable_rma) {
+                                [[maybe_unused]] bool disable_rma,
+                                [[maybe_unused]] cudaEvent_t launch_event) {
 #if NCCL_VERSION_CODE >= 23200
-  if (disable_rma && GetRuntimeNcclVersion() >= 23200) {
-    ncclCollConfig_t config =
-        MakeNonCollectiveMemoryConfig(/*allow_alg_selection=*/false);
+  if ((disable_rma || launch_event != nullptr) &&
+      GetRuntimeNcclVersion() >= 23200) {
+    ncclCollConfig_t config = NCCL_COLLCONFIG_INITIALIZER;
+    if (disable_rma) {
+      config = MakeNonCollectiveMemoryConfig(/*allow_alg_selection=*/false);
+    }
+    config.launchCompletionEvent = launch_event;
     return ncclAlltoAllConfig(sendbuff, recvbuff, count, datatype, comm, stream,
                               &config);
   }
@@ -353,6 +387,16 @@ bool NcclCommunicator::SupportsDeviceComm() const {
 
 bool NcclCommunicator::SupportsGin() const {
   return capabilities_.supports_gin;
+}
+
+// Headers and the soname-loaded library must both have the 2.32 config calls.
+bool NcclCommunicator::SupportsLaunchCompletion() const {
+  static const bool supported = [] {
+    int version = 0;
+    return NCCL_VERSION_CODE >= 23200 &&
+           ncclGetVersion(&version) == ncclSuccess && version >= 23200;
+  }();
+  return supported;
 }
 
 std::optional<int> NcclCommunicator::LsaSize() const {
@@ -724,7 +768,7 @@ absl::Status NcclCommunicator::LaunchAllReduce(
     ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(LaunchNcclAllReduce(
         send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
         nccl_dtype, ToNcclReduction(reduction_kind), comm_->comm,
-        AsCudaStream(stream), disable_rma)));
+        AsCudaStream(stream), disable_rma, LaunchCompletionEvent(executor))));
   }
   if (!IsInsideNcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -759,10 +803,10 @@ absl::Status NcclCommunicator::LaunchBroadcast(
                                              .cuda_compute_capability()));
 
     bool disable_rma = !is_rma && comm_->has_symmetric_window();
-    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(
-        LaunchNcclBroadcast(send_buffer.opaque(), recv_buffer.opaque(),
-                            ToNcclCount(dtype, count), nccl_dtype, root.value(),
-                            comm_->comm, AsCudaStream(stream), disable_rma)));
+    ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(LaunchNcclBroadcast(
+        send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
+        nccl_dtype, root.value(), comm_->comm, AsCudaStream(stream),
+        disable_rma, LaunchCompletionEvent(executor))));
   }
   if (!IsInsideNcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -800,7 +844,7 @@ absl::Status NcclCommunicator::LaunchReduce(
     ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(LaunchNcclReduce(
         send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
         nccl_dtype, ToNcclReduction(reduction_kind), root.value(), comm_->comm,
-        AsCudaStream(stream), disable_rma)));
+        AsCudaStream(stream), disable_rma, LaunchCompletionEvent(executor))));
   }
   if (!IsInsideNcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -838,7 +882,7 @@ absl::Status NcclCommunicator::LaunchReduceScatter(
     ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(LaunchNcclReduceScatter(
         send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
         nccl_dtype, ToNcclReduction(reduction_kind), comm_->comm,
-        AsCudaStream(stream), disable_rma)));
+        AsCudaStream(stream), disable_rma, LaunchCompletionEvent(executor))));
   }
   if (!IsInsideNcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -873,7 +917,8 @@ absl::Status NcclCommunicator::LaunchAllGather(
     bool disable_rma = !is_rma && comm_->has_symmetric_window();
     ABSL_RETURN_IF_ERROR(XLA_NCCL_STATUS(LaunchNcclAllGather(
         send_buffer.opaque(), recv_buffer.opaque(), ToNcclCount(dtype, count),
-        nccl_dtype, comm_->comm, AsCudaStream(stream), disable_rma)));
+        nccl_dtype, comm_->comm, AsCudaStream(stream), disable_rma,
+        LaunchCompletionEvent(executor))));
   }
   if (!IsInsideNcclGroupLaunch()) {
     ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -972,7 +1017,7 @@ absl::Status NcclCommunicator::LaunchAllToAll(
       XLA_NCCL_RETURN_IF_ERROR(LaunchNcclAllToAll(
           send_contiguous->opaque(), recv_contiguous->opaque(),
           ToNcclCount(dtype, count), nccl_dtype, comm_->comm,
-          AsCudaStream(stream), disable_rma));
+          AsCudaStream(stream), disable_rma, LaunchCompletionEvent(executor)));
     }
     if (!IsInsideNcclGroupLaunch()) {
       ABSL_RETURN_IF_ERROR(PollUntilDone());
@@ -980,6 +1025,13 @@ absl::Status NcclCommunicator::LaunchAllToAll(
     return absl::OkStatus();
   }
 #endif
+
+  // ncclSend and ncclRecv take no config, so record the edge here instead.
+  if (se::Event* launch_event =
+          absl::down_cast<const GpuCollectives::Executor&>(executor)
+              .launch_event()) {
+    ABSL_RETURN_IF_ERROR(stream->RecordEvent(launch_event));
+  }
 
   auto group = [&] {
     for (size_t i = 0; i < send_buffers.size(); ++i) {

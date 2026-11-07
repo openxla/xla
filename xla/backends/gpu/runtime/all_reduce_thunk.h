@@ -136,11 +136,13 @@ class ReduceScatterThunk : public AllReduceReduceScatterThunkBase {
 
 absl::Status RunAllReduce(ReductionKind reduction_kind,
                           std::vector<DeviceBufferPair>& buffers,
-                          se::Stream& stream, Communicator& comm);
+                          se::Stream& stream, Communicator& comm,
+                          se::Event* launch_event = nullptr);
 
 absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
-                              se::Stream& stream, Communicator& comm);
+                              se::Stream& stream, Communicator& comm,
+                              se::Event* launch_event = nullptr);
 
 }  // namespace gpu
 }  // namespace xla

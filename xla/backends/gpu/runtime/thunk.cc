@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_memory.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/backends/gpu/runtime/thunk_kind.pb.h"
@@ -69,7 +70,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
     std::optional<absl::Span<const BufferAllocation::Index>>
         persistent_alloc_indices,
     absl::flat_hash_map<LocalityDomainStreamId, se::Stream*>
-        locality_domain_streams) {
+        locality_domain_streams,
+    LaunchOrdering* launch_ordering) {
   const gpu::GpuExecutableRunOptions* gpu_opts =
       run_options.run_options().gpu_executable_run_options();
 
@@ -79,7 +81,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
   uint64_t rng_seed =
       static_cast<uint64_t>(run_options.run_options().rng_seed());
 
-  return ExecuteParams(
+  ExecuteParams params(
       &buffer_allocations, stream, command_buffer_trace_stream,
       collective_params, collective_cliques, collective_memory,
       run_options.run_options().device_to_host_stream(),
@@ -91,6 +93,8 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
       additional_compute_streams, execution_scoped_state,
       enable_mock_collectives, run_options.run_options().run_id().ToInt(),
       rng_seed, persistent_alloc_indices, std::move(locality_domain_streams));
+  params.launch_ordering = launch_ordering;
+  return params;
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(
@@ -434,6 +438,14 @@ Thunk::ThunkInfo Thunk::ThunkInfo::WithProfileAnnotation(
   thunk_info.thunk_id = thunk_id;
   auto gpu_backend_config = instr->backend_config<GpuBackendConfig>();
   return thunk_info;
+}
+
+absl::StatusOr<se::Event*> Thunk::ExecuteParams::TakeLaunchEvent(
+    const Thunk* thunk, se::Stream* stream) const {
+  if (launch_ordering == nullptr) {
+    return nullptr;
+  }
+  return launch_ordering->TakeLaunchEvent(stream, thunk->profile_annotation());
 }
 
 bool Thunk::IsCollective() const {

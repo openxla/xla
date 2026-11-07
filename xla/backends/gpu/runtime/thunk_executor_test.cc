@@ -15,21 +15,24 @@ limitations under the License.
 
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/runtime/event_pool.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -42,6 +45,7 @@ limitations under the License.
 #include "xla/service/shaped_slice.h"
 #include "xla/shape.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/stream.h"
@@ -64,6 +68,44 @@ static Thunk::ThunkInfo ThunkInfo(absl::string_view name) {
   info.profile_annotation = name;
   return info;
 };
+
+TEST(ThunkExecutorTest, LaunchOrderingHoldsOtherStreams) {
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> producer_stream,
+                       executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<se::Stream> consumer_stream,
+                       executor->CreateStream());
+  LaunchOrdering ordering(
+      executor->GetOrConstructResource<LaunchEventPool>(executor));
+
+  // Hold the producer stream, so its event stays pending.
+  absl::Notification release;
+  ASSERT_OK(
+      producer_stream->DoHostCallback([&] { release.WaitForNotification(); }));
+  ASSERT_OK_AND_ASSIGN(
+      se::Event * event,
+      ordering.TakeLaunchEvent(producer_stream.get(), "producer"));
+  ASSERT_OK(producer_stream->RecordEvent(event));
+
+  // The consumer waits once on the other stream, nobody waits on itself.
+  ASSERT_OK_AND_ASSIGN(
+      int waits, ordering.WaitForProducers(consumer_stream.get(), "consumer"));
+  EXPECT_EQ(waits, 1);
+  std::atomic<bool> consumer_ran = false;
+  ASSERT_OK(consumer_stream->DoHostCallback([&] { consumer_ran = true; }));
+  EXPECT_EQ(event->PollForStatus(), se::Event::Status::kPending);
+  EXPECT_FALSE(consumer_ran);
+  ASSERT_OK_AND_ASSIGN(
+      waits, ordering.WaitForProducers(producer_stream.get(), "producer"));
+  EXPECT_EQ(waits, 0);
+  ASSERT_OK_AND_ASSIGN(
+      waits, ordering.WaitForProducers(consumer_stream.get(), "consumer"));
+  EXPECT_EQ(waits, 0);
+
+  release.Notify();
+  ASSERT_OK(consumer_stream->BlockHostUntilDone());
+  EXPECT_TRUE(consumer_ran);
+}
 
 TEST(ThunkExecutorDefinitionTrackerTest, InvokesCallbackAfterLastUse) {
   ASSERT_OK_AND_ASSIGN(se::StreamExecutor * stream_executor, GpuExecutor());

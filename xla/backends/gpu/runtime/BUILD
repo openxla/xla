@@ -2287,6 +2287,7 @@ xla_test(
         ":all_reduce_thunk",
         ":collective_thunk",
         ":collective_thunk_multigpu_test_utils",
+        ":event_pool",
         ":thunk",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -2297,6 +2298,7 @@ xla_test(
         "//xla/service:device_assignment",
         "//xla/service:shaped_slice",
         "//xla/service/gpu:buffer_allocations",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:stream",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
@@ -3173,6 +3175,7 @@ cc_library(
     hdrs = ["collective_thunk.h"],
     deps = [
         ":annotation",
+        "//xla/backends/gpu/collectives:gpu_communicator",
         ":collective_clique_requests",
         ":collective_execution",
         ":collective_params",
@@ -3766,8 +3769,14 @@ xla_cc_test(
 
 cc_library(
     name = "thunk",
-    srcs = ["thunk.cc"],
-    hdrs = ["thunk.h"],
+    srcs = [
+        "launch_ordering.cc",
+        "thunk.cc",
+    ],
+    hdrs = [
+        "launch_ordering.h",
+        "thunk.h",
+    ],
     visibility = internal_visibility([
         ":friends",
         "//xla/backends/gpu/libraries/native_custom_call_thunks:handler_allowlist",
@@ -3779,6 +3788,7 @@ cc_library(
         ":collective_memory_requests",
         ":collective_params",
         ":command_buffer_requests",
+        ":event_pool",
         ":execution_stream_id",
         ":thunk_id",
         ":thunk_kind_proto_cc",
@@ -3795,6 +3805,7 @@ cc_library(
         "//xla/service/gpu:buffer_allocations",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/service/gpu:ir_emission_utils",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/concurrency:future",
@@ -3870,6 +3881,7 @@ xla_test(
     srcs = ["thunk_executor_test.cc"],
     backends = ["gpu"],
     deps = [
+        ":event_pool",
         ":memset_thunk",
         ":sequential_thunk",
         ":thunk",
@@ -3884,6 +3896,7 @@ xla_test(
         "//xla/service:shaped_slice",
         "//xla/service/gpu:buffer_allocations",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream",
@@ -3893,6 +3906,7 @@ xla_test(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
@@ -4640,6 +4654,7 @@ cc_library(
         "//xla/core/collectives:symmetric_memory",
         "//xla/stream_executor:command_buffer",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
