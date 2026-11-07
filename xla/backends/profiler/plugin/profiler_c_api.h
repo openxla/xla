@@ -133,8 +133,10 @@ struct PLUGIN_Profiler_Consume_Args {
   size_t struct_size;
   PLUGIN_Profiler* profiler;
   PLUGIN_Profiler_ConsumeResult* result;  // out
+  size_t estimated_size_bytes;            // out
 };
-PROFILER_DEFINE_STRUCT_TRAITS(PLUGIN_Profiler_Consume_Args, result);
+PROFILER_DEFINE_STRUCT_TRAITS(PLUGIN_Profiler_Consume_Args,
+                              estimated_size_bytes);
 
 typedef PLUGIN_Profiler_Error* PLUGIN_Profiler_Consume(
     PLUGIN_Profiler_Consume_Args* args);
