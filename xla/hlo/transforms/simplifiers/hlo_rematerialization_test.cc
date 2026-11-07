@@ -190,9 +190,9 @@ class RecomputeAndCompressHloRematerializationTest
 
     // First, get a set of instruction names before running remat.
     for (const HloComputation* computation : module->computations()) {
-      before_computation_names_.insert(computation->name());
+      before_computation_names_.emplace(computation->name());
       for (const HloInstruction* instruction : computation->instructions()) {
-        before_instruction_names_.insert(instruction->name());
+        before_instruction_names_.emplace(instruction->name());
       }
     }
 
@@ -223,7 +223,7 @@ class RecomputeAndCompressHloRematerializationTest
         continue;
       }
       for (const HloInstruction* instruction : computation->instructions()) {
-        after_instruction_names_.insert(instruction->name());
+        after_instruction_names_.emplace(instruction->name());
       }
     }
 
@@ -246,9 +246,9 @@ class RecomputeAndCompressHloRematerializationTest
   }
 
  private:
-  absl::flat_hash_set<absl::string_view> before_computation_names_;
-  absl::flat_hash_set<absl::string_view> before_instruction_names_;
-  absl::flat_hash_set<absl::string_view> after_instruction_names_;
+  absl::flat_hash_set<std::string> before_computation_names_;
+  absl::flat_hash_set<std::string> before_instruction_names_;
+  absl::flat_hash_set<std::string> after_instruction_names_;
 };
 
 // Test rematerialization of a single computation produced by
@@ -3462,6 +3462,171 @@ INSTANTIATE_TEST_SUITE_P(
     Algorithms, RematWithAliasInfoTest,
     ::testing::Values(HloRematerialization::RematAlgorithm::kAlwaysRemat,
                       HloRematerialization::RematAlgorithm::kPeakPriority));
+
+// Removing a killed unplaced instruction immediately prevents subsequent
+// rematerializations sharing its operands from placing before it.
+TEST_F(RecomputeAndCompressHloRematerializationTest,
+       AlwaysRematRemovesDeadInstructionsBeforeSubsequentPlacement) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule m, is_scheduled=true
+
+ENTRY %entry (p: f32[]) -> f32[1024] {
+  %p = f32[] parameter(0)
+  %shared = f32[16384]{0} broadcast(%p), dimensions={}
+  %dead_candidate = f32[16384]{0} negate(%shared)
+  %sibling = f32[16384]{0} abs(%shared)
+  %sibling_early = f32[1024]{0} slice(%sibling), slice={[0:1024]}
+  %p1 = f32[32768]{0} custom-call(%sibling_early), custom_call_target="Peak1"
+  %sink1 = f32[1024]{0} custom-call(%p1), custom_call_target="Sink1"
+  %mid_anchor = f32[1024]{0} slice(%shared), slice={[0:1024]}
+  %p2 = f32[32768]{0} custom-call(%sink1, %mid_anchor), custom_call_target="Peak2"
+  %sink2 = f32[1024]{0} custom-call(%p2), custom_call_target="Sink2"
+  %late_dead_use = f32[1024]{0} slice(%dead_candidate), slice={[0:1024]}
+  %late_sibling_use = f32[1024]{0} slice(%sibling), slice={[0:1024]}
+  %sum = f32[1024]{0} add(%late_dead_use, %late_sibling_use)
+  ROOT %out = f32[1024]{0} add(%sink2, %sum)
+}
+)hlo"));
+
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       RunHloRematerialization(
+                           /*memory_limit_bytes=*/160 * 1024, module.get(),
+                           /*min_remat_size=*/0,
+                           HloRematerialization::RematAlgorithm::kAlwaysRemat,
+                           /*block_size_limit=*/4));
+  EXPECT_TRUE(changed);
+  ASSERT_OK(module->schedule().Verify());
+
+  HloComputation* entry = module->entry_computation();
+  EXPECT_EQ(entry->GetInstructionWithName("dead_candidate"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("dead_candidate.remat"), nullptr);
+
+  absl::flat_hash_map<absl::string_view, int> pos;
+  int idx = 0;
+  for (const HloInstruction* inst :
+       module->schedule().sequence(entry).instructions()) {
+    pos[inst->name()] = idx++;
+  }
+  const HloInstruction* late_sibling_use =
+      entry->GetInstructionWithName("late_sibling_use");
+  ASSERT_NE(late_sibling_use, nullptr);
+  EXPECT_GT(pos.at(late_sibling_use->operand(0)->name()), pos.at("sink2"));
+}
+
+// Unplaced kGetTupleElement and kBitcast users rendered dead by rematerializing
+// a tuple fusion are removed and unlinked before computing placement.
+TEST_F(RecomputeAndCompressHloRematerializationTest,
+       AlwaysRematRemovesUnplacedDeadIndirectUserTree) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule m, is_scheduled=true
+
+%fusion_comp (p0: f32[16384], p1: f32[16384]) -> (f32[16384], f32[16384]) {
+  %p0 = f32[16384]{0} parameter(0)
+  %p1 = f32[16384]{0} parameter(1)
+  %a0 = f32[16384]{0} add(%p0, %p1)
+  %a1 = f32[16384]{0} subtract(%p0, %p1)
+  ROOT %t = (f32[16384]{0}, f32[16384]{0}) tuple(%a0, %a1)
+}
+
+ENTRY %entry {
+  %c = f32[] parameter(0)
+  %c0 = f32[16384]{0} broadcast(%c), dimensions={}
+  %c1 = f32[16384]{0} broadcast(%c), dimensions={}
+  %mof = (f32[16384]{0}, f32[16384]{0}) fusion(%c0, %c1), kind=kLoop, calls=%fusion_comp
+  %p1 = f32[32768]{0} custom-call(%c), custom_call_target="Peak1"
+  %sink1 = f32[1024]{0} custom-call(%p1), custom_call_target="Sink1"
+  %unplaced_gte0 = f32[16384]{0} get-tuple-element(%mof), index=0
+  %unplaced_gte1 = f32[16384]{0} get-tuple-element(%mof), index=1
+  %unplaced_bc0 = f16[32768]{0} bitcast(%unplaced_gte0)
+  %unplaced_bc1 = f16[32768]{0} bitcast(%unplaced_gte1)
+  %p2 = f32[32768]{0} custom-call(%sink1), custom_call_target="Peak2"
+  %sink2 = f32[1024]{0} custom-call(%p2), custom_call_target="Sink2"
+  %sum16 = f16[32768]{0} add(%unplaced_bc0, %unplaced_bc1)
+  %sl16 = f16[1024]{0} slice(%sum16), slice={[0:1024]}
+  %conv = f32[1024]{0} convert(%sl16)
+  ROOT %out = f32[1024]{0} add(%sink2, %conv)
+}
+)hlo"));
+
+  HloRematerialization::RematerializationSizes sizes;
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloRematerialization(
+          /*memory_limit_bytes=*/220 * 1024, module.get(),
+          /*min_remat_size=*/0,
+          HloRematerialization::RematAlgorithm::kAlwaysRemat,
+          /*block_size_limit=*/4, /*on_rematerialized=*/nullptr, &sizes));
+  EXPECT_TRUE(changed);
+  ASSERT_OK(module->schedule().Verify());
+
+  HloComputation* entry = module->entry_computation();
+  EXPECT_EQ(entry->GetInstructionWithName("mof"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("unplaced_gte0"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("unplaced_gte1"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("unplaced_bc0"), nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("unplaced_bc1"), nullptr);
+
+  absl::flat_hash_map<absl::string_view, int> pos;
+  int idx = 0;
+  for (const HloInstruction* inst :
+       module->schedule().sequence(entry).instructions()) {
+    pos[inst->name()] = idx++;
+  }
+  const HloInstruction* mof_remat = entry->GetInstructionWithName("mof.remat");
+  ASSERT_NE(mof_remat, nullptr);
+  EXPECT_GT(pos.at("mof.remat"), pos.at("sink2"));
+}
+
+// Removing and unlinking a killed kCopy carrying control dependencies preserves
+// the dependencies on its clone and lets surrounding candidates form a block.
+TEST_F(RecomputeAndCompressHloRematerializationTest,
+       AlwaysRematRemovesDeadInstructionWithControlDepsAndUnlinksCopy) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule m, is_scheduled=true
+
+ENTRY %entry {
+  %p = f32[] parameter(0)
+  %pred_anchor = f32[256]{0} custom-call(%p), custom_call_target="Anchor"
+  %shared_src = f32[384,32]{1,0} custom-call(%p), custom_call_target="Producer"
+  %cand_a = f32[256,32]{1,0} slice(%shared_src), slice={[0:256], [0:32]}
+  %dead_copy = f32[256,32]{0,1} copy(%cand_a), control-predecessors={%pred_anchor}
+  %cand_b = f32[256,32]{1,0} slice(%shared_src), slice={[128:384], [0:32]}
+  %early_use = f32[256]{0} custom-call(%cand_a, %cand_b), custom_call_target="EarlyUse"
+  %p1 = f32[32768]{0} custom-call(%early_use), custom_call_target="Peak1"
+  %sink1 = f32[256]{0} custom-call(%p1), custom_call_target="Sink1"
+  %late_copy_use = f32[256]{0} custom-call(%dead_copy), custom_call_target="LateCopyUse"
+  %late_ab = f32[256,32]{1,0} add(%cand_a, %cand_b)
+  %late_slice = f32[256]{0} custom-call(%late_ab), custom_call_target="LateAbUse"
+  %sum1 = f32[256]{0} add(%sink1, %late_copy_use)
+  %sum2 = f32[256]{0} add(%sum1, %late_slice)
+  ROOT %out = f32[256]{0} add(%sum2, %pred_anchor)
+}
+)hlo"));
+
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       RunHloRematerialization(
+                           /*memory_limit_bytes=*/185 * 1024, module.get(),
+                           /*min_remat_size=*/0,
+                           HloRematerialization::RematAlgorithm::kAlwaysRemat,
+                           /*block_size_limit=*/2));
+  EXPECT_TRUE(changed);
+  ASSERT_OK(module->schedule().Verify());
+
+  HloComputation* entry = module->entry_computation();
+  const HloInstruction* pred_anchor =
+      entry->GetInstructionWithName("pred_anchor");
+  ASSERT_NE(pred_anchor, nullptr);
+  EXPECT_EQ(entry->GetInstructionWithName("dead_copy"), nullptr);
+  const HloInstruction* dead_copy_remat =
+      entry->GetInstructionWithName("dead_copy.remat");
+  ASSERT_NE(dead_copy_remat, nullptr);
+  EXPECT_THAT(dead_copy_remat->control_predecessors(), Contains(pred_anchor));
+  EXPECT_NE(entry->GetInstructionWithName("cand_a.remat"), nullptr);
+  EXPECT_NE(entry->GetInstructionWithName("cand_b.remat"), nullptr);
+}
 
 }  // namespace
 }  // namespace xla
