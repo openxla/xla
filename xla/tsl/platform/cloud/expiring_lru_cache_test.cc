@@ -27,7 +27,7 @@ namespace {
 
 TEST(ExpiringLRUCacheTest, MaxAge) {
   constexpr absl::string_view key = "a";
-  std::unique_ptr<NowSecondsEnv> env(new NowSecondsEnv);
+  std::unique_ptr<NowSecondsEnv> env = std::make_unique<NowSecondsEnv>();
   ExpiringLRUCache<int> cache(1, 0, env.get());
   env->SetNowSeconds(1);
   // Verify that replacement of an existing element works, and updates the
