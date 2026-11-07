@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
@@ -40,6 +41,7 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
@@ -5283,6 +5285,195 @@ ENTRY main {
                                 ->parameter_instruction(0)),
                 42);
     }
+  }
+}
+
+std::string DescribeComputationDataflow(const HloDataflowAnalysis& analysis,
+                                        const HloComputation* computation) {
+  auto describe = [](const HloValue* value) {
+    return absl::StrCat(value->defining_instruction()->name(), "[",
+                        absl::StrJoin(value->defining_index(), ","), "]");
+  };
+  std::string out;
+  for (const HloInstruction* instruction : computation->instructions()) {
+    absl::StrAppend(&out, instruction->name(), ":");
+    for (const auto& [index, value_set] :
+         analysis.GetInstructionValueSet(instruction)) {
+      absl::StrAppend(&out, " {", absl::StrJoin(index, ","), "}=");
+      for (const HloValue* value : value_set.values()) {
+        absl::StrAppend(&out, describe(value), ";");
+      }
+      if (analysis.ValueIsDefinedAt(instruction, index)) {
+        const HloValue& def = analysis.GetValueDefinedAt(instruction, index);
+        absl::StrAppend(&out, " (live_out=", def.live_out_of_module(),
+                        " def pos:");
+        for (const HloPosition& pos : def.positions()) {
+          absl::StrAppend(&out, " ", pos.instruction->name(), "[",
+                          absl::StrJoin(pos.index, ","), "]");
+        }
+        absl::StrAppend(&out, " uses:");
+        for (const HloUse& use : def.GetUses()) {
+          absl::StrAppend(&out, " ", use.instruction->name(), "@",
+                          use.operand_number, "[",
+                          absl::StrJoin(use.operand_index, ","), "]");
+        }
+        absl::StrAppend(&out, ")");
+      }
+    }
+    absl::StrAppend(&out, "\n");
+  }
+  return out;
+}
+
+TEST_F(HloDataflowAnalysisTest, ReanalyzeComputationRequiresLocalNonSsaMode) {
+  constexpr absl::string_view kHloStr = R"hlo(
+HloModule ReanalyzePreconditions
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  ROOT neg = f32[8] negate(p0)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(
+      module_, ParseAndReturnVerifiedModule(kHloStr, GetModuleConfigForTest()));
+  HloComputation* entry = module_->entry_computation();
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> ssa_analysis,
+      HloDataflowAnalysis::Run(*module_, /*ssa_form=*/true,
+                               /*bitcast_defines_value=*/false,
+                               /*execution_threads=*/{},
+                               /*propagate_through_calls=*/false,
+                               /*precompute_uses=*/std::nullopt,
+                               /*propagate_through_control_flow=*/false));
+  EXPECT_THAT(ssa_analysis->ReanalyzeComputation(entry),
+              absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
+                                     HasSubstr("ssa_form=false")));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> calls_analysis,
+      HloDataflowAnalysis::Run(*module_, /*ssa_form=*/false,
+                               /*bitcast_defines_value=*/false,
+                               /*execution_threads=*/{},
+                               /*propagate_through_calls=*/true,
+                               /*precompute_uses=*/std::nullopt,
+                               /*propagate_through_control_flow=*/false));
+  EXPECT_THAT(
+      calls_analysis->ReanalyzeComputation(entry),
+      absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
+                             HasSubstr("propagate_through_calls=false")));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> cf_analysis,
+      HloDataflowAnalysis::Run(*module_, /*ssa_form=*/false,
+                               /*bitcast_defines_value=*/false,
+                               /*execution_threads=*/{},
+                               /*propagate_through_calls=*/false,
+                               /*precompute_uses=*/std::nullopt,
+                               /*propagate_through_control_flow=*/true));
+  EXPECT_THAT(cf_analysis->ReanalyzeComputation(entry),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kFailedPrecondition,
+                  HasSubstr("propagate_through_control_flow=false")));
+}
+
+TEST_F(HloDataflowAnalysisTest,
+       ReanalyzeComputationMatchesFullAnalysisAfterRematLikeRewrites) {
+  constexpr absl::string_view kHloStr = R"hlo(
+HloModule Reanalyze
+
+fused_add {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  ROOT add = f32[8] add(p0, p1)
+}
+
+fused_sub {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  ROOT sub = f32[8] subtract(p0, p1)
+}
+
+body {
+  t = (f32[8], s32[]) parameter(0)
+  v = f32[8] get-tuple-element(t), index=0
+  i = s32[] get-tuple-element(t), index=1
+  n = f32[8] negate(v)
+  ROOT r = (f32[8], s32[]) tuple(n, i)
+}
+
+cond {
+  t = (f32[8], s32[]) parameter(0)
+  ROOT c = pred[] constant(false)
+}
+
+ENTRY main {
+  a = f32[8] parameter(0)
+  b = f32[8] parameter(1)
+  f = f32[8] fusion(a, b), kind=kLoop, calls=fused_add
+  g = f32[8] fusion(f, b), kind=kLoop, calls=fused_sub
+  m = f32[8] multiply(f, g)
+  zero = s32[] constant(0)
+  init = (f32[8], s32[]) tuple(m, zero)
+  w = (f32[8], s32[]) while(init), condition=cond, body=body
+  out = f32[8] get-tuple-element(w), index=0
+  ROOT result = (f32[8], f32[8]) tuple(out, f)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(
+      module_, ParseAndReturnVerifiedModule(kHloStr, GetModuleConfigForTest()));
+  auto precompute_all = [](const HloValue&) { return true; };
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> incremental,
+      HloDataflowAnalysis::Run(*module_, /*ssa_form=*/false,
+                               /*bitcast_defines_value=*/false,
+                               /*execution_threads=*/{},
+                               /*propagate_through_calls=*/false,
+                               /*precompute_uses=*/precompute_all,
+                               /*propagate_through_control_flow=*/false));
+  HloComputation* entry = module_->entry_computation();
+  HloInstruction* f = FindInstruction(module_.get(), "f");
+  HloInstruction* g = FindInstruction(module_.get(), "g");
+  HloInstruction* m = FindInstruction(module_.get(), "m");
+
+  // Clone `g` with its fused computation, replace all uses, remove `g`, and
+  // call `Cleanup()` to free `g` before allocating `f_remat` and analyzing its
+  // cloned computation ahead of `entry`.
+  HloCloneContext context(module_.get());
+  HloInstruction* g_remat =
+      entry->AddInstruction(g->Clone(/*suffix=*/"remat", &context));
+  ASSERT_OK(g->ReplaceAllUsesWith(g_remat));
+  ASSERT_OK(entry->RemoveInstruction(g));
+  module_->Cleanup();
+  HloInstruction* f_remat =
+      entry->AddInstruction(f->Clone(/*suffix=*/"remat", &context));
+  ASSERT_OK(f->ReplaceUseWith(m, f_remat));
+  ASSERT_OK(incremental->ReanalyzeComputation(
+      f_remat->fused_instructions_computation(),
+      /*precompute_uses=*/precompute_all));
+  ASSERT_OK(incremental->ReanalyzeComputation(
+      entry, /*precompute_uses=*/precompute_all));
+  EXPECT_OK(incremental->Verify());
+  EXPECT_EQ(incremental->values().size(), incremental->value_count());
+  EXPECT_TRUE(absl::c_is_sorted(incremental->values(), HloValue::IdLessThan));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> full,
+      HloDataflowAnalysis::Run(*module_, /*ssa_form=*/false,
+                               /*bitcast_defines_value=*/false,
+                               /*execution_threads=*/{},
+                               /*propagate_through_calls=*/false,
+                               /*precompute_uses=*/precompute_all,
+                               /*propagate_through_control_flow=*/false));
+  const std::vector<const HloComputation*> computations = {
+      entry, g_remat->fused_instructions_computation(),
+      f_remat->fused_instructions_computation(),
+      module_->GetComputationWithName("body"),
+      module_->GetComputationWithName("cond")};
+  for (const HloComputation* computation : computations) {
+    EXPECT_EQ(DescribeComputationDataflow(*incremental, computation),
+              DescribeComputationDataflow(*full, computation))
+        << computation->name();
   }
 }
 
