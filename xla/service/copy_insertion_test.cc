@@ -82,6 +82,8 @@ class CopyInsertionTestPeer {
 
 namespace {
 
+using ::testing::ElementsAre;
+using ::testing::IsEmpty;
 using ::testing::NotNull;
 using ::testing::UnorderedElementsAre;
 
@@ -6284,6 +6286,117 @@ INSTANTIATE_TEST_SUITE_P(CondOrder, CopyInsertionCondOrderTest,
                          ::testing::Combine(::testing::Bool(),
                                             ::testing::Values(int64_t{0},
                                                               int64_t{-1})));
+
+TEST_F(CopyInsertionTest,
+       PostSchedulingControlDependenciesForAsyncComputationDef) {
+  absl::string_view hlo_string = R"(
+HloModule AsyncPostSchedulingControlDeps, is_scheduled=true
+
+async_ds_comp {
+  src = bf16[2,8] parameter(0)
+  idx0 = s32[] parameter(1)
+  idx1 = s32[] parameter(2)
+  ROOT ds = bf16[1,8] dynamic-slice(src, idx0, idx1), dynamic_slice_sizes={1,8}
+}
+
+while_cond {
+  state = (s32[], bf16[2,8], bf16[1,8]) parameter(0)
+  iter = s32[] get-tuple-element(state), index=0
+  limit = s32[] constant(2)
+  ROOT cmp = pred[] compare(iter, limit), direction=LT
+}
+
+while_body {
+  state = (s32[], bf16[2,8], bf16[1,8]) parameter(0)
+  iter = s32[] get-tuple-element(state), index=0
+  src = bf16[2,8] get-tuple-element(state), index=1
+  prev_slice = bf16[1,8] get-tuple-element(state), index=2
+  converted = f32[1,8] convert(prev_slice)
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(1)
+  next_iter = s32[] add(iter, c1)
+  ds_start = ((bf16[2,8], s32[], s32[]), bf16[1,8], u32[])
+      async-start(src, next_iter, c0), calls=async_ds_comp
+  ds_done = bf16[1,8] async-done(ds_start), calls=async_ds_comp
+  use_converted = f32[1,8] negate(converted)
+  next_slice = bf16[1,8] copy(ds_done)
+  ROOT next_state = (s32[], bf16[2,8], bf16[1,8])
+      tuple(next_iter, src, next_slice)
+}
+
+ENTRY main {
+  c0 = s32[] constant(0)
+  p0 = bf16[2,8] parameter(0)
+  p1 = bf16[1,8] parameter(1)
+  init = (s32[], bf16[2,8], bf16[1,8]) tuple(c0, p0, p1)
+  loop = (s32[], bf16[2,8], bf16[1,8]) while(init),
+      condition=while_cond, body=while_body
+  ROOT out = bf16[1,8] get-tuple-element(loop), index=2
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  CopyInsertion copy_insertion(&alias_info_,
+                               /*use_region_based_live_range_analysis=*/-1);
+  ASSERT_THAT(copy_insertion.RemoveUnnecessaryCopies(
+                  module.get(), /*execution_threads=*/{},
+                  /*insert_post_scheduling_control_dependencies=*/true),
+              ::absl_testing::IsOk());
+
+  const HloInstruction* converted = FindInstruction(module.get(), "converted");
+  const HloInstruction* ds_start = FindInstruction(module.get(), "ds_start");
+  const HloInstruction* ds_done = FindInstruction(module.get(), "ds_done");
+  const HloInstruction* next_state =
+      FindInstruction(module.get(), "next_state");
+  ASSERT_NE(converted, nullptr);
+  ASSERT_NE(ds_start, nullptr);
+  ASSERT_NE(ds_done, nullptr);
+  ASSERT_NE(next_state, nullptr);
+  EXPECT_EQ(next_state->operand(2), ds_done);
+  EXPECT_THAT(converted->control_successors(), ElementsAre(ds_start));
+}
+
+TEST_F(CopyInsertionTest,
+       PostSchedulingControlDependenciesForInPlaceAsyncComputation) {
+  absl::string_view hlo_string = R"(
+HloModule InPlaceAsyncPostSchedulingControlDeps, is_scheduled=true
+
+async_dus_comp {
+  dst = f32[8] parameter(0)
+  update = f32[2] parameter(1)
+  idx = s32[] parameter(2)
+  ROOT dus = f32[8] dynamic-update-slice(dst, update, idx)
+}
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  p1 = f32[2] parameter(1)
+  idx = s32[] constant(0)
+  neg = f32[8] negate(p0)
+  copied = f32[8] copy(neg)
+  dus_start = ((f32[8], f32[2], s32[]), f32[8], u32[])
+      async-start(copied, p1, idx), calls=async_dus_comp
+  ROOT dus_done = f32[8] async-done(dus_start), calls=async_dus_comp
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  CopyInsertion copy_insertion(&alias_info_,
+                               /*use_region_based_live_range_analysis=*/-1);
+  ASSERT_THAT(copy_insertion.RemoveUnnecessaryCopies(
+                  module.get(), /*execution_threads=*/{},
+                  /*insert_post_scheduling_control_dependencies=*/true),
+              ::absl_testing::IsOk());
+
+  const HloInstruction* neg = FindInstruction(module.get(), "neg");
+  const HloInstruction* dus_start = FindInstruction(module.get(), "dus_start");
+  const HloInstruction* dus_done = FindInstruction(module.get(), "dus_done");
+  ASSERT_NE(neg, nullptr);
+  ASSERT_NE(dus_start, nullptr);
+  ASSERT_NE(dus_done, nullptr);
+  EXPECT_EQ(dus_start->operand(0), neg);
+  EXPECT_THAT(dus_done->control_successors(), IsEmpty());
+}
 
 }  // namespace
 }  // namespace xla
