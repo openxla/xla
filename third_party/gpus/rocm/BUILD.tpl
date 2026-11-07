@@ -504,6 +504,9 @@ rocm_lib_import(
             "%{rocm_root}/lib/librocroller.so*",
             "%{rocm_root}/lib/liborigami.so*",
             "%{rocm_root}/lib/libtensilelite-host.so*",
+            # ROCm 10.2 only: libtensilelite-host needs libomp, which it finds
+            # via $ORIGIN/llvm/lib.
+            "%{rocm_root}/lib/llvm/lib/libomp.so*",
         ],
     ) + glob([
         pattern
