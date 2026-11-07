@@ -35,20 +35,17 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_interface.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/service/call_graph.h"
-#include "xla/service/hlo_value.h"
 #include "xla/service/host_offload_utils.h"
 #include "xla/service/memory_annotations.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -562,7 +559,7 @@ absl::Status MoveCopyDown(
     const InstructionAndIndex& copy_to_move_instruction_and_index,
     const CallGraph* call_graph,
     absl::flat_hash_set<HloInstruction*>& processed_annotations,
-    absl::flat_hash_set<HloInstruction*>& to_remove) {
+    absl::flat_hash_set<HloInstruction*>& to_remove, HloModulePass* pass) {
   HloInstruction* copy_to_move = copy_to_move_instruction_and_index.instruction;
   VLOG(5) << "Moving copy: " << copy_to_move->ToString();
   struct InstructionAndShapes {
@@ -614,11 +611,18 @@ absl::Status MoveCopyDown(
       } else if (instruction->opcode() == HloOpcode::kSlice ||
                  instruction->opcode() == HloOpcode::kDynamicSlice) {
         // Since we're moving the copy over a Slice/DynamicSlice, we need to
-        // change the shape of the copy to match the shape of the result of the
-        // Slice/DynamicSlice. We want to maintain the layout of
-        // shape_after_copy though.
+        // change the shapes before and after the copy to match the result
+        // dimensions of the Slice/DynamicSlice while maintaining their
+        // respective layouts, then recompute backend layout properties (e.g.,
+        // tiling) for the sliced dimensions.
+        Shape new_before_copy_shape = instruction->shape();
+        *new_before_copy_shape.mutable_layout() = shape_before_copy.layout();
+        pass->UpdateLayout(&new_before_copy_shape);
+        shape_before_copy = new_before_copy_shape;
+
         Shape new_copy_shape = instruction->shape();
         *new_copy_shape.mutable_layout() = shape_after_copy.layout();
+        pass->UpdateLayout(&new_copy_shape);
         VLOG(2) << absl::StreamFormat(
             " Encountered %s \"%s\", updating shape after copy from "
             "%s to %s",
@@ -781,7 +785,7 @@ bool ShouldMoveCopyDown(HloInstruction* copy_to_move,
 absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
     HloInstruction* instruction, const CallGraph* call_graph,
     absl::flat_hash_set<HloInstruction*>& processed_annotations,
-    absl::flat_hash_set<HloInstruction*>& to_remove) {
+    absl::flat_hash_set<HloInstruction*>& to_remove, HloModulePass* pass) {
   VLOG(2) << "Walking down graph starting at instruction "
           << instruction->name();
   if (instruction->IsRoot()) {
@@ -946,7 +950,8 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
     HloInstruction* copy_to_move = copy_to_move_and_index.instruction;
     if (ShouldMoveCopyDown(copy_to_move, *call_graph)) {
       ABSL_RETURN_IF_ERROR(MoveCopyDown(copy_to_move_and_index, call_graph,
-                                        processed_annotations, to_remove));
+                                        processed_annotations, to_remove,
+                                        pass));
       changed = true;
     } else {
       // We should not move this copy down; maybe we can move it up. For now, we
@@ -973,7 +978,7 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
 // Fixes layout changing copies in between on the path to users.
 absl::StatusOr<bool> FixupInterveningCopies(
     const std::vector<HloInstruction*>& starting_instructions,
-    const CallGraph* call_graph) {
+    const CallGraph* call_graph, HloModulePass* pass) {
   absl::flat_hash_set<HloInstruction*> processed_annotations;
   absl::flat_hash_set<HloInstruction*> annotations_to_remove;
   bool changed = false;
@@ -984,7 +989,7 @@ absl::StatusOr<bool> FixupInterveningCopies(
     ABSL_ASSIGN_OR_RETURN(bool changed_annotation_for_copy_movement,
                           ProcessAnnotationForCopyMovement(
                               instruction, call_graph, processed_annotations,
-                              annotations_to_remove));
+                              annotations_to_remove, pass));
     changed |= changed_annotation_for_copy_movement;
   }
   for (HloInstruction* instruction : annotations_to_remove) {
@@ -1043,7 +1048,7 @@ absl::StatusOr<bool> HostOffloadLegalize::RunImpl(
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
   ABSL_ASSIGN_OR_RETURN(
       bool changed_intervening_copies,
-      FixupInterveningCopies(starting_instructions, call_graph.get()));
+      FixupInterveningCopies(starting_instructions, call_graph.get(), this));
   changed |= changed_intervening_copies;
 
   return changed;
