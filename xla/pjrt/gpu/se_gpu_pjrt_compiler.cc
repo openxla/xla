@@ -272,8 +272,8 @@ StreamExecutorGpuCompiler::Compile(
                           GetStreamExecutor(client));
     gpu::GpuTargetConfig local_gpu_target_config(stream_executor);
 
-    if (local_gpu_target_config ==
-        topology_with_target_config->gpu_target_config()) {
+    if (local_gpu_target_config.MatchesTargetConfig(
+            topology_with_target_config->gpu_target_config())) {
       LOG_EVERY_N(INFO, 60)
           << "Found GPU target config and a PjRtClient with matching "
              "configuration. Performing a JIT compilation.";
@@ -417,8 +417,8 @@ StreamExecutorGpuCompiler::Compile(CompileOptions options,
     ABSL_ASSIGN_OR_RETURN(stream_executor::StreamExecutor * stream_executor,
                           GetStreamExecutor(client));
     gpu::GpuTargetConfig local_gpu_target_config(stream_executor);
-    if (local_gpu_target_config ==
-        topology_with_target_config->gpu_target_config()) {
+    if (local_gpu_target_config.MatchesTargetConfig(
+            topology_with_target_config->gpu_target_config())) {
       LOG_EVERY_N(INFO, 60)
           << "Found GPU target config and a PjRtClient with matching "
              "configuration. Performing a JIT compilation.";

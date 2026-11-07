@@ -68,22 +68,6 @@ constexpr int64_t kClockToleranceKHz = 1000;
 // embedded_target_config_test).
 constexpr int64_t kTotalGlobalMemToleranceBytes = 1024 * 1024 * 1024;
 
-Json::Value ParseProps(
-    const std::shared_ptr<cudnn_frontend::DeviceProperties>& props) {
-  std::vector<uint8_t> buf;
-  cudnn_frontend::error_t err = props->serialize(buf);
-  EXPECT_FALSE(err.is_bad()) << err.get_message();
-  std::string str(buf.begin(), buf.end());
-  Json::Value value;
-  Json::CharReaderBuilder builder;
-  std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
-  std::string errors;
-  EXPECT_TRUE(
-      reader->parse(str.data(), str.data() + str.size(), &value, &errors))
-      << errors;
-  return value;
-}
-
 void StripIgnoredFields(Json::Value& v) {
   for (absl::string_view field : kIgnoredFields) {
     v.removeMember(field.data());
@@ -130,6 +114,12 @@ void ExpectPropsMatch(Json::Value live_json, Json::Value synth_json,
   live_json.removeMember(kOversizedSharedMemoryField);
   synth_json.removeMember(kOversizedSharedMemoryField);
 
+  // Older runtimes retain this supplied JSON member but do not report it for
+  // live devices. Compare it only when the backend's live serializer knows it.
+  if (!live_json.isMember("memoryBusWidth")) {
+    synth_json.removeMember("memoryBusWidth");
+  }
+
   StripIgnoredFields(live_json);
   StripIgnoredFields(synth_json);
   ExpectClockFieldsClose(live_json, synth_json);
@@ -151,6 +141,22 @@ void ExpectPropsMatch(Json::Value live_json, Json::Value synth_json,
 }
 
 }  // namespace
+
+Json::Value ParseProps(
+    const std::shared_ptr<cudnn_frontend::DeviceProperties>& props) {
+  std::vector<uint8_t> buf;
+  cudnn_frontend::error_t err = props->serialize(buf);
+  EXPECT_FALSE(err.is_bad()) << err.get_message();
+  std::string str(buf.begin(), buf.end());
+  Json::Value value;
+  Json::CharReaderBuilder builder;
+  std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
+  std::string errors;
+  EXPECT_TRUE(
+      reader->parse(str.data(), str.data() + str.size(), &value, &errors))
+      << errors;
+  return value;
+}
 
 void ExpectDevicePropsMatchLiveDevice(const se::DeviceDescription& desc,
                                       const int device_id) {

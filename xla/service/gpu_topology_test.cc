@@ -15,20 +15,19 @@ limitations under the License.
 
 #include "xla/service/gpu_topology.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/path.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/service/cpu/executable.pb.h"
@@ -38,6 +37,7 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/util/proto/proto_matchers.h"
+#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -95,6 +95,41 @@ TEST(GpuTopologyTest, FromProto) {
   // But original value is not set.
   EXPECT_EQ(topology->num_devices_per_process_opt(), std::nullopt);
   EXPECT_THAT(topology->ToProto(), EqualsProto(gpu_topology_proto));
+}
+
+TEST(GpuTopologyTest, MemoryBusWidthPresenceSurvivesSerialization) {
+  for (std::optional<int64_t> width :
+       {std::optional<int64_t>(), std::optional<int64_t>(0),
+        std::optional<int64_t>(5120)}) {
+    SCOPED_TRACE(width.has_value() ? std::to_string(*width) : "absent");
+    GpuTopologyProto proto;
+    proto.set_platform_version("some_platform_version");
+    proto.set_num_partitions(1);
+    proto.set_num_hosts_per_partition(1);
+    proto.set_num_devices_per_host(1);
+    auto* device = proto.mutable_gpu_target_config()->mutable_gpu_device_info();
+    device->mutable_cuda_compute_capability()->set_major(9);
+    device->set_dnn_version("9.0.0");
+    if (width.has_value()) {
+      device->set_memory_bus_width(*width);
+    }
+
+    // Legacy metadata must remain decodable without inventing a width.
+    GpuTopologyProto parsed;
+    ASSERT_TRUE(parsed.ParseFromString(proto.SerializeAsString()));
+    ASSERT_OK_AND_ASSIGN(auto topology, GpuTopology::FromProto(parsed));
+    ASSERT_TRUE(topology->has_gpu_target_config());
+    EXPECT_EQ(
+        topology->gpu_target_config().device_description.memory_bus_width(),
+        width);
+    const auto output = topology->ToProto();
+    ASSERT_TRUE(output.has_gpu_target_config());
+    const auto& output_device = output.gpu_target_config().gpu_device_info();
+    EXPECT_EQ(output_device.has_memory_bus_width(), width.has_value());
+    if (width.has_value()) {
+      EXPECT_EQ(output_device.memory_bus_width(), *width);
+    }
+  }
 }
 
 TEST(GpuTopologyTest, FromProtoWithNumDevicesPerProcess) {

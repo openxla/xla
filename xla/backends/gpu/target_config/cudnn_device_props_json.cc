@@ -37,9 +37,14 @@ std::string FormatDevicePropertiesJson(
   const bool is_sm107 = cc && cc->major == 10 && cc->minor == 7;
   const int64_t oversized_shared_memory =
       is_sm107 ? desc.oversized_shared_memory_per_block() : 0;
+  std::string memory_bus_width;
+  if (desc.memory_bus_width().has_value()) {
+    memory_bus_width =
+        absl::StrFormat("  \"memoryBusWidth\":%d,\n", *desc.memory_bus_width());
+  }
   return absl::StrFormat(
       R"json({
-  "deviceVer":%d,
+%s  "deviceVer":%d,
   "multiProcessorCount":%d,
   "warpSize":%d,
   "maxSharedMemoryPerBlock":%d,
@@ -64,7 +69,7 @@ std::string FormatDevicePropertiesJson(
   "driverVer":%d,
   "deviceName":"%s"
 })json",
-      device_ver, desc.core_count(), desc.threads_per_warp(),
+      memory_bus_width, device_ver, desc.core_count(), desc.threads_per_warp(),
       desc.shared_memory_per_block(), desc.shared_memory_per_block_optin(),
       oversized_shared_memory, desc.reserved_shared_memory_per_block(),
       desc.registers_per_core_limit(), desc.max_blocks_per_multiprocessor(),

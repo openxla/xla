@@ -16,9 +16,20 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_TARGET_CONFIG_CUDNN_DEVICE_PROPS_TEST_UTIL_H_
 #define XLA_BACKENDS_GPU_TARGET_CONFIG_CUDNN_DEVICE_PROPS_TEST_UTIL_H_
 
+#include <memory>
+
+#include "json/json.h"
 #include "xla/stream_executor/device_description.h"
 
+namespace cudnn_frontend {
+class DeviceProperties;
+}  // namespace cudnn_frontend
+
 namespace xla::gpu {
+
+// Serializes device properties and parses the result, checking both operations.
+Json::Value ParseProps(
+    const std::shared_ptr<cudnn_frontend::DeviceProperties>& props);
 
 // Verifies that the cuDNN DeviceProperties synthesized from `desc` matches
 // the live DeviceProperties queried from `device_id` (skipping the test if the

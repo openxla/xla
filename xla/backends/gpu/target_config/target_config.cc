@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/target_config/target_config.h"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 
 #include "absl/base/const_init.h"
@@ -183,6 +184,15 @@ bool GpuTargetConfig::operator==(const GpuTargetConfig& other) const {
   return platform_name == other.platform_name &&
          device_description_str == other.device_description_str &&
          device_description == other.device_description;
+}
+
+bool GpuTargetConfig::MatchesTargetConfig(const GpuTargetConfig& target) const {
+  if (target.device_description.memory_bus_width().has_value()) {
+    return *this == target;
+  }
+  GpuTargetConfig legacy_local = *this;
+  legacy_local.device_description.set_memory_bus_width(std::nullopt);
+  return legacy_local == target;
 }
 
 absl::StatusOr<GpuTargetConfig> GpuTargetConfig::FromProto(

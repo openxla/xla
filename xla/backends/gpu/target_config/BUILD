@@ -107,6 +107,19 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "cudnn_device_props_json_test",
+    srcs = ["cudnn_device_props_json_test.cc"],
+    deps = [
+        ":cudnn_device_props_json",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:device_description_proto_cc",
+        "//xla/tsl/platform:status_matchers",
+        "@com_google_googletest//:gtest_main",
+        "@jsoncpp_git//:jsoncpp",
+    ],
+)
+
 cc_library(
     name = "cudnn_device_props",
     srcs = ["cudnn_device_props.cc"],
@@ -170,6 +183,7 @@ xla_test(
     ],
     tags = ["cuda-only"],
     deps = [
+        ":cudnn_device_props",
         ":cudnn_device_props_test_util",
         ":target_config",
         "//xla/service:platform_util",
@@ -184,6 +198,8 @@ xla_test(
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
+        "@cudnn_frontend_archive//:cudnn_frontend",
+        "@jsoncpp_git//:jsoncpp",
     ],
 )
 
