@@ -96,17 +96,14 @@ std::unique_ptr<GpuExecutableBufferAllocator>
 GpuExecutableBufferAllocator::Create(
     absl::string_view module_name,
     absl::Span<const BufferAllocation* const> allocations,
-    const Shape& result_shape, const DebugOptions* debug_options,
+    const Shape& result_shape, const DebugOptions& debug_options,
     ThunkExecutor* thunk_executor, int num_devices) {
   const DebugOptions::CommandBufferUpdateMode update_mode =
-      debug_options != nullptr
-          ? debug_options->xla_gpu_command_buffer_update_mode()
-          : DebugOptions::ALWAYS_UPDATE;
+      debug_options.xla_gpu_command_buffer_update_mode();
   switch (update_mode) {
     case DebugOptions::ALWAYS_UPDATE:
       return std::make_unique<GpuExecutableBufferAllocator>(
-          module_name, allocations, result_shape, debug_options,
-          thunk_executor);
+          module_name, allocations, result_shape, thunk_executor);
     case DebugOptions::SKIP_TEMP:
     case DebugOptions::SKIP_PROFILED:
       return std::make_unique<GpuExecutableVaRemapAllocator>(
@@ -150,12 +147,10 @@ void GpuExecutableBufferAllocator::ForEachCommandBufferAllocation(
 GpuExecutableBufferAllocator::GpuExecutableBufferAllocator(
     absl::string_view module_name,
     absl::Span<const BufferAllocation* const> allocations,
-    const Shape& result_shape, const DebugOptions* debug_options,
-    ThunkExecutor* thunk_executor)
+    const Shape& result_shape, ThunkExecutor* thunk_executor)
     : module_name_(module_name),
       allocations_(allocations.begin(), allocations.end()),
-      result_shape_(result_shape),
-      debug_options_(debug_options) {
+      result_shape_(result_shape) {
   AllocationIndexSet constants;
   ForEachCommandBufferAllocation(
       allocations_, thunk_executor,

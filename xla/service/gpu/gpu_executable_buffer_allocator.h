@@ -169,20 +169,19 @@ class GpuExecutableBufferAllocator {
   };
 
   // Creates the buffer allocator implementing
-  // `debug_options->xla_gpu_command_buffer_update_mode()`: this class for
+  // `debug_options.xla_gpu_command_buffer_update_mode()`: this class for
   // ALWAYS_UPDATE, GpuExecutableVaRemapAllocator for SKIP_TEMP and
   // SKIP_PROFILED. Check-fails on any other mode.
   static std::unique_ptr<GpuExecutableBufferAllocator> Create(
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
-      const Shape& result_shape, const DebugOptions* debug_options,
+      const Shape& result_shape, const DebugOptions& debug_options,
       ThunkExecutor* thunk_executor, int num_devices);
 
   GpuExecutableBufferAllocator(
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
-      const Shape& result_shape, const DebugOptions* debug_options,
-      ThunkExecutor* thunk_executor);
+      const Shape& result_shape, ThunkExecutor* thunk_executor);
   virtual ~GpuExecutableBufferAllocator() = default;
 
   size_t command_buffer_allocation_count() const {
@@ -206,7 +205,6 @@ class GpuExecutableBufferAllocator {
   absl::Span<const BufferAllocation* const> allocations() const {
     return allocations_;
   }
-  const DebugOptions* debug_options() const { return debug_options_; }
   absl::Span<const BufferAllocation::Index> constant_alloc_indices() const {
     return constant_alloc_indices_;
   }
@@ -222,7 +220,6 @@ class GpuExecutableBufferAllocator {
   std::string module_name_;
   std::vector<const BufferAllocation*> allocations_;
   Shape result_shape_;
-  const DebugOptions* debug_options_ = nullptr;
 
   // Sorted indices of command-buffer-referenced constant allocations. Their
   // global addresses are stable without VMM remapping.
