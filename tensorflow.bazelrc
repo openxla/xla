@@ -351,6 +351,8 @@ common:nonccl --define=no_nccl_support=true
 common:linux --host_copt=-w
 common:macos --copt=-w
 common:macos --host_copt=-w
+common:macos --features=-layering_check
+common:macos --host_features=-layering_check
 common:windows --copt=/W0
 common:windows --host_copt=/W0
 
