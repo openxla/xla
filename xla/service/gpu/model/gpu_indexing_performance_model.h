@@ -93,10 +93,12 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
             enable_same_shape_multi_output_fusion) {}
 
   // Returns the number of warps for `tiled_hlo_computation`, a tiling of
-  // `fusion_adaptor`.
+  // `fusion_adaptor`. When `device_info` is provided, clamps the result to the
+  // hardware threads-per-block limit.
   static int64_t EstimateNumWarps(
       const HloFusionAdaptor& fusion_adaptor,
-      const TiledHloComputation& tiled_hlo_computation);
+      const TiledHloComputation& tiled_hlo_computation,
+      const se::DeviceDescription* device_info = nullptr);
 
   absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputation(
       const HloFusionAdaptor& fusion_adaptor,
@@ -132,9 +134,9 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
   // `fusion_adaptor` and this model instance outlive the returned
   // `tsl::Future`. If executor is nullptr, defaults to
   // tsl::InlineExecutor::Instance().
-  [[nodiscard]] tsl::Future<TiledRunTimeDataOrError>
-  TryFindBestTilingForFusionAsync(const HloFusionAdaptor& fusion_adaptor,
-                                  tsl::Executor* executor = nullptr);
+  tsl::Future<TiledRunTimeDataOrError> TryFindBestTilingForFusionAsync(
+      const HloFusionAdaptor& fusion_adaptor,
+      tsl::Executor* executor = nullptr);
 
   // Returns top_k (possibly fewer if not enough valid tilings are found) block
   // level parameters for the given fusion.
@@ -143,10 +145,9 @@ class GpuPerformanceModelWithIndexingAnalysis : public GpuPerformanceModelBase {
   // `fusion_adaptor` and this model instance outlive the returned
   // `tsl::Future`. If executor is nullptr, defaults to
   // tsl::InlineExecutor::Instance().
-  [[nodiscard]] tsl::Future<TopKTiledRunTimeDataOrError>
-  TryFindTopKBestTilingsForFusionAsync(const HloFusionAdaptor& fusion_adaptor,
-                                       int top_k,
-                                       tsl::Executor* executor = nullptr);
+  tsl::Future<TopKTiledRunTimeDataOrError> TryFindTopKBestTilingsForFusionAsync(
+      const HloFusionAdaptor& fusion_adaptor, int top_k,
+      tsl::Executor* executor = nullptr);
 
   // Returns an estimate how many FLOPs will be used to produce one element of
   // the output.
