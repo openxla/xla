@@ -504,6 +504,17 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::Create(
   auto executor =
       std::make_unique<ThunkExecutor>(std::move(seq_thunk->thunks()));
 
+  // A collective inside a command buffer records no launch event.
+  if (params.debug_options.xla_gpu_explicit_launch_ordering() &&
+      absl::c_linear_search(
+          params.debug_options.xla_gpu_enable_command_buffer(),
+          DebugOptions::COLLECTIVES)) {
+    return absl::InvalidArgumentError(
+        "xla_gpu_explicit_launch_ordering does not order collectives inside "
+        "command buffers, remove COLLECTIVES from "
+        "xla_gpu_enable_command_buffer");
+  }
+
   // Precompute if collectives should use minimal resource once, as it can be
   // expensive because it requires whole HLO module traversal.
   bool collective_use_minimal_resource = false;
@@ -600,13 +611,6 @@ GpuExecutable::GpuExecutable(
                                                buffer_assignment_proto_);
   }
   set_module_stats(std::move(module_stats));
-
-  if (debug_options.xla_gpu_explicit_launch_ordering() &&
-      absl::c_linear_search(debug_options.xla_gpu_enable_command_buffer(),
-                            DebugOptions::COLLECTIVES)) {
-    LOG(WARNING) << "xla_gpu_explicit_launch_ordering does not order "
-                    "collectives inside command buffers";
-  }
 
   const DebugOptions* allocation_debug_options =
       has_module() ? &module_config().debug_options() : nullptr;

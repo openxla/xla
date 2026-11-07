@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -26,6 +24,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
 #include "absl/base/nullability.h"
 #include "absl/log/check.h"
 #include "absl/log/globals.h"
@@ -34,6 +33,7 @@ limitations under the License.
 #include "absl/log/log_sink.h"
 #include "absl/log/log_sink_registry.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
@@ -2035,6 +2035,41 @@ TEST_F(CollectiveOpsTestE2E, ExplicitLaunchOrderingWhileLoopWithCollectives) {
   ASSERT_EQ(results.size(), kNumReplicas);
   LiteralTestUtil::ExpectR1Equal<uint32_t>({50, 70}, results[0]);
   LiteralTestUtil::ExpectR1Equal<uint32_t>({50, 70}, results[1]);
+}
+
+// A collective inside a command buffer cannot record a launch event.
+TEST_F(CollectiveOpsTestE2E,
+       ExplicitLaunchOrderingRejectsCollectivesInCommandBuffers) {
+  const absl::string_view kModuleStr = R"(
+  HloModule test
+
+  add {
+    x = u32[] parameter(0)
+    y = u32[] parameter(1)
+    ROOT sum = u32[] add(x, y)
+  }
+
+  ENTRY test_computation {
+    replica = u32[] replica-id()
+    data = u32[2] broadcast(replica), dimensions={}
+    reduced = u32[2] all-reduce(data), replica_groups={{0,1}}, to_apply=add
+    ROOT doubled = u32[2] add(reduced, reduced)
+  }
+  )";
+  const int64_t kNumReplicas = 2;
+  ASSERT_GE(device_count(), kNumReplicas)
+      << "Test requires at least " << kNumReplicas << " devices";
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  DebugOptions& debug_options = config.mutable_debug_options();
+  debug_options.set_xla_gpu_explicit_launch_ordering(true);
+  debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
+  EXPECT_THAT(ExecuteReplicated(std::move(module)).status(),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     ::testing::HasSubstr("command buffer")));
 }
 
 INSTANTIATE_TEST_SUITE_P(AsyncCollectiveOps, AsyncCollectiveOps,

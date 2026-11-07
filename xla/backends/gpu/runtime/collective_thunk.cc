@@ -574,6 +574,9 @@ absl::Status IsValidOperand(Shape shape, Thunk::Kind reduction_op) {
   return absl::OkStatus();
 }
 
+// The event must record after the last launch of this thunk. The launch order
+// inside one group is not the call order, so the event goes on one call that
+// launches alone after the group of the other calls.
 absl::Status LaunchInGroups(
     GpuCommunicator& comm, absl::Span<const DeviceBufferPair> buffers,
     stream_executor::Event* launch_event,

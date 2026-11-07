@@ -2009,8 +2009,8 @@ message DebugOptions {
   // Kernels issued after a collective wait until the collective kernel is
   // dispatched, so no device runs compute ahead of a collective its peers wait
   // for. Covers NCCL, ragged all-to-all and XLA collective kernels and needs
-  // NCCL 2.32 and driver 12.3. Not collective permute, send, recv, NVSHMEM or
-  // command buffers.
+  // NCCL 2.32 and driver 12.3. Not collective permute, send, recv or command
+  // buffers.
   optional bool xla_gpu_explicit_launch_ordering = 567;
 
   // Next id: 568
