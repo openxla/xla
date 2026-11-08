@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "tsl/platform/path.h"
@@ -1125,6 +1126,9 @@ absl::Status CudaCommandBuffer::LaunchGraph(Stream* stream) {
   // https://github.com/openxla/xla/issues/36487
   // Disable the leak check temporarily.
   absl::LeakCheckDisabler disabler;
+  // See CudaStream::graph_launch_mutex(): a concurrent cuStreamWaitEvent on
+  // the same stream from another thread can otherwise be lost by the driver.
+  absl::MutexLock lock(static_cast<CudaStream*>(stream)->graph_launch_mutex());
   return cuda::ToStatus(
       cuGraphLaunch(
           graph_exec(),
