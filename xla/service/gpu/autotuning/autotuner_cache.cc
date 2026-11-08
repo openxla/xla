@@ -56,9 +56,10 @@ namespace xla {
 namespace gpu {
 namespace {
 
-// Bump this version whenever you change the structure of the results.
+// Bump this version when the result structure or valid configuration set
+// changes.
 // LINT.IfChange(version)
-constexpr int kVersion = 3;
+constexpr int kVersion = 4;
 // LINT.ThenChange()
 
 }  // namespace

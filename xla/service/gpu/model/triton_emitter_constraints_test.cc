@@ -153,6 +153,150 @@ ENTRY entry_computation {
               StatusIs(_, HasSubstr("exceeds the maximum MMA dimension size")));
 }
 
+TEST_F(VerifyTritonConstraintsTest, Int8DotContractingTileIsAtLeast32) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule m
+
+fused_computation {
+  p0 = s8[4,16] parameter(0)
+  p1 = s8[16,32768] parameter(1)
+  ROOT dot = s32[4,32768] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry_computation {
+  param_0 = s8[4,16] parameter(0)
+  param_1 = s8[16,32768] parameter(1)
+  ROOT fusion = s32[4,32768] fusion(param_0, param_1), kind=kCustom,
+    calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+}
+)hlo"));
+
+  // A 16-element contracting tile is rejected for 8-bit operands.
+  EXPECT_THAT(CheckTiling(module.get(), {4, 4, 16}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("requires at least 32 contracting elements "
+                                 "for 8-bit dot operands")));
+  // A 32-element tile is valid even when the contracting dimension is smaller.
+  EXPECT_OK(CheckTiling(module.get(), {4, 4, 32}));
+}
+
+TEST_F(VerifyTritonConstraintsTest, Fp8DotContractingTileIsAtLeast32) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule m
+
+fused_computation {
+  p0 = f8e4m3fn[4,16] parameter(0)
+  p1 = f8e4m3fn[16,32768] parameter(1)
+  ROOT dot = f32[4,32768] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry_computation {
+  param_0 = f8e4m3fn[4,16] parameter(0)
+  param_1 = f8e4m3fn[16,32768] parameter(1)
+  ROOT fusion = f32[4,32768] fusion(param_0, param_1), kind=kCustom,
+    calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+}
+)hlo"));
+
+  EXPECT_THAT(CheckTiling(module.get(), {4, 4, 16}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("requires at least 32 contracting elements "
+                                 "for 8-bit dot operands")));
+  EXPECT_OK(CheckTiling(module.get(), {4, 4, 32}));
+}
+
+TEST_F(VerifyTritonConstraintsTest, EmptyContractionStillChecksMMAMaxSize) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule m
+
+fused_computation {
+  p0 = s8[4] parameter(0)
+  p1 = s8[4] parameter(1)
+  ROOT dot = s32[4,4] dot(p0, p1),
+    lhs_contracting_dims={}, rhs_contracting_dims={}
+}
+
+ENTRY entry_computation {
+  param_0 = s8[4] parameter(0)
+  param_1 = s8[4] parameter(1)
+  ROOT fusion = s32[4,4] fusion(param_0, param_1), kind=kCustom,
+    calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+}
+)hlo"));
+
+  // No-contraction dots still get the max-MMA check.
+  EXPECT_THAT(CheckTiling(module.get(), {512, 4}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("exceeds the maximum MMA dimension size")));
+  EXPECT_OK(CheckTiling(module.get(), {4, 4}));
+}
+
+TEST_F(VerifyTritonConstraintsTest, Int8DotSmallContractingTileAllowedOnRocm) {
+  device_description_ = TestGpuDeviceInfo::AMDMI300DeviceInfo();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule m
+
+fused_computation {
+  p0 = s8[4,16] parameter(0)
+  p1 = s8[16,32768] parameter(1)
+  ROOT dot = s32[4,32768] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry_computation {
+  param_0 = s8[4,16] parameter(0)
+  param_1 = s8[16,32768] parameter(1)
+  ROOT fusion = s32[4,32768] fusion(param_0, param_1), kind=kCustom,
+    calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+}
+)hlo"));
+
+  // The K=32 requirement is NVIDIA-specific.
+  EXPECT_OK(CheckTiling(module.get(), {4, 4, 16}));
+}
+
+TEST_F(VerifyTritonConstraintsTest, ScaledDotContractingTileIsAtLeast32) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"hlo(
+HloModule m
+
+fused_computation {
+  lhs = f8e4m3fn[128,32] parameter(0)
+  rhs = f8e4m3fn[32,128] parameter(1)
+  lhs_scale = f8e8m0fnu[128,1] parameter(2)
+  rhs_scale = f8e8m0fnu[1,128] parameter(3)
+  ROOT dot = f32[128,128] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY entry_computation {
+  lhs = f8e4m3fn[128,32] parameter(0)
+  rhs = f8e4m3fn[32,128] parameter(1)
+  lhs_scale = f8e8m0fnu[128,1] parameter(2)
+  rhs_scale = f8e8m0fnu[1,128] parameter(3)
+  ROOT fusion = f32[128,128] fusion(lhs, rhs, lhs_scale, rhs_scale),
+    kind=kCustom, calls=fused_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton"}}
+}
+)hlo"));
+
+  EXPECT_THAT(CheckTiling(module.get(), {64, 64, 16}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("requires at least 32 contracting elements "
+                                 "for 8-bit dot operands")));
+  EXPECT_OK(CheckTiling(module.get(), {64, 64, 32}));
+}
+
 TEST_F(VerifyTritonConstraintsTest, ScaledDotOperandSizeConstraintIsEnforced) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"hlo(
@@ -404,6 +548,62 @@ TEST_F(VerifySubsetOfTritonConstraintsTest, RejectsDotTileExceedingMMALimit) {
   Decision valid_decision = VerifySubsetOfTritonConstraints(
       {16, 16, 256}, *space, device_description_);
   EXPECT_TRUE(valid_decision.IsAllowed()) << valid_decision.Explain();
+}
+
+TEST_F(VerifySubsetOfTritonConstraintsTest, RejectsInt8DotTileBelow32) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    HloModule m
+    ENTRY e {
+      p0 = s8[16,16] parameter(0)
+      p1 = s8[16,16] parameter(1)
+      ROOT dot = s32[16,16] dot(p0, p1),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    }
+  )"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+  ASSERT_OK_AND_ASSIGN(auto space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+
+  Decision invalid_decision = VerifySubsetOfTritonConstraints(
+      {16, 16, 16}, *space, device_description_);
+  EXPECT_TRUE(invalid_decision.IsForbidden());
+  EXPECT_THAT(
+      invalid_decision.Explain(),
+      HasSubstr("below the minimum of 32 contracting elements for 8-bit "
+                "dot operands on CUDA"));
+
+  Decision valid_decision = VerifySubsetOfTritonConstraints(
+      {16, 16, 32}, *space, device_description_);
+  EXPECT_TRUE(valid_decision.IsAllowed()) << valid_decision.Explain();
+}
+
+TEST_F(VerifySubsetOfTritonConstraintsTest,
+       RejectsMixedOperandInt8ScaledDotTileBelow32) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+    HloModule m
+    ENTRY e {
+      lhs = f4e2m1fn[128,32] parameter(0)
+      rhs = f8e4m3fn[32,128] parameter(1)
+      lhs_scale = f8e8m0fnu[128,1] parameter(2)
+      rhs_scale = f8e8m0fnu[1,128] parameter(3)
+      ROOT dot = f32[128,128] scaled-dot(lhs, rhs, lhs_scale, rhs_scale),
+          lhs_contracting_dims={1}, rhs_contracting_dims={0}
+    }
+  )"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+  ASSERT_OK_AND_ASSIGN(auto space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+
+  Decision decision = VerifySubsetOfTritonConstraints({64, 64, 16}, *space,
+                                                      device_description_);
+  EXPECT_TRUE(decision.IsForbidden());
+  EXPECT_THAT(decision.Explain(),
+              HasSubstr("below the minimum of 32 contracting elements for "
+                        "8-bit dot operands on CUDA"));
 }
 
 TEST_F(VerifySubsetOfTritonConstraintsTest, MultiOutputFusionEvaluatedPerRoot) {

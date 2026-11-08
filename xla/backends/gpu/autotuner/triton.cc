@@ -428,7 +428,11 @@ bool TritonBackend::IsSupported(const HloInstruction& instr) {
   return true;
 }
 
-std::string TritonBackend::version() const { return TRITON_VERSION; }
+std::string TritonBackend::version() const {
+  // Invalidate cached configs that may use a 16-element contracting tile for
+  // 8-bit operands.
+  return absl::StrCat(TRITON_VERSION, "+xla-8bit-k32");
+}
 
 }  // namespace gpu
 }  // namespace xla
