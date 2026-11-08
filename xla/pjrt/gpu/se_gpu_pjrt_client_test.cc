@@ -4503,6 +4503,60 @@ TEST(StreamExecutorGpuClientTest, TempBufferColorUsesSeparatePool) {
 #endif
 }
 
+#if TENSORFLOW_USE_ROCM
+// Like the default pool, the temp pool reports the device memory it allocates
+// and frees to the allocator config's sub-allocator visitors.
+TEST(StreamExecutorGpuClientTest, TempBufferPoolCallsSubAllocatorVisitors) {
+  ScopedXlaFlags flags("--xla_gpu_temp_buffer_use_separate_color=true");
+  absl::Mutex mu;
+  std::vector<se::DeviceAddressBase> allocated;
+  std::vector<void*> freed;
+  GpuClientOptions options;
+  options.allocator_config.kind = GpuAllocatorConfig::Kind::kBFC;
+  options.allocator_config.memory_fraction = 0.05;
+  options.allocator_config.sub_allocator_alloc_visitors.push_back(
+      [&](void* ptr, int, size_t bytes) {
+        absl::MutexLock lock(mu);
+        allocated.emplace_back(ptr, bytes);
+      });
+  options.allocator_config.sub_allocator_free_visitors.push_back(
+      [&](void* ptr, int, size_t) {
+        absl::MutexLock lock(mu);
+        freed.push_back(ptr);
+      });
+  options.allowed_devices = {0};
+
+  void* temp_region = nullptr;
+  {
+    ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+    auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+        absl::down_cast<CommonPjRtClient*>(client.get())->raw_client());
+    auto* allocator =
+        dynamic_cast<se::MultiDeviceAdapter*>(raw_client->allocator());
+    ASSERT_NE(allocator, nullptr);
+    ASSERT_OK_AND_ASSIGN(
+        se::ScopedDeviceAddress<uint8_t> temp,
+        allocator->Allocate(
+            /*device_ordinal=*/0, uint64_t{1} << 20,
+            /*retry_on_failure=*/false,
+            static_cast<int>(gpu::MemorySpaceColor::kTempBuffer)));
+    const uintptr_t address = reinterpret_cast<uintptr_t>(temp->opaque());
+    absl::MutexLock lock(mu);
+    auto region =
+        absl::c_find_if(allocated, [&](const se::DeviceAddressBase& r) {
+          const uintptr_t base = reinterpret_cast<uintptr_t>(r.opaque());
+          return base <= address && address < base + r.size();
+        });
+    ASSERT_NE(region, allocated.end())
+        << "The temp buffer's region was not reported to the alloc visitor";
+    temp_region = region->opaque();
+  }
+  // Destroying the client returns the temp pool's region.
+  absl::MutexLock lock(mu);
+  EXPECT_THAT(freed, Contains(temp_region));
+}
+#endif
+
 // Records the address of its first (operand-aliased) result. The second result
 // makes the custom call tuple-shaped.
 absl::Status RecordTempAddressCustomCall(ffi::AnyBuffer,
