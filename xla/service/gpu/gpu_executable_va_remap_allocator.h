@@ -73,7 +73,7 @@ class GpuExecutableVaRemapAllocator : public GpuExecutableBufferAllocator {
   GpuExecutableVaRemapAllocator(
       absl::string_view module_name,
       absl::Span<const BufferAllocation* const> allocations,
-      const Shape& result_shape, const DebugOptions* debug_options,
+      const Shape& result_shape, const DebugOptions& debug_options,
       ThunkExecutor* thunk_executor, int num_devices);
   ~GpuExecutableVaRemapAllocator() override;
 

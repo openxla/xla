@@ -42,7 +42,6 @@ limitations under the License.
 #include "xla/stream_executor/mock_stream.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
-#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
@@ -131,7 +130,7 @@ class GpuExecutableBufferAllocatorTest : public ::testing::Test {
   absl::StatusOr<BufferAllocations> Generate(
       absl::Span<const BufferAllocation* const> allocations) {
     GpuExecutableBufferAllocator executable_allocator(
-        "test", allocations, ShapeUtil::MakeShape(F32, {64}), &debug_options_,
+        "test", allocations, ShapeUtil::MakeShape(F32, {64}),
         /*thunk_executor=*/nullptr);
     auto get_parameter_buffer = [&](const BufferAllocation& allocation)
         -> absl::StatusOr<GpuExecutableBufferAllocator::ParameterBuffer> {
@@ -153,7 +152,6 @@ class GpuExecutableBufferAllocatorTest : public ::testing::Test {
   RecordingAllocator allocator_;
   ExecutableRunOptions run_options_;
   ServiceExecutableRunOptions service_run_options_;
-  DebugOptions debug_options_;
   GpuExecutableBufferAllocator::BufferAllocToDeviceMemoryMap globals_;
   alignas(kAlignment) uint8_t parameter_storage_[1024];
   alignas(kAlignment) uint8_t constant_storage_[256];

@@ -561,17 +561,15 @@ absl::Status GpuExecutableVaRemapAllocator::VaRemapExecutionScope::
 GpuExecutableVaRemapAllocator::GpuExecutableVaRemapAllocator(
     absl::string_view module_name,
     absl::Span<const BufferAllocation* const> allocations,
-    const Shape& result_shape, const DebugOptions* debug_options,
+    const Shape& result_shape, const DebugOptions& debug_options,
     ThunkExecutor* thunk_executor, int num_devices)
     : GpuExecutableBufferAllocator(module_name, allocations, result_shape,
-                                   debug_options, thunk_executor),
+                                   thunk_executor),
       remappings_(num_devices) {
   // Allocation colors are matched against the VMM allocator's memory spaces.
   static_assert(Layout::kHostMemorySpace ==
                 static_cast<int64_t>(se::MemorySpace::kHost));
-  update_mode_ = debug_options != nullptr
-                     ? debug_options->xla_gpu_command_buffer_update_mode()
-                     : DebugOptions::ALWAYS_UPDATE;
+  update_mode_ = debug_options.xla_gpu_command_buffer_update_mode();
   CHECK(update_mode_ == DebugOptions::SKIP_TEMP ||
         update_mode_ == DebugOptions::SKIP_PROFILED)
       << "Unsupported command buffer update mode for VA remapping: "
