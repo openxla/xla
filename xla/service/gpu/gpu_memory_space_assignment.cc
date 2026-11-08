@@ -36,7 +36,9 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
@@ -400,12 +402,13 @@ CollectiveOpTypes GetEnabledCollectiveOpTypes(const DebugOptions& option) {
 bool IsCommandBufferCollective(const HloInstruction* instruction,
                                const CollectiveOpTypes& enabled) {
   switch (instruction->opcode()) {
-    // The filter has no type for send and recv.
+    // The filter has no type for send and recv. Host transfers lower to host
+    // send/recv thunks, which are never recorded.
     case HloOpcode::kRecv:
     case HloOpcode::kRecvDone:
     case HloOpcode::kSend:
     case HloOpcode::kSendDone:
-      return true;
+      return !Cast<HloSendRecvInstruction>(instruction)->is_host_transfer();
     default:
       break;
   }
@@ -438,7 +441,8 @@ std::optional<BufferAssigner::MustNotLiveOut> CreateMustNotLiveOut(
   // TODO(magaonka-amd): Account for ragged all-to-all, which the command
   // buffer conversion pass records as COLLECTIVES_KERNEL when it uses the
   // symmetric memory kernel.
-  if ((update_mode != DebugOptions::SKIP_TEMP &&
+  if (!option.xla_gpu_command_buffer_keep_collectives_out_of_outputs() ||
+      (update_mode != DebugOptions::SKIP_TEMP &&
        update_mode != DebugOptions::SKIP_PROFILED) ||
       !absl::c_linear_search(option.xla_gpu_enable_command_buffer(),
                              DebugOptions::COLLECTIVES)) {

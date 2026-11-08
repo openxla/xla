@@ -2024,14 +2024,17 @@ ENTRY main {
 }
 )";
 
-  auto temp_bytes = [&](DebugOptions::CommandBufferUpdateMode update_mode)
-      -> absl::StatusOr<int64_t> {
+  auto all_reduce_maybe_live_out =
+      [&](DebugOptions::CommandBufferUpdateMode update_mode,
+          bool keep_collectives_out_of_outputs) -> absl::StatusOr<bool> {
     ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
                           ParseAndReturnVerifiedModule(kHloText));
     DebugOptions& debug_options =
         module->mutable_config().mutable_debug_options();
     debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
     debug_options.set_xla_gpu_command_buffer_update_mode(update_mode);
+    debug_options.set_xla_gpu_command_buffer_keep_collectives_out_of_outputs(
+        keep_collectives_out_of_outputs);
 
     Compiler::CompileOptions compile_options;
     compile_options.gpu_topology = GetSingleDeviceGpuTopology(
@@ -2041,21 +2044,34 @@ ENTRY main {
         std::unique_ptr<Executable> executable,
         compiler()->RunBackend(std::move(module), /*executor=*/nullptr,
                                compile_options));
-    int64_t bytes = 0;
-    for (const BufferAllocation* allocation :
-         absl::down_cast<GpuExecutable*>(executable.get())->GetAllocations()) {
-      if (allocation->IsPreallocatedTempBuffer()) {
-        bytes += allocation->size();
-      }
+    auto* gpu_executable = absl::down_cast<GpuExecutable*>(executable.get());
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<BufferAssignment> assignment,
+        BufferAssignment::FromProto(gpu_executable->buffer_assignment_proto(),
+                                    &gpu_executable->module(),
+                                    compiler()->BufferSizeBytesFunction(),
+                                    gpu_executable->alias_info()));
+    const HloInstruction* ar = FindInstruction(&gpu_executable->module(), "ar");
+    if (ar == nullptr) {
+      return absl::NotFoundError("all-reduce `ar` not in the compiled module");
     }
-    return bytes;
+    ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
+                          assignment->GetUniqueTopLevelSlice(ar));
+    return slice.allocation()->maybe_live_out();
   };
 
-  ASSERT_OK_AND_ASSIGN(int64_t always_update,
-                       temp_bytes(DebugOptions::ALWAYS_UPDATE));
-  ASSERT_OK_AND_ASSIGN(int64_t skip_temp, temp_bytes(DebugOptions::SKIP_TEMP));
-  constexpr int64_t kAllReduceBytes = 1024 * sizeof(float);
-  EXPECT_GE(skip_temp - always_update, kAllReduceBytes);
+  EXPECT_THAT(all_reduce_maybe_live_out(DebugOptions::ALWAYS_UPDATE,
+                                        /*keep_collectives_out_of_outputs=*/
+                                        true),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(all_reduce_maybe_live_out(DebugOptions::SKIP_TEMP,
+                                        /*keep_collectives_out_of_outputs=*/
+                                        false),
+              absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(all_reduce_maybe_live_out(DebugOptions::SKIP_TEMP,
+                                        /*keep_collectives_out_of_outputs=*/
+                                        true),
+              absl_testing::IsOkAndHolds(false));
 }
 
 TEST_F(GpuCompilerTest, NoCudnnVectorizationOnHopperAndBeyond) {
