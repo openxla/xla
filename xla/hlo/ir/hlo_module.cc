@@ -653,7 +653,10 @@ void HloModule::ToProto(HloModuleProto* proto, HloProtoOptions options) const {
     options.payload_deduplicator = &*payload_deduplicator;
   }
 
-  for (const HloComputation* computation : MakeComputationPostOrder()) {
+  const std::vector<HloComputation*> post_order = MakeComputationPostOrder();
+  proto->mutable_computations()->Reserve(proto->computations_size() +
+                                         post_order.size());
+  for (const HloComputation* computation : post_order) {
     computation->ToProto(proto->add_computations(), options);
   }
 
@@ -1789,6 +1792,7 @@ void HloModule::Clone(const std::string& suffix, HloCloneContext* context,
   module->set_is_dynamic(is_dynamic());
   module->set_hlo_passes_started(hlo_passes_started());
   module->set_frontend_attributes(frontend_attributes());
+  module->set_unoptimized_fingerprint(unoptimized_fingerprint());
   module->backend_config_ = backend_config_;
   *module->metadata() = metadata();
   // The canonical module id should be the same as the unique id from the

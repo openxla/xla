@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
@@ -3771,6 +3772,59 @@ TEST_F(BufferAssignmentTest, MemoryUsageReportGroupedByMemorySpace) {
   }
 }
 
+TEST_F(BufferAssignmentTest, MemoryUsageReportExcludesThreadLocalAllocations) {
+  constexpr absl::string_view kHloText = R"(
+HloModule host_async_module
+
+%host_computation (host_param: f32[4096]) -> () {
+  %host_param = f32[4096]{0} parameter(0)
+  ROOT %host_tuple = () tuple()
+}, execution_thread="host"
+
+%async_computation (async_param: f32[4096]) -> () {
+  %async_param = f32[4096]{0} parameter(0)
+  ROOT %host_execute = () custom-call(%async_param), custom_call_target="HostExecute", to_apply=%host_computation
+}, execution_thread="host"
+
+ENTRY %main (p: f32[4096]) -> () {
+  %p = f32[4096]{0} parameter(0)
+  %async_start = ((f32[4096]{0}), (), u32[]) async-start(%p), async_execution_thread="host", calls=%async_computation
+  ROOT %async_done = () custom-call-done(%async_start)
+})";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  std::unique_ptr<BufferAssignment> buffers = RunBufferAssignment(module.get());
+
+  const BufferAllocation& host_param_alloc = GetTopLevelAllocation(
+      *buffers, FindInstruction(module.get(), "host_param"));
+  ASSERT_TRUE(host_param_alloc.is_thread_local());
+  EXPECT_EQ(host_param_alloc.color(), 0);
+  EXPECT_EQ(host_param_alloc.size(), 4096 * sizeof(float));
+
+  const int64_t expected_total_bytes =
+      ComputeTotalAllocationBytes(buffers->ToProto(), /*memory_color=*/0);
+  EXPECT_GT(expected_total_bytes, 0);
+  MemoryUsageReportProto proto_report =
+      buffers->GetMemoryUsageReportProto(/*percentile=*/0.0f);
+  ASSERT_EQ(proto_report.memory_space_allocation_entries_size(), 1);
+  const MemoryUsageReportProto::AllocationEntryInMemorySpace& memory_space =
+      proto_report.memory_space_allocation_entries(0);
+  EXPECT_EQ(memory_space.memory_space_color(), 0);
+  EXPECT_EQ(memory_space.total_bytes(), expected_total_bytes);
+  ASSERT_FALSE(memory_space.allocation_entries().empty());
+  EXPECT_EQ(memory_space.allocation_entries().rbegin()->cumulative_size(),
+            expected_total_bytes);
+  for (const MemoryUsageReportProto::AllocationEntry& entry :
+       memory_space.allocation_entries()) {
+    EXPECT_NE(entry.index(), host_param_alloc.index());
+  }
+
+  EXPECT_THAT(
+      buffers->MemoryUsageReport(),
+      HasSubstr(absl::StrCat("Total bytes: ", expected_total_bytes, " (")));
+}
+
 TEST_F(BufferAssignmentTest, AliasedBuffersShouldntCoexistInPeakBuffers) {
   std::string hlo_text = R"(
 HloModule test_module, is_scheduled=true
@@ -7442,6 +7496,44 @@ ENTRY main {
   EXPECT_EQ(slice0.index(), buffer0_slice.index());
   EXPECT_EQ(slice0.offset(), 0);
   EXPECT_GE(buffer0_slice.offset(), slice0.size());
+}
+
+TEST_F(BufferAssignmentTest, PerAllocationHloAccessors) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule PerAllocationHloAccessors, is_scheduled=true
+    ENTRY main {
+      p0 = f32[100] parameter(0)
+      c0 = f32[100] constant(0)
+      add = f32[100] add(p0, c0)
+      log = f32[100] log(add)
+      ROOT slice = f32[1] slice(log), slice={[0:1]}
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  BufferAssigner::Options opts;
+  opts.allocate_buffers_for_constants = true;
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> assignment,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  const HloInstruction* add =
+      module->entry_computation()->GetInstructionWithName("add");
+  const HloValue& add_value =
+      assignment->dataflow_analysis().GetUniqueValueAt(add);
+  const BufferAllocation& alloc = assignment->GetAssignedAllocation(add_value);
+  ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice expected_slice,
+                       assignment->GetUniqueTopLevelSlice(add));
+
+  EXPECT_TRUE(assignment->assigned_buffers(alloc).contains(&add_value));
+  EXPECT_EQ(assignment->GetAssignedSlice(add_value), expected_slice);
+  EXPECT_FALSE(assignment->PeakMemoryLogicalBuffers(alloc).empty());
+  EXPECT_TRUE(assignment->CrossColorBuffers(alloc).empty());
+  EXPECT_FALSE(assignment->MemoryUsageReport(alloc, "").empty());
 }
 }  // namespace
 }  // namespace xla

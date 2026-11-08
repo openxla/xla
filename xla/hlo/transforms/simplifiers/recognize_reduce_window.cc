@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/pass/hlo_pass_registry.h"
 #include "xla/literal_util.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/errors.h"
@@ -1057,6 +1058,10 @@ absl::StatusOr<bool> RunOnComputation(HloComputation* computation) {
 
   return changed;
 }
+
+const HloPassFactory* const kRecognizeReduceWindowRegistration =
+    RegisterHloPassFactory<DefaultHloPassFactory<RecognizeReduceWindow>>(
+        "recognize-reduce-window");
 
 }  // namespace
 

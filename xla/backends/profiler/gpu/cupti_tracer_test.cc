@@ -18,8 +18,10 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <chrono>  // NOLINT(build/c++11)
 #include <cstdint>
 #include <memory>
+#include <thread>  // NOLINT(build/c++11)
 #include <utility>
 
 #include "absl/base/log_severity.h"
@@ -32,6 +34,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_driver_cbid.h"
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti_result.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "third_party/gpus/cuda/include/driver_types.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/cuda_test.h"
@@ -892,6 +895,82 @@ TEST_F(CuptiTracerTest,
   EXPECT_TRUE(cupti_tracer_->NeedRootAccess());
   EXPECT_TRUE(cupti_tracer_->IsAvailable());
   EXPECT_TRUE(CuptiDisabled());
+}
+
+// Reproduces the CUPTI bug where enabling CUPTI_ACTIVITY_KIND_GRAPH_TRACE and
+// calling cuptiFinalize() at the end of a profiling session corrupts a
+// pre-existing cudaGraphExec_t that was launched during the session, causing
+// subsequent launches after cuptiFinalize() to fail with
+// cudaErrorIllegalAddress (700).
+// Disabled by default because it corrupts the CUDA context; run manually with
+// --test_arg=--gunit_also_run_disabled_tests (or
+// --test_arg=--gtest_also_run_disabled_tests in OSS).
+TEST_F(CuptiTracerTest,
+       DISABLED_GraphTraceWithCuptiFinalizeCrashesOnPostSessionGraphLaunch) {
+  CuptiTracer* real_tracer = CuptiTracer::GetCuptiTracerSingleton();
+
+  CuptiTracerOptions options;
+  options.activities_selected = {CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL,
+                                 CUPTI_ACTIVITY_KIND_GRAPH_TRACE};
+  options.cbids_selected = CuptiTracer::CreateDefaultCallbackIds();
+  options.prefer_cupti_v2 = false;
+  options.cupti_finalize = true;
+
+  cudaError_t err = ExecuteGraphBeforeDuringAndAfterProfiler(
+      [&]() {
+        EXPECT_THAT(real_tracer->Enable(options, cupti_collector_.get()),
+                    IsOk());
+      },
+      [&]() { real_tracer->Disable(); });
+  EXPECT_EQ(err, cudaSuccess)
+      << "Post-session graph launch failed after cuptiFinalize() with error "
+      << static_cast<int>(err);
+}
+
+// Reproduces the CUPTI bug where concurrent stream capture
+// (cudaStreamBeginCaptureToGraph) + child graph node update
+// (cudaGraphExecChildGraphNodeSetParams) + launch of a parent CUDA graph
+// containing a conditional IF node while a profiler thread starts and stops
+// CUPTI sessions with cuptiFinalize() (even without
+// CUPTI_ACTIVITY_KIND_GRAPH_TRACE) triggers cudaErrorLaunchFailure (719) and
+// CUPTI_ERROR_NOT_INITIALIZED (15) or deadlocks inside CUPTI / CUDA driver
+// locks.
+// Disabled by default because it crashes or hangs the CUDA context; run
+// manually with --test_arg=--gunit_also_run_disabled_tests (or
+// --test_arg=--gtest_also_run_disabled_tests in OSS).
+TEST_F(CuptiTracerTest,
+       DISABLED_ConcurrentConditionalGraphUpdateWithCuptiFinalizeFails) {
+  CuptiTracer* real_tracer = CuptiTracer::GetCuptiTracerSingleton();
+
+  CuptiTracerOptions options;
+  options.activities_selected = {CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL};
+  // Leave cbids_selected empty so CuptiTracer enables the full
+  // CUPTI_CB_DOMAIN_DRIVER_API domain (including stream capture and child
+  // graph node update callbacks).
+  options.cbids_selected = {};
+  options.prefer_cupti_v2 = false;
+  options.cupti_finalize = true;
+
+  absl::Status last_enable_status = absl::OkStatus();
+  cudaError_t worker_err =
+      ExecuteConcurrentConditionalGraphUpdateDuringProfiler(
+          /*max_profiler_sessions=*/15, [&]() {
+            last_enable_status =
+                real_tracer->Enable(options, cupti_collector_.get());
+            if (!last_enable_status.ok()) {
+              return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            real_tracer->Disable();
+            tensorflow::profiler::XSpace space;
+            cupti_collector_->Export(&space, CuptiTracer::GetTimestamp());
+            return true;
+          });
+  EXPECT_THAT(last_enable_status, IsOk());
+  EXPECT_EQ(worker_err, cudaSuccess)
+      << "Concurrent conditional graph update/launch failed during "
+         "cuptiFinalize() with error "
+      << static_cast<int>(worker_err);
 }
 
 }  // namespace
