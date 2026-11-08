@@ -122,13 +122,6 @@ class HostOffloader : public HloModulePass {
   bool InstructionIsAllowedBetweenMoveToHostAndDus(
       const HloInstruction* instruction) const;
 
-  // Returns true if the instruction is allowed to be in the
-  // middle of a path between a DynamicSlice and a MoveToDevice custom-call
-  // annotation. Ideally the DynamicSlice should be immediately followed by the
-  // custom-call, but this is not always the case.
-  bool InstructionIsAllowedBetweenDsAndMoveToDevice(
-      const HloInstruction* instruction) const;
-
   // Walks down the graph and does "host memory offloading" starting from every
   // host memory parameter in the entry computation.
   absl::StatusOr<bool> HandleInputStreaming(HloComputation* entry_computation);
@@ -179,6 +172,10 @@ class HostOffloader : public HloModulePass {
   // start the host memory offload path from for each use of the custom call.
   absl::StatusOr<std::vector<host_offload_utils::InstructionAndShapeIndex>>
   GetStartingInstructions(HloInstruction* custom_call_instruction);
+
+  void RecordRemovedMoveToHostCustomCall(const HloInstruction* custom_call);
+
+  host_offload_utils::MovedToHostOperands moved_to_host_operands_;
 
   // When a MoveToHost custom call is not paired with a DynamicUpdateSlice, a
   // copy from device to host must be inserted.

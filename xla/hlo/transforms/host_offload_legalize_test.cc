@@ -18,7 +18,9 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -690,6 +692,90 @@ ENTRY main {
   ASSERT_NE(offload, nullptr);
   EXPECT_EQ(sort->operand(0), offload);
   EXPECT_EQ(FindInstruction(module.get(), "cp"), nullptr);
+}
+
+// A nested scan stacks blocks of offloaded data, and a layout changing copy
+// sits between the stacked buffer and the loop that reads it. The copy must
+// move down past the slices to device, or it runs on the whole host buffer.
+TEST_F(HostOffloadLegalizeTest, MoveCopyDownForNestedScanStack) {
+  const std::string& hlo_string = R"(
+HloModule nested_scan_stack
+
+inner_body {
+  p = (s32[], f32[16,128]{1,0}, f32[2,16,128]{2,1,0}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[16,128]{1,0} get-tuple-element(p), index=1
+  block = f32[2,16,128]{2,1,0} get-tuple-element(p), index=2
+  mth = f32[16,128]{1,0} custom-call(x), custom_call_target="MoveToHost"
+  mth_bitcast = f32[1,16,128]{2,1,0} bitcast(mth)
+  c0 = s32[] constant(0)
+  inner_dus = f32[2,16,128]{2,1,0} dynamic-update-slice(block, mth_bitcast, i, c0, c0)
+  c1 = s32[] constant(1)
+  next_i = s32[] add(i, c1)
+  ROOT t = (s32[], f32[16,128]{1,0}, f32[2,16,128]{2,1,0}) tuple(next_i, x, inner_dus)
+}
+
+inner_cond {
+  p = (s32[], f32[16,128]{1,0}, f32[2,16,128]{2,1,0}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c2 = s32[] constant(2)
+  ROOT lt = pred[] compare(i, c2), direction=LT
+}
+
+outer_body {
+  p = (s32[], f32[16,128]{1,0}, f32[4,2,16,128]{3,2,1,0}) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  x = f32[16,128]{1,0} get-tuple-element(p), index=1
+  stack = f32[4,2,16,128]{3,2,1,0} get-tuple-element(p), index=2
+  c0 = s32[] constant(0)
+  zero = f32[] constant(0)
+  block_init = f32[2,16,128]{2,1,0} broadcast(zero), dimensions={}
+  inner_init = (s32[], f32[16,128]{1,0}, f32[2,16,128]{2,1,0}) tuple(c0, x, block_init)
+  inner = (s32[], f32[16,128]{1,0}, f32[2,16,128]{2,1,0}) while(inner_init), condition=inner_cond, body=inner_body
+  inner_block = f32[2,16,128]{2,1,0} get-tuple-element(inner), index=2
+  block_bitcast = f32[1,2,16,128]{3,2,1,0} bitcast(inner_block)
+  outer_dus = f32[4,2,16,128]{3,2,1,0} dynamic-update-slice(stack, block_bitcast, j, c0, c0, c0)
+  c1 = s32[] constant(1)
+  next_j = s32[] add(j, c1)
+  ROOT t = (s32[], f32[16,128]{1,0}, f32[4,2,16,128]{3,2,1,0}) tuple(next_j, x, outer_dus)
+}
+
+outer_cond {
+  p = (s32[], f32[16,128]{1,0}, f32[4,2,16,128]{3,2,1,0}) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  c4 = s32[] constant(4)
+  ROOT lt = pred[] compare(j, c4), direction=LT
+}
+
+ENTRY main {
+  x = f32[16,128]{1,0} parameter(0)
+  idx = s32[] parameter(1)
+  c0 = s32[] constant(0)
+  zero = f32[] constant(0)
+  stack_init = f32[4,2,16,128]{3,2,1,0} broadcast(zero), dimensions={}
+  init = (s32[], f32[16,128]{1,0}, f32[4,2,16,128]{3,2,1,0}) tuple(c0, x, stack_init)
+  outer = (s32[], f32[16,128]{1,0}, f32[4,2,16,128]{3,2,1,0}) while(init), condition=outer_cond, body=outer_body
+  stack = f32[4,2,16,128]{3,2,1,0} get-tuple-element(outer), index=2
+  cp = f32[4,2,16,128]{3,1,2,0} copy(stack)
+  ds = f32[1,1,16,128]{3,1,2,0} dynamic-slice(cp, idx, idx, c0, c0), dynamic_slice_sizes={1,1,16,128}
+  ROOT mtd = f32[1,1,16,128]{3,1,2,0} custom-call(ds), custom_call_target="MoveToDevice"
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloadLegalize(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(FindInstruction(module.get(), "cp"), nullptr);
+  HloInstruction* ds = FindInstruction(module.get(), "ds");
+  ASSERT_NE(ds, nullptr);
+  EXPECT_EQ(ds->operand(0)->opcode(), HloOpcode::kGetTupleElement);
+  EXPECT_EQ(ds->operand(0)->operand(0), FindInstruction(module.get(), "outer"));
+  HloInstruction* root = module->entry_computation()->root_instruction();
+  ASSERT_EQ(root->opcode(), HloOpcode::kCopy);
+  EXPECT_EQ(root->shape().layout().minor_to_major(),
+            (std::vector<int64_t>{3, 1, 2, 0}));
+  EXPECT_TRUE(root->operand(0)->IsCustomCall("MoveToDevice"));
 }
 
 }  // namespace

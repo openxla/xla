@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <string>
 #include <utility>
@@ -106,6 +107,47 @@ HloInstruction* FindDUSFromAnnotation(HloInstruction* instr) {
     instr = instr->users()[0];
   }
   return instr;
+}
+
+bool UpdateIsMovedToHost(HloInstruction* update, const CallGraph& call_graph) {
+  return FindToHostAnnotationToUpdate(update) != nullptr ||
+         host_offload_utils::HoldsOnlyDataMovedToHost(
+             host_offload_utils::InstructionAndShapeIndex(update), call_graph);
+}
+
+absl::StatusOr<HloInstruction*> FindStartingInstruction(
+    HloInstruction* instruction, const CallGraph& call_graph) {
+  if (instruction->IsCustomCall(
+          memory_annotations::kMoveToHostCustomCallTarget)) {
+    ABSL_ASSIGN_OR_RETURN(
+        const std::optional<
+            std::vector<host_offload_utils::InstructionAndShapeIndex>>
+            receiving,
+        host_offload_utils::FindDynamicUpdateSlicesReceivingUpdate(
+            host_offload_utils::InstructionAndShapeIndex(instruction),
+            call_graph, /*through_in_place_updates=*/false));
+    if (receiving.has_value() && receiving->size() == 1) {
+      ABSL_ASSIGN_OR_RETURN(
+          const std::vector<host_offload_utils::InstructionAndShapeIndex>
+              outermost,
+          host_offload_utils::GetOutermostStackingDynamicUpdateSlices(
+              receiving->front(), call_graph));
+      if (outermost.size() == 1) {
+        return outermost.front().instruction;
+      }
+    }
+  }
+  HloInstruction* starting_instr =
+      FindDUSFromAnnotation(instruction->users().at(0));
+  if (starting_instr->opcode() != HloOpcode::kDynamicUpdateSlice) {
+    return instruction;
+  }
+  ABSL_ASSIGN_OR_RETURN(
+      const std::vector<host_offload_utils::InstructionAndShapeIndex> outermost,
+      host_offload_utils::GetOutermostStackingDynamicUpdateSlices(
+          host_offload_utils::InstructionAndShapeIndex(starting_instr),
+          call_graph));
+  return outermost.size() == 1 ? outermost.front().instruction : starting_instr;
 }
 
 struct InstructionAndIndex {
@@ -651,9 +693,22 @@ absl::Status MoveCopyDown(
               memory_annotations::kMoveToDeviceCustomCallTarget)) {
         HloInstruction* annotation =
             FindToDeviceAnnotationToUpdate(instruction);
-        CHECK_NE(annotation, nullptr)
-            << "We already verified we could find an annotation here. "
-               "Something went wrong.";
+        if (annotation == nullptr) {
+          // A nested scan outer slice moves a block onto device while the
+          // MoveToDevice custom call sits inside the inner loop. Place the
+          // layout copy right after the outer slice on device.
+          HloInstruction* new_copy =
+              instruction->AddInstruction(copy_to_move->CloneWithNewOperands(
+                  shape_after_copy, {instruction}));
+          std::vector<HloInstruction*> users = instruction->users();
+          for (HloInstruction* use : users) {
+            if (use != new_copy) {
+              ABSL_RETURN_IF_ERROR(
+                  instruction->ReplaceUseWithDifferentShape(use, new_copy));
+            }
+          }
+          continue;
+        }
         HloInstruction* new_annotation = nullptr;
         if (instruction->opcode() == HloOpcode::kCustomCall) {
           new_annotation = annotation;
@@ -693,7 +748,28 @@ absl::Status MoveCopyDown(
         HloInstruction* annotation =
             FindToHostAnnotationToUpdate(instruction->mutable_operand(1));
         if (annotation == nullptr) {
-          return absl::InternalError("Annotation not found.");
+          if (!UpdateIsMovedToHost(instruction->mutable_operand(1),
+                                   *call_graph)) {
+            return absl::InternalError("Annotation not found.");
+          }
+          // The update is a nested scan block that stays on device until this
+          // dynamic-update-slice writes it to host, so a device copy makes its
+          // layout match.
+          if (instruction->shape().layout().minor_to_major() !=
+              instruction->operand(1)->shape().layout().minor_to_major()) {
+            HloInstruction* block = instruction->mutable_operand(1);
+            Shape new_shape = block->shape();
+            *new_shape.mutable_layout() = instruction->shape().layout();
+            new_shape.mutable_layout()->set_memory_space(
+                Layout::kDefaultMemorySpace);
+            HloInstruction* new_copy =
+                block->AddInstruction(HloInstruction::CreateUnary(
+                    new_shape, HloOpcode::kCopy, block));
+            ABSL_RETURN_IF_ERROR(instruction->ReplaceOperandWith(1, new_copy));
+          }
+          stack.emplace_back(instruction_and_index, shape_before_copy,
+                             shape_after_copy);
+          continue;
         }
         CHECK(annotation->opcode() == HloOpcode::kCustomCall);
         HloInstruction* new_annotation =
@@ -790,12 +866,10 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
   if (instruction->user_count() == 0) {
     return false;
   }
-  // Look for a DynamicUpdateSlice following this instruction.
-  HloInstruction* starting_instr =
-      FindDUSFromAnnotation(instruction->users().at(0));
-  // If it's the pure copy case reset instruction.
-  if (starting_instr->opcode() != HloOpcode::kDynamicUpdateSlice) {
-    starting_instr = instruction;
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * starting_instr,
+                        FindStartingInstruction(instruction, *call_graph));
+  if (processed_annotations.contains(starting_instr)) {
+    return false;
   }
   if (!(starting_instr->IsCustomCall(
             memory_annotations::kMoveToHostCustomCallTarget) ||
@@ -832,15 +906,10 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
       VLOG(10) << "Current value after: "
                << current_value.instruction->ToString();
       HloInstruction* annotation = current_value.instruction;
-      if (annotation->opcode() == HloOpcode::kDynamicUpdateSlice) {
-        HloInstruction* real_annotation =
-            FindToHostAnnotationToUpdate(annotation->mutable_operand(1));
-        // Check if this dynamic-update-slice doesn't have an annotation
-        // attached.
-        if (!real_annotation->IsCustomCall(
-                memory_annotations::kMoveToHostCustomCallTarget)) {
-          return false;
-        }
+      if (annotation->opcode() == HloOpcode::kDynamicUpdateSlice &&
+          !UpdateIsMovedToHost(annotation->mutable_operand(1), *call_graph)) {
+        // This dynamic-update-slice doesn't have an annotation attached.
+        return false;
       }
     }
   }
@@ -862,6 +931,19 @@ absl::StatusOr<bool> ProcessAnnotationForCopyMovement(
       if (!annotation ||
           !annotation->IsCustomCall(
               memory_annotations::kMoveToDeviceCustomCallTarget)) {
+        if (!stack.back().instruction->IsRoot() &&
+            stack.back().instruction->user_count() > 0 &&
+            absl::c_linear_search(kUsersOpcodes,
+                                  stack.back().instruction->opcode())) {
+          ABSL_ASSIGN_OR_RETURN(
+              const bool leads_to_move_to_device,
+              host_offload_utils::SliceLeadsToMoveToDeviceCustomCall(
+                  stack.back().instruction, *call_graph));
+          if (leads_to_move_to_device) {
+            stack.pop_back();
+            continue;
+          }
+        }
         VLOG(5) << "Couldn't find annotation for consumer instruction in chain";
         return false;
       }

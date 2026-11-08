@@ -5359,5 +5359,487 @@ ENTRY main {
       Layout::kHostMemorySpace);
 }
 
+// The HLO JAX emits for a nested scan whose inner body offloads its input with
+// a remat policy: the inner loop stacks one element per iteration into a block
+// buffer, the outer loop stacks each block into a [4,3,...] buffer, and the
+// backward loops slice a block and then an element back to device.
+constexpr absl::string_view kNestedScanOffloadHlo = R"(
+HloModule nested_scan_offload
+
+fwd_inner_body {
+  p = (s32[], f32[16,128], f32[3,16,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[16,128] get-tuple-element(p), index=1
+  block = f32[3,16,128] get-tuple-element(p), index=2
+  mth = f32[16,128] custom-call(x), custom_call_target="MoveToHost"
+  mth_bitcast = f32[1,16,128] bitcast(mth)
+  c0 = s32[] constant(0)
+  inner_dus = f32[3,16,128] dynamic-update-slice(block, mth_bitcast, i, c0, c0)
+  next_x = f32[16,128] tanh(x)
+  c1 = s32[] constant(1)
+  next_i = s32[] add(i, c1)
+  ROOT t = (s32[], f32[16,128], f32[3,16,128]) tuple(next_i, next_x, inner_dus)
+}
+
+fwd_inner_cond {
+  p = (s32[], f32[16,128], f32[3,16,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c3 = s32[] constant(3)
+  ROOT lt = pred[] compare(i, c3), direction=LT
+}
+
+fwd_outer_body {
+  p = (s32[], f32[16,128], f32[4,3,16,128]) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  x = f32[16,128] get-tuple-element(p), index=1
+  stack = f32[4,3,16,128] get-tuple-element(p), index=2
+  c0 = s32[] constant(0)
+  zero = f32[] constant(0)
+  block_init = f32[3,16,128] broadcast(zero), dimensions={}
+  inner_init = (s32[], f32[16,128], f32[3,16,128]) tuple(c0, x, block_init)
+  inner = (s32[], f32[16,128], f32[3,16,128]) while(inner_init), condition=fwd_inner_cond, body=fwd_inner_body
+  inner_x = f32[16,128] get-tuple-element(inner), index=1
+  inner_block = f32[3,16,128] get-tuple-element(inner), index=2
+  block_bitcast = f32[1,3,16,128] bitcast(inner_block)
+  outer_dus = f32[4,3,16,128] dynamic-update-slice(stack, block_bitcast, j, c0, c0, c0)
+  c1 = s32[] constant(1)
+  next_j = s32[] add(j, c1)
+  ROOT t = (s32[], f32[16,128], f32[4,3,16,128]) tuple(next_j, inner_x, outer_dus)
+}
+
+fwd_outer_cond {
+  p = (s32[], f32[16,128], f32[4,3,16,128]) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  c4 = s32[] constant(4)
+  ROOT lt = pred[] compare(j, c4), direction=LT
+}
+
+bwd_inner_body {
+  p = (s32[], f32[16,128], f32[3,16,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  g = f32[16,128] get-tuple-element(p), index=1
+  block = f32[3,16,128] get-tuple-element(p), index=2
+  c0 = s32[] constant(0)
+  inner_ds = f32[1,16,128] dynamic-slice(block, i, c0, c0), dynamic_slice_sizes={1,16,128}
+  inner_ds_bitcast = f32[16,128] bitcast(inner_ds)
+  mtd = f32[16,128] custom-call(inner_ds_bitcast), custom_call_target="MoveToDevice"
+  next_g = f32[16,128] multiply(g, mtd)
+  c1 = s32[] constant(1)
+  next_i = s32[] add(i, c1)
+  ROOT t = (s32[], f32[16,128], f32[3,16,128]) tuple(next_i, next_g, block)
+}
+
+bwd_inner_cond {
+  p = (s32[], f32[16,128], f32[3,16,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c3 = s32[] constant(3)
+  ROOT lt = pred[] compare(i, c3), direction=LT
+}
+
+bwd_outer_body {
+  p = (s32[], f32[16,128], f32[4,3,16,128]) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  g = f32[16,128] get-tuple-element(p), index=1
+  stack = f32[4,3,16,128] get-tuple-element(p), index=2
+  c0 = s32[] constant(0)
+  outer_ds = f32[1,3,16,128] dynamic-slice(stack, j, c0, c0, c0), dynamic_slice_sizes={1,3,16,128}
+  block = f32[3,16,128] bitcast(outer_ds)
+  inner_init = (s32[], f32[16,128], f32[3,16,128]) tuple(c0, g, block)
+  inner = (s32[], f32[16,128], f32[3,16,128]) while(inner_init), condition=bwd_inner_cond, body=bwd_inner_body
+  inner_g = f32[16,128] get-tuple-element(inner), index=1
+  c1 = s32[] constant(1)
+  next_j = s32[] add(j, c1)
+  ROOT t = (s32[], f32[16,128], f32[4,3,16,128]) tuple(next_j, inner_g, stack)
+}
+
+bwd_outer_cond {
+  p = (s32[], f32[16,128], f32[4,3,16,128]) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  c4 = s32[] constant(4)
+  ROOT lt = pred[] compare(j, c4), direction=LT
+}
+
+ENTRY main {
+  x = f32[16,128] parameter(0)
+  c0 = s32[] constant(0)
+  zero = f32[] constant(0)
+  stack_init = f32[4,3,16,128] broadcast(zero), dimensions={}
+  fwd_init = (s32[], f32[16,128], f32[4,3,16,128]) tuple(c0, x, stack_init)
+  fwd = (s32[], f32[16,128], f32[4,3,16,128]) while(fwd_init), condition=fwd_outer_cond, body=fwd_outer_body
+  y = f32[16,128] get-tuple-element(fwd), index=1
+  stack = f32[4,3,16,128] get-tuple-element(fwd), index=2
+  bwd_init = (s32[], f32[16,128], f32[4,3,16,128]) tuple(c0, y, stack)
+  bwd = (s32[], f32[16,128], f32[4,3,16,128]) while(bwd_init), condition=bwd_outer_cond, body=bwd_outer_body
+  ROOT g = f32[16,128] get-tuple-element(bwd), index=1
+}
+)";
+
+TEST_F(HostOffloaderTest, NestedScanOffloadsStackedBufferOnceAtOuterLevel) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kNestedScanOffloadHlo));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloader(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
+  EXPECT_OK(verifier().Run(module.get()).status());
+
+  // The outer DynamicUpdateSlice is the only device to host transfer: it
+  // writes each block from device into the stacked host buffer once per outer
+  // iteration. The block buffer and the inner update stay on device.
+  HloInstruction* outer_dus = FindInstruction(module.get(), "outer_dus");
+  ASSERT_NE(outer_dus, nullptr);
+  TestShapeHasMemorySpace(outer_dus->shape(), Layout::kHostMemorySpace);
+  TestShapeHasMemorySpace(outer_dus->operand(0)->shape(),
+                          Layout::kHostMemorySpace);
+  TestShapeHasMemorySpace(outer_dus->operand(1)->shape(),
+                          Layout::kDefaultMemorySpace);
+  HloInstruction* inner_dus = FindInstruction(module.get(), "inner_dus");
+  ASSERT_NE(inner_dus, nullptr);
+  TestShapeHasMemorySpace(inner_dus->shape(), Layout::kDefaultMemorySpace);
+  TestShapeHasMemorySpace(inner_dus->operand(1)->shape(),
+                          Layout::kDefaultMemorySpace);
+
+  // The outer DynamicSlice is the only host to device transfer.
+  HloInstruction* outer_ds = FindInstruction(module.get(), "outer_ds");
+  ASSERT_NE(outer_ds, nullptr);
+  TestShapeHasMemorySpace(outer_ds->operand(0)->shape(),
+                          Layout::kHostMemorySpace);
+  TestShapeHasMemorySpace(outer_ds->shape(), Layout::kDefaultMemorySpace);
+  HloInstruction* inner_ds = FindInstruction(module.get(), "inner_ds");
+  ASSERT_NE(inner_ds, nullptr);
+  TestShapeHasMemorySpace(inner_ds->operand(0)->shape(),
+                          Layout::kDefaultMemorySpace);
+
+  // The stacked buffer lives in one host AllocateBuffer that both outer loops
+  // carry in host memory. Nothing runs as host compute and no bitcast or copy
+  // crosses memory spaces.
+  int64_t host_allocate_buffers = 0;
+  for (const HloComputation* computation : module->computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      EXPECT_FALSE(host_offload_utils::ComputeTypeIsHost(instruction))
+          << instruction->ToString();
+      EXPECT_FALSE(
+          host_offload_utils::IsSynchronousCopyFromOrToHost(instruction))
+          << instruction->ToString();
+      if (instruction->IsCustomCall("AllocateBuffer") &&
+          instruction->shape().layout().memory_space() ==
+              Layout::kHostMemorySpace) {
+        ++host_allocate_buffers;
+        EXPECT_EQ(instruction->shape().dimensions(),
+                  outer_dus->shape().dimensions());
+      }
+    }
+  }
+  EXPECT_EQ(host_allocate_buffers, 1);
+  for (const absl::string_view name : {"fwd", "bwd"}) {
+    HloInstruction* loop = FindInstruction(module.get(), name);
+    ASSERT_NE(loop, nullptr);
+    TestShapeHasMemorySpace(ShapeUtil::GetSubshape(loop->shape(), {2}),
+                            Layout::kHostMemorySpace);
+    TestShapeHasMemorySpace(
+        ShapeUtil::GetSubshape(
+            loop->while_body()->parameter_instruction(0)->shape(), {2}),
+        Layout::kHostMemorySpace);
+  }
+}
+
+// A layout changing copy sits between the forward and backward outer loops on
+// the stacked buffer. HostOffloadLegalize pushes it past the outer slice onto
+// device so the whole host stack is never copied through HBM to transpose it.
+TEST_F(HostOffloaderTest, NestedScanWithLayoutCopyBetweenForwardAndBackward) {
+  const absl::string_view hlo_string = R"(
+HloModule nested_scan_with_layout_copy
+
+fwd_inner_body {
+  p = (s32[], f32[16,128]{1,0}, f32[3,16,128]{2,1,0}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[16,128]{1,0} get-tuple-element(p), index=1
+  block = f32[3,16,128]{2,1,0} get-tuple-element(p), index=2
+  mth = f32[16,128]{1,0} custom-call(x), custom_call_target="MoveToHost"
+  mth_bitcast = f32[1,16,128]{2,1,0} bitcast(mth)
+  c0 = s32[] constant(0)
+  inner_dus = f32[3,16,128]{2,1,0} dynamic-update-slice(block, mth_bitcast, i, c0, c0)
+  next_x = f32[16,128]{1,0} tanh(x)
+  c1 = s32[] constant(1)
+  next_i = s32[] add(i, c1)
+  ROOT t = (s32[], f32[16,128]{1,0}, f32[3,16,128]{2,1,0}) tuple(next_i, next_x, inner_dus)
+}
+
+fwd_inner_cond {
+  p = (s32[], f32[16,128]{1,0}, f32[3,16,128]{2,1,0}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c3 = s32[] constant(3)
+  ROOT lt = pred[] compare(i, c3), direction=LT
+}
+
+fwd_outer_body {
+  p = (s32[], f32[16,128]{1,0}, f32[4,3,16,128]{3,2,1,0}) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  x = f32[16,128]{1,0} get-tuple-element(p), index=1
+  stack = f32[4,3,16,128]{3,2,1,0} get-tuple-element(p), index=2
+  c0 = s32[] constant(0)
+  zero = f32[] constant(0)
+  block_init = f32[3,16,128]{2,1,0} broadcast(zero), dimensions={}
+  inner_init = (s32[], f32[16,128]{1,0}, f32[3,16,128]{2,1,0}) tuple(c0, x, block_init)
+  inner = (s32[], f32[16,128]{1,0}, f32[3,16,128]{2,1,0}) while(inner_init), condition=fwd_inner_cond, body=fwd_inner_body
+  inner_x = f32[16,128]{1,0} get-tuple-element(inner), index=1
+  inner_block = f32[3,16,128]{2,1,0} get-tuple-element(inner), index=2
+  block_bitcast = f32[1,3,16,128]{3,2,1,0} bitcast(inner_block)
+  outer_dus = f32[4,3,16,128]{3,2,1,0} dynamic-update-slice(stack, block_bitcast, j, c0, c0, c0)
+  c1 = s32[] constant(1)
+  next_j = s32[] add(j, c1)
+  ROOT t = (s32[], f32[16,128]{1,0}, f32[4,3,16,128]{3,2,1,0}) tuple(next_j, inner_x, outer_dus)
+}
+
+fwd_outer_cond {
+  p = (s32[], f32[16,128]{1,0}, f32[4,3,16,128]{3,2,1,0}) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  c4 = s32[] constant(4)
+  ROOT lt = pred[] compare(j, c4), direction=LT
+}
+
+bwd_inner_body {
+  p = (s32[], f32[16,128]{0,1}, f32[3,16,128]{2,0,1}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  g = f32[16,128]{0,1} get-tuple-element(p), index=1
+  block = f32[3,16,128]{2,0,1} get-tuple-element(p), index=2
+  c0 = s32[] constant(0)
+  inner_ds = f32[1,16,128]{2,0,1} dynamic-slice(block, i, c0, c0), dynamic_slice_sizes={1,16,128}
+  inner_ds_bitcast = f32[16,128]{0,1} bitcast(inner_ds)
+  mtd = f32[16,128]{0,1} custom-call(inner_ds_bitcast), custom_call_target="MoveToDevice"
+  next_g = f32[16,128]{0,1} multiply(g, mtd)
+  c1 = s32[] constant(1)
+  next_i = s32[] add(i, c1)
+  ROOT t = (s32[], f32[16,128]{0,1}, f32[3,16,128]{2,0,1}) tuple(next_i, next_g, block)
+}
+
+bwd_inner_cond {
+  p = (s32[], f32[16,128]{0,1}, f32[3,16,128]{2,0,1}) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c3 = s32[] constant(3)
+  ROOT lt = pred[] compare(i, c3), direction=LT
+}
+
+bwd_outer_body {
+  p = (s32[], f32[16,128]{0,1}, f32[4,3,16,128]{3,2,0,1}) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  g = f32[16,128]{0,1} get-tuple-element(p), index=1
+  stack = f32[4,3,16,128]{3,2,0,1} get-tuple-element(p), index=2
+  c0 = s32[] constant(0)
+  outer_ds = f32[1,3,16,128]{3,2,0,1} dynamic-slice(stack, j, c0, c0, c0), dynamic_slice_sizes={1,3,16,128}
+  block = f32[3,16,128]{2,0,1} bitcast(outer_ds)
+  inner_init = (s32[], f32[16,128]{0,1}, f32[3,16,128]{2,0,1}) tuple(c0, g, block)
+  inner = (s32[], f32[16,128]{0,1}, f32[3,16,128]{2,0,1}) while(inner_init), condition=bwd_inner_cond, body=bwd_inner_body
+  inner_g = f32[16,128]{0,1} get-tuple-element(inner), index=1
+  c1 = s32[] constant(1)
+  next_j = s32[] add(j, c1)
+  ROOT t = (s32[], f32[16,128]{0,1}, f32[4,3,16,128]{3,2,0,1}) tuple(next_j, inner_g, stack)
+}
+
+bwd_outer_cond {
+  p = (s32[], f32[16,128]{0,1}, f32[4,3,16,128]{3,2,0,1}) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  c4 = s32[] constant(4)
+  ROOT lt = pred[] compare(j, c4), direction=LT
+}
+
+ENTRY main {
+  x = f32[16,128]{1,0} parameter(0)
+  c0 = s32[] constant(0)
+  zero = f32[] constant(0)
+  stack_init = f32[4,3,16,128]{3,2,1,0} broadcast(zero), dimensions={}
+  fwd_init = (s32[], f32[16,128]{1,0}, f32[4,3,16,128]{3,2,1,0}) tuple(c0, x, stack_init)
+  fwd = (s32[], f32[16,128]{1,0}, f32[4,3,16,128]{3,2,1,0}) while(fwd_init), condition=fwd_outer_cond, body=fwd_outer_body
+  y = f32[16,128]{1,0} get-tuple-element(fwd), index=1
+  y_t = f32[16,128]{0,1} copy(y)
+  stack = f32[4,3,16,128]{3,2,1,0} get-tuple-element(fwd), index=2
+  stack_t = f32[4,3,16,128]{3,2,0,1} copy(stack)
+  bwd_init = (s32[], f32[16,128]{0,1}, f32[4,3,16,128]{3,2,0,1}) tuple(c0, y_t, stack_t)
+  bwd = (s32[], f32[16,128]{0,1}, f32[4,3,16,128]{3,2,0,1}) while(bwd_init), condition=bwd_outer_cond, body=bwd_outer_body
+  ROOT g = f32[16,128]{0,1} get-tuple-element(bwd), index=1
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloader(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_FALSE(HaveRemainingOffloadAnnotations(module.get()));
+  EXPECT_OK(verifier().Run(module.get()).status());
+  EXPECT_EQ(FindInstruction(module.get(), "stack_t"), nullptr);
+
+  HloInstruction* outer_ds = FindInstruction(module.get(), "outer_ds");
+  ASSERT_NE(outer_ds, nullptr);
+  TestShapeHasMemorySpace(outer_ds->operand(0)->shape(),
+                          Layout::kHostMemorySpace);
+  TestShapeHasMemorySpace(outer_ds->shape(), Layout::kDefaultMemorySpace);
+  EXPECT_EQ(outer_ds->shape().layout().minor_to_major(),
+            (std::vector<int64_t>{3, 2, 1, 0}));
+
+  for (const HloComputation* computation : module->computations()) {
+    for (const HloInstruction* instruction : computation->instructions()) {
+      EXPECT_FALSE(host_offload_utils::ComputeTypeIsHost(instruction))
+          << instruction->ToString();
+      EXPECT_FALSE(
+          host_offload_utils::IsSynchronousCopyFromOrToHost(instruction))
+          << instruction->ToString();
+    }
+  }
+}
+
+// The block is also read by device compute after the inner loop, so it is not
+// lifted; offloading still starts at the inner DynamicUpdateSlice.
+TEST_F(HostOffloaderTest, NestedScanBlockReadOnDeviceIsNotLifted) {
+  const absl::string_view hlo_string = R"(
+HloModule nested_scan_block_used_on_device
+
+inner_body {
+  p = (s32[], f32[16,128], f32[3,16,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[16,128] get-tuple-element(p), index=1
+  block = f32[3,16,128] get-tuple-element(p), index=2
+  mth = f32[16,128] custom-call(x), custom_call_target="MoveToHost"
+  mth_bitcast = f32[1,16,128] bitcast(mth)
+  c0 = s32[] constant(0)
+  inner_dus = f32[3,16,128] dynamic-update-slice(block, mth_bitcast, i, c0, c0)
+  c1 = s32[] constant(1)
+  next_i = s32[] add(i, c1)
+  ROOT t = (s32[], f32[16,128], f32[3,16,128]) tuple(next_i, x, inner_dus)
+}
+
+inner_cond {
+  p = (s32[], f32[16,128], f32[3,16,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c3 = s32[] constant(3)
+  ROOT lt = pred[] compare(i, c3), direction=LT
+}
+
+outer_body {
+  p = (s32[], f32[16,128], f32[4,3,16,128]) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  x = f32[16,128] get-tuple-element(p), index=1
+  stack = f32[4,3,16,128] get-tuple-element(p), index=2
+  c0 = s32[] constant(0)
+  zero = f32[] constant(0)
+  block_init = f32[3,16,128] broadcast(zero), dimensions={}
+  inner_init = (s32[], f32[16,128], f32[3,16,128]) tuple(c0, x, block_init)
+  inner = (s32[], f32[16,128], f32[3,16,128]) while(inner_init), condition=inner_cond, body=inner_body
+  inner_block = f32[3,16,128] get-tuple-element(inner), index=2
+  block_bitcast = f32[1,3,16,128] bitcast(inner_block)
+  outer_dus = f32[4,3,16,128] dynamic-update-slice(stack, block_bitcast, j, c0, c0, c0)
+  device_use = f32[3,16,128] tanh(inner_block)
+  c1 = s32[] constant(1)
+  next_j = s32[] add(j, c1)
+  ROOT t = (s32[], f32[16,128], f32[4,3,16,128]) tuple(next_j, x, outer_dus)
+}
+
+outer_cond {
+  p = (s32[], f32[16,128], f32[4,3,16,128]) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  c4 = s32[] constant(4)
+  ROOT lt = pred[] compare(j, c4), direction=LT
+}
+
+ENTRY main {
+  x = f32[16,128] parameter(0)
+  c0 = s32[] constant(0)
+  zero = f32[] constant(0)
+  stack_init = f32[4,3,16,128] broadcast(zero), dimensions={}
+  init = (s32[], f32[16,128], f32[4,3,16,128]) tuple(c0, x, stack_init)
+  outer = (s32[], f32[16,128], f32[4,3,16,128]) while(init), condition=outer_cond, body=outer_body
+  ROOT y = f32[16,128] get-tuple-element(outer), index=1
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloader(module.get()));
+  EXPECT_TRUE(changed);
+
+  HloInstruction* inner_dus = FindInstruction(module.get(), "inner_dus");
+  ASSERT_NE(inner_dus, nullptr);
+  TestShapeHasMemorySpace(inner_dus->shape(), Layout::kHostMemorySpace);
+  TestShapeHasMemorySpace(inner_dus->operand(1)->shape(),
+                          Layout::kDefaultMemorySpace);
+}
+
+// The outer loop also stacks a value the user did not move to host into the
+// block, so writing the whole block to host would offload more than asked.
+TEST_F(HostOffloaderTest, NestedScanBlockWithDeviceDataIsNotLifted) {
+  const absl::string_view hlo_string = R"(
+HloModule nested_scan_block_with_device_data
+
+inner_body {
+  p = (s32[], f32[16,128], f32[3,16,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  x = f32[16,128] get-tuple-element(p), index=1
+  block = f32[3,16,128] get-tuple-element(p), index=2
+  mth = f32[16,128] custom-call(x), custom_call_target="MoveToHost"
+  mth_bitcast = f32[1,16,128] bitcast(mth)
+  c0 = s32[] constant(0)
+  inner_dus = f32[3,16,128] dynamic-update-slice(block, mth_bitcast, i, c0, c0)
+  c1 = s32[] constant(1)
+  next_i = s32[] add(i, c1)
+  ROOT t = (s32[], f32[16,128], f32[3,16,128]) tuple(next_i, x, inner_dus)
+}
+
+inner_cond {
+  p = (s32[], f32[16,128], f32[3,16,128]) parameter(0)
+  i = s32[] get-tuple-element(p), index=0
+  c2 = s32[] constant(2)
+  ROOT lt = pred[] compare(i, c2), direction=LT
+}
+
+outer_body {
+  p = (s32[], f32[16,128], f32[4,3,16,128]) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  x = f32[16,128] get-tuple-element(p), index=1
+  stack = f32[4,3,16,128] get-tuple-element(p), index=2
+  c0 = s32[] constant(0)
+  c2 = s32[] constant(2)
+  zero = f32[] constant(0)
+  block_init = f32[3,16,128] broadcast(zero), dimensions={}
+  inner_init = (s32[], f32[16,128], f32[3,16,128]) tuple(c0, x, block_init)
+  inner = (s32[], f32[16,128], f32[3,16,128]) while(inner_init), condition=inner_cond, body=inner_body
+  inner_block = f32[3,16,128] get-tuple-element(inner), index=2
+  device_value = f32[16,128] tanh(x)
+  device_value_bitcast = f32[1,16,128] bitcast(device_value)
+  mixed_block = f32[3,16,128] dynamic-update-slice(inner_block, device_value_bitcast, c2, c0, c0)
+  block_bitcast = f32[1,3,16,128] bitcast(mixed_block)
+  outer_dus = f32[4,3,16,128] dynamic-update-slice(stack, block_bitcast, j, c0, c0, c0)
+  c1 = s32[] constant(1)
+  next_j = s32[] add(j, c1)
+  ROOT t = (s32[], f32[16,128], f32[4,3,16,128]) tuple(next_j, x, outer_dus)
+}
+
+outer_cond {
+  p = (s32[], f32[16,128], f32[4,3,16,128]) parameter(0)
+  j = s32[] get-tuple-element(p), index=0
+  c4 = s32[] constant(4)
+  ROOT lt = pred[] compare(j, c4), direction=LT
+}
+
+ENTRY main {
+  x = f32[16,128] parameter(0)
+  c0 = s32[] constant(0)
+  zero = f32[] constant(0)
+  stack_init = f32[4,3,16,128] broadcast(zero), dimensions={}
+  init = (s32[], f32[16,128], f32[4,3,16,128]) tuple(c0, x, stack_init)
+  outer = (s32[], f32[16,128], f32[4,3,16,128]) while(init), condition=outer_cond, body=outer_body
+  ROOT y = f32[16,128] get-tuple-element(outer), index=1
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHostOffloader(module.get()));
+  EXPECT_TRUE(changed);
+
+  HloInstruction* inner_dus = FindInstruction(module.get(), "inner_dus");
+  ASSERT_NE(inner_dus, nullptr);
+  TestShapeHasMemorySpace(inner_dus->shape(), Layout::kHostMemorySpace);
+  HloInstruction* outer_dus = FindInstruction(module.get(), "outer_dus");
+  ASSERT_NE(outer_dus, nullptr);
+  TestShapeHasMemorySpace(outer_dus->operand(0)->shape(),
+                          Layout::kDefaultMemorySpace);
+}
+
 }  // namespace
 }  // namespace xla

@@ -107,6 +107,48 @@ bool IsMoveToDeviceWithDynamicSlice(const HloInstruction* instr);
 absl::flat_hash_set<int64_t> CollectDynamicVariableTupleIndices(
     const HloInstruction* while_loop);
 
+// Operand edges `(user, operand_index)` where a MoveToHost custom call stood
+// before HostOffloader removed it.
+using MovedToHostOperands =
+    absl::flat_hash_set<std::pair<const HloInstruction*, int64_t>>;
+
+// Returns true if every element of the array at `value` is either
+// uninitialized storage or data annotated with MoveToHost, so writing the
+// whole array to host memory offloads nothing the user kept on device.
+bool HoldsOnlyDataMovedToHost(
+    const InstructionAndShapeIndex& value, const CallGraph& call_graph,
+    const MovedToHostOperands& moved_to_host_operands = {});
+
+// Follows the value at `start` through instructions that forward a buffer
+// unchanged (bitcasts, copies, tuples and loop or call boundaries) and returns
+// the dynamic-update-slices which receive it as their update operand. Returns
+// nullopt unless every path ends at such an update. With
+// `through_in_place_updates`, a dynamic-update-slice which receives the value
+// as its buffer operand updates it in place, so the walk continues from its
+// result.
+absl::StatusOr<std::optional<std::vector<InstructionAndShapeIndex>>>
+FindDynamicUpdateSlicesReceivingUpdate(const InstructionAndShapeIndex& start,
+                                       const CallGraph& call_graph,
+                                       bool through_in_place_updates);
+
+// Returns the dynamic-update-slices at which an offload reaching
+// `dynamic_update_slice` should start. A nested scan stacks its residual
+// twice: the inner loop fills a block buffer, and the outer loop body writes
+// that whole block as the update of a dynamic-update-slice into the stacked
+// buffer. Offloading at the outer dynamic-update-slice keeps the block buffer
+// on device for one outer iteration and moves every element to host once.
+absl::StatusOr<std::vector<InstructionAndShapeIndex>>
+GetOutermostStackingDynamicUpdateSlices(
+    const InstructionAndShapeIndex& dynamic_update_slice,
+    const CallGraph& call_graph,
+    const MovedToHostOperands& moved_to_host_operands = {});
+
+// Returns true if every path from `slice` (`slice` or `dynamic-slice` on host
+// memory) reaches a MoveToDevice custom call through buffer forwarding ops or
+// nested slices of the resulting array.
+absl::StatusOr<bool> SliceLeadsToMoveToDeviceCustomCall(
+    HloInstruction* slice, const CallGraph& call_graph);
+
 }  // namespace host_offload_utils
 }  // namespace xla
 

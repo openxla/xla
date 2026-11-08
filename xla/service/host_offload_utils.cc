@@ -18,24 +18,31 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <queue>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/layout.h"
 #include "xla/service/call_graph.h"
+#include "xla/service/computation_layout.h"
 #include "xla/service/memory_annotations.h"
+#include "xla/shape_layout.h"
 #include "xla/shape_util.h"
 #include "xla/side_effect_util.h"
 #include "xla/util.h"
@@ -467,6 +474,383 @@ absl::flat_hash_set<int64_t> CollectDynamicVariableTupleIndices(
     }
   }
   return tuple_indices;
+}
+
+namespace {
+
+// Returns true if `instruction` passes a buffer through unchanged on the main
+// execution thread, so a value that is about to be written into host memory may
+// cross it while still in device memory.
+bool ForwardsBufferUnchanged(const HloInstruction* instruction,
+                             const CallGraph& call_graph) {
+  switch (instruction->opcode()) {
+    case HloOpcode::kReshape:
+      return ShapeUtil::ReshapeIsBitcast(instruction->operand(0)->shape(),
+                                         instruction->shape());
+    case HloOpcode::kParameter: {
+      if (instruction->parent()->IsEntryComputation()) {
+        return false;
+      }
+      const std::vector<HloInstruction*> callers =
+          call_graph.GetComputationCallers(instruction->parent());
+      return !callers.empty() &&
+             absl::c_all_of(
+                 callers,
+                 HloPredicateIsOp<HloOpcode::kCall, HloOpcode::kWhile>);
+    }
+    case HloOpcode::kBitcast:
+    case HloOpcode::kCall:
+    case HloOpcode::kCopy:
+    case HloOpcode::kGetTupleElement:
+    case HloOpcode::kOptimizationBarrier:
+    case HloOpcode::kTuple:
+    case HloOpcode::kWhile:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Returns true if the buffer operand of `dynamic_update_slice` is created by a
+// broadcast, an AllocateBuffer or a host memory entry parameter, which is what
+// HostOffloader::CreateAllocateBufferForDynamicUpdateSlice can place in host
+// memory.
+bool DynamicUpdateSliceBufferIsAllocated(HloInstruction* dynamic_update_slice,
+                                         const CallGraph& call_graph) {
+  std::queue<InstructionAndShapeIndex> queue;
+  absl::flat_hash_set<InstructionAndShapeIndex> visited;
+  queue.push(InstructionAndShapeIndex(dynamic_update_slice));
+  bool found_allocation = false;
+  while (!queue.empty()) {
+    const InstructionAndShapeIndex current = queue.front();
+    queue.pop();
+    for (const InstructionAndShapeIndex& predecessor :
+         GetPredecessors(current, call_graph)) {
+      HloInstruction* instruction = predecessor.instruction;
+      if (instruction->opcode() == HloOpcode::kBroadcast ||
+          instruction->IsCustomCall("AllocateBuffer")) {
+        found_allocation = true;
+        continue;
+      }
+      if (instruction->opcode() == HloOpcode::kParameter &&
+          instruction->parent()->IsEntryComputation()) {
+        const Shape& parameter_shape = ShapeUtil::GetSubshape(
+            instruction->GetModule()
+                ->entry_computation_layout()
+                .parameter_layout(instruction->parameter_number())
+                .shape(),
+            predecessor.shape_index);
+        if (!parameter_shape.has_layout() ||
+            parameter_shape.layout().memory_space() !=
+                Layout::kHostMemorySpace) {
+          return false;
+        }
+        found_allocation = true;
+        continue;
+      }
+      if (instruction->opcode() == HloOpcode::kParameter) {
+        const std::vector<HloInstruction*> callers =
+            call_graph.GetComputationCallers(instruction->parent());
+        if (callers.empty() ||
+            !absl::c_all_of(callers, [&](const HloInstruction* caller) {
+              return caller->opcode() == HloOpcode::kCall ||
+                     (caller->opcode() == HloOpcode::kWhile &&
+                      caller->while_body() == instruction->parent());
+            })) {
+          return false;
+        }
+      } else if (!HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kCall,
+                                   HloOpcode::kCopy,
+                                   HloOpcode::kDynamicUpdateSlice,
+                                   HloOpcode::kGetTupleElement,
+                                   HloOpcode::kOptimizationBarrier,
+                                   HloOpcode::kTuple, HloOpcode::kWhile>(
+                     instruction)) {
+        return false;
+      }
+      if (visited.insert(predecessor).second) {
+        queue.push(predecessor);
+      }
+    }
+  }
+  return found_allocation;
+}
+
+bool InstructionIsAllowedBetweenDsAndMoveToDevice(
+    const HloInstruction* instruction, const CallGraph& call_graph) {
+  if (instruction->opcode() == HloOpcode::kReduce) {
+    // A variadic reduce has a tuple shape; the verifier guarantees all its
+    // elements have the same dimensions, so the first one is representative.
+    const Shape& output_shape = instruction->shape().IsTuple()
+                                    ? instruction->shape().tuple_shapes(0)
+                                    : instruction->shape();
+    return ShapeUtil::TrueNumDimensions(instruction->operand(0)->shape()) ==
+           ShapeUtil::TrueNumDimensions(output_shape);
+  }
+  return ForwardsBufferUnchanged(instruction, call_graph) &&
+         instruction->opcode() != HloOpcode::kCall;
+}
+
+}  // namespace
+
+bool HoldsOnlyDataMovedToHost(
+    const InstructionAndShapeIndex& value, const CallGraph& call_graph,
+    const MovedToHostOperands& moved_to_host_operands) {
+  std::queue<InstructionAndShapeIndex> queue;
+  absl::flat_hash_set<InstructionAndShapeIndex> visited;
+  auto push = [&](const InstructionAndShapeIndex& next) {
+    if (visited.insert(next).second) {
+      queue.push(next);
+    }
+  };
+  push(value);
+  while (!queue.empty()) {
+    const InstructionAndShapeIndex current = queue.front();
+    queue.pop();
+    HloInstruction* instruction = current.instruction;
+    if (instruction->IsCustomCall(
+            memory_annotations::kMoveToHostCustomCallTarget) ||
+        instruction->IsCustomCall("AllocateBuffer") ||
+        (instruction->opcode() == HloOpcode::kBroadcast &&
+         instruction->operand(0)->opcode() == HloOpcode::kConstant)) {
+      continue;
+    }
+    if (instruction->opcode() == HloOpcode::kDynamicUpdateSlice) {
+      if (!moved_to_host_operands.contains({instruction, 0})) {
+        push(InstructionAndShapeIndex(instruction->mutable_operand(0)));
+      }
+      if (!moved_to_host_operands.contains({instruction, 1})) {
+        push(InstructionAndShapeIndex(instruction->mutable_operand(1)));
+      }
+      continue;
+    }
+    if (!ForwardsBufferUnchanged(instruction, call_graph)) {
+      return false;
+    }
+    if (HloPredicateIsOp<HloOpcode::kBitcast, HloOpcode::kCopy,
+                         HloOpcode::kOptimizationBarrier, HloOpcode::kReshape>(
+            instruction) &&
+        current.shape_index.empty() &&
+        moved_to_host_operands.contains({instruction, 0})) {
+      continue;
+    }
+    if (instruction->opcode() == HloOpcode::kTuple &&
+        current.shape_index.size() == 1 &&
+        moved_to_host_operands.contains(
+            {instruction, current.shape_index.front()})) {
+      continue;
+    }
+    if (instruction->opcode() == HloOpcode::kParameter) {
+      const int64_t param_number = instruction->parameter_number();
+      for (HloInstruction* caller :
+           call_graph.GetComputationCallers(instruction->parent())) {
+        if (caller->opcode() == HloOpcode::kWhile &&
+            caller->while_body() == instruction->parent()) {
+          push(InstructionAndShapeIndex(
+              instruction->parent()->root_instruction(), current.shape_index));
+        }
+        if (!current.shape_index.empty() ||
+            !moved_to_host_operands.contains({caller, param_number})) {
+          push(InstructionAndShapeIndex(caller->mutable_operand(param_number),
+                                        current.shape_index));
+        }
+      }
+      continue;
+    }
+    if (instruction->opcode() == HloOpcode::kWhile &&
+        (!current.shape_index.empty() ||
+         !moved_to_host_operands.contains({instruction, 0}))) {
+      // A loop that runs zero times returns its initial value.
+      push(InstructionAndShapeIndex(instruction->mutable_operand(0),
+                                    current.shape_index));
+    }
+    for (const InstructionAndShapeIndex& predecessor :
+         GetPredecessors(current, call_graph)) {
+      push(predecessor);
+    }
+  }
+  return true;
+}
+
+absl::StatusOr<std::optional<std::vector<InstructionAndShapeIndex>>>
+FindDynamicUpdateSlicesReceivingUpdate(const InstructionAndShapeIndex& start,
+                                       const CallGraph& call_graph,
+                                       bool through_in_place_updates) {
+  std::vector<InstructionAndShapeIndex> result;
+  std::queue<InstructionAndShapeIndex> queue;
+  absl::flat_hash_set<InstructionAndShapeIndex> visited;
+  queue.push(start);
+  visited.insert(start);
+  while (!queue.empty()) {
+    const InstructionAndShapeIndex current = queue.front();
+    queue.pop();
+    // GetSuccessors skips custom calls which do not alias the value, but such
+    // a custom call still reads it on device.
+    if (absl::c_any_of(current.instruction->users(),
+                       HloPredicateIsOp<HloOpcode::kCustomCall>)) {
+      return std::nullopt;
+    }
+    if (current.instruction->IsRoot() &&
+        current.instruction->parent()->IsEntryComputation()) {
+      return std::nullopt;
+    }
+    ABSL_ASSIGN_OR_RETURN(std::vector<InstructionAndShapeIndex> successors,
+                          GetSuccessors(current, call_graph));
+    if (current.instruction->IsRoot()) {
+      // A loop body root is also read by the next iteration.
+      for (HloInstruction* caller :
+           call_graph.GetComputationCallers(current.instruction->parent())) {
+        if (caller->opcode() == HloOpcode::kWhile &&
+            caller->while_body() == current.instruction->parent()) {
+          successors.push_back({caller->while_body()->parameter_instruction(0),
+                                current.shape_index});
+          successors.push_back(
+              {caller->while_condition()->parameter_instruction(0),
+               current.shape_index});
+        }
+      }
+    }
+    for (const InstructionAndShapeIndex& successor : successors) {
+      HloInstruction* user = successor.instruction;
+      if (user->opcode() == HloOpcode::kDynamicUpdateSlice) {
+        const absl::InlinedVector<int64_t, 4> operand_indices =
+            user->OperandIndices(current.instruction);
+        if (operand_indices.size() != 1) {
+          return std::nullopt;
+        }
+        if (operand_indices.front() == 1) {
+          if (!absl::c_linear_search(result, successor)) {
+            result.push_back(successor);
+          }
+          continue;
+        }
+        if (!through_in_place_updates || operand_indices.front() != 0) {
+          return std::nullopt;
+        }
+      } else if (!ForwardsBufferUnchanged(user, call_graph)) {
+        return std::nullopt;
+      }
+      if (visited.insert(successor).second) {
+        queue.push(successor);
+      }
+    }
+  }
+  if (result.empty()) {
+    return std::nullopt;
+  }
+  return result;
+}
+
+absl::StatusOr<std::vector<InstructionAndShapeIndex>>
+GetOutermostStackingDynamicUpdateSlices(
+    const InstructionAndShapeIndex& dynamic_update_slice,
+    const CallGraph& call_graph,
+    const MovedToHostOperands& moved_to_host_operands) {
+  std::vector<InstructionAndShapeIndex> result;
+  absl::flat_hash_set<HloInstruction*> visited;
+  std::queue<InstructionAndShapeIndex> queue;
+  queue.push(dynamic_update_slice);
+  while (!queue.empty()) {
+    const InstructionAndShapeIndex current = queue.front();
+    queue.pop();
+    if (!visited.insert(current.instruction).second) {
+      continue;
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        const std::optional<std::vector<InstructionAndShapeIndex>> outer,
+        FindDynamicUpdateSlicesReceivingUpdate(
+            current, call_graph, /*through_in_place_updates=*/true));
+    const Shape& buffer_shape = current.instruction->operand(0)->shape();
+    const bool buffer_already_on_host =
+        buffer_shape.has_layout() &&
+        buffer_shape.layout().memory_space() == Layout::kHostMemorySpace;
+    const bool can_stack_on_host =
+        outer.has_value() && !buffer_already_on_host &&
+        absl::c_all_of(*outer, [&](const InstructionAndShapeIndex& o) {
+          return DynamicUpdateSliceBufferIsAllocated(o.instruction,
+                                                     call_graph) &&
+                 HoldsOnlyDataMovedToHost(
+                     InstructionAndShapeIndex(
+                         o.instruction->mutable_operand(1)),
+                     call_graph, moved_to_host_operands);
+        });
+    if (!can_stack_on_host) {
+      if (!absl::c_linear_search(result, current)) {
+        result.push_back(current);
+      }
+      continue;
+    }
+    VLOG(2) << absl::StreamFormat(
+        "DynamicUpdateSlice \"%s\" only stacks into %d outer "
+        "DynamicUpdateSlice(s); offloading there instead.",
+        current.instruction->name(), outer->size());
+    for (const InstructionAndShapeIndex& o : *outer) {
+      queue.push(o);
+    }
+  }
+  return result;
+}
+
+absl::StatusOr<bool> SliceLeadsToMoveToDeviceCustomCall(
+    HloInstruction* slice, const CallGraph& call_graph) {
+  CHECK(slice->opcode() == HloOpcode::kDynamicSlice ||
+        slice->opcode() == HloOpcode::kSlice)
+      << "This function must only be called with a slice or dynamic slice.";
+  std::queue<std::pair<const HloInstruction*, InstructionAndShapeIndex>> queue;
+  absl::flat_hash_set<InstructionAndShapeIndex> visited;
+  ABSL_ASSIGN_OR_RETURN(
+      const std::vector<InstructionAndShapeIndex> successors_of_slice,
+      GetSuccessors(InstructionAndShapeIndex(slice), call_graph));
+  for (const InstructionAndShapeIndex& successor : successors_of_slice) {
+    if (visited.insert(successor).second) {
+      queue.push({slice, successor});
+    }
+  }
+  while (!queue.empty()) {
+    const auto [prev_instruction, instruction_and_shape] = queue.front();
+    queue.pop();
+    HloInstruction* current_instruction = instruction_and_shape.instruction;
+    if (current_instruction->IsCustomCall(
+            memory_annotations::kMoveToDeviceCustomCallTarget)) {
+      continue;
+    }
+    if (HloPredicateIsOp<HloOpcode::kDynamicSlice, HloOpcode::kSlice>(
+            current_instruction)) {
+      // A nested scan reads its stacked residual back with two chained slices:
+      // the outer loop body slices one block, and the inner loop body slices
+      // one element of that block. If the inner slice moves its result to
+      // device, the outer slice already copies the block to device.
+      const absl::InlinedVector<int64_t, 4> operand_indices =
+          current_instruction->OperandIndices(prev_instruction);
+      if (operand_indices.size() != 1 || operand_indices.front() != 0) {
+        return false;
+      }
+      ABSL_ASSIGN_OR_RETURN(
+          const bool nested_slice_leads_to_move_to_device,
+          SliceLeadsToMoveToDeviceCustomCall(current_instruction, call_graph));
+      if (!nested_slice_leads_to_move_to_device) {
+        return false;
+      }
+      continue;
+    }
+    if (!InstructionIsAllowedBetweenDsAndMoveToDevice(current_instruction,
+                                                      call_graph)) {
+      LOG(WARNING) << absl::StreamFormat(
+          "Encountered %s on tensor which is in host memory. %s does not move "
+          "the tensor back to device. %s will be converted into host compute.",
+          HloOpcodeString(slice->opcode()), slice->name(), slice->name());
+      return false;
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        const std::vector<InstructionAndShapeIndex> successors,
+        GetSuccessors(instruction_and_shape, call_graph));
+    for (const InstructionAndShapeIndex& successor : successors) {
+      if (visited.insert(successor).second) {
+        queue.push({current_instruction, successor});
+      }
+    }
+  }
+  return true;
 }
 
 }  // namespace host_offload_utils

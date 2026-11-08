@@ -8447,20 +8447,31 @@ absl::Status AlgebraicSimplifierVisitor::HandleDynamicUpdateSlice(
     // to be rewritten to a pad. Unfortunately, the host memory space is only
     // set after HostOffloader is run, so we pattern match here. After
     // HostOffloader is run the broadcast should be rewritten to an
-    // AllocateBuffer so this dus->pad rewrite won't apply anymore.
+    // AllocateBuffer so this dus->pad rewrite won't apply anymore. A nested
+    // scan writes a whole block, which an inner DUS chain filled with
+    // offloaded data, so the walk also follows DUS operands.
     auto is_host_offloading = [&](HloInstruction* hlo) {
       const auto custom_call_pattern =
           m::CustomCall({memory_annotations::kMoveToHostCustomCallTarget});
-      if (Match(hlo, custom_call_pattern)) {
-        return true;
-      }
-
-      const auto formatting_op =
-          m::AnyOf<HloInstruction>(m::Reshape(), m::Bitcast(), m::Copy());
-      while (Match(hlo, formatting_op)) {
-        hlo = hlo->mutable_operand(0);
-        if (Match(hlo, custom_call_pattern)) {
+      const auto forwarding_op = m::AnyOf<HloInstruction>(
+          m::Reshape(), m::Bitcast(), m::Copy(), m::DynamicUpdateSlice());
+      std::vector<HloInstruction*> worklist = {hlo};
+      absl::flat_hash_set<HloInstruction*> visited = {hlo};
+      while (!worklist.empty()) {
+        HloInstruction* current = worklist.back();
+        worklist.pop_back();
+        if (Match(current, custom_call_pattern)) {
           return true;
+        }
+        if (!Match(current, forwarding_op)) {
+          continue;
+        }
+        const int64_t num_data_operands =
+            current->opcode() == HloOpcode::kDynamicUpdateSlice ? 2 : 1;
+        for (int64_t i = 0; i < num_data_operands; ++i) {
+          if (visited.insert(current->mutable_operand(i)).second) {
+            worklist.push_back(current->mutable_operand(i));
+          }
         }
       }
       return false;
