@@ -132,6 +132,18 @@ bool CanBeRematerialized(
   return rematerializable;
 }
 
+bool CanBeRematerialized(
+    HloRematItem* item,
+    absl::flat_hash_map<const HloInstruction*, bool>* rematerializable_map) {
+  if (item->rematerializable != -1) {
+    return item->rematerializable != 0;
+  }
+  bool rematerializable =
+      CanBeRematerialized(item->instruction, rematerializable_map);
+  item->rematerializable = rematerializable ? 1 : 0;
+  return rematerializable;
+}
+
 // Return if this is an instruction that relays the buffers it uses to its own
 // users and if this is one of these instructions we support the
 // rematerialization of.
@@ -167,11 +179,12 @@ bool UsesEmpty(const HloInstruction* instruction) {
   return true;
 }
 
-// Removes all leftover uses of "best" in post-order (leaves first). These uses
+// Removes all leftover uses of "best" in post order (leaves first). These uses
 // are inactive as the instructions have been rendered dead by
 // rematerialization.
 absl::Status RemoveDeadUserTree(HloInstruction* best,
-                                HloComputation* computation) {
+                                HloComputation* computation,
+                                HloRematInstructionList* instruction_list) {
   absl::InlinedVector<HloInstruction*, 8> post_order;
   absl::InlinedVector<std::pair<HloInstruction*, size_t>, 8> stack;
   absl::flat_hash_set<HloInstruction*> visited;
@@ -205,6 +218,7 @@ absl::Status RemoveDeadUserTree(HloInstruction* best,
             << instr->name()
             << (is_source ? "" : absl::StrCat(" of instruction ", best->name()))
             << " because the instruction was killed by rematerialization.";
+    instruction_list->MarkDead(instruction_list->GetItem(instr));
     ABSL_RETURN_IF_ERROR(instr->DropAllControlDeps());
     ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(instr));
   }
@@ -550,10 +564,12 @@ class MemoryUsageTracker {
   int64_t BytesUsedByBuffers(const HloRematItem* item,
                              bool only_count_unplaced_users) const;
 
-  // Calculates the cost of compressing the candidate_item's output.
-  std::optional<int64_t> GetCostOfCompression(
+  // Calculates the cost of compressing the candidate_item's output. When
+  // compression is valid and compact_shape_idx_out is non null, sets
+  // *compact_shape_idx_out to the index in compact_shapes_.
+  absl::StatusOr<std::optional<int64_t>> GetCostOfCompression(
       const HloRematItem* candidate_item, int64_t memory_limit_bytes,
-      int64_t peak_memory_bytes);
+      int64_t peak_memory_bytes, size_t* compact_shape_idx_out = nullptr);
 
   // Calculates the cost of offloading the candidate_item's output to host
   // memory.
@@ -568,7 +584,7 @@ class MemoryUsageTracker {
   // empty vector if no candidates are found. Also returns an integer that
   // represents the amount of "effort" expended to find the candidate
   // instructions.
-  std::tuple<std::vector<HloRematItem*>, RematStrategy, int>
+  absl::StatusOr<std::tuple<std::vector<HloRematItem*>, RematStrategy, int>>
   PickRematerializationCandidates(
       const HloRematInstructionList& instruction_list,
       int64_t memory_limit_bytes,
@@ -695,11 +711,19 @@ class MemoryUsageTracker {
     absl::InlinedVector<BufferId, 16> extended_dead_buffers;
   };
 
+  struct CompactShapeInfo {
+    Shape compact_shape;
+    int64_t original_size;
+    int64_t compact_size;
+  };
+
   // Incrementally evaluates whether appending item to the candidate block is
   // legal and updates state with net memory changes and required live range
   // extensions. Returns false if the block cannot be extended with item.
   bool ExtendRecomputeBlock(const HloRematItem* item,
                             BlockRematState* state) const;
+
+  absl::StatusOr<size_t> GetCompactShapeInfo(const HloInstruction* hlo);
 
   // Adjusts our tracked memory usage as a result of this item going out of
   // scope.
@@ -708,10 +732,6 @@ class MemoryUsageTracker {
   // Buffers have users and users have buffers used. This function resolves
   // outstanding issues in that bidirectional dependency.
   void ReplaceUsesInUsersOfBuffer(Buffer& buffer, BufferId old_id) const;
-
-  // Gets the compact shape of given hlo instruction. An internal cache is used
-  // to avoid computing the shape multiple times.
-  absl::StatusOr<const Shape*> GetCompactShape(const HloInstruction* hlo);
 
   // Creates a Buffer representing the given HloValue. The buffer is added
   // to buffers_ and a reference is returned.
@@ -789,7 +809,7 @@ class MemoryUsageTracker {
   // point.
   bool IsInstructionCurrentlyLive(const HloRematItem* instruction) const {
     // If the instruction has not started yet, it is not alive.
-    if (!IsPlaced(instruction->instruction)) {
+    if (!instruction->placed) {
       return false;
     }
     for (const HloInstruction* user : instruction->instruction->users()) {
@@ -830,8 +850,10 @@ class MemoryUsageTracker {
   // (BeginInstruction/EndInstruction calls).
   const HloRematInstructionList& instruction_list_;
 
-  // A map that caches existing known compact shape for each instruction.
-  absl::flat_hash_map<const HloInstruction*, Shape> compact_shape_;
+  // Caches compact shape and materialized sizes for each instruction, indexed
+  // by integer ID so map rehashes and vector growth never invalidate handles.
+  std::vector<CompactShapeInfo> compact_shapes_;
+  absl::flat_hash_map<const HloInstruction*, size_t> compact_shape_index_;
 
   // Memory usage at the currently placed instruction.
   int64_t memory_usage_ = 0;
@@ -1022,6 +1044,15 @@ MemoryUsageTracker::MemoryUsageTracker(
             });
       }
     }
+    for (HloRematItem* item = instruction_list_.first(); item != nullptr;
+         item = instruction_list_.next(item)) {
+      item->pinned_by_overwrite =
+          !pinned_items_.empty() && IsPinnedByOverwrite(item);
+      if (auto it = operand_overwrites_.find(item);
+          it != operand_overwrites_.end()) {
+        item->has_operand_overwrites = !it->second.empty();
+      }
+    }
   }
   XLA_VLOG_LINES(10, ToString());
   DCHECK(Check());
@@ -1139,7 +1170,10 @@ bool MemoryUsageTracker::ExtendRecomputeBlock(const HloRematItem* item,
   }
 
   const HloInstruction* candidate = item->instruction;
-  if (absl::c_any_of(
+  DCHECK(item->has_control_successors ||
+         candidate->control_successors().empty());
+  if (item->has_control_successors &&
+      absl::c_any_of(
           candidate->control_successors(),
           [this](const HloInstruction* inst) { return IsPlaced(inst); })) {
     return false;
@@ -1148,29 +1182,34 @@ bool MemoryUsageTracker::ExtendRecomputeBlock(const HloRematItem* item,
   // An already overwritten operand is read from a copy saved before the
   // overwrite. Each item pays for its own copy.
   absl::InlinedVector<BufferId, 2> saved_buffers;
-  for (const OperandOverwrite& overwrite : Overwrites(item, /*placed=*/true)) {
-    const HloInstruction* operand =
-        candidate->operand(overwrite.operand_number);
-    // One array copy can't replace a tuple operand or other views of the
-    // buffer, e.g. a bitcast.
-    if (!operand->shape().IsArray() ||
-        absl::c_any_of(buffers_.at(overwrite.buffer_id).users,
-                       [&](const HloRematItemUse& use) {
-                         return use.user == item &&
-                                candidate->operand(use.operand_number) !=
-                                    operand;
-                       })) {
-      return false;
-    }
-    if (!absl::c_linear_search(saved_buffers, overwrite.buffer_id)) {
-      saved_buffers.push_back(overwrite.buffer_id);
-      state->memory_reduced -= SavedCopySize(overwrite.buffer_id);
-      state->zero_cost_move = false;
+  DCHECK(item->has_operand_overwrites ||
+         Overwrites(item, /*placed=*/true).empty());
+  if (item->has_operand_overwrites) {
+    for (const OperandOverwrite& overwrite :
+         Overwrites(item, /*placed=*/true)) {
+      const HloInstruction* operand =
+          candidate->operand(overwrite.operand_number);
+      // One array copy can't replace a tuple operand or other views of the
+      // buffer, e.g. a bitcast.
+      if (!operand->shape().IsArray() ||
+          absl::c_any_of(buffers_[overwrite.buffer_id].users,
+                         [&](const HloRematItemUse& use) {
+                           return use.user == item &&
+                                  candidate->operand(use.operand_number) !=
+                                      operand;
+                         })) {
+        return false;
+      }
+      if (!absl::c_linear_search(saved_buffers, overwrite.buffer_id)) {
+        saved_buffers.push_back(overwrite.buffer_id);
+        state->memory_reduced -= SavedCopySize(overwrite.buffer_id);
+        state->zero_cost_move = false;
+      }
     }
   }
 
   for (BufferId buffer_id : item->buffers_defined) {
-    const Buffer& buffer = buffers_.at(buffer_id);
+    const Buffer& buffer = buffers_[buffer_id];
     // Avoid rematerializing instructions with indirect uses as it is
     // difficult to reason about liveness after rematerializing the
     // instruction.
@@ -1190,7 +1229,7 @@ bool MemoryUsageTracker::ExtendRecomputeBlock(const HloRematItem* item,
     if (!IsCurrentlyLive(buffer_id) &&
         !absl::c_linear_search(saved_buffers, buffer_id)) {
       HloRematItem* defining_instruction =
-          buffers_.at(buffer_id).defining_instruction;
+          buffers_[buffer_id].defining_instruction;
       if (!absl::c_linear_search(state->items, defining_instruction) &&
           !absl::c_linear_search(state->extended_dead_buffers, buffer_id)) {
         state->extended_dead_buffers.push_back(buffer_id);
@@ -1322,6 +1361,7 @@ absl::Status MemoryUsageTracker::AddRematerializedInstruction(
       it != operand_overwrites_.end()) {
     // Copy first: inserting may rehash and invalidate 'it'.
     auto overwrites = it->second;
+    remat_item->has_operand_overwrites = !overwrites.empty();
     operand_overwrites_[remat_item] = std::move(overwrites);
   }
 
@@ -1640,16 +1680,24 @@ std::string MemoryUsageTracker::ToString() const {
   return output;
 }
 
-absl::StatusOr<const Shape*> MemoryUsageTracker::GetCompactShape(
+absl::StatusOr<size_t> MemoryUsageTracker::GetCompactShapeInfo(
     const HloInstruction* hlo) {
-  auto it = compact_shape_.find(hlo);
-  if (it != compact_shape_.end()) {
-    return &it->second;
+  auto it = compact_shape_index_.find(hlo);
+  if (it != compact_shape_index_.end()) {
+    return it->second;
   }
   const Shape& original_shape = hlo->shape();
   ABSL_ASSIGN_OR_RETURN(Shape min_shape,
                         options_.compact_shape_function(original_shape));
-  return &compact_shape_.emplace(hlo, min_shape).first->second;
+  const int64_t original_size =
+      options_.hlo_cost_analysis.GetShapeSize(original_shape);
+  const int64_t compact_size =
+      options_.hlo_cost_analysis.GetShapeSize(min_shape);
+  const size_t idx = compact_shapes_.size();
+  compact_shapes_.push_back(
+      CompactShapeInfo{std::move(min_shape), original_size, compact_size});
+  compact_shape_index_.emplace(hlo, idx);
+  return idx;
 }
 
 bool MemoryUsageTracker::Check() const {
@@ -1711,37 +1759,32 @@ bool MemoryUsageTracker::Check() const {
   return true;
 }
 
-// Returns a block of up to min_block_size consecutive candidate instructions
-// from instruction_list starting from start_item. Returns fewer than
-// min_block_size instructions if the block of unplaced instructions starting
-// from start_item is smaller than min_block_size.
-std::vector<HloRematItem*> GetInitialBlock(
-    const HloRematInstructionList& instruction_list,
-    const MemoryUsageTracker& tracker, HloRematItem* start_item,
-    int min_block_size) {
-  std::vector<HloRematItem*> item_block;
+// Populates 'item_block' with up to min_block_size consecutive placed candidate
+// instructions from instruction_list starting from start_item.
+void FillInitialBlock(const HloRematInstructionList& instruction_list,
+                      const MemoryUsageTracker& tracker,
+                      HloRematItem* start_item, int min_block_size,
+                      absl::InlinedVector<HloRematItem*, 16>* item_block) {
+  item_block->clear();
   HloRematItem* curr_item = start_item;
   for (int i = 0; i < min_block_size; ++i) {
     if (curr_item == nullptr || !curr_item->placed ||
         tracker.IsInProgressItem(curr_item)) {
       break;
     }
-    item_block.push_back(curr_item);
+    item_block->push_back(curr_item);
     curr_item = instruction_list.next(curr_item);
   }
-  return item_block;
 }
 
-// Returns whether any instruction in 'block' is denylisted or
-// non-rematerializable.
+// Returns whether any instruction in 'block' is denylisted or not
+// rematerializable.
 bool AnyDenylistedOrNonRematerializable(
-    const std::vector<HloRematItem*>& block,
+    absl::Span<HloRematItem* const> block,
     absl::flat_hash_map<const HloInstruction*, bool>* rematerializable_map) {
-  for (auto* item : block) {
-    if (item->denylisted) {
-      return true;
-    }
-    if (!CanBeRematerialized(item->instruction, rematerializable_map)) {
+  for (HloRematItem* item : block) {
+    if (item->denylisted || item->pinned_by_overwrite ||
+        !CanBeRematerialized(item, rematerializable_map)) {
       return true;
     }
   }
@@ -1769,49 +1812,51 @@ int64_t MemoryUsageTracker::BytesUsedByBuffers(
   return bytes_used_by_buffers;
 }
 
-std::optional<int64_t> MemoryUsageTracker::GetCostOfCompression(
+absl::StatusOr<std::optional<int64_t>> MemoryUsageTracker::GetCostOfCompression(
     const HloRematItem* candidate_item, int64_t memory_limit_bytes,
-    int64_t peak_memory_bytes) {
+    int64_t peak_memory_bytes, size_t* compact_shape_idx_out) {
   CHECK(candidate_item != nullptr);
 
   // Only consider compressing single output instruction.
   if (candidate_item->buffers_output.size() != 1) {
     // TODO(b/291824123): Currently only handling single output buffers.
-    HloInstruction* candidate_instruction = candidate_item->instruction;
-    VLOG(2) << "  " << candidate_instruction->name()
+    VLOG(2) << "  " << candidate_item->instruction->name()
             << " has more than one output buffer; cannot offload to host.";
-    return {};
+    return std::nullopt;
   }
 
-  const Buffer& output_buffer = buffers_.at(candidate_item->buffers_output[0]);
+  const BufferId output_buffer_id = candidate_item->buffers_output[0];
+  const Buffer& output_buffer = buffers_[output_buffer_id];
   if (!candidate_item->placed || candidate_item == in_progress_item_ ||
-      output_buffer.live_out) {
-    return {};
+      output_buffer.live_out || !IsCurrentlyLive(output_buffer_id) ||
+      IsInUse(output_buffer_id)) {
+    return std::nullopt;
   }
 
   const Shape& original_shape = candidate_item->instruction->shape();
-  if (!original_shape.IsArray()) {
-    return {};
+  if (!original_shape.IsArray() ||
+      !IsInstructionCurrentlyLive(candidate_item)) {
+    return std::nullopt;
   }
 
-  const Shape* compact_shape =
-      GetCompactShape(candidate_item->instruction).value();
-  const int64_t memory_reduced =
-      MemoryReducedIfCompressed(candidate_item, *compact_shape);
+  ABSL_ASSIGN_OR_RETURN(const size_t compact_idx,
+                        GetCompactShapeInfo(candidate_item->instruction));
+  const CompactShapeInfo& compact_info = compact_shapes_[compact_idx];
+  const int64_t memory_reduced = output_buffer.size - compact_info.compact_size;
   // Since the compressed and uncompressed buffers need to be alive
   // while performing the compression/uncompression, only perform
   // the compression if the sum of the two sizes is less than the
   // peak memory.
-  const int64_t size = options_.hlo_cost_analysis.GetShapeSize(
-      candidate_item->instruction->shape());
-  const int64_t reduced_size =
-      options_.hlo_cost_analysis.GetShapeSize(*compact_shape);
   // TODO(victorstone): I don't think this size check is right.
-  if (memory_reduced > 0 && size + reduced_size < peak_memory_bytes) {
+  if (memory_reduced > 0 &&
+      compact_info.original_size + compact_info.compact_size <
+          peak_memory_bytes) {
+    if (compact_shape_idx_out != nullptr) {
+      *compact_shape_idx_out = compact_idx;
+    }
     return memory_limit_bytes / memory_reduced;
-  } else {
-    return {};
   }
+  return std::nullopt;
 }
 
 std::optional<int64_t> MemoryUsageTracker::GetCostOfHostOffload(
@@ -1961,7 +2006,7 @@ std::optional<int64_t> MemoryUsageTracker::GetCostOfHostOffload(
   return memory_limit_bytes / bytes_used_by_buffers;
 }
 
-std::tuple<std::vector<HloRematItem*>, RematStrategy, int>
+absl::StatusOr<std::tuple<std::vector<HloRematItem*>, RematStrategy, int>>
 MemoryUsageTracker::PickRematerializationCandidates(
     const HloRematInstructionList& instruction_list, int64_t memory_limit_bytes,
     absl::flat_hash_map<const HloInstruction*, bool>* rematerializable_map,
@@ -1977,21 +2022,117 @@ MemoryUsageTracker::PickRematerializationCandidates(
   std::vector<HloRematItem*> best_items;
   int64_t best_cost = std::numeric_limits<int64_t>::max();
   RematStrategy best_strategy;
+  std::optional<size_t> best_compact_shape_idx;
   int effort = 0;
+  const int single_item_effort =
+      (options_.remat_mode_config.compress ? 1 : 0) +
+      (options_.remat_mode_config.host_offload ? 1 : 0) +
+      (options_.remat_mode_config.recompute ? 1 : 0);
+  absl::InlinedVector<HloRematItem*, 16> block;
   VLOG(5) << "Picking candidate block with size in [" << min_block_size << ", "
           << max_block_size << "]";
 
   for (auto* start_item = instruction_list.first_skip_node();
        start_item != nullptr;
        start_item = instruction_list.next_skip_node(start_item)) {
-    if (start_item->instruction->IsDead()) {
+    DCHECK_EQ(start_item->is_dead, start_item->instruction->IsDead());
+    if (start_item->is_dead) {
       // This should only happen in peak priority mode because it does not run a
       // DCE pass to remove dead instructions in between certain remat calls.
       continue;
     }
-    std::vector<HloRematItem*> block =
-        GetInitialBlock(instruction_list, *this, start_item, min_block_size);
-    if (block.size() < min_block_size) {
+
+    if (max_block_size == 1) {
+      if (!start_item->placed || start_item == in_progress_item_) {
+        VLOG(5) << "No more blocks of size at least " << min_block_size;
+        break;
+      }
+      if (start_item->denylisted || start_item->pinned_by_overwrite ||
+          !CanBeRematerialized(start_item, rematerializable_map)) {
+        VLOG(5) << "Block contains denylisted or non-rematerializable items, "
+                   "skipping.";
+        continue;
+      }
+      if (best_cost == 0 && memory_limit_bytes >= 0) {
+        effort += single_item_effort;
+        continue;
+      }
+      bool has_live_defined_buffer = false;
+      for (BufferId buffer_id : start_item->buffers_defined) {
+        if (IsCurrentlyLive(buffer_id) && AllocatedSize(buffer_id) > 0) {
+          has_live_defined_buffer = true;
+          break;
+        }
+      }
+      const bool can_try_compress =
+          options_.remat_mode_config.compress &&
+          start_item->buffers_output.size() == 1 &&
+          IsCurrentlyLive(start_item->buffers_output[0]);
+      if (!has_live_defined_buffer && !can_try_compress) {
+        effort += single_item_effort;
+        continue;
+      }
+
+      if (options_.remat_mode_config.compress) {
+        ++effort;
+        if (can_try_compress) {
+          size_t candidate_compact_idx = 0;
+          ABSL_ASSIGN_OR_RETURN(
+              std::optional<int64_t> cost,
+              GetCostOfCompression(start_item, memory_limit_bytes,
+                                   peak_memory_bytes, &candidate_compact_idx));
+          if (cost && *cost < best_cost) {
+            VLOG(1) << "Found new best cost; from " << best_cost << " to "
+                    << *cost << " with strategy kCompress on block of size 1";
+            best_strategy.kind = RematStrategy::kCompress;
+            best_compact_shape_idx = candidate_compact_idx;
+            best_items = {start_item};
+            best_cost = *cost;
+          }
+        }
+      }
+      if (options_.remat_mode_config.host_offload) {
+        ++effort;
+        if (has_live_defined_buffer) {
+          auto cost = GetCostOfHostOffload(start_item, memory_limit_bytes);
+          if (cost && *cost < best_cost) {
+            VLOG(1) << "Found new best cost; from " << best_cost << " to "
+                    << *cost
+                    << " with strategy kHostOffload on block of size 1";
+            best_strategy.kind = RematStrategy::kHostOffload;
+            best_compact_shape_idx.reset();
+            best_items = {start_item};
+            best_cost = *cost;
+          }
+        }
+      }
+      if (options_.remat_mode_config.recompute) {
+        ++effort;
+        if (has_live_defined_buffer) {
+          BlockRematState block_state;
+          if (ExtendRecomputeBlock(start_item, &block_state) &&
+              block_state.memory_reduced > 0) {
+            int64_t cost =
+                block_state.zero_cost_move
+                    ? 0
+                    : memory_limit_bytes / block_state.memory_reduced;
+            if (cost < best_cost) {
+              VLOG(1) << "Found new best cost; from " << best_cost << " to "
+                      << cost << " with strategy kRecompute on block of size 1";
+              best_strategy.kind = RematStrategy::kRecompute;
+              best_compact_shape_idx.reset();
+              best_items = {start_item};
+              best_cost = cost;
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    FillInitialBlock(instruction_list, *this, start_item, min_block_size,
+                     &block);
+    if (block.size() < static_cast<size_t>(min_block_size)) {
       VLOG(5) << "No more blocks of size at least " << min_block_size;
       break;
     }
@@ -2002,10 +2143,7 @@ MemoryUsageTracker::PickRematerializationCandidates(
     // In peak priority mode, the map includes all instructions that were
     // recomputed so far to improve compilation time and remat efficiency. Such
     // optimization could be applied to other modes as well.
-    if (AnyDenylistedOrNonRematerializable(block, rematerializable_map) ||
-        absl::c_any_of(block, [this](const HloRematItem* item) {
-          return IsPinnedByOverwrite(item);
-        })) {
+    if (AnyDenylistedOrNonRematerializable(block, rematerializable_map)) {
       VLOG(5) << "Block contains denylisted or non-rematerializable items, "
                  "skipping.";
       continue;
@@ -2014,19 +2152,18 @@ MemoryUsageTracker::PickRematerializationCandidates(
     // First, calculate the cost of compression rematerialization for this
     // instruction.
     if (options_.remat_mode_config.compress && block.size() == 1) {
-      auto cost =
-          GetCostOfCompression(block[0], memory_limit_bytes, peak_memory_bytes);
+      size_t candidate_compact_idx = 0;
+      ABSL_ASSIGN_OR_RETURN(
+          std::optional<int64_t> cost,
+          GetCostOfCompression(block[0], memory_limit_bytes, peak_memory_bytes,
+                               &candidate_compact_idx));
       ++effort;
       if (cost && *cost < best_cost) {
         VLOG(1) << "Found new best cost; from " << best_cost << " to " << *cost
                 << " with strategy kCompress on block of size " << block.size();
         best_strategy.kind = RematStrategy::kCompress;
-        // TODO(b/293323448): This `best_strategy.compact_shape` is already
-        // computed inside GetCostOfCompression, should we get it from there? Or
-        // is it ok to recompute?
-        best_strategy.compact_shape =
-            *GetCompactShape(block[0]->instruction).value();
-        best_items = block;
+        best_compact_shape_idx = candidate_compact_idx;
+        best_items.assign(block.begin(), block.end());
         best_cost = *cost;
       }
     }
@@ -2041,7 +2178,8 @@ MemoryUsageTracker::PickRematerializationCandidates(
                 << " with strategy kHostOffload on block of size "
                 << block.size();
         best_strategy.kind = RematStrategy::kHostOffload;
-        best_items = block;
+        best_compact_shape_idx.reset();
+        best_items.assign(block.begin(), block.end());
         best_cost = *cost;
       }
     }
@@ -2070,7 +2208,7 @@ MemoryUsageTracker::PickRematerializationCandidates(
       continue;
     }
 
-    while (block.size() <= max_block_size) {
+    while (block.size() <= static_cast<size_t>(max_block_size)) {
       ++effort;
       if (block_state.memory_reduced > 0) {
         int64_t cost = block_state.zero_cost_move
@@ -2081,12 +2219,13 @@ MemoryUsageTracker::PickRematerializationCandidates(
                   << " with strategy kRecompute on block of size "
                   << block.size();
           best_strategy.kind = RematStrategy::kRecompute;
-          best_items = block;
+          best_compact_shape_idx.reset();
+          best_items.assign(block.begin(), block.end());
           best_cost = cost;
         }
       }
 
-      if (block.size() == max_block_size) {
+      if (block.size() == static_cast<size_t>(max_block_size)) {
         break;
       }
 
@@ -2095,16 +2234,21 @@ MemoryUsageTracker::PickRematerializationCandidates(
       auto* last_item = block.back();
       auto* next_item = instruction_list.next(last_item);
       if (next_item == nullptr || next_item->denylisted || !next_item->placed ||
-          next_item == in_progress_item_ ||
-          !CanBeRematerialized(next_item->instruction, rematerializable_map) ||
-          IsPinnedByOverwrite(next_item) ||
+          next_item == in_progress_item_ || next_item->pinned_by_overwrite ||
+          !CanBeRematerialized(next_item, rematerializable_map) ||
           !ExtendRecomputeBlock(next_item, &block_state)) {
         break;
       }
       block.push_back(next_item);
     }
   }
-  return {best_items, best_strategy, effort};
+  if (!best_items.empty() && best_strategy.kind == RematStrategy::kCompress) {
+    CHECK(best_compact_shape_idx.has_value());
+    best_strategy.compact_shape =
+        compact_shapes_[*best_compact_shape_idx].compact_shape;
+  }
+  return std::make_tuple(std::move(best_items), std::move(best_strategy),
+                         effort);
 }
 
 bool MemoryUsageTracker::HasUnplacedUsers(HloRematItem* item) const {
@@ -2154,6 +2298,7 @@ absl::Status MemoryUsageTracker::AddSavedCopy(HloRematItem* remat_item,
                                     return overwrite.buffer_id == buffer_id;
                                   }),
                    overwrites.end());
+  remat_item->has_operand_overwrites = !overwrites.empty();
 
   Buffer& buffer = buffers_.at(buffer_id);
   UsesList copy_uses;
@@ -2248,6 +2393,7 @@ absl::StatusOr<int64_t> RematerializeInstructions(
     // should not be rematerialized again.
     if (rematerialization->remat_algorithm() == RematAlgorithm::kPeakPriority) {
       (*rematerializable_map)[remat] = false;
+      remat_item->rematerializable = 0;
     }
 
     // Replace each remaining use of 'best' with the rematerialization.
@@ -2289,16 +2435,21 @@ absl::StatusOr<int64_t> RematerializeInstructions(
         }
         ABSL_RETURN_IF_ERROR(user.user->instruction->ReplaceOperandWith(
             user.operand_number, remat_use));
+        if (user_operand->IsDead()) {
+          instruction_list->MarkDead(instruction_list->GetItem(user_operand));
+        }
         // Peak priority specific optimization. Any recomputed instruction
         // should not be rematerialized again.
         if (remat_use != remat && rematerialization->remat_algorithm() ==
                                       RematAlgorithm::kPeakPriority) {
           (*rematerializable_map)[remat_use] = false;
+          instruction_list->GetItem(remat_use)->rematerializable = 0;
         }
         ABSL_RETURN_IF_ERROR(
             rematerialization->on_rematerialized(user_operand, remat_use));
       }
     }
+    remat_item->is_dead = remat->IsDead();
 
     // Account for the rematerialization in the memory tracker.
     ABSL_RETURN_IF_ERROR(memory_tracker->AddRematerializedInstruction(
@@ -2324,9 +2475,10 @@ absl::StatusOr<int64_t> RematerializeInstructions(
       ABSL_RETURN_IF_ERROR(operand->ReplaceUseWith(remat, copy));
       HloRematItem* copy_item = instruction_list->CreateItem(copy);
       copy_item->placed = true;
-      instruction_list->InsertBeforeInstructions(copy_item, {overwrite.writer});
-      instruction_list->Denylist(copy);
+      copy_item->denylisted = true;
+      copy_item->rematerializable = 0;
       (*rematerializable_map)[copy] = false;
+      instruction_list->InsertBeforeInstructions(copy_item, {overwrite.writer});
       ABSL_RETURN_IF_ERROR(memory_tracker->AddSavedCopy(
           remat_item, overwrite.buffer_id, copy_item));
       ++net_instructions_added;
@@ -2394,6 +2546,7 @@ absl::StatusOr<int64_t> RematerializeInstructions(
          memory_tracker->Overwrites(remat_item, /*placed=*/false)) {
       ABSL_RETURN_IF_ERROR(
           remat->AddControlDependencyTo(overwrite.writer->instruction));
+      remat_item->has_control_successors = true;
     }
     // Insert rematerialized instruction before any of its successors to
     // preserve ordering regarding control dependency.
@@ -2406,8 +2559,9 @@ absl::StatusOr<int64_t> RematerializeInstructions(
     }
     instruction_list->InsertBeforeInstructions(remat_item, place_before);
 
-    for (auto* bitcast : indirect_users) {
-      instruction_list->InsertBeforeInstructions(bitcast, place_before);
+    for (auto* indirect_user : indirect_users) {
+      indirect_user->denylisted = true;
+      instruction_list->InsertBeforeInstructions(indirect_user, place_before);
     }
     // For kAlwaysRemat, if the rematerialized instruction is dead then
     // rematerialization is essentially a move. We do not delete the instruction
@@ -2430,15 +2584,13 @@ absl::StatusOr<int64_t> RematerializeInstructions(
       // TODO(b/486858124): Generalize this to all strategies.
       if (rematerialization->remat_algorithm() ==
           RematAlgorithm::kPeakPriority) {
-        ABSL_RETURN_IF_ERROR(RemoveDeadUserTree(best, computation));
+        ABSL_RETURN_IF_ERROR(
+            RemoveDeadUserTree(best, computation, instruction_list));
       }
       remat_move_instructions->insert(remat);
       net_instructions_added += indirect_users.size();
     } else {
       net_instructions_added += indirect_users.size() + 1;
-    }
-    for (auto* indirect_user : indirect_users) {
-      instruction_list->Denylist(indirect_user->instruction);
     }
     if (best->parent() != nullptr &&
         (HloDataflowAnalysis::IsAsynchronousOperationStart(best->opcode()) ||
@@ -2449,6 +2601,7 @@ absl::StatusOr<int64_t> RematerializeInstructions(
       // We need to remove all control dependencies from best before removing it
       // from the computation.  Its control dependencies were previously copied
       // to the remat instruction.
+      instruction_list->MarkDead(best_item);
       ABSL_RETURN_IF_ERROR(best->DropAllControlDeps());
       ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(best));
     }
@@ -2808,12 +2961,13 @@ absl::StatusOr<InstructionsAdded> RematerializeBestBlock(
   std::vector<HloRematItem*> best_items;
   RematStrategy best_strategy;
   int effort;
-  std::tie(best_items, best_strategy, effort) =
+  ABSL_ASSIGN_OR_RETURN(
+      std::tie(best_items, best_strategy, effort),
       memory_tracker->PickRematerializationCandidates(
           *instruction_list, memory_limit_bytes, rematerializable_map,
           min_block_size, max_block_size,
           rematerialization->ComputationPeakMemory(
-              memory_tracker->computation()));
+              memory_tracker->computation())));
   InstructionsAdded num_instructions_added;
   num_instructions_added.remat_count = best_items.size();
   num_instructions_added.effort = effort;
@@ -3205,7 +3359,8 @@ HloRematerialization::PeakPrioritySubPass(
                                     *state.instruction_list,
                                     &value_overwriters_, &overwriter_ids_);
   state.instruction_list->PromoteNodesToSkip([&](HloRematItem* item) {
-    return memory_tracker.AllocatedSize(item) >= min_remat_size;
+    return memory_tracker.AllocatedSize(item) >= min_remat_size &&
+           CanBeRematerialized(item, state.rematerializable_map);
   });
   bool module_changed_in_this_subpass = false;
 
@@ -3502,8 +3657,14 @@ absl::StatusOr<bool> HloRematerialization::RematerializeComputation(
                                     instruction_list, &value_overwriters_,
                                     &overwriter_ids_);
 
+  // The map from instructions to their rematerializable status.
+  // In Peak priority remat, it also stores instructions that were at any point
+  // recomputed by this pass for optimization reasons.
+  absl::flat_hash_map<const HloInstruction*, bool> rematerializable_map;
+
   instruction_list.PromoteNodesToSkip([&](HloRematItem* item) {
-    return memory_tracker.AllocatedSize(item) >= min_remat_size;
+    return memory_tracker.AllocatedSize(item) >= min_remat_size &&
+           CanBeRematerialized(item, &rematerializable_map);
   });
   bool changed = false;
 
@@ -3513,11 +3674,6 @@ absl::StatusOr<bool> HloRematerialization::RematerializeComputation(
   // the instruction is also a move then the rematerialization is added to the
   // denylist.
   absl::flat_hash_set<const HloInstruction*> remat_move_instructions;
-
-  // The map from instructions to their rematerializable status.
-  // In Peak priority remat, it also stores instructions that were at any point
-  // recomputed by this pass for optimization reasons.
-  absl::flat_hash_map<const HloInstruction*, bool> rematerializable_map;
 
   // The peak memory of the computation at any point in the instruction
   // sequence.
