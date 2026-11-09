@@ -5202,8 +5202,10 @@ ENTRY main {
 
   class TagPropagation final : public HloDataflowPropagation {
    public:
-    explicit TagPropagation(const HloDataflowAnalysis* analysis)
-        : HloDataflowPropagation(analysis) {}
+    explicit TagPropagation(const HloDataflowAnalysis* analysis,
+                            bool allow_caller_to_while_body = true)
+        : HloDataflowPropagation(analysis),
+          allow_caller_to_while_body_(allow_caller_to_while_body) {}
 
     void SetTag(const HloInstruction* inst, const ShapeIndex& index, int tag) {
       for (const HloValue* val :
@@ -5235,6 +5237,12 @@ ENTRY main {
       return GetTag(instruction, index).has_value();
     }
 
+    bool ShouldPropagateCallerToWhileBody(const HloInstruction*,
+                                          const ShapeIndex&,
+                                          const HloInstruction*) override {
+      return allow_caller_to_while_body_;
+    }
+
     absl::Status PropagateAcrossEdge(const HloInstruction* src_instruction,
                                      const ShapeIndex& src_index,
                                      const HloInstruction* dst_instruction,
@@ -5261,6 +5269,7 @@ ENTRY main {
 
    private:
     absl::flat_hash_map<HloValue::Id, int> tags_;
+    bool allow_caller_to_while_body_;
   };
 
   HloInstruction* x = FindInstruction(module_.get(), "x");
@@ -5284,6 +5293,50 @@ ENTRY main {
                 42);
     }
   }
+
+  ASSERT_OK_AND_ASSIGN(
+      auto ssa_analysis,
+      HloDataflowAnalysis::Run(
+          *module_, /*ssa_form=*/true, /*bitcast_defines_value=*/false,
+          /*execution_threads=*/{}, /*propagate_through_calls=*/false,
+          /*precompute_uses=*/std::nullopt,
+          /*propagate_through_control_flow=*/false));
+  TagPropagation guard_prop(ssa_analysis.get(),
+                            /*allow_caller_to_while_body=*/false);
+  HloInstruction* cond_param =
+      while_inst->while_condition()->parameter_instruction(0);
+  guard_prop.SetTag(while_inst, {}, 7);
+  guard_prop.SetTag(cond_param, {}, 99);
+  ASSERT_OK(guard_prop.PropagateForValue(
+      *ssa_analysis->GetValueSet(cond_param, {}).values().front()));
+  EXPECT_EQ(
+      guard_prop.GetTag(while_inst->while_body()->parameter_instruction(0)),
+      std::nullopt);
+}
+
+TEST_F(HloDataflowAnalysisTest,
+       ForEachCallerBoundaryOrdersSharedCallersByUniqueId) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"hlo(
+HloModule MultiCallerDeterminism
+callee { ROOT p = f32[4] parameter(0) }
+ENTRY main {
+  a = f32[4] parameter(0)
+  call0 = f32[4] call(a), to_apply=callee
+  call1 = f32[4] call(a), to_apply=callee
+  call2 = f32[4] call(a), to_apply=callee
+  ROOT out = (f32[4], f32[4], f32[4]) tuple(call0, call1, call2)
+}
+)hlo"));
+  const HloInstruction* call0 = FindInstruction(module.get(), "call0");
+  const HloInstruction* call1 = FindInstruction(module.get(), "call1");
+  const HloInstruction* call2 = FindInstruction(module.get(), "call2");
+  ASSERT_LT(call0->unique_id(), call1->unique_id());
+  ASSERT_LT(call1->unique_id(), call2->unique_id());
+  std::vector<const HloInstruction*> visited;
+  HloDataflowPropagation::ForEachCallerBoundary(
+      module->GetComputationWithName("callee"),
+      [&](const HloCallBoundary& b) { visited.push_back(b.callsite); });
+  EXPECT_THAT(visited, ::testing::ElementsAre(call0, call1, call2));
 }
 
 }  // namespace
