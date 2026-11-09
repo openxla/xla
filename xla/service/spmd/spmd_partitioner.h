@@ -82,7 +82,7 @@ struct SpmdPartitionerOptions {
   bool bidirectional_windowed_einsum = false;
 
   // Whether the entry computations' signature could change after partitioning.
-  bool allow_module_signature_change = false;
+  bool allow_module_signature_change = true;
 
   // Whether the entry computations' layout signature could change after
   // partitioning.
@@ -290,12 +290,15 @@ class SpmdPartitioningVisitor;
 
 class SpmdPartitioner : public HloModulePass {
  public:
+  explicit SpmdPartitioner(SpmdPartitionerOptions options = {})
+      : options_(std::move(options)) {}
   SpmdPartitioner(int64_t num_partitions, int64_t num_replicas,
                   SpmdPartitionerOptions options);
   SpmdPartitioner(int64_t num_partitions, int64_t num_replicas,
                   SpmdPartitionerOptions options,
                   SPMDCollectiveOpsCreator collective_ops_creator)
-      : num_partitions_(num_partitions),
+      : has_explicit_counts_(true),
+        num_partitions_(num_partitions),
         num_replicas_(num_replicas),
         options_(std::move(options)),
         collective_ops_creator_(std::move(collective_ops_creator)) {}
@@ -424,8 +427,9 @@ class SpmdPartitioner : public HloModulePass {
     execution_threads_ = execution_threads;
   }
 
-  const int64_t num_partitions_;
-  const int64_t num_replicas_;
+  const bool has_explicit_counts_ = false;
+  int64_t num_partitions_ = 0;
+  int64_t num_replicas_ = 0;
 
   SpmdPartitionerOptions options_;
   SPMDCollectiveOpsCreator collective_ops_creator_;

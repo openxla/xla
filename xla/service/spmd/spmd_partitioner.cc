@@ -7841,6 +7841,12 @@ int64_t SpmdPartitioner::CommunicationCostInBytes(HloInstruction* hlo) {
 absl::StatusOr<bool> SpmdPartitioner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  if (!has_explicit_counts_) {
+    num_partitions_ = module->config().num_partitions();
+    num_replicas_ = module->config().replica_count();
+    collective_ops_creator_ =
+        GetDefaultCollectiveOpsCreator(num_partitions_, num_replicas_);
+  }
   enable_rgv3_ =
       module->config().debug_options().xla_enable_rgv3_materialization();
   set_execution_threads(execution_threads);
