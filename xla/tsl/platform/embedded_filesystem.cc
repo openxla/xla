@@ -56,7 +56,8 @@ absl::Status EmbedRandomAccessFile::Read(uint64_t offset,
   size_t bytes_to_read = std::min(scratch.size(), contents_.size() - offset);
   std::copy(contents_.begin() + offset,
             contents_.begin() + offset + bytes_to_read, scratch.begin());
-  result = absl::string_view(scratch.data(), bytes_to_read);
+  result = absl::string_view(scratch.data(), scratch.size())
+               .substr(0, bytes_to_read);
 
   if (bytes_to_read < scratch.size()) {
     return absl::OutOfRangeError(

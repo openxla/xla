@@ -339,20 +339,17 @@ std::pair<absl::string_view, absl::string_view> FileSystem::SplitPath(
     }
 
     // Safe to do this arithmetic here, we are in case 2 above
-    return std::make_pair(
-        absl::string_view(uri.data(), host.end() - uri.begin()), path);
+    return std::make_pair(uri.substr(0, host.end() - uri.begin()), path);
   }
 
   // Handle the case with a single leading '/' in 'path'.
   if (pos == 0) {
-    return std::make_pair(
-        absl::string_view(uri.data(), path.begin() + 1 - uri.begin()),
-        absl::string_view(path.data() + 1, path.size() - 1));
+    return std::make_pair(uri.substr(0, path.begin() + 1 - uri.begin()),
+                          path.substr(1));
   }
 
-  return std::make_pair(
-      absl::string_view(uri.data(), path.begin() + pos - uri.begin()),
-      absl::string_view(path.data() + pos + 1, path.size() - (pos + 1)));
+  return std::make_pair(uri.substr(0, path.begin() + pos - uri.begin()),
+                        path.substr(pos + 1));
 }
 
 bool FileSystem::IsAbsolutePath(absl::string_view path) const {
@@ -372,11 +369,10 @@ absl::string_view FileSystem::Extension(absl::string_view path) const {
 
   size_t pos = basename.rfind('.');
   if (pos == absl::string_view::npos) {
-    return absl::string_view(path.data() + path.size(), 0);
+    return path.substr(path.size(), 0);
   } else {
     // pos indexes into basename, so slice basename rather than path.
-    return absl::string_view(basename.data() + pos + 1,
-                             basename.size() - (pos + 1));
+    return basename.substr(pos + 1);
   }
 }
 
