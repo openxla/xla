@@ -193,6 +193,12 @@ absl::StatusOr<GemmPerfTableEntryValues> ReadDefaultProfile(
   if (key == "sm_100_GB200") {
     key = "sm_100_B200";
   }
+  // There is no sm_103 (B300/GB300) matmul table yet. Without this alias,
+  // `SolLatencyEstimator` cannot be constructed on these GPUs and the
+  // scheduler silently falls back to T-shirt sizes.
+  if (key == "sm_103") {
+    key = "sm_100_B200";
+  }
 
   if (!Profile().entries().contains(key)) {
     return absl::NotFoundError(absl::StrCat("Cannot find key: ", key));

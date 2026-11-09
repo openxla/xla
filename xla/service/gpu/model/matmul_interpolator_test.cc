@@ -780,6 +780,22 @@ INSTANTIATE_TEST_SUITE_P(
     [](const TestParamInfo<MatmulInterpolatorDefaultTableTest::ParamType>&
            info) { return info.param.test_name; });
 
+TEST(DefaultMatmulPerfTableTest, Sm103UsesB200Table) {
+  se::DeviceDescription sm103_info =
+      TestGpuDeviceInfo::B200SXMDeviceInfo(se::CudaComputeCapability(10, 3));
+  sm103_info.set_name("NVIDIA B300 SXM6 AC");
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<MatmulInterpolator> sm103,
+                       MatmulInterpolator::Create(sm103_info));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<MatmulInterpolator> b200,
+      MatmulInterpolator::Create(TestGpuDeviceInfo::B200SXMDeviceInfo()));
+  ASSERT_OK_AND_ASSIGN(DotContext context, DotBF16(/*b=*/1, /*m=*/1024,
+                                                   /*n=*/4096, /*k=*/512));
+  std::optional<absl::Duration> runtime = sm103->EstimatedRuntime(*context.dot);
+  ASSERT_TRUE(runtime.has_value());
+  EXPECT_EQ(*runtime, *b200->EstimatedRuntime(*context.dot));
+}
+
 TEST(DefaultMatmulPerfTableTest, Gfx942InterpolatesBetweenGridPoints) {
   se::DeviceDescription device_info = TestGpuDeviceInfo::AMDMI300DeviceInfo();
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<MatmulInterpolator> interpolator,
