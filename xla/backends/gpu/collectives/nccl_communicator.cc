@@ -479,10 +479,10 @@ NcclCommunicator::~NcclCommunicator() {
     XLA_VLOG_DEVICE(1, stream_executor_->device_ordinal())
         << "Destroy " << description;
     absl::Status status = XLA_NCCL_STATUS(ncclCommDestroy(comm_->comm));
+    // NCCL no longer writes to pending split outputs after a successful
+    // teardown, so ~NcclCommState may now abort their children.
     if (status.ok()) {
-      if (absl::Status s = comm_->AbortPendingSplits(); !s.ok()) {
-        XLA_LOG_DEVICE(ERROR, stream_executor_->device_ordinal()) << s;
-      }
+      comm_->parent_torn_down = true;
     }
     return status;
   };
@@ -549,10 +549,10 @@ absl::Status NcclCommunicator::Abort() {
     // has been aborted, we can no longer safely touch it.
     absl::MutexLock lock(comm_->mutex);
     absl::Status status = XLA_NCCL_STATUS(ncclCommAbort(comm_->comm));
+    // NCCL no longer writes to pending split outputs after a successful
+    // teardown, so ~NcclCommState may now abort their children.
     if (status.ok()) {
-      if (absl::Status s = comm_->AbortPendingSplits(); !s.ok()) {
-        XLA_LOG_DEVICE(ERROR, stream_executor_->device_ordinal()) << s;
-      }
+      comm_->parent_torn_down = true;
     }
     return status;
   });

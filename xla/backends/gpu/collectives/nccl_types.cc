@@ -33,12 +33,16 @@ limitations under the License.
 namespace xla::gpu {
 
 NcclCommState::~NcclCommState() {
-  // After successful parent teardown, NcclCommunicator attempts to abort any
-  // pending children. Entries can remain if parent teardown or a child abort
-  // fails. If parent teardown failed, NCCL may still write to the storage for
-  // a child communicator handle. Leave that storage allocated without reading
-  // it to avoid a data race or use-after-free. The child communicator may also
-  // leak.
+  // After successful parent teardown, abort pending children and free their
+  // output storage.
+  if (parent_torn_down) {
+    if (absl::Status s = AbortPendingSplits(abort_fn_); !s.ok()) {
+      LOG(ERROR) << s;
+    }
+  }
+  // If parent teardown failed, leave output storage unread and allocated:
+  // NCCL may still write to it. Also leak storage for children whose abort
+  // failed.
   if (!pending_split_comms.empty()) {
     LOG(WARNING) << "Leaking " << pending_split_comms.size()
                  << " NCCL split output(s): parent teardown did not complete "

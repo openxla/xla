@@ -156,5 +156,20 @@ TEST(NcclTypesTest, AbortPendingSplits) {
   state.pending_split_comms.clear();
 }
 
+// Destructor cleanup skips null handles and aborts published children.
+TEST(NcclTypesTest, DestructorAfterParentTeardownAbortsPendingSplits) {
+  AbortedHandles().clear();
+  {
+    NcclCommState state(/*comm=*/nullptr, FakeAbort);
+    absl::MutexLock lock(state.mutex);
+    for (ncclComm_t child : {kUnpublishedChild, kChildWithSuccessfulAbort}) {
+      state.pending_split_comms.push_back(std::make_unique<ncclComm_t>(child));
+    }
+    state.parent_torn_down = true;
+  }
+  EXPECT_THAT(AbortedHandles(),
+              testing::ElementsAre(kChildWithSuccessfulAbort));
+}
+
 }  // namespace
 }  // namespace xla::gpu
