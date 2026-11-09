@@ -217,6 +217,9 @@ absl::Status NewSession(absl::string_view repository_root,
 absl::Status StartContinuousProfiling(
     const char* service_addr,
     const tensorflow::RemoteProfilerSessionManagerOptions& opts) {
+  if (service_addr == nullptr) {
+    return absl::InvalidArgumentError("No service address provided.");
+  }
   std::string session_id = GetCurrentTimeStampAsString();
   // repository_root is empty because we don't want to save profiles to a
   // repository with this request.
@@ -230,6 +233,9 @@ absl::Status StartContinuousProfiling(
 }
 
 absl::Status StopContinuousProfiling(const char* service_addr) {
+  if (service_addr == nullptr) {
+    return absl::InvalidArgumentError("No service address provided.");
+  }
   tensorflow::StopContinuousProfilingRequest request;
   tensorflow::StopContinuousProfilingResponse response;
   ABSL_RETURN_IF_ERROR(tsl::profiler::StopContinuousProfilingGrpc(
@@ -238,6 +244,12 @@ absl::Status StopContinuousProfiling(const char* service_addr) {
 }
 
 absl::Status GetSnapshot(const char* service_addr, const char* logdir) {
+  if (service_addr == nullptr) {
+    return absl::InvalidArgumentError("No service address provided.");
+  }
+  if (logdir == nullptr) {
+    return absl::InvalidArgumentError("No logdir provided.");
+  }
   tensorflow::GetSnapshotRequest request;
   ProfileResponse response;
   ABSL_RETURN_IF_ERROR(GetSnapshotGrpc(service_addr, request, &response));
@@ -372,14 +384,20 @@ absl::Status CaptureRemoteTrace(
   // TPU capture is true if the user sets worker_list.
   bool is_cloud_tpu_session = false;
   RemoteProfilerSessionManagerOptions opts =
-      GetRemoteSessionManagerOptionsLocked(service_addr, logdir, worker_list,
-                                           include_dataset_ops, duration_ms,
-                                           options, &is_cloud_tpu_session);
+      GetRemoteSessionManagerOptionsLocked(
+          absl::NullSafeStringView(service_addr),
+          absl::NullSafeStringView(logdir),
+          absl::NullSafeStringView(worker_list), include_dataset_ops,
+          duration_ms, options, &is_cloud_tpu_session);
   ABSL_RETURN_IF_ERROR(ValidateRemoteProfilerSessionManagerOptions(opts));
+  if (logdir == nullptr) {
+    return absl::InvalidArgumentError("No logdir provided.");
+  }
 
   {
-    ABSL_RETURN_IF_ERROR(CaptureRemoteTrace(logdir, num_tracing_attempts, opts,
-                                            is_cloud_tpu_session));
+    ABSL_RETURN_IF_ERROR(
+        CaptureRemoteTrace(std::string(absl::NullSafeStringView(logdir)),
+                           num_tracing_attempts, opts, is_cloud_tpu_session));
   }
   return absl::OkStatus();
 }
