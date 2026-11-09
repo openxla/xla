@@ -177,7 +177,12 @@ absl::StatusOr<bool> AsyncComputeOnRewriter::ProcessComputeOn(
 absl::StatusOr<bool> AsyncComputeOnRewriter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  bool changed = false;
+  ABSL_ASSIGN_OR_RETURN(
+      bool changed,
+      InlineCallsAlongAsyncPaths(
+          module, execution_threads, [](const HloInstruction* instr) {
+            return instr->IsCustomCall(kComputeOnDoneTarget);
+          }));
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     std::vector<HloInstruction*> done_calls;
