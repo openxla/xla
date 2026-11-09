@@ -46,7 +46,6 @@ limitations under the License.
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mhlo/transforms/passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -70,10 +69,10 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "mhlo/transforms/passes.h"
 #include "stablehlo/dialect/Base.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "stablehlo/transforms/Passes.h"
-#include "tsl/platform/platform.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/hlo/builder/lib/approx_topk.h"
@@ -113,9 +112,11 @@ limitations under the License.
 #include "xla/service/spmd/shardy/utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/side_effect_util.h"
 #include "xla/status_macros.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/platform.h"
 
 #define DEBUG_TYPE "xla-translate"
 
@@ -5604,6 +5605,15 @@ LogicalResult ConvertToHloModule::LowerFunctionCall(
   if (num_results > 1) {
     BuildGetTupleElementsForTupleResults(call_op, call_result, builder,
                                          value_map);
+    // Stream annotations describe the call boundary and are rejected on any
+    // other instruction.
+    for (mlir::Value result : call_op.getResults()) {
+      xla::HloInstructionProto* get_tuple_element =
+          xla::internal::XlaBuilderFriend::GetInstruction(value_map[result]);
+      auto* attrs =
+          get_tuple_element->mutable_frontend_attributes()->mutable_map();
+      attrs->erase(xla::kXlaStreamAnnotationAttr);
+    }
   } else if (num_results == 1) {
     value_map[call_op.getResult(0)] = call_result;
   }

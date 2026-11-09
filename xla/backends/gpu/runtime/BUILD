@@ -3747,10 +3747,16 @@ xla_cc_test(
 
 cc_library(
     name = "execution_stream_id",
+    srcs = ["execution_stream_id.cc"],
     hdrs = ["execution_stream_id.h"],
     deps = [
+        "//xla:side_effect_util",
         "//xla/tsl/lib/gtl:int_type",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -3760,6 +3766,8 @@ xla_cc_test(
     deps = [
         ":execution_stream_id",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
