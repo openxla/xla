@@ -6,9 +6,8 @@ fusion {
   param_1 = f32[15] parameter(1)
   ROOT compare = pred[15] compare(param_0, param_1), direction=GE
 }
-// CHECK:      %[[CASTED_OUT:.*]] = arith.extui
-// CHECK-SAME:   tensor<4xi1> to tensor<4xi8>
-// CHECK:      xtile.insert %[[CASTED_OUT]]
+// CHECK: %[[CMP:.*]] = arith.cmpf oge
+// CHECK: xtile.insert %[[CMP]] into {{.*}} : tensor<4xi1> -> memref<15xi1>
 
 ENTRY main {
   param_0 = f32[15] parameter(0)

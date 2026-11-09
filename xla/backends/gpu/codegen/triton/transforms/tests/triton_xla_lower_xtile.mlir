@@ -146,3 +146,71 @@ xtile.entry_func @tile_id_range_preserved(
 // CHECK-LABEL: func.func @tile_id_range_preserved
 // CHECK:         %[[PID:.*]] = tt.get_program_id x : i32
 // CHECK-NEXT:    %[[PID_IDX:.*]] = arith.index_cast %[[PID]] {xla.range = [0 : index, 7 : index]} : i32 to index
+
+// -----
+
+!i1_memref = memref<32xi1, #nvvm.memory_space<global>>
+// CHECK-LABEL: func.func @i1_nd_extract_insert(
+// CHECK-SAME:    %[[ARG0:.*]]: !tt.ptr<i8>, %[[ARG1:.*]]: !tt.ptr<i8>) {
+xtile.entry_func @i1_nd_extract_insert(%input: !i1_memref,
+                                       %output: !i1_memref,
+                                       %tile_id: index) {
+  // CHECK-DAG: %[[ZERO:.*]] = arith.constant dense<0> : tensor<4xi8>
+  // CHECK: %[[PID:.*]] = tt.get_program_id x : i32
+  // CHECK: %[[PID_IDX:.*]] = arith.index_cast %[[PID]] : i32 to index
+  // CHECK: %[[RAW:.*]] = triton_xla.extract from %[[ARG0]] as memref<32xi8, #xtile.layout<[0]>> [%[[PID_IDX]]] [4] [1] : tensor<4xi8>
+  // CHECK: %[[CMP:.*]] = arith.cmpi ne, %[[RAW]], %[[ZERO]] : tensor<4xi8>
+  // CHECK: %[[EXT:.*]] = arith.extui %[[CMP]] : tensor<4xi1> to tensor<4xi8>
+  // CHECK: triton_xla.insert %[[EXT]] into %[[ARG1]] as memref<32xi8, #xtile.layout<[0]>> [%[[PID_IDX]]] [4] [1] : tensor<4xi8>
+  %tile = xtile.extract %input[%tile_id][4][1] : !i1_memref -> tensor<4xi1>
+  xtile.insert %tile into %output[%tile_id][4][1] : tensor<4xi1> -> !i1_memref
+  xtile.return
+}
+
+// -----
+
+!i1_scalar_memref = memref<i1, #nvvm.memory_space<global>>
+// CHECK-LABEL: func.func @i1_scalar_extract_insert(
+// CHECK-SAME:    %[[ARG0:.*]]: !tt.ptr<i8>, %[[ARG1:.*]]: !tt.ptr<i8>) {
+xtile.entry_func @i1_scalar_extract_insert(%input: !i1_scalar_memref,
+                                           %output: !i1_scalar_memref,
+                                           %tile_id: index) {
+  // CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i8
+  // CHECK: %[[RAW:.*]] = tt.load %[[ARG0]] : !tt.ptr<i8>
+  // CHECK: %[[CMP:.*]] = arith.cmpi ne, %[[RAW]], %[[ZERO]] : i8
+  // CHECK: %[[EXT:.*]] = arith.extui %[[CMP]] : i1 to i8
+  // CHECK: tt.store %[[ARG1]], %[[EXT]] : !tt.ptr<i8>
+  %tile = xtile.extract %input[][][] : !i1_scalar_memref -> tensor<i1>
+  xtile.insert %tile into %output[][][] : tensor<i1> -> !i1_scalar_memref
+  xtile.return
+}
+
+// -----
+
+// CHECK-LABEL: @select_buffer_i1_test
+func.func @select_buffer_i1_test(%src: memref<2xi64>, %replica_id: index, %off: index, %tile: tensor<4xi1>) {
+  // CHECK: %[[LOADED_ADDR:.*]] = tt.load
+  // CHECK: %[[PTR_I8:.*]] = tt.int_to_ptr %[[LOADED_ADDR]] {tt.divisibility = 16 : i32} : i64 -> !tt.ptr<i8>
+  // CHECK-NOT: tt.bitcast
+  // CHECK: %[[EXT:.*]] = arith.extui {{.*}} : tensor<4xi1> to tensor<4xi8>
+  // CHECK: triton_xla.insert %[[EXT]] into %[[PTR_I8]] as memref<128xi8, #xtile.layout<[0]>>
+  %buf = xtile.select_buffer %src[%replica_id] : memref<2xi64> -> memref<128xi1>
+  xtile.insert %tile into %buf[%off][4][1] : tensor<4xi1> -> memref<128xi1>
+  return
+}
+
+// -----
+
+!unused_i1_memref = memref<16xi1, #nvvm.memory_space<global>>
+// CHECK-LABEL: func.func @unused_i1_memref_arg(
+// CHECK-SAME:    %{{.*}}: !tt.ptr<i8>, %[[OUT:.*]]: !tt.ptr<i8>) {
+// CHECK-NOT:   tt.bitcast
+// CHECK-NOT:   triton_xla.ptr_to_memref
+// CHECK:       triton_xla.insert {{.*}} into %[[OUT]]
+xtile.entry_func @unused_i1_memref_arg(%unused: !unused_i1_memref,
+                                       %output: !unused_i1_memref,
+                                       %tile_id: index) {
+  %cst = arith.constant dense<true> : tensor<4xi1>
+  xtile.insert %cst into %output[%tile_id][4][1] : tensor<4xi1> -> !unused_i1_memref
+  xtile.return
+}

@@ -64,6 +64,7 @@ cc_library(
     srcs = [
         "drop_vector_unit_dims_pass.cc",
         "hoist_alloca.cc",
+        "legalize_i1_storage.cc",
         "legalize_narrow_float_storage.cc",
         "lower_memref_bitcast.cc",
         "lower_xtile_entry.cc",
@@ -79,6 +80,7 @@ cc_library(
         "//xla:util",
         "//xla/backends/cpu/codegen/emitters/ir:xla_cpu",
         "//xla/codegen/emitters/ir:xla",
+        "//xla/codegen/xtile/codegen:emitter_helpers",
         "//xla/codegen/xtile/ir:xtile",
         "//xla/codegen/xtile/ir/transforms:passes",
         "//xla/hlo/analysis:indexing_analysis",

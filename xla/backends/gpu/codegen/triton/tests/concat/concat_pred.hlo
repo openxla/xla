@@ -1,10 +1,10 @@
 // RUN: fusion_to_triton %s | FileCheck %s
 // RUN: triton_test_correctness %s
 
-// Verifies `pred` `concatenate` lowering (`i8` memref loads converted to `i1`
-// inside each `scf.if` branch and zero-extended back to `i8` before store),
-// with branch-specific tile constraints narrowing operand offset domains (`pid
-// in [0, 3]`, `pid in [4, 7]`, and constant `0` for `pid = 8`).
+// Verifies `pred` `concatenate` XTile emission (`memref<...xi1>` loads and
+// stores without intermediate `i8` casts at the XTile level), with
+// branch-specific tile constraints narrowing operand offset domains (`pid in
+// [0, 3]`, `pid in [4, 7]`, and constant `0` for `pid = 8`).
 fusion {
   p0 = pred[128] parameter(0)
   p1 = pred[128] parameter(1)
@@ -16,40 +16,35 @@ fusion {
 // CHECK-DAG: #[[$MAP2:.+]] = #xla.indexing_map<"(pid) -> (pid * 32 - 128), domain: pid in [4, 7]">
 
 // CHECK:       xtile.entry_func
-// CHECK-SAME:  %[[ARG0:[A-Za-z0-9]+]]: memref<128xi8>,
-// CHECK-SAME:  %[[ARG1:[A-Za-z0-9]+]]: memref<128xi8>,
-// CHECK-SAME:  %[[ARG2:[A-Za-z0-9]+]]: memref<25xi8>,
-// CHECK-SAME:  %[[RESULT:[A-Za-z0-9]+]]: memref<281xi8>,
+// CHECK-SAME:  %[[ARG0:[A-Za-z0-9]+]]: memref<128xi1>,
+// CHECK-SAME:  %[[ARG1:[A-Za-z0-9]+]]: memref<128xi1>,
+// CHECK-SAME:  %[[ARG2:[A-Za-z0-9]+]]: memref<25xi1>,
+// CHECK-SAME:  %[[RESULT:[A-Za-z0-9]+]]: memref<281xi1>,
 // CHECK-SAME:  %[[PID:[A-Za-z0-9]+]]: index
 
 // CHECK-DAG:   %[[C128:.*]] = arith.constant 128 : index
 // CHECK-DAG:   %[[C256:.*]] = arith.constant 256 : index
-// CHECK-DAG:   %[[CST:.*]] = arith.constant dense<0> : tensor<32xi8>
 // CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
 
 // CHECK:       %[[OFFSET:.*]] = xla.apply_indexing #[[$MAP0]](%[[PID]])
 // CHECK:       %[[CMPI_0:.*]] = arith.cmpi slt, %[[OFFSET]], %[[C128]] : index
 // CHECK:       %[[IF_0:.*]] = scf.if %[[CMPI_0]] -> (tensor<32xi1>) {
 // CHECK:         %[[OFFSET_1:.*]] = xla.apply_indexing #[[$MAP1]](%[[PID]])
-// CHECK:         %[[EXTRACT_0:.*]] = xtile.extract %[[ARG0]][%[[OFFSET_1]]] [32] [1] : memref<128xi8> -> tensor<32xi8>
-// CHECK:         %[[CMPI_1:.*]] = arith.cmpi ne, %[[EXTRACT_0]], %[[CST]] : tensor<32xi8>
-// CHECK:         scf.yield %[[CMPI_1]] : tensor<32xi1>
+// CHECK:         %[[EXTRACT_0:.*]] = xtile.extract %[[ARG0]][%[[OFFSET_1]]] [32] [1] : memref<128xi1> -> tensor<32xi1>
+// CHECK:         scf.yield %[[EXTRACT_0]] : tensor<32xi1>
 // CHECK:       } else {
 // CHECK:         %[[CMPI_2:.*]] = arith.cmpi slt, %[[OFFSET]], %[[C256]] : index
 // CHECK:         %[[IF_1:.*]] = scf.if %[[CMPI_2]] -> (tensor<32xi1>) {
 // CHECK:           %[[OFFSET_2:.*]] = xla.apply_indexing #[[$MAP2]](%[[PID]])
-// CHECK:           %[[EXTRACT_1:.*]] = xtile.extract %[[ARG1]][%[[OFFSET_2]]] [32] [1] : memref<128xi8> -> tensor<32xi8>
-// CHECK:           %[[CMPI_3:.*]] = arith.cmpi ne, %[[EXTRACT_1]], %[[CST]] : tensor<32xi8>
-// CHECK:           scf.yield %[[CMPI_3]] : tensor<32xi1>
+// CHECK:           %[[EXTRACT_1:.*]] = xtile.extract %[[ARG1]][%[[OFFSET_2]]] [32] [1] : memref<128xi1> -> tensor<32xi1>
+// CHECK:           scf.yield %[[EXTRACT_1]] : tensor<32xi1>
 // CHECK:         } else {
-// CHECK:           %[[EXTRACT_2:.*]] = xtile.extract %[[ARG2]][%[[C0]]] [32] [1] : memref<25xi8> -> tensor<32xi8>
-// CHECK:           %[[CMPI_4:.*]] = arith.cmpi ne, %[[EXTRACT_2]], %[[CST]] : tensor<32xi8>
-// CHECK:           scf.yield %[[CMPI_4]] : tensor<32xi1>
+// CHECK:           %[[EXTRACT_2:.*]] = xtile.extract %[[ARG2]][%[[C0]]] [32] [1] : memref<25xi1> -> tensor<32xi1>
+// CHECK:           scf.yield %[[EXTRACT_2]] : tensor<32xi1>
 // CHECK:         }
 // CHECK:         scf.yield %[[IF_1]] : tensor<32xi1>
 // CHECK:       }
-// CHECK:       %[[EXTUI:.*]] = arith.extui %[[IF_0]] : tensor<32xi1> to tensor<32xi8>
-// CHECK:       xtile.insert %[[EXTUI]] into %[[RESULT]][%[[OFFSET]]] [32] [1] : tensor<32xi8> -> memref<281xi8>
+// CHECK:       xtile.insert %[[IF_0]] into %[[RESULT]][%[[OFFSET]]] [32] [1] : tensor<32xi1> -> memref<281xi1>
 
 ENTRY main {
   p0 = pred[128] parameter(0)

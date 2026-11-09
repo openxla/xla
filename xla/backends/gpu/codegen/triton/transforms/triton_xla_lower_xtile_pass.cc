@@ -71,7 +71,8 @@ llvm::SmallVector<mlir::Type> GetTransformedArgTypes(
   arg_types.reserve(entry_op.getNumArguments() - 1U);
   for (const auto& arg : entry_op.getBufferArgs()) {
     mlir::MemRefType memref_type = mlir::cast<mlir::MemRefType>(arg.getType());
-    arg_types.push_back(ttir::getPointerType(memref_type.getElementType()));
+    arg_types.push_back(ttir::getPointerType(
+        xtile::MemoryStorageType(memref_type.getElementType())));
   }
   mlir::TypeRange opaque_args(entry_op.getOpaqueArgs());
   arg_types.append(opaque_args.begin(), opaque_args.end());
@@ -82,6 +83,18 @@ MemrefToPtrOp CreateMemrefToPtr(mlir::OpBuilder& builder,
                                 mlir::TypedValue<mlir::MemRefType> memref) {
   mlir::Type ptr_type = ttir::getPointerType(memref.getType().getElementType());
   return MemrefToPtrOp::create(builder, memref.getLoc(), ptr_type, memref);
+}
+
+mlir::Value CreateStoragePtr(mlir::OpBuilder& builder,
+                             mlir::TypedValue<mlir::MemRefType> memref) {
+  mlir::Value ptr = CreateMemrefToPtr(builder, memref);
+  mlir::Type elem_type = memref.getType().getElementType();
+  mlir::Type storage_elem_type = xtile::MemoryStorageType(elem_type);
+  if (storage_elem_type == elem_type) {
+    return ptr;
+  }
+  return ttir::BitcastOp::create(builder, memref.getLoc(),
+                                 ttir::getPointerType(storage_elem_type), ptr);
 }
 
 // Rewrite a xtile entry to a func.func with the same body, but with memref
@@ -131,11 +144,20 @@ class XTileEntryToTriton : public mlir::OpRewritePattern<xtile::EntryFuncOp> {
     for (auto [old_arg, new_arg] :
          llvm::zip(old_args,
                    mlir::ValueRange(new_args).take_front(num_buffer_args))) {
+      if (old_arg.use_empty()) {
+        continue;
+      }
       mlir::MemRefType memref_type =
           mlir::cast<mlir::MemRefType>(old_arg.getType());
 
+      mlir::Value ptr = new_arg;
+      mlir::Type elem_type = memref_type.getElementType();
+      if (xtile::MemoryStorageType(elem_type) != elem_type) {
+        ptr = ttir::BitcastOp::create(builder, ttir::getPointerType(elem_type),
+                                      ptr);
+      }
       mlir::Value memref_cast =
-          PtrToMemrefOp::create(builder, memref_type, new_arg);
+          PtrToMemrefOp::create(builder, memref_type, ptr);
 
       // Replace all uses of the old argument with the result of the cast.
       rewriter.replaceAllUsesWith(old_arg, memref_cast);
@@ -183,13 +205,17 @@ class XTileSelectBufferToTriton
     auto addr_i64 = mlir::triton::LoadOp::create(b, ptr_addr.getResult(),
                                                  /*isVolatile=*/false);
     auto result_memref_type = mlir::cast<mlir::MemRefType>(op.getType());
-    mlir::Type target_ptr_type =
-        ttir::getPointerType(result_memref_type.getElementType());
+    mlir::Type elem_type = result_memref_type.getElementType();
+    mlir::Type storage_elem_type = xtile::MemoryStorageType(elem_type);
     mlir::NamedAttribute divisibility_attr = xtile::GetDivisibilityAttr(b);
-    // The ptr ->i64 -> memref dance.
+    // The ptr -> i64 -> memref dance.
     mlir::Value final_ptr = mlir::triton::IntToPtrOp::create(
-        b, target_ptr_type, addr_i64.getResult(),
+        b, ttir::getPointerType(storage_elem_type), addr_i64.getResult(),
         llvm::ArrayRef<mlir::NamedAttribute>{divisibility_attr});
+    if (storage_elem_type != elem_type) {
+      final_ptr = ttir::BitcastOp::create(b, ttir::getPointerType(elem_type),
+                                          final_ptr);
+    }
     mlir::Value ptr_to_memref =
         PtrToMemrefOp::create(b, op.getType(), final_ptr);
     rewriter.replaceOp(op, ptr_to_memref);
@@ -206,16 +232,21 @@ class XTileExtractToTriton
   mlir::LogicalResult matchAndRewrite(
       xtile::ExtractTileOp extract_op,
       mlir::PatternRewriter& rewriter) const override {
+    mlir::Location loc = extract_op.getLoc();
     mlir::MemRefType source_type = extract_op.getSource().getType();
     mlir::RankedTensorType result_type = extract_op.getType();
+    mlir::Type logical_elem_type = result_type.getElementType();
+    mlir::Type storage_elem_type = xtile::MemoryStorageType(logical_elem_type);
 
-    mlir::Value memref_to_ptr =
-        CreateMemrefToPtr(rewriter, extract_op.getSource());
+    mlir::Value storage_ptr =
+        CreateStoragePtr(rewriter, extract_op.getSource());
 
     if (result_type.getRank() == 0) {
       mlir::Value scalar_value =
-          ttir::LoadOp::create(rewriter, extract_op->getLoc(), memref_to_ptr,
+          ttir::LoadOp::create(rewriter, loc, storage_ptr,
                                /*isVolatile=*/false);
+      scalar_value = xtile::UnpackFromMemoryStorage(rewriter, loc, scalar_value,
+                                                    logical_elem_type);
 
       rewriter.replaceOpWithNewOp<mlir::tensor::FromElementsOp>(
           extract_op, result_type, scalar_value);
@@ -229,12 +260,16 @@ class XTileExtractToTriton
                                          minor_to_major_or.status().ToString());
     }
     const SmallVector<int64_t>& minor_to_major = *minor_to_major_or;
-    auto triton_extract_op = ExtractOp::create(
-        rewriter, extract_op.getLoc(), result_type, memref_to_ptr,
+    mlir::RankedTensorType storage_tensor_type =
+        result_type.clone(storage_elem_type);
+    mlir::Value extracted = ExtractOp::create(
+        rewriter, loc, storage_tensor_type, storage_ptr,
         extract_op.getOffsets(), extract_op.getFullTileShape(),
         extract_op.getStrides(), source_type.getShape(), minor_to_major);
+    extracted = xtile::UnpackFromMemoryStorage(rewriter, loc, extracted,
+                                               logical_elem_type);
 
-    rewriter.replaceOp(extract_op, triton_extract_op);
+    rewriter.replaceOp(extract_op, extracted);
 
     return mlir::success();
   }
@@ -248,17 +283,20 @@ class XTileInsertToTriton : public mlir::OpRewritePattern<xtile::InsertTileOp> {
   mlir::LogicalResult matchAndRewrite(
       xtile::InsertTileOp insert_op,
       mlir::PatternRewriter& rewriter) const override {
+    mlir::Location loc = insert_op.getLoc();
     mlir::MemRefType destination_type = insert_op.getDestination().getType();
+    mlir::RankedTensorType source_type = insert_op.getSource().getType();
 
-    mlir::Value memref_to_ptr =
-        CreateMemrefToPtr(rewriter, insert_op.getDestination());
+    mlir::Value storage_ptr =
+        CreateStoragePtr(rewriter, insert_op.getDestination());
 
-    if (insert_op.getSource().getType().getRank() == 0) {
-      mlir::Value scalar_value = mlir::tensor::ExtractOp::create(
-          rewriter, insert_op.getLoc(), insert_op.getSource());
+    if (source_type.getRank() == 0) {
+      mlir::Value scalar_value =
+          mlir::tensor::ExtractOp::create(rewriter, loc, insert_op.getSource());
+      scalar_value = xtile::PackToMemoryStorage(rewriter, loc, scalar_value);
 
       rewriter.replaceOpWithNewOp<ttir::StoreOp>(
-          insert_op, memref_to_ptr, scalar_value, /*mask=*/nullptr);
+          insert_op, storage_ptr, scalar_value, /*mask=*/nullptr);
       return mlir::success();
     }
 
@@ -269,10 +307,12 @@ class XTileInsertToTriton : public mlir::OpRewritePattern<xtile::InsertTileOp> {
                                          minor_to_major_or.status().ToString());
     }
     const SmallVector<int64_t>& minor_to_major = *minor_to_major_or;
+    mlir::Value tile_to_store =
+        xtile::PackToMemoryStorage(rewriter, loc, insert_op.getSource());
     auto triton_insert_op = InsertOp::create(
-        rewriter, insert_op.getLoc(), insert_op.getSource(), memref_to_ptr,
-        insert_op.getOffsets(), insert_op.getFullTileShape(),
-        insert_op.getStrides(), destination_type.getShape(), minor_to_major);
+        rewriter, loc, tile_to_store, storage_ptr, insert_op.getOffsets(),
+        insert_op.getFullTileShape(), insert_op.getStrides(),
+        destination_type.getShape(), minor_to_major);
 
     rewriter.replaceOp(insert_op, triton_insert_op);
 
@@ -343,6 +383,21 @@ class FoldIntoMemrefToPtr : public mlir::OpRewritePattern<MemrefToPtrOp> {
   }
 };
 
+class FoldBitcastRoundTrip : public mlir::OpRewritePattern<ttir::BitcastOp> {
+ public:
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      ttir::BitcastOp op, mlir::PatternRewriter& rewriter) const override {
+    auto producer = op.getSrc().getDefiningOp<ttir::BitcastOp>();
+    if (!producer || producer.getSrc().getType() != op.getType()) {
+      return mlir::failure();
+    }
+    rewriter.replaceOp(op, producer.getSrc());
+    return mlir::success();
+  }
+};
+
 class TritonXLALowerXTilePass
     : public impl::TritonXLALowerXTilePassBase<TritonXLALowerXTilePass> {
  public:
@@ -356,7 +411,7 @@ class TritonXLALowerXTilePass
 
     patterns.add<XTileEntryToTriton, XTileSelectBufferToTriton,
                  XTileExtractToTriton, XTileInsertToTriton, XTileMaskToTriton,
-                 FoldIntoMemrefToPtr>(context);
+                 FoldIntoMemrefToPtr, FoldBitcastRoundTrip>(context);
     if (mlir::failed(
             mlir::applyPatternsGreedily(module, std::move(patterns)))) {
       signalPassFailure();

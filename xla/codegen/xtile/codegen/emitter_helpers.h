@@ -37,6 +37,7 @@ limitations under the License.
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -306,6 +307,25 @@ absl::StatusOr<mlir::Type> PrimitiveTypeToMlirType(
 absl::StatusOr<PrimitiveType> GetPrimitiveType(mlir::Type t);
 
 mlir::Type StorageType(mlir::Type t);
+
+// Returns the byte-addressable memory storage type for `elem_type`. PRED (`i1`)
+// elements are stored as one byte (`i8`) in memory; all other types use
+// `StorageType(elem_type)`.
+mlir::Type MemoryStorageType(mlir::Type elem_type);
+
+// Converts a scalar or tensor `storage_value` loaded from memory into
+// `logical_elem_type`. For `i1`, compares `storage_value != 0`; otherwise
+// returns `storage_value` unchanged.
+mlir::Value UnpackFromMemoryStorage(mlir::OpBuilder& b, mlir::Location loc,
+                                    mlir::Value storage_value,
+                                    mlir::Type logical_elem_type);
+
+// Converts a scalar or tensor `logical_value` into its memory storage
+// representation. For `i1`, zero-extends to `i8`; otherwise returns
+// `logical_value` unchanged.
+mlir::Value PackToMemoryStorage(mlir::OpBuilder& b, mlir::Location loc,
+                                mlir::Value logical_value);
+
 mlir::Type GetSignlessType(mlir::Type t);
 
 // Returns whether the scan `combiner` computes a running sum: it has two

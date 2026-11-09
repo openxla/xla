@@ -221,7 +221,7 @@ CHECK: tt.dot {{.*}} : tensor<16x32xf32> * tensor<32x16xf32> -> tensor<16x16xf32
 )"));
 }
 
-TEST_P(TritonTest, PredParametersAreTruncatedToI1) {
+TEST_P(TritonTest, PredParametersStayI1InXTile) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -259,9 +259,8 @@ ENTRY e {
       CreateTritonIrAndFileCheck(*module_and_metadata.computation,
                                  module_and_metadata.block_level_parameters,
                                  R"(
-CHECK: %[[LOAD:.*]] = xtile.extract {{.*}} -> tensor<16x16xi8>
-CHECK: %[[CMPI:.*]] = arith.cmpi ne, %[[LOAD]], {{.*}} : tensor<16x16xi8>
-CHECK: %{{.*}} = arith.andi %[[CMPI]], %{{.*}} : tensor<16x16xi1>
+CHECK: %[[LOAD:.*]] = xtile.extract {{.*}} -> tensor<16x16xi1>
+CHECK: %{{.*}} = arith.andi %[[LOAD]], %{{.*}} : tensor<16x16xi1>
 )"));
 }
 

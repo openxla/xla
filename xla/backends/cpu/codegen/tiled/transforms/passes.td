@@ -62,6 +62,23 @@ def UnrollVectorsPass : Pass<"xtile-cpu-unroll-vectors"> {
 }
 
 
+def LegalizeI1StoragePass
+    : Pass<"xtile-cpu-legalize-i1-storage", "mlir::ModuleOp"> {
+  let summary = "Lowers i1 memref tile accesses to byte-addressed i8 storage.";
+
+  let description = [{
+    XLA stores PRED (`i1`) buffers as one byte (`i8`) per element. This pass
+    rewrites `memref<...xi1>` arguments on `xtile.entry_func` to `memref<...xi8>`
+    and lowers `xtile.extract`/`xtile.insert` on `i1` tiles via `arith.cmpi ne 0`
+    and `arith.extui`.
+  }];
+
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect",
+    "::xla::xtile::XTileDialect",
+  ];
+}
+
 def LegalizeNarrowFloatStoragePass
     : Pass<"xtile-cpu-legalize-narrow-float-storage", "mlir::ModuleOp"> {
   let summary = "Moves data movement of narrow floats onto same-width integers.";
