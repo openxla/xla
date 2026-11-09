@@ -17,8 +17,6 @@ limitations under the License.
 
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
-#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -29,42 +27,13 @@ limitations under the License.
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
+#include "xla/tests/xla_test_backend_predicates.h"
 
 namespace xla {
 namespace {
 
 using Atan2Test =
     ClientLibraryTestRunnerMixin<HloInterpreterReferenceMixin<HloTestBase>>;
-
-// XLA:CPU flushes f32 and f64 subnormal inputs to signed zero before calling
-// libm atan2, so compute expectations the same way.
-double FlushF64SubnormalToZero(double value) {
-  constexpr uint64_t kSignMask = 0x8000000000000000ULL;
-  constexpr uint64_t kMagnitudeMask = 0x7fffffffffffffffULL;
-  constexpr uint64_t kMinNormalBits = 0x0010000000000000ULL;
-  uint64_t bits;
-  std::memcpy(&bits, &value, sizeof(bits));
-  const uint64_t magnitude = bits & kMagnitudeMask;
-  if (magnitude != 0 && magnitude < kMinNormalBits) {
-    bits &= kSignMask;
-    std::memcpy(&value, &bits, sizeof(bits));
-  }
-  return value;
-}
-
-float FlushF32SubnormalToZero(float value) {
-  constexpr uint32_t kSignMask = 0x80000000U;
-  constexpr uint32_t kMagnitudeMask = 0x7fffffffU;
-  constexpr uint32_t kMinNormalBits = 0x00800000U;
-  uint32_t bits;
-  std::memcpy(&bits, &value, sizeof(bits));
-  const uint32_t magnitude = bits & kMagnitudeMask;
-  if (magnitude != 0 && magnitude < kMinNormalBits) {
-    bits &= kSignMask;
-    std::memcpy(&value, &bits, sizeof(bits));
-  }
-  return value;
-}
 
 TEST_F(Atan2Test, atan2) {
   XlaBuilder builder("atan2 with special and non-special float values");
@@ -107,6 +76,11 @@ TEST_F(Atan2Test, LargeMagnitudeOperands) {
 }
 
 TEST_F(Atan2Test, F64SubnormalOperands) {
+  // Only XLA:CPU flushes subnormal inputs; GPU preserves them, so
+  // atan2(tiny, tiny) is pi/4 there rather than +0.
+  if (!test::DeviceTypeIs(test::kCpu)) {
+    GTEST_SKIP() << "Subnormal flushing is specific to the CPU backend.";
+  }
   XlaBuilder builder("atan2 with subnormal F64 operands");
   const double tiny = std::numeric_limits<double>::denorm_min();
   const double min_normal = std::numeric_limits<double>::min();
@@ -114,13 +88,13 @@ TEST_F(Atan2Test, F64SubnormalOperands) {
                                   2 * tiny, tiny,  min_normal / 2, min_normal};
   const std::vector<double> xs = {tiny, tiny,     -tiny,      -tiny,
                                   tiny, 2 * tiny, min_normal, min_normal / 2};
-  // Subnormal inputs are flushed to signed zero by the CPU builtin, so the
-  // expectations are computed on flushed operands.
-  std::vector<double> expected;
-  for (size_t i = 0; i < ys.size(); ++i) {
-    expected.push_back(std::atan2(FlushF64SubnormalToZero(ys[i]),
-                                  FlushF64SubnormalToZero(xs[i])));
-  }
+  // The CPU builtin flushes subnormal inputs to signed zero, so each pair
+  // above reduces to atan2 on signed zeros or on one normal operand: the
+  // results are +/-0, +/-pi, or +pi/2.
+  constexpr double kPi = 3.141592653589793;
+  constexpr double kHalfPi = 1.5707963267948966;
+  const std::vector<double> expected = {0.0,  -0.0, kPi, -kPi,
+                                        0.0,  0.0,  0.0, kHalfPi};
   Literal y_literal = LiteralUtil::CreateR1<double>(ys);
   Literal x_literal = LiteralUtil::CreateR1<double>(xs);
   // Parameters ensure the subnormal inputs reach compiled CPU code instead of
@@ -133,6 +107,11 @@ TEST_F(Atan2Test, F64SubnormalOperands) {
 }
 
 TEST_F(Atan2Test, F32SubnormalOperands) {
+  // Only XLA:CPU flushes subnormal inputs; GPU preserves them, so
+  // atan2(tiny, tiny) is pi/4 there rather than +0.
+  if (!test::DeviceTypeIs(test::kCpu)) {
+    GTEST_SKIP() << "Subnormal flushing is specific to the CPU backend.";
+  }
   XlaBuilder builder("atan2 with subnormal F32 operands");
   const float tiny = std::numeric_limits<float>::denorm_min();
   const float min_normal = std::numeric_limits<float>::min();
@@ -142,14 +121,11 @@ TEST_F(Atan2Test, F32SubnormalOperands) {
   const std::vector<float> xs = {tiny,         1.0f,  -1.0f,
                                  -tiny,        tiny,  min_normal,
                                  -tiny,        tiny};
-  // Subnormal inputs are flushed to signed zero by the CPU builtin, so the
-  // expectations are computed on flushed operands.
-  std::vector<float> expected;
-  for (size_t i = 0; i < ys.size(); ++i) {
-    expected.push_back(static_cast<float>(std::atan2(
-        static_cast<double>(FlushF32SubnormalToZero(ys[i])),
-        static_cast<double>(FlushF32SubnormalToZero(xs[i])))));
-  }
+  // Flushed to signed zero, each pair above gives +/-0, +/-pi, or +/-pi/2.
+  constexpr float kPi = 3.1415927f;
+  constexpr float kHalfPi = 1.5707964f;
+  const std::vector<float> expected = {0.0f, 0.0f,  kPi,     -kPi,
+                                       kHalfPi, 0.0f, kHalfPi, -kHalfPi};
   Literal y_literal = LiteralUtil::CreateR1<float>(ys);
   Literal x_literal = LiteralUtil::CreateR1<float>(xs);
   // Parameters ensure the subnormal inputs reach compiled CPU code instead of

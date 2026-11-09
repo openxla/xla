@@ -17,49 +17,46 @@ limitations under the License.
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <type_traits>
 
 #include "absl/base/casts.h"
 
 namespace xla::cpu {
+namespace {
+
+// Flushes a subnormal input to signed zero. Floating-point comparisons can
+// already treat subnormal operands as zero under DAZ, so inspect their bits
+// instead. Signed zeros, infinities, and NaNs pass through unchanged, and the
+// sign of a flushed input is kept so the quadrant of the result is correct.
+template <typename Float>
+Float FlushSubnormalToSignedZero(Float value) {
+  using Bits = std::conditional_t<sizeof(Float) == 4, uint32_t, uint64_t>;
+  constexpr Bits kSignMask = Bits{1} << (sizeof(Float) * 8 - 1);
+  constexpr Bits kMagnitudeMask = static_cast<Bits>(~kSignMask);
+  // Smallest magnitude with a nonzero exponent field.
+  constexpr Bits kMinNormalBits =
+      Bits{1} << (std::numeric_limits<Float>::digits - 1);
+  const Bits bits = absl::bit_cast<Bits>(value);
+  const Bits magnitude = bits & kMagnitudeMask;
+  if (magnitude != 0 && magnitude < kMinNormalBits) {
+    return absl::bit_cast<Float>(bits & kSignMask);
+  }
+  return value;
+}
+
+}  // namespace
 
 double BuiltinAtan2(double y, double x) {
-  // Floating-point comparisons can already treat subnormal operands as zero
-  // under DAZ, so inspect their bits instead. Exclude signed zeros,
-  // infinities, and NaNs, which must pass through unchanged. Flushed inputs
-  // keep their sign bit so the quadrant of the result is still correct.
-  constexpr uint64_t kSignMask = 0x8000000000000000;
-  constexpr uint64_t kMagnitudeMask = 0x7fffffffffffffff;
-  constexpr uint64_t kMinNormalBits = 0x0010000000000000;
-  const uint64_t y_bits = absl::bit_cast<uint64_t>(y);
-  const uint64_t x_bits = absl::bit_cast<uint64_t>(x);
-  const uint64_t abs_y = y_bits & kMagnitudeMask;
-  const uint64_t abs_x = x_bits & kMagnitudeMask;
-  if (abs_y != 0 && abs_y < kMinNormalBits) {
-    y = absl::bit_cast<double>(y_bits & kSignMask);
-  }
-  if (abs_x != 0 && abs_x < kMinNormalBits) {
-    x = absl::bit_cast<double>(x_bits & kSignMask);
-  }
-  return std::atan2(y, x);
+  return std::atan2(FlushSubnormalToSignedZero(y),
+                    FlushSubnormalToSignedZero(x));
 }
 
 float BuiltinAtan2f(float y, float x) {
-  // Same as above for f32 inputs. glibc's atan2f can return NaN for subnormal
-  // inputs (even atan2f(denorm_min, 1)), so flush them explicitly as well.
-  constexpr uint32_t kSignMask = 0x80000000;
-  constexpr uint32_t kMagnitudeMask = 0x7fffffff;
-  constexpr uint32_t kMinNormalBits = 0x00800000;
-  const uint32_t y_bits = absl::bit_cast<uint32_t>(y);
-  const uint32_t x_bits = absl::bit_cast<uint32_t>(x);
-  const uint32_t abs_y = y_bits & kMagnitudeMask;
-  const uint32_t abs_x = x_bits & kMagnitudeMask;
-  if (abs_y != 0 && abs_y < kMinNormalBits) {
-    y = absl::bit_cast<float>(y_bits & kSignMask);
-  }
-  if (abs_x != 0 && abs_x < kMinNormalBits) {
-    x = absl::bit_cast<float>(x_bits & kSignMask);
-  }
-  return ::atan2f(y, x);
+  // glibc's atan2f can return NaN for subnormal inputs (even
+  // atan2f(denorm_min, 1)), so flush f32 inputs explicitly as well.
+  return ::atan2f(FlushSubnormalToSignedZero(y),
+                  FlushSubnormalToSignedZero(x));
 }
 
 }  // namespace xla::cpu
