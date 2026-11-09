@@ -19,6 +19,7 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -75,6 +76,7 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/parse_flags_from_env.h"
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
+#include "xla/pjrt/common_pjrt_client.h"
 #include "xla/pjrt/device_event.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
 #include "xla/pjrt/host_memory_allocator.h"
@@ -95,6 +97,7 @@ limitations under the License.
 #include "xla/pjrt/se/pjrt_stream_executor_client.h"
 #include "xla/pjrt/se/stream_executor_executable.h"
 #include "xla/pjrt/strided_gather.h"
+#include "xla/pjrt/worker_thread.h"
 #include "xla/runtime/device_id.h"
 #include "xla/service/gpu/gpu_executable_run_options.h"
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
@@ -2469,6 +2472,219 @@ TEST(StreamExecutorGpuClientTest, PinnedHostWithCustomHostMemoryAllocator) {
   std::vector<int32_t> expected{1, 2, 3, 4};
   EXPECT_TRUE(LiteralTestUtil::Equal(LiteralUtil::CreateR1<int32_t>(expected),
                                      *literal));
+}
+
+class CachingRecordingAllocator : public HostMemoryAllocator {
+ public:
+  explicit CachingRecordingAllocator(Options options,
+                                     std::atomic<int>* unmapped_count)
+      : options_(std::move(options)), unmapped_count_(unmapped_count) {}
+
+  ~CachingRecordingAllocator() override {
+    for (void* ptr : free_list_) {
+      CHECK_OK(options_.unmap_fn(std::nullopt, ptr));
+      ++(*unmapped_count_);
+      operator delete(ptr);
+    }
+  }
+
+  OwnedPtr Allocate(size_t size, const AllocateOptions& options) override {
+    auto* const buffer = static_cast<uint8_t*>(operator new(size));
+    CHECK_OK(options_.map_fn(std::nullopt, buffer, size));
+    return xla::HostMemoryAllocator::OwnedPtr(
+        buffer, xla::HostMemoryAllocator::Deleter{
+                    /*deleter=*/
+                    [](void* ptr, void* arg) {
+                      auto* const self =
+                          static_cast<CachingRecordingAllocator*>(arg);
+                      if (self->cache_next_deallocation_) {
+                        self->cache_next_deallocation_ = false;
+                        self->free_list_.push_back(ptr);
+                        return;
+                      }
+                      CHECK_OK(self->options_.unmap_fn(std::nullopt, ptr));
+                      ++(*self->unmapped_count_);
+                      operator delete(ptr);
+                    },
+                    /*arg=*/this});
+  }
+
+  void set_cache_next_deallocation(bool cache) {
+    cache_next_deallocation_ = cache;
+  }
+
+ private:
+  Options options_;
+  std::atomic<int>* unmapped_count_;
+  bool cache_next_deallocation_ = false;
+  std::vector<void*> free_list_;
+};
+
+TEST(StreamExecutorGpuClientTest,
+     CustomHostMemoryAllocatorUnmapSerializesWithDispatchThread) {
+  for (bool use_async_dispatch : {false, true}) {
+    GpuClientOptions options = GetTestGpuClientOptions();
+    options.use_async_dispatch = use_async_dispatch;
+
+    CachingRecordingAllocator* allocator_ptr = nullptr;
+    std::atomic<int> unmapped_count = 0;
+    options.host_memory_allocator_factory =
+        [&](HostMemoryAllocator::Options alloc_options)
+        -> absl::StatusOr<std::unique_ptr<HostMemoryAllocator>> {
+      auto allocator = std::make_unique<CachingRecordingAllocator>(
+          std::move(alloc_options), &unmapped_count);
+      allocator_ptr = allocator.get();
+      return allocator;
+    };
+
+    ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+    ASSERT_NE(allocator_ptr, nullptr);
+
+    auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+    auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+        common_client->raw_client());
+    LocalDeviceState* first_device = raw_client->device_state(LocalDeviceId(0));
+    ASSERT_NE(first_device, nullptr);
+    if (!first_device->executor()->HostMemoryUnregisterMaySynchronize()) {
+      GTEST_SKIP() << "HostMemoryUnregister is not serialized with the "
+                      "dispatch thread on this platform.";
+    }
+    EXPECT_TRUE(first_device->unregister_host_memory_on_dispatch_thread());
+    WorkerThread* dispatch_thread = use_async_dispatch
+                                        ? first_device->async_dispatch_thread()
+                                        : first_device->execute_thread();
+    ASSERT_NE(dispatch_thread, nullptr);
+
+    HostMemoryAllocator::OwnedPtr buf1 =
+        allocator_ptr->Allocate(1024, HostMemoryAllocator::AllocateOptions{});
+    HostMemoryAllocator::OwnedPtr buf2 =
+        allocator_ptr->Allocate(1024, HostMemoryAllocator::AllocateOptions{});
+    HostMemoryAllocator::OwnedPtr buf3 =
+        allocator_ptr->Allocate(1024, HostMemoryAllocator::AllocateOptions{});
+
+    // 1. Verify that unmap_fn blocks while first_device's dispatch thread is
+    // busy, and completes once the dispatch thread advances.
+    absl::Notification dispatch_blocked;
+    absl::Notification unblock_dispatch;
+    dispatch_thread->Schedule([&]() {
+      dispatch_blocked.Notify();
+      unblock_dispatch.WaitForNotification();
+    });
+    dispatch_blocked.WaitForNotification();
+
+    absl::Notification unmap_started;
+    absl::Notification unmap_finished;
+    WorkerThread unmap_caller(tsl::Env::Default(), "unmap_caller");
+    unmap_caller.Schedule([&]() {
+      unmap_started.Notify();
+      buf1.reset();
+      unmap_finished.Notify();
+    });
+    unmap_started.WaitForNotification();
+    EXPECT_FALSE(
+        unmap_finished.WaitForNotificationWithTimeout(absl::Milliseconds(50)));
+
+    unblock_dispatch.Notify();
+    unmap_finished.WaitForNotification();
+    EXPECT_EQ(unmapped_count, 1);
+
+    // 2. Verify that calling unmap_fn from the dispatch thread itself runs
+    // inline without self-deadlocking.
+    dispatch_thread->Schedule([&]() { buf2.reset(); });
+    dispatch_thread->Drain();
+    EXPECT_EQ(unmapped_count, 2);
+
+    // 3. Verify that unmapping cached free-list buffers in
+    // ~HostMemoryAllocator() during client teardown succeeds cleanly.
+    allocator_ptr->set_cache_next_deallocation(true);
+    buf3.reset();
+    EXPECT_EQ(unmapped_count, 2);
+
+    client.reset();
+    EXPECT_EQ(unmapped_count, 3);
+  }
+}
+
+// Sets XLA_PJRT_GPU_UNREGISTER_HOST_MEMORY_ON_DISPATCH_THREAD for the lifetime
+// of the object.
+class ScopedUnregisterHostMemoryOnDispatchThreadEnv {
+ public:
+  explicit ScopedUnregisterHostMemoryOnDispatchThreadEnv(const char* value) {
+    tsl::setenv(kName, value, /*overwrite=*/1);
+  }
+  ~ScopedUnregisterHostMemoryOnDispatchThreadEnv() { tsl::unsetenv(kName); }
+
+ private:
+  static constexpr char kName[] =
+      "XLA_PJRT_GPU_UNREGISTER_HOST_MEMORY_ON_DISPATCH_THREAD";
+};
+
+TEST(StreamExecutorGpuClientTest,
+     CustomHostMemoryAllocatorUnmapRunsInlineWhenDispatchThreadDisabled) {
+  ScopedUnregisterHostMemoryOnDispatchThreadEnv env("false");
+  for (bool use_async_dispatch : {false, true}) {
+    GpuClientOptions options = GetTestGpuClientOptions();
+    options.use_async_dispatch = use_async_dispatch;
+
+    CachingRecordingAllocator* allocator_ptr = nullptr;
+    std::atomic<int> unmapped_count = 0;
+    options.host_memory_allocator_factory =
+        [&](HostMemoryAllocator::Options alloc_options)
+        -> absl::StatusOr<std::unique_ptr<HostMemoryAllocator>> {
+      auto allocator = std::make_unique<CachingRecordingAllocator>(
+          std::move(alloc_options), &unmapped_count);
+      allocator_ptr = allocator.get();
+      return allocator;
+    };
+
+    ASSERT_OK_AND_ASSIGN(auto client, GetStreamExecutorGpuClient(options));
+    ASSERT_NE(allocator_ptr, nullptr);
+
+    auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+    auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+        common_client->raw_client());
+    LocalDeviceState* first_device = raw_client->device_state(LocalDeviceId(0));
+    ASSERT_NE(first_device, nullptr);
+    EXPECT_FALSE(first_device->unregister_host_memory_on_dispatch_thread());
+    WorkerThread* dispatch_thread = use_async_dispatch
+                                        ? first_device->async_dispatch_thread()
+                                        : first_device->execute_thread();
+    ASSERT_NE(dispatch_thread, nullptr);
+
+    HostMemoryAllocator::OwnedPtr buf =
+        allocator_ptr->Allocate(1024, HostMemoryAllocator::AllocateOptions{});
+
+    // With dispatch-thread unregistration disabled, unmap_fn runs inline on the
+    // calling thread and completes even while first_device's dispatch thread is
+    // busy.
+    absl::Notification dispatch_blocked;
+    absl::Notification unblock_dispatch;
+    dispatch_thread->Schedule([&]() {
+      dispatch_blocked.Notify();
+      unblock_dispatch.WaitForNotification();
+    });
+    dispatch_blocked.WaitForNotification();
+
+    buf.reset();
+    EXPECT_EQ(unmapped_count, 1);
+
+    unblock_dispatch.Notify();
+    dispatch_thread->Drain();
+  }
+}
+
+TEST(StreamExecutorGpuClientTest,
+     InvalidUnregisterHostMemoryOnDispatchThreadEnvVarUsesExecutorDefault) {
+  ScopedUnregisterHostMemoryOnDispatchThreadEnv env("not_a_bool");
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  auto* common_client = absl::down_cast<CommonPjRtClient*>(client.get());
+  auto* raw_client = absl::down_cast<PjRtStreamExecutorRawClient*>(
+      common_client->raw_client());
+  LocalDeviceState* first_device = raw_client->device_state(LocalDeviceId(0));
+  ASSERT_NE(first_device, nullptr);
+  EXPECT_EQ(first_device->unregister_host_memory_on_dispatch_thread(),
+            first_device->executor()->HostMemoryUnregisterMaySynchronize());
 }
 
 TEST(StreamExecutorGpuClientTest, OpaqueDeviceMemoryDataPointer) {

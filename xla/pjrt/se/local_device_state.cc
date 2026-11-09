@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/synchronization/notification.h"
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/client/local_client.h"
 #include "xla/pjrt/async_work_runner.h"
@@ -82,6 +83,20 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
                               &allow_delete_before_fulfill_);
   if (!status.ok()) {
     LOG(ERROR) << "Failed to read XLA_PJRT_GPU_ALLOW_DELETE_BEFORE_FULFILL: "
+               << status;
+  }
+
+  // Unregister host memory on the dispatch thread if the executor reports that
+  // HostMemoryUnregister may synchronize with in-flight device work (e.g. on
+  // CUDA). XLA_PJRT_GPU_UNREGISTER_HOST_MEMORY_ON_DISPATCH_THREAD overrides
+  // this, e.g. as a kill switch.
+  status = tsl::ReadBoolFromEnvVar(
+      "XLA_PJRT_GPU_UNREGISTER_HOST_MEMORY_ON_DISPATCH_THREAD",
+      executor_->HostMemoryUnregisterMaySynchronize(),
+      &unregister_host_memory_on_dispatch_thread_);
+  if (!status.ok()) {
+    LOG(ERROR) << "Failed to read "
+                  "XLA_PJRT_GPU_UNREGISTER_HOST_MEMORY_ON_DISPATCH_THREAD: "
                << status;
   }
 
@@ -160,16 +175,23 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
       tsl::Env::Default(), thread_options, "py_xla_cleanup");
 }
 
-LocalDeviceState::~LocalDeviceState() {
+void LocalDeviceState::Destroy() {
+  if (compute_stream_ == nullptr) {
+    return;
+  }
+
+  // 1. Join scheduling threads first to ensure all previously scheduled work
+  // has been enqueued onto the streams before synchronizing activity, and to
+  // prevent any new work from being enqueued. Join execute_thread_ before
+  // async_dispatch_thread_ because tasks on execute_thread_ may schedule work
+  // onto async_dispatch_thread_.
+  execute_thread_.reset();
+  async_dispatch_thread_.reset();
+
   absl::Status status = SynchronizeAllActivity();
   if (!status.ok()) {
     LOG(ERROR) << "Error when closing device: " << status;
   }
-
-  // 1. Join scheduling threads first to prevent any new work from being
-  // enqueued.
-  execute_thread_.reset();
-  async_dispatch_thread_.reset();
 
   // 2. Clear streams and stream pools to trigger all pending
   // callbacks/finalizations.
@@ -216,7 +238,65 @@ LocalDeviceState::~LocalDeviceState() {
   cleanup_thread_.reset();
 
   // 4. Finally, clear compute events.
-  compute_events_.clear();
+  {
+    absl::MutexLock lock(mu_);
+    compute_events_.clear();
+  }
+}
+
+LocalDeviceState::~LocalDeviceState() { Destroy(); }
+
+void LocalDeviceState::DrainDispatchThreads() {
+  // Drain execute_thread_ before async_dispatch_thread_ because tasks on
+  // execute_thread_ (e.g. PjRtStreamExecutorRawLoadedExecutable::Execute) may
+  // schedule work onto async_dispatch_thread_.
+  if (execute_thread_ != nullptr) {
+    execute_thread_->Drain();
+  }
+  if (async_dispatch_thread_ != nullptr) {
+    async_dispatch_thread_->Drain();
+  }
+}
+
+absl::Status LocalDeviceState::HostMemoryRegister(void* data, size_t size) {
+  if (!executor_->HostMemoryRegister(data, size)) {
+    return absl::InternalError(absl::StrFormat(
+        "Failed to register host memory at address: %ps", data));
+  }
+  return absl::OkStatus();
+}
+
+absl::Status LocalDeviceState::HostMemoryUnregister(void* data) {
+  // If enabled, serialize HostMemoryUnregister (cuMemHostUnregister on CUDA)
+  // with the device's dispatch thread (async_dispatch_thread_ when async
+  // dispatch is enabled, or execute_thread_ otherwise). In the CUDA driver,
+  // cuMemHostUnregister may synchronize with the context that owns the
+  // registration (this device's context), which can deadlock against a
+  // concurrent multi-GPU collective launch on the dispatch thread
+  // (b/575874854). If this device has already been destroyed
+  // (thread == nullptr) or the caller is already on the dispatch thread,
+  // unregister inline.
+  WorkerThread* thread = nullptr;
+  if (unregister_host_memory_on_dispatch_thread_) {
+    thread = async_dispatch_thread_ != nullptr ? async_dispatch_thread_.get()
+                                               : execute_thread_.get();
+  }
+  bool success = false;
+  if (thread != nullptr && !thread->IsCurrentThread()) {
+    absl::Notification done;
+    thread->Schedule([&]() {
+      success = executor_->HostMemoryUnregister(data);
+      done.Notify();
+    });
+    done.WaitForNotification();
+  } else {
+    success = executor_->HostMemoryUnregister(data);
+  }
+  if (!success) {
+    return absl::InternalError(absl::StrFormat(
+        "Failed to unregister host memory at address: %ps", data));
+  }
+  return absl::OkStatus();
 }
 
 absl::Status LocalDeviceState::SynchronizeAllActivity() {

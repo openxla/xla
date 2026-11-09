@@ -147,6 +147,9 @@ class CudaExecutor : public GpuExecutor {
   // wait for or block work in any primary context, so callers must make sure
   // no work on any device still uses the memory before unregistering it.
   bool HostMemoryRegister(void* location, uint64_t size) override;
+  // cuMemHostUnregister may synchronize with work in flight on the context
+  // that owns the registration.
+  bool HostMemoryUnregisterMaySynchronize() const override { return true; }
   bool HostMemoryUnregister(void* location) override;
   bool IsHostMemoryPinned(const void* ptr, uint64_t size) override;
 
