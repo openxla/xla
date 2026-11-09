@@ -16,7 +16,8 @@
 #
 # Hang probe for test actions, used as bazel test run_under.
 #
-# Logs the CPU resources the action gets, then runs the test. If the test is
+# Logs the CPU resources the action gets and checks how the C++ runtime is
+# linked into the test (see runtime_check), then runs the test. If the test is
 # still running after HANG_PROBE_AFTER_S seconds, dumps the state of every
 # thread from /proc, attaches rocgdb to print all thread backtraces and the
 # loaded libraries, and kills the test with exit code 124. Every probe line
@@ -71,12 +72,87 @@ dump_proc() {
   done
 }
 
+# Checks how the C++ runtime is linked into the test process:
+#   * where libc++, libc++abi, libunwind, libatomic and libstdc++ resolve from;
+#   * how many Bazel-built objects carry their own __cxa_guard_acquire. More
+#     than one means several libc++abi copies share the guard variables of
+#     inline statics, which can deadlock static initialization;
+#   * which object the __cxa_* references of the ROCm libraries (built against
+#     libstdc++) bind to. Binding to libc++abi.so.1 means the unversioned libc++
+#     runtime captured libstdc++ users.
+# Prints RUNTIME lines and sets RUNTIME_RC to 125 if a check failed.
+RUNTIME_RC=0
+runtime_check() {
+  local bin="$1" tmp trace not_found objects copies=0 path bindings
+  [[ "${HANG_PROBE_RUNTIME_CHECK:-1}" == "1" ]] || return 0
+  [[ "$bin" == */* ]] || bin="./$bin"
+  tmp="$(mktemp -d "${TEST_TMPDIR:-/tmp}/runtimecheck.XXXXXX")"
+
+  trace="$(LD_TRACE_LOADED_OBJECTS=1 "$bin" 2>&1)"
+  not_found="$(grep -c 'not found' <<< "$trace")"
+  objects="$(awk '$2 == "=>" && $3 ~ /^\// { print $3 }' <<< "$trace")"
+  log "RUNTIME objects=$(wc -l <<< "$objects") not_found=$not_found"
+  grep 'not found' <<< "$trace" | head -n 5 | while read -r line; do
+    log "RUNTIME not_found $line"
+  done
+  for lib in libc++.so.1 libc++abi.so.1 libunwind.so.1 libatomic.so.1 libstdc++.so.6; do
+    log "RUNTIME lib $lib -> $(awk -v l="$lib" '$1 == l { print $3; exit }' <<< "$trace")"
+  done
+
+  if command -v nm > /dev/null; then
+    while read -r path; do
+      [[ -z "$path" ]] && continue
+      case "$path" in
+        *rocm_dist*|*libstdc++*|/lib/*|/lib64/*|/usr/*) continue ;;
+      esac
+      if nm "$path" 2> /dev/null | grep -qE ' [tTW] __cxa_guard_acquire$' ||
+         nm -D --defined-only "$path" 2> /dev/null | grep -q ' __cxa_guard_acquire$'; then
+        copies=$((copies + 1))
+        (( copies <= 3 )) && log "RUNTIME guard_copy $path"
+      fi
+    done <<< "$(printf '%s\n%s\n' "$bin" "$objects")"
+    log "RUNTIME guard_copies=$copies"
+  else
+    copies=-1
+    log "RUNTIME guard_copies=unknown (no nm)"
+  fi
+
+  # Bind every symbol at load time, so the references of the ROCm libraries
+  # show up without running any GPU code.
+  LD_BIND_NOW=1 LD_DEBUG=bindings LD_DEBUG_OUTPUT="$tmp/bind" \
+      timeout 300 "$bin" --gtest_list_tests > /dev/null 2>&1
+  bindings="$(cat "$tmp"/bind.* 2> /dev/null |
+      sed -nE "s/.*binding file ([^ ]+) \[[0-9]+\] to ([^ ]+) \[[0-9]+\]: normal symbol \`(__cxa_[a-z_]+)'.*/\1 \2 \3/p")"
+  log "RUNTIME bindings_cxa=$(grep -c . <<< "$bindings")" \
+      "rocm_to_libstdcxx=$(awk '$1 ~ /rocm_dist/ && $2 ~ /libstdc\+\+/' <<< "$bindings" | grep -c .)" \
+      "rocm_to_libcxxabi=$(awk '$1 ~ /rocm_dist/ && $2 ~ /libc\+\+abi/' <<< "$bindings" | grep -c .)"
+  awk '$1 ~ /rocm_dist/ && $2 ~ /libc\+\+abi/ { print $1, $3 }' <<< "$bindings" |
+      sort -u | head -n 5 | while read -r from sym; do
+    log "RUNTIME captured ${from##*/} $sym -> libc++abi"
+  done
+  log "RUNTIME guard_providers=$(awk '$1 !~ /rocm_dist/ && $3 == "__cxa_guard_acquire" { n = $2; sub(/.*\//, "", n); print n }' <<< "$bindings" | sort -u | tr '\n' ' ')"
+
+  local reasons=""
+  (( not_found > 0 )) && reasons+=" not_found"
+  (( copies > 1 )) && reasons+=" guard_copies=$copies"
+  awk '$1 ~ /rocm_dist/ && $2 ~ /libc\+\+abi/ { found = 1 } END { exit !found }' <<< "$bindings" &&
+      reasons+=" rocm_bound_to_libcxxabi"
+  if [[ -n "$reasons" ]]; then
+    log "RUNTIME VERDICT FAIL$reasons"
+    RUNTIME_RC=125
+  else
+    log "RUNTIME VERDICT OK"
+  fi
+  rm -rf "$tmp"
+}
+
 if (( $# == 0 )); then
   log "usage hang_probe.sh TEST_BINARY ARGS"
   exit 2
 fi
 
 log_env
+runtime_check "$1"
 GDB="$(find_gdb)"
 log "GDB ${GDB:-none}"
 PIDFILE="$(mktemp "${TEST_TMPDIR:-/tmp}/hangprobe.XXXXXX")"
@@ -121,5 +197,9 @@ elif (( $(date +%s) - START >= AFTER_S )); then
   log "STACKS END rc=$RC"
 fi
 rm -f "$PIDFILE"
+# A failed runtime check fails an otherwise passing test, so it shows up.
+if (( RC == 0 && RUNTIME_RC != 0 )); then
+  RC="$RUNTIME_RC"
+fi
 log "EXIT rc=$RC wall_s=$(( $(date +%s) - START ))"
 exit "$RC"

@@ -76,10 +76,29 @@ if [[ "${XLA_CI_HANG_PROBE:-1}" == "1" && " $* " == *" --config=ci_single_gpu "*
         "--runs_per_test=${XLA_CI_HANG_PROBE_RUNS:-10}"
         "--nocache_test_results"
         "--keep_going"
+        "--remote_download_regex=.*/testlogs/.*/test\.log"
         "--"
         "${HANG_PROBE_TARGETS[@]}"
     )
+    HANG_PROBE_MARKER="$(mktemp "${RUNNER_TEMP:-/tmp}/hangprobe_start.XXXXXX")"
 fi
+
+# Summarizes the RUNTIME lines that hang_probe.sh wrote to the test logs of
+# this run, so passing tests report how the C++ runtime was linked too.
+print_hang_probe_summary() {
+    local logs
+    logs="$(find -L bazel-testlogs -name test.log -newer "$HANG_PROBE_MARKER" 2>/dev/null)"
+    echo "================ HANGPROBE runtime summary ================"
+    echo "test logs: $(grep -c . <<< "$logs")"
+    [[ -z "$logs" ]] && return
+    echo "-- verdicts:"
+    xargs -r grep -h "HANGPROBE RUNTIME VERDICT" <<< "$logs" | sort | uniq -c
+    echo "-- distinct check results:"
+    xargs -r grep -hE "HANGPROBE RUNTIME (lib |guard_copies|bindings_cxa|guard_providers|not_found|captured)" <<< "$logs" |
+        sed 's/^HANGPROBE RUNTIME //' | sort | uniq -c | sort -rn | head -40
+    echo "-- hangs: $(xargs -r grep -l "HANGPROBE HANG test still running" <<< "$logs" | wc -l)"
+    echo "==========================================================="
+}
 
 set +e
 bazel --bazelrc="$SCRIPT_DIR/rocm_xla_ci.bazelrc" test \
@@ -95,6 +114,13 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla_ci.bazelrc" test \
     "${BAZEL_ARGS[@]}"
 BAZEL_RC=$?
 set -e
+
+if [[ -n "${HANG_PROBE_MARKER:-}" ]]; then
+    { set +x; } 2>/dev/null
+    print_hang_probe_summary
+    rm -f "$HANG_PROBE_MARKER"
+    set -x
+fi
 
 if [[ $BAZEL_RC -eq 4 && -n "${XLA_ROCM_TARGET_PATTERN_FILE:-}" ]]; then
     echo "Bazel returned exit code 4 (no matching test targets in ${XLA_ROCM_TARGET_PATTERN_FILE}); treating as success."
