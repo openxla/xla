@@ -23,6 +23,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -50,13 +51,16 @@ limitations under the License.
 #include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/codegen/kernel_compiler.h"
+#include "xla/backends/gpu/codegen/rng_get_and_update_state.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/future.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/buffer_value.h"
 #include "xla/service/dump.h"
@@ -256,6 +260,24 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
       results.buffer_assignment,
       RunBufferAssignment(hlo_module, gpu_topology, alias_info,
                           std::move(buffer_size_bytes_function)));
+
+  std::optional<BufferAllocation::Slice> rng_state_slice;
+  if (absl::c_any_of(
+          hlo_module->computations(), [](const HloComputation* computation) {
+            return absl::c_any_of(
+                computation->instructions(), [](const HloInstruction* instr) {
+                  return instr->opcode() == HloOpcode::kRngGetAndUpdateState;
+                });
+          })) {
+    ABSL_ASSIGN_OR_RETURN(BufferAllocation * rng_state_allocation,
+                          results.buffer_assignment->AddPersistentAllocation(
+                              kRngStateSizeBytes,
+                              static_cast<int64_t>(MemorySpaceColor::kDefault),
+                              RngStateInitialBytes()));
+    rng_state_slice = BufferAllocation::Slice(
+        rng_state_allocation, /*offset=*/0, rng_state_allocation->size(), U64);
+  }
+
   ABSL_ASSIGN_OR_RETURN(results.output_info,
                         GetOutputInfo(*hlo_module, *results.buffer_assignment));
 
@@ -275,7 +297,7 @@ absl::StatusOr<CompileModuleResults> CompileModuleToLlvmIr(
       results.execution_stream_assignment.get(), platform_id->ToName(),
       gpu_topology, borrowed_context->get(), llvm::Triple(target_triple),
       data_layout, compiler, std::move(cpu_target_machine_options),
-      mlir_context_pool);
+      mlir_context_pool, rng_state_slice);
   ThunkEmitter thunk_emitter(&ir_emitter_context, &llvm_options_lock);
 
   const DebugOptions& options = hlo_module->config().debug_options();

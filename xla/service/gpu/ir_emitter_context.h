@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_SERVICE_GPU_IR_EMITTER_CONTEXT_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -59,15 +60,15 @@ using InstructionToHostExecuteAsyncEvents =
 // assignment and the name uniquer.
 class IrEmitterContext {
  public:
-  IrEmitterContext(const HloModule* hlo_module,
-                   const BufferAssignment* buffer_assignment,
-                   const ExecutionStreamAssignment* execution_stream_assignment,
-                   absl::string_view platform_name,
-                   const GpuTopology& gpu_topology,
-                   mlir::MLIRContext* mlir_context, llvm::Triple target_triple,
-                   std::string data_layout, KernelCompiler* compiler,
-                   xla::cpu::TargetMachineOptions cpu_target_machine_options,
-                   MlirContextPool* pool)
+  IrEmitterContext(
+      const HloModule* hlo_module, const BufferAssignment* buffer_assignment,
+      const ExecutionStreamAssignment* execution_stream_assignment,
+      absl::string_view platform_name, const GpuTopology& gpu_topology,
+      mlir::MLIRContext* mlir_context, llvm::Triple target_triple,
+      std::string data_layout, KernelCompiler* compiler,
+      xla::cpu::TargetMachineOptions cpu_target_machine_options,
+      MlirContextPool* pool,
+      std::optional<BufferAllocation::Slice> rng_state_slice = std::nullopt)
       : hlo_module_(hlo_module),
         buffer_assignment_(buffer_assignment),
         execution_stream_assignment_(execution_stream_assignment),
@@ -78,7 +79,8 @@ class IrEmitterContext {
         target_triple_(std::move(target_triple)),
         compiler_(compiler),
         cpu_target_machine_options_(std::move(cpu_target_machine_options)),
-        mlir_context_pool_(pool) {
+        mlir_context_pool_(pool),
+        rng_state_slice_(rng_state_slice) {
     CHECK(gpu_topology_.has_gpu_target_config())
         << "GpuTopology must have a valid GpuTargetConfig when used for IR "
            "emission.";
@@ -158,6 +160,10 @@ class IrEmitterContext {
 
   KernelCompiler* kernel_compiler() { return compiler_; }
 
+  std::optional<BufferAllocation::Slice> rng_state_slice() const {
+    return rng_state_slice_;
+  }
+
   BorrowedMlirContext BorrowMlirContext() {
     auto context = mlir_context_pool_->GetOrCreate();
     // Due to generator, always ok.
@@ -187,6 +193,7 @@ class IrEmitterContext {
   KernelCompiler* compiler_;
   const xla::cpu::TargetMachineOptions cpu_target_machine_options_;
   MlirContextPool* mlir_context_pool_;
+  std::optional<BufferAllocation::Slice> rng_state_slice_;
 };
 
 }  // namespace xla::gpu

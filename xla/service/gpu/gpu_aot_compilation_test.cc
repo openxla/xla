@@ -16,6 +16,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -24,6 +25,7 @@ limitations under the License.
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/Attributes.h"
@@ -261,6 +263,79 @@ TEST_F(GpuAotCompilationTest, ExportAndLoadExecutableWithTriton) {
 
   EXPECT_TRUE(LiteralTestUtil::Equal(
       LiteralUtil::MakeTuple({&literal_2, &literal_3}), result));
+}
+
+TEST_F(GpuAotCompilationTest, ExportAndLoadExecutableWithRngGetAndUpdateState) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule RngAotTest
+
+    ENTRY main {
+      first = u64[2]{0} rng-get-and-update-state(), delta=131072
+      second = u64[2]{0} rng-get-and-update-state(), delta=65536
+      ROOT tuple = (u64[2]{0}, u64[2]{0}) tuple(first, second)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  AotCompilationOptions aot_options(stream_executor_platform_id());
+  aot_options.set_gpu_topology(
+      GetSingleDeviceGpuTopology("", gpu_target_config()));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<std::unique_ptr<CompiledModule>> aot_results,
+      compiler()->CompileAheadOfTime(std::move(module), aot_options));
+  ASSERT_OK_AND_ASSIGN(std::string serialized_aot_result,
+                       aot_results[0]->SerializeAsString());
+
+  ExecutableAndOptionsProto proto;
+  *proto.mutable_serialized_executable() = std::move(serialized_aot_result);
+  proto.set_pjrt_client_name("PjRtStreamExecutorClient");
+  proto.mutable_compile_options()
+      ->mutable_executable_build_options()
+      ->set_num_replicas(1);
+  proto.mutable_compile_options()
+      ->mutable_executable_build_options()
+      ->set_num_partitions(1);
+  std::string serialized_split_proto;
+  ASSERT_OK(WriteSplitExecutableAndOptions(
+      proto,
+      std::make_unique<riegeli::StringWriter<>>(&serialized_split_proto)));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<OpaqueExecutable> executable,
+      test_runner().DeserializeExecutable(serialized_split_proto));
+
+  constexpr uint64_t kInit = 0x7012395ULL;
+  constexpr uint64_t kDeltaFirst = 131072ULL;
+  constexpr uint64_t kDeltaSecond = 65536ULL;
+
+  ASSERT_OK_AND_ASSIGN(Literal result1,
+                       test_runner().ExecuteWithExecutable(
+                           executable.get(), absl::Span<const Literal>{}));
+  std::vector<Literal> outputs1 = result1.DecomposeTuple();
+  ASSERT_EQ(outputs1.size(), 2);
+  const bool first_ran_first = outputs1[0].Get<uint64_t>({0}) == kInit;
+  if (first_ran_first) {
+    EXPECT_EQ(outputs1[0].Get<uint64_t>({0}), kInit);
+    EXPECT_EQ(outputs1[1].Get<uint64_t>({0}), kInit + kDeltaFirst);
+  } else {
+    EXPECT_EQ(outputs1[1].Get<uint64_t>({0}), kInit);
+    EXPECT_EQ(outputs1[0].Get<uint64_t>({0}), kInit + kDeltaSecond);
+  }
+
+  ASSERT_OK_AND_ASSIGN(Literal result2,
+                       test_runner().ExecuteWithExecutable(
+                           executable.get(), absl::Span<const Literal>{}));
+  std::vector<Literal> outputs2 = result2.DecomposeTuple();
+  ASSERT_EQ(outputs2.size(), 2);
+  const uint64_t run2_start = kInit + kDeltaFirst + kDeltaSecond;
+  if (first_ran_first) {
+    EXPECT_EQ(outputs2[0].Get<uint64_t>({0}), run2_start);
+    EXPECT_EQ(outputs2[1].Get<uint64_t>({0}), run2_start + kDeltaFirst);
+  } else {
+    EXPECT_EQ(outputs2[1].Get<uint64_t>({0}), run2_start);
+    EXPECT_EQ(outputs2[0].Get<uint64_t>({0}), run2_start + kDeltaSecond);
+  }
 }
 
 }  // namespace gpu

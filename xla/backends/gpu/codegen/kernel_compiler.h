@@ -42,20 +42,19 @@ limitations under the License.
 #include "xla/xla.pb.h"
 
 namespace xla::gpu {
-struct TritonWrapperResult;
 using BorrowedMlirContext = MlirContextPool::BorrowedObject;
-using GpuKernelDefinition = KernelDefinition<LlvmKernelSource, GpuKernelSpec>;
+using MlirKernelDefinition = KernelDefinition<MlirKernelSource, GpuKernelSpec>;
 
 // Abstract base class for asynchronous kernel compilation.
 //
-// Defines an interface for compiling KernelSource. Implementations of this
-// interface handle the specifics of transforming an LlvmKernelSource into an
-// executable Thunk.
+// Defines an interface for compiling kernel sources. Implementations of this
+// interface handle lowering MLIR or LLVM kernel sources into target binaries or
+// executable Thunks.
 //
 // The compilation process is asynchronous, returning a xla::Future that will
-// eventually hold the compiled std::unique_ptr<Thunk> object. This design
-// allows for non-blocking compilation and potential parallelism in compilation
-// workflows.
+// eventually hold the compiled std::unique_ptr<Thunk> or binary bytes. This
+// design allows for non blocking compilation and potential parallelism in
+// compilation workflows.
 class KernelCompiler {
  public:
   using ModuleHook = absl::AnyInvocable<void(const llvm::Module&)>;
@@ -69,14 +68,10 @@ class KernelCompiler {
 
   virtual ~KernelCompiler() = default;
 
-  // Compiles the given kernel source asynchronously.
+  // Compiles the given MLIR kernel definition asynchronously into a Thunk.
   virtual xla::Future<std::unique_ptr<Thunk>> Compile(
-      Thunk::ThunkInfo thunk_info, GpuKernelDefinition kernel_def) = 0;
-
-  virtual xla::Future<LlvmKernelSource> CompileMlirToLlvm(
-      const se::DeviceDescription& device, const HloModule& hlo_module,
-      const std::string& entry_function_name, int unroll_factor,
-      MlirKernelSource source, BorrowedMlirContext borrowed_context) = 0;
+      Thunk::ThunkInfo thunk_info, MlirKernelDefinition kernel_def,
+      BorrowedMlirContext borrowed_context, const HloModule& hlo_module) = 0;
 
   // Compiles the given Triton kernel source to LLVM IR asynchronously.
   virtual xla::Future<TritonWrapperResult> CompileTritonToLlvm(
@@ -86,6 +81,10 @@ class KernelCompiler {
       const llvm::Triple& target_triple, const std::string& data_layout,
       TritonKernelSource triton_source, BorrowedMlirContext borrowed_context,
       bool is_xla_fusion) = 0;
+
+  virtual xla::Future<std::vector<uint8_t>> CompileToTargetBinary(
+      MlirKernelDefinition kernel_def, BorrowedMlirContext borrowed_context,
+      const HloModule& hlo_module) = 0;
 
   virtual xla::Future<std::vector<uint8_t>> CompileToTargetBinary(
       LlvmKernelSource kernel_source,
