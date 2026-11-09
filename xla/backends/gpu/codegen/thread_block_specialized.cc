@@ -451,10 +451,10 @@ ThreadBlockSpecializedFusion::CreateAndLowerMLIRModule(
                             GetDefaultBufferAlignment(), entry_function_name));
   // Intermediate output buffers of `PhasedBlockClusterFusion` are written by
   // sibling CTAs before `barrier.cluster` and read in the next phase; marking
-  // them `xla.not_invariant` tells `MergePointersToSameSlicePass` to omit
+  // them `xla.aliased` tells `MergePointersToSameSlicePass` to omit
   // `llvm.noalias` on those parameters (and any aliased parameters sharing the
-  // same `xla.slice_index`) so LLVM `BasicAA` cannot reorder cross-phase
-  // accesses across the barrier after inlining.
+  // same `xla.slice_index`) so LLVM `BasicAA` cannot reorder accesses across
+  // the barrier after inlining.
   for (const NestedKernelSpec& spec : nested_kernels_) {
     if (spec.emitter_fusion_kind !=
         HloFusionAnalysis::EmitterFusionKind::kPhasedBlockCluster) {
@@ -462,8 +462,7 @@ ThreadBlockSpecializedFusion::CreateAndLowerMLIRModule(
     }
     for (size_t j = 0; j + 1 < spec.outer_root_indices.size(); ++j) {
       entry_func.setArgAttr(fusion.operand_count() + spec.outer_root_indices[j],
-                            emitters::kXlaNotInvariantAttr,
-                            builder.getUnitAttr());
+                            emitters::kXlaAliasedAttr, builder.getUnitAttr());
     }
   }
   SetBackendKind(&mlir_context, entry_func, BackendKind::kGpu);
@@ -544,7 +543,7 @@ AsyncThunkSequence ThreadBlockSpecializedFusion::Emit(
                                         GetDefaultBufferAlignment(), &fusion));
 
   auto [future_entry, cached] = ir_emitter_context.kernel_cache().GetWithStatus(
-      fusion.fused_instructions_computation(), args.args(),
+      fusion.fused_instructions_computation(), args,
       /*discriminator=*/"ThreadBlockSpecializedFusion",
       [&]() -> xla::Future<KernelReuseCache::Entry> {
         std::string kernel_name = ir_emitter_context.GetSanitizedUniqueName(
@@ -591,26 +590,21 @@ AsyncThunkSequence ThreadBlockSpecializedFusion::Emit(
       &fusion, ir_emitter_context.GetNextThunkId());
   bool kernel_cached = cached;
   return future_entry.Map(
-      [&fusion, thunk_info = std::move(thunk_info), args = std::move(args),
-       kernel_cached,
+      [&fusion, thunk_info = std::move(thunk_info), kernel_cached,
        devices_in_process =
            ir_emitter_context.gpu_topology().num_devices_per_process()](
-          const KernelReuseCache::Entry& entry) mutable
+          const KernelReuseCache::Kernel& entry) mutable
           -> absl::StatusOr<ThunkSequence> {
         if (kernel_cached) {
-          VLOG(3) << "Reuse: " << fusion.name() << " -> " << entry.kernel_name;
+          VLOG(3) << "Reuse: " << fusion.name() << " -> " << entry.spec.name();
         }
         ABSL_ASSIGN_OR_RETURN(
             CustomKernel custom_kernel,
-            kernel::CreateSharedCubinCustomKernel(
-                entry.kernel_name, entry.binary, args.args().size(),
-                entry.launch_dimensions.block_counts(),
-                entry.launch_dimensions.thread_counts_per_block(),
-                entry.shmem_bytes, entry.cluster_dim));
+            kernel::CreateSharedCubinCustomKernel(entry.spec, entry.binary));
 
         return ThunkSequence::Of<CustomKernelThunk>(
-            thunk_info, std::move(custom_kernel), args, devices_in_process,
-            entry.use_pdl);
+            thunk_info, std::move(custom_kernel), entry.spec.kernel_arguments(),
+            devices_in_process, entry.spec.use_pdl());
       });
 }
 

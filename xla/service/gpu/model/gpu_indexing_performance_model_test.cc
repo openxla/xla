@@ -111,6 +111,21 @@ class GpuIndexingPerformanceModelTest : public HloHardwareIndependentTestBase {
       &mlir_context_pool_};
 
   size_t WarpSize() const { return ::xla::gpu::WarpSize(device_info_); }
+
+  // Returns `EstimateNumWarps` for `fusion_adaptor` tiled with `tile_sizes`.
+  absl::StatusOr<int64_t> EstimateNumWarpsForTileSizes(
+      const HloFusionAdaptor& fusion_adaptor,
+      absl::Span<const int64_t> tile_sizes) {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<TilingSpace> tiling_space,
+                          TilingSpace::Create(fusion_adaptor, &mlir_context_));
+    ABSL_RETURN_IF_ERROR(tiling_space->AssignTileSizes(
+        xla::xtile::GetPaddedTileSizes(tile_sizes)));
+    ABSL_ASSIGN_OR_RETURN(
+        TiledHloComputation tiled_hlo_computation,
+        TiledHloComputation::Tile(fusion_adaptor, std::move(tiling_space)));
+    return GpuPerformanceModelWithIndexingAnalysis::EstimateNumWarps(
+        fusion_adaptor, tiled_hlo_computation);
+  }
 };
 
 TEST_F(GpuIndexingPerformanceModelTest,
@@ -1343,20 +1358,8 @@ ENTRY main {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
 
-  absl::InlinedVector<int64_t, 4> output_tile_sizes = {9, 9, 9};
-
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<TilingSpace> tiling_space,
-                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
-
-  EXPECT_OK(tiling_space->AssignTileSizes(
-      xla::xtile::GetPaddedTileSizes(output_tile_sizes)));
-
-  ASSERT_OK_AND_ASSIGN(
-      TiledHloComputation tiled_hlo_computation,
-      TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space)));
-
-  int64_t num_warps = GpuPerformanceModelWithIndexingAnalysis::EstimateNumWarps(
-      tiled_hlo_computation);
+  ASSERT_OK_AND_ASSIGN(int64_t num_warps, EstimateNumWarpsForTileSizes(
+                                              *fusion_adaptor, {9, 9, 9}));
 
   // Tile size is 9 * 9 * 9 = 729 that corresponds to 2 warps. But we estimate
   // the number of warps for padded tile that has size of 16 * 16 * 16 = 4096
@@ -1391,26 +1394,121 @@ ENTRY main {
   auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
       module->entry_computation()->root_instruction());
 
-  absl::InlinedVector<int64_t, 4> output_tile_sizes = {1};
-
-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<TilingSpace> tiling_space,
-                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
-
-  absl::InlinedVector<int64_t, 4> tile_sizes = output_tile_sizes;
-  tile_sizes.push_back(4096);
-
-  EXPECT_OK(tiling_space->AssignTileSizes(
-      xla::xtile::GetPaddedTileSizes(tile_sizes)));
-
-  ASSERT_OK_AND_ASSIGN(
-      TiledHloComputation tiled_hlo_computation,
-      TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space)));
-
-  int64_t num_warps = GpuPerformanceModelWithIndexingAnalysis::EstimateNumWarps(
-      tiled_hlo_computation);
+  ASSERT_OK_AND_ASSIGN(int64_t num_warps, EstimateNumWarpsForTileSizes(
+                                              *fusion_adaptor, {1, 4096}));
 
   // The largest tile size is 1 * 4096, for which our implementation recommends
   // using 4 warps.
+  EXPECT_EQ(num_warps, 4);
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       EstimateNumWarps_ScalesIntermediateTilesByByteWidth) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+or_region {
+  lhs = pred[] parameter(0)
+  rhs = pred[] parameter(1)
+  ROOT out = pred[] or(lhs, rhs)
+}
+
+fusion_computation {
+  p0 = s32[64,256] parameter(0)
+  bcast = s32[64,32000,256] broadcast(p0), dimensions={0,2}
+  iota = s32[64,32000,256] iota(), iota_dimension=1
+  cmp = pred[64,32000,256] compare(bcast, iota), direction=EQ
+  c0 = pred[] constant(false)
+  ROOT reduce = pred[64,32000] reduce(cmp, c0), dimensions={2},
+    to_apply=or_region
+}
+
+ENTRY main {
+  p0 = s32[64,256] parameter(0)
+  ROOT fusion = pred[64,32000] fusion(p0), kind=kCustom,
+    calls=fusion_computation,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+
+  // For output tile [1, 64] and reduction tile 256, `bcast` is ignored, `iota`
+  // materializes 64 elements along dim 1, and `cmp` has 16384 1-byte `pred`
+  // elements (4096 4-byte words), yielding 4 warps instead of 8.
+  ASSERT_OK_AND_ASSIGN(
+      int64_t num_warps_64,
+      EstimateNumWarpsForTileSizes(*fusion_adaptor, {1, 64, 256}));
+  EXPECT_EQ(num_warps_64, 4);
+
+  // For output tile [1, 16] and reduction tile 256, `cmp` has 4096 1-byte
+  // `pred` elements (1024 4-byte words), yielding 2 warps instead of 4.
+  ASSERT_OK_AND_ASSIGN(
+      int64_t num_warps_16,
+      EstimateNumWarpsForTileSizes(*fusion_adaptor, {1, 16, 256}));
+  EXPECT_EQ(num_warps_16, 2);
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       EstimateNumWarps_DoesNotScaleNarrowRootTiles) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+fusion_computation {
+  p0 = s32[64,256] parameter(0)
+  bcast = s32[64,32000,256] broadcast(p0), dimensions={0,2}
+  iota = s32[64,32000,256] iota(), iota_dimension=1
+  ROOT cmp = pred[64,32000,256] compare(bcast, iota), direction=EQ
+}
+
+ENTRY main {
+  p0 = s32[64,256] parameter(0)
+  ROOT fusion = pred[64,32000,256] fusion(p0), kind=kCustom,
+    calls=fusion_computation,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+
+  // The root `cmp` tile has 16384 `pred` elements and is not scaled by byte
+  // width, which yields 8 warps.
+  ASSERT_OK_AND_ASSIGN(int64_t num_warps, EstimateNumWarpsForTileSizes(
+                                              *fusion_adaptor, {1, 64, 256}));
+  EXPECT_EQ(num_warps, 8);
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       EstimateNumWarps_DoesNotScaleNarrowOperandTiles) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+or_region {
+  lhs = pred[] parameter(0)
+  rhs = pred[] parameter(1)
+  ROOT out = pred[] or(lhs, rhs)
+}
+
+fusion_computation {
+  p0 = pred[64,16384] parameter(0)
+  c0 = pred[] constant(false)
+  ROOT reduce = pred[64] reduce(p0, c0), dimensions={1}, to_apply=or_region
+}
+
+ENTRY main {
+  p0 = pred[64,16384] parameter(0)
+  ROOT fusion = pred[64] fusion(p0), kind=kCustom,
+    calls=fusion_computation,
+    backend_config={"fusion_backend_config": {"kind":"__triton"}}
+}
+)"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+
+  // The operand `p0` tile has 4096 `pred` elements and is not scaled by byte
+  // width, which yields 4 warps.
+  ASSERT_OK_AND_ASSIGN(int64_t num_warps, EstimateNumWarpsForTileSizes(
+                                              *fusion_adaptor, {1, 4096}));
   EXPECT_EQ(num_warps, 4);
 }
 
@@ -2179,6 +2277,243 @@ ENTRY main {
   EXPECT_EQ(no_loop.flops, reduce_flops);
   EXPECT_EQ(loop_1024.flops, reduce_flops);
   EXPECT_EQ(loop_256.flops, reduce_flops);
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       EstimateSharedMemoryUsageAndDoesTilingFitInSharedMemory) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+fused_computation {
+  p0 = f32[256,512] parameter(0)
+  t = f32[512,256] transpose(p0), dimensions={1,0}
+  ROOT out = f32[512,256] exponential(t)
+}
+
+ENTRY main {
+  p0 = f32[256,512] parameter(0)
+  ROOT fusion = f32[512,256] fusion(p0), kind=kCustom, calls=fused_computation
+}
+)"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<TilingSpace> tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+  ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation symbolic_computation,
+      TiledHloComputation::Tile(*fusion_adaptor, tiling_space->Clone()));
+
+  ASSERT_OK(tiling_space->AssignTileSizes({32, 32}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation tiled_computation,
+      TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space)));
+
+  // Transpose tile is 32 * 32 * 4 bytes = 4096 bytes.
+  EXPECT_EQ(internal::EstimateSharedMemoryUsagePerBlock(tiled_computation,
+                                                        device_info_),
+            4096);
+
+  // Set shared memory to 2 * 4096 bytes so {32, 32} is right at the 50% limit.
+  se::DeviceDescription device_info = device_info_;
+  device_info.set_shared_memory_per_core(2 * 4096);
+  EXPECT_TRUE(internal::DoesTilingFitInSharedMemory(
+      symbolic_computation, /*tile_sizes=*/{32, 32}, device_info));
+  EXPECT_FALSE(internal::DoesTilingFitInSharedMemory(
+      symbolic_computation, /*tile_sizes=*/{32, 64}, device_info));
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       EstimateSharedMemoryUsageAndDoesTilingFitInSharedMemory_Reduce) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT sum = f32[] add(p0, p1)
+}
+
+fused_computation {
+  p0 = f32[256,512] parameter(0)
+  c0 = f32[] constant(0)
+  ROOT r = f32[256] reduce(p0, c0), dimensions={1}, to_apply=add
+}
+
+ENTRY main {
+  p0 = f32[256,512] parameter(0)
+  ROOT fusion = f32[256] fusion(p0), kind=kCustom, calls=fused_computation
+}
+)"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<TilingSpace> tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+  ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation symbolic_computation,
+      TiledHloComputation::Tile(*fusion_adaptor, tiling_space->Clone()));
+
+  ASSERT_OK(tiling_space->AssignTileSizes({16, 64}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation tiled_computation,
+      TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space)));
+
+  // Largest live tile is 16 * 64 = 1024 -> 2 warps, and reduced_tile_size is
+  // 64 > WarpSize (32).
+  // Reduce output tile is 16 * 4 bytes * 2 warps = 128 bytes.
+  EXPECT_EQ(internal::EstimateSharedMemoryUsagePerBlock(tiled_computation,
+                                                        device_info_),
+            128);
+
+  // Set shared memory to 2 * 128 bytes so {16, 64} is right at the 50% limit.
+  se::DeviceDescription device_info = device_info_;
+  device_info.set_shared_memory_per_core(2 * 128);
+  EXPECT_TRUE(internal::DoesTilingFitInSharedMemory(
+      symbolic_computation, /*tile_sizes=*/{16, 64}, device_info));
+  EXPECT_FALSE(internal::DoesTilingFitInSharedMemory(
+      symbolic_computation, /*tile_sizes=*/{32, 64}, device_info));
+  // When the reduced dimension tile size is <= WarpSize (32), reduction is
+  // performed within registers and a single warp via shfl.sync (0 B SMEM).
+  device_info.set_shared_memory_per_core(0);
+  EXPECT_TRUE(internal::DoesTilingFitInSharedMemory(
+      symbolic_computation, /*tile_sizes=*/{32, 32}, device_info));
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       DoesTilingFitInSharedMemory_IgnoresUnfusedProducerOperands) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT sum = f32[] add(p0, p1)
+}
+
+fused_computation {
+  p0 = f32[256,128] parameter(0)
+  p1 = f32[256,128] parameter(1)
+  ROOT out = f32[256,128] add(p0, p1)
+}
+
+ENTRY main {
+  p0 = f32[256,128,64] parameter(0)
+  p1 = f32[128,256] parameter(1)
+  c0 = f32[] constant(0)
+  unfused_reduce = f32[256,128] reduce(p0, c0), dimensions={2}, to_apply=add
+  unfused_transpose = f32[256,128] transpose(p1), dimensions={1,0}
+  ROOT fusion = f32[256,128] fusion(unfused_reduce, unfused_transpose),
+    kind=kCustom, calls=fused_computation
+}
+)"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<TilingSpace> tiling_space,
+                       TilingSpace::Create(*fusion_adaptor, &mlir_context_));
+  ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation symbolic_computation,
+      TiledHloComputation::Tile(*fusion_adaptor, tiling_space->Clone()));
+
+  ASSERT_OK(tiling_space->AssignTileSizes({32, 32}));
+  ASSERT_OK_AND_ASSIGN(
+      TiledHloComputation tiled_computation,
+      TiledHloComputation::Tile(*fusion_adaptor, std::move(tiling_space)));
+
+  EXPECT_EQ(internal::EstimateSharedMemoryUsagePerBlock(tiled_computation,
+                                                        device_info_),
+            0);
+  EXPECT_TRUE(internal::DoesTilingFitInSharedMemory(
+      symbolic_computation, /*tile_sizes=*/{32, 32}, device_info_));
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       EstimateRunTimeForTiledFusion_AccountsForSharedMemoryUsage) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT sum = f32[] add(p0, p1)
+}
+
+fused_computation {
+  p0 = f32[256,512] parameter(0)
+  t = f32[512,256] transpose(p0), dimensions={1,0}
+  c0 = f32[] constant(0)
+  ROOT r = f32[512] reduce(t, c0), dimensions={1}, to_apply=add
+}
+
+ENTRY main {
+  p0 = f32[256,512] parameter(0)
+  ROOT fusion = f32[512] fusion(p0), kind=kCustom, calls=fused_computation
+}
+)"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+
+  // Output tile size is {32} and reduction dimension is 256, so the transpose
+  // tile is 32 * 256 * 4 bytes = 32768 bytes, which dominates the reduce
+  // shared memory (32 * 4 bytes * 8 warps = 1024 bytes).
+  ASSERT_OK_AND_ASSIGN(
+      EstimateRunTimeData runtime_data,
+      indexing_cost_model_.EstimateRunTimeForTiledFusion(
+          *fusion_adaptor, BlockLevelParameters{/*output_tile_sizes=*/{{32}}}));
+  EXPECT_EQ(runtime_data.shared_memory_per_block_bytes, 32768);
+}
+
+TEST_F(GpuIndexingPerformanceModelTest,
+       TryFindTopKBestTilings_FiltersTilingsExceedingSharedMemoryLimit) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+fused_computation {
+  p0 = f32[256,512] parameter(0)
+  t = f32[512,256] transpose(p0), dimensions={1,0}
+  ROOT out = f32[512,256] exponential(t)
+}
+
+ENTRY main {
+  p0 = f32[256,512] parameter(0)
+  ROOT fusion = f32[512,256] fusion(p0), kind=kCustom, calls=fused_computation
+}
+)"));
+  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(
+      module->entry_computation()->root_instruction());
+
+  // Allow at most 4096 bytes of shared memory per block (50% of 8192 bytes).
+  se::DeviceDescription constrained_device_info = device_info_;
+  constrained_device_info.set_shared_memory_per_core(2 * 4096);
+  HloFusionAnalysisCache analysis_cache(constrained_device_info);
+  GpuPerformanceModelWithIndexingAnalysis cost_model(
+      &constrained_device_info, &analysis_cache,
+      HloCostAnalysis::DefaultShapeSize, &mlir_context_,
+      /*enable_same_shape_multi_output_fusion=*/false, &mlir_context_pool_);
+
+  ASSERT_OK_AND_ASSIGN(
+      TopKTiledRunTimeDataOrError top_k_result,
+      cost_model
+          .TryFindTopKBestTilingsForFusionAsync(*fusion_adaptor, /*top_k=*/1000)
+          .Await());
+  ASSERT_TRUE((std::holds_alternative<absl::InlinedVector<TiledRunTimeData, 4>>(
+      top_k_result)));
+  const auto& candidates =
+      std::get<absl::InlinedVector<TiledRunTimeData, 4>>(top_k_result);
+  ASSERT_FALSE(candidates.empty());
+
+  auto output_tiles_are = [](auto matcher) {
+    return Field(&TiledRunTimeData::block_level_parameters,
+                 Field(&BlockLevelParameters::output_tile_sizes, matcher));
+  };
+  // {32, 32} uses 32 * 32 * 4 = 4096 bytes and fits within the 50% limit,
+  // whereas {32, 64} uses 8192 bytes and is filtered out.
+  EXPECT_THAT(candidates,
+              Contains(output_tiles_are(ElementsAre(ElementsAre(32, 32)))));
+  EXPECT_THAT(
+      candidates,
+      Not(Contains(output_tiles_are(ElementsAre(ElementsAre(32, 64))))));
+  for (const TiledRunTimeData& candidate : candidates) {
+    EXPECT_LE(candidate.runtime_data.shared_memory_per_block_bytes, 4096);
+  }
 }
 
 }  // namespace

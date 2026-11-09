@@ -36,6 +36,7 @@ limitations under the License.
 #include "tsl/platform/platform.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_computation_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -448,24 +449,10 @@ absl::StatusOr<bool> PropagateIdenticalConstantArguments(
   return changed;
 }
 
-// TODO(enver): Share CloneComputation with other passes, such as
-// FlattenCallGraph, by moving to HloModule or HloComputation.
-HloComputation* CloneComputation(HloModule* module,
-                                 HloComputation* computation) {
-  if (!module->has_schedule() ||
-      !module->schedule().is_computation_scheduled(computation)) {
-    return module->AddEmbeddedComputation(computation->Clone());
-  }
-  auto [clone, clone_sequence] = computation->CloneWithSchedule();
-  HloComputation* clone_ptr = module->AddEmbeddedComputation(std::move(clone));
-  module->schedule().set_sequence(clone_ptr, clone_sequence);
-  return clone_ptr;
-}
-
 using SpecializationKey = HloConstantFolding::SpecializationKey;
 
 absl::StatusOr<bool> SpecializeCalls(
-    HloModule* module, HloComputation* computation,
+    HloComputation* computation,
     absl::flat_hash_map<SpecializationKey, HloComputation*>&
         specialization_cache,
     std::vector<HloComputation*>& computation_versions) {
@@ -512,7 +499,7 @@ absl::StatusOr<bool> SpecializeCalls(
         target_comp = computation;
         original_computation_used = true;
       } else {
-        target_comp = CloneComputation(module, computation);
+        target_comp = hlo_computation_utils::CloneComputation(computation);
         computation_versions.push_back(target_comp);
       }
       specialization_cache.emplace(key, target_comp);
@@ -716,10 +703,9 @@ absl::StatusOr<bool> HloConstantFolding::RunImpl(
     // constant folded.
     std::vector<HloComputation*> computation_versions;
     computation_versions.push_back(computation);
-    ABSL_ASSIGN_OR_RETURN(
-        bool did_specialize,
-        SpecializeCalls(module, computation, specialization_cache_,
-                        computation_versions));
+    ABSL_ASSIGN_OR_RETURN(bool did_specialize,
+                          SpecializeCalls(computation, specialization_cache_,
+                                          computation_versions));
     changed |= did_specialize;
 
     for (HloComputation* computation_version : computation_versions) {

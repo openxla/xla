@@ -87,9 +87,7 @@ def TPU_TiledLayoutAttr
     int64_t getRank() const {
       return getTileStrides().size();
     }
-    int64_t getUntiledRank() const;
 
-    ::llvm::SmallVector<int64_t> getExpandedShape(::llvm::ArrayRef<int64_t> shape) const;
     ::llvm::SmallVector<int64_t> getExpandedStrides() const;
 
     // Returns true if any of the tile strides are dynamic.
@@ -1119,6 +1117,8 @@ def TPU_MatmulPopFifoOp : TPU_Op<"matmul_pop_fifo"> {
     $mxu_index attr-dict `:` type($result)
   }];
 }
+
+include "xla/mosaic/dialect/tpu/tpu_matmul_ops.td"
 
 def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let arguments = (ins

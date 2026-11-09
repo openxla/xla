@@ -52,8 +52,6 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Bitcode/BitcodeReader.h"
-#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -69,7 +67,6 @@ limitations under the License.
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
@@ -199,7 +196,6 @@ limitations under the License.
 #include "xla/service/cpu/executable.pb.h"
 #include "xla/service/cpu/export_hlo.h"
 #include "xla/service/cpu/fusion_wrapper.h"
-#include "xla/service/cpu/ir_emitter.h"
 #include "xla/service/cpu/ir_emitter2.h"
 #include "xla/service/cpu/metrics.h"
 #include "xla/service/cpu/parallel_task_assignment.h"
@@ -1340,28 +1336,20 @@ static void RemoveUnusedSymbols(llvm::Module& module) {
 // To enable parallel compilation, each LLVM module has to be owned by a
 // separate LLVM context. We take each part of the original module after a
 // split, and clone it into a new LLVM context.
-static llvm::orc::ThreadSafeModule CloneAsThreadSafeModule(
+static absl::StatusOr<llvm::orc::ThreadSafeModule> CloneAsThreadSafeModule(
     int64_t part, std::unique_ptr<llvm::Module> module) {
   TraceMe trace([&] {
     return TraceMeEncode("CpuCompiler::CloneAsThreadSafeModule",
                          {{"part", part}});
   });
 
-  // There is no way to clone a module from one context to another, so we need
-  // to serialize the module to bitcode and parse it back into the new context.
-  llvm::SmallString<0> bc;
-  llvm::raw_svector_ostream bcos(bc);
-  llvm::WriteBitcodeToFile(*module, bcos);
-
-  // Parse module back into its own LLVM context.
   auto clone_context = std::make_unique<llvm::LLVMContext>();
-  auto clone_module = llvm::parseBitcodeFile(
-      llvm::MemoryBufferRef(
-          llvm::StringRef(bc.data(), bc.size()),
-          absl::StrFormat("%s_part_%02d", kXlaModuleIdentifier, part)),
-      *clone_context);
-
-  return llvm::orc::ThreadSafeModule(std::move(*clone_module),
+  ABSL_ASSIGN_OR_RETURN(
+      std::unique_ptr<llvm::Module> clone_module,
+      llvm_ir::CloneModuleToContext(
+          *module, *clone_context,
+          absl::StrFormat("%s_part_%02d", kXlaModuleIdentifier, part)));
+  return llvm::orc::ThreadSafeModule(std::move(clone_module),
                                      std::move(clone_context));
 }
 
@@ -1478,25 +1466,9 @@ namespace {
 // have one object file for all the kernels.
 absl::StatusOr<std::unique_ptr<llvm::Module>> CopyLlvmModuleToLocalContext(
     llvm::LLVMContext& llvm_context, const llvm::Module& module) {
-  // There is no way to clone a module from one context to another, so we
-  // need to serialize the module to bitcode and parse it back into the
-  // new context.
-  llvm::SmallString<0> bc;
-  llvm::raw_svector_ostream bcos(bc);
-  llvm::WriteBitcodeToFile(module, bcos);
-
-  // Parse module back into its own LLVM context.
-  auto cloned_module = llvm::parseBitcodeFile(
-      llvm::MemoryBufferRef(
-          llvm::StringRef(bc.data(), bc.size()),
-          absl::StrFormat("%s_cloned_to_local_context", kXlaModuleIdentifier)),
-      llvm_context);
-
-  if (!cloned_module) {
-    return Internal("Failed to copy LLVM module to local context.");
-  }
-
-  return std::move(*cloned_module);
+  return llvm_ir::CloneModuleToContext(
+      module, llvm_context,
+      absl::StrFormat("%s_cloned_to_local_context", kXlaModuleIdentifier));
 };
 
 class LlvmMultipleModuleCompiler {
@@ -1710,17 +1682,9 @@ CpuCompiler::CompileCpuExecutable(
   // be renamed to NestedIrEmitter and be used only for emitting nested (aka
   // thread local or embedded) computations (reductions, maps, etc.).
 
-  // (Nested) IrEmitter is responsible for building LLVM module with functions
-  // for all HLO computations. In thunk execution mode we only build LLVM
-  // functions for embedded computations (e.g. reduction computations) and all
-  // high-level operations (fusions, elementwise, etc.) are lowered to kernel
-  // functions (which are also LLVM functions, but use a HostKernel ABI).
-  IrEmitter nested_ir_emitter(*module, *assignment, llvm_module.get(),
-                              &target_machine_features);
-
   // IR emitter is responsible for building LLVM module with host kernels for
   // corresponding HLO instructions (fusions, elemental instructions, etc.).
-  IrEmitter2 ir_emitter2(*module, llvm_module.get(), &nested_ir_emitter);
+  IrEmitter2 ir_emitter2(*module, llvm_module.get(), assignment.get());
 
   // Thunk emitter is responsible for building a Thunk sequence that will
   // resolved kernels in the compiled LLVM module and execute them together
@@ -1826,8 +1790,9 @@ CpuCompiler::CompileCpuExecutable(
     VLOG(5) << "Adding compilation module:\n" << dump;
 
     // Clone LLVM module part into its own thread safe context.
-    auto tsm =
-        CloneAsThreadSafeModule(dylib_index, std::move(llvm_module_part));
+    ABSL_ASSIGN_OR_RETURN(
+        llvm::orc::ThreadSafeModule tsm,
+        CloneAsThreadSafeModule(dylib_index, std::move(llvm_module_part)));
 
     ABSL_RETURN_IF_ERROR(
         llvm_module_compiler->AddModule(std::move(tsm), dylib_index++));

@@ -25,6 +25,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -195,6 +196,15 @@ class PjRtRawClient {
                              {});
   }
 
+  // Allocates a batch of raw buffers in `memory_space` for the execute path.
+  // Per-buffer shape metadata for memory profiling is read from
+  // `ScopedMemoryDebugAnnotation::CurrentAnnotation().pending_shape_func(i)`.
+  // Each returned buffer has an independent lifetime.
+  virtual absl::StatusOr<absl::InlinedVector<PjRtRawBufferRef, 4>>
+  AllocateRawBuffersForExecute(PjRtMemorySpace* memory_space,
+                               absl::Span<const size_t> on_device_bytes_counts,
+                               bool retry_on_oom);
+
   // Creates a raw buffer channel. Returns a tuple containing:
   // 1.  A PjRtRawBufferRef which is an alias for a future
   //     raw buffer.
@@ -336,9 +346,7 @@ class PjRtRawClient {
   }
 
   virtual absl::StatusOr<tsl::RCReference<PjRtExecutableLoadState>>
-  MakeLoadState(const LoadOptions& load_options) {
-    LOG(FATAL) << "Implement MakeLoadState()";
-  }
+  MakeLoadState(const LoadOptions& load_options) = 0;
 
   virtual std::unique_ptr<ScopedAsyncTrackingEvent> CreateAsyncTrackingEvent(
       LocalDeviceId local_device_id, absl::string_view description) const {
