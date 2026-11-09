@@ -29,8 +29,7 @@ constexpr char kCpuPlatformName[] = "cpu";
 
 CpuDeviceDescription::CpuDeviceDescription(int process_id, int local_device_id)
     : id_(PackCpuDeviceId(process_id, local_device_id)),
-      process_index_(process_id),
-      local_hardware_id_(local_device_id) {
+      process_index_(process_id) {
   debug_string_ = absl::StrCat("cpu:", id_.value());
   to_string_ = absl::StrCat("CpuDevice(id=", id_.value(), ")");
 }

@@ -68,6 +68,8 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/strided_gather.h"
+#include "xla/runtime/chip_id.h"
+#include "xla/runtime/device_id.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
@@ -2473,6 +2475,19 @@ ENTRY main {
   EXPECT_EQ(override_pool.schedule_count(), override_count_before);
   EXPECT_EQ(client_pool.schedule_count(), client_count_before);
   EXPECT_FLOAT_EQ(single_literal->Get<float>({0}), 2.0f);
+}
+
+TEST(PjRtCpuClientTest, LocalHardwareIdIsZero) {
+  CpuClientOptions options;
+  options.cpu_device_count = 4;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtClient> client,
+                       GetXlaPjrtCpuClient(options));
+  ASSERT_EQ(client->addressable_devices().size(), 4);
+  for (int i = 0; i < 4; ++i) {
+    PjRtDevice* device = client->addressable_devices()[i];
+    EXPECT_EQ(device->local_device_id(), LocalDeviceId(i));
+    EXPECT_EQ(device->local_hardware_id(), LocalChipId(0));
+  }
 }
 
 }  // namespace

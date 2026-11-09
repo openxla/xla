@@ -101,5 +101,14 @@ TEST(ThunkTest, CollectiveExecuteParams) {
   EXPECT_EQ(params.collectives, reinterpret_cast<CpuCollectives*>(0x12345678));
 }
 
+TEST(ThunkTest, CustomCallExecuteParams) {
+  ExecutableRunOptions run_options;
+  run_options.set_device_ordinal(2049);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto params,
+                          Thunk::CustomCallExecuteParams::Create(&run_options));
+  EXPECT_EQ(params.device_ordinal, 0);
+}
+
 }  // namespace
 }  // namespace xla::cpu
