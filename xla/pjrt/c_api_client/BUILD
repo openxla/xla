@@ -164,6 +164,7 @@ xla_cc_test(
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
         "//xla/backends/cpu:alignment",
         "//xla/ffi",
         "//xla/ffi:ffi_api",
