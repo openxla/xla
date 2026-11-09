@@ -22,8 +22,6 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "absl/status/status.h"
-#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -37,7 +35,6 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::FieldsAre;
-using ::testing::HasSubstr;
 using ::testing::SizeIs;
 using ::testing::VariantWith;
 
@@ -306,22 +303,6 @@ TEST_F(DynamicSliceAnalysisTest, InductionVariableEntryAgreeingIsAnalyzed) {
     ASSERT_TRUE(desc.has_value());
     EXPECT_THAT(desc->offsets,
                 VariantWith<Linear>(FieldsAre(2 * 256, 3 * 256)));
-  }
-}
-
-// An induction variable entry that contradicts known_init_step means the loop
-// metadata is inconsistent, which is an internal error.
-TEST_F(DynamicSliceAnalysisTest, InductionVariableEntryContradictingIsAnError) {
-  for (absl::string_view entry :
-       {R"({"init":"0","step":"3","tuple_index":"0"})",
-        R"({"step":"1","tuple_index":"0"})"}) {
-    SCOPED_TRACE(entry);
-    ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(
-                                          InductionVariableSliceHlo(entry)));
-    EXPECT_THAT(AnalyzeByName(module.get(), "slice"),
-                absl_testing::StatusIs(absl::StatusCode::kInternal,
-                                       HasSubstr("disagrees with "
-                                                 "known_init_step")));
   }
 }
 

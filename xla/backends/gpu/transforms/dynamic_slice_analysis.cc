@@ -32,7 +32,6 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "xla/hlo/evaluator/hlo_evaluator.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -276,15 +275,14 @@ static const HloInstruction* StripCopies(const HloInstruction* instr) {
 // Returns the affine init/step of `variable`, a GTE of the loop parameter
 // (possibly through copies), or nullopt if they are not known.
 //
-// The induction variable uses `known_init_step`; any init/step recorded for it
-// in `dynamic_variables` must agree; a disagreement means the loop's metadata
-// is inconsistent and is returned as an Internal error. Any other
-// loop-carried variable needs both init and step in its `dynamic_variables`
-// entry. Such a variable is not equal to the induction variable in general
-// (e.g. CollectivePipeliner's prefetch counters, whose init is computed by a
-// peeled iteration), so substituting the induction variable's init/step would
-// compute offsets for the wrong iteration.
-static absl::StatusOr<std::optional<InitStep>> GetInitStepForVariable(
+// The induction variable uses `known_init_step`, which is authoritative (the
+// HloVerifier rejects a `dynamic_variables` entry that contradicts it). Any
+// other loop-carried variable needs both init and step in its
+// `dynamic_variables` entry. Such a variable is not equal to the induction
+// variable in general (e.g. CollectivePipeliner's prefetch counters, whose init
+// is computed by a peeled iteration), so substituting the induction variable's
+// init/step would compute offsets for the wrong iteration.
+static std::optional<InitStep> GetInitStepForVariable(
     const HloInstruction* variable, const WhileLoopBackendConfig& config) {
   const HloInstruction* gte = StripCopies(variable);
   if (gte->opcode() != HloOpcode::kGetTupleElement) {
@@ -292,31 +290,18 @@ static absl::StatusOr<std::optional<InitStep>> GetInitStepForVariable(
     return std::nullopt;
   }
   int64_t tuple_idx = gte->tuple_index();
+  if (config.has_known_induction_variable() &&
+      config.known_induction_variable().tuple_index() == tuple_idx) {
+    return InitStep{config.known_init_step().init(),
+                    config.known_init_step().step()};
+  }
+
   const WhileLoopBackendConfig::DynamicVariable* entry = nullptr;
   for (const auto& dynamic_variable : config.dynamic_variables()) {
     if (dynamic_variable.tuple_index() == tuple_idx) {
       entry = &dynamic_variable;
       break;
     }
-  }
-
-  if (config.has_known_induction_variable() &&
-      config.known_induction_variable().tuple_index() == tuple_idx) {
-    InitStep init_step{config.known_init_step().init(),
-                       config.known_init_step().step()};
-    if (entry != nullptr &&
-        ((entry->has_init() && entry->init() != init_step.init) ||
-         (entry->has_step() && entry->step() != init_step.step))) {
-      return Internal(
-          "Dynamic variable entry for the induction variable at tuple index "
-          "%d of the loop with body %s (init=%s, step=%s) disagrees with "
-          "known_init_step (init=%d, step=%d).",
-          tuple_idx, gte->parent()->name(),
-          entry->has_init() ? absl::StrCat(entry->init()) : "unset",
-          entry->has_step() ? absl::StrCat(entry->step()) : "unset",
-          init_step.init, init_step.step);
-    }
-    return init_step;
   }
 
   if (entry == nullptr || !entry->has_init() || !entry->has_step()) {
@@ -571,9 +556,8 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
     maybe_init_step = InitStep{resolved_offsets.front().staggered_init,
                                loop_config.known_init_step().step()};
   } else {
-    ABSL_ASSIGN_OR_RETURN(
-        maybe_init_step,
-        GetInitStepForVariable(front.init_step_variable, loop_config));
+    maybe_init_step =
+        GetInitStepForVariable(front.init_step_variable, loop_config);
   }
   if (!maybe_init_step.has_value()) {
     return std::nullopt;
