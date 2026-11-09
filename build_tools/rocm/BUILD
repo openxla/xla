@@ -55,6 +55,16 @@ sh_binary(
     visibility = ["//visibility:public"],
 )
 
+# Test run_under wrapper that attaches rocgdb to a test that runs too long and
+# prints all thread backtraces.
+sh_binary(
+    name = "hang_probe",
+    srcs = ["hang_probe.sh"],
+    data = ["@local_config_rocm//rocm:rocgdb"],
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)
+
 # Sanitizer wrapper that runs under parallel_gpu_execute
 # Combines sanitizer setup with GPU locking and device visibility
 # buildifier: disable=platform-specific-binaries

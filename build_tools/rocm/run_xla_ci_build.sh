@@ -57,6 +57,30 @@ else
     BAZEL_ARGS=("$@")
 fi
 
+# Hang probe. In the single GPU run, runs only the tests that hung, several
+# times each, under the hang_probe target, which attaches rocgdb to a test that
+# is still running after HANG_PROBE_AFTER_S seconds and prints all thread
+# backtraces. Results are not taken from the cache.
+if [[ "${XLA_CI_HANG_PROBE:-1}" == "1" && " $* " == *" --config=ci_single_gpu "* ]]; then
+    read -r -a HANG_PROBE_TARGETS <<< "${XLA_CI_HANG_PROBE_TARGETS:-//xla/tests:convolution_gpu_alternative_layout_test_amdgpu_any //xla/tests:convolution_autotune_disabled_test_amdgpu_any //xla/hlo/builder/lib:svd_test_amdgpu_any}"
+    BAZEL_ARGS=()
+    for arg in "$@"; do
+        if [[ "$arg" == "--" ]]; then
+            break
+        fi
+        BAZEL_ARGS+=("$arg")
+    done
+    BAZEL_ARGS+=(
+        "--run_under=//build_tools/rocm:hang_probe"
+        "--test_env=HANG_PROBE_AFTER_S=${XLA_CI_HANG_PROBE_AFTER_S:-300}"
+        "--runs_per_test=${XLA_CI_HANG_PROBE_RUNS:-10}"
+        "--nocache_test_results"
+        "--keep_going"
+        "--"
+        "${HANG_PROBE_TARGETS[@]}"
+    )
+fi
+
 set +e
 bazel --bazelrc="$SCRIPT_DIR/rocm_xla_ci.bazelrc" test \
     --build_tag_filters=$TAG_FILTERS \
