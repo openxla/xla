@@ -2869,33 +2869,32 @@ TEST_F(AlgebraicSimplifierTest, DivOfExp) {
                                      m::Exp(m::Negate(m::Parameter(1))))));
 }
 
-// Test that A/pow(B,C) is simplified to A*pow(B,-C).
+// Test that A/pow(B,C) is simplified to A*pow(B,-C) only with fast math.
 TEST_F(AlgebraicSimplifierTest, DivOfPower) {
-  auto m = CreateNewVerifiedModule();
-  Shape r0f32 = ShapeUtil::MakeShape(F32, {});
-  HloComputation::Builder builder(TestName());
-  HloInstruction* param0 = builder.AddInstruction(
-      HloInstruction::CreateParameter(0, r0f32, "param0"));
-  HloInstruction* param1 = builder.AddInstruction(
-      HloInstruction::CreateParameter(1, r0f32, "param1"));
-  HloInstruction* param2 = builder.AddInstruction(
-      HloInstruction::CreateParameter(2, r0f32, "param2"));
-  HloInstruction* power = builder.AddInstruction(
-      HloInstruction::CreateBinary(r0f32, HloOpcode::kPower, param1, param2));
-  builder.AddInstruction(
-      HloInstruction::CreateBinary(r0f32, HloOpcode::kDivide, param0, power));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m
+    ENTRY test {
+      a = f32[] parameter(0)
+      b = f32[] parameter(1)
+      c = f32[] parameter(2)
+      p = f32[] power(b, c)
+      ROOT d = f32[] divide(a, p)
+    }
+  )hlo"));
 
-  auto computation = m->AddEntryComputationWithLayouts(builder.Build());
-
+  ASSERT_THAT(RunHloPass(AlgebraicSimplifier(default_options_), m.get()),
+              absl_testing::IsOkAndHolds(false));
   EXPECT_THAT(
-      computation->root_instruction(),
+      m->entry_computation()->root_instruction(),
       GmockMatch(m::Divide(m::Parameter(0),
                            m::Power(m::Parameter(1), m::Parameter(2)))));
 
-  AlgebraicSimplifier simplifier(default_options_);
-  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_fast_math(true);
+  ASSERT_THAT(RunHloPass(AlgebraicSimplifier(options), m.get()),
+              absl_testing::IsOkAndHolds(true));
 
-  EXPECT_THAT(computation->root_instruction(),
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Multiply(
                   m::Parameter(0),
                   m::Power(m::Parameter(1), m::Negate(m::Parameter(2))))));
@@ -2904,7 +2903,7 @@ TEST_F(AlgebraicSimplifierTest, DivOfPower) {
 // Test that an integer A/pow(B,C) is kept: pow(B,-C) is not a reciprocal for
 // integers.
 TEST_F(AlgebraicSimplifierTest, IntegerDivOfPower) {
-  const char* kModuleStr = R"(
+  const char* kModuleStr = R"hlo(
     HloModule m
     test {
       a = s32[] parameter(0)
@@ -2913,45 +2912,48 @@ TEST_F(AlgebraicSimplifierTest, IntegerDivOfPower) {
       p = s32[] power(b, c)
       ROOT d = s32[] divide(a, p)
     }
-  )";
-  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_OK_AND_ASSIGN(bool changed,
-                       AlgebraicSimplifier(default_options_).Run(m.get()));
-  EXPECT_FALSE(changed);
-  EXPECT_THAT(
-      m->entry_computation()->root_instruction(),
-      GmockMatch(m::Divide(m::Parameter(0),
-                           m::Power(m::Parameter(1), m::Parameter(2)))));
+  )hlo";
+  for (bool fast_math : {false, true}) {
+    SCOPED_TRACE(fast_math);
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+    AlgebraicSimplifierOptions options = default_options_;
+    options.set_enable_fast_math(fast_math);
+    ASSERT_THAT(RunHloPass(AlgebraicSimplifier(options), m.get()),
+                absl_testing::IsOkAndHolds(false));
+    EXPECT_THAT(
+        m->entry_computation()->root_instruction(),
+        GmockMatch(m::Divide(m::Parameter(0),
+                             m::Power(m::Parameter(1), m::Parameter(2)))));
+  }
 }
 
 // Test that broadcasting is done on the right step when simplifying A/pow(B,C)
 // to A*pow(B,-C).
 TEST_F(AlgebraicSimplifierTest, DivOfBroadcastingPower) {
-  auto m = CreateNewVerifiedModule();
-  Shape r1f32 = ShapeUtil::MakeShape(F32, {7});
-  HloComputation::Builder builder(TestName());
-  HloInstruction* param0 = builder.AddInstruction(
-      HloInstruction::CreateParameter(0, r1f32, "param0"));
-  HloInstruction* param1 = builder.AddInstruction(
-      HloInstruction::CreateParameter(1, r1f32, "param1"));
-  HloInstruction* param2 = builder.AddInstruction(
-      HloInstruction::CreateParameter(2, r1f32, "param2"));
-  HloInstruction* power = builder.AddInstruction(
-      HloInstruction::CreateBinary(r1f32, HloOpcode::kPower, param1, param2));
-  builder.AddInstruction(
-      HloInstruction::CreateBinary(r1f32, HloOpcode::kDivide, param0, power));
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule m
+    ENTRY test {
+      a = f32[7] parameter(0)
+      b = f32[7] parameter(1)
+      c = f32[7] parameter(2)
+      p = f32[7] power(b, c)
+      ROOT d = f32[7] divide(a, p)
+    }
+  )hlo"));
 
-  auto computation = m->AddEntryComputationWithLayouts(builder.Build());
-
+  ASSERT_THAT(RunHloPass(AlgebraicSimplifier(default_options_), m.get()),
+              absl_testing::IsOkAndHolds(false));
   EXPECT_THAT(
-      computation->root_instruction(),
+      m->entry_computation()->root_instruction(),
       GmockMatch(m::Divide(m::Parameter(0),
                            m::Power(m::Parameter(1), m::Parameter(2)))));
 
-  AlgebraicSimplifier simplifier(default_options_);
-  ASSERT_TRUE(simplifier.Run(m.get()).value());
+  AlgebraicSimplifierOptions options = default_options_;
+  options.set_enable_fast_math(true);
+  ASSERT_THAT(RunHloPass(AlgebraicSimplifier(options), m.get()),
+              absl_testing::IsOkAndHolds(true));
 
-  ASSERT_THAT(computation->root_instruction(),
+  EXPECT_THAT(m->entry_computation()->root_instruction(),
               GmockMatch(m::Multiply(
                   m::Parameter(0),
                   m::Power(m::Parameter(1), m::Negate(m::Parameter(2))))));
@@ -11903,33 +11905,51 @@ TEST_F(AlgebraicSimplifierTest, CompareGtBMin) {
 }
 
 TEST_F(AlgebraicSimplifierTest, CompareIota) {
-  constexpr absl::string_view kModuleStr = R"(
+  constexpr absl::string_view kModuleStr = R"hlo(
     HloModule m
-    test {
+    ENTRY test {
       zero = s32[] constant(0)
       iota = s32[128] iota(), iota_dimension=0
       broad = s32[128] broadcast(zero), dimensions={}
-      ROOT compare = pred[128] compare(iota, broad), direction=LT
-    })";
-  TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
+      ge = pred[128] compare(iota, broad), direction=GE
+      le = pred[128] compare(broad, iota), direction=LE
+      lt = pred[128] compare(iota, broad), direction=LT
+      gt = pred[128] compare(broad, iota), direction=GT
+      ROOT result = (pred[128], pred[128], pred[128], pred[128]) tuple(ge, le, lt, gt)
+    })hlo";
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
+  ASSERT_THAT(RunHloPass(AlgebraicSimplifier(default_options_), m.get()),
+              absl_testing::IsOkAndHolds(true));
   EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Broadcast(m::ConstantScalar(false))));
+              GmockMatch(m::Tuple(m::Broadcast(m::ConstantScalar(true)),
+                                  m::Broadcast(m::ConstantScalar(true)),
+                                  m::Broadcast(m::ConstantScalar(false)),
+                                  m::Broadcast(m::ConstantScalar(false)))));
 }
 
-TEST_F(AlgebraicSimplifierTest, CompareAbsLtZeroBecomesFalse) {
-  // Floating-point |x| < 0  ->  false.
-  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(R"(
-m {
-  p = f32[5] parameter(0)
-  a = f32[5] abs(p)
-  z = f32[] constant(0)
-  b = f32[5] broadcast(z)
-  ROOT r = pred[5] compare(a, b), direction=LT
-})"));
-  ASSERT_TRUE(AlgebraicSimplifier(default_options_).Run(m.get()).value());
-  EXPECT_THAT(m->entry_computation()->root_instruction(),
-              GmockMatch(m::Broadcast(m::ConstantScalar(false))));
+TEST_F(AlgebraicSimplifierTest, CompareNonNegativeFloatWithZero) {
+  for (const char* opcode : {"abs", "exponential"}) {
+    SCOPED_TRACE(opcode);
+    const std::string hlo = absl::StrFormat(R"hlo(
+      HloModule m
+      ENTRY test {
+        p = f32[5] parameter(0)
+        nonnegative = f32[5] %s(p)
+        zero = f32[] constant(0)
+        broad = f32[5] broadcast(zero), dimensions={}
+        ge = pred[5] compare(nonnegative, broad), direction=GE
+        le = pred[5] compare(broad, nonnegative), direction=LE
+        lt = pred[5] compare(nonnegative, broad), direction=LT
+        gt = pred[5] compare(broad, nonnegative), direction=GT
+        ROOT result = (pred[5], pred[5], pred[5], pred[5]) tuple(ge, le, lt, gt)
+      })hlo",
+                                            opcode);
+    ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(hlo));
+    ASSERT_THAT(RunHloPass(AlgebraicSimplifier(default_options_), m.get()),
+                absl_testing::IsOkAndHolds(false));
+    EXPECT_THAT(m->entry_computation()->root_instruction(),
+                GmockMatch(m::Tuple(m::Ge(), m::Le(), m::Lt(), m::Gt())));
+  }
 }
 
 TEST_F(AlgebraicSimplifierTest, DoesNotFoldSignedIntegerAbsLtZero) {
@@ -15842,41 +15862,41 @@ TEST_F(AlgebraicSimplifierTest, PathologicalComplexity) {
       a = s32[4,4] parameter(0)
       b = s32[4,4] parameter(1)
       %cmp0 = pred[4,4] compare(a, b), direction=GE
-      %c1 = f32[] constant(1)
-      %ones = f32[4,4] broadcast(f32[] %c1)
-      %c0 = f32[] constant(0)
-      %zeros = f32[4,4] broadcast(f32[] %c0)
-      %min = f32[4,4] minimum(%ones, %zeros)
-      %min0 = f32[4,4] minimum(%min, %min)
-      %min1 = f32[4,4] minimum(%min0, %min0)
-      %min2 = f32[4,4] minimum(%min1, %min1)
-      %min3 = f32[4,4] minimum(%min2, %min2)
-      %min4 = f32[4,4] minimum(%min3, %min3)
-      %min5 = f32[4,4] minimum(%min4, %min4)
-      %min6 = f32[4,4] minimum(%min5, %min5)
-      %min7 = f32[4,4] minimum(%min6, %min6)
-      %min8 = f32[4,4] minimum(%min7, %min7)
-      %min9 = f32[4,4] minimum(%min8, %min8)
-      %min10 = f32[4,4] minimum(%min9, %min9)
-      %min11 = f32[4,4] minimum(%min10, %min10)
-      %min12 = f32[4,4] minimum(%min11, %min11)
-      %min13 = f32[4,4] minimum(%min12, %min12)
-      %min14 = f32[4,4] minimum(%min13, %min13)
-      %min15 = f32[4,4] minimum(%min14, %min14)
-      %min16 = f32[4,4] minimum(%min15, %min15)
-      %min17 = f32[4,4] minimum(%min16, %min16)
-      %min18 = f32[4,4] minimum(%min17, %min17)
-      %min19 = f32[4,4] minimum(%min18, %min18)
-      %min20 = f32[4,4] minimum(%min19, %min19)
-      %min21 = f32[4,4] minimum(%min20, %min20)
-      %min22 = f32[4,4] minimum(%min21, %min21)
-      %min23 = f32[4,4] minimum(%min22, %min22)
-      %min24 = f32[4,4] minimum(%min23, %min23)
-      %min25 = f32[4,4] minimum(%min24, %min24)
-      %min26 = f32[4,4] minimum(%min25, %min25)
-      %min27 = f32[4,4] minimum(%min26, %min26)
-      %min28 = f32[4,4] minimum(%min27, %min27)
-      %min29 = f32[4,4] minimum(%min28, %min28)
+      %c1 = s32[] constant(1)
+      %ones = s32[4,4] broadcast(s32[] %c1)
+      %c0 = s32[] constant(0)
+      %zeros = s32[4,4] broadcast(s32[] %c0)
+      %min = s32[4,4] minimum(%ones, %zeros)
+      %min0 = s32[4,4] minimum(%min, %min)
+      %min1 = s32[4,4] minimum(%min0, %min0)
+      %min2 = s32[4,4] minimum(%min1, %min1)
+      %min3 = s32[4,4] minimum(%min2, %min2)
+      %min4 = s32[4,4] minimum(%min3, %min3)
+      %min5 = s32[4,4] minimum(%min4, %min4)
+      %min6 = s32[4,4] minimum(%min5, %min5)
+      %min7 = s32[4,4] minimum(%min6, %min6)
+      %min8 = s32[4,4] minimum(%min7, %min7)
+      %min9 = s32[4,4] minimum(%min8, %min8)
+      %min10 = s32[4,4] minimum(%min9, %min9)
+      %min11 = s32[4,4] minimum(%min10, %min10)
+      %min12 = s32[4,4] minimum(%min11, %min11)
+      %min13 = s32[4,4] minimum(%min12, %min12)
+      %min14 = s32[4,4] minimum(%min13, %min13)
+      %min15 = s32[4,4] minimum(%min14, %min14)
+      %min16 = s32[4,4] minimum(%min15, %min15)
+      %min17 = s32[4,4] minimum(%min16, %min16)
+      %min18 = s32[4,4] minimum(%min17, %min17)
+      %min19 = s32[4,4] minimum(%min18, %min18)
+      %min20 = s32[4,4] minimum(%min19, %min19)
+      %min21 = s32[4,4] minimum(%min20, %min20)
+      %min22 = s32[4,4] minimum(%min21, %min21)
+      %min23 = s32[4,4] minimum(%min22, %min22)
+      %min24 = s32[4,4] minimum(%min23, %min23)
+      %min25 = s32[4,4] minimum(%min24, %min24)
+      %min26 = s32[4,4] minimum(%min25, %min25)
+      %min27 = s32[4,4] minimum(%min26, %min26)
+      %min28 = s32[4,4] minimum(%min27, %min27)
+      %min29 = s32[4,4] minimum(%min28, %min28)
       ROOT %cmp1 = pred[4,4] compare(%min29, %zeros), direction=LT
     })";
   TF_ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kModuleStr));
