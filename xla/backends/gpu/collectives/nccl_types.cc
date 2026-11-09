@@ -20,6 +20,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "third_party/nccl/nccl.h"
@@ -32,9 +33,17 @@ limitations under the License.
 namespace xla::gpu {
 
 NcclCommState::~NcclCommState() {
-  // Successful parent teardown clears pending_split_comms. If teardown failed,
-  // NCCL may still write child handles into the retained memory, so leave it
-  // allocated to avoid a use-after-free.
+  // After successful parent teardown, NcclCommunicator attempts to abort any
+  // pending children. Entries can remain if parent teardown or a child abort
+  // fails. If parent teardown failed, NCCL may still write to the storage for
+  // a child communicator handle. Leave that storage allocated without reading
+  // it to avoid a data race or use-after-free. The child communicator may also
+  // leak.
+  if (!pending_split_comms.empty()) {
+    LOG(WARNING) << "Leaking " << pending_split_comms.size()
+                 << " NCCL split output(s): parent teardown did not complete "
+                    "or a child abort failed";
+  }
   for (auto& output : pending_split_comms) {
     (void)output.release();
   }

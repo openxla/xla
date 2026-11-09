@@ -698,6 +698,7 @@ cc_library(
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tsl/cuda:nccl",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
