@@ -314,6 +314,8 @@ xla_cc_test(
         "//xla/pjrt/plugin/xla_cpu:cpu_execute_options",
         "//xla/pjrt/plugin/xla_cpu:cpu_memory",
         "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
+        "//xla/runtime:chip_id",
+        "//xla/runtime:device_id",
         "//xla/service:hlo_proto_cc",
         "//xla/tests:literal_test_util",
         "//xla/tsl/lib/core:status_test_util",

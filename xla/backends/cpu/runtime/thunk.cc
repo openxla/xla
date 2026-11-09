@@ -138,14 +138,10 @@ Thunk::CollectiveExecuteParams::CollectiveExecuteParams(
 absl::StatusOr<Thunk::CustomCallExecuteParams>
 Thunk::CustomCallExecuteParams::Create(
     const ExecutableRunOptions* run_options) {
-  // Device ordinal must be set by caller and passed in run options, if not,
-  // we use the device ordinal from the parent StreamExecutor.
-  int32_t device_ordinal =
-      run_options->device_ordinal() >= 0
-          ? run_options->device_ordinal()
-          : run_options->stream()->parent()->device_ordinal();
-
-  return CustomCallExecuteParams{run_options->run_id(), device_ordinal,
+  // On CPU there is only a single physical host device (ordinal 0), shared by
+  // all virtual CPU devices in the process (`run_options->device_ordinal()`
+  // carries the logical/global device ID for collectives and xfeed).
+  return CustomCallExecuteParams{run_options->run_id(), /*device_ordinal=*/0,
                                  run_options->intra_op_thread_pool(),
                                  run_options->ffi_execution_context()};
 }

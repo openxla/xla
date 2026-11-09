@@ -33,7 +33,7 @@ class CpuDeviceDescription final : public PjRtDeviceDescription {
 
   int process_index() const override { return process_index_; }
 
-  int local_hardware_id() const { return local_hardware_id_; }
+  int local_hardware_id() const { return 0; }
 
   absl::string_view device_kind() const override;
 
@@ -49,7 +49,6 @@ class CpuDeviceDescription final : public PjRtDeviceDescription {
  private:
   GlobalDeviceId id_;
   int process_index_;
-  int local_hardware_id_;
   std::string debug_string_;
   std::string to_string_;
   absl::flat_hash_map<std::string, PjRtDeviceAttribute> attributes_ = {};

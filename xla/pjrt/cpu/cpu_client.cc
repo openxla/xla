@@ -502,8 +502,7 @@ std::unique_ptr<CommonPjRtClient> CreatePjRtCpuClient(
         topology_device.process_id, topology_device.local_device_id);
     auto device = std::make_unique<CommonPjRtDevice>(
         std::move(description), LocalDeviceId(topology_device.local_device_id),
-        LocalChipId(topology_device.local_device_id),
-        topology_device.process_id == process_id, client.get());
+        LocalChipId(0), topology_device.process_id == process_id, client.get());
     if (device->IsAddressable()) {
       const int id = device->global_device_id().value();
 
