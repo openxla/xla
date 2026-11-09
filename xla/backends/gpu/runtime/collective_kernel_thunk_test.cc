@@ -49,7 +49,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_execution.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
-#include "xla/backends/gpu/runtime/collective_memory_cache.h"
 #include "xla/backends/gpu/runtime/collective_memory_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
@@ -60,6 +59,7 @@ limitations under the License.
 #include "xla/core/collectives/clique_key.h"
 #include "xla/core/collectives/collectives.h"
 #include "xla/core/collectives/communicator.h"
+#include "xla/core/collectives/symmetric_memory.h"
 #include "xla/future.h"
 #include "xla/runtime/buffer_use.h"
 #include "xla/runtime/device_id.h"
@@ -307,8 +307,6 @@ struct CollectiveKernelThunkMetadata {
   bool use_ptx;
   std::vector<CollectiveThunk::Buffer> buffers;
   absl::string_view kernel_source = kKernelSource;
-  std::unique_ptr<CollectiveMemoryCache> collective_memory_cache =
-      std::make_unique<CollectiveMemoryCache>(/*num_devices=*/2);
   std::vector<se::DeviceAddressBase> device_buffers;
   // If set, the output slice lives in this second allocation (index 1), which
   // is backed by the same device buffer as `buffer_allocation` (index 0).
@@ -553,8 +551,7 @@ absl::StatusOr<se::DeviceAddressBase> RunCollectiveKernelThunk(
   ABSL_ASSIGN_OR_RETURN(
       CollectiveMemory collective_memory,
       AcquireCollectiveMemory(collective_params, collective_cliques,
-                              memory_requests,
-                              *metadata.collective_memory_cache));
+                              memory_requests));
 
   Thunk::InitializeParams initialize_params(&command_buffer_requests);
   initialize_params.executor = executor;
@@ -829,14 +826,13 @@ TEST(CollectiveKernelThunkTest, RecordCommandBufferCreateUpdate) {
       /*command_buffer_requests=*/&command_buffer_requests};
   ASSERT_OK(collective_kernel_thunk->Prepare(prepare_params));
 
-  CollectiveMemoryCache collective_memory_cache(/*num_devices=*/2);
   ASSERT_OK_AND_ASSIGN(
       CollectiveCliques collective_cliques,
       AcquireCollectiveCliques(collective_params, clique_requests));
   ASSERT_OK_AND_ASSIGN(
       CollectiveMemory collective_memory,
       AcquireCollectiveMemory(collective_params, collective_cliques,
-                              memory_requests, collective_memory_cache));
+                              memory_requests));
 
   Thunk::InitializeParams initialize_params(&command_buffer_requests);
   initialize_params.executor = executor;
@@ -984,6 +980,8 @@ INSTANTIATE_TEST_SUITE_P(
 struct WrappedComm {
   std::unique_ptr<GpuCommunicator> inner;
   StrictMock<MockGpuCommunicator>* mock;
+  std::shared_ptr<std::vector<const SymmetricMemory*>>
+      acquired_symmetric_memories;
 };
 
 struct LeakedMocks {
@@ -998,6 +996,7 @@ LeakedMocks& GetLeakedMocks() {
 
 StrictMock<MockGpuCollectives>* CreateMockCollectives(
     int expected_create_symmetric_memory_calls,
+    int expected_acquire_symmetric_memory_calls,
     std::vector<WrappedComm>& wrapped_comms) {
   se::StreamExecutor* executor0 = GetGpuExecutor(0);
   GpuCollectives* default_collectives =
@@ -1015,6 +1014,7 @@ StrictMock<MockGpuCollectives>* CreateMockCollectives(
   EXPECT_CALL(*collectives, CreateCommunicatorsWithCancel(_, _, _, _, _))
       .WillOnce(
           [default_collectives, expected_create_symmetric_memory_calls,
+           expected_acquire_symmetric_memory_calls,
            &wrapped_comms](const CliqueKey& clique_key,
                            const std::optional<CliqueIds>& clique_ids,
                            absl::Span<const Collectives::DeviceRank> ranks,
@@ -1035,6 +1035,8 @@ StrictMock<MockGpuCollectives>* CreateMockCollectives(
               auto mock_comm =
                   std::make_unique<StrictMock<MockGpuCommunicator>>();
               ::testing::Mock::AllowLeak(mock_comm.get());
+              auto acquired_symmetric_memories =
+                  std::make_shared<std::vector<const SymmetricMemory*>>();
               EXPECT_CALL(*mock_comm, CreateSymmetricMemory(_, _))
                   .Times(expected_create_symmetric_memory_calls)
                   .WillRepeatedly([inner_ptr](se::DeviceAddressBase addr,
@@ -1042,11 +1044,25 @@ StrictMock<MockGpuCollectives>* CreateMockCollectives(
                     return inner_ptr->CreateSymmetricMemory(addr,
                                                             symmetric_window);
                   });
+              EXPECT_CALL(*mock_comm, AcquireSymmetricMemory(_, _))
+                  .Times(expected_acquire_symmetric_memory_calls)
+                  .WillRepeatedly(
+                      [inner_ptr, acquired_symmetric_memories](
+                          se::DeviceAddressBase addr, bool symmetric_window)
+                          -> absl::StatusOr<std::shared_ptr<SymmetricMemory>> {
+                        ABSL_ASSIGN_OR_RETURN(
+                            std::shared_ptr<SymmetricMemory> sym,
+                            inner_ptr->AcquireSymmetricMemory(
+                                addr, symmetric_window));
+                        acquired_symmetric_memories->push_back(sym.get());
+                        return sym;
+                      });
               EXPECT_CALL(*mock_comm, HealthCheck())
                   .Times(AnyNumber())
                   .WillRepeatedly(
                       [inner_ptr]() { return inner_ptr->HealthCheck(); });
-              wrapped_comms.push_back({std::move(inner_comm), mock_comm.get()});
+              wrapped_comms.push_back({std::move(inner_comm), mock_comm.get(),
+                                       std::move(acquired_symmetric_memories)});
               result.push_back(std::move(mock_comm));
             }
             return result;
@@ -1069,11 +1085,19 @@ void VerifyAndLeakMockCollectives(StrictMock<MockGpuCollectives>* collectives,
   }
 }
 
+enum class SecondRunBufferMode {
+  kSameBuffer,
+  kSameArenaNewOffset,
+  kNewAllocation,
+};
+
 struct SymmetricMemoryCachingTestCase {
   std::string test_name;
   SymmetricMemoryType output_memory_type;
-  bool reallocate_on_second_run;
+  SecondRunBufferMode second_run_buffer_mode;
   int expected_create_symmetric_memory_calls;
+  int expected_acquire_symmetric_memory_calls;
+  bool expect_same_acquired_symmetric_memory;
 };
 
 class CollectiveKernelThunkSymmetricMemoryCachingTest
@@ -1091,7 +1115,8 @@ TEST_P(CollectiveKernelThunkSymmetricMemoryCachingTest,
 
   std::vector<WrappedComm> wrapped_comms;
   StrictMock<MockGpuCollectives>* collectives = CreateMockCollectives(
-      param.expected_create_symmetric_memory_calls, wrapped_comms);
+      param.expected_create_symmetric_memory_calls,
+      param.expected_acquire_symmetric_memory_calls, wrapped_comms);
 
   CollectiveKernelThunkMetadata metadata = CreateCollectiveKernelThunk(
       /*num_devices=*/kDevicesCount, /*num_elements=*/kNumElements,
@@ -1106,15 +1131,21 @@ TEST_P(CollectiveKernelThunkSymmetricMemoryCachingTest,
   VerifyDeviceOutputs(result_buffers1, metadata.input_data_size_bytes,
                       expected_output_data1);
 
-  if (param.reallocate_on_second_run) {
+  if (param.second_run_buffer_mode == SecondRunBufferMode::kNewAllocation) {
     metadata.device_buffers.assign(kDevicesCount, se::DeviceAddressBase());
+  } else if (param.second_run_buffer_mode ==
+             SecondRunBufferMode::kSameArenaNewOffset) {
+    for (int d = 0; d < kDevicesCount; ++d) {
+      metadata.device_buffers[d] = metadata.device_buffers[d].GetByteSlice(
+          metadata.total_buffer_size, metadata.total_buffer_size);
+    }
   }
 
   ASSERT_OK_AND_ASSIGN(
       std::vector<se::DeviceAddressBase> result_buffers2,
       RunCollectiveKernelThunkOnDevices(
           metadata, /*emulate_multiprocess=*/false, input_data2, collectives));
-  if (param.reallocate_on_second_run) {
+  if (param.second_run_buffer_mode != SecondRunBufferMode::kSameBuffer) {
     for (int d = 0; d < kDevicesCount; ++d) {
       ASSERT_NE(result_buffers1[d].opaque(), result_buffers2[d].opaque());
     }
@@ -1123,6 +1154,19 @@ TEST_P(CollectiveKernelThunkSymmetricMemoryCachingTest,
   }
   VerifyDeviceOutputs(result_buffers2, metadata.input_data_size_bytes,
                       expected_output_data2);
+
+  if (param.expected_acquire_symmetric_memory_calls == 2) {
+    for (const WrappedComm& comm : wrapped_comms) {
+      ASSERT_EQ(comm.acquired_symmetric_memories->size(), 2);
+      if (param.expect_same_acquired_symmetric_memory) {
+        EXPECT_EQ((*comm.acquired_symmetric_memories)[0],
+                  (*comm.acquired_symmetric_memories)[1]);
+      } else {
+        EXPECT_NE((*comm.acquired_symmetric_memories)[0],
+                  (*comm.acquired_symmetric_memories)[1]);
+      }
+    }
+  }
 
   VerifyAndLeakMockCollectives(collectives, wrapped_comms, kDevicesCount);
 }
@@ -1133,17 +1177,30 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Values(
         SymmetricMemoryCachingTestCase{
             "ScratchOnly", SymmetricMemoryType::kNone,
-            /*reallocate_on_second_run=*/false,
-            /*expected_create_symmetric_memory_calls=*/1},
+            SecondRunBufferMode::kSameBuffer,
+            /*expected_create_symmetric_memory_calls=*/1,
+            /*expected_acquire_symmetric_memory_calls=*/0,
+            /*expect_same_acquired_symmetric_memory=*/false},
         SymmetricMemoryCachingTestCase{
             "IoAndScratchSameAddress",
             SymmetricMemoryType::kLoadStoreAccessible,
-            /*reallocate_on_second_run=*/false,
-            /*expected_create_symmetric_memory_calls=*/2},
+            SecondRunBufferMode::kSameBuffer,
+            /*expected_create_symmetric_memory_calls=*/1,
+            /*expected_acquire_symmetric_memory_calls=*/2,
+            /*expect_same_acquired_symmetric_memory=*/true},
+        SymmetricMemoryCachingTestCase{
+            "IoAndScratchSameArenaNewOffset",
+            SymmetricMemoryType::kLoadStoreAccessible,
+            SecondRunBufferMode::kSameArenaNewOffset,
+            /*expected_create_symmetric_memory_calls=*/1,
+            /*expected_acquire_symmetric_memory_calls=*/2,
+            /*expect_same_acquired_symmetric_memory=*/true},
         SymmetricMemoryCachingTestCase{
             "IoAndScratchNewAddress", SymmetricMemoryType::kLoadStoreAccessible,
-            /*reallocate_on_second_run=*/true,
-            /*expected_create_symmetric_memory_calls=*/3}),
+            SecondRunBufferMode::kNewAllocation,
+            /*expected_create_symmetric_memory_calls=*/1,
+            /*expected_acquire_symmetric_memory_calls=*/2,
+            /*expect_same_acquired_symmetric_memory=*/false}),
     [](const ::testing::TestParamInfo<SymmetricMemoryCachingTestCase>& info) {
       return info.param.test_name;
     });
@@ -1252,7 +1309,8 @@ TEST_P(CollectiveKernelThunkKernelSpecTest, RunsOrRejectsSpec) {
   StrictMock<MockGpuCollectives>* collectives = nullptr;
   if (param.expected_create_symmetric_memory_calls.has_value()) {
     collectives = CreateMockCollectives(
-        *param.expected_create_symmetric_memory_calls, wrapped_comms);
+        *param.expected_create_symmetric_memory_calls,
+        /*expected_acquire_symmetric_memory_calls=*/0, wrapped_comms);
   }
 
   CollectiveKernelThunkMetadata metadata = CreateCollectiveKernelThunk(
