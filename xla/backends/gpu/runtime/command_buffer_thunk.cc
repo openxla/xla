@@ -18,10 +18,10 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -31,23 +31,27 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/profiler/lib/profiler_lock.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
+#include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_executor.h"
 #include "xla/backends/gpu/runtime/per_device_state.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
+#include "xla/debug_options_flags.h"
+#include "xla/executable_run_options.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/service/device_assignment.h"
 #include "xla/service/gpu/buffer_allocations.h"
+#include "xla/service/rendezvous.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
@@ -56,6 +60,9 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
+#include "tsl/profiler/lib/profiler_lock.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::gpu {
 
@@ -73,6 +80,39 @@ absl::string_view ModuleTopLevelAnnotation() {
                         : absl::string_view();
 }
 
+// Returns the number of participants in the execution if all of them run in
+// this process, and std::nullopt otherwise. Without collective params or a
+// device assignment there is a single participant.
+std::optional<int64_t> NumParticipantsIfAllLocal(
+    const CollectiveParams* collective_params) {
+  if (collective_params == nullptr ||
+      collective_params->device_assn == nullptr) {
+    return 1;
+  }
+  const DeviceAssignment& device_assn = *collective_params->device_assn;
+  const int64_t num_participants =
+      device_assn.replica_count() * device_assn.computation_count();
+  if (CountLocalParticipants(device_assn,
+                             collective_params->global_device_id_map) !=
+      num_participants) {
+    return std::nullopt;
+  }
+  return num_participants;
+}
+
+absl::Duration InitializationWarnStuckTimeout() {
+  static const int64_t timeout_seconds =
+      GetDebugOptionsFromFlags()
+          .xla_gpu_executable_warn_stuck_timeout_seconds();
+  return absl::Seconds(timeout_seconds);
+}
+
+absl::Duration InitializationTerminateTimeout() {
+  static const int64_t timeout_seconds =
+      GetDebugOptionsFromFlags().xla_gpu_executable_terminate_timeout_seconds();
+  return absl::Seconds(timeout_seconds);
+}
+
 }  // namespace
 
 //===----------------------------------------------------------------------===//
@@ -88,6 +128,45 @@ bool CommandBufferThunk::ExecutorCommandBuffer::HasDynamicAllocations(
     absl::Span<const BufferAllocation::Index> persistent_alloc_indices) {
   DCHECK(absl::c_is_sorted(persistent_alloc_indices));
   return !absl::c_includes(persistent_alloc_indices, commands.allocs_indices());
+}
+
+std::vector<BufferAllocation::Index>
+CommandBufferThunk::ExecutorCommandBuffer::ChangedAllocations(
+    absl::Span<const BufferAllocation::Index> alloc_indices,
+    const BufferAllocations& allocs,
+    absl::Span<const BufferAllocation::Index> persistent_alloc_indices) const {
+  DCHECK(absl::c_is_sorted(alloc_indices));
+  DCHECK(absl::c_is_sorted(persistent_alloc_indices));
+  std::vector<BufferAllocation::Index> changed_allocs;
+  for (BufferAllocation::Index index : alloc_indices) {
+    if (AllocationChanged(index, allocs, persistent_alloc_indices)) {
+      changed_allocs.push_back(index);
+    }
+  }
+  return changed_allocs;
+}
+
+bool CommandBufferThunk::ExecutorCommandBuffer::HasChangedAllocations(
+    absl::Span<const BufferAllocation::Index> alloc_indices,
+    const BufferAllocations& allocs,
+    absl::Span<const BufferAllocation::Index> persistent_alloc_indices) const {
+  DCHECK(absl::c_is_sorted(persistent_alloc_indices));
+  for (BufferAllocation::Index index : alloc_indices) {
+    if (AllocationChanged(index, allocs, persistent_alloc_indices)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool CommandBufferThunk::ExecutorCommandBuffer::AllocationChanged(
+    BufferAllocation::Index index, const BufferAllocations& allocs,
+    absl::Span<const BufferAllocation::Index> persistent_alloc_indices) const {
+  if (absl::c_binary_search(persistent_alloc_indices, index)) {
+    return false;
+  }
+  return recorded_allocs.size() <= index ||
+         !recorded_allocs[index].IsSameAs(allocs.GetDeviceAddress(index));
 }
 
 bool CommandBufferThunk::ShouldRecordTelemetry(
@@ -116,6 +195,7 @@ CommandBufferThunk::CommandBufferThunk(CommandExecutor commands,
       enable_command_buffers_during_profiling_(
           options.enable_command_buffers_during_profiling),
       enable_command_buffer_telemetry_(options.enable_command_buffer_telemetry),
+      skip_unchanged_collectives_(options.skip_unchanged_collectives),
       state_(std::make_shared<State>(devices_in_process)) {
   if (VLOG_IS_ON(5)) {
     absl::StatusOr<std::string> graph = commands_.RenderExecutionGraph();
@@ -147,27 +227,17 @@ std::vector<BufferAllocation::Index>
 CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
     const CommandExecutor& commands, const Thunk::ExecuteParams& params,
     absl::Span<const BufferAllocation::Index> persistent_alloc_indices) {
-  std::vector<BufferAllocation::Index> updated_allocs;
   const BufferAllocations* allocs = params.buffer_allocations;
-  std::vector<BufferAllocation::Index> dynamic_alloc_indices;
-
-  absl::c_set_difference(commands.allocs_indices(), persistent_alloc_indices,
-                         std::back_inserter(dynamic_alloc_indices));
+  std::vector<BufferAllocation::Index> updated_allocs = ChangedAllocations(
+      commands.allocs_indices(), *allocs, persistent_alloc_indices);
 
   // We check only allocations referenced by commands in a cmd sequence, and
   // leave every other entry default initialized (nullptr device memory).
-  for (BufferAllocation::Index index : dynamic_alloc_indices) {
-    se::DeviceAddressBase alloc = allocs->GetDeviceAddress(index);
-
+  for (BufferAllocation::Index index : updated_allocs) {
     if (recorded_allocs.size() <= index) {
       recorded_allocs.resize(index + 1);
-      updated_allocs.push_back(index);
     }
-
-    if (!recorded_allocs[index].IsSameAs(alloc)) {
-      recorded_allocs[index] = alloc;
-      updated_allocs.push_back(index);
-    }
+    recorded_allocs[index] = allocs->GetDeviceAddress(index);
   }
 
   return updated_allocs;
@@ -208,8 +278,33 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
 
   // TODO(b/290773547): Disabled CUDA graphs when profiling is active because of
   // memory corruption.
-  if (tsl::profiler::ProfilerLock::HasActiveSession() && thunks_ &&
-      !enable_command_buffers_during_profiling_) {
+  const bool disabled_for_profiling =
+      tsl::profiler::ProfilerLock::HasActiveSession() && thunks_ &&
+      !enable_command_buffers_during_profiling_;
+
+  // The vote and the recording below must see the same command buffer, but
+  // eviction can replace it while this device waits for the others in the vote.
+  std::shared_ptr<ExecutorCommandBuffer> cmd_buffer;
+  if (!disabled_for_profiling && params.persistent_alloc_indices.has_value()) {
+    ABSL_ASSIGN_OR_RETURN(
+        cmd_buffer,
+        GetOrCreateCommandBuffer(params.executor, params.collective_cliques,
+                                 params.collective_memory));
+  }
+
+  // Agree before any of the early returns below, because their conditions can
+  // differ between participants.
+  ABSL_ASSIGN_OR_RETURN(const Decision may_skip_update,
+                        CanSkipInitializationUpdate(
+                            params, disabled_for_profiling, cmd_buffer.get()));
+  if (commands_.requires_update_on_initialize()) {
+    XLA_VLOG_DEVICE(3, params.executor->device_ordinal())
+        << "Skip command buffer initialization update? "
+        << (may_skip_update.IsAllowed() ? "yes"
+                                        : "no: " + may_skip_update.Explain());
+  }
+
+  if (disabled_for_profiling) {
     VLOG(1) << "Initialize command buffer thunk as a regular thunk sequence "
                "because we detected active profiling session";
     TraceMe trace("WARNING: CommandBuffer disabled when profiling");
@@ -226,10 +321,7 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
     return absl::OkStatus();
   }
 
-  ABSL_ASSIGN_OR_RETURN(
-      std::shared_ptr<ExecutorCommandBuffer> cmd_buffer,
-      GetOrCreateCommandBuffer(params.executor, params.collective_cliques,
-                               params.collective_memory));
+  TF_RET_CHECK(cmd_buffer != nullptr);
   absl::MutexLock lock(cmd_buffer->mutex);
 
   // If there are no thunks, or command buffer does not require warmup,
@@ -278,7 +370,8 @@ absl::Status CommandBufferThunk::Initialize(const InitializeParams& params) {
   bool is_first_record =
       cmd_buffer->command_buffer->state() == se::CommandBuffer::State::kCreate;
   if (is_first_record ||
-      (has_dynamic_allocations && commands_.requires_update_on_initialize())) {
+      (has_dynamic_allocations && commands_.requires_update_on_initialize() &&
+       may_skip_update.IsForbidden())) {
     VLOG(3) << "Initialize command buffer on device #"
             << params.executor->device_ordinal()
             << " by recoding command buffer cmd sequence"
@@ -558,6 +651,81 @@ void CommandBufferThunk::SetRecordedSymmetricMemoryIds(
     recorded.emplace(collective_memory->symmetric_memory_ids().begin(),
                      collective_memory->symmetric_memory_ids().end());
   }
+}
+
+absl::StatusOr<Decision> CommandBufferThunk::CanSkipInitializationUpdate(
+    const InitializeParams& params, bool disabled_for_profiling,
+    ExecutorCommandBuffer* cmd_buffer) const {
+  if (!commands_.requires_update_on_initialize()) {
+    return Decision::Allow();
+  }
+  if (!skip_unchanged_collectives_) {
+    return Decision::Forbid("skipping unchanged collectives is disabled");
+  }
+
+  // A recorded collective can embed peer buffer addresses, so if one
+  // participant records it again, all of them must. Rendezvous works only
+  // within a process, so without all participants here, keep recording.
+  const std::optional<int64_t> num_participants =
+      NumParticipantsIfAllLocal(params.collective_params);
+  if (!num_participants.has_value()) {
+    return Decision::Forbid("not all participants are in this process");
+  }
+
+  // Whatever keeps this device from replaying its recorded command buffer
+  // forbids the skip, so that every participant then records as usual.
+  Decision decision = Decision::Allow();
+  if (disabled_for_profiling) {
+    decision = Decision::Forbid("command buffers are disabled for profiling");
+  } else if (!params.persistent_alloc_indices.has_value()) {
+    decision =
+        Decision::Forbid("persistent allocation indices are not available");
+  } else {
+    TF_RET_CHECK(cmd_buffer != nullptr);
+    absl::MutexLock lock(cmd_buffer->mutex);
+    bool warmed_up = cmd_buffer->warmup_done || thunks_ == nullptr;
+    if (!warmed_up) {
+      TF_RET_CHECK(params.command_buffer_requests != nullptr);
+      warmed_up = !commands_.requires_warmup(*params.command_buffer_requests);
+    }
+    const bool is_first_record = cmd_buffer->command_buffer->state() ==
+                                 se::CommandBuffer::State::kCreate;
+    if (!warmed_up) {
+      decision = Decision::Forbid("not warmed up");
+    } else if (is_first_record) {
+      decision = Decision::Forbid("not recorded yet");
+    } else if (cmd_buffer->HasChangedAllocations(
+                   commands_.update_on_initialize_allocs_indices(),
+                   *params.buffer_allocations,
+                   *params.persistent_alloc_indices)) {
+      decision = Decision::Forbid("a buffer of these commands moved");
+    }
+  }
+
+  const int device_ordinal = params.executor->device_ordinal();
+  if (*num_participants > 1) {
+    const RunId run_id = params.collective_params->run_id;
+    const bool can_skip = decision.IsAllowed();
+    ABSL_ASSIGN_OR_RETURN(
+        std::shared_ptr<bool> all_can_skip,
+        Rendezvous<bool>(
+            absl::StrFormat(
+                "[%d] command buffer initialization update; run_id=%d; %s",
+                device_ordinal, run_id.ToInt(),
+                thunk_info().profile_annotation),
+            std::make_tuple(run_id, this), can_skip, *num_participants,
+            [](absl::Span<const bool* const> values) {
+              return absl::c_all_of(values,
+                                    [](const bool* value) { return *value; });
+            },
+            InitializationWarnStuckTimeout(),
+            InitializationTerminateTimeout()));
+    if (decision.IsAllowed() && !*all_can_skip) {
+      decision = Decision::Forbid("another participant records again");
+    }
+  }
+
+  return decision;
 }
 
 //===----------------------------------------------------------------------===//

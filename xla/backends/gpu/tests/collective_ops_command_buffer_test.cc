@@ -469,5 +469,76 @@ TEST_F(CollectiveOpsCommandBufferTest, WhileWithAsyncAllReduce) {
                                      results[1]));
 }
 
+TEST_F(CollectiveOpsCommandBufferTest, AllReduceSkipUnchangedCollectives) {
+  constexpr absl::string_view kHloText = R"(
+  HloModule module, replica_count=2
+
+  add {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT add = f32[] add(lhs, rhs)
+  }
+
+  ENTRY main {
+    p0 = f32[2] parameter(0)
+    one = f32[2] constant({1, 1})
+    x = f32[2] add(p0, one)
+    ar = f32[2] all-reduce(x), replica_groups={{0,1}}, to_apply=add
+    ROOT out = f32[2] multiply(ar, ar)
+  }
+  )";
+
+  constexpr int64_t kNumReplicas = 2;
+  if (device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << device_count() << " available)";
+  }
+
+  ASSERT_OK_AND_ASSIGN(
+      tsl::testing::TemporaryDirectory dump_dir,
+      tsl::testing::TemporaryDirectory::CreateForCurrentTestcase());
+
+  HloModuleConfig config =
+      GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
+  config.mutable_debug_options().set_xla_dump_to(dump_dir.path());
+  config.mutable_debug_options().add_xla_gpu_enable_command_buffer(
+      DebugOptions::COLLECTIVES);
+  config.mutable_debug_options().set_xla_gpu_graph_min_graph_size(1);
+  config.mutable_debug_options()
+      .set_xla_gpu_command_buffer_skip_unchanged_collectives(true);
+  // A collective kernel needs no update on initialization, so keep the
+  // all-reduce a collectives library operation.
+  config.mutable_debug_options()
+      .clear_xla_gpu_experimental_use_collective_kernels();
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kHloText, config));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<OpaqueExecutable> executable,
+      CreateExecutable(std::move(module), /*run_hlo_passes=*/true));
+
+  // The all-reduce is a command of a command buffer, not a regular thunk.
+  ASSERT_OK_AND_ASSIGN(CommandBufferThunkCounts all_reduces,
+                       CountThunksInDump(dump_dir.path(), "kAllReduce"));
+  EXPECT_GT(all_reduces.in_command_buffer, 0);
+  EXPECT_EQ(all_reduces.outside_command_buffer, 0);
+
+  // Warm-up, record, then executions that may skip the update, followed by new
+  // arguments that may move buffers on some replicas.
+  Literal arg0 = LiteralUtil::CreateR1<float>({1.0f, 2.0f});
+  Literal arg1 = LiteralUtil::CreateR1<float>({3.0f, 4.0f});
+  for (Literal* arg : {&arg0, &arg0, &arg0, &arg1, &arg1}) {
+    ASSERT_OK_AND_ASSIGN(std::vector<Literal> results,
+                         ExecuteReplicated(executable.get(), {{arg}, {arg}},
+                                           /*run_hlo_passes=*/true));
+    ASSERT_EQ(results.size(), kNumReplicas);
+    Literal expected = arg == &arg0
+                           ? LiteralUtil::CreateR1<float>({16.0f, 36.0f})
+                           : LiteralUtil::CreateR1<float>({64.0f, 100.0f});
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected, results[0]));
+    EXPECT_TRUE(LiteralTestUtil::Equal(expected, results[1]));
+  }
+}
+
 }  // namespace
 }  // namespace xla

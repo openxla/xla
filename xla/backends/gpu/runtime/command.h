@@ -152,7 +152,10 @@ class Command : public Thunk {
   // commands at the same time, if some ranks will skip command updates (because
   // they got lucky and got the same buffer allocations), it will lead to
   // deadlocks. By forcing the command update at thunk initialization time, we
-  // ensure that all ranks execute NCCL command update.
+  // ensure that all ranks execute NCCL command update. With
+  // `xla_gpu_command_buffer_skip_unchanged_collectives`, all participants in
+  // this process skip the update together if none of them saw a buffer of these
+  // commands move.
   virtual bool requires_update_on_initialize() const { return false; }
 
   // Returns true if command requires a one-time fallback execution before it is

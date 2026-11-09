@@ -719,6 +719,17 @@ message DebugOptions {
   optional CommandBufferSchedulingMode xla_gpu_command_buffer_scheduling_mode =
       404;
 
+  // If true, a command buffer with collectives and non-persistent buffer
+  // allocations re-records its collectives on initialization only if a
+  // participant has to, instead of on every execution: it has not recorded them
+  // yet, cannot replay them (warm-up, profiling, no persistent allocation
+  // indices yet), or a buffer of these collectives moved. Participants agree
+  // through a host rendezvous, so this applies only when all of them run in this
+  // process, and they must all execute the same executable. A command buffer is
+  // dropped when a clique it was created with is abandoned or destroyed, so a
+  // re-created clique makes all participants record again.
+  optional bool xla_gpu_command_buffer_skip_unchanged_collectives = 566;
+
   // During command buffer lowering, unroll the loop command if loop has known
   // loop count and the loop body does not have unsupported commands.
   optional bool xla_gpu_command_buffer_unroll_loops = 411;
