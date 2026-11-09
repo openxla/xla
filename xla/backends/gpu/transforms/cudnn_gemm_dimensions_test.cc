@@ -42,6 +42,8 @@ using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Field;
 using ::testing::HasSubstr;
+using ::testing::Optional;
+using ::testing::Pair;
 using ::testing::Pointee;
 
 class CuDnnGemmDimensionsTest : public HloHardwareIndependentTestBase {
@@ -65,12 +67,25 @@ class CuDnnGemmDimensionsTest : public HloHardwareIndependentTestBase {
   std::unique_ptr<VerifiedHloModule> module_;
 };
 
+template <typename SizesMatcher, typename StridesMatcher,
+          typename SlicesMatcher>
+auto HasLayout(SizesMatcher sizes, StridesMatcher strides,
+               SlicesMatcher slices) {
+  return Pointee(AllOf(Field("sizes", &CudnnTensorLayout::sizes, sizes),
+                       Field("strides", &CudnnTensorLayout::strides, strides),
+                       Field("slices", &CudnnTensorLayout::slices, slices)));
+}
+
 template <typename SizesMatcher, typename StridesMatcher>
 auto HasSizesAndStrides(SizesMatcher sizes, StridesMatcher strides) {
-  return Pointee(
-      AllOf(Field("sizes", &CudnnTensorLayout::sizes, sizes),
-            Field("strides", &CudnnTensorLayout::strides, strides),
-            Field("slices", &CudnnTensorLayout::slices, Eq(std::nullopt))));
+  return HasLayout(sizes, strides, Eq(std::nullopt));
+}
+
+template <typename SizesMatcher, typename StridesMatcher,
+          typename SlicesMatcher>
+auto HasSizesStridesAndSlices(SizesMatcher sizes, StridesMatcher strides,
+                              SlicesMatcher slices) {
+  return HasLayout(sizes, strides, Optional(slices));
 }
 
 TEST_F(CuDnnGemmDimensionsTest, PlainDot) {
@@ -530,6 +545,405 @@ e {
       HasSizesAndStrides(ElementsAre(1, 32, 64), ElementsAre(2048, 64, 1)));
   EXPECT_EQ(dims.TensorLayout(Instruction("c")), nullptr);
   EXPECT_EQ(dims.CanonicalSizes(Instruction("c")), nullptr);
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceIsAccepted) {
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = f16[11,23,64] parameter(0)
+  s0 = f16[8,16,64] slice(p0), slice={[1:9], [3:19], [0:64]}
+  p1 = f16[8,64,32] parameter(1)
+  ROOT r = f16[8,16,32] dot(s0, p1),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1}
+})"));
+  EXPECT_THAT(dims.TensorLayout(Instruction("p0")),
+              HasSizesStridesAndSlices(
+                  ElementsAre(11, 23, 64), ElementsAre(1472, 64, 1),
+                  ElementsAre(Pair(1, 9), Pair(3, 19), Pair(0, 64))));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceOfSliceIsAccepted) {
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = f32[64,32] parameter(0)
+  slice0 = f32[48,32] slice(p0), slice={[4:52], [0:32]}
+  slice1 = f32[16,32] slice(slice0), slice={[10:26], [0:32]}
+  p1 = f32[32,16] parameter(1)
+  ROOT r = f32[16,16] dot(slice1, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"));
+  EXPECT_THAT(dims.TensorLayout(Instruction("p0")),
+              HasSizesStridesAndSlices(
+                  ElementsAre(1, 64, 32), ElementsAre(2048, 32, 1),
+                  ElementsAre(Pair(0, 1), Pair(14, 30), Pair(0, 32))));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceOfTransposedParameterIsAccepted) {
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = f32[40,32] parameter(0)
+  t0 = f32[32,40] transpose(p0), dimensions={1,0}
+  s0 = f32[32,24] slice(t0), slice={[0:32], [8:32]}
+  n0 = f32[32,24] negate(s0)
+  p1 = f32[24,16] parameter(1)
+  ROOT r = f32[32,16] dot(n0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"));
+  EXPECT_THAT(dims.TensorLayout(Instruction("p0")),
+              HasSizesStridesAndSlices(
+                  ElementsAre(1, 32, 40), ElementsAre(1280, 1, 32),
+                  ElementsAre(Pair(0, 1), Pair(0, 32), Pair(8, 32))));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceThenTransposeIsAccepted) {
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = f32[64,48] parameter(0)
+  slice0 = f32[32,48] slice(p0), slice={[8:40], [0:48]}
+  tr0 = f32[48,32] transpose(slice0), dimensions={1,0}
+  p1 = f32[32,16] parameter(1)
+  ROOT r = f32[48,16] dot(tr0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"));
+  EXPECT_THAT(dims.TensorLayout(Instruction("p0")),
+              HasSizesStridesAndSlices(
+                  ElementsAre(1, 48, 64), ElementsAre(3072, 1, 48),
+                  ElementsAre(Pair(0, 1), Pair(0, 48), Pair(8, 40))));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceOfMajorPartOfMergedDimensionIsAccepted) {
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = f32[8,4,64] parameter(0)
+  slice0 = f32[4,4,64] slice(p0), slice={[2:6], [0:4], [0:64]}
+  bc0 = f32[16,64] bitcast(slice0)
+  p1 = f32[64,32] parameter(1)
+  ROOT r = f32[16,32] dot(bc0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"));
+  EXPECT_THAT(dims.TensorLayout(Instruction("p0")),
+              HasSizesStridesAndSlices(
+                  ElementsAre(1, 32, 64), ElementsAre(2048, 64, 1),
+                  ElementsAre(Pair(0, 1), Pair(8, 24), Pair(0, 64))));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceThenAlignedSplitIsAccepted) {
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = f32[32,64] parameter(0)
+  slice0 = f32[16,64] slice(p0), slice={[8:24], [0:64]}
+  bc0 = f32[4,4,64] bitcast(slice0)
+  p1 = f32[4,64,8] parameter(1)
+  ROOT r = f32[4,4,8] dot(bc0, p1),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1}
+})"));
+  EXPECT_THAT(dims.TensorLayout(Instruction("p0")),
+              HasSizesStridesAndSlices(
+                  ElementsAre(8, 4, 64), ElementsAre(256, 64, 1),
+                  ElementsAre(Pair(2, 6), Pair(0, 4), Pair(0, 64))));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceThenReshapeAcrossDimensionsIsAccepted) {
+  // The first 32 rows of p0 are the first 16 rows of p0 reshaped to [32,64].
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = f32[64,32] parameter(0)
+  slice0 = f32[32,32] slice(p0), slice={[0:32], [0:32]}
+  r0 = f32[16,64] reshape(slice0)
+  p1 = f32[64,16] parameter(1)
+  ROOT r = f32[16,16] dot(r0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"));
+  EXPECT_THAT(dims.TensorLayout(Instruction("p0")),
+              HasSizesStridesAndSlices(
+                  ElementsAre(1, 32, 64), ElementsAre(2048, 64, 1),
+                  ElementsAre(Pair(0, 1), Pair(0, 16), Pair(0, 64))));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceOfMajorDimensionThenDropIsAccepted) {
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = f32[64,256] parameter(0)
+  w = f32[3,256,128] parameter(1)
+  s = f32[1,256,128] slice(w), slice={[1:2], [0:256], [0:128]}
+  b = f32[256,128] bitcast(s)
+  ROOT d = f32[64,128] dot(p0, b),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"));
+  EXPECT_THAT(dims.TensorLayout(Instruction("w")),
+              HasSizesStridesAndSlices(
+                  ElementsAre(1, 768, 128), ElementsAre(98304, 128, 1),
+                  ElementsAre(Pair(0, 1), Pair(256, 512), Pair(0, 128))));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceThenBroadcastIsAccepted) {
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = bf16[48,128] parameter(0)
+  s0 = bf16[32,128] slice(p0), slice={[8:40], [0:128]}
+  b0 = bf16[5,32,128] broadcast(s0), dimensions={1,2}
+  p1 = bf16[5,128,64] parameter(1)
+  ROOT r = f32[5,32,64] dot(b0, p1),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1}
+})"));
+  EXPECT_THAT(dims.TensorLayout(Instruction("p0")),
+              HasSizesStridesAndSlices(
+                  ElementsAre(1, 48, 128), ElementsAre(1, 128, 1),
+                  ElementsAre(Pair(0, 1), Pair(8, 40), Pair(0, 128))));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceOfMinorPartOfMergedDimensionIsRejected) {
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = f32[4,8,64] parameter(0)
+  slice0 = f32[4,4,64] slice(p0), slice={[0:4], [2:6], [0:64]}
+  bc0 = f32[16,64] bitcast(slice0)
+  p1 = f32[64,32] parameter(1)
+  ROOT r = f32[16,32] dot(bc0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("not a range of a dimension")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceOfMinorDimensionThenDropIsRejected) {
+  // Unlike a major dimension (SliceOfMajorDimensionThenDropIsAccepted), one
+  // element of the minor dimension is a stride over the tensor, not a range.
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = f32[64,256] parameter(0)
+  w = f32[256,128,3] parameter(1)
+  s = f32[256,128,1] slice(w), slice={[0:256], [0:128], [1:2]}
+  b = f32[256,128] bitcast(s)
+  ROOT d = f32[64,128] dot(p0, b),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("not a range of a dimension")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceThenUnalignedSplitIsRejected) {
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = f32[32,64] parameter(0)
+  slice0 = f32[16,64] slice(p0), slice={[6:22], [0:64]}
+  bc0 = f32[4,4,64] bitcast(slice0)
+  p1 = f32[4,64,8] parameter(1)
+  ROOT r = f32[4,4,8] dot(bc0, p1),
+    lhs_batch_dims={0}, rhs_batch_dims={0},
+    lhs_contracting_dims={2}, rhs_contracting_dims={1}
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("not a range of a dimension")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceOfPartOfCanonicalDimensionIsRejected) {
+  // Dimensions 0 and 1 of s0 are merged into M, but only dimension 1 is sliced.
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = f32[8,4,64] parameter(0)
+  s0 = f32[8,2,64] slice(p0), slice={[0:8], [1:3], [0:64]}
+  p1 = f32[64,32] parameter(1)
+  ROOT r = f32[8,2,32] dot(s0, p1),
+    lhs_contracting_dims={2}, rhs_contracting_dims={0}
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("not a whole canonical dimension")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, ParameterSlicedInTwoWaysIsRejected) {
+  EXPECT_THAT(
+      Analyze(R"(
+e {
+  p0 = f32[64,32] parameter(0)
+  slice0 = f32[32,32] slice(p0), slice={[0:32], [0:32]}
+  slice1 = f32[32,32] slice(p0), slice={[32:64], [0:32]}
+  a = f32[32,32] add(slice0, slice1)
+  p1 = f32[32,16] parameter(1)
+  ROOT r = f32[32,16] dot(a, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"),
+      StatusIs(absl::StatusCode::kUnimplemented, HasSubstr("several ways")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, StridedSliceIsRejected) {
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = f32[64,32] parameter(0)
+  slice0 = f32[32,32] slice(p0), slice={[0:64:2], [0:32]}
+  p1 = f32[32,16] parameter(1)
+  ROOT r = f32[32,16] dot(slice0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("Only unit-stride slices")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceAfterTheDotIsRejected) {
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = f32[32,48] parameter(0)
+  p1 = f32[48,16] parameter(1)
+  d = f32[32,16] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  p2 = f32[64,16] parameter(2)
+  slice2 = f32[32,16] slice(p2), slice={[16:48], [0:16]}
+  ROOT a = f32[32,16] add(d, slice2)
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("Slices are not supported after the dot")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest,
+       SplitNonContractingLhsInputAndOutputIsAccepted) {
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = s8[4,3,16,400]{2,1,3,0} parameter(0)
+  cp0 = s8[4,3,16,400]{3,2,1,0} copy(p0)
+  bc0 = s8[192,400]{1,0} bitcast(cp0)
+  cvt0 = bf16[192,400]{1,0} convert(bc0)
+  p1 = bf16[1,128,400]{2,1,0} parameter(1)
+  bc1 = bf16[128,400]{1,0} reshape(p1)
+  d = bf16[192,128]{1,0} dot(cvt0, bc1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  bc = bf16[4,3,16,128]{3,2,1,0} bitcast(d)
+  ROOT cp = bf16[4,3,16,128]{2,1,3,0} copy(bc)
+})"));
+  // The outer part of M is a virtual batch dimension.
+  EXPECT_THAT(
+      dims.TensorLayout(Instruction("p0")),
+      HasSizesAndStrides(ElementsAre(4, 48, 400), ElementsAre(19200, 1, 48)));
+  EXPECT_THAT(
+      dims.TensorLayout(Instruction("p1")),
+      HasSizesAndStrides(ElementsAre(1, 400, 128), ElementsAre(51200, 1, 400)));
+  EXPECT_THAT(
+      dims.TensorLayout(Instruction("cp")),
+      HasSizesAndStrides(ElementsAre(4, 48, 128), ElementsAre(6144, 1, 48)));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, EpilogueParametersSplitLikeTheLhsIsAccepted) {
+  ASSERT_OK_AND_ASSIGN(CuDnnGemmDimensions dims, Analyze(R"(
+e {
+  p0 = s8[4,3,16,400]{2,1,3,0} parameter(0)
+  cp0 = s8[4,3,16,400]{3,2,1,0} copy(p0)
+  bc0 = s8[192,400]{1,0} bitcast(cp0)
+  cvt0 = bf16[192,400]{1,0} convert(bc0)
+  p1 = bf16[128,400]{1,0} parameter(1)
+  d = bf16[192,128]{1,0} dot(cvt0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  p2 = bf16[192,128]{1,0} parameter(2)
+  p3 = bf16[128] parameter(3)
+  p3b = bf16[192,128] broadcast(p3), dimensions={1}
+  a = bf16[192,128] add(d, p2)
+  ROOT m = bf16[192,128] multiply(a, p3b)
+})"));
+  EXPECT_THAT(
+      dims.TensorLayout(Instruction("p2")),
+      HasSizesAndStrides(ElementsAre(4, 48, 128), ElementsAre(6144, 128, 1)));
+  EXPECT_THAT(
+      dims.TensorLayout(Instruction("m")),
+      HasSizesAndStrides(ElementsAre(4, 48, 128), ElementsAre(6144, 128, 1)));
+  // p3 is broadcasted along M, so it is not split.
+  EXPECT_THAT(
+      dims.TensorLayout(Instruction("p3")),
+      HasSizesAndStrides(ElementsAre(1, 1, 128), ElementsAre(128, 128, 1)));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, OutputSplitDifferentlyFromTheLhsIsRejected) {
+  // M of the LHS is split as 4 x 48, but M of the output as 12 x 16.
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = s8[4,3,16,400]{2,1,3,0} parameter(0)
+  cp0 = s8[4,3,16,400]{3,2,1,0} copy(p0)
+  bc0 = s8[192,400]{1,0} bitcast(cp0)
+  cvt0 = bf16[192,400]{1,0} convert(bc0)
+  p1 = bf16[128,400]{1,0} parameter(1)
+  d = bf16[192,128]{1,0} dot(cvt0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+  bc = bf16[12,16,128]{2,1,0} bitcast(d)
+  ROOT cp = bf16[12,16,128]{1,2,0} copy(bc)
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("not a single strided dimension")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, PartlyBroadcastedMDimensionIsRejected) {
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = f32[8,64] parameter(0)
+  p0b = f32[8,4,64] broadcast(p0), dimensions={0,2}
+  r0 = f32[32,64] reshape(p0b)
+  p1 = f32[64,16] parameter(1)
+  ROOT d = f32[32,16] dot(r0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("not a single strided dimension")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, TransposedSplitMDimensionIsRejected) {
+  // The major part of M is minor in memory.
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = bf16[32,16,8]{2,1,0} parameter(0)
+  t0 = bf16[8,16,32]{2,1,0} transpose(p0), dimensions={2,1,0}
+  bc0 = bf16[128,32]{1,0} bitcast(t0)
+  p1 = bf16[32,64]{1,0} parameter(1)
+  ROOT d = bf16[128,64]{1,0} dot(bc0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("not a single strided dimension")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SliceOfSplitMDimensionIsRejected) {
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = s8[4,3,16,400]{2,1,3,0} parameter(0)
+  cp0 = s8[4,3,16,400]{3,2,1,0} copy(p0)
+  bc0 = s8[192,400]{1,0} bitcast(cp0)
+  cvt0 = bf16[192,400]{1,0} convert(bc0)
+  s0 = bf16[96,400]{1,0} slice(cvt0), slice={[0:96], [0:400]}
+  p1 = bf16[128,400]{1,0} parameter(1)
+  ROOT d = bf16[96,128]{1,0} dot(s0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("Cannot slice a dimension")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SplitMWithBatchDimensionIsRejected) {
+  // The batch dimension is taken, so M cannot be split into a virtual batch.
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = bf16[2,4,3,16,400]{3,2,4,1,0} parameter(0)
+  cp0 = bf16[2,4,3,16,400]{4,3,2,1,0} copy(p0)
+  bc0 = bf16[2,192,400]{2,1,0} bitcast(cp0)
+  p1 = bf16[2,400,128]{2,1,0} parameter(1)
+  ROOT d = bf16[2,192,128]{2,1,0} dot(bc0, p1),
+    lhs_batch_dims={0}, lhs_contracting_dims={2},
+    rhs_batch_dims={0}, rhs_contracting_dims={1}
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("not a single strided dimension")));
+}
+
+TEST_F(CuDnnGemmDimensionsTest, SplitRhsDimensionIsRejected) {
+  // Only M of the LHS can be split into a virtual batch dimension.
+  EXPECT_THAT(Analyze(R"(
+e {
+  p0 = bf16[32,400]{1,0} parameter(0)
+  p1 = bf16[4,3,16,400]{2,1,3,0} parameter(1)
+  cp1 = bf16[4,3,16,400]{3,2,1,0} copy(p1)
+  bc1 = bf16[192,400]{1,0} bitcast(cp1)
+  ROOT d = bf16[32,192]{1,0} dot(p0, bc1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={1}
+})"),
+              StatusIs(absl::StatusCode::kUnimplemented,
+                       HasSubstr("not a single strided dimension")));
 }
 
 }  // namespace

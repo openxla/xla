@@ -885,6 +885,7 @@ cc_library(
         ":cudnn_fusion_utils",
         "//xla:permutation_util",
         "//xla:shape_util",
+        "//xla:util",
         "//xla/hlo/analysis:shape_tracker",
         "//xla/hlo/ir:hlo",
         "//xla/service:matmul_indexing_utils",
