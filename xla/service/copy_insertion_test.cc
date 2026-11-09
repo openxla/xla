@@ -38,6 +38,7 @@ limitations under the License.
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
+#include "benchmark/registration.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/frontend_attributes.h"
@@ -2055,7 +2056,8 @@ TEST_F(CopyInsertionTest, SwizzlingWhileDisabledCopies) {
       HloInstruction::CreateTuple({constant1, constant2}));
   auto xla_while = builder.AddInstruction(
       HloInstruction::CreateWhile(loop_state_shape, condition, body, tuple));
-  xla_while->set_frontend_attribute(kXlaDisableWhileLoopCopies, "true");
+  xla_while->set_frontend_attribute(frontend::kXlaDisableWhileLoopCopies,
+                                    "true");
   module->AddEntryComputation(builder.Build());
 
   InsertCopies(module.get());
