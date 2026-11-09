@@ -302,7 +302,9 @@ GroupSizesPrefix GetGroupSizesPrefix(const DotDimensionNumbers& dot_dims,
   for (int i = 0; i < dot_dims.lhs_batch_dimensions_size(); ++i) {
     // A ragged batch dimension ends the prefix: the groups partition it, so
     // the dimensions inner to it are not indexed by group_sizes.
-    if (dot_dims.lhs_batch_dimensions(i) == lhs_ragged_dim) break;
+    if (dot_dims.lhs_batch_dimensions(i) == lhs_ragged_dim) {
+      break;
+    }
     prefix.lhs.push_back(dot_dims.lhs_batch_dimensions(i));
     prefix.rhs.push_back(dot_dims.rhs_batch_dimensions(i));
   }
@@ -311,7 +313,9 @@ GroupSizesPrefix GetGroupSizesPrefix(const DotDimensionNumbers& dot_dims,
       break;
     case RaggedDotMode::kRaggedContracting:
       for (int i = 0; i < dot_dims.lhs_contracting_dimensions_size(); ++i) {
-        if (dot_dims.lhs_contracting_dimensions(i) == lhs_ragged_dim) break;
+        if (dot_dims.lhs_contracting_dimensions(i) == lhs_ragged_dim) {
+          break;
+        }
         prefix.lhs.push_back(dot_dims.lhs_contracting_dimensions(i));
         prefix.rhs.push_back(dot_dims.rhs_contracting_dimensions(i));
       }
