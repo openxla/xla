@@ -40,7 +40,7 @@ limitations under the License.
 #include "xla/service/compiler.h"
 #include "xla/service/decision.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/hipblaslt_custom_calls.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
 #include "xla/shape.h"
@@ -204,13 +204,13 @@ const HloInstruction* GetScaledDotFromFusion(const HloInstruction& instr) {
       *instr.fused_instructions_computation(), HloOpcode::kScaledDot);
 }
 
-// Decides whether `gemm` is an FP8-output __cublas$lt$matmul$f8, without amax
+// Decides whether `gemm` is an FP8-output __hipblaslt$matmul$f8, without amax
 // or auxiliary output, that can run as a GEMM with a wider output followed by
 // the D scale, the saturation and the conversion to FP8. A forbidding decision
 // explains what prevents the rewrite.
 Decision CanUnfuseFp8Output(const HloInstruction& gemm) {
-  if (!IsCublasLtMatmulF8(gemm)) {
-    return Decision::Forbid("not a __cublas$lt$matmul$f8 call");
+  if (!IsHipblasLtMatmulF8(gemm)) {
+    return Decision::Forbid("not a __hipblaslt$matmul$f8 call");
   }
   if (!gemm.shape().IsTuple() || gemm.shape().tuple_shapes().size() != 2) {
     return Decision::Forbid(absl::StrCat(
@@ -358,8 +358,8 @@ absl::Status RewriteWithWideOutputGemm(HloInstruction* gemm,
 }  // namespace
 
 bool HipblasLtBackend::IsSupported(const HloInstruction& instr) {
-  if (IsCublasLtMatmul(instr) || IsCublasLtMatmulF8(instr) ||
-      IsCublasLtGroupedMatmul(instr)) {
+  if (IsHipblasLtMatmul(instr) || IsHipblasLtMatmulF8(instr) ||
+      IsHipblasLtGroupedMatmul(instr)) {
     return true;
   }
   if (GetScaledDotFromFusion(instr) != nullptr) {
@@ -382,7 +382,7 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
         "HipblasLtBackend cannot enumerate configs in deviceless mode.");
   }
 
-  if (IsCublasLtMatmul(instr) || IsCublasLtMatmulF8(instr)) {
+  if (IsHipblasLtMatmul(instr) || IsHipblasLtMatmulF8(instr)) {
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                           instr.backend_config<GpuBackendConfig>());
     const GemmBackendConfig& backend_config = gpu_config.gemm_backend_config();
@@ -516,7 +516,7 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
     }
     return configs;
   }
-  if (IsCublasLtGroupedMatmul(instr)) {
+  if (IsHipblasLtGroupedMatmul(instr)) {
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                           instr.backend_config<GpuBackendConfig>());
 
@@ -622,7 +622,7 @@ absl::Status HipblasLtBackend::ApplyConfig(HloInstruction& instr,
     return RewriteWithWideOutputGemm(&instr, wide);
   }
 
-  if (IsCublasLtMatmul(instr) || IsCublasLtMatmulF8(instr)) {
+  if (IsHipblasLtMatmul(instr) || IsHipblasLtMatmulF8(instr)) {
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                           instr.backend_config<GpuBackendConfig>());
     GemmBackendConfig& backend_config =
@@ -719,13 +719,13 @@ absl::Status HipblasLtBackend::ApplyConfig(HloInstruction& instr,
 
     HloInstruction* custom_call =
         parent->AddInstruction(HloInstruction::CreateCustomCall(
-            output_shape, operands, kCublasLtMatmulMxCallTarget));
+            output_shape, operands, kHipblasLtMatmulMxCallTarget));
     ABSL_RETURN_IF_ERROR(custom_call->set_backend_config(gpu_backend_config));
     HloInstruction* gte = parent->AddInstruction(
         HloInstruction::CreateGetTupleElement(result_shape, custom_call, 0));
     return parent->ReplaceInstruction(&instr, gte);
   }
-  if (IsCublasLtGroupedMatmul(instr)) {
+  if (IsHipblasLtGroupedMatmul(instr)) {
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
                           instr.backend_config<GpuBackendConfig>());
     GemmBackendConfig* backend_config =

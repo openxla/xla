@@ -38,11 +38,12 @@ namespace gpu {
 // This backend is used to autotune hipBLASLt algorithms.
 //
 // Supports two instruction types:
-// 1. cuBLASLt custom calls (__cublas$lt$matmul, __cublas$lt$matmul$f8)
+// 1. hipBLASLt custom calls (__hipblaslt$matmul, __hipblaslt$matmul$f8,
+// __hipblaslt$groupedMatmul)
 // 2. __triton_gemm fusions containing kScaledDot, which are converted to
-// __cublas$lt$matmul$mx custom calls.
+// __hipblaslt$matmul$mx custom calls.
 //
-// If hipBLASLt has no algorithm for the FP8 output of a __cublas$lt$matmul$f8,
+// If hipBLASLt has no algorithm for the FP8 output of a __hipblaslt$matmul$f8,
 // the configs are for a GEMM with a wider output, and ApplyConfig adds a loop
 // fusion that converts its result to FP8.
 class HipblasLtBackend : public GpuCodegenBackend {

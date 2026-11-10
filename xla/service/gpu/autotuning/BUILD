@@ -311,6 +311,7 @@ cc_library(
         "//xla/service:decision",
         "//xla/service:hlo_cost_analysis",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:blas_lt_custom_calls",
         "//xla/service/gpu:cublas_cudnn",
         "//xla/service/gpu:ir_emission_utils",
         "//xla/service/gpu:mlir_context_pool",

@@ -45,6 +45,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/service/computation_layout.h"
 #include "xla/service/gpu/conv_utils.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/matmul_utils.h"
@@ -595,7 +596,7 @@ absl::Status GpuLayoutAssignment::AddBackendConstraints(
           Cast<HloCustomCallInstruction>(instruction), constraints));
     }
 
-    CHECK(!IsCublasLtGemm(*instruction))
+    CHECK(!IsBlasLtGemm(*instruction))
         << "Gemm rewriting should run after layout assignment";
 
     const DebugOptions& debug_options =

@@ -30,7 +30,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/blas_lt_custom_calls.h"
 #include "xla/service/gpu/gpu_hlo_schedule.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
@@ -120,7 +120,7 @@ absl::StatusOr<bool> SolGpuCostModelStatsCollection::RunImpl(
     for (HloInstruction* instr : comp->MakeInstructionPostOrder()) {
       if (instr->opcode() != HloOpcode::kFusion &&
           !hlo_query::IsAsyncCollectiveStartOp(instr) &&
-          !IsCublasLtGemm(*instr) && !IsTritonGemm(*instr)) {
+          !IsBlasLtGemm(*instr) && !IsTritonGemm(*instr)) {
         continue;
       }
       if (!RecordReificationCost(*instr, *estimator)) {

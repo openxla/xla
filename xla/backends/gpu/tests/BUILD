@@ -1343,6 +1343,7 @@ xla_test(
         "//xla/service:hlo_runner_interface",
         "//xla/service:pattern_matcher",
         "//xla/service/gpu:backend_configs_cc",
+        "//xla/service/gpu:blas_lt_custom_calls",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:literal_test_util",

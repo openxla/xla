@@ -17,9 +17,19 @@ limitations under the License.
 
 #include <gtest/gtest.h>
 
+#include <functional>
+#include <optional>
+#include <string>
+#include <utility>
+
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/pass/hlo_pass_interface.h"
+#include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/hipblaslt_custom_calls.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -99,9 +109,68 @@ bool GemmRewriteTestBase::HasCudaComputeCapability(
          Capability().cuda_compute_capability()->SupportsAllFeaturesOf(cc);
 }
 
-ParameterizedGemmRewriteTestBase::ParameterizedGemmRewriteTestBase() {
-  replacements_[kCustomCallTargetPlaceholder] = "__cublas$lt$matmul";
+absl::string_view GemmRewriteTestBase::MatmulTarget() const {
+  return IsRocm() ? kHipblasLtMatmulCallTarget : kCublasLtMatmulCallTarget;
 }
+
+absl::string_view GemmRewriteTestBase::MatmulF8Target() const {
+  return IsRocm() ? kHipblasLtMatmulF8CallTarget : kCublasLtMatmulF8CallTarget;
+}
+
+absl::string_view GemmRewriteTestBase::MatmulMxTarget() const {
+  // MX block-scaled matmuls are only produced on ROCm.
+  return kHipblasLtMatmulMxCallTarget;
+}
+
+absl::string_view GemmRewriteTestBase::GroupedMatmulTarget() const {
+  return IsRocm() ? kHipblasLtGroupedMatmulCallTarget
+                  : kCublasLtGroupedMatmulCallTarget;
+}
+
+std::string GemmRewriteTestBase::Subst(absl::string_view text) const {
+  const std::string matmul_target_regex =
+      absl::StrReplaceAll(MatmulTarget(), {{"$", "\\$"}});
+  return absl::StrReplaceAll(
+      text, {{kMatmulTargetPlaceholder, MatmulTarget()},
+             {kMatmulF8TargetPlaceholder, MatmulF8Target()},
+             {kMatmulMxTargetPlaceholder, MatmulMxTarget()},
+             {kGroupedMatmulTargetPlaceholder, GroupedMatmulTarget()},
+             {kMatmulTargetRegexPlaceholder, matmul_target_regex}});
+}
+
+void GemmRewriteTestBase::MatchOptimizedHlo(absl::string_view hlo,
+                                            absl::string_view pattern,
+                                            bool print_operand_shape) {
+  HloPjRtGpuTestBase::MatchOptimizedHlo(hlo, Subst(pattern),
+                                        print_operand_shape);
+}
+
+void GemmRewriteTestBase::RunAndFilecheckHloRewrite(
+    absl::string_view hlo_with_checks, HloPassInterface&& hlo_pass,
+    std::function<void(HloModule*)> after_pass_checks,
+    const HloModuleConfig* config) const {
+  HloPjRtGpuTestBase::RunAndFilecheckHloRewrite(
+      Subst(hlo_with_checks), std::move(hlo_pass), std::move(after_pass_checks),
+      config);
+}
+
+void GemmRewriteTestBase::RunAndFilecheckHloRewrite(
+    absl::string_view hlo_with_filecheck_lines, HloPassInterface&& hlo_pass,
+    std::optional<absl::string_view> expected,
+    std::function<void(HloModule*)> after_pass_checks,
+    const HloModuleConfig* config,
+    absl::Span<const absl::string_view> additional_check_prefixes) const {
+  const std::string hlo = Subst(hlo_with_filecheck_lines);
+  std::optional<std::string> substituted_expected;
+  if (expected.has_value()) {
+    substituted_expected = Subst(*expected);
+  }
+  HloPjRtGpuTestBase::RunAndFilecheckHloRewrite(
+      hlo, std::move(hlo_pass), substituted_expected,
+      std::move(after_pass_checks), config, additional_check_prefixes);
+}
+
+ParameterizedGemmRewriteTestBase::ParameterizedGemmRewriteTestBase() = default;
 
 DebugOptions ParameterizedGemmRewriteTestBase::GetDebugOptionsForTest() const {
   DebugOptions debug_options = GemmRewriteTestBase::GetDebugOptionsForTest();
@@ -118,13 +187,16 @@ void ParameterizedGemmRewriteTestBase::MatchOptimizedHlo(
 }
 
 absl::string_view ParameterizedGemmRewriteTestBase::CustomCallTarget() {
-  return replacements_[kCustomCallTargetPlaceholder];
+  return MatmulTarget();
 }
 
 void ParameterizedGemmRewriteTestBase::SetUp() {
   if (SkipGpuBlasLtTest()) {
     GTEST_SKIP() << "BlasLt is not supported on this GPU architecture";
   }
+  // Populated here rather than in the constructor: MatmulTarget() queries the
+  // device under test, which is not available until the fixture is set up.
+  replacements_[kCustomCallTargetPlaceholder] = MatmulTarget();
 }
 
 }  // namespace xla::gpu
