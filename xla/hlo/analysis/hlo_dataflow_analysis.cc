@@ -91,9 +91,19 @@ bool IsCrossBufferSliceFusion(const HloInstruction* instruction) {
   return root->IsCustomFusion();
 }
 
-// Returns true if `instruction` (or its wrapped async instruction or an
-// enclosing kWhile instruction) is annotated as reading and writing disjoint
-// buffer regions.
+// Returns true if `instruction` has `frontend_attributes` entry
+// `xla_disjoint_read_write_regions="true"`, checked via
+// `frontend::HasDisjointReadWriteRegionsAttr` on `instruction` itself, on
+// `instruction->async_wrapped_instruction()` when `instruction` is an
+// `async-start`, `async-update`, or `async-done`, or on an enclosing `kWhile`.
+//
+// This attribute promises that reads and in place writes to the same shared
+// array buffer access non overlapping slices (subregions) of that buffer rather
+// than distinct buffers, so in place aliasing is safe even when the buffer is
+// also read. For example, a pipelined `kWhile` annotated with
+// `xla_disjoint_read_write_regions="true"` may read tile `i + 1` via
+// `dynamic-slice(buf, ...)` while updating tile `i` in place via
+// `dynamic-update-slice(buf, ...)` in the same iteration.
 bool HasDisjointReadWriteRegions(const HloInstruction* instruction) {
   if (instruction == nullptr) {
     return false;
@@ -119,16 +129,24 @@ bool HasDisjointReadWriteRegions(const HloInstruction* instruction) {
   return false;
 }
 
-// Returns true if the async op `async_op` wraps an op whose loop-carried async
-// state forwards the in-flight output (index {1}) to the async-update/done: a
-// dynamic-slice, a dynamic-update-slice or a cross_buffer_slice fusion.
-bool WrapsSliceOrCrossBufferSlice(const HloInstruction* async_op) {
-  switch (async_op->async_wrapped_opcode()) {
+// Returns true if `async_hlo` (an `async-start`, `async-update`, or
+// `async-done` instruction) wraps an `async_wrapped_computation()` whose root
+// instruction (`async_wrapped_instruction()`) is a `dynamic-slice`,
+// `dynamic-update-slice`, or `cross_buffer_slice` custom fusion. When such an
+// async chain crosses a `kWhile` boundary, `async-update` and `async-done`
+// forward the in flight result from tuple index `{1}` of their async chain
+// operand rather than from the wrapped computation's root.
+//
+// REQUIRES: `async_hlo` is not null and `async_hlo->IsAsynchronous()`.
+bool WrapsSliceOrCrossBufferSlice(const HloInstruction* async_hlo) {
+  CHECK_NE(async_hlo, nullptr);
+  CHECK(async_hlo->IsAsynchronous()) << async_hlo->ToString();
+  switch (async_hlo->async_wrapped_opcode()) {
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
       return true;
     case HloOpcode::kFusion:
-      return IsCrossBufferSliceFusion(async_op->async_wrapped_instruction());
+      return IsCrossBufferSliceFusion(async_hlo->async_wrapped_instruction());
     default:
       return false;
   }
@@ -456,14 +474,55 @@ using absl::StrCat;
 HloDataflowAnalysis::HloDataflowAnalysis(
     const HloModule& module, bool ssa_form, bool bitcast_defines_value,
     absl::flat_hash_set<absl::string_view> execution_threads,
-    bool propagate_through_calls, bool propagate_through_control_flow)
+    bool propagate_through_calls, bool propagate_through_control_flow,
+    PassthroughPredicate is_passthrough)
     : module_(module),
       execution_threads_(std::move(execution_threads)),
       ssa_form_(ssa_form),
       bitcast_defines_value_(bitcast_defines_value),
       propagate_through_calls_(propagate_through_calls),
       propagate_through_control_flow_(propagate_through_control_flow),
+      is_passthrough_(std::move(is_passthrough)),
       call_graph_(CallGraph::Build(&module)) {}
+
+bool HloDataflowAnalysis::IsPassthrough(
+    const HloInstruction* instruction) const {
+  CHECK_NE(instruction, nullptr);
+  if (is_passthrough_ == nullptr) {
+    return false;
+  }
+  if (instruction->parent() != nullptr &&
+      !HloInstruction::IsThreadIncluded(
+          instruction->parent()->execution_thread(), execution_threads_)) {
+    return false;
+  }
+  if (!is_passthrough_(instruction)) {
+    return false;
+  }
+  // Verify that the accepted instruction is a single operand custom call with
+  // compatible input and output shapes (array or tuple) and no called
+  // computations or output to operand aliasing.
+  CHECK_EQ(instruction->opcode(), HloOpcode::kCustomCall)
+      << instruction->ToString();
+  CHECK_EQ(instruction->operand_count(), 1) << instruction->ToString();
+  CHECK(ShapeUtil::Compatible(instruction->shape(),
+                              instruction->operand(0)->shape()))
+      << instruction->ToString();
+  CHECK(instruction->called_computations().empty()) << instruction->ToString();
+  CHECK(Cast<HloCustomCallInstruction>(instruction)
+            ->output_to_operand_aliasing()
+            .empty())
+      << instruction->ToString();
+  return true;
+}
+
+const HloInstruction* HloDataflowAnalysis::UnwrapPassthrough(
+    const HloInstruction* inst) const {
+  while (inst != nullptr && IsPassthrough(inst)) {
+    inst = inst->operand(0);
+  }
+  return inst;
+}
 
 bool HloDataflowAnalysis::AreTransitiveUsesElementwiseOrTuple(
     const HloInstruction* inst) {
@@ -958,11 +1017,13 @@ bool HloDataflowAnalysis::UpdateAsyncUpdateValueSet(
     }
   }
 
+  const HloInstruction* async_operand =
+      UnwrapPassthrough(async_update->operand(0));
   bool is_loop_crossing =
-      async_update->operand(0)->opcode() == HloOpcode::kGetTupleElement ||
-      async_update->operand(0)->opcode() == HloOpcode::kTuple ||
-      async_update->operand(0)->opcode() == HloOpcode::kWhile ||
-      async_update->operand(0)->opcode() == HloOpcode::kParameter;
+      async_operand->opcode() == HloOpcode::kGetTupleElement ||
+      async_operand->opcode() == HloOpcode::kTuple ||
+      async_operand->opcode() == HloOpcode::kWhile ||
+      async_operand->opcode() == HloOpcode::kParameter;
   bool is_slice_or_copy =
       is_loop_crossing && WrapsSliceOrCrossBufferSlice(async_update);
 
@@ -979,7 +1040,7 @@ bool HloDataflowAnalysis::UpdateAsyncUpdateValueSet(
         if (!subshape.IsArray() && !subshape.IsToken()) {
           return;
         }
-        if (index.empty() || index.front() == 0) {
+        if (index.empty() || index.front() != 1) {
           return;
         }
         const HloValueSet& operand_value_set = GetValueSet(prev_chain, index);
@@ -994,11 +1055,13 @@ bool HloDataflowAnalysis::UpdateAsyncUpdateValueSet(
 
 bool HloDataflowAnalysis::UpdateAsyncDoneValueSet(HloInstruction* async_done) {
   CHECK_EQ(async_done->opcode(), HloOpcode::kAsyncDone);
+  const HloInstruction* async_operand =
+      UnwrapPassthrough(async_done->operand(0));
   bool is_loop_crossing =
-      async_done->operand(0)->opcode() == HloOpcode::kGetTupleElement ||
-      async_done->operand(0)->opcode() == HloOpcode::kTuple ||
-      async_done->operand(0)->opcode() == HloOpcode::kWhile ||
-      async_done->operand(0)->opcode() == HloOpcode::kParameter;
+      async_operand->opcode() == HloOpcode::kGetTupleElement ||
+      async_operand->opcode() == HloOpcode::kTuple ||
+      async_operand->opcode() == HloOpcode::kWhile ||
+      async_operand->opcode() == HloOpcode::kParameter;
   bool is_slice_or_copy =
       is_loop_crossing && WrapsSliceOrCrossBufferSlice(async_done);
   // For loop-crossing chains where async-done wraps a dynamic-slice,
@@ -1137,11 +1200,11 @@ bool HloDataflowAnalysis::UpdateCopyValueSet(HloInstruction* copy) {
 
 bool HloDataflowAnalysis::UpdateOptimizationBarrierValueSet(
     HloInstruction* barrier) {
-  // Optimization Barriers just forward their operand. Given that barriers can
-  // have a tuple operand, we iterate through its indexes, like for copies.
-  // Unlike copies though we also propagate the top-level value.
+  // Optimization Barriers and configured passthrough instructions forward their
+  // single operand across all shape indices, including the top level value.
   CHECK(barrier->opcode() == HloOpcode::kOptimizationBarrier ||
-        barrier->IsCustomCall(kCallMarkerAfterTarget));
+        barrier->IsCustomCall(kCallMarkerAfterTarget) ||
+        IsPassthrough(barrier));
   bool changed = false;
   for (auto& pair : GetInstructionValueSet(barrier)) {
     const ShapeIndex& index = pair.first;
@@ -1526,6 +1589,9 @@ bool HloDataflowAnalysis::UpdateCollectivePermuteDoneValueSet(
 bool HloDataflowAnalysis::UpdateInstructionValueSet(
     HloInstruction* instruction) {
   // Recompute from operands.
+  if (IsPassthrough(instruction)) {
+    return UpdateOptimizationBarrierValueSet(instruction);
+  }
   switch (instruction->opcode()) {
     case HloOpcode::kAddDependency:
       return UpdateAddDependencyValueSet(instruction);
@@ -1802,6 +1868,13 @@ absl::Status HloDataflowAnalysis::InitializeInstructionValueSets() {
         HloValue* value = NewHloValue(instruction, index, /*is_phi=*/false);
         GetMutableValueSet(instruction, index).AddValue(value);
       };
+
+      // Configured passthrough instructions forward their operand values and
+      // define no values of their own.
+      if (IsPassthrough(instruction)) {
+        any_passthrough_seen_ = true;
+        continue;
+      }
 
       switch (instruction->opcode()) {
         case HloOpcode::kBitcast:
@@ -2090,15 +2163,25 @@ absl::StatusOr<std::unique_ptr<HloDataflowAnalysis>> HloDataflowAnalysis::Run(
     absl::flat_hash_set<absl::string_view> execution_threads,
     bool propagate_through_calls,
     std::optional<absl::FunctionRef<bool(const HloValue&)>> precompute_uses,
-    bool propagate_through_control_flow) {
+    bool propagate_through_control_flow, PassthroughPredicate is_passthrough) {
   VLOG(1) << "HloDataflowAnalysis::Run on module " << module.name();
   XLA_VLOG_LINES(2, module.ToString());
 
   auto dataflow_analysis = absl::WrapUnique(new HloDataflowAnalysis(
       module, ssa_form, bitcast_defines_value, execution_threads,
-      propagate_through_calls, propagate_through_control_flow));
+      propagate_through_calls, propagate_through_control_flow,
+      std::move(is_passthrough)));
   ABSL_RETURN_IF_ERROR(dataflow_analysis->RunImpl());
-  if (precompute_uses.has_value()) {
+  if (dataflow_analysis->is_passthrough_ != nullptr) {
+    // Precompute uses for every value through `IsPassthrough` so later
+    // `GetUses()` calls see filtered uses without storing the predicate per
+    // value.
+    HloValue::PrecomputeUses(
+        dataflow_analysis->values(),
+        [analysis = dataflow_analysis.get()](const HloInstruction* inst) {
+          return analysis->IsPassthrough(inst);
+        });
+  } else if (precompute_uses.has_value()) {
     std::vector<HloValue*> values;
     for (HloValue* value : dataflow_analysis->values()) {
       if ((*precompute_uses)(*value)) {
@@ -2112,6 +2195,11 @@ absl::StatusOr<std::unique_ptr<HloDataflowAnalysis>> HloDataflowAnalysis::Run(
 
 absl::Status HloDataflowAnalysis::RunImpl() {
   ABSL_RETURN_IF_ERROR(InitializeInstructionValueSets());
+  // Drop `is_passthrough_` when no instruction in the module matched so modules
+  // without passthroughs pay zero extra cost during propagation or use queries.
+  if (!any_passthrough_seen_) {
+    is_passthrough_ = nullptr;
+  }
   Propagate();
   OptimizePhiValues();
 
@@ -2264,21 +2352,160 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     const AliasInfo* alias_info) const {
   CHECK(user->IsUserOf(operand))
       << "user: " << user->ToString() << " operand: " << operand->ToString();
-  if (operand->opcode() == HloOpcode::kConstant) {
+  // Unwrap configured passthrough wrappers so shape, constant, and multi
+  // operand checks reflect the underlying producer once wrappers are removed.
+  const HloInstruction* unwrapped_operand = operand;
+  bool single_user_along_passthrough_chain = operand->users().size() == 1;
+  while (IsPassthrough(unwrapped_operand)) {
+    unwrapped_operand = unwrapped_operand->operand(0);
+    single_user_along_passthrough_chain &=
+        unwrapped_operand->users().size() == 1;
+  }
+  if (unwrapped_operand->opcode() == HloOpcode::kConstant) {
     return false;
   }
 
   const Shape& operand_subshape =
-      ShapeUtil::GetSubshape(operand->shape(), operand_index);
+      ShapeUtil::GetSubshape(unwrapped_operand->shape(), operand_index);
   const Shape& user_subshape =
       ShapeUtil::GetSubshape(user->shape(), user_index);
+
+  // `IsPassthrough` only enforces `ShapeUtil::Compatible` (which ignores layout
+  // and memory space), whereas buffer sharing requires every passthrough
+  // wrapper along the value forwarding path to `(operand, operand_index)` and
+  // any passthrough `user` to preserve the exact subshape at the matching shape
+  // index.
+  auto passthrough_chain_preserves_subshape =
+      [&](const HloInstruction* start_inst, ShapeIndex start_idx) -> bool {
+    if (is_passthrough_ == nullptr) {
+      return true;
+    }
+    const HloInstruction* curr = start_inst;
+    ShapeIndex idx = std::move(start_idx);
+    while (curr != nullptr) {
+      if (!ShapeUtil::IndexIsValid(curr->shape(), idx)) {
+        return false;
+      }
+      if (IsPassthrough(curr)) {
+        if (!ShapeUtil::IndexIsValid(curr->operand(0)->shape(), idx) ||
+            !ShapeUtil::Equal(
+                ShapeUtil::GetSubshape(curr->shape(), idx),
+                ShapeUtil::GetSubshape(curr->operand(0)->shape(), idx))) {
+          return false;
+        }
+        curr = curr->operand(0);
+      } else if (curr->opcode() == HloOpcode::kGetTupleElement) {
+        idx.push_front(curr->tuple_index());
+        curr = curr->operand(0);
+      } else if (curr->opcode() == HloOpcode::kTuple && !idx.empty()) {
+        const int64_t elem = idx.front();
+        idx.erase(idx.begin());
+        curr = curr->operand(elem);
+      } else if ((curr->opcode() == HloOpcode::kCopy && !idx.empty()) ||
+                 (curr->opcode() == HloOpcode::kBitcast &&
+                  !bitcast_defines_value_ && idx.empty()) ||
+                 curr->opcode() == HloOpcode::kOptimizationBarrier ||
+                 curr->opcode() == HloOpcode::kAddDependency ||
+                 curr->IsCustomCall(kCallMarkerAfterTarget)) {
+        curr = curr->operand(0);
+      } else if (curr->opcode() == HloOpcode::kParameter &&
+                 propagate_through_calls_ && curr->parent() != nullptr) {
+        const absl::InlinedVector<HloInstruction*, 1> callers =
+            curr->parent()->caller_instructions(HloOpcode::kCall);
+        if (callers.size() != 1) {
+          break;
+        }
+        curr = callers[0]->operand(curr->parameter_number());
+      } else if (curr->opcode() == HloOpcode::kCall &&
+                 propagate_through_calls_ && curr->to_apply() != nullptr &&
+                 HloInstruction::IsThreadIncluded(
+                     curr->to_apply()->execution_thread(),
+                     execution_threads_)) {
+        curr = curr->to_apply()->root_instruction();
+      } else {
+        break;
+      }
+    }
+    return true;
+  };
+  if (!passthrough_chain_preserves_subshape(operand, operand_index)) {
+    return false;
+  }
+
+  if (IsPassthrough(user)) {
+    return operand_index == user_index &&
+           ShapeUtil::Equal(operand_subshape, user_subshape);
+  }
 
   // During tiling assignment, we can add no-op instructions which appear to
   // change tiling (and memory space) of the operand, but don't.
   if (hlo_query::IsChangeTilingCopyFusion(user) ||
-      hlo_query::IsChangeTilingCopyFusion(operand)) {
+      hlo_query::IsChangeTilingCopyFusion(unwrapped_operand)) {
     return true;
   }
+
+  // Collect all operand positions of `user` that read from `unwrapped_operand`,
+  // whether directly or through distinct passthrough wrappers.
+  auto shared_operand_indices = [&]() {
+    if (is_passthrough_ == nullptr) {
+      return user->OperandIndices(operand);
+    }
+    decltype(user->OperandIndices(operand)) indices;
+    for (int64_t i = 0; i < user->operand_count(); ++i) {
+      if (UnwrapPassthrough(user->operand(i)) == unwrapped_operand) {
+        indices.push_back(i);
+      }
+    }
+    return indices;
+  };
+
+  // Queries `alias_info->MayAlias` while accounting for multiple operand slots
+  // of `user` that unwrap to `unwrapped_operand`.
+  auto query_may_alias = [&]() -> std::optional<bool> {
+    if (is_passthrough_ == nullptr) {
+      return alias_info->MayAlias(operand, operand_index, user, user_index);
+    }
+    const auto operand_indices = shared_operand_indices();
+    if (operand_indices.size() <= 1) {
+      return alias_info->MayAlias(operand, operand_index, user, user_index);
+    }
+    for (int64_t op_num : operand_indices) {
+      if (!passthrough_chain_preserves_subshape(user->operand(op_num),
+                                                operand_index)) {
+        return false;
+      }
+    }
+    // Tracks whether every shared operand slot returned an explicit `true`
+    // hint from `MayAlias` (rather than `std::nullopt`), while continuing to
+    // check remaining slots so any explicit `false` hint still vetoes sharing.
+    bool all_true = true;
+    for (int64_t op_num : operand_indices) {
+      std::optional<bool> hint = alias_info->MayAlias(
+          user->operand(op_num), operand_index, user, user_index);
+      if (!hint.has_value()) {
+        all_true = false;
+        continue;
+      }
+      if (!*hint) {
+        return false;
+      }
+    }
+    if (!all_true) {
+      return std::nullopt;
+    }
+    // Single slot backend `MayAlias` overrides (such as `kAllReduce`, `kScan`,
+    // or custom fusions) check `user->OperandIndices(operand).size() == 1` on
+    // each wrapper rather than on `unwrapped_operand`, so per wrapper `true`
+    // hints are only combined when each operand slot can alias independently;
+    // other opcodes return `std::nullopt` to fall through to standard rules.
+    if (HasDisjointReadWriteRegions(user) ||
+        user->opcode() == HloOpcode::kConditional ||
+        (user->opcode() == HloOpcode::kFusion && !user->IsCustomFusion())) {
+      return true;
+    }
+    return std::nullopt;
+  };
+
   const bool shapes_equal = ShapeUtil::Equal(operand_subshape, user_subshape);
   // Check that operand and user emit the same shape and layout.
   if (shapes_equal) {
@@ -2301,15 +2528,20 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     if (pairs_it != user_pairs.end()) {
       const auto* fusion = DynCast<HloFusionInstruction>(user);
       for (const HloOperandIndex& in_place_operand : pairs_it->second) {
-        if (user->operand(in_place_operand.operand_number) == operand &&
-            in_place_operand.operand_index == operand_index) {
+        if (in_place_operand.operand_index != operand_index) {
+          continue;
+        }
+        if (UnwrapPassthrough(user->operand(in_place_operand.operand_number)) ==
+            unwrapped_operand) {
           if (HasDisjointReadWriteRegions(user)) {
-            return true;
+            return absl::c_all_of(shared_operand_indices(),
+                                  [&](int64_t op_num) {
+                                    return passthrough_chain_preserves_subshape(
+                                        user->operand(op_num), operand_index);
+                                  });
           }
-          if (user->OperandIndices(operand).size() != 1) {
-            return alias_info
-                ->MayAlias(operand, operand_index, user, user_index)
-                .value_or(false);
+          if (shared_operand_indices().size() != 1) {
+            return query_may_alias().value_or(false);
           }
           if (fusion == nullptr || HasExplicitFusionOutputToOperandAliasing(
                                        fusion, in_place_operand, user_index)) {
@@ -2323,8 +2555,7 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     }
   }
 
-  if (std::optional<bool> hint =
-          alias_info->MayAlias(operand, operand_index, user, user_index)) {
+  if (std::optional<bool> hint = query_may_alias()) {
     return *hint;
   }
 
@@ -2334,7 +2565,7 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
 
   if (user->opcode() == HloOpcode::kFusion) {
     if (user->IsLoopFusion() || user->IsInputFusion()) {
-      return absl::c_all_of(user->OperandIndices(operand),
+      return absl::c_all_of(shared_operand_indices(),
                             [&](int64_t operand_number) {
                               return AreTransitiveUsesElementwiseOrTuple(
                                   user->fused_parameter(operand_number));
@@ -2344,7 +2575,7 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     if (user->IsOutputFusion() &&
         user->fused_expression_root()->opcode() == HloOpcode::kAdd) {
       // Output fusion with kAdd fused root.
-      const auto operand_indices = user->OperandIndices(operand);
+      const auto operand_indices = shared_operand_indices();
       if (operand_indices.size() != 1) {
         return false;
       }
@@ -2396,7 +2627,7 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
       user->opcode() == HloOpcode::kSetDimensionSize) {
     // We eliminated other users in HloOrdering::LiveRangeStrictlyBefore
     // so here we just need to check that the use is at the right operand index.
-    const auto operand_indices = user->OperandIndices(operand);
+    const auto operand_indices = shared_operand_indices();
     int64_t operand_no = 0;
     if (user->opcode() == HloOpcode::kTriangularSolve) {
       operand_no = 1;
@@ -2410,7 +2641,7 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
   }
   if (user->opcode() == HloOpcode::kSort) {
     // Only valid if there are no other users.
-    if (operand->users().size() != 1) {
+    if (!single_user_along_passthrough_chain) {
       return false;
     }
     // If we only sort keys, the output of sort is not a tuple, so we can always
@@ -2420,7 +2651,7 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     }
     CHECK(!user_index.empty());
     // Only share with the right tuple element buffer.
-    const auto operand_indices = user->OperandIndices(operand);
+    const auto operand_indices = shared_operand_indices();
     return operand_indices.size() == 1 && user_index[0] == operand_indices[0];
   }
   if (user->opcode() == HloOpcode::kCall) {
@@ -2444,21 +2675,53 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
         absl::c_find_if(uses, [user](const HloUse& use) {
           return use.instruction == user;
         }) != uses.end();
-    auto* callee_root = user->to_apply()->root_instruction();
+    // Passthroughs inside `user->to_apply()` can transiently change layout or
+    // memory space even when the outer `kCall` operand and result subshapes
+    // match, so unwrap `callee_root` while verifying that every wrapper on the
+    // root chain preserves `user_subshape`.
+    const HloInstruction* callee_root = user->to_apply()->root_instruction();
+    bool root_preserves_subshape = true;
+    while (IsPassthrough(callee_root)) {
+      if (!ShapeUtil::Equal(
+              ShapeUtil::GetSubshape(callee_root->shape(), user_index),
+              user_subshape)) {
+        root_preserves_subshape = false;
+        break;
+      }
+      callee_root = callee_root->operand(0);
+    }
+    if (!root_preserves_subshape ||
+        !ShapeUtil::Equal(
+            ShapeUtil::GetSubshape(callee_root->shape(), user_index),
+            user_subshape)) {
+      return false;
+    }
+    // Verify that the elementwise operand of `callee_root` preserves
+    // `operand_subshape` across any value forwarding instructions inside
+    // `user->to_apply()`.
     const bool found_elementwise_callee_use =
-        absl::c_find_if(uses, [callee_root](const HloUse& use) {
-          return use.instruction == callee_root &&
-                 callee_root->IsElementwiseOnOperand(use.operand_number);
+        absl::c_find_if(uses, [&](const HloUse& use) {
+          if (use.instruction != callee_root ||
+              !callee_root->IsElementwiseOnOperand(use.operand_number)) {
+            return false;
+          }
+          const HloInstruction* root_op =
+              callee_root->operand(use.operand_number);
+          return ShapeUtil::IndexIsValid(root_op->shape(), use.operand_index) &&
+                 ShapeUtil::Equal(ShapeUtil::GetSubshape(root_op->shape(),
+                                                         use.operand_index),
+                                  operand_subshape) &&
+                 passthrough_chain_preserves_subshape(root_op,
+                                                      use.operand_index);
         }) != uses.end();
     return uses.size() == 2 && found_caller_use && found_elementwise_callee_use;
   }
 
   // Loop fusions that contain transposing copies won't reach here as they have
   // different layouts, which fails the check in the beginning of this function.
-  return absl::c_all_of(user->OperandIndices(operand),
-                        [&](int64_t operand_number) {
-                          return user->IsElementwiseOnOperand(operand_number);
-                        });
+  return absl::c_all_of(shared_operand_indices(), [&](int64_t operand_number) {
+    return user->IsElementwiseOnOperand(operand_number);
+  });
 }
 
 bool HloDataflowAnalysis::CanShareOperandValueBufferWithUser(
@@ -2470,6 +2733,9 @@ bool HloDataflowAnalysis::CanShareOperandValueBufferWithUser(
                                               return pos.instruction == user;
                                             });
   };
+  if (IsPassthrough(user) && !is_root_position()) {
+    return false;
+  }
   bool used_by_user = false;
   for (const HloPosition& position : operand_value.positions()) {
     if (!user->IsUserOf(position.instruction)) {

@@ -16,6 +16,7 @@ limitations under the License.
 #include "xla/service/copy_insertion.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -171,78 +172,846 @@ bool IsWhileLoopCopyDisabled(const HloInstruction* instruction,
   return false;
 }
 
-// Deep copy the given instructions 'from' and 'to' at the ShapeIndexes given in
-// 'indices_to_copy'. Add control edges from the respective kCopy instructions
-// in deep copy of 'from' to the respective kCopy instruction in the deep copy
-// of 'to'. These control edges are necessary to prevent live range interference
-// between the kCopy instructions in the deep copy of 'from' and the kCopy
-// instructions in the deep copy of 'to'.
-//
-// Requirements: 'from' and 'to' must have compatible shapes.
-//
-// For example, suppose 'from' and 'to' are two-element tuples where index 0 is
-// the only index to copy. Prior to deep-copying we have:
-//
-//
-//       'from'
-//          |
-//         ...
-//          |
-//        'to'
-//
-// DeepCopyAndAddControlEdges produces:
-//
-//       'from'
-//        /   \
-//      GTE   GTE
-//       |     |
-//     Copy    |
-//    /   \   /
-//   |    Tuple
-//   |      |
-//  ctrl   ...
-//  edge    |
-//   |      |
-//   |    'to'
-//   |    /   \
-//   |  GTE   GTE
-//    \  |     |
-//     Copy    |
-//        \   /
-//        Tuple
-//
-absl::StatusOr<std::pair<HloInstruction*, HloInstruction*>>
-DeepCopyAndAddControlEdges(HloInstruction* from, HloInstruction* to,
-                           const ShapeTree<bool>& indices_to_copy) {
-  DCHECK(ShapeUtil::Compatible(from->shape(), to->shape()));
-  // to/from_copy_tree hold the kCopy instruction produces by the deep
-  // copies. Elements which are not copied (indices_to_copy.element(index) ==
-  // false) have nullptr at that index.
-  ShapeTree<HloInstruction*> from_copy_tree(from->shape(),
-                                            /*init_value=*/nullptr);
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * from_deep_copy,
-                        from->parent()->DeepCopyInstruction(
-                            from, &indices_to_copy, &from_copy_tree));
+using CopyListTree = ShapeTree<absl::InlinedVector<HloInstruction*, 1>>;
 
-  ShapeTree<HloInstruction*> to_copy_tree(to->shape(), /*init_value=*/nullptr);
-  ABSL_ASSIGN_OR_RETURN(
-      HloInstruction * to_deep_copy,
-      to->parent()->DeepCopyInstruction(to, &indices_to_copy, &to_copy_tree));
+// Returns the attachment direction of `inst` under `classify_passthrough` after
+// verifying all passthrough invariants required by HloDataflowAnalysis.
+//
+// REQUIRES: `inst` is not null.
+CopyInsertion::PassthroughAttachment ClassifyValidatedPassthrough(
+    const HloInstruction* inst,
+    const CopyInsertion::PassthroughClassifier& classify_passthrough) {
+  CHECK_NE(inst, nullptr);
+  if (classify_passthrough == nullptr) {
+    return CopyInsertion::PassthroughAttachment::kNone;
+  }
+  CopyInsertion::PassthroughAttachment attachment = classify_passthrough(inst);
+  if (attachment != CopyInsertion::PassthroughAttachment::kNone) {
+    CHECK_EQ(inst->opcode(), HloOpcode::kCustomCall) << inst->ToString();
+    CHECK_EQ(inst->operand_count(), 1) << inst->ToString();
+    CHECK(ShapeUtil::Compatible(inst->shape(), inst->operand(0)->shape()))
+        << inst->ToString();
+    CHECK(inst->called_computations().empty()) << inst->ToString();
+    CHECK(Cast<HloCustomCallInstruction>(inst)
+              ->output_to_operand_aliasing()
+              .empty())
+        << inst->ToString();
+    CHECK(!inst->IsCustomCall(kCallMarkerBeforeTarget)) << inst->ToString();
+  }
+  return attachment;
+}
 
-  // Add control edges between the respective kCopy instructions.
+// Clones `marker` onto `new_operand` with `new_shape` while preserving any
+// control predecessors and control successors attached to `marker`.
+//
+// REQUIRES: `marker` and `new_operand` are not null and belong to the same
+// computation, and `ShapeUtil::Compatible(new_shape, marker->shape())`.
+HloInstruction* ClonePassthroughPreservingControlDeps(
+    const HloInstruction* marker, HloInstruction* new_operand,
+    const Shape& new_shape) {
+  CHECK_NE(marker, nullptr);
+  CHECK_NE(new_operand, nullptr);
+  HloComputation* comp = new_operand->parent();
+  CHECK_NE(comp, nullptr);
+  CHECK_EQ(comp, marker->parent());
+  HloInstruction* clone = comp->AddInstruction(
+      marker->CloneWithNewOperands(new_shape, {new_operand}));
+  for (HloInstruction* pred : marker->control_predecessors()) {
+    CHECK_OK(pred->AddControlDependencyTo(clone));
+  }
+  for (HloInstruction* succ : marker->control_successors()) {
+    CHECK_OK(clone->AddControlDependencyTo(succ));
+  }
+  return clone;
+}
+
+// Copies an array leaf `leaf` to `output_shape`, placing the new kCopy after
+// any kProducer passthroughs and before any kConsumer passthroughs (except when
+// `is_entry_root_copy` is true, where the entry root kCopy itself is the final
+// consumer).
+//
+// REQUIRES: `leaf` is not null and belongs to a computation,
+// `leaf->shape().IsArray()`, and `ShapeUtil::Compatible(output_shape,
+// leaf->shape())`.
+absl::StatusOr<HloInstruction*> CopyArrayPreservingPassthroughs(
+    HloInstruction* leaf, const Shape& output_shape,
+    const HloInstruction* target_user, bool is_entry_root_copy,
+    bool allow_in_place_rewire, HloInstruction** recorded_copy,
+    const CopyInsertion::PassthroughClassifier& classify_passthrough) {
+  CHECK_NE(leaf, nullptr);
+  HloComputation* comp = leaf->parent();
+  CHECK_NE(comp, nullptr);
+  // Unwrap all passthrough wrappers from `leaf` down to the underlying producer
+  // `base`.
+  std::vector<HloInstruction*> wrappers;
+  HloInstruction* curr = leaf;
+  while (ClassifyValidatedPassthrough(curr, classify_passthrough) !=
+         CopyInsertion::PassthroughAttachment::kNone) {
+    wrappers.push_back(curr);
+    curr = curr->mutable_operand(0);
+  }
+  HloInstruction* base = curr;
+
+  // When there are no passthrough wrappers or when inserting an entry root
+  // copy (which has no downstream consumer), emit a direct kCopy after `leaf`.
+  if (wrappers.empty() || is_entry_root_copy) {
+    HloInstruction* copy = comp->AddInstruction(
+        HloInstruction::CreateUnary(output_shape, HloOpcode::kCopy, leaf));
+    if (recorded_copy != nullptr) {
+      *recorded_copy = copy;
+    }
+    return copy;
+  }
+
+  // Partition wrappers from `base` outward into `kProducer` and `kConsumer`
+  // lists while tracking whether all producer wrappers already precede all
+  // consumer wrappers.
+  std::vector<HloInstruction*> producer_wrappers;
+  std::vector<HloInstruction*> consumer_wrappers;
+  bool seen_consumer = false;
+  bool ordered_prod_then_cons = true;
+  for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
+    HloInstruction* w = *it;
+    if (ClassifyValidatedPassthrough(w, classify_passthrough) ==
+        CopyInsertion::PassthroughAttachment::kProducer) {
+      if (seen_consumer) {
+        ordered_prod_then_cons = false;
+      }
+      producer_wrappers.push_back(w);
+    } else {
+      seen_consumer = true;
+      consumer_wrappers.push_back(w);
+    }
+  }
+
+  if (consumer_wrappers.empty()) {
+    HloInstruction* copy = comp->AddInstruction(
+        HloInstruction::CreateUnary(output_shape, HloOpcode::kCopy, leaf));
+    if (recorded_copy != nullptr) {
+      *recorded_copy = copy;
+    }
+    return copy;
+  }
+
+  // If the consumer wrapper chain is already ordered after any producer
+  // wrappers and is unshared by other instructions, splice the new kCopy in
+  // place between `prod_tail` and `consumer_wrappers.front()`.
+  bool can_rewire_in_place = allow_in_place_rewire && ordered_prod_then_cons &&
+                             ShapeUtil::Equal(output_shape, leaf->shape());
+  if (can_rewire_in_place) {
+    can_rewire_in_place = target_user == nullptr
+                              ? leaf->user_count() == 0
+                              : (leaf->user_count() == 1 && !leaf->IsRoot() &&
+                                 target_user->OperandIndices(leaf).size() == 1);
+    for (size_t i = 0; i + 1 < consumer_wrappers.size() && can_rewire_in_place;
+         ++i) {
+      can_rewire_in_place &= consumer_wrappers[i]->user_count() == 1 &&
+                             !consumer_wrappers[i]->IsRoot();
+    }
+  }
+  if (can_rewire_in_place) {
+    HloInstruction* prod_tail =
+        producer_wrappers.empty() ? base : producer_wrappers.back();
+    HloInstruction* copy = comp->AddInstruction(HloInstruction::CreateUnary(
+        prod_tail->shape(), HloOpcode::kCopy, prod_tail));
+    if (recorded_copy != nullptr) {
+      *recorded_copy = copy;
+    }
+    ABSL_RETURN_IF_ERROR(
+        prod_tail->ReplaceUseWith(consumer_wrappers.front(), 0, copy));
+    return leaf;
+  }
+
+  // Otherwise, rebuild the producer wrapper chain on `base`, emit the kCopy,
+  // and clone the consumer wrapper chain after the kCopy so shared consumers or
+  // mixed wrapper chains are separated cleanly.
+  HloInstruction* prod_tail = base;
+  for (HloInstruction* w : producer_wrappers) {
+    prod_tail =
+        (w->operand(0) == prod_tail)
+            ? w
+            : ClonePassthroughPreservingControlDeps(w, prod_tail, w->shape());
+  }
+  HloInstruction* copy = comp->AddInstruction(
+      HloInstruction::CreateUnary(output_shape, HloOpcode::kCopy, prod_tail));
+  if (recorded_copy != nullptr) {
+    *recorded_copy = copy;
+  }
+  HloInstruction* cons_tail = copy;
+  for (HloInstruction* w : consumer_wrappers) {
+    cons_tail =
+        ClonePassthroughPreservingControlDeps(w, cons_tail, output_shape);
+  }
+  return cons_tail;
+}
+
+// Deep copies `instruction` for `target_user` (or for a computation root when
+// `target_user` is null), placing each copied array leaf between any kProducer
+// and kConsumer passthrough wrappers so both stay attached to their targets.
+//
+// REQUIRES: `instruction` is not null and belongs to a computation, and any
+// non null `indices_to_copy` or `copies_added` is shape compatible with
+// `instruction->shape()`.
+absl::StatusOr<HloInstruction*> DeepCopyConsumerOperand(
+    HloInstruction* instruction, const HloInstruction* target_user,
+    const ShapeTree<bool>* indices_to_copy,
+    ShapeTree<HloInstruction*>* copies_added,
+    const CopyInsertion::PassthroughClassifier& classify_passthrough) {
+  TF_RET_CHECK(instruction != nullptr);
+  HloComputation* computation = instruction->parent();
+  TF_RET_CHECK(computation != nullptr);
+  if (indices_to_copy != nullptr) {
+    TF_RET_CHECK(
+        ShapeUtil::Compatible(instruction->shape(), indices_to_copy->shape()));
+  }
+  if (copies_added != nullptr) {
+    TF_RET_CHECK(
+        ShapeUtil::Compatible(instruction->shape(), copies_added->shape()));
+  }
+  if (classify_passthrough == nullptr) {
+    return computation->DeepCopyInstruction(instruction, indices_to_copy,
+                                            copies_added);
+  }
+
+  const bool is_entry_root_copy =
+      target_user == nullptr && computation->IsEntryComputation();
+
+  if (instruction->shape().IsArray()) {
+    if (indices_to_copy != nullptr && !indices_to_copy->element({})) {
+      return instruction;
+    }
+    HloInstruction* recorded = nullptr;
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * result,
+        CopyArrayPreservingPassthroughs(
+            instruction, instruction->shape(), target_user, is_entry_root_copy,
+            /*allow_in_place_rewire=*/true, &recorded, classify_passthrough));
+    if (copies_added != nullptr) {
+      *copies_added->mutable_element({}) = recorded;
+    }
+    return result;
+  }
+
+  if (!instruction->shape().IsTuple()) {
+    return computation->DeepCopyInstruction(instruction, indices_to_copy,
+                                            copies_added);
+  }
+
+  // If `instruction` itself is wrapped in tuple shaped kConsumer passthroughs
+  // (such as tuple V0 coloring markers), unwrap them, deep copy the underlying
+  // tuple, and reattach or clone the tuple kConsumer chain on top.
+  if (!is_entry_root_copy &&
+      ClassifyValidatedPassthrough(instruction, classify_passthrough) ==
+          CopyInsertion::PassthroughAttachment::kConsumer) {
+    std::vector<HloInstruction*> tuple_chain;
+    HloInstruction* curr = instruction;
+    while (ClassifyValidatedPassthrough(curr, classify_passthrough) ==
+           CopyInsertion::PassthroughAttachment::kConsumer) {
+      tuple_chain.push_back(curr);
+      curr = curr->mutable_operand(0);
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * copied_base,
+        DeepCopyConsumerOperand(curr, /*target_user=*/tuple_chain.back(),
+                                indices_to_copy, copies_added,
+                                classify_passthrough));
+    if (copied_base == curr) {
+      return instruction;
+    }
+    // Rewire the tuple kConsumer chain in place onto `copied_base` when the
+    // chain is unshared; otherwise clone the chain onto `copied_base`.
+    bool can_rewire_in_place =
+        ShapeUtil::Equal(copied_base->shape(), curr->shape()) &&
+        (target_user == nullptr
+             ? instruction->user_count() == 0
+             : (instruction->user_count() == 1 && !instruction->IsRoot() &&
+                target_user->OperandIndices(instruction).size() == 1));
+    for (size_t i = 1; i < tuple_chain.size() && can_rewire_in_place; ++i) {
+      can_rewire_in_place &=
+          tuple_chain[i]->user_count() == 1 && !tuple_chain[i]->IsRoot();
+    }
+    if (can_rewire_in_place) {
+      ABSL_RETURN_IF_ERROR(
+          curr->ReplaceUseWith(tuple_chain.back(), 0, copied_base));
+      return instruction;
+    }
+    HloInstruction* rebuilt = copied_base;
+    for (auto it = tuple_chain.rbegin(); it != tuple_chain.rend(); ++it) {
+      rebuilt =
+          ClonePassthroughPreservingControlDeps(*it, rebuilt, (*it)->shape());
+    }
+    return rebuilt;
+  }
+
+  // Tuple path: walk downward from `(instruction, leaf_index)` across nested
+  // kTuple instructions so array leaves that carry passthrough wrappers keep
+  // kProducer and kConsumer wrappers on the right side of the new kCopy, while
+  // leaves without passthroughs (including GTEs of tuple kProducer wrappers)
+  // copy `leaf` directly (matching HloComputation::DeepCopyInstruction and
+  // preserving any explicit tuple subshape layout or tiling on
+  // `leaf->shape()`).
+  return computation->DeepCopyInstructionWithCustomCopier(
+      instruction,
+      [&](HloInstruction* leaf, const ShapeIndex& leaf_index,
+          HloComputation* comp) -> HloInstruction* {
+        if (indices_to_copy != nullptr &&
+            !indices_to_copy->element(leaf_index)) {
+          return leaf;
+        }
+        if (!leaf->shape().IsArray()) {
+          return leaf;
+        }
+        // Resolve the underlying tuple element only across explicit kTuple
+        // nodes so a tuple shaped kProducer passthrough stays attached above
+        // the GTE leaf.
+        HloInstruction* underlying = instruction;
+        bool resolved_to_leaf = true;
+        for (int64_t idx : leaf_index) {
+          if (underlying->opcode() == HloOpcode::kTuple) {
+            underlying = underlying->mutable_operand(idx);
+          } else {
+            resolved_to_leaf = false;
+            break;
+          }
+        }
+        const bool has_leaf_passthrough =
+            resolved_to_leaf &&
+            ClassifyValidatedPassthrough(underlying, classify_passthrough) !=
+                CopyInsertion::PassthroughAttachment::kNone;
+        if (!has_leaf_passthrough) {
+          HloInstruction* copy =
+              comp->AddInstruction(HloInstruction::CreateUnary(
+                  leaf->shape(), HloOpcode::kCopy, leaf));
+          if (copies_added != nullptr) {
+            *copies_added->mutable_element(leaf_index) = copy;
+          }
+          return copy;
+        }
+        HloInstruction* recorded = nullptr;
+        absl::StatusOr<HloInstruction*> copied =
+            CopyArrayPreservingPassthroughs(
+                underlying, leaf->shape(), /*target_user=*/nullptr,
+                is_entry_root_copy, /*allow_in_place_rewire=*/false, &recorded,
+                classify_passthrough);
+        CHECK_OK(copied.status());
+        if (copies_added != nullptr) {
+          *copies_added->mutable_element(leaf_index) = recorded;
+        }
+        return *copied;
+      });
+}
+
+// Returns true if every non passthrough user of the underlying producer of
+// `operand` carries the disjoint read/write regions attribute, memoized by
+// unwrapped producer in `disjoint_base_cache`.
+//
+// REQUIRES: `operand` and `disjoint_base_cache` are not null.
+bool AllNonPassthroughUsersHaveDisjointRegions(
+    const HloInstruction* operand,
+    const CopyInsertion::PassthroughClassifier& classify_passthrough,
+    absl::flat_hash_map<const HloInstruction*, bool>* disjoint_base_cache) {
+  CHECK_NE(operand, nullptr);
+  CHECK_NE(disjoint_base_cache, nullptr);
+  const HloInstruction* base = operand;
+  while (ClassifyValidatedPassthrough(base, classify_passthrough) !=
+         CopyInsertion::PassthroughAttachment::kNone) {
+    base = base->operand(0);
+  }
+  if (auto it = disjoint_base_cache->find(base);
+      it != disjoint_base_cache->end()) {
+    return it->second;
+  }
+  absl::flat_hash_set<const HloInstruction*> visited = {base};
+  std::vector<const HloInstruction*> worklist = {base};
+  bool all_disjoint = true;
+  while (!worklist.empty()) {
+    const HloInstruction* curr = worklist.back();
+    worklist.pop_back();
+    if (curr->IsRoot()) {
+      all_disjoint = false;
+      break;
+    }
+    for (const HloInstruction* user : curr->users()) {
+      if (ClassifyValidatedPassthrough(user, classify_passthrough) !=
+          CopyInsertion::PassthroughAttachment::kNone) {
+        if (visited.insert(user).second) {
+          worklist.push_back(user);
+        }
+        continue;
+      }
+      if (!frontend::HasDisjointReadWriteRegionsAttr(user)) {
+        all_disjoint = false;
+        worklist.clear();
+        break;
+      }
+    }
+  }
+  disjoint_base_cache->emplace(base, all_disjoint);
+  return all_disjoint;
+}
+
+// Deep copies `instruction` at `indices_to_copy` and rewires its downstream
+// uses (and computation root when `replace_root` is true and `instruction` or
+// an attached kProducer passthrough is the root), placing copies after any
+// attached kProducer passthroughs without introducing edges between markers.
+//
+// REQUIRES: `instruction` is not null and belongs to a computation,
+// `indices_to_copy` is shape compatible with `instruction->shape()`, any non
+// null `copies_added` is shape compatible with `instruction->shape()`, and when
+// `users_override` is present every element of `*users_override` is not null.
+absl::Status InsertProducerCopyImpl(
+    HloInstruction* instruction, const ShapeTree<bool>& indices_to_copy,
+    std::optional<absl::Span<HloInstruction* const>> users_override,
+    bool replace_root,
+    const absl::flat_hash_set<const HloInstruction*>* skip_users,
+    CopyListTree* copies_added,
+    const CopyInsertion::PassthroughClassifier& classify_passthrough) {
+  TF_RET_CHECK(instruction != nullptr);
+  HloComputation* computation = instruction->parent();
+  TF_RET_CHECK(computation != nullptr);
+  TF_RET_CHECK(
+      ShapeUtil::Compatible(instruction->shape(), indices_to_copy.shape()));
+  if (copies_added != nullptr) {
+    TF_RET_CHECK(
+        ShapeUtil::Compatible(instruction->shape(), copies_added->shape()));
+  }
+
+  auto should_skip_user = [&](const HloInstruction* u) {
+    return skip_users != nullptr && skip_users->contains(u);
+  };
+
+  std::vector<HloInstruction*> initial_users;
+  if (users_override.has_value()) {
+    for (HloInstruction* u : *users_override) {
+      if (!should_skip_user(u)) {
+        initial_users.push_back(u);
+      }
+    }
+  } else {
+    for (HloInstruction* u : instruction->users()) {
+      if (!should_skip_user(u)) {
+        initial_users.push_back(u);
+      }
+    }
+  }
+
+  auto record_single_tree = [&](const ShapeTree<HloInstruction*>& single_tree) {
+    if (copies_added == nullptr) {
+      return;
+    }
+    single_tree.ForEachElement(
+        [&](const ShapeIndex& idx, HloInstruction* copy) {
+          if (copy != nullptr) {
+            copies_added->mutable_element(idx)->push_back(copy);
+          }
+        });
+  };
+
+  if (classify_passthrough == nullptr) {
+    const bool update_root = replace_root && instruction->IsRoot();
+    ShapeTree<HloInstruction*> single_tree(instruction->shape(), nullptr);
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * deep_copy,
+        computation->DeepCopyInstruction(
+            instruction, &indices_to_copy,
+            copies_added != nullptr ? &single_tree : nullptr));
+    record_single_tree(single_tree);
+    for (HloInstruction* user : initial_users) {
+      ABSL_RETURN_IF_ERROR(
+          instruction->ReplaceUseWithDifferentShape(user, deep_copy));
+    }
+    if (update_root) {
+      computation->set_root_instruction(deep_copy);
+    }
+    return absl::OkStatus();
+  }
+
+  // Array producer path: keep every attached kProducer passthrough on its
+  // existing operand (preventing cycles) and place a kCopy immediately after
+  // each owner (`instruction` or attached kProducer) that has downstream uses
+  // or is the computation root. Also separate mixed `kConsumer -> kProducer`
+  // chains so `kProducer` stays before the kCopy and `kConsumer` stays after.
+  if (instruction->shape().IsArray() && indices_to_copy.element({})) {
+    std::vector<HloInstruction*> owners = {instruction};
+    absl::flat_hash_set<HloInstruction*> visited_owners = {instruction};
+    absl::flat_hash_map<HloInstruction*, std::vector<HloInstruction*>>
+        owner_uses;
+    bool recorded_any_copy = false;
+
+    auto process_user_of_owner = [&](HloInstruction* owner,
+                                     HloInstruction* user) -> absl::Status {
+      if (should_skip_user(user)) {
+        return absl::OkStatus();
+      }
+      auto att = ClassifyValidatedPassthrough(user, classify_passthrough);
+      if (att == CopyInsertion::PassthroughAttachment::kProducer) {
+        if (visited_owners.insert(user).second) {
+          owners.push_back(user);
+        }
+        return absl::OkStatus();
+      }
+      if (att == CopyInsertion::PassthroughAttachment::kConsumer) {
+        // Check if any kProducer passthrough sits downstream of `user`; if so,
+        // rebuild each such path as `owner -> m_out_clone -> copy ->
+        // m_in_clone` via CopyArrayPreservingPassthroughs on the outer tail.
+        std::vector<HloInstruction*> stack = {user};
+        absl::flat_hash_set<HloInstruction*> seen = {user};
+        bool has_downstream_producer_marker = false;
+        while (!stack.empty()) {
+          HloInstruction* curr = stack.back();
+          stack.pop_back();
+          for (HloInstruction* sub : curr->users()) {
+            auto sub_att =
+                ClassifyValidatedPassthrough(sub, classify_passthrough);
+            if (sub_att == CopyInsertion::PassthroughAttachment::kProducer) {
+              has_downstream_producer_marker = true;
+              break;
+            }
+            if (sub_att == CopyInsertion::PassthroughAttachment::kConsumer &&
+                seen.insert(sub).second) {
+              stack.push_back(sub);
+            }
+          }
+        }
+        if (has_downstream_producer_marker) {
+          // Walk to the maximal passthrough tails reachable from `user` and
+          // rebuild each tail for its non passthrough consumers.
+          std::vector<HloInstruction*> tails = {user};
+          absl::flat_hash_set<HloInstruction*> visited_tails = {user};
+          for (size_t ti = 0; ti < tails.size(); ++ti) {
+            HloInstruction* t = tails[ti];
+            std::vector<HloInstruction*> non_pass_users;
+            for (HloInstruction* tu : t->users()) {
+              if (should_skip_user(tu)) {
+                continue;
+              }
+              if (ClassifyValidatedPassthrough(tu, classify_passthrough) !=
+                  CopyInsertion::PassthroughAttachment::kNone) {
+                if (visited_tails.insert(tu).second) {
+                  tails.push_back(tu);
+                }
+              } else {
+                non_pass_users.push_back(tu);
+              }
+            }
+            const bool tail_is_root = replace_root && t->IsRoot();
+            if (!non_pass_users.empty() || tail_is_root) {
+              HloInstruction* recorded = nullptr;
+              ABSL_ASSIGN_OR_RETURN(HloInstruction * rebuilt,
+                                    CopyArrayPreservingPassthroughs(
+                                        t, t->shape(), /*target_user=*/nullptr,
+                                        /*is_entry_root_copy=*/false,
+                                        /*allow_in_place_rewire=*/false,
+                                        &recorded, classify_passthrough));
+              if (recorded != nullptr) {
+                recorded_any_copy = true;
+                if (copies_added != nullptr) {
+                  copies_added->mutable_element({})->push_back(recorded);
+                }
+              }
+              for (HloInstruction* nu : non_pass_users) {
+                ABSL_RETURN_IF_ERROR(
+                    t->ReplaceUseWithDifferentShape(nu, rebuilt));
+              }
+              if (tail_is_root) {
+                computation->set_root_instruction(rebuilt);
+              }
+            }
+          }
+          return absl::OkStatus();
+        }
+      }
+      owner_uses[owner].push_back(user);
+      return absl::OkStatus();
+    };
+
+    // Collect all transitively attached kProducer passthroughs and their
+    // downstream non producer uses without creating edges between markers.
+    for (HloInstruction* u : initial_users) {
+      ABSL_RETURN_IF_ERROR(process_user_of_owner(instruction, u));
+    }
+    for (size_t idx = 1; idx < owners.size(); ++idx) {
+      HloInstruction* marker = owners[idx];
+      std::vector<HloInstruction*> m_users = marker->users();
+      for (HloInstruction* u : m_users) {
+        ABSL_RETURN_IF_ERROR(process_user_of_owner(marker, u));
+      }
+    }
+
+    // When `instruction` has both attached kProducer markers and direct users,
+    // route any direct user that cannot reach `primary_marker` through
+    // `primary_marker`'s copy so a single kCopy serves both without introducing
+    // cycles.
+    std::vector<HloInstruction*> shared_direct_users;
+    if (owners.size() > 1) {
+      auto direct_it = owner_uses.find(instruction);
+      if (direct_it != owner_uses.end() && !direct_it->second.empty()) {
+        HloInstruction* primary_marker = owners.back();
+        std::unique_ptr<HloReachabilityMap> reachability =
+            HloReachabilityMap::Build(computation);
+        std::vector<HloInstruction*> remaining_direct_users;
+        for (HloInstruction* u : direct_it->second) {
+          if (!reachability->IsReachable(u, primary_marker)) {
+            shared_direct_users.push_back(u);
+          } else {
+            remaining_direct_users.push_back(u);
+          }
+        }
+        direct_it->second = std::move(remaining_direct_users);
+      }
+    }
+
+    // Emit a kCopy immediately after each owner (`instruction` or attached
+    // kProducer) that has downstream uses or is the computation root.
+    for (HloInstruction* owner : owners) {
+      const auto it = owner_uses.find(owner);
+      const bool has_uses = it != owner_uses.end() && !it->second.empty();
+      const bool is_primary = owners.size() > 1 && owner == owners.back() &&
+                              !shared_direct_users.empty();
+      const bool owner_is_root = replace_root && owner->IsRoot();
+      if (!has_uses && !is_primary && !owner_is_root) {
+        continue;
+      }
+      HloInstruction* copy = computation->AddInstruction(
+          HloInstruction::CreateUnary(owner->shape(), HloOpcode::kCopy, owner));
+      if (copies_added != nullptr) {
+        copies_added->mutable_element({})->push_back(copy);
+      }
+      recorded_any_copy = true;
+      if (has_uses) {
+        for (HloInstruction* user : it->second) {
+          ABSL_RETURN_IF_ERROR(owner->ReplaceUseWithDifferentShape(user, copy));
+        }
+      }
+      if (is_primary) {
+        for (HloInstruction* user : shared_direct_users) {
+          ABSL_RETURN_IF_ERROR(
+              instruction->ReplaceUseWithDifferentShape(user, copy));
+        }
+      }
+      if (owner_is_root) {
+        computation->set_root_instruction(copy);
+      }
+    }
+    if (!recorded_any_copy && copies_added != nullptr) {
+      HloInstruction* copy =
+          computation->AddInstruction(HloInstruction::CreateUnary(
+              instruction->shape(), HloOpcode::kCopy, instruction));
+      copies_added->mutable_element({})->push_back(copy);
+    }
+    return absl::OkStatus();
+  }
+
+  // Tuple producer path: preserve both tuple shaped kProducer passthroughs on
+  // `instruction` and array kProducer passthroughs attached to GTEs of
+  // `instruction`.
+  if (instruction->shape().IsTuple()) {
+    std::vector<HloInstruction*> tuple_producer_markers;
+    std::vector<HloInstruction*> gtes_with_producer_markers;
+    std::vector<HloInstruction*> direct_users;
+    absl::flat_hash_set<HloInstruction*> visited_tuple_markers;
+
+    auto has_transitive_producer_passthrough =
+        [&](const HloInstruction* root_inst) {
+          absl::flat_hash_set<const HloInstruction*> seen;
+          std::vector<const HloInstruction*> stack(root_inst->users().begin(),
+                                                   root_inst->users().end());
+          while (!stack.empty()) {
+            const HloInstruction* curr = stack.back();
+            stack.pop_back();
+            const auto kind =
+                ClassifyValidatedPassthrough(curr, classify_passthrough);
+            if (kind == CopyInsertion::PassthroughAttachment::kProducer) {
+              return true;
+            }
+            if (kind == CopyInsertion::PassthroughAttachment::kConsumer &&
+                seen.insert(curr).second) {
+              stack.insert(stack.end(), curr->users().begin(),
+                           curr->users().end());
+            }
+          }
+          return false;
+        };
+
+    for (HloInstruction* u : initial_users) {
+      if (ClassifyValidatedPassthrough(u, classify_passthrough) ==
+          CopyInsertion::PassthroughAttachment::kProducer) {
+        if (visited_tuple_markers.insert(u).second) {
+          tuple_producer_markers.push_back(u);
+        }
+        continue;
+      }
+      if (u->opcode() == HloOpcode::kGetTupleElement && u->shape().IsArray() &&
+          indices_to_copy.element({u->tuple_index()}) &&
+          has_transitive_producer_passthrough(u)) {
+        gtes_with_producer_markers.push_back(u);
+        continue;
+      }
+      direct_users.push_back(u);
+    }
+
+    if (!tuple_producer_markers.empty() ||
+        !gtes_with_producer_markers.empty()) {
+      // 1. Deep copy each tuple shaped kProducer passthrough on `instruction`
+      // for its downstream users.
+      for (size_t i = 0; i < tuple_producer_markers.size(); ++i) {
+        HloInstruction* marker = tuple_producer_markers[i];
+        std::vector<HloInstruction*> m_direct_users;
+        for (HloInstruction* mu : marker->users()) {
+          if (should_skip_user(mu)) {
+            continue;
+          }
+          if (ClassifyValidatedPassthrough(mu, classify_passthrough) ==
+              CopyInsertion::PassthroughAttachment::kProducer) {
+            if (visited_tuple_markers.insert(mu).second) {
+              tuple_producer_markers.push_back(mu);
+            }
+          } else {
+            m_direct_users.push_back(mu);
+          }
+        }
+        const bool marker_is_root = replace_root && marker->IsRoot();
+        if (!m_direct_users.empty() || marker_is_root) {
+          ShapeTree<HloInstruction*> single_tree(marker->shape(), nullptr);
+          ABSL_ASSIGN_OR_RETURN(
+              HloInstruction * marker_copy,
+              computation->DeepCopyInstruction(
+                  marker, &indices_to_copy,
+                  copies_added != nullptr ? &single_tree : nullptr));
+          record_single_tree(single_tree);
+          for (HloInstruction* mu : m_direct_users) {
+            ABSL_RETURN_IF_ERROR(
+                marker->ReplaceUseWithDifferentShape(mu, marker_copy));
+          }
+          if (marker_is_root) {
+            computation->set_root_instruction(marker_copy);
+          }
+        }
+      }
+
+      // 2. Recursively copy each GTE leaf that has attached kProducer
+      // passthroughs.
+      for (HloInstruction* gte : gtes_with_producer_markers) {
+        ShapeTree<bool> leaf_indices(gte->shape(), true);
+        CopyListTree leaf_copies(gte->shape());
+        ABSL_RETURN_IF_ERROR(InsertProducerCopyImpl(
+            gte, leaf_indices, /*users_override=*/std::nullopt, replace_root,
+            skip_users, copies_added != nullptr ? &leaf_copies : nullptr,
+            classify_passthrough));
+        if (copies_added != nullptr) {
+          auto& dst = *copies_added->mutable_element({gte->tuple_index()});
+          const auto& src = leaf_copies.element({});
+          dst.insert(dst.end(), src.begin(), src.end());
+        }
+      }
+
+      // 3. Deep copy `instruction` only for remaining direct users that access
+      // copied indices (or when `instruction` itself is the computation root).
+      const bool update_root = replace_root && instruction->IsRoot();
+      auto has_copied_index_in_subtree = [&](int64_t top_index) {
+        bool found = false;
+        indices_to_copy.ForEachElement(
+            [&](const ShapeIndex& idx, bool to_copy) {
+              if (to_copy && !idx.empty() && idx.front() == top_index) {
+                found = true;
+              }
+            });
+        return found;
+      };
+      std::vector<HloInstruction*> step3_users;
+      bool has_non_gte_user = false;
+      absl::flat_hash_set<int64_t> direct_gte_indices;
+      for (HloInstruction* u : direct_users) {
+        if (u->opcode() == HloOpcode::kGetTupleElement) {
+          if (has_copied_index_in_subtree(u->tuple_index())) {
+            step3_users.push_back(u);
+            direct_gte_indices.insert(u->tuple_index());
+          }
+        } else {
+          step3_users.push_back(u);
+          has_non_gte_user = true;
+        }
+      }
+      ShapeTree<bool> step3_indices(instruction->shape(), false);
+      bool any_step3_copy = false;
+      indices_to_copy.ForEachElement([&](const ShapeIndex& idx, bool to_copy) {
+        if (!to_copy) {
+          return;
+        }
+        const bool needed_for_users_or_root =
+            update_root || has_non_gte_user ||
+            (!idx.empty() && direct_gte_indices.contains(idx.front()));
+        const bool needed_for_copies_added =
+            copies_added != nullptr && copies_added->element(idx).empty();
+        if (needed_for_users_or_root || needed_for_copies_added) {
+          *step3_indices.mutable_element(idx) = true;
+          any_step3_copy = true;
+        }
+      });
+      if (any_step3_copy &&
+          (!step3_users.empty() || update_root || copies_added != nullptr)) {
+        ShapeTree<HloInstruction*> single_tree(instruction->shape(), nullptr);
+        ABSL_ASSIGN_OR_RETURN(
+            HloInstruction * deep_copy,
+            computation->DeepCopyInstruction(
+                instruction, &step3_indices,
+                copies_added != nullptr ? &single_tree : nullptr));
+        record_single_tree(single_tree);
+        for (HloInstruction* u : step3_users) {
+          ABSL_RETURN_IF_ERROR(
+              instruction->ReplaceUseWithDifferentShape(u, deep_copy));
+        }
+        if (update_root) {
+          computation->set_root_instruction(deep_copy);
+        }
+      }
+      return absl::OkStatus();
+    }
+  }
+
+  const bool update_root = replace_root && instruction->IsRoot();
+  ShapeTree<HloInstruction*> single_tree(instruction->shape(), nullptr);
+  ABSL_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
+                        computation->DeepCopyInstruction(
+                            instruction, &indices_to_copy,
+                            copies_added != nullptr ? &single_tree : nullptr));
+  record_single_tree(single_tree);
+  for (HloInstruction* user : initial_users) {
+    ABSL_RETURN_IF_ERROR(
+        instruction->ReplaceUseWithDifferentShape(user, deep_copy));
+  }
+  if (update_root) {
+    computation->set_root_instruction(deep_copy);
+  }
+  return absl::OkStatus();
+}
+
+// Adds control dependencies from every kCopy in `from_copy_tree` at each leaf
+// index to the matching kCopy in `to_copy_tree`.
+//
+// REQUIRES: `ShapeUtil::Compatible(from_copy_tree.shape(),
+// to_copy_tree.shape())`, and for each index `from_copy_tree.element(index)` is
+// non empty iff `to_copy_tree.element(index) != nullptr`.
+absl::Status AddControlEdgesBetweenCopyTrees(
+    const CopyListTree& from_copy_tree,
+    const ShapeTree<HloInstruction*>& to_copy_tree) {
+  TF_RET_CHECK(
+      ShapeUtil::Compatible(from_copy_tree.shape(), to_copy_tree.shape()));
   for (const auto& pair : from_copy_tree) {
     const ShapeIndex& index = pair.first;
-    HloInstruction* from_copy = pair.second;
+    const auto& from_copies = pair.second;
     HloInstruction* to_copy = to_copy_tree.element(index);
-    if (from_copy == nullptr) {
+    if (from_copies.empty()) {
       TF_RET_CHECK(to_copy == nullptr);
       continue;
     }
     TF_RET_CHECK(to_copy != nullptr);
-    ABSL_RETURN_IF_ERROR(from_copy->AddControlDependencyTo(to_copy));
+    for (HloInstruction* from_copy : from_copies) {
+      TF_RET_CHECK(from_copy != nullptr);
+      ABSL_RETURN_IF_ERROR(from_copy->AddControlDependencyTo(to_copy));
+    }
   }
-
-  return std::make_pair(from_deep_copy, to_deep_copy);
+  return absl::OkStatus();
 }
 
 // Returns whether the instruction is an asynchronous operation that produces
@@ -450,21 +1219,58 @@ bool IsAsyncOperationStateDefinition(const HloInstruction* instruction) {
          instruction->opcode() == HloOpcode::kAsyncUpdate;
 }
 
-bool IsAsyncPipelinedWhileTupleIndex(const HloInstruction* while_instr,
-                                     const ShapeIndex& index) {
+// Returns true if `index` of `while_instr` carries an async pipelined state
+// across loop iterations when `xla_disable_while_loop_copies` is set.
+//
+// REQUIRES: `while_instr` is not null.
+bool IsAsyncPipelinedWhileTupleIndex(
+    const HloInstruction* while_instr, const ShapeIndex& index,
+    const CopyInsertion::PassthroughClassifier& classify_passthrough) {
+  CHECK_NE(while_instr, nullptr);
   if (!frontend::HasDisableWhileLoopCopiesAttr(while_instr) || index.empty()) {
     return false;
   }
+  auto is_passthrough = [&](const HloInstruction* inst) {
+    return ClassifyValidatedPassthrough(inst, classify_passthrough) !=
+           CopyInsertion::PassthroughAttachment::kNone;
+  };
+  auto unwrap_wrappers = [&](const HloInstruction* inst) {
+    while (inst->opcode() == HloOpcode::kBitcast || is_passthrough(inst)) {
+      inst = inst->operand(0);
+    }
+    return inst;
+  };
+  // Walk through passthrough wrappers and nested GTEs from a loop state GTE to
+  // check whether it feeds an async completion or update op.
+  auto has_async_done_or_update_user = [&](const HloInstruction* gte) {
+    absl::flat_hash_set<const HloInstruction*> visited = {gte};
+    std::vector<const HloInstruction*> worklist = {gte};
+    while (!worklist.empty()) {
+      const HloInstruction* curr = worklist.back();
+      worklist.pop_back();
+      for (const HloInstruction* u : curr->users()) {
+        if (is_passthrough(u) || u->opcode() == HloOpcode::kGetTupleElement) {
+          if (visited.insert(u).second) {
+            worklist.push_back(u);
+          }
+          continue;
+        }
+        if (HloDataflowAnalysis::IsAsynchronousOperationDone(u->opcode()) ||
+            u->opcode() == HloOpcode::kAsyncUpdate) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
   int64_t tuple_idx = index[0];
 
   // 1. Check while init operand
   const HloInstruction* while_init = while_instr->operand(0);
   if (while_init->opcode() == HloOpcode::kTuple &&
       tuple_idx < while_init->operand_count()) {
-    const HloInstruction* init_elem = while_init->operand(tuple_idx);
-    while (init_elem->opcode() == HloOpcode::kBitcast) {
-      init_elem = init_elem->operand(0);
-    }
+    const HloInstruction* init_elem =
+        unwrap_wrappers(while_init->operand(tuple_idx));
     if (IsAsyncOperationStateDefinition(init_elem)) {
       return true;
     }
@@ -477,10 +1283,8 @@ bool IsAsyncPipelinedWhileTupleIndex(const HloInstruction* while_instr,
     const HloInstruction* root = while_body->root_instruction();
     if (root != nullptr && root->opcode() == HloOpcode::kTuple &&
         tuple_idx < root->operand_count()) {
-      const HloInstruction* root_elem = root->operand(tuple_idx);
-      while (root_elem->opcode() == HloOpcode::kBitcast) {
-        root_elem = root_elem->operand(0);
-      }
+      const HloInstruction* root_elem =
+          unwrap_wrappers(root->operand(tuple_idx));
       if (IsAsyncOperationStateDefinition(root_elem)) {
         return true;
       }
@@ -491,23 +1295,9 @@ bool IsAsyncPipelinedWhileTupleIndex(const HloInstruction* while_instr,
       const HloInstruction* while_param = while_body->parameter_instruction(0);
       for (const HloInstruction* user : while_param->users()) {
         if (user->opcode() == HloOpcode::kGetTupleElement &&
-            user->tuple_index() == tuple_idx) {
-          for (const HloInstruction* gte_user : user->users()) {
-            if (HloDataflowAnalysis::IsAsynchronousOperationDone(
-                    gte_user->opcode()) ||
-                gte_user->opcode() == HloOpcode::kAsyncUpdate) {
-              return true;
-            }
-            if (gte_user->opcode() == HloOpcode::kGetTupleElement) {
-              for (const HloInstruction* sub_user : gte_user->users()) {
-                if (HloDataflowAnalysis::IsAsynchronousOperationDone(
-                        sub_user->opcode()) ||
-                    sub_user->opcode() == HloOpcode::kAsyncUpdate) {
-                  return true;
-                }
-              }
-            }
-          }
+            user->tuple_index() == tuple_idx &&
+            has_async_done_or_update_user(user)) {
+          return true;
         }
       }
     }
@@ -516,23 +1306,9 @@ bool IsAsyncPipelinedWhileTupleIndex(const HloInstruction* while_instr,
   // 3. Check while instruction users
   for (const HloInstruction* user : while_instr->users()) {
     if (user->opcode() == HloOpcode::kGetTupleElement &&
-        user->tuple_index() == tuple_idx) {
-      for (const HloInstruction* gte_user : user->users()) {
-        if (HloDataflowAnalysis::IsAsynchronousOperationDone(
-                gte_user->opcode()) ||
-            gte_user->opcode() == HloOpcode::kAsyncUpdate) {
-          return true;
-        }
-        if (gte_user->opcode() == HloOpcode::kGetTupleElement) {
-          for (const HloInstruction* sub_user : gte_user->users()) {
-            if (HloDataflowAnalysis::IsAsynchronousOperationDone(
-                    sub_user->opcode()) ||
-                sub_user->opcode() == HloOpcode::kAsyncUpdate) {
-              return true;
-            }
-          }
-        }
-      }
+        user->tuple_index() == tuple_idx &&
+        has_async_done_or_update_user(user)) {
+      return true;
     }
   }
 
@@ -650,9 +1426,14 @@ bool HasWhileWithDisabledCopies(const HloModule& module) {
 
 // `alias_analysis` is only consulted for a while annotated with
 // xla_disable_while_loop_copies and may be null otherwise.
-absl::Status AddCopiesForWhile(const HloDataflowAnalysis& dataflow,
-                               const HloAliasAnalysis* alias_analysis,
-                               HloInstruction* xla_while) {
+//
+// REQUIRES: `xla_while` is not null and has opcode `kWhile`, and
+// `alias_analysis` is not null when `xla_while` carries the
+// `xla_disable_while_loop_copies` attribute.
+absl::Status AddCopiesForWhile(
+    const HloDataflowAnalysis& dataflow, const HloAliasAnalysis* alias_analysis,
+    HloInstruction* xla_while,
+    const CopyInsertion::PassthroughClassifier& classify_passthrough) {
   VLOG(2) << "Adding copies for kWhile instruction " << xla_while->name();
   TF_RET_CHECK(xla_while->opcode() == HloOpcode::kWhile);
 
@@ -672,7 +1453,8 @@ absl::Status AddCopiesForWhile(const HloDataflowAnalysis& dataflow,
       const Shape& subshape =
           ShapeUtil::GetSubshape(xla_while->shape(), pair.first);
       if (ShapeUtil::IsScalar(subshape) ||
-          IsAsyncPipelinedWhileTupleIndex(xla_while, pair.first) ||
+          IsAsyncPipelinedWhileTupleIndex(xla_while, pair.first,
+                                          classify_passthrough) ||
           IsDisjointInPlaceWhileTupleIndex(xla_while, pair.first)) {
         pair.second = false;
       }
@@ -687,7 +1469,8 @@ absl::Status AddCopiesForWhile(const HloDataflowAnalysis& dataflow,
           while_init->shape(),
           [&](const Shape& subshape, const ShapeIndex& index) {
             if (!subshape.IsArray() || index.empty() ||
-                IsAsyncPipelinedWhileTupleIndex(xla_while, {index[0]})) {
+                IsAsyncPipelinedWhileTupleIndex(xla_while, {index[0]},
+                                                classify_passthrough)) {
               return;
             }
             std::vector<const HloBuffer*> buffers =
@@ -702,10 +1485,14 @@ absl::Status AddCopiesForWhile(const HloDataflowAnalysis& dataflow,
           });
       if (need_copy) {
         ABSL_ASSIGN_OR_RETURN(HloInstruction * while_init_copy,
-                              xla_while->parent()->DeepCopyInstruction(
-                                  while_init, &init_indices_to_copy));
-        ABSL_RETURN_IF_ERROR(
-            while_init->ReplaceUseWith(xla_while, while_init_copy));
+                              DeepCopyConsumerOperand(while_init, xla_while,
+                                                      &init_indices_to_copy,
+                                                      /*copies_added=*/nullptr,
+                                                      classify_passthrough));
+        if (while_init_copy != while_init) {
+          ABSL_RETURN_IF_ERROR(
+              while_init->ReplaceUseWith(xla_while, while_init_copy));
+        }
       }
     }
   }
@@ -730,12 +1517,16 @@ absl::Status AddCopiesForWhile(const HloDataflowAnalysis& dataflow,
     }
   }
 
-  // Deep copy init.
+  // Deep copy init, placing leaf copies before any kConsumer passthroughs.
   HloInstruction* while_init = xla_while->mutable_operand(0);
   ABSL_ASSIGN_OR_RETURN(
       HloInstruction * while_init_copy,
-      xla_while->parent()->DeepCopyInstruction(while_init, &indices_to_copy));
-  ABSL_RETURN_IF_ERROR(while_init->ReplaceUseWith(xla_while, while_init_copy));
+      DeepCopyConsumerOperand(while_init, xla_while, &indices_to_copy,
+                              /*copies_added=*/nullptr, classify_passthrough));
+  if (while_init_copy != while_init) {
+    ABSL_RETURN_IF_ERROR(
+        while_init->ReplaceUseWith(xla_while, while_init_copy));
+  }
 
   // Deep copy the parameter and the root. Extend a control edge from the copy
   // of the parameter value to the corresponding copy value of the root.
@@ -751,16 +1542,20 @@ absl::Status AddCopiesForWhile(const HloDataflowAnalysis& dataflow,
   // will create new users of the parameter (eg, the GTE instructions of the
   // deep copy).
   std::vector<HloInstruction*> param_users = param->users();
+  CopyListTree from_copy_tree(param->shape());
+  ABSL_RETURN_IF_ERROR(InsertProducerCopyImpl(
+      param, indices_to_copy, param_users, /*replace_root=*/false,
+      /*skip_users=*/nullptr, &from_copy_tree, classify_passthrough));
 
+  root = body->root_instruction();
+  ShapeTree<HloInstruction*> to_copy_tree(root->shape(),
+                                          /*init_value=*/nullptr);
   ABSL_ASSIGN_OR_RETURN(
-      auto pair, DeepCopyAndAddControlEdges(param, root, indices_to_copy));
-
-  HloInstruction* param_copy = pair.first;
-  HloInstruction* root_copy = pair.second;
-
-  for (HloInstruction* user : param_users) {
-    ABSL_RETURN_IF_ERROR(param->ReplaceUseWith(user, param_copy));
-  }
+      HloInstruction * root_copy,
+      DeepCopyConsumerOperand(root, /*target_user=*/nullptr, &indices_to_copy,
+                              &to_copy_tree, classify_passthrough));
+  ABSL_RETURN_IF_ERROR(
+      AddControlEdgesBetweenCopyTrees(from_copy_tree, to_copy_tree));
 
   body->set_root_instruction(root_copy);
   return absl::OkStatus();
@@ -768,14 +1563,22 @@ absl::Status AddCopiesForWhile(const HloDataflowAnalysis& dataflow,
 
 // Add copies for the operands of in-place operations. RemoveUnnecessaryCopies
 // will remove the unnecessary copies.
-absl::Status AddCopiesForInPlaceOperation(HloInstruction* in_place_op,
-                                          int64_t operand_number) {
+//
+// REQUIRES: `in_place_op` is not null and
+// `0 <= operand_number < in_place_op->operand_count()`.
+absl::Status AddCopiesForInPlaceOperation(
+    HloInstruction* in_place_op, int64_t operand_number,
+    const CopyInsertion::PassthroughClassifier& classify_passthrough) {
   VLOG(2) << "Adding copies for in-place operation " << in_place_op->name();
   HloInstruction* operand = in_place_op->mutable_operand(operand_number);
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
-                        in_place_op->parent()->DeepCopyInstruction(operand));
-  ABSL_RETURN_IF_ERROR(
-      operand->ReplaceUseWith(in_place_op, operand_number, deep_copy));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * deep_copy,
+      DeepCopyConsumerOperand(operand, in_place_op, /*indices_to_copy=*/nullptr,
+                              /*copies_added=*/nullptr, classify_passthrough));
+  if (deep_copy != operand) {
+    ABSL_RETURN_IF_ERROR(
+        operand->ReplaceUseWith(in_place_op, operand_number, deep_copy));
+  }
   return absl::OkStatus();
 }
 
@@ -791,22 +1594,57 @@ absl::Status AddCopiesForInPlaceOperation(HloInstruction* in_place_op,
 //
 // Readers that are copies are skipped: removing either of two copies of the
 // same operand feeding in-place ops would make both ops write the same buffer.
-// `reachability` may be stale; it is only used to find paths that already
-// exist, and instructions missing from it are skipped.
+// `reachability` is updated when new control dependencies are added onto `copy`
+// so subsequent calls in the same computation never form a cycle.
+//
+// REQUIRES: `copy` and `in_place_op` are not null and
+// `copy->operand_count() >= 1`.
 absl::Status OrderPredecessorReadersBeforeCopy(
     HloInstruction* copy, const HloInstruction* in_place_op,
-    const HloReachabilityMap& reachability) {
-  for (HloInstruction* reader : copy->operand(0)->users()) {
-    // Asynchronous ops keep reading their operands until the matching done,
-    // so ordering the start before `copy` would not order the read.
-    if (reader != copy && reader != in_place_op &&
-        reader->opcode() != HloOpcode::kCopy &&
-        !HloDataflowAnalysis::IsAsynchronousOperationStart(reader->opcode()) &&
-        reachability.IsPresent(reader) &&
-        reachability.IsReachable(reader, in_place_op)) {
-      VLOG(3) << "Ordering " << reader->name() << " before " << copy->name();
-      ABSL_RETURN_IF_ERROR(reader->AddControlDependencyTo(copy));
+    HloReachabilityMap& reachability,
+    const CopyInsertion::PassthroughClassifier& classify_passthrough) {
+  // Unwrap passthrough wrappers above `copy->operand(0)` to locate the shared
+  // base producer, then walk all non copy readers reachable through passthrough
+  // wrappers and order any predecessor of `in_place_op` before `copy`.
+  HloInstruction* base = copy->mutable_operand(0);
+  while (ClassifyValidatedPassthrough(base, classify_passthrough) !=
+         CopyInsertion::PassthroughAttachment::kNone) {
+    base = base->mutable_operand(0);
+  }
+  absl::flat_hash_set<HloInstruction*> visited = {base};
+  std::vector<HloInstruction*> worklist = {base};
+  bool added_control_dep = false;
+  while (!worklist.empty()) {
+    HloInstruction* curr = worklist.back();
+    worklist.pop_back();
+    for (HloInstruction* reader : curr->users()) {
+      if (reader == copy || reader == in_place_op) {
+        continue;
+      }
+      if (ClassifyValidatedPassthrough(reader, classify_passthrough) !=
+          CopyInsertion::PassthroughAttachment::kNone) {
+        if (visited.insert(reader).second) {
+          worklist.push_back(reader);
+        }
+        continue;
+      }
+      // Asynchronous ops keep reading their operands until the matching done,
+      // so ordering the start before `copy` would not order the read.
+      if (reader->opcode() != HloOpcode::kCopy &&
+          !HloDataflowAnalysis::IsAsynchronousOperationStart(
+              reader->opcode()) &&
+          reachability.IsPresent(reader) &&
+          reachability.IsReachable(reader, in_place_op) &&
+          (!reachability.IsPresent(copy) ||
+           !reachability.IsReachable(copy, reader))) {
+        VLOG(3) << "Ordering " << reader->name() << " before " << copy->name();
+        ABSL_RETURN_IF_ERROR(reader->AddControlDependencyTo(copy));
+        added_control_dep = true;
+      }
     }
+  }
+  if (added_control_dep && reachability.IsPresent(copy)) {
+    reachability.UpdateReachabilityThroughInstruction(copy);
   }
   return absl::OkStatus();
 }
@@ -815,9 +1653,12 @@ absl::Status OrderPredecessorReadersBeforeCopy(
 // each aliased parameter to resolve interference of aliased input and output
 // buffer. We later rely on RemoveUnnecessaryCopies to drop the unnecessary
 // ones.
+//
+// REQUIRES: `module` and `module->entry_computation()` are not null.
 absl::Status AddCopiesForAliasedInputOutputs(
     HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+    const absl::flat_hash_set<absl::string_view>& execution_threads,
+    const CopyInsertion::PassthroughClassifier& classify_passthrough) {
   HloComputation* entry = module->entry_computation();
   if (!HloInstruction::IsThreadIncluded(entry->execution_thread(),
                                         execution_threads)) {
@@ -826,7 +1667,7 @@ absl::Status AddCopiesForAliasedInputOutputs(
   HloInstruction* root = entry->root_instruction();
 
   ShapeTree<bool> output_indices_to_copy(root->shape());
-  std::vector<std::optional<ShapeTree<HloInstruction*>>> copied_parameters(
+  std::vector<std::optional<CopyListTree>> copied_parameters(
       entry->num_parameters());
   bool has_alias = false;
   for (auto* param : entry->parameter_instructions()) {
@@ -852,23 +1693,16 @@ absl::Status AddCopiesForAliasedInputOutputs(
     TF_RET_CHECK(!copied_parameters[param->parameter_number()]);
 
     has_alias = true;
-    // Store a snapshot of users before DeepCopyInstruction, as
-    // DeepCopyInstruction introduces new users of the instruction.
+    // Store a snapshot of users before copying, as copying introduces new users
+    // of the instruction.
     std::vector<HloInstruction*> users = param->users();
-    ShapeTree<HloInstruction*> param_copy_tree(param->shape(),
-                                               /*init_value=*/nullptr);
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * copied,
-                          entry->DeepCopyInstruction(
-                              param, &param_indices_to_copy, &param_copy_tree));
-    if (param == root) {
-      entry->set_root_instruction(copied);
-      root = copied;
-    }
-    for (HloInstruction* user : users) {
-      ABSL_RETURN_IF_ERROR(param->ReplaceUseWith(user, copied));
-    }
+    CopyListTree param_copy_tree(param->shape());
+    ABSL_RETURN_IF_ERROR(InsertProducerCopyImpl(
+        param, param_indices_to_copy, users, /*replace_root=*/true,
+        /*skip_users=*/nullptr, &param_copy_tree, classify_passthrough));
+    root = entry->root_instruction();
 
-    copied_parameters[param->parameter_number()] = param_copy_tree;
+    copied_parameters[param->parameter_number()] = std::move(param_copy_tree);
   }
 
   if (!has_alias) {
@@ -879,9 +1713,11 @@ absl::Status AddCopiesForAliasedInputOutputs(
   ShapeTree<HloInstruction*> output_copy_tree(root->shape(),
                                               /*init_value=*/nullptr);
 
-  ABSL_ASSIGN_OR_RETURN(HloInstruction * root_copied,
-                        root->parent()->DeepCopyInstruction(
-                            root, &output_indices_to_copy, &output_copy_tree));
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * root_copied,
+      DeepCopyConsumerOperand(root, /*target_user=*/nullptr,
+                              &output_indices_to_copy, &output_copy_tree,
+                              classify_passthrough));
 
   // Add control dependencies between the input/output copies.
   ABSL_RETURN_IF_ERROR(
@@ -891,14 +1727,17 @@ absl::Status AddCopiesForAliasedInputOutputs(
             if (!copied_parameters[alias.parameter_number]) {
               return absl::OkStatus();
             }
-            HloInstruction* from =
+            const auto& from_copies =
                 copied_parameters[alias.parameter_number]->element(
                     alias.parameter_index);
             HloInstruction* to = output_copy_tree.element(output_index);
 
-            TF_RET_CHECK(from != nullptr);
+            TF_RET_CHECK(!from_copies.empty());
             TF_RET_CHECK(to != nullptr);
-            ABSL_RETURN_IF_ERROR(from->AddControlDependencyTo(to));
+            for (HloInstruction* from : from_copies) {
+              TF_RET_CHECK(from != nullptr);
+              ABSL_RETURN_IF_ERROR(from->AddControlDependencyTo(to));
+            }
             return absl::OkStatus();
           }));
 
@@ -945,11 +1784,14 @@ absl::Status CopyInsertion::AddCopiesForConditional(
     std::vector<HloInstruction*> users = root->users();
     ABSL_ASSIGN_OR_RETURN(
         HloInstruction * deep_copy,
-        computation->DeepCopyInstruction(root, &indices_to_copy));
-    for (HloInstruction* user : users) {
-      ABSL_RETURN_IF_ERROR(root->ReplaceUseWith(user, deep_copy));
+        DeepCopyConsumerOperand(root, /*target_user=*/nullptr, &indices_to_copy,
+                                /*copies_added=*/nullptr));
+    if (deep_copy != root) {
+      for (HloInstruction* user : users) {
+        ABSL_RETURN_IF_ERROR(root->ReplaceUseWith(user, deep_copy));
+      }
+      computation->set_root_instruction(deep_copy);
     }
-    computation->set_root_instruction(deep_copy);
   }
   return absl::OkStatus();
 }
@@ -1535,13 +2377,17 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
   std::unique_ptr<HloDataflowAnalysis> owned_dataflow;
   const HloDataflowAnalysis* dataflow = nullptr;
   if (HasWhileWithDisabledCopies(*module)) {
-    ABSL_ASSIGN_OR_RETURN(alias_analysis,
-                          HloAliasAnalysis::Run(module, alias_info_));
+    ABSL_ASSIGN_OR_RETURN(alias_analysis, RunAliasAnalysis(module));
     dataflow = &alias_analysis->dataflow_analysis();
   } else {
-    ABSL_ASSIGN_OR_RETURN(owned_dataflow, HloDataflowAnalysis::Run(
-                                              *module, /*ssa_form=*/true,
-                                              /*bitcast_defines_value=*/false));
+    ABSL_ASSIGN_OR_RETURN(
+        owned_dataflow,
+        HloDataflowAnalysis::Run(
+            *module, /*ssa_form=*/true, /*bitcast_defines_value=*/false,
+            /*execution_threads=*/{}, /*propagate_through_calls=*/true,
+            /*precompute_uses=*/std::nullopt,
+            /*propagate_through_control_flow=*/true,
+            MakePassthroughPredicate()));
     dataflow = owned_dataflow.get();
   }
   for (HloComputation* computation :
@@ -1549,11 +2395,13 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
     if (computation->IsAsyncComputation()) {
       continue;
     }
+    absl::flat_hash_map<const HloInstruction*, bool> disjoint_base_cache;
     for (HloInstruction* instruction :
          computation->MakeInstructionPostOrder()) {
       if (instruction->opcode() == HloOpcode::kWhile) {
-        ABSL_RETURN_IF_ERROR(
-            AddCopiesForWhile(*dataflow, alias_analysis.get(), instruction));
+        ABSL_RETURN_IF_ERROR(AddCopiesForWhile(*dataflow, alias_analysis.get(),
+                                               instruction,
+                                               classify_passthrough_));
       } else if (instruction->opcode() == HloOpcode::kConditional) {
         ABSL_RETURN_IF_ERROR(AddCopiesForConditional(*dataflow, instruction));
       } else if (IsNonCopyable(instruction)) {
@@ -1643,12 +2491,9 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
           }
           if (has_disjoint_loop ||
               (frontend::HasDisjointReadWriteRegionsAttr(instruction) &&
-               absl::c_all_of(
-                   instruction->operand(operand_index_in_this_intr)->users(),
-                   [&instruction](const HloInstruction* user) {
-                     return user == instruction ||
-                            frontend::HasDisjointReadWriteRegionsAttr(user);
-                   }))) {
+               AllNonPassthroughUsersHaveDisjointRegions(
+                   instruction->operand(operand_index_in_this_intr),
+                   classify_passthrough_, &disjoint_base_cache))) {
             continue;
           }
           if ((instruction->opcode() == HloOpcode::kAsyncDone ||
@@ -1658,14 +2503,349 @@ absl::Status CopyInsertion::AddCopiesToResolveInterference(
           }
           copied_operands.insert(operand_index_in_this_intr);
           ABSL_RETURN_IF_ERROR(AddCopiesForInPlaceOperation(
-              instruction, operand_index_in_this_intr));
+              instruction, operand_index_in_this_intr, classify_passthrough_));
         }
       }
     }
   }
 
-  ABSL_RETURN_IF_ERROR(
-      AddCopiesForAliasedInputOutputs(module, execution_threads));
+  ABSL_RETURN_IF_ERROR(AddCopiesForAliasedInputOutputs(
+      module, execution_threads, classify_passthrough_));
+  return absl::OkStatus();
+}
+
+CopyInsertion::PassthroughAttachment CopyInsertion::ClassifyPassthrough(
+    const HloInstruction* instruction) const {
+  return ClassifyValidatedPassthrough(instruction, classify_passthrough_);
+}
+
+HloDataflowAnalysis::PassthroughPredicate
+CopyInsertion::MakePassthroughPredicate() const {
+  if (classify_passthrough_ == nullptr) {
+    return nullptr;
+  }
+  return [classifier = classify_passthrough_](const HloInstruction* inst) {
+    return ClassifyValidatedPassthrough(inst, classifier) !=
+           PassthroughAttachment::kNone;
+  };
+}
+
+absl::StatusOr<std::unique_ptr<HloAliasAnalysis>>
+CopyInsertion::RunAliasAnalysis(const HloModule* module) const {
+  TF_RET_CHECK(module != nullptr);
+  return HloAliasAnalysis::Run(module, alias_info_, MakePassthroughPredicate());
+}
+
+absl::Status CopyInsertion::InsertRootCopyUnwrappingBitcast(
+    HloComputation* computation, const ShapeTree<bool>& indices_to_copy,
+    std::vector<HloInstruction*>* dead_bitcasts,
+    absl::flat_hash_set<const HloInstruction*>* inserted_root_copies) const {
+  TF_RET_CHECK(computation != nullptr);
+  TF_RET_CHECK(dead_bitcasts != nullptr);
+  HloInstruction* root = computation->root_instruction();
+  TF_RET_CHECK(root != nullptr);
+  TF_RET_CHECK(ShapeUtil::Compatible(root->shape(), indices_to_copy.shape()));
+
+  // If `root` is a zero user identity bitcast (or tuple of leaf bitcasts) added
+  // by WrapRootPassthroughsInBitcast over a passthrough, unwrap it and copy the
+  // underlying passthrough directly so we do not leave `copy(bitcast(m))`.
+  HloInstruction* target = root;
+  std::vector<HloInstruction*> retired_wrappers;
+  if (classify_passthrough_ != nullptr && root->user_count() == 0) {
+    if (indices_to_copy.element({}) && root->opcode() == HloOpcode::kBitcast &&
+        ShapeUtil::Equal(root->shape(), root->operand(0)->shape()) &&
+        IsPassthrough(root->operand(0))) {
+      target = root->mutable_operand(0);
+      retired_wrappers.push_back(root);
+    } else if (root->shape().IsTuple() && root->opcode() == HloOpcode::kTuple &&
+               absl::c_any_of(indices_to_copy,
+                              [](const auto& p) { return p.second; })) {
+      std::vector<HloInstruction*> candidate_wrappers;
+      auto match_tuple_wrapper = [&](auto& self,
+                                     HloInstruction* node) -> HloInstruction* {
+        if (!node->control_predecessors().empty() ||
+            !node->control_successors().empty() ||
+            (node != root && node->user_count() != 1)) {
+          return nullptr;
+        }
+        if (node->shape().IsTuple()) {
+          if (node->opcode() != HloOpcode::kTuple) {
+            return nullptr;
+          }
+          candidate_wrappers.push_back(node);
+          HloInstruction* parent_tuple = nullptr;
+          for (int64_t i = 0; i < node->operand_count(); ++i) {
+            HloInstruction* child = node->mutable_operand(i);
+            HloInstruction* gte = nullptr;
+            if (child->shape().IsTuple()) {
+              gte = self(self, child);
+              if (gte == nullptr ||
+                  gte->opcode() != HloOpcode::kGetTupleElement ||
+                  gte->tuple_index() != i ||
+                  gte->user_count() != child->operand_count() ||
+                  !gte->control_predecessors().empty() ||
+                  !gte->control_successors().empty()) {
+                return nullptr;
+              }
+              candidate_wrappers.push_back(gte);
+            } else if (child->shape().IsArray()) {
+              if (child->opcode() != HloOpcode::kBitcast ||
+                  child->user_count() != 1 ||
+                  !child->control_predecessors().empty() ||
+                  !child->control_successors().empty() ||
+                  !ShapeUtil::Equal(child->shape(),
+                                    child->operand(0)->shape())) {
+                return nullptr;
+              }
+              candidate_wrappers.push_back(child);
+              gte = child->mutable_operand(0);
+              if (gte->opcode() != HloOpcode::kGetTupleElement ||
+                  gte->tuple_index() != i || gte->user_count() != 1 ||
+                  !gte->control_predecessors().empty() ||
+                  !gte->control_successors().empty()) {
+                return nullptr;
+              }
+              candidate_wrappers.push_back(gte);
+            } else {
+              gte = child;
+              if (gte->opcode() != HloOpcode::kGetTupleElement ||
+                  gte->tuple_index() != i || gte->user_count() != 1 ||
+                  !gte->control_predecessors().empty() ||
+                  !gte->control_successors().empty()) {
+                return nullptr;
+              }
+              candidate_wrappers.push_back(gte);
+            }
+            HloInstruction* src = gte->mutable_operand(0);
+            if (parent_tuple == nullptr) {
+              parent_tuple = src;
+            } else if (parent_tuple != src) {
+              return nullptr;
+            }
+          }
+          return parent_tuple;
+        }
+        return nullptr;
+      };
+      HloInstruction* tuple_target =
+          match_tuple_wrapper(match_tuple_wrapper, root);
+      if (tuple_target != nullptr && IsPassthrough(tuple_target) &&
+          ShapeUtil::Equal(tuple_target->shape(), root->shape())) {
+        target = tuple_target;
+        retired_wrappers = std::move(candidate_wrappers);
+      }
+    }
+  }
+
+  ShapeTree<HloInstruction*> copies_added(target->shape(), nullptr);
+  ABSL_ASSIGN_OR_RETURN(
+      HloInstruction * copied,
+      DeepCopyConsumerOperand(
+          target, /*target_user=*/nullptr, &indices_to_copy,
+          inserted_root_copies != nullptr ? &copies_added : nullptr));
+  // Transfer any control dependencies from the unwrapped root bitcast onto the
+  // new root instruction and record retired wrapper nodes for post pass
+  // removal.
+  if (target != root) {
+    std::vector<HloInstruction*> preds(root->control_predecessors().begin(),
+                                       root->control_predecessors().end());
+    std::vector<HloInstruction*> succs(root->control_successors().begin(),
+                                       root->control_successors().end());
+    ABSL_RETURN_IF_ERROR(StripControlDependenciesFrom(root));
+    for (HloInstruction* pred : preds) {
+      ABSL_RETURN_IF_ERROR(pred->AddControlDependencyTo(copied));
+    }
+    for (HloInstruction* succ : succs) {
+      ABSL_RETURN_IF_ERROR(copied->AddControlDependencyTo(succ));
+    }
+  }
+  computation->set_root_instruction(copied);
+  for (HloInstruction* wrapper : retired_wrappers) {
+    dead_bitcasts->push_back(wrapper);
+  }
+  if (inserted_root_copies != nullptr) {
+    inserted_root_copies->insert(root);
+    inserted_root_copies->insert(copied);
+    for (HloInstruction* wrapper : retired_wrappers) {
+      inserted_root_copies->insert(wrapper);
+    }
+    auto skip_root_only_chain = [&](const HloInstruction* p) {
+      while (p != nullptr &&
+             (IsPassthrough(p) || p->opcode() == HloOpcode::kGetTupleElement) &&
+             absl::c_all_of(p->users(), [&](const HloInstruction* u) {
+               return (u->user_count() == 0 && !u->IsRoot()) ||
+                      inserted_root_copies->contains(u);
+             })) {
+        for (const HloInstruction* u : p->users()) {
+          if (u->user_count() == 0 && !u->IsRoot()) {
+            inserted_root_copies->insert(u);
+          }
+        }
+        inserted_root_copies->insert(p);
+        p = p->operand(0);
+      }
+    };
+    copies_added.ForEachElement(
+        [&](const ShapeIndex& /*index*/, HloInstruction* leaf_copy) {
+          if (leaf_copy != nullptr) {
+            inserted_root_copies->insert(leaf_copy);
+            skip_root_only_chain(leaf_copy->operand(0));
+          }
+        });
+    indices_to_copy.ForEachElement([&](const ShapeIndex& index, bool to_copy) {
+      if (!to_copy) {
+        return;
+      }
+      for (const HloInstruction* start : {copied, target}) {
+        const HloInstruction* curr = start;
+        for (int64_t idx : index) {
+          while (IsPassthrough(curr) &&
+                 absl::c_all_of(curr->users(), [&](const HloInstruction* u) {
+                   return (u->user_count() == 0 && !u->IsRoot()) ||
+                          inserted_root_copies->contains(u);
+                 })) {
+            for (const HloInstruction* u : curr->users()) {
+              if (u->user_count() == 0 && !u->IsRoot()) {
+                inserted_root_copies->insert(u);
+              }
+            }
+            inserted_root_copies->insert(curr);
+            curr = curr->operand(0);
+          }
+          if (curr->opcode() != HloOpcode::kTuple) {
+            curr = nullptr;
+            break;
+          }
+          for (const HloInstruction* u : curr->users()) {
+            if (u->user_count() == 0 && !u->IsRoot()) {
+              inserted_root_copies->insert(u);
+            }
+          }
+          inserted_root_copies->insert(curr);
+          curr = curr->operand(idx);
+        }
+        if (curr != nullptr) {
+          skip_root_only_chain(curr);
+        }
+      }
+    });
+    skip_root_only_chain(target);
+  }
+  return absl::OkStatus();
+}
+
+absl::Status CopyInsertion::RemoveDeadRootBitcasts(
+    HloModule* module, absl::Span<HloInstruction* const> dead_bitcasts) const {
+  TF_RET_CHECK(module != nullptr);
+  for (HloInstruction* bitcast : dead_bitcasts) {
+    TF_RET_CHECK(bitcast != nullptr);
+    HloComputation* computation = bitcast->parent();
+    TF_RET_CHECK(computation != nullptr);
+    TF_RET_CHECK(bitcast->user_count() == 0);
+    if (module->has_schedule() &&
+        module->schedule().is_computation_scheduled(computation)) {
+      module->schedule()
+          .GetOrCreateSequence(computation)
+          .remove_instruction(bitcast);
+    }
+    ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(bitcast));
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<HloInstruction*> CopyInsertion::DeepCopyConsumerOperand(
+    HloInstruction* instruction, const HloInstruction* target_user,
+    const ShapeTree<bool>* indices_to_copy,
+    ShapeTree<HloInstruction*>* copies_added) const {
+  return ::xla::DeepCopyConsumerOperand(instruction, target_user,
+                                        indices_to_copy, copies_added,
+                                        classify_passthrough_);
+}
+
+absl::Status CopyInsertion::InsertProducerCopy(
+    HloInstruction* instruction, const ShapeTree<bool>& indices_to_copy,
+    std::optional<absl::Span<HloInstruction* const>> users_override,
+    bool replace_root,
+    const absl::flat_hash_set<const HloInstruction*>* skip_users) const {
+  return InsertProducerCopyImpl(
+      instruction, indices_to_copy, users_override, replace_root, skip_users,
+      /*copies_added=*/nullptr, classify_passthrough_);
+}
+
+absl::Status CopyInsertion::WrapRootPassthroughsInBitcast(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) const {
+  TF_RET_CHECK(module != nullptr);
+  if (classify_passthrough_ == nullptr) {
+    return absl::OkStatus();
+  }
+  for (HloComputation* computation : module->computations(execution_threads)) {
+    if (computation->IsFusionComputation()) {
+      continue;
+    }
+    HloInstruction* root = computation->root_instruction();
+    TF_RET_CHECK(root != nullptr);
+    if (!IsPassthrough(root)) {
+      continue;
+    }
+    std::vector<HloInstruction*> added_instructions;
+    HloInstruction* new_root = nullptr;
+    // Array root passthroughs are wrapped in a single identity bitcast; tuple
+    // root passthroughs are wrapped in a tuple of leaf bitcasts so
+    // TupleSimplifier does not fold the wrapper back into `root`.
+    if (root->shape().IsArray()) {
+      new_root = computation->AddInstruction(
+          HloInstruction::CreateBitcast(root->shape(), root));
+      added_instructions.push_back(new_root);
+    } else if (root->shape().IsTuple()) {
+      const size_t before_count = computation->instruction_count();
+      std::vector<HloInstruction*> existing(computation->instructions().begin(),
+                                            computation->instructions().end());
+      absl::flat_hash_set<HloInstruction*> existing_set(existing.begin(),
+                                                        existing.end());
+      ABSL_ASSIGN_OR_RETURN(
+          new_root,
+          computation->DeepCopyInstructionWithCustomCopier(
+              root,
+              [](HloInstruction* leaf, const ShapeIndex& /*leaf_index*/,
+                 HloComputation* comp) -> HloInstruction* {
+                if (!leaf->shape().IsArray()) {
+                  return leaf;
+                }
+                return comp->AddInstruction(
+                    HloInstruction::CreateBitcast(leaf->shape(), leaf));
+              }));
+      if (computation->instruction_count() > before_count) {
+        for (HloInstruction* inst : computation->instructions()) {
+          if (!existing_set.contains(inst)) {
+            added_instructions.push_back(inst);
+          }
+        }
+      }
+    }
+    if (new_root == nullptr || new_root == root) {
+      continue;
+    }
+    computation->set_root_instruction(new_root);
+    // Insert newly created root bitcast instructions immediately after `root`
+    // in the computation schedule when the module is scheduled.
+    if (module->has_schedule() &&
+        module->schedule().is_computation_scheduled(computation)) {
+      HloInstructionSequence& seq =
+          module->schedule().GetOrCreateSequence(computation);
+      auto it = absl::c_find(seq.instructions(), root);
+      TF_RET_CHECK(it != seq.instructions().end());
+      int64_t insert_idx = (it - seq.instructions().begin()) + 1;
+      for (HloInstruction* added : added_instructions) {
+        if (insert_idx < seq.size()) {
+          seq.insert_instruction(added, insert_idx);
+        } else {
+          seq.push_back(added);
+        }
+        ++insert_idx;
+      }
+    }
+  }
   return absl::OkStatus();
 }
 
@@ -1683,23 +2863,75 @@ absl::Status CopyInsertion::AddSpecialCaseCopies(
     const absl::flat_hash_set<absl::string_view>& execution_threads,
     HloModule* module, CustomBufferAnalysisFn custom_buffer_analysis) {
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                        HloAliasAnalysis::Run(module, alias_info_));
+                        RunAliasAnalysis(module));
   ABSL_ASSIGN_OR_RETURN(
-      HloInstructionMap<ShapeTree<bool>> instructions_to_copy,
+      SpecialCaseCopies special_case_copies,
       ComputeSpecialCaseCopies(call_graph, execution_threads, module,
                                *alias_analysis, custom_buffer_analysis));
-  return InsertSpecialCaseCopies(instructions_to_copy);
+  ABSL_RETURN_IF_ERROR(InsertSpecialCaseCopies(special_case_copies, module));
+  ABSL_RETURN_IF_ERROR(
+      WrapRootPassthroughsInBitcast(module, execution_threads));
+  if (module->has_schedule() && !special_case_copies.empty()) {
+    ABSL_RETURN_IF_ERROR(module->schedule().Update());
+  }
+  return absl::OkStatus();
 }
 
-absl::StatusOr<HloInstructionMap<ShapeTree<bool>>>
+absl::StatusOr<CopyInsertion::SpecialCaseCopies>
 CopyInsertion::ComputeSpecialCaseCopies(
     const CallGraph& call_graph,
     const absl::flat_hash_set<absl::string_view>& execution_threads,
     HloModule* module, const HloAliasAnalysis& alias_analysis,
     CustomBufferAnalysisFn custom_buffer_analysis) {
-  // Identify which shape indices of which instructions need to be copied. Store
-  // these results in 'instructions_to_copy'.
-  HloInstructionMap<ShapeTree<bool>> instructions_to_copy;
+  SpecialCaseCopies result;
+  HloInstructionMap<ShapeTree<bool>>& instructions_to_copy =
+      result.instructions_to_copy;
+  absl::flat_hash_map<std::pair<HloInstruction*, int64_t>, size_t>
+      operand_copy_index;
+  auto add_operand_index_to_copy = [&](HloInstruction* user,
+                                       int64_t operand_number,
+                                       const ShapeIndex& index) {
+    if (IsWhileLoopCopyDisabled(user, call_graph) ||
+        user->parent()->IsAsyncComputation()) {
+      return;
+    }
+    const Shape& op_shape = user->operand(operand_number)->shape();
+    if (ShapeUtil::GetSubshape(op_shape, index).IsBuffer()) {
+      return;
+    }
+    auto [it, inserted] = operand_copy_index.try_emplace(
+        std::make_pair(user, operand_number), result.operand_copies.size());
+    if (inserted) {
+      result.operand_copies.push_back(OperandCopy{
+          .user = user,
+          .operand_number = operand_number,
+          .indices_to_copy = ShapeTree<bool>(op_shape, /*init_value=*/false),
+      });
+    }
+    *result.operand_copies[it->second].indices_to_copy.mutable_element(index) =
+        true;
+  };
+  auto unwrap_passthrough = [this](const HloInstruction* inst) {
+    while (IsPassthrough(inst)) {
+      inst = inst->operand(0);
+    }
+    return inst;
+  };
+  auto unwrap_passthrough_and_gte =
+      [this](const HloInstruction* inst,
+             ShapeIndex index) -> std::pair<const HloInstruction*, ShapeIndex> {
+    while (true) {
+      if (IsPassthrough(inst)) {
+        inst = inst->operand(0);
+      } else if (inst->opcode() == HloOpcode::kGetTupleElement) {
+        index.push_front(inst->tuple_index());
+        inst = inst->operand(0);
+      } else {
+        break;
+      }
+    }
+    return {inst, std::move(index)};
+  };
   auto add_index_to_copy = [&instructions_to_copy, &call_graph](
                                HloInstruction* instruction,
                                const ShapeIndex& index) {
@@ -1744,7 +2976,9 @@ CopyInsertion::ComputeSpecialCaseCopies(
   // removed too aggressively by CopyRemoval.
   for (const HloValue* value : alias_analysis.dataflow_analysis().values()) {
     const HloBuffer& buffer = alias_analysis.GetBufferContainingValue(*value);
-    if (buffer.values().size() > 1 && ValueIsReadOnly(*value)) {
+    const bool read_only_copied_at_def =
+        buffer.values().size() > 1 && ValueIsReadOnly(*value);
+    if (read_only_copied_at_def) {
       VLOG(2) << "Value " << value->ToShortString()
               << " is read only, but its buffer contains more than one value. "
                  "Copying.";
@@ -1781,9 +3015,38 @@ CopyInsertion::ComputeSpecialCaseCopies(
                     << "@" << use.operand_index.ToString()
                     << " instr: " << position.instruction->ToString() << "@"
                     << position.index;
-            add_index_to_copy(
-                use.instruction->mutable_operand(use.operand_number),
-                use.operand_index);
+            // When `use.instruction` reads the same unwrapped producer across
+            // multiple operand slots (such as `dus(m_in(b), m_in(b), z)`),
+            // record a per edge `OperandCopy` so the conflicting operand edges
+            // receive distinct buffers; otherwise record `operand` unless
+            // `value` was already marked for a producer copy at its definition.
+            HloInstruction* operand =
+                use.instruction->mutable_operand(use.operand_number);
+            const HloInstruction* unwrapped = unwrap_passthrough(operand);
+            bool shares_base_with_other_operand = false;
+            if (classify_passthrough_ != nullptr) {
+              for (int64_t op_idx = 0;
+                   op_idx < use.instruction->operand_count(); ++op_idx) {
+                if (op_idx != use.operand_number &&
+                    unwrap_passthrough(use.instruction->operand(op_idx)) ==
+                        unwrapped) {
+                  shares_base_with_other_operand = true;
+                  break;
+                }
+              }
+            }
+            if (shares_base_with_other_operand) {
+              add_operand_index_to_copy(use.instruction, use.operand_number,
+                                        use.operand_index);
+            } else {
+              auto [unwrapped_def, unwrapped_index] =
+                  unwrap_passthrough_and_gte(operand, use.operand_index);
+              if (!read_only_copied_at_def ||
+                  unwrapped_def != value->defining_instruction() ||
+                  unwrapped_index != value->defining_index()) {
+                add_index_to_copy(operand, use.operand_index);
+              }
+            }
           }
         }
       }
@@ -1859,28 +3122,174 @@ CopyInsertion::ComputeSpecialCaseCopies(
       }
     }
   }
-  return instructions_to_copy;
+  return result;
 }
 
 absl::Status CopyInsertion::InsertSpecialCaseCopies(
-    const HloInstructionMap<ShapeTree<bool>>& instructions_to_copy) {
-  for (const auto& pair : instructions_to_copy) {
-    HloInstruction* instruction = pair.first;
-    const ShapeTree<bool>& indices_to_copy = pair.second;
+    const SpecialCaseCopies& special_case_copies, HloModule* module) const {
+  TF_RET_CHECK(module != nullptr);
 
-    ShapeTree<HloInstruction*> copies_added(indices_to_copy.shape());
-    std::vector<HloInstruction*> users = instruction->users();
-    ABSL_ASSIGN_OR_RETURN(HloInstruction * deep_copy,
-                          instruction->parent()->DeepCopyInstruction(
-                              instruction, &indices_to_copy, &copies_added));
-    for (HloInstruction* user : users) {
-      ABSL_RETURN_IF_ERROR(instruction->ReplaceUseWith(user, deep_copy));
+  // 1. Copy individual conflicting operand edges (such as multi operand uses of
+  // the same underlying producer across passthrough wrappers) and record the
+  // added copies so subsequent producer copies in step 3 skip those edges.
+  absl::flat_hash_set<const HloInstruction*> inserted_root_copies;
+  auto record_copied_chain = [&](const HloInstruction* p) {
+    while (p != nullptr &&
+           (IsPassthrough(p) || p->opcode() == HloOpcode::kGetTupleElement) &&
+           !p->IsRoot() &&
+           absl::c_all_of(p->users(), [&](const HloInstruction* u) {
+             return (u->user_count() == 0 && !u->IsRoot()) ||
+                    inserted_root_copies.contains(u);
+           })) {
+      for (const HloInstruction* u : p->users()) {
+        if (u->user_count() == 0 && !u->IsRoot()) {
+          inserted_root_copies.insert(u);
+        }
+      }
+      inserted_root_copies.insert(p);
+      p = p->operand(0);
     }
-    if (instruction == instruction->parent()->root_instruction()) {
-      instruction->parent()->set_root_instruction(deep_copy);
+  };
+  for (const OperandCopy& op_copy : special_case_copies.operand_copies) {
+    HloInstruction* operand =
+        op_copy.user->mutable_operand(op_copy.operand_number);
+    ShapeTree<HloInstruction*> op_copies_added(operand->shape(), nullptr);
+    ABSL_ASSIGN_OR_RETURN(
+        HloInstruction * deep_copy,
+        DeepCopyConsumerOperand(operand, op_copy.user, &op_copy.indices_to_copy,
+                                &op_copies_added));
+    if (deep_copy != operand) {
+      ABSL_RETURN_IF_ERROR(operand->ReplaceUseWith(
+          op_copy.user, op_copy.operand_number, deep_copy));
+    }
+    op_copies_added.ForEachElement(
+        [&](const ShapeIndex& /*index*/, HloInstruction* leaf_copy) {
+          if (leaf_copy != nullptr) {
+            inserted_root_copies.insert(leaf_copy);
+            record_copied_chain(leaf_copy->operand(0));
+          }
+        });
+    record_copied_chain(operand);
+  }
+
+  // 2. Process pure root entries before producer entries so any temporary
+  // identity root bitcast over a passthrough is unwrapped cleanly and never
+  // copied twice when its underlying producer is also in the map.
+  std::vector<HloInstruction*> dead_bitcasts;
+  absl::flat_hash_set<const HloInstruction*> handled_in_pass_1;
+  absl::flat_hash_set<const HloComputation*> computations_with_new_root_copy;
+  for (const auto& [instruction, indices_to_copy] :
+       special_case_copies.instructions_to_copy) {
+    HloComputation* computation = instruction->parent();
+    if (instruction == computation->root_instruction() &&
+        instruction->user_count() == 0) {
+      ABSL_RETURN_IF_ERROR(InsertRootCopyUnwrappingBitcast(
+          computation, indices_to_copy, &dead_bitcasts, &inserted_root_copies));
+      handled_in_pass_1.insert(instruction);
+      computations_with_new_root_copy.insert(computation);
     }
   }
-  return absl::OkStatus();
+
+  // 3. Process remaining passthrough and producer entries, skipping any root
+  // entries and root copies already handled in steps 1 and 2.
+  for (const auto& [instruction, indices_to_copy] :
+       special_case_copies.instructions_to_copy) {
+    if (handled_in_pass_1.contains(instruction)) {
+      continue;
+    }
+    HloComputation* computation = instruction->parent();
+    if (computations_with_new_root_copy.contains(computation) &&
+        instruction->user_count() == 1 &&
+        inserted_root_copies.contains(instruction->users()[0])) {
+      continue;
+    }
+
+    if (IsPassthrough(instruction)) {
+      ShapeTree<bool> filtered_indices = indices_to_copy;
+      const HloInstruction* base = instruction;
+      ShapeIndex prefix;
+      bool has_consumer_passthrough = false;
+      while (true) {
+        const PassthroughAttachment att = ClassifyPassthrough(base);
+        if (att != PassthroughAttachment::kNone) {
+          if (att == PassthroughAttachment::kConsumer && prefix.empty()) {
+            has_consumer_passthrough = true;
+          }
+          base = base->operand(0);
+        } else if (base->opcode() == HloOpcode::kGetTupleElement) {
+          prefix.push_front(base->tuple_index());
+          base = base->operand(0);
+        } else {
+          break;
+        }
+      }
+      if (!handled_in_pass_1.contains(base)) {
+        if (auto base_it = special_case_copies.instructions_to_copy.find(
+                const_cast<HloInstruction*>(base));
+            base_it != special_case_copies.instructions_to_copy.end()) {
+          filtered_indices.ForEachMutableElement([&](const ShapeIndex& idx,
+                                                     bool* to_copy) {
+            if (!*to_copy) {
+              return;
+            }
+            ShapeIndex full_idx = prefix;
+            for (int64_t i : idx) {
+              full_idx.push_back(i);
+            }
+            if (ShapeUtil::IndexIsValid(base_it->second.shape(), full_idx) &&
+                base_it->second.element(full_idx)) {
+              *to_copy = false;
+            }
+          });
+        }
+      }
+      if (!absl::c_any_of(filtered_indices,
+                          [](const auto& p) { return p.second; })) {
+        continue;
+      }
+      if (has_consumer_passthrough) {
+        std::vector<HloInstruction*> users;
+        for (HloInstruction* u : instruction->users()) {
+          if (!inserted_root_copies.contains(u)) {
+            users.push_back(u);
+          }
+        }
+        const bool is_root =
+            !computations_with_new_root_copy.contains(computation) &&
+            instruction->IsRoot();
+        if (users.empty() && !is_root) {
+          continue;
+        }
+        ABSL_ASSIGN_OR_RETURN(
+            HloInstruction * rebuilt,
+            DeepCopyConsumerOperand(instruction,
+                                    !users.empty() ? users[0] : nullptr,
+                                    &filtered_indices));
+        if (rebuilt != instruction) {
+          for (HloInstruction* user : users) {
+            ABSL_RETURN_IF_ERROR(instruction->ReplaceUseWith(user, rebuilt));
+          }
+          if (is_root) {
+            computation->set_root_instruction(rebuilt);
+          }
+        }
+        continue;
+      }
+      ABSL_RETURN_IF_ERROR(InsertProducerCopy(
+          instruction, filtered_indices, /*users_override=*/std::nullopt,
+          /*replace_root=*/
+          !computations_with_new_root_copy.contains(computation),
+          &inserted_root_copies));
+      continue;
+    }
+
+    ABSL_RETURN_IF_ERROR(InsertProducerCopy(
+        instruction, indices_to_copy, /*users_override=*/std::nullopt,
+        /*replace_root=*/!computations_with_new_root_copy.contains(computation),
+        &inserted_root_copies));
+  }
+
+  return RemoveDeadRootBitcasts(module, dead_bitcasts);
 }
 
 static int64_t GetNumExistingCopies(
@@ -1915,7 +3324,7 @@ absl::Status CopyInsertion::RemoveUnnecessaryCopies(
   }
 
   ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
-                        HloAliasAnalysis::Run(module, alias_info_));
+                        RunAliasAnalysis(module));
   CopyRemover copy_remover(*module, *alias_analysis, alias_info_,
                            ordering.get(), execution_threads, view_color_);
   if (VLOG_IS_ON(3)) {
@@ -1975,7 +3384,9 @@ absl::Status CopyInsertion::RemoveUnnecessaryCopies(
       }
     }
   }
-  return absl::OkStatus();
+  // Wrap any root passthrough instructions in bitcasts after copy elision
+  // settles so HloValue::IsRootOf remains valid throughout the fixpoint loop.
+  return WrapRootPassthroughsInBitcast(module, execution_threads);
 }
 
 absl::Status CopyInsertion::OrderPredecessorReadersBeforeInPlaceCopies(
@@ -1996,15 +3407,26 @@ absl::Status CopyInsertion::OrderPredecessorReadersBeforeInPlaceCopies(
         }
         HloInstruction* copy =
             instruction->mutable_operand(operand_index.operand_number);
-        if (copy->opcode() != HloOpcode::kCopy ||
-            copy->operand(0)->user_count() < 2) {
+        while (IsPassthrough(copy)) {
+          copy = copy->mutable_operand(0);
+        }
+        if (copy->opcode() != HloOpcode::kCopy) {
+          continue;
+        }
+        const HloInstruction* base = copy->operand(0);
+        bool has_other_user = base->user_count() >= 2;
+        while (IsPassthrough(base)) {
+          base = base->operand(0);
+          has_other_user |= base->user_count() >= 2;
+        }
+        if (!has_other_user) {
           continue;
         }
         if (reachability == nullptr) {
           reachability = HloReachabilityMap::Build(computation);
         }
         ABSL_RETURN_IF_ERROR(OrderPredecessorReadersBeforeCopy(
-            copy, instruction, *reachability));
+            copy, instruction, *reachability, classify_passthrough_));
       }
     }
   }
@@ -2080,6 +3502,11 @@ absl::StatusOr<bool> CopyInsertion::RunImpl(
   ABSL_RETURN_IF_ERROR(
       tuple_simplifier.Run(module, execution_threads).status());
   ABSL_RETURN_IF_ERROR(dce.Run(module, execution_threads).status());
+  ABSL_RETURN_IF_ERROR(
+      WrapRootPassthroughsInBitcast(module, execution_threads));
+  if (module->has_schedule()) {
+    ABSL_RETURN_IF_ERROR(module->schedule().Update());
+  }
 
   VLOG(1) << "Num copies before copy-insertion: " << num_copies_before;
   VLOG(1) << "Num copies after copy-insertion: "
