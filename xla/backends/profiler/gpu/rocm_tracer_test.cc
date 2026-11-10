@@ -425,6 +425,10 @@ class RocmTracerMarkerTest : public ::testing::Test {
     if (!tracer.IsAvailable()) {
       tracer.Disable();
     }
+
+    if (hipError_t err = hipDeviceSynchronize(); err != hipSuccess) {
+      LOG(WARNING) << "hipDeviceSynchronize failed in TearDown: " << err;
+    }
   }
 };
 
