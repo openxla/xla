@@ -180,6 +180,9 @@ AutotuneDecision ShouldAssignConfigToGemmFusion(
     }
     return AutotuneDecision::Allow();
   }
+  if (IsRaggedDotTritonFusion(instruction)) {
+    return AutotuneDecision::Allow();
+  }
   return AutotuneDecision::Forbid(
       "Fusion kind is not supported for GEMM autotuning");
 }
@@ -214,6 +217,13 @@ AutotuneDecision ShouldAssignConfigToGenericFusion(
     return AutotuneDecision::Forbid(
         "Custom fusions are not supported for generic fusion autotuning");
   }
+  // Skip constant-only fusions (operand_count == 0): these are trivial
+  // computations (e.g. broadcast-of-constant group-sizes tensors created by
+  // priority_fusion) that no backend can tune and that need no profiling.
+  if (fusion->operand_count() == 0) {
+    return AutotuneDecision::Forbid(
+        "Constant fusion (no operands) needs no autotuning");
+  }
   if (absl::c_any_of(fusion->fused_instructions_computation()->instructions(),
                      HloPredicateIsOp<HloOpcode::kScatter>)) {
     return AutotuneDecision::Forbid("Fusions with Scatter are not supported");
@@ -241,7 +251,8 @@ AutotuneDecision ShouldAssignConfigToInstruction(
         gpu_config->fusion_backend_config();
     if (backend_config.kind() == kTritonGemmFusionKind ||
         backend_config.kind() == kCuDnnFusionKind ||
-        backend_config.kind() == kCustomFusionKind) {
+        backend_config.kind() == kCustomFusionKind ||
+        IsRaggedDotTritonFusion(instruction)) {
       return ShouldAssignConfigToGemmFusion(instruction);
     }
     // 3. Generic Triton-only fusions. These are expected to only be tuned by
