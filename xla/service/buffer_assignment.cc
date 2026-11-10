@@ -61,6 +61,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
 #include "xla/hlo/utils/hlo_live_range.h"
+#include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/map_util.h"
 #include "xla/service/buffer_assignment.pb.h"
@@ -749,6 +750,10 @@ BufferAllocationProto BufferAllocation::ToProto() const {
         is_parameter_aliased_with_output_);
   }
   proto.set_is_constant(is_constant_);
+  proto.set_is_persistent(is_persistent_);
+  if (!initial_data_.empty()) {
+    proto.set_initial_data(initial_data_.data(), initial_data_.size());
+  }
   proto.set_maybe_live_out(maybe_live_out_);
   using Entry = std::pair<const HloValue* const, OffsetSize>;
   std::vector<const Entry*> sorted;
@@ -777,6 +782,11 @@ BufferAllocation BufferAllocation::FromProto(
     const BufferAllocationProto& proto) {
   BufferAllocation allocation{proto.index(), proto.size(), proto.color()};
   allocation.set_constant(proto.is_constant());
+  allocation.set_persistent(proto.is_persistent());
+  if (!proto.initial_data().empty()) {
+    allocation.set_initial_data(std::vector<uint8_t>(
+        proto.initial_data().begin(), proto.initial_data().end()));
+  }
   allocation.set_is_thread_local(proto.is_thread_local());
   allocation.set_is_tuple(proto.is_tuple());
   if (proto.is_entry_computation_parameter()) {
@@ -856,6 +866,9 @@ std::string BufferAllocation::ToShortString(bool human_readable_size) const {
   }
   if (is_constant()) {
     StrAppend(&output, ", constant");
+  }
+  if (is_persistent()) {
+    StrAppend(&output, ", persistent");
   }
   if (is_thread_local()) {
     StrAppend(&output, ", thread-local");
@@ -1157,6 +1170,27 @@ BufferAllocation* BufferAssignment::NewEmptyAllocation(
   return allocation;
 }
 
+absl::StatusOr<BufferAllocation*> BufferAssignment::AddPersistentAllocation(
+    int64_t size, LogicalBuffer::Color color,
+    std::vector<uint8_t> initial_data) {
+  TF_RET_CHECK(size > 0) << "Persistent allocation size must be positive";
+  TF_RET_CHECK(initial_data.empty() ||
+               static_cast<int64_t>(initial_data.size()) == size)
+      << "Initial data has " << initial_data.size() << " bytes, expected "
+      << size;
+  // Runtimes allocate persistent buffers in default device memory.
+  TF_RET_CHECK(color == Layout::kDefaultMemorySpace)
+      << "Unsupported persistent allocation color " << color;
+  BufferAllocation* allocation = NewEmptyAllocation(size, color);
+  allocation->set_persistent(true);
+  allocation->set_initial_data(std::move(initial_data));
+  stats_.persistent_allocation_count++;
+  stats_.persistent_allocation_bytes += size;
+  stats_.total_allocation_count++;
+  stats_.total_allocation_bytes += size;
+  return allocation;
+}
+
 absl::StatusOr<BufferAllocation*> BufferAssignment::NewAllocation(
     const HloBuffer& buffer, int64_t size, int64_t offset) {
   ABSL_ASSIGN_OR_RETURN(auto color, buffer.color());
@@ -1441,6 +1475,10 @@ void BufferAssignment::ComputeSummaryStats() {
       stats_.constant_allocation_count++;
       stats_.constant_allocation_bytes += allocation.size();
     }
+    if (allocation.is_persistent()) {
+      stats_.persistent_allocation_count++;
+      stats_.persistent_allocation_bytes += allocation.size();
+    }
     if (allocation.maybe_live_out()) {
       stats_.maybe_live_out_allocation_count++;
       stats_.maybe_live_out_allocation_bytes += allocation.size();
@@ -1494,6 +1532,8 @@ std::string BufferAssignment::StatsString(const AliasInfo* alias_info) const {
                   HumanReadableNumBytes(stats_.parameter_allocation_bytes));
   StrAppendFormat(&s, "              constant allocation: %10s\n",
                   HumanReadableNumBytes(stats_.constant_allocation_bytes));
+  StrAppendFormat(&s, "            persistent allocation: %10s\n",
+                  HumanReadableNumBytes(stats_.persistent_allocation_bytes));
   StrAppendFormat(
       &s, "        maybe_live_out allocation: %10s\n",
       HumanReadableNumBytes(stats_.maybe_live_out_allocation_bytes));
@@ -2015,6 +2055,12 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
     allocation->set_is_thread_local(alloc_proto.is_thread_local());
     allocation->set_is_tuple(alloc_proto.is_tuple());
     allocation->set_constant(alloc_proto.is_constant());
+    allocation->set_persistent(alloc_proto.is_persistent());
+    if (!alloc_proto.initial_data().empty()) {
+      allocation->set_initial_data(
+          std::vector<uint8_t>(alloc_proto.initial_data().begin(),
+                               alloc_proto.initial_data().end()));
+    }
 
     // If allocation corresponds to an entry computation parameter, copy
     // parameter properties to a BufferAllocation.
@@ -4156,7 +4202,7 @@ int64_t ComputeIndefiniteAllocationsInBytes(const BufferAssignmentProto& proto,
       continue;
     }
     if (alloc.is_entry_computation_parameter() || alloc.is_constant() ||
-        alloc.maybe_live_out()) {
+        alloc.is_persistent() || alloc.maybe_live_out()) {
       indefinite_allocations_bytes += alloc.size();
     }
   }

@@ -526,6 +526,82 @@ TEST_F(GpuExecutableTest, CommandBufferAllocationPolicy) {
               Optional(ElementsAre(1)));
 }
 
+TEST_F(GpuExecutableTest, CommandBufferAllocationPolicyIncludesPersistent) {
+  std::vector<BufferAllocation> allocations;
+  allocations.reserve(2);
+  allocations.emplace_back(0, 16, 0);
+  allocations.back().set_persistent(true);
+  allocations.emplace_back(1, 4, 0);
+  allocations.back().set_maybe_live_out(true);
+
+  Shape shape = ShapeUtil::MakeShape(U64, {2});
+  BufferAllocation::Slice persistent_slice(&allocations[0], 0, 16);
+  BufferAllocation::Slice live_out_slice(&allocations[1], 0, 4);
+
+  emitters::KernelArgument persistent_arg(shape, persistent_slice);
+  persistent_arg.set_written(true);
+  persistent_arg.set_invariant(false);
+  emitters::KernelArgument live_out_arg(ShapeUtil::MakeShape(S32, {}),
+                                        live_out_slice);
+
+  ThunkSequence command_thunks = ThunkSequence::Of<KernelThunk>(
+      ThunkInfoWithId(124),
+      /*kernel_name=*/"test_persistent_kernel",
+      /*kernel_arguments=*/
+      emitters::KernelArguments(
+          std::vector<emitters::KernelArgument>{persistent_arg, live_out_arg}),
+      /*launch_dimensions=*/LaunchDimensions(),
+      /*cluster_dim=*/std::nullopt,
+      /*shmem_bytes=*/0,
+      /*tma_metadata=*/se::gpu::TmaMetadata(),
+      /*devices_per_host=*/1);
+
+  ASSERT_OK_AND_ASSIGN(
+      CommandExecutor commands,
+      ConvertToCommands(command_thunks, ConvertToCommandsOptions{}));
+  auto sequential_thunk = std::make_unique<SequentialThunk>(
+      Thunk::ThunkInfo(), std::move(command_thunks));
+  ThunkSequence thunk_sequence = ThunkSequence::Of<CommandBufferThunk>(
+      std::move(commands), Thunk::ThunkInfo(), /*devices_in_process=*/1,
+      std::move(sequential_thunk));
+  ThunkExecutor thunk_executor(std::move(thunk_sequence));
+
+  std::vector<const BufferAllocation*> allocation_ptrs = {&allocations[0],
+                                                          &allocations[1]};
+  for (DebugOptions::CommandBufferUpdateMode mode :
+       {DebugOptions::ALWAYS_UPDATE, DebugOptions::SKIP_TEMP,
+        DebugOptions::SKIP_PROFILED}) {
+    DebugOptions debug_options;
+    debug_options.set_xla_gpu_command_buffer_update_mode(mode);
+    std::unique_ptr<GpuExecutableBufferAllocator> buffer_allocator =
+        GpuExecutableBufferAllocator::Create("test", allocation_ptrs, shape,
+                                             &debug_options, &thunk_executor,
+                                             /*num_devices=*/1);
+    EXPECT_EQ(buffer_allocator->command_buffer_allocation_count(), 1);
+    ServiceExecutableRunOptions run_options;
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<GpuExecutableBufferAllocator::ExecutionScope>
+            allocation_scope,
+        buffer_allocator->CreateExecutionScope(
+            &run_options, /*memory_allocator=*/nullptr, /*device_ordinal=*/0));
+
+    std::vector<se::DeviceAddressBase> buffers;
+    BufferAllocations buffer_allocations(buffers, /*device_ordinal=*/0,
+                                         /*memory_allocator=*/nullptr);
+    std::optional<std::vector<BufferAllocation::Index>> persistent_indices;
+    ASSERT_OK(allocation_scope->ExecuteWithBufferAllocations(
+        buffer_allocations,
+        [&](const BufferAllocations&,
+            std::optional<absl::Span<const BufferAllocation::Index>> indices) {
+          if (indices.has_value()) {
+            persistent_indices.emplace(indices->begin(), indices->end());
+          }
+          return absl::OkStatus();
+        }));
+    EXPECT_THAT(persistent_indices, Optional(ElementsAre(0)));
+  }
+}
+
 TEST_F(GpuExecutableTest, ComputeComputationLayout) {
   GpuExecutable::Params params;
   params.module_name = "test_module";

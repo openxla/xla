@@ -52,6 +52,7 @@ limitations under the License.
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/test_helpers.h"
+#include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/transforms/simplifiers/flatten_call_graph.h"
 #include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
 #include "xla/layout.h"
@@ -78,6 +79,7 @@ namespace xla {
 namespace {
 
 using memory_space_assignment::PresetAssignments;
+using ::testing::ElementsAre;
 using ::testing::FieldsAre;
 using ::testing::HasSubstr;
 using ::testing::Pair;
@@ -1428,6 +1430,65 @@ TEST_F(BufferAssignmentTest, BasicToFromProto) {
                   Pointwise(IdEq(), peak_buffers_orig));
     }
   }
+}
+
+TEST_F(BufferAssignmentTest, PersistentAllocationToFromProto) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule PersistentAllocationToFromProto
+    ENTRY main {
+      p0 = f32[4]{0} parameter(0)
+      ROOT neg = f32[4]{0} negate(p0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  std::unique_ptr<BufferAssignment> assignment =
+      RunBufferAssignment(module.get());
+  const int64_t num_allocations = assignment->Allocations().size();
+  const int64_t total_bytes = assignment->GetStats().total_allocation_bytes;
+
+  ASSERT_OK_AND_ASSIGN(BufferAllocation * persistent,
+                       assignment->AddPersistentAllocation(
+                           /*size=*/4, /*color=*/0, {9, 8, 7, 6}));
+  EXPECT_EQ(persistent->index(), num_allocations);
+  EXPECT_FALSE(persistent->IsPreallocatedTempBuffer());
+  EXPECT_EQ(assignment->GetStats().persistent_allocation_count, 1);
+  EXPECT_EQ(assignment->GetStats().persistent_allocation_bytes, 4);
+  EXPECT_EQ(assignment->GetStats().total_allocation_bytes, total_bytes + 4);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<BufferAssignment> from_proto,
+                       ConvertToProtoAndBack(assignment.get(), module.get()));
+  ASSERT_EQ(from_proto->Allocations().size(), num_allocations + 1);
+  const BufferAllocation& restored = from_proto->Allocations().back();
+  EXPECT_TRUE(restored.is_persistent());
+  EXPECT_THAT(restored.initial_data(), ElementsAre(9, 8, 7, 6));
+  EXPECT_EQ(from_proto->GetStats().persistent_allocation_count, 1);
+  EXPECT_EQ(from_proto->GetStats().persistent_allocation_bytes, 4);
+  EXPECT_EQ(from_proto->GetStats().total_allocation_bytes, total_bytes + 4);
+}
+
+TEST_F(BufferAssignmentTest, PersistentAllocationRejectsInvalidArguments) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule PersistentAllocationRejectsInvalidArguments
+    ENTRY main {
+      ROOT p0 = f32[4]{0} parameter(0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  std::unique_ptr<BufferAssignment> assignment =
+      RunBufferAssignment(module.get());
+  const int64_t num_allocations = assignment->Allocations().size();
+
+  EXPECT_THAT(assignment->AddPersistentAllocation(/*size=*/4, /*color=*/1),
+              absl_testing::StatusIs(absl::StatusCode::kInternal,
+                                     HasSubstr("Unsupported persistent")));
+  EXPECT_THAT(
+      assignment->AddPersistentAllocation(/*size=*/4, /*color=*/0, {1, 2}),
+      absl_testing::StatusIs(absl::StatusCode::kInternal,
+                             HasSubstr("Initial data has 2 bytes")));
+  EXPECT_EQ(assignment->Allocations().size(), num_allocations);
+  EXPECT_EQ(assignment->GetStats().persistent_allocation_count, 0);
 }
 
 TEST_F(BufferAssignmentTest, AliasedParamCanBeReused) {
@@ -5415,20 +5476,27 @@ void ForEachExampleBufferAllocation(Func func) {
     for (int size : {128, 256}) {
       for (int color : {44, 55}) {
         for (bool is_constant : {true, false}) {
-          for (bool is_thread_local : {true, false}) {
-            for (bool is_tuple : {true, false}) {
-              for (bool maybe_live_out : {true, false}) {
-                BufferAllocation buf_allocation{index, size, color};
-                buf_allocation.set_constant(is_constant);
-                buf_allocation.set_is_thread_local(is_thread_local);
-                buf_allocation.set_is_tuple(is_tuple);
-                buf_allocation.set_maybe_live_out(maybe_live_out);
-                func(buf_allocation);
+          for (bool is_persistent : {true, false}) {
+            for (bool is_thread_local : {true, false}) {
+              for (bool is_tuple : {true, false}) {
+                for (bool maybe_live_out : {true, false}) {
+                  BufferAllocation buf_allocation{index, size, color};
+                  buf_allocation.set_constant(is_constant);
+                  buf_allocation.set_persistent(is_persistent);
+                  if (is_persistent) {
+                    buf_allocation.set_initial_data(
+                        std::vector<uint8_t>{1, 2, 3, 4});
+                  }
+                  buf_allocation.set_is_thread_local(is_thread_local);
+                  buf_allocation.set_is_tuple(is_tuple);
+                  buf_allocation.set_maybe_live_out(maybe_live_out);
+                  func(buf_allocation);
 
-                buf_allocation.set_entry_computation_parameter(
-                    33, ShapeIndex{1, 2, 3, 4},
-                    /*parameter_aliased_with_output=*/true);
-                func(buf_allocation);
+                  buf_allocation.set_entry_computation_parameter(
+                      33, ShapeIndex{1, 2, 3, 4},
+                      /*parameter_aliased_with_output=*/true);
+                  func(buf_allocation);
+                }
               }
             }
           }
@@ -5445,6 +5513,8 @@ TEST(BufferAllocationTest, ToAndFromProto) {
     EXPECT_EQ(allocation.size(), new_allocation.size());
     EXPECT_EQ(allocation.color(), new_allocation.color());
     EXPECT_EQ(allocation.is_constant(), new_allocation.is_constant());
+    EXPECT_EQ(allocation.is_persistent(), new_allocation.is_persistent());
+    EXPECT_EQ(allocation.initial_data(), new_allocation.initial_data());
     EXPECT_EQ(allocation.is_thread_local(), new_allocation.is_thread_local());
     EXPECT_EQ(allocation.is_tuple(), new_allocation.is_tuple());
     EXPECT_EQ(allocation.maybe_live_out(), new_allocation.maybe_live_out());

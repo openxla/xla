@@ -40,7 +40,8 @@ class GpuKernelSpec final : public KernelSpec {
                 std::optional<size_t> scratch_bytes = std::nullopt,
                 bool use_pdl = false,
                 stream_executor::gpu::TmaMetadata tma_metadata = {},
-                std::optional<se::ClusterDim> cluster_dim = std::nullopt);
+                std::optional<se::ClusterDim> cluster_dim = std::nullopt,
+                int unroll_factor = 0);
 
   const LaunchDimensions& launch_dimensions() const {
     return launch_dimensions_;
@@ -62,12 +63,15 @@ class GpuKernelSpec final : public KernelSpec {
 
   size_t shmem_bytes() const { return scratch_bytes().value_or(0); }
 
+  int unroll_factor() const { return unroll_factor_; }
+
  private:
   LaunchDimensions launch_dimensions_;
   emitters::KernelArguments kernel_arguments_;
   bool use_pdl_;
   stream_executor::gpu::TmaMetadata tma_metadata_;
   std::optional<se::ClusterDim> cluster_dim_;
+  int unroll_factor_;
 };
 
 }  // namespace xla::gpu

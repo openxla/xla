@@ -48,7 +48,8 @@ GpuKernelSpec::GpuKernelSpec(absl::string_view name,
                              const emitters::KernelArguments& kernel_arguments,
                              std::optional<size_t> scratch_bytes, bool use_pdl,
                              stream_executor::gpu::TmaMetadata tma_metadata,
-                             std::optional<se::ClusterDim> cluster_dim)
+                             std::optional<se::ClusterDim> cluster_dim,
+                             int unroll_factor)
     : KernelSpec(name, launch_dimensions.AsWorkDimensions(),
                  kernel_arguments.GetArgumentShapedSlices(), {},
                  GetInvariantArguments(kernel_arguments), scratch_bytes),
@@ -56,6 +57,7 @@ GpuKernelSpec::GpuKernelSpec(absl::string_view name,
       kernel_arguments_(kernel_arguments),
       use_pdl_(use_pdl),
       tma_metadata_(tma_metadata),
-      cluster_dim_(cluster_dim) {}
+      cluster_dim_(cluster_dim),
+      unroll_factor_(unroll_factor) {}
 
 }  // namespace xla::gpu
