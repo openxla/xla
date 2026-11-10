@@ -175,8 +175,8 @@ START="$(date +%s)"
       exec "$GDB" -batch -nx -iex "set debuginfod enabled off" -p "$test_pid" \
           -ex "set pagination off" -ex "set width 0" -ex "set confirm off" \
           -ex "set print thread-events off" \
-          -ex "info threads" -ex "thread apply all bt 80" \
-          -ex "info sharedlibrary" -ex "kill" -ex "quit 124" >&2
+          -ex "info threads" -ex "thread apply all bt ${HANG_PROBE_BT_DEPTH:-40}" \
+          -ex "kill" -ex "quit 124" >&2
     fi
     sleep 1
   done
@@ -197,8 +197,9 @@ elif (( $(date +%s) - START >= AFTER_S )); then
   log "STACKS END rc=$RC"
 fi
 rm -f "$PIDFILE"
-# A failed runtime check fails an otherwise passing test, so it shows up.
-if (( RC == 0 && RUNTIME_RC != 0 )); then
+# A failed runtime check fails an otherwise passing test, so it shows up,
+# unless HANG_PROBE_RUNTIME_ENFORCE=0 asks for the check to only report.
+if (( RC == 0 && RUNTIME_RC != 0 )) && [[ "${HANG_PROBE_RUNTIME_ENFORCE:-1}" == "1" ]]; then
   RC="$RUNTIME_RC"
 fi
 log "EXIT rc=$RC wall_s=$(( $(date +%s) - START ))"
