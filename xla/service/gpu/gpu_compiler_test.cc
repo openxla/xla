@@ -733,11 +733,11 @@ TEST_P(PersistedAutotuningTest, LoadMismatchedFormatResultsFallback) {
 
   if (use_new_format()) {
     AutotuneResults legacy_results;
-    legacy_results.set_version(3);
+    legacy_results.set_version(4);
     auto* entry = legacy_results.add_results();
     entry->set_device("test_device");
     entry->set_hlo("test_hlo");
-    entry->set_version(3);
+    entry->set_version(4);
     entry->mutable_result()->mutable_gemm()->set_algorithm(1);
 
     std::string serialized;

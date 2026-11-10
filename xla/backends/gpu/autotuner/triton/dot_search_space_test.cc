@@ -132,6 +132,22 @@ ENTRY e {
         rhs_parallel_dim));
   }
 
+  absl::StatusOr<std::unique_ptr<VerifiedHloModule>> GetDotModule(
+      absl::string_view operand_type, absl::string_view result_type,
+      int lhs_parallel_dim, int rhs_parallel_dim, int contracting_dim) {
+    constexpr const char* kModuleTextFormat = R"(
+ENTRY e {
+  p0 = %s[%d,%d] parameter(0)
+  p1 = %s[%d,%d] parameter(1)
+  ROOT r = %s[%d,%d] dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+})";
+    return ParseAndReturnVerifiedModule(absl::StrFormat(
+        kModuleTextFormat, operand_type, lhs_parallel_dim, contracting_dim,
+        operand_type, contracting_dim, rhs_parallel_dim, result_type,
+        lhs_parallel_dim, rhs_parallel_dim));
+  }
+
   HloDotInstruction* GetDot(VerifiedHloModule* module) {
     return Cast<HloDotInstruction>(
         module->entry_computation()->root_instruction());
@@ -432,6 +448,59 @@ TEST_F(DotSearchSpaceTest, EnsuresContractingTileSizeFitsInstructonShape) {
 
   EXPECT_THAT(search_space.GenerateConfigs(),
               AllOf(Not(IsEmpty()), Each(BlockKIs(Ge(8)))));
+}
+
+TEST_F(DotSearchSpaceTest, Int8DotUsesAtLeast32ElementContractingTile) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       GetDotModule(/*operand_type=*/"s8",
+                                    /*result_type=*/"s32",
+                                    /*lhs_parallel_dim=*/1024,
+                                    /*rhs_parallel_dim=*/1024,
+                                    /*contracting_dim=*/16));
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  std::vector<TritonGemmConfig> configs = search_space.GenerateConfigs();
+  EXPECT_THAT(configs, AllOf(Not(IsEmpty()), Each(BlockKIs(Ge(32)))));
+
+  // A hint with a small contracting tile is clamped.
+  TritonGemmConfig hint = {
+      /*block_m=*/32,   /*block_n=*/32,  /*block_k=*/16,
+      /*num_stages=*/1, /*num_warps=*/4, /*num_ctas=*/1};
+  EXPECT_THAT(search_space.OptimizeConfigSet(configs, {hint}),
+              AllOf(Not(IsEmpty()), Each(BlockKIs(Ge(32)))));
+
+  // Force the fallback path; it must still clamp block_k.
+  TritonGemmConfig fallback_hint = {
+      /*block_m=*/32,      /*block_n=*/32,  /*block_k=*/16,
+      /*num_stages=*/9999, /*num_warps=*/4, /*num_ctas=*/1};
+  EXPECT_THAT(search_space.OptimizeConfigSet(configs, {fallback_hint}),
+              AllOf(Not(IsEmpty()), Each(BlockKIs(Ge(32)))));
+}
+
+TEST_F(DotSearchSpaceTest, UInt8DotUsesAtLeast32ElementContractingTile) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       GetDotModule(/*operand_type=*/"u8",
+                                    /*result_type=*/"u32",
+                                    /*lhs_parallel_dim=*/1024,
+                                    /*rhs_parallel_dim=*/1024,
+                                    /*contracting_dim=*/16));
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  EXPECT_THAT(search_space.GenerateConfigs(),
+              AllOf(Not(IsEmpty()), Each(BlockKIs(Ge(32)))));
+}
+
+TEST_F(DotSearchSpaceTest, Fp8DotUsesAtLeast32ElementContractingTile) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       GetDotModule(/*operand_type=*/"f8e4m3fn",
+                                    /*result_type=*/"f32",
+                                    /*lhs_parallel_dim=*/1024,
+                                    /*rhs_parallel_dim=*/1024,
+                                    /*contracting_dim=*/16));
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  EXPECT_THAT(search_space.GenerateConfigs(),
+              AllOf(Not(IsEmpty()), Each(BlockKIs(Ge(32)))));
 }
 
 TEST_F(DotSearchSpaceTest, FindReasonablePipeliningStageCount) {

@@ -2632,11 +2632,12 @@ ENTRY e {
                   /*run_hlo_passes=*/false));
 }
 
-TEST_P(TritonGemmTest, Fp8DotWithSmallTileDoesNotCrash) {
+TEST_P(TritonGemmTest, Fp8DotWithSmallOutputTileDoesNotCrash) {
   if (!GetCudaComputeCapability().IsAtLeastHopper()) {
     GTEST_SKIP() << "Doesn't pass on pre-Hopper GPUs.";
   }
 
+  // Small M/N tile; block_k must be at least 32 for 8-bit operands.
   constexpr absl::string_view kHloText = R"(
 HloModule m
 
@@ -2652,7 +2653,7 @@ ENTRY e {
   p1 = f8e4m3fn[33,33]{1,0} parameter(1)
   ROOT _ = bf16[33,33] fusion(p0, p1), kind=kCustom, calls=triton_dot,
     backend_config={"fusion_backend_config": {kind: "__triton_gemm",
-    triton_gemm_config: {"block_m":16,"block_n":16,"block_k":16,
+    triton_gemm_config: {"block_m":16,"block_n":16,"block_k":32,
                          "num_stages":2,"num_warps":2,
                          "num_ctas":1}}}
 })";
@@ -2661,6 +2662,37 @@ ENTRY e {
                        GetModuleAndNestedFusionMetadata(kHloText));
   EXPECT_TRUE(Run(std::move(module_and_metadata.module),
                   /*run_hlo_passes=*/false));
+}
+
+TEST_P(TritonGemmTest, Int8DotWithK16AndBlockK32MatchesReference) {
+  if (!GetCudaComputeCapability().IsAtLeastAmpere()) {
+    GTEST_SKIP() << "Triton int8 dots require Ampere or newer.";
+  }
+
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+triton_dot {
+  p0 = s8[16,16]{1,0} parameter(0)
+  p1 = s8[16,16]{1,0} parameter(1)
+  ROOT _ = s32[16,16]{1,0} dot(p0, p1),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+
+ENTRY e {
+  p0 = s8[16,16]{1,0} parameter(0)
+  p1 = s8[16,16]{1,0} parameter(1)
+  ROOT _ = s32[16,16] fusion(p0, p1), kind=kCustom, calls=triton_dot,
+    backend_config={"fusion_backend_config": {kind: "__triton_gemm",
+    triton_gemm_config: {"block_m":16,"block_n":16,"block_k":32,
+                         "num_stages":1,"num_warps":2,
+                         "num_ctas":1}}}
+})";
+
+  ASSERT_OK_AND_ASSIGN(ModuleAndNestedFusionMetadata module_and_metadata,
+                       GetModuleAndNestedFusionMetadata(kHloText));
+  EXPECT_TRUE(RunAndCompareNoHloPasses(module_and_metadata.module->ToString(),
+                                       ErrorSpec{/*aabs=*/0, /*arel=*/0}));
 }
 
 TEST_P(TritonGemmTest, MixedF8DotExecutesCorrectly) {
