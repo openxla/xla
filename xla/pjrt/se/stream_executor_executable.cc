@@ -38,6 +38,7 @@ limitations under the License.
 #include "riegeli/bytes/wrapping_reader.h"
 #include "riegeli/messages/parse_message.h"
 #include "xla/client/local_client.h"
+#include "xla/debug_options_flags.h"
 #include "xla/layout.h"
 #include "xla/pjrt/compiled_memory_stats.h"
 #include "xla/pjrt/host_memory_spaces.h"
@@ -466,11 +467,20 @@ StreamExecutorExecutable::Deserialize(riegeli::Any<riegeli::Reader*> reader,
   CompileOptions compile_options;
   if (options.has_value()) {
     compile_options = *std::move(options);
+    ABSL_RETURN_IF_ERROR(compile_options.ApplyAllOptionOverrides());
   } else {
     ABSL_ASSIGN_OR_RETURN(compile_options,
                           CompileOptions::FromProto(proto.compile_options()));
+    // Apply serialized compile-time `env_option_overrides` before load-time
+    // flag overrides so serving runtime flags take precedence (and still apply
+    // if `env_option_overrides` first materializes `debug_options`).
+    ABSL_RETURN_IF_ERROR(compile_options.ApplyAllOptionOverrides());
+    if (compile_options.executable_build_options.has_debug_options()) {
+      ApplyLoadTimeDebugOptionsOverrides(
+          GetDebugOptionsFromFlags(),
+          compile_options.executable_build_options.mutable_debug_options());
+    }
   }
-  ABSL_RETURN_IF_ERROR(compile_options.ApplyAllOptionOverrides());
 
   ABSL_ASSIGN_OR_RETURN(auto default_memory_space,
                         GetDefaultMemoryKind(topology));

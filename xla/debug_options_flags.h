@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_DEBUG_OPTIONS_FLAGS_H_
 #define XLA_DEBUG_OPTIONS_FLAGS_H_
 
+#include <cstdint>
 #include <vector>
 
 #include "absl/log/log.h"
@@ -92,11 +93,25 @@ DebugOptions GetDebugOptionsFromFlags();
 // Gets a DebugOptions proto that reflects the defaults as if no flags were set.
 DebugOptions DefaultDebugOptionsIgnoringFlags();
 
+// Default GPU executable rendezvous timeouts when unset in `DebugOptions`.
+inline constexpr int32_t kDefaultGpuExecutableWarnStuckTimeoutSeconds = 10;
+inline constexpr int32_t kDefaultGpuExecutableTerminateTimeoutSeconds = 30;
+
 // Processes DebugOptions by starting with options from a proto (if provided) or
 // default options, and then applying overrides from the XLA_FLAGS environment
 // variable.
 DebugOptions GetDebugOptionsFromProtoAndFlags(
     DebugOptions* proto_debug_options);
+
+// Applies runtime-configurable load-time `DebugOptions` overrides (dump path,
+// collective flags, execution timeouts, and progress tracking) from
+// `load_time_debug_options` onto `target_debug_options` so that serving flags
+// take effect on loaded AOT executables without clobbering unset fields.
+// `xla_gpu_experimental_nccl_window_symmetric` is sticky-enable (copied only
+// when true) because `DefaultDebugOptionsIgnoringFlags` populates it as false.
+void ApplyLoadTimeDebugOptionsOverrides(
+    const DebugOptions& load_time_debug_options,
+    DebugOptions* target_debug_options);
 
 // Checks whether the pass fuel was explicitly set.
 bool PassFuelIsSet(absl::string_view pass);

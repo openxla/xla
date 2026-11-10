@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/runtime/annotation.h"
@@ -443,10 +444,11 @@ class GpuExecutable : public Executable {
   std::unique_ptr<GpuAliasInfo> alias_info_;
 
   // The DebugOptions used at run time. These are the compile-time options from
-  // the module config, with `xla_dump_to` and
-  // `xla_gpu_experimental_nccl_window_symmetric` taken from the load-time
-  // options for loaded executables (see `FromProto`). If the executable has no
-  // module config at all, these are the options passed to `Create`.
+  // the module config, with `xla_dump_to`,
+  // `xla_gpu_experimental_nccl_window_symmetric`, execution timeouts, and
+  // progress tracking taken from the load-time options for loaded executables
+  // (see `FromProto`). If the executable has no module config at all, these are
+  // the options passed to `Create`.
   //
   // This is a copy taken in `Create`. Changing the module config after that
   // (e.g. through `HloModule::mutable_config()`) doesn't affect execution.
@@ -515,6 +517,12 @@ class GpuExecutable : public Executable {
 
 absl::StatusOr<absl::flat_hash_map<ShapeIndex, GpuExecutable::OutputInfo>>
 GetOutputInfo(const HloModule& hlo_module, const BufferAssignment& assignment);
+
+// Returns the rendezvous stuck-warning and termination timeouts from
+// `debug_options`, falling back to `kDefaultGpuExecutable*TimeoutSeconds` when
+// unset so executables loaded with a default `DebugOptions` do not use 0s.
+absl::Duration GetExecutableWarnStuckTimeout(const DebugOptions& debug_options);
+absl::Duration GetExecutableTerminateTimeout(const DebugOptions& debug_options);
 
 }  // namespace gpu
 }  // namespace xla
