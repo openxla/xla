@@ -14,10 +14,13 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <string>
 
 #include "absl/strings/cord.h"
 #include "google/protobuf/repeated_ptr_field.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/MemoryBufferRef.h"
+#include "mlir/Bytecode/BytecodeReader.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OperationSupport.h"
@@ -68,8 +71,27 @@ void IfrtAtomProgramsFromVhloPass::runOnOperation() {
   mlir::ModuleOp module = getOperation();
   mlir::MLIRContext& context = getContext();
   for (const auto& atom_program_proto : atom_programs_) {
-    auto atom_program_module = mlir::stablehlo::deserializePortableArtifact(
-        absl::Cord(atom_program_proto.program()).Flatten(), &context);
+    // Atom programs can be large, so we avoid copying them whenever possible.
+    // Copying a Cord shares its data, and `Flatten()` copies the data only if
+    // the Cord is fragmented.
+    absl::Cord atom_program_cord = atom_program_proto.program();
+    llvm::StringRef atom_program = atom_program_cord.Flatten();
+    // Atom programs are serialized as MLIR bytecode, and the MLIR bytecode
+    // reader never reads past the end of its input buffer, so bytecode is
+    // deserialized directly from the flattened Cord. Any other input is parsed
+    // as MLIR text by the MLIR Lexer, which assumes that the input buffer is
+    // null-terminated. A flattened Cord is not null-terminated, so only in that
+    // case we copy the atom program to a `std::string` to guarantee
+    // null-termination. `mlir::isBytecode()` is the same check that the MLIR
+    // parser uses to choose between the bytecode reader and the text parser.
+    std::string null_terminated_atom_program;
+    if (!mlir::isBytecode(
+            llvm::MemoryBufferRef(atom_program, /*Identifier=*/""))) {
+      null_terminated_atom_program = atom_program.str();
+      atom_program = null_terminated_atom_program;
+    }
+    auto atom_program_module =
+        mlir::stablehlo::deserializePortableArtifact(atom_program, &context);
     if (!atom_program_module) {
       module->emitOpError()
           << "Failed to deserialize atom program `" << atom_program_proto.name()
