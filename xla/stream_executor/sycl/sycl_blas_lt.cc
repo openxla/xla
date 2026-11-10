@@ -90,11 +90,20 @@ absl::Status BlasLt::MatmulPlan::OneMklMatmulPlan::ExecuteOnStream(
     Stream* stream, const gpu::BlasLt::MemoryArgs& args,
     blas::ProfileResult* profile_result) const {
   gpu::MatrixLayout out = config_.output_layout;
-  ABSL_ASSIGN_OR_RETURN(blas::DataType dtype, gpu::AsBlasDataType(out.dtype));
-  TF_RET_CHECK(dtype == blas::DataType::kComplexDouble ||
-               dtype == blas::DataType::kComplexFloat)
+  ABSL_ASSIGN_OR_RETURN(blas::DataType out_dtype,
+                        gpu::AsBlasDataType(out.dtype));
+  TF_RET_CHECK(out_dtype == blas::DataType::kComplexDouble ||
+               out_dtype == blas::DataType::kComplexFloat)
       << "Invalid type, expecting complex data type.";
-  return (dtype == blas::DataType::kComplexDouble)
+  gpu::MatrixLayout lhs = config_.lhs_layout;
+  gpu::MatrixLayout rhs = config_.rhs_layout;
+  ABSL_ASSIGN_OR_RETURN(blas::DataType lhs_dtype,
+                        gpu::AsBlasDataType(lhs.dtype));
+  ABSL_ASSIGN_OR_RETURN(blas::DataType rhs_dtype,
+                        gpu::AsBlasDataType(rhs.dtype));
+  TF_RET_CHECK(out_dtype == lhs_dtype && out_dtype == rhs_dtype)
+      << "Output datatype must match input data types.";
+  return (out_dtype == blas::DataType::kComplexDouble)
              ? ComplexMatmulImpl<std::complex<double>>(config_, stream, args)
              : ComplexMatmulImpl<std::complex<float>>(config_, stream, args);
 }

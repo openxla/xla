@@ -24,10 +24,9 @@ limitations under the License.
 #include "xla/stream_executor/sycl/onemkl_util.h"
 
 namespace stream_executor::sycl {
-namespace {
 
 // Helper functions transforming blas arguments into oneMKL arguments.
-oneapi::mkl::transpose ToMklTranspose(blas::Transpose trans) {
+inline oneapi::mkl::transpose ToMklTranspose(blas::Transpose trans) {
   if (trans == blas::Transpose::kTranspose)
     return oneapi::mkl::transpose::trans;
   else if (trans == blas::Transpose::kNoTranspose)
@@ -35,7 +34,6 @@ oneapi::mkl::transpose ToMklTranspose(blas::Transpose trans) {
   else
     return oneapi::mkl::transpose::conjtrans;
 }
-}  // namespace
 
 template <typename CType>
 absl::Status ComplexMatmulImpl(const gpu::GemmConfig& config, Stream* stream,

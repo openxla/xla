@@ -156,7 +156,7 @@ TEST_F(GemmSyclTest, MatmulWithBiasAndRELU) {
     c_bcast = <<DType>>[256,8] broadcast(c), dimensions={}
     ROOT out = <<DType>>[256,8] maximum(biased, c_bcast)
   })";
-  TestGemmWithTypeVariations(matmul_module_str);
+  TestGemmWithTypeVariations(matmul_module_str, /*include_complex=*/false);
 }
 
 TEST_F(GemmSyclTest, MatmulWithBiasAndApproxGELU) {
@@ -188,7 +188,7 @@ TEST_F(GemmSyclTest, MatmulWithBiasAndApproxGELU) {
     mul.4 = <<DType>>[256,8] multiply(add.2, bcast.3)
     ROOT out = <<DType>>[256,8] multiply(biased, mul.4)
   })";
-  TestGemmWithTypeVariations(matmul_module_str);
+  TestGemmWithTypeVariations(matmul_module_str, /*include_complex=*/false);
 }
 
 }  // namespace
