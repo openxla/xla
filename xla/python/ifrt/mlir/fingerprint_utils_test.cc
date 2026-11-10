@@ -19,8 +19,11 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <string>
 
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/strings/substitute.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -125,6 +128,56 @@ module @foo {
   ASSERT_OK_AND_ASSIGN(uint64_t fp1, FingerprintModuleOp(*module1));
   ASSERT_OK_AND_ASSIGN(uint64_t fp2, FingerprintModuleOp(*module2));
   EXPECT_EQ(fp1, fp2);
+}
+
+// Parses a module with a `tpu_custom_call` whose `custom_call_config` has the
+// given JSON members.
+absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> ParseModuleWithKernelConfig(
+    absl::string_view kernel_config, mlir::MLIRContext& context) {
+  std::string module = absl::Substitute(R"mlir(
+module {
+  func.func @main(%arg0: tensor<f32>) -> tensor<f32> {
+    %0 = stablehlo.custom_call @tpu_custom_call(%arg0) {backend_config = "{\22custom_call_config\22: {$0}}"} : (tensor<f32>) -> tensor<f32>
+    return %0 : tensor<f32>
+  }
+}
+)mlir",
+                                        kernel_config);
+  return xla::ParseMlirModuleString(module, context);
+}
+
+TEST(FingerprintUtilsTest, IgnoresMosaicKernelDebugLocations) {
+  mlir::MLIRContext context;
+  ASSERT_OK_AND_ASSIGN(
+      mlir::OwningOpRef<mlir::ModuleOp> module1,
+      ParseModuleWithKernelConfig(
+          R"(\22body\22: \22a2VybmVs\22, \22debug_locations\22: \22L3RtcC9h\22)",
+          context));
+  ASSERT_OK_AND_ASSIGN(
+      mlir::OwningOpRef<mlir::ModuleOp> module2,
+      ParseModuleWithKernelConfig(
+          R"(\22debug_locations\22:\22L3RtcC9i\22,\22body\22:\22a2VybmVs\22)",
+          context));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp1, FingerprintModuleOp(*module1));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp2, FingerprintModuleOp(*module2));
+  EXPECT_EQ(fp1, fp2);
+}
+
+TEST(FingerprintUtilsTest, DistinctMosaicKernelsHaveDifferentFingerprints) {
+  mlir::MLIRContext context;
+  ASSERT_OK_AND_ASSIGN(
+      mlir::OwningOpRef<mlir::ModuleOp> module1,
+      ParseModuleWithKernelConfig(
+          R"(\22body\22: \22a2VybmVs\22, \22debug_locations\22: \22L3RtcC9h\22)",
+          context));
+  ASSERT_OK_AND_ASSIGN(
+      mlir::OwningOpRef<mlir::ModuleOp> module2,
+      ParseModuleWithKernelConfig(
+          R"(\22body\22: \22b3RoZXI=\22, \22debug_locations\22: \22L3RtcC9h\22)",
+          context));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp1, FingerprintModuleOp(*module1));
+  ASSERT_OK_AND_ASSIGN(uint64_t fp2, FingerprintModuleOp(*module2));
+  EXPECT_NE(fp1, fp2);
 }
 
 }  // namespace
