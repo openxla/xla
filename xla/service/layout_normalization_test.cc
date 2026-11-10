@@ -22,13 +22,10 @@ limitations under the License.
 #include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
-#include "xla/service/hlo_verifier.h"
 #include "xla/service/scatter_simplifier.h"
 
 namespace xla {
@@ -1121,13 +1118,12 @@ ENTRY main {
   ROOT neg = f32[5,4]{0,1} negate(done)
 }
 )";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  ASSERT_OK_AND_ASSIGN(bool changed, LayoutNormalization{}.Run(module.get()));
-  EXPECT_TRUE(changed);
-
-  EXPECT_OK(HloVerifier(HloVerifierOpts{}.MakeLayoutSensitive())
-                .Run(module.get())
-                .status());
+  // abs-{start,done} is syntactic sugar for async_comp, printed only while it
+  // is still a single instruction (i.e. no bitcasts were inserted).
+  CheckLayoutNormalization(hlo, R"(
+// CHECK: abs-start(
+// CHECK: abs-done(
+)");
 }
 
 TEST_F(LayoutNormalizationTest, NonMainThreadAsyncComputationIsNormalized) {
@@ -1145,18 +1141,13 @@ ENTRY main {
   ROOT done = f32[5,4]{0,1} async-done(start)
 }
 )";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  ASSERT_OK_AND_ASSIGN(bool changed, LayoutNormalization{}.Run(module.get()));
-  EXPECT_TRUE(changed);
-
-  HloComputation* async_comp = module->GetComputationWithName("async_comp");
-  ASSERT_NE(async_comp, nullptr);
-  EXPECT_FALSE(async_comp->CanExpandIntoSingleInstruction());
-  EXPECT_EQ(async_comp->root_instruction()->opcode(), HloOpcode::kBitcast);
-
-  EXPECT_OK(HloVerifier(HloVerifierOpts{}.MakeLayoutSensitive())
-                .Run(module.get())
-                .status());
+  CheckLayoutNormalization(hlo, R"(
+// CHECK: async_comp
+// CHECK: %[[P:.*]] = f32[5,4]{0,1} parameter(0)
+// CHECK: %[[B:.*]] = f32[4,5]{1,0} bitcast(%[[P]])
+// CHECK: %[[ABS:.*]] = f32[4,5]{1,0} abs(%[[B]])
+// CHECK: ROOT {{.*}} = f32[5,4]{0,1} bitcast(%[[ABS]])
+)");
 }
 
 TEST_F(LayoutNormalizationTest, CollectivesGroupAsyncComputationIsNormalized) {
@@ -1175,18 +1166,14 @@ ENTRY main {
   ROOT done = f32[5,4]{0,1} async-done(start)
 }
 )";
-  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
-  ASSERT_OK_AND_ASSIGN(bool changed, LayoutNormalization{}.Run(module.get()));
-  EXPECT_TRUE(changed);
-
-  EXPECT_EQ(module->GetComputationWithName("async_comp")
-                ->root_instruction()
-                ->opcode(),
-            HloOpcode::kBitcast);
-
-  EXPECT_OK(HloVerifier(HloVerifierOpts{}.MakeLayoutSensitive())
-                .Run(module.get())
-                .status());
+  CheckLayoutNormalization(hlo, R"(
+// CHECK: async_comp
+// CHECK: %[[P:.*]] = f32[5,4]{0,1} parameter(0)
+// CHECK: %[[B:.*]] = f32[4,5]{1,0} bitcast(%[[P]])
+// CHECK: %[[ABS:.*]] = f32[4,5]{1,0} abs(%[[B]])
+// CHECK: %[[NEG:.*]] = f32[4,5]{1,0} negate(%[[ABS]])
+// CHECK: ROOT {{.*}} = f32[5,4]{0,1} bitcast(%[[NEG]])
+)");
 }
 
 }  // namespace

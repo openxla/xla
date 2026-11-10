@@ -43,7 +43,6 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/protobuf.h"
 #include "xla/hlo/ir/backend_config.h"
 #include "xla/hlo/ir/dfs_hlo_visitor.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
@@ -62,6 +61,7 @@ limitations under the License.
 #include "xla/tsl/lib/gtl/iterator_range.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
 
 namespace xla {
 
@@ -916,6 +916,16 @@ class HloComputation {
 
   // Returns true iff this computation can be inlined as a single instruction.
   bool CanExpandIntoSingleInstruction() const;
+
+  // Returns true iff this is a main-thread async computation that the HLO
+  // verifier requires to contain only parameters and a root. Computations that
+  // are collectives groups (unique async-start caller with an attached
+  // kCollectiveGroupMarkerAttr frontend attribute) or async barriers (only
+  // parameters, get-tuple-elements, and a root, with at least one
+  // get-tuple-element) are exempt. This also returns true for such
+  // computations that currently violate the requirement; use
+  // CanExpandIntoSingleInstruction() to check the current contents.
+  bool MustBeSingleInstructionAsyncComputation() const;
 
   // A comparator that orders computations by their unique IDs. This is used
   // for determinism.

@@ -45,7 +45,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
-#include "tsl/platform/platform.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -74,6 +73,7 @@ limitations under the License.
 #include "xla/tsl/platform/errors.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/platform.h"
 
 namespace xla {
 namespace {
@@ -4118,25 +4118,6 @@ absl::Status CheckElementwiseInstruction(HloInstruction* instruction) {
   return absl::OkStatus();
 }
 
-bool IsCollectivesGroupComputation(HloComputation* computation) {
-  auto maybe_caller = computation->GetUniqueCaller(HloOpcode::kAsyncStart);
-  if (!maybe_caller.has_value()) {
-    return false;
-  }
-  return (*maybe_caller)
-      ->get_frontend_attribute(kCollectiveGroupMarkerAttr)
-      .has_value();
-}
-
-bool IsAsyncBarrierComputation(HloComputation* computation) {
-  return absl::c_all_of(
-      computation->instructions(),
-      [root = computation->root_instruction()](const HloInstruction* instr) {
-        return root == instr || instr->opcode() == HloOpcode::kParameter ||
-               instr->opcode() == HloOpcode::kGetTupleElement;
-      });
-}
-
 int64_t CountWriters(const HloInstruction* inst,
                      absl::Span<const int64_t> shape_index);
 
@@ -5114,11 +5095,7 @@ absl::StatusOr<bool> HloVerifier::RunImpl(
       ABSL_RETURN_IF_ERROR(computation->Accept(&instruction_verifier));
       // Verify that async computations contain a single instruction unless
       // they are explicitly marked as a collectives group or async barrier.
-      if (computation->IsAsyncComputation() &&
-          computation->execution_thread() ==
-              HloInstruction::kMainExecutionThread &&
-          !IsCollectivesGroupComputation(computation) &&
-          !IsAsyncBarrierComputation(computation)) {
+      if (computation->MustBeSingleInstructionAsyncComputation()) {
         ABSL_RETURN_IF_ERROR(VerifyAsyncComputation(computation));
       }
     }

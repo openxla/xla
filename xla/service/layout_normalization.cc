@@ -45,7 +45,6 @@ limitations under the License.
 #include "xla/service/shape_inference.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/side_effect_util.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
@@ -54,21 +53,6 @@ limitations under the License.
 
 namespace xla {
 namespace {
-
-// Returns true for main-thread async computations that the HLO verifier
-// requires to contain only parameter instructions and a root.
-bool AsyncComputationRequiresSingleInstruction(
-    const HloComputation* computation) {
-  if (!computation->IsAsyncComputation() || !computation->IsMainThread()) {
-    return false;
-  }
-  // Computations whose unique caller has a collective group annotation can
-  // have multiple instructions.
-  std::optional<HloInstruction*> caller =
-      computation->GetUniqueCaller(HloOpcode::kAsyncStart);
-  return !caller.has_value() ||
-         !(*caller)->get_frontend_attribute(kCollectiveGroupMarkerAttr);
-}
 
 // Layout normalization visitor. Aims to achieve the global postcondition that
 // every layout is strictly descending (the layout permutation is effectively
@@ -94,11 +78,6 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
       : normalization_(normalization),
         custom_call_transformer_(custom_call_transformer) {}
   bool ShouldProcessNode(HloInstruction* hlo) override {
-    // Skip single-instruction async computations to avoid inserting bitcasts
-    // into them.
-    if (AsyncComputationRequiresSingleInstruction(hlo->parent())) {
-      return false;
-    }
     // Skip `hlo` if it already has a default layout and the operands have a
     // default layout as well.
     if (hlo->shape().IsArray() && HasDefaultLayout(hlo) &&
@@ -982,8 +961,17 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
 absl::StatusOr<bool> LayoutNormalization::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  return LayoutNormalizationVisitor{this, custom_call_transformer_}.RunOnModule(
-      module, execution_threads);
+  LayoutNormalizationVisitor visitor(this, custom_call_transformer_);
+  for (HloComputation* computation :
+       module->MakeNonfusionComputations(execution_threads)) {
+    // Skip single-instruction async computations to avoid inserting bitcasts
+    // into them.
+    if (computation->MustBeSingleInstructionAsyncComputation()) {
+      continue;
+    }
+    ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));
+  }
+  return visitor.changed();
 }
 
 }  // end namespace xla
