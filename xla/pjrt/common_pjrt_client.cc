@@ -1390,12 +1390,17 @@ absl::StatusOr<PjRtDeviceEventRef> CommonPjRtClient::LinearizeIntoImpl(
                 HostBufferSemantics::kImmutableOnlyDuringCall,
             device_shape, byte_strides.value_or(absl::Span<const int64_t>()),
             raw_buffer));
+    constexpr int64_t kMaxInlineAsyncLinearizeBytes = 512 * 1024;
+    const int64_t on_device_bytes = raw_buffer->GetOnDeviceSizeInBytes();
     // TODO(parkers): IsCpuId because the linearization pool shares with the
     // execute pool on cpu, so we have potential deadlocks.
     if (host_buffer_semantics ==
             HostBufferSemantics::kImmutableOnlyDuringCall ||
         IsCpuId(platform_id()) ||
-        memory_space->kind_id() == UnpinnedHostMemorySpace::kKindId) {
+        memory_space->kind_id() == UnpinnedHostMemorySpace::kKindId ||
+        (on_device_bytes > 0 &&
+         on_device_bytes <= kMaxInlineAsyncLinearizeBytes &&
+         linearized.IsAvailable() && !linearized.IsError())) {
       if (!linearized.IsAvailable()) {
         tsl::BlockUntilReady(linearized.GetAsyncValue());
       }
@@ -4445,6 +4450,17 @@ CommonPjRtLoadedExecutable::Execute(
     int failed = 0;
     absl::Status first_failure_status;
     const bool profiling_requested = options.execution_profile != nullptr;
+    // A synchronous execution finishes before Execute returns, so that nothing
+    // can be queued behind it while its host callbacks run. PjRt-IFRT runs
+    // every program with host callbacks this way, but only the CPU runtime
+    // honors it. A dispatch from inside a host callback does not wait: it may
+    // be queued behind the program running the callback, because collectives
+    // launch one at a time. Threads that a callback starts, such as
+    // thread_map's, are outside its scope, so a dispatch from one of them
+    // waits here, and deadlocks if the callback joins that thread.
+    const bool sync_wait =
+        options.execution_mode == ExecuteOptions::ExecutionMode::kSynchronous &&
+        IsCpuId(client()->platform_id()) && !ThisThreadIsInsideHostCallback();
     std::vector<ExecutionProfile> device_execution_profiles;
     if (profiling_requested) {
       device_execution_profiles.resize(num_addressable_devices,
@@ -4523,7 +4539,7 @@ CommonPjRtLoadedExecutable::Execute(
           // Phase 2: Launch. It cannot fail.
           results[i] =
               ExecuteLaunch(*launch_args, returned_futures.has_value() ||
-                                              profiling_requested);
+                                              profiling_requested || sync_wait);
 
           absl::MutexLock lock(mu);
           --launching;
@@ -4556,6 +4572,14 @@ CommonPjRtLoadedExecutable::Execute(
       // Return the profile from device 0 because current API supports only a
       // single profile.
       *options.execution_profile = std::move(device_execution_profiles.front());
+    }
+    if (sync_wait) {
+      for (const auto& result : results) {
+        // Errors still reach the caller through the outputs.
+        if (result.ok() && result->future.has_value()) {
+          tsl::BlockUntilReady(result->future->async_value());
+        }
+      }
     }
   }
   VLOG(3) << "Replicated execution complete.";
