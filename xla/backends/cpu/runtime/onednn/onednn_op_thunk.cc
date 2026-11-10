@@ -20,6 +20,7 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/base/dynamic_annotations.h"
@@ -35,12 +36,14 @@ limitations under the License.
 #include "xla/backends/cpu/runtime/onednn/onednn_threadpool.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/runtime/buffer_use.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/service/cpu/onednn_config.pb.h"
 #include "xla/service/cpu/onednn_convolution.h"
 #include "xla/service/cpu/onednn_layer_norm.h"
 #include "xla/service/cpu/onednn_matmul.h"
 #include "xla/service/cpu/onednn_memory_util.h"
 #include "xla/service/cpu/onednn_softmax.h"
+#include "xla/service/cpu/onednn_weight_cache.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/logging.h"
@@ -215,9 +218,36 @@ tsl::AsyncValueRef<OneDnnOpThunk::ExecuteEvent> OneDnnOpThunk::Execute(
     base_resources.result_memrefs.push_back(std::move(memref));
   }
 
+  const auto* matmul_config = std::get_if<OneDnnMatMulConfig>(&config_);
+  if (matmul_config && matmul_config->weights_cache_eligible() &&
+      GlobalOneDnnWeightCache().capacity_bytes() > 0) {
+    runtime->prim_resources().weights_source_identity =
+        params.buffer_allocations->GetBufferIdentity(
+            op_buffers_.arguments_buffers[1].index());
+  }
+
   auto executed = runtime->Invoke(thread_pool, config_, target_);
 
-  // Do not return runtime to the pool until the execution is done.
+  if (runtime->prim_resources().weights_pending) {
+    // This separate event makes observing completion also guarantee that the
+    // miss was published or canceled. The callback retains runtime resources
+    // until oneDNN finishes and releases them before signaling this event.
+    auto completed = tsl::MakeConstructedAsyncValueRef<ExecuteEvent>();
+    executed.AndThen(
+        [runtime = std::move(runtime), completed](absl::Status status) mutable {
+          runtime->prim_resources().CompleteWeightCache(status.ok());
+          runtime.reset();
+          if (status.ok()) {
+            completed.SetStateConcrete();
+          } else {
+            completed.SetError(std::move(status));
+          }
+        });
+    return completed;
+  }
+
+  // On hits, callers can observe completion before this callback runs; it must
+  // retain the runtime's resources until oneDNN has finished with them.
   executed.AndThen([runtime = std::move(runtime)]() {
     // runtime will be destroyed here when going out of scope.
     VLOG(3) << "OneDnnOpThunk execution completed and destroying runtime now.";

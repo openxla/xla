@@ -42,7 +42,6 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Support/DebugStringHelper.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/computation_kernel_arguments.h"
 #include "xla/backends/cpu/codegen/dot/dot_kernel_emitter.h"
@@ -127,9 +126,11 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/profiler/lib/traceme.h"
 
 #ifdef XLA_ONEDNN
 #include "xla/backends/cpu/runtime/onednn/onednn_op_thunk.h"
+#include "xla/service/cpu/onednn_config.pb.h"
 #endif  // XLA_ONEDNN
 
 #if XLA_ONEDNN_USE_GRAPH_API
@@ -1173,6 +1174,24 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitOneDnnOpThunk(
 
   ABSL_ASSIGN_OR_RETURN(auto op_buffers, GetOpBuffers<OneDnnOpThunk::OpBuffers>(
                                              instruction, buffer_assignment_));
+  if (custom_call_target == "__onednn$matmul") {
+    auto& matmul_config = std::get<OneDnnMatMulConfig>(config);
+    // Recompute eligibility from the final allocation, not the input config.
+    matmul_config.set_weights_cache_eligible(false);
+    if (op_buffers.arguments_buffers.size() > 1 &&
+        !op_buffers.arguments_buffers[1].empty()) {
+      const BufferAllocation* weights =
+          op_buffers.arguments_buffers[1].allocation();
+      const Shape& weights_shape = op_buffers.arguments_shapes[1];
+      // Restrict runtime packing to rank-2 FP32 weights until other types and
+      // ranks have layout and reuse coverage.
+      matmul_config.set_weights_cache_eligible(
+          weights->is_entry_computation_parameter() && weights->is_readonly() &&
+          weights_shape.dimensions().size() == 2 &&
+          weights_shape.element_type() == F32 &&
+          !matmul_config.optimization_config().weights_prepacked());
+    }
+  }
   return ThunkSequence::Of<OneDnnOpThunk>(
       custom_call_target, ThunkInfo(custom_call), op_buffers, config);
 }

@@ -35,6 +35,7 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "oneapi/dnnl/dnnl.hpp"
 #include "xla/literal.h"
+#include "xla/service/cpu/onednn_weight_cache.h"
 #include "xla/service/llvm_ir/ir_array.h"
 #include "xla/service/llvm_ir/llvm_util.h"
 #include "xla/shape.h"
@@ -225,6 +226,14 @@ Shape MemDescToXlaShapeFlattened(const dnnl::memory::desc& md) {
   int64_t bytes_num = md.get_size();
   auto elements_num = static_cast<int64_t>(bytes_num / element_size);
   return ShapeUtil::MakeShape(ToXlaPrimitiveType(dtype), {elements_num});
+}
+
+OneDnnPrimResources::~OneDnnPrimResources() { CompleteWeightCache(false); }
+
+void OneDnnPrimResources::CompleteWeightCache(bool success) {
+  if (std::exchange(weights_pending, false)) {
+    GlobalOneDnnWeightCache().Complete(packed_weights, success);
+  }
 }
 
 }  // namespace cpu
