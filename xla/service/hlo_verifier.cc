@@ -4118,6 +4118,15 @@ absl::Status CheckElementwiseInstruction(HloInstruction* instruction) {
   return absl::OkStatus();
 }
 
+bool IsAsyncBarrierComputation(const HloComputation* computation) {
+  return absl::c_all_of(
+      computation->instructions(),
+      [root = computation->root_instruction()](const HloInstruction* instr) {
+        return root == instr || instr->opcode() == HloOpcode::kParameter ||
+               instr->opcode() == HloOpcode::kGetTupleElement;
+      });
+}
+
 int64_t CountWriters(const HloInstruction* inst,
                      absl::Span<const int64_t> shape_index);
 
@@ -5095,7 +5104,8 @@ absl::StatusOr<bool> HloVerifier::RunImpl(
       ABSL_RETURN_IF_ERROR(computation->Accept(&instruction_verifier));
       // Verify that async computations contain a single instruction unless
       // they are explicitly marked as a collectives group or async barrier.
-      if (computation->MustBeSingleInstructionAsyncComputation()) {
+      if (computation->IsRestrictedAsyncComputation() &&
+          !IsAsyncBarrierComputation(computation)) {
         ABSL_RETURN_IF_ERROR(VerifyAsyncComputation(computation));
       }
     }

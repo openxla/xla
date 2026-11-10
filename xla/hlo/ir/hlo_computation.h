@@ -917,15 +917,14 @@ class HloComputation {
   // Returns true iff this computation can be inlined as a single instruction.
   bool CanExpandIntoSingleInstruction() const;
 
-  // Returns true iff this is a main-thread async computation that the HLO
-  // verifier requires to contain only parameters and a root. Computations that
-  // are collectives groups (unique async-start caller with an attached
-  // kCollectiveGroupMarkerAttr frontend attribute) or async barriers (only
-  // parameters, get-tuple-elements, and a root, with at least one
-  // get-tuple-element) are exempt. This also returns true for such
-  // computations that currently violate the requirement; use
-  // CanExpandIntoSingleInstruction() to check the current contents.
-  bool MustBeSingleInstructionAsyncComputation() const;
+  // Returns true iff:
+  //   1. This is a main-thread async computation.
+  //   2. It is not a collectives group computation (unique caller with
+  //      kCollectiveGroupMarkerAttr frontend attribute).
+  // Such computations are either 'AsyncBarrierComputations' that must only
+  // contain {parameter, gte, root} instructions, or are async computations
+  // that must only contain {parameter, root} instructions.
+  bool IsRestrictedAsyncComputation() const;
 
   // A comparator that orders computations by their unique IDs. This is used
   // for determinism.

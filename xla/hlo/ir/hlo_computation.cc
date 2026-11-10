@@ -2590,21 +2590,11 @@ bool IsCollectivesGroupComputation(const HloComputation* computation) {
       .has_value();
 }
 
-bool IsAsyncBarrierComputation(const HloComputation* computation) {
-  return absl::c_all_of(
-      computation->instructions(),
-      [root = computation->root_instruction()](const HloInstruction* instr) {
-        return root == instr || instr->opcode() == HloOpcode::kParameter ||
-               instr->opcode() == HloOpcode::kGetTupleElement;
-      });
-}
-
 }  // namespace
 
-bool HloComputation::MustBeSingleInstructionAsyncComputation() const {
+bool HloComputation::IsRestrictedAsyncComputation() const {
   return IsAsyncComputation() && IsMainThread() &&
-         !IsCollectivesGroupComputation(this) &&
-         (CanExpandIntoSingleInstruction() || !IsAsyncBarrierComputation(this));
+         !IsCollectivesGroupComputation(this);
 }
 
 bool HloComputation::IsFusionComputation() const {

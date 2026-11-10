@@ -15,15 +15,14 @@ limitations under the License.
 
 #include "xla/hlo/ir/hlo_computation.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -845,6 +844,72 @@ ENTRY entry {
   EXPECT_THAT(inst_proto.operand_ids(),
               ::testing::ElementsAre(999999, p0->unique_id(), p1->unique_id(),
                                      called->unique_id()));
+}
+
+TEST_F(HLOComputationTest, IsRestrictedAsyncComputation) {
+  constexpr absl::string_view kHlo = R"(
+HloModule m
+
+main_thread_comp {
+  main_param = f32[4] parameter(0)
+  ROOT main_neg = f32[4] negate(main_param)
+}
+
+barrier_comp {
+  barrier_param = (f32[4]) parameter(0)
+  barrier_gte = f32[4] get-tuple-element(barrier_param), index=0
+  ROOT barrier_tuple = (f32[4]) tuple(barrier_gte)
+}
+
+parallel_thread_comp {
+  parallel_param = f32[4] parameter(0)
+  ROOT parallel_neg = f32[4] negate(parallel_param)
+}, execution_thread="parallel"
+
+collectives_group_comp {
+  group_param = f32[4] parameter(0)
+  ROOT group_neg = f32[4] negate(group_param)
+}
+
+ENTRY non_async_comp {
+  p0 = f32[4] parameter(0)
+  main_start = ((f32[4]), f32[4], s32[]) async-start(p0), calls=main_thread_comp
+  main_done = f32[4] async-done(main_start)
+  
+  barrier_in = (f32[4]) tuple(main_done)
+  barrier_start = (((f32[4])), (f32[4]), s32[]) async-start(barrier_in), calls=barrier_comp
+  barrier_done = (f32[4]) async-done(barrier_start)
+  
+  barrier_out = f32[4] get-tuple-element(barrier_done), index=0
+  parallel_start = ((f32[4]), f32[4], s32[]) async-start(barrier_out), calls=parallel_thread_comp, async_execution_thread="parallel"
+  parallel_done = f32[4] async-done(parallel_start)
+  
+  group_start = ((f32[4]), f32[4], s32[]) async-start(parallel_done), calls=collectives_group_comp, frontend_attributes={_collectives_group=""}
+  ROOT group_done = f32[4] async-done(group_start)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  // Sync computations are not restricted.
+  EXPECT_FALSE(module->GetComputationWithName("non_async_comp")
+                   ->IsRestrictedAsyncComputation());
+
+  // Main thread async computations are restricted.
+  EXPECT_TRUE(module->GetComputationWithName("main_thread_comp")
+                  ->IsRestrictedAsyncComputation());
+
+  // Async barriers are restricted.
+  EXPECT_TRUE(module->GetComputationWithName("barrier_comp")
+                  ->IsRestrictedAsyncComputation());
+
+  // Non-main thread async computations are not restricted.
+  EXPECT_FALSE(module->GetComputationWithName("parallel_thread_comp")
+                   ->IsRestrictedAsyncComputation());
+
+  // Collective group computations are not restricted.
+  EXPECT_FALSE(module->GetComputationWithName("collectives_group_comp")
+                   ->IsRestrictedAsyncComputation());
 }
 
 std::unique_ptr<HloComputation> MakeAddChainComputation(

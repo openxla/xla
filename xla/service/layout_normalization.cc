@@ -964,9 +964,8 @@ absl::StatusOr<bool> LayoutNormalization::RunImpl(
   LayoutNormalizationVisitor visitor(this, custom_call_transformer_);
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    // Skip single-instruction async computations to avoid inserting bitcasts
-    // into them.
-    if (computation->MustBeSingleInstructionAsyncComputation()) {
+    // Skip restricted async computations to avoid inserting bitcasts into them.
+    if (computation->IsRestrictedAsyncComputation()) {
       continue;
     }
     ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));

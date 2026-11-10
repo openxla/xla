@@ -79,7 +79,7 @@ bool IsLayoutConstrainedCollective(const HloInstruction* instruction) {
 // Computations for which this is true are required by the HLO verifier to
 // contain only parameter instructions and a single root, and currently do.
 bool IsProtectedAsyncComputation(const HloComputation* computation) {
-  return computation->MustBeSingleInstructionAsyncComputation() &&
+  return computation->IsRestrictedAsyncComputation() &&
          computation->CanExpandIntoSingleInstruction();
 }
 }  // namespace

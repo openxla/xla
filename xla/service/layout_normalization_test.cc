@@ -1123,6 +1123,7 @@ ENTRY main {
   CheckLayoutNormalization(hlo, R"(
 // CHECK: abs-start(
 // CHECK: abs-done(
+// CHECK: f32[4,5]{1,0} negate(
 )");
 }
 
@@ -1173,6 +1174,33 @@ ENTRY main {
 // CHECK: %[[ABS:.*]] = f32[4,5]{1,0} abs(%[[B]])
 // CHECK: %[[NEG:.*]] = f32[4,5]{1,0} negate(%[[ABS]])
 // CHECK: ROOT {{.*}} = f32[5,4]{0,1} bitcast(%[[NEG]])
+)");
+}
+
+TEST_F(LayoutNormalizationTest, NoBitcastsInMainThreadAsyncBarrierComputation) {
+  const char* hlo = R"(
+HloModule module
+
+barrier_comp {
+  p = (f32[5,4]{0,1}) parameter(0)
+  gte = f32[5,4]{0,1} get-tuple-element(p), index=0
+  ROOT t = (f32[5,4]{0,1}) tuple(gte)
+}
+
+ENTRY main {
+  p0 = f32[5,4]{0,1} parameter(0)
+  t = (f32[5,4]{0,1}) tuple(p0)
+  start = (((f32[5,4]{0,1})), (f32[5,4]{0,1}), s32[]) async-start(t), calls=barrier_comp
+  ROOT done = (f32[5,4]{0,1}) async-done(start)
+}
+)";
+  CheckLayoutNormalization(hlo, R"(
+// CHECK: barrier_comp
+// CHECK-NEXT: parameter(0)
+// CHECK-NEXT: get-tuple-element(
+// CHECK-NEXT: ROOT {{.*}} tuple(
+// CHECK: ENTRY
+// CHECK: f32[4,5]{1,0} bitcast(
 )");
 }
 
