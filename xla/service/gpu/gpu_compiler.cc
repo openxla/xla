@@ -286,6 +286,7 @@ limitations under the License.
 #include "xla/service/gpu/conv_layout_normalization.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/gpu/cudnn_support_utils.h"
+#include "xla/service/gpu/dense_data_intermediate.h"
 #include "xla/service/gpu/early_exit_compilation_result.h"
 #include "xla/service/gpu/export_hlo.h"
 #include "xla/service/gpu/flag_utils.h"
@@ -2277,10 +2278,10 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
           gpu_target_config.device_description, ShapeSizeBytesFunction(),
           alias_info, mlir_context,
           /*only_fuse_if_profitable=*/true, thread_pool, &mlir_context_pool_);
-      if (debug_options.xla_gpu_experimental_enable_triton_scan() &&
-          gpu_version.cuda_compute_capability() != nullptr) {
+      if (debug_options.xla_gpu_experimental_enable_triton_scan()) {
         pipeline.AddPass<ScanRewriterTriton>(
-            gpu_target_config.device_description);
+            gpu_target_config.device_description, ShapeSizeBytesFunction(),
+            mlir_context);
       }
     }
 
@@ -3010,6 +3011,17 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   BufferAssignmentProto buffer_assignment_proto =
       res.compile_module_results.buffer_assignment->ToProto();
 
+  // The constants' content usually aliases the literals of `module` (see
+  // `LiteralToXlaFormat`). If the module doesn't get embedded in the
+  // executable, it is destroyed at the end of this function, so the constants
+  // need to own a copy of their content.
+  if (!options.embed_hlo_module) {
+    for (GpuExecutable::ConstantInfo& constant :
+         res.compile_module_results.constants) {
+      constant.content = std::move(constant.content).ToOwned();
+    }
+  }
+
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<GpuExecutable> gpu_executable,
       GpuExecutable::Create(GpuExecutable::Params{
@@ -3317,16 +3329,7 @@ absl::Status GpuCompiler::RunPostSchedulingPipelines(
     pipeline.AddPass<FusionWrapper>(gpu_device_info);
   }
 
-  const auto* cuda_cc =
-      gpu_device_info.gpu_compute_capability().cuda_compute_capability();
-  const auto* rocm_cc =
-      gpu_device_info.gpu_compute_capability().rocm_compute_capability();
-  // TODO(anurmukh) Enable on the other gfx12 GPUs once Triton block level
-  // fusions are validated there.
-  if ((cuda_cc != nullptr && cuda_cc->IsAtLeastAmpere()) ||
-      (rocm_cc != nullptr &&
-       (rocm_cc->gfx9_mi200() || rocm_cc->gfx9_mi300_series() ||
-        rocm_cc->gfx1250()))) {
+  if (IsTritonEnabled(gpu_device_info.gpu_compute_capability())) {
     // This needs to run after every pass affecting fusions. The last passes
     // that create new fusions are FusionWrapper and StreamAttributeAnnotator.
     main_pipeline.AddPass<HloPassPipeline>(

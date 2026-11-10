@@ -15,8 +15,9 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_CODEGEN_THREAD_BLOCK_SPECIALIZED_H_
 #define XLA_BACKENDS_GPU_CODEGEN_THREAD_BLOCK_SPECIALIZED_H_
 
-#include <cstddef>
-#include <string>
+#include <cstdint>
+#include <memory>
+#include <optional>
 #include <vector>
 
 #include "absl/status/status.h"
@@ -27,7 +28,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
-#include "mlir/Pass/PassManager.h"
+#include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/codegen/llvm_kernel_source.h"
@@ -37,67 +38,82 @@ limitations under the License.
 #include "xla/service/gpu/ir_emitter_context.h"
 #include "xla/service/gpu/launch_dimensions.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/launch_dim.h"
 
 namespace xla::gpu {
 
-// Emits a thread-block-specialized wrapper kernel of nested fusions.
+// Emits a single kernel for arbitrarily nested horizontal
+// (`__thread_block_specialized`) and phased (`__phased_block_cluster`) fusions.
+//
+// Each leaf fusion (`kLoop`, `kReduction`, `kTranspose`, `kScatter`,
+// `kConcatenate`) is lowered by its native emitter, virtualized once via
+// `VirtualizeSubKernelPass`, and spliced as an `alwaysinline` internal function
+// into a unified `@launcher` kernel. Horizontal nodes partition `block_id`
+// across children, while phased nodes sequence children with aligned
+// `nvvm.cluster.arrive` / `nvvm.cluster.wait` barriers.
 class ThreadBlockSpecializedFusion : public KernelFusionInterface {
  public:
+  static constexpr uint64_t kMaxBlocksPerCluster = 8;
+
+  struct LlvmKernelSourceWrapper {
+    LlvmKernelSource source;
+    int64_t max_shmem_bytes;
+  };
+
+  struct NestedKernelSpec {
+    enum class Kind { kLeaf, kHorizontal, kPhased };
+    Kind kind = Kind::kLeaf;
+    const HloFusionInstruction* fusion = nullptr;
+    LaunchDimensions launch_dims;
+    std::optional<se::ClusterDim> cluster_dim;
+    std::vector<int64_t> input_arg_indices;
+    std::vector<int64_t> output_arg_indices;
+    std::vector<NestedKernelSpec> children;
+  };
+
   explicit ThreadBlockSpecializedFusion(const HloFusionAnalysis& analysis);
 
+  static std::unique_ptr<MlirKernelEmitter> CreateNativeNestedEmitter(
+      const HloFusionAnalysis& nested_analysis);
+
   LaunchDimensions launch_dimensions() const override {
-    return launch_dimensions_;
+    return root_spec_.launch_dims;
+  }
+  std::optional<se::ClusterDim> cluster_dim() const {
+    return root_spec_.cluster_dim;
   }
 
   AsyncThunkSequence Emit(IrEmitterContext& ir_emitter_context,
                           const HloFusionInstruction& fusion) const override;
 
-  // Emits a launcher function that calls nested kernels based on the block IDs.
-  // Each nested fusion is lowered separately with corresponding emitters,
-  // virtualized and spliced into the main launcher module.
-  // Result module is lowered to `llvm` + `nvvm` dialects.
+  // Emits a launcher function that dispatches nested leaf kernels according to
+  // the recursive `NestedKernelSpec` tree. Each leaf fusion is lowered
+  // separately by its native emitter, virtualized, and spliced into the main
+  // launcher module in `llvm` + `nvvm` dialects.
   absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateAndLowerMLIRModule(
       mlir::MLIRContext& mlir_context, const HloFusionInstruction& fusion,
       absl::string_view entry_function_name,
       const BufferAssignment* buffer_assignment) const;
 
   // Visible for testing.
-  absl::StatusOr<LlvmKernelSource> CreateLLVMModule(
+  absl::StatusOr<LlvmKernelSourceWrapper> CreateLLVMModule(
       const se::DeviceDescription& device, const HloFusionInstruction& fusion,
       absl::string_view entry_function_name,
       const BufferAssignment* buffer_assignment,
       mlir::MLIRContext& mlir_context) const;
 
  private:
-  struct NestedKernelSpec {
-    static NestedKernelSpec Create(const HloFusionInstruction& fusion,
-                                   const se::DeviceDescription& device_info);
-
-    const HloFusionInstruction* fusion = nullptr;
-    LaunchDimensions launch_dims;
-  };
-
   // Emits the entry function that conditionally launches nested kernels based
   // on block and thread IDs.
   absl::Status EmitLauncherBody(
       mlir::ModuleOp launcher_module, mlir::func::FuncOp entry_function,
       const HloFusionInstruction& fusion,
+      absl::Span<const NestedKernelSpec* const> leaf_specs,
       absl::Span<const mlir::OwningOpRef<mlir::ModuleOp>> nested_modules) const;
 
   const se::DeviceDescription& device_info_;
-  std::vector<NestedKernelSpec> nested_kernels_;
-  LaunchDimensions launch_dimensions_;
+  NestedKernelSpec root_spec_;
 };
-
-std::string GetNestedKernelFunctionName(absl::string_view entry_function_name,
-                                        size_t index);
-absl::Status RunPassManager(mlir::ModuleOp module, mlir::PassManager& pm);
-absl::Status LowerLauncherModuleToLlvmDialect(
-    mlir::ModuleOp launcher_module, const se::DeviceDescription& device_info,
-    bool should_verify);
-absl::Status SpliceNestedKernelModuleIntoLauncher(
-    mlir::ModuleOp launcher_module, mlir::ModuleOp nested_module,
-    absl::string_view nested_fn_name);
 
 }  // namespace xla::gpu
 

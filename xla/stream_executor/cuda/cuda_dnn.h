@@ -102,9 +102,7 @@ class CudnnGraph : public dnn::DnnGraph {
 };
 
 // Minimum cuDNN runtime for deviceless cuDNN graph compilation.
-// Technically older versions support deviceless compilation, but they have
-// various bugs.
-inline constexpr SemanticVersion kMinDevicelessCudnnVersion{9, 23, 0};
+inline constexpr SemanticVersion kMinDevicelessCudnnVersion{9, 15, 0};
 
 // Returns whether the loaded cuDNN runtime is at least
 // kMinDevicelessCudnnVersion. CudnnGraph::Prepare refuses deviceless
@@ -572,7 +570,9 @@ class CudnnSupport : public dnn::DnnSupport {
 
   // Loads complete graph from its serialized representation.
   absl::StatusOr<std::unique_ptr<dnn::DnnGraph>> DeserializeGraph(
-      Stream& stream, absl::string_view serialized_data) const override;
+      Stream& stream, absl::string_view serialized_data,
+      const std::optional<dnn::DnnGraphTargetDevice>& target_device)
+      const override;
   StreamExecutor* GetParent() const { return parent_; }
 
  private:

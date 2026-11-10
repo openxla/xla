@@ -18,6 +18,7 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -694,6 +695,58 @@ TEST_F(AutotunerFlagsTest, DeterministicOpsDisallowAutotuning) {
   debug_options.set_xla_gpu_deterministic_ops(false);
   debug_options.set_xla_gpu_exclude_nondeterministic_ops(true);
   EXPECT_FALSE(GetConfigAssignerOptions(debug_options).allow_autotuning);
+}
+
+TEST_F(AutotunerFlagsTest, TritonFusionIsOnlyAutotunedWithTopKAboveOne) {
+  // Triton fusions are autotuned only with top-k > 1 and the block-level
+  // emitter enabled.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(R"(
+HloModule m
+max {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT m = f32[] maximum(a, b)
+}
+
+triton_softmax_computation {
+  p0 = f32[128,256]{1,0} parameter(0)
+  c = f32[] constant(-inf)
+  r = f32[128]{0} reduce(p0, c), dimensions={1}, to_apply=max
+  b = f32[128,256]{1,0} broadcast(r), dimensions={0}
+  ROOT s = f32[128,256]{1,0} subtract(p0, b)
+}
+
+ENTRY main {
+  p0 = f32[128,256]{1,0} parameter(0)
+  ROOT triton_softmax = f32[128,256]{1,0} fusion(p0), kind=kCustom,
+    calls=triton_softmax_computation,
+    backend_config={"fusion_backend_config":{"kind":"__triton",
+      "block_level_fusion_config":{"output_tiles":[{"sizes":["1","256"]}],
+      "num_warps":"1","num_ctas":1,"num_stages":1}}}
+}
+)"));
+  const HloInstruction& fusion =
+      *module->entry_computation()->root_instruction();
+  const se::GpuComputeCapability gpu_version =
+      stream_executor_->GetDeviceDescription().gpu_compute_capability();
+  DebugOptions debug_options = GetDebugOptionsForTest();
+
+  debug_options.set_xla_gpu_fusion_autotune_top_k_configs(1);
+  EXPECT_FALSE(
+      GetShouldAssignConfigToInstructionFn(debug_options, gpu_version)(fusion));
+
+  debug_options.set_xla_gpu_fusion_autotune_top_k_configs(4);
+  EXPECT_TRUE(
+      GetShouldAssignConfigToInstructionFn(debug_options, gpu_version)(fusion));
+
+  // Without the block-level emitter, no backend could keep the fusion as a
+  // Triton fusion, so it keeps its config.
+  debug_options.clear_xla_gpu_experimental_autotune_backends();
+  debug_options.add_xla_gpu_experimental_autotune_backends(
+      autotuner::Backend::NATIVE_EMITTER);
+  EXPECT_FALSE(
+      GetShouldAssignConfigToInstructionFn(debug_options, gpu_version)(fusion));
 }
 
 TEST_F(AutotunerFlagsTest, GetEnabledBackendsRespectsDeterminism) {
@@ -1402,6 +1455,81 @@ TEST_P(DeterministicCacheIsolationTest,
   ASSERT_OK_AND_ASSIGN(auto gpu_backend_config,
                        gemm->backend_config<GpuBackendConfig>());
   EXPECT_EQ(gpu_backend_config.gemm_backend_config().selected_algorithm(), 0);
+}
+
+TEST_P(DeterministicCacheIsolationTest,
+       DeterministicCompileUsesCacheWhenFlagEnabled) {
+  const bool use_new_cache_format = GetParam();
+  tsl::thread::ThreadPool thread_pool(tsl::Env::Default(), "autotuning",
+                                      /*num_threads=*/4);
+
+  // 1. With an empty cache, requiring every config to come from the cache still
+  //    fails even when
+  //    `xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops` is
+  //    enabled.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> empty_cache_module,
+                       ParseAndReturnVerifiedModule(kCublasCustomCallHlo));
+  DebugOptions& empty_cache_options =
+      empty_cache_module->mutable_config().mutable_debug_options();
+  empty_cache_options.set_xla_gpu_use_new_autotune_cache_format(
+      use_new_cache_format);
+  empty_cache_options.set_xla_gpu_exclude_nondeterministic_ops(true);
+  empty_cache_options.set_xla_gpu_require_complete_aot_autotune_results(true);
+  empty_cache_options
+      .set_xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops(
+          true);
+  EXPECT_THAT(
+      RunPass(empty_cache_module.get(), &thread_pool),
+      absl_testing::StatusIs(absl::StatusCode::kNotFound,
+                             ::testing::HasSubstr("No cached config found")));
+
+  // 2. A non-deterministic compilation autotunes the GEMM and populates the
+  //    process-wide autotune cache.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> autotuned_module,
+                       ParseAndReturnVerifiedModule(kCublasCustomCallHlo));
+  autotuned_module->mutable_config()
+      .mutable_debug_options()
+      .set_xla_gpu_use_new_autotune_cache_format(use_new_cache_format);
+  EXPECT_THAT(RunPass(autotuned_module.get(), &thread_pool),
+              absl_testing::IsOkAndHolds(true));
+  const HloInstruction* autotuned_gemm =
+      autotuned_module->entry_computation()->GetInstructionWithName(
+          "custom-call.1");
+  ASSERT_OK_AND_ASSIGN(GpuBackendConfig autotuned_backend_config,
+                       autotuned_gemm->backend_config<GpuBackendConfig>());
+  const int64_t cached_algorithm =
+      autotuned_backend_config.gemm_backend_config().selected_algorithm();
+
+  // 3. With
+  //    `xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops`
+  //    enabled, both `xla_gpu_exclude_nondeterministic_ops` and
+  //    `xla_gpu_deterministic_ops` reuse the cached entry.
+  for (bool use_deterministic_ops_flag : {false, true}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> deterministic_module,
+                         ParseAndReturnVerifiedModule(kCublasCustomCallHlo));
+    DebugOptions& debug_options =
+        deterministic_module->mutable_config().mutable_debug_options();
+    debug_options.set_xla_gpu_use_new_autotune_cache_format(
+        use_new_cache_format);
+    if (use_deterministic_ops_flag) {
+      debug_options.set_xla_gpu_deterministic_ops(true);
+    } else {
+      debug_options.set_xla_gpu_exclude_nondeterministic_ops(true);
+    }
+    debug_options.set_xla_gpu_require_complete_aot_autotune_results(true);
+    debug_options
+        .set_xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops(
+            true);
+    EXPECT_THAT(RunPass(deterministic_module.get(), &thread_pool),
+                absl_testing::IsOkAndHolds(true));
+    const HloInstruction* gemm =
+        deterministic_module->entry_computation()->GetInstructionWithName(
+            "custom-call.1");
+    ASSERT_OK_AND_ASSIGN(GpuBackendConfig gpu_backend_config,
+                         gemm->backend_config<GpuBackendConfig>());
+    EXPECT_EQ(gpu_backend_config.gemm_backend_config().selected_algorithm(),
+              cached_algorithm);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(CacheFormats, DeterministicCacheIsolationTest,

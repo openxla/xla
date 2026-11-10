@@ -17,14 +17,9 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <array>
-#include <cmath>
-#include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <memory>
 #include <optional>
-#include <ostream>
-#include <random>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -34,16 +29,13 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/random/uniform_int_distribution.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
-#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
@@ -1030,6 +1022,44 @@ ENTRY main {
 })";
 
   EXPECT_TRUE(RunAndCompareNoHloPasses(kHloText, kExactMatch));
+}
+
+// Dimension 2 (151) is padded to a tile of 256. Padding lanes load as 0, so
+// the add makes them 1; they must be masked for every reduced dimension.
+TEST_F(TritonEmitterTest, MultiDimReductionMasksAllPaddedDimensions) {
+  constexpr absl::string_view kHloText = R"(
+HloModule m
+
+add {
+  x = f32[] parameter(0)
+  y = f32[] parameter(1)
+  ROOT r = f32[] add(x, y)
+}
+
+triton_computation {
+  p = f32[2,64,151] parameter(0)
+  one = f32[] constant(1)
+  ones = f32[2,64,151] broadcast(one), dimensions={}
+  a = f32[2,64,151] add(p, ones)
+  zero = f32[] constant(0)
+  ROOT r = f32[64] reduce(a, zero), dimensions={0,2}, to_apply=add
+}
+
+ENTRY main {
+  p = f32[2,64,151] parameter(0)
+  ROOT fusion = f32[64] fusion(p), kind=kCustom, calls=triton_computation,
+    backend_config={
+      "fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["16"]}],
+        "num_warps":"4",
+        "num_ctas":"1",
+        "num_stages":"1"}}}
+})";
+
+  EXPECT_TRUE(RunAndCompareNoHloPasses(
+      kHloText, ErrorSpec{/*aabs=*/1e-3, /*arel=*/1e-3}));
 }
 
 TEST_F(TritonEmitterTest, TestSoftMaxWithTileElementsNotAllContiguous) {
@@ -2441,14 +2471,15 @@ class ScanTritonEmitterTest : public TritonEmitterTest {
 
   // Returns arguments for the entry computation of `module` filled with small
   // integers. All intermediate scan results are then exactly representable in
-  // f32, so that the results match the interpreter reference bit-exactly,
-  // independently of the order in which the scan combines the elements.
+  // the parameter type, so that the results match the interpreter reference
+  // bit-exactly, independently of the order in which the scan combines the
+  // elements.
   absl::StatusOr<std::vector<Literal>> MakeSmallIntegerArguments(
       const HloModule& module) {
     std::vector<Literal> arguments;
     for (const HloInstruction* parameter :
          module.entry_computation()->parameter_instructions()) {
-      Literal literal(parameter->shape());
+      Literal literal(ShapeUtil::ChangeElementType(parameter->shape(), F32));
       ABSL_RETURN_IF_ERROR(
           literal.Populate<float>([](absl::Span<const int64_t> indices) {
             int64_t value = 0;
@@ -2457,7 +2488,9 @@ class ScanTritonEmitterTest : public TritonEmitterTest {
             }
             return static_cast<float>(value % 7 - 3);
           }));
-      arguments.push_back(std::move(literal));
+      ABSL_ASSIGN_OR_RETURN(Literal converted,
+                            literal.Convert(parameter->shape().element_type()));
+      arguments.push_back(std::move(converted));
     }
     return arguments;
   }
@@ -2522,6 +2555,39 @@ ENTRY entry_computation {
   p0 = f32[1024] parameter(0)
   p1 = f32[] parameter(1)
   ROOT fusion = f32[1024] fusion(p0, p1), kind=kCustom, calls=scan_fusion,
+    backend_config={"fusion_backend_config":{"kind":"__triton",
+      "block_level_fusion_config":{"output_tiles":[{"sizes":[]}],
+        "num_warps":4,"num_ctas":1,"num_stages":1}}}
+})";
+  RunAndCompareScan(kHloText);
+}
+
+// On pre-Hopper GPUs, FloatNormalization wraps the bf16 add of the combiner in
+// converts.
+TEST_F(ScanTritonEmitterTest, TiledFloatNormalizedBf16Scan) {
+  constexpr absl::string_view kHloText = R"(
+add_computation {
+  p0 = bf16[] parameter(0)
+  p1 = bf16[] parameter(1)
+  c0 = f32[] convert(p0)
+  c1 = f32[] convert(p1)
+  add = f32[] add(c0, c1)
+  convert = bf16[] convert(add)
+  ROOT tuple = (bf16[], bf16[]) tuple(convert, convert)
+}
+
+scan_fusion {
+  p0 = bf16[1000] parameter(0)
+  p1 = bf16[] parameter(1)
+  scan = (bf16[1000], bf16[]) scan(p0, p1), dimensions={0}, num_carries=1,
+    is_associative=true, to_apply=add_computation, backend_config={sizes:[256]}
+  ROOT get-tuple-element = bf16[1000] get-tuple-element(scan), index=0
+}
+
+ENTRY entry_computation {
+  p0 = bf16[1000] parameter(0)
+  p1 = bf16[] parameter(1)
+  ROOT fusion = bf16[1000] fusion(p0, p1), kind=kCustom, calls=scan_fusion,
     backend_config={"fusion_backend_config":{"kind":"__triton",
       "block_level_fusion_config":{"output_tiles":[{"sizes":[]}],
         "num_warps":4,"num_ctas":1,"num_stages":1}}}
@@ -2706,9 +2772,6 @@ ENTRY entry_computation {
 }
 
 TEST_F(ScanTritonEmitterTest, TopPMaskEndToEnd8x128) {
-  if (GpuComputeCapability().IsRocm()) {
-    GTEST_SKIP() << "ScanRewriterTriton is only enabled on CUDA.";
-  }
   constexpr absl::string_view kHloText = R"(
 HloModule top_p_mask_8x128
 
@@ -2853,9 +2916,6 @@ ENTRY entry_computation {
 }
 
 TEST_F(ScanTritonEmitterTest, ScanOverLastDimensionOfRank3Input) {
-  if (GpuComputeCapability().IsRocm()) {
-    GTEST_SKIP() << "ScanRewriterTriton is only enabled on CUDA.";
-  }
   constexpr absl::string_view kHloText = R"(
 add_computation {
   p0 = f32[4,8] parameter(0)

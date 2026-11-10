@@ -100,19 +100,20 @@ bool HasDisjointReadWriteRegions(const HloInstruction* instruction) {
   if (instruction == nullptr) {
     return false;
   }
-  if (HasDisjointReadWriteRegionsAttr(instruction)) {
+  if (frontend::HasDisjointReadWriteRegionsAttr(instruction)) {
     return true;
   }
   if (instruction->IsAsynchronous()) {
     const HloInstruction* wrapped = instruction->async_wrapped_instruction();
-    if (wrapped != nullptr && HasDisjointReadWriteRegionsAttr(wrapped)) {
+    if (wrapped != nullptr &&
+        frontend::HasDisjointReadWriteRegionsAttr(wrapped)) {
       return true;
     }
   }
   if (instruction->parent() != nullptr) {
     for (const HloInstruction* caller :
          instruction->parent()->caller_instructions(HloOpcode::kWhile)) {
-      if (HasDisjointReadWriteRegionsAttr(caller)) {
+      if (frontend::HasDisjointReadWriteRegionsAttr(caller)) {
         return true;
       }
     }
@@ -2454,7 +2455,15 @@ bool HloDataflowAnalysis::CanShareOperandBufferWithUser(
     // We eliminated other users in HloOrdering::LiveRangeStrictlyBefore
     // so here we just need to check that the use is at the right operand index.
     const auto operand_indices = user->OperandIndices(operand);
-    int64_t operand_no = user->opcode() == HloOpcode::kTriangularSolve ? 1 : 0;
+    int64_t operand_no = 0;
+    if (user->opcode() == HloOpcode::kTriangularSolve) {
+      operand_no = 1;
+    } else if (user->shape().IsTuple()) {
+      CHECK_EQ(user_index.size(), 1);
+      CHECK_LT(user_index[0],
+               Cast<HloScatterInstruction>(user)->scatter_operand_count());
+      operand_no = user_index[0];
+    }
     return operand_indices.size() == 1 && operand_indices[0] == operand_no;
   }
   if (user->opcode() == HloOpcode::kSort) {

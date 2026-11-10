@@ -36,6 +36,7 @@ limitations under the License.
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/nanort/nanort_client.h"
 #include "xla/backends/cpu/nanort/nanort_executable.h"
+#include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/host_offloading/host_offloading_executable.h"
@@ -156,10 +157,12 @@ TEST(HostExecuteStartThunkTest, SingleArgSingleResult) {
       service_executable_run_options, allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, {}, &scoped_state);
 
-  Thunk::InitializeParams init_params{.executor = stream_executor,
-                                      .buffer_allocations = &allocations,
-                                      .stream = stream.get(),
-                                      .execution_scoped_state = &scoped_state};
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = stream_executor;
+  init_params.buffer_allocations = &allocations;
+  init_params.stream = stream.get();
+  init_params.execution_scoped_state = &scoped_state;
   ASSERT_OK(thunk->Initialize(init_params));
   ASSERT_OK(thunk->ExecuteOnStream(params));
 
@@ -232,10 +235,12 @@ TEST(HostExecuteStartThunkTest, RecordCommandBufferSingleArgSingleResult) {
       service_executable_run_options, allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, {}, &scoped_state);
 
-  Thunk::InitializeParams init_params{.executor = stream_executor,
-                                      .buffer_allocations = &allocations,
-                                      .stream = stream.get(),
-                                      .execution_scoped_state = &scoped_state};
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = stream_executor;
+  init_params.buffer_allocations = &allocations;
+  init_params.stream = stream.get();
+  init_params.execution_scoped_state = &scoped_state;
 
   CommandStateManager state;
   Command::RecordParams record_params = {state};
@@ -323,10 +328,12 @@ TEST(HostExecuteStartThunkTest, MultiArgMultipleResult) {
       service_executable_run_options, allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, {}, &scoped_state);
 
-  Thunk::InitializeParams init_params{.executor = stream_executor,
-                                      .buffer_allocations = &allocations,
-                                      .stream = stream.get(),
-                                      .execution_scoped_state = &scoped_state};
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = stream_executor;
+  init_params.buffer_allocations = &allocations;
+  init_params.stream = stream.get();
+  init_params.execution_scoped_state = &scoped_state;
   ASSERT_OK(thunk->Initialize(init_params));
   ASSERT_OK(thunk->ExecuteOnStream(params));
 
@@ -410,10 +417,12 @@ TEST(HostExecuteStartThunkTest, ArgAndResultPinnedOnHost) {
       service_executable_run_options, allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, {}, &scoped_state);
 
-  Thunk::InitializeParams init_params{.executor = stream_executor,
-                                      .buffer_allocations = &allocations,
-                                      .stream = stream.get(),
-                                      .execution_scoped_state = &scoped_state};
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = stream_executor;
+  init_params.buffer_allocations = &allocations;
+  init_params.stream = stream.get();
+  init_params.execution_scoped_state = &scoped_state;
   ASSERT_OK(thunk->Initialize(init_params));
   ASSERT_OK(thunk->ExecuteOnStream(params));
 
@@ -489,10 +498,12 @@ TEST(HostExecuteStartThunkTest, ArgAndResultInSharedMemory) {
       service_executable_run_options, allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, {}, &scoped_state);
 
-  Thunk::InitializeParams init_params{.executor = stream_executor,
-                                      .buffer_allocations = &allocations,
-                                      .stream = stream.get(),
-                                      .execution_scoped_state = &scoped_state};
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = stream_executor;
+  init_params.buffer_allocations = &allocations;
+  init_params.stream = stream.get();
+  init_params.execution_scoped_state = &scoped_state;
   ASSERT_OK(thunk->Initialize(init_params));
   ASSERT_OK(thunk->ExecuteOnStream(params));
 
@@ -555,10 +566,12 @@ TEST(HostExecuteStartThunkTest, ArgAndResultNonRegisteredHostMemory) {
       service_executable_run_options, allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, {}, &scoped_state);
 
-  Thunk::InitializeParams init_params{.executor = stream_executor,
-                                      .buffer_allocations = &allocations,
-                                      .stream = stream.get(),
-                                      .execution_scoped_state = &scoped_state};
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = stream_executor;
+  init_params.buffer_allocations = &allocations;
+  init_params.stream = stream.get();
+  init_params.execution_scoped_state = &scoped_state;
   ASSERT_OK(thunk->Initialize(init_params));
   ASSERT_OK(thunk->ExecuteOnStream(params));
 
@@ -627,10 +640,12 @@ TEST(HostExecuteStartThunkTest, TestErrorPropagationFromExecuteEvent) {
       service_executable_run_options, allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, {}, &scoped_state);
 
-  Thunk::InitializeParams init_params{.executor = stream_executor,
-                                      .buffer_allocations = &allocations,
-                                      .stream = stream.get(),
-                                      .execution_scoped_state = &scoped_state};
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = stream_executor;
+  init_params.buffer_allocations = &allocations;
+  init_params.stream = stream.get();
+  init_params.execution_scoped_state = &scoped_state;
   ASSERT_OK(thunk->Initialize(init_params));
   ASSERT_OK(thunk->ExecuteOnStream(params));
 
@@ -668,10 +683,12 @@ TEST(HostExecuteDoneThunkTest, WaitingOnAvailableEvent) {
     available_event.SetStateConcrete();
   }
 
-  Thunk::InitializeParams init_params{.executor = stream_executor,
-                                      .buffer_allocations = &allocations,
-                                      .stream = stream.get(),
-                                      .execution_scoped_state = &scoped_state};
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = stream_executor;
+  init_params.buffer_allocations = &allocations;
+  init_params.stream = stream.get();
+  init_params.execution_scoped_state = &scoped_state;
   ASSERT_OK(thunk.Initialize(init_params));
   ASSERT_OK(thunk.ExecuteOnStream(params));
 }
@@ -702,10 +719,12 @@ TEST(HostExecuteDoneThunkTest, WaitingOnErrorEvent) {
     error_event.SetError(Internal("Test error"));
   }
 
-  Thunk::InitializeParams init_params{.executor = stream_executor,
-                                      .buffer_allocations = &allocations,
-                                      .stream = stream.get(),
-                                      .execution_scoped_state = &scoped_state};
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = stream_executor;
+  init_params.buffer_allocations = &allocations;
+  init_params.stream = stream.get();
+  init_params.execution_scoped_state = &scoped_state;
   ASSERT_OK(thunk.Initialize(init_params));
   EXPECT_THAT(thunk.ExecuteOnStream(params),
               absl_testing::StatusIs(absl::StatusCode::kInternal));
@@ -983,10 +1002,12 @@ void BM_HostExecuteThunkOverhead(benchmark::State& state) {
   BufferAllocations allocations({arg, result}, 0, &allocator);
 
   Thunk::ExecutionScopedState scoped_state;
-  Thunk::InitializeParams init_params{.executor = stream_executor,
-                                      .buffer_allocations = &allocations,
-                                      .stream = stream.get(),
-                                      .execution_scoped_state = &scoped_state};
+  CommandBufferRequests command_buffer_requests;
+  Thunk::InitializeParams init_params(&command_buffer_requests);
+  init_params.executor = stream_executor;
+  init_params.buffer_allocations = &allocations;
+  init_params.stream = stream.get();
+  init_params.execution_scoped_state = &scoped_state;
   Thunk::ExecuteParams exec_params = Thunk::ExecuteParams::Create(
       service_executable_run_options, allocations, stream.get(), stream.get(),
       nullptr, nullptr, nullptr, {}, &scoped_state);

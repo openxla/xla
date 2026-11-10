@@ -91,7 +91,6 @@ PjRtCompiler::PjRtCompiler(PjRtClient* client) : client_(client) {}
 
 tsl::Future<LoadedExecutableRef> PjRtCompiler::CompileAndLoad(
     std::unique_ptr<Program> program, std::unique_ptr<CompileOptions> options) {
-  DCHECK(this);
   if (client_ == nullptr) {
     return absl::InvalidArgumentError(
         "PjRtCompiler must be constructed with a Client to call "
@@ -117,7 +116,6 @@ tsl::Future<LoadedExecutableRef> PjRtCompiler::CompileAndLoad(
 tsl::Future<ExecutableRef> PjRtCompiler::Compile(
     std::unique_ptr<Program> program, const Topology& topology,
     std::unique_ptr<CompileOptions> options) {
-  DCHECK(this);
   if (!isa_and_nonnull<HloProgram>(program.get())) {
     return absl::InvalidArgumentError("PjRtCompiler requires an HloProgram");
   }
@@ -157,7 +155,6 @@ tsl::Future<ExecutableRef> PjRtCompiler::Compile(
 tsl::Future<LoadedExecutableRef> PjRtCompiler::DeserializeLoadedExecutable(
     const absl::Cord& serialized,
     std::unique_ptr<DeserializeExecutableOptions> options) {
-  DCHECK(this);
   if (client_ == nullptr) {
     return absl::InvalidArgumentError(
         "PjRtCompiler must be constructed with a Client to call "

@@ -447,6 +447,7 @@ xla_test(
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:verified_hlo_module",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/tests:literal_test_util",
@@ -763,6 +764,7 @@ lit_test_suite_for_gpus(
             "triton_async_copy.hlo",
             "triton_calling_convention.hlo",
             "triton_naming.hlo",
+            "triton_scan_bf16.hlo",
             "triton_tdm_elemwise.hlo",
             "vectorization.hlo",
             "zero_clamp_abs_index.hlo",
@@ -783,6 +785,8 @@ lit_test_suite_for_gpus(
             "reduction_vectorization_sm_all.hlo",
             "triton_async_copy.hlo",
             "pdl.hlo",
+            # TODO: re-enable once mi200.txtpb sets registers_per_block_limit.
+            "triton_scan_bf16.hlo",
         ],
         "mi300": [
             "memory_bandwidth_fusion.hlo",
@@ -800,12 +804,17 @@ lit_test_suite_for_gpus(
             "memory_bandwidth_fusion.hlo",
             "vectorization.hlo",
             "pdl.hlo",
+            # TODO: re-enable once mi450.txtpb sets registers_per_block_limit.
+            "triton_scan_bf16.hlo",
         ],
         "gfx1250_strict": [
             # TODO: re-enable once gfx1250-strict memory_bandwidth is finalized.
             "memory_bandwidth_fusion.hlo",
             "vectorization.hlo",
             "pdl.hlo",
+            # TODO: re-enable once gfx1250_strict.txtpb sets
+            # registers_per_block_limit.
+            "triton_scan_bf16.hlo",
         ],
     },
     gpus = [
@@ -2079,6 +2088,40 @@ xla_test(
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+xla_test(
+    name = "command_buffer_temp_buffer_shift_test",
+    srcs = ["command_buffer_temp_buffer_shift_test.cc"],
+    backend_tags = {
+        "gpu": [
+            "multi_gpu",
+        ],
+    },
+    backends = [
+        "gpu",
+    ],
+    deps = [
+        ":collective_ops_e2e_test_base",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_layout",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/pjrt:pjrt_client",
+        "//xla/service:hlo_module_config",
+        "//xla/service:hlo_runner",
+        "//xla/service:hlo_runner_interface",
+        "//xla/tests:xla_internal_test_main",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/time",
         "@com_google_googletest//:gtest",
     ],
 )

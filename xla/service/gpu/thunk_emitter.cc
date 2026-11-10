@@ -65,6 +65,7 @@ limitations under the License.
 #include "xla/backends/gpu/codegen/kernels/custom_kernel.h"
 #include "xla/backends/gpu/codegen/kernels/ptx_custom_kernel.h"
 #include "xla/backends/gpu/codegen/llvm/llvm_emitter.h"
+#include "xla/backends/gpu/codegen/pad_to_static.h"
 #include "xla/backends/gpu/codegen/sort.h"
 #include "xla/backends/gpu/codegen/triton/triton_kernel_source.h"
 #include "xla/backends/gpu/codegen/triton/xtile_compiler.h"
@@ -111,8 +112,10 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/topk.h"
 #include "xla/backends/gpu/runtime/triangular_solve_thunk.h"
 #include "xla/backends/gpu/runtime/while_thunk.h"
+#include "xla/backends/gpu/target_config/cudnn_device_props_json.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_copy.h"
 #include "xla/backends/gpu/transforms/dynamic_slice_fusion.h"
+#include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/kernel_definition.h"
 #include "xla/codegen/kernel_spec.h"
@@ -586,13 +589,13 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitConstant(
 
 Future<ThunkSequence> ThunkEmitter::EmitConditional(
     const HloInstruction* instr) {
+  ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
+                        GetAllocationSlice(instr->operand(0), {}));
   std::vector<Future<ThunkSequence>> branch_thunks;
   branch_thunks.reserve(instr->branch_count());
   for (HloComputation* comp : instr->branch_computations()) {
     branch_thunks.emplace_back(EmitHloComputation(comp));
   }
-  ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice slice,
-                        GetAllocationSlice(instr->operand(0), {}));
 
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
@@ -612,20 +615,7 @@ Future<ThunkSequence> ThunkEmitter::EmitConditional(
 // Output = {static array, dynamic_dim0, dynamic_dim1}
 Future<ThunkSequence> ThunkEmitter::EmitPadToStatic(
     const HloCustomCallInstruction* instr) {
-  ABSL_ASSIGN_OR_RETURN(emitters::KernelArguments kernel_arguments,
-                        emitters::KernelArguments::Create(
-                            ir_emitter_context_->buffer_assignment(),
-                            GetDefaultBufferAlignment(), instr));
-
-  ABSL_ASSIGN_OR_RETURN(
-      (KernelDefinition<LlvmKernelSource, GpuKernelSpec> kernel_def),
-      EmitPadToStaticLLVMIR(instr, ir_emitter_context_, kernel_arguments));
-
-  return ir_emitter_context_->kernel_compiler()
-      ->Compile(Thunk::ThunkInfo::WithProfileAnnotation(
-                    instr, ir_emitter_context_->GetNextThunkId()),
-                std::move(kernel_def))
-      .Map([](auto thunk) { return ThunkSequence::Of(std::move(thunk)); });
+  return gpu::EmitPadToStatic(instr, ir_emitter_context_);
 }
 
 // Input = {dynamic array(with dynamic dimension meta data at the end)}
@@ -1178,7 +1168,8 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCuDnn(
           instr, ir_emitter_context_->GetNextThunkId()),
       kernel_arguments.GetArgumentShapedSlices(),
       kernel_arguments.GetArgumentOutputFlags(),
-      /*should_memzero=*/IsCustomCallTofMHA(*instr), dropout_seed);
+      /*should_memzero=*/IsCustomCallTofMHA(*instr), dropout_seed,
+      GetCudnnGraphTargetDevice(ir_emitter_context_->gpu_device_info()));
 }
 
 absl::StatusOr<ThunkSequence> ThunkEmitter::EmitPtxCustomCall(
@@ -1715,28 +1706,28 @@ Future<ThunkSequence> ThunkEmitter::EmitTritonCustomCall(
 
   auto [status_or_entry, was_cached] =
       ir_emitter_context_->kernel_cache().GetWithStatus(
-          instr->raw_backend_config_string(), generate);
+          absl::StrCat(
+              "(", emitters::GetArgumentFingerprint(kernel_arguments.args()),
+              ")", instr->raw_backend_config_string()),
+          kernel_arguments, generate);
 
   Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
       instr, ir_emitter_context_->GetNextThunkId());
   return status_or_entry.Map(
-      [info = std::move(info), kernel_arguments = std::move(kernel_arguments),
+      [info = std::move(info),
        call_zeroed_outputs = std::move(call_zeroed_outputs),
        devices_in_process =
            ir_emitter_context_->gpu_topology().num_devices_per_process()](
-          const KernelReuseCache::Entry& entry) mutable
+          const KernelReuseCache::Kernel& entry) mutable
           -> absl::StatusOr<ThunkSequence> {
         ABSL_ASSIGN_OR_RETURN(
             CustomKernel custom_kernel,
-            kernel::CreateSharedCubinCustomKernel(
-                entry.kernel_name, entry.binary, kernel_arguments.args().size(),
-                entry.launch_dimensions.block_counts(),
-                entry.launch_dimensions.thread_counts_per_block(),
-                entry.shmem_bytes));
+            kernel::CreateSharedCubinCustomKernel(entry.spec, entry.binary));
         return ThunkSequence::Of<CustomKernelThunk>(
             std::move(info), std::move(custom_kernel),
-            std::move(kernel_arguments), devices_in_process, entry.use_pdl,
-            call_zeroed_outputs, entry.tma_metadata);
+            entry.spec.kernel_arguments(), devices_in_process,
+            entry.spec.use_pdl(), call_zeroed_outputs,
+            entry.spec.tma_metadata());
       });
 }
 

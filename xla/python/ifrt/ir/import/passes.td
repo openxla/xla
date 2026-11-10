@@ -105,12 +105,12 @@ func.func @main(%arg0: !array, %arg1: !array {ifrt.donated}) -> (!array, !array)
 }
 
 
-def IfrtMergeCopiesAndReshardsPass :
-    Pass<"ifrt-merge-copies-and-reshards", "mlir::func::FuncOp"> {
-  let summary = "Merge copies and reshards into a single op.";
+def IfrtMergeOpsPass :
+    Pass<"ifrt-merge-ops", "mlir::func::FuncOp"> {
+  let summary = "Merge compatible CopyArrays, Reshard, and BitcastArrays ops.";
   let description = [{
-Merges copies and reshards from a source op which flow into the same destination
-op, ignoring control dependencies.
+Merges compatible `ifrt.CopyArrays`, `ifrt.Reshard`, and `ifrt.BitcastArrays`
+ops while respecting dominance order, ignoring control dependencies.
 
 E.g.
 
@@ -299,6 +299,46 @@ or `ifrt.CopyArrays` ops.
 
 Note: this pass does not clean up dead arguments, results, or transfers left
 behind after copying constants.
+  }];
+}
+
+def IfrtCallDedupPass :
+    Pass<"ifrt-call-dedup", "mlir::ModuleOp"> {
+  let summary = "Deduplicates operands and results of `ifrt.Call` ops.";
+  let description = [{
+Processes `ifrt.Call` ops in IFRT functions in program order to:
+1. Redirect uses of duplicate non-donated, non-aliased input block arguments
+   (with matching callee argument types and normalized argument attributes)
+   inside the callee `func.func` to the first matching block argument. If the
+   callee (or its enclosing outlined `ModuleOp`) is non-private or has other
+   symbol uses (e.g., another `ifrt.Call` or a `func.call`), it is cloned as a
+   private symbol before mutating its arguments.
+2. Redirect caller uses of duplicate `ifrt.Call` outputs (returning the same
+   SSA value in the callee with identical `!ifrt.array` types and normalized
+   result attributes) to the first matching output, excluding outputs aliased
+   to a call input or donated/aliased to a downstream consumer.
+
+Dead arguments and results are left to be erased by `IfrtDcePass`.
+  }];
+}
+
+def IfrtDcePass : Pass<"ifrt-dce", "mlir::ModuleOp"> {
+  let summary = "Eliminates unused CallOp arguments/results, simplifies atom "
+                "program regions, and erases dead "
+                "Call/Reshard/CopyArrays/BitcastArrays/RemapArrays ops.";
+  let description = [{
+Walks IFRT functions in reverse order to:
+1. Erase unused outputs (or the entire op when all array outputs are unused,
+   forwarding `control_inputs` to `control_output` users) from
+   `IfrtPairwiseArrayOpInterface` ops (`ifrt.Reshard`, `ifrt.CopyArrays`,
+   `ifrt.BitcastArrays`) and from `ifrt.RemapArrays` ops (pruning unused
+   `ifrt.RemapArrays` inputs as a result of erasing unused outputs and
+   remapping `mappings` indices).
+2. Erase unused `ifrt.Call` results and corresponding callee `func.return`
+   operands, simplify callee regions, erase unused callee block arguments and
+   `ifrt.Call` inputs (remapping `io_aliases`, `donated_input_indices`,
+   `arg_attrs`, and `res_attrs`), and erase dead empty `ifrt.Call` ops along
+   with unused private callees.
   }];
 }
 
