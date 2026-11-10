@@ -98,10 +98,11 @@ print_hang_probe_summary() {
         sed 's/^HANGPROBE RUNTIME //' | sort | uniq -c | sort -rn | head -40
     echo "-- hangs: $(xargs -r grep -l "HANGPROBE HANG test still running" <<< "$logs" | wc -l)"
     echo "-- hangs with a thread in __cxa_guard_acquire: $(xargs -r grep -l "__cxa_guard_acquire" <<< "$logs" | xargs -r grep -l "HANGPROBE HANG" | wc -l)"
+    echo "-- hangs with a thread waiting on a libc++abi guard condvar: $(xargs -r grep -l "HANGPROBE FUTEX.*LibcppCondVar" <<< "$logs" | wc -l)"
     local hung
-    for hung in $(xargs -r grep -l "HANGPROBE HANG test still running" <<< "$logs" | head -n 3); do
+    for hung in $(xargs -r grep -l "HANGPROBE HANG test still running" <<< "$logs" | head -n 6); do
         echo "-- $hung"
-        grep -E "HANGPROBE (ENV target|PROC pid)" "$hung"
+        grep -E "HANGPROBE (PROC|FUTEX)" "$hung" | cut -c1-260
         if grep -q "__cxa_guard_acquire" "$hung"; then
             grep -m 2 -B 3 -A 16 "__cxa_guard_acquire" "$hung" | cut -c1-220
         else
@@ -139,6 +140,10 @@ if [[ "${XLA_CI_HANG_PROBE_CPU:-1}" == "1" && " $* " == *" --config=ci_single_gp
         --curses=no \
         --color=yes \
         "${CPU_PROBE_ARGS[@]}" \
+        `# Only makes rocm_configure create the real @local_config_rocm, so the` \
+        `# probe gets rocgdb. The C++ toolchain stays the CPU one: toolchain` \
+        `# selection follows rules_ml_toolchain enable_rocm, which is not set.` \
+        --repo_env=TF_NEED_ROCM=1 \
         --run_under=//build_tools/rocm:hang_probe \
         --test_env=HANG_PROBE_AFTER_S="${XLA_CI_HANG_PROBE_AFTER_S:-240}" \
         --test_env=HANG_PROBE_RUNTIME_ENFORCE=0 \

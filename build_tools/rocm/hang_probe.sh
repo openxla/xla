@@ -60,16 +60,66 @@ find_gdb() {
   command -v gdb 2>/dev/null
 }
 
-# Thread names, states and kernel wait channels. Needs no ptrace, so it is
-# printed even if rocgdb cannot attach.
+# Thread names, states and kernel wait channels, grouped. Needs no debugger, so
+# it is printed even if rocgdb is missing or cannot attach.
 dump_proc() {
   local pid="$1" t
   log "PROC pid=$pid threads=$(ls /proc/$pid/task 2>/dev/null | wc -l)"
   for t in /proc/"$pid"/task/*; do
-    log "PROC tid=${t##*/} comm=$(cat "$t/comm" 2>/dev/null)" \
-        "state=$(awk '{ print $3 }' "$t/stat" 2>/dev/null)" \
-        "wchan=$(cat "$t/wchan" 2>/dev/null)"
+    echo "comm=$(cat "$t/comm" 2>/dev/null)" \
+         "state=$(awk '{ print $3 }' "$t/stat" 2>/dev/null)" \
+         "wchan=$(cat "$t/wchan" 2>/dev/null)"
+  done | sort | uniq -c | sort -rn | while read -r n rest; do
+    log "PROC threads=$n $rest"
   done
+  dump_futexes "$pid"
+}
+
+# Resolves the futex each sleeping thread waits on to the mapping and, for
+# addresses inside a shared object or its .bss, to the nearest symbol. Idle
+# pool threads wait on heap addresses; a thread stuck in libc++abi's
+# __cxa_guard_acquire waits on a private GlobalStatic<LibcppCondVar>::instance.
+dump_futexes() {
+  local pid="$1" t nr uaddr rest maps tmp
+  tmp="$(mktemp -d "${TEST_TMPDIR:-/tmp}/futex.XXXXXX")"
+  # /proc/PID/task/TID/syscall needs ptrace access, which Yama ptrace_scope=1
+  # only grants to ancestors. This shell is the test's parent, so read the
+  # files here (redirecting to a file), not in a forked pipeline stage.
+  for t in /proc/"$pid"/task/*; do
+    read -r nr uaddr rest < "$t/syscall" 2> /dev/null || continue
+    [[ "$nr" == "202" ]] && echo "$uaddr"
+  done > "$tmp/raw"
+  sort "$tmp/raw" | uniq -c | sort -rn > "$tmp/addrs"
+  cp "/proc/$pid/maps" "$tmp/maps" 2> /dev/null
+  local count addr a range perms off dev inode path start end last_path base where sym
+  while read -r count addr; do
+    a=$((addr))
+    where="unmapped"; sym=""; last_path=""
+    while read -r range perms off dev inode path; do
+      start=$((16#${range%-*})); end=$((16#${range#*-}))
+      # Anonymous mappings right after a shared object are its .bss.
+      [[ -n "$path" ]] && last_path="$path"
+      if (( a >= start && a < end )); then
+        if [[ -z "$path" && "$last_path" == /* ]]; then path="$last_path (.bss)"; fi
+        where="${path:-[anon]}"
+        local file="${path% (.bss)}"
+        if [[ "$file" == /*.so* || "$file" == */_solib_* ]] && command -v nm > /dev/null; then
+          base=$((16#$(awk -v f="$file" '$6 == f { split($1, r, "-"); print r[1]; exit }' "$tmp/maps")))
+          # mawk has no strtonum, so parse the hex addresses by hand.
+          sym="$(nm -n --defined-only -C "$file" 2> /dev/null | awk -v v="$(( a - base ))" '
+              function hex(s,  i, n) {
+                n = 0; s = tolower(s)
+                for (i = 1; i <= length(s); i++) n = n * 16 + index("0123456789abcdef", substr(s, i, 1)) - 1
+                return n
+              }
+              { if (hex($1) <= v) best = $0; else exit } END { print best }')"
+        fi
+        break
+      fi
+    done < "$tmp/maps"
+    log "FUTEX threads=$count addr=$addr in=${where##*/} sym=${sym:-?}"
+  done < <(head -n 12 "$tmp/addrs")
+  rm -rf "$tmp"
 }
 
 # Checks how the C++ runtime is linked into the test process:
