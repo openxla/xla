@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "absl/strings/string_view.h"
 #include "tsl/platform/fingerprint.h"
 #include "xla/tsl/platform/statusor.h"
 

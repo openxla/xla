@@ -306,19 +306,10 @@ cc_library(
 
 cc_library(
     name = "stateful_rng_spmd_partitioner",
-    srcs = ["stateful_rng_spmd_partitioner.cc"],
     hdrs = ["stateful_rng_spmd_partitioner.h"],
     deps = [
         ":spmd_partitioner",
-        "//xla:status_macros",
-        "//xla:xla_data_proto_cc",
-        "//xla/hlo/ir:hlo",
-        "//xla/hlo/pass:hlo_pass",
-        "//xla/service:call_graph",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -356,6 +347,7 @@ cc_library(
         "//xla/hlo/analysis:while_loop_analysis",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
+        "//xla/hlo/pass:hlo_pass_registry",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
@@ -367,6 +359,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
     ],
+    alwayslink = True,
 )
 
 xla_cc_test(

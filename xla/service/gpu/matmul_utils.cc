@@ -107,7 +107,7 @@ absl::StatusOr<Shape> GetBatchRowColumnShape(
   }
 
   auto dim_size = [&](absl::Span<const int64_t> dims) {
-    return absl::c_accumulate(dims, 1, [&](int64_t size, int64_t dim) {
+    return absl::c_accumulate(dims, int64_t{1}, [&](int64_t size, int64_t dim) {
       return size * shape.dimensions(dim);
     });
   };
@@ -1171,7 +1171,7 @@ absl::StatusOr<bool> IsMatrixMultiplicationTooSmallForRewriting(
 }
 
 bool IsDotSupportedByClassicalEmitters(const HloInstruction& dot) {
-  if (!algorithm_util::IsSupportedByElementalIrEmitter(
+  if (!algorithm_util::IsSupportedByElementalDotEmitter(
           dot.precision_config().algorithm())) {
     return false;
   }

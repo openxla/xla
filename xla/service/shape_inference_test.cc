@@ -3703,6 +3703,95 @@ TEST_F(GatherShapeInferenceTest, TensorFlowGatherBatchingDims) {
       << ShapeUtil::HumanString(gather_shape);
 }
 
+TEST_F(GatherShapeInferenceTest, BatchingDimEqualToExplicitIndexVectorDim) {
+  const absl::StatusOr<Shape> statusor = ShapeInference::InferGatherShape(
+      ShapeUtil::MakeShape(F32, {3, 64}), ShapeUtil::MakeShape(S64, {3, 1}),
+      HloGatherInstruction::MakeGatherDimNumbers(
+          /*offset_dims=*/{},
+          /*collapsed_slice_dims=*/{1},
+          /*start_index_map=*/{1},
+          /*index_vector_dim=*/1,
+          /*operand_batching_dims=*/{0},
+          /*start_indices_batching_dims=*/{1}),
+      /*slice_sizes=*/{1, 1});
+  ASSERT_FALSE(statusor.ok());
+  EXPECT_THAT(statusor.status().message(),
+              HasSubstr("index_vector_dim=1 is not allowed as a batching "
+                        "dimension, got: 0->1"))
+      << statusor.status();
+}
+
+TEST_F(GatherShapeInferenceTest, BatchingDimEqualToImplicitIndexVectorDim) {
+  const absl::StatusOr<Shape> statusor = ShapeInference::InferGatherShape(
+      ShapeUtil::MakeShape(F32, {3, 64}), ShapeUtil::MakeShape(S64, {3}),
+      HloGatherInstruction::MakeGatherDimNumbers(
+          /*offset_dims=*/{},
+          /*collapsed_slice_dims=*/{1},
+          /*start_index_map=*/{1},
+          /*index_vector_dim=*/1,
+          /*operand_batching_dims=*/{0},
+          /*start_indices_batching_dims=*/{1}),
+      /*slice_sizes=*/{1, 1});
+  ASSERT_FALSE(statusor.ok());
+  EXPECT_THAT(statusor.status().message(),
+              HasSubstr("index_vector_dim=1 is not allowed as a batching "
+                        "dimension, got: 0->1"))
+      << statusor.status();
+}
+
+// The last real dimension of the start indices, with an implicit
+// index_vector_dim, remains a valid batching dimension.
+TEST_F(GatherShapeInferenceTest, LastRealStartIndicesBatchingDimAccepted) {
+  ASSERT_OK_AND_ASSIGN(
+      const Shape gather_shape,
+      ShapeInference::InferGatherShape(
+          ShapeUtil::MakeShape(F32, {3, 64}), ShapeUtil::MakeShape(S64, {5, 3}),
+          HloGatherInstruction::MakeGatherDimNumbers(
+              /*offset_dims=*/{},
+              /*collapsed_slice_dims=*/{1},
+              /*start_index_map=*/{1},
+              /*index_vector_dim=*/2,
+              /*operand_batching_dims=*/{0},
+              /*start_indices_batching_dims=*/{1}),
+          /*slice_sizes=*/{1, 1}));
+  EXPECT_TRUE(ShapeUtil::Equal(gather_shape, ShapeUtil::MakeShape(F32, {5, 3})))
+      << ShapeUtil::HumanString(gather_shape);
+}
+
+TEST_F(GatherShapeInferenceTest, BatchingDimBeforeExplicitIndexVectorDim) {
+  ASSERT_OK_AND_ASSIGN(const Shape gather_shape,
+                       ShapeInference::InferGatherShape(
+                           ShapeUtil::MakeShape(F32, {3, 64}),
+                           ShapeUtil::MakeShape(S64, {5, 3, 1}),
+                           HloGatherInstruction::MakeGatherDimNumbers(
+                               /*offset_dims=*/{},
+                               /*collapsed_slice_dims=*/{1},
+                               /*start_index_map=*/{1},
+                               /*index_vector_dim=*/2,
+                               /*operand_batching_dims=*/{0},
+                               /*start_indices_batching_dims=*/{1}),
+                           /*slice_sizes=*/{1, 1}));
+  EXPECT_TRUE(ShapeUtil::Equal(gather_shape, ShapeUtil::MakeShape(F32, {5, 3})))
+      << ShapeUtil::HumanString(gather_shape);
+}
+
+TEST_F(GatherShapeInferenceTest, BatchingDimAfterIndexVectorDim) {
+  ASSERT_OK_AND_ASSIGN(
+      const Shape gather_shape,
+      ShapeInference::InferGatherShape(
+          ShapeUtil::MakeShape(F32, {3, 64}), ShapeUtil::MakeShape(S64, {1, 3}),
+          HloGatherInstruction::MakeGatherDimNumbers(
+              /*offset_dims=*/{},
+              /*collapsed_slice_dims=*/{1},
+              /*start_index_map=*/{1},
+              /*index_vector_dim=*/0,
+              /*operand_batching_dims=*/{0},
+              /*start_indices_batching_dims=*/{1}),
+          /*slice_sizes=*/{1, 1}));
+  EXPECT_TRUE(ShapeUtil::Equal(gather_shape, ShapeUtil::MakeShape(F32, {3})))
+      << ShapeUtil::HumanString(gather_shape);
+}
+
 TEST_F(GatherShapeInferenceTest, TensorFlowGatherNd) {
   ASSERT_OK_AND_ASSIGN(const Shape gather_shape,
                        ShapeInference::InferGatherShape(
@@ -4332,6 +4421,94 @@ TEST_P(ScatterShapeInferenceTest,
       HasSubstr("Bounds of the window dimensions of updates must not exceed "
                 "the bounds of the corresponding dimensions of operand."))
       << statusor.status();
+}
+
+TEST_P(ScatterShapeInferenceTest, BatchingDimEqualToExplicitIndexVectorDim) {
+  const auto shapes = CreateShapes({3, 64}, s64_tensor({3, 1}), {3}, types());
+  const absl::StatusOr<Shape> statusor = ShapeInference::InferScatterShape(
+      shapes.ptrs, to_apply(types()),
+      HloScatterInstruction::MakeScatterDimNumbers(
+          /*update_window_dims=*/{},
+          /*inserted_window_dims=*/{1},
+          /*scatter_dims_to_operand_dims=*/{1},
+          /*index_vector_dim=*/1,
+          /*input_batching_dims=*/{0},
+          /*scatter_indices_batching_dims=*/{1}));
+  ASSERT_FALSE(statusor.ok());
+  EXPECT_THAT(statusor.status().message(),
+              HasSubstr("index_vector_dim=1 is not allowed as a batching "
+                        "dimension, got: 1"))
+      << statusor.status();
+}
+
+TEST_P(ScatterShapeInferenceTest, BatchingDimEqualToImplicitIndexVectorDim) {
+  const auto shapes = CreateShapes({3, 64}, s64_tensor({3}), {3}, types());
+  const absl::StatusOr<Shape> statusor = ShapeInference::InferScatterShape(
+      shapes.ptrs, to_apply(types()),
+      HloScatterInstruction::MakeScatterDimNumbers(
+          /*update_window_dims=*/{},
+          /*inserted_window_dims=*/{1},
+          /*scatter_dims_to_operand_dims=*/{1},
+          /*index_vector_dim=*/1,
+          /*input_batching_dims=*/{0},
+          /*scatter_indices_batching_dims=*/{1}));
+  ASSERT_FALSE(statusor.ok());
+  EXPECT_THAT(statusor.status().message(),
+              HasSubstr("index_vector_dim=1 is not allowed as a batching "
+                        "dimension, got: 1"))
+      << statusor.status();
+}
+
+// The last real dimension of the scatter indices, with an implicit
+// index_vector_dim, remains a valid batching dimension.
+TEST_P(ScatterShapeInferenceTest, LastRealScatterIndicesBatchingDimAccepted) {
+  const auto shapes =
+      CreateShapes({3, 64}, s64_tensor({5, 3}), {5, 3}, types());
+  ASSERT_OK_AND_ASSIGN(const Shape scatter_shape,
+                       ShapeInference::InferScatterShape(
+                           shapes.ptrs, to_apply(types()),
+                           HloScatterInstruction::MakeScatterDimNumbers(
+                               /*update_window_dims=*/{},
+                               /*inserted_window_dims=*/{1},
+                               /*scatter_dims_to_operand_dims=*/{1},
+                               /*index_vector_dim=*/2,
+                               /*input_batching_dims=*/{0},
+                               /*scatter_indices_batching_dims=*/{1})));
+  EXPECT_TRUE(ShapeUtil::Equal(scatter_shape, Collate({3, 64}, types())))
+      << ShapeUtil::HumanString(scatter_shape);
+}
+
+TEST_P(ScatterShapeInferenceTest, BatchingDimBeforeExplicitIndexVectorDim) {
+  const auto shapes =
+      CreateShapes({3, 64}, s64_tensor({5, 3, 1}), {5, 3}, types());
+  ASSERT_OK_AND_ASSIGN(const Shape scatter_shape,
+                       ShapeInference::InferScatterShape(
+                           shapes.ptrs, to_apply(types()),
+                           HloScatterInstruction::MakeScatterDimNumbers(
+                               /*update_window_dims=*/{},
+                               /*inserted_window_dims=*/{1},
+                               /*scatter_dims_to_operand_dims=*/{1},
+                               /*index_vector_dim=*/2,
+                               /*input_batching_dims=*/{0},
+                               /*scatter_indices_batching_dims=*/{1})));
+  EXPECT_TRUE(ShapeUtil::Equal(scatter_shape, Collate({3, 64}, types())))
+      << ShapeUtil::HumanString(scatter_shape);
+}
+
+TEST_P(ScatterShapeInferenceTest, BatchingDimAfterIndexVectorDim) {
+  const auto shapes = CreateShapes({3, 64}, s64_tensor({1, 3}), {3}, types());
+  ASSERT_OK_AND_ASSIGN(const Shape scatter_shape,
+                       ShapeInference::InferScatterShape(
+                           shapes.ptrs, to_apply(types()),
+                           HloScatterInstruction::MakeScatterDimNumbers(
+                               /*update_window_dims=*/{},
+                               /*inserted_window_dims=*/{1},
+                               /*scatter_dims_to_operand_dims=*/{1},
+                               /*index_vector_dim=*/0,
+                               /*input_batching_dims=*/{0},
+                               /*scatter_indices_batching_dims=*/{1})));
+  EXPECT_TRUE(ShapeUtil::Equal(scatter_shape, Collate({3, 64}, types())))
+      << ShapeUtil::HumanString(scatter_shape);
 }
 
 TEST_P(ScatterShapeInferenceTest, TfScatterWithUpdatesNotMatchingIndices) {
@@ -6496,5 +6673,33 @@ INSTANTIATE_TEST_SUITE_P(UnboundedDynamism, UnboundedUnaryOpShapeInferenceTest,
                               {"f32[?]", "f32[?]", HloOpcode::kSinh},
                               {"f32[?]", "f32[?]", HloOpcode::kSqrt},
                               {"f32[?]", "f32[?]", HloOpcode::kTanh}}));
+
+TEST_F(ShapeInferenceTest, MulhiRequiresIntegralType) {
+  const Shape s32_vec = ShapeUtil::MakeShape(S32, {4});
+  const Shape u32_vec = ShapeUtil::MakeShape(U32, {4});
+  ASSERT_OK_AND_ASSIGN(Shape s32_out, ShapeInference::InferBinaryOpShape(
+                                          HloOpcode::kMulhi, s32_vec, s32_vec,
+                                          /*broadcast_dimensions=*/{}));
+  EXPECT_TRUE(ShapeUtil::Equal(s32_out, s32_vec));
+  ASSERT_OK_AND_ASSIGN(Shape u32_out, ShapeInference::InferBinaryOpShape(
+                                          HloOpcode::kMulhi, u32_vec, u32_vec,
+                                          /*broadcast_dimensions=*/{}));
+  EXPECT_TRUE(ShapeUtil::Equal(u32_out, u32_vec));
+
+  EXPECT_THAT(
+      ShapeInference::InferBinaryOpShape(HloOpcode::kMulhi, vector_32_,
+                                         vector_32_,
+                                         /*broadcast_dimensions=*/{}),
+      absl_testing::StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          HasSubstr("Expected integral type in argument to mulhi operation")));
+  EXPECT_THAT(
+      ShapeInference::InferBinaryOpShape(HloOpcode::kMulhi, pred_, pred_,
+                                         /*broadcast_dimensions=*/{}),
+      absl_testing::StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          HasSubstr("Expected integral type in argument to mulhi operation")));
+}
+
 }  // namespace
 }  // namespace xla
