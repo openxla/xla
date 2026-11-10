@@ -1920,6 +1920,47 @@ TEST(StreamExecutorGpuClientTest, CopyToPinnedHostMemorySpace) {
                                      *literal));
 }
 
+TEST(StreamExecutorGpuClientTest,
+     CopiesToPinnedHostDoNotAccumulateSourceUsageEvents) {
+  ASSERT_OK_AND_ASSIGN(auto client,
+                       GetStreamExecutorGpuClient(GetTestGpuClientOptions()));
+  std::vector<int32_t> data{1, 2, 3, 4};
+  Shape shape = ShapeUtil::MakeShape(S32, {4});
+  auto device = client->addressable_devices()[0];
+  ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      client->BufferFromHostBuffer(
+          data.data(), shape.element_type(), shape.dimensions(),
+          /*byte_strides=*/std::nullopt,
+          PjRtClient::HostBufferSemantics::kImmutableOnlyDuringCall, nullptr,
+          *device->default_memory_space(), /*device_layout=*/nullptr));
+
+  auto* common_buffer = dynamic_cast<CommonPjRtBuffer*>(buffer.get());
+  ASSERT_NE(common_buffer, nullptr);
+
+  // Each copy adds a usage event to `buffer` before its stream is known.
+  auto* pinned_memory_space = device->memory_spaces()[1];
+  ASSERT_EQ(pinned_memory_space->kind_id(), PinnedHostMemorySpace::kKindId);
+  constexpr int kNumCopies = 100;
+  for (int i = 0; i < kNumCopies; ++i) {
+    ASSERT_OK_AND_ASSIGN(auto result,
+                         buffer->CopyToMemorySpace(pinned_memory_space));
+    ASSERT_OK(result->GetReadyFuture().Await());
+    // The source usage event is fulfilled after the destination's definition
+    // event, so wait for it as well.
+    auto hold =
+        common_buffer->GetBufferWithHold(CommonPjRtBuffer::ScopedHold::kUsage);
+    ASSERT_OK(hold.status());
+    ASSERT_OK(
+        hold.buffer()->BlockForOperationsToComplete(buffer->memory_space()));
+  }
+
+  auto hold =
+      common_buffer->GetBufferWithHold(CommonPjRtBuffer::ScopedHold::kUsage);
+  ASSERT_OK(hold.status());
+  EXPECT_LE(hold.buffer()->usage_events().size(), 8);
+}
+
 TEST(StreamExecutorGpuClientTest, CopyFromPinnedHostMemorySpace) {
   TF_ASSERT_OK_AND_ASSIGN(
       auto client, GetStreamExecutorGpuClient(GetTestGpuClientOptions()));

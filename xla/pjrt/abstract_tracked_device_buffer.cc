@@ -569,6 +569,16 @@ void AbstractTrackedDeviceBuffer::AddUsageEvent(PjRtDeviceEventRef event) {
         }
       }
     }
+    // An event whose stream is not known yet, e.g. the source usage event of a
+    // copy whose promise is fulfilled later, can't be merged above. Drop
+    // events that have completed so that such events don't accumulate for the
+    // lifetime of the buffer. A completed usage event orders nothing; donation
+    // in Execute skips them too.
+    if (usage_events_.size() + 1 > usage_events_.capacity()) {
+      absl::erase_if(usage_events_, [](const PjRtDeviceEventRef& ev) {
+        return ev.state() == PJRT_DeviceEvent_State_Ready;
+      });
+    }
     usage_events_.push_back(event);
     return;
   }
