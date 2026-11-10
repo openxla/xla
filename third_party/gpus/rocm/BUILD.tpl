@@ -626,6 +626,23 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# rocgdb and the libraries it loads, for debugging test actions remotely.
+filegroup(
+    name = "rocgdb",
+    srcs = glob(
+        [
+            rocm_path("bin/rocgdb*"),
+            rocm_path("lib/librocm-dbgapi.so*"),
+            rocm_path("lib/libamd_comgr.so*"),
+            rocm_path("lib/llvm/lib/libLLVM.so*"),
+            rocm_path("lib/llvm/lib/libclang-cpp.so*"),
+            rocm_path("share/rocgdb/**"),
+        ],
+        allow_empty = True,
+    ) + [":system_libs_data"],
+    visibility = ["//visibility:public"],
+)
+
 filegroup(
     name = "rocminfo",
     srcs = [

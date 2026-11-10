@@ -57,6 +57,112 @@ else
     BAZEL_ARGS=("$@")
 fi
 
+# Hang probe. In the single GPU run, runs only the tests that hung, several
+# times each, under the hang_probe target, which attaches rocgdb to a test that
+# is still running after HANG_PROBE_AFTER_S seconds and prints all thread
+# backtraces. Results are not taken from the cache.
+if [[ "${XLA_CI_HANG_PROBE:-1}" == "1" && " $* " == *" --config=ci_single_gpu "* ]]; then
+    read -r -a HANG_PROBE_TARGETS <<< "${XLA_CI_HANG_PROBE_TARGETS:-//xla/tests:convolution_gpu_alternative_layout_test_amdgpu_any //xla/tests:convolution_autotune_disabled_test_amdgpu_any //xla/hlo/builder/lib:svd_test_amdgpu_any}"
+    BAZEL_ARGS=()
+    for arg in "$@"; do
+        if [[ "$arg" == "--" ]]; then
+            break
+        fi
+        BAZEL_ARGS+=("$arg")
+    done
+    BAZEL_ARGS+=(
+        "--run_under=//build_tools/rocm:hang_probe"
+        "--test_env=HANG_PROBE_AFTER_S=${XLA_CI_HANG_PROBE_AFTER_S:-300}"
+        "--runs_per_test=${XLA_CI_HANG_PROBE_RUNS:-10}"
+        "--nocache_test_results"
+        "--keep_going"
+        "--remote_download_regex=.*/testlogs/.*/test\.log"
+        "--"
+        "${HANG_PROBE_TARGETS[@]}"
+    )
+    HANG_PROBE_MARKER="$(mktemp "${RUNNER_TEMP:-/tmp}/hangprobe_start.XXXXXX")"
+fi
+
+# Summarizes the RUNTIME lines that hang_probe.sh wrote to the test logs of
+# this run, so passing tests report how the C++ runtime was linked too.
+print_hang_probe_summary() {
+    local logs
+    logs="$(find -L bazel-testlogs -name test.log -newer "$HANG_PROBE_MARKER" 2>/dev/null)"
+    echo "================ HANGPROBE runtime summary ================"
+    echo "test logs: $(grep -c . <<< "$logs")"
+    [[ -z "$logs" ]] && return
+    echo "-- verdicts:"
+    xargs -r grep -h "HANGPROBE RUNTIME VERDICT" <<< "$logs" | sort | uniq -c
+    echo "-- distinct check results:"
+    xargs -r grep -hE "HANGPROBE RUNTIME (lib |guard_copies|bindings_cxa|guard_providers|not_found|captured)" <<< "$logs" |
+        sed 's/^HANGPROBE RUNTIME //' | sort | uniq -c | sort -rn | head -40
+    echo "-- hangs: $(xargs -r grep -l "HANGPROBE HANG test still running" <<< "$logs" | wc -l)"
+    echo "-- hangs with a thread in __cxa_guard_acquire: $(xargs -r grep -l "__cxa_guard_acquire" <<< "$logs" | xargs -r grep -l "HANGPROBE HANG" | wc -l)"
+    echo "-- hangs with a thread waiting on a libc++abi guard condvar: $(xargs -r grep -l "HANGPROBE FUTEX.*LibcppCondVar" <<< "$logs" | wc -l)"
+    local hung
+    for hung in $(xargs -r grep -l "HANGPROBE HANG test still running" <<< "$logs" | head -n 6); do
+        echo "-- $hung"
+        grep -E "HANGPROBE (PROC|FUTEX)" "$hung" | cut -c1-260
+        if grep -q "__cxa_guard_acquire" "$hung"; then
+            grep -m 2 -B 3 -A 16 "__cxa_guard_acquire" "$hung" | cut -c1-220
+        else
+            sed -n '/HANGPROBE STACKS BEGIN/,/HANGPROBE STACKS END/p' "$hung" | head -n 60 | cut -c1-220
+        fi
+    done
+    echo "==========================================================="
+}
+
+# CPU hang probe. Runs CPU tests that time out in upstream CPU CI with the
+# upstream Linux CPU configuration (warnings, nonccl, linux_cpu: statically
+# linked libc++, default xla_test linking, no ROCm configs) under the hang
+# probe, then exits. The runtime check only reports here, because private
+# libc++abi copies are expected in this configuration.
+if [[ "${XLA_CI_HANG_PROBE_CPU:-1}" == "1" && " $* " == *" --config=ci_single_gpu "* ]]; then
+    read -r -a CPU_PROBE_TARGETS <<< "${XLA_CI_HANG_PROBE_CPU_TARGETS:-//xla/tests:prng_test_cpu //xla/tests:batch_normalization_test_cpu //xla/tests:cholesky_test_cpu //xla/tests:dot_operation_test_cpu //xla/hlo/builder/lib:self_adjoint_eig_test_cpu}"
+    CPU_PROBE_ARGS=()
+    for arg in "$@"; do
+        if [[ "$arg" == "--" ]]; then
+            break
+        fi
+        case "$arg" in
+            # ROCm-only configs; no_flaky expands to rocm_base.
+            --config=rocm_ci_hermetic|--config=ci_single_gpu|--config=no_flaky) continue ;;
+        esac
+        CPU_PROBE_ARGS+=("$arg")
+    done
+    HANG_PROBE_MARKER="$(mktemp "${RUNNER_TEMP:-/tmp}/hangprobe_start.XXXXXX")"
+    set +e
+    bazel --bazelrc="$SCRIPT_DIR/rocm_xla.bazelrc" test \
+        --config=warnings \
+        --config=nonccl \
+        --config=linux_cpu \
+        --test_output=errors \
+        --curses=no \
+        --color=yes \
+        "${CPU_PROBE_ARGS[@]}" \
+        `# Only makes rocm_configure create the real @local_config_rocm, so the` \
+        `# probe gets rocgdb. The C++ toolchain stays the CPU one: toolchain` \
+        `# selection follows rules_ml_toolchain enable_rocm, which is not set.` \
+        --repo_env=TF_NEED_ROCM=1 \
+        --run_under=//build_tools/rocm:hang_probe \
+        --test_env=HANG_PROBE_AFTER_S="${XLA_CI_HANG_PROBE_AFTER_S:-240}" \
+        --test_env=HANG_PROBE_RUNTIME_ENFORCE=0 \
+        --test_timeout=900 \
+        --runs_per_test="${XLA_CI_HANG_PROBE_RUNS:-10}" \
+        --nocache_test_results \
+        --keep_going \
+        --remote_download_regex='.*/testlogs/.*/test\.log' \
+        --experimental_ui_max_stdouterr_bytes=16777216 \
+        -- \
+        "${CPU_PROBE_TARGETS[@]}"
+    BAZEL_RC=$?
+    set -e
+    { set +x; } 2>/dev/null
+    print_hang_probe_summary
+    rm -f "$HANG_PROBE_MARKER"
+    exit $BAZEL_RC
+fi
+
 set +e
 bazel --bazelrc="$SCRIPT_DIR/rocm_xla_ci.bazelrc" test \
     --build_tag_filters=$TAG_FILTERS \
@@ -71,6 +177,13 @@ bazel --bazelrc="$SCRIPT_DIR/rocm_xla_ci.bazelrc" test \
     "${BAZEL_ARGS[@]}"
 BAZEL_RC=$?
 set -e
+
+if [[ -n "${HANG_PROBE_MARKER:-}" ]]; then
+    { set +x; } 2>/dev/null
+    print_hang_probe_summary
+    rm -f "$HANG_PROBE_MARKER"
+    set -x
+fi
 
 if [[ $BAZEL_RC -eq 4 && -n "${XLA_ROCM_TARGET_PATTERN_FILE:-}" ]]; then
     echo "Bazel returned exit code 4 (no matching test targets in ${XLA_ROCM_TARGET_PATTERN_FILE}); treating as success."
