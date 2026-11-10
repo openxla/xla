@@ -222,7 +222,19 @@ class FastMergeBufferAllocationsManagerForComputationsWithoutOrdering
   absl::StatusOr<bool> TryAssignToExistingAllocation(
       const HloBuffer* hlo_buffer, int64_t required_size) override {
     BufferLiveRange live_range = GetBufferLiveRange(hlo_buffer);
-    UpdateLiveness(live_range.min_start);
+    bool has_custom_interference =
+        live_range_interference_options_.has_value() &&
+        absl::c_any_of(hlo_buffer->values(), [&](const HloValue* hlo_value) {
+          return live_range_interference_options_->has_custom_interference(
+              assignment_->alias_analysis(), *hlo_value);
+        });
+    // Buffers with custom interference rules are sorted by descending size
+    // ahead of normal buffers, so their min_start times are not monotonic.
+    // Only advance the monotonic UpdateLiveness sweep-line once normal
+    // buffers (sorted by kLiveRangeStart) begin.
+    if (!has_custom_interference) {
+      UpdateLiveness(live_range.min_start);
+    }
 
     ABSL_ASSIGN_OR_RETURN(BufferValue::Color buffer_color, hlo_buffer->color());
     auto& pool = free_pool_[buffer_color];
@@ -256,45 +268,37 @@ class FastMergeBufferAllocationsManagerForComputationsWithoutOrdering
       ++it;
     }
 
-    if (live_range_interference_options_.has_value()) {
-      bool has_custom_interference =
-          absl::c_any_of(hlo_buffer->values(), [&](const HloValue* hlo_value) {
-            return live_range_interference_options_->has_custom_interference(
-                assignment_->alias_analysis(), *hlo_value);
-          });
-      if (has_custom_interference) {
-        // Collect active allocations that are of the same color, have
-        // sufficient size, and are not in the free pool (which was already
-        // searched above). When custom interference rules are present, active
-        // allocations may be safely reusable if custom interference returns
-        // false.
-        std::vector<BufferAllocation*> candidates;
-        for (BufferAllocation::Index index : allocation_indices_) {
-          BufferAllocation* allocation =
-              assignment_->GetMutableAllocation(index);
-          if (allocation->color() == buffer_color &&
-              allocation->size() >= required_size &&
-              !pool.contains({allocation->size(), index})) {
-            candidates.push_back(allocation);
-          }
+    if (has_custom_interference) {
+      // Collect active allocations that are of the same color, have
+      // sufficient size, and are not in the free pool (which was already
+      // searched above). When custom interference rules are present, active
+      // allocations may be safely reusable if custom interference returns
+      // false.
+      std::vector<BufferAllocation*> candidates;
+      for (BufferAllocation::Index index : allocation_indices_) {
+        BufferAllocation* allocation = assignment_->GetMutableAllocation(index);
+        if (allocation->color() == buffer_color &&
+            allocation->size() >= required_size &&
+            !pool.contains({allocation->size(), index})) {
+          candidates.push_back(allocation);
         }
-        // Sort candidates by size (best-fit) to preserve larger allocations for
-        // future large buffers.
-        absl::c_sort(candidates,
-                     [](const BufferAllocation* a, const BufferAllocation* b) {
-                       if (a->size() != b->size()) {
-                         return a->size() < b->size();
-                       }
-                       return a->index() < b->index();
-                     });
-        for (BufferAllocation* allocation : candidates) {
-          ABSL_ASSIGN_OR_RETURN(bool success,
-                                assigner_->MaybeAssignBuffer(
-                                    allocation, *hlo_buffer, assignment_));
-          if (success) {
-            RecordAllocationUse(allocation, live_range.max_end);
-            return true;
-          }
+      }
+      // Sort candidates by size (best-fit) to preserve larger allocations for
+      // future large buffers.
+      absl::c_sort(candidates,
+                   [](const BufferAllocation* a, const BufferAllocation* b) {
+                     if (a->size() != b->size()) {
+                       return a->size() < b->size();
+                     }
+                     return a->index() < b->index();
+                   });
+      for (BufferAllocation* allocation : candidates) {
+        ABSL_ASSIGN_OR_RETURN(
+            bool success,
+            assigner_->MaybeAssignBuffer(allocation, *hlo_buffer, assignment_));
+        if (success) {
+          RecordAllocationUse(allocation, live_range.max_end);
+          return true;
         }
       }
     }
@@ -2780,15 +2784,37 @@ absl::Status BufferAssigner::AssignBuffersForGlobalComputations(
     buffer_order = BufferOrder::kLiveRangeStart;
   }
 
-  auto has_fixed_offset = [&](const HloBuffer* buffer) {
-    if (!opts_.fixed_offset.has_value()) {
-      return false;
+  std::vector<uint8_t> has_fixed_offset_cache;
+  if (opts_.fixed_offset.has_value()) {
+    has_fixed_offset_cache.assign(assignment->num_buffer_ids(), 0);
+    for (const HloBuffer* buffer : sorted_buffers) {
+      has_fixed_offset_cache[buffer->id()] =
+          absl::c_any_of(buffer->values(), [&](const HloValue* val) {
+            return (*opts_.fixed_offset)(alias_analysis, val->instruction(),
+                                         val->index())
+                .has_value();
+          });
     }
-    return absl::c_any_of(buffer->values(), [&](const HloValue* val) {
-      return (*opts_.fixed_offset)(alias_analysis, val->instruction(),
-                                   val->index())
-          .has_value();
-    });
+  }
+  auto has_fixed_offset = [&](const HloBuffer* buffer) -> bool {
+    return !has_fixed_offset_cache.empty() &&
+           has_fixed_offset_cache[buffer->id()] != 0;
+  };
+
+  std::vector<uint8_t> has_custom_interference_cache;
+  if (opts_.live_range_interference_options.has_value()) {
+    has_custom_interference_cache.assign(assignment->num_buffer_ids(), 0);
+    for (const HloBuffer* buffer : sorted_buffers) {
+      has_custom_interference_cache[buffer->id()] =
+          absl::c_any_of(buffer->values(), [&](const HloValue* val) {
+            return opts_.live_range_interference_options
+                ->has_custom_interference(alias_analysis, *val);
+          });
+    }
+  }
+  auto has_custom_interference = [&](const HloBuffer* buffer) -> bool {
+    return !has_custom_interference_cache.empty() &&
+           has_custom_interference_cache[buffer->id()] != 0;
   };
 
   std::vector<Comparator> comparators;
@@ -2801,6 +2827,20 @@ absl::Status BufferAssigner::AssignBuffersForGlobalComputations(
             return a_fixed > b_fixed;
           }
           if (a_fixed) {
+            return CompareSize(size_of, a, b);
+          }
+          return std::nullopt;
+        });
+  }
+  if (opts_.live_range_interference_options.has_value()) {
+    comparators.push_back(
+        [&](const HloBuffer* a, const HloBuffer* b) -> std::optional<bool> {
+          bool a_custom = has_custom_interference(a);
+          bool b_custom = has_custom_interference(b);
+          if (a_custom != b_custom) {
+            return a_custom > b_custom;
+          }
+          if (a_custom) {
             return CompareSize(size_of, a, b);
           }
           return std::nullopt;
@@ -2993,22 +3033,39 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
 
   const auto& live_ranges = assignment->hlo_live_range().buffer_live_ranges();
 
-  // Step 1: Collect the destination allocations we are allowed to reuse: the
-  // already-materialized temp allocations of a different but compatible color.
+  // Step 1: Collect the destination allocations we are allowed to reuse:
+  // already-materialized temp allocations of a different compatible color, or
+  // same-color preallocated temp allocations created for buffers with custom
+  // interference rules (which bypass the sequential heap simulator).
   std::vector<BufferAllocation*> destinations;
+  bool has_cross_color_destination = false;
+  int64_t max_destination_size = 0;
   for (BufferAllocation& allocation : assignment->allocations_) {
-    if (allocation.color() != buffer_color &&
-        allocation.IsPreallocatedTempBuffer() &&
-        opts_.can_use_allocation(buffer_color, allocation.color())) {
+    const bool cross_color_compatible =
+        allocation.color() != buffer_color &&
+        opts_.can_use_allocation(buffer_color, allocation.color());
+    const bool same_color_custom_interference =
+        allocation.color() == buffer_color &&
+        opts_.live_range_interference_options.has_value() &&
+        absl::c_any_of(allocation.assigned_values_, [&](const HloValue* val) {
+          return opts_.live_range_interference_options->has_custom_interference(
+              assignment->alias_analysis(), *val);
+        });
+    if (allocation.size() > 0 && allocation.IsPreallocatedTempBuffer() &&
+        allocation.is_reusable() &&
+        (cross_color_compatible || same_color_custom_interference)) {
       if (opts_.fixed_offset.has_value() &&
-          absl::c_any_of(allocation.assigned_buffers(), [&](const auto& entry) {
-            const HloValue* val = entry.first;
+          absl::c_any_of(allocation.assigned_values_, [&](const HloValue* val) {
             return (*opts_.fixed_offset)(assignment->alias_analysis(),
                                          val->instruction(), val->index())
                 .has_value();
           })) {
         continue;
       }
+      if (cross_color_compatible) {
+        has_cross_color_destination = true;
+      }
+      max_destination_size = std::max(max_destination_size, allocation.size());
       destinations.push_back(&allocation);
     }
   }
@@ -3016,7 +3073,8 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
     return 0;
   }
 
-  // Step 2: Collect movable candidates.
+  // Step 2: Collect movable candidates that can fit in at least one
+  // destination allocation.
   std::vector<ReuseCandidate> candidates;
   absl::flat_hash_set<const HloBuffer*> seen_buffers;
   for (const HloValue* value : *values) {
@@ -3060,8 +3118,10 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
     };
 
     if (absl::c_all_of(hlo_buffer.values(), is_moveable)) {
-      candidates.push_back(
-          ReuseCandidate{&hlo_buffer, assignment->HloBufferSize(hlo_buffer)});
+      const int64_t buf_size = assignment->HloBufferSize(hlo_buffer);
+      if (buf_size > 0 && buf_size <= max_destination_size) {
+        candidates.push_back(ReuseCandidate{&hlo_buffer, buf_size});
+      }
     }
   }
 
@@ -3072,6 +3132,13 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
     return (a.size != b.size) ? (a.size > b.size)
                               : (a.hlo_buffer->id() < b.hlo_buffer->id());
   });
+  // Cap same-color candidate evaluations to bound compile time on large modules
+  // with tens of thousands of small temporary buffers.
+  constexpr size_t kMaxSameColorReuseCandidates = 2048;
+  if (!has_cross_color_destination &&
+      candidates.size() > kMaxSameColorReuseCandidates) {
+    candidates.resize(kMaxSameColorReuseCandidates);
+  }
 
   // Returns true if any value of `candidate` is live at the same time as
   // `other_value`. If so, they cannot occupy overlapping storage.
@@ -3094,14 +3161,18 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
   // Finds the best-fit free gap into which `candidate` fits inside
   // `allocation`, or nullopt if it does not fit. A gap is free if no buffer
   // occupying it is live at the same time as the candidate.
-  auto find_placement = [&](const ReuseCandidate& candidate,
-                            BufferAllocation& allocation) {
+  auto find_placement =
+      [&](const ReuseCandidate& candidate,
+          BufferAllocation& allocation) -> std::optional<ReusePlacement> {
+    if (candidate.size > allocation.size()) {
+      return std::nullopt;
+    }
     // Collect the byte ranges that block the candidate: only buffers whose live
     // range overlaps the candidate's. Non-overlapping buffers are invisible
     // because the candidate can safely reuse their storage.
     std::vector<BufferAllocation::OffsetSize> blocking;
     for (const auto& [assigned_value, offset_size] :
-         allocation.assigned_buffers()) {
+         allocation.assigned_buffers_) {
       if (candidate_interferes_with(candidate, assigned_value)) {
         blocking.push_back(offset_size);
       }
@@ -3114,8 +3185,13 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
   // Step 4: Place each candidate into the first compatible allocation where it
   // fits, committing through the normal AddAssignment path.
   int64_t placed_buffers = 0;
-  for (const ReuseCandidate& candidate : candidates) {
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    const ReuseCandidate& candidate = candidates[i];
     for (BufferAllocation* allocation : destinations) {
+      if (allocation->color() == buffer_color &&
+          i >= kMaxSameColorReuseCandidates) {
+        continue;
+      }
       std::optional<ReusePlacement> placement =
           find_placement(candidate, *allocation);
       if (!placement.has_value()) {
@@ -3128,7 +3204,9 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
           assignment->AddAssignment(allocation, *candidate.hlo_buffer,
                                     placement->offset, candidate.size));
       for (const HloValue* value : candidate.hlo_buffer->values()) {
-        allocation->cross_color_buffers_.push_back(value);
+        if (allocation->color() != buffer_color) {
+          allocation->cross_color_buffers_.push_back(value);
+        }
         values->erase(value);
       }
       VLOG(2) << "Reused temp allocation #" << allocation->index() << " (color "
