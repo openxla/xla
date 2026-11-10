@@ -1386,11 +1386,19 @@ def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure, ViewLikeOpInterface]> 
 }
 
 def TPU_MemRefReshapeOp : TPU_Op<"memref_reshape", [Pure, ViewLikeOpInterface]> {
-  let arguments = (ins AnyMemRef:$input);
+  let arguments = (ins
+    AnyMemRef:$input,
+    Variadic<I32>:$dynamic_sizes
+  );
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
-    $input attr-dict `:` type($input) `->` type($result)
+    $input (`<` $dynamic_sizes^ `>`)? attr-dict `:` type($input) `->` type($result)
   }];
+  let builders = [
+    OpBuilder<(ins "::mlir::Type":$result_type, "::mlir::Value":$input), [{
+      build($_builder, $_state, result_type, input, /*dynamic_sizes=*/::mlir::ValueRange{});
+    }]>
+  ];
   let extraClassDeclaration = [{
     // ViewLikeOpInterface.
     ::mlir::Value getViewSource() { return getInput(); }
