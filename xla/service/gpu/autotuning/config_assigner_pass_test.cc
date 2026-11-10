@@ -35,14 +35,17 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/autotuner/config_assigner.h"
 #include "xla/backends/autotuner/in_memory_store.h"
 #include "xla/backends/autotuner/profiler.h"
+#include "xla/backends/gpu/autotuner/block_level_emitter.h"
 #include "xla/backends/gpu/autotuner/cublaslt.h"
 #include "xla/backends/gpu/autotuner/cudnn.h"
+#include "xla/backends/gpu/autotuner/native_emitter.h"
 #include "xla/backends/gpu/autotuner/triton.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/hlo/analysis/symbolic_expr.h"
@@ -54,6 +57,7 @@ limitations under the License.
 #include "xla/service/gpu/autotuning/autotuner_cache.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/gpu_compiler.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/mlir_context_pool.h"
 #include "xla/service/gpu/nvptx_compiler.h"
 #include "xla/service/platform_util.h"
@@ -75,6 +79,7 @@ namespace {
 
 namespace se = stream_executor;
 
+using ::testing::IsSupersetOf;
 using ::tsl::proto_testing::EqualsProto;
 
 se::StreamExecutor* GpuExecutor() {
@@ -117,17 +122,58 @@ class ConfigAssignerPassTest : public HloHardwareIndependentTestBase {
         };
     return ConfigAssignerPass::Create(
         std::move(get_backends_fn), debug_options,
-        target_config.device_description.gpu_compute_capability(),
         /*stream_executor=*/nullptr, /*thread_pool=*/nullptr, &target_config,
         /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
         /*shape_size_fn=*/[](const Shape& shape) { return 0; },
         allocator_.get());
   }
 
+  // Runs the pass on `module` with only the native and block-level emitter
+  // backends. A null `stream_executor` makes the compilation deviceless.
+  absl::Status RunWithEmitterBackends(HloModule* module,
+                                      se::StreamExecutor* stream_executor) {
+    GpuCompiler::GpuTargetConfig target_config(stream_executor_);
+    const DebugOptions& debug_options = module->config().debug_options();
+    std::vector<std::unique_ptr<CodegenBackend>> backends;
+    backends.push_back(std::make_unique<NativeEmitterBackend>(
+        &debug_options, &compiler_, &target_config));
+    backends.push_back(std::make_unique<BlockLevelEmitterBackend>(
+        &debug_options, &compiler_, compiler_.ShapeSizeBytesFunction(),
+        &target_config));
+    auto get_backends_fn =
+        [backends =
+             std::make_shared<std::vector<std::unique_ptr<CodegenBackend>>>(
+                 std::move(backends))]() mutable {
+          return std::move(*backends);
+        };
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<ConfigAssignerPass> pass,
+        ConfigAssignerPass::Create(
+            std::move(get_backends_fn), debug_options, stream_executor,
+            /*thread_pool=*/nullptr, &target_config,
+            /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
+            compiler_.ShapeSizeBytesFunction(), allocator_.get()));
+    return pass->Run(module, /*execution_threads=*/{}).status();
+  }
+
   se::StreamExecutor* stream_executor_;
   std::unique_ptr<se::DeviceAddressAllocator> allocator_;
   NVPTXCompiler compiler_;
 };
+
+// Returns whether the fusion named `name` was assigned to the block-level
+// emitter.
+bool IsAssignedToBlockLevelEmitter(const HloModule& module,
+                                   absl::string_view name) {
+  const HloInstruction* fusion =
+      module.entry_computation()->GetInstructionWithName(name);
+  CHECK(fusion != nullptr) << name;
+  absl::StatusOr<GpuBackendConfig> gpu_config =
+      fusion->backend_config<GpuBackendConfig>();
+  return gpu_config.ok() &&
+         gpu_config->fusion_backend_config().kind() == kTritonFusionKind &&
+         gpu_config->fusion_backend_config().has_block_level_fusion_config();
+}
 
 using AutotunerPassTest = ConfigAssignerPassTest;
 
@@ -261,7 +307,6 @@ TEST_F(ConfigAssignerPassTest, CublasGemmIsAutotuned) {
       std::unique_ptr<ConfigAssignerPass> pass,
       ConfigAssignerPass::Create(
           std::move(get_backends_fn), module->config().debug_options(),
-          target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config,
           /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -308,7 +353,6 @@ TEST_F(ConfigAssignerPassTest, CublasGemmIsAutotunedAndCached) {
         std::unique_ptr<ConfigAssignerPass> pass,
         ConfigAssignerPass::Create(
             std::move(get_backends_fn), module->config().debug_options(),
-            target_config.device_description.gpu_compute_capability(),
             stream_executor_, &thread_pool, &target_config,
             /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
             /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -356,7 +400,6 @@ TEST_F(ConfigAssignerPassTest, CublasGemmIsAutotunedAndCached) {
         std::unique_ptr<ConfigAssignerPass> pass2,
         ConfigAssignerPass::Create(
             std::move(get_backends_fn2), module_2->config().debug_options(),
-            target_config.device_description.gpu_compute_capability(),
             stream_executor_, &thread_pool, &target_config,
             /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
             /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -409,7 +452,6 @@ TEST_F(ConfigAssignerPassTest, CublasGemmIsAutotunedWithCacheOnly) {
         std::unique_ptr<ConfigAssignerPass> pass,
         ConfigAssignerPass::Create(
             std::move(get_backends_fn), module->config().debug_options(),
-            target_config.device_description.gpu_compute_capability(),
             stream_executor_, &thread_pool, &target_config,
             /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
             /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -442,7 +484,6 @@ TEST_F(ConfigAssignerPassTest, CublasGemmIsAutotunedWithCacheOnly) {
         std::unique_ptr<ConfigAssignerPass> pass2,
         ConfigAssignerPass::Create(
             std::move(get_backends_fn2), module_2->config().debug_options(),
-            target_config.device_description.gpu_compute_capability(),
             /*stream_executor=*/nullptr, &thread_pool, &target_config,
             /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
             /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -487,7 +528,6 @@ TEST_F(ConfigAssignerPassTest, DevicelessUsesDefaultConfigIfNoCache) {
       std::unique_ptr<ConfigAssignerPass> pass,
       ConfigAssignerPass::Create(
           std::move(get_backends_fn), module->config().debug_options(),
-          target_config.device_description.gpu_compute_capability(),
           /*stream_executor=*/nullptr, &thread_pool, &target_config,
           /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -529,7 +569,6 @@ TEST_F(ConfigAssignerPassTest, AutotuneLevel0UsesDefaultConfig) {
       std::unique_ptr<ConfigAssignerPass> pass,
       ConfigAssignerPass::Create(
           std::move(get_backends_fn), module->config().debug_options(),
-          target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config,
           /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -548,6 +587,59 @@ TEST_F(ConfigAssignerPassTest, AutotuneLevel0UsesDefaultConfig) {
   EXPECT_EQ(gpu_backend_config.gemm_backend_config().selected_algorithm(), 0);
   EXPECT_EQ(gpu_backend_config.gemm_backend_config().autotune_workspace_size(),
             80000);
+}
+
+// The slow loop transpose matches a pattern of GetDefaultBackend, the f32
+// reduction doesn't.
+constexpr absl::string_view kPolicyFusionsHlo = R"(
+HloModule m
+
+transpose {
+  p0 = f32[256,128,64]{2,1,0} parameter(0)
+  ROOT transpose = f32[64,128,256]{2,1,0} transpose(p0), dimensions={2,1,0}
+}
+
+add {
+  p0 = f32[] parameter(0)
+  p1 = f32[] parameter(1)
+  ROOT add = f32[] add(p0, p1)
+}
+
+fused_reduce {
+  p0 = f32[128,256]{1,0} parameter(0)
+  c0 = f32[] constant(0)
+  ROOT reduce = f32[128]{0} reduce(p0, c0), dimensions={1}, to_apply=add
+}
+
+ENTRY main {
+  p0 = f32[256,128,64]{2,1,0} parameter(0)
+  p1 = f32[128,256]{1,0} parameter(1)
+  transpose_fusion = f32[64,128,256]{2,1,0} fusion(p0), kind=kLoop,
+    calls=transpose
+  reduce_fusion = f32[128]{0} fusion(p1), kind=kInput, calls=fused_reduce
+  ROOT tuple = (f32[64,128,256]{2,1,0}, f32[128]{0}) tuple(transpose_fusion,
+    reduce_fusion)
+})";
+
+TEST_F(ConfigAssignerPassTest,
+       AutotuneLevel0PicksBlockLevelEmitterForPolicyFusions) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kPolicyFusionsHlo));
+  module->mutable_config().mutable_debug_options().set_xla_gpu_autotune_level(
+      0);
+  ASSERT_OK(RunWithEmitterBackends(module.get(), stream_executor_));
+  EXPECT_TRUE(IsAssignedToBlockLevelEmitter(*module, "transpose_fusion"));
+  EXPECT_FALSE(IsAssignedToBlockLevelEmitter(*module, "reduce_fusion"));
+}
+
+TEST_F(ConfigAssignerPassTest,
+       DevicelessPicksBlockLevelEmitterForPolicyFusions) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kPolicyFusionsHlo));
+  ASSERT_OK(RunWithEmitterBackends(module.get(),
+                                   /*stream_executor=*/nullptr));
+  EXPECT_TRUE(IsAssignedToBlockLevelEmitter(*module, "transpose_fusion"));
+  EXPECT_FALSE(IsAssignedToBlockLevelEmitter(*module, "reduce_fusion"));
 }
 
 TEST_F(ConfigAssignerPassTest, CublasGemmInNonDefaultStreamIsAutotuned) {
@@ -594,7 +686,6 @@ ENTRY %main (arg0: f32[100,100], arg1: f32[100,100]) -> f32[100,100] {
       std::unique_ptr<ConfigAssignerPass> pass,
       ConfigAssignerPass::Create(
           std::move(get_backends_fn), module->config().debug_options(),
-          target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config,
           /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -733,20 +824,23 @@ ENTRY main {
   DebugOptions debug_options = GetDebugOptionsForTest();
 
   debug_options.set_xla_gpu_fusion_autotune_top_k_configs(1);
-  EXPECT_FALSE(
-      GetShouldAssignConfigToInstructionFn(debug_options, gpu_version)(fusion));
+  EXPECT_FALSE(GetShouldAssignConfigToInstructionFn(
+      debug_options,
+      GetEnabledBackendTypes(debug_options, gpu_version))(fusion));
 
   debug_options.set_xla_gpu_fusion_autotune_top_k_configs(4);
-  EXPECT_TRUE(
-      GetShouldAssignConfigToInstructionFn(debug_options, gpu_version)(fusion));
+  EXPECT_TRUE(GetShouldAssignConfigToInstructionFn(
+      debug_options,
+      GetEnabledBackendTypes(debug_options, gpu_version))(fusion));
 
   // Without the block-level emitter, no backend could keep the fusion as a
   // Triton fusion, so it keeps its config.
   debug_options.clear_xla_gpu_experimental_autotune_backends();
   debug_options.add_xla_gpu_experimental_autotune_backends(
       autotuner::Backend::NATIVE_EMITTER);
-  EXPECT_FALSE(
-      GetShouldAssignConfigToInstructionFn(debug_options, gpu_version)(fusion));
+  EXPECT_FALSE(GetShouldAssignConfigToInstructionFn(
+      debug_options,
+      GetEnabledBackendTypes(debug_options, gpu_version))(fusion));
 }
 
 TEST_F(AutotunerFlagsTest, GetEnabledBackendsRespectsDeterminism) {
@@ -760,7 +854,10 @@ TEST_F(AutotunerFlagsTest, GetEnabledBackendsRespectsDeterminism) {
   MlirContextPool mlir_context_pool(CreateMlirContext);
 
   auto get_enabled_backends = [&]() {
-    return ConfigAssignerPass::GetEnabledBackends(
+    return ConfigAssignerPass::CreateBackends(
+        GetEnabledBackendTypes(
+            debug_options,
+            target_config.device_description.gpu_compute_capability()),
         stream_executor_, allocator_.get(), &target_config, &alias_info,
         debug_options, &mlir_context,
         /*shape_size_fn=*/[](const Shape&) { return 0; }, &compiler_,
@@ -772,9 +869,15 @@ TEST_F(AutotunerFlagsTest, GetEnabledBackendsRespectsDeterminism) {
                        get_enabled_backends());
   for (const auto& backend : backends) {
     EXPECT_NE(backend->backend(), autotuner::Backend::TRITON);
-    EXPECT_NE(backend->backend(), autotuner::Backend::NATIVE_EMITTER);
-    EXPECT_NE(backend->backend(), autotuner::Backend::BLOCK_LEVEL_EMITTER);
   }
+  // The emitter backends stay enabled to assign configs to the fusions that
+  // GetDefaultBackend matches. This doesn't affect determinism: without online
+  // autotuning, configs don't depend on measurements.
+  EXPECT_THAT(GetEnabledBackendTypes(
+                  debug_options,
+                  target_config.device_description.gpu_compute_capability()),
+              IsSupersetOf({autotuner::Backend::NATIVE_EMITTER,
+                            autotuner::Backend::BLOCK_LEVEL_EMITTER}));
 
   debug_options.set_xla_gpu_experimental_deterministic_ops_triton(
       DebugOptions::DETERMINISTIC_OPS_TRITON_MODE_UNCHECKED);
@@ -784,8 +887,6 @@ TEST_F(AutotunerFlagsTest, GetEnabledBackendsRespectsDeterminism) {
     if (backend->backend() == autotuner::Backend::TRITON) {
       has_triton = true;
     }
-    EXPECT_NE(backend->backend(), autotuner::Backend::NATIVE_EMITTER);
-    EXPECT_NE(backend->backend(), autotuner::Backend::BLOCK_LEVEL_EMITTER);
   }
   EXPECT_TRUE(has_triton);
 }
@@ -801,13 +902,17 @@ TEST_F(AutotunerFlagsTest, GetEnabledBackendsRespectsTensorIrFlag) {
     DebugOptions debug_options = GetDebugOptionsForTest();
     debug_options.set_xla_gpu_experimental_enable_tensor_ir(false);
 
-    ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<CodegenBackend>> backends,
-                         ConfigAssignerPass::GetEnabledBackends(
-                             stream_executor_, allocator_.get(), &target_config,
-                             &alias_info, debug_options, &mlir_context,
-                             /*shape_size_fn=*/[](const Shape&) { return 0; },
-                             &compiler_, stream_executor_->GetPlatform()->id(),
-                             /*thread_pool=*/nullptr, &mlir_context_pool));
+    ASSERT_OK_AND_ASSIGN(
+        std::vector<std::unique_ptr<CodegenBackend>> backends,
+        ConfigAssignerPass::CreateBackends(
+            GetEnabledBackendTypes(
+                debug_options,
+                target_config.device_description.gpu_compute_capability()),
+            stream_executor_, allocator_.get(), &target_config, &alias_info,
+            debug_options, &mlir_context,
+            /*shape_size_fn=*/[](const Shape&) { return 0; }, &compiler_,
+            stream_executor_->GetPlatform()->id(),
+            /*thread_pool=*/nullptr, &mlir_context_pool));
 
     for (const auto& backend : backends) {
       EXPECT_NE(backend->backend(), autotuner::Backend::TENSOR_IR);
@@ -818,13 +923,17 @@ TEST_F(AutotunerFlagsTest, GetEnabledBackendsRespectsTensorIrFlag) {
     DebugOptions debug_options = GetDebugOptionsForTest();
     debug_options.set_xla_gpu_experimental_enable_tensor_ir(true);
 
-    ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<CodegenBackend>> backends,
-                         ConfigAssignerPass::GetEnabledBackends(
-                             stream_executor_, allocator_.get(), &target_config,
-                             &alias_info, debug_options, &mlir_context,
-                             /*shape_size_fn=*/[](const Shape&) { return 0; },
-                             &compiler_, stream_executor_->GetPlatform()->id(),
-                             /*thread_pool=*/nullptr, &mlir_context_pool));
+    ASSERT_OK_AND_ASSIGN(
+        std::vector<std::unique_ptr<CodegenBackend>> backends,
+        ConfigAssignerPass::CreateBackends(
+            GetEnabledBackendTypes(
+                debug_options,
+                target_config.device_description.gpu_compute_capability()),
+            stream_executor_, allocator_.get(), &target_config, &alias_info,
+            debug_options, &mlir_context,
+            /*shape_size_fn=*/[](const Shape&) { return 0; }, &compiler_,
+            stream_executor_->GetPlatform()->id(),
+            /*thread_pool=*/nullptr, &mlir_context_pool));
 
     bool has_tensor_ir = false;
     for (const auto& backend : backends) {
@@ -850,7 +959,10 @@ TEST_F(AutotunerFlagsTest, GetEnabledBackendsTreatsEmptyListLikeDefaultList) {
       [&]() -> absl::StatusOr<std::vector<autotuner::Backend>> {
     ABSL_ASSIGN_OR_RETURN(
         std::vector<std::unique_ptr<CodegenBackend>> backends,
-        ConfigAssignerPass::GetEnabledBackends(
+        ConfigAssignerPass::CreateBackends(
+            GetEnabledBackendTypes(
+                debug_options,
+                target_config.device_description.gpu_compute_capability()),
             stream_executor_, allocator_.get(), &target_config, &alias_info,
             debug_options, &mlir_context,
             /*shape_size_fn=*/[](const Shape&) { return 0; }, &compiler_,
@@ -913,7 +1025,6 @@ TEST_F(ConfigAssignerPassTest, CublasLtSelectFirstConfig) {
       std::unique_ptr<ConfigAssignerPass> pass,
       ConfigAssignerPass::Create(
           std::move(get_backends_fn), module->config().debug_options(),
-          target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config,
           /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -1002,7 +1113,6 @@ TEST_F(ConfigAssignerPassTest, TritonSelectFirstConfig) {
       std::unique_ptr<ConfigAssignerPass> pass,
       ConfigAssignerPass::Create(
           std::move(get_backends_fn), module->config().debug_options(),
-          target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config, &alias_info,
           &mlir_context,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -1080,7 +1190,6 @@ TEST_F(ConfigAssignerPassTest, CudnnSelectFirstConfig) {
       std::unique_ptr<ConfigAssignerPass> pass,
       ConfigAssignerPass::Create(
           std::move(get_backends_fn), module->config().debug_options(),
-          target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config,
           /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -1178,7 +1287,6 @@ TEST_F(ConfigAssignerPassTest, CudnnNonGemmFusionSelectedForUntaggedFusion) {
       std::unique_ptr<ConfigAssignerPass> pass,
       ConfigAssignerPass::Create(
           std::move(get_backends_fn), module->config().debug_options(),
-          target_config.device_description.gpu_compute_capability(),
           stream_executor_, &thread_pool, &target_config,
           /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
           /*shape_size_fn=*/[](const Shape& shape) { return 0; },
@@ -1400,7 +1508,6 @@ class DeterministicCacheIsolationTest
         std::unique_ptr<ConfigAssignerPass> pass,
         ConfigAssignerPass::Create(
             std::move(get_backends_fn), module->config().debug_options(),
-            target_config.device_description.gpu_compute_capability(),
             stream_executor_, thread_pool, &target_config,
             /*alias_info=*/nullptr, /*mlir_context=*/nullptr,
             /*shape_size_fn=*/[](const Shape& shape) { return 0; },
