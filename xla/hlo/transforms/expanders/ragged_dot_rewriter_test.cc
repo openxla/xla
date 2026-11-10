@@ -81,12 +81,12 @@ TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotFusion) {
                       lhs_ragged_dims={0}, rhs_group_dims={0}
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed, RaggedDotRewriter(GetCudaComputeCapability(),
                                       gpu::kMinCudnnVersionForRaggedDotFusion)
                         .Run(module.get()));
@@ -106,14 +106,14 @@ TEST_F(RaggedDotRewriterTest, RewriteIfPreAmpereForRaggedDotFusion) {
                       lhs_ragged_dims={0}, rhs_group_dims={0}
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
   // Volta is pre-Ampere, so even with a recent cuDNN the fusion gate must
   // fail and the rewriter must fall back to expansion.
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(
           se::CudaComputeCapability{se::CudaComputeCapability::kVolta, 0},
@@ -135,12 +135,12 @@ TEST_F(RaggedDotRewriterTest, RewriteIfCudnnVersionTooOldForRaggedDotFusion) {
                       lhs_ragged_dims={0}, rhs_group_dims={0}
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(GetCudaComputeCapability(), se::dnn::VersionInfo{9, 21})
           .Run(module.get()));
@@ -221,12 +221,12 @@ TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotFusionRocm) {
                       lhs_ragged_dims={0}, rhs_group_dims={0}
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
   module->mutable_config()
       .mutable_debug_options()
       .set_xla_gpu_experimental_use_ragged_dot_fusion(true);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(GetRocmComputeCapability()).Run(module.get()));
   EXPECT_FALSE(changed);
@@ -245,12 +245,12 @@ TEST_F(RaggedDotRewriterTest, DontRewriteIfUsingRaggedDotGroupedGemm) {
                       lhs_ragged_dims={0}, rhs_group_dims={0}
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
   auto& debug_option = module->mutable_config().mutable_debug_options();
   debug_option.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
   debug_option.set_xla_gpu_enable_cublaslt(true);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(GetRocmComputeCapability()).Run(module.get()));
   EXPECT_FALSE(changed);
@@ -270,12 +270,12 @@ TEST_F(RaggedDotRewriterTest,
                       lhs_ragged_dims={0}, rhs_group_dims={0}
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
   auto& debug_option = module->mutable_config().mutable_debug_options();
   debug_option.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
   debug_option.set_xla_gpu_enable_cublaslt(true);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(GetRocmComputeCapability()).Run(module.get()));
   EXPECT_TRUE(changed);
@@ -295,12 +295,12 @@ TEST_F(RaggedDotRewriterTest,
                       lhs_ragged_dims={0}, rhs_group_dims={0}
   })";
 
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(module_string));
   auto& debug_option = module->mutable_config().mutable_debug_options();
   debug_option.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
   debug_option.set_xla_gpu_enable_cublaslt(true);
-  TF_ASSERT_OK_AND_ASSIGN(
+  ASSERT_OK_AND_ASSIGN(
       bool changed,
       RaggedDotRewriter(GetCudaComputeCapability()).Run(module.get()));
   EXPECT_TRUE(changed);

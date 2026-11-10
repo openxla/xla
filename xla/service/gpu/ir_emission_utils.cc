@@ -42,8 +42,6 @@ limitations under the License.
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/regexp.h"
 #include "xla/codegen/ir_emission_utils.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -63,9 +61,15 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
 #include "xla/util.h"
+#include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/regexp.h"
 
 namespace xla {
 namespace gpu {
@@ -192,8 +196,9 @@ bool IsTritonSupportedRaggedDot(
       case F16:
       case BF16:
       case F32:
-      case F64:
         return true;
+      case F64:
+        return cuda_cc != nullptr;
       case F8E5M2:
       case F8E4M3FN:
         if (cuda_cc != nullptr) {
@@ -208,9 +213,42 @@ bool IsTritonSupportedRaggedDot(
     }
   };
 
-  return is_supported_element_type(instr.operand(0)->shape().element_type()) &&
-         is_supported_element_type(instr.operand(1)->shape().element_type()) &&
-         is_supported_element_type(instr.shape().element_type());
+  const PrimitiveType lhs_type = instr.operand(0)->shape().element_type();
+  const PrimitiveType rhs_type = instr.operand(1)->shape().element_type();
+  if (!is_supported_element_type(lhs_type) ||
+      !is_supported_element_type(rhs_type) ||
+      !is_supported_element_type(instr.shape().element_type())) {
+    return false;
+  }
+
+  // Triton lowers the dot with a single operand type, so the two operands must
+  // agree apart from the mixed-FP8 pairs.
+  auto types_are = [&](PrimitiveType first, PrimitiveType second) {
+    return (lhs_type == first && rhs_type == second) ||
+           (lhs_type == second && rhs_type == first);
+  };
+  if (lhs_type != rhs_type && !types_are(F8E5M2, F8E4M3FN) &&
+      !(rocm_cc != nullptr && types_are(F8E5M2FNUZ, F8E4M3FNUZ))) {
+    return false;
+  }
+
+  // An F64 dot accumulates in F64 and cannot cast the result down.
+  if (lhs_type == F64 && instr.shape().element_type() != F64) {
+    return false;
+  }
+
+  // group_sizes is an index operand: the emitter index-casts it with sign
+  // extension (ExtractGroupSizeScalar).
+  // Mirrors the index-operand rule of IsTritonSupportedDynamicSlice.
+  switch (instr.operand(2)->shape().element_type()) {
+    case S8:
+    case S16:
+    case S32:
+    case S64:
+      return true;
+    default:
+      return false;
+  }
 }
 
 bool SupportsCudnnRaggedDotWgrad(
