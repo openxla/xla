@@ -372,6 +372,66 @@ ENTRY main {
   CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-1, 1e-1});
 }
 
+// Triton has no F64 dot lowering on ROCm, so IsTritonSupportedRaggedDot takes
+// the fusion on CUDA and leaves the ragged-dot for RaggedDotRewriter on ROCm.
+TEST_F(TritonRaggedDotTest, Fp64BalancedGroups) {
+  const char* hlo_text = R"(
+HloModule TritonRaggedDotFp64Balanced
+
+ENTRY main {
+  lhs = f64[64,16] parameter(0)
+  rhs = f64[2,16,8] parameter(1)
+  gs  = s32[2] constant({32, 32})
+  ROOT rd = f64[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  if (IsCuda()) {
+    CheckHloAndMaybeRun(hlo_text, ErrorSpec{1e-6, 1e-6});
+    return;
+  }
+  MatchOptimizedHlo(hlo_text, R"(
+    ; CHECK-NOT: "__triton"
+  )");
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-6, 1e-6}));
+}
+
+// Shapes IsTritonSupportedRaggedDot rejects, so RaggedDotRewriter expands them
+// into dense dots instead.
+TEST_F(TritonRaggedDotTest, MixedOperandTypes) {
+  const char* hlo_text = R"(
+HloModule TritonRaggedDotMixedOperandTypes
+
+ENTRY main {
+  lhs = f32[64,16] parameter(0)
+  rhs = f16[2,16,8] parameter(1)
+  gs  = s32[2] constant({32, 32})
+  ROOT rd = f32[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
+}
+
+// Unsigned group_sizes: the emitter index-casts them with sign extension.
+TEST_F(TritonRaggedDotTest, UnsignedGroupSizes) {
+  const char* hlo_text = R"(
+HloModule TritonRaggedDotUnsignedGroupSizes
+
+ENTRY main {
+  lhs = bf16[64,16] parameter(0)
+  rhs = bf16[2,16,8] parameter(1)
+  gs  = u32[2] constant({32, 32})
+  ROOT rd = bf16[64,8] ragged-dot(lhs, rhs, gs),
+      lhs_contracting_dims={1}, rhs_contracting_dims={1},
+      lhs_ragged_dims={0}, rhs_group_dims={0}
+}
+)";
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-2, 1e-2}));
+}
+
 // ============================================================================
 // Layout tests (analogous to GroupedGemmRewriteTest layout tests)
 // ============================================================================
