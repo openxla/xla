@@ -368,15 +368,9 @@ class ConcreteSharding : public RTTIExtends<ConcreteSharding, Sharding> {
       DeviceListRef devices, MemoryKind memory_kind, DynamicShape dynamic_shape,
       std::vector<DynamicShape> shard_dynamic_shapes);
 
-  bool has_dynamic_shape() const {
-    DCHECK(this);
-    return sharding_spec_->has_dynamic_shape();
-  }
+  bool has_dynamic_shape() const { return sharding_spec_->has_dynamic_shape(); }
 
-  bool has_static_shape() const {
-    DCHECK(this);
-    return sharding_spec_->has_static_shape();
-  }
+  bool has_static_shape() const { return sharding_spec_->has_static_shape(); }
 
   const Shape& shape() const {
     DCHECK(has_static_shape());
@@ -389,18 +383,15 @@ class ConcreteSharding : public RTTIExtends<ConcreteSharding, Sharding> {
   }
 
   const std::vector<Shape>& shard_shapes() const {
-    DCHECK(this);
     return sharding_spec_->shard_shapes();
   }
 
   const std::vector<DynamicShape>& shard_dynamic_shapes() const {
-    DCHECK(this);
     return sharding_spec_->shard_dynamic_shapes();
   }
 
   const std::optional<std::vector<xla::ifrt::IndexDomain>>& index_domains()
       const {
-    DCHECK(this);
     return sharding_spec_->index_domains();
   }
 
@@ -461,14 +452,8 @@ class ConcreteEvenSharding
       DeviceListRef devices, MemoryKind memory_kind, Shape shape,
       Shape shard_shape, bool is_fully_replicated = false);
 
-  Shape shape() const {
-    DCHECK(this);
-    return sharding_spec_->shape();
-  }
-  const Shape& shard_shape() const {
-    DCHECK(this);
-    return sharding_spec_->shard_shape();
-  }
+  Shape shape() const { return sharding_spec_->shape(); }
+  const Shape& shard_shape() const { return sharding_spec_->shard_shape(); }
 
   // Sharding implementation.
 

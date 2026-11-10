@@ -542,7 +542,6 @@ PjRtExecutable::PjRtExecutable(
 }
 
 absl::StatusOr<std::optional<std::string>> PjRtExecutable::Fingerprint() const {
-  DCHECK(this);
   return pjrt_executable_->FingerprintExecutable();
 }
 
@@ -885,7 +884,6 @@ PjRtExecutable::CommonMetadata::Deserialize(
 }
 
 absl::StatusOr<std::string> PjRtExecutable::Serialize() const {
-  DCHECK(this);
   return common_metadata_.Serialize(pjrt_executable_.get());
 }
 
@@ -1019,7 +1017,6 @@ absl::StatusOr<PjRtLoadedExecutable::ExecuteResult>
 PjRtLoadedExecutable::Execute(absl::Span<ArrayRef> args,
                               const ExecuteOptions& options,
                               std::optional<DeviceListRef> devices) {
-  DCHECK(this);
   // TODO(hyeontaek): Check input sharding consistency.
 
   // Convert an Array vector into 2-level PjRtBuffer vectors, optionally copying
@@ -1325,7 +1322,6 @@ PjRtLoadedExecutable::ExecuteBundle(absl::Span<BundleRef> args,
 
 absl::StatusOr<std::optional<std::string>> PjRtLoadedExecutable::Fingerprint()
     const {
-  DCHECK(this);
   absl::StatusOr<std::string> fingerprint =
       pjrt_loaded_executable_->FingerprintExecutable();
   if (fingerprint.ok()) {
@@ -1340,7 +1336,6 @@ absl::StatusOr<std::optional<std::string>> PjRtLoadedExecutable::Fingerprint()
 
 absl::StatusOr<std::shared_ptr<const ExecutableVersion>>
 PjRtLoadedExecutable::executable_version() const {
-  DCHECK(this);
   ABSL_ASSIGN_OR_RETURN(
       std::unique_ptr<XlaExecutableVersion> xla_executable_version,
       GetXlaExecutableVersion(pjrt_loaded_executable_->GetExecutable()));
@@ -1349,7 +1344,6 @@ PjRtLoadedExecutable::executable_version() const {
 }
 
 absl::StatusOr<std::string> PjRtLoadedExecutable::Serialize() const {
-  DCHECK(this);
   return common_metadata_.Serialize(pjrt_loaded_executable_->GetExecutable());
 }
 
