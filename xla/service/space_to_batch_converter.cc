@@ -984,6 +984,68 @@ bool IsTrivialElementwise(HloInstruction* hlo) {
   return hlo->IsElementwise();
 }
 
+// Returns true when `conv` is a 2D backward-weight convolution with small
+// channel counts (`<= max_feature_size`) whose window and spatial extents match
+// the strided/transposed backward-weight pattern handled by the TPU
+// spatial-minor convolution emitter (`TpuSpatialMinorConvRewriter`).
+bool IsSpatialMinorBackpropFilterCandidate(const HloInstruction* conv,
+                                           int64_t max_feature_size) {
+  if (max_feature_size <= 0 || conv->feature_group_count() != 1 ||
+      conv->batch_group_count() != 1) {
+    return false;
+  }
+  const auto& dnums = conv->convolution_dimension_numbers();
+  const Window& window = conv->window();
+  if (dnums.input_spatial_dimensions_size() != 2 ||
+      dnums.kernel_spatial_dimensions_size() != 2 ||
+      window.dimensions_size() != 2) {
+    return false;
+  }
+  const Shape& lhs_shape = conv->operand(0)->shape();
+  const Shape& rhs_shape = conv->operand(1)->shape();
+  const int64_t batch = lhs_shape.dimensions(dnums.input_batch_dimension());
+  const int64_t input_feature =
+      lhs_shape.dimensions(dnums.input_feature_dimension());
+  const int64_t output_feature =
+      conv->shape().dimensions(dnums.output_feature_dimension());
+  if (batch > max_feature_size || input_feature > max_feature_size ||
+      output_feature > max_feature_size) {
+    return false;
+  }
+
+  constexpr int64_t kMinLhsSpatialMinorExtent = 128;
+  constexpr int64_t kMinRhsSpatialMinorExtent = 8;
+  bool has_viable_minor_spatial_dim = false;
+  int64_t num_reversed = 0;
+  for (int64_t s = 0; s < 2; ++s) {
+    const WindowDimension& wd = window.dimensions(s);
+    const int64_t lhs_spatial =
+        lhs_shape.dimensions(dnums.input_spatial_dimensions(s));
+    const int64_t rhs_spatial =
+        rhs_shape.dimensions(dnums.kernel_spatial_dimensions(s));
+    if (wd.stride() != 1 || wd.base_dilation() != 1 || wd.padding_low() < 0 ||
+        wd.padding_low() > 1 || wd.padding_high() < 0 ||
+        wd.padding_high() > 1 || wd.size() != rhs_spatial) {
+      return false;
+    }
+    const int64_t dilation = wd.window_dilation();
+    const bool dilation_ok =
+        dilation == 2 || (s == 1 && (dilation == 1 || dilation == 4));
+    if (!dilation_ok) {
+      return false;
+    }
+    if (lhs_spatial >= kMinLhsSpatialMinorExtent &&
+        rhs_spatial >= kMinRhsSpatialMinorExtent && rhs_spatial > batch) {
+      has_viable_minor_spatial_dim = true;
+    }
+    num_reversed += wd.window_reversal() ? 1 : 0;
+  }
+  if (!has_viable_minor_spatial_dim) {
+    return false;
+  }
+  return num_reversed != 1 || !window.dimensions(1).window_reversal();
+}
+
 bool ConvolutionVisitor::CanPropagate(HloInstruction* consumer,
                                       HloInstruction* producer) {
   if (IsTrivialElementwise(consumer)) {
@@ -1195,6 +1257,12 @@ bool ConvolutionVisitor::CanPropagate(HloInstruction* consumer,
     }
 
     if (!IsThisBackPropFilterConv(consumer)) {
+      return false;
+    }
+
+    if (IsSpatialMinorBackpropFilterCandidate(
+            consumer,
+            ctrl_.disable_backprop_filter_propagation_max_feature_size)) {
       return false;
     }
     // Check for space-to-depth readiness here. Note this is not done in
