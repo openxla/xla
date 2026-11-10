@@ -589,6 +589,7 @@ bool IsUniversallyLoopFusible(const HloInstruction& instr) {
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kGather:
+    case HloOpcode::kMap:
     case HloOpcode::kPad:
     case HloOpcode::kReduceWindow:
     case HloOpcode::kReshape:
@@ -1045,6 +1046,7 @@ bool MayCausePerformanceDropIfUnrolled(const HloFusionAdaptor& fusion) {
       }
       case HloOpcode::kSort:
       case HloOpcode::kDot:
+      case HloOpcode::kMap:
         return true;
       case HloOpcode::kConcatenate:
         return node.instruction().operand_count() >
@@ -1069,16 +1071,22 @@ std::vector<HloComputation*> GetFusibleComputations(
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   auto result = module.MakeComputationPostOrder(execution_threads);
   absl::flat_hash_set<const HloComputation*> computations_not_to_fuse;
-  for (const auto* computation : result) {
+  // Iterate in reverse post-order (callers before callees) so non-fusible
+  // computations (such as a `map` body) propagate exclusion transitively to any
+  // nested `while` or `conditional` computations inside them.
+  for (auto it = result.rbegin(); it != result.rend(); ++it) {
+    const HloComputation* computation = *it;
+    const bool in_non_fusible = computations_not_to_fuse.contains(computation);
     for (const auto* instr : computation->instructions()) {
-      // Don't fuse within called computations, unless they are for control
-      // flow. See also fusion_wrapper.cc, which does the same.
+      // Don't fuse within called computations, unless they are for top-level
+      // control flow. See also fusion_wrapper_base.cc, which does the same.
       if (HloInstruction::MightHaveCalledComputations(instr->opcode()) &&
-          !IsStreamAnnotatedComputation(instr) &&
-          instr->opcode() != HloOpcode::kWhile &&
-          instr->opcode() != HloOpcode::kConditional &&
-          // No need to add fusion computations, just check the flag.
-          instr->opcode() != HloOpcode::kFusion) {
+          (in_non_fusible ||
+           (!IsStreamAnnotatedComputation(instr) &&
+            instr->opcode() != HloOpcode::kWhile &&
+            instr->opcode() != HloOpcode::kConditional &&
+            // No need to add fusion computations, just check the flag.
+            instr->opcode() != HloOpcode::kFusion))) {
         for (auto* called : instr->called_computations()) {
           computations_not_to_fuse.insert(called);
         }

@@ -39,10 +39,15 @@ mlir::Type PrimitiveTypeToMlirType(PrimitiveType type, mlir::OpBuilder& b);
 mlir::Type PrimitiveTypeToMlirTypeWithSign(PrimitiveType type,
                                            mlir::OpBuilder& b);
 
-// If `shape` is a tuple, returns the converted tuple shapes. Otherwise returns
-// just the converted shape. Nested tuples are not supported.
+// If `shape` is a tuple, returns the converted leaf tensor types; otherwise
+// returns just the converted tensor type.
 llvm::SmallVector<mlir::Type> ShapeToMlirTypes(const Shape& shape,
                                                mlir::OpBuilder& b);
+
+// Returns the flattened MLIR scalar element types of all array leaves in
+// `shape` (for example, `((s32[], f32[]), ())` -> `{i32, f32}`).
+llvm::SmallVector<mlir::Type> ShapeToElementTypes(const Shape& shape,
+                                                  mlir::OpBuilder& b);
 
 }  // namespace emitters
 }  // namespace xla

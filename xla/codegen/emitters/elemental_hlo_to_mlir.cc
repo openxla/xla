@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
@@ -89,6 +90,7 @@ limitations under the License.
 #include "xla/mlir_hlo/mhlo/transforms/map_mhlo_to_scalar_op.h"
 #include "xla/primitive_util.h"
 #include "xla/service/algorithm_util.h"
+#include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/xla_data.pb.h"
@@ -176,10 +178,25 @@ static auto& kUnsupportedOps =
                                    HloOpcode::kSort,
                                    HloOpcode::kTopK,
                                    HloOpcode::kTriangularSolve,
-                                   HloOpcode::kWhile,
-                                   HloOpcode::kConditional,
-                                   HloOpcode::kStochasticConvert,
-                                   HloOpcode::kCall};
+                                   HloOpcode::kStochasticConvert};
+
+// Checks that `shape` is a rank-0 scalar or a (possibly nested or empty) tuple
+// of rank-0 scalars.
+absl::Status VerifyScalarLeaves(const Shape& shape, absl::string_view context) {
+  bool all_scalar = true;
+  ShapeUtil::ForEachLeafShape(
+      shape, [&](const Shape& subshape, const ShapeIndex&) {
+        if (!subshape.IsArray() || !ShapeUtil::IsScalar(subshape)) {
+          all_scalar = false;
+        }
+      });
+  if (!all_scalar) {
+    return absl::UnimplementedError(
+        absl::StrCat("Elemental emitter requires scalar leaf shapes for ",
+                     context, "; got ", shape.ToString()));
+  }
+  return absl::OkStatus();
+}
 
 absl::StatusOr<Value> GetSingleOperandValue(
     const OperandProvider& operand_provider, const HloInstruction* instr,
@@ -635,13 +652,211 @@ absl::StatusOr<SmallVector<Value, 1>> EmitParameter(const HloInstruction* instr,
                                                     mlir::func::FuncOp this_fn,
                                                     ValueRange indices,
                                                     ImplicitLocOpBuilder& b) {
-  Value value = this_fn.getArgument(instr->parameter_number());
-  if (mlir::isa<mlir::TensorType>(value.getType())) {
-    value = mlir::tensor::ExtractOp::create(b, value, indices);
-  } else {
-    TF_RET_CHECK(indices.empty());
+  // Each HLO parameter contributes `GetLeafCount(shape)` consecutive MLIR
+  // arguments (e.g. `p0 = (s32[], f32[]), p1 = f64[]` -> 3 arguments). Slice
+  // out the arguments belonging to `parameter_number()`.
+  const HloComputation* computation = instr->parent();
+  int64_t offset = 0;
+  for (int64_t i = 0; i < instr->parameter_number(); ++i) {
+    offset +=
+        ShapeUtil::GetLeafCount(computation->parameter_instruction(i)->shape());
   }
-  return {{value}};
+  int64_t leaf_count = ShapeUtil::GetLeafCount(instr->shape());
+  auto args = this_fn.getArguments().slice(offset, leaf_count);
+  if (computation->IsFusionComputation() || computation->IsEntryComputation()) {
+    SmallVector<Value, 1> results;
+    results.reserve(leaf_count);
+    for (Value arg : args) {
+      if (mlir::isa<mlir::TensorType>(arg.getType())) {
+        arg = mlir::tensor::ExtractOp::create(b, arg, indices);
+      } else {
+        TF_RET_CHECK(indices.empty());
+      }
+      results.push_back(arg);
+    }
+    return results;
+  }
+  ABSL_RETURN_IF_ERROR(
+      VerifyScalarLeaves(instr->shape(), instr->ToShortString()));
+  TF_RET_CHECK(indices.empty());
+  return SmallVector<Value, 1>(args.begin(), args.end());
+}
+
+// Lowers a scalar-leaf HLO `call` to `xla.pure_call` on the callee's root
+// subgraph function, passing flattened scalar leaf arguments.
+absl::StatusOr<SmallVector<Value, 1>> EmitCall(
+    const HloInstruction* instr, ValueRange indices,
+    const OperandProvider& operand_provider,
+    const CallTargetProvider& call_target_provider, ImplicitLocOpBuilder& b) {
+  ABSL_RETURN_IF_ERROR(
+      VerifyScalarLeaves(instr->shape(), instr->ToShortString()));
+  TF_RET_CHECK(indices.empty());
+  SmallVector<Value> call_args;
+  for (int i = 0; i < instr->operand_count(); ++i) {
+    ABSL_RETURN_IF_ERROR(
+        VerifyScalarLeaves(instr->operand(i)->shape(), instr->ToShortString()));
+    ABSL_ASSIGN_OR_RETURN(auto op_vals, operand_provider(instr, i, {}));
+    call_args.append(op_vals.begin(), op_vals.end());
+  }
+  auto callee = call_target_provider(instr->to_apply()->root_instruction());
+  return PureCallOp::create(b, callee, call_args).getResults();
+}
+
+// Lowers a scalar-leaf HLO `while` to `scf.while` carrying the flattened scalar
+// leaf values across its `before` (condition) and `after` (body) regions.
+absl::StatusOr<SmallVector<Value, 1>> EmitWhile(
+    const HloInstruction* instr, ValueRange indices,
+    const OperandProvider& operand_provider,
+    const CallTargetProvider& call_target_provider, ImplicitLocOpBuilder& b) {
+  ABSL_RETURN_IF_ERROR(
+      VerifyScalarLeaves(instr->shape(), instr->ToShortString()));
+  ABSL_RETURN_IF_ERROR(
+      VerifyScalarLeaves(instr->operand(0)->shape(), instr->ToShortString()));
+  TF_RET_CHECK(indices.empty());
+
+  ABSL_ASSIGN_OR_RETURN(auto init_values, operand_provider(instr, 0, indices));
+  SmallVector<mlir::Type> state_types;
+  state_types.reserve(init_values.size());
+  for (Value v : init_values) {
+    state_types.push_back(v.getType());
+  }
+
+  auto while_op = scf::WhileOp::create(b, state_types, init_values);
+  {
+    OpBuilder::InsertionGuard guard(b);
+    mlir::Block* before_block = b.createBlock(&while_op.getBefore());
+    for (mlir::Type ty : state_types) {
+      before_block->addArgument(ty, b.getLoc());
+    }
+    b.setInsertionPointToStart(before_block);
+    auto cond_fn =
+        call_target_provider(instr->while_condition()->root_instruction());
+    auto cond_results =
+        PureCallOp::create(b, cond_fn, before_block->getArguments())
+            .getResults();
+    TF_RET_CHECK(cond_results.size() == 1);
+    Value cond_val = cond_results[0];
+    // XLA represents `PRED` as `i8` on function boundaries; convert to `i1`.
+    if (!cond_val.getType().isInteger(1)) {
+      Value zero = arith::ConstantIntOp::create(b, cond_val.getType(), 0);
+      cond_val =
+          arith::CmpIOp::create(b, arith::CmpIPredicate::ne, cond_val, zero);
+    }
+    scf::ConditionOp::create(b, cond_val, before_block->getArguments());
+  }
+  {
+    OpBuilder::InsertionGuard guard(b);
+    mlir::Block* after_block = b.createBlock(&while_op.getAfter());
+    for (mlir::Type ty : state_types) {
+      after_block->addArgument(ty, b.getLoc());
+    }
+    b.setInsertionPointToStart(after_block);
+    auto body_fn =
+        call_target_provider(instr->while_body()->root_instruction());
+    auto body_results =
+        PureCallOp::create(b, body_fn, after_block->getArguments())
+            .getResults();
+    scf::YieldOp::create(b, body_results);
+  }
+  return SmallVector<Value, 1>(while_op.getResults());
+}
+
+// Lowers a scalar-leaf HLO `conditional` to `scf.if` (for `PRED` selectors) or
+// `scf.index_switch` (for integer branch indices, placing the last branch in
+// `default` to match HLO's out-of-range fallback semantics).
+absl::StatusOr<SmallVector<Value, 1>> EmitConditional(
+    const HloInstruction* instr, ValueRange indices,
+    const OperandProvider& operand_provider,
+    const CallTargetProvider& call_target_provider, ImplicitLocOpBuilder& b) {
+  ABSL_RETURN_IF_ERROR(
+      VerifyScalarLeaves(instr->shape(), instr->ToShortString()));
+  TF_RET_CHECK(indices.empty());
+  for (int i = 0; i < instr->operand_count(); ++i) {
+    ABSL_RETURN_IF_ERROR(
+        VerifyScalarLeaves(instr->operand(i)->shape(), instr->ToShortString()));
+  }
+
+  SmallVector<mlir::Type> result_types = ShapeToElementTypes(instr->shape(), b);
+
+  ABSL_ASSIGN_OR_RETURN(Value selector,
+                        GetSingleOperandValue(operand_provider, instr, 0, {}));
+
+  const int num_branches = instr->branch_count();
+  SmallVector<SmallVector<Value>> branch_operands(num_branches);
+  for (int j = 0; j < num_branches; ++j) {
+    ABSL_ASSIGN_OR_RETURN(branch_operands[j],
+                          operand_provider(instr, j + 1, {}));
+  }
+
+  if (instr->operand(0)->shape().element_type() == PRED) {
+    TF_RET_CHECK(num_branches == 2);
+    Value cond = selector;
+    if (!cond.getType().isInteger(1)) {
+      Value zero = arith::ConstantIntOp::create(b, cond.getType(), 0);
+      cond = arith::CmpIOp::create(b, arith::CmpIPredicate::ne, cond, zero);
+    }
+    auto if_op =
+        IfOp::create(b, mlir::TypeRange(result_types), cond, true, true);
+    {
+      OpBuilder::InsertionGuard guard(b);
+      b.setInsertionPointToStart(if_op.getBody(0));
+      auto true_fn = call_target_provider(
+          instr->branch_computation(0)->root_instruction());
+      auto then_results =
+          PureCallOp::create(b, true_fn, branch_operands[0]).getResults();
+      scf::YieldOp::create(b, then_results);
+    }
+    {
+      OpBuilder::InsertionGuard guard(b);
+      b.setInsertionPointToStart(if_op.getBody(1));
+      auto false_fn = call_target_provider(
+          instr->branch_computation(1)->root_instruction());
+      auto else_results =
+          PureCallOp::create(b, false_fn, branch_operands[1]).getResults();
+      scf::YieldOp::create(b, else_results);
+    }
+    return SmallVector<Value, 1>(if_op.getResults());
+  }
+
+  TF_RET_CHECK(num_branches >= 1);
+  if (num_branches == 1) {
+    auto fn =
+        call_target_provider(instr->branch_computation(0)->root_instruction());
+    return PureCallOp::create(b, fn, branch_operands[0]).getResults();
+  }
+
+  Value branch_idx = selector;
+  if (!mlir::isa<mlir::IndexType>(branch_idx.getType())) {
+    branch_idx = arith::IndexCastOp::create(b, b.getIndexType(), branch_idx);
+  }
+  SmallVector<int64_t> cases(num_branches - 1);
+  for (int j = 0; j < num_branches - 1; ++j) {
+    cases[j] = j;
+  }
+  auto switch_op = scf::IndexSwitchOp::create(b, result_types, branch_idx,
+                                              cases, cases.size());
+  for (int j = 0; j < num_branches - 1; ++j) {
+    OpBuilder::InsertionGuard guard(b);
+    mlir::Block& case_block = switch_op.getCaseRegions()[j].emplaceBlock();
+    b.setInsertionPointToStart(&case_block);
+    auto branch_fn =
+        call_target_provider(instr->branch_computation(j)->root_instruction());
+    auto case_results =
+        PureCallOp::create(b, branch_fn, branch_operands[j]).getResults();
+    scf::YieldOp::create(b, case_results);
+  }
+  {
+    OpBuilder::InsertionGuard guard(b);
+    mlir::Block& default_block = switch_op.getDefaultRegion().emplaceBlock();
+    b.setInsertionPointToStart(&default_block);
+    auto default_fn = call_target_provider(
+        instr->branch_computation(num_branches - 1)->root_instruction());
+    auto default_results =
+        PureCallOp::create(b, default_fn, branch_operands[num_branches - 1])
+            .getResults();
+    scf::YieldOp::create(b, default_results);
+  }
+  return SmallVector<Value, 1>(switch_op.getResults());
 }
 
 template <typename MhloOp, typename... ExtraArgs>
@@ -750,11 +965,30 @@ absl::StatusOr<SmallVector<Value, 1>> EmitTuple(
     const HloInstruction* instr, ValueRange indices,
     const OperandProvider& operand_provider, ImplicitLocOpBuilder& builder,
     MLIRContext* mlir_context) {
-  const auto* first_shape = &instr->shape().tuple_shapes(0);
-  while (first_shape->IsTuple()) {
-    first_shape = &first_shape->tuple_shapes(0);
+  std::optional<const Shape*> first_shape;
+  bool all_leaves_compatible = true;
+  ShapeUtil::ForEachLeafShape(
+      instr->shape(), [&](const Shape& leaf, const ShapeIndex&) {
+        if (!leaf.IsArray()) {
+          all_leaves_compatible = false;
+          return;
+        }
+        if (!first_shape.has_value()) {
+          first_shape = &leaf;
+        } else if (ShapeUtil::ElementsIn(leaf) !=
+                   ShapeUtil::ElementsIn(**first_shape)) {
+          all_leaves_compatible = false;
+        }
+      });
+  if (!all_leaves_compatible) {
+    return absl::UnimplementedError(absl::StrCat(
+        "Tuples with heterogeneous leaf shapes are not supported: ",
+        instr->ToShortString()));
   }
-  CHECK_EQ(first_shape->dimensions().size(), indices.size())
+  if (!first_shape.has_value()) {
+    return SmallVector<Value, 1>{};
+  }
+  TF_RET_CHECK((*first_shape)->dimensions().size() == indices.size())
       << "Indices for tuple must be for the first tuple element";
   SmallVector<Value, 1> operands;
   for (int i = 0; i < instr->operand_count(); ++i) {
@@ -762,14 +996,18 @@ absl::StatusOr<SmallVector<Value, 1>> EmitTuple(
     // The tuple shapes only need to be bitcast compatible, so insert
     // bitcasts where necessary.
     const auto* operand = instr->operand(i);
-    const auto* operand_index_shape = &operand->shape();
-    while (operand_index_shape->IsTuple()) {
-      operand_index_shape = &operand_index_shape->tuple_shapes(0);
-    }
-    if (i > 0 && !ShapeUtil::EqualIgnoringElementType(*first_shape,
-                                                      *operand_index_shape)) {
+    std::optional<const Shape*> operand_index_shape;
+    ShapeUtil::ForEachLeafShape(
+        operand->shape(), [&](const Shape& leaf, const ShapeIndex&) {
+          if (!operand_index_shape.has_value() && leaf.IsArray()) {
+            operand_index_shape = &leaf;
+          }
+        });
+    if (operand_index_shape.has_value() &&
+        !ShapeUtil::EqualIgnoringElementType(**first_shape,
+                                             **operand_index_shape)) {
       auto operand_map =
-          GetBitcastMap(*first_shape, *operand_index_shape, mlir_context);
+          GetBitcastMap(**first_shape, **operand_index_shape, mlir_context);
       operand_indices = ApplyIndexing(operand_map, indices, {}, builder);
     } else {
       operand_indices = indices;
@@ -812,25 +1050,45 @@ absl::StatusOr<SmallVector<Value, 1>> EmitConstant(
   return {{mlir::tensor::ExtractOp::create(builder, constant, indices)}};
 }
 
+// Extracts the flattened leaf SSA values corresponding to `tuple_index()` from
+// a tuple's flat leaf vector (supporting nested and empty tuples).
+absl::StatusOr<SmallVector<Value, 1>> EmitGetTupleElement(
+    const HloInstruction* instr, ValueRange indices,
+    const OperandProvider& operand_provider) {
+  ABSL_ASSIGN_OR_RETURN(auto tuple, operand_provider(instr, 0, indices));
+  const Shape& tuple_shape = instr->operand(0)->shape();
+  int64_t offset = 0;
+  for (int64_t i = 0; i < instr->tuple_index(); ++i) {
+    offset += ShapeUtil::GetLeafCount(tuple_shape.tuple_shapes(i));
+  }
+  int64_t leaf_count = ShapeUtil::GetLeafCount(instr->shape());
+  auto slice = ValueRange(tuple).slice(offset, leaf_count);
+  return SmallVector<Value, 1>(slice.begin(), slice.end());
+}
+
 // Returns true if `HloToMlir` lowers `opcode` with a dedicated emitter (see
 // `EmitWithDedicatedEmitter`). These emitters request their operands from the
 // operand provider themselves, so their operand indices can't be computed
 // upfront.
 bool HasDedicatedEmitter(HloOpcode opcode) {
   switch (opcode) {
+    case HloOpcode::kCall:
     case HloOpcode::kConcatenate:
+    case HloOpcode::kConditional:
     case HloOpcode::kConstant:
     case HloOpcode::kConvolution:
     case HloOpcode::kDot:
     case HloOpcode::kDynamicSlice:
     case HloOpcode::kDynamicUpdateSlice:
     case HloOpcode::kGather:
+    case HloOpcode::kGetTupleElement:
     case HloOpcode::kIota:
     case HloOpcode::kPad:
     case HloOpcode::kParameter:
     case HloOpcode::kReduce:
     case HloOpcode::kReduceWindow:
     case HloOpcode::kTuple:
+    case HloOpcode::kWhile:
       return true;
     default:
       return false;
@@ -1002,8 +1260,14 @@ absl::StatusOr<SmallVector<Value, 1>> EmitWithDedicatedEmitter(
     const CallTargetProvider& call_target_provider,
     ImplicitLocOpBuilder& builder, MLIRContext* mlir_context) {
   switch (instr->opcode()) {
+    case HloOpcode::kCall:
+      return EmitCall(instr, indices, operand_provider, call_target_provider,
+                      builder);
     case HloOpcode::kConcatenate:
       return EmitConcat(instr, indices, operand_provider, builder);
+    case HloOpcode::kConditional:
+      return EmitConditional(instr, indices, operand_provider,
+                             call_target_provider, builder);
     case HloOpcode::kConstant:
       return EmitConstant(instr, indices, builder);
     case HloOpcode::kConvolution:
@@ -1015,6 +1279,8 @@ absl::StatusOr<SmallVector<Value, 1>> EmitWithDedicatedEmitter(
       return EmitDynamicUpdateSlice(instr, indices, operand_provider, builder);
     case HloOpcode::kGather:
       return EmitGather(instr, indices, operand_provider, builder);
+    case HloOpcode::kGetTupleElement:
+      return EmitGetTupleElement(instr, indices, operand_provider);
     case HloOpcode::kIota:
       return EmitIota(instr, indices, builder);
     case HloOpcode::kPad:
@@ -1031,6 +1297,9 @@ absl::StatusOr<SmallVector<Value, 1>> EmitWithDedicatedEmitter(
                               call_target_provider, builder, mlir_context);
     case HloOpcode::kTuple:
       return EmitTuple(instr, indices, operand_provider, builder, mlir_context);
+    case HloOpcode::kWhile:
+      return EmitWhile(instr, indices, operand_provider, call_target_provider,
+                       builder);
     default:
       return absl::InternalError(
           absl::StrCat("No dedicated emitter for ", instr->ToShortString()));
@@ -1059,16 +1328,6 @@ absl::StatusOr<SmallVector<Value, 1>> HloToMlir(
   TF_RET_CHECK(operand_indices.size() == instr->operand_count())
       << "Expected indices for all operands of " << instr->ToShortString()
       << ", got " << operand_indices.size();
-
-  if (instr->opcode() == HloOpcode::kGetTupleElement) {
-    // We have to generate the entire tuple, but since we don't support
-    // internal tuple operations (only root tuples), this will always be
-    // cached and computed together anyway (e.g. it'll be a variadic
-    // reduce).
-    ABSL_ASSIGN_OR_RETURN(auto tuple,
-                          operand_provider(instr, 0, operand_indices.front()));
-    return {{tuple[instr->tuple_index()]}};
-  }
 
   auto element_type = instr->shape().element_type();
 
@@ -1338,12 +1597,12 @@ ValueRange ProvideParameter(const PartitionedComputation& computation,
       it != injected_value_starts.end()) {
     return ValueRange(this_fn.getArguments())
         .take_back(caller->num_injected_values)
-        .slice(it->second, 1);
+        .slice(it->second, ShapeUtil::GetLeafCount(operand->shape()));
   }
 
   auto callee = call_target_provider(operand);
-  SmallVector<Value> operands(
-      this_fn.getArguments().take_front(instr->parent()->num_parameters()));
+  SmallVector<Value> operands(this_fn.getArguments().take_front(
+      NumFlattenedParameters(*instr->parent())));
 
   absl::c_copy(indices, std::back_inserter(operands));
   auto results = PureCallOp::create(builder, callee, operands).getResults();
@@ -1357,8 +1616,7 @@ ValueRange ProvideParameter(const PartitionedComputation& computation,
 
   int offset = 0;
   for (auto root : callee_subgraph.roots) {
-    int root_arity =
-        root->shape().IsTuple() ? root->shape().tuple_shapes().size() : 1;
+    int root_arity = ShapeUtil::GetLeafCount(root->shape());
     if (root == operand) {
       return results.slice(offset, root_arity);
     }
@@ -1498,8 +1756,7 @@ absl::StatusOr<SmallVector<Value>> SubgraphConverter::Convert() {
         it != subgraph_.injected_value_starts.end()) {
       auto injected =
           this_fn_.getArguments().take_back(subgraph_.num_injected_values);
-      int arity =
-          root->shape().IsTuple() ? root->shape().tuple_shapes().size() : 1;
+      int arity = ShapeUtil::GetLeafCount(root->shape());
       absl::c_copy(injected.slice(it->second, arity),
                    std::back_inserter(results));
       continue;
@@ -1688,10 +1945,10 @@ absl::Status SubgraphToMlirFunction(
   TF_RET_CHECK(func != nullptr);
   ImplicitLocOpBuilder builder(func.getLoc(), func->getContext());
   builder.setInsertionPointToStart(func.addEntryBlock());
-  auto parameters = func.getArguments().take_front(
-      computation.computation().num_parameters());
-  auto indices_and_injected_values = func.getArguments().drop_front(
-      computation.computation().num_parameters());
+  int64_t num_param_args = NumFlattenedParameters(computation.computation());
+  auto parameters = func.getArguments().take_front(num_param_args);
+  auto indices_and_injected_values =
+      func.getArguments().drop_front(num_param_args);
   auto indices =
       indices_and_injected_values.drop_back(subgraph.num_injected_values);
   ABSL_ASSIGN_OR_RETURN(
