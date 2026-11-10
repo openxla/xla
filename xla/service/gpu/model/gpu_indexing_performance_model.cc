@@ -144,7 +144,7 @@ int64_t GetNetBytesRead(const OperandReadMap& read_map,
 absl::Duration ComputeReadTime(
     const OperandReadMap& read_map, const se::DeviceDescription& device_info,
     int64_t num_blocks, const HloCostAnalysis::ShapeSizeFunction& shape_size,
-    bool include_cache_rereads = true, double bandwidth_derate = 1.0) {
+    bool include_cache_rereads = true, double max_bandwidth_utilization = 1.0) {
   absl::Duration read_time = absl::ZeroDuration();
   // `absl::Duration` addition uses exact fixed-point integer arithmetic, so
   // map iteration order does not affect the accumulated result.
@@ -159,7 +159,8 @@ absl::Duration ComputeReadTime(
         /*n_bytes_total=*/total_bytes,
         /*element_type=*/hlo->shape().element_type(),
         /*hbm_bandwidth_utilization_rate=*/
-        operand_read_info.read_bandwidth_utilization_rate * bandwidth_derate);
+        std::min(operand_read_info.read_bandwidth_utilization_rate,
+                 max_bandwidth_utilization));
   }
   return read_time;
 }
@@ -636,31 +637,87 @@ bool DoesTilingFitInSharedMemory(
 }  // namespace internal
 
 namespace {
-// Holds dot launch resource footprints and compute/runtime estimates.
+
+// Returns the LHS + RHS tile bytes one block consumes over the K loop, at the
+// dot's operand types. Clamps tiles larger than the problem.
+int64_t CalculateOperandBytesPerBlockAtDotType(
+    const HloDotInstruction& dot_instr,
+    const dot_model::DotProblemInfo& dot_info,
+    const dot_model::DotTileSize& dot_tile,
+    absl::Span<const int64_t> batch_tile_sizes) {
+  // Dot output dims are [batch..., m, n]; clamp each batch tile to its dim.
+  int64_t clamped_b = 1;
+  for (auto [tile_size, dim_size] : llvm::zip(
+           batch_tile_sizes,
+           dot_instr.shape().dimensions().first(batch_tile_sizes.size()))) {
+    clamped_b *= std::min(tile_size, dim_size);
+  }
+  int64_t clamped_m = std::min(dot_tile.m, dot_info.m);
+  int64_t clamped_n = std::min(dot_tile.n, dot_info.n);
+  // The K loop masks its tail tile, so K is counted exactly once.
+  int64_t lhs_bytes = CeilOfRatio<int64_t>(
+      clamped_b * clamped_m * dot_info.k *
+          primitive_util::BitWidth(dot_info.lhs_element_type),
+      8);
+  int64_t rhs_bytes = CeilOfRatio<int64_t>(
+      clamped_b * dot_info.k * clamped_n *
+          primitive_util::BitWidth(dot_info.rhs_element_type),
+      8);
+  return lhs_bytes + rhs_bytes;
+}
+
+// Holds dot resource footprints and mainloop work estimates.
 struct DotEstimates {
+  PrimitiveType output_element_type = PrimitiveType::PRIMITIVE_TYPE_INVALID;
+  int64_t flops_with_wave_quant = 0;
   absl::Duration compute_time = absl::ZeroDuration();
-  absl::Duration exec_time = absl::ZeroDuration();
+  int64_t k_loop_iterations = 0;
   int64_t shared_memory_per_block_bytes = 0;
   int registers_per_thread = 0;
+  // L2 operand bytes over all blocks, counted at the dot's operand types.
+  int64_t l2_bytes_at_dot_type = 0;
 };
 
 // Combines two dot estimates within the same fusion by summing sequential
-// compute work and taking the maximum of per-block resource footprints.
+// mainloop work and taking the maximum of per-block resource footprints.
 DotEstimates MergeDotEstimates(DotEstimates dst, const DotEstimates& src) {
+  // TODO(b/495346904): Weight compute utilization by per-dot peak rate when
+  // fusing dots with different output element types.
+  dst.output_element_type = src.output_element_type;
+  dst.flops_with_wave_quant += src.flops_with_wave_quant;
   dst.compute_time += src.compute_time;
-  // TODO: b/495346904 - integrate the dot stats more completely.
-  dst.exec_time = std::max(dst.exec_time, src.exec_time);
+  dst.k_loop_iterations += src.k_loop_iterations;
   dst.shared_memory_per_block_bytes = std::max(
       dst.shared_memory_per_block_bytes, src.shared_memory_per_block_bytes);
   dst.registers_per_thread =
       std::max(dst.registers_per_thread, src.registers_per_thread);
+  dst.l2_bytes_at_dot_type += src.l2_bytes_at_dot_type;
   return dst;
+}
+
+// Returns the number of unswitched K-loop copies produced by `kConcatenate`
+// instructions in `region`. Triton unswitches the K-loop across the
+// mutually-exclusive branches of each `kConcatenate` in the loop body, and
+// the resulting loop copies don't alias their shared-memory buffers.
+int64_t GetConcatLoopCopies(const TiledHloRegion& region) {
+  int64_t copies = 1;
+  for (const TiledHloInstruction* instr : region.instructions()) {
+    if (instr->hlo()->opcode() == HloOpcode::kConcatenate &&
+        !instr->hlo_regions().empty()) {
+      int64_t branch_copies = 0;
+      for (const TiledHloRegion& branch : instr->hlo_regions()) {
+        branch_copies += GetConcatLoopCopies(branch);
+      }
+      copies *= branch_copies;
+    }
+  }
+  return copies;
 }
 
 // Computes block launch resource footprints and dot runtime estimates.
 absl::StatusOr<DotEstimates> BuildDotEstimates(
-    const TiledHloInstruction* tiled_hlo,
-    const se::DeviceDescription& device_info,
+    const TiledHloInstruction* tiled_hlo, int64_t num_launched_blocks,
+    bool in_dot_region, const se::DeviceDescription& device_info,
     const BlockLevelParameters& block_params) {
   const HloDotInstruction* dot_instr =
       Cast<HloDotInstruction>(tiled_hlo->hlo());
@@ -673,28 +730,55 @@ absl::StatusOr<DotEstimates> BuildDotEstimates(
   CHECK_LT(lhs_contracting_dim, lhs_tile_sizes.size());
   int64_t block_k = lhs_tile_sizes[lhs_contracting_dim];
 
-  // Use the provided block parameters which contain num_warps and num_stages.
-  // The output_tile_sizes from the block parameters represent the fusion roots,
-  // which might have different tile sizes than the dot instruction itself.
-  // We clear them and explicitly pass the dot's tile sizes to ensure the
-  // dot cost model receives exactly one correct tile size.
-  BlockLevelParameters dot_block_params = block_params;
-  dot_block_params.output_tile_sizes.clear();
   ABSL_ASSIGN_OR_RETURN(llvm::SmallVector<int64_t> tile_sizes,
                         tiled_hlo->tile(0).GetStaticTileSizes());
-  dot_block_params.output_tile_sizes.emplace_back(tile_sizes.begin(),
-                                                  tile_sizes.end());
+  absl::Span<const int64_t> batch_tile_sizes =
+      absl::MakeConstSpan(tile_sizes).first(tile_sizes.size() - 2);
+  dot_model::DotTileSize dot_tile{
+      /*m=*/tile_sizes[tile_sizes.size() - 2],
+      /*n=*/tile_sizes.back(),
+      /*k=*/block_k,
+      /*b=*/Product(batch_tile_sizes),
+  };
+
+  dot_model::DotProblemInfo dot_info(*dot_instr);
+
   ABSL_ASSIGN_OR_RETURN(
-      EstimateRunTimeData dot_perf_stats,
-      gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
-          dot_instr, dot_block_params, device_info, block_k));
+      dot_model::ComputeAndFlops compute_and_flops,
+      dot_model::CalculateComputeTimeWithTileAndWaveQuantization(
+          dot_info, dot_tile, device_info));
+  // The dot model counts CTAs from the dot's own shape, but the fusion kernel
+  // launches `num_launched_blocks` CTAs from the root shape (which can be
+  // larger when an epilogue reshape splits and pads a dot dimension).
+  if (!in_dot_region) {
+    double block_scale = std::max(
+        1.0, static_cast<double>(num_launched_blocks) /
+                 dot_model::CalculateNumThreadblocks(dot_info, dot_tile));
+    compute_and_flops.flops_with_wave_quant = static_cast<int64_t>(
+        compute_and_flops.flops_with_wave_quant * block_scale);
+    compute_and_flops.compute_time *= block_scale;
+  }
+
+  const int64_t concat_loop_copies =
+      block_params.num_stages > 1
+          ? GetConcatLoopCopies(tiled_hlo->hlo_regions().front())
+          : 1;
+  const int64_t shared_memory_per_block_bytes =
+      concat_loop_copies * dot_model::CalculateSharedMemoryPerBlockBytes(
+                               dot_info, dot_tile, block_params.num_stages);
 
   return DotEstimates{
-      /*compute_time=*/dot_perf_stats.compute_time,
-      /*exec_time=*/dot_perf_stats.exec_time,
-      /*shared_memory_per_block_bytes=*/
-      dot_perf_stats.shared_memory_per_block_bytes,
-      /*registers_per_thread=*/dot_perf_stats.registers_per_thread,
+      /*output_element_type=*/dot_info.output_element_type,
+      /*flops_with_wave_quant=*/compute_and_flops.flops_with_wave_quant,
+      /*compute_time=*/compute_and_flops.compute_time,
+      /*k_loop_iterations=*/CeilOfRatio<int64_t>(dot_info.k, block_k),
+      /*shared_memory_per_block_bytes=*/shared_memory_per_block_bytes,
+      /*registers_per_thread=*/
+      dot_model::CalculateRegistersPerThread(dot_info, dot_tile, block_params,
+                                             device_info),
+      /*l2_bytes_at_dot_type=*/num_launched_blocks *
+          CalculateOperandBytesPerBlockAtDotType(*dot_instr, dot_info, dot_tile,
+                                                 batch_tile_sizes),
   };
 }
 
@@ -712,6 +796,42 @@ int64_t GetShapeSizeRecursive(
   return total_size;
 }
 
+// Returns the time to write every fusion output to HBM exactly once. Unlike
+// `ComputeReadTime`, there is no cache or occupancy adjustment.
+absl::Duration ComputeOutputWriteTime(
+    absl::Span<const TiledHloInstruction* const> roots,
+    const se::DeviceDescription& device_info,
+    const HloCostAnalysis::ShapeSizeFunction& shape_size,
+    double max_bandwidth_utilization = 1.0) {
+  absl::Duration write_time = absl::ZeroDuration();
+  for (const TiledHloInstruction* root : roots) {
+    // Take the min, not the product, so a transfer-size cap and poor
+    // coalescing don't penalize the same bytes twice.
+    double utilization =
+        std::min(BandwidthUtilizationRateHeuristicForTiledMemoryAccess(
+                     *root, device_info),
+                 max_bandwidth_utilization);
+    double bytes_per_second = utilization * device_info.memory_bandwidth();
+    int64_t root_bytes =
+        GetShapeSizeRecursive(root->hlo()->shape(), shape_size);
+    write_time += absl::Seconds(root_bytes / bytes_per_second);
+  }
+  return write_time;
+}
+
+// Uncoalesced reads still fetch full 32B L2 sectors, so L2 transfers more
+// bytes than the logical elements used (`logical_bytes_read`).
+int64_t EstimateL2BytesRead(int64_t logical_bytes_read, double dram_utilization,
+                            const se::DeviceDescription& device_info) {
+  constexpr double kL2SectorBytes = 32.0;
+  double l2_sector_utilization = std::min(
+      1.0, dram_utilization * (device_info.dram_to_l2_transaction_size_bytes() /
+                               kL2SectorBytes));
+  return l2_sector_utilization > 0.0
+             ? static_cast<int64_t>(logical_bytes_read / l2_sector_utilization)
+             : logical_bytes_read;
+}
+
 absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
     const HloFusionAdaptor& fusion_adaptor,
     const TiledHloComputation& tiled_hlo_computation,
@@ -720,9 +840,12 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
     HloCostAnalysis::ShapeSizeFunction shape_size,
     absl::FunctionRef<int64_t(const HloInstruction*)> flops_per_element_fn) {
   OperandReadMap n_bytes_total_map;
+  OperandReadMap dot_region_operand_read_map;
+  OperandReadMap epilogue_operand_read_map;
 
   // Compute time for dot flops is counted separately.
   int64_t dot_flops = 0;
+  int64_t prologue_flops = 0;
   int64_t flops = 0;
   int64_t bytes_read = 0;
   int64_t dot_l2_bytes_read = 0;
@@ -761,7 +884,8 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
 
           if (hlo->opcode() == HloOpcode::kDot) {
             if (absl::StatusOr<DotEstimates> cur_dot_estimates =
-                    BuildDotEstimates(tiled_hlo, device_info,
+                    BuildDotEstimates(tiled_hlo, num_blocks_cur_hlo,
+                                      in_dot_region, device_info,
                                       block_level_parameters);
                 cur_dot_estimates.ok()) {
               dot_estimates =
@@ -780,7 +904,11 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
           }
 
           // Tiles inside the computation contribute to the total FLOPs count.
-          flops += flops_per_element_fn(hlo) * num_elements;
+          int64_t inst_flops = flops_per_element_fn(hlo) * num_elements;
+          flops += inst_flops;
+          if (in_dot_region) {
+            prologue_flops += inst_flops;
+          }
           return;
         }
         // Calculate the total number of elements that are read from memory
@@ -809,35 +937,27 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
                          info_cur_hlo.in_bound_read_fraction);
 
         bytes_read += tile_bytes_read;
-        if (in_dot_region) {
-          dot_l2_bytes_read += tile_bytes_read;
-        }
 
-        double effective_bandwidth_utilization_rate =
+        double dram_utilization =
             BandwidthUtilizationRateHeuristicForTiledMemoryAccess(*tiled_hlo,
                                                                   device_info);
 
-        RecordOperandRead(hlo, tile_bytes_read,
-                          effective_bandwidth_utilization_rate,
+        if (in_dot_region) {
+          dot_l2_bytes_read += EstimateL2BytesRead(
+              tile_bytes_read, dram_utilization, device_info);
+        }
+        RecordOperandRead(hlo, tile_bytes_read, dram_utilization,
                           n_bytes_total_map);
+        RecordOperandRead(hlo, tile_bytes_read, dram_utilization,
+                          in_dot_region ? dot_region_operand_read_map
+                                        : epilogue_operand_read_map);
       });
 
-  absl::Duration read_time =
-      ComputeReadTime(n_bytes_total_map, device_info, num_blocks, shape_size);
-
   auto roots = tiled_hlo_computation.roots();
+  // Output tiles partition each root, so each output byte is written once.
   int64_t bytes_written = 0;
-  absl::Duration write_time;
   for (auto* root : roots) {
-    int64_t effective_bandwidth =
-        BandwidthUtilizationRateHeuristicForTiledMemoryAccess(*root,
-                                                              device_info) *
-        device_info.memory_bandwidth();
-    int64_t bytes_written_for_root =
-        GetShapeSizeRecursive(root->hlo()->shape(), shape_size);
-    write_time +=
-        absl::Seconds(1.0 * bytes_written_for_root / effective_bandwidth);
-    bytes_written += bytes_written_for_root;
+    bytes_written += GetShapeSizeRecursive(root->hlo()->shape(), shape_size);
   }
 
   absl::Duration compute_time =
@@ -846,38 +966,115 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
           block_level_parameters.num_warps * WarpSize(device_info)) +
       dot_estimates.compute_time;
 
-  absl::Duration memory_access_time = read_time + write_time;
-  absl::Duration exec_time =
-      GpuPerformanceModelBase::CombineComputeAndMemoryAccessTime(
-          compute_time, memory_access_time);
-
-  // TODO(b/503201785): This is a hacky way to ensure that the execution time is
-  // at least as long as the dot execution time. But in those cases we are not
-  // accounting for any work in the epilogue or prologue properly. We are
-  // planning to do it in the future but the cost model will need to be
-  // significantly more complex for that.
-  exec_time = std::max(exec_time, dot_estimates.exec_time);
-
-  if (dot_estimates.exec_time > absl::ZeroDuration()) {
-    int64_t total_net_hbm_bytes =
-        GetNetBytesRead(n_bytes_total_map, shape_size) + bytes_written;
+  absl::Duration read_time;
+  absl::Duration write_time;
+  absl::Duration exec_time;
+  double compute_utilization = 0.0;
+  double memory_utilization = 0.0;
+  const bool has_dot = dot_estimates.k_loop_iterations > 0;
+  if (has_dot) {
+    // Triton fails to compile kernels whose shared memory exceeds the per-block
+    // opt-in limit.
+    if (dot_estimates.shared_memory_per_block_bytes >
+        device_info.shared_memory_per_block_optin()) {
+      return EstimateRunTimeData::Infinite();
+    }
+    int64_t net_bytes_read = GetNetBytesRead(n_bytes_total_map, shape_size);
+    int64_t total_net_hbm_bytes = net_bytes_read + bytes_written;
     float effective_hbm_bandwidth =
         dot_model::GetEffectiveHbmBandwidth(total_net_hbm_bytes, device_info);
-    double hbm_bandwidth_derate = static_cast<double>(effective_hbm_bandwidth) /
-                                  device_info.memory_bandwidth();
+    // TODO(b/510667327): This fraction folds the table's fixed latency into
+    // bandwidth, so reads and writes combine it with coalescing via min. Keep
+    // the latency separate and apply coalescing to bandwidth only.
+    double hbm_bandwidth_utilization =
+        static_cast<double>(effective_hbm_bandwidth) /
+        device_info.memory_bandwidth();
     // Exclude K-loop cache re-reads because `CalculateL2Time` models L2
     // traffic separately.
+    absl::Duration dot_dram_read_time = ComputeReadTime(
+        dot_region_operand_read_map, device_info, num_blocks, shape_size,
+        /*include_cache_rereads=*/false, hbm_bandwidth_utilization);
+    absl::Duration epilogue_read_time = ComputeReadTime(
+        epilogue_operand_read_map, device_info, num_blocks, shape_size,
+        /*include_cache_rereads=*/true, hbm_bandwidth_utilization);
+    read_time = dot_dram_read_time + epilogue_read_time;
+    write_time = ComputeOutputWriteTime(roots, device_info, shape_size,
+                                        hbm_bandwidth_utilization);
+
+    dot_model::LaunchConfig launch_config{
+        /*num_stages=*/block_level_parameters.num_stages,
+        /*num_warps=*/block_level_parameters.num_warps,
+        /*k_loop_iterations=*/dot_estimates.k_loop_iterations,
+        /*threadblock_count=*/num_blocks,
+        /*shared_memory_per_block_bytes=*/
+        dot_estimates.shared_memory_per_block_bytes,
+        /*registers_per_thread=*/dot_estimates.registers_per_thread,
+    };
+    absl::Duration post_mainloop_time = epilogue_read_time + write_time;
+    const dot_model::SmOccupancy occupancy =
+        dot_model::CalculateSmOccupancy(launch_config, device_info);
+    const int64_t blocks_per_sm =
+        std::min(occupancy.active_blocks_per_sm,
+                 CeilOfRatio<int64_t>(num_blocks, device_info.core_count()));
+    const int64_t active_threads_per_sm = blocks_per_sm *
+                                          block_level_parameters.num_warps *
+                                          WarpSize(device_info);
+    // TODO(b/581767811): Replace with a throughput-based SIMT compute model.
+    constexpr int64_t kEmpiricalSimtComputeDivisor = 8;
+    absl::Duration prologue_compute_time =
+        GpuPerformanceModelBase::ComputeTime(
+            device_info, prologue_flops, num_blocks, active_threads_per_sm) /
+        kEmpiricalSimtComputeDivisor;
+    const bool has_async_mma =
+        device_info.cuda_compute_capability().IsAtLeastHopper();
+    // Asynchronous MMA (wgmma/tcgen05) overlaps with SIMT prologue operations,
+    // whereas mma.sync issues from the same warps and serializes with them.
+    absl::Duration mainloop_compute_time =
+        has_async_mma
+            ? GpuPerformanceModelBase::CombineComputeAndMemoryAccessTime(
+                  dot_estimates.compute_time, prologue_compute_time)
+            : dot_estimates.compute_time + prologue_compute_time;
+    absl::Duration mainloop_time =
+        dot_model::CalculatePipelinedLoopTimeWithLaunchWaves(
+            launch_config, mainloop_compute_time,
+            dot_model::HbmEstimates{dot_dram_read_time, absl::ZeroDuration()},
+            device_info);
+    // The epilogue (operand reads and output writes) runs after the K loop and
+    // doesn't overlap with it.
+    absl::Duration pipelined_loop_time = mainloop_time + post_mainloop_time;
+    // Widening prologues (e.g. s8 -> bf16) also pay for an in-register convert
+    // in the K loop, which we don't model yet. As a proxy, floor L2 traffic at
+    // the dot's operand types, even though Triton loads the narrow type. The
+    // floor also applies to other prologues (broadcasts, chained-dot operands).
+    // TODO(b/581269931): Model the convert cost and drop this floor.
+    absl::Duration l2_time = dot_model::CalculateL2Time(
+        dot_estimates.k_loop_iterations, device_info,
+        std::max(dot_l2_bytes_read, dot_estimates.l2_bytes_at_dot_type),
+        block_level_parameters.is_tma_allowed);
+    exec_time = std::max(pipelined_loop_time, l2_time);
+
+    // Roofline utilization uses wave-quantized FLOPs and net DRAM traffic.
+    EstimateRunTimeData roofline_estimates = EstimateRunTimeData::Zero();
+    roofline_estimates.flops = dot_estimates.flops_with_wave_quant + flops;
+    roofline_estimates.bytes_read = net_bytes_read;
+    roofline_estimates.bytes_written = bytes_written;
+    roofline_estimates.exec_time = exec_time;
+    compute_utilization = dot_model::CalculateComputeUtilization(
+        roofline_estimates, device_info, dot_estimates.output_element_type);
+    memory_utilization =
+        dot_model::CalculateMemoryUtilization(roofline_estimates, device_info);
+  } else {
     read_time =
-        ComputeReadTime(n_bytes_total_map, device_info, num_blocks, shape_size,
-                        /*include_cache_rereads=*/false, hbm_bandwidth_derate);
-    write_time /= hbm_bandwidth_derate;
+        ComputeReadTime(n_bytes_total_map, device_info, num_blocks, shape_size);
+    write_time = ComputeOutputWriteTime(roots, device_info, shape_size);
+    exec_time = GpuPerformanceModelBase::CombineComputeAndMemoryAccessTime(
+        compute_time, read_time + write_time);
   }
 
   const int64_t estimated_shared_memory_per_block =
-      dot_estimates.exec_time > absl::ZeroDuration()
-          ? dot_estimates.shared_memory_per_block_bytes
-          : internal::EstimateSharedMemoryUsagePerBlock(tiled_hlo_computation,
-                                                        device_info);
+      has_dot ? dot_estimates.shared_memory_per_block_bytes
+              : internal::EstimateSharedMemoryUsagePerBlock(
+                    tiled_hlo_computation, device_info);
 
   return EstimateRunTimeData{
       /*flops=*/flops + dot_flops,
@@ -889,7 +1086,9 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForTiledHloComputationImpl(
       /*exec_time=*/exec_time,
       /*l2_bytes_read=*/dot_l2_bytes_read,
       /*shared_memory_per_block_bytes=*/estimated_shared_memory_per_block,
-      /*registers_per_thread=*/dot_estimates.registers_per_thread};
+      /*registers_per_thread=*/dot_estimates.registers_per_thread,
+      /*compute_utilization=*/compute_utilization,
+      /*memory_utilization=*/memory_utilization};
 }
 
 // TODO(b/534676634): Support multi-reduction and multi-dimension reduction
