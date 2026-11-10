@@ -121,7 +121,7 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(HloInstruction * fusion,
                        SwizzleHipblasLtScale32x8(scale));
 
-  Literal input(scale->shape());
+  ASSERT_OK_AND_ASSIGN(Literal input, Literal::Make(scale->shape()));
   auto* src = static_cast<uint8_t*>(input.untyped_data());
   for (int64_t i = 0; i < rows * cols; ++i) {
     src[i] = (i * 37) % 251;
