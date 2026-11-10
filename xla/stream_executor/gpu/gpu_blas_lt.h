@@ -130,7 +130,7 @@ enum class ScaleMode {
   kNone = 0,
   kTensorScaling = 1,
   kBlockScaling = 2,
-  // Block scales in hipBLASLt's swizzled 32x8 tile order.
+  // Block scales in a swizzled 32x8 tile order.
   kBlockScalingSwizzled32x8 = 3,
 };
 

@@ -510,6 +510,8 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
             *scaled_dot, debug_options(),
             target_config().device_description.gpu_compute_capability()));
     if (layouts.empty()) {
+      LOG(WARNING) << "hipBLASLt MX: no scale layout is allowed for "
+                   << scaled_dot->name() << ", leaving it to other backends";
       return std::vector<std::unique_ptr<BackendConfig>>();
     }
 
@@ -548,16 +550,22 @@ HipblasLtBackend::GetSupportedConfigs(const HloInstruction& instr) {
       absl::StatusOr<BlasLt::MatmulPlanPtr> plan_or =
           blas_lt->GetMatmulPlan(*gemm_config_or, BlasLt::Epilogue::kDefault);
       if (!plan_or.ok()) {
-        VLOG(2) << "hipBLASLt MX: GetMatmulPlan failed for scale layout "
-                << layout << ": " << plan_or.status();
+        LOG(WARNING) << "hipBLASLt MX: GetMatmulPlan failed for scale layout "
+                     << HipblasLtBackendConfig::MxScaleLayout_Name(layout)
+                     << ": " << plan_or.status();
         continue;
       }
       absl::StatusOr<std::vector<BlasLt::MatmulAlgorithm>> algorithms_or =
           (*plan_or)->GetAlgorithms(max_algorithms, workspace_size);
       if (!algorithms_or.ok()) {
-        VLOG(2) << "hipBLASLt MX: GetAlgorithms failed for scale layout "
-                << layout << ": " << algorithms_or.status();
+        LOG(WARNING) << "hipBLASLt MX: GetAlgorithms failed for scale layout "
+                     << HipblasLtBackendConfig::MxScaleLayout_Name(layout)
+                     << ": " << algorithms_or.status();
         continue;
+      }
+      if (algorithms_or->empty()) {
+        LOG(WARNING) << "hipBLASLt MX: no algorithms found for scale layout "
+                     << HipblasLtBackendConfig::MxScaleLayout_Name(layout);
       }
       for (int64_t i = 0; i < static_cast<int64_t>(algorithms_or->size());
            ++i) {
@@ -756,6 +764,10 @@ absl::Status HipblasLtBackend::ApplyConfig(HloInstruction& instr,
           << "Not all scaled-dot operands are fed by a fusion parameter.";
     }
     if (scale_mode == se::gpu::ScaleMode::kBlockScalingSwizzled32x8) {
+      TF_RET_CHECK(CanUseHipblasLtScale32x8(
+          *scaled_dot,
+          target_config().device_description.gpu_compute_capability()))
+          << scaled_dot->name() << " cannot use the swizzled 32x8 scale layout";
       ABSL_ASSIGN_OR_RETURN(operands[2],
                             SwizzleHipblasLtScale32x8(operands[2]));
       ABSL_ASSIGN_OR_RETURN(operands[3],
