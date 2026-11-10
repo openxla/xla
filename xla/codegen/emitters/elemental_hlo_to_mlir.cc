@@ -506,9 +506,11 @@ absl::StatusOr<Value> EmitMulAdd(Value lhs, Value rhs, Value accumulator,
                                  mlir::Type accumulator_type,
                                  ImplicitLocOpBuilder& b) {
   if (primitive_util::IsFloatingPointType(result_element_type)) {
-    if (result_element_type == PrimitiveType::BF16) {
-      lhs = EmitFloatCast(lhs, b.getF32Type(), b);
-      rhs = EmitFloatCast(rhs, b.getF32Type(), b);
+    if (lhs.getType() != accumulator_type) {
+      lhs = EmitFloatCast(lhs, accumulator_type, b);
+    }
+    if (rhs.getType() != accumulator_type) {
+      rhs = EmitFloatCast(rhs, accumulator_type, b);
     }
     Value casted =
         EmitFloatCast(arith::MulFOp::create(b, lhs, rhs), accumulator_type, b);
