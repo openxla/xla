@@ -49,11 +49,11 @@ limitations under the License.
 #include "rocm/include/rocprofiler-sdk/marker.h"
 #include "rocm/include/rocprofiler-sdk/registration.h"
 #include "rocm/include/rocprofiler-sdk/rocprofiler.h"
-#include "tsl/platform/abi.h"
 #include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/profiler/backends/cpu/annotation_stack.h"
+#include "tsl/platform/abi.h"
 
 namespace xla {
 namespace profiler {
@@ -178,6 +178,10 @@ absl::Status RocmTracer::Enable(RocmTraceCollector* collector) {
   // point is now stale and will be dropped at pop rather than emitted into
   // the new session. See roctx_generation_ in rocm_tracer.h.
   roctx_generation_.fetch_add(1, std::memory_order_relaxed);
+  // Same isolation problem for buffered Activity records, solved with a
+  // timestamp instead of a counter -- see activity_session_start_ns_ in
+  // rocm_tracer.h.
+  activity_session_start_ns_.store(GetTimestamp(), std::memory_order_relaxed);
 
   collector_ = collector;
 
@@ -520,6 +524,16 @@ void RocmTracer::TracingCallback(rocprofiler_context_id_t context,
       default:
         continue;
     }  // switch
+
+    // Delivery is async and uncorrelated with Enable()/Disable(): a record
+    // describing work that completed before this session's Enable() call can
+    // still arrive after it, once rocprofiler's own pipeline catches up. Such
+    // a record belongs to a previous (or no) session, so hand it to nobody --
+    // see activity_session_start_ns_ in rocm_tracer.h.
+    if (event.start_time_ns <
+        activity_session_start_ns_.load(std::memory_order_relaxed)) {
+      continue;
+    }
 
     absl::MutexLock lock(collector_mutex_);
     if (collector()) {

@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/rocm_tracer.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -27,6 +24,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
@@ -44,10 +43,10 @@ limitations under the License.
 #include "rocm/include/rocprofiler-sdk/context.h"
 #include "rocm/include/rocprofiler-sdk/fwd.h"
 #include "rocm/include/rocprofiler-sdk/marker.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/platform/env_time.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -419,7 +418,17 @@ static rocprofiler_callback_tracing_record_t MakeMarkerRecord(
   return rec;
 }
 
-TEST(RocmTracerTest, MarkerCallbackPushPopEmitsRoctxRange) {
+class RocmTracerMarkerTest : public ::testing::Test {
+ protected:
+  void TearDown() override {
+    RocmTracer& tracer = RocmTracer::GetRocmTracerSingleton();
+    if (!tracer.IsAvailable()) {
+      tracer.Disable();
+    }
+  }
+};
+
+TEST_F(RocmTracerMarkerTest, MarkerCallbackPushPopEmitsRoctxRange) {
   RocmTracer& tracer = RocmTracer::GetRocmTracerSingleton();
   ASSERT_TRUE(tracer.IsAvailable());
 

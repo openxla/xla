@@ -129,6 +129,17 @@ class RocmTracer {
   // either way the frame is consistently tagged and consistently judged.
   std::atomic<uint64_t> roctx_generation_{0};
 
+  // Buffered Activity records (HIP_API/Kernel/Memcpy) have no equivalent push
+  // hook: rocprofiler hands us the finished record only once, from inside its
+  // own async delivery pipeline, so there is no point before that delay where
+  // we could stamp a generation on it the way MarkerCallback does. What we
+  // can do instead is use the clock rocprofiler already stamps every record
+  // with: Enable() snapshots GetTimestamp() before opening the context gate,
+  // and TracingCallback drops any record whose start_timestamp predates that
+  // snapshot -- it describes work that happened before this session began,
+  // so it cannot be ours, no matter how late delivery straggled in.
+  std::atomic<uint64_t> activity_session_start_ns_{0};
+
  public:
   using kernel_symbol_data_t =
       rocprofiler_callback_tracing_code_object_kernel_symbol_register_data_t;
