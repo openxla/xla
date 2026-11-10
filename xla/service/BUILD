@@ -2129,6 +2129,7 @@ cc_library(
     srcs = ["instruction_fusion.cc"],
     hdrs = ["instruction_fusion.h"],
     deps = [
+        ":call_graph",
         ":decision",
         ":fusion_queue",
         ":hlo_graph_dumper",
@@ -2180,7 +2181,7 @@ cc_library(
     srcs = ["multi_output_fusion.cc"],
     hdrs = ["multi_output_fusion.h"],
     deps = [
-        ":instruction_fusion",
+        ":call_graph",
         "//xla:debug_options_flags",
         "//xla:shape_util",
         "//xla:util",
@@ -2369,6 +2370,7 @@ cc_library(
     srcs = ["scatter_expander.cc"],
     hdrs = ["scatter_expander.h"],
     deps = [
+        ":call_graph",
         ":gather_scatter_utils",
         ":hlo_creation_utils",
         ":scatter_utils",
@@ -2388,7 +2390,9 @@ cc_library(
         "//xla/tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:no_destructor",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",

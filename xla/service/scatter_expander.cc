@@ -24,7 +24,9 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -366,13 +368,34 @@ absl::StatusOr<HloInstruction*> ScatterExpander::ExpandInstruction(
   return MaybeMakeTuple(results);
 }
 
+absl::StatusOr<bool> ScatterExpander::RunImpl(
+    HloModule* module,
+    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+  if (mode_ == kEliminateEmbeddedScatters) {
+    call_graph_ = CallGraph::Build(module, execution_threads);
+  }
+  absl::Cleanup cleanup = [this] { call_graph_.reset(); };
+  return OpExpanderPass::RunImpl(module, execution_threads);
+}
+
 bool ScatterExpander::InstructionMatchesPattern(HloInstruction* inst) {
   auto* scatter = DynCast<HloScatterInstruction>(inst);
-  return (scatter != nullptr) && (mode_ == kEliminateAllScatters ||
-                                  (mode_ == kEliminateSimpleScatters &&
-                                   ScatterIndicesCount(scatter) == 1) ||
-                                  (mode_ == kEliminateIndeterministicScatters &&
-                                   !IsScatterDeterministic(scatter)));
+  if (scatter == nullptr) {
+    return false;
+  }
+  switch (mode_) {
+    case kEliminateAllScatters:
+      return true;
+    case kEliminateSimpleScatters:
+      return ScatterIndicesCount(scatter) == 1;
+    case kEliminateIndeterministicScatters:
+      return !IsScatterDeterministic(scatter);
+    case kEliminateEmbeddedScatters: {
+      CallContext context = call_graph_->GetNode(scatter->parent()).context();
+      return context == CallContext::kEmbedded || context == CallContext::kBoth;
+    }
+  }
+  return false;
 }
 
 namespace {
@@ -391,6 +414,8 @@ class ScatterExpanderFactory : public HloPassFactory {
              ScatterExpander::kEliminateSimpleScatters},
             {"eliminate_indeterministic_scatters",
              ScatterExpander::kEliminateIndeterministicScatters},
+            {"eliminate_embedded_scatters",
+             ScatterExpander::kEliminateEmbeddedScatters},
         });
     ABSL_ASSIGN_OR_RETURN(ScatterExpander::Mode mode,
                           options.GetEnum("mode", *kModes));
