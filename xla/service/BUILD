@@ -5943,7 +5943,11 @@ xla_aot_compile_gpu(
         "b200",
     ],
     module = "xla_aot_compile_test_convolution.mlir",
-    xla_flags = "--xla_gpu_use_new_autotune_cache_format=true",
+    # TODO(b/568668570): Enable conv fusion once deviceless cuDNN conv fusions are fixed.
+    xla_flags = " ".join([
+        "--xla_gpu_use_new_autotune_cache_format=true",
+        "--xla_gpu_experimental_enable_conv_fusion=false",
+    ]),
 )
 
 xla_aot_compile_gpu(
@@ -5954,7 +5958,10 @@ xla_aot_compile_gpu(
         "b200",
     ],
     module = "xla_aot_compile_test_convolution.mlir",
-    xla_flags = "--xla_gpu_use_new_autotune_cache_format=false",
+    xla_flags = " ".join([
+        "--xla_gpu_use_new_autotune_cache_format=false",
+        "--xla_gpu_experimental_enable_conv_fusion=false",
+    ]),
 )
 
 xla_aot_compile_gpu(
