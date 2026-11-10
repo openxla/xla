@@ -6496,5 +6496,408 @@ INSTANTIATE_TEST_SUITE_P(CondOrder, CopyInsertionCondOrderTest,
                                             ::testing::Values(int64_t{0},
                                                               int64_t{-1})));
 
+// REQUIRES: `inst` is not null.
+CopyInsertion::PassthroughAttachment ClassifyTestPassthrough(
+    const HloInstruction* inst) {
+  CHECK_NE(inst, nullptr);
+  if (inst->IsCustomCall("passthrough_consumer")) {
+    return CopyInsertion::PassthroughAttachment::kConsumer;
+  }
+  if (inst->IsCustomCall("passthrough_producer")) {
+    return CopyInsertion::PassthroughAttachment::kProducer;
+  }
+  return CopyInsertion::PassthroughAttachment::kNone;
+}
+
+// Verifies that RemoveUnnecessaryCopies preserves the copy before an in place
+// update when a downstream reader accesses the original value through a
+// configured passthrough instruction scheduled earlier than the update.
+TEST_F(CopyInsertionTest, PassthroughPreventsCopyElisionOnInterference) {
+  absl::string_view hlo_string = R"(
+HloModule PassthroughInterference, is_scheduled=true
+
+ENTRY main {
+  x = f32[8] parameter(0)
+  y = f32[8] parameter(1)
+  u = f32[2] parameter(2)
+  z = s32[] constant(0)
+  a = f32[8] add(x, y)
+  a_colored = f32[8] custom-call(a), custom_call_target="passthrough_consumer"
+  a_copy = f32[8] copy(a)
+  dus_a = f32[8] dynamic-update-slice(a_copy, u, z)
+  tanh_a = f32[8] tanh(a_colored)
+  ROOT out = (f32[8], f32[8]) tuple(dus_a, tanh_a)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  CopyInsertion copy_insertion(
+      &alias_info_, /*use_region_based_live_range_analysis=*/-1,
+      /*should_skip_removal=*/nullptr, /*view_color=*/std::nullopt,
+      ClassifyTestPassthrough);
+  ASSERT_THAT(copy_insertion.RemoveUnnecessaryCopies(module.get()),
+              ::absl_testing::IsOk());
+  EXPECT_EQ(CountCopies(*module), 1);
+}
+
+TEST_F(CopyInsertionTest, PassthroughDoesNotAddCopyForReadOnlyUses) {
+  absl::string_view hlo_string = R"(
+HloModule PassthroughReadOnly
+
+ENTRY main {
+  x = f32[8] parameter(0)
+  y = f32[8] parameter(1)
+  a = f32[8] add(x, y)
+  a_colored = f32[8] custom-call(a), custom_call_target="passthrough_consumer"
+  neg_a = f32[8] negate(a)
+  tanh_a = f32[8] tanh(a_colored)
+  ROOT out = (f32[8], f32[8]) tuple(neg_a, tanh_a)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  CopyInsertion copy_insertion(
+      &alias_info_, /*use_region_based_live_range_analysis=*/-1,
+      /*should_skip_removal=*/nullptr, /*view_color=*/std::nullopt,
+      ClassifyTestPassthrough);
+  ASSERT_THAT(copy_insertion.Run(module.get()), ::absl_testing::IsOk());
+  EXPECT_EQ(CountCopies(*module), 0);
+}
+
+// Verifies copy placement relative to kConsumer vs kProducer passthroughs and
+// zero cost bitcast wrapping when eliding a root copy above a passthrough.
+TEST_F(CopyInsertionTest,
+       PassthroughPlacesCopiesByAttachmentAndWrapsElidedRootInBitcast) {
+  absl::string_view hlo_string = R"(
+HloModule PassthroughPlacement, input_output_alias={ {}: (0, {}) }
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  u = f32[2] parameter(2)
+  z = s32[] constant(0)
+  a = f32[8] add(p0, p1)
+  m_in = f32[8] custom-call(a), custom_call_target="passthrough_consumer"
+  dus_in = f32[8] dynamic-update-slice(m_in, u, z)
+  reader_after_dus = f32[8] add(m_in, dus_in)
+  m_out = f32[8] custom-call(p1), custom_call_target="passthrough_producer"
+  dus_out = f32[8] dynamic-update-slice(m_out, u, z)
+  sum = f32[8] add(reader_after_dus, dus_out)
+  ROOT out_m = f32[8] custom-call(sum),
+      custom_call_target="passthrough_producer"
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  CopyInsertion copy_insertion(
+      &alias_info_, /*use_region_based_live_range_analysis=*/-1,
+      /*should_skip_removal=*/nullptr, /*view_color=*/std::nullopt,
+      ClassifyTestPassthrough);
+  ASSERT_THAT(copy_insertion.Run(module.get()), ::absl_testing::IsOk());
+
+  // `dus_in` gets a cloned `passthrough_consumer` over `copy(a)` while
+  // `reader_after_dus` keeps `passthrough_consumer(a)`, `dus_out` gets a copy
+  // after `passthrough_producer(p1)`, and the donated root has its temporary
+  // copy elided into `bitcast(passthrough_producer(sum))`.
+  const HloInstruction* dus_in = FindInstruction(module.get(), "dus_in");
+  const HloInstruction* reader_after_dus =
+      FindInstruction(module.get(), "reader_after_dus");
+  const HloInstruction* dus_out = FindInstruction(module.get(), "dus_out");
+  EXPECT_THAT(dus_in->operand(0),
+              op::CustomCall("passthrough_consumer", op::Copy(op::Add())));
+  EXPECT_THAT(reader_after_dus->operand(0),
+              op::CustomCall("passthrough_consumer", op::Add()));
+  EXPECT_THAT(
+      dus_out->operand(0),
+      op::Copy(op::CustomCall("passthrough_producer", op::Parameter(1))));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Bitcast(op::CustomCall("passthrough_producer")));
+  EXPECT_EQ(CountCopies(*module), 2);
+}
+
+// Verifies that eliding a root copy over a passthrough during
+// RemoveUnnecessaryCopies does not invalidate HloValue::IsRootOf in subsequent
+// fixpoint iterations and therefore preserves copies protecting live out
+// outputs from in place updates.
+TEST_F(CopyInsertionTest,
+       RootCopyElisionOverPassthroughPreservesIsRootOfForOtherCopies) {
+  absl::string_view scheduled_hlo = R"(
+HloModule ScheduledRootClobber, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  u = f32[2] parameter(2)
+  c0 = s32[] constant(0)
+  tok = token[] after-all()
+  x = f32[8] add(p0, p1)
+  m = f32[8] custom-call(x), custom_call_target="passthrough_producer"
+  copy_dus = f32[8] copy(x)
+  dus = f32[8] dynamic-update-slice(copy_dus, u, c0)
+  outf = token[] outfeed(dus, tok)
+  ROOT copy_root = f32[8] copy(m)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> scheduled_module,
+                       ParseAndReturnVerifiedModule(scheduled_hlo));
+  CopyInsertion copy_insertion(
+      &alias_info_, /*use_region_based_live_range_analysis=*/-1,
+      /*should_skip_removal=*/nullptr, /*view_color=*/std::nullopt,
+      ClassifyTestPassthrough);
+  ASSERT_THAT(copy_insertion.RemoveUnnecessaryCopies(scheduled_module.get()),
+              ::absl_testing::IsOk());
+  EXPECT_THAT(FindInstruction(scheduled_module.get(), "dus")->operand(0),
+              op::Copy(op::Add()));
+  EXPECT_THAT(scheduled_module->entry_computation()->root_instruction(),
+              op::Bitcast(op::CustomCall("passthrough_producer")));
+
+  absl::string_view unscheduled_hlo = R"(
+HloModule UnscheduledRootClobber, input_output_alias={ {}: (0, {}) }
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  u = f32[2] parameter(2)
+  c0 = s32[] constant(0)
+  tok = token[] after-all()
+  sum = f32[8] add(p0, p1)
+  dus = f32[8] dynamic-update-slice(sum, u, c0)
+  outf = token[] outfeed(dus, tok)
+  ROOT color = f32[8] custom-call(sum),
+      custom_call_target="passthrough_producer"
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> unscheduled_module,
+                       ParseAndReturnVerifiedModule(unscheduled_hlo));
+  ASSERT_THAT(copy_insertion.Run(unscheduled_module.get()),
+              ::absl_testing::IsOk());
+  EXPECT_THAT(FindInstruction(unscheduled_module.get(), "dus")->operand(0),
+              op::Copy(op::Add()));
+}
+
+// Verifies that copying a producer with multiple kProducer passthroughs linked
+// by control dependencies never introduces cycles in the computation.
+TEST_F(CopyInsertionTest,
+       MultipleProducerPassthroughsWithControlDependenciesStayAcyclic) {
+  absl::string_view hlo_string = R"(
+HloModule ProducerPassthroughNoCycle
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  u = f32[2] parameter(1)
+  c0 = s32[] constant(0)
+  m_a = f32[8] custom-call(p0), custom_call_target="passthrough_producer"
+  m_b = f32[8] custom-call(m_a), custom_call_target="passthrough_producer"
+  y = f32[8] negate(m_b)
+  m_c = f32[8] custom-call(p0), custom_call_target="passthrough_producer",
+      control-predecessors={y}
+  dus = f32[8] dynamic-update-slice(m_a, u, c0)
+  ROOT out = (f32[8], f32[8], f32[8]) tuple(y, m_c, dus)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  CopyInsertion copy_insertion(
+      &alias_info_, /*use_region_based_live_range_analysis=*/-1,
+      /*should_skip_removal=*/nullptr, /*view_color=*/std::nullopt,
+      ClassifyTestPassthrough);
+  ASSERT_THAT(copy_insertion.Run(module.get()), ::absl_testing::IsOk());
+  EXPECT_EQ(module->entry_computation()->MakeInstructionPostOrder().size(),
+            module->entry_computation()->instruction_count());
+}
+
+// Verifies that cloning kConsumer passthroughs inside nested tuples at depth >=
+// 2 places copies before the passthroughs and preserves control dependencies.
+TEST_F(CopyInsertionTest,
+       NestedTupleConsumerPassthroughPreservesAttachmentAndControlDeps) {
+  absl::string_view hlo_string = R"(
+HloModule NestedTuplePassthrough
+
+body {
+  s = ((f32[8], f32[8]), s32[]) parameter(0)
+  inner = (f32[8], f32[8]) get-tuple-element(s), index=0
+  e0 = f32[8] get-tuple-element(inner), index=0
+  e1 = f32[8] get-tuple-element(inner), index=1
+  idx = s32[] get-tuple-element(s), index=1
+  sum = f32[8] add(e0, e1)
+  next_inner = (f32[8], f32[8]) tuple(sum, e1)
+  ROOT next = ((f32[8], f32[8]), s32[]) tuple(next_inner, idx)
+}
+
+cond {
+  s = ((f32[8], f32[8]), s32[]) parameter(0)
+  ROOT done = pred[] constant(false)
+}
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  p1 = f32[8] parameter(1)
+  c0 = s32[] constant(0)
+  reader = f32[8] negate(p0)
+  m_in = f32[8] custom-call(p0), custom_call_target="passthrough_consumer",
+      control-predecessors={reader}
+  inner = (f32[8], f32[8]) tuple(m_in, p1)
+  init = ((f32[8], f32[8]), s32[]) tuple(inner, c0)
+  loop = ((f32[8], f32[8]), s32[]) while(init), condition=cond, body=body
+  loop_inner = (f32[8], f32[8]) get-tuple-element(loop), index=0
+  loop_e0 = f32[8] get-tuple-element(loop_inner), index=0
+  ROOT out = (f32[8], f32[8]) tuple(loop_e0, reader)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  CopyInsertion copy_insertion(
+      &alias_info_, /*use_region_based_live_range_analysis=*/-1,
+      /*should_skip_removal=*/nullptr, /*view_color=*/std::nullopt,
+      ClassifyTestPassthrough);
+  ASSERT_THAT(copy_insertion.Run(module.get()), ::absl_testing::IsOk());
+
+  const HloInstruction* loop = FindInstruction(module.get(), "loop");
+  const HloInstruction* reader = FindInstruction(module.get(), "reader");
+  const HloInstruction* cloned_marker =
+      loop->operand(0)->operand(0)->operand(0);
+  EXPECT_THAT(cloned_marker, op::CustomCall("passthrough_consumer",
+                                            op::Copy(op::Parameter(0))));
+  EXPECT_THAT(cloned_marker->control_predecessors(),
+              ::testing::ElementsAre(reader));
+}
+
+// Verifies mixed `kConsumer -> kProducer` chains and multi operand self
+// aliasing across passthrough wrappers (`dus(m_in(a), m_in(a), z)`).
+TEST_F(CopyInsertionTest,
+       MixedPassthroughChainAndMultiOperandSelfAliasResolved) {
+  absl::string_view hlo_string = R"(
+HloModule MixedAndSelfAlias
+
+ENTRY main {
+  x = f32[8] parameter(0)
+  y = f32[8] parameter(1)
+  z = s32[] constant(0)
+  a = f32[8] add(x, y)
+  m_in = f32[8] custom-call(a), custom_call_target="passthrough_consumer"
+  m_out = f32[8] custom-call(m_in), custom_call_target="passthrough_producer"
+  dus_mixed = f32[8] dynamic-update-slice(m_out, y, z)
+  after_mixed = f32[8] add(a, dus_mixed)
+  b = f32[8] multiply(x, y)
+  b_in = f32[8] custom-call(b), custom_call_target="passthrough_consumer"
+  dus_self = f32[8] dynamic-update-slice(b_in, b_in, z)
+  ROOT out = (f32[8], f32[8]) tuple(after_mixed, dus_self)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  CopyInsertion copy_insertion(
+      &alias_info_, /*use_region_based_live_range_analysis=*/-1,
+      /*should_skip_removal=*/nullptr, /*view_color=*/std::nullopt,
+      ClassifyTestPassthrough);
+  ASSERT_THAT(copy_insertion.Run(module.get()), ::absl_testing::IsOk());
+
+  const HloInstruction* dus_mixed = FindInstruction(module.get(), "dus_mixed");
+  EXPECT_THAT(dus_mixed->operand(0),
+              op::CustomCall(
+                  "passthrough_consumer",
+                  op::Copy(op::CustomCall("passthrough_producer", op::Add()))));
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloAliasAnalysis> alias_analysis,
+      HloAliasAnalysis::Run(
+          module.get(), &alias_info_, [](const HloInstruction* inst) {
+            return ClassifyTestPassthrough(inst) !=
+                   CopyInsertion::PassthroughAttachment::kNone;
+          }));
+  const HloInstruction* dus_self = FindInstruction(module.get(), "dus_self");
+  EXPECT_NE(&alias_analysis->GetUniqueBufferAt(dus_self->operand(0)),
+            &alias_analysis->GetUniqueBufferAt(dus_self->operand(1)));
+}
+
+// Verifies that RemoveUnnecessaryCopies elides an identity copy of a shape
+// changing bitcast while preserving a copy whose operand passthrough changes
+// memory space relative to its unwrapped producer.
+TEST_F(
+    CopyInsertionTest,
+    CopyElisionAllowsShapeChangingBitcastAndKeepsMemorySpacePassthroughCopy) {
+  absl::string_view hlo_string = R"(
+HloModule BitcastAndMemorySpacePassthroughCopyElision, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[8,16]{1,0} parameter(0)
+  p1 = f32[8,16]{1,0} parameter(1)
+  sum = f32[8,16]{1,0} add(p0, p1)
+  bc = f32[128]{0} bitcast(sum)
+  bc_copy = f32[128]{0} copy(bc)
+  bc_neg = f32[128]{0} negate(bc_copy)
+  prod = f32[128]{0:S(0)} add(bc_neg, bc_neg)
+  m_space = f32[128]{0:S(1)} custom-call(prod), custom_call_target="passthrough_producer"
+  space_copy = f32[128]{0:S(1)} copy(m_space)
+  ROOT out = f32[128]{0:S(1)} negate(space_copy)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  CopyInsertion copy_insertion(
+      &alias_info_, /*use_region_based_live_range_analysis=*/-1,
+      /*should_skip_removal=*/nullptr, /*view_color=*/std::nullopt,
+      ClassifyTestPassthrough);
+  ASSERT_THAT(copy_insertion.RemoveUnnecessaryCopies(module.get()),
+              ::absl_testing::IsOk());
+
+  EXPECT_THAT(FindInstruction(module.get(), "bc_neg"),
+              op::Negate(op::Bitcast(op::Add())));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Negate(op::Copy(op::CustomCall("passthrough_producer"))));
+}
+
+// Verifies that deep copying a kTuple operand whose subshape tiling differs
+// from its underlying element preserves the tuple subshape tiling both with and
+// without passthrough wrappers.
+TEST_F(CopyInsertionTest,
+       DeepCopyTuplePreservesExplicitSubshapeTilingWithPassthroughClassifier) {
+  absl::string_view hlo_string = R"(
+HloModule TupleExplicitSubshapeTiling
+
+cond {
+  p = (s32[]{:T(128)}, f32[64]{0:T(128)}, f32[64]{0:T(128)}) parameter(0)
+  i = s32[]{:T(128)} get-tuple-element(p), index=0
+  limit = s32[]{:T(128)} constant(2)
+  ROOT cmp = pred[]{:T(512)} compare(i, limit), direction=LT
+}
+
+body {
+  p = (s32[]{:T(128)}, f32[64]{0:T(128)}, f32[64]{0:T(128)}) parameter(0)
+  i = s32[]{:T(128)} get-tuple-element(p), index=0
+  one = s32[]{:T(128)} constant(1)
+  next_i = s32[]{:T(128)} add(i, one)
+  v1 = f32[64]{0:T(128)} get-tuple-element(p), index=1
+  next_v1 = f32[64]{0:T(128)} add(v1, v1)
+  v2 = f32[64]{0:T(128)} get-tuple-element(p), index=2
+  next_v2 = f32[64]{0:T(128)} add(v2, v2)
+  ROOT out = (s32[]{:T(128)}, f32[64]{0:T(128)}, f32[64]{0:T(128)}) tuple(next_i, next_v1, next_v2)
+}
+
+ENTRY main {
+  arg = (f32[64]{0:T(256)}, f32[64]{0:T(256)}) parameter(0)
+  c0 = s32[]{:T(128)} constant(0)
+  e0 = f32[64]{0:T(256)} get-tuple-element(arg), index=0
+  e1 = f32[64]{0:T(256)} get-tuple-element(arg), index=1
+  m1 = f32[64]{0:T(256)} custom-call(e1), custom_call_target="passthrough_consumer"
+  init = (s32[]{:T(128)}, f32[64]{0:T(128)}, f32[64]{0:T(128)}) tuple(c0, e0, m1)
+  ROOT loop = (s32[]{:T(128)}, f32[64]{0:T(128)}, f32[64]{0:T(128)}) while(init), condition=cond, body=body
+}
+)";
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnUnverifiedModule(hlo_string, HloModuleConfig()));
+  CopyInsertion copy_insertion(
+      &alias_info_, /*use_region_based_live_range_analysis=*/-1,
+      /*should_skip_removal=*/nullptr, /*view_color=*/std::nullopt,
+      ClassifyTestPassthrough);
+  ASSERT_THAT(copy_insertion.Run(module.get()), ::absl_testing::IsOk());
+
+  const HloInstruction* loop = module->entry_computation()->root_instruction();
+  EXPECT_TRUE(ShapeUtil::Equal(loop->shape(), loop->operand(0)->shape()))
+      << "loop: " << loop->shape().ToString(true)
+      << " init: " << loop->operand(0)->shape().ToString(true);
+}
+
 }  // namespace
 }  // namespace xla

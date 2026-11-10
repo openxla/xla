@@ -258,6 +258,24 @@ bool HloOrdering::UsesBeforeValueDefinition(
                   absl::MakeSpan(use.operand_index)
                       .subspan(2, use.operand_index.size() - 2));
             }
+            if (!user->IsUserOf(operand)) {
+              HloInstruction* wrapped_operand = nullptr;
+              for (HloInstruction* candidate : user->operands()) {
+                const HloInstruction* curr = candidate;
+                while (curr->opcode() == HloOpcode::kBitcast ||
+                       dataflow.IsPassthrough(curr)) {
+                  curr = curr->operand(0);
+                }
+                if (curr == operand) {
+                  wrapped_operand = candidate;
+                  break;
+                }
+              }
+              if (wrapped_operand == nullptr) {
+                break;
+              }
+              operand = wrapped_operand;
+            }
           }
         }
 
@@ -305,9 +323,14 @@ bool HloOrdering::UsesBeforeValueDefinition(
         // Treat CollectivePermuteDone as a special case as it shares the buffer
         // from its operand (CollectivePermuteStart).
         if (use_is_always_before_def_in_same_instr &&
-            use.instruction->opcode() == HloOpcode::kCollectivePermuteDone &&
-            use.instruction->operand(0) == value.instruction()) {
-          return true;
+            use.instruction->opcode() == HloOpcode::kCollectivePermuteDone) {
+          const HloInstruction* cp_operand = use.instruction->operand(0);
+          while (dataflow.IsPassthrough(cp_operand)) {
+            cp_operand = cp_operand->operand(0);
+          }
+          if (cp_operand == value.instruction()) {
+            return true;
+          }
         }
         break;
       case HloOrdering::ExecutionConstraint::kUnordered:

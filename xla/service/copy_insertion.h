@@ -18,12 +18,16 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
+#include <utility>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_alias_analysis.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -59,6 +63,31 @@ namespace xla {
 //       InstructionAliasSet::IsDistinct return true.
 class CopyInsertion : public HloModulePass {
  public:
+  // Attachment direction for instructions that CopyInsertion treats as
+  // transparent passthroughs during dataflow, alias, and copy removal
+  // analysis.
+  enum class PassthroughAttachment : uint8_t {
+    // Not a transparent passthrough instruction.
+    kNone,
+    // Attaches to its producer (operand 0). Copies of the producer's output
+    // for downstream users are placed after this instruction so it stays
+    // attached to the producer.
+    kProducer,
+    // Attaches to its consumers (users). Copies of an operand for a consumer
+    // are placed before this instruction so it stays attached to the consumer.
+    kConsumer,
+  };
+
+  // Classifier returning the attachment direction of a single operand
+  // passthrough instruction, or PassthroughAttachment::kNone when the
+  // instruction is not a passthrough.
+  //
+  // REQUIRES: Every instruction classified as kProducer or kConsumer has
+  // `operand_count() == 1` and
+  // `ShapeUtil::Compatible(inst->shape(), inst->operand(0)->shape())`.
+  using PassthroughClassifier =
+      std::function<PassthroughAttachment(const HloInstruction*)>;
+
   absl::string_view name() const override { return "copy-insertion"; }
   static constexpr int64_t kUseRegionAnalysisLimit = 0;
 
@@ -72,6 +101,11 @@ class CopyInsertion : public HloModulePass {
   // no producer is merged into the viewed buffer between a view and its
   // readers.
   //
+  // `classify_passthrough` optionally identifies wrapper instructions (such as
+  // memory space coloring markers) that forward their operand transparently
+  // during dataflow, alias, and copy removal analysis while keeping inserted
+  // copies on the appropriate side of each wrapper.
+  //
   // TODO(b/80315712): Find a better way to tell whether a fusion can share
   // buffer.
   explicit CopyInsertion(
@@ -79,12 +113,14 @@ class CopyInsertion : public HloModulePass {
       int64_t use_region_based_live_range_analysis = kUseRegionAnalysisLimit,
       std::function<bool(const HloInstruction* copy)> should_skip_removal =
           nullptr,
-      std::optional<int64_t> view_color = std::nullopt)
+      std::optional<int64_t> view_color = std::nullopt,
+      PassthroughClassifier classify_passthrough = nullptr)
       : alias_info_(alias_info),
-        should_skip_removal_(should_skip_removal),
+        should_skip_removal_(std::move(should_skip_removal)),
         use_region_based_live_range_analysis_(
             use_region_based_live_range_analysis),
-        view_color_(view_color) {}
+        view_color_(view_color),
+        classify_passthrough_(std::move(classify_passthrough)) {}
 
   // When enabled, the copy added for the operand of an in-place operation is
   // ordered (via control dependencies) after the other readers of that operand
@@ -129,6 +165,24 @@ class CopyInsertion : public HloModulePass {
       CustomBufferAnalysisFn custom_buffer_analysis = nullptr);
 
  protected:
+  // Copy of a single operand edge of `user` needed when `user` reads the same
+  // underlying value through multiple operands with conflicting sharing rules.
+  struct OperandCopy {
+    HloInstruction* user;
+    int64_t operand_number;
+    ShapeTree<bool> indices_to_copy;
+  };
+
+  // Special case copy plan produced by ComputeSpecialCaseCopies.
+  struct SpecialCaseCopies {
+    HloInstructionMap<ShapeTree<bool>> instructions_to_copy;
+    std::vector<OperandCopy> operand_copies;
+
+    bool empty() const {
+      return instructions_to_copy.empty() && operand_copies.empty();
+    }
+  };
+
   // Override which requires the caller to pass in a call graph. Runs the alias
   // analysis, then ComputeSpecialCaseCopies and InsertSpecialCaseCopies.
   virtual absl::Status AddSpecialCaseCopies(
@@ -136,17 +190,98 @@ class CopyInsertion : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads,
       HloModule* module, CustomBufferAnalysisFn custom_buffer_analysis);
 
-  // Records the shape indices that need special case copies without inserting
-  // them. `alias_analysis` must be current for `module`.
-  absl::StatusOr<HloInstructionMap<ShapeTree<bool>>> ComputeSpecialCaseCopies(
+  // Records the shape indices and operand edges that need special case copies
+  // without inserting them. `alias_analysis` must be current for `module`.
+  absl::StatusOr<SpecialCaseCopies> ComputeSpecialCaseCopies(
       const CallGraph& call_graph,
       const absl::flat_hash_set<absl::string_view>& execution_threads,
       HloModule* module, const HloAliasAnalysis& alias_analysis,
       CustomBufferAnalysisFn custom_buffer_analysis);
 
   // Inserts the copies computed by ComputeSpecialCaseCopies.
-  static absl::Status InsertSpecialCaseCopies(
-      const HloInstructionMap<ShapeTree<bool>>& instructions_to_copy);
+  absl::Status InsertSpecialCaseCopies(
+      const SpecialCaseCopies& special_case_copies, HloModule* module) const;
+
+  // Returns the configured attachment direction of `instruction`, or kNone.
+  //
+  // REQUIRES: `instruction` is not null.
+  PassthroughAttachment ClassifyPassthrough(
+      const HloInstruction* instruction) const;
+
+  // Returns true if `instruction` is configured as a transparent passthrough.
+  //
+  // REQUIRES: `instruction` is not null.
+  bool IsPassthrough(const HloInstruction* instruction) const {
+    return ClassifyPassthrough(instruction) != PassthroughAttachment::kNone;
+  }
+
+  // Builds the HloDataflowAnalysis passthrough predicate for this pass, or
+  // nullptr when none is configured.
+  HloDataflowAnalysis::PassthroughPredicate MakePassthroughPredicate() const;
+
+  // Runs HloAliasAnalysis configured with `alias_info_` and
+  // `MakePassthroughPredicate()`.
+  //
+  // REQUIRES: `module` is not null and has a flattened call graph.
+  absl::StatusOr<std::unique_ptr<HloAliasAnalysis>> RunAliasAnalysis(
+      const HloModule* module) const;
+
+  // Inserts a root copy on `computation` at `indices_to_copy`, collapsing any
+  // zero user identity root bitcast wrapping a passthrough and recording any
+  // retired bitcast in `dead_bitcasts` for post pass removal.
+  //
+  // REQUIRES: `computation` and `dead_bitcasts` are not null,
+  // `computation->root_instruction()` is not null, and `indices_to_copy` is
+  // shape compatible with `computation->root_instruction()->shape()`.
+  absl::Status InsertRootCopyUnwrappingBitcast(
+      HloComputation* computation, const ShapeTree<bool>& indices_to_copy,
+      std::vector<HloInstruction*>* dead_bitcasts) const;
+
+  // Removes retired root bitcasts collected in `dead_bitcasts`, updating
+  // `module->schedule()` first when `module` is scheduled.
+  //
+  // REQUIRES: `module` is not null and every instruction in `dead_bitcasts` has
+  // `user_count() == 0` and no control dependencies.
+  absl::Status RemoveDeadRootBitcasts(
+      HloModule* module, absl::Span<HloInstruction* const> dead_bitcasts) const;
+
+  // Deep copies `instruction` for `target_user` (or for a computation root
+  // when `target_user` is null), placing each copied array leaf between any
+  // kProducer and kConsumer passthrough wrappers so both stay attached to their
+  // targets.
+  //
+  // REQUIRES: `instruction` is not null and belongs to a computation, and any
+  // non null `indices_to_copy` or `copies_added` is shape compatible with
+  // `instruction->shape()`.
+  absl::StatusOr<HloInstruction*> DeepCopyConsumerOperand(
+      HloInstruction* instruction, const HloInstruction* target_user = nullptr,
+      const ShapeTree<bool>* indices_to_copy = nullptr,
+      ShapeTree<HloInstruction*>* copies_added = nullptr) const;
+
+  // Deep copies `instruction` at `indices_to_copy` and rewires its downstream
+  // uses (and computation root when `replace_root` is true and `instruction` or
+  // an attached kProducer passthrough is the root), placing copies after any
+  // attached kProducer passthroughs without introducing marker to marker edges.
+  //
+  // REQUIRES: `instruction` is not null and belongs to a computation, and
+  // `indices_to_copy` is shape compatible with `instruction->shape()`.
+  absl::Status InsertProducerCopy(
+      HloInstruction* instruction, const ShapeTree<bool>& indices_to_copy,
+      std::optional<absl::Span<HloInstruction* const>> users_override =
+          std::nullopt,
+      bool replace_root = true,
+      const absl::flat_hash_set<const HloInstruction*>* skip_users =
+          nullptr) const;
+
+  // Wraps any computation root in `execution_threads` that is a configured
+  // passthrough instruction in a zero cost bitcast (or tuple of leaf bitcasts)
+  // so no passthrough remains a computation root after copy insertion or
+  // removal.
+  //
+  // REQUIRES: `module` is not null.
+  absl::Status WrapRootPassthroughsInBitcast(
+      HloModule* module,
+      const absl::flat_hash_set<absl::string_view>& execution_threads) const;
 
   // Add copies for conditional instructions.
   virtual absl::Status AddCopiesForConditional(
@@ -184,6 +319,7 @@ class CopyInsertion : public HloModulePass {
       const absl::flat_hash_set<absl::string_view>& execution_threads);
   int64_t use_region_based_live_range_analysis_;
   std::optional<int64_t> view_color_;
+  PassthroughClassifier classify_passthrough_;
   bool order_predecessor_readers_before_in_place_copies_ = false;
 };
 
