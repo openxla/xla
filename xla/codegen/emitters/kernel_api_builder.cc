@@ -221,9 +221,35 @@ void SetIndexDataLayout(mlir::ModuleOp module,
       mlir::DataLayoutSpecAttr::get(module->getContext(), {index_layout}));
 }
 
-IndexingMap GetDefaultWorkItemIndexingMap(const WorkDimensions& work_dimensions,
-                                          const Shape& shape,
-                                          mlir::MLIRContext* mlir_context) {
+// Maps the index in the traversal order described by `order` to the index in
+// the memory order.
+static SymbolicExpr ApplyBlockedDimensionOrder(
+    SymbolicExpr traversal_index, const BlockedDimensionOrder& order) {
+  const int64_t block_size = order.block_size;
+  const int64_t middle_size = order.middle_size;
+  const int64_t minor_size = order.minor_size;
+  const int64_t num_blocks = order.blocked_size / block_size;
+  const int64_t blocked_stride = middle_size * minor_size;
+  const int64_t outer_stride = order.blocked_size * blocked_stride;
+
+  SymbolicExpr minor = traversal_index % minor_size;
+  SymbolicExpr in_block = traversal_index.floorDiv(minor_size) % block_size;
+  SymbolicExpr middle =
+      traversal_index.floorDiv(minor_size * block_size) % middle_size;
+  SymbolicExpr block =
+      traversal_index.floorDiv(minor_size * block_size * middle_size) %
+      num_blocks;
+  SymbolicExpr outer = traversal_index.floorDiv(outer_stride);
+
+  return outer * outer_stride +
+         (block * block_size + in_block) * blocked_stride +
+         middle * minor_size + minor;
+}
+
+IndexingMap GetDefaultWorkItemIndexingMap(
+    const WorkDimensions& work_dimensions, const Shape& shape,
+    mlir::MLIRContext* mlir_context,
+    const std::optional<BlockedDimensionOrder>& order) {
   llvm::SmallVector<SymbolicExpr> output_dims(shape.dimensions().size());
 
   const NumWorkItems& num_work_items = work_dimensions.num_work_items;
@@ -277,10 +303,24 @@ IndexingMap GetDefaultWorkItemIndexingMap(const WorkDimensions& work_dimensions,
   SymbolicExpr chunk_id = CreateSymbolExpr(0, /*num_dims=*/6, mlir_context);
   linear_index = chunk_id * items_per_chunk + linear_index;
 
+  // The index of the element in the order in which the work items traverse the
+  // output. This is what the bounds of the output constrain. The permutation
+  // below is a bijection of [0, num_elements), so it keeps the elements that
+  // are in bounds in bounds.
+  SymbolicExpr traversal_index = linear_index;
+  SymbolicExpr memory_index = traversal_index;
+  if (order.has_value()) {
+    CHECK_EQ(order->blocked_size % order->block_size, 0);
+    CHECK_EQ(ShapeUtil::ElementsIn(shape) %
+                 (order->blocked_size * order->middle_size * order->minor_size),
+             0);
+    memory_index = ApplyBlockedDimensionOrder(traversal_index, *order);
+  }
+
   // See IndexUtil::LinearIndexToMultidimensionalIndex.
   uint64_t divisor = 1;
   for (auto dimension : LayoutUtil::MinorToMajor(shape)) {
-    output_dims[dimension] = (linear_index.floorDiv(divisor)) %
+    output_dims[dimension] = (memory_index.floorDiv(divisor)) %
                              static_cast<uint64_t>(shape.dimensions(dimension));
     divisor *= shape.dimensions(dimension);
   }
@@ -303,7 +343,7 @@ IndexingMap GetDefaultWorkItemIndexingMap(const WorkDimensions& work_dimensions,
                        /*num_symbols=*/range_vars_size, output_dims),
       std::move(dim_vars), std::move(range_vars),
       /*rt_vars=*/{});
-  indexing_map.AddConstraint(linear_index, Interval{0, num_elements - 1});
+  indexing_map.AddConstraint(traversal_index, Interval{0, num_elements - 1});
   indexing_map.Simplify();
   indexing_map.RemoveUnusedSymbols();
   return indexing_map;

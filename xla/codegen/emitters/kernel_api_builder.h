@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_CODEGEN_EMITTERS_KERNEL_API_BUILDER_H_
 #define XLA_CODEGEN_EMITTERS_KERNEL_API_BUILDER_H_
 
+#include <cstdint>
+#include <optional>
+
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
@@ -52,11 +55,50 @@ void SetIndexDataLayout(mlir::ModuleOp module,
                         const HloInstruction& hlo_instruction,
                         bool force_64_bit = false);
 
+// Changes the order in which consecutive work items visit the elements of the
+// output. By default work items walk the output in memory order. The
+// physically linearized output is viewed as the row-major array
+//
+//   [outer, blocked_size, middle_size, minor_size]
+//
+// and is instead traversed as
+//
+//   [outer, blocked_size / block_size, middle_size, block_size, minor_size]
+//
+// i.e. the `block_size` consecutive indices of the blocked dimension are moved
+// right above the minor dimension. For a transpose that swaps the blocked and
+// the middle dimensions this makes the work items that run at the same time
+// read `block_size * minor_size` contiguous elements of the operand instead of
+// `minor_size` elements that are `blocked_size * minor_size` elements apart.
+//
+// The traversal order is a bijection of the element indices, so it does not
+// change which elements are computed.
+struct BlockedDimensionOrder {
+  // Size of the dimension that is split into blocks.
+  int64_t blocked_size;
+  // Number of consecutive indices of the blocked dimension that are visited
+  // together. Must divide `blocked_size`.
+  int64_t block_size;
+  // Size of the dimension between the blocked and the minor dimension.
+  int64_t middle_size;
+  // Number of elements in all dimensions that are more minor than the middle
+  // dimension.
+  int64_t minor_size;
+
+  bool operator==(const BlockedDimensionOrder& other) const {
+    return blocked_size == other.blocked_size &&
+           block_size == other.block_size && middle_size == other.middle_size &&
+           minor_size == other.minor_size;
+  }
+};
+
 // Get the default indexing map for the given work dimensions, unroll factor,
-// and output shape.
-IndexingMap GetDefaultWorkItemIndexingMap(const WorkDimensions& work_dimensions,
-                                          const Shape& shape,
-                                          mlir::MLIRContext* mlir_context);
+// and output shape. If `order` is set, the work items traverse the output in
+// the given order instead of the memory order.
+IndexingMap GetDefaultWorkItemIndexingMap(
+    const WorkDimensions& work_dimensions, const Shape& shape,
+    mlir::MLIRContext* mlir_context,
+    const std::optional<BlockedDimensionOrder>& order = std::nullopt);
 
 // Emits the work group id ops annotated with the range of each dimension.
 llvm::SmallVector<mlir::Value> EmitWorkGroupIds(
