@@ -162,6 +162,35 @@ ENTRY e {
   }
 }
 
+TEST_P(RewriteFp8xNDotStructureTest, KeepsFrontendAttributes) {
+  const auto [algorithm, precision] = GetParam();
+  std::unique_ptr<VerifiedHloModule> module =
+      Rewrite(absl::StrFormat(R"(
+HloModule m
+ENTRY e {
+  a = f32[8,64] parameter(0)
+  b = bf16[64,16] parameter(1)
+  ROOT d = f32[8,16] dot(a, b), lhs_contracting_dims={1},
+    rhs_contracting_dims={0}, algorithm=%s,
+    frontend_attributes={_scheduling_group_id="1"}
+})",
+                              AlgorithmToString(algorithm)),
+              precision);
+
+  // The F8 dots and the instruction that replaces the dot keep the attributes.
+  for (const HloInstruction* instr :
+       module->entry_computation()->instructions()) {
+    if (instr->opcode() == HloOpcode::kDot) {
+      EXPECT_EQ(instr->get_frontend_attribute("_scheduling_group_id"), "1")
+          << instr->name();
+    }
+  }
+  EXPECT_EQ(
+      module->entry_computation()->root_instruction()->get_frontend_attribute(
+          "_scheduling_group_id"),
+      "1");
+}
+
 INSTANTIATE_TEST_SUITE_P(
     AlgorithmsAndPrecisions, RewriteFp8xNDotStructureTest,
     ::testing::Combine(
