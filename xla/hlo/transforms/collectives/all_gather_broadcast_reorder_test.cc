@@ -208,5 +208,36 @@ ENTRY main {
   EXPECT_THAT(RunFileCheck(module->ToString(), hlo_string), IsOkAndHolds(true));
 }
 
+TEST_F(AllGatherBroadcastReorderTest, GatherAlongOnlyBroadcastedDim) {
+  constexpr absl::string_view kHlo = R"hlo(
+// CHECK: %[[RS0:.*]] = f32[1,128,5]{{.*}} reshape(%x)
+// CHECK: %[[AG:.*]] = f32[2,128,5]{{.*}} all-gather(%[[RS0]]), replica_groups={{[{][{]}}0,1{{[}][}]}}, dimensions={0}
+// CHECK: %[[BC:.*]] = f32[5,2,4,1,128]{{.*}} broadcast(%[[AG]]), dimensions={1,4,0}
+// CHECK: ROOT %{{.*}} = f32[5,8,1,128]{{.*}} reshape(%[[BC]])
+HloModule m, replica_count=2
+
+ENTRY main {
+  x = f32[128,5] parameter(0)
+  bc = f32[5,4,1,128] broadcast(x), dimensions={3,0}
+  ROOT ag = f32[5,8,1,128] all-gather(bc), dimensions={1}, replica_groups={{0,1}}
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_THAT(AllGatherBroadcastReorder().Run(module.get()),
+              IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(module->ToString(), kHlo), IsOkAndHolds(true));
+
+  RunPass(R"hlo(
+HloModule m, replica_count=2
+
+ENTRY main {
+  x = f32[128,5] parameter(0)
+  bc = f32[5,1,1,128] broadcast(x), dimensions={3,0}
+  ROOT ag = f32[5,2,1,128] all-gather(bc), dimensions={1}, replica_groups={{0,1}}
+}
+)hlo",
+          PassOutput::NoChange);
+}
+
 }  // namespace
 }  // namespace xla
