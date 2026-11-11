@@ -461,6 +461,7 @@ cc_library(
         ":stream",
         ":stream_executor_h",
         "//xla/stream_executor/rocm:rocm_device_address_vmm_allocator",
+        "//xla/stream_executor/rocm:rocm_vmm_allocator",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
