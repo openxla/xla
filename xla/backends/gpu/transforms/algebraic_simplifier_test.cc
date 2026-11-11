@@ -235,10 +235,15 @@ TEST_F(
   AlgebraicSimplifierOptions options;
   ASSERT_TRUE(GpuAlgebraicSimplifier(options, Ampere()).Run(m.get()).value());
   constexpr absl::string_view kPattern = R"(
-    CHECK-COUNT-6: %[[partial_result:.*]] = bf16[] multiply
+    CHECK-COUNT-6: %[[partial_result:.*]] = f32[] multiply
   )";
   ASSERT_OK_AND_ASSIGN(bool matched, RunFileCheck(m->ToString(), kPattern));
   EXPECT_TRUE(matched);
+  Literal lhs = LiteralUtil::CreateR0<float>(129.0f);
+  Literal rhs = LiteralUtil::CreateR0<float>(129.0f);
+  ASSERT_OK_AND_ASSIGN(Literal actual,
+                       HloEvaluator().Evaluate(*m, {&lhs, &rhs}));
+  EXPECT_EQ(actual.GetFirstElement<float>(), 16641.0f);
 }
 
 TEST_F(GpuAlgebraicSimplifierTest, SimplifyOneHotReduceSumToGather) {

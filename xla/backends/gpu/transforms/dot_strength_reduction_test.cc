@@ -199,6 +199,43 @@ ENTRY entry {
   EXPECT_TRUE(filecheck_result);
 }
 
+class Bf16DotProductPrecisionTest
+    : public DotStrengthReductionTest,
+      public ::testing::WithParamInterface<absl::string_view> {};
+
+TEST_P(Bf16DotProductPrecisionTest, PreservesCancellation) {
+  ASSERT_OK_AND_ASSIGN(
+      auto module, ParseAndReturnVerifiedModule(absl::Substitute(R"hlo(
+HloModule cancellation
+ENTRY main {
+  lhs = f32[2] parameter(0)
+  rhs = f32[2] parameter(1)
+  ROOT dot = f32[] dot(lhs, rhs), lhs_contracting_dims={0}, rhs_contracting_dims={0}, algorithm=$0
+}
+)hlo",
+                                                                 GetParam())));
+  Literal lhs = LiteralUtil::CreateR1<float>({129.0f, -128.0f});
+  Literal rhs = LiteralUtil::CreateR1<float>({129.0f, 130.0f});
+  ASSERT_OK_AND_ASSIGN(Literal expected,
+                       HloEvaluator().Evaluate(*module, {&lhs, &rhs}));
+  ASSERT_EQ(expected.GetFirstElement<float>(), 1.0f);
+
+  DotStrengthReduction pass{
+      se::GpuComputeCapability(se::CudaComputeCapability::Hopper())};
+  ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
+  ASSERT_TRUE(changed);
+  ASSERT_OK(module->Verify());
+  ASSERT_OK_AND_ASSIGN(Literal actual,
+                       HloEvaluator().Evaluate(*module, {&lhs, &rhs}));
+  EXPECT_EQ(actual, expected);
+}
+
+INSTANTIATE_TEST_SUITE_P(Bf16Algorithms, Bf16DotProductPrecisionTest,
+                         ::testing::Values("dot_bf16_bf16_f32",
+                                           "dot_bf16_bf16_f32_x3",
+                                           "dot_bf16_bf16_f32_x6",
+                                           "dot_bf16_bf16_f32_x9"));
+
 TEST_F(DotStrengthReductionTest, MatrixVectorDotShouldNotBeStrengthReduced) {
   const std::string& hlo_string = R"(
 HloModule m
@@ -264,12 +301,12 @@ ENTRY entry {
   CHECK_OK(module->Verify());
 
   const char* filecheck_pattern = R"(
-// CHECK: bf16{{[^ ]*}} multiply
-// CHECK: bf16{{[^ ]*}} multiply
-// CHECK: bf16{{[^ ]*}} multiply
-// CHECK: bf16{{[^ ]*}} multiply
-// CHECK: bf16{{[^ ]*}} multiply
-// CHECK: bf16{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
 // CHECK: f32[32,70]{{[^ ]*}} reduce
 )";
 
@@ -296,12 +333,12 @@ ENTRY entry {
   CHECK_OK(module->Verify());
 
   const char* filecheck_pattern = R"(
-// CHECK: bf16{{[^ ]*}} multiply
-// CHECK: bf16{{[^ ]*}} multiply
-// CHECK: bf16{{[^ ]*}} multiply
-// CHECK: bf16{{[^ ]*}} multiply
-// CHECK: bf16{{[^ ]*}} multiply
-// CHECK: bf16{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
+// CHECK: f32{{[^ ]*}} multiply
 // CHECK: f32[3000]{0} reduce
 )";
 
