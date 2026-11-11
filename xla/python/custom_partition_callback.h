@@ -19,14 +19,17 @@ limitations under the License.
 #include <optional>
 #include <string>
 #include <tuple>
+#include <vector>
 
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_custom_partitioner_extension.h"
 #include "xla/service/custom_call_sharding_helper.h"
+#include "xla/shape.h"
 
 namespace jax {
 
@@ -36,6 +39,13 @@ struct PartitionScratch {
 };
 PartitionScratch PopulateArgs(JAX_CustomCallPartitioner_Partition_Args* args,
                               const xla::HloInstruction* instruction);
+PartitionScratch PopulateArgs(
+    JAX_CustomCallPartitioner_Partition_Args* args,
+    absl::Span<const xla::Shape> arg_shapes,
+    absl::Span<const std::optional<xla::HloSharding>> arg_shardings,
+    const xla::Shape& result_shape,
+    const std::optional<xla::HloSharding>& result_sharding,
+    absl::string_view backend_config);
 absl::StatusOr<std::tuple<
     std::vector<xla::Shape>, std::vector<std::optional<xla::HloSharding>>,
     xla::Shape, std::optional<xla::HloSharding>, absl::string_view>>

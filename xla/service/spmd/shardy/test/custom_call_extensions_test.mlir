@@ -233,6 +233,16 @@ func.func @custom_call_partial_reduce_string_backend_config_insert_explicit_resh
   return %0#0, %0#1 : tensor<16x2xf32>, tensor<16x2xf32>
 }
 
+// `@CustomSPMDPartitioning` without an attached `sdy.sharding_rule` skips rule
+// generation without emitting an unknown-custom-call warning.
+// CHECK-LABEL: func @custom_spmd_partitioning_no_warning
+func.func @custom_spmd_partitioning_no_warning(%arg0: tensor<8x2xf32>) -> tensor<8x2xf32> {
+  // CHECK: stablehlo.custom_call @CustomSPMDPartitioning
+  // CHECK-NOT: sdy.sharding_rule
+  %0 = stablehlo.custom_call @CustomSPMDPartitioning(%arg0) {backend_config = ""} : (tensor<8x2xf32>) -> tensor<8x2xf32>
+  return %0 : tensor<8x2xf32>
+}
+
 // CHECK-LABEL: func @unknown_custom_op
 func.func @unknown_custom_op(%arg0: tensor<8x2xui32>, %arg1: tensor<8x2xui32>) -> tensor<8x2xui64> {
   // expected-warning@+1 {{custom call @unknown_custom_op is unknown to SDY sharding rule registry}}

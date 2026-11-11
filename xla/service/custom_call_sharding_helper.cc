@@ -16,16 +16,20 @@ limitations under the License.
 #include "xla/service/custom_call_sharding_helper.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "absl/base/attributes.h"
 #include "absl/base/const_init.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/types/span.h"
 #include "tsl/platform/logging.h"
 #include "xla/hlo/ir/hlo_sharding.h"
+#include "xla/shape.h"
 #include "xla/util.h"
 
 namespace xla {
@@ -52,6 +56,17 @@ bool CustomCallShardingHelper::CanPropagateShardingToOperands(
 absl::Status CustomCallPartitioner::Partition(
     spmd::SpmdPartitioningVisitor* partitioner, HloInstruction* hlo) const {
   return xla::Unimplemented("Implement sharding for %s", hlo->ToString());
+}
+
+absl::StatusOr<std::optional<CustomCallPartitionResult>>
+CustomCallPartitioner::PartitionToMlir(
+    absl::Span<const Shape> arg_shapes,
+    absl::Span<const std::optional<HloSharding>> arg_shardings,
+    const Shape& result_shape,
+    const std::optional<HloSharding>& result_sharding,
+    absl::string_view backend_config) const {
+  return xla::Unimplemented(
+      "PartitionToMlir is not implemented for this custom call partitioner.");
 }
 
 absl::Status CustomCallPartitioner::InspectSharding(

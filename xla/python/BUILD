@@ -209,6 +209,7 @@ cc_library(
     visibility = internal_visibility([":friends"]),
     deps = [
         "//xla:debug_options_flags",
+        "//xla:shape_util",
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/builder:xla_computation",
@@ -231,6 +232,7 @@ cc_library(
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
     ],
 )
 

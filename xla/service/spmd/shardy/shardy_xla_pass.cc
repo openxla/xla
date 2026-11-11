@@ -36,18 +36,27 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Transforms/Passes.h"
 #include "re2/re2.h"
 #include "shardy/common/file_utils.h"
+#include "shardy/dialect/sdy/ir/constants.h"
 #include "shardy/dialect/sdy/transforms/common/partitioner_stage.h"
+#include "shardy/dialect/sdy/transforms/common/passes.h"
 #include "shardy/dialect/sdy/transforms/common/propagation_options.h"
+#include "shardy/dialect/sdy/transforms/export/partitioner_pipeline.h"
+#include "shardy/dialect/sdy/transforms/export/passes.h"
 #include "shardy/dialect/sdy/transforms/export/utils.h"
+#include "shardy/dialect/sdy/transforms/import/passes.h"
+#include "shardy/dialect/sdy/transforms/propagation/auto_partitioner_registry.h"
 #include "shardy/dialect/sdy/transforms/propagation/passes.h"
+#include "shardy/dialect/sdy/transforms/propagation/user_priority_propagation.h"
 #include "tsl/platform/path.h"
 #include "tsl/platform/platform.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -70,6 +79,7 @@ limitations under the License.
 #include "xla/service/computation_layout.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/spmd/shardy/constants.h"
+#include "xla/service/spmd/shardy/extensions/custom_spmd_partitioning.h"
 #include "xla/service/spmd/shardy/sdy_round_trip/pipelines.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_export.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/stablehlo_import.h"
@@ -371,6 +381,100 @@ std::string getShardyDirIfShouldDump(const DebugOptions& debugOptions,
   return shardyDir;
 }
 
+// Populates `pm` with Shardy propagation and device-code partitioning when the
+// module contains custom calls with MLIR partitioning callbacks (e.g., JAX
+// `@custom_partitioning`), inserting `XlaSdyCustomCallPartitioningPass` after
+// explicit reshard insertion and before `sdy::addPartitionerPipeline`.
+void addPropagationAndPartitionerWithCustomCallLowering(
+    mlir::OpPassManager& pm, int& dumpIndex,
+    const mlir::sdy::PropagationOptions& options) {
+  mlir::sdy::addImportPipeline(pm, dumpIndex, options);
+  if (!options.dedupFunctionsFully) {
+    pm.addPass(mlir::sdy::createFlattenCallGraphPass());
+    pm.addPass(mlir::createSymbolDCEPass());
+  }
+  pm.addPass(mlir::sdy::createAddFuncDataFlowEdgesPass());
+  pm.addPass(mlir::sdy::createApplyShardingConstraintsPass(
+      mlir::sdy::ApplyShardingConstraintsPassOptions{
+          options.debugShardingOrigins, options.debugPropagationEdgeSharding}));
+  pm.addPass(mlir::sdy::createShardingGroupImportPass());
+  {
+    mlir::sdy::PropagationOptions optionsWithKeepShardingRules = options;
+    optionsWithKeepShardingRules.keepShardingRules = true;
+    pm.addPass(mlir::sdy::createPreOrderFuncsPass());
+    pm.addPass(mlir::sdy::createUserPriorityPropagationPass(
+        optionsWithKeepShardingRules, dumpIndex));
+  }
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::sdy::createSinkFuncDataFlowEdgesPass());
+  pm.addPass(mlir::sdy::createPropagateToFuncResultsPass());
+  pm.addPass(mlir::sdy::createUnflattenCallGraphPass());
+  pm.addPass(mlir::createSymbolDCEPass());
+  if (options.enableAutoPartitioning) {
+    pm.addPass(mlir::sdy::createSaveModuleOpPass(
+        options.dumpDirectory, "propagation_before_auto_partitioning",
+        dumpIndex++));
+    mlir::sdy::AutoPartitionerRegistry::addPasses(pm);
+  }
+  pm.addPass(mlir::sdy::createInsertFuncCallReshardsPass());
+
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::sdy::createConstantOrScalarMergerPass());
+  pm.addNestedPass<mlir::func::FuncOp>(mlir::sdy::createSinkDataFlowEdgesPass(
+      mlir::sdy::SinkDataFlowEdgesPassOptions{
+          /*sinkDebugShardingOrigins=*/options.debugShardingOrigins,
+          /*sinkDebugPropagationEdgeSharding=*/options
+              .debugPropagationEdgeSharding}));
+  pm.addPass(mlir::sdy::createRemoveShardingGroupsPass());
+  pm.addPass(mlir::sdy::createRemovePropagationBarriersPass());
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::sdy::createShardingConstraintToReshardPass());
+  if (options.updateNonDivisibleInputOutputShardings) {
+    pm.addPass(mlir::sdy::createUpdateNonDivisibleInputOutputShardingsPass());
+    pm.addPass(mlir::sdy::createRemoveSubAxesInInputOutputShardingsPass());
+  }
+  pm.addPass(mlir::sdy::createCloseShardingsPass());
+  pm.addPass(mlir::sdy::createSaveModuleOpPass(
+      options.dumpDirectory, "after_propagation", dumpIndex++));
+
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::sdy::createVerifyUnreducedAxesPass());
+  mlir::sdy::InsertExplicitReshardsPassOptions reshardsOptions;
+  reshardsOptions.enableFullVersion = true;
+  reshardsOptions.markPartialResultWithUnreducedAxes = true;
+  reshardsOptions.shardyGeneratesDeviceCode = true;
+  pm.addNestedPass<mlir::func::FuncOp>(
+      mlir::sdy::createInsertExplicitReshardsPass(reshardsOptions));
+  pm.addPass(createXlaSdyCustomCallPartitioningPass());
+  pm.addPass(mlir::sdy::createSaveModuleOpPass(
+      options.dumpDirectory, "after_explicit_reshards", dumpIndex++));
+  mlir::sdy::addCanonicalizerPass(pm, mlir::sdy::kReshardLabel);
+
+  mlir::sdy::PartitionerPipelineOptions partitionerOptions;
+  partitionerOptions.stage = options.partitionerStage;
+  partitionerOptions.replicaCount = options.replicaCount;
+  partitionerOptions.partitionCount = options.partitionCount;
+  partitionerOptions.rngBitGeneratorUnsafe = options.rngBitGeneratorUnsafe;
+  partitionerOptions.shardyGeneratesDeviceCode = true;
+  mlir::sdy::addPartitionerPipeline(pm, partitionerOptions);
+
+  mlir::sdy::addCanonicalizerPass(
+      pm, {mlir::sdy::kCollectiveLabel, mlir::sdy::kIotaCollectiveLabel});
+  pm.addPass(mlir::sdy::createSaveModuleOpPass(
+      options.dumpDirectory, "after_partitioner_passes", dumpIndex++));
+
+  if (options.debugPropagationEdgeSharding || options.debugShardingOrigins) {
+    pm.addPass(mlir::sdy::createRemovePropagationDebugInfoPass());
+  }
+  if (!options.keepShardingRules) {
+    pm.addNestedPass<mlir::func::FuncOp>(
+        mlir::sdy::createDropShardingRulesPass());
+  }
+  if (options.inlineMeshes) {
+    pm.addPass(mlir::sdy::createInlineMeshesPass());
+  }
+}
+
 absl::Status runShardingPropagation(HloModule* hloModule,
                                     mlir::ModuleOp mlirModule,
                                     bool importMhloShardings,
@@ -471,13 +575,18 @@ absl::Status runShardingPropagation(HloModule* hloModule,
   options.dumpDirectory = shardyDir;
   options.conservativePropagation = hloModule->use_auto_spmd_partitioning();
   options.enableAutoPartitioning = hloModule->use_auto_spmd_partitioning();
-  mlir::sdy::addPropagationPipeline(pm, dumpIndex, options);
 
   bool shardyGeneratesDeviceCode =
       !options.avoidExportForPartitioning &&
       !options.enablePerInstructionPartitioning &&
       options.partitionerStage ==
           mlir::sdy::PartitionerStage::kConvertGlobalToLocal;
+  if (shardyGeneratesDeviceCode && hasCustomCallMlirPartitioner(mlirModule)) {
+    addPropagationAndPartitionerWithCustomCallLowering(pm, dumpIndex, options);
+  } else {
+    mlir::sdy::addPropagationPipeline(pm, dumpIndex, options);
+  }
+
   xla::sdy::StablehloExportPipelineOptions stablehloExportPipelineOptions;
   stablehloExportPipelineOptions.addMissingShardingToControlFlow =
       !shardyGeneratesDeviceCode;

@@ -49,6 +49,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/mlir_hlo/utils/unregistered_attributes.h"
 #include "xla/service/custom_call_sharding_helper.h"
+#include "xla/service/spmd/shardy/extensions/custom_spmd_partitioning.h"
 #include "xla/service/spmd/shardy/extensions/partial_reduce_custom_call.h"
 #include "xla/service/spmd/shardy/stablehlo_round_trip/export_shardings.h"
 
@@ -269,6 +270,10 @@ struct CustomCallShardingRuleOpInterface
       }
       return mlir::sdy::OpShardingRuleBuilder::buildPointwise(customCall);
     }
+    if (callTargetName == kCustomSPMDPartitioningTargetName ||
+        xla::GetCustomCallPartitioner(callTargetName) != nullptr) {
+      return mlir::sdy::OpShardingRuleAttr();
+    }
     // TODO(b/327191011): output unregistered op stats instead.
     static llvm::once_flag onceFlag;
     mlir::sdy::emitOpWarningOnce(
@@ -331,6 +336,7 @@ struct CustomCallPartitioningOpInterface
 }  // namespace
 
 void registerCustomCallExtensions(mlir::DialectRegistry& registry) {
+  registerCustomSPMDPartitioningDialects(registry);
   registry.addExtension(+[](mlir::MLIRContext* ctx,
                             mlir::stablehlo::StablehloDialect*) {
     mlir::stablehlo::CustomCallOp::attachInterface<
