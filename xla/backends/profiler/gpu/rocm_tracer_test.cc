@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/backends/profiler/gpu/rocm_tracer.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -27,6 +24,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
@@ -44,10 +43,10 @@ limitations under the License.
 #include "rocm/include/rocprofiler-sdk/context.h"
 #include "rocm/include/rocprofiler-sdk/fwd.h"
 #include "rocm/include/rocprofiler-sdk/marker.h"
-#include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/backends/profiler/gpu/rocm_collector.h"
 #include "xla/backends/profiler/gpu/rocm_tracer_utils.h"
 #include "xla/tsl/platform/env_time.h"
+#include "tsl/profiler/protobuf/xplane.pb.h"
 
 namespace xla {
 namespace profiler {
@@ -378,6 +377,11 @@ class MarkerCapturingCollector : public RocmTraceCollector {
   MarkerCapturingCollector() : RocmTraceCollector(MakeCollectorOptions()) {}
 
   void AddEvent(RocmTracerEvent&& event, bool) override {
+    // Only EmitMarkerEvent produces Generic events, and it runs synchronously
+    // in MarkerCallback. Buffered HIP API/kernel/memcpy records from earlier
+    // tests can still be delivered into this session (AIPROFSDK-1162);
+    // ignore them.
+    if (event.type != RocmTracerEventType::Generic) return;
     absl::MutexLock lock(&mu_);
     events_.push_back(std::move(event));
   }
