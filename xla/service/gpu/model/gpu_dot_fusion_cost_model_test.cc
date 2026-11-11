@@ -41,26 +41,28 @@ namespace xla {
 namespace gpu {
 namespace {
 
-using gpu_dot_fusion_cost_model::detail::
-    CalculateComputeTimeWithTileAndWaveQuantization;
-using gpu_dot_fusion_cost_model::detail::CalculateHardwareLaunchWaves;
-using gpu_dot_fusion_cost_model::detail::CalculateLoopIterBytes;
-using gpu_dot_fusion_cost_model::detail::
-    CalculatePipelinedLoopTimeWithLaunchWaves;
-using gpu_dot_fusion_cost_model::detail::CalculateRegistersPerThread;
-using gpu_dot_fusion_cost_model::detail::CalculateSharedMemoryPerBlockBytes;
-using gpu_dot_fusion_cost_model::detail::CalculateSmOccupancy;
-using gpu_dot_fusion_cost_model::detail::ComputeAndFlops;
-using gpu_dot_fusion_cost_model::detail::DotProblemInfo;
-using gpu_dot_fusion_cost_model::detail::DotTileSize;
-using gpu_dot_fusion_cost_model::detail::FactorWarpGrid;
-using gpu_dot_fusion_cost_model::detail::GetEffectiveFlopsPerNsForTileSize;
-using gpu_dot_fusion_cost_model::detail::GetEffectiveHbmBandwidth;
-using gpu_dot_fusion_cost_model::detail::HbmEstimates;
-using gpu_dot_fusion_cost_model::detail::kLoopLatencyTax;
-using gpu_dot_fusion_cost_model::detail::LaunchConfig;
-using gpu_dot_fusion_cost_model::detail::SmOccupancy;
 using ::testing::FieldsAre;
+using ::xla::gpu::gpu_dot_fusion_cost_model::
+    CalculateComputeTimeWithTileAndWaveQuantization;
+using ::xla::gpu::gpu_dot_fusion_cost_model::CalculateComputeUtilization;
+using ::xla::gpu::gpu_dot_fusion_cost_model::CalculateHardwareLaunchWaves;
+using ::xla::gpu::gpu_dot_fusion_cost_model::CalculateLoopIterBytes;
+using ::xla::gpu::gpu_dot_fusion_cost_model::CalculateMemoryUtilization;
+using ::xla::gpu::gpu_dot_fusion_cost_model::
+    CalculatePipelinedLoopTimeWithLaunchWaves;
+using ::xla::gpu::gpu_dot_fusion_cost_model::CalculateRegistersPerThread;
+using ::xla::gpu::gpu_dot_fusion_cost_model::CalculateSharedMemoryPerBlockBytes;
+using ::xla::gpu::gpu_dot_fusion_cost_model::CalculateSmOccupancy;
+using ::xla::gpu::gpu_dot_fusion_cost_model::ComputeAndFlops;
+using ::xla::gpu::gpu_dot_fusion_cost_model::DotProblemInfo;
+using ::xla::gpu::gpu_dot_fusion_cost_model::DotTileSize;
+using ::xla::gpu::gpu_dot_fusion_cost_model::FactorWarpGrid;
+using ::xla::gpu::gpu_dot_fusion_cost_model::GetEffectiveFlopsPerNsForTileSize;
+using ::xla::gpu::gpu_dot_fusion_cost_model::GetEffectiveHbmBandwidth;
+using ::xla::gpu::gpu_dot_fusion_cost_model::HbmEstimates;
+using ::xla::gpu::gpu_dot_fusion_cost_model::kLoopLatencyTax;
+using ::xla::gpu::gpu_dot_fusion_cost_model::LaunchConfig;
+using ::xla::gpu::gpu_dot_fusion_cost_model::SmOccupancy;
 using ::xla::xtile::BlockLevelParameters;
 
 class GpuDotFusionCostModelTest : public HloHardwareIndependentTestBase {
@@ -360,9 +362,10 @@ backend_config={"sizes":["32"]}
               absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
 }
 
-// TODO(b/501002656): Remove this test once we support transposes in the dot
-// fusion cost model.
-TEST_F(GpuDotFusionCostModelTest, GpuDotWithDownstreamTransposeIsRejected) {
+// TODO(b/510718798): Remove once EstimateRunTimeForDotOpWithBlockParameters
+// supports downstream transposes.
+TEST_F(GpuDotFusionCostModelTest,
+       EstimateRunTimeForDotOpWithDownstreamTransposeIsRejected) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
                        ParseAndReturnVerifiedModule(R"(
 ENTRY e {
@@ -376,8 +379,13 @@ ROOT r = bf16[1024,1024] transpose(d), dimensions={1,0}
 
   auto* root = module->entry_computation()->root_instruction();
   auto* dot = Cast<HloDotInstruction>(root->operand(0));
-  EXPECT_THAT(gpu_dot_fusion_cost_model::IsSupported(dot),
-              absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
+  EXPECT_OK(gpu_dot_fusion_cost_model::IsSupported(dot));
+  BlockLevelParameters block_params;
+  block_params.output_tile_sizes = {{64, 64}};
+  EXPECT_THAT(
+      gpu_dot_fusion_cost_model::EstimateRunTimeForDotOpWithBlockParameters(
+          dot, block_params, ddh100_),
+      absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
 }
 
 TEST_F(GpuDotFusionCostModelTest, CalculateIterBytes) {
@@ -424,6 +432,27 @@ TEST_F(GpuDotFusionCostModelTest, CalculateSharedMemoryPerBlockBytes) {
   DotTileSize dot_tile_f64_16{/*m=*/64, /*n=*/64, /*k=*/16, /*b=*/1};
   EXPECT_EQ(16384, CalculateSharedMemoryPerBlockBytes(
                        dot_info_f64, dot_tile_f64_16, /*num_stages=*/1));
+
+  // Batched tiles scale shared memory by the batch tile size.
+  // Tile size: (2*64*64/2) + (2*64*64*4) = 4096 + 32768 = 36864 bytes.
+  // stages=2 -> 36864 * 2 = 73728 bytes.
+  DotProblemInfo dot_info_s4_f32;
+  dot_info_s4_f32.lhs_element_type = PrimitiveType::S4;
+  dot_info_s4_f32.rhs_element_type = PrimitiveType::F32;
+  DotTileSize dot_tile_batched{/*m=*/64, /*n=*/64, /*k=*/64, /*b=*/2};
+  EXPECT_EQ(73728, CalculateSharedMemoryPerBlockBytes(
+                       dot_info_s4_f32, dot_tile_batched, /*num_stages=*/2));
+
+  // Predicate operands use 8-bit storage width and odd sub-byte element counts
+  // round up to whole bytes.
+  // Tile size: (1*1*3*1) + ceil(1*1*3*4/8) = 3 + 2 = 5 bytes.
+  // stages=2 -> 5 * 2 = 10 bytes.
+  DotProblemInfo dot_info_pred_s4;
+  dot_info_pred_s4.lhs_element_type = PrimitiveType::PRED;
+  dot_info_pred_s4.rhs_element_type = PrimitiveType::S4;
+  DotTileSize dot_tile_odd{/*m=*/1, /*n=*/1, /*k=*/3, /*b=*/1};
+  EXPECT_EQ(10, CalculateSharedMemoryPerBlockBytes(
+                    dot_info_pred_s4, dot_tile_odd, /*num_stages=*/2));
 }
 
 TEST_F(GpuDotFusionCostModelTest, CalculateSmOccupancy_ShmemLimited) {
@@ -635,16 +664,12 @@ TEST_F(GpuDotFusionCostModelTest, CalculateComputeUtilization) {
 
   // Compute Utilization: flops / (theoretical * exec_time(4s)) = 0.5
   EXPECT_DOUBLE_EQ(
-      gpu_dot_fusion_cost_model::detail::CalculateComputeUtilization(
-          estimates, ddh100_, PrimitiveType::F32),
-      0.5);
+      CalculateComputeUtilization(estimates, ddh100_, PrimitiveType::F32), 0.5);
 
   estimates.exec_time = absl::ZeroDuration();
   // We default to 0.0 compute utilization if the execution time is zero.
   EXPECT_DOUBLE_EQ(
-      gpu_dot_fusion_cost_model::detail::CalculateComputeUtilization(
-          estimates, ddh100_, PrimitiveType::F32),
-      0.0);
+      CalculateComputeUtilization(estimates, ddh100_, PrimitiveType::F32), 0.0);
 }
 
 TEST_F(GpuDotFusionCostModelTest, CalculateMemoryUtilization) {
@@ -657,25 +682,16 @@ TEST_F(GpuDotFusionCostModelTest, CalculateMemoryUtilization) {
 
   // Memory roofline: (1000 + 2000) / 3000 B/s = 1.0s
   // Memory Utilization: roofline (1s) / exec_time (4s) = 0.25
-  EXPECT_DOUBLE_EQ(
-      gpu_dot_fusion_cost_model::detail::CalculateMemoryUtilization(estimates,
-                                                                    ddh100_),
-      0.25);
+  EXPECT_DOUBLE_EQ(CalculateMemoryUtilization(estimates, ddh100_), 0.25);
 
   estimates.exec_time = absl::ZeroDuration();
   // We default to 0.0 memory utilization if the execution time is zero.
-  EXPECT_DOUBLE_EQ(
-      gpu_dot_fusion_cost_model::detail::CalculateMemoryUtilization(estimates,
-                                                                    ddh100_),
-      0.0);
+  EXPECT_DOUBLE_EQ(CalculateMemoryUtilization(estimates, ddh100_), 0.0);
 
   estimates.exec_time = absl::Seconds(4);
   ddh100_.set_memory_bandwidth(0);
   // We default to 0.0 memory utilization if peak memory bandwidth is zero.
-  EXPECT_DOUBLE_EQ(
-      gpu_dot_fusion_cost_model::detail::CalculateMemoryUtilization(estimates,
-                                                                    ddh100_),
-      0.0);
+  EXPECT_DOUBLE_EQ(CalculateMemoryUtilization(estimates, ddh100_), 0.0);
 }
 
 TEST_F(GpuDotFusionCostModelTest,
