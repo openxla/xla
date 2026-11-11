@@ -25,6 +25,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/backends/gpu/codegen/emitters/mlir_kernel_emitter.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
+#include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/gpu/gpu_fusible.h"
@@ -37,9 +38,7 @@ namespace gpu {
 // Generic loop fusion.
 class LoopFusion final : public MlirKernelEmitter {
  public:
-  explicit LoopFusion(const HloFusionAnalysis& analysis)
-      : analysis_(analysis),
-        unroll_factor_(ComputeLoopFusionConfig(analysis)) {}
+  explicit LoopFusion(const HloFusionAnalysis& analysis);
   LaunchDimensions launch_dimensions() const override;
   int unroll_factor() const override { return unroll_factor_; }
 
@@ -66,6 +65,9 @@ class LoopFusion final : public MlirKernelEmitter {
  private:
   const HloFusionAnalysis& analysis_;
   int unroll_factor_;
+  // The order in which the work items traverse the output, if it is not the
+  // memory order.
+  std::optional<emitters::BlockedDimensionOrder> order_;
 };
 
 }  // namespace gpu

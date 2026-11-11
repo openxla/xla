@@ -18,8 +18,12 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
+#include <vector>
 
+#include "absl/container/flat_hash_set.h"
+#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Dialect/Func/IR/FuncDialect.h"
@@ -100,6 +104,88 @@ TEST(DefaultWorkItemIndexingMap, MultiDimensionTile) {
   SymbolicExpr tile_sym_z =
       CreateSymbolExpr(2, indexing_map.GetDimensionCount(), &mlir_context);
   EXPECT_EQ(symbolic_map.GetResult(3), tile_sym_z);
+}
+
+TEST(DefaultWorkItemIndexingMap, BlockedDimensionOrder) {
+  mlir::MLIRContext mlir_context;
+  RegisterSymbolicExprStorage(&mlir_context);
+  mlir_context.loadDialect<mlir::affine::AffineDialect>();
+
+  constexpr int64_t kNumGroups = 3;
+  constexpr int64_t kNumItems = 4;
+  constexpr int64_t kTile = 8;
+  WorkDimensions work_dimensions{NumWorkClusters{}, NumWorkGroups{kNumGroups},
+                                 NumWorkItems{kNumItems},
+                                 WorkTileSize{{kTile}}};
+
+  // [J, I, K]. The work items visit the elements as [J / 2, I, 2, K].
+  constexpr int64_t kJ = 4, kI = 3, kK = 8, kBlock = 2;
+  Shape shape(PrimitiveType::F32, {kJ, kI, kK});
+  *shape.mutable_layout() = LayoutUtil::GetDefaultLayoutForShape(shape);
+  ASSERT_EQ(kNumGroups * kNumItems * kTile, ShapeUtil::ElementsIn(shape));
+
+  IndexingMap indexing_map = GetDefaultWorkItemIndexingMap(
+      work_dimensions, shape, &mlir_context,
+      BlockedDimensionOrder{/*blocked_size=*/kJ, /*block_size=*/kBlock,
+                            /*middle_size=*/kI, /*minor_size=*/kK});
+  // Every work item is in bounds.
+  EXPECT_EQ(indexing_map.GetConstraintsCount(), 0);
+  ASSERT_EQ(indexing_map.GetSymbolCount(), 1);
+
+  auto constant = [&](int64_t value) {
+    return CreateSymbolicConstant(value, &mlir_context);
+  };
+  absl::flat_hash_set<std::vector<int64_t>> visited;
+  for (int64_t group = 0; group < kNumGroups; ++group) {
+    for (int64_t item = 0; item < kNumItems; ++item) {
+      for (int64_t tile = 0; tile < kTile; ++tile) {
+        // Dimensions are the work item ids followed by the work group ids.
+        llvm::SmallVector<SymbolicExpr> dims = {constant(item), constant(0),
+                                                constant(0),    constant(group),
+                                                constant(0),    constant(0)};
+        llvm::SmallVector<SymbolicExpr> symbols = {constant(tile)};
+        llvm::SmallVector<int64_t, 4> result =
+            indexing_map.Evaluate(dims, symbols);
+
+        // Position in the order the work items traverse the output.
+        int64_t position = (group * kNumItems + item) * kTile + tile;
+        int64_t k = position % kK;
+        int64_t in_block = position / kK % kBlock;
+        int64_t i = position / (kK * kBlock) % kI;
+        int64_t block = position / (kK * kBlock * kI);
+        EXPECT_THAT(result,
+                    ::testing::ElementsAre(block * kBlock + in_block, i, k))
+            << "position " << position;
+        visited.insert(std::vector<int64_t>(result.begin(), result.end()));
+      }
+    }
+  }
+  // Every element is visited exactly once.
+  EXPECT_EQ(visited.size(), ShapeUtil::ElementsIn(shape));
+}
+
+TEST(DefaultWorkItemIndexingMap, BlockedDimensionOrderKeepsBoundsCheck) {
+  mlir::MLIRContext mlir_context;
+  RegisterSymbolicExprStorage(&mlir_context);
+  mlir_context.loadDialect<mlir::affine::AffineDialect>();
+
+  // 3 * 5 * 8 work items for 4 * 3 * 8 elements: the last items are out of
+  // bounds and must be masked.
+  WorkDimensions work_dimensions{NumWorkClusters{}, NumWorkGroups{3},
+                                 NumWorkItems{5}, WorkTileSize{{8}}};
+  Shape shape(PrimitiveType::F32, {4, 3, 8});
+  *shape.mutable_layout() = LayoutUtil::GetDefaultLayoutForShape(shape);
+
+  IndexingMap default_map =
+      GetDefaultWorkItemIndexingMap(work_dimensions, shape, &mlir_context);
+  IndexingMap indexing_map = GetDefaultWorkItemIndexingMap(
+      work_dimensions, shape, &mlir_context,
+      BlockedDimensionOrder{/*blocked_size=*/4, /*block_size=*/2,
+                            /*middle_size=*/3, /*minor_size=*/8});
+  EXPECT_EQ(indexing_map.GetConstraintsCount(),
+            default_map.GetConstraintsCount())
+      << "default: " << default_map << "\nordered: " << indexing_map;
+  EXPECT_EQ(default_map.GetConstraintsCount(), 1) << default_map;
 }
 
 using KernelApiBuilderTest = HloHardwareIndependentTestBase;

@@ -76,7 +76,7 @@ LoopFusionKernelEmitter::LoopFusionKernelEmitter(
     const HloFusionSpec& fusion_spec, const BufferAssignment* buffer_assignment,
     KernelArguments::BufferAlignment buffer_alignment,
     WorkDimensions work_dimensions, absl::string_view entry_function_name,
-    BackendKind backend_kind)
+    BackendKind backend_kind, std::optional<BlockedDimensionOrder> order)
     : mlir_context_(mlir_context),
       fusion_(fusion),
       fusion_spec_(fusion_spec),
@@ -84,7 +84,8 @@ LoopFusionKernelEmitter::LoopFusionKernelEmitter(
       buffer_alignment_(std::move(buffer_alignment)),
       work_dimensions_(std::move(work_dimensions)),
       entry_function_name_(entry_function_name),
-      backend_kind_(backend_kind) {}
+      backend_kind_(backend_kind),
+      order_(order) {}
 
 absl::StatusOr<LoopFusionKernelEmitter::KernelDefinition>
 LoopFusionKernelEmitter::EmitKernelDefinition() {
@@ -122,14 +123,14 @@ LoopFusionKernelEmitter::EmitKernelDefinition() {
 
 IndexingMap LoopFusionKernelEmitter::ComputeWorkItemIdToOutputIndexing(
     const WorkDimensions& work_dimensions, const Shape& root_shape,
-    MLIRContext* ctx) {
-  return GetDefaultWorkItemIndexingMap(work_dimensions, root_shape, ctx);
+    MLIRContext* ctx, const std::optional<BlockedDimensionOrder>& order) {
+  return GetDefaultWorkItemIndexingMap(work_dimensions, root_shape, ctx, order);
 }
 
 IndexingMap LoopFusionKernelEmitter::ComputeWorkItemIdToOutputIndexing(
     MLIRContext* ctx) const {
-  return ComputeWorkItemIdToOutputIndexing(work_dimensions_,
-                                           GetIndexingShape(fusion_spec_), ctx);
+  return ComputeWorkItemIdToOutputIndexing(
+      work_dimensions_, GetIndexingShape(fusion_spec_), ctx, order_);
 }
 
 Shape LoopFusionKernelEmitter::GetIndexingShape(

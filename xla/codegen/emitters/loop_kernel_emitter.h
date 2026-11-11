@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef XLA_CODEGEN_EMITTERS_LOOP_KERNEL_EMITTER_H_
 #define XLA_CODEGEN_EMITTERS_LOOP_KERNEL_EMITTER_H_
 
+#include <optional>
 #include <string>
 
 #include "absl/status/status.h"
@@ -25,6 +26,7 @@ limitations under the License.
 #include "mlir/IR/MLIRContext.h"
 #include "xla/codegen/emitters/computation_partitioner.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
+#include "xla/codegen/emitters/kernel_api_builder.h"
 #include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/codegen/hlo_fusion_spec.h"
 #include "xla/codegen/kernel_emitter.h"
@@ -47,14 +49,19 @@ class LoopFusionKernelEmitter final : public KernelEmitter<MlirKernelSource> {
                           KernelArguments::BufferAlignment buffer_alignment,
                           WorkDimensions work_dimensions,
                           absl::string_view entry_function_name,
-                          BackendKind backend_kind);
+                          BackendKind backend_kind,
+                          std::optional<BlockedDimensionOrder> order =
+                              std::nullopt);
 
   absl::string_view name() const final { return "loop_fusion_kernel_emitter"; }
   absl::StatusOr<KernelDefinition> EmitKernelDefinition() override;
 
+  // If `order` is set, the work items traverse the elements of the root in
+  // that order instead of the memory order.
   static IndexingMap ComputeWorkItemIdToOutputIndexing(
       const WorkDimensions& work_dimensions, const Shape& root_shape,
-      mlir::MLIRContext* ctx);
+      mlir::MLIRContext* ctx,
+      const std::optional<BlockedDimensionOrder>& order = std::nullopt);
 
   // Get the shape that will be used for loop indexing for the given fusion
   // specification.
@@ -78,6 +85,7 @@ class LoopFusionKernelEmitter final : public KernelEmitter<MlirKernelSource> {
   WorkDimensions work_dimensions_;
   std::string entry_function_name_;
   BackendKind backend_kind_;
+  std::optional<BlockedDimensionOrder> order_;
 };
 
 }  // namespace xla::emitters

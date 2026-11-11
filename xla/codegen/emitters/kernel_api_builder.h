@@ -16,6 +16,9 @@ limitations under the License.
 #ifndef XLA_CODEGEN_EMITTERS_KERNEL_API_BUILDER_H_
 #define XLA_CODEGEN_EMITTERS_KERNEL_API_BUILDER_H_
 
+#include <cstdint>
+#include <optional>
+
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/SmallVector.h"
@@ -52,11 +55,23 @@ void SetIndexDataLayout(mlir::ModuleOp module,
                         const HloInstruction& hlo_instruction,
                         bool force_64_bit = false);
 
+// Traverses the linearized output [outer, blocked, middle, minor] as
+// [outer, blocked / block_size, middle, block_size, minor]. This is a
+// permutation, so the set of computed elements does not change.
+struct BlockedDimensionOrder {
+  int64_t blocked_size;
+  int64_t block_size;  // Divides blocked_size.
+  int64_t middle_size;
+  int64_t minor_size;
+};
+
 // Get the default indexing map for the given work dimensions, unroll factor,
-// and output shape.
-IndexingMap GetDefaultWorkItemIndexingMap(const WorkDimensions& work_dimensions,
-                                          const Shape& shape,
-                                          mlir::MLIRContext* mlir_context);
+// and output shape. If `order` is set, the work items traverse the output in
+// the given order instead of the memory order.
+IndexingMap GetDefaultWorkItemIndexingMap(
+    const WorkDimensions& work_dimensions, const Shape& shape,
+    mlir::MLIRContext* mlir_context,
+    const std::optional<BlockedDimensionOrder>& order = std::nullopt);
 
 // Emits the work group id ops annotated with the range of each dimension.
 llvm::SmallVector<mlir::Value> EmitWorkGroupIds(
