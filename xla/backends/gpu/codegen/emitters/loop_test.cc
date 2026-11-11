@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/log/check.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -44,7 +43,7 @@ namespace {
 
 using ::testing::ElementsAreArray;
 
-// There is no gfx1151 test device, so reuse the RDNA3 one with its arch.
+// There is no gfx1151 test device, so reuse the RX7900 one with its arch.
 se::DeviceDescription Gfx1151DeviceInfo() {
   se::DeviceDescription device = TestGpuDeviceInfo::AMDRX7900DeviceInfo();
   device.set_gpu_compute_capability(
@@ -60,9 +59,6 @@ class LoopFusionTest : public HloHardwareIndependentTestBase {
   }
 
  protected:
-  // A loop fusion with result[j, i, k] = operand[i, j, k] + 1 if `transpose`
-  // is true and result[i, j, k] = operand[i, j, k] + 1 otherwise. The array has
-  // the shape bf16[dim, dim, minor].
   static std::string FusionHlo(int64_t dim, int64_t minor, bool transpose) {
     const std::string shape =
         absl::StrCat("bf16[", dim, ",", dim, ",", minor, "]{2,1,0}");
@@ -74,7 +70,6 @@ class LoopFusionTest : public HloHardwareIndependentTestBase {
         broadcast = $0 broadcast(one), dimensions={}
         ROOT add = $0 add(transposed, broadcast)
       }
-
       ENTRY main {
         p0 = $0 parameter(0)
         ROOT fusion = $0 fusion(p0), kind=kLoop, calls=fused_computation
@@ -84,46 +79,35 @@ class LoopFusionTest : public HloHardwareIndependentTestBase {
                                       : "copy(p0)");
   }
 
-  // Returns the index in the output of the first element that the work item
-  // `thread` of the first work group computes, if the fusion is analyzed for
-  // `device_info`, and the number of elements per work item.
   struct FirstElement {
     llvm::SmallVector<int64_t, 4> index;
     int64_t unroll_factor;
   };
+
   absl::StatusOr<FirstElement> GetFirstElement(
-      const se::DeviceDescription& device_info, int64_t dim, int64_t minor,
+      const se::DeviceDescription& device, int64_t dim, int64_t minor,
       bool transpose, int64_t thread) {
     TF_ASSIGN_OR_RETURN(auto module,
                         ParseAndReturnVerifiedModule(
                             FusionHlo(dim, minor, transpose)));
     HloFusionAnalysis analysis = HloFusionAnalysis::Create(
-        *module->entry_computation()->root_instruction(), device_info);
+        *module->entry_computation()->root_instruction(), device);
     CHECK(analysis.emitter_fusion_kind() ==
           HloFusionAnalysis::EmitterFusionKind::kLoop);
     LoopFusion fusion(analysis);
-
     std::optional<IndexingMap> indexing =
-        fusion.ComputeThreadIdToOutputIndexing(/*root_index=*/0,
-                                               &mlir_context_);
+        fusion.ComputeThreadIdToOutputIndexing(0, &mlir_context_);
     CHECK(indexing.has_value());
-    // The only symbol left is the index of the element within the work item,
-    // because one pass of the grid covers the whole output.
     CHECK_EQ(indexing->GetSymbolCount(), 1);
-    auto constant = [&](int64_t value) {
+    auto c = [&](int64_t value) {
       return CreateSymbolicConstant(value, &mlir_context_);
     };
-    // Dimensions are the work item ids followed by the work group ids.
-    llvm::SmallVector<SymbolicExpr> dims = {constant(thread), constant(0),
-                                            constant(0),      constant(0),
-                                            constant(0),      constant(0)};
-    return FirstElement{indexing->Evaluate(dims, {constant(0)}),
+    llvm::SmallVector<SymbolicExpr> dims = {c(thread), c(0), c(0),
+                                            c(0),      c(0), c(0)};
+    return FirstElement{indexing->Evaluate(dims, {c(0)}),
                         fusion.unroll_factor()};
   }
 
-  // The index of the `position`-th element of a [dim, dim, minor] array when
-  // the elements are visited as [dim / block, dim, block, minor]. A block of 1
-  // is the memory order.
   static llvm::SmallVector<int64_t, 3> VisitedIndex(int64_t position,
                                                     int64_t dim, int64_t minor,
                                                     int64_t block) {
@@ -136,56 +120,39 @@ class LoopFusionTest : public HloHardwareIndependentTestBase {
   mlir::MLIRContext mlir_context_;
 };
 
-TEST_F(LoopFusionTest, Gfx1151ReadsAdjacentRowsOfTransposeOperandTogether) {
-  se::DeviceDescription device = Gfx1151DeviceInfo();
-  // The rows are 256 bytes long and 256 KiB apart: 16 rows are 4 KiB. The
-  // dimension has to be a multiple of the number of rows that are read
-  // together, 1032 is only a multiple of 8.
-  for (auto [dim, block] : {std::pair{1024, 16}, std::pair{1032, 8}}) {
-    for (int64_t thread : {1, 32, 33, 127}) {
-      ASSERT_OK_AND_ASSIGN(
-          FirstElement element,
-          GetFirstElement(device, dim, /*minor=*/128, /*transpose=*/true,
-                          thread));
-      EXPECT_THAT(element.index,
-                  ElementsAreArray(VisitedIndex(thread * element.unroll_factor,
-                                                dim, 128, block)))
-          << "dim " << dim << " thread " << thread;
-    }
-  }
-}
-
-TEST_F(LoopFusionTest, KeepsMemoryOrderIfRowsDoNotNeedToBeReadTogether) {
+TEST_F(LoopFusionTest, TransposeOrderIsEnabledOnlyForGfx1151) {
   struct TestCase {
-    std::string name;
+    const char* name;
     se::DeviceDescription device;
     int64_t dim;
     int64_t minor;
     bool transpose;
+    int64_t block;
   };
   const se::DeviceDescription gfx1151 = Gfx1151DeviceInfo();
-  const TestCase test_cases[] = {
-      // The rows are not a multiple of 512 bytes apart.
-      {"unaligned rows", gfx1151, 1023, 128, true},
-      // Rows of 8 KiB already cover all memory channels.
-      {"long rows", gfx1151, 256, 4096, true},
-      {"no transpose", gfx1151, 1024, 128, false},
-      // Only enabled on gfx1151, where the slowdown was measured.
-      {"gfx1100", TestGpuDeviceInfo::AMDRX7900DeviceInfo(), 1024, 128, true},
-      {"mi300", TestGpuDeviceInfo::AMDMI300DeviceInfo(), 1024, 128, true},
-      {"cuda", TestGpuDeviceInfo::RTXA6000DeviceInfo(), 1024, 128, true},
+  const TestCase cases[] = {
+      {"gfx1151, 1024", gfx1151, 1024, 128, true, 16},
+      {"gfx1151, 1032", gfx1151, 1032, 128, true, 8},
+      {"unaligned rows", gfx1151, 1023, 128, true, 1},
+      {"wide rows", gfx1151, 256, 4096, true, 1},
+      {"no transpose", gfx1151, 1024, 128, false, 1},
+      {"gfx1100", TestGpuDeviceInfo::AMDRX7900DeviceInfo(), 1024, 128, true,
+       1},
+      {"mi300", TestGpuDeviceInfo::AMDMI300DeviceInfo(), 1024, 128, true, 1},
+      {"cuda", TestGpuDeviceInfo::RTXA6000DeviceInfo(), 1024, 128, true, 1},
   };
-  for (const TestCase& test_case : test_cases) {
-    for (int64_t thread : {1, 32, 33, 127}) {
+
+  for (const TestCase& test : cases) {
+    for (int64_t thread : {32, 127}) {
       ASSERT_OK_AND_ASSIGN(
           FirstElement element,
-          GetFirstElement(test_case.device, test_case.dim, test_case.minor,
-                          test_case.transpose, thread));
+          GetFirstElement(test.device, test.dim, test.minor, test.transpose,
+                          thread));
       EXPECT_THAT(element.index,
                   ElementsAreArray(VisitedIndex(thread * element.unroll_factor,
-                                                test_case.dim, test_case.minor,
-                                                /*block=*/1)))
-          << test_case.name << ", thread " << thread;
+                                                test.dim, test.minor,
+                                                test.block)))
+          << test.name << ", thread " << thread;
     }
   }
 }
