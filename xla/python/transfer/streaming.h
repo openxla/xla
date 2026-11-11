@@ -206,7 +206,9 @@ class PullTable {
     virtual ~Entry() = default;
 
     // Must call Send() on state when the transfer is ready. Result buffers are
-    // offset by base_req_id.
+    // offset by base_req_id. May be called concurrently from multiple threads
+    // (a pull that arrives while AwaitPull() is still replaying paused pulls),
+    // so implementations must be thread-safe.
     virtual bool Handle(tsl::RCReference<ConnectionState> state,
                         const SocketTransferPullRequest& req,
                         size_t base_req_id) = 0;
