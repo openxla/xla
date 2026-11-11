@@ -1,7 +1,12 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:lit.bzl", "enforce_glob", "lit_test_suite")
 load("//xla:xla.default.bzl", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "AMD_GPU_ANY_BACKEND",
+    "NVIDIA_GPU_ANY_BACKEND",
+    "xla_test",
+)
 load("//xla/tsl:tsl.bzl", "if_oss")
 load("//xla/tsl/platform:build_config_root.bzl", "if_static")
 
@@ -1127,8 +1132,8 @@ xla_test(
     },
     backends = [
         "a100",
-        "amdgpu_any",
-    ] + if_oss(["nvgpu_any"]),
+        AMD_GPU_ANY_BACKEND,
+    ] + if_oss([NVIDIA_GPU_ANY_BACKEND]),
     shard_count = 10,
     deps = [
         ":cudnn_fused_conv_rewriter_test_common",
@@ -1141,7 +1146,7 @@ xla_test(
     args = ["--xla_gpu_autotune_level=0"],
     backends = [
         "a100",
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ],
     #fail_if_no_test_linked = False,  # NOLINT=Only tests AMD GPUs.
     #fail_if_no_test_selected = False,  # NOLINT=Only tests AMD GPUs.
@@ -1631,7 +1636,7 @@ xla_test(
         "p100",
         "v100",
         "b200",
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ],
     deps =
         [
@@ -4086,7 +4091,7 @@ xla_test(
         "a100",
         "h100",
         "b200",
-        "amdgpu_any",
+        AMD_GPU_ANY_BACKEND,
     ],
     deps = [
         ":triton_fusion_numerics_verifier",
