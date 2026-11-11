@@ -100,10 +100,6 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
 
   //===--------------------------------------------------------------------===//
 
-  using NoOpKernel = TypedKernel<>;
-
-  absl::StatusOr<NoOpKernel*> GetNoOpKernel();
-
   absl::StatusOr<GraphConditionalNodeHandle> CreateConditionalNode(
       absl::Span<const GraphNodeHandle> dependencies,
       GraphConditionalHandle conditional, ConditionType type) override;
@@ -266,23 +262,6 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
       CUgraphConditionalHandle handle);
   static std::vector<CUgraphNode> ToCudaGraphHandles(
       absl::Span<const GraphNodeHandle> opaque_handles);
-
-  // A signature of a device kernels updating conditional handle(s).
-  using SetCaseConditionKernel =
-      TypedKernel<CUgraphConditionalHandle, CUgraphConditionalHandle,
-                  CUgraphConditionalHandle, CUgraphConditionalHandle,
-                  CUgraphConditionalHandle, CUgraphConditionalHandle,
-                  CUgraphConditionalHandle, CUgraphConditionalHandle,
-                  DeviceAddress<uint8_t>, bool, int32_t, int32_t, bool>;
-
-  using SetWhileConditionKernel =
-      TypedKernel<CUgraphConditionalHandle, DeviceAddress<bool>>;
-
-  // Lazy loaded auxiliary kernels required for building CUDA graphs (no-op
-  // barriers, updating conditional handles, etc.).
-  NoOpKernel noop_kernel_;
-  SetCaseConditionKernel set_case_condition_kernel_;
-  SetWhileConditionKernel set_while_condition_kernel_;
 
   StreamExecutor* stream_exec_ = nullptr;
   CudaCommandBuffer* parent_ = nullptr;

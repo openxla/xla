@@ -25,6 +25,7 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <thread>  // NOLINT
+#include <utility>
 #include <vector>
 
 #include "absl/base/casts.h"
@@ -32,7 +33,9 @@ limitations under the License.
 #include "absl/log/log_sink.h"
 #include "absl/log/log_sink_registry.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
@@ -44,6 +47,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/cuda/command_buffer_kernels.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/device_address.h"
@@ -53,6 +57,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
+#include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -618,6 +623,138 @@ TEST_F(CudaCommandBufferTest,
   dealloc_thread.join();
   absl::RemoveLogSink(&sink);
   EXPECT_EQ(sink.capture_errors.load(), 0);
+}
+
+TEST_F(CudaCommandBufferTest, HelperKernelLoaderSpecsAreInProcessSymbols) {
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec case_spec,
+                       GetSetCaseConditionKernelLoaderSpec());
+  EXPECT_TRUE(case_spec.has_in_process_symbol());
+  EXPECT_FALSE(case_spec.has_cuda_ptx_in_memory());
+  EXPECT_FALSE(case_spec.has_cuda_cubin_in_memory());
+  ASSERT_TRUE(case_spec.in_process_symbol().has_value());
+  EXPECT_NE(case_spec.in_process_symbol()->symbol, nullptr);
+  EXPECT_EQ(case_spec.kernel_name(), "set_case_condition");
+  EXPECT_EQ(case_spec.arity(), 13);
+
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec while_spec,
+                       GetSetWhileConditionKernelLoaderSpec());
+  EXPECT_TRUE(while_spec.has_in_process_symbol());
+  EXPECT_FALSE(while_spec.has_cuda_ptx_in_memory());
+  EXPECT_FALSE(while_spec.has_cuda_cubin_in_memory());
+  ASSERT_TRUE(while_spec.in_process_symbol().has_value());
+  EXPECT_NE(while_spec.in_process_symbol()->symbol, nullptr);
+  EXPECT_EQ(while_spec.kernel_name(), "set_while_condition");
+  EXPECT_EQ(while_spec.arity(), 2);
+
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec noop_spec, GetNoOpKernelLoaderSpec());
+  EXPECT_TRUE(noop_spec.has_in_process_symbol());
+  EXPECT_FALSE(noop_spec.has_cuda_ptx_in_memory());
+  EXPECT_FALSE(noop_spec.has_cuda_cubin_in_memory());
+  ASSERT_TRUE(noop_spec.in_process_symbol().has_value());
+  EXPECT_NE(noop_spec.in_process_symbol()->symbol, nullptr);
+  EXPECT_EQ(noop_spec.kernel_name(), "noop");
+  EXPECT_EQ(noop_spec.arity(), 0);
+
+  Platform* platform = CudaPlatform();
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> case_kernel,
+                       executor->LoadKernel(case_spec));
+  EXPECT_NE(case_kernel, nullptr);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> while_kernel,
+                       executor->LoadKernel(while_spec));
+  EXPECT_NE(while_kernel, nullptr);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> noop_kernel,
+                       executor->LoadKernel(noop_spec));
+  ASSERT_NE(noop_kernel, nullptr);
+
+  // Exercise the compiled noop kernel on device, since PrepareFinalization only
+  // inserts it on drivers older than 12.8.
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                       executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBuffer> cmd_buffer,
+                       executor->CreateCommandBuffer(primary));
+  ASSERT_OK(cmd_buffer
+                ->CreateLaunch(ThreadDim(), BlockDim(), std::nullopt,
+                               *noop_kernel,
+                               *stream_executor::PackKernelArgs(0), {})
+                .status());
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
+TEST_F(CudaCommandBufferTest, ConditionalBoolCaseAndUpdateAcrossBuffers) {
+  Platform* platform = CudaPlatform();
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                       executor->CreateStream());
+
+  DeviceAddress<bool> pred0 = executor->AllocateArray<bool>(1);
+  DeviceAddress<bool> pred1 = executor->AllocateArray<bool>(1);
+  DeviceAddress<int32_t> out = executor->AllocateArray<int32_t>(4);
+
+  const bool kFalse = false;
+  const bool kTrue = true;
+  ASSERT_OK(stream->Memcpy(&pred0, &kFalse, sizeof(bool)));
+  ASSERT_OK(stream->Memcpy(&pred1, &kTrue, sizeof(bool)));
+
+  auto make_branches = [&]() {
+    std::vector<CommandBuffer::CreateCommands> branches;
+    branches.push_back(
+        [&](CommandBuffer* branch_cb,
+            absl::Span<const CommandBuffer::Command* const> d)
+            -> absl::StatusOr<std::vector<const CommandBuffer::Command*>> {
+          ABSL_ASSIGN_OR_RETURN(
+              const CommandBuffer::Command* cmd,
+              branch_cb->CreateMemset(&out, uint32_t{11}, 4, d));
+          return std::vector<const CommandBuffer::Command*>{cmd};
+        });
+    branches.push_back(
+        [&](CommandBuffer* branch_cb,
+            absl::Span<const CommandBuffer::Command* const> d)
+            -> absl::StatusOr<std::vector<const CommandBuffer::Command*>> {
+          ABSL_ASSIGN_OR_RETURN(
+              const CommandBuffer::Command* cmd,
+              branch_cb->CreateMemset(&out, uint32_t{22}, 4, d));
+          return std::vector<const CommandBuffer::Command*>{cmd};
+        });
+    return branches;
+  };
+
+  // Record, update, and destroy two separate command buffers to verify per
+  // executor helper kernel caching across command buffer lifetimes.
+  for (int round = 0; round < 2; ++round) {
+    ASSERT_OK(stream->MemZero(&out, out.size()));
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBuffer> cmd_buffer,
+                         executor->CreateCommandBuffer(primary));
+    ASSERT_OK_AND_ASSIGN(const CommandBuffer::Command* case_cmd,
+                         cmd_buffer->CreateCase(pred0, make_branches(), {}));
+    ASSERT_OK(cmd_buffer->Finalize());
+    ASSERT_OK(cmd_buffer->Submit(stream.get()));
+
+    std::vector<int32_t> host_out(4, 0);
+    ASSERT_OK(stream->Memcpy(host_out.data(), out, out.size()));
+    ASSERT_OK(stream->BlockHostUntilDone());
+    EXPECT_THAT(host_out, Each(11));
+
+    std::vector<CommandBuffer::UpdateCommands> noop_updates;
+    noop_updates.push_back([](CommandBuffer*) { return absl::OkStatus(); });
+    noop_updates.push_back([](CommandBuffer*) { return absl::OkStatus(); });
+    ASSERT_OK(cmd_buffer->Update());
+    ASSERT_OK(cmd_buffer->UpdateCase(case_cmd, pred1, std::move(noop_updates)));
+    ASSERT_OK(cmd_buffer->Finalize());
+    ASSERT_OK(cmd_buffer->Submit(stream.get()));
+
+    ASSERT_OK(stream->Memcpy(host_out.data(), out, out.size()));
+    ASSERT_OK(stream->BlockHostUntilDone());
+    EXPECT_THAT(host_out, Each(22));
+  }
+
+  executor->Deallocate(&pred0);
+  executor->Deallocate(&pred1);
+  executor->Deallocate(&out);
 }
 }  // namespace
 }  // namespace stream_executor::cuda

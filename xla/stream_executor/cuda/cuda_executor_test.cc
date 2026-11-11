@@ -28,10 +28,12 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
+#include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/debug_options_flags.h"
 #include "xla/stream_executor/activate_context.h"
+#include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"
 #include "xla/stream_executor/cuda/cuda_platform_id.h"
@@ -487,6 +489,41 @@ TEST(CudaExecutorTest, RetainVmmMemoryHandleForDefaultDeviceMemory) {
                        cuda_executor->RetainVmmMemoryHandle(ptr.opaque()));
   EXPECT_NE(handle.handle(), 0);
   cuda_executor->Deallocate(&ptr);
+}
+
+TEST(CudaExecutorTest, DestroysCachedCommandBufferHelperKernelsBeforeShutdown) {
+  ASSERT_OK_AND_ASSIGN(Platform * platform,
+                       PlatformManager::PlatformWithName("CUDA"));
+  auto executor = std::make_unique<CudaExecutor>(platform, 0);
+  ASSERT_OK(executor->Init());
+  if (executor->GetDeviceDescription().driver_version() <
+      SemanticVersion{12, 3, 0}) {
+    GTEST_SKIP() << "CUDA command buffers require CUDA driver >= 12.3";
+  }
+
+  DeviceAddress<bool> pred = executor->AllocateArray<bool>(1);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<CommandBuffer> cmd_buffer,
+      executor->CreateCommandBuffer(CommandBuffer::Mode::kPrimary));
+  std::vector<CommandBuffer::CreateCommands> branches;
+  branches.push_back(
+      [](CommandBuffer*,
+         auto) -> absl::StatusOr<std::vector<const CommandBuffer::Command*>> {
+        return std::vector<const CommandBuffer::Command*>{};
+      });
+  branches.push_back(
+      [](CommandBuffer*,
+         auto) -> absl::StatusOr<std::vector<const CommandBuffer::Command*>> {
+        return std::vector<const CommandBuffer::Command*>{};
+      });
+  ASSERT_OK(cmd_buffer->CreateCase(pred, std::move(branches), {}).status());
+  ASSERT_OK(cmd_buffer->Finalize());
+  cmd_buffer.reset();
+  executor->Deallocate(&pred);
+
+  // Destroying `executor` must tear down cached StreamExecutor::Resources while
+  // `CudaExecutor` is still alive so `CudaKernel` unloading succeeds cleanly.
+  executor.reset();
 }
 }  // namespace
 }  // namespace stream_executor::gpu
