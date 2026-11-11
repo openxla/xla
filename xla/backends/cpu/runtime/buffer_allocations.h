@@ -1,4 +1,4 @@
-/* Copyright 2024 The OpenXLA Authors.
+/* Copyright 2024, 2026 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <utility>
 
 #include "absl/base/attributes.h"
@@ -30,6 +32,10 @@ limitations under the License.
 #include "xla/stream_executor/device_address.h"
 #include "xla/util.h"
 
+namespace tsl {
+class TiedAny;
+}  // namespace tsl
+
 namespace xla::cpu {
 
 // Buffer allocation is a container for device buffers allocated for a
@@ -37,11 +43,15 @@ namespace xla::cpu {
 class BufferAllocations {
  public:
   using Buffers = absl::InlinedVector<se::DeviceAddressBase, 8>;
+  using BufferIdentity = std::shared_ptr<tsl::TiedAny>;
+  using BufferIdentityProvider =
+      std::function<BufferIdentity(BufferAllocation::Index)>;
 
   explicit BufferAllocations(Buffers buffers);
   explicit BufferAllocations(absl::Span<const se::DeviceAddressBase> buffers);
   explicit BufferAllocations(
-      absl::Span<const MaybeOwningDeviceAddress> buffers);
+      absl::Span<const MaybeOwningDeviceAddress> buffers,
+      BufferIdentityProvider buffer_identity_provider = {});
 
   // Returns the device address of buffer at the given index. Returns an error
   // if the index is out of range.
@@ -63,10 +73,16 @@ class BufferAllocations {
   se::DeviceAddressBase GetDeviceAddressUnchecked(
       BufferAllocation::Slice slice) const;
 
+  // Returns the current content identity and owner for cached representations.
+  // Providers replace it before writes and drop it when storage is released.
+  // An empty identity disables caching; it never owns the source storage.
+  BufferIdentity GetBufferIdentity(BufferAllocation::Index index) const;
+
  private:
   absl::InlinedVector<se::DeviceAddressBase, 8> buffers_;
   se::DeviceAddressBase* buffers_data_;  // buffers_.data()
   size_t num_buffers_;
+  BufferIdentityProvider buffer_identity_provider_;
 };
 
 inline BufferAllocations::BufferAllocations(Buffers buffers)
@@ -81,10 +97,12 @@ inline BufferAllocations::BufferAllocations(
       num_buffers_(buffers_.size()) {}
 
 inline BufferAllocations::BufferAllocations(
-    absl::Span<const MaybeOwningDeviceAddress> buffers)
+    absl::Span<const MaybeOwningDeviceAddress> buffers,
+    BufferIdentityProvider buffer_identity_provider)
     : buffers_(buffers.size()),
       buffers_data_(buffers_.data()),
-      num_buffers_(buffers_.size()) {
+      num_buffers_(buffers_.size()),
+      buffer_identity_provider_(std::move(buffer_identity_provider)) {
   for (size_t i = 0; i < buffers.size(); ++i) {
     buffers_[i] = buffers[i].AsDeviceAddress();
   }
@@ -154,6 +172,14 @@ BufferAllocations::GetDeviceAddressUnchecked(
     BufferAllocation::Slice slice) const {
   return buffers_data_[slice.index()].GetByteSlice(slice.offset(),
                                                    slice.size());
+}
+
+inline BufferAllocations::BufferIdentity BufferAllocations::GetBufferIdentity(
+    BufferAllocation::Index index) const {
+  if (index < 0 || index >= num_buffers_ || !buffer_identity_provider_) {
+    return nullptr;
+  }
+  return buffer_identity_provider_(index);
 }
 
 }  // namespace xla::cpu
