@@ -35,14 +35,18 @@ limitations under the License.
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/TypeRange.h"
+#include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
@@ -58,6 +62,7 @@ limitations under the License.
 #include "xla/hlo/analysis/symbolic_expr.h"
 #include "xla/hlo/analysis/symbolic_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/primitive_util.h"
@@ -339,6 +344,33 @@ SmallVector<Value> EmitterHelper::EmitScatterComputation(
     SmallVector<Value> reduced_values =
         emitters::InlineBlock(b, reducer.getBody().front(), inline_arguments);
     return WriteUpdatesToOperands(b, indices, reduced_values, output_tensors);
+  }
+
+  CHECK_EQ(output_tensors.size(), 1)
+      << "Variadic scatter is only supported with unique_indices.";
+  CHECK_EQ(update_elements.size(), 1);
+  const HloComputation* to_apply =
+      description_->scatter->called_computations()[0];
+  if (reducer.getArgument(0).use_empty() ||
+      to_apply->parameter_instruction(0)->IsDead()) {
+    Value unused_current;
+    if (!reducer.getArgument(0).use_empty()) {
+      mlir::Type arg_type = reducer.getArgument(0).getType();
+      if (auto complex_ty = mlir::dyn_cast<mlir::ComplexType>(arg_type)) {
+        mlir::TypedAttr zero = b.getZeroAttr(complex_ty.getElementType());
+        unused_current = mlir::complex::ConstantOp::create(
+            b, complex_ty, b.getArrayAttr({zero, zero}));
+      } else {
+        unused_current =
+            mlir::arith::ConstantOp::create(b, b.getZeroAttr(arg_type));
+      }
+    }
+    Value reduced_val =
+        emitters::InlineBlock(b, reducer.getBody().front(),
+                              {unused_current, update_elements.front()})[0];
+    return {
+        AtomicStoreOp::create(b, reduced_val, output_tensors.front(), indices)
+            .getResult()};
   }
 
   auto atomic_rmw = AtomicRMWOp::create(b, output_tensors.front(), indices);
