@@ -24,6 +24,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/base/dynamic_annotations.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -93,9 +94,12 @@ using ::xla::complex64;
 //
 // Everything else XLA uses from hipblaslt-ext.hpp is safe across the two
 // libraries: the other functions have no std:: types in their names, and
-// GroupedGemm is created and destroyed by hipBLASLt itself (its constructor is
-// out of line and its destructor virtual), so its std::vector and
-// std::shared_ptr members are only touched by libstdc++ code.
+// GroupedGemm's constructor is out of line. Its destructor is virtual but
+// defined inline in hipblaslt-ext.hpp (~GemmInstance), so GroupedGemm must stay
+// heap-allocated and be destroyed polymorphically, through the vtable its
+// constructor installs. Never stack-allocate it or let the call be
+// devirtualized: that would run libc++'s destructors on its libstdc++
+// std::vector and std::shared_ptr members.
 //
 // TODO: Switch to a C API for grouped GEMM once hipBLASLt provides one.
 namespace hipblaslt_libstdcxx {
@@ -119,6 +123,28 @@ GroupedGemmSetProblemFn GroupedGemmSetProblem __asm__(
     "_ZN13hipblaslt_ext11GroupedGemm10setProblemERSt6vectorIlSaIlEES4_S4_"
     "S4_S4_S4_S4_S4_S4_S4_S4_S4_RS1_INS_12GemmEpilogueESaIS5_EERS1_INS_"
     "10GemmInputsESaIS9_EERNS_15GemmProblemTypeE");
+// The compiler does not check labelled declarations against
+// hipblaslt-ext.hpp, so require the header to declare exactly this setProblem
+// overload: a hipBLASLt API change then fails to compile instead of passing
+// mismatched arguments. GroupedGemmSetProblemMemberFn has the same parameters
+// as GroupedGemmSetProblemFn, as a member function of GroupedGemm; keep the two
+// in sync. The cast selects the overload (setProblem has several) and stays
+// unevaluated, so it does not reference the libc++-mangled symbol.
+using GroupedGemmSetProblemMemberFn =
+    hipblasStatus_t (hipblaslt_ext::GroupedGemm::*)(
+        std::vector<int64_t>& m, std::vector<int64_t>& n,
+        std::vector<int64_t>& k, std::vector<int64_t>& batch_count,
+        std::vector<int64_t>& lda, std::vector<int64_t>& ldb,
+        std::vector<int64_t>& ldc, std::vector<int64_t>& ldd,
+        std::vector<int64_t>& stride_a, std::vector<int64_t>& stride_b,
+        std::vector<int64_t>& stride_c, std::vector<int64_t>& stride_d,
+        std::vector<hipblaslt_ext::GemmEpilogue>& epilogue,
+        std::vector<hipblaslt_ext::GemmInputs>& inputs,
+        hipblaslt_ext::GemmProblemType& problem_type);
+static_assert(
+    std::is_same_v<decltype(static_cast<GroupedGemmSetProblemMemberFn>(
+                       &hipblaslt_ext::GroupedGemm::setProblem)),
+                   GroupedGemmSetProblemMemberFn>);
 
 // hipblaslt_ext::getAllAlgos.
 using GetAllAlgosFn = hipblasStatus_t(
@@ -131,10 +157,19 @@ GetAllAlgosFn GetAllAlgos __asm__(
     "_ZN13hipblaslt_ext11getAllAlgosEPvNS_8GemmTypeE18hipblasOperation_"
     "tS2_11hipDataTypeS3_S3_S3_20hipblasComputeType_tRSt6vectorI33_"
     "hipblasLtMatmulHeuristicResult_tSaIS6_EE");
+// As for setProblem, require hipblaslt-ext.hpp to declare exactly this.
+static_assert(std::is_same_v<decltype(static_cast<GetAllAlgosFn*>(
+                                 &hipblaslt_ext::getAllAlgos)),
+                             GetAllAlgosFn*>);
 
-// setProblem reads each GemmEpilogue and GemmInputs as a single pimpl pointer.
+// The labels encode int64_t as 'l' (long).
+static_assert(std::is_same_v<int64_t, long>);
+
+// setProblem reads each GemmEpilogue, GemmInputs and GemmProblemType as a
+// single pimpl pointer.
 static_assert(sizeof(hipblaslt_ext::GemmEpilogue) == sizeof(void*));
 static_assert(sizeof(hipblaslt_ext::GemmInputs) == sizeof(void*));
+static_assert(sizeof(hipblaslt_ext::GemmProblemType) == sizeof(void*));
 // hipBLASLt reads and writes XLA's vectors, and XLA allocates GroupedGemm,
 // whose size must match hipBLASLt's (it holds a std::vector and a
 // std::shared_ptr).
@@ -155,6 +190,27 @@ static_assert(kVectorLayoutIsPointerBased,
 static_assert(sizeof(std::shared_ptr<void>) == 2 * sizeof(void*));
 // XLA destroys GroupedGemm, which must dispatch to hipBLASLt's destructor.
 static_assert(std::has_virtual_destructor_v<hipblaslt_ext::GroupedGemm>);
+
+// Under ASan, libc++'s std::vector keeps [size(), capacity()) poisoned and
+// updates that annotation on every change. libhipblaslt.so (libstdc++, not
+// instrumented) allocates and fills the getAllAlgos result without it, so mark
+// the unused capacity as libc++ would have. ABSL_ANNOTATE_CONTIGUOUS_CONTAINER
+// expands to nothing without ASan.
+#if defined(_LIBCPP_VERSION)
+inline constexpr bool kVectorIsAsanAnnotated = true;
+#else
+inline constexpr bool kVectorIsAsanAnnotated = false;
+#endif
+void AnnotateFilledByHipblaslt(
+    std::vector<hipblasLtMatmulHeuristicResult_t>& results) {
+  if constexpr (kVectorIsAsanAnnotated) {
+    if (results.data() != nullptr) {
+      ABSL_ANNOTATE_CONTIGUOUS_CONTAINER(
+          results.data(), results.data() + results.capacity(),
+          results.data() + results.capacity(), results.data() + results.size());
+    }
+  }
+}
 
 }  // namespace hipblaslt_libstdcxx
 
@@ -898,10 +954,12 @@ auto BlasLt::GroupedMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
 
   const ProblemType& problem = problem_type_;
   std::vector<hipblasLtMatmulHeuristicResult_t> heuristicResult;
-  SE_HIPBLAS_RETURN_IF_ERROR(hipblaslt_libstdcxx::GetAllAlgos(
+  hipblasStatus_t status = hipblaslt_libstdcxx::GetAllAlgos(
       blas_lt_.handle_.get(), hipblaslt_ext::GemmType::HIPBLASLT_GROUPED_GEMM,
       problem.op_a, problem.op_b, problem.type_a, problem.type_b,
-      problem.type_c, problem.type_d, problem.compute_type, heuristicResult));
+      problem.type_c, problem.type_d, problem.compute_type, heuristicResult);
+  hipblaslt_libstdcxx::AnnotateFilledByHipblaslt(heuristicResult);
+  SE_HIPBLAS_RETURN_IF_ERROR(status);
   VLOG(2) << "Total heuristics found: " << heuristicResult.size();
   std::vector<MatmulAlgorithm> algorithms;
   algorithms.reserve(max_algorithm_count);
