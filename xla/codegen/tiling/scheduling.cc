@@ -61,6 +61,41 @@ namespace xla::gpu {
 
 namespace {
 
+int64_t GetPhysicalOperandByteSize(const HloInstruction* instr) {
+  while (instr->opcode() == HloOpcode::kConvert ||
+         instr->opcode() == HloOpcode::kBitcast ||
+         instr->opcode() == HloOpcode::kCopy ||
+         instr->opcode() == HloOpcode::kReshape ||
+         instr->opcode() == HloOpcode::kTranspose) {
+    instr = instr->operand(0);
+  }
+  return ShapeUtil::ByteSizeOf(instr->shape());
+}
+
+constexpr int64_t kMinLargeGemmParallelDim = 1024;
+
+bool HasLargeNonContractingDims(const HloInstruction* dot) {
+  const Shape& lhs_shape = dot->operand(0)->shape();
+  const Shape& rhs_shape = dot->operand(1)->shape();
+  const DotDimensionNumbers& dnums = dot->dot_dimension_numbers();
+  int64_t lhs_nc = 1;
+  for (int64_t d = 0; d < lhs_shape.dimensions().size(); ++d) {
+    if (!absl::c_linear_search(dnums.lhs_contracting_dimensions(), d) &&
+        !absl::c_linear_search(dnums.lhs_batch_dimensions(), d)) {
+      lhs_nc *= lhs_shape.dimensions(d);
+    }
+  }
+  int64_t rhs_nc = 1;
+  for (int64_t d = 0; d < rhs_shape.dimensions().size(); ++d) {
+    if (!absl::c_linear_search(dnums.rhs_contracting_dimensions(), d) &&
+        !absl::c_linear_search(dnums.rhs_batch_dimensions(), d)) {
+      rhs_nc *= rhs_shape.dimensions(d);
+    }
+  }
+  return lhs_nc >= kMinLargeGemmParallelDim &&
+         rhs_nc >= kMinLargeGemmParallelDim;
+}
+
 // Computes the parallel-dimensions permutation for the ragged non-contracting
 // case.
 //
@@ -217,6 +252,16 @@ llvm::SmallVector<int64_t> GetParallelDimensionsPermutation(
   }
 
   const HloInstruction* root = tiled_computation.roots().front()->hlo();
+  const HloInstruction* unwrapped = root;
+  while (unwrapped->IsElementwise() && unwrapped->operand_count() == 1 &&
+         unwrapped->operand(0)->shape() == unwrapped->shape()) {
+    unwrapped = unwrapped->operand(0);
+  }
+  if ((unwrapped->opcode() == HloOpcode::kDot ||
+       unwrapped->opcode() == HloOpcode::kScaledDot) &&
+      HasLargeNonContractingDims(unwrapped)) {
+    root = unwrapped;
+  }
   const TilingSpace& tiling_space = tiled_computation.tiling_space();
   int64_t num_parallel_dims = tiling_space.num_parallel_dimensions();
   if (num_parallel_dims < 2) {
@@ -249,7 +294,14 @@ llvm::SmallVector<int64_t> GetParallelDimensionsPermutation(
     // Heuristic: if the LHS operand is smaller than the RHS operand, it is more
     // beneficial to traverse the RHS non-contracting dimensions ('n') first
     // (more slowly) while keeping the LHS tile in the L2 cache.
-    if (ShapeUtil::ByteSizeOf(lhs_shape) >= ShapeUtil::ByteSizeOf(rhs_shape)) {
+    const bool use_physical_bytes = HasLargeNonContractingDims(root);
+    const int64_t lhs_bytes = use_physical_bytes
+                                  ? GetPhysicalOperandByteSize(root->operand(0))
+                                  : ShapeUtil::ByteSizeOf(lhs_shape);
+    const int64_t rhs_bytes = use_physical_bytes
+                                  ? GetPhysicalOperandByteSize(root->operand(1))
+                                  : ShapeUtil::ByteSizeOf(rhs_shape);
+    if (lhs_bytes >= rhs_bytes) {
       return {};
     }
 
@@ -275,6 +327,164 @@ llvm::SmallVector<int64_t> GetParallelDimensionsPermutation(
   // ---- Ragged dot ----
   if (root->opcode() == HloOpcode::kRaggedDot) {
     return GetRaggedDotPermutation(*root, tiling_space, num_parallel_dims);
+  }
+
+  // ---- Batch-outermost scheduling for fusions with epilogue permutations ----
+  const TiledHloInstruction* single_tiled_dot = nullptr;
+  for (const TiledHloInstruction* instr : tiled_computation.instructions()) {
+    if (instr->hlo()->opcode() == HloOpcode::kDot ||
+        instr->hlo()->opcode() == HloOpcode::kScaledDot) {
+      if (single_tiled_dot != nullptr) {
+        return {};
+      }
+      single_tiled_dot = instr;
+    }
+  }
+
+  if (single_tiled_dot != nullptr &&
+      HasLargeNonContractingDims(single_tiled_dot->hlo())) {
+    const HloInstruction* dot_hlo = single_tiled_dot->hlo();
+    const DotDimensionNumbers& dim_numbers = dot_hlo->dot_dimension_numbers();
+    int64_t num_batch = dim_numbers.lhs_batch_dimensions_size();
+    int64_t dot_rank = dot_hlo->shape().dimensions().size();
+    const Shape& lhs_shape = dot_hlo->operand(0)->shape();
+    const Shape& rhs_shape = dot_hlo->operand(1)->shape();
+    int64_t num_lhs_nc = lhs_shape.dimensions().size() -
+                         dim_numbers.lhs_contracting_dimensions_size() -
+                         dim_numbers.lhs_batch_dimensions_size();
+    int64_t num_rhs_nc = rhs_shape.dimensions().size() -
+                         dim_numbers.rhs_contracting_dimensions_size() -
+                         dim_numbers.rhs_batch_dimensions_size();
+
+    if (num_batch >= 0 &&
+        single_tiled_dot->tile().dim_tiles().size() == dot_rank) {
+      const llvm::SmallVector<TilingSpace::DimensionInfo, 4> dims =
+          tiling_space.dimensions();
+      llvm::DenseSet<int64_t> batch_parallel_vars;
+      llvm::DenseSet<int64_t> m_parallel_vars;
+      llvm::DenseSet<int64_t> n_parallel_vars;
+      llvm::DenseSet<int64_t> non_batch_parallel_vars;
+
+      for (int64_t d = 0; d < dot_rank; ++d) {
+        const SymbolicExpr& offset =
+            single_tiled_dot->tile().dim_tiles()[d].offset;
+        for (const TilingSpace::DimensionInfo& dim_info : dims) {
+          if (dim_info.type == TilingSpace::DimensionSemantics::kParallel &&
+              offset.IsFunctionOfVariable(dim_info.id.value())) {
+            if (d < num_batch) {
+              batch_parallel_vars.insert(dim_info.id.value());
+            } else {
+              non_batch_parallel_vars.insert(dim_info.id.value());
+              if (num_lhs_nc == 1 && d == num_batch) {
+                m_parallel_vars.insert(dim_info.id.value());
+              } else if (num_rhs_nc == 1 && d == num_batch + 1) {
+                n_parallel_vars.insert(dim_info.id.value());
+              }
+            }
+          }
+        }
+      }
+
+      bool disjoint = true;
+      for (int64_t var_id : batch_parallel_vars) {
+        if (non_batch_parallel_vars.contains(var_id)) {
+          disjoint = false;
+          break;
+        }
+      }
+      for (int64_t var_id : m_parallel_vars) {
+        if (n_parallel_vars.contains(var_id)) {
+          disjoint = false;
+          break;
+        }
+      }
+
+      if (disjoint) {
+        llvm::SmallVector<int64_t, 4> parallel_dim_ids;
+        for (const TilingSpace::DimensionInfo& dim_info : dims) {
+          if (dim_info.type == TilingSpace::DimensionSemantics::kParallel) {
+            parallel_dim_ids.push_back(dim_info.id.value());
+          }
+        }
+
+        if (parallel_dim_ids.size() == num_parallel_dims) {
+          if (num_lhs_nc == 1 && num_rhs_nc == 1 &&
+              m_parallel_vars.size() == 1 && n_parallel_vars.size() == 1) {
+            int64_t m_var = *m_parallel_vars.begin();
+            int64_t n_var = *n_parallel_vars.begin();
+            int64_t m_pos = -1;
+            int64_t n_pos = -1;
+            for (int64_t i = 0; i < num_parallel_dims; ++i) {
+              if (parallel_dim_ids[i] == m_var) {
+                m_pos = i;
+              }
+              if (parallel_dim_ids[i] == n_var) {
+                n_pos = i;
+              }
+            }
+            if (m_pos != -1 && n_pos != -1) {
+              int64_t lhs_bytes =
+                  GetPhysicalOperandByteSize(dot_hlo->operand(0));
+              int64_t rhs_bytes =
+                  GetPhysicalOperandByteSize(dot_hlo->operand(1));
+              llvm::SmallVector<int64_t> permutation;
+              permutation.reserve(num_parallel_dims);
+              for (int64_t i = 0; i < num_parallel_dims; ++i) {
+                if (batch_parallel_vars.contains(parallel_dim_ids[i])) {
+                  permutation.push_back(i);
+                }
+              }
+              if (lhs_bytes < rhs_bytes) {
+                permutation.push_back(n_pos);
+                permutation.push_back(m_pos);
+              } else {
+                permutation.push_back(m_pos);
+                permutation.push_back(n_pos);
+              }
+              for (int64_t i = 0; i < num_parallel_dims; ++i) {
+                if (!batch_parallel_vars.contains(parallel_dim_ids[i]) &&
+                    i != m_pos && i != n_pos) {
+                  permutation.push_back(i);
+                }
+              }
+              bool is_identity = true;
+              for (int64_t i = 0; i < num_parallel_dims; ++i) {
+                if (permutation[i] != i) {
+                  is_identity = false;
+                  break;
+                }
+              }
+              if (!is_identity) {
+                return permutation;
+              }
+            }
+          } else if (!batch_parallel_vars.empty()) {
+            llvm::SmallVector<int64_t> permutation;
+            permutation.reserve(num_parallel_dims);
+            for (int64_t i = 0; i < num_parallel_dims; ++i) {
+              if (batch_parallel_vars.contains(parallel_dim_ids[i])) {
+                permutation.push_back(i);
+              }
+            }
+            for (int64_t i = 0; i < num_parallel_dims; ++i) {
+              if (!batch_parallel_vars.contains(parallel_dim_ids[i])) {
+                permutation.push_back(i);
+              }
+            }
+            bool is_identity = true;
+            for (int64_t i = 0; i < num_parallel_dims; ++i) {
+              if (permutation[i] != i) {
+                is_identity = false;
+                break;
+              }
+            }
+            if (!is_identity) {
+              return permutation;
+            }
+          }
+        }
+      }
+    }
   }
 
   return {};

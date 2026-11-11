@@ -200,6 +200,82 @@ TEST_F(SchedulingTest, GetDotPermutationMultipleBatchDims) {
                                  "num_pids=768, num_tiles=768")));
 }
 
+TEST_F(SchedulingTest, BatchedDotEpilogueTransposeSchedulesBatchOutermost) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"(
+    fusion {
+      p0 = bf16[32,4096,2048]{2,1,0} parameter(0)
+      p1 = bf16[32,2048,2048]{2,1,0} parameter(1)
+      dot = bf16[32,4096,2048]{2,1,0} dot(p0, p1),
+        lhs_batch_dims={0}, lhs_contracting_dims={2},
+        rhs_batch_dims={0}, rhs_contracting_dims={1}
+      ROOT transpose = bf16[4096,32,2048]{2,1,0} transpose(dot), dimensions={1,0,2}
+    }
+    ENTRY main {
+      p0 = bf16[32,4096,2048]{2,1,0} parameter(0)
+      p1 = bf16[32,2048,2048]{2,1,0} parameter(1)
+      ROOT fusion = bf16[4096,32,2048]{2,1,0} fusion(p0, p1), kind=kLoop, calls=fusion
+    })",
+                                    {64, 1, 64, 32}));
+  // d1 is the batch dimension (size 32, tile 1 -> 32 blocks).
+  // d0 is M (size 4096, tile 64 -> 64 blocks).
+  // d2 is N (size 2048, tile 64 -> 32 blocks).
+  // Total tiles = 32 * 64 * 32 = 65536.
+  // Batch dimension d1 must be scheduled outermost: d1 -> pid / 2048.
+  EXPECT_THAT(GetSchedule(tiled_computation),
+              IsOkAndHolds(MatchSchedule("d0 -> (pid mod 2048) / 32, "
+                                         "d1 -> pid / 2048, "
+                                         "d2 -> pid mod 2048 mod 32, "
+                                         "num_pids=65536, num_tiles=65536")));
+}
+
+TEST_F(SchedulingTest, DotEpilogueTransposeSmallerLhsSchedulesRhsOutermost) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"(
+    fusion {
+      p0 = s8[1024,256]{1,0} parameter(0)
+      p1 = f32[256,2048]{1,0} parameter(1)
+      c0 = f32[1024,256]{1,0} convert(p0)
+      dot = f32[1024,2048]{1,0} dot(c0, p1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT transpose = f32[2048,1024]{1,0} transpose(dot), dimensions={1,0}
+    }
+    ENTRY main {
+      p0 = s8[1024,256]{1,0} parameter(0)
+      p1 = f32[256,2048]{1,0} parameter(1)
+      ROOT fusion = f32[2048,1024]{1,0} fusion(p0, p1), kind=kLoop, calls=fusion
+    })",
+                                    {128, 128, /*reduction_tile_size=*/32}));
+  EXPECT_THAT(GetSchedule(tiled_computation),
+              IsOkAndHolds(MatchSchedule("d0 -> pid / 8, "
+                                         "d1 -> pid mod 8, "
+                                         "num_pids=128, num_tiles=128")));
+}
+
+TEST_F(SchedulingTest, SkinnyMDecodeDotEpiloguePreservesDefaultSchedule) {
+  ASSERT_OK_AND_ASSIGN(const TiledHloComputation tiled_computation,
+                       ParseAndTile(R"(
+    fusion {
+      p0 = bf16[16,4096]{1,0} parameter(0)
+      p1 = s8[4096,8192]{1,0} parameter(1)
+      c0 = f32[16,4096]{1,0} convert(p0)
+      c1 = f32[4096,8192]{1,0} convert(p1)
+      dot = f32[16,8192]{1,0} dot(c0, c1),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT convert = bf16[16,8192]{1,0} convert(dot)
+    }
+    ENTRY main {
+      p0 = bf16[16,4096]{1,0} parameter(0)
+      p1 = s8[4096,8192]{1,0} parameter(1)
+      ROOT fusion = bf16[16,8192]{1,0} fusion(p0, p1), kind=kLoop, calls=fusion
+    })",
+                                    {16, 128, /*reduction_tile_size=*/64}));
+  EXPECT_THAT(GetSchedule(tiled_computation),
+              IsOkAndHolds(MatchSchedule("d0 -> pid / 64, "
+                                         "d1 -> pid mod 64, "
+                                         "num_pids=64, num_tiles=64")));
+}
+
 // kRaggedNonContracting M/N swap heuristic:
 // When M_avg = M_total/G < N, the scheduler traverses N more slowly
 // so that LHS activation tiles (size M_avg) stay in L2 cache.
