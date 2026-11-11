@@ -456,6 +456,38 @@ TEST(PjRtStreamExecutorClientTest, ExecuteWithInputError) {
   }
 }
 
+TEST(PjRtStreamExecutorClientTest, CopiesDoNotAccumulateSourceUsageEvents) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommonPjRtClient> client,
+                       GetClientWithDevices(2));
+  auto literal = LiteralUtil::CreateR1<float>({1, 2, 3, 4});
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> src,
+      client->BufferFromHostLiteral(literal, client->memory_spaces()[0],
+                                    /*device_layout=*/nullptr));
+
+  auto* common_src = dynamic_cast<CommonPjRtBuffer*>(src.get());
+  ASSERT_NE(common_src, nullptr);
+
+  // Each copy adds a usage event to `src` before its stream is known.
+  constexpr int kNumCopies = 100;
+  for (int i = 0; i < kNumCopies; ++i) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<PjRtBuffer> dst,
+                         src->CopyToMemorySpace(client->memory_spaces()[1]));
+    ASSERT_OK(dst->GetReadyFuture().Await());
+    // The source usage event is fulfilled after the destination's definition
+    // event, so wait for it as well.
+    auto hold =
+        common_src->GetBufferWithHold(CommonPjRtBuffer::ScopedHold::kUsage);
+    ASSERT_OK(hold.status());
+    ASSERT_OK(hold.buffer()->BlockForOperationsToComplete(src->memory_space()));
+  }
+
+  auto hold =
+      common_src->GetBufferWithHold(CommonPjRtBuffer::ScopedHold::kUsage);
+  ASSERT_OK(hold.status());
+  EXPECT_LE(hold.buffer()->usage_events().size(), 8);
+}
+
 TEST(PjRtStreamExecutorClientTest, DeserializeAndDump) {
   tsl::Env* env = tsl::Env::Default();
   EXPECT_TRUE(env);
