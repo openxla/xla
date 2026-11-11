@@ -171,6 +171,10 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
 }
 
 LocalDeviceState::~LocalDeviceState() {
+  // Wait for device work and drain the callback thread so that closures queued
+  // by already-completed device work (e.g. ones that pop compute_events_ or
+  // release host staging buffers) run while the streams, stream pools and
+  // dispatch threads are still alive.
   absl::Status status = SynchronizeAllActivity();
   if (!status.ok()) {
     LOG(ERROR) << "Error when closing device: " << status;
@@ -181,29 +185,9 @@ LocalDeviceState::~LocalDeviceState() {
   execute_thread_.reset();
   async_dispatch_thread_.reset();
 
-  // 2. Clear streams and stream pools to trigger all pending
-  // callbacks/finalizations.
-  // Drain the callback thread before touching compute_events_.
-  //
-  // After SynchronizeAllActivity() above, all GPU host-callbacks registered
-  // via hipLaunchHostFunc / ThenExecuteCallback have been *invoked*, which
-  // means every callback_thread_->Schedule() call they contain has already
-  // been issued.  Those closures (e.g. the AndThen that calls
-  // compute_events_.pop_front()) may still be sitting in the queue or
-  // actively executing.
-  //
-  // Because compute_events_ is declared *after* callback_thread_ in the
-  // class, C++ destroys it *before* callback_thread_'s destructor joins the
-  // worker thread — creating a window where pop_front() runs on an
-  // already-destroyed deque (undefined behaviour / use-after-free).
-  //
-  // Draining the thread here closes that window: every closure enqueued
-  // before this point completes before we touch compute_events_.
-  callback_thread_->Drain();
-
-  // Explicitly delete all the streams and events to ensure that their callbacks
-  // are executed before the destruction of the LocalDeviceState and its
-  // callback threads.
+  // 2. Explicitly delete all the streams and events to ensure that their
+  // callbacks are scheduled before the callback/cleanup threads are joined in
+  // step 3.
   external_ready_event_streams_.clear();
   fixed_size_pool_usage_streams_.clear();
   device_to_device_streams_.clear();
@@ -221,12 +205,32 @@ LocalDeviceState::~LocalDeviceState() {
   host_to_device_stream_.reset();
   compute_stream_.reset();
 
-  // 3. Join callback/cleanup threads to execute all pending tasks.
+  // 3. Join callback/cleanup threads to execute all pending tasks. This must
+  // happen before compute_events_ is cleared: compute_events_ is declared
+  // *after* callback_thread_, so implicit member destruction would destroy it
+  // first, and a closure still queued at that point (e.g. the AndThen that
+  // calls compute_events_.pop_front()) would run on a destroyed deque.
   callback_thread_.reset();
   cleanup_thread_.reset();
 
   // 4. Finally, clear compute events.
   compute_events_.clear();
+}
+
+absl::Status LocalDeviceState::HostMemoryRegister(void* data, size_t size) {
+  if (!executor_->HostMemoryRegister(data, size)) {
+    return absl::InternalError(absl::StrFormat(
+        "Failed to register host memory at address: %ps", data));
+  }
+  return absl::OkStatus();
+}
+
+absl::Status LocalDeviceState::HostMemoryUnregister(void* data) {
+  if (!executor_->HostMemoryUnregister(data)) {
+    return absl::InternalError(absl::StrFormat(
+        "Failed to unregister host memory at address: %ps", data));
+  }
+  return absl::OkStatus();
 }
 
 absl::Status LocalDeviceState::SynchronizeAllActivity() {
@@ -250,6 +254,13 @@ absl::Status LocalDeviceState::SynchronizeAllActivity() {
   if (!ok) {
     status.Update(Unknown("SynchronizeAllActivity failed."));
   }
+
+  // All device host callbacks enqueued via ThenExecuteCallback (e.g. with
+  // cuLaunchHostFunc / hipLaunchHostFunc) have now been invoked, so every
+  // callback_thread_->Schedule() call they make has been issued. Those closures
+  // (e.g. ones that release host staging buffers) may still be queued or
+  // running, so drain the callback thread.
+  callback_thread_->Drain();
   return status;
 }
 
