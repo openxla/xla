@@ -16,6 +16,7 @@
 # proto-message: stream_executor.GpuTargetConfigProto
 
 gpu_device_info {
+  memory_bus_width: 7936
   threads_per_block_limit: 1024
   threads_per_warp: 32
   shared_memory_per_block: 49152

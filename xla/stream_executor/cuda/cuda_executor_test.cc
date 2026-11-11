@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/cuda/cuda_executor.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -25,6 +22,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/cleanup/cleanup.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"  // IWYU pragma: keep
@@ -60,6 +59,20 @@ using ::testing::Ge;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Not;
+
+TEST(CudaExecutorTest, PreservesReportedMemoryBusWidth) {
+  CudaPlatform platform;
+  ASSERT_GT(platform.VisibleDeviceCount(), 0);
+  CUdevice device;
+  ASSERT_EQ(cuDeviceGet(&device, 0), CUDA_SUCCESS);
+  int width = 0;
+  ASSERT_EQ(cuDeviceGetAttribute(
+                &width, CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH, device),
+            CUDA_SUCCESS);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<DeviceDescription> description,
+                       CudaExecutor::CreateDeviceDescription(0));
+  EXPECT_THAT(description->memory_bus_width(), ::testing::Optional(width));
+}
 
 TEST(CudaExecutorTest, CreateDeviceDescription) {
   CudaPlatform platform;
