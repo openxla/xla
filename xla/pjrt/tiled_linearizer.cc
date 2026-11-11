@@ -23,6 +23,7 @@ limitations under the License.
 #include <functional>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -48,6 +49,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/permutation_util.h"
 #include "xla/pjrt/tiled_linearizer_highway.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/primitive_util.h"
@@ -141,8 +143,14 @@ template <typename F>
 absl::Status TcLaneCountSwitch(F&& f, int64_t lane_count) {
   switch (lane_count) {
     case 128:
-      std::invoke(f, TcLaneCountConstant<128>());
-      return absl::OkStatus();
+      if constexpr (std::is_same_v<
+                        std::invoke_result_t<F, TcLaneCountConstant<128>>,
+                        absl::Status>) {
+        return std::invoke(std::forward<F>(f), TcLaneCountConstant<128>());
+      } else {
+        std::invoke(std::forward<F>(f), TcLaneCountConstant<128>());
+        return absl::OkStatus();
+      }
     default:
       return absl::UnimplementedError(
           absl::StrCat("unhandled lane_count ", lane_count));
@@ -484,6 +492,347 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   return tiling_vec;
 }
 
+// Transposes and repacks sub-byte host elements (stored 1 element per byte in
+// `data`) into hardware sub-tile layout in megabyte-scale chunks, avoiding a
+// full-tensor unpacked scratch allocation. Sets `*handled = true` when chunked
+// linearization ran, or `*handled = false` to fall back to the single-buffer
+// path for small or unsupported inputs.
+template <int64_t kPackingFactor, int64_t kLaneCount>
+absl::Status LinearizeSubbyteSubtileChunked(
+    uint32_t* target_buffer, const void* data, absl::Span<int64_t const> dims,
+    absl::Span<int64_t const> permutation,
+    absl::Span<int64_t const> input_strides,
+    absl::Span<int64_t const> output_tiling_vec,
+    TransposePlan::Transformation transformation, bool set_padding_to_nan,
+    uint8_t pad_byte, size_t unpacked_total_bytes,
+    const TiledLinearizer::ParallelismOptions& parallelism_options,
+    bool* handled) {
+  *handled = false;
+  static_assert(kPackingFactor >= 8 && kPackingFactor % sizeof(uint32_t) == 0);
+  static_assert(kLaneCount % kPackingFactor == 0);
+  constexpr size_t kTpuToCpuExpansionFactor = kPackingFactor / sizeof(uint32_t);
+  constexpr size_t kSublaneUnpackedBytes =
+      kLaneCount * sizeof(uint32_t) * kTpuToCpuExpansionFactor;
+  constexpr size_t kSingleThreadScratchBytes = 1 << 20;
+  constexpr size_t kParallelScratchBytes = 2 << 20;
+
+  if (parallelism_options.max_parallelism < 1 || dims.empty() ||
+      permutation.size() != dims.size() || !IsPermutation(permutation) ||
+      input_strides.size() != dims.size() ||
+      output_tiling_vec.size() > dims.size() ||
+      absl::c_any_of(dims, [](int64_t d) { return d <= 0; }) ||
+      absl::c_any_of(output_tiling_vec, [](int64_t t) { return t < 1; })) {
+    return absl::OkStatus();
+  }
+
+  const bool use_parallel = parallelism_options.max_parallelism > 1 &&
+                            parallelism_options.run_plan != nullptr;
+  const size_t target_scratch_bytes =
+      use_parallel ? kParallelScratchBytes : kSingleThreadScratchBytes;
+  if (unpacked_total_bytes <= target_scratch_bytes) {
+    return absl::OkStatus();
+  }
+
+  // Compute output dimension bounds, tile counts, and total tiled byte size.
+  const size_t ndim = dims.size();
+  const size_t untiled_dims = ndim - output_tiling_vec.size();
+  absl::InlinedVector<int64_t, 4> b_dims(ndim);
+  absl::InlinedVector<int64_t, 4> b_tiles(ndim);
+  absl::InlinedVector<int64_t, 4> num_tiles(ndim);
+  size_t tiled_bytes = 1;
+  for (size_t d = 0; d < ndim; ++d) {
+    b_dims[d] = dims[permutation[d]];
+    b_tiles[d] = d < untiled_dims ? 1 : output_tiling_vec[d - untiled_dims];
+    num_tiles[d] = CeilOfRatio<int64_t>(b_dims[d], b_tiles[d]);
+    tiled_bytes *=
+        static_cast<size_t>(RoundUpTo<int64_t>(b_dims[d], b_tiles[d]));
+  }
+  TF_RET_CHECK(unpacked_total_bytes >= tiled_bytes);
+  TF_RET_CHECK(unpacked_total_bytes % kSublaneUnpackedBytes == 0);
+
+  // Build a unified contiguous hierarchy across outer tile grid levels
+  // `[0, ndim)` followed by intra-tile levels `[ndim, ndim + num_tile_dims)`,
+  // matching `ComputeStrides` in `transpose.cc`.
+  const size_t num_tile_dims = output_tiling_vec.size();
+  const size_t num_levels = ndim + num_tile_dims;
+  absl::InlinedVector<int64_t, 6> level_count(num_levels);
+  absl::InlinedVector<size_t, 6> level_unit_bytes(num_levels);
+  size_t acc_bytes = 1;
+  for (size_t j = num_tile_dims; j > 0; --j) {
+    level_count[ndim + j - 1] = output_tiling_vec[j - 1];
+    level_unit_bytes[ndim + j - 1] = acc_bytes;
+    acc_bytes *= static_cast<size_t>(output_tiling_vec[j - 1]);
+  }
+  for (size_t d = ndim; d > 0; --d) {
+    level_count[d - 1] = num_tiles[d - 1];
+    level_unit_bytes[d - 1] = acc_bytes;
+    acc_bytes *= static_cast<size_t>(num_tiles[d - 1]);
+  }
+
+  auto sublane_step_for = [](size_t unit) -> size_t {
+    return (kSublaneUnpackedBytes /
+            std::gcd<size_t>(unit, kSublaneUnpackedBytes)) *
+           unit;
+  };
+
+  // Select the outermost level (descending inside a huge top-level tile such
+  // as `Tile::kMatchDimension` when needed) whose sublane-aligned step fits
+  // within `target_scratch_bytes`. Any partial sublane at an outer-iteration
+  // boundary is carried across iterations in the leading sublane of `scratch`.
+  size_t split_level = 0;
+  while (split_level + 1 < num_levels &&
+         sublane_step_for(level_unit_bytes[split_level]) >
+             target_scratch_bytes) {
+    ++split_level;
+  }
+
+  const size_t split_unit_bytes = level_unit_bytes[split_level];
+  const size_t min_units_per_sublane =
+      kSublaneUnpackedBytes /
+      std::gcd<size_t>(split_unit_bytes, kSublaneUnpackedBytes);
+  const size_t sublane_step_bytes = min_units_per_sublane * split_unit_bytes;
+  const size_t steps_per_chunk =
+      std::max<size_t>(1, target_scratch_bytes / sublane_step_bytes);
+  const int64_t units_per_chunk = static_cast<int64_t>(
+      std::min<size_t>(static_cast<size_t>(level_count[split_level]),
+                       steps_per_chunk * min_units_per_sublane));
+  const size_t max_chunk_bytes =
+      static_cast<size_t>(units_per_chunk) * split_unit_bytes;
+
+  // Allocate a reusable scratch buffer with one extra sublane of headroom so
+  // carried partial sublanes, final-chunk padding, and trailing padding fit
+  // without reallocating.
+  const size_t scratch_bytes =
+      RoundUpTo<size_t>(max_chunk_bytes, kSublaneUnpackedBytes) +
+      kSublaneUnpackedBytes;
+  Buffer scratch(scratch_bytes / sizeof(uint32_t), /*value=*/std::nullopt,
+                 &tensorflow::tpu::DefaultAllocator);
+  absl::Span<uint8_t> scratch_span = scratch.mutable_data<uint8_t>();
+
+  // Cache the active slice TransposePlan locally (keyed by both `current_dims`
+  // and `current_tiling`) so uniform interior chunks do not contend on
+  // `linearizer_cache->mu`.
+  absl::InlinedVector<int64_t, 4> slice_dims(dims.begin(), dims.end());
+  absl::InlinedVector<int64_t, 2> sub_tiling_vec(output_tiling_vec.begin(),
+                                                 output_tiling_vec.end());
+  absl::InlinedVector<int64_t, 4> last_dims;
+  absl::InlinedVector<int64_t, 2> last_tiling;
+  std::shared_ptr<TransposePlan> last_plan;
+  auto get_slice_plan = [&](absl::Span<int64_t const> current_dims,
+                            absl::Span<int64_t const> current_tiling,
+                            size_t chunk_bytes)
+      -> absl::StatusOr<std::shared_ptr<TransposePlan>> {
+    if (last_plan != nullptr &&
+        absl::MakeConstSpan(last_dims) == current_dims &&
+        absl::MakeConstSpan(last_tiling) == current_tiling) {
+      return last_plan;
+    }
+    TransposePlan::Options slice_options;
+    slice_options.elem_size_in_bytes = 1;
+    slice_options.dims = current_dims;
+    slice_options.permutation = permutation;
+    slice_options.input_striding = TransposePlan::Striding{input_strides};
+    slice_options.output_tiling = TransposePlan::Tiling{current_tiling};
+    slice_options.transformation = transformation;
+    slice_options.num_threads =
+        use_parallel ? parallelism_options.max_parallelism : 1;
+    slice_options.chunk_contiguity =
+        (use_parallel && chunk_bytes > kSublaneUnpackedBytes)
+            ? TransposePlan::ChunkContiguity::kOutput
+            : TransposePlan::ChunkContiguity::kNone;
+    slice_options.tile_padding = pad_byte;
+    std::shared_ptr<TransposePlan> plan;
+    {
+      absl::MutexLock lock(linearizer_cache->mu);
+      ABSL_ASSIGN_OR_RETURN(plan,
+                            linearizer_cache->cache.GetOrCreate(slice_options));
+      if (slice_options.chunk_contiguity ==
+              TransposePlan::ChunkContiguity::kOutput &&
+          plan->Parallelism() <= 1) {
+        slice_options.chunk_contiguity = TransposePlan::ChunkContiguity::kInput;
+        ABSL_ASSIGN_OR_RETURN(
+            std::shared_ptr<TransposePlan> alt_plan,
+            linearizer_cache->cache.GetOrCreate(slice_options));
+        if (alt_plan->Parallelism() > plan->Parallelism()) {
+          plan = std::move(alt_plan);
+        }
+      }
+    }
+    last_dims.assign(current_dims.begin(), current_dims.end());
+    last_tiling.assign(current_tiling.begin(), current_tiling.end());
+    last_plan = plan;
+    return plan;
+  };
+
+  // Iterate outer levels `< split_level` in row-major order and transpose +
+  // repack contiguous chunks along `split_level`.
+  size_t total_outer_iters = 1;
+  for (size_t l = 0; l < split_level; ++l) {
+    total_outer_iters *= static_cast<size_t>(level_count[l]);
+  }
+  absl::InlinedVector<int64_t, 6> outer_idx(split_level, 0);
+  size_t repacked_sublanes = 0;
+  size_t carry_len = 0;
+
+  for (size_t outer_iter = 0; outer_iter < total_outer_iters; ++outer_iter) {
+    for (int64_t unit_start = 0; unit_start < level_count[split_level];
+         unit_start += units_per_chunk) {
+      const int64_t chunk_units = std::min<int64_t>(
+          units_per_chunk, level_count[split_level] - unit_start);
+
+      int64_t input_byte_offset = 0;
+      bool is_pure_padding = false;
+      for (size_t d = 0; d < untiled_dims; ++d) {
+        int64_t elem_start = 0;
+        int64_t span_elems = b_dims[d];
+        if (d < split_level) {
+          elem_start = outer_idx[d];
+          span_elems = 1;
+        } else if (d == split_level) {
+          elem_start = unit_start;
+          span_elems = chunk_units;
+        }
+        const int64_t elem_end =
+            std::min<int64_t>(b_dims[d], elem_start + span_elems);
+        const int64_t valid_elems = std::max<int64_t>(0, elem_end - elem_start);
+        if (valid_elems == 0) {
+          is_pure_padding = true;
+        }
+        const int64_t in_d = permutation[d];
+        slice_dims[in_d] = valid_elems;
+        input_byte_offset += elem_start * input_strides[in_d];
+      }
+      const size_t chunk_bytes =
+          static_cast<size_t>(chunk_units) * split_unit_bytes;
+      size_t active_chunk_bytes = chunk_bytes;
+      for (size_t j = 0; j < num_tile_dims; ++j) {
+        const size_t d = untiled_dims + j;
+        const size_t l_outer = d;
+        const size_t l_inner = ndim + j;
+        const int64_t tile_sz = output_tiling_vec[j];
+        int64_t elem_start = 0;
+        int64_t span_elems = b_dims[d];
+        int64_t sub_tile = tile_sz;
+        if (split_level < l_outer) {
+          elem_start = 0;
+          span_elems = b_dims[d];
+          sub_tile = tile_sz;
+        } else if (split_level == l_outer) {
+          elem_start = unit_start * tile_sz;
+          span_elems = chunk_units * tile_sz;
+          sub_tile = tile_sz;
+        } else if (split_level < l_inner) {
+          elem_start = outer_idx[l_outer] * tile_sz;
+          span_elems = tile_sz;
+          sub_tile = tile_sz;
+        } else if (split_level == l_inner) {
+          elem_start = outer_idx[l_outer] * tile_sz + unit_start;
+          span_elems = chunk_units;
+          // All outer levels `< split_level` have 1 tile in this slice, so
+          // `sub_tile = 1` lays out `valid_elems` units at `split_unit_bytes`
+          // stride as an exterior loop that `TransposePlan` can parallelize.
+          sub_tile = 1;
+        } else {
+          elem_start = outer_idx[l_outer] * tile_sz + outer_idx[l_inner];
+          span_elems = 1;
+          sub_tile = 1;
+        }
+        sub_tiling_vec[j] = sub_tile;
+        const int64_t elem_end =
+            std::min<int64_t>(b_dims[d], elem_start + span_elems);
+        const int64_t valid_elems = std::max<int64_t>(0, elem_end - elem_start);
+        if (valid_elems == 0) {
+          is_pure_padding = true;
+        } else if (split_level == l_inner) {
+          active_chunk_bytes =
+              static_cast<size_t>(valid_elems) * split_unit_bytes;
+        }
+        const int64_t in_d = permutation[d];
+        slice_dims[in_d] = valid_elems;
+        input_byte_offset += elem_start * input_strides[in_d];
+      }
+
+      absl::Span<uint8_t> chunk_dst =
+          scratch_span.subspan(carry_len, chunk_bytes);
+      if (is_pure_padding) {
+        absl::c_fill(chunk_dst, pad_byte);
+      } else {
+        const char* slice_data =
+            static_cast<const char*>(data) + input_byte_offset;
+        ABSL_ASSIGN_OR_RETURN(
+            std::shared_ptr<TransposePlan> slice_plan,
+            get_slice_plan(slice_dims, sub_tiling_vec, active_chunk_bytes));
+        if (slice_plan->Parallelism() <= 1) {
+          slice_plan->Execute(slice_data, chunk_dst.data());
+        } else {
+          parallelism_options.run_plan(*slice_plan, slice_data,
+                                       chunk_dst.data());
+        }
+        if (active_chunk_bytes < chunk_bytes) {
+          absl::Span<uint8_t> chunk_pad = chunk_dst.subspan(active_chunk_bytes);
+          absl::c_fill(chunk_pad, pad_byte);
+        }
+      }
+
+      const size_t avail_bytes = carry_len + chunk_bytes;
+      const size_t full_bytes =
+          RoundDownTo<size_t>(avail_bytes, kSublaneUnpackedBytes);
+      if (full_bytes > 0) {
+        RepackToHardwareLayout<kPackingFactor, kLaneCount>(
+            scratch_span.first(full_bytes),
+            target_buffer + repacked_sublanes * kLaneCount, set_padding_to_nan);
+        repacked_sublanes += full_bytes / kSublaneUnpackedBytes;
+      }
+      carry_len = avail_bytes - full_bytes;
+      if (full_bytes > 0 && carry_len > 0) {
+        absl::c_copy(scratch_span.subspan(full_bytes, carry_len),
+                     scratch_span.begin());
+      }
+    }
+
+    for (size_t l = split_level; l > 0; --l) {
+      if (++outer_idx[l - 1] < level_count[l - 1]) {
+        break;
+      }
+      outer_idx[l - 1] = 0;
+    }
+  }
+
+  TF_RET_CHECK(repacked_sublanes * kSublaneUnpackedBytes + carry_len ==
+               tiled_bytes);
+  if (carry_len > 0) {
+    absl::Span<uint8_t> carry_pad =
+        scratch_span.subspan(carry_len, kSublaneUnpackedBytes - carry_len);
+    absl::c_fill(carry_pad, pad_byte);
+    RepackToHardwareLayout<kPackingFactor, kLaneCount>(
+        scratch_span.first(kSublaneUnpackedBytes),
+        target_buffer + repacked_sublanes * kLaneCount, set_padding_to_nan);
+    ++repacked_sublanes;
+    carry_len = 0;
+  }
+
+  const size_t pad_start = repacked_sublanes * kSublaneUnpackedBytes;
+  if (pad_start < unpacked_total_bytes) {
+    const size_t pad_step =
+        RoundDownTo<size_t>(scratch_span.size(), kSublaneUnpackedBytes);
+    const size_t fill_bytes =
+        std::min<size_t>(pad_step, unpacked_total_bytes - pad_start);
+    absl::Span<uint8_t> pad_chunk = scratch_span.first(fill_bytes);
+    absl::c_fill(pad_chunk, pad_byte);
+    for (size_t offset = pad_start; offset < unpacked_total_bytes;
+         offset += pad_step) {
+      const size_t chunk =
+          std::min<size_t>(pad_step, unpacked_total_bytes - offset);
+      RepackToHardwareLayout<kPackingFactor, kLaneCount>(
+          scratch_span.first(chunk),
+          target_buffer + (offset / kSublaneUnpackedBytes) * kLaneCount,
+          set_padding_to_nan);
+    }
+  }
+  *handled = true;
+  return absl::OkStatus();
+}
+
 }  // namespace
 
 /* static */ absl::Status TiledLinearizer::LinearizeUsingTransposeInto(
@@ -594,6 +943,50 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
        (!tiles.empty() && tiles[0].dimensions().size() > 1));
   const uint8_t pad_byte = set_padding_to_nan ? kPadByte : uint8_t{0};
 
+  if (prefix_size > 0) {
+    absl::Span<uint8_t> prefix = dest.first(prefix_size);
+    absl::c_fill(prefix, pad_byte);
+  }
+
+  if (has_subtile_packing && bits_per_pack < 8 && transpose_byte_width == 1) {
+    TF_RET_CHECK(bits_per_pack > 0 && CHAR_BIT % bits_per_pack == 0 &&
+                 32 % bits_per_pack == 0);
+    const auto lane_tile_dims =
+        (tiles.size() > 1 ? tiles[tiles.size() - 2] : tiles[0]).dimensions();
+    TF_RET_CHECK(!lane_tile_dims.empty());
+    TF_RET_CHECK(size_in_bytes % (lane_tile_dims.back() * sizeof(uint32_t)) ==
+                 0);
+    const size_t unpacked_total_bytes =
+        static_cast<size_t>(size_in_bytes) * (CHAR_BIT / bits_per_pack);
+    uint32_t* target_u32 =
+        tsl::safe_reinterpret_cast<uint32_t*>(dest.subspan(prefix_size).data());
+    bool handled = false;
+    ABSL_RETURN_IF_ERROR(TcLaneCountSwitch(
+        [&](auto kTcLaneCount) -> absl::Status {
+          return ElementPackingFactorSwitch<absl::Status>(
+              [&](auto kPackingFactor) -> absl::Status {
+                if constexpr (kPackingFactor >= 8) {
+                  return LinearizeSubbyteSubtileChunked<kPackingFactor,
+                                                        kTcLaneCount>(
+                      target_u32, data, dims, permutation, input_strides,
+                      output_tiling_vec, transformation, set_padding_to_nan,
+                      pad_byte, unpacked_total_bytes, parallelism_options,
+                      &handled);
+                }
+                return absl::OkStatus();
+              },
+              packing_factor);
+        },
+        lane_tile_dims.back()));
+    if (handled) {
+      if (!dynamic_sizes.empty()) {
+        absl::c_copy(dynamic_sizes,
+                     tsl::safe_reinterpret_cast<uint32_t*>(dest.data()));
+      }
+      return absl::OkStatus();
+    }
+  }
+
   TransposePlan::Options options;
   options.elem_size_in_bytes = transpose_byte_width;
   options.dims = dims;
@@ -618,10 +1011,6 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
   // when repacking into `dest`.
   if (has_subtile_packing && bits_per_pack < 8) {
     elements_in_the_packed_data *= 8 / bits_per_pack;
-  }
-
-  if (prefix_size > 0) {
-    std::memset(dest.data(), pad_byte, prefix_size);
   }
 
   std::optional<Buffer> scratch;
@@ -651,7 +1040,8 @@ absl::InlinedVector<int64_t, 2> GetResolvedTopLevelTiling(
           : tiled_elems * transpose_byte_width;
   TF_RET_CHECK(dst.size() >= tiled_bytes);
   if (dst.size() > tiled_bytes) {
-    std::memset(dst.data() + tiled_bytes, pad_byte, dst.size() - tiled_bytes);
+    absl::Span<uint8_t> tail = dst.subspan(tiled_bytes);
+    absl::c_fill(tail, pad_byte);
   }
   if (plan->Parallelism() <= 1) {
     plan->Execute(data, dst.data());

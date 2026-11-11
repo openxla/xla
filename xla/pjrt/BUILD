@@ -1243,6 +1243,7 @@ cc_library(
         ":tiled_linearizer_highway",
         ":transpose",
         "//xla:literal",
+        "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:status_macros",
         "//xla:types",
@@ -1268,6 +1269,30 @@ cc_library(
         "@eigen_archive//:eigen3",
         "@tsl//tsl/profiler/lib:traceme",
         "@tsl//tsl/profiler/lib:traceme_encode",
+    ],
+)
+
+xla_cc_test(
+    name = "tiled_linearizer_test",
+    srcs = ["tiled_linearizer_test.cc"],
+    deps = [
+        ":tiled_linearizer",
+        ":transpose",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:util",
+        "//xla:xla_data_proto_cc",
+        "//xla/tsl/platform:env",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
