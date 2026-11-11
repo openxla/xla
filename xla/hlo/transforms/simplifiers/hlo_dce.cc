@@ -61,6 +61,77 @@ namespace {
 const absl::string_view kDceSideEffectFrontendAttribute =
     "xla_allow_dce_side_effecting_op";
 
+bool IsInstructionSideEffectRemovable(
+    const HloInstruction* instruction,
+    bool remove_cross_partition_collective_ops);
+
+bool HasDceSideEffectAttr(const HloInstruction* inst, absl::string_view value) {
+  if (inst == nullptr) {
+    return false;
+  }
+  auto it =
+      inst->frontend_attributes().map().find(kDceSideEffectFrontendAttribute);
+  return it != inst->frontend_attributes().map().end() && it->second == value;
+}
+
+// Returns the corresponding start instruction for an asynchronous done or
+// update instruction, or nullptr if `instruction` is not an async completion.
+//
+// In addition to generic `kAsyncDone` / `kAsyncUpdate` instructions (which link
+// to their `kAsyncStart` via `async_chain_start()`), dedicated async collective
+// completion opcodes (`kAllReduceDone`, `kAllGatherDone`,
+// `kCollectivePermuteDone`) pass their `-start` instruction directly as
+// `operand(0)` and return nullptr from `async_chain_start()`.
+const HloInstruction* GetAsyncStartInstruction(
+    const HloInstruction* instruction) {
+  if (instruction->opcode() == HloOpcode::kAsyncDone ||
+      instruction->opcode() == HloOpcode::kAsyncUpdate) {
+    return instruction->async_chain_start();
+  }
+  if (instruction->opcode() == HloOpcode::kAllReduceDone ||
+      instruction->opcode() == HloOpcode::kAllGatherDone ||
+      instruction->opcode() == HloOpcode::kCollectivePermuteDone) {
+    return instruction->operand(0);
+  }
+  return nullptr;
+}
+
+// Checks whether `instruction` is a cross-partition collective (synchronous,
+// async-wrapped, or dedicated `-start`/`-done` pair) that can be removed when
+// `remove_cross_partition_collective_ops` is true.
+//
+// Note:
+// 1. `RemoveDeadRoots` traverses instructions in reverse postorder (consumers
+//    before operands), so for a dead `-start`/`-done` pair it visits `-done`
+//    while `-start` still has `user_count() == 1`. Unwrapping `-done` via
+//    `operand(0)` allows `-done` to be removed first, which drops `-start`'s
+//    user count to 0 so `-start` is removed when visited later in the same
+//    pass.
+// 2. `HloCollectivePermuteInstruction` (`kCollectivePermute`,
+//    `kCollectivePermuteStart`) inherits from `HloChannelInstruction` rather
+//    than `HloCollectiveInstruction`, so it must be checked explicitly.
+bool IsRemovableCollective(const HloInstruction* instruction,
+                           bool remove_cross_partition_collective_ops) {
+  if (!remove_cross_partition_collective_ops) {
+    return false;
+  }
+  const HloInstruction* target = instruction;
+  if (target->opcode() == HloOpcode::kAllReduceDone ||
+      target->opcode() == HloOpcode::kAllGatherDone ||
+      target->opcode() == HloOpcode::kCollectivePermuteDone) {
+    target = target->operand(0);
+  } else if (target->async_wrapped_instruction() != nullptr) {
+    target = target->async_wrapped_instruction();
+  }
+  if (auto collective = DynCast<HloCollectiveInstruction>(target)) {
+    return !collective->constrain_layout();
+  }
+  if (DynCast<HloCollectivePermuteInstruction>(target)) {
+    return true;
+  }
+  return false;
+}
+
 // Checks if the instruction is a removable while given
 // remove_cross_partition_collective_ops
 bool IsRemovableWhile(const HloInstruction* instruction,
@@ -72,16 +143,75 @@ bool IsRemovableWhile(const HloInstruction* instruction,
 
   for (HloComputation* computation : instruction->called_computations()) {
     for (HloInstruction* called_instr : computation->instructions()) {
-      auto maybe_collective_op =
-          DynCast<HloCollectiveInstruction>(called_instr);
-      if (called_instr->HasSideEffect() &&
-          (!remove_cross_partition_collective_ops || !maybe_collective_op ||
-           maybe_collective_op->constrain_layout())) {
+      if (!IsInstructionSideEffectRemovable(
+              called_instr, remove_cross_partition_collective_ops)) {
         return false;
       }
     }
   }
   return true;
+}
+
+// Checks if the instruction is a removable conditional given
+// `remove_cross_partition_collective_ops`.
+//
+// When all users of a `kConditional` are eliminated (for example, after call
+// inlining and tuple simplification), `ConditionalSimplifier` rewrites the
+// `kConditional` and its branch roots to return an empty tuple `()`, but cannot
+// remove the `() conditional(...)` if `HasSideEffect()` is true on any branch
+// instruction (such as cross-partition collectives or custom-calls marked with
+// `xla_allow_dce_side_effecting_op="true"`). Once the conditional has no users
+// and an empty-tuple shape `()`, it is safe to remove if every instruction in
+// every branch computation has removable side effects.
+bool IsRemovableConditional(const HloInstruction* instruction,
+                            bool remove_cross_partition_collective_ops) {
+  if (instruction->opcode() != HloOpcode::kConditional ||
+      instruction->user_count() > 0 ||
+      !ShapeUtil::IsEmptyTuple(instruction->shape())) {
+    return false;
+  }
+
+  for (HloComputation* computation : instruction->called_computations()) {
+    for (HloInstruction* called_instr : computation->instructions()) {
+      if (!IsInstructionSideEffectRemovable(
+              called_instr, remove_cross_partition_collective_ops)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool IsInstructionSideEffectRemovable(
+    const HloInstruction* instruction,
+    bool remove_cross_partition_collective_ops) {
+  const HloInstruction* async_start = GetAsyncStartInstruction(instruction);
+  // Reverse postorder visits async-done before async-start. If "false" is
+  // set on async-start, async-done must inspect async_start; otherwise only
+  // async-done will be removed, leaving a dangling async-start.
+  if (HasDceSideEffectAttr(instruction, "false") ||
+      HasDceSideEffectAttr(async_start, "false")) {
+    return false;
+  }
+  if (!instruction->HasSideEffect()) {
+    return true;
+  }
+  bool allow_collective =
+      IsRemovableCollective(instruction, remove_cross_partition_collective_ops);
+  bool allow_while =
+      IsRemovableWhile(instruction, remove_cross_partition_collective_ops);
+  bool allow_conditional = IsRemovableConditional(
+      instruction, remove_cross_partition_collective_ops);
+  // Reverse postorder visits async-done before async-start. If "true" is
+  // set on async-start, async-done must inspect async_start; otherwise
+  // async-done is kept alive, which keeps async-start used (user_count > 0)
+  // and prevents either from being removed.
+  bool allow_custom_call = (instruction->IsCustomCall("tpu_custom_call") ||
+                            instruction->IsAsynchronous()) &&
+                           (HasDceSideEffectAttr(instruction, "true") ||
+                            HasDceSideEffectAttr(async_start, "true"));
+  return allow_collective || allow_while || allow_conditional ||
+         allow_custom_call;
 }
 
 // Updates the users of the fusion instruction.
@@ -252,47 +382,8 @@ bool CanRemoveInstruction(
        instruction->operand(0)->user_count() != 1)) {
     return false;
   }
-  auto has_dce_side_effect_attr = [](const HloInstruction* inst,
-                                     absl::string_view value) {
-    if (inst == nullptr) {
-      return false;
-    }
-    auto it =
-        inst->frontend_attributes().map().find(kDceSideEffectFrontendAttribute);
-    return it != inst->frontend_attributes().map().end() && it->second == value;
-  };
-  // Reverse postorder visits async-done before async-start. If "false" is
-  // set on async-start, async-done must inspect async_chain_start().
-  // otherwise only async-done will be removed, leaving a dangling async-start
-  if (has_dce_side_effect_attr(instruction, "false") ||
-      has_dce_side_effect_attr(instruction->async_chain_start(), "false")) {
-    return false;
-  }
-  if (instruction->HasSideEffect()) {
-    auto maybe_collective_op = DynCast<HloCollectiveInstruction>(
-        instruction->async_wrapped_instruction()
-            ? instruction->async_wrapped_instruction()
-            : instruction);
-    bool allow_collective = remove_cross_partition_collective_ops &&
-                            maybe_collective_op &&
-                            !maybe_collective_op->constrain_layout();
-    bool allow_while =
-        IsRemovableWhile(instruction, remove_cross_partition_collective_ops);
-    // Reverse postorder visits async-done before async-start. If "true" is
-    // set on async-start, async-done must inspect
-    // async_chain_start(). otherwise async-done is kept
-    // alive, which keeps async-start used (user_count > 0) and prevents
-    // either from being removed.
-    bool allow_custom_call =
-        (instruction->IsCustomCall("tpu_custom_call") ||
-         instruction->IsAsynchronous()) &&
-        (has_dce_side_effect_attr(instruction, "true") ||
-         has_dce_side_effect_attr(instruction->async_chain_start(), "true"));
-    if (!allow_collective && !allow_while && !allow_custom_call) {
-      return false;
-    }
-  }
-  return true;
+  return IsInstructionSideEffectRemovable(
+      instruction, remove_cross_partition_collective_ops);
 }
 
 absl::StatusOr<bool> RemoveDeadRoots(
