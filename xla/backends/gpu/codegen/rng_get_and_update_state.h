@@ -16,25 +16,48 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_CODEGEN_RNG_GET_AND_UPDATE_STATE_H_
 #define XLA_BACKENDS_GPU_CODEGEN_RNG_GET_AND_UPDATE_STATE_H_
 
+#include <cstdint>
+#include <vector>
+
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "xla/backends/gpu/codegen/fusion_emitter.h"
+#include "xla/codegen/emitters/kernel_arguments.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/gpu/ir_emitter_context.h"
 
 namespace xla::gpu {
 
-// Builds the MLIR module implementing an `RngGetAndUpdateState` kernel.
-// Visible for testing.
+// The RNG state is a 128 bit little endian counter in a persistent buffer
+// shared by every `RngGetAndUpdateState` op of an executable.
+inline constexpr int64_t kRngStateSizeBytes = 16;
+// A non zero initial value so the first random numbers pass chi square tests.
+inline constexpr uint64_t kRngStateInitialLow = 0x7012395;
+
+// Returns the initial contents of the RNG state buffer.
+std::vector<uint8_t> RngStateInitialBytes();
+
+// Builds the kernel arguments of an `RngGetAndUpdateState` kernel: the state
+// slice as a read only argument, the state slice again as a written argument,
+// then the output slice.
+absl::StatusOr<emitters::KernelArguments>
+CreateRngGetAndUpdateStateKernelArguments(
+    const HloRngGetAndUpdateStateInstruction* instr,
+    const BufferAllocation::Slice& state_slice,
+    const BufferAllocation::Slice& out_slice);
+
+// Builds the MLIR module implementing an `RngGetAndUpdateState` kernel whose
+// entry function arguments are `kernel_arguments`, as built by
+// `CreateRngGetAndUpdateStateKernelArguments`. Visible for testing.
 absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>>
 CreateRngGetAndUpdateStateMlirModule(
     mlir::MLIRContext& mlir_context,
     const HloRngGetAndUpdateStateInstruction* instr,
-    const BufferAssignment* buffer_assignment,
+    const emitters::KernelArguments& kernel_arguments,
     absl::string_view entry_function_name);
 
 // Emits the kernel thunk for an `RngGetAndUpdateState` instruction on GPU.
