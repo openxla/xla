@@ -297,13 +297,9 @@ cc_library(
     deps = [
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
-        "//xla/service/llvm_ir:llvm_type_conversion_util",
-        "//xla/service/llvm_ir:llvm_util",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
         "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
     ],
 )
@@ -316,8 +312,6 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/tests:xla_internal_test_main",
         "@com_google_googletest//:gtest",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TargetParser",
     ],
 )
@@ -1110,7 +1104,6 @@ cc_library(
     compatible_with = get_compatible_with_portable(),
     deps = [
         ":backend_configs_cc",
-        ":target_util",
         "//xla:permutation_util",
         "//xla:shape_util",
         "//xla:status_macros",
@@ -1761,6 +1754,7 @@ xla_cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
         "@com_google_googletest//:gtest_main",
+        "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:ir_headers",
     ],
 )
@@ -2583,6 +2577,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/backends/gpu/transforms:algebraic_simplifier",
         "//xla/backends/gpu/transforms:block_scaling_rewriter",
+        "//xla/backends/gpu/transforms:compiled_cudnn_graph_cache",
         "//xla/backends/gpu/transforms:conv_fp8_fallback",
         "//xla/backends/gpu/transforms:conv_kind_assignment",
         "//xla/backends/gpu/transforms:conv_padding_legalization",
