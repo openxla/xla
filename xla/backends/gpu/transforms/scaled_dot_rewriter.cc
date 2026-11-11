@@ -197,11 +197,11 @@ absl::StatusOr<bool> ScaledDotRewriter::RewriteComputation(
     dot_shape.set_element_type(GetTargetType(lhs->shape().element_type(),
                                              dot->shape().element_type()));
 
-    ABSL_RETURN_IF_ERROR(dot->ReplaceAllUsesWith(
-        Convert(computation->AddInstruction(HloInstruction::CreateDot(
-                    dot_shape, lhs, rhs, dot->dot_dimension_numbers(),
-                    dot->precision_config())),
-                dot->shape().element_type())));
+    HloInstruction* new_dot = dot->AddInstruction(HloInstruction::CreateDot(
+        dot_shape, lhs, rhs, dot->dot_dimension_numbers(),
+        dot->precision_config()));
+    ABSL_RETURN_IF_ERROR(
+        dot->ReplaceAllUsesWith(Convert(new_dot, dot->shape().element_type())));
     ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(dot));
   }
   return changed;

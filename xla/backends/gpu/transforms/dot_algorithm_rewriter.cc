@@ -203,7 +203,6 @@ HloInstruction* ReplaceNaNWithZeros(HloInstruction* input) {
 }
 
 void RewriteF32ToBF16(HloInstruction* instr) {
-  HloComputation* computation = instr->parent();
   HloDotInstruction* original_dot = Cast<HloDotInstruction>(instr);
   PrecisionConfig precision_config = original_dot->precision_config();
   precision_config.set_algorithm(PrecisionConfig::ALG_DOT_BF16_BF16_F32);
@@ -214,7 +213,7 @@ void RewriteF32ToBF16(HloInstruction* instr) {
   HloInstruction* lhs_bf16 = RoundToBF16(lhs);
   HloInstruction* rhs_bf16 = RoundToBF16(rhs);
   HloInstruction* result =
-      computation->AddInstruction(HloInstruction::CreateDot(
+      original_dot->AddInstruction(HloInstruction::CreateDot(
           shape, lhs_bf16, rhs_bf16, dnums, precision_config));
   CHECK_OK(original_dot->ReplaceAllUsesWith(result));
   CHECK_OK(original_dot->parent()->RemoveInstruction(original_dot));
@@ -245,7 +244,7 @@ void RewriteDotWithOperandPairs(
   std::vector<HloInstruction*> partial_dots;
   partial_dots.reserve(operand_pairs.size());
   for (auto [lhs, rhs] : operand_pairs) {
-    partial_dots.push_back(computation->AddInstruction(
+    partial_dots.push_back(original_dot->AddInstruction(
         HloInstruction::CreateDot(shape, lhs, rhs, dnums, precision_config)));
   }
 
@@ -254,6 +253,7 @@ void RewriteDotWithOperandPairs(
         return computation->AddInstruction(
             HloInstruction::CreateBinary(shape, HloOpcode::kAdd, lhs, rhs));
       });
+  original_dot->SetupDerivedInstruction(result);
   CHECK_OK(original_dot->ReplaceAllUsesWith(result));
   CHECK_OK(computation->RemoveInstruction(original_dot));
 }
