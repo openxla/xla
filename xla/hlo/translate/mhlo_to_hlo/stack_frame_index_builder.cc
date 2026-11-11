@@ -19,7 +19,6 @@ limitations under the License.
 #include <string>
 #include <tuple>
 #include <utility>
-#include <vector>
 
 #include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -107,68 +106,55 @@ bool IsFrameNameLocation(mlir::Location location) {
          isa<mlir::FileLineColLoc>(cast<mlir::NameLoc>(location).getChildLoc());
 }
 
-// Appends the frames of the call stack encoded in `loc` to `frames`, from the
-// innermost (callee) frame to the outermost (caller) frame. Returns whether
-// `loc` holds a call stack.
-bool CollectFrames(mlir::Location loc, std::vector<mlir::NameLoc>& frames) {
+}  // namespace
+
+int StackFrameIndexBuilder::AddFrames(mlir::Location loc, int parent_frame_id) {
+  // Based on source_info_to_location in JAX's jax/_src/interpreters/mlir.py
+  // and on xla/hlo/translate/hlo_to_mhlo/location_importer.cc: op name
+  // wrappers carry no frame and are unique per op, so look past them before
+  // memoizing.
+  while (isa<mlir::NameLoc>(loc) && !IsFrameNameLocation(loc)) {
+    loc = cast<mlir::NameLoc>(loc).getChildLoc();
+  }
+
+  // Ops share call stacks and callers, so each (location, parent) pair is
+  // walked once; a repeat is one lookup and inserts nothing.
+  const std::pair<mlir::Location, int> key(loc, parent_frame_id);
+  auto memo_iterator = call_stack_to_frame_id_.find(key);
+  if (memo_iterator != call_stack_to_frame_id_.end()) {
+    return memo_iterator->second;
+  }
+
+  int frame_id = parent_frame_id;
   // Based on JAX's `jaxlib/mlir/_mlir_libs/traceback_to_location.cc`, and on
   // `stackLocations` in `mlir/lib/Transforms/Utils/InliningUtils.cpp`.
   if (auto call_site = dyn_cast<mlir::CallSiteLoc>(loc)) {
-    bool callee_has_frames = CollectFrames(call_site.getCallee(), frames);
-    bool caller_has_frames = CollectFrames(call_site.getCaller(), frames);
-    return callee_has_frames || caller_has_frames;
-  }
-  // Also `jaxlib/mlir/_mlir_libs/traceback_to_location.cc`, which emits one
-  // `NameLoc(<function name>, FileLineColRange)` per Python frame.
-  if (IsFrameNameLocation(loc)) {
-    frames.push_back(cast<mlir::NameLoc>(loc));
-    return true;
-  }
-  // Based on `source_info_to_location` in JAX's
-  // `jax/_src/interpreters/mlir.py`, and on
-  // `xla/hlo/translate/hlo_to_mhlo/location_importer.cc`.
-  if (auto name_loc = dyn_cast<mlir::NameLoc>(loc)) {
-    return CollectFrames(name_loc.getChildLoc(), frames);
-  }
-  // Based on `xla/hlo/translate/hlo_to_mhlo/location_importer.cc`. The
-  // sub-locations are unrelated ops, so keep the first stack instead of
-  // concatenating them.
-  if (auto fused_loc = dyn_cast<mlir::FusedLoc>(loc)) {
+    // The caller's frames are the parents of the callee's.
+    int caller_frame_id = AddFrames(call_site.getCaller(), parent_frame_id);
+    frame_id = AddFrames(call_site.getCallee(), caller_frame_id);
+  } else if (IsFrameNameLocation(loc)) {
+    // Also `jaxlib/mlir/_mlir_libs/traceback_to_location.cc`, which emits one
+    // `NameLoc(<function name>, FileLineColRange)` per Python frame.
+    frame_id = AddStackFrameLocation(cast<mlir::NameLoc>(loc), parent_frame_id);
+  } else if (auto fused_loc = dyn_cast<mlir::FusedLoc>(loc)) {
+    // Based on `xla/hlo/translate/hlo_to_mhlo/location_importer.cc`. The
+    // sub-locations are unrelated ops, so keep the first stack instead of
+    // concatenating them.
     for (mlir::Location sub_loc : fused_loc.getLocations()) {
-      if (CollectFrames(sub_loc, frames)) {
-        return true;
+      frame_id = AddFrames(sub_loc, parent_frame_id);
+      if (frame_id != parent_frame_id) {
+        break;
       }
     }
   }
-  return false;
+
+  call_stack_to_frame_id_[key] = frame_id;
+  return frame_id;
 }
 
-}  // namespace
-
-StackFrameIndexBuilder::AddStackFrameResult
-StackFrameIndexBuilder::AddCallStackAndGetFirstFrameId(
+int StackFrameIndexBuilder::AddCallStackAndGetFirstFrameId(
     const mlir::Location& root_loc) {
-  std::vector<mlir::NameLoc> frames;
-  CollectFrames(root_loc, frames);
-
-  int parent_frame_id = StackFrameIndexBuilder::kInvalidIndex;
-  for (auto it = frames.rbegin(); it != frames.rend(); ++it) {
-    parent_frame_id = AddStackFrameLocation(*it, parent_frame_id);
-  }
-
-  if (parent_frame_id == StackFrameIndexBuilder::kInvalidIndex) {
-    return {StackFrameIndexBuilder::kInvalidIndex, "", 0};
-  }
-
-  auto stack_frame = indexes_.stack_frames(parent_frame_id - 1);
-  auto file_location =
-      indexes_.file_locations(stack_frame.file_location_id() - 1);
-  return {parent_frame_id,
-          indexes_.file_names(file_location.file_name_id() - 1),
-          file_location.line(),
-          file_location.end_line(),
-          file_location.column(),
-          file_location.end_column()};
+  return AddFrames(root_loc, StackFrameIndexBuilder::kInvalidIndex);
 }
 
 xla::StackFrameIndexProto StackFrameIndexBuilder::Build() const {
