@@ -36,12 +36,21 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
 namespace {
 
 using ::testing::ElementsAreArray;
+
+// There is no gfx1151 test device, so reuse the RDNA3 one with its arch.
+se::DeviceDescription Gfx1151DeviceInfo() {
+  se::DeviceDescription device = TestGpuDeviceInfo::AMDRX7900DeviceInfo();
+  device.set_gpu_compute_capability(
+      se::GpuComputeCapability(se::RocmComputeCapability("gfx1151")));
+  return device;
+}
 
 class LoopFusionTest : public HloHardwareIndependentTestBase {
  public:
@@ -127,8 +136,8 @@ class LoopFusionTest : public HloHardwareIndependentTestBase {
   mlir::MLIRContext mlir_context_;
 };
 
-TEST_F(LoopFusionTest, Gfx11ReadsAdjacentRowsOfTransposeOperandTogether) {
-  se::DeviceDescription device = TestGpuDeviceInfo::AMDRX7900DeviceInfo();
+TEST_F(LoopFusionTest, Gfx1151ReadsAdjacentRowsOfTransposeOperandTogether) {
+  se::DeviceDescription device = Gfx1151DeviceInfo();
   // The rows are 256 bytes long and 256 KiB apart: 16 rows are 4 KiB. The
   // dimension has to be a multiple of the number of rows that are read
   // together, 1032 is only a multiple of 8.
@@ -154,14 +163,15 @@ TEST_F(LoopFusionTest, KeepsMemoryOrderIfRowsDoNotNeedToBeReadTogether) {
     int64_t minor;
     bool transpose;
   };
-  const se::DeviceDescription gfx11 = TestGpuDeviceInfo::AMDRX7900DeviceInfo();
+  const se::DeviceDescription gfx1151 = Gfx1151DeviceInfo();
   const TestCase test_cases[] = {
       // The rows are not a multiple of 512 bytes apart.
-      {"unaligned rows", gfx11, 1023, 128, true},
+      {"unaligned rows", gfx1151, 1023, 128, true},
       // Rows of 8 KiB already cover all memory channels.
-      {"long rows", gfx11, 256, 4096, true},
-      {"no transpose", gfx11, 1024, 128, false},
-      // Only enabled on the GPUs where the slowdown was measured.
+      {"long rows", gfx1151, 256, 4096, true},
+      {"no transpose", gfx1151, 1024, 128, false},
+      // Only enabled on gfx1151, where the slowdown was measured.
+      {"gfx1100", TestGpuDeviceInfo::AMDRX7900DeviceInfo(), 1024, 128, true},
       {"mi300", TestGpuDeviceInfo::AMDMI300DeviceInfo(), 1024, 128, true},
       {"cuda", TestGpuDeviceInfo::RTXA6000DeviceInfo(), 1024, 128, true},
   };

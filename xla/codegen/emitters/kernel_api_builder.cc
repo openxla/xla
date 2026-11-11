@@ -303,10 +303,7 @@ IndexingMap GetDefaultWorkItemIndexingMap(
   SymbolicExpr chunk_id = CreateSymbolExpr(0, /*num_dims=*/6, mlir_context);
   linear_index = chunk_id * items_per_chunk + linear_index;
 
-  // The index of the element in the order in which the work items traverse the
-  // output. This is what the bounds of the output constrain. The permutation
-  // below is a bijection of [0, num_elements), so it keeps the elements that
-  // are in bounds in bounds.
+  // The bounds check applies to the traversal index, before the permutation.
   SymbolicExpr traversal_index = linear_index;
   SymbolicExpr memory_index = traversal_index;
   if (order.has_value()) {

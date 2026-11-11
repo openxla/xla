@@ -66,30 +66,21 @@ const Shape& GetIndexShape(const Shape& shape) {
   return shape.IsTuple() ? shape.tuple_shapes(0) : shape;
 }
 
-// The memory channel that serves an access is chosen by a few address bits on
-// AMD GPUs. If the work items that run at the same time read addresses that
-// are a multiple of a large power of two apart, they all hit the same
-// channels. This is what happens when a transpose that keeps the minor
-// dimension is emitted as a loop fusion: the work items traverse the output in
-// memory order, so the operand is read one row at a time, and the rows are
-// `kMinStrideAlignmentBytes` or more apart whenever the dimension that is
-// moved has a large power of two factor.
-//
-// Reading `kContiguousReadBytes` of adjacent rows of the operand at a time
-// spreads the accesses over all channels.
+// On gfx1151, a transpose loop fusion that keeps the minor dimension reads
+// operand rows blocked_size * row_bytes apart. When that stride has a large
+// power-of-two factor, the reads hit few memory channels. Visiting
+// ~kContiguousReadBytes of adjacent rows together spreads them out.
+// Both constants were measured on gfx1151.
 constexpr int64_t kContiguousReadBytes = 4096;
 constexpr int64_t kMinStrideAlignmentBytes = 512;
 
-// Returns the order in which the work items should traverse the output of a
-// loop fusion that contains a transpose that keeps the minor dimension and is
-// slowed down by the access pattern described above.
+// Returns the traversal order for a loop fusion with such a transpose, or
+// nullopt to keep the memory order.
 std::optional<emitters::BlockedDimensionOrder> GetTransposeFriendlyOrder(
     const HloFusionAnalysis& analysis, int unroll_factor) {
-  // Only enabled where the slowdown was measured (gfx1151). Other AMD GPUs
-  // map addresses to memory channels differently.
   const stream_executor::RocmComputeCapability* rocm =
       analysis.device_info().gpu_compute_capability().rocm_compute_capability();
-  if (rocm == nullptr || !rocm->gfx11()) {
+  if (rocm == nullptr || rocm->gfx_version() != "gfx1151") {
     return std::nullopt;
   }
 
