@@ -6,4 +6,10 @@ into pure `jax`, `jax.lax`, `jax.experimental.layout`, and
 
 ## Included Kernels
 
+- `fused_conv1d_gdn`
+- `fused_moe`
 - `gmm`
+- `kda`
+- `splash_attention_bwd`
+- `splash_attention_fwd`
+- `tgmm`
