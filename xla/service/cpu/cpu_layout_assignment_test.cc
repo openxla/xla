@@ -664,5 +664,30 @@ ENTRY main {
             LayoutUtil::MakeLayout({0, 2, 1}));
   EXPECT_EQ(ag->operand(1)->shape().layout(), LayoutUtil::MakeLayout({0, 1}));
 }
+
+TEST_F(CpuLayoutAssignmentTest, FftAfterAllGatherAssignsRowMajorLayout) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule FftAfterAllGatherAssignsRowMajorLayout
+
+ENTRY main {
+  p0 = c64[48,16]{0,1} parameter(0)
+  ag0 = c64[48,32]{0,1} all-gather(p0), dimensions={1}, replica_groups={{0,1}}
+  fft = c64[48,32]{0,1} fft(ag0), fft_type=FFT, fft_length={32}
+  ROOT ag1 = c64[48,64]{0,1} all-gather(fft), dimensions={1},
+      replica_groups={{0,1}}
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo, /*replica_count=*/2));
+  AssignLayouts(module.get());
+
+  const HloInstruction* ag0 = FindInstruction(module.get(), "ag0");
+  const HloInstruction* fft = FindInstruction(module.get(), "fft");
+  const HloInstruction* ag1 = FindInstruction(module.get(), "ag1");
+  EXPECT_EQ(ag0->shape().layout(), LayoutUtil::MakeLayout({0, 1}));
+  EXPECT_EQ(fft->operand(0)->shape().layout(), LayoutUtil::MakeLayout({1, 0}));
+  EXPECT_EQ(fft->shape().layout(), LayoutUtil::MakeLayout({1, 0}));
+  EXPECT_EQ(ag1->shape().layout(), LayoutUtil::MakeLayout({0, 1}));
+}
 }  // namespace
 }  // namespace xla
