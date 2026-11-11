@@ -570,34 +570,18 @@ void AbstractTrackedDeviceBuffer::AddUsageEvent(PjRtDeviceEventRef event) {
       }
     }
     // An event whose stream is not known yet, e.g. the source usage event of a
-    // copy whose promise is fulfilled later, can't be merged above. Drop
-    // events that have completed so that such events don't accumulate for the
-    // lifetime of the buffer. A completed usage event orders nothing; donation
-    // in Execute skips them too.
-    if (usage_events_.size() + 1 > usage_events_.capacity()) {
-      absl::erase_if(usage_events_, [](const PjRtDeviceEventRef& ev) {
-        return ev.state() == PJRT_DeviceEvent_State_Ready;
-      });
-    }
-    usage_events_.push_back(event);
-    return;
+    // copy whose promise is fulfilled later, can't be merged above. It falls
+    // through so that the trimming below keeps such events from accumulating
+    // for the lifetime of the buffer.
   }
 
   // Trim ready events in order to avoid dynamic allocation as much as possible.
   // The cost will be amortized because a typical vector implementation grows
   // the capacity superlinearly.
   if (usage_events_.size() + 1 > usage_events_.capacity()) {
-    int i = 0;
-    while (i < usage_events_.size()) {
-      auto& ev = usage_events_.at(i);
-      if (ev.async_value()->IsAvailable()) {
-        using std::swap;
-        swap(ev, usage_events_.back());
-        usage_events_.pop_back();
-        continue;
-      }
-      ++i;
-    }
+    absl::erase_if(usage_events_, [](const PjRtDeviceEventRef& ev) {
+      return ev.state() != PJRT_DeviceEvent_State_Unavailable;
+    });
   }
   usage_events_.push_back(std::move(event));
 }
