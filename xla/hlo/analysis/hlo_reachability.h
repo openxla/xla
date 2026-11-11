@@ -118,9 +118,10 @@ class HloReachabilityMap {
   // Bulk update reachabilities for multiple instructions. All works if new
   // predecessors are added to the instructions, but not removed. to_update is a
   // map from instruction to new predecessors.
+  // The map must be transitively closed for the graph without the new edges.
   void UpdateMultipleInstructions(
-      absl::flat_hash_map<const HloInstruction*,
-                          absl::flat_hash_set<const HloInstruction*>>
+      const absl::flat_hash_map<const HloInstruction*,
+                                absl::flat_hash_set<const HloInstruction*>>&
           to_update);
 
   // Update reachability map given left and right are going to be merged into a
@@ -227,20 +228,7 @@ class HloReachabilityMap {
       if (ptr_ == other.ptr_) {
         return false;
       }
-
-      // Ease the work of the auto-vectorizer.
-      Word* __restrict a = ptr_;
-      const Word* __restrict b = other.ptr_;
-      size_t num_words = NumWords();
-      Word changed_accumulator = 0;
-      for (size_t i = 0; i < num_words; ++i) {
-        Word ai = a[i];
-        Word bi = b[i];
-
-        a[i] = ai | bi;
-        changed_accumulator |= (~ai & bi);
-      }
-      return changed_accumulator;
+      return OrUpdateRange(other, 0, NumWords());
     }
 
     // Same as operator|=, but only updates the words in the given diff.
@@ -248,6 +236,44 @@ class HloReachabilityMap {
       for (const auto& [index, value] : diff) {
         ptr_[index] |= value;
       }
+    }
+
+    // Same as OrUpdate, but only for the words [begin, end).
+    bool OrUpdateRange(const BitSet& other, size_t begin, size_t end) {
+      DCHECK(words_ == other.words_);
+      DCHECK(ptr_ != other.ptr_);
+      DCHECK_LE(end, NumWords());
+      Word* __restrict a = ptr_ + begin;
+      const Word* __restrict b = other.ptr_ + begin;
+      const size_t num_words = end - begin;
+      Word changed_accumulator = 0;
+      for (size_t i = 0; i < num_words; ++i) {
+        const Word ai = a[i];
+        const Word bi = b[i];
+        a[i] = ai | bi;
+        changed_accumulator |= ~ai & bi;
+      }
+      return changed_accumulator;
+    }
+
+    // Same as OrUpdate, but also sets bit i % kBits of mask[i / kBits] for
+    // every word i that gained bits.
+    bool OrUpdateMask(const BitSet& other, Word* __restrict mask) {
+      DCHECK(words_ == other.words_);
+      if (ptr_ == other.ptr_) {
+        return false;
+      }
+      Word* __restrict a = ptr_;
+      const Word* __restrict b = other.ptr_;
+      const size_t num_words = NumWords();
+      Word changed_accumulator = 0;
+      for (size_t i = 0; i < num_words; ++i) {
+        const Word bit = static_cast<Word>((~a[i] & b[i]) != 0) << (i % kBits);
+        a[i] |= b[i];
+        mask[i / kBits] |= bit;
+        changed_accumulator |= bit;
+      }
+      return changed_accumulator;
     }
 
     // Useful for updating multiple instructions at once using smaller diff.
@@ -374,6 +400,15 @@ class HloReachabilityMap {
   std::vector<std::pair<size_t, BitSet::Word>> tmp_changed_words_;
   std::vector<uintptr_t> tmp_worklist_;
   std::vector<Index> tmp_indices_to_update_;
+
+  // Used by UpdateMultipleInstructions, kept across calls to avoid allocations.
+  // Per instruction key, a dirty mask with one bit per word of its row, set
+  // while the word has bits not yet forwarded to the successors of the row.
+  // Every mask is zero between calls.
+  std::vector<BitSet::Word> tmp_dirty_masks_;
+  // The rows with a nonzero dirty mask, a min heap by row index; empty between
+  // calls.
+  std::vector<std::pair<Index, const HloInstruction*>> tmp_pending_rows_;
 };
 
 }  // namespace xla

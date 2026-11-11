@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <queue>
 #include <utility>
@@ -31,6 +32,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
+#include "absl/numeric/bits.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 
@@ -360,29 +362,140 @@ void HloReachabilityMap::UpdateReachabilityForMerge(
   tmp_indices_to_update_.clear();
 }
 
-void HloReachabilityMap::UpdateMultipleInstructions(
-    absl::flat_hash_map<const HloInstruction*,
-                        absl::flat_hash_set<const HloInstruction*>>
-        to_update) {
-  while (!to_update.empty()) {
-    auto it = to_update.begin();
-    const HloInstruction* instruction = it->first;
+namespace {
 
-    BitSet bit_set = BitSetFromIndex(GetIndex(instruction));
+// UpdateMultipleInstructions forwards the dirty words of a row to a successor
+// as runs of consecutive words, one vectorized union each, or the whole row as
+// one union when that is cheaper. A run costs about as much as a union of this
+// many words on top of its own length: ten one word runs cost about as much as
+// the union of a 257 word row.
+constexpr size_t kWordsPerRun = 24;
+
+}  // namespace
+
+void HloReachabilityMap::UpdateMultipleInstructions(
+    const absl::flat_hash_map<const HloInstruction*,
+                              absl::flat_hash_set<const HloInstruction*>>&
+        to_update) {
+  const size_t num_words = words_per_bitset_;
+  const size_t mask_words = (num_words + BitSet::kBits - 1) / BitSet::kBits;
+  if (tmp_dirty_masks_.size() < indices_.size() * mask_words) {
+    tmp_dirty_masks_.resize(indices_.size() * mask_words, 0);
+  }
+  const auto mask_of = [&](const HloInstruction* instruction) {
+    return tmp_dirty_masks_.data() + GetKey(instruction) * mask_words;
+  };
+  // Marks the words [begin, end) in mask.
+  const auto mark_dirty = [](BitSet::Word* mask, size_t begin, size_t end) {
+    for (size_t word = begin; word < end;) {
+      const size_t bit = word % BitSet::kBits;
+      const size_t count = std::min(BitSet::kBits - bit, end - word);
+      const BitSet::Word bits = count == BitSet::kBits
+                                    ? ~BitSet::Word{0}
+                                    : ((BitSet::Word{1} << count) - 1) << bit;
+      mask[word / BitSet::kBits] |= bits;
+      word += count;
+    }
+  };
+
+  // The rows with a nonzero dirty mask, a min heap by row index. Build assigns
+  // indices in post order, so a row is normally popped once, after all of its
+  // predecessors. The result does not depend on the order: a row that gains
+  // bits after its pop is queued again.
+  using Item = std::pair<Index, const HloInstruction*>;
+  std::vector<Item>& worklist = tmp_pending_rows_;
+  DCHECK(worklist.empty());
+  const auto push = [&](Index index, const HloInstruction* instruction) {
+    worklist.emplace_back(index, instruction);
+    // A chain keeps one row queued at a time; a heap of one needs no sift.
+    if (worklist.size() > 1) {
+      std::push_heap(worklist.begin(), worklist.end(), std::greater<Item>());
+    }
+  };
+
+  // Seed: every updated row absorbs the rows of its new predecessors. All
+  // masks are zero here and to_update has each instruction once, so every row
+  // that changes is queued once.
+  // NOLINTNEXTLINE the loop aggregation is order independent.
+  for (const auto& [instruction, new_predecessors] : to_update) {
+    const Index index = GetIndex(instruction);
+    BitSet row = BitSetFromIndex(index);
+    BitSet::Word* mask = mask_of(instruction);
     bool changed = false;
     // NOLINTNEXTLINE the loop aggregation is order independent.
-    for (const HloInstruction* operand : it->second) {
-      BitSet operand_bit_set = BitSetFromIndex(GetIndex(operand));
-      changed |= bit_set.OrUpdate(operand_bit_set);
+    for (const HloInstruction* predecessor : new_predecessors) {
+      changed |= row.OrUpdateMask(BitSetFromIndex(GetIndex(predecessor)), mask);
     }
-    to_update.erase(it);
     if (changed) {
-      for (const HloInstruction* user : instruction->users()) {
-        to_update[user].insert(instruction);
+      push(index, instruction);
+    }
+  }
+
+  // Merges the given runs of words of the row source into the row of target,
+  // flags the runs that changed in the dirty mask of target, and queues target
+  // if its mask was zero.
+  using Run = std::pair<uint32_t, uint32_t>;
+  const auto absorb_runs = [&](const HloInstruction* target,
+                               const BitSet& source,
+                               absl::Span<const Run> runs) {
+    const Index index = GetIndex(target);
+    BitSet row = BitSetFromIndex(index);
+    BitSet::Word* mask = mask_of(target);
+    bool changed = false;
+    for (const auto& [begin, end] : runs) {
+      if (row.OrUpdateRange(source, begin, end)) {
+        if (!changed &&
+            std::all_of(mask, mask + mask_words,
+                        [](BitSet::Word bits) { return bits == 0; })) {
+          push(index, target);
+        }
+        changed = true;
+        mark_dirty(mask, begin, end);
       }
-      for (const HloInstruction* succ : instruction->control_successors()) {
-        to_update[succ].insert(instruction);
+    }
+  };
+
+  absl::InlinedVector<Run, 16> runs;
+  while (!worklist.empty()) {
+    if (worklist.size() > 1) {
+      std::pop_heap(worklist.begin(), worklist.end(), std::greater<Item>());
+    }
+    const auto [index, instruction] = worklist.back();
+    worklist.pop_back();
+    // The dirty words as runs of consecutive words, clearing the mask.
+    BitSet::Word* mask = mask_of(instruction);
+    runs.clear();
+    size_t dirty_words = 0;
+    for (size_t block = 0; block < mask_words; ++block) {
+      BitSet::Word bits = mask[block];
+      mask[block] = 0;
+      while (bits != 0) {
+        const size_t low = absl::countr_zero(bits);
+        const size_t count = absl::countr_one(bits >> low);
+        const uint32_t begin = block * BitSet::kBits + low;
+        const uint32_t end = begin + count;
+        if (!runs.empty() && runs.back().second == begin) {
+          runs.back().second = end;
+        } else {
+          runs.emplace_back(begin, end);
+        }
+        dirty_words += count;
+        // Clears bits [low, low + count); every shift stays below kBits.
+        bits &= ~BitSet::Word{0} << low << (count - 1) << 1;
       }
+    }
+    // Forwarding the whole row costs about one union of num_words words, the
+    // runs about their length plus kWordsPerRun words each.
+    if (dirty_words + runs.size() * kWordsPerRun >= num_words) {
+      runs.clear();
+      runs.emplace_back(0, num_words);
+    }
+    const BitSet row = BitSetFromIndex(index);
+    for (const HloInstruction* user : instruction->users()) {
+      absorb_runs(user, row, runs);
+    }
+    for (const HloInstruction* successor : instruction->control_successors()) {
+      absorb_runs(successor, row, runs);
     }
   }
 }
