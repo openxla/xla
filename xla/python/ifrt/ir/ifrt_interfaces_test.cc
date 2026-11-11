@@ -29,6 +29,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Support/LogicalResult.h"
+#include "third_party/gloop/util/task/status_matchers.h"
 #include "xla/python/ifrt/ir/ifrt_ir_test_base.h"
 #include "xla/python/ifrt/ir/ifrt_ops.h"
 

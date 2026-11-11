@@ -134,6 +134,7 @@ xla_cc_test(
     deps = [
         ":ifrt_ir_test_base",
         ":ir",
+        "//third_party/gloop/util/task:status_matchers",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
