@@ -703,6 +703,54 @@ TEST_F(XTileDialectTest, HloAllGatherDotLowering) {
     )"));
 }
 
+TEST_F(XTileDialectTest, TwoShotAllGatherEmitsSelectBufferOnRootInsert) {
+  constexpr absl::string_view kHloText = R"(
+    HloModule two_shot_all_gather
+
+    %ag_fusion {
+      %p0 = f32[32,16]{1,0} parameter(0)
+      ROOT %ag = f32[128,16]{1,0} all-gather(%p0),
+        replica_groups={{0,1,2,3}}, dimensions={0},
+        backend_config={"collective_backend_config":{"kernel_strategy":"KERNEL_STRATEGY_TRITON_TWO_SHOT"}}
+    }
+
+    ENTRY %entry {
+      %p0 = f32[32,16]{1,0} parameter(0)
+      ROOT %fusion = f32[128,16]{1,0} fusion(%p0),
+        kind=kCustom, calls=%ag_fusion,
+        backend_config={
+          "fusion_backend_config": {
+            "kind": "__triton_collective",
+            "block_level_fusion_config": {
+              "num_warps": "4",
+              "output_tiles": [{"sizes": ["16", "16"]}],
+              "num_ctas": 1,
+              "num_stages": 1,
+              "is_tma_allowed": false,
+              "is_warp_specialization_allowed": false
+            }
+          }
+        }
+    }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnUnverifiedModule(kHloText));
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{16, 16}};
+
+  EXPECT_OK(CreateXTileIrAndFileCheck(
+      *module->GetComputationWithName("ag_fusion"), block_level_parameters, R"(
+    CHECK: xtile.entry_func @xtile_dialect_fn(%arg0: memref<32x16xf32>, %arg1: memref<4xi64>, %arg2: index
+    CHECK-NOT: xtile.select_buffer %arg0
+    CHECK: %[[LOCAL_TILE:.*]] = xtile.extract %arg0[{{.*}}] [16, 16] [1, 1] : memref<32x16xf32> -> tensor<16x16xf32>
+    CHECK: %[[AG:.*]] = "stablehlo.all_gather"(%[[LOCAL_TILE]])
+    CHECK: %[[PEER_BUF:.*]] = xtile.select_buffer %arg1[{{.*}}] : memref<4xi64> -> memref<128x16xf32>
+    CHECK: xtile.insert %[[AG]] into %[[PEER_BUF]][{{.*}}] [16, 16] [1, 1] : tensor<16x16xf32> -> memref<128x16xf32>
+    )"));
+}
+
 TEST_F(XTileDialectTest, HloScanWithLoop) {
   constexpr absl::string_view kHloText = R"(
 HloModule t

@@ -1153,6 +1153,7 @@ absl::StatusOr<Type> GetMlirType(
 
 absl::StatusOr<SmallVector<Type>> GetFnArgTypes(
     mlir::ImplicitLocOpBuilder& b, const HloFusionInstruction& fusion,
+    const gpu::TiledHloComputation& tiled_computation,
     absl::Span<mlir::Type> opaque_args_types,
     const std::optional<GpuComputeCapability>& gpu_cc) {
   SmallVector<Type> fn_arg_types;
@@ -1168,7 +1169,25 @@ absl::StatusOr<SmallVector<Type>> GetFnArgTypes(
   }
 
   // Add result types.
+  absl::Span<const gpu::TiledHloInstruction* const> roots =
+      tiled_computation.roots();
+  int64_t root_idx = 0;
   for (const auto& [index, shape] : ShapeUtil::GetLeafShapes(fusion.shape())) {
+    TF_RET_CHECK(root_idx < static_cast<int64_t>(roots.size()));
+    const gpu::Tile& root_tile = roots[root_idx++]->tile();
+    if (!root_tile.replica_ids().empty()) {
+      TF_RET_CHECK(root_tile.replica_ids().size() == 1)
+          << "Expected a single replica ID for root buffer selection";
+      SymbolicExpr upper_bound =
+          root_tile.replica_ids().front().upper_bound.Canonicalize();
+      TF_RET_CHECK(upper_bound.GetType() == SymbolicExprType::kConstant)
+          << "Expected constant upper bound for root replica ID";
+      // Two-shot AllGather roots write to symmetric peer output buffers, so the
+      // result argument is a per-peer pointer table (`memref<R x i64>`).
+      fn_arg_types.push_back(
+          mlir::MemRefType::get({upper_bound.GetValue()}, b.getI64Type()));
+      continue;
+    }
     ABSL_ASSIGN_OR_RETURN(
         Type ir_type, PrimitiveTypeToMlirType(b, shape.element_type(), gpu_cc));
     ABSL_ASSIGN_OR_RETURN(mlir::MemRefType memref_type,
