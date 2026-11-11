@@ -21,7 +21,9 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -290,10 +292,13 @@ class HloRematerialization : public HloPassInterface {
     return absl::OkStatus();
   }
 
-  // Only Peak priority requires constant update of dataflow analysis.
-  void on_block_rematerialized(int remat_count) {
-    if (remat_count > 0 && remat_algorithm() == RematAlgorithm::kPeakPriority) {
-      SetDataflowAnalysisStale();
+  // Records `computation` for incremental dataflow reanalysis after a block is
+  // rematerialized in it.
+  void on_block_rematerialized(int remat_count,
+                               const HloComputation* computation) {
+    if (remat_count > 0 && computation != nullptr &&
+        !absl::c_linear_search(stale_computations_, computation)) {
+      stale_computations_.push_back(computation);
     }
   }
 
@@ -307,7 +312,8 @@ class HloRematerialization : public HloPassInterface {
       const HloInstructionSequence& sequence,
       const absl::flat_hash_set<absl::string_view>& execution_threads);
 
-  // Updates dataflow analysis if it is stale.
+  // Updates dataflow analysis if it is stale, reanalyzing only the computations
+  // changed since the last update.
   absl::Status UpdateDataflowAnalysis(HloModule* module);
 
   // Fills value_overwriters_ and overwriter_ids_ once per RunImpl if
@@ -414,6 +420,10 @@ class HloRematerialization : public HloPassInterface {
   absl::flat_hash_map<const HloComputation*, int64_t> computation_peak_memory_;
 
   std::unique_ptr<HloDataflowAnalysis> dataflow_analysis_;
+
+  // Computations changed since `dataflow_analysis_` was last updated, in
+  // deterministic insertion order.
+  std::vector<const HloComputation*> stale_computations_;
 
   // Maps (instruction unique id, shape index) of an array position to the
   // unique id of the instruction in the same computation that next overwrites
