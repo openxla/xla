@@ -970,6 +970,146 @@ ENTRY main {
   EXPECT_EQ(operand_1->operand(0)->opcode(), HloOpcode::kAllGatherDone);
 }
 
+// A scan-like loop whose state holds `zeros`, a loop-invariant broadcast of a
+// constant as JAX produces when it hoists a zero buffer out of a scan body.
+// ZEROS_USE computes `next_acc` from `acc` and `zeros`.
+constexpr absl::string_view kSinkBroadcastTemplate = R"(
+HloModule sink_broadcast
+
+condition {
+  state = (s32[], s32[], f32[128,128], f32[128,128]) parameter(0)
+  i = s32[] get-tuple-element(state), index=0
+  n = s32[] get-tuple-element(state), index=1
+  ROOT lt = pred[] compare(i, n), direction=LT
+}
+
+body {
+  state = (s32[], s32[], f32[128,128], f32[128,128]) parameter(0)
+  i = s32[] get-tuple-element(state), index=0
+  n = s32[] get-tuple-element(state), index=1
+  acc = f32[128,128] get-tuple-element(state), index=2
+  zeros = f32[128,128] get-tuple-element(state), index=3
+  one = s32[] constant(1)
+  next_i = s32[] add(i, one)
+  ZEROS_USE
+  ROOT out = (s32[], s32[], f32[128,128], f32[128,128]) tuple(next_i, n, next_acc, zeros)
+}
+
+ENTRY main {
+  n = s32[] parameter(0)
+  x = f32[128,128] parameter(1)
+  zero_i = s32[] constant(0)
+  zero_f = f32[] constant(0)
+  zeros = f32[128,128] broadcast(zero_f), dimensions={}
+  init = (s32[], s32[], f32[128,128], f32[128,128]) tuple(zero_i, n, x, zeros)
+  loop = (s32[], s32[], f32[128,128], f32[128,128]) while(init), condition=condition, body=body
+  ROOT result = f32[128,128] get-tuple-element(loop), index=2
+}
+)";
+
+class GpuCompilerWhileLoopSinkingTest : public GpuCompilerTest {
+ protected:
+  // Compiles the template with `zeros_use` and returns how many f32[128,128]
+  // buffers the while loop carries in its state.
+  absl::StatusOr<int64_t> CountCarriedBuffers(absl::string_view zeros_use,
+                                              bool sink_broadcasts) {
+    HloModuleConfig config = GetModuleConfigForTest();
+    config.mutable_debug_options()
+        .set_xla_gpu_experimental_while_loop_sink_broadcast_constants(
+            sink_broadcasts);
+    ABSL_ASSIGN_OR_RETURN(
+        std::unique_ptr<HloModule> module,
+        GetOptimizedModule(absl::StrReplaceAll(kSinkBroadcastTemplate,
+                                               {{"ZEROS_USE", zeros_use}}),
+                           config));
+    const HloInstruction* while_op =
+        FindInstruction(module.get(), HloOpcode::kWhile);
+    if (while_op == nullptr) {
+      return absl::NotFoundError("no while loop in the optimized module");
+    }
+    return absl::c_count_if(
+        while_op->shape().tuple_shapes(), [](const Shape& element) {
+          return ShapeUtil::Compatible(element,
+                                       ShapeUtil::MakeShape(F32, {128, 128}));
+        });
+  }
+};
+
+// `zeros` feeds an elementwise op, which can fuse the broadcast.
+constexpr absl::string_view kFusibleUse = R"(
+  t = f32[128,128] tanh(acc)
+  next_acc = f32[128,128] maximum(t, zeros))";
+
+// `zeros` is only the buffer of a dynamic-update-slice, so sinking it would
+// add a broadcast kernel to every iteration.
+constexpr absl::string_view kInPlaceUse = R"(
+  zero = s32[] constant(0)
+  row = f32[1,128] slice(acc), slice={[0:1], [0:128]}
+  dus = f32[128,128] dynamic-update-slice(zeros, row, i, zero)
+  next_acc = f32[128,128] add(acc, dus))";
+
+// As kInPlaceUse, but `zeros` reaches the dynamic-update-slice through a
+// transpose, which the hook looks through.
+constexpr absl::string_view kTransposedInPlaceUse = R"(
+  zero = s32[] constant(0)
+  zeros_t = f32[128,128] transpose(zeros), dimensions={1,0}
+  row = f32[1,128] slice(acc), slice={[0:1], [0:128]}
+  dus = f32[128,128] dynamic-update-slice(zeros_t, row, i, zero)
+  next_acc = f32[128,128] add(acc, dus))";
+
+// `zeros` is only read by a custom call, which takes the carried buffer as is.
+constexpr absl::string_view kCustomCallUse = R"(
+  cc = f32[128,128] custom-call(zeros, acc), custom_call_target="__xla_test_sliced_custom_call", api_version=API_VERSION_TYPED_FFI
+  next_acc = f32[128,128] add(acc, cc))";
+
+// `zeros` is updated in place, but an add also reads it and can fuse it.
+constexpr absl::string_view kInPlaceAndFusibleUse = R"(
+  zero = s32[] constant(0)
+  row = f32[1,128] slice(acc), slice={[0:1], [0:128]}
+  dus = f32[128,128] dynamic-update-slice(zeros, row, i, zero)
+  sum = f32[128,128] add(acc, zeros)
+  next_acc = f32[128,128] add(sum, dus))";
+
+TEST_F(GpuCompilerWhileLoopSinkingTest, SinksFusibleBroadcastWithFlag) {
+  EXPECT_THAT(CountCarriedBuffers(kFusibleUse, false),
+              absl_testing::IsOkAndHolds(2));
+  EXPECT_THAT(CountCarriedBuffers(kFusibleUse, true),
+              absl_testing::IsOkAndHolds(1));
+}
+
+TEST_F(GpuCompilerWhileLoopSinkingTest, KeepsBroadcastNoUseCanFuse) {
+  for (absl::string_view use :
+       {kInPlaceUse, kTransposedInPlaceUse, kCustomCallUse}) {
+    SCOPED_TRACE(use);
+    EXPECT_THAT(CountCarriedBuffers(use, true), absl_testing::IsOkAndHolds(2));
+  }
+}
+
+TEST_F(GpuCompilerWhileLoopSinkingTest, SinksBroadcastWithOneFusibleUse) {
+  EXPECT_THAT(CountCarriedBuffers(kInPlaceAndFusibleUse, true),
+              absl_testing::IsOkAndHolds(1));
+}
+
+TEST_F(GpuCompilerWhileLoopSinkingTest, MatchesReferenceWithFlag) {
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options()
+      .set_xla_gpu_experimental_while_loop_sink_broadcast_constants(true);
+  for (absl::string_view use : {kFusibleUse, kInPlaceUse}) {
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(
+            absl::StrReplaceAll(kSinkBroadcastTemplate, {{"ZEROS_USE", use}}),
+            config));
+    Literal n = LiteralUtil::CreateR0<int32_t>(3);
+    ASSERT_OK_AND_ASSIGN(Literal x, LiteralUtil::CreateRandomLiteral<F32>(
+                                        ShapeUtil::MakeShape(F32, {128, 128}),
+                                        /*mean=*/0.0f, /*stddev=*/1.0f));
+    const std::vector<const Literal*> arguments = {&n, &x};
+    EXPECT_TRUE(
+        RunAndCompare(std::move(module), arguments, ErrorSpec{1e-4, 1e-4}));
+  }
+}
+
 TEST_F(GpuCompilerTest,
        CublasF8NumericallySameWithTritonFallbackAndWithoutTriton) {
   if (!get_cuda_cc().IsAtLeastHopper()) {

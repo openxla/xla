@@ -15,8 +15,10 @@ limitations under the License.
 
 #include "xla/hlo/transforms/simplifiers/while_loop_constant_sinking.h"
 
-#include <gmock/gmock.h>
+#include <cstdint>
+#include <vector>
 
+#include <gmock/gmock.h>
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
@@ -29,6 +31,7 @@ namespace {
 
 namespace op = xla::testing::opcode_matchers;
 using ::testing::_;
+using ::testing::UnorderedElementsAre;
 using WhileLoopConstantSinkingTest = HloHardwareIndependentTestBase;
 
 TEST_F(WhileLoopConstantSinkingTest, SinkOneConstant) {
@@ -159,6 +162,110 @@ ENTRY entry {
   auto* while_body = module->GetComputationWithName("body.sunk");
   EXPECT_THAT(while_body->root_instruction(),
               op::Tuple(op::Add(_, op::Broadcast(op::Constant())), _));
+}
+
+// The loop state holds a broadcast of a constant that the body reads and a
+// scalar constant that the condition reads.
+constexpr char kShouldSinkHlo[] = R"(
+HloModule ModuleWithWhile
+
+body {
+  p_body = (f32[16],f32[16],s32[]) parameter(0)
+  p_body.0 = get-tuple-element(p_body), index=0
+  p_body.1 = get-tuple-element(p_body), index=1
+  p_body.2 = get-tuple-element(p_body), index=2
+
+  add.0 = add(p_body.0, p_body.1)
+  ROOT root = tuple(add.0, p_body.1, p_body.2)
+}
+
+condition {
+  p_cond = (f32[16],f32[16],s32[]) parameter(0)
+  p_cond.2 = get-tuple-element(p_cond), index=2
+  zero = s32[] constant(0)
+  ROOT result = pred[] compare(p_cond.2, zero), direction=GT
+}
+
+ENTRY entry {
+  param = f32[16] parameter(0)
+  const_0 = f32[] constant(0)
+  broadcast_0 = f32[16] broadcast(const_0), dimensions={}
+  limit = s32[] constant(4)
+  while_init = tuple(param, broadcast_0, limit)
+  ROOT while = while(while_init), condition=condition, body=body
+}
+)";
+
+TEST_F(WhileLoopConstantSinkingTest, ShouldSinkSeesInitValueAndBodyGte) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kShouldSinkHlo));
+  std::vector<int64_t> seen_indices;
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      WhileLoopConstantSinking(
+          /*sink_broadcast_of_constants=*/true,
+          /*sink_only_scalar_constants=*/false,
+          [&](const HloInstruction& init_value,
+              const HloInstruction& body_gte) {
+            EXPECT_EQ(body_gte.opcode(), HloOpcode::kGetTupleElement);
+            EXPECT_EQ(body_gte.parent()->name(), "body");
+            EXPECT_EQ(init_value.parent()->name(), "entry");
+            EXPECT_EQ(init_value.opcode(), body_gte.tuple_index() == 1
+                                               ? HloOpcode::kBroadcast
+                                               : HloOpcode::kConstant);
+            seen_indices.push_back(body_gte.tuple_index());
+            return true;
+          })
+          .Run(module.get()));
+  ASSERT_TRUE(changed);
+  EXPECT_THAT(seen_indices, UnorderedElementsAre(1, 2));
+
+  // Accepting every candidate is the same as having no hook.
+  EXPECT_THAT(module->GetComputationWithName("body.sunk")->root_instruction(),
+              op::Tuple(op::Add(_, op::Broadcast(op::Constant())), _, _));
+  EXPECT_THAT(
+      module->GetComputationWithName("condition.sunk")->root_instruction(),
+      op::Compare(op::Constant(), op::Constant()));
+}
+
+TEST_F(WhileLoopConstantSinkingTest, ShouldSinkKeepsRejectedBroadcast) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kShouldSinkHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed, WhileLoopConstantSinking(
+                        /*sink_broadcast_of_constants=*/true,
+                        /*sink_only_scalar_constants=*/false,
+                        [](const HloInstruction& init_value,
+                           const HloInstruction& /*body_gte*/) {
+                          return init_value.opcode() != HloOpcode::kBroadcast;
+                        })
+                        .Run(module.get()));
+  ASSERT_TRUE(changed);
+
+  // The broadcast stays in the loop state; the scalar constant is still sunk
+  // into the condition.
+  const HloInstruction* while_instr =
+      module->entry_computation()->root_instruction();
+  EXPECT_EQ(while_instr->while_body()->name(), "body");
+  EXPECT_THAT(
+      while_instr->while_body()->root_instruction(),
+      op::Tuple(op::Add(op::GetTupleElement(_, 0), op::GetTupleElement(_, 1)),
+                _, _));
+  EXPECT_THAT(while_instr->while_condition()->root_instruction(),
+              op::Compare(op::Constant(), op::Constant()));
+}
+
+TEST_F(WhileLoopConstantSinkingTest, ShouldSinkRejectingAllIsANoOp) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kShouldSinkHlo));
+  ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      WhileLoopConstantSinking(
+          /*sink_broadcast_of_constants=*/true,
+          /*sink_only_scalar_constants=*/false,
+          [](const HloInstruction&, const HloInstruction&) { return false; })
+          .Run(module.get()));
+  EXPECT_FALSE(changed);
 }
 
 TEST_F(WhileLoopConstantSinkingTest, SinkBroadcastOfConstantWithOriginalValue) {
