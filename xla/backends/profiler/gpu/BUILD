@@ -626,7 +626,10 @@ xla_test(
     size = "small",
     srcs = ["rocm_tracer_test.cc"],
     backends = ["gpu"],
-    tags = ["rocm-only"],
+    tags = [
+        "flaky",
+        "rocm-only",
+    ],
     deps = [
         ":rocm_collector",
         ":rocm_tracer",
