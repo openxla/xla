@@ -408,6 +408,7 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
 
   absl::Status DefaultAction(HloInstruction*) override;
   absl::Status HandleFusion(HloInstruction* fusion) override;
+  absl::Status HandleMap(HloInstruction* map) override;
   absl::Status HandleBroadcast(HloInstruction* broadcast) override;
   absl::Status HandleBitcastConvert(HloInstruction* c) override;
   absl::Status HandleWhile(HloInstruction* xla_while) override;
@@ -443,6 +444,8 @@ class InstructionVerifier : public DfsHloVisitorWithDefault {
       const HloInstruction* instruction);
 
   absl::flat_hash_map<std::string, const HloInstruction*> instructions_by_name_;
+  // Computations already checked to be side-effect-free inside kMap.
+  absl::flat_hash_set<const HloComputation*> verified_map_computations_;
   const HloVerifierOpts& opts_;
   std::optional<int64_t> num_devices_;
 };

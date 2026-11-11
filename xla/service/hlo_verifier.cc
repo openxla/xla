@@ -4721,6 +4721,31 @@ absl::Status InstructionVerifier::HandleFusion(HloInstruction* fusion) {
   return CheckFusionInstruction(fusion);
 }
 
+absl::Status InstructionVerifier::HandleMap(HloInstruction* map) {
+  const HloComputation* to_apply = map->to_apply();
+  if (!verified_map_computations_.insert(to_apply).second) {
+    return absl::OkStatus();
+  }
+  std::vector<const HloComputation*> stack = {to_apply};
+  while (!stack.empty()) {
+    const HloComputation* comp = stack.back();
+    stack.pop_back();
+    for (const HloInstruction* inst : comp->instructions()) {
+      if (inst->HasSideEffectNoRecurse()) {
+        return InvalidArgument(
+            "Mapped computation cannot contain side-effecting instruction: %s",
+            inst->ToString());
+      }
+      for (const HloComputation* callee : inst->called_computations()) {
+        if (verified_map_computations_.insert(callee).second) {
+          stack.push_back(callee);
+        }
+      }
+    }
+  }
+  return absl::OkStatus();
+}
+
 absl::Status InstructionVerifier::HandleBroadcast(HloInstruction* broadcast) {
   // If you see this failure then someone has confused the difference
   // between the HLO broadcast op, and the UserComputation broadcast

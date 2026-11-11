@@ -8130,5 +8130,106 @@ TEST_F(HloVerifierTest, FmaValidAndInvalid) {
                                  "floating for fma operation; got S32.")));
 }
 
+TEST_F(HloVerifierTest, MapWithControlFlowValid) {
+  constexpr absl::string_view kValidHlo = R"hlo(
+  HloModule MapWithControlFlowValid
+  leaf {
+    x = f32[] parameter(0)
+    ROOT r = f32[] add(x, x)
+  }
+  mid_a {
+    x = f32[] parameter(0)
+    ROOT r = f32[] call(x), to_apply=leaf
+  }
+  mid_b {
+    x = f32[] parameter(0)
+    ROOT r = f32[] call(x), to_apply=leaf
+  }
+  while_cond {
+    p = (s32[], f32[]) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    n = s32[] constant(4)
+    ROOT cmp = pred[] compare(i, n), direction=LT
+  }
+  while_body {
+    p = (s32[], f32[]) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    v = f32[] get-tuple-element(p), index=1
+    one = s32[] constant(1)
+    i_next = s32[] add(i, one)
+    va = f32[] call(v), to_apply=mid_a
+    vb = f32[] call(v), to_apply=mid_b
+    v_next = f32[] add(va, vb)
+    ROOT t = (s32[], f32[]) tuple(i_next, v_next)
+  }
+  mapper {
+    x = f32[] parameter(0)
+    y = s32[] parameter(1)
+    init = (s32[], f32[]) tuple(y, x)
+    loop = (s32[], f32[]) while(init), condition=while_cond, body=while_body
+    ROOT out = f32[] get-tuple-element(loop), index=1
+  }
+  ENTRY Entry {
+    a = f32[8] parameter(0)
+    b = s32[8] parameter(1)
+    m0 = f32[8] map(a, b), dimensions={0}, to_apply=mapper
+    ROOT m1 = f32[8] map(m0, b), dimensions={0}, to_apply=mapper
+  })hlo";
+  ASSERT_OK_AND_ASSIGN(auto valid_module,
+                       ParseAndReturnUnverifiedModule(kValidHlo));
+  EXPECT_OK(verifier().Run(valid_module.get()).status());
+}
+
+TEST_F(HloVerifierTest, MapRejectsSideEffectingInstruction) {
+  constexpr absl::string_view kInvalidHlo = R"hlo(
+  HloModule MapSideEffectInvalid
+  mapper {
+    x = f32[] parameter(0)
+    tok = token[] after-all()
+    out = token[] outfeed(x, tok)
+    ROOT r = f32[] add(x, x)
+  }
+  ENTRY Entry {
+    a = f32[8] parameter(0)
+    ROOT m = f32[8] map(a), dimensions={0}, to_apply=mapper
+  })hlo";
+  ASSERT_OK_AND_ASSIGN(auto invalid_module,
+                       ParseAndReturnUnverifiedModule(kInvalidHlo));
+  EXPECT_THAT(verifier().Run(invalid_module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Mapped computation cannot contain "
+                                 "side-effecting instruction")));
+}
+
+TEST_F(HloVerifierTest, MapRejectsNestedSideEffectingInstruction) {
+  constexpr absl::string_view kInvalidHlo = R"hlo(
+  HloModule MapNestedSideEffectInvalid
+  while_cond {
+    x = f32[] parameter(0)
+    limit = f32[] constant(8.0)
+    ROOT cmp = pred[] compare(x, limit), direction=LT
+  }
+  while_body {
+    x = f32[] parameter(0)
+    tok = token[] after-all()
+    out = token[] outfeed(x, tok)
+    ROOT next = f32[] add(x, x)
+  }
+  mapper {
+    x = f32[] parameter(0)
+    ROOT loop = f32[] while(x), condition=while_cond, body=while_body
+  }
+  ENTRY Entry {
+    a = f32[8] parameter(0)
+    ROOT m = f32[8] map(a), dimensions={0}, to_apply=mapper
+  })hlo";
+  ASSERT_OK_AND_ASSIGN(auto invalid_module,
+                       ParseAndReturnUnverifiedModule(kInvalidHlo));
+  EXPECT_THAT(verifier().Run(invalid_module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Mapped computation cannot contain "
+                                 "side-effecting instruction")));
+}
+
 }  // namespace
 }  // namespace xla
