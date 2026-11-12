@@ -818,6 +818,17 @@ TEST(CommandBufferConversionPassTest, ConvertConvolutionAndGemmThunks) {
   EXPECT_THAT(
       thunks_in_command_buffer,
       ThunkKindsAre(Thunk::kCopy, Thunk::kCublasLtMatmul, Thunk::kConvolution));
+
+  int num_convolutions = 0;
+  EXPECT_THAT(command_buffer_thunk->WalkCommands([&](const Command* command) {
+    if (dynamic_cast<const ConvolutionThunk*>(command) != nullptr) {
+      ++num_convolutions;
+      EXPECT_TRUE(command->requires_warmup());
+    }
+    return absl::OkStatus();
+  }),
+              IsOk());
+  EXPECT_EQ(num_convolutions, 1);
 }
 
 TEST(CommandBufferConversionPassTest, ConvertsAsyncPairToCommandBuffer) {
