@@ -229,7 +229,8 @@ bool OperandLayoutConstraint::UpdateLayout(int64_t new_priority,
   VLOG(3) << "Updating existing Operand layout:" << ToString();
   mandatory_ = mandatory;
   dfs_ = dfs;
-  priority_ = std::max(priority_, new_priority);
+  priority_ =
+      upgrade_to_mandatory ? new_priority : std::max(priority_, new_priority);
   shape_layout_.push_back(shape_layout_[0]);
   shape_layout_[0] = ShapeLayout(new_shape);
   return true;
@@ -2228,7 +2229,7 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
   auto priority_for_operand = [&](int64_t op_no) {
     const OperandLayoutConstraint* existing_op_constraint =
         constraints->GetOperandLayoutConstraint(instruction, op_no);
-    return existing_op_constraint != nullptr
+    return existing_op_constraint && existing_op_constraint->mandatory()
                ? std::max(priority, existing_op_constraint->priority())
                : priority;
   };
@@ -2257,6 +2258,7 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
               /*dfs=*/true, priority_for_operand(operand_no)));
         } else if (instruction->opcode() == HloOpcode::kBitcastConvert) {
           Shape shape = instruction->shape();
+          *shape.mutable_layout() = buffer_constraint.layout();
           if (operand->shape().dimensions().size() <
               instruction->shape().dimensions().size()) {
             shape = ShapeUtil::DeleteDimension(shape.dimensions().size() - 1,
@@ -2278,7 +2280,8 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
       ABSL_RETURN_IF_ERROR(SetArrayOperandLayout(
           layout, instruction, operand_no, /*mandatory=*/true,
           /*dfs=*/
-          InstructionShouldPropagateDepthFirst(*instruction), priority));
+          InstructionShouldPropagateDepthFirst(*instruction),
+          priority_for_operand(operand_no)));
     } else {
       if (!buffer.IsTopLevel() ||
           !instruction->operand(operand_no)->shape().IsArray()) {
@@ -2294,7 +2297,10 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
             *operand_layout, instruction, operand_no,
             /*mandatory=*/OutputLayoutAlwaysPropagateToOperands(instruction),
             /*dfs=*/
-            InstructionShouldPropagateDepthFirst(*instruction), priority));
+            InstructionShouldPropagateDepthFirst(*instruction),
+            OutputLayoutAlwaysPropagateToOperands(instruction)
+                ? priority_for_operand(operand_no)
+                : priority));
       }
     }
   }
