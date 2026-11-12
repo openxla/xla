@@ -798,10 +798,14 @@ MovableAllReduceContext IsAllReduceMovable(
     to_visit.pop();
     for (HloInstruction* user : instruction->users()) {
       switch (user->opcode()) {
-        case HloOpcode::kConvert:
-          to_visit.push(user);
+        case HloOpcode::kConvert: {
+          if (is_reduce_scatter || !CanReorderConvert(user, all_reduce)) {
+            is_all_reduce_movable = false;
+          } else {
+            to_visit.push(user);
+          }
           break;
-
+        }
         case HloOpcode::kBitcast:
         case HloOpcode::kReshape:
         case HloOpcode::kGetTupleElement:

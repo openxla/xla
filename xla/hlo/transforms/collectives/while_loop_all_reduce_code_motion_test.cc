@@ -1673,6 +1673,51 @@ TEST_F(WhileLoopAllReduceCodeMotionTest, AllReduceConvertAccumulateUse) {
   EXPECT_THAT(new_root->operand(0), op::Add());
 }
 
+TEST_F(WhileLoopAllReduceCodeMotionTest, OnlyCommutingConvertsAreHoisted) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule m
+    red { ROOT r = $0[] $2($0[] parameter(0), $0[] parameter(1)) }
+    cond { p = ($0[4,4], $1[4,4], $1[2,4], $1[4,2]) parameter(0) ROOT c = pred[] constant(true) }
+    body {
+      p = ($0[4,4], $1[4,4], $1[2,4], $1[4,2]) parameter(0)
+      x = $0[4,4] get-tuple-element(p), index=0
+      a0 = $1[4,4] get-tuple-element(p), index=1
+      a1 = $1[2,4] get-tuple-element(p), index=2
+      a2 = $1[4,2] get-tuple-element(p), index=3
+      ar = $0[4,4] all-reduce(x), channel_id=1, replica_groups={{0,1}}, use_global_device_ids=true, to_apply=red
+      rs = $0[2,4] reduce-scatter(x), channel_id=2, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=red
+      rs2 = $0[2,4] reduce-scatter(x), channel_id=3, replica_groups={{0,1}}, use_global_device_ids=true, dimensions={0}, to_apply=red
+      tr = $1[4,2] transpose($1[2,4] convert(rs2)), dimensions={1,0}
+      ROOT t = ($0[4,4], $1[4,4], $1[2,4], $1[4,2]) tuple(x, $1[4,4] add($1[4,4] convert(ar), a0), $1[2,4] add($1[2,4] convert(rs), a1), $1[4,2] add(tr, a2))
+    }
+    ENTRY main { z = $1[] constant(0)
+      ROOT w = ($0[4,4], $1[4,4], $1[2,4], $1[4,2]) while(($0[4,4], $1[4,4], $1[2,4], $1[4,2]) tuple($0[4,4] parameter(0), $1[4,4] broadcast(z), $1[2,4] broadcast(z), $1[4,2] broadcast(z))), condition=cond, body=body }
+  )hlo";
+  using T = std::tuple<const char*, const char*, const char*, bool>;
+  for (const auto& [s, d, op, ok] :
+       {T{"bf16", "f32", "add", true}, T{"f16", "f32", "add", true},
+        T{"s32", "s32", "add", true}, T{"f32", "s32", "add", false},
+        T{"s8", "s32", "add", false}, T{"s16", "f32", "add", false},
+        T{"f16", "bf16", "add", false}, T{"f32", "bf16", "add", false},
+        T{"u32", "s32", "maximum", false},
+        T{"bf16", "f32", "maximum", false}}) {
+    std::string hlo = absl::Substitute(kHlo, s, d, op);
+    for (bool setup : {false, true}) {
+      SCOPED_TRACE(absl::Substitute("$0->$1 $2 setup=$3", s, d, op, setup));
+      ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> m,
+                           ParseAndReturnVerifiedModule(hlo));
+      std::string before = m->ToString();
+      EXPECT_THAT((WhileLoopAllReduceCodeMotion{/*enable_reduce_scatter=*/true,
+                                                /*run_setup_passes=*/setup}
+                       .Run(m.get())),
+                  absl_testing::IsOkAndHolds(ok));
+      if (!ok) {
+        EXPECT_EQ(m->ToString(), before);
+      }
+    }
+  }
+}
+
 // Test single all reduce and single dynamic update slice.
 TEST_F(WhileLoopAllReduceCodeMotionTest, SingleAllReduceDUS) {
   constexpr absl::string_view kHloModule = R"(

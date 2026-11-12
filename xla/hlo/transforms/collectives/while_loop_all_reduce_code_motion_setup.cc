@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/primitive_util.h"
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/shape.h"
@@ -35,6 +36,24 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+
+// Moving `kConvert` ahead of a collective reduction is only sound for `SUM`
+// reductions when `kConvert` is an identity cast or a lossless widening float
+// or complex cast (such as `bf16` or `f16` to `f32` mixed precision
+// accumulation). Conversions involving integers, narrowing casts, or other
+// reduction kinds can alter truncation, modular wraparound, overflow, or
+// ordering.
+bool CanReorderConvert(const HloInstruction* conv, const HloInstruction* red) {
+  PrimitiveType src = conv->operand(0)->shape().element_type();
+  PrimitiveType dst = conv->shape().element_type();
+  bool float_pair = primitive_util::IsFloatingPointType(src) &&
+                    primitive_util::IsFloatingPointType(dst);
+  bool complex_pair =
+      primitive_util::IsComplexType(src) && primitive_util::IsComplexType(dst);
+  return MatchReductionComputation(red->to_apply()) == ReductionKind::SUM &&
+         (src == dst || ((float_pair || complex_pair) &&
+                         primitive_util::CastPreservesValues(src, dst)));
+}
 
 bool ReorderReduceTranspose::InstructionMatchesPattern(
     HloInstruction* instruction) {
@@ -59,12 +78,9 @@ bool ReorderReduceTranspose::InstructionMatchesPattern(
   if (operand->opcode() != HloOpcode::kReduceScatter) {
     return false;
   }
-  // If moving the convert before the reduce-scatter changes its element type,
-  // we must be able to rebuild the reduction computation for the new type.
-  if (has_convert &&
-      operand->to_apply()->root_instruction()->shape().element_type() !=
-          instruction->shape().element_type() &&
-      !MatchReductionComputation(operand->to_apply())) {
+  // Only push `kConvert` ahead of `kReduceScatter` when the conversion commutes
+  // with an additive reduction and `to_apply` can be rebuilt for the new type.
+  if (has_convert && !CanReorderConvert(instruction->operand(0), operand)) {
     return false;
   }
 
@@ -212,7 +228,7 @@ bool ReorderConvertReduceAdd::InstructionMatchesPattern(
       reduce->opcode() != HloOpcode::kAllReduce) {
     return false;
   }
-  if (!MatchReductionComputation(reduce->to_apply())) {
+  if (!CanReorderConvert(convert_after_reduce, reduce)) {
     return false;
   }
   // Check if the reduce op is a reduce-scatter and enable_reduce_scatter_ is
