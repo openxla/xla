@@ -750,6 +750,7 @@ BufferAllocationProto BufferAllocation::ToProto() const {
   }
   proto.set_is_constant(is_constant_);
   proto.set_maybe_live_out(maybe_live_out_);
+  proto.set_is_non_pageable(is_non_pageable_);
   using Entry = std::pair<const HloValue* const, OffsetSize>;
   std::vector<const Entry*> sorted;
   sorted.reserve(assigned_buffers_.size());
@@ -787,6 +788,9 @@ BufferAllocation BufferAllocation::FromProto(
         proto.is_parameter_aliased_with_output());
   }
   allocation.set_maybe_live_out(proto.maybe_live_out());
+  if (proto.is_non_pageable()) {
+    allocation.set_non_pageable();
+  }
 
   return allocation;
 }
@@ -865,6 +869,9 @@ std::string BufferAllocation::ToShortString(bool human_readable_size) const {
   }
   if (IsPreallocatedTempBuffer()) {
     StrAppend(&output, ", preallocated-temp");
+  }
+  if (is_non_pageable()) {
+    StrAppend(&output, ", non-pageable");
   }
   StrAppend(&output, ":\n");
   return output;
@@ -1260,8 +1267,10 @@ absl::Status BufferAssignment::CombineTempAllocations(
                      return false;
                    });
 
-  // Holds the pointer to a combined allocation of each (color, page), if any.
-  absl::flat_hash_map<std::pair<BufferValue::Color, int64_t>, BufferAllocation*>
+  // Holds the pointer to a combined allocation of each
+  // (color, page, is_non_pageable), if any.
+  absl::flat_hash_map<std::tuple<BufferValue::Color, int64_t, bool>,
+                      BufferAllocation*>
       combined_allocation_map;
 
   // Walk over the run of temp allocations, collecting the allocations belonging
@@ -1273,6 +1282,7 @@ absl::Status BufferAssignment::CombineTempAllocations(
     }
     BufferValue::Color color = temp_allocation.color();
     int64_t page = temp_allocation.page_id();
+    const bool non_pageable = temp_allocation.is_non_pageable();
     bool has_fixed_offset = false;
     bool all_fixed_offsets_are_zero = true;
     if (fixed_offset.has_value()) {
@@ -1295,16 +1305,16 @@ absl::Status BufferAssignment::CombineTempAllocations(
       continue;
     }
 
-    auto combined_it = combined_allocation_map.find({color, page});
-    if (combined_it == combined_allocation_map.end()) {
+    auto [combined_it, inserted] = combined_allocation_map.try_emplace(
+        std::make_tuple(color, page, non_pageable), nullptr);
+    if (inserted) {
       // We have found the first temp allocation of this color. Collect
       // the other temp allocations of the same color into it subject to the
       // size constraint.
       VLOG(1) << "Combined temp allocation for color " << color << " page "
               << page << " is: " << temp_allocation;
       combined_allocations.push_back(std::move(temp_allocation));
-      combined_allocation_map.emplace(std::make_pair(color, page),
-                                      &combined_allocations.back());
+      combined_it->second = &combined_allocations.back();
       continue;
     }
     // Any subsequent fixed-offset-0 allocation interfered with the first one
@@ -2015,6 +2025,9 @@ absl::StatusOr<std::unique_ptr<BufferAssignment>> BufferAssignment::FromProto(
     allocation->set_is_thread_local(alloc_proto.is_thread_local());
     allocation->set_is_tuple(alloc_proto.is_tuple());
     allocation->set_constant(alloc_proto.is_constant());
+    if (alloc_proto.is_non_pageable()) {
+      allocation->set_non_pageable();
+    }
 
     // If allocation corresponds to an entry computation parameter, copy
     // parameter properties to a BufferAllocation.
@@ -2272,6 +2285,11 @@ absl::StatusOr<bool> BufferAssigner::MaybeAssignBuffer(
       allocation->is_parameter_aliased_with_output()) {
     VLOG(4) << "Can't assign: reusing aliased parameter allocation for "
                "temporary buffers is disabled";
+    return false;
+  }
+
+  if (allocation->is_non_pageable() != MustBeNonPageable(hlo_buffer)) {
+    VLOG(4) << "Can't assign: pageability mismatch for " << hlo_buffer;
     return false;
   }
 
@@ -2638,6 +2656,9 @@ absl::Status BufferAssigner::AssignSingleHloBuffer(
     ABSL_ASSIGN_OR_RETURN(
         BufferAllocation * allocation,
         assignment->NewAllocation(*hlo_buffer, buffer_size, target_offset));
+    if (MustBeNonPageable(*hlo_buffer)) {
+      allocation->set_non_pageable();
+    }
     allocation_manager->RegisterNewAllocation(hlo_buffer, allocation->index());
     VLOG(3) << "New allocation #" << allocation->index()
             << " for: " << *hlo_buffer;
@@ -2999,6 +3020,7 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
   for (BufferAllocation& allocation : assignment->allocations_) {
     if (allocation.color() != buffer_color &&
         allocation.IsPreallocatedTempBuffer() &&
+        !allocation.is_non_pageable() &&
         opts_.can_use_allocation(buffer_color, allocation.color())) {
       if (opts_.fixed_offset.has_value() &&
           absl::c_any_of(allocation.assigned_buffers(), [&](const auto& entry) {
@@ -3025,7 +3047,7 @@ absl::StatusOr<int64_t> BufferAssigner::ReuseCompatibleTempHeaps(
 
     // Check if we already processed this buffer via another of its values.
     auto [it, inserted] = seen_buffers.insert(&hlo_buffer);
-    if (!inserted) {
+    if (!inserted || MustBeNonPageable(hlo_buffer)) {
       continue;
     }
 
@@ -3219,11 +3241,13 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
 
   // Returns a heap algorithm that chooses the best result from several
   // algorithms.
-  auto get_heap_algorithm = [&](int64_t alignment, LogicalBuffer::Color color)
-      -> std::unique_ptr<HeapAlgorithm<HloValue>> {
+  auto get_heap_algorithm =
+      [&](int64_t alignment, LogicalBuffer::Color color,
+          bool non_pageable) -> std::unique_ptr<HeapAlgorithm<HloValue>> {
     uint64_t page_size = assignment->module().config().page_size_kib() * 1024;
-    if (page_size > 0 && (color == LogicalBuffer::Color(0) ||
-                          color == LogicalBuffer::Color(1))) {
+    if (!non_pageable && page_size > 0 &&
+        (color == LogicalBuffer::Color(0) ||
+         color == LogicalBuffer::Color(1))) {
       // Check that all buffers that are assigned fit in the page size. This is
       // a requirement for multi-page buffer assignment.
       absl::c_for_each(buffers_to_assign_sequentially, [&](const auto& pair) {
@@ -3232,6 +3256,12 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
                    ? hlo_value->shape().layout().memory_space()
                    : 0) == color &&
               !assignment->alias_analysis().ValueLivesOut(*hlo_value)) {
+            if (opts_.must_be_non_pageable &&
+                MustBeNonPageable(
+                    assignment->alias_analysis().GetBufferContainingValue(
+                        *hlo_value))) {
+              return;
+            }
             uint64_t size = assignment->buffer_size_(*hlo_value);
             CHECK_LE(size, page_size)
                 << "Temp buffer size " << size << " is larger than page size "
@@ -3308,6 +3338,48 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
     return build_algorithm(algo_to_use);
   };
 
+  // Non pageable buffers run in their own unpaged heap simulation so they are
+  // never split into or relocated across pages.
+  auto run_color_partitions = [&](LogicalBuffer::Color color,
+                                  const flat_hash_set<const HloValue*>& values,
+                                  bool alloc_constants,
+                                  auto run_heap) -> absl::Status {
+    int64_t alignment = assignment->color_alignment_(color);
+    auto run_one = [&](const flat_hash_set<const HloValue*>* partition,
+                       bool is_non_pageable) -> absl::Status {
+      if (partition->empty()) {
+        return absl::OkStatus();
+      }
+      HeapSimulator::Options options;
+      options.alloc_constants = alloc_constants;
+      options.view_color = opts_.dus_view_color;
+      options.buffers_to_assign = partition;
+      ABSL_ASSIGN_OR_RETURN(
+          HeapSimulator::Result<HloValue> result,
+          run_heap(get_heap_algorithm(alignment, color, is_non_pageable),
+                   options));
+      return AssignBuffersFromHeapSimulator(result, assignment, color,
+                                            isolation_options, is_non_pageable);
+    };
+    if (!opts_.must_be_non_pageable) {
+      return run_one(&values, /*is_non_pageable=*/false);
+    }
+    flat_hash_set<const HloValue*> pageable_buffers;
+    flat_hash_set<const HloValue*> non_pageable_buffers;
+    // NOLINTNEXTLINE(*-custom-deterministic-iteration-order)
+    for (const HloValue* value : values) {
+      const HloBuffer& hlo_buffer =
+          assignment->alias_analysis().GetBufferContainingValue(*value);
+      if (MustBeNonPageable(hlo_buffer)) {
+        non_pageable_buffers.insert(value);
+      } else {
+        pageable_buffers.insert(value);
+      }
+    }
+    ABSL_RETURN_IF_ERROR(run_one(&pageable_buffers, /*is_non_pageable=*/false));
+    return run_one(&non_pageable_buffers, /*is_non_pageable=*/true);
+  };
+
   if (run_whole_module_heap_simulation) {
     // Run the heap simulation over the whole module. This reduces memory
     // usage, since buffers for kCall, kWhile, and kConditional
@@ -3347,19 +3419,15 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
       }
 
       VLOG(2) << "Simulating heap for color " << color;
-      int64_t alignment = assignment->color_alignment_(color);
-      HeapSimulator::Options options;
-      options.alloc_constants = opts_.allocate_buffers_for_constants;
-      options.view_color = opts_.dus_view_color;
-      options.buffers_to_assign = &color_map[color];
-      HeapSimulator::Result<HloValue> result;
-      ABSL_ASSIGN_OR_RETURN(
-          result, HeapSimulator::Run(get_heap_algorithm(alignment, color),
-                                     assignment->module(), schedule,
-                                     assignment->alias_analysis(), alias_info_,
-                                     &assignment->buffer_size_, options));
-      ABSL_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
-          result, assignment, color, isolation_options));
+      ABSL_RETURN_IF_ERROR(run_color_partitions(
+          color, color_map[color], opts_.allocate_buffers_for_constants,
+          [&](std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
+              const HeapSimulator::Options& options) {
+            return HeapSimulator::Run(std::move(algorithm),
+                                      assignment->module(), schedule,
+                                      assignment->alias_analysis(), alias_info_,
+                                      &assignment->buffer_size_, options);
+          }));
     }
   } else {
     // Run the heap-simulation on a per-computation basis. Buffers for
@@ -3377,18 +3445,15 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
       absl::c_sort(sorted_colors);
       for (auto color : sorted_colors) {
         VLOG(2) << "Simulating heap for color " << color;
-        int64_t alignment = assignment->color_alignment_(color);
-        HeapSimulator::Options options;
-        options.buffers_to_assign = &color_map[color];
-        options.view_color = opts_.dus_view_color;
-        HeapSimulator::Result<HloValue> result;
-        ABSL_ASSIGN_OR_RETURN(
-            result, HeapSimulator::Run(
-                        get_heap_algorithm(alignment, color), *computation,
-                        *instruction_sequence, assignment->alias_analysis(),
-                        alias_info_, &assignment->buffer_size_, options));
-        ABSL_RETURN_IF_ERROR(AssignBuffersFromHeapSimulator(
-            result, assignment, color, isolation_options));
+        ABSL_RETURN_IF_ERROR(run_color_partitions(
+            color, color_map[color], /*alloc_constants=*/false,
+            [&](std::unique_ptr<HeapAlgorithm<HloValue>> algorithm,
+                const HeapSimulator::Options& options) {
+              return HeapSimulator::Run(
+                  std::move(algorithm), *computation, *instruction_sequence,
+                  assignment->alias_analysis(), alias_info_,
+                  &assignment->buffer_size_, options);
+            }));
       }
     }
   }
@@ -3585,7 +3650,8 @@ void BufferAssigner::IsolateHeapBuffers(
 absl::Status BufferAssigner::AssignBuffersFromHeapSimulator(
     HeapSimulator::Result<HloValue>& result, BufferAssignment* assignment,
     BufferValue::Color color,
-    std::optional<BufferAssignment::BufferIsolationOptions> isolation_options) {
+    std::optional<BufferAssignment::BufferIsolationOptions> isolation_options,
+    bool is_non_pageable) {
   IsolateHeapBuffers(isolation_options, assignment, color, result);
   if (result.fragmentation_size >= 0) {
     assignment->fragmentation_bytes_by_color_[color] +=
@@ -3600,7 +3666,9 @@ absl::Status BufferAssigner::AssignBuffersFromHeapSimulator(
        result.heap_results) {
     BufferAllocation* allocation =
         assignment->NewEmptyAllocation(heap_result.heap_size, color);
-    if (assignment->module().config().page_size_kib() > 0) {
+    if (is_non_pageable) {
+      allocation->set_non_pageable();
+    } else if (assignment->module().config().page_size_kib() > 0) {
       allocation->set_page_id(page_index++);
     }
     for (const auto& [value, chunk] : heap_result.chunk_map) {
