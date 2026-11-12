@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gtest/gtest.h>
-
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -23,6 +21,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/no_destructor.h"
 #include "absl/log/log.h"
 #include "absl/strings/ascii.h"
@@ -43,6 +43,28 @@ limitations under the License.
 
 namespace xla::cpu {
 namespace {
+
+using YnnFusionBufferReuseTest = HloInterpreterReferenceMixin<HloTestBase>;
+
+TEST_F(YnnFusionBufferReuseTest, ElementwiseFusionWithAliasedInput) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule test, input_output_alias={{}: (0, {}, may-alias)}
+
+    fused {
+      input = f32[4]{0} parameter(0)
+      ROOT result = f32[4]{0} negate(input)
+    }
+
+    ENTRY main {
+      input = f32[4]{0} parameter(0)
+      ROOT result = f32[4]{0} fusion(input), kind=kCustom, calls=fused,
+        backend_config={"fusion_config":{"kind":"__ynn_fusion"}}
+    }
+  )hlo";
+  auto input = LiteralUtil::CreateR1<float>({-2, -1, 1, 2});
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_TRUE(RunAndCompare(std::move(module), {&input}, ErrorSpec{0, 0}));
+}
 
 struct YnnFusionTestParams {
   std::string in_dtype;

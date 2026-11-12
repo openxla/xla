@@ -67,6 +67,7 @@ limitations under the License.
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+#include "xla/backends/cpu/alias_info.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
@@ -76,7 +77,6 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/constant_allocation.h"
-#include "xla/backends/cpu/custom_fusion_configs.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/target_machine_options.h"
@@ -87,7 +87,6 @@ limitations under the License.
 #include "xla/backends/cpu/transforms/small_while_loop_hoisting_pass.h"
 #include "xla/backends/cpu/ynn_support.h"
 #include "xla/comparison_util.h"
-#include "xla/hlo/analysis/alias_info.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -166,7 +165,6 @@ limitations under the License.
 #include "xla/service/conditional_to_select.h"
 #include "xla/service/control_dep_rewriter.h"
 #include "xla/service/copy_insertion.h"
-#include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/conv_canonicalization.h"
 #include "xla/service/cpu/cpu_aot_compilation_result.h"
 #include "xla/service/cpu/cpu_aot_loader.h"
@@ -328,26 +326,6 @@ absl::StatusOr<std::vector<std::unique_ptr<Executable>>> CpuCompiler::Compile(
 }
 
 namespace {
-
-class CpuAliasInfo : public AliasInfo {
- public:
-  std::optional<bool> MayAlias(const HloInstruction* operand,
-                               const ShapeIndex& operand_index,
-                               const HloInstruction* user,
-                               const ShapeIndex& user_index) const override {
-    if (user->IsCustomFusion()) {
-      absl::StatusOr<BackendConfig> config =
-          user->backend_config<BackendConfig>();
-      if (config.ok() && config->fusion_config().kind() == kOneDnnFusionKind) {
-        // oneDNN compiles partitions at runtime, so their supported in-place
-        // pairs are unavailable here. Elementwise HLO uses do not guarantee
-        // that the compiled partition can safely overwrite an input buffer.
-        return false;
-      }
-    }
-    return std::nullopt;
-  }
-};
 
 // Adds the HloVerifier for CPU to the given pipeline.
 void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
