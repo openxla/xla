@@ -171,7 +171,8 @@ bool UsesEmpty(const HloInstruction* instruction) {
 // are inactive as the instructions have been rendered dead by
 // rematerialization.
 absl::Status RemoveDeadUserTree(HloInstruction* best,
-                                HloComputation* computation) {
+                                HloComputation* computation,
+                                HloRematInstructionList* instruction_list) {
   absl::InlinedVector<HloInstruction*, 8> post_order;
   absl::InlinedVector<std::pair<HloInstruction*, size_t>, 8> stack;
   absl::flat_hash_set<HloInstruction*> visited;
@@ -205,6 +206,7 @@ absl::Status RemoveDeadUserTree(HloInstruction* best,
             << instr->name()
             << (is_source ? "" : absl::StrCat(" of instruction ", best->name()))
             << " because the instruction was killed by rematerialization.";
+    instruction_list->RemoveItem(instruction_list->GetItem(instr));
     ABSL_RETURN_IF_ERROR(instr->DropAllControlDeps());
     ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(instr));
   }
@@ -2340,6 +2342,30 @@ absl::StatusOr<int64_t> RematerializeInstructions(
     ItemList place_before;
     const absl::flat_hash_set<HloRematItem*> indirect_users_set(
         indirect_users.begin(), indirect_users.end());
+    if (!UsesEmpty(remat)) {
+      auto remove_dead_rewired_indirect_users =
+          [&](HloInstruction* producer) -> absl::Status {
+        absl::InlinedVector<HloInstruction*, 4> dead_users;
+        for (HloInstruction* user : producer->users()) {
+          if (!indirect_users_set.contains(instruction_list->GetItem(user)) &&
+              IsSupportedIndirectUser(user) && UsesEmpty(user)) {
+            dead_users.push_back(user);
+          }
+        }
+        for (HloInstruction* user : dead_users) {
+          if (user->parent() != nullptr) {
+            ABSL_RETURN_IF_ERROR(
+                RemoveDeadUserTree(user, computation, instruction_list));
+          }
+        }
+        return absl::OkStatus();
+      };
+      ABSL_RETURN_IF_ERROR(remove_dead_rewired_indirect_users(remat));
+      for (HloRematItem* indirect_user : indirect_users) {
+        ABSL_RETURN_IF_ERROR(
+            remove_dead_rewired_indirect_users(indirect_user->instruction));
+      }
+    }
     for (auto user : remat->users()) {
       if (!indirect_users_set.contains(instruction_list->GetItem(user))) {
         place_before.push_back(instruction_list->GetItem(user));
@@ -2409,11 +2435,10 @@ absl::StatusOr<int64_t> RematerializeInstructions(
     for (auto* bitcast : indirect_users) {
       instruction_list->InsertBeforeInstructions(bitcast, place_before);
     }
-    // For kAlwaysRemat, if the rematerialized instruction is dead then
-    // rematerialization is essentially a move. We do not delete the instruction
-    // immediately to avoid duplicate HloInstruction* values in pointer maps.
-    // (See kPeakPriority below for the exception where immediate deletion is
-    // required).
+    // Remove 'best' and any dead indirect users immediately so they cannot
+    // skew placement or block formation for subsequent rematerializations.
+    // HloComputation::RemoveInstruction defers deallocation until Cleanup(), so
+    // HloInstruction* keys in pointer maps remain unique throughout the pass.
     if (UsesEmpty(best)) {
       VLOG(2) << best->name() << " is now dead";
       if (ContainsKey(*remat_move_instructions, best)) {
@@ -2423,15 +2448,8 @@ absl::StatusOr<int64_t> RematerializeInstructions(
         // to avoid an infinite loop.
         instruction_list->Denylist(remat);
       }
-      // Peak priority specific cleanup. If the source (best) instruction
-      // is dead, we are forced to remove it from the computation immediately
-      // before any other rematerialization occurs. Otherwise, the dead
-      // instruction may influence instruction placement.
-      // TODO(b/486858124): Generalize this to all strategies.
-      if (rematerialization->remat_algorithm() ==
-          RematAlgorithm::kPeakPriority) {
-        ABSL_RETURN_IF_ERROR(RemoveDeadUserTree(best, computation));
-      }
+      ABSL_RETURN_IF_ERROR(
+          RemoveDeadUserTree(best, computation, instruction_list));
       remat_move_instructions->insert(remat);
       net_instructions_added += indirect_users.size();
     } else {
@@ -2449,6 +2467,7 @@ absl::StatusOr<int64_t> RematerializeInstructions(
       // We need to remove all control dependencies from best before removing it
       // from the computation.  Its control dependencies were previously copied
       // to the remat instruction.
+      instruction_list->RemoveItem(best_item);
       ABSL_RETURN_IF_ERROR(best->DropAllControlDeps());
       ABSL_RETURN_IF_ERROR(computation->RemoveInstruction(best));
     }
@@ -3538,6 +3557,9 @@ absl::StatusOr<bool> HloRematerialization::RematerializeComputation(
   for (auto* item = instruction_list.first(); item != nullptr;
        item = instruction_list.next(item)) {
     const HloInstruction* instruction = item->instruction;
+    if (instruction->parent() == nullptr) {
+      continue;
+    }
     ABSL_ASSIGN_OR_RETURN(
         int64_t callee_usage,
         CalledComputationsMemoryUsage(instruction, execution_threads));

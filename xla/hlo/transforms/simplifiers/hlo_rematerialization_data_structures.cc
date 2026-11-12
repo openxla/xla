@@ -190,6 +190,9 @@ void HloRematInstructionList::InsertBefore(HloRematItem* item,
     // Reached the end. Set the prev_express to last_skip_node, and reset
     // last_skip.
     item->prev_skip_node = last_skip_node_;
+    if (last_skip_node_ != nullptr) {
+      last_skip_node_->next_skip_node = item;
+    }
     item->next_skip_node = nullptr;
     last_skip_node_ = item;
   } else {
@@ -224,5 +227,36 @@ void HloRematInstructionList::InsertBefore(HloRematItem* item,
   // 'before'. This guarantees monotonicity of the position numbers, but not
   // uniqueness.
   item->position = before->position;
+}
+
+void HloRematInstructionList::RemoveItem(HloRematItem* item) {
+  if (item == nullptr) {
+    return;
+  }
+  if (item->is_skip_node) {
+    if (item->prev_skip_node != nullptr) {
+      item->prev_skip_node->next_skip_node = item->next_skip_node;
+    } else if (first_skip_node_ == item) {
+      first_skip_node_ = item->next_skip_node;
+    }
+    if (item->next_skip_node != nullptr) {
+      item->next_skip_node->prev_skip_node = item->prev_skip_node;
+    } else if (last_skip_node_ == item) {
+      last_skip_node_ = item->prev_skip_node;
+    }
+    item->is_skip_node = false;
+    item->prev_skip_node = nullptr;
+    item->next_skip_node = nullptr;
+  }
+  if (item->prev != nullptr) {
+    item->prev->next = item->next;
+  } else if (first_ == item) {
+    first_ = item->next;
+  }
+  if (item->next != nullptr) {
+    item->next->prev = item->prev;
+  }
+  item->prev = nullptr;
+  item->next = nullptr;
 }
 }  // namespace xla
