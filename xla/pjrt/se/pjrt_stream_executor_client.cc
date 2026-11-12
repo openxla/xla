@@ -1446,7 +1446,7 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
     // Serializes enqueuing executions onto the compute stream across host
     // threads to prevent stream operation interleaving, BFC temporary buffer
     // lifetime races, and driver-level race conditions on the compute stream.
-    absl::MutexLock lock(&device_state->compute_stream_enqueue_mu());
+    absl::MutexLock lock(device_state->compute_stream_enqueue_mu());
 
     // Create PjRt<->StreamExecutor adaptors to send/recv device memory as PjRt
     // chunks via the user-provided callbacks. Send operations are scheduled in
