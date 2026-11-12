@@ -42,6 +42,7 @@ if _XLA_SRC_ROOT not in sys.path:
 
 # pylint: disable=g-import-not-at-top
 from build_tools.ci import bazel_diff
+from build_tools.ci import bep_annotations
 from build_tools.ci import change_detector
 # pylint: enable=g-import-not-at-top
 
@@ -56,6 +57,11 @@ _DEFAULT_BAZEL_OPTIONS = dict(
     flaky_test_attempts=3,
     jobs=150,
     bes_upload_mode="fully_async",
+    build_runfile_links=False,
+    show_timestamps=True,
+    show_progress_rate_limit=5,
+    experimental_remote_grpc_log="bazel_remote_grpc.log",
+    build_event_json_file="build_events.json",
 )
 
 _KW_ONLY_IF_PYTHON310 = {"kw_only": True} if sys.version_info >= (3, 10) else {}
@@ -77,21 +83,6 @@ _WINDOWS_BAZEL_DNS_SECURITY_PROPERTIES = (
     f"-Djava.security.properties={_GITHUB_WORKSPACE}"
     r"\openxla\xla\build_tools\ci\bazel_dns_windows.security"
 )
-
-
-def retry(
-    args: List[str], delay_seconds: int = 15, retries: int = 3
-) -> List[str]:
-  # Possibly a slight abuse of `parallel` as nothing happens in parallel, just
-  # retries with delay if the command fails.
-  # pyformat:disable
-  return [
-      "parallel", "--ungroup",
-      "--retries", str(retries),
-      "--delay", str(delay_seconds),
-      "--nonall",
-      "--", *args,
-  ]
 
 
 def sh(args, check=True, **kwargs):
@@ -208,14 +199,12 @@ class Build:
   def bazel_command(
       self,
       subcommand: str = "test",
-      extra_options: Tuple[str, ...] = (),
       target_pattern_file: Optional[str] = None,
   ) -> List[str]:
     """Returns a bazel test command for this build.
 
     Args:
       subcommand: The subcommand to give to bazel. `test` by default.
-      extra_options: Extra options. For now just used to pass in `--nobuild`.
       target_pattern_file: Optional file containing explicit target patterns.
 
     Returns: List of command line arguments
@@ -223,10 +212,21 @@ class Build:
     options = _dict_to_cli_options(self.options)
     startup_options = _dict_to_cli_options(self.startup_options)
     configs = [f"--config={config}" for config in self.configs]
+    effective_build_tag_filters = self.build_tag_filters
+    effective_test_tag_filters = self.test_tag_filters
+    if target_pattern_file:
+      # Explicit target labels in --target_pattern_file bypass Bazel's wildcard
+      # exclusion of `tags = ["manual"]`, so exclude manual targets explicitly.
+      if "-manual" not in effective_build_tag_filters:
+        effective_build_tag_filters = (*effective_build_tag_filters, "-manual")
+      if "-manual" not in effective_test_tag_filters:
+        effective_test_tag_filters = (*effective_test_tag_filters, "-manual")
     build_tag_filters = (
-        f"--build_tag_filters={','.join(self.build_tag_filters)}"
+        f"--build_tag_filters={','.join(effective_build_tag_filters)}"
     )
-    test_tag_filters = f"--test_tag_filters={','.join(self.test_tag_filters)}"
+    test_tag_filters = (
+        f"--test_tag_filters={','.join(effective_test_tag_filters)}"
+    )
     action_env = [f"--action_env={k}={v}" for k, v in self.action_env.items()]
     test_env = [f"--test_env={k}={v}" for k, v in self.test_env.items()]
     repo_env = [f"--repo_env={k}={v}" for k, v in self.repo_env.items()]
@@ -248,7 +248,6 @@ class Build:
         + override_repository
         + override_module
         + options
-        + list(extra_options)
     )
     if target_pattern_file:
       extra = ["--skip_incompatible_explicit_targets"]
@@ -278,30 +277,6 @@ class Build:
     cmds = []
 
     cmds.extend(self.extra_setup_commands)
-
-    # We really want `bazel fetch` here, but it uses `bazel query` and not
-    # `cquery`, which means that it fails due to config issues that aren't
-    # problems in practice.
-    # TODO(ddunleavy): Remove the condition here. Need to get parallel on the
-    # MacOS VM.
-    macos_build = (
-        self.type_ == BuildType.XLA_MACOS_X86_CPU_KOKORO
-        or self.type_ == BuildType.XLA_MACOS_ARM64_CPU_KOKORO
-    )
-    windows_build = (
-        self.type_ == BuildType.JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS
-        or self.type_ == BuildType.XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS
-    )
-    if not (macos_build or windows_build):
-      cmds.append(
-          retry(
-              self.bazel_command(
-                  subcommand="build",
-                  extra_options=("--nobuild",),
-                  target_pattern_file=target_pattern_file,
-              )
-          )
-      )
     cmds.append(
         self.bazel_command(
             subcommand=self.subcommand,
@@ -474,10 +449,11 @@ Build(
         "-//xla/backends/cpu/runtime/ynnpack:ynn_fusion_thunk",
         "-//xla/backends/cpu/runtime/ynnpack:ynn_interop",
         "-//xla/backends/cpu/runtime/ynnpack:ynn_threadpool",
-        # triton is not windows compatible
+        # triton and sycl are not windows compatible
         "-//xla/backends/gpu/...",
         "-//xla/codegen/emitters/tests/...",
         "-//xla/service/gpu/...",
+        "-//xla/stream_executor/sycl/...",
     ),
     build_tag_filters=windows_x86_tag_filter,
     test_tag_filters=windows_x86_tag_filter,
@@ -495,6 +471,8 @@ Build(
     # the Windows CI container image includes the lld/COFF/Driver.cpp
     # LinkerDriver::enqueuePath fix (b/571437556).
     command_retries=2,
+    use_bazel_diff=True,
+    bazel_diff_use_cquery=True,
 )
 
 Build(
@@ -595,6 +573,8 @@ Build(
     test_tag_filters=oneapi_test_tag_filter,
     options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
     subcommand="build",
+    use_bazel_diff=True,
+    bazel_diff_use_cquery=True,
 )
 
 # ROCm builds - hermetic LLVM
@@ -638,6 +618,10 @@ Build(
     test_tag_filters=rocm_tag_filter,
     options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
     subcommand="build",
+    # Do not enable bazel-diff here: this is a compile-only RBE build with high
+    # remote cache hit rates, so running two `bazel cquery` passes for
+    # bazel-diff adds more overhead than it saves.
+    use_bazel_diff=False,
 )
 
 Build(
@@ -647,7 +631,12 @@ Build(
     target_patterns=_XLA_CPU_PRESUBMIT_BENCHMARKS_DEFAULT_TARGET_PATTERNS,
     build_tag_filters=cpu_x86_tag_filter,
     test_tag_filters=cpu_x86_tag_filter,
-    options={**_DEFAULT_BAZEL_OPTIONS, "//xla/tsl:ci_build": True},
+    options={
+        **_DEFAULT_BAZEL_OPTIONS,
+        "build_runfile_links": True,
+        "remote_download_toplevel": True,
+        "//xla/tsl:ci_build": True,
+    },
     subcommand="build",
 )
 
@@ -659,6 +648,8 @@ Build(
     options={
         **_DEFAULT_BAZEL_OPTIONS,
         "build_tests_only": False,
+        "build_runfile_links": True,
+        "remote_download_toplevel": True,
         "//xla/tsl:ci_build": True,
     },
     build_tag_filters=cpu_arm_tag_filter,
@@ -683,6 +674,8 @@ Build(
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         "//xla/tsl:ci_build": True,
         **_DEFAULT_BAZEL_OPTIONS,
+        "build_runfile_links": True,
+        "remote_download_toplevel": True,
     },
     repo_env={
         "TF_CUDA_COMPUTE_CAPABILITIES": "8.9",
@@ -708,6 +701,8 @@ Build(
         "run_under": "//build_tools/ci:parallel_gpu_execute",
         "//xla/tsl:ci_build": True,
         **_DEFAULT_BAZEL_OPTIONS,
+        "build_runfile_links": True,
+        "remote_download_toplevel": True,
     },
     repo_env={
         "TF_CUDA_COMPUTE_CAPABILITIES": "10",
@@ -806,7 +801,7 @@ Build(
     override_module={
         "xla": f"{_GITHUB_WORKSPACE}/openxla/xla",
     },
-    options=_DEFAULT_BAZEL_OPTIONS,
+    options={**_DEFAULT_BAZEL_OPTIONS, "remote_download_minimal": True},
     repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
 )
 
@@ -834,7 +829,7 @@ Build(
     override_module=dict(
         xla=f"{_GITHUB_WORKSPACE}\\openxla\\xla",
     ),
-    options={**_DEFAULT_BAZEL_OPTIONS, "build_runfile_links": False},
+    options={**_DEFAULT_BAZEL_OPTIONS, "remote_download_minimal": True},
     repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
     subcommand="build",
     startup_options={
@@ -878,6 +873,7 @@ Build(
     ),
     options={
         **_DEFAULT_BAZEL_OPTIONS,
+        "remote_download_minimal": True,
         "@local_config_cuda//cuda:override_include_cuda_libs": True,
     },
     repo_env={"HERMETIC_PYTHON_VERSION": "3.12"},
@@ -915,18 +911,44 @@ def get_xla_dir(build: Build) -> str:
   return "."
 
 
+def _emit_bep_annotations_best_effort(build: Build, returncode: int) -> None:
+  """Emits GitHub ::error annotations from Bazel's BEP file on failure."""
+  if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
+    return
+  bep_file = build.options.get("build_event_json_file")
+  if not isinstance(bep_file, str) or not bep_file:
+    return
+  bep_annotations.emit_github_annotations(
+      [bep_file],
+      label=build.type_.name,
+      exit_code=returncode,
+  )
+
+
 def execute_build_commands(
     build: Build, target_pattern_file: str | None = None
 ) -> None:
   """Executes commands for a build, retrying failed Bazel commands if configured."""
+  bep_file = build.options.get("build_event_json_file")
   for command in build.commands(target_pattern_file=target_pattern_file):
+    is_bazel = bool(command and command[0] == "bazel")
     max_retries = (
-        build.command_retries
-        if command and command[0] == "bazel" and build.command_retries > 0
-        else 0
+        build.command_retries if is_bazel and build.command_retries > 0 else 0
     )
     for attempt in range(max_retries + 1):
-      result = sh(command, check=False)
+      if is_bazel and isinstance(bep_file, str) and bep_file:
+        try:
+          os.remove(bep_file)
+        except FileNotFoundError:
+          pass
+        except OSError as e:
+          logging.warning("Failed to remove stale BEP file %s: %s", bep_file, e)
+      try:
+        result = sh(command, check=False)
+      except KeyboardInterrupt:
+        if is_bazel:
+          _emit_bep_annotations_best_effort(build, 130)
+        raise
       if result.returncode == 0:
         break
       if result.returncode == 4 and target_pattern_file:
@@ -943,6 +965,8 @@ def execute_build_commands(
             max_retries + 1,
         )
         continue
+      if is_bazel:
+        _emit_bep_annotations_best_effort(build, result.returncode)
       sys.exit(result.returncode)
 
 

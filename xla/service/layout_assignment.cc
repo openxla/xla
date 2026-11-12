@@ -75,6 +75,13 @@ bool IsLayoutConstrainedCollective(const HloInstruction* instruction) {
       DynCast<HloCollectiveInstruction>(instruction);
   return collective != nullptr && collective->constrain_layout();
 }
+
+// Computations for which this is true are required by the HLO verifier to
+// contain only parameter instructions and a single root, and currently do.
+bool IsProtectedAsyncComputation(const HloComputation* computation) {
+  return computation->IsRestrictedAsyncComputation() &&
+         computation->CanExpandIntoSingleInstruction();
+}
 }  // namespace
 
 std::ostream& operator<<(std::ostream& out,
@@ -173,19 +180,29 @@ bool OperandLayoutConstraint::UpdateLayout(int64_t new_priority,
                                            const Shape& new_shape,
                                            bool mandatory, bool dfs,
                                            LayoutAssignment* assignment) {
+  // A mandatory constraint replaces a non-mandatory one regardless of priority.
+  const bool upgrade_to_mandatory = mandatory && !mandatory_;
   if (shape_layout().MatchesLayoutInShape(new_shape,
                                           /*minor_to_major_only=*/true)) {
     if (priority_ < new_priority) {
       priority_ = new_priority;
     }
     VLOG(3) << "SUCC b/c the new layout matches the existing one.";
-    // New constraint matches existing constraint. Nothing to do.
+    // New constraint matches existing constraint. Only an upgrade to
+    // mandatory needs to be recorded.
+    if (upgrade_to_mandatory) {
+      mandatory_ = true;
+      return true;
+    }
     return false;
   }
   if (!mandatory) {
-    // Do not update if this constraint has been updated too many times, to
-    // make sure the propagation can terminate.
-    if (shape_layout_.size() > kMaxLayoutProp) {
+    // Do not update if:
+    // 1. We are trying to update a tuple, since NegotiateOperandLayout only
+    //    supports arrays.
+    // 2. This constraint has been updated too many times, since we want to make
+    //    sure the propagation can terminate.
+    if (!new_shape.IsArray() || shape_layout_.size() > kMaxLayoutProp) {
       return false;
     }
     if (!assignment->OperandLayoutAlwaysPropagateForward(instruction_) ||
@@ -200,7 +217,7 @@ bool OperandLayoutConstraint::UpdateLayout(int64_t new_priority,
       return false;
     }
   }
-  if (priority() > new_priority) {
+  if (!upgrade_to_mandatory && priority() > new_priority) {
     if (mandatory) {
       VLOG(5) << absl::StrFormat(
           "Cannot constrain layout of operand %d of instruction %s because "
@@ -212,7 +229,8 @@ bool OperandLayoutConstraint::UpdateLayout(int64_t new_priority,
   VLOG(3) << "Updating existing Operand layout:" << ToString();
   mandatory_ = mandatory;
   dfs_ = dfs;
-  priority_ = std::max(priority_, new_priority);
+  priority_ =
+      upgrade_to_mandatory ? new_priority : std::max(priority_, new_priority);
   shape_layout_.push_back(shape_layout_[0]);
   shape_layout_[0] = ShapeLayout(new_shape);
   return true;
@@ -941,24 +959,23 @@ absl::Status LayoutAssignment::AddAsyncStartConstraints(
       instruction->shape().tuple_shapes().size() > 1 &&
       ShapeUtil::Compatible(instruction->shape().tuple_shapes(1),
                             async_layout.result_layout().shape())) {
-    Shape result_tuple_shape = instruction->shape();
+    // Build result_tuple_constraint_shape, which we will use to add buffer
+    // constraints to the async-start op's outputs.
+    Shape result_tuple_constraint_shape = instruction->shape();
+
     // Element {0} of the kAsyncStart output tuple holds the operands passed to
     // the async computation, and HloDataflowAnalysis aliases each {0, i}
-    // subshape to operand i.
-    for (int64_t i = 0; i < instruction->operand_count(); ++i) {
-      if (async_layout.parameter_layout(i).MinorToMajorInLayoutIsSet() &&
-          ShapeUtil::IndexIsValid(result_tuple_shape, {0, i}) &&
-          ShapeUtil::Compatible(
-              ShapeUtil::GetSubshape(result_tuple_shape, {0, i}),
-              async_layout.parameter_layout(i).shape())) {
-        *ShapeUtil::GetMutableSubshape(&result_tuple_shape, {0, i}) =
-            async_layout.parameter_layout(i).shape();
-      }
-    }
-    *ShapeUtil::GetMutableSubshape(&result_tuple_shape, {1}) =
+    // subshape to operand i. Mandatory OperandConstraints were already added
+    // for these values above; we clear result_tuple_constraint_shape[0] to
+    // avoid incorrectly constraining the operand's own buffer.
+    LayoutUtil::ClearLayout(
+        ShapeUtil::GetMutableSubshape(&result_tuple_constraint_shape, {0}));
+
+    *ShapeUtil::GetMutableSubshape(&result_tuple_constraint_shape, {1}) =
         async_layout.result_layout().shape();
+
     ABSL_RETURN_IF_ERROR(SetInstructionLayout(
-        result_tuple_shape, instruction,
+        result_tuple_constraint_shape, instruction,
         /*mandatory=*/
         async_constraint->computation_constraint().result_layout_is_set(),
         /*dfs=*/true,
@@ -968,62 +985,22 @@ absl::Status LayoutAssignment::AddAsyncStartConstraints(
 }
 
 absl::Status LayoutAssignment::AddAsyncDoneConstraints(
-    HloInstruction* instruction, LayoutConstraints* constraints) {
+    HloInstruction* instruction) {
   HloInstruction* start = instruction->async_chain_start();
   if (start == nullptr || start->async_wrapped_computation() == nullptr ||
       !HasConstrainedComputationLayout(start->async_wrapped_computation())) {
     return absl::OkStatus();
   }
-  LayoutConstraints* async_constraint =
-      mutable_computation_constraints(start->async_wrapped_computation());
-  ComputationLayout async_layout = async_constraint->computation_layout();
-  bool reset_needed = false;
-  if (constraints->computation()->IsEntryComputation() &&
-      instruction == constraints->computation()->root_instruction() &&
-      entry_computation_layout_->result_layout()
-          .AnyMinorToMajorInLayoutIsSet()) {
-    if (!async_layout.result_layout().MatchesLayoutInShape(
-            entry_computation_layout_->result_layout().shape(),
-            /*minor_to_major_only=*/true)) {
-      *async_layout.mutable_result_layout() =
-          entry_computation_layout_->result_layout();
-      reset_needed = true;
-    }
-  } else if (async_layout.result_layout().AnyMinorToMajorInLayoutIsSet()) {
-    Shape s = instruction->shape();
-    bool shape_reset = false;
-    ShapeUtil::ForEachSubshape(
-        s, [&](const Shape& subshape, const ShapeIndex& index) {
-          if (!subshape.IsArray()) {
-            return;
-          }
-          const BufferLayoutConstraint* done_constraint =
-              GetConstrainedLayoutAtIndex(instruction, index);
-          const Shape& async_subshape = ShapeUtil::GetSubshape(
-              async_layout.result_layout().shape(), index);
-          if (done_constraint != nullptr && async_subshape.has_layout() &&
-              async_subshape.layout() != done_constraint->layout()) {
-            *ShapeUtil::GetMutableSubshape(&s, index)->mutable_layout() =
-                done_constraint->layout();
-            shape_reset = true;
-          }
-        });
-    if (shape_reset) {
-      *async_layout.mutable_result_layout() = ShapeLayout(s);
-      reset_needed = true;
-    }
-  }
-  if (reset_needed) {
-    async_constraint->mutable_computation_constraint()->ResetComputationLayout(
-        async_layout, current_priority_ + kNumberOfPropagationRounds,
-        /*prop_result_layout=*/true,
-        /*prop_parameter_layout=*/true);
-  }
+  const LayoutConstraints& async_constraint =
+      computation_constraints(start->async_wrapped_computation());
+  const ComputationLayout& async_layout = async_constraint.computation_layout();
   if (async_layout.result_layout().MinorToMajorInLayoutIsSet()) {
+    // Require caller result buffer to conform to the wrapped async computation
+    // interface.
     ABSL_RETURN_IF_ERROR(SetInstructionLayout(
         async_layout.result_layout().shape(), instruction,
-        /*mandatory=*/reset_needed ||
-            async_constraint->computation_constraint().result_layout_is_set(),
+        /*mandatory=*/
+        async_constraint.computation_constraint().result_layout_is_set(),
         /*dfs=*/true, /*allow_alias=*/true));
   }
   return absl::OkStatus();
@@ -1046,7 +1023,7 @@ absl::Status LayoutAssignment::AddSubcomputationLayoutConstraints(
         ABSL_RETURN_IF_ERROR(AddAsyncStartConstraints(instruction));
         break;
       case HloOpcode::kAsyncDone:
-        ABSL_RETURN_IF_ERROR(AddAsyncDoneConstraints(instruction, constraints));
+        ABSL_RETURN_IF_ERROR(AddAsyncDoneConstraints(instruction));
         break;
       default:
         break;
@@ -1277,45 +1254,120 @@ absl::Status LayoutAssignment::CopyOperandIfLayoutsDiffer(
   VLOG(2) << "Operand " << operand->ToString() << " layout does not match "
           << operand_layout.ToString() << " in " << instruction->ToString();
 
-  if (IsWhileLoopCopyDisabled(*instruction) &&
-      !instruction->parent()->caller_instructions(HloOpcode::kWhile).empty()) {
+  // `instruction` is the consumer whose operand needs `operand_layout`.
+  // IsWhileLoopCopyDisabled holds for every computation reachable from a while
+  // loop with the attribute. Requiring that computation to be the body or the
+  // condition of its unique caller excludes computations nested in the loop.
+  // Both have exactly one parameter, the loop state tuple, so parameter 0 is
+  // the loop state.
+  std::optional<HloInstruction*> xla_while =
+      instruction->parent()->GetUniqueCaller(HloOpcode::kWhile);
+  if (IsWhileLoopCopyDisabled(*instruction) && xla_while.has_value()) {
     HloComputation* comp = instruction->parent();
     HloInstruction* param = comp->parameter_instruction(0);
+    HloComputation* body = (*xla_while)->while_body();
     ShapeIndex index = {};
     HloInstruction* current = operand;
     while (current->opcode() == HloOpcode::kGetTupleElement) {
       index.insert(index.begin(), current->tuple_index());
       current = current->mutable_operand(0);
     }
-    if (current == param) {
-      Shape* param_subshape =
-          ShapeUtil::GetMutableSubshape(param->mutable_shape(), index);
-      Shape* root_subshape =
-          ShapeUtil::IndexIsValid(comp->root_instruction()->shape(), index)
-              ? ShapeUtil::GetMutableSubshape(
-                    comp->root_instruction()->mutable_shape(), index)
-              : nullptr;
-      if (param_subshape != nullptr) {
-        VLOG(2) << "Changing copy-disabled while loop parameter layout to "
-                << operand_layout.ToString();
-        *param_subshape = operand_layout.shape();
-        if (root_subshape != nullptr &&
-            ShapeUtil::Compatible(*root_subshape, operand_layout.shape())) {
-          *root_subshape = operand_layout.shape();
+    // This pass's dataflow does not propagate through control flow, so the body
+    // parameter defines its own value. The body root shares that value only if
+    // it forwards the element unchanged, i.e. the element is loop invariant.
+    const bool is_loop_invariant_element =
+        current == param && !index.empty() &&
+        dataflow_analysis_->GetValueSet(body->root_instruction(), index)
+                .values() ==
+            dataflow_analysis_
+                ->GetValueSet(body->parameter_instruction(0), index)
+                .values();
+    HloComputation* condition = (*xla_while)->while_condition();
+    // Changing the element's layout changes it for every consumer in the loop,
+    // so only do it when every consumer requires that layout. A consumer that
+    // requires another layout, or none, keeps the loop layout and gets its own
+    // copy. Operand constraints are complete after propagation, so this does
+    // not depend on the order consumers are visited in.
+    auto all_loop_consumers_require = [&](const Layout& layout) {
+      for (const HloInstruction* loop_param :
+           {body->parameter_instruction(0),
+            condition->parameter_instruction(0)}) {
+        for (const HloUse& use :
+             dataflow_analysis_->GetUniqueValueAt(loop_param, index)
+                 .GetUses()) {
+          if (use.instruction == body->root_instruction()) {
+            continue;
+          }
+          const ShapeLayout* required =
+              computation_constraints(use.instruction->parent())
+                  .OperandLayout(use.instruction, use.operand_number);
+          if (required == nullptr ||
+              !ShapeUtil::IndexIsValid(required->shape(), use.operand_index)) {
+            return false;
+          }
+          const Shape& required_subshape =
+              ShapeUtil::GetSubshape(required->shape(), use.operand_index);
+          if (!required_subshape.has_layout() ||
+              !Layout::Equal().MinorToMajorOnly()(required_subshape.layout(),
+                                                  layout)) {
+            return false;
+          }
         }
-        if (operand != param) {
-          *operand->mutable_shape() = operand_layout.shape();
-        }
-        ComputationLayout computed_computation_layout(
-            comp->ComputeProgramShape(), /*ignore_layouts=*/false);
-        mutable_computation_constraints(comp)
-            ->mutable_computation_constraint()
-            ->ResetComputationLayout(computed_computation_layout,
-                                     current_priority_ + 1,
-                                     /* prop_result_layout=*/true,
-                                     /*prop_parameter_layout=*/true);
-        return absl::OkStatus();
       }
+      return true;
+    };
+    // Only a loop invariant array element can take the new layout as a whole,
+    // since nothing inside the loop then needs a copy. Other cases fall through
+    // to the ordinary copy below.
+    if (is_loop_invariant_element && operand_layout.shape().IsArray() &&
+        all_loop_consumers_require(operand_layout.shape().layout())) {
+      const Layout& layout = operand_layout.shape().layout();
+      VLOG(2) << "Changing copy-disabled while loop parameter layout to "
+              << operand_layout.ToString();
+      // This runs after propagation, so update every place that is later
+      // checked against the element: the values at the loop boundary, the
+      // body and condition layouts, and the while operand constraint. The
+      // caller side mismatch is then resolved by a copy of the while init.
+      for (const HloInstruction* boundary :
+           {body->parameter_instruction(0), condition->parameter_instruction(0),
+            *xla_while}) {
+        const HloValue& value =
+            dataflow_analysis_->GetUniqueValueAt(boundary, index);
+        ABSL_RETURN_IF_ERROR(SetBufferLayout(layout, value, /*mandatory=*/true,
+                                             /*dfs=*/true, current_priority_));
+        for (const HloPosition& position : value.positions()) {
+          *ShapeUtil::GetMutableSubshape(position.instruction->mutable_shape(),
+                                         position.index)
+               ->mutable_layout() = layout;
+        }
+      }
+      ComputationLayout* body_layout = mutable_computation_constraints(body)
+                                           ->mutable_computation_constraint()
+                                           ->mutable_computation_layout();
+      body_layout->mutable_parameter_layout(0)->ResetLayout(layout, index);
+      body_layout->mutable_result_layout()->ResetLayout(layout, index);
+      mutable_computation_constraints(condition)
+          ->mutable_computation_constraint()
+          ->mutable_computation_layout()
+          ->mutable_parameter_layout(0)
+          ->ResetLayout(layout, index);
+      // Require the new layout for the element in the while's init tuple.
+      // AssignLayouts visits callees before callers, so the caller has not
+      // been assigned yet and will copy the init element to match. Start from
+      // the existing constraint: the init tuple's shape does not have its
+      // final layouts yet.
+      const OperandLayoutConstraint* init_constraint =
+          computation_constraints((*xla_while)->parent())
+              .GetOperandLayoutConstraint(*xla_while, 0);
+      TF_RET_CHECK(init_constraint != nullptr);
+      Shape init_shape = init_constraint->shape_layout().shape();
+      *ShapeUtil::GetMutableSubshape(&init_shape, index)->mutable_layout() =
+          layout;
+      ABSL_RETURN_IF_ERROR(SetOperandLayout(
+          init_shape, *xla_while, /*operand_no=*/0, /*mandatory=*/true,
+          /*dfs=*/true,
+          std::max(current_priority_, init_constraint->priority())));
+      return absl::OkStatus();
     }
   }
 
@@ -1876,12 +1928,16 @@ absl::Status LayoutAssignment::PropagateUseConstraintToDefs(
     const ShapeLayout& shape_layout, const HloInstruction* instruction,
     LayoutConstraints* constraints, int64_t priority,
     const HloInstruction* user) {
+  const HloComputation* computation = instruction->parent();
+  const bool from_async_root = user == computation->root_instruction() &&
+                               IsProtectedAsyncComputation(computation);
+
   // Try to set all logical buffers which may be sources of the given operand to
   // match the given layout.
   const InstructionValueSet& value_set_tree =
       dataflow_analysis_->GetInstructionValueSet(instruction);
   return value_set_tree.ForEachElementWithStatus(
-      [&shape_layout, this, priority, user](
+      [&shape_layout, this, priority, user, computation, from_async_root](
           const ShapeIndex& index,
           const HloValueSet& value_set) -> absl::Status {
         const auto& subshape =
@@ -1892,10 +1948,14 @@ absl::Status LayoutAssignment::PropagateUseConstraintToDefs(
             if (buffer->shape().IsArray() &&
                 (buffer->instruction()->opcode() != HloOpcode::kReduce ||
                  !buffer->instruction()->shape().IsTuple())) {
+              // Async parameter buffers must follow the root's operand layout.
+              const bool mandatory =
+                  from_async_root &&
+                  buffer->instruction()->opcode() == HloOpcode::kParameter &&
+                  buffer->instruction()->parent() == computation;
               ABSL_RETURN_IF_ERROR(SetBufferLayout(subshape.layout(), *buffer,
-                                                   /*mandatory=*/false,
-                                                   /*dfs=*/true, priority,
-                                                   user));
+                                                   mandatory, /*dfs=*/true,
+                                                   priority, user));
             }
           }
         }
@@ -2169,7 +2229,7 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
   auto priority_for_operand = [&](int64_t op_no) {
     const OperandLayoutConstraint* existing_op_constraint =
         constraints->GetOperandLayoutConstraint(instruction, op_no);
-    return existing_op_constraint != nullptr
+    return existing_op_constraint && existing_op_constraint->mandatory()
                ? std::max(priority, existing_op_constraint->priority())
                : priority;
   };
@@ -2198,6 +2258,7 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
               /*dfs=*/true, priority_for_operand(operand_no)));
         } else if (instruction->opcode() == HloOpcode::kBitcastConvert) {
           Shape shape = instruction->shape();
+          *shape.mutable_layout() = buffer_constraint.layout();
           if (operand->shape().dimensions().size() <
               instruction->shape().dimensions().size()) {
             shape = ShapeUtil::DeleteDimension(shape.dimensions().size() - 1,
@@ -2219,7 +2280,8 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
       ABSL_RETURN_IF_ERROR(SetArrayOperandLayout(
           layout, instruction, operand_no, /*mandatory=*/true,
           /*dfs=*/
-          InstructionShouldPropagateDepthFirst(*instruction), priority));
+          InstructionShouldPropagateDepthFirst(*instruction),
+          priority_for_operand(operand_no)));
     } else {
       if (!buffer.IsTopLevel() ||
           !instruction->operand(operand_no)->shape().IsArray()) {
@@ -2235,7 +2297,10 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToOperands(
             *operand_layout, instruction, operand_no,
             /*mandatory=*/OutputLayoutAlwaysPropagateToOperands(instruction),
             /*dfs=*/
-            InstructionShouldPropagateDepthFirst(*instruction), priority));
+            InstructionShouldPropagateDepthFirst(*instruction),
+            OutputLayoutAlwaysPropagateToOperands(instruction)
+                ? priority_for_operand(operand_no)
+                : priority));
       }
     }
   }
@@ -2262,6 +2327,15 @@ absl::Status LayoutAssignment::PropagateBufferConstraintToUses(
           << buffer_constraint.ToString();
   const HloValue& buffer = buffer_constraint.buffer();
   TF_RET_CHECK(buffer.IsArray());
+
+  // In async computations that must contain only parameters and a root,
+  // parameters must conform to the root's constraints, so do not propagate
+  // any constraints from the parameter to the root to avoid promoting any root
+  // constraints.
+  if (buffer.instruction()->opcode() == HloOpcode::kParameter &&
+      IsProtectedAsyncComputation(buffer.instruction()->parent())) {
+    return absl::OkStatus();
+  }
 
   // Propagate the layout to all array uses of the logical buffer. This skips
   // uses of the buffer where the buffer is the element of a tuple.
@@ -2445,9 +2519,81 @@ absl::Status LayoutAssignment::PropagateAcrossEdge(
   if (constraint == nullptr) {
     return absl::OkStatus();
   }
-  return ConstrainOrOverrideBuffersAtIndex(
-      dst_instruction, dst_index, *constraint,
-      allow_override ? &cross_comp_override_counts_ : nullptr, changed);
+
+  const HloComputation* computation = dst_instruction->parent();
+  const HloInstruction* root = computation->root_instruction();
+
+  // Some async computations must contain only parameter instructions and a
+  // single root. When a parameter feeds the root, redirect to an operand
+  // constraint on the root. The parameter buffers then follow the root's
+  // accepted operand layouts.
+  // Rank <= 1 shapes are constrained directly instead, because operand
+  // constraints on them are never propagated back to the parameter buffers.
+  bool redirect_to_root = dst_instruction->opcode() == HloOpcode::kParameter &&
+                          !IsAtMostRank1(dst_instruction->shape()) &&
+                          IsProtectedAsyncComputation(computation) &&
+                          root->IsUserOf(dst_instruction);
+
+  if (!redirect_to_root) {
+    return ConstrainOrOverrideBuffersAtIndex(
+        dst_instruction, dst_index, *constraint,
+        allow_override ? &cross_comp_override_counts_ : nullptr, changed);
+  }
+
+  // Build operand_shape using the src instruction's buffer constraints.
+  Shape operand_shape = dst_instruction->shape();
+  bool all_leaves_constrained = true;
+  int64_t priority = constraint->priority();
+  ShapeUtil::ForEachMutableSubshape(
+      &operand_shape, [&](Shape* subshape, const ShapeIndex& index) {
+        if (!subshape->IsArray()) {
+          return;
+        }
+        const BufferLayoutConstraint* leaf_constraint =
+            GetConstrainedLayoutAtIndex(src_instruction, index);
+        if (leaf_constraint == nullptr) {
+          all_leaves_constrained = false;
+          return;
+        }
+        *subshape->mutable_layout() = leaf_constraint->layout();
+        priority = std::max(priority, leaf_constraint->priority());
+      });
+
+  // Operand constraints require layouts for every array leaf, so wait for
+  // any missing constraints.
+  if (!all_leaves_constrained) {
+    return absl::OkStatus();
+  }
+
+  // Set the operand constraint for operands that use dst_instruction.
+  const LayoutConstraints& constraints = computation_constraints(computation);
+  for (int64_t operand_no : root->OperandIndices(dst_instruction)) {
+    const OperandLayoutConstraint* existing =
+        constraints.GetOperandLayoutConstraint(root, operand_no);
+    // Keep existing mandatory constraints.
+    if (existing != nullptr && existing->mandatory()) {
+      continue;
+    }
+    const bool already_matches =
+        existing != nullptr && existing->shape_layout().MatchesLayoutInShape(
+                                   operand_shape, /*minor_to_major_only=*/true);
+
+    // We still call SetOperandLayout when layouts match because it can raise
+    // the priority.
+    ABSL_RETURN_IF_ERROR(SetOperandLayout(operand_shape, root, operand_no,
+                                          /*mandatory=*/false, /*dfs=*/true,
+                                          priority));
+
+    const OperandLayoutConstraint* updated =
+        constraints.GetOperandLayoutConstraint(root, operand_no);
+
+    if (changed != nullptr && !already_matches && updated != nullptr &&
+        updated->shape_layout().MatchesLayoutInShape(
+            operand_shape, /*minor_to_major_only=*/true)) {
+      *changed = true;
+    }
+  }
+  return absl::OkStatus();
 }
 
 bool LayoutAssignment::ShouldPropagateAcrossRootBoundary(
@@ -2586,6 +2732,24 @@ absl::Status SetFusionLayouts(HloInstruction* fusion) {
   return absl::OkStatus();
 }
 
+// Copies current operand layouts to outputs that forward those operands.
+// TODO(asrao): Support other ops that forward inputs->outputs.
+absl::Status SetForwardedOperandResultLayouts(HloInstruction* instruction) {
+  switch (instruction->opcode()) {
+    case HloOpcode::kAsyncStart:
+      for (int64_t i = 0; i < instruction->operand_count(); ++i) {
+        ABSL_RETURN_IF_ERROR(LayoutUtil::CopyLayoutBetweenShapes(
+            instruction->operand(i)->shape(),
+            ShapeUtil::GetMutableSubshape(instruction->mutable_shape(),
+                                          {0, i})));
+      }
+      break;
+    default:
+      break;
+  }
+  return absl::OkStatus();
+}
+
 }  // namespace
 
 absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
@@ -2631,6 +2795,31 @@ absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
       }
     }
 
+    // Create a copy of an operand if the operand instruction's layout does not
+    // match the use constraint (OperandLayoutConstraint). Do this before
+    // assigning output layouts via aliases because inserted copies might
+    // change the layouts we want to set on aliased outputs.
+    for (int64_t operand_no = 0; operand_no < instruction->operand_count();
+         ++operand_no) {
+      const ShapeLayout* operand_layout =
+          constraints.OperandLayout(instruction, operand_no);
+      if (operand_layout != nullptr) {
+        ABSL_RETURN_IF_ERROR(CopyOperandIfLayoutsDiffer(
+            *operand_layout, instruction, operand_no));
+      } else {
+        VLOG(2) << "operand " << operand_no << " has no constraint";
+      }
+    }
+    VLOG(3) << "Instruction after copies on operands:"
+            << instruction->ToString() << "\n";
+
+    // Copy operand layouts to forwarded outputs of async-start. Read layouts
+    // from current operands because the dataflow analysis predates the copies
+    // inserted above.
+    ABSL_RETURN_IF_ERROR(SetForwardedOperandResultLayouts(instruction));
+    VLOG(3) << "Instruction layout after forwarding:"
+            << instruction->ToString();
+
     // Any remaining layouts in the output of the instruction must be
     // inferrable using points-to analysis.
     ABSL_RETURN_IF_ERROR(ShapeUtil::ForEachMutableSubshapeWithStatus(
@@ -2646,19 +2835,7 @@ absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
           return absl::OkStatus();
         }));
     VLOG(3) << "Instruction layout:" << instruction->ToString();
-    // Create a copy of an operand if the operand instruction's layout does not
-    // match the use constraint (OperandLayoutConstraint).
-    for (int64_t operand_no = 0; operand_no < instruction->operand_count();
-         ++operand_no) {
-      const ShapeLayout* operand_layout =
-          constraints.OperandLayout(instruction, operand_no);
-      if (operand_layout != nullptr) {
-        ABSL_RETURN_IF_ERROR(CopyOperandIfLayoutsDiffer(
-            *operand_layout, instruction, operand_no));
-      } else {
-        VLOG(2) << "operand " << operand_no << " has no constraint";
-      }
-    }
+
     if (instruction->opcode() == HloOpcode::kFusion) {
       ABSL_RETURN_IF_ERROR(SetFusionLayouts(instruction));
     }
@@ -2677,8 +2854,22 @@ absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
   // Copy the root instruction's result if its layout does not match the result
   // layout constraint.
   if (constraints.ResultLayout() != nullptr &&
-      constraints.ResultLayout()->MinorToMajorInLayoutIsSet()) {
-    ShapeLayout result_layout = *constraints.ResultLayout();
+      constraints.ResultLayout()->AnyMinorToMajorInLayoutIsSet()) {
+    Shape result_shape = constraints.ResultLayout()->shape();
+    // A tuple can mix explicitly constrained and automatically chosen layouts.
+    // Fill only the unconstrained leaves from the assigned root so that a
+    // missing layout does not suppress copies for the constrained leaves.
+    ShapeUtil::ForEachMutableSubshape(
+        &result_shape, [&](Shape* subshape, const ShapeIndex& index) {
+          if (subshape->IsArray() &&
+              !LayoutUtil::HasMinorToMajorSetInLayout(*subshape)) {
+            *subshape->mutable_layout() =
+                ShapeUtil::GetSubshape(computation->root_instruction()->shape(),
+                                       index)
+                    .layout();
+          }
+        });
+    ShapeLayout result_layout(result_shape);
     // Clear out memory space in layout. Host offloader will do the
     // analysis later.
     ABSL_RETURN_IF_ERROR(ResetMemorySpaceInLayout(result_layout));
@@ -2727,6 +2918,9 @@ absl::Status LayoutAssignment::AssignLayouts(LayoutConstraints& constraints) {
 
 absl::Status LayoutAssignment::CalculateComputationLayout(
     LayoutConstraints* constraints) {
+  const bool is_single_instruction_async =
+      IsProtectedAsyncComputation(constraints->computation());
+
   // Process instructions that contain nested computations and may require
   // additional layouts to be assigned on the instructions nested inside.
 
@@ -2764,8 +2958,8 @@ absl::Status LayoutAssignment::CalculateComputationLayout(
   auto SetCalleeLayout = [this, UpdateLayout](
                              const HloInstruction* result,
                              absl::Span<const HloInstruction* const> operands,
-                             LayoutConstraints* callee,
-                             int priority) -> absl::Status {
+                             LayoutConstraints* callee, int priority,
+                             bool force_reset = false) -> absl::Status {
     ComputationLayoutConstraint* callee_constraint =
         callee->mutable_computation_constraint();
     ComputationLayout callee_layout = callee_constraint->computation_layout();
@@ -2773,7 +2967,7 @@ absl::Status LayoutAssignment::CalculateComputationLayout(
         copy_disabled_while_computations_.contains(callee->computation());
     if (callee_constraint->priority() < priority ||
         conditional_mismatch_.count(callee->computation()) > 0 ||
-        is_copy_disabled) {
+        is_copy_disabled || force_reset) {
       bool layout_updated = false;
       if (conditional_mismatch_.count(callee->computation()) == 0 &&
           UpdateLayout(result, callee_layout.mutable_result_layout())) {
@@ -2829,13 +3023,16 @@ absl::Status LayoutAssignment::CalculateComputationLayout(
         boundary_options));
   }
   // Reset the layout of the current computation from its body.
-  if (current_priority_ == 0 ||
+  // Single-instruction async bodies need this on every call, in every round,
+  // regardless of the existing layout's priority.
+  if (is_single_instruction_async || current_priority_ == 0 ||
       conditional_mismatch_.count(constraints->computation()) > 0 ||
       copy_disabled_while_computations_.contains(constraints->computation())) {
     ABSL_RETURN_IF_ERROR(SetCalleeLayout(
         constraints->computation()->root_instruction(),
         constraints->computation()->parameter_instructions(), constraints,
-        current_priority_ + kNumberOfPropagationRounds));
+        current_priority_ + kNumberOfPropagationRounds,
+        /*force_reset=*/is_single_instruction_async));
     if (constraints->computation()->IsEntryComputation()) {
       *entry_computation_layout_ = constraints->computation_layout();
     }
@@ -3316,6 +3513,7 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     case HloOpcode::kBitcastConvert:
     case HloOpcode::kCeil:
     case HloOpcode::kClamp:
+    case HloOpcode::kFma:
     case HloOpcode::kClz:
     case HloOpcode::kCompare:
     case HloOpcode::kComplex:
@@ -3415,7 +3613,6 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     case HloOpcode::kCopy:
     case HloOpcode::kCopyStart:
     case HloOpcode::kCopyDone:
-    case HloOpcode::kDomain:
     case HloOpcode::kDot:
     case HloOpcode::kFusion:
     case HloOpcode::kGather:
@@ -3435,6 +3632,7 @@ bool LayoutAssignment::InstructionCanChangeLayout(
     case HloOpcode::kRng:
     case HloOpcode::kRngBitGenerator:
     case HloOpcode::kRngGetAndUpdateState:
+    case HloOpcode::kDotGeneral:
     case HloOpcode::kScaledDot:
     case HloOpcode::kSend:
     case HloOpcode::kSendDone:

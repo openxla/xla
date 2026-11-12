@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/executable_run_options.h"
@@ -366,7 +367,9 @@ absl::StatusOr<GlobalDataHandle> Service::ExecuteAndRegisterResult(
         backend->eigen_intra_op_thread_pool_device());
     options.set_device_assignment(device_assignment_ptr);
     options.set_execution_profile(profile);
-    run_options.emplace_back(options, backend->StreamBorrowerWithPriority());
+    run_options.emplace_back(
+        options, backend->StreamBorrowerWithPriority(),
+        backend->LocalityDomainStreamBorrowerWithPriority());
   }
 
   if (options_.number_of_replicas() == 1) {

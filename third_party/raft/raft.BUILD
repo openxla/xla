@@ -14,6 +14,7 @@
 # ==============================================================================
 
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 licenses(["notice"])  # Apache 2.0
 
@@ -38,6 +39,10 @@ cuda_library(
         "cpp/include",
         "cpp/internal",
     ],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     textual_hdrs = glob([
         "cpp/include/**/*.cuh",
         "cpp/include/**/*.hpp",
@@ -59,6 +64,10 @@ cuda_library(
     srcs = ["select_k_runner.cu.cc"],
     hdrs = ["select_k_runner.hpp"],
     copts = BASE_COPTS,
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":raft_matrix",

@@ -89,6 +89,11 @@ absl::Status IsAllToAllKernelSupported(
     return absl::UnimplementedError(
         "Cross-host symmetric memory collectives are not supported.");
   }
+  if (num_devices == 1) {
+    return absl::UnimplementedError(
+        "Degenerate collectives with a single device per replica group are not "
+        "supported by collective kernels.");
+  }
   if (!llvm::has_single_bit(static_cast<uint64_t>(num_devices))) {
     return absl::UnimplementedError(absl::StrFormat(
         "Collective kernels are only supported for power of 2 number of "
@@ -217,12 +222,11 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllToAllKernelSpec(
           /* .argument_descriptors= */
           {{KernelArgType::kInputBuffer, /*index=*/0},
            {KernelArgType::kOutputBuffer, /*index=*/0},
-           {KernelArgType::kRuntimeRank},
-           {KernelArgType::kInvocationCount},
+           {KernelArgType::kScratchBuffer,
+            /*index=*/1},  // remote scratch buffers
            {KernelArgType::kScratchBuffer,
             /*index=*/0},  // signal buffers
-           {KernelArgType::kScratchBuffer,
-            /*index=*/1}},  // remote scratch buffers
+           {KernelArgType::kRuntimeRank}},
           /* .sync_count_increment= */ is_one_shot ? 1u : 2u},
       /* .scratch_buffers= */
       {{signal_size, /*requires_multimem=*/false, scratch_memory_type,

@@ -86,6 +86,30 @@ func.func @apply_indexing(%d0: index, %d1: index, %s0: index) -> (index, index) 
 
 // -----
 
+#map_with_constraints = #xla.indexing_map<"(d0, d1)[s0] -> (d0, d1 + s0),"
+  "domain: d0 in [1, 2], d1 in [5, 8], s0 in [0, 32],"
+  "d0 mod 2 in [0, 1], d0 + s0 in [1, 10]">
+func.func @apply_indexing_with_constraints(%d0: index, %d1: index, %s0: index) -> (index, index) {
+  %0:2 = xla.apply_indexing #map_with_constraints (%d0, %d1)[%s0]
+  func.return %0#0, %0#1 : index, index
+}
+// CHECK: #[[$MAP_CONSTRAINTS:.*]] = #xla.indexing_map<"
+// CHECK-SAME:              (d0, d1)[s0] -> (d0, d1 + s0)
+// CHECK-SAME:              domain:
+// CHECK-SAME:              d0 in [1, 2]
+// CHECK-SAME:              d1 in [5, 8]
+// CHECK-SAME:              s0 in [0, 32]
+// CHECK-SAME:              d0 + s0 in [1, 10]
+// CHECK-SAME:              d0 mod 2 in [0, 1]
+// CHECK-SAME:             >
+
+// CHECK-LABEL: @apply_indexing_with_constraints
+// CHECK: (%[[d0:.*]]: index, %[[d1:.*]]: index, %[[s0:.*]]: index)
+// CHECK: xla.apply_indexing #[[$MAP_CONSTRAINTS]]
+// CHECK-SAME:  (%[[d0]], %[[d1]])[%[[s0]]]
+
+// -----
+
 #map0 = #xla.indexing_map<"(d0, d1) -> (d0, d1),"
   "domain: d0 in [0, 2], d1 in [1, 3]">
 func.func @apply_indexing_no_symbols(%d0: index, %d1: index) -> (index, index) {
@@ -190,3 +214,41 @@ func.func @get_dynamic_dim_size(%in: tensor<16x8x4xf32>) -> (i32) {
 }
 // CHECK-LABEL: @get_dynamic_dim_size
 // CHECK: xla.get_dynamic_dim_size
+
+// -----
+
+func.func @copy_slice(%src: tensor<4x3xf32>, %dst: tensor<4x5xf32>,
+                      %i: index, %j: index) -> tensor<4x5xf32> {
+  %out = xla.copy_slice %src[%i, %j] into %dst[%i, %j] count(3)
+      : tensor<4x3xf32> into tensor<4x5xf32>
+  func.return %out : tensor<4x5xf32>
+}
+// CHECK-LABEL: @copy_slice
+// CHECK: xla.copy_slice %{{.*}}[%{{.*}}, %{{.*}}] into %{{.*}}[%{{.*}}, %{{.*}}] count(3) : tensor<4x3xf32> into tensor<4x5xf32>
+
+// -----
+
+func.func @linear_extract(%src: tensor<4x3xf32>, %idx: index) -> f32 {
+  %out = xla.linear_extract %src[%idx] : tensor<4x3xf32>
+  func.return %out : f32
+}
+// CHECK-LABEL: @linear_extract
+// CHECK: xla.linear_extract %{{.*}}[%{{.*}}] : tensor<4x3xf32>
+
+// -----
+
+func.func @linear_insert(%val: f32, %dst: tensor<4x3xf32>, %idx: index) -> tensor<4x3xf32> {
+  %out = xla.linear_insert %val into %dst[%idx] : tensor<4x3xf32>
+  func.return %out : tensor<4x3xf32>
+}
+// CHECK-LABEL: @linear_insert
+// CHECK: xla.linear_insert %{{.*}} into %{{.*}}[%{{.*}}] : tensor<4x3xf32>
+
+// -----
+
+func.func @set_dynamic_dim_size(%in: tensor<16x8x4xf32>, %size: i32) -> tensor<16x8x4xf32> {
+  %out = xla.set_dynamic_dim_size %size into %in[1] : tensor<16x8x4xf32>
+  func.return %out : tensor<16x8x4xf32>
+}
+// CHECK-LABEL: @set_dynamic_dim_size
+// CHECK: xla.set_dynamic_dim_size %{{.*}} into %{{.*}}[1] : tensor<16x8x4xf32>

@@ -18,7 +18,6 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <utility>
-#include <vector>
 
 #include "absl/status/status.h"
 #include "xla/pjrt/device_event.h"

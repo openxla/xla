@@ -32,7 +32,6 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/optimization.h"
-#include "absl/cleanup/cleanup.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
@@ -382,32 +381,6 @@ int64_t EstimateFragmentationSize(HloModule* module,
 
 }  // namespace
 
-CanonicalAsyncOp DefaultGetCanonicalAsyncOp(const HloInstruction& hlo) {
-  switch (hlo.opcode()) {
-    case HloOpcode::kAsyncStart:
-    case HloOpcode::kAsyncDone:
-      return {hlo.opcode(), hlo.async_wrapped_opcode()};
-    case HloOpcode::kAllReduceStart:
-      return {HloOpcode::kAsyncStart, HloOpcode::kAllReduce};
-    case HloOpcode::kAllGatherStart:
-      return {HloOpcode::kAsyncStart, HloOpcode::kAllGather};
-    case HloOpcode::kCollectivePermuteStart:
-      return {HloOpcode::kAsyncStart, HloOpcode::kCollectivePermute};
-    case HloOpcode::kCopyStart:
-      return {HloOpcode::kAsyncStart, HloOpcode::kCopy};
-    case HloOpcode::kCopyDone:
-      return {HloOpcode::kAsyncDone, HloOpcode::kCopy};
-    case HloOpcode::kAllReduceDone:
-      return {HloOpcode::kAsyncDone, HloOpcode::kAllReduce};
-    case HloOpcode::kAllGatherDone:
-      return {HloOpcode::kAsyncDone, HloOpcode::kAllGather};
-    case HloOpcode::kCollectivePermuteDone:
-      return {HloOpcode::kAsyncDone, HloOpcode::kCollectivePermute};
-    default:
-      return {hlo.opcode(), hlo.opcode()};
-  }
-}
-
 const HloInstruction* FindStart(const HloInstruction* done) {
   if (done == nullptr) {
     return nullptr;
@@ -473,45 +446,6 @@ const HloInstruction* FindDone(const HloInstruction* start) {
 HloInstruction* FindDone(HloInstruction* start) {
   return const_cast<HloInstruction*>(
       FindDone(const_cast<const HloInstruction*>(start)));
-}
-
-bool LatencyEstimator::IsAsyncPair(const HloGraphNode& from,
-                                   const HloGraphNode& target) const {
-  CanonicalAsyncOp from_op = GetCanonicalAsyncOp(from.GetInstr());
-  CanonicalAsyncOp target_op = GetCanonicalAsyncOp(target.GetInstr());
-  return from_op.outer == HloOpcode::kAsyncStart &&
-         target_op.outer == HloOpcode::kAsyncDone &&
-         from_op.inner == target_op.inner;
-}
-
-bool LatencyEstimator::IsP2pPair(const HloGraphNode& from,
-                                 const HloGraphNode& target) const {
-  return (from.GetOpcode() == HloOpcode::kSend &&
-          target.GetOpcode() == HloOpcode::kSendDone) ||
-         (from.GetOpcode() == HloOpcode::kRecv &&
-          target.GetOpcode() == HloOpcode::kRecvDone);
-}
-
-std::optional<LatencyEstimator::TimeCost>
-LatencyEstimator::GetLatencyFromMetadata(
-    const HloInstruction& instruction) const {
-  const auto& attrs = instruction.frontend_attributes().map();
-  const auto it = attrs.find("latency_metadata");
-  if (it == attrs.end()) {
-    return std::nullopt;
-  }
-  int64_t latency_ns;
-  if (!absl::SimpleAtoi(it->second, &latency_ns)) {
-    LOG(WARNING) << "Failed to parse latency from custom call for "
-                 << instruction.name()
-                 << " from latency_metadata:" << it->second;
-    return std::nullopt;
-  }
-  VLOG(10)
-      << "LatencyEstimator::GetLatencyFromMetadata: Returning latency from "
-         "custom call for "
-      << instruction.name() << ": " << latency_ns << " ns";
-  return (TimeCost)latency_ns * CyclesPerMicrosecond() / 1000.0;
 }
 
 LatencyEstimator::TimeCost ApproximateLatencyEstimator::GetLatencyBetween(
@@ -784,12 +718,23 @@ AsyncTracker::GetNumResourcesPerInstruction(const HloInstruction& instr) const {
     }
   }
 
+  // Only the start of an async op reports its async computation as a called
+  // computation; account for it at the update and done of the async op as
+  // well, so that the resources used inside the async op are checked at both
+  // ends of it.
+  // TODO(deqiangc): Converge this behaviour with GetNumResourcesPerInstruction.
+  std::vector<const HloComputation*> nested_computations(
+      instr.called_computations().begin(), instr.called_computations().end());
+  if (instr.IsAsynchronous() && nested_computations.empty()) {
+    nested_computations.push_back(instr.async_wrapped_computation());
+  }
+
   // For instructions calling multiple computations, we assume that the called
   // computations do not execute in parallel (i.e., they are either mutually
   // exclusive, as in conditionals, or executed in sequence). Then for each
   // resource type, the usage across all called computations is the maximum
   // usage in any of the called computations.
-  for (const HloComputation* computation : instr.called_computations()) {
+  for (const HloComputation* computation : nested_computations) {
     const auto& map = RecursivelyComputeResourceMap(computation);
     for (const auto& [resource_type, num_resources] : map) {
       num_resources_per_type[resource_type] =
@@ -1723,6 +1668,51 @@ int64_t ReadySetLt::GetNumConflictingSerialResources(
 // return true. Otherwise it returns false. *reason is always update to
 // point to a string describing which heuristic ultimately made the
 // decision.
+namespace {
+
+// Returns the async start of `done`, reached through any async updates, or
+// nullptr if `done` has no separate start that `async_tracker` supports (e.g. a
+// synchronous collective that the backend schedules as async), or if the start
+// is not in the computation of `done` (only ops in the scheduled computation
+// are in its reachability map).
+const HloInstruction* GetAsyncStartFromAsyncDone(
+    const HloInstruction& done, const AsyncTracker& async_tracker) {
+  const HloInstruction* op = &done;
+  while (op->operand_count() > 0) {
+    op = op->operand(0);
+    if (op->parent() != done.parent()) {
+      return nullptr;
+    }
+    if (async_tracker.IsSupportedAsyncStart(*op)) {
+      return op;
+    }
+    if (op->opcode() != HloOpcode::kAsyncUpdate) {
+      return nullptr;
+    }
+  }
+  return nullptr;
+}
+
+// Returns true if a data operand of the async start `x` reaches the async start
+// `y` in `reachability`, i.e. `x` transfers data produced before `y` is issued.
+// The start is the only op of an async chain with data operands (async updates
+// and dones only take the previous op of the chain), and every op of `y`'s
+// chain is reachable through `y`. Operands shared by both starts (e.g. common
+// offsets) do not order the transfers, and neither do parameters and constants,
+// which are available from the start and would otherwise relate every two
+// starts reading them.
+bool TransfersEarlierData(const HloInstruction& x, const HloInstruction& y,
+                          const HloReachabilityMap& reachability) {
+  return absl::c_any_of(x.operands(), [&](const HloInstruction* operand) {
+    return operand->opcode() != HloOpcode::kParameter &&
+           operand->opcode() != HloOpcode::kConstant &&
+           !absl::c_linear_search(y.operands(), operand) &&
+           reachability.IsReachable(operand, &y);
+  });
+}
+
+}  // namespace
+
 bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
                                 DefaultSchedulerCore::ScheduleCandidate& b,
                                 const char** reason) const {
@@ -2043,6 +2033,31 @@ bool ReadySetLt::AIsBetterThanB(DefaultSchedulerCore::ScheduleCandidate& a,
     if (auto res = CmpExplicit(a_increase.first < 0, b_increase.first < 0,
                                "kDecreaseMemory", reason)) {
       return *res;
+    }
+  }
+
+  // Tie-breaker for two ready async-done operations: if a data input of one's
+  // async start is an ancestor of the other's async start (e.g. two dependent
+  // layers each offloading their result), the done transferring the
+  // earlier-produced data completes first in program order. Async ops that
+  // execute in order (e.g. on SparseCore) are then also issued in data order,
+  // right after their data is produced. Unrelated async-dones keep their
+  // original order.
+  if (an->IsSupportedAsyncDone() && bn->IsSupportedAsyncDone()) {
+    const HloInstruction* a_start =
+        GetAsyncStartFromAsyncDone(an->GetInstr(), *sched_state.async_tracker);
+    const HloInstruction* b_start =
+        GetAsyncStartFromAsyncDone(bn->GetInstr(), *sched_state.async_tracker);
+    if (a_start != nullptr && b_start != nullptr) {
+      const HloReachabilityMap& reachability =
+          sched_state.sched_graph->reachability();
+      if (auto res = CmpDirectional(
+              core_->top_down_scheduling_,
+              TransfersEarlierData(*a_start, *b_start, reachability),
+              TransfersEarlierData(*b_start, *a_start, reachability),
+              "kAsyncDoneDataDependency", reason)) {
+        return *res;
+      }
     }
   }
 
@@ -2578,6 +2593,11 @@ absl::StatusOr<HloGraphNode*> FindAndExtractBestAnnotatedNode(
       chosen_it = ready_node_it;
     }
   }
+  if (chosen_it == annotation_ready.end()) {
+    // Every ready node crosses the overlap limit. Leave the annotation ready
+    // set untouched and let the caller report the failure.
+    return nullptr;
+  }
   // Delete the node from the annotation ready set.
   std::swap(*chosen_it, annotation_ready.back());
   annotation_ready.pop_back();
@@ -2650,20 +2670,14 @@ absl::Status DefaultSchedulerCore::ScheduleAnnotation(
     VLOG(2) << "Scheduled annotated node (" << num_scheduled << "/"
             << annotation_size << "): " << node->GetInstr().name();
   }
-  // If for some reason we could not schedule all the instructions in the
-  // annotation in one go, we clear the annotation for the remaining
-  // instruction. Currently this should only happen for async-start
-  // instructions.
+  // If we could not schedule all the instructions in the annotation in one go
+  // (e.g., due to dynamic dependencies added during scheduling), clear the
+  // annotation for all remaining instructions in the group.
   if (num_scheduled < annotation_size - non_ready_instr) {
     for (auto* inst :
          annotation_tracker_->GetInstructions(computation, annotation)) {
       HloGraphNode& node = sched_state->sched_graph->GetNode(inst);
       if (!node.IsScheduled()) {
-        TF_RET_CHECK(
-            scheduling_context_->GetAsyncTracker()->IsSupportedAsyncStart(
-                node.GetInstr()) ||
-            scheduling_context_->GetAsyncTracker()->IsSupportedAsyncDone(
-                node.GetInstr()));
         VLOG(2) << "Could not schedule all annotated nodes with annotation ID "
                 << annotation << " in one go; clearing annotation for "
                 << node.GetInstr().name();

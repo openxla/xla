@@ -222,6 +222,18 @@ class IfrtBackend final : public BackendInterface {
   tsl::Future<Response> HandleCompileRequest(
       std::unique_ptr<IfrtRequest> request);
 
+  tsl::Future<Response> HandleDeserializeLoadedExecutableRequest(
+      std::unique_ptr<IfrtRequest> request);
+
+  // Registers `executable` and `host_callback_queues` with this backend and
+  // fills `compile_resp` with the handles and the metadata of `executable`.
+  // Shared by the compile and the deserialize requests.
+  void PopulateCompileResponse(
+      xla::ifrt::LoadedExecutableRef executable,
+      std::vector<std::shared_ptr<RemoteLoadedHostCallbackQueue>>
+          host_callback_queues,
+      CompileResponse* compile_resp);
+
   tsl::Future<Response> HandleLoadedExecutableMetadataRequest(
       std::unique_ptr<IfrtRequest> request);
   tsl::Future<Response> HandleLoadedExecutableMpmdMetadataRequest(
@@ -251,6 +263,10 @@ class IfrtBackend final : public BackendInterface {
   absl::StatusOr<Response> HandleGetDefaultDeviceAssignmentRequest(
       std::unique_ptr<IfrtRequest> request);
   absl::StatusOr<Response> HandleGetDefaultLayoutRequest(
+      std::unique_ptr<IfrtRequest> request);
+  absl::StatusOr<Response> HandleCancelExecutionRequest(
+      std::unique_ptr<IfrtRequest> request);
+  tsl::Future<Response> HandleHashValuesRequest(
       std::unique_ptr<IfrtRequest> request);
 
   //////////////////////////////////////////////////////////////////////
@@ -327,6 +343,14 @@ class IfrtBackend final : public BackendInterface {
 
   class InOrderRequestsProcessor;
   std::unique_ptr<InOrderRequestsProcessor> in_order_requests_processor_;
+
+  struct CancellationHandles {
+    absl::Mutex mu;
+    absl::flat_hash_map<uint64_t,
+                        xla::ifrt::LoadedExecutable::CancellationHandle>
+        handles ABSL_GUARDED_BY(mu);
+  };
+  std::shared_ptr<CancellationHandles> cancellation_handles_;
 
   // Tracks destroyed user context IDs. `ids` contains the ID of `UserContext`s
   // destroyed since the last response identified by `next_seq_num` - 1.

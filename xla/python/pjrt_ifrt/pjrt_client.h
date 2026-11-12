@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
-#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -37,7 +36,6 @@ limitations under the License.
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "xla/literal.h"
-#include "xla/pjrt/distributed/client.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -72,6 +70,10 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla {
+
+class CoordinationServiceAgent;
+class DistributedRuntimeClient;
+
 namespace ifrt {
 
 class PjRtCompatibleArray;
@@ -250,6 +252,10 @@ class PjRtClient final : public RTTIExtends<PjRtClient, PjRtCompatibleClient> {
       std::optional<MemoryKind> memory_kind,
       ArrayCopySemantics semantics) override;
 
+  absl::StatusOr<std::vector<ArrayRef>> CopyArraysWithDonatedDst(
+      absl::Span<ArrayRef> arrays, absl::Span<ArrayRef> donated_dst_arrays,
+      ArrayCopySemantics semantics) override;
+
   absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> RemapArrays(
       const RemapPlan& plan, absl::Span<xla::ifrt::ArrayRef> arrays,
       ArrayCopySemantics semantics) override;
@@ -265,6 +271,14 @@ class PjRtClient final : public RTTIExtends<PjRtClient, PjRtCompatibleClient> {
   absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> ReshardArrays(
       absl::Span<ArrayRef> arrays, absl::Span<const ArraySpec> specs,
       ArrayCopySemantics semantics) override;
+
+  absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> CopyArraySlices(
+      absl::Span<const ArrayRef> arrays,
+      absl::Span<const IndexDomain> index_domains) override;
+
+  absl::StatusOr<std::vector<xla::ifrt::ArrayRef>> UpdateArraySlices(
+      absl::Span<ArrayRef> arrays, absl::Span<const ArrayRef> slices,
+      absl::Span<const Index> origins) override;
 
   tsl::Future<> GetReadyFuture(absl::Span<const ValueRef> values) override;
 
@@ -286,46 +300,31 @@ class PjRtClient final : public RTTIExtends<PjRtClient, PjRtCompatibleClient> {
   absl::string_view runtime_type() const override { return kRuntimeType; }
 
   absl::string_view platform_name() const override {
-    DCHECK(this);
     return pjrt_client_->platform_name();
   }
   absl::string_view platform_version() const override {
-    DCHECK(this);
     return pjrt_client_->platform_version();
   }
   PlatformId platform_id() const override {
-    DCHECK(this);
     return pjrt_client_->platform_id();
   }
 
   const AttributeMap& Attributes() const override;
 
-  int device_count() const override {
-    DCHECK(this);
-    return devices_.size();
-  }
+  int device_count() const override { return devices_.size(); }
   int addressable_device_count() const override {
-    DCHECK(this);
     return pjrt_client_->addressable_device_count();
   }
-  absl::Span<Device* const> devices() const override {
-    DCHECK(this);
-    return devices_;
-  }
+  absl::Span<Device* const> devices() const override { return devices_; }
   absl::Span<Device* const> addressable_devices() const override {
-    DCHECK(this);
     return addressable_devices_;
   }
   int process_index() const override { return my_process_index_; }
 
-  absl::Span<Device* const> GetAllDevices() const override {
-    DCHECK(this);
-    return devices_;
-  }
+  absl::Span<Device* const> GetAllDevices() const override { return devices_; }
 
   absl::StatusOr<DeviceAssignment> GetDefaultDeviceAssignment(
       int num_replicas, int num_partitions) const override {
-    DCHECK(this);
     return pjrt_client_->GetDefaultDeviceAssignment(num_replicas,
                                                     num_partitions);
   }
@@ -337,10 +336,7 @@ class PjRtClient final : public RTTIExtends<PjRtClient, PjRtCompatibleClient> {
   absl::StatusOr<DeviceListRef> MakeDeviceList(
       absl::Span<Device* const> devices) const override;
 
-  Compiler* GetDefaultCompiler() override {
-    DCHECK(this);
-    return &default_compiler_;
-  }
+  Compiler* GetDefaultCompiler() override { return &default_compiler_; }
 
   absl::StatusOr<std::vector<tsl::Future<LoadedExecutableRef>>> Load(
       absl::Span<const ExecutableRef> executables,
@@ -426,6 +422,13 @@ class PjRtClient final : public RTTIExtends<PjRtClient, PjRtCompatibleClient> {
       std::tuple<DType, std::vector<int64_t>, MemoryKind>,
       absl::StatusOr<std::shared_ptr<const xla::PjRtLayout>>>
       default_layout_cache_ ABSL_GUARDED_BY(default_layout_cache_mu_);
+
+  // Copies arrays from source to destination devices, optionally reusing
+  // donated destination arrays for host-local transfers.
+  absl::StatusOr<std::vector<ArrayRef>> CopyArraysImpl(
+      absl::Span<ArrayRef> arrays, std::optional<DeviceListRef> devices,
+      std::optional<MemoryKind> memory_kind,
+      absl::Span<ArrayRef> donated_dst_arrays, ArrayCopySemantics semantics);
 
   // Copies arrays from source to destination devices when at least one of the
   // (source, destination) pairs is cross-host.

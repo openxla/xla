@@ -18,7 +18,6 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <numeric>
 #include <string>
 #include <vector>
 
@@ -150,8 +149,9 @@ void ForLoop::Emit(llvm::IRBuilderBase* b) {
     back_branch->setMetadata(llvm::LLVMContext::MD_loop, loop_id);
   }
 
-  // Re-point the IR builder to the loop exit block.
-  b->SetInsertPoint(exit_bb_);
+  // Re-point the IR builder to the loop exit block, inserting before any
+  // instructions the split moved there (e.g. the original terminator).
+  b->SetInsertPoint(exit_bb_, exit_bb_->getFirstInsertionPt());
 }
 
 std::vector<llvm::Metadata*> ForLoop::GetLoopMetadata(llvm::IRBuilderBase* b) {
@@ -208,10 +208,6 @@ std::unique_ptr<ForLoop> ForLoopNest::AddLoop(
       prevent_vectorization));
   loop->Emit(b_);
 
-  if (outer_loop_preheader_bb_ == nullptr) {
-    outer_loop_preheader_bb_ = loop->GetPreheaderBasicBlock();
-  }
-
   if (outer_loop_exit_bb_ == nullptr) {
     outer_loop_exit_bb_ = loop->GetExitBasicBlock();
   }
@@ -242,14 +238,6 @@ std::unique_ptr<ForLoop> ForLoopNest::AddLoop(int64_t start_index,
                  GetConstantWithIndexType(end_index),
                  GetConstantWithIndexType(stride), unroll_mode,
                  prevent_vectorization);
-}
-
-IrArray::Index ForLoopNest::AddLoopsForShape(const Shape& shape,
-                                             absl::string_view suffix) {
-  std::vector<int64_t> dimensions(shape.dimensions().size());
-  std::iota(dimensions.begin(), dimensions.end(), 0);
-  return IrArray::Index(AddLoopsForShapeOnDimensions(shape, dimensions, suffix),
-                        shape, index_type_);
 }
 
 std::vector<llvm::Value*> ForLoopNest::AddLoopsForShapeOnDimensions(

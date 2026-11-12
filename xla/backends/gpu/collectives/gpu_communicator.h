@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/core/collectives/symmetric_memory.h"
 #include "xla/ffi/api/record_c_api.h"
 #include "xla/future.h"
+#include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/memory_allocation.h"
@@ -89,6 +90,12 @@ class GpuDeviceCommunicator {
  public:
   virtual ~GpuDeviceCommunicator() = default;
 
+  enum GpuCftCap : int32_t {
+    kGpuCftCapNone = 0,
+    kGpuCftCapUnicast = 0x1,   // NCCL_CFT
+    kGpuCftCapMultimem = 0x2,  // NCCL_CFT_MULTIMEM
+  };
+
   // Requirements for constructing a device communicator object.
   struct Requirements {
     template <typename Sink>
@@ -96,10 +103,12 @@ class GpuDeviceCommunicator {
       absl::Format(&sink,
                    "{barrier_count: %d, lsa_barrier_count: %d, "
                    "rail_gin_barrier_count: %d, "
-                   "gin_signal_count: %d, gin_connection_full: %d}",
+                   "gin_signal_count: %d, gin_connection_full: %d, "
+                   "cft_caps: 0x%x, cft_barrier_count: %d}",
                    reqs.barrier_count, reqs.lsa_barrier_count,
                    reqs.rail_gin_barrier_count, reqs.gin_signal_count,
-                   reqs.gin_connection_full);
+                   reqs.gin_connection_full, reqs.cft_caps,
+                   reqs.cft_barrier_count);
     }
 
     bool operator==(const Requirements& other) const {
@@ -107,7 +116,9 @@ class GpuDeviceCommunicator {
              other.lsa_barrier_count == lsa_barrier_count &&
              other.rail_gin_barrier_count == rail_gin_barrier_count &&
              other.gin_signal_count == gin_signal_count &&
-             other.gin_connection_full == gin_connection_full;
+             other.gin_connection_full == gin_connection_full &&
+             other.cft_caps == cft_caps &&
+             other.cft_barrier_count == cft_barrier_count;
     }
 
     bool operator<(const Requirements& other) const {
@@ -123,7 +134,13 @@ class GpuDeviceCommunicator {
       if (gin_signal_count != other.gin_signal_count) {
         return gin_signal_count < other.gin_signal_count;
       }
-      return gin_connection_full < other.gin_connection_full;
+      if (gin_connection_full != other.gin_connection_full) {
+        return gin_connection_full < other.gin_connection_full;
+      }
+      if (cft_caps != other.cft_caps) {
+        return cft_caps < other.cft_caps;
+      }
+      return cft_barrier_count < other.cft_barrier_count;
     }
 
     int32_t barrier_count = 0;
@@ -133,6 +150,8 @@ class GpuDeviceCommunicator {
     int32_t rail_gin_barrier_count = 0;
     int32_t gin_signal_count = 0;
     bool gin_connection_full = false;
+    int32_t cft_caps = 0;
+    int32_t cft_barrier_count = 0;
   };
 
   static bool RequestsGin(const Requirements& reqs) {
@@ -147,6 +166,9 @@ class GpuDeviceCommunicator {
 
   // Returns the size of the load/store accessible communication.
   virtual int64_t lsa_size() const = 0;
+
+  // Returns the bitmask of GpuCftCap values the dev-comm actually granted.
+  virtual int32_t granted_cft_caps() const { return 0; }
 
   virtual std::string ToString() const = 0;
 
@@ -222,8 +244,13 @@ class GpuCommunicator : public Communicator {
   // a collective operation, and all ranks in a clique must call this operation
   // in order to make a progress.
   virtual absl::StatusOr<std::unique_ptr<SymmetricMemory>>
-  CreateSymmetricMemory(se::DeviceAddressBase addr) {
+  CreateSymmetricMemory(se::DeviceAddressBase addr, bool symmetric_window) {
     return Unimplemented("Symmetric memory is not implemented");
+  }
+
+  absl::StatusOr<std::unique_ptr<SymmetricMemory>> CreateSymmetricMemory(
+      se::DeviceAddressBase addr) {
+    return CreateSymmetricMemory(addr, /*symmetric_window=*/false);
   }
 
   //===--------------------------------------------------------------------===//
@@ -241,13 +268,14 @@ class GpuCommunicator : public Communicator {
                                        se::DeviceAddressBase recv_buffer,
                                        PrimitiveType dtype, size_t count,
                                        ReductionKind reduction_kind,
-                                       const Executor& executor) = 0;
+                                       const Executor& executor,
+                                       bool is_rma) = 0;
 
   virtual absl::Status LaunchBroadcast(se::DeviceAddressBase send_buffer,
                                        se::DeviceAddressBase recv_buffer,
                                        PrimitiveType dtype, size_t count,
-                                       RankId root,
-                                       const Executor& executor) = 0;
+                                       RankId root, const Executor& executor,
+                                       bool is_rma) = 0;
 
   // Reduces buffers of length `count` in `send_buffer` using `reduction_kind`
   // and writes the result only to `recv_buffer` on the `root` rank (NCCL
@@ -257,7 +285,7 @@ class GpuCommunicator : public Communicator {
                                     se::DeviceAddressBase recv_buffer,
                                     PrimitiveType dtype, size_t count,
                                     ReductionKind reduction_kind, RankId root,
-                                    const Executor& executor) {
+                                    const Executor& executor, bool is_rma) {
     return Unimplemented("LaunchReduce is not implemented");
   }
 
@@ -265,17 +293,20 @@ class GpuCommunicator : public Communicator {
                                            se::DeviceAddressBase recv_buffer,
                                            PrimitiveType dtype, size_t count,
                                            ReductionKind reduction_kind,
-                                           const Executor& executor) = 0;
+                                           const Executor& executor,
+                                           bool is_rma) = 0;
 
   virtual absl::Status LaunchAllGather(se::DeviceAddressBase send_buffer,
                                        se::DeviceAddressBase recv_buffer,
                                        PrimitiveType dtype, size_t count,
-                                       const Executor& executor) = 0;
+                                       const Executor& executor,
+                                       bool is_rma) = 0;
 
   virtual absl::Status LaunchAllToAll(
       absl::InlinedVector<se::DeviceAddressBase, 4> send_buffers,
       absl::InlinedVector<se::DeviceAddressBase, 4> recv_buffers,
-      PrimitiveType dtype, size_t count, const Executor& executor) = 0;
+      PrimitiveType dtype, size_t count, const Executor& executor,
+      bool is_rma) = 0;
 
   virtual absl::Status LaunchCollectivePermute(
       se::DeviceAddressBase send_buffer, se::DeviceAddressBase recv_buffer,
@@ -324,10 +355,20 @@ class GpuCommunicator : public Communicator {
     return Unimplemented("RecordMultiGpuBarrier is not implemented");
   }
 
-  virtual void InitializeCrossDeviceBarrier(
+  virtual absl::StatusOr<const se::CommandBuffer::Command*>
+  RecordMultiGpuBarrier(
+      se::CommandBuffer* command_buffer,
+      const se::CommandBuffer::Command* absl_nullable cmd,
+      absl::Span<const se::CommandBuffer::Command* const> dependencies) {
+    return Unimplemented("RecordMultiGpuBarrier is not implemented");
+  }
+
+  virtual absl::Status InitializeCrossDeviceBarrier(
       tsl::TiedRef<se::MemoryAllocation> tied_signal_value,
       tsl::TiedRef<se::MemoryAllocation> tied_signal,
-      tsl::TiedRef<SymmetricMemory> tied_symmetric_memory) {}
+      tsl::TiedRef<SymmetricMemory> tied_symmetric_memory) {
+    return Unimplemented("InitializeCrossDeviceBarrier is not implemented");
+  }
 
   virtual bool IsCrossDeviceBarrierInitiated() const { return false; }
 

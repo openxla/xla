@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -852,18 +853,27 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
     return HandleTernary(hlo);
   }
 
+  absl::Status HandleFma(HloInstruction* hlo) override {
+    return HandleTernary(hlo);
+  }
+
  private:
-  // Replace clamp/select ternary operation with a normalized one.
+  // Replace clamp/select/fma ternary operation with a normalized one.
   absl::Status HandleTernary(HloInstruction* hlo) {
     Shape s = hlo->shape();
     HloOpcode opcode = hlo->opcode();
-    TF_RET_CHECK(opcode == HloOpcode::kClamp || opcode == HloOpcode::kSelect);
+    TF_RET_CHECK(opcode == HloOpcode::kClamp || opcode == HloOpcode::kSelect ||
+                 opcode == HloOpcode::kFma);
     HloInstruction* arg0 = hlo->mutable_operand(0);
     HloInstruction* arg1 = hlo->mutable_operand(1);
     HloInstruction* arg2 = hlo->mutable_operand(2);
     if (opcode == HloOpcode::kClamp) {
       TF_RET_CHECK(arg1->shape().layout() == s.layout());
     } else if (opcode == HloOpcode::kSelect) {
+      TF_RET_CHECK(arg1->shape().layout() == s.layout());
+      TF_RET_CHECK(arg2->shape().layout() == s.layout());
+    } else if (opcode == HloOpcode::kFma) {
+      TF_RET_CHECK(arg0->shape().layout() == s.layout());
       TF_RET_CHECK(arg1->shape().layout() == s.layout());
       TF_RET_CHECK(arg2->shape().layout() == s.layout());
     } else {
@@ -951,8 +961,16 @@ class LayoutNormalizationVisitor : public DfsHloRewriteVisitor {
 absl::StatusOr<bool> LayoutNormalization::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  return LayoutNormalizationVisitor{this, custom_call_transformer_}.RunOnModule(
-      module, execution_threads);
+  LayoutNormalizationVisitor visitor(this, custom_call_transformer_);
+  for (HloComputation* computation :
+       module->MakeNonfusionComputations(execution_threads)) {
+    // Skip restricted async computations to avoid inserting bitcasts into them.
+    if (computation->IsRestrictedAsyncComputation()) {
+      continue;
+    }
+    ABSL_RETURN_IF_ERROR(computation->Accept(&visitor));
+  }
+  return visitor.changed();
 }
 
 }  // end namespace xla

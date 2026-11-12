@@ -23,12 +23,11 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "llvm/ADT/SmallVector.h"
-#include "mlir/IR/Builders.h"
 #include "mlir/IR/PatternMatch.h"
-#include "mlir/IR/Types.h"
 #include "mlir/Support/LLVM.h"
 #include "stablehlo/dialect/StablehloOps.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
+#include "xla/codegen/xtile/codegen/emitter_helpers.h"
 #include "xla/codegen/xtile/ir/xtile_ops.h"
 #include "xla/codegen/xtile/xtile_config.pb.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -74,17 +73,12 @@ absl::Status TrySetGpuBackendConfigForCollective(
     const GpuTopology& gpu_topology, HloFusionInstruction* fusion_instr,
     const DeviceAssignment* device_assignment = nullptr);
 
-// Adds the metadata arguments to the function's argument list.
-// For collective some extra metadata arguments are needed such as rank,
-// and pointers to remote GPU buffers.
-// The fn_arg_types is updated in place to add these.
-// Returns the number of metadata arguments added or error.
-absl::StatusOr<int32_t> AddCollectiveMetadataArguments(
-    llvm::SmallVector<mlir::Type>& fn_arg_types, mlir::ImplicitLocOpBuilder& b,
-    const HloComputation* hlo_computation);
+// Builds the collective entry function signature spec for `fusion`.
+absl::StatusOr<xla::xtile::CollectiveEntrySpec> BuildCollectiveEntrySpec(
+    const HloFusionInstruction& fusion);
 
-// Version of [AddCollectiveMetadataArguments] that does the same for
-// [emitters::KernelArgument] structure.
+// Returns the unmanaged kernel argument shapes (`[scratch..., signal, rank]`)
+// for a collective `fusion`.
 absl::StatusOr<std::vector<Shape>> GetCollectiveUnmanagedKernelArguments(
     const HloFusionInstruction* fusion);
 
@@ -112,16 +106,25 @@ absl::StatusOr<SymmetricMemoryType> GetSymmetricMemoryType(
     const GpuTopology& gpu_topology, const HloInstruction& instr,
     const DeviceAssignment* device_assignment = nullptr);
 // Creates a CollectiveKernelSpec for a given collective or fusion instruction.
-// `scratch_memory_type` is used for all scratch buffers.
+// `symmetric_memory_type` is used for collective symmetric buffers.
 absl::StatusOr<CollectiveKernelSpec> CreateCollectiveKernelSpec(
-    const HloInstruction* instr, const LaunchDimensions& launch_dimensions,
-    SymmetricMemoryType scratch_memory_type);
+    const GpuTopology& gpu_topology, const HloInstruction* instr,
+    const LaunchDimensions& launch_dimensions,
+    SymmetricMemoryType symmetric_memory_type,
+    const DeviceAssignment* device_assignment);
 
-// Reshapes a reduce-scatter fusion (whose root is a reduce-scatter that
-// satisfies IsReduceScatterFlattenable) to a 2D reduce-scatter along dimension
-// 0: the fused parameter becomes [R * R, OutputSize / R] and the root
-// [R, OutputSize / R], where R is the number of replicas per group.
-// Bitcasts are inserted around the fusion in the parent computation.
+// Returns true if `rs` needs to be reshaped by `FlattenReduceScatterFusion`
+// before tiling: either an output is not divisible by the replica group size
+// along the scatter dimension, or its per-rank element count is not a power of
+// two.
+bool ShouldFlattenReduceScatter(
+    const HloReduceScatterInstruction* absl_nonnull rs);
+
+// Reshapes a reduce-scatter fusion so every operand is scattered along dim 0
+// with output dim 0 equal to R (the number of ranks per group), and wraps the
+// fusion inputs and outputs in bitcasts in the parent computation.
+// For example, with R = 2, an operand `f32[2,4,8] -> f32[1,4,8]` is reshaped
+// to `f32[4,16] -> f32[2,16]`.
 absl::Status FlattenReduceScatterFusion(
     HloFusionInstruction* absl_nonnull fusion_instr);
 
@@ -129,6 +132,7 @@ absl::Status FlattenReduceScatterFusion(
 // reduce-scatter) of a collective fusion computation, or nullptr if there is
 // none.
 const HloInstruction* GetCollectiveHero(const HloComputation* computation);
+HloInstruction* GetMutableCollectiveHero(HloComputation* computation);
 
 }  // namespace xla::gpu
 #endif  // XLA_BACKENDS_GPU_CODEGEN_TRITON_COLLECTIVE_EMITTER_H_

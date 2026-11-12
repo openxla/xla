@@ -15,12 +15,14 @@
 """Tests for build module."""
 
 from collections.abc import Sequence
+import os
 import subprocess
 from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
+from build_tools.ci import bep_annotations
 from build_tools.ci import build
 
 
@@ -56,6 +58,88 @@ class BuildTest(parameterized.TestCase):
       self.assertIn(
           r"\openxla\xla\build_tools\ci\bazel_dns_windows.security",
           builds[build_type].startup_options.get("host_jvm_args", ""),
+      )
+
+  def test_default_and_jax_builds_disable_runfile_links_and_downloads(
+      self,
+  ) -> None:
+    builds = build.Build.all_builds()
+    for build_type in (
+        build.BuildType.XLA_LINUX_X86_CPU_GITHUB_ACTIONS,
+        build.BuildType.JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS,
+    ):
+      self.assertIs(
+          builds[build_type].options.get("build_runfile_links"), False
+      )
+      self.assertNotIn("remote_download_toplevel", builds[build_type].options)
+    for build_type in (
+        build.BuildType.JAX_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS,
+        build.BuildType.JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS,
+        build.BuildType.JAX_LINUX_X86_GPU_T4_GITHUB_ACTIONS,
+    ):
+      self.assertIs(
+          builds[build_type].options.get("build_runfile_links"), False
+      )
+      self.assertIs(
+          builds[build_type].options.get("remote_download_minimal"), True
+      )
+
+  def test_default_bazel_options_configure_diagnostic_logging(self) -> None:
+    builds = build.Build.all_builds()
+    for target_build in builds.values():
+      self.assertIs(target_build.options.get("show_timestamps"), True)
+      self.assertEqual(target_build.options.get("show_progress_rate_limit"), 5)
+      self.assertEqual(
+          target_build.options.get("experimental_remote_grpc_log"),
+          "bazel_remote_grpc.log",
+      )
+      self.assertEqual(
+          target_build.options.get("build_event_json_file"),
+          "build_events.json",
+      )
+
+  def test_xla_github_actions_ci_builds_enable_bazel_diff(self) -> None:
+    builds = build.Build.all_builds()
+    for build_type in (
+        build.BuildType.XLA_LINUX_X86_CPU_GITHUB_ACTIONS,
+        build.BuildType.XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS,
+        build.BuildType.XLA_LINUX_X86_CPU_WORKSPACE_GITHUB_ACTIONS,
+        build.BuildType.XLA_LINUX_ARM64_CPU_GITHUB_ACTIONS,
+        build.BuildType.XLA_LINUX_X86_GPU_T4_GITHUB_ACTIONS,
+        build.BuildType.XLA_LINUX_X86_GPU_8X_H100_GITHUB_ACTIONS,
+        build.BuildType.XLA_LINUX_X86_GPU_ONEAPI_GITHUB_ACTIONS,
+    ):
+      self.assertTrue(builds[build_type].use_bazel_diff)
+      self.assertTrue(builds[build_type].bazel_diff_use_cquery)
+    for build_type in (
+        # Hermetic ROCm is a compile-only RBE build where bazel-diff's two
+        # cquery passes cost more time than incremental target selection saves.
+        build.BuildType.XLA_LINUX_X86_GPU_HERMETIC_ROCM_GITHUB_ACTIONS,
+        build.BuildType.JAX_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS,
+        build.BuildType.JAX_WINDOWS_X86_CPU_GITHUB_ACTIONS,
+        build.BuildType.JAX_LINUX_X86_GPU_T4_GITHUB_ACTIONS,
+    ):
+      self.assertFalse(builds[build_type].use_bazel_diff)
+    self.assertIn(
+        "-//xla/stream_executor/sycl/...",
+        builds[
+            build.BuildType.XLA_WINDOWS_X86_CPU_GITHUB_ACTIONS
+        ].target_patterns,
+    )
+
+  def test_benchmark_presubmit_builds_enable_runfile_links_and_toplevel_downloads(
+      self,
+  ) -> None:
+    builds = build.Build.all_builds()
+    for build_type in (
+        build.BuildType.XLA_LINUX_X86_CPU_128_VCPU_PRESUBMIT_GITHUB_ACTIONS,
+        build.BuildType.XLA_LINUX_ARM64_CPU_48_VCPU_PRESUBMIT_GITHUB_ACTIONS,
+        build.BuildType.XLA_LINUX_X86_GPU_L4_16_VCPU_BENCHMARK_PRESUBMIT_GITHUB_ACTIONS,
+        build.BuildType.XLA_LINUX_X86_GPU_A4_224_VCPU_BENCHMARK_PRESUBMIT_GITHUB_ACTIONS,
+    ):
+      self.assertIs(builds[build_type].options.get("build_runfile_links"), True)
+      self.assertIs(
+          builds[build_type].options.get("remote_download_toplevel"), True
       )
 
   @parameterized.named_parameters(
@@ -121,7 +205,6 @@ class BuildTest(parameterized.TestCase):
       self, mock_sh: mock.MagicMock
   ) -> None:
     mock_sh.side_effect = [
-        subprocess.CompletedProcess(args=["parallel"], returncode=0),
         subprocess.CompletedProcess(args=["bazel"], returncode=2),
     ]
     target_build = build.Build.all_builds()[
@@ -129,7 +212,7 @@ class BuildTest(parameterized.TestCase):
     ]
     with self.assertRaisesRegex(SystemExit, "^2$"):
       build.execute_build_commands(target_build)
-    self.assertEqual(mock_sh.call_count, 2)
+    self.assertEqual(mock_sh.call_count, 1)
 
   @mock.patch.object(build, "sh", autospec=True, spec_set=True)
   def test_execute_build_commands_exit_code_4_with_target_pattern_file(
@@ -159,6 +242,127 @@ class BuildTest(parameterized.TestCase):
     with self.assertRaisesRegex(SystemExit, "^4$"):
       build.execute_build_commands(target_build, target_pattern_file=None)
     self.assertEqual(mock_sh.call_count, 3)
+
+  def test_bazel_command_excludes_manual_tags_with_target_pattern_file(
+      self,
+  ) -> None:
+    builds = build.Build.all_builds()
+    cpu_build = builds[build.BuildType.XLA_LINUX_X86_CPU_GITHUB_ACTIONS]
+
+    wildcard_cmd = cpu_build.bazel_command(target_pattern_file=None)
+    self.assertIn(
+        "--build_tag_filters=-no_oss,-gpu,-requires-gpu-nvidia,"
+        "-requires-gpu-amd,-requires-gpu-intel",
+        wildcard_cmd,
+    )
+    self.assertIn(
+        "--test_tag_filters=-no_oss,-gpu,-requires-gpu-nvidia,"
+        "-requires-gpu-amd,-requires-gpu-intel",
+        wildcard_cmd,
+    )
+
+    pattern_file_cmd = cpu_build.bazel_command(
+        target_pattern_file="/tmp/targets.txt"
+    )
+    self.assertIn(
+        "--build_tag_filters=-no_oss,-gpu,-requires-gpu-nvidia,"
+        "-requires-gpu-amd,-requires-gpu-intel,-manual",
+        pattern_file_cmd,
+    )
+    self.assertIn(
+        "--test_tag_filters=-no_oss,-gpu,-requires-gpu-nvidia,"
+        "-requires-gpu-amd,-requires-gpu-intel,-manual",
+        pattern_file_cmd,
+    )
+
+    empty_tag_build = builds[
+        build.BuildType.JAX_LINUX_X86_CPU_BZLMOD_GITHUB_ACTIONS
+    ]
+    empty_tag_cmd = empty_tag_build.bazel_command(
+        target_pattern_file="/tmp/targets.txt"
+    )
+    self.assertIn("--build_tag_filters=-manual", empty_tag_cmd)
+    self.assertIn("--test_tag_filters=-manual", empty_tag_cmd)
+
+  @mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=False)
+  @mock.patch.object(
+      bep_annotations, "emit_github_annotations", autospec=True, spec_set=True
+  )
+  @mock.patch.object(build, "sh", autospec=True, spec_set=True)
+  def test_execute_build_commands_emits_bep_annotations_on_failure(
+      self, mock_sh: mock.MagicMock, mock_emit: mock.MagicMock
+  ) -> None:
+    mock_sh.return_value = subprocess.CompletedProcess(
+        args=["bazel"], returncode=3
+    )
+    target_build = build.Build.all_builds()[
+        build.BuildType.XLA_LINUX_X86_CPU_GITHUB_ACTIONS
+    ]
+    with self.assertRaisesRegex(SystemExit, "^3$"):
+      build.execute_build_commands(target_build)
+    mock_emit.assert_called_once_with(
+        ["build_events.json"],
+        label="XLA_LINUX_X86_CPU_GITHUB_ACTIONS",
+        exit_code=3,
+    )
+
+  @mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=False)
+  @mock.patch.object(
+      bep_annotations, "emit_github_annotations", autospec=True, spec_set=True
+  )
+  @mock.patch.object(build, "sh", autospec=True, spec_set=True)
+  def test_execute_build_commands_skips_annotations_for_non_bazel_commands(
+      self, mock_sh: mock.MagicMock, mock_emit: mock.MagicMock
+  ) -> None:
+    mock_sh.return_value = subprocess.CompletedProcess(
+        args=["echo"], returncode=1
+    )
+    target_build = build.Build.all_builds()[
+        build.BuildType.XLA_LINUX_X86_CPU_GITHUB_ACTIONS
+    ]
+    with mock.patch.object(
+        build.Build, "commands", return_value=[["echo", "setup"]]
+    ):
+      with self.assertRaisesRegex(SystemExit, "^1$"):
+        build.execute_build_commands(target_build)
+    mock_emit.assert_not_called()
+
+  @mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=False)
+  @mock.patch.object(
+      bep_annotations, "emit_github_annotations", autospec=True, spec_set=True
+  )
+  @mock.patch.object(build, "sh", autospec=True, spec_set=True)
+  def test_execute_build_commands_does_not_emit_annotations_on_success(
+      self, mock_sh: mock.MagicMock, mock_emit: mock.MagicMock
+  ) -> None:
+    mock_sh.return_value = subprocess.CompletedProcess(
+        args=["bazel"], returncode=0
+    )
+    target_build = build.Build.all_builds()[
+        build.BuildType.XLA_LINUX_X86_CPU_GITHUB_ACTIONS
+    ]
+    build.execute_build_commands(target_build)
+    mock_emit.assert_not_called()
+
+  @mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=False)
+  @mock.patch.object(
+      bep_annotations, "emit_github_annotations", autospec=True, spec_set=True
+  )
+  @mock.patch.object(build, "sh", autospec=True, spec_set=True)
+  def test_execute_build_commands_emits_bep_annotations_on_interrupt(
+      self, mock_sh: mock.MagicMock, mock_emit: mock.MagicMock
+  ) -> None:
+    mock_sh.side_effect = KeyboardInterrupt()
+    target_build = build.Build.all_builds()[
+        build.BuildType.XLA_LINUX_X86_CPU_GITHUB_ACTIONS
+    ]
+    with self.assertRaises(KeyboardInterrupt):
+      build.execute_build_commands(target_build)
+    mock_emit.assert_called_once_with(
+        ["build_events.json"],
+        label="XLA_LINUX_X86_CPU_GITHUB_ACTIONS",
+        exit_code=130,
+    )
 
 
 if __name__ == "__main__":

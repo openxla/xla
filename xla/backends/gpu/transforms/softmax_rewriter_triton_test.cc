@@ -46,7 +46,6 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/threadpool.h"
-#include "xla/xla.pb.h"
 
 namespace xla {
 namespace gpu {
@@ -72,12 +71,9 @@ class SoftmaxRewriterTritonTest : public HloHardwareIndependentTestBase {
   se::DeviceDescription device_info_{TestGpuDeviceInfo::RTXA6000DeviceInfo()};
   mlir::MLIRContext mlir_context_;
   GpuAliasInfo alias_info_{device_info_};
-  SoftmaxRewriterTriton fusion_rewriter_{device_info_,
-                                         HloCostAnalysis::DefaultShapeSize,
-                                         &alias_info_,
-                                         &mlir_context_,
-                                         /*only_fuse_if_profitable=*/false,
-                                         /*use_experimental_tiling=*/true};
+  SoftmaxRewriterTriton fusion_rewriter_{
+      device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
+      &mlir_context_, /*only_fuse_if_profitable=*/false};
 };
 
 TEST_F(SoftmaxRewriterTritonTest, CanFuseSingleNormalizationF32) {
@@ -190,6 +186,32 @@ ENTRY main {
       module->entry_computation()->root_instruction();
   EXPECT_FALSE(IsTritonSupportedInstruction(
       *complex, device_info_.gpu_compute_capability()));
+  EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
+}
+
+TEST_F(SoftmaxRewriterTritonTest, DoesNotFuseDiamondWithParameterOnlyReducer) {
+  // Regression test for #50830: the `(a, b) -> b` combiner of a "take last"
+  // reduction has no neutral value, so padded lanes would be returned instead
+  // of the last element. The diamond must not be fused.
+  const std::string hlo_string = R"(
+HloModule take_last_reducer
+pick {
+  arg_0 = f32[] parameter(0)
+  ROOT arg_1 = f32[] parameter(1)
+}
+ENTRY main {
+  param_0 = f32[128,256]{1,0} parameter(0)
+  constant_0 = f32[] constant(0)
+  reduce = f32[128]{0} reduce(param_0, constant_0), dimensions={1}, to_apply=pick
+  broadcast = f32[128,256]{1,0} broadcast(reduce), dimensions={0}
+  ROOT multiply = f32[128,256]{1,0} multiply(param_0, broadcast)
+})";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  const HloInstruction* reduce =
+      module->entry_computation()->GetInstructionWithName("reduce");
+  ASSERT_NE(reduce, nullptr);
+  EXPECT_FALSE(IsTritonSupportedInstruction(
+      *reduce, device_info_.gpu_compute_capability()));
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
@@ -579,8 +601,7 @@ ENTRY main {
           TestGpuDeviceInfo::RTXA6000DeviceInfo(
               se::CudaComputeCapability{se::CudaComputeCapability::kVolta, 0}),
           HloCostAnalysis::DefaultShapeSize, &alias_info_, &mlir_context_,
-          /*only_fuse_if_profitable=*/false,
-          /*use_experimental_tiling=*/true)
+          /*only_fuse_if_profitable=*/false)
           .Run(module.get()),
       absl_testing::StatusIs(
           tsl::error::FAILED_PRECONDITION,
@@ -610,8 +631,7 @@ ENTRY main {
   EXPECT_TRUE(SoftmaxRewriterTriton(TestGpuDeviceInfo::AMDMI210DeviceInfo(),
                                     HloCostAnalysis::DefaultShapeSize,
                                     &alias_info_, &mlir_context_,
-                                    /*only_fuse_if_profitable=*/false,
-                                    /*use_experimental_tiling=*/true)
+                                    /*only_fuse_if_profitable=*/false)
                   .Run(module.get())
                   .ok());
 }
@@ -698,8 +718,7 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   SoftmaxRewriterTriton fusion_rewriter(
       device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
-      &mlir_context_, /*only_fuse_if_profitable=*/false,
-      /*use_experimental_tiling=*/true);
+      &mlir_context_, /*only_fuse_if_profitable=*/false);
   EXPECT_THAT(fusion_rewriter_.Run(module.get()), IsOkAndHolds(false));
 }
 
@@ -847,8 +866,7 @@ ENTRY main {
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
   SoftmaxRewriterTriton softmax_rewriter_triton(
       device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
-      &mlir_context_, /*only_fuse_if_profitable=*/false,
-      /*use_experimental_tiling=*/true);
+      &mlir_context_, /*only_fuse_if_profitable=*/false);
   int unmatched = 0, matched = 0;
   for (HloInstruction* instruction :
        module->entry_computation()->MakeInstructionPostOrder()) {
@@ -1103,12 +1121,9 @@ ENTRY main {
     // normalization diamond, because the row size is too large to fit in
     // registers.
     SoftmaxRewriterTriton fusion_rewriter_without_cost_model{
-        device_info_,
-        HloCostAnalysis::DefaultShapeSize,
-        &alias_info_,
+        device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
         &mlir_context_,
-        /*only_fuse_if_profitable=*/false,
-        /*use_experimental_tiling=*/true};
+        /*only_fuse_if_profitable=*/false};
 
     ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
     EXPECT_THAT(fusion_rewriter_without_cost_model.Run(module.get()),
@@ -1119,12 +1134,9 @@ ENTRY main {
     // SoftmaxRewriterTriton with Cost Model will discard the normalization
     // diamond, because row size is too large.
     SoftmaxRewriterTriton fusion_rewriter_with_cost_model{
-        device_info_,
-        HloCostAnalysis::DefaultShapeSize,
-        &alias_info_,
+        device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
         &mlir_context_,
-        /*only_fuse_if_profitable=*/true,
-        /*use_experimental_tiling=*/true};
+        /*only_fuse_if_profitable=*/true};
 
     ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
     EXPECT_THAT(fusion_rewriter_with_cost_model.Run(module.get()),
@@ -1186,8 +1198,7 @@ ENTRY main {
   SoftmaxRewriterTriton rewriter(
       device_info_, HloCostAnalysis::DefaultShapeSize, &alias_info_,
       &mlir_context_,
-      /*only_fuse_if_profitable=*/false,
-      /*use_experimental_tiling=*/true, &thread_pool, &mlir_context_pool);
+      /*only_fuse_if_profitable=*/false, &thread_pool, &mlir_context_pool);
   EXPECT_THAT(rewriter.Run(module.get()), IsOkAndHolds(true));
   EXPECT_TRUE(verifier().Run(module.get()).status().ok());
   EXPECT_THAT(

@@ -85,6 +85,16 @@ LocalDeviceState::LocalDeviceState(se::StreamExecutor* executor,
                << status;
   }
 
+  // Setting XLA_PJRT_GPU_HOST_WAIT_CROSS_DEVICE_COPIES to true makes a D2D copy
+  // wait on the host for events from other devices, instead of making its
+  // stream wait on them. See b/578068384.
+  status = tsl::ReadBoolFromEnvVar("XLA_PJRT_GPU_HOST_WAIT_CROSS_DEVICE_COPIES",
+                                   false, &host_wait_cross_device_copies_);
+  if (!status.ok()) {
+    LOG(ERROR) << "Failed to read XLA_PJRT_GPU_HOST_WAIT_CROSS_DEVICE_COPIES: "
+               << status;
+  }
+
   local_hardware_id_ = executor_->device_ordinal();
   local_device_id_ =
       device_ordinal != -1 ? device_ordinal : executor_->device_ordinal();
@@ -393,13 +403,11 @@ void LocalDeviceState::ReturnStreamToPool(std::unique_ptr<se::Stream> stream) {
 }
 
 absl::Status LocalDeviceState::AllocateAndRecordEvent(
-    AsyncWorkRunner* async_work_runner, BufferSequencingEventRef event,
-    se::Stream* stream, absl::string_view tag,
+    BufferSequencingEventRef event, se::Stream* stream, absl::string_view tag,
     absl::AnyInvocable<void() &&> cleanup) {
   auto status = [&]() {
-    ABSL_ASSIGN_OR_RETURN(
-        EventPool::Handle device_event,
-        event_pool().AllocateEvent(async_work_runner, stream->parent()));
+    ABSL_ASSIGN_OR_RETURN(EventPool::Handle device_event,
+                          event_pool().AllocateEvent(stream->parent()));
     event_pool().ThenRecordEvent(stream, device_event);
     event->SetSequencingEvent(std::move(device_event), stream);
     return ThenExecuteCallback(
@@ -443,9 +451,8 @@ LocalDeviceState::GetEventForComputeStreamSyncPoint(
   }
   next_compute_stream_sync_point_.store(cur_sync_point + 1);
   auto event = BufferSequencingEvent::Create(async_work_runner);
-  auto status =
-      AllocateAndRecordEvent(async_work_runner, event, compute_stream(),
-                             "GetEventForComputeStreamSyncPoint");
+  auto status = AllocateAndRecordEvent(event, compute_stream(),
+                                       "GetEventForComputeStreamSyncPoint");
   if (!status.ok()) {
     mu_.unlock();
     return status;

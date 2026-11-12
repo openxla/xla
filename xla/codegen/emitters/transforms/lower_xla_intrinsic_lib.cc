@@ -373,13 +373,15 @@ class LowerXlaIntrinsicLibPass
                  LowerIntrinsicPattern<ci::Log1p, mm::Log1pOp>,
                  LowerIntrinsicPattern<ci::Rsqrt, mm::RsqrtOp>,
                  LowerIntrinsicPattern<ci::Tanh, mm::TanhOp>,
-                 LowerIntrinsicPattern<ci::EigenAtan, mm::AtanOp>,
+                 LowerIntrinsicPattern<ci::Atan, mm::AtanOp>,
                  LowerIntrinsicPattern<ci::Sin, mm::SinOp>,
                  LowerIntrinsicPattern<ci::Cos, mm::CosOp>,
                  LowerIntrinsicPattern<ci::FpTrunc, ma::TruncFOp>,
                  LowerIntrinsicPattern<ci::Erf, mm::ErfOp>,
                  LowerIntrinsicPattern<ci::Sinh, mm::SinhOp>,
-                 LowerIntrinsicPattern<ci::Cosh, mm::CoshOp>>(context,
+                 LowerIntrinsicPattern<ci::Cosh, mm::CoshOp>,
+                 LowerIntrinsicPattern<ci::Asin, mm::AsinOp>,
+                 LowerIntrinsicPattern<ci::Acos, mm::AcosOp>>(context,
                                                               cpu_features);
     patterns.add<FoldSinOfNeg, FoldCosOfNeg>(context, /*benefit=*/2);
     if (mlir::failed(

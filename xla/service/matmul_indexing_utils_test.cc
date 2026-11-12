@@ -410,11 +410,11 @@ TEST(DotOperandDimsTest, PermuteToConsecutive) {
 
   auto permutation = dims.PermuteToConsecutive(DotOperandDims::kContracting);
   EXPECT_TRUE(permutation.has_value());
-  EXPECT_THAT(*permutation, ElementsAre(0, 1, 3, 5, 2, 4));
+  EXPECT_THAT(*permutation, ElementsAre(0, 1, 3, 2, 4, 5));
 
-  EXPECT_THAT(dims.Indices(DotOperandDims::kBatch), ElementsAre(0, 3));
+  EXPECT_THAT(dims.Indices(DotOperandDims::kBatch), ElementsAre(0, 5));
   EXPECT_THAT(dims.Indices(DotOperandDims::kNonContracting), ElementsAre(1, 2));
-  EXPECT_THAT(dims.Indices(DotOperandDims::kContracting), ElementsAre(4, 5));
+  EXPECT_THAT(dims.Indices(DotOperandDims::kContracting), ElementsAre(3, 4));
 }
 
 TEST(DotOperandDimsTest, PermuteToConsecutiveAlreadyConsecutive) {
@@ -435,11 +435,11 @@ TEST(DotOperandDimsTest, PermuteToConsecutiveUnsorted) {
 
   auto permutation = dims.PermuteToConsecutive(DotOperandDims::kContracting);
   ASSERT_TRUE(permutation.has_value());
-  EXPECT_THAT(*permutation, ElementsAre(0, 1, 2, 5, 4, 3));
+  EXPECT_THAT(*permutation, ElementsAre(0, 1, 2, 4, 3, 5));
 
-  EXPECT_THAT(dims.Indices(DotOperandDims::kBatch), ElementsAre(0, 3));
+  EXPECT_THAT(dims.Indices(DotOperandDims::kBatch), ElementsAre(0, 5));
   EXPECT_THAT(dims.Indices(DotOperandDims::kNonContracting), ElementsAre(1, 2));
-  EXPECT_THAT(dims.Indices(DotOperandDims::kContracting), ElementsAre(4, 5));
+  EXPECT_THAT(dims.Indices(DotOperandDims::kContracting), ElementsAre(3, 4));
 }
 
 TEST(DotOperandDimsTest, MapBackwardThroughTranspose) {
@@ -917,6 +917,42 @@ TEST(DotOperandDimsTest, FoldBackwardDegenerateDimensions) {
                                  /*contracting_dims=*/{2});
   ASSERT_OK_AND_ASSIGN(folded, transposed_dims.FoldBackward(transpose_tracker));
   EXPECT_FALSE(folded.has_value());
+}
+
+TEST(DotOperandDimsTest,
+     MapForwardAndBackwardThroughTrackerRejectBroadcastAndReduce) {
+  ASSERT_OK_AND_ASSIGN(Shape broadcast_in, ParseShape("f32[2,3]"));
+  ShapeTracker broadcast_tracker(broadcast_in);
+  ASSERT_OK(broadcast_tracker.AppendBroadcast({4, 2, 3}, {1, 2}));
+
+  DotOperandDims in_dims(broadcast_in, /*batch_dims=*/{},
+                         /*non_contracting_dims=*/{0},
+                         /*contracting_dims=*/{1});
+  EXPECT_THAT(in_dims.MapForward(broadcast_tracker),
+              absl_testing::IsOkAndHolds(::testing::Eq(std::nullopt)));
+
+  DotOperandDims out_dims(broadcast_tracker.output_shape(), /*batch_dims=*/{0},
+                          /*non_contracting_dims=*/{1},
+                          /*contracting_dims=*/{2});
+  EXPECT_THAT(out_dims.MapBackward(broadcast_tracker),
+              absl_testing::IsOkAndHolds(::testing::Eq(std::nullopt)));
+
+  ASSERT_OK_AND_ASSIGN(Shape reduce_in, ParseShape("f32[4,2,3]"));
+  ShapeTracker reduce_tracker(reduce_in);
+  ASSERT_OK(reduce_tracker.AppendReduce({0}));
+
+  DotOperandDims reduce_in_dims(reduce_in, /*batch_dims=*/{0},
+                                /*non_contracting_dims=*/{1},
+                                /*contracting_dims=*/{2});
+  EXPECT_THAT(reduce_in_dims.MapForward(reduce_tracker),
+              absl_testing::IsOkAndHolds(::testing::Eq(std::nullopt)));
+
+  DotOperandDims reduce_out_dims(reduce_tracker.output_shape(),
+                                 /*batch_dims=*/{},
+                                 /*non_contracting_dims=*/{0},
+                                 /*contracting_dims=*/{1});
+  EXPECT_THAT(reduce_out_dims.MapBackward(reduce_tracker),
+              absl_testing::IsOkAndHolds(::testing::Eq(std::nullopt)));
 }
 
 }  // namespace

@@ -1,5 +1,14 @@
 # PJRT C API changelog
 
+## 0.118
+
+*   Added `local_device_id` and `memory_kind_id` fields to `PJRT_Memory`.
+
+## 0.117
+
+*   Added `device_layout` to `PJRT_Client_CreateErrorBuffer_Args` and deprecated
+    `shape_layout`.
+
 ## 0.116
 
 *   Added `custom_options` and `num_custom_options` fields to

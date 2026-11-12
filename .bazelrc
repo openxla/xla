@@ -18,12 +18,15 @@ common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
 common:clang_local --noincompatible_enable_cc_toolchain_resolution
 common:clang_local --@rules_ml_toolchain//common:enable_hermetic_cc=False
 common:clang_local --repo_env USE_HERMETIC_CC_TOOLCHAIN=0
+common:clang_local --@llvm-project//llvm:use_libunwind_for_eh_frame_registration=false
 
 # Error on struct/class mismatches, since this causes link failures on Windows.
 common:clang --copt=-Werror=mismatched-tags
 
 common:clang-tidy-common --aspects=@bazel_clang_tidy//clang_tidy:clang_tidy.bzl%clang_tidy_aspect
 common:clang-tidy-common --output_groups=report
+common:clang-tidy-common --remote_download_toplevel
+common:clang-tidy-common --strategy=ClangTidy=local
 common:clang-tidy-common --@bazel_clang_tidy//:clang_tidy_executable=//build_tools/ci:clang_tidy_bin
 
 common:clang-tidy --config=clang-tidy-common

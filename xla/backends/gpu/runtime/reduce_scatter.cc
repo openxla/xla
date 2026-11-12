@@ -112,13 +112,12 @@ bool IsReduceScatterFlattenable(const HloReduceScatterInstruction* rs) {
 }
 
 // A broader check for reduce-scatter kernel support that verifies device,
-// operand count, replica group, reduction computation, element-type, layout,
-// and size constraints.
+// replica group, reduction computation, element-type, layout, and size
+// constraints.
 // Returns absl::OkStatus() if supported, or an absl::UnimplementedError
 // explaining why not.
 absl::Status IsReduceScatterKernelSupported(
     const se::DeviceDescription& device_info,        //
-    int32_t num_operands,                            //
     std::optional<ReductionKind> reduction_kind,     //
     int64_t num_devices,                             //
     int64_t num_output_elements,                     //
@@ -133,11 +132,6 @@ absl::Status IsReduceScatterKernelSupported(
         "Got: %s.",
         device_info.gpu_compute_capability().ToString()));
   }
-  // TODO(b/383125489): Support variadic arguments.
-  if (num_operands != 1) {
-    return absl::UnimplementedError(
-        "Reduce-scatter kernel only supports a single operand.");
-  }
   if (replica_groups.empty()) {
     return absl::UnimplementedError(
         "Replica groups must be explicitly provided for collective kernels.");
@@ -145,6 +139,11 @@ absl::Status IsReduceScatterKernelSupported(
   if (!is_local) {
     return absl::UnimplementedError(
         "Cross-host symmetric memory collectives are not supported.");
+  }
+  if (num_devices == 1) {
+    return absl::UnimplementedError(
+        "Degenerate collectives with a single device per replica group are not "
+        "supported by collective kernels.");
   }
   if (!llvm::has_single_bit(static_cast<uint64_t>(num_devices))) {
     return absl::UnimplementedError(absl::StrFormat(
@@ -211,6 +210,11 @@ absl::StatusOr<ReduceScatterInfo> BuildReduceScatterInfo(
     return absl::UnimplementedError(
         "Reduce-scatter kernel requires at least one operand.");
   }
+  if (num_operands > kReduceScatterMaxNumOperands) {
+    return absl::UnimplementedError(absl::StrFormat(
+        "Reduce-scatter kernel supports at most %d operands. Got %d.",
+        kReduceScatterMaxNumOperands, num_operands));
+  }
   if (device_info.device_interconnect_info().active_links <= 0) {
     return absl::UnimplementedError(
         "Collective kernels are only supported on devices with NVLink "
@@ -241,9 +245,8 @@ absl::StatusOr<ReduceScatterInfo> BuildReduceScatterInfo(
     const int64_t output_elements =
         ShapeUtil::ElementsIn(OutputShape(reduce_scatter, k));
     ABSL_RETURN_IF_ERROR(IsReduceScatterKernelSupported(
-        device_info, num_operands, reduction_kind, num_devices, output_elements,
-        element_type, is_flattenable, is_local,
-        reduce_scatter->replica_groups()));
+        device_info, reduction_kind, num_devices, output_elements, element_type,
+        is_flattenable, is_local, reduce_scatter->replica_groups()));
     num_output_elements = std::max(num_output_elements, output_elements);
   }
   return ReduceScatterInfo{
@@ -274,7 +277,7 @@ absl::StatusOr<CollectiveKernelSpec> CreateReduceScatterKernelSpec(
   codegen_config.sync_count_increment = 1u;
   codegen_config.device_sync_count = true;
   // Argument layout (must match the Triton entry function): inputs, outputs,
-  // rank, signal flags, one remote scratch table per operand.
+  // one remote scratch table per operand, signal flags, rank.
   for (int32_t i = 0; i < num_operands; ++i) {
     codegen_config.input_buffer_specs.push_back(
         {/*requires_multimem=*/false, SymmetricMemoryType::kNone});
@@ -287,10 +290,6 @@ absl::StatusOr<CollectiveKernelSpec> CreateReduceScatterKernelSpec(
     codegen_config.argument_descriptors.push_back(
         {KernelArgType::kOutputBuffer, /*index=*/i});
   }
-  codegen_config.argument_descriptors.push_back({KernelArgType::kRuntimeRank});
-  // Signal buffers.
-  codegen_config.argument_descriptors.push_back(
-      {KernelArgType::kScratchBuffer, /*index=*/0});
   kernel_spec.scratch_buffers.push_back({signal_size,
                                          /*requires_multimem=*/false,
                                          scratch_memory_type,
@@ -311,6 +310,9 @@ absl::StatusOr<CollectiveKernelSpec> CreateReduceScatterKernelSpec(
                                            /*should_memzero=*/false,
                                            /*should_double_buffer=*/true});
   }
+  codegen_config.argument_descriptors.push_back(
+      {KernelArgType::kScratchBuffer, /*index=*/0});
+  codegen_config.argument_descriptors.push_back({KernelArgType::kRuntimeRank});
   return kernel_spec;
 }
 

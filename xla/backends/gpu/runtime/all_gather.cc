@@ -67,7 +67,7 @@ std::vector<PrimitiveType> SupportedAllGatherTypes(
 // explaining why not.
 absl::Status IsAllGatherKernelSupported(
     const se::DeviceDescription& device_info, int64_t num_devices,
-    int64_t num_elements, int64_t per_rank_gather_dim_size,
+    int64_t num_output_elements, int64_t per_rank_gather_dim_size,
     PrimitiveType element_type, bool is_local,
     const std::vector<ReplicaGroup>& replica_groups) {
   // Check if the device supports Triton collective codegen:
@@ -97,6 +97,11 @@ absl::Status IsAllGatherKernelSupported(
     return absl::UnimplementedError(
         "Cross-host symmetric memory collectives are not supported.");
   }
+  if (num_devices == 1) {
+    return absl::UnimplementedError(
+        "Degenerate collectives with a single device per replica group are not "
+        "supported by collective kernels.");
+  }
   if (!llvm::has_single_bit(static_cast<uint64_t>(num_devices))) {
     return absl::UnimplementedError(absl::StrFormat(
         "Collective kernels are only supported for power of 2 number of "
@@ -124,7 +129,7 @@ absl::Status IsAllGatherKernelSupported(
   }
 
   const int64_t output_byte_size =
-      num_elements * num_devices * primitive_util::ByteWidth(element_type);
+      num_output_elements * primitive_util::ByteWidth(element_type);
   if (output_byte_size > kMaxAllGatherSizeBytes) {
     return absl::UnimplementedError(
         "Custom all-gather strategy is only supported for small outputs.");
@@ -148,6 +153,11 @@ absl::StatusOr<AllGatherInfo> BuildAllGatherInfo(
   }
   const int64_t num_devices =
       all_gather->device_list()->num_devices_per_group();
+  if (all_gather->operand_count() > kAllGatherMaxNumOperands) {
+    return absl::UnimplementedError(absl::StrFormat(
+        "All-gather kernel supports at most %d operands. Got %d.",
+        kAllGatherMaxNumOperands, all_gather->operand_count()));
+  }
   if (device_info.device_interconnect_info().active_links <= 0) {
     return absl::UnimplementedError(
         "Collective kernels are only supported on devices with NVLink/UALink "
@@ -157,21 +167,21 @@ absl::StatusOr<AllGatherInfo> BuildAllGatherInfo(
       const bool is_local,
       AreAllReplicasOnSameSlice(gpu_topology, *all_gather, device_assignment));
 
-  int64_t num_elements = 0;
+  int64_t max_output_elements = 0;
   for (const HloInstruction* operand : all_gather->operands()) {
-    const int64_t operand_elements = ShapeUtil::ElementsIn(operand->shape());
+    const int64_t output_elements =
+        ShapeUtil::ElementsIn(operand->shape()) * num_devices;
     const int64_t per_rank_gather_dim_size =
         operand->shape().dimensions(all_gather->all_gather_dimension());
     ABSL_RETURN_IF_ERROR(IsAllGatherKernelSupported(
-        device_info, num_devices, operand_elements, per_rank_gather_dim_size,
+        device_info, num_devices, output_elements, per_rank_gather_dim_size,
         operand->shape().element_type(), is_local,
         all_gather->replica_groups()));
-    num_elements = std::max(num_elements, operand_elements);
+    max_output_elements = std::max(max_output_elements, output_elements);
   }
   return AllGatherInfo{
       /*.num_devices =*/num_devices,
-      /*.num_elements =*/num_elements,
-      /*.element_type =*/all_gather->operand(0)->shape().element_type(),
+      /*.max_output_elements =*/max_output_elements,
   };
 }
 
@@ -195,7 +205,7 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
   codegen_config.copy_input_to_scratch = false;
   codegen_config.sync_count_increment = 1u;
   // Argument layout (must match the Triton entry function): inputs, outputs,
-  // rank, invocation count, signal flags, one remote scratch table per operand.
+  // one remote scratch table per operand, signal flags, rank.
   for (int32_t i = 0; i < num_operands; ++i) {
     codegen_config.input_buffer_specs.push_back(
         {/*requires_multimem=*/false, SymmetricMemoryType::kNone});
@@ -208,32 +218,29 @@ absl::StatusOr<CollectiveKernelSpec> CreateAllGatherKernelSpec(
     codegen_config.argument_descriptors.push_back(
         {KernelArgType::kOutputBuffer, /*index=*/i});
   }
-  codegen_config.argument_descriptors.push_back({KernelArgType::kRuntimeRank});
-  codegen_config.argument_descriptors.push_back(
-      {KernelArgType::kInvocationCount});
-  // Signal buffers.
-  codegen_config.argument_descriptors.push_back(
-      {KernelArgType::kScratchBuffer, /*index=*/0});
   kernel_spec.scratch_buffers.push_back({signal_size,
                                          /*requires_multimem=*/false,
                                          scratch_memory_type,
                                          /*should_memzero=*/true,
                                          /*should_double_buffer=*/true});
-  // One symmetric scratch buffer per operand that holds one rank's slice
-  // (= input size). Double-buffering is handled by the should_double_buffer
+  // One symmetric scratch buffer per operand that holds all ranks' slices
+  // (= output size). Double-buffering is handled by the should_double_buffer
   // flag.
   for (int32_t i = 0; i < num_operands; ++i) {
-    const int64_t remote_size = xla::RoundUpTo<uint64_t>(
-        ShapeUtil::ByteSizeOf(instr->operand(i)->shape()),
+    const int64_t output_size = xla::RoundUpTo<uint64_t>(
+        ShapeUtil::ByteSizeOf(instr->operand(i)->shape()) * group_size,
         kXlaAllocatedBufferAlignBytes);
     codegen_config.argument_descriptors.push_back(
         {KernelArgType::kScratchBuffer, /*index=*/1 + i});
-    kernel_spec.scratch_buffers.push_back({remote_size,
+    kernel_spec.scratch_buffers.push_back({output_size,
                                            /*requires_multimem=*/false,
                                            scratch_memory_type,
                                            /*should_memzero=*/false,
                                            /*should_double_buffer=*/true});
   }
+  codegen_config.argument_descriptors.push_back(
+      {KernelArgType::kScratchBuffer, /*index=*/0});
+  codegen_config.argument_descriptors.push_back({KernelArgType::kRuntimeRank});
   return kernel_spec;
 }
 

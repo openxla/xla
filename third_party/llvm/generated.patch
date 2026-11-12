@@ -1,1 +1,504 @@
 Auto generated patch. Do not edit or delete it, even if empty.
+diff -ruN --strip-trailing-cr a/llvm/include/llvm/ADT/DenseMap.h b/llvm/include/llvm/ADT/DenseMap.h
+--- a/llvm/include/llvm/ADT/DenseMap.h
++++ b/llvm/include/llvm/ADT/DenseMap.h
+@@ -1360,9 +1360,8 @@
+ template <typename KeyT, typename ValueT,
+           typename KeyInfoT = DenseMapInfo<KeyT>,
+           typename BucketT = llvm::detail::DenseMapPair<KeyT, ValueT>>
+-class LLVM_ATTRIBUTE_WARN_UNUSED DenseMap
+-    : public DenseMapBase<densemap::detail::DenseMapStorage<BucketT>, KeyT,
+-                          ValueT, KeyInfoT, BucketT> {
++class DenseMap : public DenseMapBase<densemap::detail::DenseMapStorage<BucketT>,
++                                     KeyT, ValueT, KeyInfoT, BucketT> {
+   using BaseT = DenseMapBase<densemap::detail::DenseMapStorage<BucketT>, KeyT,
+                              ValueT, KeyInfoT, BucketT>;
+ 
+diff -ruN --strip-trailing-cr a/llvm/lib/Target/AMDGPU/AMDGPUInstructionSelector.cpp b/llvm/lib/Target/AMDGPU/AMDGPUInstructionSelector.cpp
+--- a/llvm/lib/Target/AMDGPU/AMDGPUInstructionSelector.cpp
++++ b/llvm/lib/Target/AMDGPU/AMDGPUInstructionSelector.cpp
+@@ -4564,10 +4564,10 @@
+ 
+   if (!WaveAddr) {
+     WaveAddr = MRI->createVirtualRegister(&AMDGPU::SReg_32RegClass);
+-    BuildMI(*MBB, MI, DL, TII.get(AMDGPU::S_LSHR_B32), WaveAddr)
+-      .addReg(SrcReg)
+-      .addImm(Subtarget->getWavefrontSizeLog2())
+-      .setOperandDead(3); // Dead scc
++    BuildMI(*MBB, MI, DL, TII.get(AMDGPU::S_LSHL_B32), WaveAddr)
++        .addReg(SrcReg)
++        .addImm(Subtarget->getWavefrontSizeLog2())
++        .setOperandDead(3); // Dead scc
+   }
+ 
+   BuildMI(*MBB, &MI, DL, TII.get(AMDGPU::COPY), SP)
+diff -ruN --strip-trailing-cr a/llvm/lib/Transforms/Instrumentation/ControlHeightReduction.cpp b/llvm/lib/Transforms/Instrumentation/ControlHeightReduction.cpp
+--- a/llvm/lib/Transforms/Instrumentation/ControlHeightReduction.cpp
++++ b/llvm/lib/Transforms/Instrumentation/ControlHeightReduction.cpp
+@@ -1682,6 +1682,16 @@
+ 
+   assert(Scope->RegInfos.size() >= 1 && "Should have at least one Region");
+ 
++  // An outer scope may have hoisted one of our selects out of this scope.
++  // It can no longer be specialized under this scope's merged branch, and
++  // may also be the cached branch insertion point.
++  // TODO: Add inner selects to Unhoistables to avoid hoisting them out of
++  // their scopes and allow those scopes to be transformed.
++  for (const RegInfo &RI : Scope->CHRRegions)
++    for (SelectInst *SI : RI.Selects)
++      if (!Scope->contains(SI))
++        return;
++
+   for (RegInfo &RI : Scope->RegInfos) {
+     const Region *R = RI.R;
+     unsigned Duplication = getRegionDuplicationCount(R);
+diff -ruN --strip-trailing-cr a/llvm/test/CodeGen/AMDGPU/GlobalISel/inst-select-stacksave-stackrestore.mir b/llvm/test/CodeGen/AMDGPU/GlobalISel/inst-select-stacksave-stackrestore.mir
+--- a/llvm/test/CodeGen/AMDGPU/GlobalISel/inst-select-stacksave-stackrestore.mir
++++ b/llvm/test/CodeGen/AMDGPU/GlobalISel/inst-select-stacksave-stackrestore.mir
+@@ -32,15 +32,15 @@
+     ; GFX10-WAVE32: liveins: $sgpr10
+     ; GFX10-WAVE32-NEXT: {{  $}}
+     ; GFX10-WAVE32-NEXT: [[COPY:%[0-9]+]]:sreg_32 = COPY $sgpr32
+-    ; GFX10-WAVE32-NEXT: [[S_LSHR_B32_:%[0-9]+]]:sreg_32 = S_LSHR_B32 [[COPY]], 5, implicit-def dead $scc
+-    ; GFX10-WAVE32-NEXT: $sgpr32 = COPY [[S_LSHR_B32_]]
++    ; GFX10-WAVE32-NEXT: [[S_LSHL_B32_:%[0-9]+]]:sreg_32 = S_LSHL_B32 [[COPY]], 5, implicit-def dead $scc
++    ; GFX10-WAVE32-NEXT: $sgpr32 = COPY [[S_LSHL_B32_]]
+     ;
+     ; GFX10-WAVE64-LABEL: name: stackrestore_direct_sp_sgpr
+     ; GFX10-WAVE64: liveins: $sgpr10
+     ; GFX10-WAVE64-NEXT: {{  $}}
+     ; GFX10-WAVE64-NEXT: [[COPY:%[0-9]+]]:sreg_32 = COPY $sgpr32
+-    ; GFX10-WAVE64-NEXT: [[S_LSHR_B32_:%[0-9]+]]:sreg_32 = S_LSHR_B32 [[COPY]], 6, implicit-def dead $scc
+-    ; GFX10-WAVE64-NEXT: $sgpr32 = COPY [[S_LSHR_B32_]]
++    ; GFX10-WAVE64-NEXT: [[S_LSHL_B32_:%[0-9]+]]:sreg_32 = S_LSHL_B32 [[COPY]], 6, implicit-def dead $scc
++    ; GFX10-WAVE64-NEXT: $sgpr32 = COPY [[S_LSHL_B32_]]
+     %0:sgpr(p5) = COPY $sgpr32
+     G_STACKRESTORE %0
+ 
+@@ -58,15 +58,15 @@
+     ; GFX10-WAVE32: liveins: $sgpr10
+     ; GFX10-WAVE32-NEXT: {{  $}}
+     ; GFX10-WAVE32-NEXT: [[COPY:%[0-9]+]]:sreg_32 = COPY $sgpr10
+-    ; GFX10-WAVE32-NEXT: [[S_LSHR_B32_:%[0-9]+]]:sreg_32 = S_LSHR_B32 [[COPY]], 5, implicit-def dead $scc
+-    ; GFX10-WAVE32-NEXT: $sgpr32 = COPY [[S_LSHR_B32_]]
++    ; GFX10-WAVE32-NEXT: [[S_LSHL_B32_:%[0-9]+]]:sreg_32 = S_LSHL_B32 [[COPY]], 5, implicit-def dead $scc
++    ; GFX10-WAVE32-NEXT: $sgpr32 = COPY [[S_LSHL_B32_]]
+     ;
+     ; GFX10-WAVE64-LABEL: name: stackrestore_any_sgpr
+     ; GFX10-WAVE64: liveins: $sgpr10
+     ; GFX10-WAVE64-NEXT: {{  $}}
+     ; GFX10-WAVE64-NEXT: [[COPY:%[0-9]+]]:sreg_32 = COPY $sgpr10
+-    ; GFX10-WAVE64-NEXT: [[S_LSHR_B32_:%[0-9]+]]:sreg_32 = S_LSHR_B32 [[COPY]], 6, implicit-def dead $scc
+-    ; GFX10-WAVE64-NEXT: $sgpr32 = COPY [[S_LSHR_B32_]]
++    ; GFX10-WAVE64-NEXT: [[S_LSHL_B32_:%[0-9]+]]:sreg_32 = S_LSHL_B32 [[COPY]], 6, implicit-def dead $scc
++    ; GFX10-WAVE64-NEXT: $sgpr32 = COPY [[S_LSHL_B32_]]
+     %0:sgpr(p5) = COPY $sgpr10
+     G_STACKRESTORE %0
+ 
+diff -ruN --strip-trailing-cr a/llvm/test/CodeGen/AMDGPU/stacksave_stackrestore.ll b/llvm/test/CodeGen/AMDGPU/stacksave_stackrestore.ll
+--- a/llvm/test/CodeGen/AMDGPU/stacksave_stackrestore.ll
++++ b/llvm/test/CodeGen/AMDGPU/stacksave_stackrestore.ll
+@@ -669,20 +669,20 @@
+ ; GISEL-WAVE32-OPT-LABEL: func_stackrestore_poison:
+ ; GISEL-WAVE32-OPT:       ; %bb.0:
+ ; GISEL-WAVE32-OPT-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE32-OPT-NEXT:    s_lshr_b32 s32, s4, 5
++; GISEL-WAVE32-OPT-NEXT:    s_lshl_b32 s32, s4, 5
+ ; GISEL-WAVE32-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE64-OPT-LABEL: func_stackrestore_poison:
+ ; GISEL-WAVE64-OPT:       ; %bb.0:
+ ; GISEL-WAVE64-OPT-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE64-OPT-NEXT:    s_lshr_b32 s32, s4, 6
++; GISEL-WAVE64-OPT-NEXT:    s_lshl_b32 s32, s4, 6
+ ; GISEL-WAVE64-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE32-O0-LABEL: func_stackrestore_poison:
+ ; GISEL-WAVE32-O0:       ; %bb.0:
+ ; GISEL-WAVE32-O0-NEXT:    ; implicit-def: $sgpr4
+ ; GISEL-WAVE32-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE32-O0-NEXT:    s_lshr_b32 s4, s4, 5
++; GISEL-WAVE32-O0-NEXT:    s_lshl_b32 s4, s4, 5
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE32-O0-NEXT:    s_setpc_b64 s[30:31]
+ ;
+@@ -690,7 +690,7 @@
+ ; GISEL-WAVE64-O0:       ; %bb.0:
+ ; GISEL-WAVE64-O0-NEXT:    ; implicit-def: $sgpr4
+ ; GISEL-WAVE64-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE64-O0-NEXT:    s_lshr_b32 s4, s4, 6
++; GISEL-WAVE64-O0-NEXT:    s_lshl_b32 s4, s4, 6
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE64-O0-NEXT:    s_setpc_b64 s[30:31]
+   call void @llvm.stackrestore.p5(ptr addrspace(5) poison)
+@@ -750,7 +750,7 @@
+ ; GISEL-WAVE32-O0:       ; %bb.0:
+ ; GISEL-WAVE32-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s4, 0
+-; GISEL-WAVE32-O0-NEXT:    s_lshr_b32 s4, s4, 5
++; GISEL-WAVE32-O0-NEXT:    s_lshl_b32 s4, s4, 5
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE32-O0-NEXT:    s_setpc_b64 s[30:31]
+ ;
+@@ -758,7 +758,7 @@
+ ; GISEL-WAVE64-O0:       ; %bb.0:
+ ; GISEL-WAVE64-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s4, 0
+-; GISEL-WAVE64-O0-NEXT:    s_lshr_b32 s4, s4, 6
++; GISEL-WAVE64-O0-NEXT:    s_lshl_b32 s4, s4, 6
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE64-O0-NEXT:    s_setpc_b64 s[30:31]
+   call void @llvm.stackrestore.p5(ptr addrspace(5) zeroinitializer)
+@@ -805,20 +805,20 @@
+ ; GISEL-WAVE32-OPT-LABEL: func_stackrestore_neg1:
+ ; GISEL-WAVE32-OPT:       ; %bb.0:
+ ; GISEL-WAVE32-OPT-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE32-OPT-NEXT:    s_mov_b32 s32, 0x7ffffff
++; GISEL-WAVE32-OPT-NEXT:    s_movk_i32 s32, 0xffe0
+ ; GISEL-WAVE32-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE64-OPT-LABEL: func_stackrestore_neg1:
+ ; GISEL-WAVE64-OPT:       ; %bb.0:
+ ; GISEL-WAVE64-OPT-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE64-OPT-NEXT:    s_mov_b32 s32, 0x3ffffff
++; GISEL-WAVE64-OPT-NEXT:    s_movk_i32 s32, 0xffc0
+ ; GISEL-WAVE64-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE32-O0-LABEL: func_stackrestore_neg1:
+ ; GISEL-WAVE32-O0:       ; %bb.0:
+ ; GISEL-WAVE32-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s4, -1
+-; GISEL-WAVE32-O0-NEXT:    s_lshr_b32 s4, s4, 5
++; GISEL-WAVE32-O0-NEXT:    s_lshl_b32 s4, s4, 5
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE32-O0-NEXT:    s_setpc_b64 s[30:31]
+ ;
+@@ -826,7 +826,7 @@
+ ; GISEL-WAVE64-O0:       ; %bb.0:
+ ; GISEL-WAVE64-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s4, -1
+-; GISEL-WAVE64-O0-NEXT:    s_lshr_b32 s4, s4, 6
++; GISEL-WAVE64-O0-NEXT:    s_lshl_b32 s4, s4, 6
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE64-O0-NEXT:    s_setpc_b64 s[30:31]
+   call void @llvm.stackrestore.p5(ptr addrspace(5) inttoptr (i32 -1 to ptr addrspace(5)))
+@@ -873,20 +873,20 @@
+ ; GISEL-WAVE32-OPT-LABEL: func_stackrestore_42:
+ ; GISEL-WAVE32-OPT:       ; %bb.0:
+ ; GISEL-WAVE32-OPT-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE32-OPT-NEXT:    s_mov_b32 s32, 1
++; GISEL-WAVE32-OPT-NEXT:    s_movk_i32 s32, 0x540
+ ; GISEL-WAVE32-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE64-OPT-LABEL: func_stackrestore_42:
+ ; GISEL-WAVE64-OPT:       ; %bb.0:
+ ; GISEL-WAVE64-OPT-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE64-OPT-NEXT:    s_mov_b32 s32, 0
++; GISEL-WAVE64-OPT-NEXT:    s_movk_i32 s32, 0xa80
+ ; GISEL-WAVE64-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE32-O0-LABEL: func_stackrestore_42:
+ ; GISEL-WAVE32-O0:       ; %bb.0:
+ ; GISEL-WAVE32-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s4, 42
+-; GISEL-WAVE32-O0-NEXT:    s_lshr_b32 s4, s4, 5
++; GISEL-WAVE32-O0-NEXT:    s_lshl_b32 s4, s4, 5
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE32-O0-NEXT:    s_setpc_b64 s[30:31]
+ ;
+@@ -894,7 +894,7 @@
+ ; GISEL-WAVE64-O0:       ; %bb.0:
+ ; GISEL-WAVE64-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s4, 42
+-; GISEL-WAVE64-O0-NEXT:    s_lshr_b32 s4, s4, 6
++; GISEL-WAVE64-O0-NEXT:    s_lshl_b32 s4, s4, 6
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE64-O0-NEXT:    s_setpc_b64 s[30:31]
+   call void @llvm.stackrestore.p5(ptr addrspace(5) inttoptr (i32 42 to ptr addrspace(5)))
+@@ -1192,7 +1192,7 @@
+ ; GISEL-WAVE32-OPT-NEXT:    s_lshr_b32 s4, s32, 5
+ ; GISEL-WAVE32-OPT-NEXT:    v_add_nc_u32_e32 v0, s4, v0
+ ; GISEL-WAVE32-OPT-NEXT:    v_readfirstlane_b32 s4, v0
+-; GISEL-WAVE32-OPT-NEXT:    s_lshr_b32 s32, s4, 5
++; GISEL-WAVE32-OPT-NEXT:    s_lshl_b32 s32, s4, 5
+ ; GISEL-WAVE32-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE64-OPT-LABEL: func_stacksave_stackrestore_voffset:
+@@ -1201,7 +1201,7 @@
+ ; GISEL-WAVE64-OPT-NEXT:    s_lshr_b32 s4, s32, 6
+ ; GISEL-WAVE64-OPT-NEXT:    v_add_nc_u32_e32 v0, s4, v0
+ ; GISEL-WAVE64-OPT-NEXT:    v_readfirstlane_b32 s4, v0
+-; GISEL-WAVE64-OPT-NEXT:    s_lshr_b32 s32, s4, 6
++; GISEL-WAVE64-OPT-NEXT:    s_lshl_b32 s32, s4, 6
+ ; GISEL-WAVE64-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE32-O0-LABEL: func_stacksave_stackrestore_voffset:
+@@ -1212,7 +1212,7 @@
+ ; GISEL-WAVE32-O0-NEXT:    v_mov_b32_e32 v0, s4
+ ; GISEL-WAVE32-O0-NEXT:    v_add_nc_u32_e64 v0, v0, v1
+ ; GISEL-WAVE32-O0-NEXT:    v_readfirstlane_b32 s4, v0
+-; GISEL-WAVE32-O0-NEXT:    s_lshr_b32 s4, s4, 5
++; GISEL-WAVE32-O0-NEXT:    s_lshl_b32 s4, s4, 5
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE32-O0-NEXT:    s_setpc_b64 s[30:31]
+ ;
+@@ -1224,7 +1224,7 @@
+ ; GISEL-WAVE64-O0-NEXT:    v_mov_b32_e32 v0, s4
+ ; GISEL-WAVE64-O0-NEXT:    v_add_nc_u32_e64 v0, v0, v1
+ ; GISEL-WAVE64-O0-NEXT:    v_readfirstlane_b32 s4, v0
+-; GISEL-WAVE64-O0-NEXT:    s_lshr_b32 s4, s4, 6
++; GISEL-WAVE64-O0-NEXT:    s_lshl_b32 s4, s4, 6
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE64-O0-NEXT:    s_setpc_b64 s[30:31]
+   %stacksave = call ptr addrspace(5) @llvm.stacksave.p5()
+@@ -1276,21 +1276,21 @@
+ ; GISEL-WAVE32-OPT:       ; %bb.0:
+ ; GISEL-WAVE32-OPT-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+ ; GISEL-WAVE32-OPT-NEXT:    v_readfirstlane_b32 s4, v0
+-; GISEL-WAVE32-OPT-NEXT:    s_lshr_b32 s32, s4, 5
++; GISEL-WAVE32-OPT-NEXT:    s_lshl_b32 s32, s4, 5
+ ; GISEL-WAVE32-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE64-OPT-LABEL: func_stacksave_vgpr:
+ ; GISEL-WAVE64-OPT:       ; %bb.0:
+ ; GISEL-WAVE64-OPT-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+ ; GISEL-WAVE64-OPT-NEXT:    v_readfirstlane_b32 s4, v0
+-; GISEL-WAVE64-OPT-NEXT:    s_lshr_b32 s32, s4, 6
++; GISEL-WAVE64-OPT-NEXT:    s_lshl_b32 s32, s4, 6
+ ; GISEL-WAVE64-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE32-O0-LABEL: func_stacksave_vgpr:
+ ; GISEL-WAVE32-O0:       ; %bb.0:
+ ; GISEL-WAVE32-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+ ; GISEL-WAVE32-O0-NEXT:    v_readfirstlane_b32 s4, v0
+-; GISEL-WAVE32-O0-NEXT:    s_lshr_b32 s4, s4, 5
++; GISEL-WAVE32-O0-NEXT:    s_lshl_b32 s4, s4, 5
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE32-O0-NEXT:    s_setpc_b64 s[30:31]
+ ;
+@@ -1298,7 +1298,7 @@
+ ; GISEL-WAVE64-O0:       ; %bb.0:
+ ; GISEL-WAVE64-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+ ; GISEL-WAVE64-O0-NEXT:    v_readfirstlane_b32 s4, v0
+-; GISEL-WAVE64-O0-NEXT:    s_lshr_b32 s4, s4, 6
++; GISEL-WAVE64-O0-NEXT:    s_lshl_b32 s4, s4, 6
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s32, s4
+ ; GISEL-WAVE64-O0-NEXT:    s_setpc_b64 s[30:31]
+   call void @llvm.stackrestore.p5(ptr addrspace(5) %stack)
+@@ -1342,26 +1342,26 @@
+ ; GISEL-WAVE32-OPT-LABEL: func_stacksave_sgpr:
+ ; GISEL-WAVE32-OPT:       ; %bb.0:
+ ; GISEL-WAVE32-OPT-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE32-OPT-NEXT:    s_lshr_b32 s32, s4, 5
++; GISEL-WAVE32-OPT-NEXT:    s_lshl_b32 s32, s4, 5
+ ; GISEL-WAVE32-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE64-OPT-LABEL: func_stacksave_sgpr:
+ ; GISEL-WAVE64-OPT:       ; %bb.0:
+ ; GISEL-WAVE64-OPT-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE64-OPT-NEXT:    s_lshr_b32 s32, s4, 6
++; GISEL-WAVE64-OPT-NEXT:    s_lshl_b32 s32, s4, 6
+ ; GISEL-WAVE64-OPT-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE32-O0-LABEL: func_stacksave_sgpr:
+ ; GISEL-WAVE32-O0:       ; %bb.0:
+ ; GISEL-WAVE32-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE32-O0-NEXT:    s_lshr_b32 s34, s4, 5
++; GISEL-WAVE32-O0-NEXT:    s_lshl_b32 s34, s4, 5
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s32, s34
+ ; GISEL-WAVE32-O0-NEXT:    s_setpc_b64 s[30:31]
+ ;
+ ; GISEL-WAVE64-O0-LABEL: func_stacksave_sgpr:
+ ; GISEL-WAVE64-O0:       ; %bb.0:
+ ; GISEL-WAVE64-O0-NEXT:    s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)
+-; GISEL-WAVE64-O0-NEXT:    s_lshr_b32 s34, s4, 6
++; GISEL-WAVE64-O0-NEXT:    s_lshl_b32 s34, s4, 6
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s32, s34
+ ; GISEL-WAVE64-O0-NEXT:    s_setpc_b64 s[30:31]
+   call void @llvm.stackrestore.p5(ptr addrspace(5) %stack)
+@@ -1455,7 +1455,7 @@
+ ; GISEL-WAVE32-O0-NEXT:    ;;#ASMSTART
+ ; GISEL-WAVE32-O0-NEXT:    ; use s1
+ ; GISEL-WAVE32-O0-NEXT:    ;;#ASMEND
+-; GISEL-WAVE32-O0-NEXT:    s_lshr_b32 s0, s0, 5
++; GISEL-WAVE32-O0-NEXT:    s_lshl_b32 s0, s0, 5
+ ; GISEL-WAVE32-O0-NEXT:    s_mov_b32 s32, s0
+ ; GISEL-WAVE32-O0-NEXT:    s_endpgm
+ ;
+@@ -1467,7 +1467,7 @@
+ ; GISEL-WAVE64-O0-NEXT:    ;;#ASMSTART
+ ; GISEL-WAVE64-O0-NEXT:    ; use s1
+ ; GISEL-WAVE64-O0-NEXT:    ;;#ASMEND
+-; GISEL-WAVE64-O0-NEXT:    s_lshr_b32 s0, s0, 6
++; GISEL-WAVE64-O0-NEXT:    s_lshl_b32 s0, s0, 6
+ ; GISEL-WAVE64-O0-NEXT:    s_mov_b32 s32, s0
+ ; GISEL-WAVE64-O0-NEXT:    s_endpgm
+   call void asm sideeffect "; use $0", "s"(ptr addrspace(5) %stack)
+diff -ruN --strip-trailing-cr a/llvm/test/Transforms/PGOProfile/chr-hoisted-select.ll b/llvm/test/Transforms/PGOProfile/chr-hoisted-select.ll
+--- a/llvm/test/Transforms/PGOProfile/chr-hoisted-select.ll
++++ b/llvm/test/Transforms/PGOProfile/chr-hoisted-select.ll
+@@ -0,0 +1,120 @@
++; NOTE: Assertions have been autogenerated by utils/update_test_checks.py UTC_ARGS: --version 6
++; RUN: opt -passes='require<profile-summary>,function(chr)' -S %s | FileCheck %s
++
++; The outer scope hoists %a to entry because it is the condition of %b.
++; The inner scope must not split head at the now-hoisted %a or specialize it
++; outside the region guarded by the inner scope's merged branch.
++define void @hoisted_insert_point() !prof !12 {
++; CHECK-LABEL: define void @hoisted_insert_point(
++; CHECK-SAME: ) !prof [[PROF12:![0-9]+]] {
++; CHECK-NEXT:  [[ENTRY:.*:]]
++; CHECK-NEXT:    [[A:%.*]] = select i1 false, i1 false, i1 false, !prof [[PROF13:![0-9]+]]
++; CHECK-NEXT:    [[TMP0:%.*]] = xor i1 true, [[A]]
++; CHECK-NEXT:    [[TMP1:%.*]] = select i1 true, i1 [[TMP0]], i1 false, !prof [[PROF14:![0-9]+]]
++; CHECK-NEXT:    [[TMP2:%.*]] = select i1 [[TMP1]], i1 true, i1 false, !prof [[PROF14]]
++; CHECK-NEXT:    br i1 [[TMP2]], label %[[ENTRY_SPLIT:.*]], label %[[ENTRY_SPLIT_NONCHR:.*]], !prof [[PROF15:![0-9]+]]
++; CHECK:       [[ENTRY_SPLIT]]:
++; CHECK-NEXT:    br label %[[HEAD:.*]]
++; CHECK:       [[HEAD]]:
++; CHECK-NEXT:    br i1 false, label %[[SIDE:.*]], label %[[EXIT:.*]], !prof [[PROF13]]
++; CHECK:       [[SIDE]]:
++; CHECK-NEXT:    br label %[[EXIT]]
++; CHECK:       [[EXIT]]:
++; CHECK-NEXT:    [[B:%.*]] = select i1 false, i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    [[C:%.*]] = select i1 false, i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    ret void
++; CHECK:       [[ENTRY_SPLIT_NONCHR]]:
++; CHECK-NEXT:    br label %[[HEAD_NONCHR:.*]]
++; CHECK:       [[HEAD_NONCHR]]:
++; CHECK-NEXT:    [[A_NONCHR:%.*]] = select i1 false, i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    br i1 false, label %[[SIDE_NONCHR:.*]], label %[[EXIT_NONCHR:.*]], !prof [[PROF13]]
++; CHECK:       [[SIDE_NONCHR]]:
++; CHECK-NEXT:    br label %[[EXIT_NONCHR]]
++; CHECK:       [[EXIT_NONCHR]]:
++; CHECK-NEXT:    [[B_NONCHR:%.*]] = select i1 [[A_NONCHR]], i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    [[C_NONCHR:%.*]] = select i1 false, i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    ret void
++;
++entry:
++  br label %head
++head:
++  %a = select i1 false, i1 false, i1 false, !prof !13
++  br i1 false, label %side, label %exit, !prof !13
++side:
++  br label %exit
++exit:
++  %b = select i1 %a, i1 false, i1 false, !prof !13
++  %c = select i1 false, i1 false, i1 false, !prof !13
++  ret void
++}
++
++; A select other than the insertion point can also be hoisted. Preserve its
++; condition: specializing it would change the outer scope's branch condition.
++define i1 @hoisted_later_select() !prof !12 {
++; CHECK-LABEL: define i1 @hoisted_later_select(
++; CHECK-SAME: ) !prof [[PROF12]] {
++; CHECK-NEXT:  [[ENTRY:.*:]]
++; CHECK-NEXT:    [[A:%.*]] = select i1 true, i1 true, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    [[TMP0:%.*]] = xor i1 true, [[A]]
++; CHECK-NEXT:    [[TMP1:%.*]] = select i1 true, i1 [[TMP0]], i1 false, !prof [[PROF14]]
++; CHECK-NEXT:    [[TMP2:%.*]] = select i1 [[TMP1]], i1 true, i1 false, !prof [[PROF14]]
++; CHECK-NEXT:    br i1 [[TMP2]], label %[[ENTRY_SPLIT:.*]], label %[[ENTRY_SPLIT_NONCHR:.*]], !prof [[PROF15]]
++; CHECK:       [[ENTRY_SPLIT]]:
++; CHECK-NEXT:    br label %[[HEAD:.*]]
++; CHECK:       [[HEAD]]:
++; CHECK-NEXT:    [[KEEP:%.*]] = select i1 false, i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    br i1 false, label %[[SIDE:.*]], label %[[EXIT:.*]], !prof [[PROF13]]
++; CHECK:       [[SIDE]]:
++; CHECK-NEXT:    br label %[[EXIT]]
++; CHECK:       [[EXIT]]:
++; CHECK-NEXT:    [[B:%.*]] = select i1 false, i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    [[C:%.*]] = select i1 false, i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    ret i1 [[A]]
++; CHECK:       [[ENTRY_SPLIT_NONCHR]]:
++; CHECK-NEXT:    br label %[[HEAD_NONCHR:.*]]
++; CHECK:       [[HEAD_NONCHR]]:
++; CHECK-NEXT:    [[KEEP_NONCHR:%.*]] = select i1 false, i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    [[A_NONCHR:%.*]] = select i1 true, i1 true, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    br i1 false, label %[[SIDE_NONCHR:.*]], label %[[EXIT_NONCHR:.*]], !prof [[PROF13]]
++; CHECK:       [[SIDE_NONCHR]]:
++; CHECK-NEXT:    br label %[[EXIT_NONCHR]]
++; CHECK:       [[EXIT_NONCHR]]:
++; CHECK-NEXT:    [[B_NONCHR:%.*]] = select i1 [[A_NONCHR]], i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    [[C_NONCHR:%.*]] = select i1 false, i1 false, i1 false, !prof [[PROF13]]
++; CHECK-NEXT:    ret i1 [[A_NONCHR]]
++;
++entry:
++  br label %head
++head:
++  %keep = select i1 false, i1 false, i1 false, !prof !13
++  %a = select i1 true, i1 true, i1 false, !prof !13
++  br i1 false, label %side, label %exit, !prof !13
++side:
++  br label %exit
++exit:
++  %b = select i1 %a, i1 false, i1 false, !prof !13
++  %c = select i1 false, i1 false, i1 false, !prof !13
++  ret i1 %a
++}
++
++!llvm.module.flags = !{!0}
++!0 = !{i32 1, !"ProfileSummary", !1}
++!1 = !{!2, !3, !4, !5, !6, !7, !8, !9}
++!2 = !{!"ProfileFormat", !"InstrProf"}
++!3 = !{!"TotalCount", i64 1000}
++!4 = !{!"MaxCount", i64 1000}
++!5 = !{!"MaxInternalCount", i64 1000}
++!6 = !{!"MaxFunctionCount", i64 1000}
++!7 = !{!"NumCounts", i64 1}
++!8 = !{!"NumFunctions", i64 1}
++!9 = !{!"DetailedSummary", !10}
++!10 = !{!11}
++!11 = !{i32 999999, i64 1000, i32 1}
++!12 = !{!"function_entry_count", i64 1000}
++!13 = !{!"branch_weights", i32 0, i32 1000}
++;.
++; CHECK: [[PROF12]] = !{!"function_entry_count", i64 1000}
++; CHECK: [[PROF13]] = !{!"branch_weights", i32 0, i32 1000}
++; CHECK: [[PROF14]] = !{!"unknown", !"chr"}
++; CHECK: [[PROF15]] = !{!"branch_weights", i32 1000, i32 0}
++;.
+diff -ruN --strip-trailing-cr a/llvm/unittests/ADT/DenseMapTest.cpp b/llvm/unittests/ADT/DenseMapTest.cpp
+--- a/llvm/unittests/ADT/DenseMapTest.cpp
++++ b/llvm/unittests/ADT/DenseMapTest.cpp
+@@ -629,8 +629,7 @@
+     Values.emplace_back(i, CountCopyAndMove(i));
+ 
+   CountCopyAndMove::ResetCounts();
+-  [[maybe_unused]] DenseMap<int, CountCopyAndMove> Map(Values.begin(),
+-                                                       Values.end());
++  DenseMap<int, CountCopyAndMove> Map(Values.begin(), Values.end());
+   // Check that no move occurred
+   EXPECT_EQ(0, CountCopyAndMove::TotalMoves());
+   // Check that copy was called the expected number of times
+@@ -1286,7 +1285,7 @@
+   DenseMap<int, int> M;
+   M.try_emplace(1, 10);
+   auto It = M.find(1);
+-  [[maybe_unused]] DenseMap<int, int> Other = std::move(M);
++  DenseMap<int, int> Other = std::move(M);
+   EXPECT_DEATH((void)It->second, "invalid iterator access");
+ }
+ 
+@@ -1294,7 +1293,7 @@
+   DenseMap<int, int> M;
+   M.try_emplace(1, 10);
+   auto It = M.find(1);
+-  [[maybe_unused]] DenseMap<int, int> Other;
++  DenseMap<int, int> Other;
+   Other = std::move(M);
+   EXPECT_DEATH((void)It->second, "invalid iterator access");
+ }
+diff -ruN --strip-trailing-cr a/mlir/lib/Dialect/Bufferization/Transforms/BufferOptimizations.cpp b/mlir/lib/Dialect/Bufferization/Transforms/BufferOptimizations.cpp
+--- a/mlir/lib/Dialect/Bufferization/Transforms/BufferOptimizations.cpp
++++ b/mlir/lib/Dialect/Bufferization/Transforms/BufferOptimizations.cpp
+@@ -357,6 +357,9 @@
+   /// position.
+   PostDominanceInfo postDominators;
+ 
++  /// The map storing the final placement blocks of a given alloc value.
++  llvm::DenseMap<Value, Block *> placementBlocks;
++
+   /// The operation that this transformation is working on. It is used to also
+   /// gather allocas.
+   Operation *scopeOp;

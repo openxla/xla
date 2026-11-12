@@ -1056,6 +1056,225 @@ TEST_F(HloVerifierTest, DotUnreferencedExtraOperandsNotAllowed) {
               HasSubstr("Expected all 2 extra operands to be referenced"));
 }
 
+static const char* const kDotGeneralHloString = R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  rhs_scale = f8e8m0fnu[4,64] parameter(3)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale, rhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2} rhs={scale_idx=3}}
+})";
+
+TEST_F(HloVerifierTest, DotGeneralBlockScaled) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(kDotGeneralHloString));
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HloVerifierTest, DotGeneralUnreferencedExtraOperandNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(kDotGeneralHloString));
+  HloInstruction* dot = module->entry_computation()->root_instruction();
+  BlockScalingConfig config = dot->block_scaling_config();
+  config.clear_rhs();
+  dot->set_block_scaling_config(config);
+  EXPECT_THAT(
+      verifier().Run(module.get()).status(),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("Expected all 2 extra operands to be referenced")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralScaleRankMismatchNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[256] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must have the same rank")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralScaleNotDividingOperandNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,3] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must evenly divide")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralWithoutExtraOperandsNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f32[8,16] parameter(0)
+  rhs = f32[16,4] parameter(1)
+  ROOT dot = f32[8,4] dot-general(lhs, rhs), lhs_contracting_dims={1},
+    rhs_contracting_dims={0}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must have sparsity or block scaling")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralPrecisionForExtraOperandNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    operand_precision={high,high,high},
+    block_scaling_config={lhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("exactly 2 operand precisions, got 3")));
+}
+
+TEST_F(HloVerifierTest, BlockScaledConvolutionScaleRankMismatchNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  input = f8e4m3fn[8,128] parameter(0)
+  filter = f8e4m3fn[128,16] parameter(1)
+  scale = f8e8m0fnu[64] parameter(2)
+  ROOT conv = f32[8,16] convolution(input, filter, scale),
+    dim_labels=bf_io->bf, block_scaling_config={rhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must have the same rank")));
+}
+
+TEST_F(HloVerifierTest, BlockScaledDotScaleNotDividingOperandNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,3] parameter(2)
+  ROOT dot = f32[64,64] dot(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must evenly divide")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralPaddedScaleWithBlockSizes) {
+  // 100 values in blocks of 32 need 4 scales; the last block is partial.
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,100] parameter(0)
+  rhs = f8e4m3fn[100,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2 block_sizes=1x32}}
+})"));
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HloVerifierTest, DotGeneralNonPositiveBlockSizeNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2 block_sizes=1x0}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must be positive")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralEmptyScaleWithBlockSizesNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,0] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2 block_sizes=1x32}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must be positive")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralNonArrayOperandNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = (f8e4m3fn[64,128]) parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Expected array operand 0")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralBlockSizesRankMismatchNotAllowed) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,128] parameter(0)
+  rhs = f8e4m3fn[128,64] parameter(1)
+  lhs_scale = f8e8m0fnu[64,4] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, lhs_scale),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    block_scaling_config={lhs={scale_idx=2 block_sizes=32}}
+})"));
+  EXPECT_THAT(verifier().Run(module.get()).status(),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("must have 2 entries, got 1")));
+}
+
+TEST_F(HloVerifierTest, DotGeneralSparseShape) {
+  // A 1:4 sparse rhs stores K / 4 values along its contracting dimension.
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(R"(
+HloModule module
+ENTRY entry_computation {
+  lhs = f8e4m3fn[64,256] parameter(0)
+  rhs = f8e4m3fn[64,64] parameter(1)
+  rhs_indices = u8[64,64] parameter(2)
+  ROOT dot = f32[64,64] dot-general(lhs, rhs, rhs_indices),
+    lhs_contracting_dims={1}, rhs_contracting_dims={0},
+    sparsity_config={rhs={sparsity=1x4 dimension=0 stride=1 idx=2}}
+})"));
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
 static const char* const kAddWithLayoutChangeHlo = R"(
    HloModule AddWithLayoutChange
     ENTRY AddWithLayoutChange {
@@ -2592,6 +2811,57 @@ TEST_F(HloVerifierTest, IotaPredResultNotAllowed) {
   EXPECT_THAT(status.message(), HasSubstr("got PRED"));
 }
 
+TEST_F(HloVerifierTest, SortNegativeDimension) {
+  const char* const hlo_string = R"(
+  HloModule SortNegativeDimension
+
+  compare {
+    p.0.lhs = f32[] parameter(0)
+    p.0.rhs = f32[] parameter(1)
+    ROOT lt = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+  }
+
+  ENTRY main {
+    x = f32[4,8] parameter(0)
+    ROOT sorted = f32[4,8] sort(x), dimensions={-1}, to_apply=compare
+  }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("Expected the sort_dimension -1 of sort to be "
+                                 "non-negative and smaller than the rank 2")));
+}
+
+TEST_F(HloVerifierTest, SortKeyValueDimensionOutOfRange) {
+  const char* const hlo_string = R"(
+  HloModule SortKeyValueDimensionOutOfRange
+
+  compare {
+    p.0.lhs = f32[] parameter(0)
+    p.0.rhs = f32[] parameter(1)
+    p.1.lhs = s32[] parameter(2)
+    p.1.rhs = s32[] parameter(3)
+    ROOT lt = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+  }
+
+  ENTRY main {
+    keys = f32[4,8] parameter(0)
+    values = s32[4,8] parameter(1)
+    ROOT sorted = (f32[4,8], s32[4,8]) sort(keys, values), dimensions={2}, to_apply=compare
+  }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("Expected the sort_dimension 2 of sort to be "
+                                 "non-negative and smaller than the rank 2")));
+}
+
 static const char* const kMapOperandComputationMismatchHlo = R"(
   HloModule MapOperandComputationMismatch
 
@@ -3062,6 +3332,62 @@ TEST_F(HloVerifierTest, AllToAll_LayoutConstrained) {
     p0 = f32[128,4]{0,1} parameter(0)
     p1 = f32[128,4]{1,0} parameter(1)
     ROOT a2a = (f32[128,4]{0,1}, f32[128,4]{1,0}) all-to-all(p0, p1),
+      replica_groups={{0,1}}, constrain_layout=true
+  }
+  )";
+  HloModuleConfig config;
+  config.set_replica_count(2);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(kModuleStr, config));
+  EXPECT_THAT(verifier().Run(module.get()).status().message(),
+              HasSubstr("HLO all-to-all has operands with different shapes"));
+}
+
+TEST_F(HloVerifierTestLayoutSensitive, AllToAll_DifferentOperandLayouts) {
+  const char* const kModuleStr = R"(
+  HloModule test
+  ENTRY entry {
+    p0 = f32[128,4]{0,1} parameter(0)
+    p1 = f32[128,4]{1,0} parameter(1)
+    ROOT a2a = (f32[128,4]{0,1}, f32[128,4]{1,0}) all-to-all(p0, p1),
+      replica_groups={{0,1}}
+  }
+  )";
+  HloModuleConfig config;
+  config.set_replica_count(2);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(kModuleStr, config));
+  EXPECT_THAT(verifier().Run(module.get()).status().message(),
+              HasSubstr("HLO all-to-all has operands with different shapes"));
+}
+
+TEST_F(HloVerifierTest,
+       AllToAll_DifferentOperandLayoutsBeforeLayoutAssignment) {
+  // Layout-insensitive passes may leave tuple all-to-all operands with
+  // different layouts; this is fine until layouts are assigned.
+  const char* const kModuleStr = R"(
+  HloModule test
+  ENTRY entry {
+    p0 = f32[128,4]{0,1} parameter(0)
+    p1 = f32[128,4]{1,0} parameter(1)
+    ROOT a2a = (f32[128,4]{0,1}, f32[128,4]{1,0}) all-to-all(p0, p1),
+      replica_groups={{0,1}}
+  }
+  )";
+  HloModuleConfig config;
+  config.set_replica_count(2);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnUnverifiedModule(kModuleStr, config));
+  EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HloVerifierTest, AllToAll_DifferentOperandDimensions) {
+  const char* const kModuleStr = R"(
+  HloModule test
+  ENTRY entry {
+    p0 = f32[128,4] parameter(0)
+    p1 = f32[128,8] parameter(1)
+    ROOT a2a = (f32[128,4], f32[128,8]) all-to-all(p0, p1),
       replica_groups={{0,1}}
   }
   )";
@@ -4052,6 +4378,34 @@ ENTRY computation {
   ASSERT_OK(HloVerifier{HloVerifierOpts{}.VerifyBroadcastDimensionsOrder()}
                 .Run(module.get())
                 .status());
+}
+
+TEST_F(HloVerifierTest, ComputationNamesMustBeUnique) {
+  const char* const hlo = R"(
+HloModule module
+
+reducer {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT add = f32[] add(a, b)
+}
+
+ENTRY entry {
+  p0 = f32[8] parameter(0)
+  zero = f32[] constant(0)
+  ROOT r = f32[] reduce(p0, zero), dimensions={0}, to_apply=reducer
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  // The parser rejects duplicate names, so rename behind the uniquer's back,
+  // which is how passes have produced duplicates in practice.
+  module->GetComputationWithName("reducer")->SetAndSanitizeName("entry");
+
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(status.message(),
+              HasSubstr("Computation has name that is not unique"));
 }
 
 TEST_F(HloVerifierTest, VerifyInstructionNameChanged) {
@@ -6546,6 +6900,411 @@ TEST_F(HloVerifierTest, VerifyFanInDuplicateOperands) {
               HasSubstr("custom-call to FanIn must have distinct operands"));
 }
 
+TEST_F(HloVerifierTest, VerifyCrossBufferSliceCustomFusionOnStreamsValid) {
+  // Verifies that HloVerifier accepts a valid two-level cross-buffer slice
+  // custom fusion (wrapping an inner dynamic-update-slice custom fusion)
+  // operating in-place on a FanOut stream buffer before joining at FanIn.
+  const char* const hlo = R"(
+  HloModule module
+
+  inner_dus_comp {
+    dst_p = b(s32[4]) parameter(0)
+    src_p = s32[2] parameter(1)
+    zero = s32[] constant(0)
+    slice = s32[2] dynamic-slice(src_p, zero), dynamic_slice_sizes={2}
+    ROOT dus = b(s32[4]) dynamic-update-slice(dst_p, slice, zero)
+  }
+
+  outer_scatter_comp {
+    outer_dst = b(s32[4]) parameter(0)
+    outer_src = s32[2] parameter(1)
+    ROOT inner_fusion = b(s32[4]) fusion(outer_dst, outer_src), kind=kCustom,
+      calls=inner_dus_comp
+  }
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    p1 = s32[2] parameter(1)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    fan_out = (b(s32[4]), b(s32[4])) custom-call(b0),
+      custom_call_target="FanOut", output_to_operand_aliasing={{0}: (0, {})}
+    anchor = b(s32[4]) get-tuple-element(fan_out), index=0
+    stream1 = b(s32[4]) get-tuple-element(fan_out), index=1
+    scatter_fusion = b(s32[4]) fusion(stream1, p1), kind=kCustom,
+      calls=outer_scatter_comp, output_to_operand_aliasing={{}: (0, {})}
+    fan_in = b(s32[4]) custom-call(anchor, scatter_fusion),
+      custom_call_target="FanIn", output_to_operand_aliasing={{}: (0, {})}
+    ROOT v = s32[4] custom-call(fan_in), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()), StatusIs(absl::StatusCode::kOk));
+}
+
+TEST_F(HloVerifierTest, VerifyNonCrossBufferSliceFusionWithBuffersRejected) {
+  // Verifies that HloVerifier rejects a custom fusion operating on buffer
+  // shapes when it is not a recognized cross-buffer slice custom fusion.
+  const char* const hlo = R"(
+  HloModule module
+
+  bad_fusion_comp {
+    dst_p = b(s32[4]) parameter(0)
+    ROOT copy_b = b(s32[4]) custom-call(dst_p), custom_call_target="AddOne",
+      output_to_operand_aliasing={{}: (0, {})}
+  }
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    bad_fusion = b(s32[4]) fusion(b0), kind=kCustom,
+      calls=bad_fusion_comp, output_to_operand_aliasing={{}: (0, {})}
+    ROOT v = s32[4] custom-call(bad_fusion), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(
+      status.message(),
+      HasSubstr("Seen buffers while buffers aren't allowed in this context"));
+}
+
+TEST_F(HloVerifierTest, VerifyDynamicSliceOnBufferValid) {
+  // Tests that HloVerifier allows a read only dynamic-slice on a buffer
+  // operand inside a cross buffer slice custom fusion when the start index is a
+  // regular scalar and the result is a regular array.
+  const char* const hlo = R"(
+  HloModule module
+
+  inner_dus_comp {
+    dst_p = s32[2] parameter(0)
+    src_p = b(s32[4]) parameter(1)
+    idx_p = s32[] parameter(2)
+    zero = s32[] constant(0)
+    slice = s32[2] dynamic-slice(src_p, idx_p), dynamic_slice_sizes={2}
+    ROOT dus = s32[2] dynamic-update-slice(dst_p, slice, zero)
+  }
+
+  outer_gather_comp {
+    outer_src = b(s32[4]) parameter(0)
+    outer_idx = s32[] parameter(1)
+    alloc = s32[2] custom-call(), custom_call_target="AllocateBuffer"
+    inner_fusion = s32[2] fusion(alloc, outer_src, outer_idx), kind=kCustom,
+      calls=inner_dus_comp
+    ROOT out_tuple = (b(s32[4]), s32[2]) tuple(outer_src, inner_fusion)
+  }
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    idx = s32[] constant(1)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    gather_fusion = (b(s32[4]), s32[2]) fusion(b0, idx), kind=kCustom,
+      calls=outer_gather_comp, output_to_operand_aliasing={{0}: (0, {})}
+    b0_after = b(s32[4]) get-tuple-element(gather_fusion), index=0
+    slice = s32[2] get-tuple-element(gather_fusion), index=1
+    unpin = s32[4] custom-call(b0_after), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+    ROOT t = (s32[4], s32[2]) tuple(unpin, slice)
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()), StatusIs(absl::StatusCode::kOk));
+}
+
+TEST_F(HloVerifierTest, VerifyTopLevelDynamicSliceOnBufferRejected) {
+  // Tests that HloVerifier rejects a top level dynamic-slice reading from a
+  // buffer operand outside a cross buffer slice custom fusion, since generic
+  // HLO passes do not support buffer operands on dynamic-slice.
+  const char* const hlo = R"(
+  HloModule module
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    idx = s32[] constant(1)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    slice = s32[2] dynamic-slice(b0, idx), dynamic_slice_sizes={2}
+    unpin = s32[4] custom-call(b0), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+    ROOT t = (s32[4], s32[2]) tuple(unpin, slice)
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(
+      status.message(),
+      HasSubstr("Seen buffers while buffers aren't allowed in this context"));
+}
+
+TEST_F(HloVerifierTest, VerifyDynamicSliceOnBufferIndexIsBufferRejected) {
+  // Tests that HloVerifier rejects a dynamic-slice on a buffer operand inside a
+  // cross buffer slice custom fusion when any start index operand is itself a
+  // buffer.
+  const char* const hlo = R"(
+  HloModule module
+
+  inner_dus_comp {
+    dst_p = s32[2] parameter(0)
+    src_p = b(s32[4]) parameter(1)
+    idx_p = b(s32[]) parameter(2)
+    zero = s32[] constant(0)
+    slice = s32[2] dynamic-slice(src_p, idx_p), dynamic_slice_sizes={2}
+    ROOT dus = s32[2] dynamic-update-slice(dst_p, slice, zero)
+  }
+
+  outer_gather_comp {
+    outer_src = b(s32[4]) parameter(0)
+    outer_idx = b(s32[]) parameter(1)
+    alloc = s32[2] custom-call(), custom_call_target="AllocateBuffer"
+    inner_fusion = s32[2] fusion(alloc, outer_src, outer_idx), kind=kCustom,
+      calls=inner_dus_comp
+    ROOT out_tuple = (b(s32[4]), s32[2]) tuple(outer_src, inner_fusion)
+  }
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    idx = s32[] constant(1)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    b_idx = b(s32[]) custom-call(idx), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    gather_fusion = (b(s32[4]), s32[2]) fusion(b0, b_idx), kind=kCustom,
+      calls=outer_gather_comp, output_to_operand_aliasing={{0}: (0, {})}
+    b0_after = b(s32[4]) get-tuple-element(gather_fusion), index=0
+    slice = s32[2] get-tuple-element(gather_fusion), index=1
+    unpin0 = s32[4] custom-call(b0_after), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+    unpin_idx = s32[] custom-call(b_idx), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+    ROOT t = (s32[4], s32[], s32[2]) tuple(unpin0, unpin_idx, slice)
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  auto status = verifier().Run(module.get()).status();
+  ASSERT_FALSE(status.ok());
+  EXPECT_THAT(
+      status.message(),
+      HasSubstr("Seen buffers while buffers aren't allowed in this context"));
+}
+
+TEST_F(HloVerifierTest, VerifyDynamicSliceOnBufferResultIsBufferRejected) {
+  // Tests that HloVerifier rejects a dynamic-slice on a buffer operand inside a
+  // cross buffer slice custom fusion when the result shape is itself a buffer.
+  // Parses a valid gather fusion module, mutates the inner dynamic-slice result
+  // shape to b(s32[2]), and verifies the expected error message.
+  const char* const hlo = R"(
+  HloModule module
+
+  inner_dus_comp {
+    dst_p = s32[2] parameter(0)
+    src_p = b(s32[4]) parameter(1)
+    idx_p = s32[] parameter(2)
+    zero = s32[] constant(0)
+    slice = s32[2] dynamic-slice(src_p, idx_p), dynamic_slice_sizes={2}
+    ROOT dus = s32[2] dynamic-update-slice(dst_p, slice, zero)
+  }
+
+  outer_gather_comp {
+    outer_src = b(s32[4]) parameter(0)
+    outer_idx = s32[] parameter(1)
+    alloc = s32[2] custom-call(), custom_call_target="AllocateBuffer"
+    inner_fusion = s32[2] fusion(alloc, outer_src, outer_idx), kind=kCustom,
+      calls=inner_dus_comp
+    ROOT out_tuple = (b(s32[4]), s32[2]) tuple(outer_src, inner_fusion)
+  }
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    idx = s32[] constant(1)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    gather_fusion = (b(s32[4]), s32[2]) fusion(b0, idx), kind=kCustom,
+      calls=outer_gather_comp, output_to_operand_aliasing={{0}: (0, {})}
+    b0_after = b(s32[4]) get-tuple-element(gather_fusion), index=0
+    slice = s32[2] get-tuple-element(gather_fusion), index=1
+    unpin = s32[4] custom-call(b0_after), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+    ROOT t = (s32[4], s32[2]) tuple(unpin, slice)
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(Shape buffer_slice_shape, ParseShape("b(s32[2])"));
+  HloInstruction* inner_slice = module->GetComputationWithName("inner_dus_comp")
+                                    ->GetInstructionWithName("slice");
+  *inner_slice->mutable_shape() = buffer_slice_shape;
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("actual shape is b(s32[2])")));
+  EXPECT_THAT(verifier().Run(module.get(), {"parallel_thread"}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("DynamicSlice result cannot be a buffer")));
+}
+
+TEST_F(HloVerifierTest, VerifyAsyncGatherCustomFusionOnStreamsValid) {
+  // Tests that HloVerifier accepts a two element tuple async gather custom
+  // fusion operating on a FanOut stream buffer. Constructs the nested gather
+  // fusion structure (outer tuple of aliased stream parameter and inner DUS
+  // fusion reading from the stream buffer via dynamic-slice) between FanOut and
+  // FanIn, and verifies that HloVerifier succeeds without overcounting read
+  // only slice accesses as buffer writers.
+  const char* const hlo = R"(
+  HloModule module
+
+  inner_dus_comp {
+    dst_p = s32[2] parameter(0)
+    src_p = b(s32[4]) parameter(1)
+    idx_p = s32[] parameter(2)
+    zero = s32[] constant(0)
+    slice = s32[2] dynamic-slice(src_p, idx_p), dynamic_slice_sizes={2}
+    ROOT dus = s32[2] dynamic-update-slice(dst_p, slice, zero)
+  }
+
+  outer_gather_comp {
+    outer_src = b(s32[4]) parameter(0)
+    outer_idx = s32[] parameter(1)
+    alloc = s32[2] custom-call(), custom_call_target="AllocateBuffer"
+    inner_fusion = s32[2] fusion(alloc, outer_src, outer_idx), kind=kCustom,
+      calls=inner_dus_comp
+    ROOT out_tuple = (b(s32[4]), s32[2]) tuple(outer_src, inner_fusion)
+  }
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    idx = s32[] constant(1)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    fan_out = (b(s32[4]), b(s32[4])) custom-call(b0),
+      custom_call_target="FanOut", output_to_operand_aliasing={{0}: (0, {})}
+    anchor = b(s32[4]) get-tuple-element(fan_out), index=0
+    stream1 = b(s32[4]) get-tuple-element(fan_out), index=1
+    gather_fusion = (b(s32[4]), s32[2]) fusion(stream1, idx), kind=kCustom,
+      calls=outer_gather_comp, output_to_operand_aliasing={{0}: (0, {})}
+    stream1_after = b(s32[4]) get-tuple-element(gather_fusion), index=0
+    gathered = s32[2] get-tuple-element(gather_fusion), index=1
+    fan_in = b(s32[4]) custom-call(anchor, stream1_after),
+      custom_call_target="FanIn", output_to_operand_aliasing={{}: (0, {})}
+    unpin = s32[4] custom-call(fan_in), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+    ROOT t = (s32[4], s32[2]) tuple(unpin, gathered)
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()), StatusIs(absl::StatusCode::kOk));
+}
+
+TEST_F(HloVerifierTest, VerifyAsyncGatherCustomFusionDuplicateWritersRejected) {
+  // Tests that HloVerifier rejects duplicate buffer writers on tuple output {0}
+  // of a synchronous two element tuple cross buffer slice gather fusion.
+  const char* const hlo = R"(
+  HloModule module
+
+  inner_dus_comp {
+    dst_p = s32[2] parameter(0)
+    src_p = b(s32[4]) parameter(1)
+    idx_p = s32[] parameter(2)
+    zero = s32[] constant(0)
+    slice = s32[2] dynamic-slice(src_p, idx_p), dynamic_slice_sizes={2}
+    ROOT dus = s32[2] dynamic-update-slice(dst_p, slice, zero)
+  }
+
+  outer_gather_comp {
+    outer_src = b(s32[4]) parameter(0)
+    outer_idx = s32[] parameter(1)
+    alloc = s32[2] custom-call(), custom_call_target="AllocateBuffer"
+    inner_fusion = s32[2] fusion(alloc, outer_src, outer_idx), kind=kCustom,
+      calls=inner_dus_comp
+    ROOT out_tuple = (b(s32[4]), s32[2]) tuple(outer_src, inner_fusion)
+  }
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    idx = s32[] constant(1)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    gather_fusion = (b(s32[4]), s32[2]) fusion(b0, idx), kind=kCustom,
+      calls=outer_gather_comp, output_to_operand_aliasing={{0}: (0, {})}
+    b0_after = b(s32[4]) get-tuple-element(gather_fusion), index=0
+    gathered = s32[2] get-tuple-element(gather_fusion), index=1
+    unpin1 = s32[4] custom-call(b0_after), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+    unpin2 = s32[4] custom-call(b0_after), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+    sum = s32[4] add(unpin1, unpin2)
+    ROOT t = (s32[4], s32[2]) tuple(sum, gathered)
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("an HLO buffer value has more than one "
+                                 "writers")));
+}
+
+TEST_F(HloVerifierTest, VerifyAsyncDoneDuplicateBufferWritersRejected) {
+  // Tests that HloVerifier enforces the unique buffer writer invariant on
+  // buffer outputs of async-done instructions, including two element tuple
+  // cross buffer slice gather fusions wrapped in async-start and async-done.
+  const char* const hlo = R"(
+  HloModule module
+
+  inner_dus_comp {
+    dst_p = s32[2] parameter(0)
+    src_p = b(s32[4]) parameter(1)
+    idx_p = s32[] parameter(2)
+    zero = s32[] constant(0)
+    slice = s32[2] dynamic-slice(src_p, idx_p), dynamic_slice_sizes={2}
+    ROOT dus = s32[2] dynamic-update-slice(dst_p, slice, zero)
+  }
+
+  outer_gather_comp {
+    outer_src = b(s32[4]) parameter(0)
+    outer_idx = s32[] parameter(1)
+    alloc = s32[2] custom-call(), custom_call_target="AllocateBuffer"
+    inner_fusion = s32[2] fusion(alloc, outer_src, outer_idx), kind=kCustom,
+      calls=inner_dus_comp
+    ROOT out_tuple = (b(s32[4]), s32[2]) tuple(outer_src, inner_fusion)
+  }
+
+  async_gather_comp {
+    async_src = b(s32[4]) parameter(0)
+    async_idx = s32[] parameter(1)
+    ROOT gather_fusion = (b(s32[4]), s32[2]) fusion(async_src, async_idx),
+      kind=kCustom, calls=outer_gather_comp,
+      output_to_operand_aliasing={{0}: (0, {})}
+  }
+
+  ENTRY computation {
+    p0 = s32[4] parameter(0)
+    idx = s32[] constant(1)
+    b0 = b(s32[4]) custom-call(p0), custom_call_target="Pin",
+      output_to_operand_aliasing={{}: (0, {})}
+    start = ((b(s32[4]), s32[]), (b(s32[4]), s32[2]), s32[])
+      async-start(b0, idx), calls=async_gather_comp,
+      output_to_operand_aliasing={{1, 0}: (0, {})}
+    done = (b(s32[4]), s32[2]) async-done(start)
+    b0_after = b(s32[4]) get-tuple-element(done), index=0
+    gathered = s32[2] get-tuple-element(done), index=1
+    v1 = s32[4] custom-call(b0_after), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+    v2 = s32[4] custom-call(b0_after), custom_call_target="Unpin",
+      output_to_operand_aliasing={{}: (0, {})}
+    sum = s32[4] add(v1, v2)
+    ROOT out = (s32[4], s32[2]) tuple(sum, gathered)
+  })";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo));
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("an HLO buffer value has more than one "
+                                 "writers")));
+}
+
 TEST_F(HloVerifierTest, Scan) {
   const char* const hlo_string = R"(
   HloModule scan_module
@@ -7389,6 +8148,37 @@ ENTRY Entry (p0: f32[100], update: f32[10], idx: s32[]) -> f32[100] {
   )";
   ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
   EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+TEST_F(HloVerifierTest, FmaValidAndInvalid) {
+  const char* const kValidHlo = R"(
+  HloModule FmaValid
+  ENTRY Entry {
+    a = f32[4] parameter(0)
+    b = f32[4] parameter(1)
+    c = f32[4] parameter(2)
+    ROOT f = f32[4] fma(a, b, c)
+  })";
+  ASSERT_OK_AND_ASSIGN(auto valid_module,
+                       ParseAndReturnUnverifiedModule(kValidHlo));
+  EXPECT_OK(verifier().Run(valid_module.get()).status());
+
+  auto invalid_module = CreateUnverifiedModule();
+  HloComputation::Builder builder("FmaInvalidInt");
+  Shape s32_shape = ShapeUtil::MakeShape(S32, {4});
+  auto p0 = builder.AddInstruction(
+      HloInstruction::CreateParameter(0, s32_shape, "p0"));
+  auto p1 = builder.AddInstruction(
+      HloInstruction::CreateParameter(1, s32_shape, "p1"));
+  auto p2 = builder.AddInstruction(
+      HloInstruction::CreateParameter(2, s32_shape, "p2"));
+  builder.AddInstruction(
+      HloInstruction::CreateTernary(s32_shape, HloOpcode::kFma, p0, p1, p2));
+  invalid_module->AddEntryComputation(builder.Build());
+  EXPECT_THAT(verifier().Run(invalid_module.get()),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Expected element type in shape to be "
+                                 "floating for fma operation; got S32.")));
 }
 
 }  // namespace

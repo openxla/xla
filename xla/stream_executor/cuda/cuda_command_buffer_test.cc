@@ -19,16 +19,22 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <thread>  // NOLINT
 #include <vector>
 
 #include "absl/base/casts.h"
+#include "absl/log/log_entry.h"
+#include "absl/log/log_sink.h"
+#include "absl/log/log_sink_registry.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/match.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"  // IWYU pragma: keep - cudnn frontend headers are not hermetic
@@ -38,6 +44,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/cuda/command_buffer_kernels.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_dnn.h"
 #include "xla/stream_executor/device_address.h"
@@ -47,6 +54,7 @@ limitations under the License.
 #include "xla/stream_executor/gpu/gpu_test_kernels.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
+#include "xla/stream_executor/kernel_spec.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/platform_manager.h"
@@ -55,6 +63,7 @@ limitations under the License.
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/trace_command_buffer_factory.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/protobuf/dnn.pb.h"
 
 namespace stream_executor::cuda {
 namespace {
@@ -62,6 +71,7 @@ namespace {
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
 using ::testing::Each;
+using ::testing::NotNull;
 
 static Platform* CudaPlatform() {
   auto name = absl::AsciiStrToUpper(
@@ -314,6 +324,37 @@ TEST_F(CudaCommandBufferTest, LaunchClusterKernelWithClusterDimsSucceeds) {
   ASSERT_OK(stream->BlockHostUntilDone());
 }
 
+TEST_F(CudaCommandBufferTest, LaunchWithNonPortableClusterSizeSucceeds) {
+  Platform* platform = CudaPlatform();
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  if (!executor->GetDeviceDescription()
+           .cuda_compute_capability()
+           .IsAtLeastHopper()) {
+    GTEST_SKIP() << "Requires at least a Hopper GPU.";
+  }
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                       executor->CreateStream());
+  KernelLoaderSpec spec = stream_executor::gpu::GetMinimalClusterKernelSpec();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> kernel,
+                       executor->LoadKernel(spec));
+  DeviceAddress<uint8_t> dummy = executor->AllocateArray<uint8_t>(256);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBuffer> cmd_buffer,
+                       executor->CreateCommandBuffer(primary));
+  // Clusters larger than 8 blocks need the non-portable cluster attribute.
+  ASSERT_OK_AND_ASSIGN(
+      const CommandBuffer::Command* cmd,
+      cmd_buffer->CreateLaunch(ThreadDim(128, 1, 1), BlockDim(16, 1, 1),
+                               ClusterDim{16, 1, 1}, *kernel,
+                               *stream_executor::PackKernelArgs(
+                                   /*shmem_bytes=*/0, dummy),
+                               {}));
+  ASSERT_NE(cmd, nullptr);
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
+}
+
 TEST_F(CudaCommandBufferTest, LaunchHostCallback) {
   Platform* platform = CudaPlatform();
   ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
@@ -508,6 +549,122 @@ TEST_F(CudaCommandBufferTest,
       dynamic_cast<gpu::CudaCommandBuffer*>(cmd_buffer.get());
   ASSERT_NE(cuda_cmd_buffer, nullptr);
   EXPECT_TRUE(cuda_cmd_buffer->has_node_priority());
+}
+
+TEST_F(CudaCommandBufferTest,
+       ConcurrentVmmDeallocationDuringGetConvolveRunners) {
+  Platform* platform = CudaPlatform();
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  dnn::DnnSupport* dnn = executor->AsDnn();
+  ASSERT_NE(dnn, nullptr);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                       executor->CreateStream());
+
+  class CaptureErrorSink : public absl::LogSink {
+   public:
+    void Send(const absl::LogEntry& entry) override {
+      if (absl::StrContains(entry.text_message(),
+                            "CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED")) {
+        capture_errors.fetch_add(1, std::memory_order_relaxed);
+      }
+    }
+    std::atomic<int> capture_errors{0};
+  } sink;
+  absl::AddLogSink(&sink);
+
+  std::atomic<bool> stop{false};
+  std::thread dealloc_thread([&]() {
+    while (!stop.load(std::memory_order_relaxed)) {
+      DeviceAddressBase buf = executor->Allocate(4096);
+      ASSERT_FALSE(buf.is_null());
+      executor->Deallocate(&buf);
+    }
+  });
+
+  for (int iter = 0; iter < 5; ++iter) {
+    dnn::BatchDescriptor input_desc;
+    input_desc.set_count(2)
+        .set_feature_map_count(3)
+        .set_height(9 + iter)
+        .set_width(10 + iter)
+        .set_layout(dnn::DataLayout::kBatchDepthYX);
+    dnn::FilterDescriptor filter_desc;
+    filter_desc.set_input_feature_map_count(3)
+        .set_output_feature_map_count(4)
+        .set_input_filter_height(3)
+        .set_input_filter_width(3)
+        .set_layout(dnn::FilterLayout::kOutputInputYX);
+    dnn::ConvolutionDescriptor conv_desc;
+    conv_desc.set_vertical_filter_stride(1)
+        .set_horizontal_filter_stride(1)
+        .set_zero_padding_height(1)
+        .set_zero_padding_width(1);
+    dnn::BatchDescriptor output_desc;
+    output_desc.set_count(2)
+        .set_feature_map_count(4)
+        .set_height(9 + iter)
+        .set_width(10 + iter)
+        .set_layout(dnn::DataLayout::kBatchDepthYX);
+
+    std::vector<std::unique_ptr<const dnn::ConvRunner>> runners;
+    EXPECT_OK(dnn->GetConvolveRunners(
+        dnn::ConvolutionKind::FORWARD, dnn::DataType::kHalf,
+        dnn::DataType::kHalf, stream.get(), input_desc,
+        DeviceAddressBase(nullptr, 0), filter_desc,
+        DeviceAddressBase(nullptr, 0), output_desc,
+        DeviceAddressBase(nullptr, 0), conv_desc, /*use_fallback=*/false,
+        /*scratch_allocator=*/nullptr, EngineOptions{}, &runners));
+  }
+
+  stop.store(true, std::memory_order_relaxed);
+  dealloc_thread.join();
+  absl::RemoveLogSink(&sink);
+  EXPECT_EQ(sink.capture_errors.load(), 0);
+}
+
+TEST_F(CudaCommandBufferTest, HelperKernelLoaderSpecsAreCubinsInMemory) {
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec case_spec,
+                       GetSetCaseConditionKernelLoaderSpec());
+  EXPECT_TRUE(case_spec.has_cuda_cubin_in_memory());
+  EXPECT_FALSE(case_spec.has_cuda_ptx_in_memory());
+  EXPECT_FALSE(case_spec.has_in_process_symbol());
+  EXPECT_EQ(case_spec.arity(), 13);
+
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec while_spec,
+                       GetSetWhileConditionKernelLoaderSpec());
+  EXPECT_TRUE(while_spec.has_cuda_cubin_in_memory());
+  EXPECT_FALSE(while_spec.has_cuda_ptx_in_memory());
+  EXPECT_FALSE(while_spec.has_in_process_symbol());
+  EXPECT_EQ(while_spec.arity(), 2);
+
+  ASSERT_OK_AND_ASSIGN(KernelLoaderSpec noop_spec, GetNoOpKernelLoaderSpec());
+  EXPECT_TRUE(noop_spec.has_cuda_cubin_in_memory());
+  EXPECT_FALSE(noop_spec.has_cuda_ptx_in_memory());
+  EXPECT_FALSE(noop_spec.has_in_process_symbol());
+  EXPECT_EQ(noop_spec.arity(), 0);
+
+  Platform* platform = CudaPlatform();
+  ASSERT_OK_AND_ASSIGN(StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  EXPECT_THAT(executor->LoadKernel(case_spec), IsOkAndHolds(NotNull()));
+  EXPECT_THAT(executor->LoadKernel(while_spec), IsOkAndHolds(NotNull()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Kernel> noop_kernel,
+                       executor->LoadKernel(noop_spec));
+  ASSERT_NE(noop_kernel, nullptr);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<Stream> stream,
+                       executor->CreateStream());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CommandBuffer> cmd_buffer,
+                       executor->CreateCommandBuffer(primary));
+  ASSERT_OK(cmd_buffer
+                ->CreateLaunch(ThreadDim(), BlockDim(), std::nullopt,
+                               *noop_kernel,
+                               *stream_executor::PackKernelArgs(0), {})
+                .status());
+  ASSERT_OK(cmd_buffer->Finalize());
+  ASSERT_OK(cmd_buffer->Submit(stream.get()));
+  ASSERT_OK(stream->BlockHostUntilDone());
 }
 }  // namespace
 }  // namespace stream_executor::cuda

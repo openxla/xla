@@ -1,6 +1,6 @@
---- a/python/triton/experimental/gsan/src/GSanAllocator.cc
-+++ b/python/triton/experimental/gsan/src/GSanAllocator.cc
-@@ -393,8 +393,14 @@ CUresult ensureContext(int device) {
+--- a/python/triton/experimental/gsan/src/AllocatorCommon.h
++++ b/python/triton/experimental/gsan/src/AllocatorCommon.h
+@@ -232,8 +232,14 @@ inline CUresult ensureContext(int device) {
    CUresult res = cuCtxGetCurrent(&ctx);
    if (res != CUDA_SUCCESS)
      return res;
@@ -20,7 +20,7 @@
 
 --- a/python/triton/experimental/gsan/src/GSan.h
 +++ b/python/triton/experimental/gsan/src/GSan.h
-@@ -35,7 +35,7 @@ struct LaunchState {
+@@ -17,7 +17,7 @@ struct LaunchState {
  // A normal/write-once pair for each power-of-two granularity from 1 to 16.
  // The low pool-index bit selects the mode; the remaining bits encode log2
  // granularity. Six unused slots keep the reservation a power of two.

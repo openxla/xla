@@ -46,6 +46,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command.h"
+#include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/command_state.h"
 #include "xla/backends/gpu/runtime/record_ffi.h"
 #include "xla/backends/gpu/runtime/thunk.h"
@@ -329,6 +330,11 @@ CustomCallThunk::CustomCallThunk(
       gpu_compute_capability_(gpu_compute_capability),
       cpu_target_machine_options_(std::move(cpu_target_machine_options)) {}
 
+std::string CustomCallThunk::ToString(int indent) const {
+  return absl::StrCat(TracedCommand::ToString(indent),
+                      use_pdl_ ? ", use_pdl=true" : "");
+}
+
 absl::StatusOr<CustomCallThunk::CallFrameLease> CustomCallThunk::BuildCallFrame(
     const BufferAllocations* absl_nullable buffer_allocations) {
   if (!call_frame_.has_value()) {
@@ -384,6 +390,7 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
     const CollectiveParams* absl_nullable collective_params,
     CollectiveCliqueRequests* absl_nullable collective_clique_requests,
     CollectiveMemoryRequests* absl_nullable collective_memory_requests,
+    CommandBufferRequests* absl_nullable command_buffer_requests,
     const CollectiveCliques* absl_nullable collective_cliques,
     const CollectiveMemory* absl_nullable collective_memory,
     const ffi::ExecutionContext* absl_nullable execution_context,
@@ -427,7 +434,8 @@ InvokeContext CustomCallThunk::BuildInvokeContext(
           cpu_target_machine_options_ ? &*cpu_target_machine_options_ : nullptr,
           computation_streams,
           collective_params ? absl::MakeSpan(collective_params->async_streams)
-                            : absl::Span<se::Stream* const>()},
+                            : absl::Span<se::Stream* const>(),
+          command_buffer_requests},
       InvokeContext::StateContext{execution_state_.get(), prepare_state,
                                   initialize_state},
       called_computation_,
@@ -444,6 +452,7 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
     const CollectiveParams* absl_nullable collective_params,
     CollectiveCliqueRequests* absl_nullable collective_clique_requests,
     CollectiveMemoryRequests* absl_nullable collective_memory_requests,
+    CommandBufferRequests* absl_nullable command_buffer_requests,
     const CollectiveCliques* absl_nullable collective_cliques,
     const CollectiveMemory* absl_nullable collective_memory,
     absl::Span<se::Stream* const> computation_streams,
@@ -460,8 +469,8 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
   InvokeContext context = BuildInvokeContext(
       run_id, stream, execution_scoped_state, buffer_allocations,
       collective_params, collective_clique_requests, collective_memory_requests,
-      collective_cliques, collective_memory, execution_context, custom_options,
-      computation_streams);
+      command_buffer_requests, collective_cliques, collective_memory,
+      execution_context, custom_options, computation_streams);
   GpuCollectivesState collectives_state{
       collective_params, collective_clique_requests, collective_memory_requests,
       collective_cliques, collective_memory};
@@ -481,6 +490,7 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
     const CollectiveParams* absl_nullable collective_params,
     CollectiveCliqueRequests* absl_nullable collective_clique_requests,
     CollectiveMemoryRequests* absl_nullable collective_memory_requests,
+    CommandBufferRequests* absl_nullable command_buffer_requests,
     const CollectiveCliques* absl_nullable collective_cliques,
     const CollectiveMemory* absl_nullable collective_memory,
     absl::Span<se::Stream* const> computation_streams,
@@ -494,8 +504,8 @@ absl::Status CustomCallThunk::ExecuteFfiHandler(
   InvokeContext context = BuildInvokeContext(
       run_id, stream, execution_scoped_state, buffer_allocations,
       collective_params, collective_clique_requests, collective_memory_requests,
-      collective_cliques, collective_memory, execution_context, custom_options,
-      computation_streams);
+      command_buffer_requests, collective_cliques, collective_memory,
+      execution_context, custom_options, computation_streams);
   GpuCollectivesState collectives_state{
       collective_params, collective_clique_requests, collective_memory_requests,
       collective_cliques, collective_memory};
@@ -527,6 +537,9 @@ absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
 
   const RunId run_id =
       params.collective_params ? params.collective_params->run_id : RunId{-1};
+  TF_RET_CHECK(params.command_buffer_requests != nullptr);
+  CommandBufferRequests::ScopedCommand scoped_command(
+      *params.command_buffer_requests, this);
 
   if (c_bundle && c_bundle->prepare) {
     return ExecuteFfiHandler(
@@ -538,6 +551,7 @@ absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
         /*collective_params=*/params.collective_params,
         /*collective_clique_requests=*/params.collective_clique_requests,
         /*collective_memory_requests=*/params.collective_memory_requests,
+        /*command_buffer_requests=*/params.command_buffer_requests,
         /*collective_cliques=*/nullptr,
         /*collective_memory=*/nullptr,
         /*computation_streams=*/{});
@@ -552,6 +566,7 @@ absl::Status CustomCallThunk::Prepare(const PrepareParams& params) {
         /*collective_params=*/params.collective_params,
         /*collective_clique_requests=*/params.collective_clique_requests,
         /*collective_memory_requests=*/params.collective_memory_requests,
+        /*command_buffer_requests=*/params.command_buffer_requests,
         /*collective_cliques=*/nullptr,
         /*collective_memory=*/nullptr,
         /*computation_streams=*/{});
@@ -589,7 +604,8 @@ absl::Status CustomCallThunk::Initialize(const InitializeParams& params) {
         params.ffi_execution_context, params.custom_options,
         params.buffer_allocations, params.collective_params,
         /*collective_clique_requests=*/nullptr,
-        /*collective_memory_requests=*/nullptr, params.collective_cliques,
+        /*collective_memory_requests=*/nullptr,
+        /*command_buffer_requests=*/nullptr, params.collective_cliques,
         params.collective_memory,
         /*computation_streams=*/{});
   }
@@ -601,7 +617,8 @@ absl::Status CustomCallThunk::Initialize(const InitializeParams& params) {
         params.custom_options, params.buffer_allocations,
         params.collective_params,
         /*collective_clique_requests=*/nullptr,
-        /*collective_memory_requests=*/nullptr, params.collective_cliques,
+        /*collective_memory_requests=*/nullptr,
+        /*command_buffer_requests=*/nullptr, params.collective_cliques,
         params.collective_memory,
         /*computation_streams=*/{});
   }
@@ -621,7 +638,8 @@ absl::Status CustomCallThunk::ExecuteOnStream(const ExecuteParams& params) {
         params.custom_options, params.buffer_allocations,
         params.collective_params,
         /*collective_clique_requests=*/nullptr,
-        /*collective_memory_requests=*/nullptr, params.collective_cliques,
+        /*collective_memory_requests=*/nullptr,
+        /*command_buffer_requests=*/nullptr, params.collective_cliques,
         params.collective_memory, params.additional_compute_streams);
   }
   if (const auto* owned_bundle = std::get_if<OwnedHandlerBundle>(&bundle_)) {
@@ -634,7 +652,8 @@ absl::Status CustomCallThunk::ExecuteOnStream(const ExecuteParams& params) {
         params.custom_options, params.buffer_allocations,
         params.collective_params,
         /*collective_clique_requests=*/nullptr,
-        /*collective_memory_requests=*/nullptr, params.collective_cliques,
+        /*collective_memory_requests=*/nullptr,
+        /*command_buffer_requests=*/nullptr, params.collective_cliques,
         params.collective_memory, params.additional_compute_streams);
   }
 
@@ -701,7 +720,8 @@ absl::StatusOr<const se::CommandBuffer::Command*> CustomCallThunk::Record(
         execute_params.buffer_allocations, execute_params.collective_params,
         /*collective_clique_requests=*/nullptr,
         /*collective_memory_requests=*/nullptr,
-        execute_params.collective_cliques, execute_params.collective_memory,
+        /*command_buffer_requests=*/nullptr, execute_params.collective_cliques,
+        execute_params.collective_memory,
         execute_params.additional_compute_streams,
         &record_extension.extension_base);
   };

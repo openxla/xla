@@ -23,6 +23,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/btree_map.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
@@ -33,16 +34,15 @@ limitations under the License.
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/ArithDialect.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
-#include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LogicalResult.h"
 #include "tensor_ir/Analysis/Tiling/Arch.h"
 #include "tensor_ir/Analysis/Tiling/Enumerate.h"
 #include "tensor_ir/Analysis/Tiling/Evaluate.h"
 #include "tensor_ir/Dialect/TensorIR.h"
-#include "tensor_ir/Transform/Passes.h"
 #include "tensor_ir/Utils/ComputeCapability.h"
 #include "xla/backends/autotuner/codegen_backend.h"
 #include "xla/backends/gpu/codegen/tensor_ir/hlo_to_tensor_ir.h"
@@ -163,25 +163,18 @@ TensorIrBackend::GetSupportedConfigs(const HloInstruction& instr) {
   mlir::MLIRContext context;
   context.loadDialect<mlir::nv_tensor_ir::TensorIRDialect,
                       mlir::arith::ArithDialect>();
+  // TensorIR reports why it can't handle a fusion through MLIR diagnostics.
+  // Log them instead of letting MLIR print them to stderr.
+  mlir::ScopedDiagnosticHandler diagnostic_handler(
+      &context, [&](mlir::Diagnostic& diag) {
+        VLOG(1) << "TensorIrBackend: " << instr.name() << ": " << diag.str();
+        return mlir::success();
+      });
   mlir::OwningOpRef<mlir::ModuleOp> module =
       llvm_ir::CreateMlirModuleOp(mlir::UnknownLoc::get(&context));
   ABSL_ASSIGN_OR_RETURN(
       mlir::nv_tensor_ir::GraphOp graph_op,
       tensor_ir::ImportAndLegalizeComputation(computation, *module));
-
-  // `enumerateTilings` reads the "iteration_space" attribute that the
-  // layout-propagation passes attach to the graph; run them first.
-  mlir::PassManager pass_manager(&context);
-  pass_manager.addNestedPass<mlir::nv_tensor_ir::GraphOp>(
-      mlir::nv_tensor_ir::createLayoutPropagationAnnotationPass());
-  pass_manager.addNestedPass<mlir::nv_tensor_ir::GraphOp>(
-      mlir::nv_tensor_ir::createLayoutPropagationNormalizationPass());
-  if (llvm::failed(pass_manager.run(*module))) {
-    return absl::InvalidArgumentError(
-        absl::StrCat("TensorIrBackend: layout propagation failed for "
-                     "fusion: ",
-                     instr.ToString()));
-  }
 
   // Get the compute capability and target-specific architecture information.
   const auto* cuda_cc = target_config()

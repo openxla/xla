@@ -14,6 +14,7 @@
 # ==============================================================================
 
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 licenses(["notice"])  # Apache 2.0
 
@@ -36,6 +37,10 @@ cuda_library(
     copts = BASE_COPTS,
     features = ["-use_header_modules"],
     includes = ["cpp/include"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
     textual_hdrs = glob([
         "cpp/include/rmm/**/*.h",
         "cpp/include/rmm/**/*.hpp",

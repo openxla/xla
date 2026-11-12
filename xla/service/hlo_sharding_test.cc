@@ -216,6 +216,30 @@ TEST_F(HloShardingTest, NamedShardingTupleProtoRoundTrip) {
   EXPECT_THAT(sharding.ToProto(), EqualsProto(proto));
 }
 
+TEST_F(HloShardingTest, FromProtoFailsWithMoreLastTileDimsThanTileDims) {
+  auto proto = ParseTextProtoOrDie<OpSharding>(R"pb(
+    type: OTHER
+    tile_assignment_dimensions: 2
+    tile_assignment_devices: 0
+    tile_assignment_devices: 1
+    last_tile_dims: MANUAL
+    last_tile_dims: REPLICATED
+  )pb");
+  EXPECT_THAT(HloSharding::FromProto(proto).status().message(),
+              ::testing::HasSubstr("last_tile_dims has 2 entries"));
+
+  proto = ParseTextProtoOrDie<OpSharding>(R"pb(
+    type: OTHER
+    tile_assignment_dimensions: 2
+    iota_reshape_dims: 2
+    iota_transpose_perm: 0
+    last_tile_dims: MANUAL
+    last_tile_dims: REPLICATED
+  )pb");
+  EXPECT_THAT(HloSharding::FromProto(proto).status().message(),
+              ::testing::HasSubstr("last_tile_dims has 2 entries"));
+}
+
 using TileTest = HloShardingTest;
 TEST_F(TileTest, FailsWithDuplicateDeviceInTileAssignment) {
   HloSharding sharding =
@@ -632,6 +656,21 @@ TEST_P(HloShardingRepresentationTest, EmptySingleTupleIsNotShardGroup) {
 INSTANTIATE_TEST_SUITE_P(HloShardingRepresentationTest,
                          HloShardingRepresentationTest,
                          ::testing::Values(false, true));
+
+// Tests that an empty tuple without sharding has no sharding properties.
+TEST_F(HloShardingTest, EmptyTupleWithoutShardingProperties) {
+  HloSharding sharding = HloSharding::Tuple(ShapeUtil::MakeTupleShape({}), {});
+
+  EXPECT_TRUE(sharding.IsTuple());
+  EXPECT_TRUE(sharding.tuple_elements().empty());
+  EXPECT_FALSE(sharding.IsSingleDevice());
+  EXPECT_FALSE(sharding.IsManual());
+  EXPECT_FALSE(sharding.IsUnknown());
+  EXPECT_FALSE(sharding.IsUnreduced());
+  EXPECT_FALSE(sharding.IsManualSubgroup());
+  EXPECT_FALSE(sharding.IsUnreducedSubgroup());
+  EXPECT_FALSE(sharding.UniqueDevice().has_value());
+}
 
 TEST_F(HloShardingTest, NestedTuple) {
   // nested_tuple_shape = (f32[], (f32[3]), f32[4, 6])
@@ -1537,6 +1576,28 @@ TEST_F(HloShardingTest, CopyAndMoveWithNamedSharding) {
   move_assign_sharding = std::move(assign_sharding);
   EXPECT_TRUE(move_assign_sharding.UseNamedShardingLeaf());
   EXPECT_EQ(move_assign_sharding.named_sharding(), named_sharding);
+}
+
+TEST_F(HloShardingTest, UnreducedLeafNumTilesFails) {
+  const HloSharding unreduced_v2 = HloSharding::Unreduced();
+  EXPECT_DEATH((void)unreduced_v2.NumTiles(), "!IsUnreducedLeaf\\(\\)");
+  EXPECT_DEATH((void)unreduced_v2.TotalNumTiles(), "!IsUnreducedLeaf\\(\\)");
+
+  const Mesh mesh({2, 2}, {"a", "b"});
+  const HloSharding unreduced_v3(NamedSharding::Unreduced(mesh));
+  EXPECT_DEATH((void)unreduced_v3.NumTiles(), "!IsUnreducedLeaf\\(\\)");
+  EXPECT_DEATH((void)unreduced_v3.TotalNumTiles(), "!IsUnreducedLeaf\\(\\)");
+
+  const HloSharding subgroup_v2 =
+      HloSharding::Subgroup(TileAssignment({2, 2}), {OpSharding::UNREDUCED});
+  EXPECT_EQ(subgroup_v2.NumTiles(), 2);
+  EXPECT_EQ(subgroup_v2.TotalNumTiles(), 4);
+
+  const HloSharding subgroup_v3(
+      test_utils::FromAxisNames(mesh, {{"a"}}, /*replicated_axes=*/{},
+                                /*unreduced_axes=*/{"b"}));
+  EXPECT_EQ(subgroup_v3.NumTiles(), 2);
+  EXPECT_EQ(subgroup_v3.TotalNumTiles(), 4);
 }
 
 }  // namespace

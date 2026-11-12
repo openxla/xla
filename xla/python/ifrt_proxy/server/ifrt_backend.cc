@@ -482,6 +482,7 @@ IfrtBackend::IfrtBackend(IfrtProxyVersion version, uint64_t session_id,
           /*num_threads=*/32),
       in_order_requests_processor_(
           std::make_unique<InOrderRequestsProcessor>(this)),
+      cancellation_handles_(std::make_shared<CancellationHandles>()),
       destroyed_user_context_ids_(std::make_shared<DestroyedUserContextIds>()) {
 }
 
@@ -643,6 +644,8 @@ tsl::Future<BackendInterface::Response> IfrtBackend::ProcessInternal(
           HandleDestructArrayRequest(std::move(request)));
     case IfrtRequest::RequestCase::kCompileRequest:
       return tsl::Future<Response>(HandleCompileRequest(std::move(request)));
+    case IfrtRequest::RequestCase::kDeserializeLoadedExecutableRequest:
+      return HandleDeserializeLoadedExecutableRequest(std::move(request));
     case IfrtRequest::RequestCase::kLoadedExecutableMetadataRequest:
       return HandleLoadedExecutableMetadataRequest(std::move(request));
     case IfrtRequest::RequestCase::kLoadedExecutableMpmdMetadataRequest:
@@ -713,6 +716,11 @@ tsl::Future<BackendInterface::Response> IfrtBackend::ProcessInternal(
     case IfrtRequest::RequestCase::kGetDefaultLayoutRequest:
       return tsl::Future<Response>(
           HandleGetDefaultLayoutRequest(std::move(request)));
+    case IfrtRequest::RequestCase::kCancelExecutionRequest:
+      return tsl::Future<Response>(
+          HandleCancelExecutionRequest(std::move(request)));
+    case IfrtRequest::RequestCase::kHashValuesRequest:
+      return HandleHashValuesRequest(std::move(request));
     default:
       LOG(ERROR) << "Got unimplemented request type: "
                  << request->DebugString();
@@ -1106,6 +1114,12 @@ IfrtBackend::HandleRemapArraysRequest(ArrayStore::Reservation& asr,
   ABSL_ASSIGN_OR_RETURN(
       RemapPlan plan,
       RemapPlan::FromProto(client_.get(), remap_request.plan()));
+  // The plan comes from the proxy client, so reject inconsistent array specs
+  // here rather than relying on every `Client::RemapArrays()` implementation.
+  // The result is cached in `plan`, so implementations that validate again do
+  // not pay for it twice. The slower shard-level checks of `Validate()` are
+  // left to the implementation.
+  ABSL_RETURN_IF_ERROR(plan.ValidateArraySpecs());
   ABSL_ASSIGN_OR_RETURN(auto semantics, FromArrayCopySemanticsProto(
                                             remap_request.copy_semantics()));
 
@@ -1447,6 +1461,90 @@ IfrtBackend::HandleDestructArrayRequest(std::unique_ptr<IfrtRequest> request) {
   return ifrt_resp;
 }
 
+void IfrtBackend::PopulateCompileResponse(
+    xla::ifrt::LoadedExecutableRef executable,
+    std::vector<std::shared_ptr<RemoteLoadedHostCallbackQueue>>
+        host_callback_queues,
+    CompileResponse* compile_resp) {
+  uint64_t handle = handle_generator_.GenerateAtServer();
+  compile_resp->set_loaded_executable_handle(handle);
+
+  std::vector<uint64_t> host_callback_handles(host_callback_queues.size());
+  handle_generator_.GenerateAtServerBulk(absl::MakeSpan(host_callback_handles));
+  compile_resp->mutable_loaded_host_callback_handles()->Add(
+      host_callback_handles.begin(), host_callback_handles.end());
+
+  // Populate executable metadata.
+  compile_resp->set_name(AsProtoStringData(executable->name()));
+  if (std::optional<xla::ifrt::DeviceListRef> device_list =
+          executable->devices();
+      device_list.has_value()) {
+    compile_resp->set_num_devices((*device_list)->size());
+    for (const auto* device :
+         (*device_list)->AddressableDeviceList()->devices()) {
+      compile_resp->add_addressable_device_ids(device->Id().value());
+    }
+    for (const auto* device : (*device_list)->devices()) {
+      compile_resp->add_device_ids(device->Id().value());
+    }
+  }
+  // TODO(b/282757875): Consider making fingerprint calculation asynchronous
+  // if it is expected to take long.
+  auto fingerprint = executable->Fingerprint();
+  if (!fingerprint.ok()) {
+    *compile_resp->mutable_fingerprint_error() =
+        tsl::StatusToProto(fingerprint.status());
+  } else if (fingerprint->has_value()) {
+    compile_resp->set_fingerprint_value(std::move(fingerprint)->value());
+  }
+  if (protocol_version() >= protocol_version::kMpmdLoadedExecutableMethods) {
+    auto* mpmd_executable = dyn_cast<MpmdLoadedExecutable>(executable.get());
+    // Only populate MPMD addressable devices for MPMD executables.
+    if (mpmd_executable != nullptr) {
+      auto mpmd_addressable_devices =
+          mpmd_executable->GetMpmdAddressableDevices();
+      if (mpmd_addressable_devices.ok()) {
+        for (const auto& [name, devices] : *mpmd_addressable_devices) {
+          auto& device_list = (*compile_resp->mutable_mpmd_addressable_devices()
+                                    ->mutable_mpmd_addressable_devices())[name];
+          for (const auto* device : devices) {
+            device_list.add_mpmd_addressable_device_ids(device->Id().value());
+          }
+        }
+      } else {
+        *compile_resp->mutable_mpmd_addressable_devices_error() =
+            tsl::StatusToProto(mpmd_addressable_devices.status());
+      }
+    }
+  }
+  // Register the ready future to `futures_`. Caller is expected to call
+  // `CheckFuture` exactly once to check for its status and erase it. In
+  // future, we may introduce separate mechanisms to remove futures from
+  // `futures_` without checking its status for situations where futures are
+  // not used.
+  //
+  // TODO(junwhan): Clean this up once the client stops querying the ready
+  // future.
+  {
+    absl::MutexLock lock(futures_mutex_);
+    compile_resp->set_ready_future_handle(handle_generator_.GenerateAtServer());
+    futures_.insert({compile_resp->ready_future_handle(), absl::OkStatus()});
+  }
+
+  {
+    absl::MutexLock lock(executables_mutex_);
+    executables_.insert({handle, std::make_shared<LoadedExecutableWithInfo>(
+                                     std::move(executable))});
+  }
+  {
+    absl::MutexLock lock(host_callback_queues_mutex_);
+    for (int i = 0; i < host_callback_queues.size(); ++i) {
+      host_callback_queues_.insert(
+          {host_callback_handles[i], std::move(host_callback_queues[i])});
+    }
+  }
+}
+
 tsl::Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
     std::unique_ptr<IfrtRequest> request) {
   // Perform compilation on a thread pool in order to (1) avoid blocking the RPC
@@ -1515,89 +1613,89 @@ tsl::Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
 
     std::unique_ptr<IfrtResponse> ifrt_resp =
         NewIfrtResponse(request->request_metadata().op_id());
-    auto* compile_resp = ifrt_resp->mutable_compile_response();
+    PopulateCompileResponse(std::move(executable),
+                            std::move(host_callback_queues),
+                            ifrt_resp->mutable_compile_response());
+    return ifrt_resp;
+  };
+  return AsyncExecute(std::move(f), &compile_thread_pool_);
+}
 
-    uint64_t handle = handle_generator_.GenerateAtServer();
-    compile_resp->set_loaded_executable_handle(handle);
+tsl::Future<BackendInterface::Response>
+IfrtBackend::HandleDeserializeLoadedExecutableRequest(
+    std::unique_ptr<IfrtRequest> request) {
+  // Like compilation, loading a serialized executable can take long and use
+  // deep stacks. Run it on the compile thread pool. The lookup of the uploaded
+  // bytes runs there too, because it can wait for the upload and must not block
+  // the thread that processes the session requests.
+  auto f = [this, request = std::shared_ptr<IfrtRequest>(
+                      std::move(request))]() -> absl::StatusOr<Response> {
+    const DeserializeLoadedExecutableRequest& deserialize_request =
+        request->deserialize_loaded_executable_request();
+    const uint64_t host_buffer_handle =
+        deserialize_request.serialized_executable_handle();
 
-    std::vector<uint64_t> host_callback_handles(host_callback_queues.size());
-    handle_generator_.GenerateAtServerBulk(
-        absl::MakeSpan(host_callback_handles));
-    compile_resp->mutable_loaded_host_callback_handles()->Add(
-        host_callback_handles.begin(), host_callback_handles.end());
+    // Delete the host buffer on every path, also when a check or the lookup
+    // fails. Otherwise a rejected request leaves the bytes in the store.
+    absl::Cleanup delete_host_buffer = [&] {
+      host_buffer_store_->Delete(host_buffer_handle).IgnoreError();
+    };
 
-    // Populate executable metadata.
-    compile_resp->set_name(AsProtoStringData(executable->name()));
-    if (std::optional<xla::ifrt::DeviceListRef> device_list =
-            executable->devices();
-        device_list.has_value()) {
-      compile_resp->set_num_devices((*device_list)->size());
-      for (const auto* device :
-           (*device_list)->AddressableDeviceList()->devices()) {
-        compile_resp->add_addressable_device_ids(device->Id().value());
+    if (host_buffer_handle == 0) {
+      return absl::InvalidArgumentError(
+          "`DeserializeLoadedExecutable` requires a host buffer handle");
+    }
+
+    ABSL_ASSIGN_OR_RETURN(
+        HostBufferStore::MemRegion host_buffer,
+        host_buffer_store_->Lookup(host_buffer_handle,
+                                   /*timeout=*/absl::InfiniteDuration()));
+    // Wrap the bytes without copying. The `Cord` keeps the region alive.
+    // `MakeCordFromExternal` may copy small buffers and release them at once.
+    absl::Cord serialized = absl::MakeCordFromExternal(
+        *host_buffer, [keep_alive = host_buffer]() {});
+    std::move(delete_host_buffer).Invoke();
+
+    auto xla_options =
+        std::make_unique<xla::ifrt::XlaDeserializeExecutableOptions>();
+    if (deserialize_request.has_compile_options()) {
+      ABSL_ASSIGN_OR_RETURN(
+          auto compile_options,
+          Deserialize<xla::ifrt::CompileOptions>(
+              deserialize_request.compile_options(), /*options=*/nullptr));
+      ABSL_ASSIGN_OR_RETURN(
+          auto xla_compile_options,
+          xla::ifrt::GetXlaCompileOptions(std::move(compile_options)));
+      xla_options->compile_options =
+          std::move(xla_compile_options->compile_options);
+    }
+
+    if (deserialize_request.device_ids_size() > 0) {
+      std::vector<xla::ifrt::Device*> device_vector;
+      device_vector.reserve(deserialize_request.device_ids_size());
+      for (const int32_t device_id : deserialize_request.device_ids()) {
+        ABSL_ASSIGN_OR_RETURN(
+            xla::ifrt::Device* const device,
+            client_->LookupDevice(xla::ifrt::DeviceId(device_id)));
+        device_vector.push_back(device);
       }
-      for (const auto* device : (*device_list)->devices()) {
-        compile_resp->add_device_ids(device->Id().value());
-      }
-    }
-    // TODO(b/282757875): Consider making fingerprint calculation asynchronous
-    // if it is expected to take long.
-    auto fingerprint = executable->Fingerprint();
-    if (!fingerprint.ok()) {
-      *compile_resp->mutable_fingerprint_error() =
-          tsl::StatusToProto(fingerprint.status());
-    } else if (fingerprint->has_value()) {
-      compile_resp->set_fingerprint_value(std::move(fingerprint)->value());
-    }
-    if (protocol_version() >= protocol_version::kMpmdLoadedExecutableMethods) {
-      auto* mpmd_executable = dyn_cast<MpmdLoadedExecutable>(executable.get());
-      // Only populate MPMD addressable devices for MPMD executables.
-      if (mpmd_executable != nullptr) {
-        auto mpmd_addressable_devices =
-            mpmd_executable->GetMpmdAddressableDevices();
-        if (mpmd_addressable_devices.ok()) {
-          for (const auto& [name, devices] : *mpmd_addressable_devices) {
-            auto& device_list =
-                (*compile_resp->mutable_mpmd_addressable_devices()
-                      ->mutable_mpmd_addressable_devices())[name];
-            for (const auto* device : devices) {
-              device_list.add_mpmd_addressable_device_ids(device->Id().value());
-            }
-          }
-        } else {
-          *compile_resp->mutable_mpmd_addressable_devices_error() =
-              tsl::StatusToProto(mpmd_addressable_devices.status());
-        }
-      }
-    }
-    // Register the ready future to `futures_`. Caller is expected to call
-    // `CheckFuture` exactly once to check for its status and erase it. In
-    // future, we may introduce separate mechanisms to remove futures from
-    // `futures_` without checking its status for situations where futures are
-    // not used.
-    //
-    // TODO(junwhan): Clean this up once the client stops querying the ready
-    // future.
-    {
-      absl::MutexLock lock(futures_mutex_);
-      compile_resp->set_ready_future_handle(
-          handle_generator_.GenerateAtServer());
-      futures_.insert({compile_resp->ready_future_handle(), absl::OkStatus()});
+      ABSL_ASSIGN_OR_RETURN(xla_options->devices,
+                            client_->MakeDeviceList(device_vector));
     }
 
-    {
-      absl::MutexLock lock(executables_mutex_);
-      executables_.insert({handle, std::make_shared<LoadedExecutableWithInfo>(
-                                       std::move(executable))});
-    }
-    {
-      absl::MutexLock lock(host_callback_queues_mutex_);
-      for (int i = 0; i < host_callback_queues.size(); ++i) {
-        host_callback_queues_.insert(
-            {host_callback_handles[i], std::move(host_callback_queues[i])});
-      }
-    }
+    ABSL_ASSIGN_OR_RETURN(
+        auto executable,
+        client_->GetDefaultCompiler()
+            ->DeserializeLoadedExecutable(serialized, std::move(xla_options))
+            .Await());
 
+    std::unique_ptr<IfrtResponse> ifrt_resp =
+        NewIfrtResponse(request->request_metadata().op_id());
+    PopulateCompileResponse(
+        std::move(executable),
+        /*host_callback_queues=*/{},
+        ifrt_resp->mutable_deserialize_loaded_executable_response()
+            ->mutable_compile_response());
     return ifrt_resp;
   };
   return AsyncExecute(std::move(f), &compile_thread_pool_);
@@ -1977,6 +2075,24 @@ IfrtBackend::HandleLoadedExecutableExecuteRequest(
   // assigns values to client-minted handles, and assumes this is done
   // atomically (as in ACID) across all handles.
   [&]() -> void {
+    // The cancellation handle is retained only while the execution status is
+    // tracked, so that the entry is released once the execution completes. The
+    // client only sends a cancellation handle when `fill_status` is set.
+    const uint64_t cancellation_handle = execute.cancellation_handle();
+    if (cancellation_handle != 0 && result.cancellation_handle != nullptr &&
+        result.status.IsValid()) {
+      {
+        absl::MutexLock lock(cancellation_handles_->mu);
+        cancellation_handles_->handles.insert(
+            {cancellation_handle, std::move(result.cancellation_handle)});
+      }
+      result.status.OnReady([cancellation_handles = cancellation_handles_,
+                             cancellation_handle](const absl::Status&) {
+        absl::MutexLock lock(cancellation_handles->mu);
+        cancellation_handles->handles.erase(cancellation_handle);
+      });
+    }
+
     if (execute_options.fill_status) {
       uint64_t status_handle = execute.result_status_handle();
       if (status_handle == 0) {
@@ -2325,6 +2441,65 @@ IfrtBackend::HandleGetDefaultLayoutRequest(
        ->mutable_serialized_pjrt_layout() = layout->Serialize();
 
   return ifrt_resp;
+}
+
+absl::StatusOr<BackendInterface::Response>
+IfrtBackend::HandleCancelExecutionRequest(
+    std::unique_ptr<IfrtRequest> request) {
+  const auto& cancel_request = request->cancel_execution_request();
+  absl::Status error = tsl::StatusFromProto(cancel_request.error());
+  if (error.ok()) {
+    return absl::InvalidArgumentError(
+        "CancelExecution requires a non-OK status");
+  }
+  xla::ifrt::LoadedExecutable::CancellationHandle cancellation_handle;
+  {
+    absl::MutexLock lock(cancellation_handles_->mu);
+    auto node = cancellation_handles_->handles.extract(
+        cancel_request.cancellation_handle());
+    if (!node.empty()) {
+      cancellation_handle = std::move(node.mapped());
+    }
+  }
+  if (cancellation_handle != nullptr) {
+    client_->CancelExecution(std::move(cancellation_handle), std::move(error));
+  }
+
+  auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
+  ifrt_resp->mutable_cancel_execution_response();
+  return ifrt_resp;
+}
+
+tsl::Future<BackendInterface::Response> IfrtBackend::HandleHashValuesRequest(
+    std::unique_ptr<IfrtRequest> request) {
+  const HashValuesRequest& hash_request = request->hash_values_request();
+  absl::StatusOr<xla::ifrt::Client::HashMode> hash_mode =
+      FromHashModeProto(hash_request.hash_mode());
+  if (!hash_mode.ok()) {
+    return tsl::Future<Response>(hash_mode.status());
+  }
+
+  std::vector<xla::ifrt::ValueRef> values;
+  values.reserve(hash_request.value_handles_size());
+  for (const uint64_t value_handle : hash_request.value_handles()) {
+    // TODO(b/261991179): Support other Value types.
+    absl::StatusOr<IfrtArrayRef> array = array_store_.Find(value_handle);
+    if (!array.ok()) {
+      return tsl::Future<Response>(array.status());
+    }
+    values.push_back(*std::move(array));
+  }
+
+  return client_->HashValues(values, *hash_mode)
+      .Map<BackendInterface::Response>(
+          [op_id = request->request_metadata().op_id()](
+              const std::vector<uint64_t>& hashes) {
+            Response ifrt_resp = NewIfrtResponse(op_id);
+            HashValuesResponse* hash_resp =
+                ifrt_resp->mutable_hash_values_response();
+            hash_resp->mutable_hashes()->Assign(hashes.begin(), hashes.end());
+            return ifrt_resp;
+          });
 }
 
 absl::StatusOr<std::shared_ptr<IfrtBackend::LoadedExecutableWithInfo>>
