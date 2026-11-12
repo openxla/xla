@@ -21,6 +21,7 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "xla/stream_executor/device_description.h"

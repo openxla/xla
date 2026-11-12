@@ -59,23 +59,28 @@ cc_library(
     deps = [
         ":device_event",
         ":pjrt_client",
+        ":pjrt_device_dimensions",
         ":pjrt_executable",
         ":raw_buffer",
         "//xla:executable_run_options",
         "//xla:future",
+        "//xla/pjrt/c:pjrt_c_api_hdrs",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/pjrt/distributed/coordination:coordination_service_proto_cc",
         "//xla/runtime:device_id",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:platform_port",
+        "@tsl//tsl/profiler/lib:scoped_memory_debug_annotation",
     ],
 )
 
@@ -156,9 +161,10 @@ xla_cc_test(
     deps = [
         ":semaphore",
         "//xla/hlo/testlib:test",
+        "//xla/tsl/platform:env",
+        "//xla/tsl/platform:test_benchmark",
+        "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/synchronization",
-        "@com_google_googletest//:gtest_main",
-        "@tsl//tsl/platform:env",
     ],
 )
 
@@ -294,12 +300,16 @@ xla_cc_test(
     deps = [
         ":common_pjrt_client",
         ":pjrt_client",
+        ":pjrt_executable",
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:types",
         "//xla:util",
         "//xla:xla_data_proto_cc",
+        "//xla/hlo/builder:xla_computation",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
         "//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
         "//xla/runtime:device_id",
@@ -310,9 +320,11 @@ xla_cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_benchmark//:benchmark",
         "@com_google_googletest//:gtest",
+        "@tsl//tsl/profiler/lib:scoped_memory_debug_annotation",
     ],
 )
 
@@ -666,6 +678,120 @@ cc_library(
 )
 
 cc_library(
+    name = "pjrt_build_stamp",
+    srcs = ["pjrt_build_stamp.cc"],
+    hdrs = ["pjrt_build_stamp.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        ":pjrt_common",
+        "//xla/pjrt/proto:pjrt_build_stamp_proto_cc",
+        "//xla/pjrt/proto:pjrt_value_type_proto_cc",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
+        "@com_google_protobuf//:protobuf_lite",
+        "@com_google_protobuf//:timestamp_cc_proto",
+        "@tsl//tsl/platform:fingerprint",
+    ],
+)
+
+cc_library(
+    name = "pjrt_compatibility_versions",
+    srcs = ["pjrt_compatibility_versions.cc"],
+    hdrs = ["pjrt_compatibility_versions.h"],
+    visibility = internal_visibility([":friends"]),
+    deps = [
+        ":pjrt_build_stamp",
+        "//xla/pjrt/proto:pjrt_build_stamp_proto_cc",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+cc_library(
+    name = "pjrt_build_stamp_writer",
+    srcs = ["pjrt_build_stamp_writer.cc"],
+    hdrs = ["pjrt_build_stamp_writer.h"],
+    # Restricted to compiler build stamp factories and the helpers they use. Add
+    # Google-internal packages to `pjrt/google:build_stamp_factories`, which is
+    # not exported, rather than here.
+    visibility = internal_visibility(
+        [
+            ":__pkg__",
+            "//xla/pjrt/google:build_stamp_factories",
+        ],
+        or_else = [":__pkg__"],
+    ),
+    deps = [
+        ":pjrt_build_stamp",
+        ":pjrt_common",
+        ":pjrt_compatibility_versions",
+        "//xla/pjrt/proto:pjrt_build_stamp_proto_cc",
+        "//xla/pjrt/proto:pjrt_value_type_proto_cc",
+        "//xla/tsl/builddata",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_protobuf//:timestamp_cc_proto",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_build_stamp_writer_test",
+    srcs = ["pjrt_build_stamp_writer_test.cc"],
+    deps = [
+        ":pjrt_build_stamp",
+        ":pjrt_build_stamp_writer",
+        "//xla/pjrt/proto:pjrt_build_stamp_proto_cc",
+        "//xla/tsl/builddata",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_compatibility_versions_test",
+    srcs = ["pjrt_compatibility_versions_test.cc"],
+    deps = [
+        ":pjrt_build_stamp",
+        ":pjrt_build_stamp_writer",
+        ":pjrt_compatibility_versions",
+        "//xla/pjrt/proto:pjrt_build_stamp_proto_cc",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+xla_cc_test(
+    name = "pjrt_build_stamp_test",
+    srcs = ["pjrt_build_stamp_test.cc"],
+    deps = [
+        ":pjrt_build_stamp",
+        "//xla/pjrt/proto:pjrt_build_stamp_proto_cc",
+        "//xla/tsl/util/proto:parse_text_proto",
+        "//xla/tsl/util/proto:proto_matchers",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "pjrt_compiler",
     srcs = ["pjrt_compiler.cc"],
     hdrs = ["pjrt_compiler.h"],
@@ -743,6 +869,7 @@ cc_library(
         "//xla/runtime:device_id",
         "//xla/runtime:process_id",
         "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/strings:string_view",
     ],
 )
 
@@ -1423,6 +1550,7 @@ cc_library(
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/functional:function_ref",
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
@@ -1435,10 +1563,17 @@ xla_cc_test(
     name = "raw_buffer_test",
     srcs = ["raw_buffer_test.cc"],
     deps = [
+        ":device_event",
         ":raw_buffer",
+        "//xla:future",
+        "//xla/pjrt/c:pjrt_c_api_device_event_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_raw_buffer_extension_hdrs",
+        "//xla/pjrt/c:pjrt_c_api_status_utils",
+        "//xla/tsl/concurrency:async_value",
         "//xla/tsl/concurrency:ref_count",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",

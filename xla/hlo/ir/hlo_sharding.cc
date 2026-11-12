@@ -1560,6 +1560,7 @@ int64_t HloSharding::TotalNumTiles() const {
   }
   CHECK(!IsManualLeaf());
   CHECK(!IsUnknownLeaf());
+  CHECK(!IsUnreducedLeaf());
 
   return num_devices();
 }
@@ -1568,7 +1569,7 @@ int64_t HloSharding::NumTiles() const {
   if (IsReplicatedOrSingleDeviceLeaf()) {
     return 1;
   }
-  CHECK(!IsManualLeaf() && !IsUnknownLeaf());
+  CHECK(!IsManualLeaf() && !IsUnknownLeaf() && !IsUnreducedLeaf());
   if (UseNamedShardingLeaf()) {
     return Product(dimensions());
   }

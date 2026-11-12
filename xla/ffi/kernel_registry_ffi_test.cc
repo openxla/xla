@@ -46,7 +46,16 @@ struct CanRegister : std::false_type {};
 
 template <typename T>
 struct CanRegister<T, std::void_t<decltype(std::declval<T>().Register(
-                          "k", nullptr, 0, SourceFormat::kPtx))>>
+                          "k", nullptr, 0, SourceFormat::kPtx, false))>>
+    : std::true_type {};
+
+template <typename T, typename = void>
+struct CanRegisterWithCache : std::false_type {};
+
+template <typename T>
+struct CanRegisterWithCache<
+    T, std::void_t<decltype(std::declval<T>().Register(
+           "k", nullptr, 0, SourceFormat::kPtx, false, nullptr))>>
     : std::true_type {};
 
 template <typename T, typename = void>
@@ -60,6 +69,9 @@ struct CanLaunch<T, std::void_t<decltype(std::declval<T>().Launch(
 static_assert(CanRegister<PrepareKernelRegistry>::value);
 static_assert(CanRegister<InitializeKernelRegistry>::value);
 static_assert(!CanRegister<ExecuteKernelRegistry>::value);
+static_assert(CanRegisterWithCache<PrepareKernelRegistry>::value);
+static_assert(CanRegisterWithCache<InitializeKernelRegistry>::value);
+static_assert(!CanRegisterWithCache<ExecuteKernelRegistry>::value);
 
 static_assert(!CanLaunch<PrepareKernelRegistry>::value);
 static_assert(!CanLaunch<InitializeKernelRegistry>::value);
@@ -92,6 +104,7 @@ TEST(KernelRegistryFfiTest, KernelRegistry) {
     int32_t device_ordinal = 1;
     bool registered = false;
     bool launched = false;
+    const XLA_FFI_Kernel* last_cached_kernel = nullptr;
   };
 
   auto register_cb =
@@ -107,7 +120,9 @@ TEST(KernelRegistryFfiTest, KernelRegistry) {
               "internal_kernel");
     EXPECT_EQ(args->kernel_spec->size, 6u);
     EXPECT_EQ(args->kernel_spec->format, XLA_FFI_SourceFormat_CUBIN);
+    EXPECT_EQ(args->uses_pdl, 0);
     state->registered = true;
+    state->last_cached_kernel = args->cached_kernel;
     args->kernel = kExpectedKernel;
     return nullptr;
   };
@@ -143,9 +158,18 @@ TEST(KernelRegistryFfiTest, KernelRegistry) {
   auto init_fn = [&](InitializeKernelRegistry kernel_registry) -> absl::Status {
     ABSL_ASSIGN_OR_RETURN(const XLA_FFI_Kernel* kernel,
                           kernel_registry.Register("internal_kernel", "cubin!",
-                                                   6, SourceFormat::kCubin));
+                                                   6, SourceFormat::kCubin,
+                                                   /*uses_pdl=*/false));
     EXPECT_EQ(kernel, kExpectedKernel);
+    EXPECT_EQ(state.last_cached_kernel, nullptr);
     registered_kernel = kernel;
+    ABSL_ASSIGN_OR_RETURN(
+        const XLA_FFI_Kernel* cached,
+        kernel_registry.Register("internal_kernel", "cubin!", 6,
+                                 SourceFormat::kCubin,
+                                 /*uses_pdl=*/false, registered_kernel));
+    EXPECT_EQ(cached, kExpectedKernel);
+    EXPECT_EQ(state.last_cached_kernel, kExpectedKernel);
     return absl::OkStatus();
   };
 
@@ -158,7 +182,8 @@ TEST(KernelRegistryFfiTest, KernelRegistry) {
   auto prepare_fn = [&](PrepareKernelRegistry kernel_registry) -> absl::Status {
     ABSL_ASSIGN_OR_RETURN(const XLA_FFI_Kernel* kernel,
                           kernel_registry.Register("internal_kernel", "cubin!",
-                                                   6, SourceFormat::kCubin));
+                                                   6, SourceFormat::kCubin,
+                                                   /*uses_pdl=*/false));
     EXPECT_EQ(kernel, kExpectedKernel);
     return absl::OkStatus();
   };

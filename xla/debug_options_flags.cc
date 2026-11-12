@@ -374,6 +374,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_nccl_init_max_rank_per_root_ratio(0);
 
   opts.set_xla_gpu_temp_buffer_use_separate_color(false);
+  opts.set_xla_gpu_temp_buffer_use_collective_color(true);
   opts.set_xla_gpu_require_exclusive_lock(false);
 
   opts.set_xla_gpu_redzone_padding_bytes(8 * 1024 * 1024);
@@ -509,6 +510,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
       DebugOptions::AUTOTUNE_CACHE_MODE_UPDATE);
 
   opts.set_xla_gpu_autotune_gemm_rtol(0.1f);
+  opts.set_xla_gpu_autotune_flush_l2_cache(true);
+  opts.set_xla_gpu_autotune_num_timed_runs(3);
 
   // TODO(b/355487968): Remove this flag once all data will be presented in
   // xprof with command buffers.
@@ -585,6 +588,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_ragged_all_to_all_mode(
       DebugOptions::COLLECTIVES_PRIVATE_MEMORY);
   opts.set_xla_gpu_experimental_ragged_all_to_all_use_device_kernel(false);
+  opts.set_xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight(0.22f);
   opts.set_xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback(false);
   opts.set_xla_gpu_experimental_use_ragged_dot_grouped_gemm(true);
   opts.set_xla_gpu_native_emitter_tune_unroll_factor_for_loops(false);
@@ -619,6 +623,7 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_experimental_enable_raft_for_stable_topk(true);
   opts.set_xla_gpu_experimental_enable_tensor_ir(false);
   opts.set_xla_gpu_experimental_enable_triton_scan(true);
+  opts.set_xla_gpu_experimental_multi_phase_fusion(false);
   opts.set_xla_gpu_async_copy_min_bytes(-1);
 
   // Disable float checks.
@@ -1842,6 +1847,19 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_autotune_gemm_rtol(),
       "Relative precision for comparing GEMM solutions vs the reference one"));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_autotune_flush_l2_cache",
+      bool_setter_for(&DebugOptions::set_xla_gpu_autotune_flush_l2_cache),
+      debug_options->xla_gpu_autotune_flush_l2_cache(),
+      "If true, the GPU autotuner flushes the L2 cache before every timed run "
+      "of a candidate, so that candidates are profiled with operands read "
+      "from device memory."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_autotune_num_timed_runs",
+      int32_setter_for(&DebugOptions::set_xla_gpu_autotune_num_timed_runs),
+      debug_options->xla_gpu_autotune_num_timed_runs(),
+      "Number of timed runs of each candidate during GPU autotuning. The mean "
+      "run time is used to rank the candidates."));
+  flag_list->push_back(tsl::Flag(
       "xla_force_host_platform_device_count",
       int32_setter_for(&DebugOptions::set_xla_force_host_platform_device_count),
       debug_options->xla_force_host_platform_device_count(),
@@ -2503,6 +2521,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "allocate temp buffer to the fixed address on every iteration"));
 
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_temp_buffer_use_collective_color",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_temp_buffer_use_collective_color),
+      debug_options->xla_gpu_temp_buffer_use_collective_color(),
+      "If true, allocates temporary buffers for fully-sharded modules (modules "
+      "using all devices in the topology) in the Collective memory space "
+      "(color 7)."));
+
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_require_exclusive_lock",
       bool_setter_for(&DebugOptions::set_xla_gpu_require_exclusive_lock),
       debug_options->xla_gpu_require_exclusive_lock(),
@@ -3017,8 +3044,8 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           &DebugOptions::
               set_xla_gpu_experimental_enable_fusion_block_level_rewriter),
       debug_options->xla_gpu_experimental_enable_fusion_block_level_rewriter(),
-      "Enabling this flag will attempt to redirect every fusion possible to "
-      "the Triton emitter"));
+      "Enabling this flag makes every fusion that Triton supports default to "
+      "the Triton block-level emitter when fusions are not autotuned."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_enable_libnvptxcompiler",
       [debug_options](bool enabled) {
@@ -3814,6 +3841,15 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "If true, lowers eligible associative kScan instructions to Triton "
       "fusions (ScanRewriterTriton)."));
   flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_multi_phase_fusion",
+      bool_setter_for(
+          &DebugOptions::set_xla_gpu_experimental_multi_phase_fusion),
+      debug_options->xla_gpu_experimental_multi_phase_fusion(),
+      "If true, fuses dependent small fusions into nested fusions. Nested "
+      "fusions are emitted as a sequence of phases of a single kernel. Phases "
+      "exchange data via HBM or caches and synchronize with block cluster "
+      "barriers."));
+  flag_list->push_back(tsl::Flag(
       "xla_gpu_experimental_ragged_all_to_all_use_device_kernel",
       bool_setter_for(
           &DebugOptions::
@@ -3828,6 +3864,18 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
               set_xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback),
       debug_options->xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback(),
       "If true, allow fallback to NCCL Send/Recv path for ragged-all-to-all."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight",
+      float_setter_for(
+          &DebugOptions::
+              set_xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight),
+      debug_options
+          ->xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight(),
+      "Weight applied to the (hbm_bw / fabric_bw) ratio when scoring remote "
+      "writes for per-CTA scheduling in the ragged-all-to-all device kernel "
+      "(0.0-1.0). Higher value => higher remote-write cost => more CTAs on "
+      "remote work. Out-of-range values use the default (0.22, fitted on "
+      "GB200)."));
   flag_list->push_back(tsl::Flag(
       "xla_gpu_async_copy_min_bytes",
       int64_setter_for(&DebugOptions::set_xla_gpu_async_copy_min_bytes),

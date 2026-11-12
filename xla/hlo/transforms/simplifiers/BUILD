@@ -320,6 +320,7 @@ xla_cc_test(
     srcs = ["hlo_computation_deduplicator_test.cc"],
     deps = [
         ":hlo_computation_deduplicator",
+        "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -338,6 +339,7 @@ cc_library(
     deps = [
         "//xla:util",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_computation_utils",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_registry",
         "//xla/tsl/platform:logging",
@@ -1077,8 +1079,7 @@ cc_library(
         "//xla/hlo/pass:hlo_pass_registry",
         "//xla/service:call_graph",
         "//xla/service:computation_layout",
-        "//xla/tsl/platform:errors",
-        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:logging",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -1245,6 +1246,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_computation_utils",
         "//xla/hlo/pass:hlo_pass",
         "//xla/hlo/pass:hlo_pass_registry",
         "//xla/service:slow_operation_alarm",

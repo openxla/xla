@@ -1221,6 +1221,55 @@ std::optional<xla::BackendKind> GetBackendKind(mlir::func::FuncOp fn) {
   return backend_attr.getValue();
 }
 
+LogicalResult CopySliceOp::verify() {
+  RankedTensorType src_type = getSrc().getType();
+  RankedTensorType dest_type = getDest().getType();
+  if (getResult().getType() != dest_type) {
+    return emitOpError("result type must match dest type");
+  }
+  if (src_type.getElementType() != dest_type.getElementType()) {
+    return emitOpError("src and dest element types must match");
+  }
+  if (static_cast<int64_t>(getSrcIndices().size()) != src_type.getRank()) {
+    return emitOpError("src_indices count must match src rank");
+  }
+  if (static_cast<int64_t>(getDestIndices().size()) != dest_type.getRank()) {
+    return emitOpError("dest_indices count must match dest rank");
+  }
+  if (static_cast<int64_t>(getNumElements()) < 0) {
+    return emitOpError("num_elements must be non-negative");
+  }
+  return success();
+}
+
+LogicalResult LinearExtractOp::verify() {
+  if (getTensor().getType().getRank() < 1) {
+    return emitOpError("tensor must have rank at least 1");
+  }
+  return success();
+}
+
+LogicalResult LinearInsertOp::verify() {
+  if (getTensor().getType().getRank() < 1) {
+    return emitOpError("tensor must have rank at least 1");
+  }
+  return success();
+}
+
+LogicalResult GetDynamicDimSizeOp::verify() {
+  if (static_cast<int64_t>(getDim()) < 0) {
+    return emitOpError("dim must be non-negative");
+  }
+  return success();
+}
+
+LogicalResult SetDynamicDimSizeOp::verify() {
+  if (static_cast<int64_t>(getDim()) < 0) {
+    return emitOpError("dim must be non-negative");
+  }
+  return success();
+}
+
 }  // namespace xla
 
 #define GET_OP_CLASSES

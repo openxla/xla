@@ -17,14 +17,9 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <array>
-#include <cmath>
-#include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <memory>
 #include <optional>
-#include <ostream>
-#include <random>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -34,16 +29,13 @@ limitations under the License.
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
-#include "absl/random/uniform_int_distribution.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
-#include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/types/span.h"
@@ -2780,9 +2772,6 @@ ENTRY entry_computation {
 }
 
 TEST_F(ScanTritonEmitterTest, TopPMaskEndToEnd8x128) {
-  if (GpuComputeCapability().IsRocm()) {
-    GTEST_SKIP() << "ScanRewriterTriton is only enabled on CUDA.";
-  }
   constexpr absl::string_view kHloText = R"(
 HloModule top_p_mask_8x128
 
@@ -2927,9 +2916,6 @@ ENTRY entry_computation {
 }
 
 TEST_F(ScanTritonEmitterTest, ScanOverLastDimensionOfRank3Input) {
-  if (GpuComputeCapability().IsRocm()) {
-    GTEST_SKIP() << "ScanRewriterTriton is only enabled on CUDA.";
-  }
   constexpr absl::string_view kHloText = R"(
 add_computation {
   p0 = f32[4,8] parameter(0)

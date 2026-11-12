@@ -51,10 +51,13 @@ using ::tsl::thread::ThreadPool;
 
 TEST(CpuDeviceMemoryTest, Basic) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  AsyncWorkRunner* async_work_runner =
+      absl::down_cast<CommonPjRtClient*>(client.get())->async_work_runner();
   PjRtMemorySpace* memory_space = client->memory_spaces()[0];
   std::string expected = "tracked_cpu_device_buffer_test";
   TF_ASSERT_OK_AND_ASSIGN(
-      auto buffer, CpuRawBuffer::Allocate(memory_space, expected.size()));
+      auto buffer, CpuRawBuffer::Allocate(memory_space->ToCApiPtr(),
+                                          expected.size(), async_work_runner));
 
   auto definition_event = MakeConstructedAsyncValueRef<CpuEvent>();
 
@@ -78,9 +81,12 @@ TEST(CpuDeviceMemoryTest, Basic) {
 
 TEST(CpuDeviceMemoryTest, BasicError) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  AsyncWorkRunner* async_work_runner =
+      absl::down_cast<CommonPjRtClient*>(client.get())->async_work_runner();
   PjRtMemorySpace* memory_space = client->memory_spaces()[0];
-  TF_ASSERT_OK_AND_ASSIGN(auto buffer,
-                          CpuRawBuffer::Allocate(memory_space, 64));
+  TF_ASSERT_OK_AND_ASSIGN(
+      auto buffer,
+      CpuRawBuffer::Allocate(memory_space->ToCApiPtr(), 64, async_work_runner));
 
   auto definition_event = MakeConstructedAsyncValueRef<CpuEvent>();
 
@@ -104,6 +110,8 @@ TEST(CpuDeviceMemoryTest, BasicError) {
 
 TEST(CpuDeviceMemoryTest, DelayedAllocation) {
   TF_ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  AsyncWorkRunner* async_work_runner =
+      absl::down_cast<CommonPjRtClient*>(client.get())->async_work_runner();
   PjRtMemorySpace* memory_space = client->memory_spaces()[0];
   std::string expected = "tracked_cpu_device_buffer_test";
 
@@ -117,9 +125,10 @@ TEST(CpuDeviceMemoryTest, DelayedAllocation) {
   absl::InlinedVector<PjRtDeviceEventRef, 2> definition_events;
   definition_events.push_back(PjRtDeviceEventRef(definition_event));
 
-  auto raw_buffer = tsl::MakeRef<CpuRawBuffer>(memory_space, buffer,
-                                               /*buffer_size=*/expected.size(),
-                                               /*is_mutable=*/true);
+  auto raw_buffer =
+      tsl::MakeRef<CpuRawBuffer>(memory_space->ToCApiPtr(), buffer,
+                                 /*buffer_size=*/expected.size(),
+                                 /*is_mutable=*/true, async_work_runner);
   auto result = raw_buffer->buffer();
 
   ASSERT_FALSE(result.IsAvailable());

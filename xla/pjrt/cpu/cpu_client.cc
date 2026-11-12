@@ -1067,39 +1067,39 @@ PjRtCpuRawClient::CreateLinkedEventPromise(LocalDeviceId local_device_id,
 }
 
 absl::StatusOr<PjRtRawBufferRef> PjRtCpuRawClient::ImportForeignMemory(
-    PjRtMemorySpace* memory_space, void* device_ptr, size_t size,
+    PJRT_Memory* memory_space, void* device_ptr, size_t size,
     absl::AnyInvocable<void() &&> on_delete_callback, bool is_mutable) {
-  return CpuRawBuffer::ImportForeignMemory(device_ptr,
-                                           std::move(on_delete_callback), size,
-                                           memory_space, is_mutable);
+  return CpuRawBuffer::ImportForeignMemory(
+      device_ptr, std::move(on_delete_callback), size, memory_space, is_mutable,
+      async_work_runner());
 }
 
 absl::StatusOr<PjRtRawBufferRef> PjRtCpuRawClient::AllocateRawBuffer(
-    PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
-    bool retry_on_oom, tsl::AsyncValueRef<bool> allocate_after) {
+    PJRT_Memory* memory_space, size_t on_device_bytes_count, bool retry_on_oom,
+    tsl::AsyncValueRef<bool> allocate_after) {
   CHECK(allocate_after == nullptr)
       << "allocate_after is not supported for PjRtCpuRawClient.";
   return xla::CpuRawBuffer::Allocate(memory_space, on_device_bytes_count,
-                                     *allocator_);
+                                     async_work_runner(), *allocator_);
 }
 
 absl::StatusOr<PjRtRawBufferRef> PjRtCpuRawClient::AllocateRawBufferForExecute(
-    PjRtMemorySpace* memory_space, size_t on_device_bytes_count,
+    PJRT_Memory* memory_space, size_t on_device_bytes_count,
     bool retry_on_oom) {
   return tsl::MakeRef<CpuRawBuffer>(memory_space,
                                     CpuDeviceMemory::CreateDelayedMemory(),
                                     on_device_bytes_count,
-                                    /*owns_buffer=*/true);
+                                    /*is_mutable=*/true, async_work_runner());
 }
 
 absl::StatusOr<std::pair<PjRtRawBufferRef,
                          CommonPjRtClient::PjRtFulfillAliasRawBufferCallback>>
-PjRtCpuRawClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
+PjRtCpuRawClient::CreateRawBufferChannel(PJRT_Memory* memory_space,
                                          size_t on_device_bytes_count) {
   auto buffer_promise = tsl::MakeIndirectAsyncValue();
   auto raw_buffer = tsl::MakeRef<CpuRawBuffer>(
       memory_space, tsl::AsyncValueRef<CpuDeviceMemory>(buffer_promise),
-      on_device_bytes_count, /*is_mutable=*/true);
+      on_device_bytes_count, /*is_mutable=*/true, async_work_runner());
 
   auto buffer_promise_cb =
       [buffer_promise = std::move(buffer_promise), memory_space](
@@ -1108,11 +1108,10 @@ PjRtCpuRawClient::CreateRawBufferChannel(PjRtMemorySpace* memory_space,
       buffer_promise->SetError(raw_buffer.status());
       return raw_buffer.status();
     }
-    if (memory_space != (*raw_buffer)->memory_space()) {
+    if (memory_space != (*raw_buffer)->c_memory_space()) {
       auto status = absl::InvalidArgumentError(absl::StrFormat(
-          "Memory space mismatch when forwarding raw buffers: %s vs %s",
-          memory_space->DebugString(),
-          (*raw_buffer)->memory_space()->DebugString()));
+          "Memory space mismatch when forwarding raw buffers: %p vs %p",
+          memory_space, (*raw_buffer)->c_memory_space()));
       buffer_promise->SetError(status);
       return status;
     }
@@ -1541,17 +1540,6 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
           input_buffers, buffer_alloc, buffer_alloc_and_copy, tuple_index_table,
           output_leaf_buffers, executable_->output_indices_);
 
-  // The choice of where we wait is arbitrary; the reason for the wait is
-  // pacing to avoid problems such as memory fragmentation and running ahead
-  // too far, not for correctness. Placing it before the executable launch
-  // allows the inputs for the next executable to be fetched even if the
-  // launch is delayed. A dispatch from inside a host callback takes no units:
-  // the computations holding them may be queued behind the computation that
-  // runs the callback, so waiting for a unit can deadlock.
-  auto compute_reservation = std::make_unique<Semaphore::ScopedReservation>(
-      local_device_state->max_inflight_computations_semaphore().ScopedAcquire(
-          ThisThreadIsInsideHostCallback() ? 0 : 1));
-
   ExecutableRunOptions run_options;
   run_options.set_run_id(run_id_);
   // Need to keep device_assignment alive until execution completes.
@@ -1635,6 +1623,24 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
   } else if (options.execution_mode ==
              ExecuteOptions::ExecutionMode::kSynchronous) {
     execute_inline = true;
+    // A synchronous execution waits for its inputs on the calling thread
+    // instead of running asynchronously. Programs with host callbacks run this
+    // way, so nothing can be queued behind one while its callbacks run. Multi
+    // device launches still dispatch asynchronously: they run on the async
+    // work runner, which may have to run the copies they wait for, and
+    // CommonPjRtLoadedExecutable::Execute waits for them instead. A dispatch
+    // from inside a host callback does not wait either: its inputs may come
+    // from computations queued behind the program running the callback.
+    if (!is_a_collective_launch && !ThisThreadIsInsideHostCallback()) {
+      bool inputs_ok = true;
+      for (size_t i = 0; i < input_deps.size(); ++i) {
+        BlockUntilReady(input_deps[i]);
+        inputs_ok &= i < num_control_deps || !input_deps[i].GetErrorIfPresent();
+      }
+      if (inputs_ok) {
+        input_deps.Clear();
+      }
+    }
   }
 
   auto execute_thunks = [cpu_executable, buffer_table = std::move(buffer_table),
@@ -1732,6 +1738,18 @@ PjRtRawLoadedExecutable::RawExecuteResult CpuPjRtRawLoadedExecutable::Execute(
     returned_future_can_be_set_event.SetStateConcrete();
   } else {
     // Asynchronously call generated function.
+    // Only asynchronous executions are paced, to avoid problems such as memory
+    // fragmentation and running ahead too far; correctness does not depend on
+    // it. Synchronous multi device launches get here too and take no units. A
+    // dispatch from inside a host callback takes none either: the computations
+    // holding them may be queued behind the computation that runs the
+    // callback, so waiting for a unit can deadlock.
+    const bool paced =
+        options.execution_mode != ExecuteOptions::ExecutionMode::kSynchronous &&
+        !ThisThreadIsInsideHostCallback();
+    auto compute_reservation = std::make_unique<Semaphore::ScopedReservation>(
+        local_device_state->max_inflight_computations_semaphore().ScopedAcquire(
+            paced ? 1 : 0));
     if (!is_a_collective_launch) {
       // This is a non-parallel computation. Set the execute event as the new
       // last enqueue event.

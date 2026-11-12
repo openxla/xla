@@ -2477,6 +2477,10 @@ absl::StatusOr<TensorValue> EmitCombinerStep(
                                ? mlir::cast<TensorValue>(acc_value)
                                : input_tile;
   }
+  // A combiner that only selects one of its parameters, e.g. the `(a, b) -> b`
+  // combiner of a "take last" reduction, has no instruction to emit. Such
+  // combiners have no neutral value and are rejected before codegen, so
+  // EmitScope reports an error for the empty instruction list.
   return EmitScope(b, to_emit, region_values);
 }
 
@@ -3173,8 +3177,11 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
   ABSL_ASSIGN_OR_RETURN(SmallVector<Type> fn_arg_types,
                         GetFnArgTypes(b, fusion, opaque_args_types, gpu_cc));
   // Metadata arguments are opaque to the tiling infra.
-  llvm::SmallVector<mlir::NamedAttribute> named_attributes{b.getNamedAttr(
-      "num_opaque_args", b.getI32IntegerAttr(opaque_args_types.size()))};
+  llvm::SmallVector<mlir::NamedAttribute> named_attributes;
+  if (!opaque_args_types.empty()) {
+    named_attributes.push_back(b.getNamedAttr(
+        "num_opaque_args", b.getI32IntegerAttr(opaque_args_types.size())));
+  }
 
   auto fn = xtile::EntryFuncOp::create(b, fn_name, fn_arg_types,
                                        named_attributes, {});
