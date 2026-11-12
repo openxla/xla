@@ -17,6 +17,8 @@ limitations under the License.
 
 #include "xla/service/graphcycles/graphcycles.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -26,6 +28,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/log/vlog_is_on.h"
 #include "absl/random/random.h"
 #include "tsl/platform/logging.h"
 #include "tsl/platform/test.h"
