@@ -275,58 +275,13 @@ LogicalResult SharedMemRefSliceOp::verify() {
   return success();
 }
 
-LogicalResult MemRefSqueezeOp::verify() {
-  MemRefType input_type = getInput().getType();
-  MemRefType result_type = getType();
+namespace {
 
-  if (result_type.getMemorySpace() != input_type.getMemorySpace()) {
-    return emitOpError("Memory spaces do not match.");
-  }
-
-  if (result_type.getElementType() != input_type.getElementType()) {
-    return emitOpError("Element types don't match.");
-  }
-
-  const ArrayRef<int64_t> input_shape = input_type.getShape();
-  const ArrayRef<int64_t> result_shape = result_type.getShape();
-  // NOTE: In cases where there is flexibility on which dimension to squeeze,
-  //   such as 1x1x2 -> 1x2 (can squeeze dimension 1 or 2), this may choose
-  //   dimensions that have padding and fail in inferResultLayout.
-  // TODO(tlongeri): Unify logic in inferMemRefReshape such that we don't
-  //  need computeSqueezedDimsChecked at all.
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const SmallVector<int64_t> squeezed,
-      computeSqueezedDimsChecked(*this, input_shape, result_shape));
-  if (squeezed.empty() && input_shape != result_shape) {
-    return emitOpError(
-        "Source and target shapes must be the same if no dimensions are "
-        "squeezed.");
-  }
-
-  if (isa<StridedLayoutAttr>(input_type.getLayout()) ||
-      isa<StridedLayoutAttr>(result_type.getLayout())) {
-    // TODO(b/568373460): This is for compatibility with older serialized
-    //   artifacts outside of the guaranteed compatibility window. Remove once
-    //   all artifacts are updated.
-    return success();
-  }
-
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const MemRefLayoutAttrInterface expected_result_layout,
-      inferResultLayout(input_type.getLayout(), squeezed,
-                        [&]() { return emitOpError(); }));
-  if (result_type.getLayout() != expected_result_layout) {
-    return emitOpError("Expected result layout to be ")
-           << expected_result_layout;
-  }
-  return success();
-}
-
-FailureOr<MemRefLayoutAttrInterface> MemRefSqueezeOp::inferResultLayout(
+FailureOr<MemRefLayoutAttrInterface> inferMemRefSqueezeResultLayout(
     const MemRefLayoutAttrInterface input_layout,
     const ArrayRef<int64_t> squeezed,
     const function_ref<InFlightDiagnostic()> emit_error) {
-  // TODO(tlongeri): Make MemRefReshapeOp::inferResultLayout more general and
+  // TODO(tlongeri): Make inferMemRefReshapeResultLayout more general and
   // use that instead.
   MLIRContext* const ctx = input_layout.getContext();
   if (auto tiled_layout = dyn_cast<TiledLayoutAttr>(input_layout)) {
@@ -355,8 +310,8 @@ FailureOr<MemRefLayoutAttrInterface> MemRefSqueezeOp::inferResultLayout(
 
     SmallVector<xla::Tile> result_tiles;
     result_tiles.reserve(tiles.size());
-    // Perform expansion as in TiledLayoutAttr::getExpandedShape, maintaining a
-    // mapping from expanded shape dimension to corresponding input dimension.
+    // Perform expansion as in getExpandedShape, maintaining a mapping from
+    // expanded shape dimension to corresponding input dimension.
     SmallVector<int64_t> expanded_dims = llvm::to_vector(
         llvm::iota_range<int64_t>(0, input_rank, /*Inclusive=*/false));
     for (const xla::Tile& input_tile : tiles) {
@@ -393,122 +348,58 @@ FailureOr<MemRefLayoutAttrInterface> MemRefSqueezeOp::inferResultLayout(
   return emit_error() << "Only tiled or identity layouts supported.";
 }
 
-LogicalResult MemRefReshapeOp::verify() {
-  const MemRefType input_ty = getInput().getType();
-  const MemRefType result_ty = getType();
-  if (result_ty.getMemorySpace() != input_ty.getMemorySpace()) {
+}  // namespace
+
+LogicalResult MemRefSqueezeOp::verify() {
+  MemRefType input_type = getInput().getType();
+  MemRefType result_type = getType();
+
+  if (result_type.getMemorySpace() != input_type.getMemorySpace()) {
     return emitOpError("Memory spaces do not match.");
   }
-  if (result_ty.getElementType() != input_ty.getElementType()) {
+
+  if (result_type.getElementType() != input_type.getElementType()) {
     return emitOpError("Element types don't match.");
   }
-  int64_t input_static_elements = 1;
-  int64_t result_static_elements = 1;
-  int64_t input_dynamic_dims = 0;
-  int64_t result_dynamic_dims = 0;
-  for (const int64_t dim : input_ty.getShape()) {
-    if (ShapedType::isDynamic(dim)) {
-      ++input_dynamic_dims;
-    } else {
-      input_static_elements *= dim;
-    }
-  }
-  for (const int64_t dim : result_ty.getShape()) {
-    if (ShapedType::isDynamic(dim)) {
-      ++result_dynamic_dims;
-    } else {
-      result_static_elements *= dim;
-    }
-  }
-  const bool is_static = input_dynamic_dims == 0;
-  if (is_static != (result_dynamic_dims == 0)) {
+
+  const ArrayRef<int64_t> input_shape = input_type.getShape();
+  const ArrayRef<int64_t> result_shape = result_type.getShape();
+  // NOTE: In cases where there is flexibility on which dimension to squeeze,
+  //   such as 1x1x2 -> 1x2 (can squeeze dimension 1 or 2), this may choose
+  //   dimensions that have padding and fail in inferMemRefSqueezeResultLayout.
+  // TODO(tlongeri): Unify logic in inferMemRefReshape such that we don't
+  //  need computeSqueezedDimsChecked at all.
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const SmallVector<int64_t> squeezed,
+      computeSqueezedDimsChecked(*this, input_shape, result_shape));
+  if (squeezed.empty() && input_shape != result_shape) {
     return emitOpError(
-        "Input and result shapes must be both static or both dynamic.");
+        "Source and target shapes must be the same if no dimensions are "
+        "squeezed.");
   }
-  if (is_static && input_static_elements != result_static_elements) {
-    return emitOpError("Input and result number of elements don't match.");
+
+  if (isa<StridedLayoutAttr>(input_type.getLayout()) ||
+      isa<StridedLayoutAttr>(result_type.getLayout())) {
+    // TODO(b/568373460): This is for compatibility with older serialized
+    //   artifacts outside of the guaranteed compatibility window. Remove once
+    //   all artifacts are updated.
+    return success();
   }
-  if (result_dynamic_dims > 1) {
-    return emitOpError(
-        "Multiple result dynamic dimensions (their values are ambiguous).");
-  }
-  // The above checks are fundamental, the following is simply unimplemented:
-  if (!is_static && (input_dynamic_dims > 1 ||
-                     input_static_elements != result_static_elements)) {
-    // inferResultLayout relies on this check. Make sure to update it when
-    // removing this.
-    return emitOpError(
-        "Not implemented: Input with multiple dynamic dimensions or a changing "
-        "single dynamic dimension.");
-  }
+
   FAILUREOR_ASSIGN_OR_RETURN(
       const MemRefLayoutAttrInterface expected_result_layout,
-      inferResultLayout(input_ty, result_ty.getShape(),
-                        [&]() { return emitOpError(); }));
-  if (expected_result_layout != result_ty.getLayout()) {
+      inferMemRefSqueezeResultLayout(input_type.getLayout(), squeezed,
+                                     [&]() { return emitOpError(); }));
+  if (result_type.getLayout() != expected_result_layout) {
     return emitOpError("Expected result layout to be ")
            << expected_result_layout;
   }
   return success();
 }
 
-LogicalResult MemRefPadOp::verify() {
-  const MemRefType input_ty = getInput().getType();
-  const MemRefType result_ty = getType();
-  if (result_ty.getMemorySpace() != input_ty.getMemorySpace()) {
-    return emitOpError("Memory spaces do not match.");
-  }
-  if (result_ty.getElementType() != input_ty.getElementType()) {
-    return emitOpError("Element types don't match.");
-  }
-  if (result_ty.getRank() != input_ty.getRank()) {
-    return emitOpError("Input and result ranks must match.");
-  }
-  if (result_ty.getLayout() != input_ty.getLayout()) {
-    return emitOpError("Input and result layouts must match.");
-  }
+namespace {
 
-  auto tiled_layout = dyn_cast<TiledLayoutAttr>(input_ty.getLayout());
-  if (!tiled_layout && !input_ty.getLayout().isIdentity()) {
-    return emitOpError("Only tiled or identity layouts supported.");
-  }
-  ArrayRef<int64_t> first_tile;
-  if (tiled_layout && !tiled_layout.getTiles().empty()) {
-    first_tile = tiled_layout.getTiles().front().dimensions();
-  }
-  const int64_t first_tiled_dim = input_ty.getRank() - first_tile.size();
-  for (int64_t i = 0; i < input_ty.getRank(); ++i) {
-    const int64_t in_dim = input_ty.getDimSize(i);
-    const int64_t res_dim = result_ty.getDimSize(i);
-    if (in_dim == res_dim) {
-      continue;
-    }
-    if (ShapedType::isDynamic(in_dim) || ShapedType::isDynamic(res_dim)) {
-      return emitOpError("Cannot pad dynamic dimension ") << i << ".";
-    }
-    if (res_dim < in_dim) {
-      return emitOpError("Result dimension ")
-             << i << " (" << res_dim
-             << ") must be greater than or equal to input dimension (" << in_dim
-             << ").";
-    }
-    if (tiled_layout) {
-      const int64_t tile_size =
-          i < first_tiled_dim ? 1 : first_tile[i - first_tiled_dim];
-      const int64_t aligned_dim = llvm::alignTo(in_dim, tile_size);
-      if (res_dim > aligned_dim) {
-        return emitOpError("Result dimension ")
-               << i << " (" << res_dim
-               << ") must not exceed the tile-aligned bound (" << aligned_dim
-               << ") of input dimension " << in_dim << " for tile size "
-               << tile_size << ".";
-      }
-    }
-  }
-  return success();
-}
-
-FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
+FailureOr<MemRefLayoutAttrInterface> inferMemRefReshapeResultLayout(
     const MemRefType input_type, const ArrayRef<int64_t> result_shape,
     function_ref<InFlightDiagnostic()> emit_error) {
   MLIRContext* const ctx = input_type.getContext();
@@ -732,6 +623,123 @@ FailureOr<MemRefLayoutAttrInterface> MemRefReshapeOp::inferResultLayout(
   return emit_error() << "Only tiled or identity layouts supported.";
 }
 
+}  // namespace
+
+LogicalResult MemRefReshapeOp::verify() {
+  const MemRefType input_ty = getInput().getType();
+  const MemRefType result_ty = getType();
+  if (result_ty.getMemorySpace() != input_ty.getMemorySpace()) {
+    return emitOpError("Memory spaces do not match.");
+  }
+  if (result_ty.getElementType() != input_ty.getElementType()) {
+    return emitOpError("Element types don't match.");
+  }
+  int64_t input_static_elements = 1;
+  int64_t result_static_elements = 1;
+  int64_t input_dynamic_dims = 0;
+  int64_t result_dynamic_dims = 0;
+  for (const int64_t dim : input_ty.getShape()) {
+    if (ShapedType::isDynamic(dim)) {
+      ++input_dynamic_dims;
+    } else {
+      input_static_elements *= dim;
+    }
+  }
+  for (const int64_t dim : result_ty.getShape()) {
+    if (ShapedType::isDynamic(dim)) {
+      ++result_dynamic_dims;
+    } else {
+      result_static_elements *= dim;
+    }
+  }
+  const bool is_static = input_dynamic_dims == 0;
+  if (is_static != (result_dynamic_dims == 0)) {
+    return emitOpError(
+        "Input and result shapes must be both static or both dynamic.");
+  }
+  if (is_static && input_static_elements != result_static_elements) {
+    return emitOpError("Input and result number of elements don't match.");
+  }
+  if (result_dynamic_dims > 1) {
+    return emitOpError(
+        "Multiple result dynamic dimensions (their values are ambiguous).");
+  }
+  // The above checks are fundamental, the following is simply unimplemented:
+  if (!is_static && (input_dynamic_dims > 1 ||
+                     input_static_elements != result_static_elements)) {
+    // inferMemRefReshapeResultLayout relies on this check. Make sure to update
+    // it when removing this.
+    return emitOpError(
+        "Not implemented: Input with multiple dynamic dimensions or a changing "
+        "single dynamic dimension.");
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const MemRefLayoutAttrInterface expected_result_layout,
+      inferMemRefReshapeResultLayout(input_ty, result_ty.getShape(),
+                                     [&]() { return emitOpError(); }));
+  if (expected_result_layout != result_ty.getLayout()) {
+    return emitOpError("Expected result layout to be ")
+           << expected_result_layout;
+  }
+  return success();
+}
+
+LogicalResult MemRefPadOp::verify() {
+  const MemRefType input_ty = getInput().getType();
+  const MemRefType result_ty = getType();
+  if (result_ty.getMemorySpace() != input_ty.getMemorySpace()) {
+    return emitOpError("Memory spaces do not match.");
+  }
+  if (result_ty.getElementType() != input_ty.getElementType()) {
+    return emitOpError("Element types don't match.");
+  }
+  if (result_ty.getRank() != input_ty.getRank()) {
+    return emitOpError("Input and result ranks must match.");
+  }
+  if (result_ty.getLayout() != input_ty.getLayout()) {
+    return emitOpError("Input and result layouts must match.");
+  }
+
+  auto tiled_layout = dyn_cast<TiledLayoutAttr>(input_ty.getLayout());
+  if (!tiled_layout && !input_ty.getLayout().isIdentity()) {
+    return emitOpError("Only tiled or identity layouts supported.");
+  }
+  ArrayRef<int64_t> first_tile;
+  if (tiled_layout && !tiled_layout.getTiles().empty()) {
+    first_tile = tiled_layout.getTiles().front().dimensions();
+  }
+  const int64_t first_tiled_dim = input_ty.getRank() - first_tile.size();
+  for (int64_t i = 0; i < input_ty.getRank(); ++i) {
+    const int64_t in_dim = input_ty.getDimSize(i);
+    const int64_t res_dim = result_ty.getDimSize(i);
+    if (in_dim == res_dim) {
+      continue;
+    }
+    if (ShapedType::isDynamic(in_dim) || ShapedType::isDynamic(res_dim)) {
+      return emitOpError("Cannot pad dynamic dimension ") << i << ".";
+    }
+    if (res_dim < in_dim) {
+      return emitOpError("Result dimension ")
+             << i << " (" << res_dim
+             << ") must be greater than or equal to input dimension (" << in_dim
+             << ").";
+    }
+    if (tiled_layout) {
+      const int64_t tile_size =
+          i < first_tiled_dim ? 1 : first_tile[i - first_tiled_dim];
+      const int64_t aligned_dim = llvm::alignTo(in_dim, tile_size);
+      if (res_dim > aligned_dim) {
+        return emitOpError("Result dimension ")
+               << i << " (" << res_dim
+               << ") must not exceed the tile-aligned bound (" << aligned_dim
+               << ") of input dimension " << in_dim << " for tile size "
+               << tile_size << ".";
+      }
+    }
+  }
+  return success();
+}
+
 LogicalResult TransposeOp::verify() {
   auto source_type = getSourceVectorType();
   auto permutation = getPermutation();
@@ -767,19 +775,9 @@ LogicalResult TransposeOp::verify() {
   return success();
 }
 
-LogicalResult MemRefBitcastOp::verify() {
-  auto src_ty = getInput().getType();
-  auto tgt_ty = getType();
-  FAILUREOR_ASSIGN_OR_RETURN(
-      auto result_type, inferResultType(src_ty, tgt_ty.getElementType(),
-                                        [this]() { return emitOpError(); }));
-  if (result_type != tgt_ty) {
-    return emitOpError("Expected result type to be ") << result_type;
-  }
-  return success();
-}
+namespace {
 
-mlir::FailureOr<MemRefType> MemRefBitcastOp::inferResultType(
+mlir::FailureOr<MemRefType> inferMemRefBitcastResultType(
     const MemRefType input_type, const Type result_elem_type,
     function_ref<InFlightDiagnostic()> emit_error) {
   const unsigned input_bitwidth = getElementTypeBitwidth(input_type);
@@ -876,6 +874,21 @@ mlir::FailureOr<MemRefType> MemRefBitcastOp::inferResultType(
       input_type.getContext(), result_tiles, input_layout.getTileStrides());
   return MemRefType::get(result_shape, result_elem_type, result_layout,
                          input_type.getMemorySpace());
+}
+
+}  // namespace
+
+LogicalResult MemRefBitcastOp::verify() {
+  auto src_ty = getInput().getType();
+  auto tgt_ty = getType();
+  FAILUREOR_ASSIGN_OR_RETURN(
+      auto result_type,
+      inferMemRefBitcastResultType(src_ty, tgt_ty.getElementType(),
+                                   [this]() { return emitOpError(); }));
+  if (result_type != tgt_ty) {
+    return emitOpError("Expected result type to be ") << result_type;
+  }
+  return success();
 }
 
 template <typename Op>
@@ -1784,11 +1797,11 @@ void SemaphoreSignalOp::build(OpBuilder& builder, OperationState& state,
         /*subcore_id=*/nullptr);
 }
 
-mlir::tpu::CoreType SemaphoreSignalOp::getTargetCoreType() {
-  return getRefCoreType(getSemaphore()).value_or(GetCoreTypeOfParentOp(**this));
-}
-
 namespace {
+
+CoreType getSemaphoreSignalTargetCoreType(SemaphoreSignalOp op) {
+  return getRefCoreType(op.getSemaphore()).value_or(GetCoreTypeOfParentOp(*op));
+}
 
 bool isRemote(Value device_id, Value core_id) {
   return device_id != nullptr || core_id != nullptr;
@@ -1808,7 +1821,7 @@ LogicalResult SemaphoreSignalOp::verify() {
   }
 
   CoreType issuing_core_type = GetCoreTypeOfParentOp(**this);
-  CoreType target_core_type = getTargetCoreType();
+  CoreType target_core_type = getSemaphoreSignalTargetCoreType(*this);
 
   if (!isRemote(*this)) {
     if (target_core_type != issuing_core_type) {
@@ -2029,18 +2042,22 @@ LogicalResult EnqueueDMAOp::verify() {
   return success();
 }
 
-FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
+namespace {
+
+FailureOr<bool> isEnqueueIndirectDMAGather(EnqueueIndirectDMAOp op) {
   const auto source_ms = dyn_cast_if_present<MemorySpaceAttr>(
-      getMemRefType(getSource()).getMemorySpace());
+      getMemRefType(op.getSource()).getMemorySpace());
   const auto target_ms = dyn_cast_if_present<MemorySpaceAttr>(
-      getMemRefType(getTarget()).getMemorySpace());
+      getMemRefType(op.getTarget()).getMemorySpace());
   if (source_ms == nullptr || target_ms == nullptr) {
-    return emitOpError("Source and target memory spaces must be provided");
+    return op.emitOpError("Source and target memory spaces must be provided");
   }
-  return mlir::tpu::isGather(*getOperation(), source_ms.getValue(),
+  return mlir::tpu::isGather(*op.getOperation(), source_ms.getValue(),
                              source_ms.getCoreType(), target_ms.getValue(),
                              target_ms.getCoreType());
 }
+
+}  // namespace
 
 LogicalResult EnqueueIndirectDMAOp::verify() {
   CoreType issuing_core = GetCoreTypeOfParentOp(**this);
@@ -2056,7 +2073,7 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
     return emitOpError("Source and target element type mismatch");
   }
 
-  FAILUREOR_ASSIGN_OR_RETURN(bool is_gather, isGather());
+  FAILUREOR_ASSIGN_OR_RETURN(bool is_gather, isEnqueueIndirectDMAGather(*this));
 
   const Value offsets = getOffsets();
   ArrayRef<int64_t> offsets_shape;
@@ -2171,18 +2188,22 @@ LogicalResult WaitDMAOp::verify() {
   return success();
 }
 
-FailureOr<bool> WaitIndirectDMAOp::isGather() {
+namespace {
+
+FailureOr<bool> isWaitIndirectDMAGather(WaitIndirectDMAOp op) {
   const auto source_ms = dyn_cast_if_present<MemorySpaceAttr>(
-      getMemRefType(getSrc()).getMemorySpace());
+      getMemRefType(op.getSrc()).getMemorySpace());
   const auto target_ms = dyn_cast_if_present<MemorySpaceAttr>(
-      getMemRefType(getDst()).getMemorySpace());
+      getMemRefType(op.getDst()).getMemorySpace());
   if (source_ms == nullptr || target_ms == nullptr) {
-    return emitOpError("Source and target memory spaces must be provided");
+    return op.emitOpError("Source and target memory spaces must be provided");
   }
-  return mlir::tpu::isGather(*getOperation(), source_ms.getValue(),
+  return mlir::tpu::isGather(*op.getOperation(), source_ms.getValue(),
                              source_ms.getCoreType(), target_ms.getValue(),
                              target_ms.getCoreType());
 }
+
+}  // namespace
 
 LogicalResult WaitIndirectDMAOp::verify() {
   CoreType issuing_core = GetCoreTypeOfParentOp(**this);
@@ -2194,7 +2215,7 @@ LogicalResult WaitIndirectDMAOp::verify() {
   if (sem_type.getRank() != 0) {
     return emitOpError("Indirect DMA wait semaphore must be rank 0");
   }
-  return isGather();
+  return isWaitIndirectDMAGather(*this);
 }
 
 LogicalResult RegionOp::verify() {
