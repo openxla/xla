@@ -1126,8 +1126,9 @@ absl::Status CudaCommandBuffer::LaunchGraph(Stream* stream) {
   // https://github.com/openxla/xla/issues/36487
   // Disable the leak check temporarily.
   absl::LeakCheckDisabler disabler;
-  // See CudaStream::graph_launch_mutex(): a concurrent cuStreamWaitEvent on
-  // the same stream from another thread can otherwise be lost by the driver.
+  // Workaround for NVIDIA bug 7061757: see CudaStream::graph_launch_mutex().
+  // A concurrent cuStreamWaitEvent on the same stream from another host thread
+  // can otherwise be silently dropped by the CUDA driver.
   absl::MutexLock lock(static_cast<CudaStream*>(stream)->graph_launch_mutex());
   return cuda::ToStatus(
       cuGraphLaunch(

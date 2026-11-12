@@ -63,10 +63,14 @@ class CudaStream : public StreamCommon {
   absl::Status WaitFor(Event* event) override;
 
   // Serializes cuStreamWaitEvent and cuGraphLaunch on this stream across host
-  // threads. The CUDA driver can drop a cross-stream event wait that is
-  // enqueued on a stream while another thread is inside cuGraphLaunch on the
-  // same stream: work enqueued after the wait then runs before the event's
-  // recorded work has completed.
+  // threads to work around NVIDIA driver bug 7061757. The CUDA driver can drop
+  // a cross-stream event wait that is enqueued on a stream while another thread
+  // is inside cuGraphLaunch on the same stream: work enqueued after the wait
+  // then runs before the event's recorded work has completed.
+  //
+  // Note: Waits or graph launches issued directly inside external libraries
+  // (e.g. NCCL) or via raw CUstream handles (e.g. WaitForEventOnExternalStream)
+  // bypass StreamExecutor and are not covered by this mutex.
   absl::Mutex& graph_launch_mutex() { return graph_launch_mutex_; }
 
   absl::Status Memset32(DeviceAddressBase* location, uint32_t pattern,
