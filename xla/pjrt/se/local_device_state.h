@@ -143,6 +143,11 @@ class LocalDeviceState {
     return host_to_device_stream_.get();
   }
 
+  // Serializes execution enqueueing onto the compute stream across host threads.
+  absl::Mutex& compute_stream_enqueue_mu() {
+    return compute_stream_enqueue_mu_;
+  }
+
   // Returns a device to host stream. Allocates streams in a round-robin fashion
   // amongst the available streams.
   se::Stream* GetDeviceToHostStream();
@@ -274,6 +279,7 @@ class LocalDeviceState {
   static constexpr int kNumExternalReadyEventStreams = 4;
 
   absl::Mutex mu_;
+  absl::Mutex compute_stream_enqueue_mu_;
   int next_device_to_host_stream_ ABSL_GUARDED_BY(mu_) = 0;
   int next_device_to_device_stream_ ABSL_GUARDED_BY(mu_) = 0;
   int next_fixed_size_pool_usage_stream_ ABSL_GUARDED_BY(mu_) = 0;

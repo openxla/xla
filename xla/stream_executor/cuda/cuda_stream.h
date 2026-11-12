@@ -29,7 +29,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "absl/synchronization/mutex.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "xla/stream_executor/cuda/cuda_event.h"
 #include "xla/stream_executor/cuda/cuda_executor.h"
@@ -61,17 +60,6 @@ class CudaStream : public StreamCommon {
   absl::Status WaitFor(Stream* other) override;
   absl::Status RecordEvent(Event* event) override;
   absl::Status WaitFor(Event* event) override;
-
-  // Serializes cuStreamWaitEvent and cuGraphLaunch on this stream across host
-  // threads to work around NVIDIA driver bug 7061757. The CUDA driver can drop
-  // a cross-stream event wait that is enqueued on a stream while another thread
-  // is inside cuGraphLaunch on the same stream: work enqueued after the wait
-  // then runs before the event's recorded work has completed.
-  //
-  // Note: Waits or graph launches issued directly inside external libraries
-  // (e.g. NCCL) or via raw CUstream handles (e.g. WaitForEventOnExternalStream)
-  // bypass StreamExecutor and are not covered by this mutex.
-  absl::Mutex& graph_launch_mutex() { return graph_launch_mutex_; }
 
   absl::Status Memset32(DeviceAddressBase* location, uint32_t pattern,
                         uint64_t size) override;
@@ -187,7 +175,6 @@ class CudaStream : public StreamCommon {
       absl::InternalError("Capture stream not initialized")};
 
   std::atomic<uint32_t> tsan_proxy_{false};
-  absl::Mutex graph_launch_mutex_;
   std::unique_ptr<HostCallbackRegistry::RegistryHandle>
       callback_registry_handle_;
 };

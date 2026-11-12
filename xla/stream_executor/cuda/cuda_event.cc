@@ -84,10 +84,6 @@ Event::Status CudaEvent::PollForStatus() {
   return Event::Status::kError;
 }
 
-// Note: This operates on a raw CUstream handle without acquiring
-// CudaStream::graph_launch_mutex(). If the external stream handle corresponds
-// to an internal CudaStream concurrently launching graphs, NVIDIA bug 7061757
-// may apply. Callers using XLA-managed streams should use Stream::WaitFor.
 absl::Status CudaEvent::WaitForEventOnExternalStream(std::intptr_t stream) {
   return WaitStreamOnEvent(executor_, absl::bit_cast<CUstream>(stream),
                            handle_);

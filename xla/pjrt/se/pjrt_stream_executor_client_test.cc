@@ -799,5 +799,23 @@ TEST(PjRtStreamExecutorClientTest,
             executor0->device_ordinal());
 }
 
+TEST(PjRtStreamExecutorClientTest, LocalDeviceStateComputeStreamEnqueueMu) {
+  LocalClient* local_client = xla::ClientLibrary::LocalClientOrDie();
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       PlatformUtil::GetPlatform("Host"));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+
+  LocalDeviceState device_state(
+      executor, local_client, LocalDeviceState::kSynchronous,
+      /*max_inflight_computations=*/32, /*allow_event_reuse=*/false,
+      /*use_callback_stream=*/false, /*device_ordinal=*/0);
+
+  absl::Mutex& mu = device_state.compute_stream_enqueue_mu();
+  EXPECT_TRUE(mu.TryLock());
+  EXPECT_FALSE(mu.TryLock());
+  mu.Unlock();
+}
+
 }  // namespace
 }  // namespace xla

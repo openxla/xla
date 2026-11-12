@@ -1443,6 +1443,11 @@ PjRtStreamExecutorRawLoadedExecutable::Execute(
        result_definition_event_promises =
            std::move(result_definition_event_promises),
        control_deps = std::move(control_deps)]() mutable -> PjRtDeviceEventRef {
+    // Serializes enqueuing executions onto the compute stream across host
+    // threads to prevent stream operation interleaving, BFC temporary buffer
+    // lifetime races, and driver-level race conditions on the compute stream.
+    absl::MutexLock lock(&device_state->compute_stream_enqueue_mu());
+
     // Create PjRt<->StreamExecutor adaptors to send/recv device memory as PjRt
     // chunks via the user-provided callbacks. Send operations are scheduled in
     // the client thread pool. Sends are issued from this thread, so the send
