@@ -17,25 +17,49 @@ limitations under the License.
 
 #include <optional>
 
-#include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/Location.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 
 namespace xla {
 namespace emitters {
 
-// Describes an atomic read-modify-write as a binary op plus its argument.
-struct AtomicModifierParameters {
-  mlir::Value modifier;
-  mlir::LLVM::AtomicBinOp bin_op;
-  // True when `modifier` is subtracted instead of added.
-  bool negated = false;
+enum class AtomicRMWKind {
+  kAdd,
+  kSub,
+  kMaxS,
+  kMinS,
+  kMaxU,
+  kMinU,
+  kAnd,
+  kOr,
+  kXor,
+  kFAdd,
+  kFSub,
+  kFMax,
+  kFMin,
 };
 
-// Returns the value combined into the atomic, the operation to apply, and
-// whether that value is negated.
+// Describes an `xla.atomic_rmw` computation as `current <kind> modifier`.
+struct AtomicModifierParameters {
+  // Either an SSA value defined outside the `xla.atomic_rmw` region or a
+  // TypedAttr constant narrowed losslessly to the atomic value type.
+  mlir::OpFoldResult modifier;
+  AtomicRMWKind kind;
+};
+
+// Matches an `xla.atomic_rmw` whose yielded value computes
+// `current <kind> modifier`, looking through widening `arith.extf` and
+// narrowing `arith.truncf` casts for low precision float reductions.
 std::optional<AtomicModifierParameters> GetAtomicModifierParameters(
     AtomicRMWOp op);
+
+// Returns `modifier` as an SSA Value, materializing an `arith.constant` when
+// `modifier` holds a narrowed constant attribute.
+mlir::Value MaterializeAtomicModifier(mlir::OpBuilder& b, mlir::Location loc,
+                                      mlir::OpFoldResult modifier);
 
 }  // namespace emitters
 }  // namespace xla

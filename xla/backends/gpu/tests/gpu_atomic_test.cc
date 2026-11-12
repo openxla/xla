@@ -47,7 +47,10 @@ TEST_F(GpuAtomicTest, TestStore) {
     }
 )";
 
-  ASSERT_OK(CompileAndVerifyIr(hlo_string, R"(
+  ASSERT_OK(CompileAndVerifyIr(hlo_string, IsBuiltWithRocm() ? R"(
+CHECK: store atomic{{.*}}syncscope("agent-one-as") monotonic, align 4
+)"
+                                                             : R"(
 CHECK: store atomic{{.*}}unordered, align 4
 )"));
 }
@@ -75,7 +78,7 @@ TEST_F(GpuAtomicTest, TestStoreNoAtomic) {
 )";
 
   ASSERT_OK(CompileAndVerifyIr(hlo_string, R"(
-CHECK-NOT: store atomic{{.*}}unordered, align 4
+CHECK-NOT: store atomic
 )"));
 }
 

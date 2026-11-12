@@ -35,19 +35,24 @@ limitations under the License.
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter.h"
 #include "xla/backends/cpu/codegen/fusion_compiler.h"
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
@@ -174,8 +179,31 @@ SmallVector<Value> EmitScatterComputation(
     }
     return ret;
   }
+  // Multi workgroup CPU scatter path (active when num_threads > 1).
+  CHECK_EQ(output_tensors.size(), 1);
+  CHECK_EQ(update_elems.size(), 1);
   Value output_tensor = output_tensors.front();
   Value update_elem = update_elems.front();
+  const HloComputation* to_apply = scatter->called_computations()[0];
+  if (reducer.getArgument(0).use_empty() ||
+      to_apply->parameter_instruction(0)->IsDead()) {
+    Value unused_current;
+    if (!reducer.getArgument(0).use_empty()) {
+      mlir::Type arg_type = reducer.getArgument(0).getType();
+      if (auto complex_ty = mlir::dyn_cast<mlir::ComplexType>(arg_type)) {
+        mlir::TypedAttr zero = b.getZeroAttr(complex_ty.getElementType());
+        unused_current = mlir::complex::ConstantOp::create(
+            b, complex_ty, b.getArrayAttr({zero, zero}));
+      } else {
+        unused_current =
+            mlir::arith::ConstantOp::create(b, b.getZeroAttr(arg_type));
+      }
+    }
+    Value reduced_val = emitters::InlineBlock(b, reducer.getBody().front(),
+                                              {unused_current, update_elem})[0];
+    return {AtomicStoreOp::create(b, reduced_val, output_tensor, indices)
+                .getResult()};
+  }
   auto atomic_rmw = AtomicRMWOp::create(b, output_tensor, indices);
   mlir::OpBuilder body_builder = atomic_rmw.getBodyBuilder();
   auto reduced_val =

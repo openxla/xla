@@ -26,11 +26,11 @@ limitations under the License.
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
@@ -38,7 +38,9 @@ limitations under the License.
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
@@ -47,6 +49,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "tsl/platform/protobuf.h"
+#include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/codegen/device_spec.h"
 #include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/codegen/emitters/transforms/atomic_rmw_utils.h"
@@ -66,7 +69,6 @@ namespace {
 using mlir::Value;
 
 namespace arith = ::mlir::arith;
-namespace ml = ::mlir::LLVM;
 namespace scf = mlir::scf;
 namespace se = stream_executor;
 
@@ -164,7 +166,8 @@ mlir::VectorType GetVectorType(mlir::RankedTensorType tensor_type,
   if (vector_bit_width < 8 || vector_bit_width > 256) {
     return nullptr;  // Vector size is not byte-aligned or is too large.
   }
-  if (tensor_type.getShape().back() % *vector_size) {
+  if (tensor_type.getShape().back() < *vector_size ||
+      tensor_type.getShape().back() % *vector_size) {
     return nullptr;  // Misaligned start indices.
   }
   return mlir::VectorType::get({*vector_size}, tensor_type.getElementType());
@@ -197,7 +200,8 @@ mlir::VectorType GetVectorTypeForAtomicRMW(mlir::RankedTensorType tensor_type,
   }
 
   // Misaligned start indices.
-  if (tensor_type.getShape().back() % *vector_size) {
+  if (tensor_type.getShape().back() < *vector_size ||
+      tensor_type.getShape().back() % *vector_size) {
     return nullptr;
   }
   return mlir::VectorType::get({*vector_size}, tensor_type.getElementType());
@@ -355,6 +359,68 @@ bool IsConflictFree(mlir::Operation* op, Value destination) {
          bbarg.getOwner()->getParentOp() == op->getParentOp();
 }
 
+bool IsSharedMemoryTensor(Value tensor) {
+  llvm::SmallPtrSet<Value, 8> visited;
+  while (tensor) {
+    if (!visited.insert(tensor).second) {
+      return false;
+    }
+    if (auto block_arg = mlir::dyn_cast<mlir::BlockArgument>(tensor)) {
+      if (auto scf_for = mlir::dyn_cast_or_null<scf::ForOp>(
+              block_arg.getOwner()->getParentOp())) {
+        if (block_arg.getArgNumber() >= scf_for.getNumInductionVars()) {
+          unsigned idx =
+              block_arg.getArgNumber() - scf_for.getNumInductionVars();
+          tensor = scf_for.getInitArgs()[idx];
+          continue;
+        }
+      }
+      return false;
+    }
+    mlir::Operation* def = tensor.getDefiningOp();
+    if (!def) {
+      return false;
+    }
+    if (mlir::isa<gpu::AllocateSharedOp>(def)) {
+      return true;
+    }
+    unsigned res_idx = mlir::cast<mlir::OpResult>(tensor).getResultNumber();
+    if (auto rmw = mlir::dyn_cast<AtomicRMWOp>(def)) {
+      tensor = rmw.getInput();
+    } else if (auto store = mlir::dyn_cast<AtomicStoreOp>(def)) {
+      tensor = store.getDest();
+    } else if (auto ins = mlir::dyn_cast<mlir::tensor::InsertOp>(def)) {
+      tensor = ins.getDest();
+    } else if (auto copy = mlir::dyn_cast<CopySliceOp>(def)) {
+      tensor = copy.getDest();
+    } else if (auto set_dim = mlir::dyn_cast<SetDynamicDimSizeOp>(def)) {
+      tensor = set_dim.getTensor();
+    } else if (auto tw = mlir::dyn_cast<mlir::vector::TransferWriteOp>(def)) {
+      tensor = tw.getBase();
+    } else if (auto sync = mlir::dyn_cast<gpu::SyncThreadsOp>(def)) {
+      tensor = sync.getOperand(res_idx);
+    } else if (auto scf_for = mlir::dyn_cast<scf::ForOp>(def)) {
+      tensor = scf_for.getInitArgs()[res_idx];
+    } else if (auto scf_if = mlir::dyn_cast<scf::IfOp>(def)) {
+      tensor =
+          scf_if.getThenRegion().front().getTerminator()->getOperand(res_idx);
+    } else if (auto sw = mlir::dyn_cast<scf::IndexSwitchOp>(def)) {
+      tensor = sw.getDefaultBlock().getTerminator()->getOperand(res_idx);
+    } else if (auto cast =
+                   mlir::dyn_cast<mlir::UnrealizedConversionCastOp>(def)) {
+      if (cast.getNumOperands() == 1 &&
+          mlir::isa<mlir::RankedTensorType>(cast.getOperand(0).getType())) {
+        tensor = cast.getOperand(0);
+      } else {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+  return false;
+}
+
 class VectorizeAtomicRMW : public mlir::OpRewritePattern<AtomicRMWOp> {
  public:
   VectorizeAtomicRMW(mlir::MLIRContext* context, const DeviceSpec& device_spec)
@@ -368,6 +434,14 @@ class VectorizeAtomicRMW : public mlir::OpRewritePattern<AtomicRMWOp> {
       return rewriter.notifyMatchFailure(
           op,
           "atomic vectorization currently only supported on Hopper or later");
+    }
+    if (op.getCurrentValue().getType() != op.getType().getElementType() ||
+        op.getIndices().size() != 1) {
+      return rewriter.notifyMatchFailure(op, "expected scalar 1D atomic_rmw");
+    }
+    if (IsSharedMemoryTensor(op.getInput())) {
+      return rewriter.notifyMatchFailure(
+          op, "vectorized atomic_rmw is only supported on global memory");
     }
     auto loop = mlir::dyn_cast_or_null<scf::ForOp>(op->getParentOp());
     if (!loop) {
@@ -387,10 +461,12 @@ class VectorizeAtomicRMW : public mlir::OpRewritePattern<AtomicRMWOp> {
     b.setInsertionPoint(loop);
     auto atomic_modifier_parameters = emitters::GetAtomicModifierParameters(op);
     if (!atomic_modifier_parameters.has_value() ||
-        atomic_modifier_parameters->bin_op != ml::AtomicBinOp::fadd) {
-      return rewriter.notifyMatchFailure(op,
-                                         "atomic modifier is not vectorizable. "
-                                         "Currently only supporting fadd.");
+        (atomic_modifier_parameters->kind != emitters::AtomicRMWKind::kFAdd &&
+         atomic_modifier_parameters->kind != emitters::AtomicRMWKind::kFSub)) {
+      return rewriter.notifyMatchFailure(
+          op,
+          "atomic modifier is not vectorizable. "
+          "Currently only supporting fadd and fsub.");
     }
 
     auto vector_index =
@@ -408,8 +484,9 @@ class VectorizeAtomicRMW : public mlir::OpRewritePattern<AtomicRMWOp> {
       auto induction_var =
           mlir::cast<scf::ForOp>(bbarg.front().getOwner()->getParentOp())
               .getInductionVar();
-      Value modifier = atomic_modifier_parameters->modifier;
-      if (atomic_modifier_parameters->negated) {
+      Value modifier = emitters::MaterializeAtomicModifier(
+          yield_b, yield_loc, atomic_modifier_parameters->modifier);
+      if (atomic_modifier_parameters->kind == emitters::AtomicRMWKind::kFSub) {
         modifier = arith::NegFOp::create(yield_b, yield_loc, modifier);
       }
       auto insert_op = mlir::vector::InsertOp::create(
@@ -645,6 +722,7 @@ class VectorizeLoadsAndStoresPass
     patterns.add<VectorizeLoad, VectorizeStore>(mlir_context, device_spec_);
     patterns.add<FoldVectorInsertExtractPairs>(mlir_context);
     patterns.add<VectorizeAtomicRMW>(mlir_context, device_spec_);
+    AtomicRMWOp::getCanonicalizationPatterns(patterns, mlir_context);
     if (mlir::failed(
             mlir::applyPatternsGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
