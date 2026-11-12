@@ -112,6 +112,13 @@ void CopyOriginalValue(const HloInstruction* src_instruction,
                        HloInstruction* dest_instruction, bool clone,
                        bool issue_warning);
 
+// Updates the original value of `instruction` after its tuple shape was widened
+// in place by appending elements to it. The original values of the existing
+// elements are kept, and the appended elements are left without original
+// values. Does nothing if `instruction` has no original value, or if its
+// original value does not match the leading elements of its shape.
+void AppendEmptyElementsToOriginalValue(HloInstruction* instruction);
+
 // Removes duplicates of original value objects referenced in the module to save
 // memory storage.
 void DeduplicateOriginalValues(HloModule* module);

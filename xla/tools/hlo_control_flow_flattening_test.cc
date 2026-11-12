@@ -281,6 +281,79 @@ TEST_F(HloControlFlowFlatteningTest, WhileUser) {
                                            op::GetTupleElement(while_op, 1))));
 }
 
+TEST_F(HloControlFlowFlatteningTest, WhileKeepsOriginalValuesInSync) {
+  absl::string_view hlo_string = R"(
+  HloModule While
+  While.body {
+    loop_var.1 = (s32[], s32[3]{0}) parameter(0), origin={({"i"}, {"x"})}
+    get-tuple-element.1 = s32[] get-tuple-element(loop_var.1), index=0
+    constant.1 = s32[] constant(1)
+    add = s32[] add(get-tuple-element.1, constant.1)
+    get-tuple-element.2 = s32[3]{0} get-tuple-element(loop_var.1), index=1
+    multiply = s32[3]{0} multiply(get-tuple-element.2, get-tuple-element.2)
+    ROOT tuple = (s32[], s32[3]{0}) tuple(add, multiply), origin={({"next_i"}, {"next_x"})}
+  }
+  While.condition {
+    loop_var.2 = (s32[], s32[3]{0}) parameter(0), origin={({"i"}, {"x"})}
+    get-tuple-element.3 = s32[] get-tuple-element(loop_var.2), index=0
+    constant.2 = s32[] constant(100)
+    ROOT less-than = pred[] compare(get-tuple-element.3, constant.2), direction=LT
+  }
+  FusedComputation {
+    param = (s32[], s32[3]{0}) parameter(0)
+    get-tuple-element.4 = s32[] get-tuple-element(param), index=0
+    get-tuple-element.5 = s32[3]{0} get-tuple-element(param), index=1
+    broadcast = s32[3]{0} broadcast(get-tuple-element.4), dimensions={}
+    ROOT add = s32[3]{0} add(broadcast, get-tuple-element.5)
+  }
+  ENTRY While {
+    constant.3 = s32[] constant(42)
+    constant.4 = s32[3]{0} constant({0, 1, 2})
+    tuple.1 = (s32[], s32[3]{0}) tuple(constant.3, constant.4), origin={({"c3"}, {"c4"})}
+    while = (s32[], s32[3]{0}) while(tuple.1), condition=While.condition, body=While.body, origin={({"i"}, {"x"}),["while#$"]}
+    ROOT fusion = s32[3]{0} fusion(while), kind=kLoop, calls=FusedComputation
+  }
+  )";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+  HloControlFlowFlattening flattening(
+      HloControlFlowFlattening::Options{/*while_execution_count=*/3});
+  EXPECT_TRUE(flattening.Run(module.get()).value());
+  // The verifier checks that every original value matches its instruction's
+  // shape.
+  TF_ASSERT_OK(HloVerifier(/*layout_sensitive=*/true,
+                           /*allow_mixed_precision=*/true)
+                   .Run(module.get())
+                   .status());
+
+  auto while_op = module->entry_computation()->GetInstructionWithName("while");
+  // The induction variable appended by the flattening has no original value.
+  ASSERT_NE(while_op->original_value(), nullptr);
+  EXPECT_EQ(while_op->original_value()->ToString(),
+            R"(({"i"}, {"x"}, {}),["while#$"])");
+  ASSERT_NE(while_op->while_init()->original_value(), nullptr);
+  EXPECT_EQ(while_op->while_init()->original_value()->ToString(),
+            R"(({"c3"}, {"c4"}, {}))");
+  for (const HloComputation* computation :
+       {while_op->while_condition(), while_op->while_body()}) {
+    ASSERT_NE(computation->parameter_instruction(0)->original_value(), nullptr);
+    EXPECT_EQ(
+        computation->parameter_instruction(0)->original_value()->ToString(),
+        R"(({"i"}, {"x"}, {}))");
+  }
+  ASSERT_NE(while_op->while_body()->root_instruction()->original_value(),
+            nullptr);
+  EXPECT_EQ(
+      while_op->while_body()->root_instruction()->original_value()->ToString(),
+      R"(({"next_i"}, {"next_x"}, {}))");
+  // The user of the loop sees the loop's original state.
+  const HloInstruction* prefix =
+      module->entry_computation()->root_instruction()->operand(0);
+  ASSERT_NE(prefix->original_value(), nullptr);
+  EXPECT_EQ(prefix->original_value()->ToString(),
+            R"(({"i"}, {"x"}),["while#$"])");
+}
+
 TEST_F(HloControlFlowFlatteningTest, Infeed) {
   absl::string_view hlo_string = R"(
   HloModule Infeed

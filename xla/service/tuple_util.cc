@@ -16,7 +16,10 @@ limitations under the License.
 #include "xla/service/tuple_util.h"
 
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -33,12 +36,83 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_original_value.h"
+#include "xla/hlo/ir/hlo_original_value_util.h"
 #include "xla/service/hlo_value.h"
 #include "xla/shape.h"
 #include "xla/shape_tree.h"
 #include "xla/shape_util.h"
 
 namespace xla {
+
+namespace {
+
+// Returns the original value of `instruction` if it can be used to derive the
+// original values of instructions built from `instruction`, i.e. if it is set,
+// is not a synthetic call, and has the same tuple structure as `instruction`'s
+// shape. Returns nullptr otherwise, e.g. if `instruction`'s shape was changed
+// in place without updating its original value. Instructions derived from such
+// an instruction are left without an original value, and it is up to the caller
+// that changed the shape to keep the original values in sync.
+const OriginalValue* GetUsableOriginalValue(const HloInstruction* instruction) {
+  const std::shared_ptr<OriginalValue>& original_value =
+      instruction->original_value();
+  if (original_value == nullptr || original_value->is_synthetic_call() ||
+      !original_value->IsCompatibleWith(instruction->shape())) {
+    return nullptr;
+  }
+  return original_value.get();
+}
+
+// Sets the original value of the new get-tuple-element `gte` to the original
+// value of the element of its operand that it extracts, if any.
+void SetGetTupleElementOriginalValue(HloInstruction* gte) {
+  if (GetUsableOriginalValue(gte->operand(0)) == nullptr) {
+    return;
+  }
+  gte->set_original_value(OriginalValue::CreateFromInstruction(gte));
+}
+
+// Sets the original value of the new tuple instruction `new_tuple`, which is
+// derived from `source_tuple`. For every operand index i of `new_tuple` for
+// which `is_from_source(i)` is true, element i of `new_tuple` holds the same
+// value as element i of `source_tuple`, so it takes the original value of that
+// element of `source_tuple`, along with `source_tuple`'s call hierarchy. Every
+// other element takes the original value of the corresponding operand of
+// `new_tuple`. Leaves `new_tuple` without an original value if none of its
+// elements has one.
+template <typename IsFromSource>
+void SetTupleOriginalValue(HloInstruction* new_tuple,
+                           const HloInstruction* source_tuple,
+                           IsFromSource is_from_source) {
+  const OriginalValue* source_original_value =
+      GetUsableOriginalValue(source_tuple);
+  auto original_value = std::make_shared<OriginalValue>(
+      new_tuple->shape(), source_original_value != nullptr
+                              ? source_original_value->call_hierarchy()
+                              : std::nullopt);
+  for (int64_t i = 0; i < new_tuple->operand_count(); ++i) {
+    if (is_from_source(i)) {
+      if (source_original_value != nullptr) {
+        // The compatibility of `source_original_value` with `source_tuple`'s
+        // shape guarantees that this copy succeeds.
+        CHECK_OK(original_value->mutable_tree()->CopyCompatibleSubtreeFrom(
+            source_original_value->tree(), {i}, {i}));
+      }
+      continue;
+    }
+    if (const OriginalValue* operand_original_value =
+            GetUsableOriginalValue(new_tuple->operand(i))) {
+      CHECK_OK(original_value->mutable_tree()->CopyCompatibleSubtreeFrom(
+          operand_original_value->tree(), {}, {i}));
+    }
+  }
+  if (!original_value->IsEmpty()) {
+    new_tuple->set_original_value(std::move(original_value));
+  }
+}
+
+}  // namespace
 
 /*static*/ HloInstruction* TupleUtil::ExtractPrefix(HloInstruction* input_tuple,
                                                     int64_t elements,
@@ -59,10 +133,13 @@ namespace xla {
         HloInstruction::CreateGetTupleElement(input_shape.tuple_shapes(i),
                                               input_tuple, i),
         element_name));
+    SetGetTupleElementOriginalValue(tuple_elements.back());
   }
 
-  return computation->AddInstruction(
+  HloInstruction* prefix = computation->AddInstruction(
       HloInstruction::CreateTuple(tuple_elements), name);
+  SetTupleOriginalValue(prefix, input_tuple, [](int64_t) { return true; });
+  return prefix;
 }
 
 /*static*/ HloInstruction* TupleUtil::AppendSuffix(
@@ -72,17 +149,22 @@ namespace xla {
 
   HloComputation* computation = input_tuple->parent();
   const Shape& input_shape = input_tuple->shape();
+  const int64_t num_input_elements = input_shape.tuple_shapes().size();
   std::vector<HloInstruction*> tuple_elements;
-  tuple_elements.reserve(input_shape.tuple_shapes().size());
-  for (int i = 0; i < input_shape.tuple_shapes().size(); i++) {
+  tuple_elements.reserve(num_input_elements);
+  for (int i = 0; i < num_input_elements; i++) {
     tuple_elements.push_back(
         computation->AddInstruction(HloInstruction::CreateGetTupleElement(
             input_shape.tuple_shapes(i), input_tuple, i)));
+    SetGetTupleElementOriginalValue(tuple_elements.back());
   }
   tuple_elements.insert(tuple_elements.end(), trailing_values.begin(),
                         trailing_values.end());
-  return computation->AddInstruction(
-      HloInstruction::CreateTuple(tuple_elements));
+  HloInstruction* with_suffix =
+      computation->AddInstruction(HloInstruction::CreateTuple(tuple_elements));
+  SetTupleOriginalValue(with_suffix, input_tuple,
+                        [&](int64_t i) { return i < num_input_elements; });
+  return with_suffix;
 }
 
 /*static*/ absl::StatusOr<HloInstruction*> TupleUtil::ReplaceTupleWith(
@@ -126,8 +208,10 @@ namespace xla {
       if (tuple->opcode() == HloOpcode::kTuple) {
         return tuple->mutable_operand(i);
       } else {
-        return computation->AddInstruction(
+        HloInstruction* gte = computation->AddInstruction(
             HloInstruction::CreateGetTupleElement(subshape, tuple, i));
+        SetGetTupleElementOriginalValue(gte);
+        return gte;
       }
     };
     if (i == shape_index[0]) {
@@ -144,8 +228,13 @@ namespace xla {
           VLOG(4) << "Old shape = " << subshape.ToString()
                   << ", new shape = " << new_instruction->shape().ToString()
                   << "; inserting a bitcast.";
-          new_instruction = computation->AddInstruction(
+          HloInstruction* bitcast = computation->AddInstruction(
               HloInstruction::CreateBitcast(subshape, new_instruction));
+          // The bitcast holds the value of `new_instruction` if their shapes
+          // are compatible (e.g. differ only in layout).
+          CopyOriginalValue(new_instruction, bitcast, /*clone=*/false,
+                            /*issue_warning=*/false);
+          new_instruction = bitcast;
         } else if (tuple->opcode() == HloOpcode::kTuple &&
                    tuple->operand(i) == new_instruction) {
           // If the tuple element is the same as the new instruction, we
@@ -167,7 +256,13 @@ namespace xla {
     // instruction as an additional argument.
     tuple_args.push_back(new_instruction);
   }
-  return computation->AddInstruction(HloInstruction::CreateTuple(tuple_args));
+  HloInstruction* new_tuple =
+      computation->AddInstruction(HloInstruction::CreateTuple(tuple_args));
+  // Every element of `new_tuple` other than the replaced (or appended) one
+  // holds the same value as the element of `tuple` at the same index.
+  SetTupleOriginalValue(new_tuple, tuple,
+                        [&](int64_t i) { return i != shape_index[0]; });
+  return new_tuple;
 }
 
 /*static*/ HloInstruction* TupleUtil::AddGetTupleElements(
@@ -192,6 +287,7 @@ namespace xla {
       instruction =
           computation->AddInstruction(HloInstruction::CreateGetTupleElement(
               instruction->shape().tuple_shapes(index), instruction, index));
+      SetGetTupleElementOriginalValue(instruction);
     }
   }
   return instruction;
