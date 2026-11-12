@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -25,10 +22,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/node_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/service/platform_util.h"
 #include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/platform.h"
@@ -39,6 +39,8 @@ limitations under the License.
 
 namespace stream_executor {
 namespace {
+
+using ::testing::HasSubstr;
 
 // Each allocation will have an incrementing address.
 class TestAllocator : public tsl::Allocator {
@@ -169,6 +171,39 @@ TEST(MultiDeviceAdapter, DeallocationWithDifferentAllocator) {
   // Place back memory pointer to remove it during with ScopedDeviceAddress
   // destruction.
   allocations->insert(buff0->opaque());
+}
+
+TEST(MultiDeviceAdapter, LooksUpAllocatorsByMemorySpace) {
+  ASSERT_OK_AND_ASSIGN(auto* platform, xla::PlatformUtil::GetDefaultPlatform());
+  ASSERT_OK_AND_ASSIGN(std::vector<StreamExecutor*> executors,
+                       xla::PlatformUtil::GetStreamExecutors(platform));
+  ASSERT_OK_AND_ASSIGN(auto stream, executors[0]->CreateStream());
+
+  auto default_allocator = std::make_shared<TestAllocator>(0x1000);
+  auto domain_allocator = std::make_shared<TestAllocator>(0x2000);
+  std::vector<MultiDeviceAdapter::AllocatorInfo> infos;
+  infos.push_back({default_allocator, stream.get(),
+                   /*memory_space=*/0, /*device_ordinal=*/0});
+  infos.push_back({domain_allocator, stream.get(),
+                   /*memory_space=*/16, /*device_ordinal=*/0});
+  MultiDeviceAdapter adapter(platform, std::move(infos));
+
+  EXPECT_TRUE(adapter.HasAllocator(/*device_ordinal=*/0, /*memory_space=*/0));
+  EXPECT_TRUE(adapter.HasAllocator(/*device_ordinal=*/0, /*memory_space=*/16));
+  EXPECT_FALSE(adapter.HasAllocator(/*device_ordinal=*/0, /*memory_space=*/17));
+  EXPECT_FALSE(adapter.HasAllocator(/*device_ordinal=*/1, /*memory_space=*/16));
+  EXPECT_FALSE(
+      adapter.HasAllocator(/*device_ordinal=*/-1, /*memory_space=*/16));
+
+  ASSERT_OK_AND_ASSIGN(tsl::Allocator * found,
+                       adapter.GetAllocator(/*device_ordinal=*/0,
+                                            /*memory_space=*/16));
+  EXPECT_EQ(found, domain_allocator.get());
+  EXPECT_THAT(adapter.GetAllocator(/*device_ordinal=*/0, /*memory_space=*/17),
+              absl_testing::StatusIs(
+                  absl::StatusCode::kNotFound,
+                  HasSubstr("No allocator found for device ordinal 0 and "
+                            "memory space 17")));
 }
 
 TEST(MemoryAllocationError, IsMemoryAllocationError) {

@@ -127,6 +127,22 @@ struct GpuAllocatorConfig {
   // granularity requirements.
   size_t collective_memory_size = 0;
 
+  // Only used if kind == kBFC (or kDefault). Bytes of memory to preallocate on
+  // each locality domain (die) of a multi-domain device, served through the
+  // "locality_domain:<id>" memory kinds. Each domain pool is reserved before
+  // the default pool and has a fixed size; it never grows.
+  //
+  // The reservations are carved out of the default pool's budget, so the
+  // collective pool is unaffected: out of its initial allocation (the start of
+  // `GetMemoryFraction()` of total memory, or `gpu_system_memory_size`) and,
+  // when the default pool can grow, out of its growth cap too. Client creation
+  // fails if the reservations do not fit in that budget or a domain cannot
+  // provide its full size.
+  //
+  // If 0, no locality-domain pools are created and the locality-domain memory
+  // kinds are not available.
+  size_t locality_domain_memory_size = 0;
+
   // Callbacks that get called when the underlying suballocator allocates or
   // deallocates memory. See `SubAllocator::Visitor` for more details.
   std::vector<tsl::SubAllocator::Visitor> sub_allocator_alloc_visitors;

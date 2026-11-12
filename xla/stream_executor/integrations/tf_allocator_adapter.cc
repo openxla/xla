@@ -277,6 +277,26 @@ absl::StatusOr<tsl::Allocator*> MultiDeviceAdapter::GetAllocator(
   return allocator->GetAllocator(device_ordinal);
 }
 
+absl::StatusOr<tsl::Allocator*> MultiDeviceAdapter::GetAllocator(
+    int device_ordinal, int64_t memory_space) {
+  if (!HasAllocator(device_ordinal, memory_space)) {
+    return absl::NotFoundError(absl::StrFormat(
+        "No allocator found for device ordinal %d and memory space %d",
+        device_ordinal, memory_space));
+  }
+  return memory_space_to_per_device_allocators_
+      .at(memory_space)[device_ordinal]
+      ->GetAllocator(device_ordinal);
+}
+
+bool MultiDeviceAdapter::HasAllocator(int device_ordinal,
+                                      int64_t memory_space) const {
+  auto it = memory_space_to_per_device_allocators_.find(memory_space);
+  return it != memory_space_to_per_device_allocators_.end() &&
+         device_ordinal >= 0 && device_ordinal < it->second.size() &&
+         it->second[device_ordinal] != nullptr;
+}
+
 //===----------------------------------------------------------------------===//
 // Error helpers
 //===----------------------------------------------------------------------===//

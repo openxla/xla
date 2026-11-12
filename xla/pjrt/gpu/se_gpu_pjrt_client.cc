@@ -55,12 +55,6 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/platform/fingerprint.h"
-#include "tsl/platform/numa.h"
-#include "tsl/platform/protobuf.h"
-#include "tsl/platform/random.h"
-#include "tsl/profiler/lib/nvtx_utils.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/allocator_memory_registration.h"
 #include "xla/backends/gpu/collectives/gpu_clique.h"
@@ -129,6 +123,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/device_interconnect_resource.h"
 #include "xla/stream_executor/gpu/gpu_executor.h"
+#include "xla/stream_executor/gpu/locality_domain_memory.h"
 #include "xla/stream_executor/integrations/tf_allocator_adapter.h"
 #include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
@@ -145,6 +140,12 @@ limitations under the License.
 #include "xla/tsl/protobuf/coordination_service.pb.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/fingerprint.h"
+#include "tsl/platform/numa.h"
+#include "tsl/platform/protobuf.h"
+#include "tsl/platform/random.h"
+#include "tsl/profiler/lib/nvtx_utils.h"
+#include "tsl/profiler/lib/traceme.h"
 
 #if defined(GOOGLE_CUDA) || defined(TENSORFLOW_USE_ROCM) || \
     defined(TENSORFLOW_USE_SYCL)
@@ -1483,6 +1484,14 @@ GetStreamExecutorGpuDeviceAllocator(
         "The VMM allocator is in an experimental mode.");
   }
 
+  if (allocator_config.locality_domain_memory_size > 0 &&
+      effective_kind != GpuAllocatorConfig::Kind::kDefault &&
+      effective_kind != GpuAllocatorConfig::Kind::kBFC) {
+    LOG(WARNING) << "locality_domain_memory_size is only supported by the BFC "
+                    "allocator; locality-domain memory kinds will not be "
+                    "available.";
+  }
+
   // Set when a single preallocated BFC allocator serves both default and
   // collective memory via spatial partitioning; suppresses the separate
   // collective allocator below.
@@ -1530,6 +1539,43 @@ GetStreamExecutorGpuDeviceAllocator(
           shared_collective_pool ? tsl::AllocationEnd::kUpper
                                  : tsl::AllocationEnd::kLower;
       for (const auto& ordinal_and_device : addressable_devices) {
+        se::StreamExecutor* executor = ordinal_and_device.second->executor();
+        uint64_t locality_domain_reserved_bytes = 0;
+        if (allocator_config.locality_domain_memory_size > 0) {
+          const int domain_count =
+              executor->GetDeviceDescription().locality_domain_count();
+          if (domain_count <= 1) {
+            return FailedPrecondition(
+                "locality_domain_memory_size is set, but device %d does not "
+                "have multiple locality domains (locality_domain_count=%d)",
+                executor->device_ordinal(), domain_count);
+          }
+          // Domain pools are reserved before the default pool exists so that
+          // the driver's placement of default memory cannot starve a domain.
+          for (int domain = 0; domain < domain_count; ++domain) {
+            ABSL_ASSIGN_OR_RETURN(
+                int64_t memory_space,
+                se::gpu::EncodeLocalityDomainMemorySpace(domain));
+            ABSL_ASSIGN_OR_RETURN(
+                std::unique_ptr<tsl::BFCAllocator> domain_allocator,
+                CreateLocalityDomainBFCAllocator(
+                    executor, domain,
+                    allocator_config.locality_domain_memory_size,
+                    allocator_config.sub_allocator_alloc_visitors,
+                    allocator_config.sub_allocator_free_visitors));
+            // The pool is fully preallocated, so its committed bytes are the
+            // physical memory taken from the default pool's budget.
+            std::optional<tsl::AllocatorStats> domain_stats =
+                domain_allocator->GetStats();
+            locality_domain_reserved_bytes +=
+                domain_stats.has_value()
+                    ? domain_stats->pool_bytes.value_or(0)
+                    : allocator_config.locality_domain_memory_size;
+            allocators.push_back({std::move(domain_allocator),
+                                  ordinal_and_device.second->compute_stream(),
+                                  memory_space});
+          }
+        }
         ABSL_ASSIGN_OR_RETURN(
             auto bfc_allocator,
             CreateBFCAllocator(
@@ -1538,7 +1584,9 @@ GetStreamExecutorGpuDeviceAllocator(
                 allocator_config.gpu_system_memory_size,
                 allocator_config.sub_allocator_alloc_visitors,
                 allocator_config.sub_allocator_free_visitors,
-                /*enable_spatial_partitioning=*/shared_collective_pool));
+                /*enable_spatial_partitioning=*/shared_collective_pool,
+                /*name_prefix=*/"GPU",
+                /*reserved_bytes=*/locality_domain_reserved_bytes));
         allocators.push_back(
             {bfc_allocator, ordinal_and_device.second->compute_stream(),
              /*memory_space=*/

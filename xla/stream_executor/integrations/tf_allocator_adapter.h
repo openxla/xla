@@ -193,6 +193,14 @@ class MultiDeviceAdapter : public DeviceAddressAllocator {
 
   absl::StatusOr<tsl::Allocator*> GetAllocator(int device_ordinal);
 
+  // Returns the allocator registered for `memory_space` on `device_ordinal`.
+  absl::StatusOr<tsl::Allocator*> GetAllocator(int device_ordinal,
+                                               int64_t memory_space);
+
+  // Returns true if an allocator is registered for `memory_space` on
+  // `device_ordinal`.
+  bool HasAllocator(int device_ordinal, int64_t memory_space) const;
+
  private:
   absl::StatusOr<std::shared_ptr<TfAllocatorAdapter>> GetDefaultAllocator(
       int device_ordinal);
