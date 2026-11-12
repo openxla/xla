@@ -13,16 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gtest/gtest.h>
-
 #include <tuple>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
+#include "xla/stream_executor/blas.h"
+#include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/gpu/gpu_blas_lt.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/platform_manager.h"
+#include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
 
@@ -189,6 +197,102 @@ TEST_F(GemmSyclTest, MatmulWithBiasAndApproxGELU) {
     ROOT out = <<DType>>[256,8] multiply(biased, mul.4)
   })";
   TestGemmWithTypeVariations(matmul_module_str, /*include_complex=*/false);
+}
+
+class SyclBlasLtTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    ASSERT_OK_AND_ASSIGN(
+        platform_, stream_executor::PlatformManager::PlatformWithName("SYCL"));
+    ASSERT_OK_AND_ASSIGN(executor_, platform_->ExecutorForDevice(0));
+    LOG(INFO) << "Device name: " << executor_->GetDeviceDescription().name();
+    ASSERT_OK_AND_ASSIGN(stream_, executor_->CreateStream());
+    ASSERT_OK_AND_ASSIGN(blas_lt_,
+                         stream_executor::gpu::BlasLt::Get(executor_));
+  }
+
+  template <typename LhsT, typename RhsT, typename OutputT>
+  void TestComplexTypeMismatch() {
+    int64_t m = 32, n = 32, k = 32;
+
+    std::vector<LhsT> a(m * k, 1);
+    std::vector<RhsT> b(k * n, 1);
+    std::vector<LhsT> c(m * n, static_cast<LhsT>(0));
+
+    auto a_buf = executor_->AllocateArray<LhsT>(a.size());
+    auto b_buf = executor_->AllocateArray<RhsT>(b.size());
+    auto c_buf = executor_->AllocateArray<OutputT>(c.size());
+
+    ASSERT_OK(stream_->Memcpy(&a_buf, a.data(), a.size() * sizeof(LhsT)));
+    ASSERT_OK(stream_->Memcpy(&b_buf, b.data(), b.size() * sizeof(RhsT)));
+    ASSERT_OK(stream_->MemZero(&c_buf, c.size() * sizeof(OutputT)));
+
+    stream_executor::gpu::MatrixLayout a_layout(
+        xla::primitive_util::NativeToPrimitiveType<LhsT>(), m, k,
+        stream_executor::gpu::MatrixLayout::Order::kColumnMajor);
+    stream_executor::gpu::MatrixLayout b_layout(
+        xla::primitive_util::NativeToPrimitiveType<RhsT>(), k, n,
+        stream_executor::gpu::MatrixLayout::Order::kColumnMajor);
+    stream_executor::gpu::MatrixLayout c_layout(
+        xla::primitive_util::NativeToPrimitiveType<OutputT>(), m, n,
+        stream_executor::gpu::MatrixLayout::Order::kColumnMajor);
+
+    stream_executor::gpu::GemmConfig cfg = {
+        a_layout,                                // lhs_layout
+        b_layout,                                // rhs_layout
+        c_layout,                                // c_layout
+        c_layout,                                // output_layout
+        {1.0, 0.0},                              // alpha
+        0.0,                                     // beta
+        0,                                       // compute_precision
+        xla::PrecisionConfig::ALG_UNSET,         // precision_algorithm
+        std::nullopt,                            // algorithm
+        false,                                   // grad_x
+        false,                                   // grad_y
+        stream_executor::gpu::ScaleMode::kNone,  // scale_mode
+    };
+
+    ASSERT_OK_AND_ASSIGN(
+        auto plan, blas_lt_->GetMatmulPlan(
+                       cfg, stream_executor::gpu::BlasLt::Epilogue::kDefault));
+
+    stream_executor::gpu::BlasLt::MemoryArgs args{
+        /*a=*/a_buf,
+        /*b=*/b_buf,
+        /*c=*/c_buf,
+        /*d=*/c_buf,
+        /*bias=*/stream_executor::DeviceAddressBase{},
+        /*aux=*/stream_executor::DeviceAddressBase{},
+        /*a_scale=*/stream_executor::DeviceAddressBase{},
+        /*b_scale=*/stream_executor::DeviceAddressBase{},
+        /*c_scale=*/stream_executor::DeviceAddressBase{},
+        /*d_scale=*/stream_executor::DeviceAddressBase{},
+        /*d_amax=*/{stream_executor::DeviceAddressBase{}},
+        /*workspace*/ stream_executor::DeviceAddressBase{},
+        /*scratch_allocator=*/nullptr,
+    };
+
+    auto status = plan->ExecuteOnStream(stream_.get(), args, nullptr);
+    EXPECT_FALSE(status.ok());
+    EXPECT_THAT(
+        status.message(),
+        ::testing::HasSubstr("Output datatype must match input data types"));
+
+    ASSERT_OK(stream_->BlockHostUntilDone());
+    executor_->Deallocate(&a_buf);
+    executor_->Deallocate(&b_buf);
+    executor_->Deallocate(&c_buf);
+  }
+
+  stream_executor::Platform* platform_;
+  stream_executor::StreamExecutor* executor_;
+  std::unique_ptr<stream_executor::Stream> stream_;
+  stream_executor::gpu::BlasLt* blas_lt_;
+};
+
+TEST_F(SyclBlasLtTest, ComplexTypeMismatch) {
+  TestComplexTypeMismatch<std::complex<double>, std::complex<float>,
+                          std::complex<float>>();
 }
 
 }  // namespace
