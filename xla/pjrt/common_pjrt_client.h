@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -526,6 +527,11 @@ class CommonPjRtClient : public PjRtClient {
 
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateUninitializedBuffer(
       const Shape& shape, PjRtMemorySpace* memory_space) override;
+
+  absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateBufferFromExternalWrite(
+      const Shape& shape, PjRtMemorySpace* memory_space,
+      absl::FunctionRef<Future<>(PjRtRawBufferRef raw, Future<> allocated)> cb)
+      override;
 
   using PjRtClient::CreateViewOfDeviceBuffer;
   absl::StatusOr<std::unique_ptr<PjRtBuffer>> CreateViewOfDeviceBuffer(
@@ -1295,6 +1301,10 @@ class CommonPjRtBufferImpl : public CommonPjRtBuffer {
 
   Future<> CopyRawToHostFuture(Future<void*> dst, int64_t offset,
                                int64_t transfer_size) override;
+
+  Future<> UseBuffer(
+      absl::FunctionRef<Future<>(PjRtRawBufferRef raw, Future<> defined)> cb)
+      override;
 
   void Delete() override;
 
