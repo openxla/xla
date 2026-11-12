@@ -13,6 +13,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/mori_communicator.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,9 +33,9 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/collectives/gxl_communicator.h"
 #include "xla/backends/gpu/collectives/mori_collectives.h"
 #include "xla/backends/gpu/collectives/mori_kernels.h"
 #include "xla/core/collectives/communicator.h"
@@ -47,6 +48,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/casts.h"
 
 namespace xla::gpu {
 
@@ -115,6 +117,37 @@ absl::StatusOr<se::Stream*> ToStream(const Communicator::Executor& executor) {
 }
 }  // namespace
 
+class MoriCommunicator::GxlAdapter : public GxlCommunicator {
+ public:
+  explicit GxlAdapter(MoriCommunicator* comm) : comm_(comm) {}
+
+  absl::Status RunAllGatherGxl(se::Stream* stream, PrimitiveType element_type,
+                               se::DeviceAddressBase input_buffer,
+                               se::DeviceAddressBase output_buffer,
+                               int64_t element_count, int64_t rank) final {
+    return comm_->LaunchAllGather(input_buffer, output_buffer, element_type,
+                                  element_count, GpuCollectives::On(*stream),
+                                  /*is_rma=*/false);
+  }
+
+  absl::Status RunRaggedAllToAllGxl(
+      se::Stream* stream, PrimitiveType element_type,
+      se::DeviceAddressBase input_buffer, se::DeviceAddressBase output_buffer,
+      se::DeviceAddressBase input_offsets_buffer,
+      se::DeviceAddressBase send_sizes_buffer,
+      se::DeviceAddressBase output_offsets_buffer,
+      se::DeviceAddressBase recv_sizes_buffer, int64_t num_row_elements,
+      int64_t num_total_updates, int64_t rank) final {
+    return comm_->LaunchRaggedAllToAll(
+        input_buffer, output_buffer, input_offsets_buffer, send_sizes_buffer,
+        output_offsets_buffer, element_type, num_row_elements,
+        num_total_updates, GpuCollectives::On(*stream));
+  }
+
+ private:
+  MoriCommunicator* comm_;  // Owns this adapter.
+};
+
 absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
     std::shared_ptr<CancellationToken> cancel, int rank,
     absl::Span<const int> rank_to_pe) {
@@ -130,6 +163,7 @@ absl::StatusOr<std::unique_ptr<MoriCommunicator>> MoriCommunicator::Create(
         "is not supported.",
         rank, absl::StrJoin(rank_to_pe, ","));
   }
+  comm->gxl_ = std::make_unique<GxlAdapter>(comm.get());
 
   VLOG(1) << "Created " << *comm << " with participants: " << num_ranks;
   return comm;
@@ -377,6 +411,54 @@ absl::Status MoriCommunicator::LaunchAllToAll(
     return se::gpu::ToStatus(
         facade_->RunAllToAll(addrs, bytes, hip_stream, is_async));
   });
+}
+
+absl::Status MoriCommunicator::LaunchRaggedAllToAll(
+    se::DeviceAddressBase input, se::DeviceAddressBase output,
+    se::DeviceAddressBase input_offsets, se::DeviceAddressBase send_sizes,
+    se::DeviceAddressBase output_offsets, PrimitiveType dtype,
+    int64_t num_row_elements, int64_t num_total_updates,
+    const Executor& executor) {
+  CHECK_CANCELLED()
+  ABSL_ASSIGN_OR_RETURN(se::Stream * stream, ToStream(executor));
+
+  const int64_t num_ranks = facade_->NumPes();
+  const int64_t num_updates = num_total_updates / num_ranks;
+  VLOG(3) << "RaggedAllToAll: input=" << input.opaque()
+          << " output=" << output.opaque() << " num_updates=" << num_updates
+          << " num_row_elements=" << num_row_elements
+          << " dtype=" << primitive_util::LowercasePrimitiveTypeName(dtype)
+          << " stream=" << AsHipStream(stream);
+
+  if (num_total_updates % num_ranks != 0 || num_updates < 1 ||
+      num_updates > mori::ccl::kRaggedMaxUpdates) {
+    return FailedPrecondition(
+        "MORI ragged-all-to-all supports 1..%d updates per peer, got %d total "
+        "updates for %d ranks; disable "
+        "--xla_gpu_enable_gxl_ragged_all_to_all",
+        mori::ccl::kRaggedMaxUpdates, num_total_updates, num_ranks);
+  }
+  if (!facade_->InHeap(output.opaque(), output.size())) {
+    return FailedPrecondition(
+        "MORI ragged-all-to-all output buffer %p (%d bytes) is not in the MORI "
+        "heap; enable --xla_gpu_experimental_enable_nccl_symmetric_buffers or "
+        "disable --xla_gpu_enable_gxl_ragged_all_to_all",
+        output.opaque(), output.size());
+  }
+
+  return LaunchOrDefer(
+      [this, in = input.opaque(), out = output.opaque(),
+       in_offs = static_cast<const int64_t*>(input_offsets.opaque()),
+       sizes = static_cast<const int64_t*>(send_sizes.opaque()),
+       out_offs = static_cast<const int64_t*>(output_offsets.opaque()),
+       num_updates = static_cast<int>(num_updates),
+       row_bytes = ToMoriByteCount(dtype, num_row_elements),
+       hip_stream = AsHipStream(stream)](bool is_async) {
+        VLOG(3) << "RaggedAllToAll: launch is_async=" << is_async;
+        return se::gpu::ToStatus(facade_->RunRaggedAllToAll(
+            in, out, in_offs, sizes, out_offs, num_updates, row_bytes,
+            hip_stream, is_async));
+      });
 }
 
 absl::Status MoriCommunicator::LaunchSend(se::DeviceAddressBase send_buffer,
