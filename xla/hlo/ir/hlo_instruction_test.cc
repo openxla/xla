@@ -27,6 +27,8 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/comparison_util.h"
 #include "xla/frontend_attributes.h"
@@ -34,6 +36,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_print_options.h"
 #include "xla/hlo/ir/stack_frames.h"
@@ -53,6 +56,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::HasSubstr;
@@ -1346,6 +1350,374 @@ ENTRY %main (p0: f32[10]) -> f32[10] {
   ASSERT_EQ(roundtrip_async_update->opcode(), HloOpcode::kAsyncUpdate);
   EXPECT_EQ(roundtrip_async_update->output_operand_aliasing(),
             async_update->output_operand_aliasing());
+}
+
+absl::StatusOr<HloInstructionProto*> FindInstructionProto(
+    HloModuleProto& module_proto, absl::string_view name) {
+  for (HloComputationProto& computation :
+       *module_proto.mutable_computations()) {
+    for (HloInstructionProto& instruction :
+         *computation.mutable_instructions()) {
+      if (instruction.name() == name) {
+        return &instruction;
+      }
+    }
+  }
+  return absl::NotFoundError(name);
+}
+
+constexpr absl::string_view kScanHlo = R"hlo(
+HloModule m
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  add = f32[] add(lhs, rhs)
+  ROOT t = (f32[], f32[]) tuple(add, add)
+}
+
+ENTRY main {
+  input = f32[4] parameter(0)
+  init = f32[] constant(0)
+  ROOT scan = (f32[4], f32[]) scan(input, init), dimensions={0}, num_carries=1, to_apply=add
+}
+)hlo";
+
+TEST_F(HloInstructionTest, ScanFromProtoRoundTrip) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kScanHlo));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> round_trip,
+      HloModule::CreateFromProto(module->ToProto(), module->config()));
+  EXPECT_THAT(FindInstruction(round_trip.get(), "scan")->dimensions(),
+              ::testing::ElementsAre(0));
+}
+
+TEST_F(HloInstructionTest, ScanFromProtoWithoutDimensionIsRejected) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kScanHlo));
+  HloModuleProto proto = module->ToProto();
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * scan,
+                       FindInstructionProto(proto, "scan"));
+  scan->clear_dimensions();
+  EXPECT_THAT(HloModule::CreateFromProto(proto, module->config()),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("Scan instruction should have 1 dimension")));
+}
+
+constexpr absl::string_view kScatterHlo = R"hlo(
+HloModule m
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+add2 {
+  lhs.0 = f32[] parameter(0)
+  lhs.1 = f32[] parameter(1)
+  rhs.0 = f32[] parameter(2)
+  rhs.1 = f32[] parameter(3)
+  add.0 = f32[] add(lhs.0, rhs.0)
+  add.1 = f32[] add(lhs.1, rhs.1)
+  ROOT t = (f32[], f32[]) tuple(add.0, add.1)
+}
+
+ENTRY main {
+  operand = f32[3,3] parameter(0)
+  indices = s32[2] parameter(1)
+  updates = f32[2,3] parameter(2)
+  scatter = f32[3,3] scatter(operand, indices, updates), to_apply=add, update_window_dims={1}, inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, index_vector_dim=1
+  scatter2 = (f32[3,3], f32[3,3]) scatter(operand, operand, indices, updates, updates), to_apply=add2, update_window_dims={1}, inserted_window_dims={0}, scatter_dims_to_operand_dims={0}, index_vector_dim=1
+  ROOT t = (f32[3,3], (f32[3,3], f32[3,3])) tuple(scatter, scatter2)
+}
+)hlo";
+
+TEST_F(HloInstructionTest, ScatterFromProtoRoundTrip) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kScatterHlo));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> round_trip,
+      HloModule::CreateFromProto(module->ToProto(), module->config()));
+  EXPECT_EQ(FindInstruction(round_trip.get(), "scatter")->operand_count(), 3);
+  EXPECT_EQ(FindInstruction(round_trip.get(), "scatter2")->operand_count(), 5);
+}
+
+TEST_F(HloInstructionTest, ScatterFromProtoWithoutOperandsIsRejected) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kScatterHlo));
+  HloModuleProto proto = module->ToProto();
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * scatter,
+                       FindInstructionProto(proto, "scatter"));
+  scatter->clear_operand_ids();
+  EXPECT_THAT(
+      HloModule::CreateFromProto(proto, module->config()),
+      StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr(
+              "Scatter instruction should have an odd number of operands")));
+}
+
+TEST_F(HloInstructionTest, ScatterFromProtoWithEvenOperandCountIsRejected) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kScatterHlo));
+  HloModuleProto proto = module->ToProto();
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * scatter,
+                       FindInstructionProto(proto, "scatter"));
+  scatter->mutable_operand_ids()->RemoveLast();
+  EXPECT_THAT(
+      HloModule::CreateFromProto(proto, module->config()),
+      StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr(
+              "Scatter instruction should have an odd number of operands")));
+}
+
+// In-place collective-permutes covering each way CreateFromProto reads
+// dynamic_slice_sizes: array input with a tuple of scalar offsets, array input
+// with a tuple of offset tuples, tuple input with a tuple of offset tuples and
+// tuple input with a tuple of tuples of offset tuples.
+constexpr absl::string_view kInPlaceCollectivePermuteArrayHlo = R"hlo(
+HloModule m, replica_count=4
+
+ENTRY main {
+  input = f32[128,32] parameter(0)
+  constant = f32[] constant(1)
+  output = f32[128,128] broadcast(constant), dimensions={}
+  constant.1 = s32[] constant(0)
+  tuple.1 = (s32[], s32[]) tuple(constant.1, constant.1)
+  constant.2 = s32[] constant(64)
+  tuple.2 = (s32[], s32[]) tuple(constant.1, constant.2)
+  empty = () tuple()
+  cp = f32[128,128] collective-permute(input, output, tuple.1, tuple.2), source_target_pairs={{0,1},{1,2},{2,3}}, slice_sizes={{128,32}}
+  cps = (f32[128,32], f32[128,128], u32[], u32[]) collective-permute-start(input, output, tuple.1, tuple.2), source_target_pairs={{0,1},{1,2},{2,3}}, slice_sizes={{64,32}}
+  cpd = f32[128,128] collective-permute-done(cps)
+  ROOT root = ((), f32[128,128], f32[128,128]) tuple(empty, cp, cpd)
+}
+)hlo";
+
+constexpr absl::string_view kInPlaceCollectivePermuteArrayNestedHlo = R"hlo(
+HloModule m, replica_count=4
+
+ENTRY main {
+  input = f32[8,8,128] parameter(0)
+  constant = f32[] constant(1)
+  output = f32[8,8,128] broadcast(constant), dimensions={}
+  constant.1 = s32[] constant(0)
+  constant.2 = s32[] constant(1)
+  offset.1 = (s32[], s32[], s32[]) tuple(constant.1, constant.1, constant.1)
+  offset.2 = (s32[], s32[], s32[]) tuple(constant.2, constant.1, constant.1)
+  offsets = ((s32[], s32[], s32[]), (s32[], s32[], s32[])) tuple(offset.1, offset.2)
+  ROOT cp = f32[8,8,128] collective-permute(input, output, offsets, offsets), source_target_pairs={{0,1},{1,2},{2,3},{0,3},{2,1},{3,2}}, slice_sizes={{1,8,128},{1,8,128}}
+}
+)hlo";
+
+constexpr absl::string_view kInPlaceCollectivePermuteTupleHlo = R"hlo(
+HloModule m, replica_count=4
+
+ENTRY main {
+  input = f32[128,32] parameter(0)
+  tuple.input = (f32[128,32], f32[128,32]) tuple(input, input)
+  constant = f32[] constant(1)
+  output = f32[128,128] broadcast(constant), dimensions={}
+  tuple.output = (f32[128,128], f32[128,128]) tuple(output, output)
+  constant.1 = s32[] constant(0)
+  constant.2 = s32[] constant(64)
+  tuple.1 = (s32[], s32[]) tuple(constant.1, constant.1)
+  tuple.2 = (s32[], s32[]) tuple(constant.2, constant.1)
+  tuple.3 = ((s32[], s32[]), (s32[], s32[])) tuple(tuple.1, tuple.2)
+  tuple.4 = (s32[], s32[]) tuple(constant.1, constant.1)
+  tuple.5 = (s32[], s32[]) tuple(constant.2, constant.2)
+  tuple.6 = ((s32[], s32[]), (s32[], s32[])) tuple(tuple.4, tuple.5)
+  ROOT cp = (f32[128,128], f32[128,128]) collective-permute(tuple.input, tuple.output, tuple.3, tuple.6), source_target_pairs={{0,1},{1,2},{2,3}}, slice_sizes={{64,32},{64,32}}
+}
+)hlo";
+
+constexpr absl::string_view kInPlaceCollectivePermuteTupleNestedHlo = R"hlo(
+HloModule m, replica_count=4
+
+ENTRY main {
+  replica_id = u32[] replica-id()
+  broadcast.0 = u32[2,8,128] broadcast(replica_id), dimensions={}
+  tuple.input = (u32[2,8,128], u32[2,8,128]) tuple(broadcast.0, broadcast.0)
+  constant.1 = u32[] constant(1000)
+  broadcast.1 = u32[2,8,128] broadcast(constant.1), dimensions={}
+  broadcast.2 = u32[4,8,128] broadcast(constant.1), dimensions={}
+  tuple.output = (u32[2,8,128], u32[4,8,128]) tuple(broadcast.1, broadcast.2)
+  constant.2 = s32[] constant(0)
+  tuple.2 = (s32[], s32[], s32[]) tuple(constant.2, constant.2, constant.2)
+  constant.3 = s32[] constant(1)
+  tuple.3 = (s32[], s32[], s32[]) tuple(constant.3, constant.2, constant.2)
+  tuple.4 = ((s32[], s32[], s32[]), (s32[], s32[], s32[])) tuple(tuple.2, tuple.3)
+  tuple.7 = ((s32[], s32[], s32[]), (s32[], s32[], s32[])) tuple(tuple.2, tuple.2)
+  short = (((s32[], s32[], s32[]), (s32[], s32[], s32[]))) tuple(tuple.4)
+  tuple.8 = (((s32[], s32[], s32[]), (s32[], s32[], s32[])), ((s32[], s32[], s32[]), (s32[], s32[], s32[]))) tuple(tuple.4, tuple.7)
+  constant.4 = s32[] constant(2)
+  tuple.5 = (s32[], s32[], s32[]) tuple(constant.4, constant.2, constant.2)
+  tuple.6 = ((s32[], s32[], s32[]), (s32[], s32[], s32[])) tuple(tuple.2, tuple.5)
+  tuple.9 = (((s32[], s32[], s32[]), (s32[], s32[], s32[])), ((s32[], s32[], s32[]), (s32[], s32[], s32[]))) tuple(tuple.4, tuple.6)
+  cp = (u32[2,8,128], u32[4,8,128]) collective-permute(tuple.input, tuple.output, tuple.8, tuple.9), source_target_pairs={{0,1},{1,2},{2,3},{3,0},{0,3},{3,2},{2,1},{1,0}}, slice_sizes={{1,8,128},{1,8,128},{2,8,128},{2,8,128}}
+  ROOT root = ((((s32[], s32[], s32[]), (s32[], s32[], s32[]))), (u32[2,8,128], u32[4,8,128])) tuple(short, cp)
+}
+)hlo";
+
+// The first input buffer is read at one offset and the second at two.
+constexpr absl::string_view kInPlaceCollectivePermuteTupleUnevenHlo = R"hlo(
+HloModule m, replica_count=4
+
+ENTRY main {
+  replica_id = u32[] replica-id()
+  broadcast.0 = u32[2,8,128] broadcast(replica_id), dimensions={}
+  tuple.input = (u32[2,8,128], u32[2,8,128]) tuple(broadcast.0, broadcast.0)
+  constant.1 = u32[] constant(1000)
+  broadcast.1 = u32[4,8,128] broadcast(constant.1), dimensions={}
+  tuple.output = (u32[4,8,128], u32[4,8,128]) tuple(broadcast.1, broadcast.1)
+  constant.2 = s32[] constant(0)
+  constant.3 = s32[] constant(1)
+  offset.0 = (s32[], s32[], s32[]) tuple(constant.2, constant.2, constant.2)
+  offset.1 = (s32[], s32[], s32[]) tuple(constant.3, constant.2, constant.2)
+  one = ((s32[], s32[], s32[])) tuple(offset.0)
+  two = ((s32[], s32[], s32[]), (s32[], s32[], s32[])) tuple(offset.0, offset.1)
+  offsets = (((s32[], s32[], s32[])), ((s32[], s32[], s32[]), (s32[], s32[], s32[]))) tuple(one, two)
+  ROOT cp = (u32[4,8,128], u32[4,8,128]) collective-permute(tuple.input, tuple.output, offsets, offsets), source_target_pairs={{0,1},{1,2},{2,3},{3,0}}, slice_sizes={{1,8,128},{1,8,128},{2,8,128}}
+}
+)hlo";
+
+TEST_F(HloInstructionTest, InPlaceCollectivePermuteFromProtoRoundTrip) {
+  for (absl::string_view hlo : {kInPlaceCollectivePermuteArrayHlo,
+                                kInPlaceCollectivePermuteArrayNestedHlo,
+                                kInPlaceCollectivePermuteTupleHlo,
+                                kInPlaceCollectivePermuteTupleNestedHlo}) {
+    SCOPED_TRACE(hlo);
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(hlo, /*replica_count=*/4));
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> round_trip,
+        HloModule::CreateFromProto(module->ToProto(), module->config()));
+    for (HloInstruction* instruction :
+         module->entry_computation()->instructions()) {
+      if (instruction->opcode() != HloOpcode::kCollectivePermute &&
+          instruction->opcode() != HloOpcode::kCollectivePermuteStart) {
+        continue;
+      }
+      SCOPED_TRACE(instruction->name());
+      EXPECT_EQ(Cast<HloCollectivePermuteInstruction>(
+                    FindInstruction(round_trip.get(), instruction->name()))
+                    ->dynamic_slice_sizes_list(),
+                Cast<HloCollectivePermuteInstruction>(instruction)
+                    ->dynamic_slice_sizes_list());
+    }
+  }
+}
+
+TEST_F(HloInstructionTest,
+       InPlaceCollectivePermuteFromProtoRoundTripUnevenOffsets) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kInPlaceCollectivePermuteTupleUnevenHlo,
+                                   /*replica_count=*/4));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> round_trip,
+      HloModule::CreateFromProto(module->ToProto(), module->config()));
+  EXPECT_EQ(
+      Cast<HloCollectivePermuteInstruction>(
+          FindInstruction(round_trip.get(), "cp"))
+          ->dynamic_slice_sizes_list(),
+      Cast<HloCollectivePermuteInstruction>(FindInstruction(module.get(), "cp"))
+          ->dynamic_slice_sizes_list());
+}
+
+TEST_F(HloInstructionTest,
+       InPlaceCollectivePermuteFromProtoWithThreeOperandsIsRejected) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kInPlaceCollectivePermuteArrayHlo,
+                                   /*replica_count=*/4));
+  HloModuleProto proto = module->ToProto();
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * cp,
+                       FindInstructionProto(proto, "cp"));
+  cp->mutable_operand_ids()->RemoveLast();
+  EXPECT_THAT(HloModule::CreateFromProto(proto, module->config()),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("should have 4 operands")));
+}
+
+TEST_F(HloInstructionTest,
+       InPlaceCollectivePermuteFromProtoWithArrayStartIndicesIsRejected) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kInPlaceCollectivePermuteArrayHlo,
+                                   /*replica_count=*/4));
+  HloModuleProto proto = module->ToProto();
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * cp,
+                       FindInstructionProto(proto, "cp"));
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * start_indices,
+                       FindInstructionProto(proto, "input"));
+  cp->set_operand_ids(2, start_indices->id());
+  EXPECT_THAT(
+      HloModule::CreateFromProto(proto, module->config()),
+      StatusIs(absl::StatusCode::kInternal,
+               HasSubstr("input start indices should be a non-empty tuple")));
+}
+
+TEST_F(HloInstructionTest,
+       InPlaceCollectivePermuteFromProtoWithEmptyStartIndicesIsRejected) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kInPlaceCollectivePermuteArrayHlo,
+                                   /*replica_count=*/4));
+  HloModuleProto proto = module->ToProto();
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * cp,
+                       FindInstructionProto(proto, "cp"));
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * start_indices,
+                       FindInstructionProto(proto, "empty"));
+  cp->set_operand_ids(2, start_indices->id());
+  EXPECT_THAT(
+      HloModule::CreateFromProto(proto, module->config()),
+      StatusIs(absl::StatusCode::kInternal,
+               HasSubstr("input start indices should be a non-empty tuple")));
+}
+
+TEST_F(HloInstructionTest,
+       InPlaceCollectivePermuteFromProtoWithShortStartIndicesIsRejected) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kInPlaceCollectivePermuteTupleNestedHlo,
+                                   /*replica_count=*/4));
+  HloModuleProto proto = module->ToProto();
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * cp,
+                       FindInstructionProto(proto, "cp"));
+  ASSERT_OK_AND_ASSIGN(HloInstructionProto * start_indices,
+                       FindInstructionProto(proto, "short"));
+  cp->set_operand_ids(2, start_indices->id());
+  EXPECT_THAT(
+      HloModule::CreateFromProto(proto, module->config()),
+      StatusIs(
+          absl::StatusCode::kInternal,
+          HasSubstr(
+              "input start indices should be a tuple of tuples matching")));
+}
+
+TEST_F(HloInstructionTest,
+       InPlaceCollectivePermuteFromProtoWithTooFewSliceSizesIsRejected) {
+  for (absl::string_view hlo : {kInPlaceCollectivePermuteArrayHlo,
+                                kInPlaceCollectivePermuteArrayNestedHlo,
+                                kInPlaceCollectivePermuteTupleHlo,
+                                kInPlaceCollectivePermuteTupleNestedHlo}) {
+    SCOPED_TRACE(hlo);
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<HloModule> module,
+        ParseAndReturnVerifiedModule(hlo, /*replica_count=*/4));
+    HloModuleProto proto = module->ToProto();
+    ASSERT_OK_AND_ASSIGN(HloInstructionProto * cp,
+                         FindInstructionProto(proto, "cp"));
+    cp->mutable_dynamic_slice_sizes()->RemoveLast();
+    EXPECT_THAT(HloModule::CreateFromProto(proto, module->config()),
+                StatusIs(absl::StatusCode::kInternal,
+                         HasSubstr("Too few dynamic_slice_sizes")));
+  }
 }
 
 TEST_F(HloInstructionTest, DefuseRelaysControlDependencies) {
