@@ -11,30 +11,90 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "xla/service/cpu/cpu_compiler.h"
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/strings/string_view.h"
-#include "tsl/platform/platform.h"
-#include "tsl/platform/test.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/service/buffer_assignment.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
 #include "xla/tsl/lib/monitoring/collected_metrics.h"
 #include "xla/tsl/lib/monitoring/collection_registry.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/test.h"
 
 namespace xla {
 namespace cpu {
 namespace {
 
 using CpuCompilerTest = HloTestBase;
+
+using CpuCompilerBufferAssignmentTest = HloHardwareIndependentTestBase;
+
+TEST_F(CpuCompilerBufferAssignmentTest,
+       OneDnnFusionDoesNotOverwritePostOpInput) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule test, is_scheduled=true
+
+    fused {
+      lhs = f32[17,23]{1,0} parameter(0)
+      rhs = f32[23,19]{1,0} parameter(1)
+      zeros = f32[17,19]{1,0} parameter(2)
+      product = f32[17,19]{1,0} dot(lhs, rhs),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT result = f32[17,19]{1,0} maximum(product, zeros)
+    }
+
+    ENTRY main {
+      lhs = f32[17,23]{1,0} parameter(0)
+      rhs = f32[23,19]{1,0} parameter(1)
+      zero = f32[] constant(0)
+      zeros = f32[17,19]{1,0} broadcast(zero), dimensions={}
+      ROOT result = f32[17,19]{1,0} fusion(lhs, rhs, zeros),
+        kind=kCustom, calls=fused,
+        backend_config={"fusion_config":{"kind":"__onednn_fusion"}}
+    }
+  )hlo"));
+
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(auto assignment,
+                       compiler.CreateBufferAssignment(*module));
+  HloInstruction* result = module->entry_computation()->root_instruction();
+  EXPECT_FALSE(assignment->SharesTopLevelSlice(result, result->operand(2)));
+}
+
+TEST_F(CpuCompilerBufferAssignmentTest, LoopFusionCanStillReuseOperand) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"hlo(
+    HloModule test, is_scheduled=true
+
+    fused {
+      input = f32[17,19]{1,0} parameter(0)
+      ROOT result = f32[17,19]{1,0} negate(input)
+    }
+
+    ENTRY main {
+      input = f32[17,19]{1,0} parameter(0)
+      temporary = f32[17,19]{1,0} exponential(input)
+      ROOT result = f32[17,19]{1,0} fusion(temporary), kind=kLoop, calls=fused
+    }
+  )hlo"));
+
+  CpuCompiler compiler;
+  ASSERT_OK_AND_ASSIGN(auto assignment,
+                       compiler.CreateBufferAssignment(*module));
+  HloInstruction* result = module->entry_computation()->root_instruction();
+  EXPECT_TRUE(assignment->SharesTopLevelSlice(result, result->operand(0)));
+}
 
 constexpr absl::string_view kCpuCompilerStacktraceMetricName =
     "/xla/service/cpu/compiler_stacktrace_count";

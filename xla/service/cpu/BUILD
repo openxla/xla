@@ -144,6 +144,7 @@ cc_library(
     ],
     copts = tsl_copts(),
     deps = [
+        ":backend_config_proto_cc",
         ":conv_canonicalization",
         ":cpu_aot_compilation_result",
         ":cpu_aot_loader",
@@ -169,6 +170,7 @@ cc_library(
         "//xla:xla_proto_cc",
         "//xla/backends/cpu:alignment",
         "//xla/backends/cpu:constant_allocation",
+        "//xla/backends/cpu:custom_fusion_configs",
         "//xla/backends/cpu:target_machine_options",
         "//xla/backends/cpu:ynn_support",
         "//xla/backends/cpu/codegen:builtin_definition_generator",
@@ -447,8 +449,11 @@ xla_test(
     ],
     test_cpu_fast_compile = True,
     deps = [
+        ":cpu_compiler",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:buffer_assignment",
         "//xla/service:hlo_module_config",
         "//xla/tests:hlo_pjrt_test_base",
         "//xla/tests:xla_internal_test_main",

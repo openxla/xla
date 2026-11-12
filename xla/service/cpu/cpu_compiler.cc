@@ -67,10 +67,6 @@ limitations under the License.
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/logging.h"  // IWYU pragma: keep
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/cpu/alignment.h"
 #include "xla/backends/cpu/codegen/builtin_definition_generator.h"
 #include "xla/backends/cpu/codegen/emitters/cpu_fusion_emitter_config.h"
@@ -80,6 +76,7 @@ limitations under the License.
 #include "xla/backends/cpu/codegen/kernel_api_ir_builder.h"
 #include "xla/backends/cpu/codegen/target_machine_features.h"
 #include "xla/backends/cpu/constant_allocation.h"
+#include "xla/backends/cpu/custom_fusion_configs.h"
 #include "xla/backends/cpu/runtime/function_library.h"
 #include "xla/backends/cpu/runtime/thunk.h"
 #include "xla/backends/cpu/target_machine_options.h"
@@ -169,6 +166,7 @@ limitations under the License.
 #include "xla/service/conditional_to_select.h"
 #include "xla/service/control_dep_rewriter.h"
 #include "xla/service/copy_insertion.h"
+#include "xla/service/cpu/backend_config.pb.h"
 #include "xla/service/cpu/conv_canonicalization.h"
 #include "xla/service/cpu/cpu_aot_compilation_result.h"
 #include "xla/service/cpu/cpu_aot_loader.h"
@@ -237,6 +235,10 @@ limitations under the License.
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/logging.h"  // IWYU pragma: keep
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 #ifdef TF_LLVM_X86_AVAILABLE
 #include "llvm/TargetParser/X86TargetParser.h"
@@ -326,6 +328,26 @@ absl::StatusOr<std::vector<std::unique_ptr<Executable>>> CpuCompiler::Compile(
 }
 
 namespace {
+
+class CpuAliasInfo : public AliasInfo {
+ public:
+  std::optional<bool> MayAlias(const HloInstruction* operand,
+                               const ShapeIndex& operand_index,
+                               const HloInstruction* user,
+                               const ShapeIndex& user_index) const override {
+    if (user->IsCustomFusion()) {
+      absl::StatusOr<BackendConfig> config =
+          user->backend_config<BackendConfig>();
+      if (config.ok() && config->fusion_config().kind() == kOneDnnFusionKind) {
+        // oneDNN compiles partitions at runtime, so their supported in-place
+        // pairs are unavailable here. Elementwise HLO uses do not guarantee
+        // that the compiled partition can safely overwrite an input buffer.
+        return false;
+      }
+    }
+    return std::nullopt;
+  }
+};
 
 // Adds the HloVerifier for CPU to the given pipeline.
 void AddHloVerifier(HloPassPipeline* pipeline, HloVerifierOpts&& opts = {},
@@ -979,7 +1001,7 @@ absl::Status CpuCompiler::RunHloPassesAfterLayoutAssn(
     ABSL_RETURN_IF_ERROR(lib_pipeline.Run(module).status());
   }
 
-  AliasInfo alias_info;
+  CpuAliasInfo alias_info;
   bool use_multi_output_fusion =
       options::UseMultiOutputFusion(module->config());
   pipeline.AddPass<CpuInstructionFusion>(
@@ -1945,7 +1967,7 @@ CpuCompiler::LoadAotCompilationResult(
 
 absl::StatusOr<HloSchedule> CpuCompiler::CreateHloSchedule(
     HloModule& hlo_module) const {
-  AliasInfo alias_info;
+  CpuAliasInfo alias_info;
   auto scheduler =
       hlo_module.config().debug_options().xla_cpu_scheduler_type() ==
               DebugOptions::CPU_SCHEDULER_TYPE_MEMORY_OPTIMIZED
@@ -1963,7 +1985,7 @@ absl::StatusOr<HloSchedule> CpuCompiler::CreateHloSchedule(
 absl::StatusOr<std::unique_ptr<BufferAssignment>>
 CpuCompiler::CreateBufferAssignment(const HloModule& module) const {
   // Run buffer allocation on the HLO graph.
-  AliasInfo alias_info;
+  CpuAliasInfo alias_info;
   BufferAssigner::Options opts;
   opts.allocate_buffers_for_constants = true;
   return BufferAssigner::Run(

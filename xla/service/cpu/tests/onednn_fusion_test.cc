@@ -13,26 +13,72 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gtest/gtest.h>
-
 #include <string>
+#include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
-#include "tsl/platform/cpu_info.h"
 #include "xla/backends/cpu/onednn_support.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/cpu/onednn_util.h"
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/test.h"
+#include "tsl/platform/cpu_info.h"
 
 namespace xla::cpu {
 namespace {
+
+class OneDnnFusionBufferReuseTest
+    : public HloInterpreterReferenceMixin<HloTestBase> {
+ protected:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions options =
+        HloInterpreterReferenceMixin::GetDebugOptionsForTest();
+    options.clear_xla_cpu_experimental_ynn_fusion_type();
+    return options;
+  }
+};
+
+TEST_F(OneDnnFusionBufferReuseTest, MatmulReluPreservesZeroOperand) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule matmul_relu
+
+    fused {
+      lhs = f32[2,3]{1,0} parameter(0)
+      rhs = f32[3,2]{1,0} parameter(1)
+      zeros = f32[2,2]{1,0} parameter(2)
+      product = f32[2,2]{1,0} dot(lhs, rhs),
+        lhs_contracting_dims={1}, rhs_contracting_dims={0}
+      ROOT result = f32[2,2]{1,0} maximum(product, zeros)
+    }
+
+    ENTRY main {
+      lhs = f32[2,3]{1,0} parameter(0)
+      rhs = f32[3,2]{1,0} parameter(1)
+      zero = f32[] constant(0)
+      zeros = f32[2,2]{1,0} broadcast(zero), dimensions={}
+      ROOT result = f32[2,2]{1,0} fusion(lhs, rhs, zeros),
+        kind=kCustom, calls=fused,
+        backend_config={"fusion_config":{"kind":"__onednn_fusion"}}
+    }
+  )hlo";
+
+  // The product has both signs, so overwriting the zeros cannot hide behind
+  // an input whose matrix product is already nonnegative.
+  auto lhs = LiteralUtil::CreateR2<float>({{1, -2, 3}, {-4, 5, -6}});
+  auto rhs = LiteralUtil::CreateR2<float>({{1, -1}, {2, -2}, {3, -3}});
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  EXPECT_TRUE(
+      RunAndCompare(std::move(module), {&lhs, &rhs}, ErrorSpec{1e-4, 1e-4}));
+}
 
 constexpr bool IsOneDnnGraphEnabled() {
 #if defined(XLA_ONEDNN_USE_GRAPH_API)
