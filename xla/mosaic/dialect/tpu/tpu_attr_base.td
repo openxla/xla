@@ -19,7 +19,10 @@ limitations under the License.
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/BuiltinAttributeInterfaces.td"
 
-class TPU_TiledLayoutAttrBase<Dialect dialect, code extraDecl = "">
+// If `allowNestedPadding` is set, the second tile may be a padding tile (see
+// `mlir::tpu::impl::isPaddingTile`).
+class TPU_TiledLayoutAttrBase<Dialect dialect, code extraDecl = "",
+                              bit allowNestedPadding = 0>
   : AttrDef<dialect, "TiledLayout",
              [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface, ["verifyLayout"]>]> {
   let mnemonic = "tiled";
@@ -27,7 +30,8 @@ class TPU_TiledLayoutAttrBase<Dialect dialect, code extraDecl = "">
     This attribute represents tiled layouts in memrefs.
 
     Multiple levels of tiling are supported with the following restriction:
-    - Additional levels of tiling may not add any padding.
+    - Additional levels of tiling may not add any padding, unless the dialect
+      opts into nested padding (see `allowNestedPadding`).
     - Additional levels of tiling may not tile previously untiled dimensions,
       that is, they cannot tile across first-level tiles.
 
@@ -126,8 +130,9 @@ class TPU_TiledLayoutAttrBase<Dialect dialect, code extraDecl = "">
         ::llvm::function_ref<::mlir::InFlightDiagnostic()> emitError,
         ::llvm::ArrayRef<::xla::Tile> tiles,
         ::llvm::ArrayRef<int64_t> tile_strides) {
-      return ::mlir::tpu::impl::verifyTiledLayout(emitError, tiles,
-                                                  tile_strides);
+      return ::mlir::tpu::impl::verifyTiledLayout(
+          emitError, tiles, tile_strides, /*allow_nested_padding=*/}] #
+          !if(allowNestedPadding, "true", "false") # [{);
     }
 
     ::llvm::LogicalResult $cppClass::verifyLayout(

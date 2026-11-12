@@ -64,9 +64,21 @@ int64_t getNumTrailingDimsWithContiguousTiles(ArrayRef<xla::Tile> tiles,
 FailureOr<SmallVector<int64_t>> getExpandedStrides(
     ArrayRef<xla::Tile> tiles, ArrayRef<int64_t> tile_strides);
 
+// Returns true if `tile` pads the dimensions tiled by `prev_tile`, i.e. both
+// have the same rank and `tile` equals `prev_tile` except for the minor
+// dimension, which is larger by one. E.g. (8, 129) pads (8, 128).
+bool isPaddingTile(const xla::Tile& prev_tile, const xla::Tile& tile);
+
+// Returns true if the second tile of `tiles` is a padding tile. This is only
+// valid in dialects that allow nested padding (see TPU_TiledLayoutAttrBase).
+bool hasNestedPadding(ArrayRef<xla::Tile> tiles);
+
+// If `allow_nested_padding` is true, the second tile may be a padding tile,
+// which later tiles must evenly divide.
 LogicalResult verifyTiledLayout(function_ref<InFlightDiagnostic()> emitError,
                                 ArrayRef<xla::Tile> tiles,
-                                ArrayRef<int64_t> tile_strides);
+                                ArrayRef<int64_t> tile_strides,
+                                bool allow_nested_padding);
 
 LogicalResult verifyTiledLayoutRank(
     int64_t layout_rank, ArrayRef<int64_t> shape,
