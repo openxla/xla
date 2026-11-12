@@ -1431,5 +1431,36 @@ ENTRY main {
   EXPECT_FALSE(EntryHasStandaloneOp(*module, HloOpcode::kNegate));
 }
 
+TEST_F(InstructionFusionTest,
+       FuseMinorDimensionConcatenateWithNarrowOperandSlices) {
+  // Mirrors YOLO detection heads: the output minor dimension is wide (85
+  // elements), but two operands contribute only 2 elements per row.
+  absl::string_view module_string = R"(
+HloModule module
+
+ENTRY main {
+  %p0 = bf16[64,3,85]{2,1,0} parameter(0)
+  %slice0 = bf16[64,3,2]{2,1,0} slice(%p0), slice={[0:64], [0:3], [0:2]}
+  %slice1 = bf16[64,3,2]{2,1,0} slice(%p0), slice={[0:64], [0:3], [2:4]}
+  %slice2 = bf16[64,3,81]{2,1,0} slice(%p0), slice={[0:64], [0:3], [4:85]}
+  %neg0 = bf16[64,3,2]{2,1,0} negate(%slice0)
+  %neg1 = bf16[64,3,2]{2,1,0} negate(%slice1)
+  %neg2 = bf16[64,3,81]{2,1,0} negate(%slice2)
+  %concat = bf16[64,3,85]{2,1,0} concatenate(%neg0, %neg1, %neg2), dimensions={2}
+  ROOT %convert = f32[64,3,85]{2,1,0} convert(%concat)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_FALSE(EntryHasStandaloneOp(*module, HloOpcode::kConcatenate));
+  EXPECT_FALSE(EntryHasStandaloneOp(*module, HloOpcode::kNegate));
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              op::Fusion());
+}
+
 }  // namespace
 }  // namespace xla::cpu
