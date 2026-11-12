@@ -13,12 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// AOT compatibility of ConvolutionThunk (cuDNN convolution), on 1 GPU.
-// Autotuning is off, so the golden holds cuDNN's first heuristic algorithm.
+// AOT compatibility of ConvolutionThunk (cuDNN convolution), on 1 GPU. The
+// cuDNN algorithm is pinned per arch.
 
 #include <memory>
+#include <string>
 #include <utility>
 
+#include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
@@ -28,6 +31,7 @@ limitations under the License.
 #include "xla/tests/aot_compatibility/gpu/gpu_aot_test_params.h"
 #include "xla/tests/aot_compatibility/test_lib.h"
 #include "xla/tests/literal_test_util.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/xla.pb.h"
 
@@ -45,6 +49,33 @@ class ConvolutionAotTest : public AotCompatibilityTest,
   ConvolutionAotTest() : AotCompatibilityTest(GetParam()) {}
 };
 
+// Returns the textproto fields of the cuDNN algorithm to force on this arch.
+// The heuristic's pick changes with the cuDNN version (on GB200, engine 28 at
+// 9.23.0 and engine 0 at 9.25.1), and so would a golden left to it. These are
+// the picks at 9.23.0; they need no workspace, hence the empty
+// `workspace_size`. If cuDNN no longer accepts a pinned engine, the test fails:
+// the runtime has no heuristic fallback yet.
+absl::string_view PinnedCudnnAlgorithm(absl::string_view target_name) {
+  if (absl::EndsWith(target_name, "_h100")) {
+    return "algo_id: 0 workspace_size {}";
+  }
+  if (absl::EndsWith(target_name, "_b200") ||
+      absl::EndsWith(target_name, "_gb200")) {
+    return "algo_id: 28 tuning_knobs { key: 2 value: 4 } "
+           "tuning_knobs { key: 3 value: 0 } workspace_size {}";
+  }
+  // A new arch needs its own algorithm, picked from a heuristic run on it.
+  LOG(FATAL) << "No pinned cuDNN algorithm for " << target_name;
+}
+
+// Returns the `xla_force_config` value. It applies to every instruction that
+// gets a config assigned, so the module must hold one convolution and no other
+// such op (e.g. a dot).
+std::string ForcedCudnnConfig(absl::string_view target_name) {
+  return absl::StrCat("backend: CUDNN backend_config { algorithm { ",
+                      PinnedCudnnAlgorithm(target_name), " } }");
+}
+
 // A sliding 2x2 window.
 TEST_P(ConvolutionAotTest, Convolution) {
   constexpr absl::string_view kHlo = R"hlo(
@@ -57,7 +88,12 @@ TEST_P(ConvolutionAotTest, Convolution) {
     }
   )hlo";
   HloModuleConfig config = GetModuleConfigForTest();
-  config.mutable_debug_options().set_xla_gpu_autotune_level(0);
+  DebugOptions& debug_options = config.mutable_debug_options();
+  debug_options.set_xla_gpu_autotune_level(0);
+  debug_options.set_xla_force_config(ForcedCudnnConfig(GetParam().target_name));
+  // As a conv fusion the convolution would lower to CuDnnThunk, and the forced
+  // algo_id would be read as a cuDNN plan index.
+  debug_options.set_xla_gpu_experimental_enable_conv_fusion(false);
   Literal input =
       LiteralUtil::CreateR4<float>({{{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}}});
   Literal filter = LiteralUtil::CreateR4<float>({{{{1, 2}, {3, 4}}}});

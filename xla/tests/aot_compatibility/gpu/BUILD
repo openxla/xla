@@ -288,7 +288,9 @@ xla_test(
         "//xla/tests:literal_test_util",
         "//xla/tests:xla_internal_test_main",
         "//xla/tests/aot_compatibility:test_lib",
+        "//xla/tsl/platform:logging",
         "//xla/tsl/platform:test",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
     ],
 )
