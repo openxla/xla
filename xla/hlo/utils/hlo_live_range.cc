@@ -51,6 +51,109 @@ limitations under the License.
 #include "xla/shape_util.h"
 
 namespace xla {
+namespace {
+
+// Walks the instructions of computation in schedule order and, in
+// module_scoped_analysis mode, recurses into the called computations before
+// the calling instruction, appending to sequence. computation_span_times
+// records the span of every visited computation and doubles as the visited
+// set. The optional outputs are filled when non null: instruction_schedule
+// with the ordinal of each instruction, computations_in_async_context with
+// the async context of each computation called from one, and
+// total_order_scheduled cleared when a computation has no sequence.
+absl::Status FlattenScheduleInto(
+    const HloSchedule& schedule, bool module_scoped_analysis,
+    const absl::flat_hash_set<absl::string_view>& execution_threads,
+    const HloComputation& computation, const HloComputation* async_context,
+    HloInstructionSequence& sequence,
+    absl::flat_hash_map<const HloComputation*, HloLiveRange::LiveRangeBounds>&
+        computation_span_times,
+    absl::flat_hash_map<const HloInstruction*, HloLiveRange::LogicalTime>*
+        instruction_schedule,
+    absl::flat_hash_map<const HloComputation*, const HloComputation*>*
+        computations_in_async_context,
+    bool* total_order_scheduled) {
+  if (!HloInstruction::IsThreadIncluded(computation.execution_thread(),
+                                        execution_threads)) {
+    return absl::OkStatus();
+  }
+  auto it = schedule.sequences().find(computation.unique_id());
+  if (it == schedule.sequences().end()) {
+    if (total_order_scheduled != nullptr) {
+      *total_order_scheduled = false;
+    }
+    return absl::OkStatus();
+  }
+
+  // Check if we've already processed this computation.
+  if (computation_span_times.contains(&computation)) {
+    return absl::OkStatus();
+  }
+
+  // Mark this computation into the async context, if available.
+  if (async_context != nullptr && computations_in_async_context != nullptr) {
+    (*computations_in_async_context)[&computation] = async_context;
+  }
+
+  auto flatten = [&](const HloComputation& called_computation,
+                     const HloComputation* called_async_context) {
+    return FlattenScheduleInto(
+        schedule, module_scoped_analysis, execution_threads, called_computation,
+        called_async_context, sequence, computation_span_times,
+        instruction_schedule, computations_in_async_context,
+        total_order_scheduled);
+  };
+
+  HloLiveRange::LogicalTime start_time = sequence.size();
+
+  const HloInstructionSequence& instruction_sequence = it->second;
+  for (HloInstruction* instruction : instruction_sequence.instructions()) {
+    if (module_scoped_analysis) {
+      // Recurse into sub computations if running with module scoped analysis
+      // mode.
+      if (instruction->opcode() == HloOpcode::kCall ||
+          instruction->opcode() == HloOpcode::kConditional) {
+        for (const HloComputation* called_computation :
+             instruction->called_computations()) {
+          ABSL_RETURN_IF_ERROR(flatten(*called_computation, async_context));
+        }
+      } else if (instruction->IsAsynchronous()) {
+        // For async operations, the async wrapped computation is flattened
+        // before the first async instruction that has its operands and output
+        // fully bound.
+        ABSL_ASSIGN_OR_RETURN(
+            const bool is_first_fully_bound,
+            hlo_instruction_utils::async::IsFirstFullyBound(instruction));
+        if (is_first_fully_bound) {
+          const HloComputation* called_computation =
+              instruction->async_wrapped_computation();
+          ABSL_RETURN_IF_ERROR(
+              flatten(*called_computation, called_computation));
+        }
+      } else if (instruction->opcode() == HloOpcode::kWhile) {
+        // Order of flattening matters here: for while loops, the condition
+        // must be flattened first, then the body.
+        ABSL_RETURN_IF_ERROR(
+            flatten(*instruction->while_condition(), async_context));
+        ABSL_RETURN_IF_ERROR(
+            flatten(*instruction->while_body(), async_context));
+      }
+    }
+
+    HloLiveRange::LogicalTime time = sequence.size();
+    if (instruction_schedule != nullptr) {
+      CHECK(instruction_schedule->insert({instruction, time}).second);
+    }
+    sequence.push_back(instruction);
+  }
+
+  HloLiveRange::LogicalTime end_time = sequence.size();
+  computation_span_times[&computation] = {start_time, end_time};
+  return absl::OkStatus();
+}
+
+}  // namespace
+
 /*static*/
 absl::StatusOr<std::unique_ptr<HloLiveRange>> HloLiveRange::Run(
     const HloSchedule& schedule, const HloAliasAnalysis& alias_analysis,
@@ -63,6 +166,24 @@ absl::StatusOr<std::unique_ptr<HloLiveRange>> HloLiveRange::Run(
   hlo_live_range->CalculateBufferStartEndMap();
   hlo_live_range->NormalizeAliasedBuffers();
   return hlo_live_range;
+}
+
+/*static*/
+absl::StatusOr<HloInstructionSequence>
+HloLiveRange::GetFlattenedInstructionSequence(
+    const HloSchedule& schedule, const HloComputation* computation,
+    bool module_scoped_analysis,
+    absl::flat_hash_set<absl::string_view> execution_threads) {
+  HloInstructionSequence sequence;
+  absl::flat_hash_map<const HloComputation*, LiveRangeBounds>
+      computation_span_times;
+  ABSL_RETURN_IF_ERROR(FlattenScheduleInto(
+      schedule, module_scoped_analysis, execution_threads, *computation,
+      /*async_context=*/nullptr, sequence, computation_span_times,
+      /*instruction_schedule=*/nullptr,
+      /*computations_in_async_context=*/nullptr,
+      /*total_order_scheduled=*/nullptr));
+  return sequence;
 }
 
 /*static*/
@@ -211,71 +332,11 @@ void HloLiveRange::NormalizeAliasedBuffers() {
 // number of each instruction in the schedule.
 absl::Status HloLiveRange::FlattenSchedule(
     const HloComputation& computation, const HloComputation* async_context) {
-  if (!HloInstruction::IsThreadIncluded(computation.execution_thread(),
-                                        execution_threads_)) {
-    return absl::OkStatus();
-  }
-  auto it = schedule_.sequences().find(computation.unique_id());
-  if (it == schedule_.sequences().end()) {
-    total_order_scheduled_ = false;
-    return absl::OkStatus();
-  }
-
-  // Check if we've already processed this computation.
-  if (computation_span_times_.contains(&computation)) {
-    return absl::OkStatus();
-  }
-
-  // Mark this computation into the async context, if available.
-  if (async_context != nullptr) {
-    computations_in_async_context_[&computation] = async_context;
-  }
-
-  LogicalTime start_time = flattened_instruction_sequence_.size();
-
-  const HloInstructionSequence& instruction_sequence = it->second;
-  for (HloInstruction* instruction : instruction_sequence.instructions()) {
-    if (module_scoped_analysis_) {
-      // Recurse into sub computations if running with module scoped analysis
-      // mode.
-      if (instruction->opcode() == HloOpcode::kCall ||
-          instruction->opcode() == HloOpcode::kConditional) {
-        for (const HloComputation* called_computation :
-             instruction->called_computations()) {
-          ABSL_RETURN_IF_ERROR(
-              FlattenSchedule(*called_computation, async_context));
-        }
-      } else if (instruction->IsAsynchronous()) {
-        // For async operations, the async wrapped computation is flattened
-        // before the first async instruction that has its operands and output
-        // fully bound.
-        ABSL_ASSIGN_OR_RETURN(
-            const bool is_first_fully_bound,
-            hlo_instruction_utils::async::IsFirstFullyBound(instruction));
-        if (is_first_fully_bound) {
-          const HloComputation* called_computation =
-              instruction->async_wrapped_computation();
-          ABSL_RETURN_IF_ERROR(
-              FlattenSchedule(*called_computation, called_computation));
-        }
-      } else if (instruction->opcode() == HloOpcode::kWhile) {
-        // Order of flattening matters here: for while loops, the condition
-        // must be flattened first, then the body.
-        ABSL_RETURN_IF_ERROR(
-            FlattenSchedule(*instruction->while_condition(), async_context));
-        ABSL_RETURN_IF_ERROR(
-            FlattenSchedule(*instruction->while_body(), async_context));
-      }
-    }
-
-    LogicalTime time = flattened_instruction_sequence_.size();
-    CHECK(instruction_schedule_.insert({instruction, time}).second);
-    flattened_instruction_sequence_.push_back(instruction);
-  }
-
-  LogicalTime end_time = flattened_instruction_sequence_.size();
-  computation_span_times_[&computation] = {start_time, end_time};
-  return absl::OkStatus();
+  return FlattenScheduleInto(
+      schedule_, module_scoped_analysis_, execution_threads_, computation,
+      async_context, flattened_instruction_sequence_, computation_span_times_,
+      &instruction_schedule_, &computations_in_async_context_,
+      &total_order_scheduled_);
 }
 
 std::pair<HloLiveRange::LogicalTime, HloPosition>
