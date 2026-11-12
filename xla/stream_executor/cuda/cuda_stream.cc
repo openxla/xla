@@ -331,6 +331,7 @@ absl::Status CudaStream::WaitFor(Stream* other) {
   CudaStream* other_stream = static_cast<CudaStream*>(other);
 
   ABSL_RETURN_IF_ERROR(other_stream->RecordCompletedEvent());
+  absl::MutexLock lock(graph_launch_mutex_);
   return WaitStreamOnEvent(executor_, stream_handle_,
                            other_stream->completed_event_.GetHandle());
 }
@@ -341,6 +342,7 @@ absl::Status CudaStream::RecordEvent(Event* event) {
 }
 
 absl::Status CudaStream::WaitFor(Event* event) {
+  absl::MutexLock lock(graph_launch_mutex_);
   return WaitStreamOnEvent(executor_, stream_handle_,
                            static_cast<CudaEvent*>(event)->GetHandle());
 }

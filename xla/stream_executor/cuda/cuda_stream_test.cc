@@ -312,6 +312,34 @@ TEST_F(CudaStreamTest, WaitForOtherStream) {
                           ExecutionStage::kAfterWaitForStream));
 }
 
+TEST_F(CudaStreamTest, GraphLaunchMutexSerializesWait) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
+                       CudaStream::Create(executor_,
+                                          /*priority=*/std::nullopt));
+  ASSERT_OK_AND_ASSIGN(CudaEvent event,
+                       CudaEvent::Create(executor_, /*allow_timing=*/false));
+
+  absl::Mutex& mu = stream->graph_launch_mutex();
+  absl::Notification wait_started;
+  absl::Notification wait_finished;
+
+  mu.Lock();
+  std::unique_ptr<tsl::Thread> wait_thread(tsl::Env::Default()->StartThread(
+      tsl::ThreadOptions(), "wait_thread", [&]() -> void {
+        wait_started.Notify();
+        EXPECT_THAT(stream->WaitFor(&event), IsOk());
+        wait_finished.Notify();
+      }));
+
+  wait_started.WaitForNotification();
+  // Ensure the thread is waiting on the mutex.
+  tsl::Env::Default()->SleepForMicroseconds(50000);
+  EXPECT_FALSE(wait_finished.HasBeenNotified());
+
+  mu.Unlock();
+  wait_finished.WaitForNotification();
+}
+
 TEST_F(CudaStreamTest, DoHostCallbackWithStatusSuccess) {
   ASSERT_OK_AND_ASSIGN(std::unique_ptr<CudaStream> stream,
                        CudaStream::Create(executor_,
