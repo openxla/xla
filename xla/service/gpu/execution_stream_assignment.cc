@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/collective_opt_utils.h"
 #include "xla/service/gpu/gpu_latency_hiding_scheduler.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/side_effect_util.h"
 
 namespace xla::gpu {
@@ -160,6 +161,8 @@ bool IsWrappedCollective(const HloAsyncInstruction* async) {
     case HloOpcode::kRaggedAllToAll:
     case HloOpcode::kReduceScatter:
       return true;
+    case HloOpcode::kFusion:
+      return IsTritonCollectiveFusion(*async->async_wrapped_instruction());
     default:
       return false;
   }

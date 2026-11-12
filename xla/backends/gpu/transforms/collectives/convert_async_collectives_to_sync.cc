@@ -32,29 +32,53 @@ limitations under the License.
 #include "xla/hlo/transforms/collectives/convert_async_collectives_to_sync.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
+#include "xla/status_macros.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla::gpu {
+namespace {
+
+bool IsGpuAsyncCollectiveStart(const HloInstruction* instruction) {
+  return hlo_query::IsAsyncCollectiveStartOp(instruction) ||
+         IsAsyncTritonCollectiveFusionStart(*instruction);
+}
+
+bool IsGpuAsyncCollectiveDone(const HloInstruction* instruction) {
+  return hlo_query::IsAsyncCollectiveDoneOp(instruction) ||
+         IsAsyncTritonCollectiveFusionDone(*instruction);
+}
+
+}  // namespace
 
 GpuConvertAsyncCollectivesToSync::GpuConvertAsyncCollectivesToSync()
-    : ConvertAsyncCollectivesToSync(/*is_nop=*/
-                                    HloPredicateIsOp<
-                                        HloOpcode::kParameter,
-                                        HloOpcode::kConstant,
-                                        HloOpcode::kBitcast,
-                                        HloOpcode::kGetTupleElement>) {}
+    : ConvertAsyncCollectivesToSync(
+          /*is_nop=*/HloPredicateIsOp<HloOpcode::kParameter,
+                                      HloOpcode::kConstant, HloOpcode::kBitcast,
+                                      HloOpcode::kGetTupleElement>,
+          /*is_async_start=*/IsGpuAsyncCollectiveStart,
+          /*is_async_done=*/IsGpuAsyncCollectiveDone) {}
 
 absl::Status GpuConvertAsyncCollectivesToSync::ConvertAsyncInstructionsToSync(
     HloComputation* computation,
     absl::Span<const std::pair<HloInstruction*, HloInstruction*>> async_pairs)
     const {
   for (auto& [async_start, async_done] : async_pairs) {
-    // Tag the async start with is_sync = true.
+    HloInstruction* config_target = async_start;
+    if (IsAsyncTritonCollectiveFusionStart(*async_start)) {
+      HloInstruction* wrapped = async_start->async_wrapped_instruction();
+      if (!async_start->has_backend_config()) {
+        async_start->CopyBackendConfigFrom(wrapped);
+      }
+      config_target = GetTritonCollectiveHero(*wrapped);
+      TF_RET_CHECK(config_target != nullptr);
+    }
+    // Tag the collective with is_sync = true.
     ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                          async_start->backend_config<GpuBackendConfig>());
+                          config_target->backend_config<GpuBackendConfig>());
     gpu_config.mutable_collective_backend_config()->set_is_sync(true);
-    ABSL_RETURN_IF_ERROR(async_start->set_backend_config(gpu_config));
+    ABSL_RETURN_IF_ERROR(config_target->set_backend_config(gpu_config));
   }
   return computation->ReplaceAsyncInstructionsWithSync(async_pairs);
 }
@@ -76,12 +100,12 @@ absl::StatusOr<bool> GpuConvertAsyncCollectivesToSync::RunImpl(
 
       std::vector<std::pair<HloInstruction*, HloInstruction*>> async_pairs;
       for (HloInstruction* instruction : computation->instructions()) {
-        if (!hlo_query::IsAsyncCollectiveStartOp(instruction) ||
+        if (!IsGpuAsyncCollectiveStart(instruction) ||
             !IsGPUSyncCollective(*instruction)) {
           continue;
         }
         if (instruction->user_count() != 1 ||
-            !hlo_query::IsAsyncCollectiveDoneOp(instruction->users()[0])) {
+            !IsGpuAsyncCollectiveDone(instruction->users()[0])) {
           continue;
         }
         HloInstruction* async_done = instruction->users()[0];
@@ -89,6 +113,13 @@ absl::StatusOr<bool> GpuConvertAsyncCollectivesToSync::RunImpl(
       }
 
       if (!async_pairs.empty()) {
+        for (auto& [async_start, async_done] : async_pairs) {
+          if (IsAsyncTritonCollectiveFusionStart(*async_start) &&
+              !async_start->has_backend_config()) {
+            async_start->CopyBackendConfigFrom(
+                async_start->async_wrapped_instruction());
+          }
+        }
         ABSL_RETURN_IF_ERROR(
             computation->ReplaceAsyncInstructionsWithSync(async_pairs));
         changed = true;

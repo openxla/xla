@@ -201,5 +201,49 @@ TEST_F(LegalizeCollectiveDomainTest, PromotesLegacyAsyncCollective) {
   EXPECT_THAT(legalizer.Run(module.get()), absl_testing::IsOkAndHolds(false));
 }
 
+TEST_F(LegalizeCollectiveDomainTest,
+       PromotesTritonCollectiveFusionAndAsyncStart) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule m, replica_count=2
+
+    fused_ag0 {
+      p0 = f32[4] parameter(0)
+      ROOT ag = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    fused_ag1 {
+      p0 = f32[4] parameter(0)
+      ROOT ag = f32[8] all-gather(p0), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    ENTRY main {
+      p0 = f32[4] parameter(0)
+      sync_fusion = f32[8] fusion(p0), kind=kCustom, calls=fused_ag0,
+        frontend_attributes={collective_communication_domain="scale_up_fabric"},
+        backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      async_start = ((f32[4]), f32[8]) fusion-start(p0), kind=kCustom,
+        calls=fused_ag1,
+        frontend_attributes={collective_communication_domain="scale_up_fabric"},
+        backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      async_done = f32[8] fusion-done(async_start)
+      ROOT result = (f32[8], f32[8]) tuple(sync_fusion, async_done)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+
+  LegalizeCollectiveDomain legalizer;
+  EXPECT_THAT(legalizer.Run(module.get()), absl_testing::IsOkAndHolds(true));
+  EXPECT_THAT(GetCollectiveCommunicationDomain(
+                  *FindInstruction(module.get(), "sync_fusion")),
+              absl_testing::IsOkAndHolds(kScaleUpFabricCollectiveDomain));
+  EXPECT_THAT(GetCollectiveCommunicationDomain(
+                  *FindInstruction(module.get(), "async_start")),
+              absl_testing::IsOkAndHolds(kScaleUpFabricCollectiveDomain));
+  EXPECT_THAT(GetCollectiveCommunicationDomain(
+                  *FindInstruction(module.get(), "async_done")),
+              absl_testing::IsOkAndHolds(kScaleUpFabricCollectiveDomain));
+}
+
 }  // namespace
 }  // namespace xla::gpu

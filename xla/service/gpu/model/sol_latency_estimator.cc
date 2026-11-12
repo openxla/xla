@@ -65,26 +65,6 @@ bool IsSupportedCollectiveOp(const HloInstruction& instr) {
       &instr);
 }
 
-bool IsTritonCollectiveFusion(const HloInstruction& instr) {
-  if (!instr.IsCustomFusion()) {
-    return false;
-  }
-  absl::StatusOr<GpuBackendConfig> gpu_config =
-      instr.backend_config<GpuBackendConfig>();
-  return gpu_config.ok() && gpu_config->fusion_backend_config().kind() ==
-                                kTritonCollectiveFusionKind;
-}
-
-bool IsAsyncTritonCollectiveFusionStart(const HloInstruction& instr) {
-  return instr.opcode() == HloOpcode::kAsyncStart &&
-         IsTritonCollectiveFusion(*instr.async_wrapped_instruction());
-}
-
-bool IsAsyncTritonCollectiveFusionDone(const HloInstruction& instr) {
-  return instr.opcode() == HloOpcode::kAsyncDone &&
-         IsTritonCollectiveFusion(*instr.async_wrapped_instruction());
-}
-
 bool IsHostOffloaded(const HloInstruction& instr) {
   auto backend_config = instr.backend_config<GpuBackendConfig>();
   return backend_config.ok() &&
@@ -378,7 +358,11 @@ SolLatencyEstimator::ComputeCollectiveTime(
   const HloInstruction* collective =
       instr.IsAsynchronous() ? instr.async_wrapped_instruction() : &instr;
   if (IsTritonCollectiveFusion(*collective)) {
-    collective = collective->fused_expression_root();
+    if (const HloInstruction* hero = GetTritonCollectiveHero(*collective)) {
+      collective = hero;
+    } else {
+      collective = collective->fused_expression_root();
+    }
   }
   if (const auto* cp = DynCast<HloCollectivePermuteInstruction>(collective)) {
     // Handles the collective-permute ops.

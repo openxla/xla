@@ -257,21 +257,27 @@ HloInstructionSequence PostprocessorToScheduleSyncCollectives(
   // Returns true if `inst` is a synchronous version of async collective start
   // operation (marked with `is_sync` attribute).
   auto is_sync_start = [](const HloInstruction* instr) {
-    return hlo_query::IsAsyncCollectiveStartOp(instr,
-                                               /*include_send_recv=*/true) &&
+    return (hlo_query::IsAsyncCollectiveStartOp(instr,
+                                                /*include_send_recv=*/true) ||
+            IsAsyncTritonCollectiveFusionStart(*instr)) &&
            IsGPUSyncCollective(*instr);
   };
 
   for (HloInstruction* instr : input.instructions()) {
     // Skip synchronous start instruction as it will be scheduled later when
     // we'll process corresponding done instruction.
-    if (is_sync_start(instr)) continue;
+    if (is_sync_start(instr)) {
+      continue;
+    }
 
     // Find a start instruction corresponding to done and schedule it right
     // before a done if it's a synchronous version.
-    if (hlo_query::IsAsyncCollectiveDoneOp(instr, true)) {
+    if (hlo_query::IsAsyncCollectiveDoneOp(instr, true) ||
+        IsAsyncTritonCollectiveFusionDone(*instr)) {
       HloInstruction* start = instr->mutable_operand(0);
-      if (is_sync_start(start)) result.push_back(start);
+      if (is_sync_start(start)) {
+        result.push_back(start);
+      }
     }
 
     result.push_back(instr);
@@ -899,16 +905,7 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
   config.convert_ragged_all_to_all = HloPredicateTrue;
   config.convert_reduce_scatter = HloPredicateTrue;
   config.convert_collective_fusion = [](const HloInstruction* instr) {
-    if (!instr->IsCustomFusion()) {
-      return false;
-    }
-    absl::StatusOr<GpuBackendConfig> gpu_config =
-        instr->backend_config<GpuBackendConfig>();
-    if (!gpu_config.ok()) {
-      return false;
-    }
-    return gpu_config->fusion_backend_config().kind() ==
-           xla::gpu::kTritonCollectiveFusionKind;
+    return IsTritonCollectiveFusion(*instr);
   };
   config.use_generic_async_start_done = true;
   pipeline.AddPass<AsyncCollectiveCreator>(std::move(config));
@@ -937,7 +934,14 @@ absl::Status RunAsyncCollectivesConversionPasses(HloModule* module) {
         return !disabled_async_ops.contains(DebugOptions::ALLGATHER);
       case HloOpcode::kAsyncStart: {
         auto async_inst = Cast<HloAsyncInstruction>(inst);
-        switch (async_inst->async_wrapped_opcode()) {
+        const HloInstruction* wrapped = async_inst->async_wrapped_instruction();
+        HloOpcode wrapped_opcode = async_inst->async_wrapped_opcode();
+        if (IsTritonCollectiveFusion(*wrapped)) {
+          if (const HloInstruction* hero = GetTritonCollectiveHero(*wrapped)) {
+            wrapped_opcode = hero->opcode();
+          }
+        }
+        switch (wrapped_opcode) {
           case HloOpcode::kCollectiveBroadcast:
             return !disabled_async_ops.contains(
                 DebugOptions::COLLECTIVEBROADCAST);

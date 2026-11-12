@@ -23,6 +23,7 @@ limitations under the License.
 #include <string>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -481,5 +482,34 @@ TEST_F(CollectiveFusionTest, FusesAllToAllOneShot) {
                             AnnotateAndFusePipeline(*gpu_topology_), kExpected,
                             /*after_pass_checks=*/nullptr, &config);
 }
+
+TEST_F(CollectiveFusionTest,
+       DisableAsyncCollectivesMarksTritonCollectiveFusionSync) {
+  constexpr int64_t kNumElements = 32768;
+  Shape shape = ShapeUtil::MakeShape(F32, {kNumElements});
+  const std::string hlo =
+      absl::StrFormat(kAllReduceHloTemplate, shape.ToString());
+  HloModuleConfig module_config = GetModuleConfigForTest(/*replica_count=*/8);
+  module_config.mutable_debug_options().add_xla_gpu_disable_async_collectives(
+      DebugOptions::ALLREDUCE);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(hlo, module_config));
+  AnnotateAndFusePipeline fuse_pipeline(*gpu_topology_);
+  ASSERT_OK_AND_ASSIGN(bool merged, fuse_pipeline.Run(module.get()));
+  EXPECT_TRUE(merged);
+  ASSERT_OK(xla::gpu::RunAsyncCollectivesConversionPasses(module.get()));
+  static constexpr absl::string_view kExpected = R"(
+    // CHECK: %[[FUSION_COMPUTATION:.*]] ({{.*}}: f32[32768]) -> f32[32768] {
+    // CHECK:   ROOT {{.*}} = f32[32768]{0} all-reduce({{.*}})
+    // CHECK-SAME: "is_sync":true
+    // CHECK: ENTRY %e ({{.*}}: f32[32768]) -> f32[32768] {
+    // CHECK:   %[[ASYNC_START:.*]] = ((f32[32768]{0}), f32[32768]{0})
+    // CHECK-SAME: fusion-start({{.*}}), kind=kCustom, calls=%[[FUSION_COMPUTATION]]
+    // CHECK-SAME: "kind":"__triton_collective"
+  )";
+  EXPECT_THAT(RunFileCheck(module->ToString(HloPrintOptions()), kExpected),
+              ::absl_testing::IsOkAndHolds(true));
+}
+
 }  // namespace
 }  // namespace xla::gpu

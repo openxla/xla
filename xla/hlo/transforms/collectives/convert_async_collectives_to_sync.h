@@ -34,8 +34,12 @@ namespace xla {
 // there are no compute operations overlapping with them.
 class ConvertAsyncCollectivesToSync : public HloModulePass {
  public:
-  explicit ConvertAsyncCollectivesToSync(HloPredicate is_nop = {})
-      : is_nop_(is_nop) {}
+  explicit ConvertAsyncCollectivesToSync(HloPredicate is_nop = {},
+                                         HloPredicate is_async_start = {},
+                                         HloPredicate is_async_done = {})
+      : is_nop_(std::move(is_nop)),
+        is_async_start_(std::move(is_async_start)),
+        is_async_done_(std::move(is_async_done)) {}
   absl::string_view name() const override {
     return "convert-async-collectives-to-sync";
   }
@@ -55,6 +59,8 @@ class ConvertAsyncCollectivesToSync : public HloModulePass {
  private:
   absl::StatusOr<bool> RunOnComputation(HloComputation* computation);
   HloPredicate is_nop_;
+  HloPredicate is_async_start_;
+  HloPredicate is_async_done_;
 };
 }  // namespace xla
 

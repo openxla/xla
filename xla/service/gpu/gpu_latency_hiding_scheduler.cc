@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
@@ -47,6 +48,7 @@ limitations under the License.
 #include "xla/service/device_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/latency_hiding_scheduler.h"
 #include "xla/shape.h"
@@ -103,12 +105,14 @@ bool IsNopInstruction(const HloInstruction& hlo) {
 bool IsAsyncComputeStartOp(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kAsyncStart &&
          !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
+         !IsAsyncTritonCollectiveFusionStart(hlo) &&
          hlo.async_execution_thread() != hlo.parent()->execution_thread();
 }
 
 bool IsAsyncComputeDoneOp(const HloInstruction& hlo) {
   return hlo.opcode() == HloOpcode::kAsyncDone &&
          !hlo_query::IsCollectiveCommunicationOp(hlo.async_wrapped_opcode()) &&
+         !IsAsyncTritonCollectiveFusionDone(hlo) &&
          hlo.async_execution_thread() != hlo.parent()->execution_thread();
 }
 
@@ -210,6 +214,13 @@ GetParticipatingDevicesGroupsForAsyncStart(
   if (HloPredicateIsOp<HloOpcode::kAsyncStart>(collective)) {
     collective = collective->async_wrapped_instruction();
   }
+  if (IsTritonCollectiveFusion(*collective)) {
+    collective = GetTritonCollectiveHero(*collective);
+    if (collective == nullptr) {
+      return absl::InternalError(
+          "Triton collective fusion has no collective hero instruction");
+    }
+  }
   return GetParticipatingDevicesGroups(*collective, device_assignment);
 }
 
@@ -222,7 +233,9 @@ absl::StatusOr<ParticipatingDeviceGroups> GetParticipatingDevicesGroups(
   for (const HloInstruction* instruction : computation.instructions()) {
     if (!hlo_query::IsCollectiveCommunicationOp(instruction->opcode()) &&
         !hlo_query::IsAsyncCollectiveStartOp(instruction,
-                                             /*include_send_recv=*/true)) {
+                                             /*include_send_recv=*/true) &&
+        !IsTritonCollectiveFusion(*instruction) &&
+        !IsAsyncTritonCollectiveFusionStart(*instruction)) {
       continue;
     }
     ABSL_ASSIGN_OR_RETURN(ParticipatingDeviceGroups instruction_groups,
@@ -266,6 +279,7 @@ bool IsGpuAsyncStart(const HloInstruction& hlo) {
   const bool is_collective_start =
       hlo_query::IsAsyncCollectiveStartOp(&hlo,
                                           /*include_send_recv=*/true) ||
+      IsAsyncTritonCollectiveFusionStart(hlo) ||
       IsCollectivesGroupAsyncStartOp(hlo);
   if (is_collective_start && IsGPUSyncCollective(hlo)) {
     return false;
@@ -279,6 +293,7 @@ bool IsGpuAsyncDone(const HloInstruction& hlo) {
   const bool is_collective_done =
       hlo_query::IsAsyncCollectiveDoneOp(&hlo,
                                          /*include_send_recv=*/true) ||
+      IsAsyncTritonCollectiveFusionDone(hlo) ||
       IsCollectivesGroupAsyncDoneOp(hlo);
   if (is_collective_done && IsGPUSyncCollective(*hlo.operand(0))) {
     return false;
@@ -375,6 +390,15 @@ CanonicalAsyncOp GpuGetCanonicalAsyncOp(const HloInstruction& hlo) {
       return {HloOpcode::kAsyncStart, HloOpcode::kRecv};
     case HloOpcode::kRecvDone:
       return {HloOpcode::kAsyncDone, HloOpcode::kRecv};
+    case HloOpcode::kAsyncStart:
+    case HloOpcode::kAsyncDone:
+      if (IsTritonCollectiveFusion(*hlo.async_wrapped_instruction())) {
+        if (const HloInstruction* hero =
+                GetTritonCollectiveHero(*hlo.async_wrapped_instruction())) {
+          return {hlo.opcode(), hero->opcode()};
+        }
+      }
+      return DefaultGetCanonicalAsyncOp(hlo);
     default:
       return DefaultGetCanonicalAsyncOp(hlo);
   }

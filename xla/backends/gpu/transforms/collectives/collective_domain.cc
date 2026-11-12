@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/side_effect_util.h"
 #include "xla/util.h"
 
@@ -90,12 +91,14 @@ bool SupportsCollectiveCommunicationDomain(const HloInstruction& instruction) {
     return SupportsCollectiveCommunicationDomain(canonical);
   }
 
-  if (hlo_query::IsCollectiveCommunicationOp(instruction.opcode())) {
+  if (hlo_query::IsCollectiveCommunicationOp(instruction.opcode()) ||
+      IsTritonCollectiveFusion(instruction)) {
     return true;
   }
   if (HloPredicateIsOp<HloOpcode::kAsyncStart>(&instruction)) {
     return hlo_query::IsCollectiveCommunicationOp(
                instruction.async_wrapped_opcode()) ||
+           IsTritonCollectiveFusion(*instruction.async_wrapped_instruction()) ||
            instruction.frontend_attributes().map().contains(
                kCollectiveGroupMarkerAttr);
   }
@@ -105,14 +108,34 @@ bool SupportsCollectiveCommunicationDomain(const HloInstruction& instruction) {
 absl::StatusOr<CollectiveCommunicationDomain> GetCollectiveCommunicationDomain(
     const HloInstruction& instruction) {
   const HloInstruction& canonical = CanonicalAsyncStart(instruction);
-  absl::StatusOr<GpuBackendConfig> config =
-      canonical.backend_config<GpuBackendConfig>();
-  if (!config.ok()) {
-    return config.status();
+  ABSL_ASSIGN_OR_RETURN(GpuBackendConfig canonical_config,
+                        canonical.backend_config<GpuBackendConfig>());
+  ABSL_ASSIGN_OR_RETURN(
+      CollectiveCommunicationDomain domain,
+      JoinCollectiveCommunicationDomains(
+          kUnspecifiedCollectiveDomain,
+          canonical_config.collective_backend_config().communication_domain()));
+
+  const HloInstruction* fusion = &canonical;
+  if (HloPredicateIsOp<HloOpcode::kAsyncStart>(fusion) &&
+      IsTritonCollectiveFusion(*fusion->async_wrapped_instruction())) {
+    fusion = fusion->async_wrapped_instruction();
   }
-  return JoinCollectiveCommunicationDomains(
-      kUnspecifiedCollectiveDomain,
-      config->collective_backend_config().communication_domain());
+  if (IsTritonCollectiveFusion(*fusion)) {
+    const HloInstruction* hero = GetTritonCollectiveHero(*fusion);
+    if (hero == nullptr) {
+      return absl::InternalError(
+          "Triton collective fusion has no collective hero instruction");
+    }
+    ABSL_ASSIGN_OR_RETURN(GpuBackendConfig hero_config,
+                          hero->backend_config<GpuBackendConfig>());
+    ABSL_ASSIGN_OR_RETURN(
+        domain,
+        JoinCollectiveCommunicationDomains(
+            domain,
+            hero_config.collective_backend_config().communication_domain()));
+  }
+  return domain;
 }
 
 }  // namespace xla::gpu

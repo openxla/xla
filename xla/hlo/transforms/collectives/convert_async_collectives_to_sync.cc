@@ -50,11 +50,20 @@ absl::StatusOr<bool> ConvertAsyncCollectivesToSync::RunOnComputation(
   // yet seen.
   absl::flat_hash_set<HloInstruction*> in_flight_ops;
 
+  const auto is_async_start = [&](const HloInstruction* instruction) {
+    return is_async_start_ ? is_async_start_(instruction)
+                           : hlo_query::IsAsyncCollectiveStartOp(instruction);
+  };
+  const auto is_async_done = [&](const HloInstruction* instruction) {
+    return is_async_done_ ? is_async_done_(instruction)
+                          : hlo_query::IsAsyncCollectiveDoneOp(instruction);
+  };
+
   for (HloInstruction* instruction : sequence.instructions()) {
-    if (hlo_query::IsAsyncCollectiveStartOp(instruction)) {
+    if (is_async_start(instruction)) {
       in_flight_ops.insert(instruction);
       VLOG(3) << "Found async start " << instruction->ToString();
-    } else if (hlo_query::IsAsyncCollectiveDoneOp(instruction)) {
+    } else if (is_async_done(instruction)) {
       // If this done is matching with the previous start and all intervening
       // ops are nops (i.e., prev_async_start was not reset to null), then we
       // were unable to schedule an independent op to overlap with this async

@@ -518,5 +518,56 @@ TEST_F(GpuConvertAsyncCollectivesToSyncTest,
               IsOkAndHolds(true));
 }
 
+TEST_F(GpuConvertAsyncCollectivesToSyncTest,
+       UnoverlappedTritonCollectiveFusionConvertedToSync) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule test, is_scheduled=true
+
+    fused_ag0 {
+      param0 = f32[4] parameter(0)
+      ROOT ag0 = f32[8] all-gather(param0), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    fused_ag1 {
+      param1 = f32[4] parameter(0)
+      ROOT ag1 = f32[8] all-gather(param1), dimensions={0}, replica_groups={{0,1}}
+    }
+
+    ENTRY main {
+      p0 = f32[4] parameter(0)
+      start_unoverlapped = ((f32[4]), f32[8]) fusion-start(p0), kind=kCustom,
+        calls=fused_ag0,
+        backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      done_unoverlapped = f32[8] fusion-done(start_unoverlapped)
+      start_overlapped = ((f32[4]), f32[8]) fusion-start(p0), kind=kCustom,
+        calls=fused_ag1,
+        backend_config={"fusion_backend_config":{"kind":"__triton_collective"}}
+      work = f32[4] add(p0, p0)
+      done_overlapped = f32[8] fusion-done(start_overlapped)
+      ROOT result = (f32[8], f32[8], f32[4]) tuple(
+          done_unoverlapped, done_overlapped, work)
+    }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  ASSERT_OK(RunPass(module.get(), /*expect_change=*/true));
+
+  EXPECT_THAT(RunFileCheck(module->ToString(), R"(
+    CHECK-LABEL: ENTRY %main
+    CHECK-NOT: %start_unoverlapped
+    CHECK: %[[SYNC_FUSION:.*]] = f32[8]{0} fusion(%p0), kind=kCustom
+    CHECK-SAME: "kind":"__triton_collective"
+    CHECK: %start_overlapped = ((f32[4]{0}), f32[8]{0}) {{(fusion-start|async-start)}}(%p0)
+    CHECK: %work = f32[4]{0} add(%p0, %p0)
+    CHECK: %done_overlapped = f32[8]{0} {{(fusion-done|async-done)}}(%start_overlapped)
+  )"),
+              IsOkAndHolds(true));
+  EXPECT_THAT(RunFileCheck(module->ToString(), R"(
+    CHECK: ROOT %{{.*}} = f32[8]{0} all-gather(%{{.*}})
+    CHECK-SAME: "is_sync":true
+  )"),
+              IsOkAndHolds(true));
+}
+
 }  // namespace
 }  // namespace xla::gpu

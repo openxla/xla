@@ -120,6 +120,21 @@ inline constexpr absl::string_view kTritonFusionKind = "__triton";
 inline constexpr absl::string_view kTritonCollectiveFusionKind =
     "__triton_collective";
 
+// Returns true if `instr` is a custom fusion with kind
+// `kTritonCollectiveFusionKind`.
+bool IsTritonCollectiveFusion(const HloInstruction& instr);
+
+// Returns the collective communication instruction inside a Triton collective
+// fusion, or nullptr if `fusion` is not a Triton collective fusion or contains
+// no collective instruction.
+const HloInstruction* GetTritonCollectiveHero(const HloInstruction& fusion);
+HloInstruction* GetTritonCollectiveHero(HloInstruction& fusion);
+
+// Returns true if `instr` is an `async-start` / `async-done` wrapping a Triton
+// collective fusion (`fusion-start` / `fusion-done`).
+bool IsAsyncTritonCollectiveFusionStart(const HloInstruction& instr);
+bool IsAsyncTritonCollectiveFusionDone(const HloInstruction& instr);
+
 // Fusions that use Triton have FusionBackendConfig.kind equal to this string.
 inline constexpr absl::string_view kTritonGemmFusionKind = "__triton_gemm";
 

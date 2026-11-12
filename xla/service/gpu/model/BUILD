@@ -39,6 +39,7 @@ cc_library(
         "//xla/hlo/utils:hlo_query",
         "//xla/service:hlo_cost_analysis",
         "//xla/service:latency_hiding_scheduler",
+        "//xla/service/gpu:ir_emission_utils",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:status",
         "@com_google_absl//absl/log",

@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/service/collective_ops_utils.h"
 #include "xla/service/device_assignment.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu_topology.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/side_effect_util.h"
@@ -274,11 +275,23 @@ CollectivePermuteCostModelType GetCollectivePermuteCostModelType(
 }
 
 bool IsGPUSyncCollective(const HloInstruction& instr) {
-  auto backend_config = instr.backend_config<GpuBackendConfig>();
-  if (!backend_config.ok()) {
-    return false;
+  if (auto backend_config = instr.backend_config<GpuBackendConfig>();
+      backend_config.ok() &&
+      backend_config->collective_backend_config().is_sync()) {
+    return true;
   }
-  return backend_config->collective_backend_config().is_sync();
+  const HloInstruction* target = &instr;
+  if (IsAsyncTritonCollectiveFusionStart(*target)) {
+    target = target->async_wrapped_instruction();
+  }
+  if (IsTritonCollectiveFusion(*target)) {
+    if (const HloInstruction* hero = GetTritonCollectiveHero(*target)) {
+      auto hero_config = hero->backend_config<GpuBackendConfig>();
+      return hero_config.ok() &&
+             hero_config->collective_backend_config().is_sync();
+    }
+  }
+  return false;
 }
 
 absl::StatusOr<GPUCommunicationType> CommunicationType(

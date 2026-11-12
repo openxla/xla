@@ -51,6 +51,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h"
 #include "xla/hlo/utils/hlo_traversal.h"
 #include "xla/layout_util.h"
 #include "xla/permutation_util.h"
@@ -539,6 +540,68 @@ std::optional<std::string> GetCustomFusionConfigName(
     return std::nullopt;
   }
   return fusion_backend_config.custom_fusion_config().name();
+}
+
+bool IsTritonCollectiveFusion(const HloInstruction& instr) {
+  if (!instr.IsCustomFusion()) {
+    return false;
+  }
+  absl::StatusOr<GpuBackendConfig> gpu_config =
+      instr.backend_config<GpuBackendConfig>();
+  return gpu_config.ok() && gpu_config->fusion_backend_config().kind() ==
+                                kTritonCollectiveFusionKind;
+}
+
+const HloInstruction* GetTritonCollectiveHero(const HloInstruction& fusion) {
+  if (!IsTritonCollectiveFusion(fusion)) {
+    return nullptr;
+  }
+  const HloComputation* computation = fusion.fused_instructions_computation();
+  if (computation == nullptr) {
+    return nullptr;
+  }
+  if (const HloInstruction* root = computation->root_instruction();
+      root != nullptr &&
+      hlo_query::IsCollectiveCommunicationOp(root->opcode())) {
+    return root;
+  }
+  for (const HloInstruction* instr : computation->instructions()) {
+    if (hlo_query::IsCollectiveCommunicationOp(instr->opcode())) {
+      return instr;
+    }
+  }
+  return nullptr;
+}
+
+HloInstruction* GetTritonCollectiveHero(HloInstruction& fusion) {
+  if (!IsTritonCollectiveFusion(fusion)) {
+    return nullptr;
+  }
+  HloComputation* computation = fusion.fused_instructions_computation();
+  if (computation == nullptr) {
+    return nullptr;
+  }
+  if (HloInstruction* root = computation->root_instruction();
+      root != nullptr &&
+      hlo_query::IsCollectiveCommunicationOp(root->opcode())) {
+    return root;
+  }
+  for (HloInstruction* instr : computation->instructions()) {
+    if (hlo_query::IsCollectiveCommunicationOp(instr->opcode())) {
+      return instr;
+    }
+  }
+  return nullptr;
+}
+
+bool IsAsyncTritonCollectiveFusionStart(const HloInstruction& instr) {
+  return instr.opcode() == HloOpcode::kAsyncStart &&
+         IsTritonCollectiveFusion(*instr.async_wrapped_instruction());
+}
+
+bool IsAsyncTritonCollectiveFusionDone(const HloInstruction& instr) {
+  return instr.opcode() == HloOpcode::kAsyncDone &&
+         IsTritonCollectiveFusion(*instr.async_wrapped_instruction());
 }
 
 }  // namespace gpu

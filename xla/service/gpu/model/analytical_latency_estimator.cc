@@ -25,6 +25,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/gpu_collective_performance_model.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
 #include "xla/service/gpu/model/gpu_performance_model.h"
@@ -58,7 +59,9 @@ LatencyEstimator::TimeCost AnalyticalLatencyEstimator::GetLatencyBetween(
 LatencyEstimator::TimeCost AnalyticalLatencyEstimator::NodeCost(
     const HloInstruction* instr) const {
   if (hlo_query::IsAsyncCollectiveStartOp(instr, /*include_send_recv=*/true) ||
-      hlo_query::IsAsyncCollectiveDoneOp(instr, /*include_send_recv=*/true)) {
+      hlo_query::IsAsyncCollectiveDoneOp(instr, /*include_send_recv=*/true) ||
+      IsAsyncTritonCollectiveFusionStart(*instr) ||
+      IsAsyncTritonCollectiveFusionDone(*instr)) {
     return kLowCost;
   }
 

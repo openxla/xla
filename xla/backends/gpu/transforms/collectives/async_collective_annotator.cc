@@ -26,6 +26,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -37,14 +38,23 @@ absl::StatusOr<bool> AsyncCollectiveAnnotator::RunImpl(
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
-      if (!hlo_query::IsAsyncCollectiveStartOp(instruction)) {
+      if (!hlo_query::IsAsyncCollectiveStartOp(instruction) &&
+          !IsAsyncTritonCollectiveFusionStart(*instruction)) {
         continue;
       }
+      HloInstruction* config_target = instruction;
+      if (IsAsyncTritonCollectiveFusionStart(*instruction)) {
+        config_target =
+            GetTritonCollectiveHero(*instruction->async_wrapped_instruction());
+        if (config_target == nullptr) {
+          continue;
+        }
+      }
       ABSL_ASSIGN_OR_RETURN(GpuBackendConfig gpu_config,
-                            instruction->backend_config<GpuBackendConfig>());
+                            config_target->backend_config<GpuBackendConfig>());
       gpu_config.mutable_collective_backend_config()->set_is_sync(
           !is_collective_async_(instruction));
-      ABSL_RETURN_IF_ERROR(instruction->set_backend_config(gpu_config));
+      ABSL_RETURN_IF_ERROR(config_target->set_backend_config(gpu_config));
       changed = true;
     }
   }

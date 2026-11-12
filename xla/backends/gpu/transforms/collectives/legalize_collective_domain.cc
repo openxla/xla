@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/utils/hlo_query.h"
 #include "xla/service/gpu/backend_configs.pb.h"
+#include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/side_effect_util.h"
 #include "xla/util.h"
 
@@ -36,6 +37,31 @@ namespace {
 bool HasDomainAttribute(const HloInstruction& instruction) {
   return instruction.frontend_attributes().map().contains(
       kCollectiveCommunicationDomainAttr);
+}
+
+HloInstruction* ResolveCollectiveConfigTarget(HloInstruction& instruction) {
+  HloInstruction* target = &instruction;
+  if (HloPredicateIsOp<HloOpcode::kAsyncStart>(target) &&
+      IsTritonCollectiveFusion(*target->async_wrapped_instruction())) {
+    target = target->async_wrapped_instruction();
+  }
+  if (IsTritonCollectiveFusion(*target)) {
+    return GetTritonCollectiveHero(*target);
+  }
+  return target;
+}
+
+const HloInstruction* ResolveCollectiveConfigTarget(
+    const HloInstruction& instruction) {
+  const HloInstruction* target = &instruction;
+  if (HloPredicateIsOp<HloOpcode::kAsyncStart>(target) &&
+      IsTritonCollectiveFusion(*target->async_wrapped_instruction())) {
+    target = target->async_wrapped_instruction();
+  }
+  if (IsTritonCollectiveFusion(*target)) {
+    return GetTritonCollectiveHero(*target);
+  }
+  return target;
 }
 
 absl::StatusOr<CollectiveCommunicationDomain> ReadLocalDomain(
@@ -49,8 +75,14 @@ absl::StatusOr<CollectiveCommunicationDomain> ReadLocalDomain(
         domain, JoinCollectiveCommunicationDomains(domain, attribute_domain));
   }
 
+  const HloInstruction* config_target =
+      ResolveCollectiveConfigTarget(instruction);
+  if (config_target == nullptr) {
+    return absl::InternalError(
+        "Triton collective fusion has no collective hero instruction");
+  }
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig config,
-                        instruction.backend_config<GpuBackendConfig>());
+                        config_target->backend_config<GpuBackendConfig>());
   ABSL_ASSIGN_OR_RETURN(
       domain,
       JoinCollectiveCommunicationDomains(
@@ -77,12 +109,17 @@ absl::StatusOr<bool> SetLocalDomain(HloInstruction& instruction,
   ABSL_RETURN_IF_ERROR(ValidateStreamAnnotation(instruction, domain));
 
   bool changed = false;
+  HloInstruction* config_target = ResolveCollectiveConfigTarget(instruction);
+  if (config_target == nullptr) {
+    return absl::InternalError(
+        "Triton collective fusion has no collective hero instruction");
+  }
   ABSL_ASSIGN_OR_RETURN(GpuBackendConfig config,
-                        instruction.backend_config<GpuBackendConfig>());
+                        config_target->backend_config<GpuBackendConfig>());
   if (config.collective_backend_config().communication_domain() != domain) {
     config.mutable_collective_backend_config()->set_communication_domain(
         domain);
-    ABSL_RETURN_IF_ERROR(instruction.set_backend_config(config));
+    ABSL_RETURN_IF_ERROR(config_target->set_backend_config(config));
     changed = true;
   }
 
@@ -100,13 +137,16 @@ absl::StatusOr<bool> LegalizeCollectiveDomain::RunImpl(
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
     for (HloInstruction* instruction : computation->instructions()) {
-      if (HasDomainAttribute(*instruction) &&
-          !hlo_query::IsCollectiveCommunicationOp(instruction->opcode())) {
+      const bool supports_domain =
+          hlo_query::IsCollectiveCommunicationOp(instruction->opcode()) ||
+          IsTritonCollectiveFusion(*instruction) ||
+          IsAsyncTritonCollectiveFusionStart(*instruction);
+      if (HasDomainAttribute(*instruction) && !supports_domain) {
         return InvalidArgument("Frontend attribute %s is not supported on %s",
                                kCollectiveCommunicationDomainAttr,
                                instruction->name());
       }
-      if (hlo_query::IsCollectiveCommunicationOp(instruction->opcode())) {
+      if (supports_domain) {
         ABSL_ASSIGN_OR_RETURN(CollectiveCommunicationDomain domain,
                               ReadLocalDomain(*instruction));
         ABSL_ASSIGN_OR_RETURN(bool instruction_changed,
