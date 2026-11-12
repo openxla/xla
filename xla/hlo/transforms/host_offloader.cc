@@ -135,37 +135,6 @@ bool HostOffloader::InstructionIsAllowedBetweenMoveToHostAndDus(
           instruction->opcode() == HloOpcode::kCopy);
 }
 
-bool HostOffloader::InstructionIsAllowedBetweenDsAndMoveToDevice(
-    const HloInstruction* instruction) const {
-  if (instruction->opcode() == HloOpcode::kReduce) {
-    // TODO(b/333902007): Remove this once trivial reduces no longer appear.
-    // A variadic reduce has a tuple shape; the verifier guarantees all its
-    // elements have the same dimensions, so the first one is representative.
-    const Shape& output_shape = instruction->shape().IsTuple()
-                                    ? instruction->shape().tuple_shapes(0)
-                                    : instruction->shape();
-    return ShapeUtil::TrueNumDimensions(instruction->operand(0)->shape()) ==
-           ShapeUtil::TrueNumDimensions(output_shape);
-  }
-  if (instruction->opcode() == HloOpcode::kReshape) {
-    return ShapeUtil::ReshapeIsBitcast(instruction->operand(0)->shape(),
-                                       instruction->shape());
-  }
-  if (instruction->opcode() == HloOpcode::kBitcast ||
-      instruction->opcode() == HloOpcode::kCopy) {
-    return true;
-  }
-  // Allow an annotation to sit inside a loop.
-  if (instruction->opcode() == HloOpcode::kTuple ||
-      instruction->opcode() == HloOpcode::kOptimizationBarrier ||
-      instruction->opcode() == HloOpcode::kGetTupleElement ||
-      instruction->opcode() == HloOpcode::kParameter ||
-      instruction->opcode() == HloOpcode::kWhile) {
-    return true;
-  }
-  return false;
-}
-
 absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
     const InstructionAndShapeIndex& starting_instruction_and_index,
     const bool insert_copy_before, std::optional<int64_t> operand_index) {
@@ -457,6 +426,7 @@ absl::StatusOr<bool> HostOffloader::WalkDownHostMemoryOffloadPaths(
   for (HloInstruction* custom_call : mth_custom_calls_to_remove) {
     VLOG(1) << absl::StreamFormat("Removing MoveToHost custom call \"%s\"",
                                   custom_call->name());
+    RecordRemovedMoveToHostCustomCall(custom_call);
     ABSL_RETURN_IF_ERROR(
         custom_call->ReplaceAllUsesWith(custom_call->mutable_operand(0)));
     ABSL_RETURN_IF_ERROR(custom_call->parent()->RemoveInstruction(custom_call));
@@ -598,6 +568,7 @@ absl::StatusOr<bool> HostOffloader::HandleMoveToHostCustomCall(
   // Remove custom call.
   VLOG(2) << absl::StreamFormat("Removing MoveToHost custom call \"%s\"",
                                 custom_call_instruction->name());
+  RecordRemovedMoveToHostCustomCall(custom_call_instruction);
   ABSL_RETURN_IF_ERROR(custom_call_instruction->ReplaceAllUsesWith(
       custom_call_instruction->mutable_operand(0)));
   ABSL_RETURN_IF_ERROR(custom_call_instruction->parent()->RemoveInstruction(
@@ -704,6 +675,15 @@ absl::StatusOr<bool> HostOffloader::InsertCopyBetween(
   return changed;
 }
 
+void HostOffloader::RecordRemovedMoveToHostCustomCall(
+    const HloInstruction* custom_call) {
+  for (const HloInstruction* user : custom_call->users()) {
+    for (int64_t index : user->OperandIndices(custom_call)) {
+      moved_to_host_operands_.insert({user, index});
+    }
+  }
+}
+
 absl::StatusOr<std::vector<InstructionAndShapeIndex>>
 HostOffloader::GetStartingInstructions(
     HloInstruction* custom_call_instruction) {
@@ -712,9 +692,38 @@ HostOffloader::GetStartingInstructions(
   // 1. Feeds into a DynamicUpdateSlice.
   // 2. Does "normal" memory offloading.
   std::vector<InstructionAndShapeIndex> result;
-  std::queue<InstructionAndShapeIndex> queue;
   const CallGraph& call_graph =
       GetOrBuildCallGraph(custom_call_instruction->GetModule());
+  auto add_dynamic_update_slice =
+      [&](const InstructionAndShapeIndex& dus) -> absl::Status {
+    ABSL_ASSIGN_OR_RETURN(
+        const std::vector<InstructionAndShapeIndex> outermost,
+        host_offload_utils::GetOutermostStackingDynamicUpdateSlices(
+            dus, call_graph, moved_to_host_operands_));
+    for (const InstructionAndShapeIndex& o : outermost) {
+      if (!absl::c_linear_search(result, o)) {
+        result.push_back(o);
+      }
+    }
+    return absl::OkStatus();
+  };
+
+  // When every use of the annotated value only forwards it, possibly across
+  // loop and call boundaries, into the update operand of dynamic-update-slices,
+  // the value stays on device and those dynamic-update-slices write it to host.
+  ABSL_ASSIGN_OR_RETURN(
+      const std::optional<std::vector<InstructionAndShapeIndex>> receiving,
+      host_offload_utils::FindDynamicUpdateSlicesReceivingUpdate(
+          InstructionAndShapeIndex(custom_call_instruction), call_graph,
+          /*through_in_place_updates=*/false));
+  if (receiving.has_value()) {
+    for (const InstructionAndShapeIndex& dus : *receiving) {
+      ABSL_RETURN_IF_ERROR(add_dynamic_update_slice(dus));
+    }
+    return result;
+  }
+
+  std::queue<InstructionAndShapeIndex> queue;
   ABSL_ASSIGN_OR_RETURN(
       const std::vector<InstructionAndShapeIndex> successors_of_custom_call,
       host_offload_utils::GetSuccessors(
@@ -728,7 +737,7 @@ HostOffloader::GetStartingInstructions(
     HloInstruction* current_instruction = instruction_and_shape.instruction;
     if (current_instruction->opcode() == HloOpcode::kDynamicUpdateSlice) {
       // Found a DynamicUpdateSlice.
-      result.push_back(instruction_and_shape);
+      ABSL_RETURN_IF_ERROR(add_dynamic_update_slice(instruction_and_shape));
       continue;
     }
     if (!InstructionIsAllowedBetweenMoveToHostAndDus(current_instruction)) {
@@ -749,47 +758,8 @@ HostOffloader::GetStartingInstructions(
 
 absl::StatusOr<bool> HostOffloader::SliceLeadsToMoveToDeviceCustomCall(
     HloInstruction* slice) {
-  // Every host-to-device DynamicSlice/Slice must be followed by a MoveToDevice
-  // custom call. This function verifies that.
-  CHECK(slice->opcode() == HloOpcode::kDynamicSlice ||
-        slice->opcode() == HloOpcode::kSlice)
-      << "This function must only be called with a slice or dynamic slice.";
-  std::queue<InstructionAndShapeIndex> queue;
-  const CallGraph& call_graph = GetOrBuildCallGraph(slice->GetModule());
-  ABSL_ASSIGN_OR_RETURN(
-      const std::vector<InstructionAndShapeIndex> successors_of_slice,
-      host_offload_utils::GetSuccessors(InstructionAndShapeIndex(slice),
-                                        call_graph));
-  for (const InstructionAndShapeIndex& successor : successors_of_slice) {
-    queue.push(successor);
-  }
-  while (!queue.empty()) {
-    InstructionAndShapeIndex instruction_and_shape = queue.front();
-    queue.pop();
-    HloInstruction* current_instruction = instruction_and_shape.instruction;
-    if (current_instruction->opcode() == HloOpcode::kCustomCall &&
-        current_instruction->custom_call_target() ==
-            memory_annotations::kMoveToDeviceCustomCallTarget) {
-      // This path ended with the MoveToDevice custom call. This path is good.
-      continue;
-    }
-    if (!InstructionIsAllowedBetweenDsAndMoveToDevice(current_instruction)) {
-      // We were expecting to find a MoveToDevice custom call here, marking the
-      // end of host memory offloading, but we did not.
-      LOG(WARNING) << absl::StreamFormat(
-          "Encountered %s on tensor which is in host memory. %s does not move "
-          "the tensor back to device. %s will be converted into host compute.",
-          HloOpcodeString(slice->opcode()), slice->name(), slice->name());
-      return false;
-    }
-    ABSL_ASSIGN_OR_RETURN(
-        const std::vector<InstructionAndShapeIndex> successors,
-        host_offload_utils::GetSuccessors(instruction_and_shape, call_graph));
-    for (const InstructionAndShapeIndex& successor : successors) {
-      queue.push(successor);
-    }
-  }
-  return true;
+  return host_offload_utils::SliceLeadsToMoveToDeviceCustomCall(
+      slice, GetOrBuildCallGraph(slice->GetModule()));
 }
 
 absl::Status HostOffloader::CreateAllocateBufferForDynamicUpdateSlice(
@@ -1545,7 +1515,10 @@ absl::StatusOr<bool> HostOffloader::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   // Dropped on every exit so that no run sees another run's graph.
-  absl::Cleanup drop_call_graph = [this] { call_graph_.reset(); };
+  absl::Cleanup drop_call_graph = [this] {
+    call_graph_.reset();
+    moved_to_host_operands_.clear();
+  };
 
   // Start by removing all host memory space from all shapes. Host memory space
   // might have been set by other passes, however, this pass is the one which is

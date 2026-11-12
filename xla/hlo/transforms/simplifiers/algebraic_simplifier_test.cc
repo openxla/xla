@@ -10550,6 +10550,44 @@ ENTRY DynamicUpdateSliceOfBroadcastToPadHostOffloadMultiLevel {
           m::ConstantScalar(0), m::ConstantScalar(0))));
 }
 
+// A nested scan stacks a block, filled by a chain of dynamic-update-slices of
+// offloaded data, into the stacked buffer. The outer dynamic-update-slice is
+// the host offload, so it must not become a pad either.
+TEST_F(AlgebraicSimplifierTest,
+       DynamicUpdateSliceOfBroadcastToPadHostOffloadNestedBlock) {
+  const std::string hlo_string = absl::StrFormat(
+      R"(
+HloModule DynamicUpdateSliceOfBroadcastToPadHostOffloadNestedBlock
+
+ENTRY main {
+  zero = bf16[] constant(0)
+  c0 = s32[] constant(0)
+  c1 = s32[] constant(1)
+  param_0 = bf16[1,16,128] parameter(0)
+  param_1 = bf16[1,16,128] parameter(1)
+  mth_0 = bf16[1,16,128] custom-call(param_0), custom_call_target="%s"
+  mth_1 = bf16[1,16,128] custom-call(param_1), custom_call_target="%s"
+  block_init = bf16[2,16,128] broadcast(zero), dimensions={}
+  block_0 = bf16[2,16,128] dynamic-update-slice(block_init, mth_0, c0, c0, c0)
+  block_1 = bf16[2,16,128] dynamic-update-slice(block_0, mth_1, c1, c0, c0)
+  block = bf16[1,2,16,128] bitcast(block_1)
+  stack_init = bf16[4,2,16,128] broadcast(zero), dimensions={}
+  ROOT stack = bf16[4,2,16,128] dynamic-update-slice(stack_init, block, c0, c0, c0, c0)
+}
+)",
+      memory_annotations::kMoveToHostCustomCallTarget,
+      memory_annotations::kMoveToHostCustomCallTarget);
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  AlgebraicSimplifier simplifier(default_options_);
+  EXPECT_FALSE(simplifier.Run(module.get()).value());
+  EXPECT_THAT(
+      module->entry_computation()->root_instruction(),
+      GmockMatch(m::DynamicUpdateSlice(
+          m::Broadcast(m::ConstantScalar(0)),
+          m::Bitcast(m::DynamicUpdateSlice()), m::ConstantScalar(0),
+          m::ConstantScalar(0), m::ConstantScalar(0), m::ConstantScalar(0))));
+}
+
 // Test of dynamic-update-slice with dims where update and result have the same
 // size so we can replace indices to 0.
 TEST_F(AlgebraicSimplifierTest, DynamicUpdateSliceTrivialIndices) {

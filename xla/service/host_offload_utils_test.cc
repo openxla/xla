@@ -639,6 +639,61 @@ TEST_F(HostOffloadUtilsTest,
   EXPECT_THAT(pred_cc, ElementsAre(InstructionAndShapeIndex(host_param, {})));
 }
 
+TEST_F(HostOffloadUtilsTest, HoldsOnlyDataMovedToHostTracksSpecificOperands) {
+  absl::string_view hlo_string = R"hlo(
+    HloModule m
+    ENTRY main {
+      x = f32[8] parameter(0)
+      zero = f32[] constant(0)
+      c0 = s32[] constant(0)
+      c1 = s32[] constant(1)
+      init = f32[2,8] broadcast(zero), dimensions={}
+      b0 = f32[1,8] bitcast(x)
+      b1 = f32[1,8] bitcast(x)
+      d0 = f32[2,8] dynamic-update-slice(init, b0, c0, c0)
+      ROOT d1 = f32[2,8] dynamic-update-slice(d0, b1, c1, c0)
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module.get());
+  HloInstruction* b0 = FindInstruction(module.get(), "b0");
+  HloInstruction* b1 = FindInstruction(module.get(), "b1");
+  HloInstruction* d1 = FindInstruction(module.get(), "d1");
+
+  // Recording MoveToHost removal on b0 alone leaves b1 unannotated, even though
+  // both read the same instruction x.
+  EXPECT_FALSE(HoldsOnlyDataMovedToHost(InstructionAndShapeIndex(d1),
+                                        *call_graph, {{b0, 0}}));
+  EXPECT_TRUE(HoldsOnlyDataMovedToHost(InstructionAndShapeIndex(d1),
+                                       *call_graph, {{b0, 0}, {b1, 0}}));
+}
+
+TEST_F(HostOffloadUtilsTest, SliceLeadsToMoveToDeviceChecksSlicedOperandOnly) {
+  absl::string_view hlo_string = R"hlo(
+    HloModule m
+    ENTRY main {
+      host_idx = s32[4] parameter(0)
+      data = f32[8] parameter(1)
+      c0 = s32[] constant(0)
+      idx_slice = s32[1] dynamic-slice(host_idx, c0), dynamic_slice_sizes={1}
+      idx = s32[] bitcast(idx_slice)
+      data_slice = f32[2] dynamic-slice(data, idx), dynamic_slice_sizes={2}
+      ROOT mtd = f32[2] custom-call(data_slice), custom_call_target="MoveToDevice"
+    }
+  )hlo";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module.get());
+  HloInstruction* idx_slice = FindInstruction(module.get(), "idx_slice");
+  HloInstruction* data_slice = FindInstruction(module.get(), "data_slice");
+
+  ASSERT_OK_AND_ASSIGN(bool idx_leads, SliceLeadsToMoveToDeviceCustomCall(
+                                           idx_slice, *call_graph));
+  EXPECT_FALSE(idx_leads);
+  ASSERT_OK_AND_ASSIGN(bool data_leads, SliceLeadsToMoveToDeviceCustomCall(
+                                            data_slice, *call_graph));
+  EXPECT_TRUE(data_leads);
+}
+
 }  // namespace
 }  // namespace host_offload_utils
 }  // namespace xla
