@@ -67,6 +67,7 @@ limitations under the License.
 #include "xla/service/buffer_value.h"
 #include "xla/service/call_graph.h"
 #include "xla/service/heap_simulator/heap_simulator.h"
+#include "xla/service/heap_simulator/multi_sweep_heap.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_value.h"
@@ -3275,6 +3276,20 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
               assignment->multiheap_size_constraint_per_heap(), alignment,
               HeapType::kFastSplit);
         case buffer_assignment::BufferAssignmentAlgorithmProto::
+            FAST_MULTI_SWEEP: {
+          auto algorithms = std::make_unique<
+              std::vector<std::unique_ptr<HeapAlgorithm<HloValue>>>>();
+          // FAST_MERGE comes first, so that it wins ties.
+          algorithms->push_back(
+              std::make_unique<ConstrainedGlobalDecreasingSizeBestFitHeap>(
+                  assignment->multiheap_size_constraint_per_heap(), alignment,
+                  HeapType::kFastMerge));
+          algorithms->push_back(std::make_unique<MultiSweepHeap>(
+              alignment, assignment->multiheap_size_constraint_per_heap()));
+          return std::make_unique<ChooseBestHeapAlgorithm<HloValue>>(
+              std::move(algorithms));
+        }
+        case buffer_assignment::BufferAssignmentAlgorithmProto::
             BEST_OF_SPATIAL_TEMPORAL:
         case buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT:
         default: {
@@ -3299,7 +3314,9 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
     if (algo_to_use ==
             buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE ||
         algo_to_use ==
-            buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT) {
+            buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT ||
+        algo_to_use == buffer_assignment::BufferAssignmentAlgorithmProto::
+                           FAST_MULTI_SWEEP) {
       if (!opts_.supports_fast_buffer_assignment(color)) {
         algo_to_use =
             buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
@@ -3726,7 +3743,7 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
   // sequential) pairs are, depending on the sequential algorithm:
   //  * FAST_MERGE: (FAST_MERGE, FAST_MERGE) -> (FAST_MERGE, FAST_SPLIT) ->
   //    (SPATIAL, SPATIAL) -> (SPATIAL, TEMPORAL)
-  //  * FAST_SPLIT: (FAST_MERGE, FAST_SPLIT) -> (SPATIAL, SPATIAL) ->
+  //  * FAST_SPLIT, FAST_MULTI_SWEEP: (FAST_MERGE, X) -> (SPATIAL, SPATIAL) ->
   //    (SPATIAL, TEMPORAL)
   //  * SPATIAL: (FAST_MERGE, SPATIAL) -> (SPATIAL, SPATIAL) ->
   //    (SPATIAL, TEMPORAL)

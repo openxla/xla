@@ -1992,6 +1992,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_live_range",
         "//xla/service/heap_simulator",
+        "//xla/service/heap_simulator:multi_sweep_heap",
         "//xla/service/memory_space_assignment",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
