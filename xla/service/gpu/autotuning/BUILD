@@ -280,6 +280,44 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "gpu_default_backend_policy",
+    srcs = ["gpu_default_backend_policy.cc"],
+    hdrs = ["gpu_default_backend_policy.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:backends_proto_cc",
+        "//xla/codegen/tiling:tiling_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/service:pattern_matcher",
+        "//xla/service/gpu:gpu_fusible",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status:statusor",
+        "@llvm-project//llvm:Support",
+    ],
+)
+
+xla_cc_test(
+    name = "gpu_default_backend_policy_test",
+    srcs = ["gpu_default_backend_policy_test.cc"],
+    deps = [
+        ":gpu_default_backend_policy",
+        "//xla:xla_proto_cc",
+        "//xla/backends/autotuner:backends_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/service:hlo_module_config",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "config_assigner_pass",
     srcs = [
         "config_assigner_pass.cc",
@@ -304,6 +342,7 @@ cc_library(
         "//xla/backends/gpu/autotuner:factory",
         "//xla/backends/gpu/autotuner:gpu_profiler",
         "//xla/backends/gpu/autotuner:legacy_cache",
+        "//xla/backends/gpu/codegen/triton:support",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/pjrt/distributed:key_value_store_interface",
@@ -333,6 +372,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
         "@llvm-project//mlir:IR",
     ],
 )

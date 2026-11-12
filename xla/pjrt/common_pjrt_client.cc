@@ -80,7 +80,6 @@ limitations under the License.
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/host_to_device_transfer_manager.h"
-#include "xla/pjrt/infer_dispatch_info.h"
 #include "xla/pjrt/linearize_throttler.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -759,10 +758,11 @@ absl::Status CommonPjRtClient::Linearize(
     converted_dynamic_sizes.assign(dynamic_sizes.begin(), dynamic_sizes.end());
     dims = converted_dynamic_sizes;
 
-    int32_t* metadata_dest =
-        reinterpret_cast<int32_t*>(dest.data() + requirements.metadata_offset);
+    uint8_t* metadata_dest = dest.data() + requirements.metadata_offset;
     for (int i = 0; i < dims.size(); ++i) {
-      metadata_dest[i] = dynamic_sizes[i];
+      int32_t dynamic_size = static_cast<int32_t>(dynamic_sizes[i]);
+      std::memcpy(metadata_dest + i * sizeof(int32_t), &dynamic_size,
+                  sizeof(dynamic_size));
     }
   } else {
     if (!dynamic_sizes.empty()) {
@@ -1008,15 +1008,42 @@ absl::Status CommonPjRtClient::ResolveAddressableDevices(
     std::vector<PjRtDevice*>& addressable_devices,
     std::shared_ptr<DeviceAssignment>& device_assignment,
     const LoadOptions& load_options) {
+  if (load_options.multi_slice_config != nullptr) {
+    compile_options->multi_slice_config = load_options.multi_slice_config;
+  }
   // Find devices that are addressable by this client/task.
   if (device_assignment != nullptr) {
+    if (load_options.computation_origin.has_value() &&
+        compile_options->multi_slice_config != nullptr) {
+      return Unimplemented(
+          "Execution on subslices not supported with megascale!");
+    }
     int num_replicas = device_assignment->replica_count();
     int num_partitions = device_assignment->computation_count();
     addressable_device_logical_ids.reserve(num_replicas * num_partitions);
     addressable_devices.reserve(num_replicas * num_partitions);
     for (int replica = 0; replica < num_replicas; ++replica) {
       for (int partition = 0; partition < num_partitions; ++partition) {
-        GlobalDeviceId device_id((*device_assignment)(replica, partition));
+        int64_t raw_device_id = (*device_assignment)(replica, partition);
+        GlobalDeviceId device_id;
+        if (compile_options->multi_slice_config != nullptr) {
+          ABSL_ASSIGN_OR_RETURN(
+              std::optional<GlobalDeviceId> slice_local_device_id,
+              compile_options->multi_slice_config->GetSliceLocalDeviceId(
+                  raw_device_id));
+          if (!slice_local_device_id.has_value()) {
+            VLOG(3) << "Device on non-local slice: " << raw_device_id;
+            continue;
+          }
+          device_id = *slice_local_device_id;
+        } else if (load_options.computation_origin.has_value()) {
+          ABSL_ASSIGN_OR_RETURN(
+              device_id,
+              raw_client()->TranslateSubsliceDeviceId(
+                  raw_device_id, executable, *load_options.computation_origin));
+        } else {
+          device_id = GlobalDeviceId(raw_device_id);
+        }
         // TODO(parkers): remove this dependence on CPU's UnpackCpuProcessIndex.
         if (IsCpuId(platform_id()) &&
             UnpackCpuProcessIndex(device_id) != process_index()) {
@@ -1175,11 +1202,32 @@ CommonPjRtClient::LoadInternal(
             ? absl::MakeSpan(*result_shape.mutable_tuple_shapes())
             : absl::MakeSpan(&result_shape, 1)));
     ABSL_RETURN_IF_ERROR(canonicalize_shapes(absl::MakeSpan(parameter_shapes)));
-    // `canonicalize_shapes` (`MakeCanonicalShapeForMemorySpace`)
-    // unconditionally stamps the 1024-byte metadata prefix onto dynamic shapes;
-    // clear it on parameters consumed by `PadRealToStatic`.
-    ABSL_RETURN_IF_ERROR(ClearPadRealToStaticParameterMetadataPrefixes(
-        *hlo_module, absl::MakeSpan(parameter_shapes)));
+    // canonicalize_shapes calls MakeCanonicalShapeForMemorySpace, which by
+    // default sets dynamic_shape_metadata_prefix_bytes to 1024 for all dynamic
+    // shapes. However, custom call PadRealToStatic consumes dynamic inputs
+    // without the 1024-byte metadata prefix. Find parameters feeding
+    // PadRealToStatic custom calls and explicitly set their prefix bytes to 0.
+    const HloComputation* entry_comp = hlo_module->entry_computation();
+    for (const HloInstruction* instruction : entry_comp->instructions()) {
+      if (instruction->IsCustomCall("PadRealToStatic") &&
+          instruction->operand_count() > 0) {
+        const HloInstruction* operand = instruction->operand(0);
+        while (operand->opcode() == HloOpcode::kCopy ||
+               operand->opcode() == HloOpcode::kBitcast) {
+          operand = operand->operand(0);
+        }
+        CHECK(operand->opcode() == HloOpcode::kParameter);
+        CHECK(operand->shape().IsArray());
+        int64_t param_no = operand->parameter_number();
+        DCHECK_LT(param_no, parameter_shapes.size());
+        DCHECK(parameter_shapes[param_no].IsArray());
+        if (param_no < parameter_shapes.size()) {
+          parameter_shapes[param_no]
+              .mutable_layout()
+              ->set_dynamic_shape_metadata_prefix_bytes(0);
+        }
+      }
+    }
   }
   using InputHloSnapshotBits =
       CommonPjRtLoadedExecutable::DispatchInfo::InputHloSnapshotBits;
@@ -1741,7 +1789,7 @@ Future<> CommonPjRtClient::CreateProfiledFuture(PjRtMemorySpace* memory_space,
         VLOG(1) << callee_type << "::" << callee_method;
         if (event_tracker()) {
           event_tracker()->RegisterClientThreadWait(
-              memory_space, std::move(ready_event),
+              memory_space->ToCApiPtr(), std::move(ready_event),
               absl::StrCat(callee_type, "::", callee_method));
         }
         FutureHelpers::ProfilingKeys keys;
@@ -3059,9 +3107,9 @@ CommonPjRtClient::AllocateOutputBuffersWithInputReuse(
           });
       ABSL_ASSIGN_OR_RETURN(
           (absl::InlinedVector<PjRtRawBufferRef, 4> raw_buffers),
-          raw_client()->AllocateRawBuffersForExecute(pending.memory_space,
-                                                     pending.sizes_bytes,
-                                                     /*retry_on_oom=*/false));
+          raw_client()->AllocateRawBuffersForExecute(
+              pending.memory_space->ToCApiPtr(), pending.sizes_bytes,
+              /*retry_on_oom=*/false));
       if (raw_buffers.size() != pending.output_indices.size()) {
         return absl::InternalError(absl::StrFormat(
             "AllocateRawBuffersForExecute returned %d buffers for %d requests",
@@ -3660,18 +3708,16 @@ absl::Status CommonPjRtLoadedExecutable::ExecutePrepare(
   // Fill in device to launch_args so it will be present even if ExecutePrepare
   // fails with OOM.
   launch_args.device = device;
-  DeviceAndAssignment device_and_assign{
-      .device = device,
-      .local_device_id = device->local_device_id(),
-      .global_device_id = device->global_device_id(),
-      .process_index = device->process_index(),
-      .slice_id =
-          options.multi_slice_config != nullptr
-              ? std::make_optional(options.multi_slice_config->SliceId())
-              : std::nullopt,
-      .replica = replica,
-      .partition = partition,
-  };
+  DeviceAndAssignment device_and_assign;
+  device_and_assign.device = device;
+  device_and_assign.local_device_id = device->local_device_id();
+  device_and_assign.global_device_id = device->global_device_id();
+  device_and_assign.process_index = device->process_index();
+  if (options.multi_slice_config != nullptr) {
+    device_and_assign.slice_id = options.multi_slice_config->SliceId();
+  }
+  device_and_assign.replica = replica;
+  device_and_assign.partition = partition;
 
   // Execute takes `extra_deps` and waits for those to be
   // fulfilled before executing the program and returning an available
@@ -4336,17 +4382,16 @@ CommonPjRtLoadedExecutable::Execute(
       DumpHloUnoptimizedSnapshotIfEnabled(hlo_snapshot,
                                           hlo_module->config().debug_options());
     }
-    auto statusor = ExecuteHelperOnSingleDevice(
-        argument_handles[0], run_id, replica, partition, options,
-        returned_futures.has_value(), addressable_devices_[0]);
+    ABSL_ASSIGN_OR_RETURN(
+        auto result, ExecuteHelperOnSingleDevice(argument_handles[0], run_id,
+                                                 replica, partition, options,
+                                                 returned_futures.has_value(),
+                                                 addressable_devices_[0]));
 
-    if (!statusor.ok()) {
-      return std::move(statusor).status();
-    }
+    wrapped_results[0] = std::move(result.buffers);
 
-    wrapped_results[0] = std::move(statusor->buffers);
     if (returned_futures.has_value()) {
-      returned_futures->push_back(std::move(*statusor->future));
+      returned_futures->push_back(std::move(*result.future));
     }
 
     MaybeDumpHloSnapshot(*hlo_module, run_id, argument_handles[0],
@@ -5995,6 +6040,8 @@ CommonPjRtClient::CommonPjRtClient(
     }
   }
 }
+
+CommonPjRtClient::~CommonPjRtClient() { raw_client_->Quiesce(); }
 
 void CommonPjRtClient::AttachDevices(
     std::vector<std::unique_ptr<PjRtDevice>> devices,

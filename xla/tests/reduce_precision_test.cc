@@ -28,6 +28,7 @@ limitations under the License.
 #include "xla/tests/xla_test_backend_predicates.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace {

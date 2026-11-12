@@ -15,14 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/transforms/fusion_block_level_rewriter.h"
 
-#include <cstdint>
 #include <memory>
 #include <utility>
 #include <variant>
 
 #include "absl/container/flat_hash_set.h"
-#include "absl/container/inlined_vector.h"
-#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -30,21 +27,17 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
-#include "llvm/Support/MathExtras.h"
 #include "mlir/IR/MLIRContext.h"
+#include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/gpu/codegen/triton/support.h"
-#include "xla/codegen/tiling/tiling_space.h"
-#include "xla/codegen/tiling/tiling_util.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_traversal.h"
-#include "xla/layout_util.h"
+#include "xla/service/gpu/autotuning/gpu_default_backend_policy.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/hlo_fusion_analysis.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/mlir_context_pool.h"
@@ -53,188 +46,14 @@ limitations under the License.
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/instruction_fusion.h"
-#include "xla/service/pattern_matcher.h"
-#include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/xla.pb.h"
-#include "xla/xla_data.pb.h"
 
 namespace xla {
 namespace gpu {
 
 namespace {
-
-namespace m = ::xla::match;
-
-// Pattern-matches slow loop fusions that can likely be handled better by
-// Triton than by other emitters.
-// TODO(b/370690811,b/372187266): generalize this to other slow transposes.
-bool ShouldRewriteLoopTransposeFusion(
-    const HloFusionInstruction* fusion,
-    const se::DeviceDescription& device_description) {
-  const HloInstruction* root =
-      fusion->fused_instructions_computation()->root_instruction();
-
-  bool is_loop_transpose_fusion =
-      fusion->fusion_kind() == HloInstruction::FusionKind::kLoop &&
-      root->opcode() == HloOpcode::kTranspose;
-
-  if (!is_loop_transpose_fusion) {
-    return false;
-  }
-
-  // The slow transposes are those when the minormost dimension in the input
-  // is neither the minormost nor the second minormost dimension in the output,
-  // and the output minormost dimension is swapped with the new minormost
-  // dimension.
-
-  // We use the normalized logical transpose shape so it should be enough to
-  // check that the minormost dimension's index within the result is smaller
-  // than rank - 2, and that the new minormost dimension is swapped with it.
-  absl::InlinedVector<int64_t, 3> permutation;
-  auto normalized_dims_or = ShapeUtil::GetNormalizedLogicalTransposeShape(
-      root->operand(0)->shape(), root->shape(), root->dimensions(),
-      permutation);
-  if (!normalized_dims_or.ok()) {
-    return false;
-  }
-  auto normalized_dims = normalized_dims_or.value();
-  int64_t rank = normalized_dims.size();
-
-  // This only triggers for transposes with major-to-minor layout.
-  bool has_major_to_minor_layout =
-      LayoutUtil::IsMonotonicWithDim0Major(root->shape().layout());
-  int64_t result_minormost_dim_in_operand = permutation.back();
-
-  if (!(has_major_to_minor_layout &&
-        permutation[result_minormost_dim_in_operand] == rank - 1 &&
-        permutation[rank - 1] < rank - 2)) {
-    return false;
-  }
-
-  // Because of Triton's power-of-two restriction, we're only guaranteed to
-  // handle the bitcast case when the bitcast's minor dimension is a power of
-  // two. This ensures that we can tile it reasonably even if the bitcast's
-  // input has that dimension collapsed. (See comments in `symbolic_tile.cc`
-  // around destructuring summations to understand why this is important.)
-  auto can_bitcast_input_be_tiled_efficiently =
-      [](const HloInstruction* bitcast) {
-        return llvm::isPowerOf2_64(bitcast->shape().dimensions_minor(0));
-      };
-
-  bool is_pure_transpose = ::xla::Match(root, m::Transpose(m::Parameter()));
-  bool is_bitcasted_transpose_with_power_of_two_minor_dim = ::xla::Match(
-      root,
-      m::Transpose(m::Bitcast(m::Parameter())
-                       .WithPredicate(can_bitcast_input_be_tiled_efficiently)));
-  return is_pure_transpose ||
-         is_bitcasted_transpose_with_power_of_two_minor_dim;
-}
-
-// Pattern matches reduction fusions that can likely be handled better by
-// Triton than by other emitters.
-// At present we try to match closely for s32 dots that have been rewritten as
-// reductions.
-bool ShouldRewriteReductionFusion(
-    const HloFusionInstruction* fusion,
-    const se::DeviceDescription& device_description) {
-  if (fusion->IsMultiOutputFusion()) {
-    return false;
-  }
-  const HloInstruction* root =
-      fusion->fused_instructions_computation()->root_instruction();
-  if (const bool is_reduce_fusion = root->opcode() == HloOpcode::kReduce;
-      !is_reduce_fusion) {
-    return false;
-  }
-  // All inputs are s32.
-  for (const auto* operand : root->operands()) {
-    if (operand->shape().element_type() != S32) {
-      return false;
-    }
-  }
-  if (const bool is_output_s32 = root->shape().element_type() == S32;
-      !is_output_s32) {
-    return false;
-  }
-  return true;
-}
-
-bool IsScanFusion(const HloFusionInstruction* fusion) {
-  const HloInstruction* root =
-      fusion->fused_instructions_computation()->root_instruction();
-  return root->opcode() == HloOpcode::kGetTupleElement &&
-         root->operand(0)->opcode() == HloOpcode::kScan &&
-         root->tuple_index() == 0;
-}
-
-absl::StatusOr<bool> ShouldTryRewriteFusion(
-    const HloFusionInstruction* fusion,
-    const se::DeviceDescription& device_description) {
-  // If a dot fusion can be handled by Triton, GemmRewriter would have already
-  // taken care of it.
-  for (const HloInstruction* instr :
-       fusion->fused_instructions_computation()->instructions()) {
-    if (instr->opcode() == HloOpcode::kDot ||
-        instr->opcode() == HloOpcode::kScaledDot) {
-      return false;
-    }
-  }
-
-  const DebugOptions& debug_options =
-      fusion->GetModule()->config().debug_options();
-
-  // Same-shape multi-output fusions.
-  if (IsSameShapeMultiOutputFusion(*fusion,
-                                   Shape::Equal().IgnoreElementType()) &&
-      debug_options
-          .xla_gpu_experimental_enable_same_shape_multi_output_fusion()) {
-    return true;
-  }
-
-  if (fusion->IsMultiOutputFusion() &&
-      !debug_options.xla_gpu_unsupported_enable_triton_multi_output_fusion()) {
-    return false;
-  }
-
-  if (debug_options.xla_gpu_experimental_enable_fusion_block_level_rewriter()) {
-    return true;
-  }
-
-  // TODO(b/370690811): ShouldRewriteLoopTransposeFusion rewrite may no longer
-  // be necessary once MLIR emitters transposes are faster.
-  return ShouldRewriteLoopTransposeFusion(fusion, device_description) ||
-         ShouldRewriteReductionFusion(fusion, device_description) ||
-         IsScanFusion(fusion);
-}
-
-// Returns whether the `sequential_tile_sizes` of a Triton fusion's block-level
-// config no longer match the number of sequential dimensions of its tiling
-// space, e.g. because HloCSE merged reductions that producer fusion had
-// duplicated.
-absl::StatusOr<bool> HasStaleSequentialTileSizes(
-    const HloFusionInstruction& fusion,
-    const FusionBackendConfig& fusion_backend_config,
-    mlir::MLIRContext* mlir_context, MlirContextPool* mlir_context_pool) {
-  if (fusion_backend_config.kind() != kTritonFusionKind) {
-    return false;
-  }
-  const auto& block_config = fusion_backend_config.block_level_fusion_config();
-  if (block_config.sequential_tile_sizes().empty()) {
-    return false;
-  }
-  ABSL_ASSIGN_OR_RETURN(PooledOrFallbackMlirContext context,
-                        BorrowMlirContextOr(mlir_context_pool, mlir_context));
-  auto fusion_adaptor = HloFusionAdaptor::ForInstruction(&fusion);
-  absl::StatusOr<std::unique_ptr<TilingSpace>> tiling_space =
-      TilingSpace::Create(*fusion_adaptor, context.get());
-  if (!tiling_space.ok()) {
-    return false;
-  }
-  return block_config.sequential_tile_sizes_size() !=
-         (*tiling_space)->num_sequential_dimensions();
-}
 
 absl::StatusOr<bool> ProcessFusionInstruction(
     HloFusionInstruction* fusion_instruction,
@@ -267,33 +86,15 @@ absl::StatusOr<bool> ProcessFusionInstruction(
     return false;
   }
   if (fusion_backend_config.has_block_level_fusion_config()) {
-    ABSL_ASSIGN_OR_RETURN(
-        bool has_stale_config,
-        HasStaleSequentialTileSizes(*fusion_instruction, fusion_backend_config,
-                                    mlir_context, mlir_context_pool));
-    if (!has_stale_config) {
-      // Fusion is already block-level! Skip.
-      return false;
-    }
-    VLOG(2) << "Re-tiling " << fusion_instruction->name()
-            << " because its sequential tile sizes are stale.";
-    backend_config.mutable_fusion_backend_config()
-        ->clear_block_level_fusion_config();
-    ABSL_RETURN_IF_ERROR(
-        fusion_instruction->set_backend_config(backend_config));
+    // Fusion is already block-level! Skip.
+    return false;
   }
 
-  // The Triton emitter requires a block-level config, so Triton fusions
-  // without one (e.g. from ScanRewriterTriton) are always tiled.
-  if (!IsGenericTritonFusion(*fusion_instruction)) {
-    ABSL_ASSIGN_OR_RETURN(
-        bool should_try_rewrite,
-        ShouldTryRewriteFusion(fusion_instruction, device_info));
-    if (!should_try_rewrite) {
-      VLOG(2) << "Not rewriting fusion " << fusion_instruction->ToString()
-              << " because it is not supported.";
-      return false;
-    }
+  if (GetDefaultBackend(*fusion_instruction) !=
+      autotuner::Backend::BLOCK_LEVEL_EMITTER) {
+    VLOG(2) << "Not rewriting fusion " << fusion_instruction->ToString()
+            << " because it is not supported.";
+    return false;
   }
 
   const HloComputation* fusion_computation =
