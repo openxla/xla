@@ -92,6 +92,15 @@ class CollectiveOpsE2ETestBase : public gpu::HloPjRtGpuTestBase {
     return Capability().IsCuda() &&
            Capability().cuda_compute_capability()->IsAtLeastAmpere();
   }
+
+  // True if command buffers on this platform can express on-device control
+  // flow, i.e. whether `while` and `conditional` thunks can be recorded into a
+  // command buffer. ROCm has no equivalent of CUDA's conditional graph nodes,
+  // so CommandBufferConversionPass drops the WHILE and CONDITIONAL commands
+  // there and the corresponding thunks stay outside of command buffers.
+  bool SupportsCommandBufferControlFlow() const {
+    return !Capability().IsRocm();
+  }
 };
 
 // E2E tests for collective ops. These will generally verify some HLO transform

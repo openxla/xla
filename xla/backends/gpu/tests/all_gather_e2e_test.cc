@@ -401,6 +401,10 @@ TEST_F(AllGatherTest, TwentyAllGathersInWhileLoopWithCudaGraphs) {
   if (!CheckDeviceCount(kNumReplicas)) {
     return;
   }
+  if (!SupportsCommandBufferControlFlow()) {
+    GTEST_SKIP() << "Command buffers on this platform do not support "
+                    "on-device control flow (while loops).";
+  }
 
   // Each step k in the loop body gathers in_k = 0.5 * prev + p0 (f32[128])
   // across the 2 replicas into ag_k (f32[256]) and sums the two 128-element
