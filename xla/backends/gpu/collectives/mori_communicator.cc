@@ -122,26 +122,23 @@ class MoriCommunicator::GxlAdapter : public GxlCommunicator {
   explicit GxlAdapter(MoriCommunicator* comm) : comm_(comm) {}
 
   absl::Status RunAllGatherGxl(se::Stream* stream, PrimitiveType element_type,
-                               se::DeviceAddressBase input_buffer,
-                               se::DeviceAddressBase output_buffer,
+                               se::DeviceAddressBase input,
+                               se::DeviceAddressBase output,
                                int64_t element_count, int64_t rank) final {
-    return comm_->LaunchAllGather(input_buffer, output_buffer, element_type,
-                                  element_count, GpuCollectives::On(*stream),
+    return comm_->LaunchAllGather(input, output, element_type, element_count,
+                                  GpuCollectives::On(*stream),
                                   /*is_rma=*/false);
   }
 
   absl::Status RunRaggedAllToAllGxl(
       se::Stream* stream, PrimitiveType element_type,
-      se::DeviceAddressBase input_buffer, se::DeviceAddressBase output_buffer,
-      se::DeviceAddressBase input_offsets_buffer,
-      se::DeviceAddressBase send_sizes_buffer,
-      se::DeviceAddressBase output_offsets_buffer,
-      se::DeviceAddressBase recv_sizes_buffer, int64_t num_row_elements,
-      int64_t num_total_updates, int64_t rank) final {
+      se::DeviceAddressBase input, se::DeviceAddressBase output,
+      se::DeviceAddressBase input_offsets, se::DeviceAddressBase send_sizes,
+      se::DeviceAddressBase output_offsets, se::DeviceAddressBase recv_sizes,
+      int64_t num_row_elements, int64_t num_total_updates, int64_t rank) final {
     return comm_->LaunchRaggedAllToAll(
-        input_buffer, output_buffer, input_offsets_buffer, send_sizes_buffer,
-        output_offsets_buffer, element_type, num_row_elements,
-        num_total_updates, GpuCollectives::On(*stream));
+        input, output, input_offsets, send_sizes, output_offsets, element_type,
+        num_row_elements, num_total_updates, GpuCollectives::On(*stream));
   }
 
  private:
