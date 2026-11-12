@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -113,7 +114,8 @@ XTileTestBase::CreateXTileIrAndFileCheck(
   ABSL_ASSIGN_OR_RETURN(
       xtile_dialect_module,
       xtile::EmitXTileModule("xtile_dialect_fn", *fusion, tiled_computation,
-                             *mlir_context()));
+                             *mlir_context(), /*collective_spec=*/{},
+                             /*gpu_cc=*/std::nullopt, /*num_tiles_per_pid=*/1));
   std::string out;
   llvm::raw_string_ostream os(out);
   xtile_dialect_module->print(os);
