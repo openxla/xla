@@ -48,6 +48,14 @@ absl::Status LaunchMultiGpuBarrier(
 absl::StatusOr<stream_executor::gpu::MultiGpuBarrierWithNcclKernel::KernelType>
 LoadMultiGpuBarrierWithNcclKernel(stream_executor::StreamExecutor* executor);
 
+// Returns true if `executor`'s platform provides the NCCL-backed multi-GPU
+// barrier kernel. The kernel reads peer pointers out of an NCCL symmetric
+// memory window, which has no equivalent on platforms other than CUDA+NCCL, so
+// collectives that need a cross-device barrier (e.g. symmetric-memory ragged
+// all-to-all) are unavailable when this returns false.
+bool IsMultiGpuBarrierWithNcclSupported(
+    stream_executor::StreamExecutor* executor);
+
 // Additionally to the barrier synchronization, this kernel also can exchange
 // pointers to another buffer between peers.
 // If ptr_to_store is not null, the pointer to the buffer will be stored in the
