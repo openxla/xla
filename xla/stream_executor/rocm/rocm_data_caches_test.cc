@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdint>
 
+#include "absl/types/span.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/rocm/smi_util.h"
 
@@ -48,8 +49,8 @@ TEST(BuildDataCacheHierarchyTest, Mi350x) {
                   DataCacheInfo{3, 256 * kMiB, 1}));
 }
 
-TEST(BuildDataCacheHierarchyTest, Rdna3KeepsGl1AtLevelOne) {
-  // RDNA3-like, shuffled. The GL1 is kept, the scalar cache dropped.
+TEST(BuildDataCacheHierarchyTest, KeepsOneCachePerLevel) {
+  // RDNA3-like, shuffled. The GL1 and the scalar cache are dropped.
   const SmiDataCache caches[] = {
       {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/12},
       {/*level=*/3, /*size_bytes=*/96 * kMiB, /*num_instances=*/1},
@@ -62,27 +63,44 @@ TEST(BuildDataCacheHierarchyTest, Rdna3KeepsGl1AtLevelOne) {
       BuildDataCacheHierarchy(caches, /*core_count=*/96, /*xcc_count=*/1,
                               /*hip_l2_cache_size=*/0,
                               /*default_l1_cache_size=*/kDefaultL1),
-      ElementsAre(
-          DataCacheInfo{1, 32 * kKiB, 96}, DataCacheInfo{1, 256 * kKiB, 12},
-          DataCacheInfo{2, 6 * kMiB, 1}, DataCacheInfo{3, 96 * kMiB, 1}));
+      ElementsAre(DataCacheInfo{1, 32 * kKiB, 96},
+                  DataCacheInfo{2, 6 * kMiB, 1},
+                  DataCacheInfo{3, 96 * kMiB, 1}));
 }
 
-TEST(BuildDataCacheHierarchyTest, DropsHarvestedScalarGroups) {
-  // Scalar caches of half-disabled CU pairs form their own small group.
-  const SmiDataCache caches[] = {
-      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/8},
-      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/304},
-      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/148},
+TEST(BuildDataCacheHierarchyTest, HarvestingDoesNotChangeTheResult) {
+  // Two GPUs of one model, harvested differently. The scalar caches and a
+  // 256 KiB cache shared by 7 to 9 CUs are split into differing groups.
+  const SmiDataCache gpu0[] = {
+      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/256},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/112},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/32},
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/8},
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/12},
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/12},
+      {/*level=*/2, /*size_bytes=*/4 * kMiB, /*num_instances=*/1},
+  };
+  const SmiDataCache gpu2[] = {
+      {/*level=*/1, /*size_bytes=*/32 * kKiB, /*num_instances=*/256},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/112},
+      {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/32},
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/16},
+      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/16},
+      {/*level=*/2, /*size_bytes=*/4 * kMiB, /*num_instances=*/1},
   };
 
-  EXPECT_THAT(
-      BuildDataCacheHierarchy(caches, /*core_count=*/304, /*xcc_count=*/8,
-                              /*hip_l2_cache_size=*/0,
-                              /*default_l1_cache_size=*/kDefaultL1),
-      ElementsAre(DataCacheInfo{1, 32 * kKiB, 304}));
+  auto build = [](absl::Span<const SmiDataCache> caches) {
+    return BuildDataCacheHierarchy(caches, /*core_count=*/256,
+                                   /*xcc_count=*/1,
+                                   /*hip_l2_cache_size=*/4 * kMiB,
+                                   /*default_l1_cache_size=*/kDefaultL1);
+  };
+  EXPECT_THAT(build(gpu0), ElementsAre(DataCacheInfo{1, 32 * kKiB, 256},
+                                       DataCacheInfo{2, 4 * kMiB, 1}));
+  EXPECT_EQ(build(gpu0), build(gpu2));
 }
 
-TEST(BuildDataCacheHierarchyTest, Gfx9CapsFoldedScalarCaches) {
+TEST(BuildDataCacheHierarchyTest, L1CountIsTheCoreCount) {
   // rocm_smi folds orphaned gfx9 scalar caches into the vector L1 group.
   const SmiDataCache caches[] = {
       {/*level=*/1, /*size_bytes=*/16 * kKiB, /*num_instances=*/112},
@@ -109,21 +127,6 @@ TEST(BuildDataCacheHierarchyTest, SkipsInvalidEntries) {
                                       /*hip_l2_cache_size=*/0,
                                       /*default_l1_cache_size=*/kDefaultL1),
               ElementsAre(DataCacheInfo{1, kDefaultL1, 4}));
-}
-
-TEST(BuildDataCacheHierarchyTest, DefaultL1FillsInWhenSmiHasNone) {
-  // The GL1 is not per-CU.
-  const SmiDataCache caches[] = {
-      {/*level=*/1, /*size_bytes=*/256 * kKiB, /*num_instances=*/12},
-  };
-
-  EXPECT_THAT(
-      BuildDataCacheHierarchy(caches, /*core_count=*/96, /*xcc_count=*/1,
-                              /*hip_l2_cache_size=*/6 * kMiB,
-                              /*default_l1_cache_size=*/kDefaultL1),
-      ElementsAre(DataCacheInfo{1, kDefaultL1, 96},
-                  DataCacheInfo{1, 256 * kKiB, 12},
-                  DataCacheInfo{2, 6 * kMiB, 1}));
 }
 
 TEST(BuildDataCacheHierarchyTest, HipL2SizeWinsOverSmi) {

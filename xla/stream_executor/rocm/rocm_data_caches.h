@@ -23,12 +23,13 @@ limitations under the License.
 
 namespace stream_executor::gpu {
 
-// Returns the data caches of the device at `pci_bus_id`. They come from
-// amd-smi (ROCm 7.13+); otherwise only the default L1 and HIP's L2 are listed.
+// Returns the data caches of the device at `pci_bus_id`, one per level. Sizes
+// come from amd-smi (ROCm 7.13+); otherwise only the default L1 and HIP's L2
+// are listed. Instance counts come from the topology, `core_count` L1s,
+// `xcc_count` L2s and one of each higher level.
 //
-// `xcc_count` sets the L2 instance count. `hip_l2_cache_size` is
-// hipDeviceProp_t::l2CacheSize (0 if unknown) and overrides SMI's L2 size.
-// `default_l1_cache_size` is used when SMI has no per-CU L1.
+// `hip_l2_cache_size` is hipDeviceProp_t::l2CacheSize (0 if unknown) and
+// overrides SMI's L2 size. `default_l1_cache_size` is used when SMI has no L1.
 std::vector<DataCacheInfo> GetRocmDataCaches(absl::string_view pci_bus_id,
                                              int core_count, int xcc_count,
                                              int64_t hip_l2_cache_size,

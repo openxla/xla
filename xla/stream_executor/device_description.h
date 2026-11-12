@@ -380,13 +380,11 @@ class DeviceDescription {
   // Returns the device memory size in bytes.
   int64_t device_memory_size() const { return device_memory_size_; }
 
-  // Returns the device's data caches, ordered by level, then by decreasing
-  // num_instances (most private first). A level may hold several caches or
-  // none.
+  // Returns the device's data caches in increasing level order, at most one per
+  // level. The L1 is the per core cache.
   absl::Span<const DataCacheInfo> data_caches() const { return data_caches_; }
 
-  // Returns the most private data cache at `level`, or nullptr if there is
-  // none.
+  // Returns the data cache at `level`, or nullptr if there is none.
   const DataCacheInfo* data_cache(int level) const;
 
   // Returns the size of one L2 instance in bytes, not the total across all

@@ -97,17 +97,13 @@ absl::StatusOr<DeviceDescription> DeviceDescription::FromProto(
       return absl::InvalidArgumentError(absl::StrCat(
           "data_caches levels start from 1, got level ", cache.level()));
     }
-    if (!device_description.data_caches_.empty()) {
-      const DataCacheInfo& prev = device_description.data_caches_.back();
-      if (cache.level() < prev.level ||
-          (cache.level() == prev.level &&
-           cache.num_instances() > prev.num_instances)) {
-        return absl::InvalidArgumentError(absl::StrCat(
-            "data_caches must be ordered by level, then by decreasing "
-            "num_instances, got (",
-            cache.level(), ", ", cache.num_instances(), ") after (", prev.level,
-            ", ", prev.num_instances, ")"));
-      }
+    if (!device_description.data_caches_.empty() &&
+        cache.level() <= device_description.data_caches_.back().level) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "data_caches must have one cache per level, in increasing level "
+          "order, got level ",
+          cache.level(), " after level ",
+          device_description.data_caches_.back().level));
     }
     device_description.data_caches_.push_back(DataCacheInfo::FromProto(cache));
   }
@@ -393,12 +389,9 @@ const DataCacheInfo* DeviceDescription::data_cache(int level) const {
 }
 
 int64_t DeviceDescription::l1_cache_size_per_SM() const {
-  for (const DataCacheInfo& cache : data_caches_) {
-    if (cache.level == 1 && cache.num_instances == core_count_) {
-      return cache.size_bytes;
-    }
-  }
-  return DefaultL1CacheSizePerCore(gpu_compute_capability_);
+  const DataCacheInfo* l1 = data_cache(1);
+  return l1 != nullptr ? l1->size_bytes
+                       : DefaultL1CacheSizePerCore(gpu_compute_capability_);
 }
 
 int64_t DeviceDescription::DefaultL1CacheSizePerCore(

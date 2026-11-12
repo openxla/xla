@@ -242,22 +242,19 @@ TEST(DataCacheInfo, ProtoConversion) {
 }
 
 TEST(DeviceDescription, DataCachesProtoConversion) {
-  // RDNA3-like: the L0 and the GL1 both at level 1.
-  const DataCacheInfo l0{/*level=*/1, /*size_bytes=*/32 * 1024,
+  const DataCacheInfo l1{/*level=*/1, /*size_bytes=*/32 * 1024,
                          /*num_instances=*/96};
-  const DataCacheInfo gl1{/*level=*/1, /*size_bytes=*/256 * 1024,
-                          /*num_instances=*/12};
   const DataCacheInfo l2{/*level=*/2, /*size_bytes=*/6 * 1024 * 1024,
                          /*num_instances=*/1};
   const DataCacheInfo l3{/*level=*/3, /*size_bytes=*/96 * 1024 * 1024,
                          /*num_instances=*/1};
   DeviceDescription desc;
-  desc.set_data_caches({l0, gl1, l2, l3});
+  desc.set_data_caches({l1, l2, l3});
 
   ASSERT_OK_AND_ASSIGN(DeviceDescription from_proto,
                        DeviceDescription::FromProto(desc.ToProto()));
 
-  EXPECT_THAT(from_proto.data_caches(), ElementsAre(l0, gl1, l2, l3));
+  EXPECT_THAT(from_proto.data_caches(), ElementsAre(l1, l2, l3));
 }
 
 TEST(DeviceDescription, DataCachesDefaultToEmpty) {
@@ -295,12 +292,10 @@ TEST(DeviceDescription, DataCachesRejectBadOrder) {
     return proto;
   };
 
-  // Ties are allowed.
-  EXPECT_OK(DeviceDescription::FromProto(
-      proto_with({{1, 96}, {1, 96}, {1, 12}, {2, 1}})));
+  EXPECT_OK(DeviceDescription::FromProto(proto_with({{1, 96}, {3, 1}})));
   EXPECT_THAT(DeviceDescription::FromProto(proto_with({{2, 1}, {1, 96}})),
               StatusIs(absl::StatusCode::kInvalidArgument));
-  EXPECT_THAT(DeviceDescription::FromProto(proto_with({{1, 12}, {1, 96}})),
+  EXPECT_THAT(DeviceDescription::FromProto(proto_with({{1, 96}, {1, 12}})),
               StatusIs(absl::StatusCode::kInvalidArgument));
   EXPECT_THAT(DeviceDescription::FromProto(proto_with({{0, 1}})),
               StatusIs(absl::StatusCode::kInvalidArgument));
@@ -322,15 +317,13 @@ TEST(DeviceDescription, EqualsToComparesDataCaches) {
       desc.EqualsTo(other, {DeviceDescription::CompareOptions::kPortable}));
 }
 
-TEST(DeviceDescription, DataCacheReturnsMostPrivateAtLevel) {
-  const DataCacheInfo l0{/*level=*/1, /*size_bytes=*/32 * 1024,
+TEST(DeviceDescription, DataCacheReturnsTheCacheAtLevel) {
+  const DataCacheInfo l1{/*level=*/1, /*size_bytes=*/32 * 1024,
                          /*num_instances=*/96};
-  const DataCacheInfo gl1{/*level=*/1, /*size_bytes=*/256 * 1024,
-                          /*num_instances=*/12};
   DeviceDescription desc;
-  desc.set_data_caches({l0, gl1});
+  desc.set_data_caches({l1});
 
-  EXPECT_THAT(desc.data_cache(1), Pointee(Eq(l0)));
+  EXPECT_THAT(desc.data_cache(1), Pointee(Eq(l1)));
   EXPECT_EQ(desc.data_cache(2), nullptr);
 }
 
@@ -375,14 +368,12 @@ TEST(DeviceDescription, ToProtoKeepsWritingOldL2Field) {
   EXPECT_EQ(desc.ToProto().l2_cache_size(), 4 * 1024 * 1024);
 }
 
-TEST(DeviceDescription, L1CacheSizePerSMUsesPerCoreEntry) {
+TEST(DeviceDescription, L1CacheSizePerSMUsesL1Entry) {
   DeviceDescription desc;
   desc.set_rocm_compute_capability("gfx1100");
   desc.set_core_count(96);
   desc.set_data_caches({DataCacheInfo{/*level=*/1, /*size_bytes=*/32 * 1024,
-                                      /*num_instances=*/96},
-                        DataCacheInfo{/*level=*/1, /*size_bytes=*/256 * 1024,
-                                      /*num_instances=*/12}});
+                                      /*num_instances=*/96}});
 
   EXPECT_EQ(desc.l1_cache_size_per_SM(), 32 * 1024);
 }
@@ -393,9 +384,10 @@ TEST(DeviceDescription, L1CacheSizePerSMFallsBackToDefault) {
   rocm.set_core_count(304);
   EXPECT_EQ(rocm.l1_cache_size_per_SM(), 32 * 1024);
 
-  // A shared level 1 cache (GL1) is not per-core.
-  rocm.set_data_caches({DataCacheInfo{/*level=*/1, /*size_bytes=*/256 * 1024,
-                                      /*num_instances=*/38}});
+  // No L1 entry, only an L2.
+  rocm.set_data_caches({DataCacheInfo{/*level=*/2,
+                                      /*size_bytes=*/4 * 1024 * 1024,
+                                      /*num_instances=*/8}});
   EXPECT_EQ(rocm.l1_cache_size_per_SM(), 32 * 1024);
 
   DeviceDescription cuda;

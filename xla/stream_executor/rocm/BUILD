@@ -525,7 +525,6 @@ cc_library(
         ":smi_util",
         "//xla/stream_executor:device_description",
         "//xla/tsl/platform:logging",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
@@ -546,6 +545,7 @@ xla_cc_test(
         ":rocm_data_caches",
         ":smi_util",
         "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
     ],
 )
