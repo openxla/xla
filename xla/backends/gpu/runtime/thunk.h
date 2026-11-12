@@ -388,8 +388,7 @@ class Thunk {
         std::optional<absl::Span<const BufferAllocation::Index>>
             persistent_alloc_indices = std::nullopt,
         absl::flat_hash_map<LocalityDomainStreamId, se::Stream*>
-            locality_domain_streams = {},
-        LaunchOrdering* launch_ordering = nullptr);
+            locality_domain_streams = {});
 
     // Constructs execute parameters from an existing parameters but with
     // different buffer allocations.

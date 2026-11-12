@@ -56,7 +56,6 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
 #include "xla/backends/gpu/runtime/command_buffer_requests.h"
-#include "xla/backends/gpu/runtime/event_pool.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -602,8 +601,6 @@ GpuExecutable::GpuExecutable(
       locality_domain_count_(device_description.locality_domain_count()),
       thunk_executor_(std::move(executable)),
       definition_plan_(ThunkExecutor::BuildDefinitionPlan(*thunk_executor_)),
-      explicit_launch_ordering_(
-          debug_options.xla_gpu_explicit_launch_ordering()),
       num_additional_streams_(
           GetNumAdditionalStreams(*thunk_executor_, debug_options)),
       module_name_(std::move(module_name)),
@@ -736,8 +733,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         persistent_alloc_indices,
     const GpuExecutable::NumAdditionalStreams& num_additional_streams,
     CollectiveMemoryCache& collective_memory_cache,
-    bool collective_use_minimal_resource, int compiled_locality_domain_count,
-    bool explicit_launch_ordering) {
+    bool collective_use_minimal_resource, int compiled_locality_domain_count) {
   const GpuExecutableRunOptions* gpu_run_options =
       run_options->run_options().gpu_executable_run_options();
 
@@ -1017,7 +1013,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
 
   // A backend that records no launch event has nothing to order.
   std::optional<LaunchOrdering> launch_ordering;
-  if (explicit_launch_ordering) {
+  if (debug_options.xla_gpu_explicit_launch_ordering()) {
     ABSL_ASSIGN_OR_RETURN(bool records_launch_completion,
                           collective_cliques.SupportsLaunchCompletion(
                               collective_params.global_device_id));
@@ -1038,8 +1034,9 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
       command_buffer_trace_stream, &collective_params, &collective_cliques,
       &collective_memory, std::move(compute_streams.streams),
       &execution_scoped_state, persistent_alloc_indices,
-      std::move(locality_domain_streams),
-      launch_ordering.has_value() ? &*launch_ordering : nullptr);
+      std::move(locality_domain_streams));
+  execute_params.launch_ordering =
+      launch_ordering ? &*launch_ordering : nullptr;
 
   // device_to_host_stream/host_to_device_stream above come from run_options,
   // which are only populated when running through PJRT. Fall back to a
@@ -1595,7 +1592,7 @@ absl::Status GpuExecutable::ExecuteThunks(
       run_options, buffer_allocations, block_host_until_done,
       persistent_alloc_indices, num_additional_streams_,
       collective_memory_cache_, collective_use_minimal_resource_,
-      locality_domain_count_, explicit_launch_ordering_);
+      locality_domain_count_);
 }
 
 int64_t GpuExecutable::SizeOfGeneratedCodeInBytes() const {

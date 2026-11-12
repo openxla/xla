@@ -661,6 +661,15 @@ absl::Status LaunchCudaKernel(
 absl::Status CudaStream::LaunchKernel(
     const ThreadDim& thread_dims, const BlockDim& block_dims,
     const std::optional<ClusterDim>& cluster_dims, void* function,
+    absl::string_view name, void** args, int64_t shmem_bytes, bool use_pdl) {
+  return LaunchKernelWithCompletionEvent(thread_dims, block_dims, cluster_dims,
+                                         function, name, args, shmem_bytes,
+                                         use_pdl, nullptr);
+}
+
+absl::Status CudaStream::LaunchKernelWithCompletionEvent(
+    const ThreadDim& thread_dims, const BlockDim& block_dims,
+    const std::optional<ClusterDim>& cluster_dims, void* function,
     absl::string_view name, void** args, int64_t shmem_bytes, bool use_pdl,
     Event* launch_completion_event) {
   TraceMe trace([] { return TraceMeEncode("CudaStream::LaunchKernel", {}); },

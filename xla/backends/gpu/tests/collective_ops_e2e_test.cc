@@ -2037,6 +2037,48 @@ TEST_F(CollectiveOpsTestE2E, ExplicitLaunchOrderingWhileLoopWithCollectives) {
   LiteralTestUtil::ExpectR1Equal<uint32_t>({50, 70}, results[1]);
 }
 
+// The members of a collectives group each record a launch event.
+TEST_F(CollectiveOpsTestE2E, ExplicitLaunchOrderingCollectivesGroup) {
+  const absl::string_view kModuleStr = R"(
+  HloModule collective_group_repro, replica_count=2
+  add {
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT sum = f32[] add(lhs, rhs)
+  }
+  grouped_collectives {
+    p0 = f32[16] parameter(0)
+    p1 = f32[16] parameter(1)
+    ar = f32[16] all-reduce(p0), replica_groups={{0,1}}, to_apply=add
+    ag = f32[32] all-gather(p1), dimensions={0}, replica_groups={{0,1}}
+    ROOT out = (f32[16], f32[32]) tuple(ar, ag)
+  }
+  ENTRY main {
+    p0 = f32[16] parameter(0)
+    p1 = f32[16] parameter(1)
+    start = ((f32[16], f32[16]), (f32[16], f32[32])) async-start(p0, p1),
+      calls=grouped_collectives, frontend_attributes={_collectives_group=""}
+    ROOT done = (f32[16], f32[32]) async-done(start)
+  }
+  )";
+  ASSERT_GE(device_count(), 2);
+  HloModuleConfig config = GetModuleConfigForTest(/*replica_count=*/2);
+  config.mutable_debug_options().set_xla_gpu_explicit_launch_ordering(true);
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(kModuleStr, config));
+
+  Literal ones = LiteralUtil::CreateFull<float>({16}, 1);
+  std::vector<std::vector<Literal*>> args(2, {&ones, &ones});
+  ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
+                       ExecuteReplicated(std::move(module), args));
+  ASSERT_EQ(execution_result.results.size(), 2);
+  for (Literal& result : execution_result.results) {
+    std::vector<Literal> parts = result.DecomposeTuple();
+    LiteralTestUtil::ExpectR1Equal<float>(std::vector<float>(16, 2), parts[0]);
+    LiteralTestUtil::ExpectR1Equal<float>(std::vector<float>(32, 1), parts[1]);
+  }
+}
+
 // A collective inside a command buffer cannot record a launch event.
 TEST_F(CollectiveOpsTestE2E,
        ExplicitLaunchOrderingRejectsCollectivesInCommandBuffers) {

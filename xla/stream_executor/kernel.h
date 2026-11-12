@@ -81,6 +81,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/kernel_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
@@ -151,12 +152,21 @@ class Kernel {
                       Stream* stream, const KernelArgs& args);
 
   // Helper method to launch a kernel with optional cluster dimensions.
-  // `launch_completion_event` fires at last-block dispatch, not completion.
   virtual absl::Status Launch(const ThreadDim& thread_dims,
                               const BlockDim& block_dims,
                               const std::optional<ClusterDim>& cluster_dims,
-                              Stream* stream, const KernelArgs& args,
-                              Event* launch_completion_event = nullptr) = 0;
+                              Stream* stream, const KernelArgs& args) = 0;
+
+  // `launch_completion_event` fires at last-block dispatch, not completion.
+  virtual absl::Status LaunchWithCompletionEvent(
+      const ThreadDim& thread_dims, const BlockDim& block_dims,
+      const std::optional<ClusterDim>& cluster_dims, Stream* stream,
+      const KernelArgs& args, Event* launch_completion_event) {
+    if (launch_completion_event == nullptr) {
+      return Launch(thread_dims, block_dims, cluster_dims, stream, args);
+    }
+    return absl::UnimplementedError("Not implemented");
+  }
 
   struct PlatformSpecificHandle {
     void* kernel = nullptr;
@@ -242,8 +252,9 @@ class TypedKernel {
                                                 Event* launch_completion_event,
                                                 Args... args) {
     auto kernel_args = PackKernelArgs(*this, args...);
-    return kernel_->Launch(thread_dims, block_dims, std::nullopt, stream,
-                           *kernel_args, launch_completion_event);
+    return kernel_->LaunchWithCompletionEvent(
+        thread_dims, block_dims, std::nullopt, stream, *kernel_args,
+        launch_completion_event);
   }
 
   template <typename... Args>

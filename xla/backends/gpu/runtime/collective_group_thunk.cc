@@ -83,6 +83,10 @@ Thunk::BufferUses CollectiveGroupThunk::buffer_uses() const {
 
 absl::Status CollectiveGroupThunk::ExecuteOnStream(
     const Thunk::ExecuteParams& params) {
+  // Under launch ordering the members launch one by one, each with its event.
+  if (params.launch_ordering != nullptr) {
+    return executor_.ExecuteOnStream(params);
+  }
   GlobalDeviceId global_device_id = params.collective_params->global_device_id;
 
   // Collect all communicators used by non-degenerate collective thunks.

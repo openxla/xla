@@ -70,8 +70,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
     std::optional<absl::Span<const BufferAllocation::Index>>
         persistent_alloc_indices,
     absl::flat_hash_map<LocalityDomainStreamId, se::Stream*>
-        locality_domain_streams,
-    LaunchOrdering* launch_ordering) {
+        locality_domain_streams) {
   const gpu::GpuExecutableRunOptions* gpu_opts =
       run_options.run_options().gpu_executable_run_options();
 
@@ -93,7 +92,6 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
       additional_compute_streams, execution_scoped_state,
       enable_mock_collectives, run_options.run_options().run_id().ToInt(),
       rng_seed, persistent_alloc_indices, std::move(locality_domain_streams));
-  params.launch_ordering = launch_ordering;
   return params;
 }
 

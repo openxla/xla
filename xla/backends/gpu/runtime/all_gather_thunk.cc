@@ -27,7 +27,6 @@ limitations under the License.
 #include "absl/status/status_macros.h"
 #include "absl/strings/str_format.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -48,6 +47,7 @@ limitations under the License.
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
@@ -198,6 +198,8 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
                                            se::Stream& stream,
                                            Communicator& comm) {
   int device_ordinal = stream.parent()->device_ordinal();
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, &stream));
 
   ABSL_ASSIGN_OR_RETURN(
       std::vector<DeviceBufferPair> device_buffers,
@@ -206,8 +208,6 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
   if (use_symmetric_memory() && clique_key.is_local()) {
     XLA_VLOG_DEVICE(3, device_ordinal)
         << "AllGather: using one-sided mode (Put+Signal)";
-    ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
-                          params.TakeLaunchEvent(this, &stream));
     if (launch_event != nullptr) {
       ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
     }
@@ -224,8 +224,6 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
       const std::optional<RankId> rank =
           clique_key.rank(params.collective_params->global_device_id);
 
-      ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
-                            params.TakeLaunchEvent(this, &stream));
       if (launch_event != nullptr) {
         ABSL_RETURN_IF_ERROR(stream.RecordEvent(launch_event));
       }
@@ -235,8 +233,6 @@ absl::Status AllGatherThunk::RunCollective(const ExecuteParams& params,
           device_buffers[0].element_count, rank.value().value());
     }
   }
-  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
-                        params.TakeLaunchEvent(this, &stream));
   return xla::gpu::RunAllGather(device_buffers, stream, comm, launch_event);
 }
 

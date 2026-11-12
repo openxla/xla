@@ -33,6 +33,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/gpu/ragged_all_to_all_device_kernel.h"
 #include "xla/stream_executor/gpu/ragged_all_to_all_kernel.h"

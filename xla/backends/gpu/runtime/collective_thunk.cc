@@ -63,6 +63,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"
 #include "xla/stream_executor/command_buffer.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
@@ -582,20 +583,22 @@ absl::Status LaunchInGroups(
     stream_executor::Event* launch_event,
     absl::FunctionRef<absl::Status(int64_t, stream_executor::Event*)> launch) {
   std::optional<int64_t> alone;  // the call that runs alone, with the event
-  if (launch_event != nullptr && !buffers.empty()) {
-    auto by_size = [](const DeviceBufferPair& a, const DeviceBufferPair& b) {
-      return a.source_buffer.size() < b.source_buffer.size();
-    };
-    alone = absl::c_max_element(buffers, by_size) - buffers.begin();
-  }
   auto others = [&]() -> absl::Status {
     for (int64_t i = 0; i < buffers.size(); ++i) {
-      if (i != alone) ABSL_RETURN_IF_ERROR(launch(i, nullptr));
+      if (i != alone) {
+        ABSL_RETURN_IF_ERROR(launch(i, nullptr));
+      }
     }
     return absl::OkStatus();
   };
   // No event, launch the group directly.
-  if (!alone) return comm.GroupExecute(others).Await();
+  if (launch_event == nullptr || buffers.empty()) {
+    return comm.GroupExecute(others).Await();
+  }
+  auto by_size = [](const DeviceBufferPair& a, const DeviceBufferPair& b) {
+    return a.source_buffer.size() < b.source_buffer.size();
+  };
+  alone = absl::c_max_element(buffers, by_size) - buffers.begin();
   // The other calls go first in their own group, skipped the alone call.
   if (buffers.size() > 1) {
     ABSL_RETURN_IF_ERROR(comm.GroupExecute(others).Await());

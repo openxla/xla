@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"

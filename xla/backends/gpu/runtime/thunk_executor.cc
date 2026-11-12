@@ -122,15 +122,8 @@ absl::Status ThunkExecutor::ExecuteOnStream(
         thunks_.size(), thunk->profile_annotation(), thunk->kind(), loop_nest);
 
     if (LaunchOrdering* ordering = params.launch_ordering) {
-      ABSL_ASSIGN_OR_RETURN(
-          int waits, ordering->WaitForProducers(params.stream,
-                                                thunk->profile_annotation()));
-      if (waits > 0) {
-        tsl::profiler::TraceMe::InstantActivity([&] {
-          return absl::StrFormat("LaunchOrdering: %s waits on %d launch(es)",
-                                 thunk->profile_annotation(), waits);
-        });
-      }
+      ABSL_RETURN_IF_ERROR(ordering->WaitForLaunchEvents(
+          params.stream, thunk->profile_annotation()));
     }
 
     // Execute thunk and launch "work" on the GPU stream.

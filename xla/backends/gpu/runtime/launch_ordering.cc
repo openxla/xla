@@ -21,12 +21,14 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "xla/backends/gpu/runtime/event_pool.h"
 #include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/util.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 
@@ -36,27 +38,33 @@ absl::StatusOr<stream_executor::Event*> LaunchOrdering::TakeLaunchEvent(
                         pool_->GetOrCreateEvent());
   stream_executor::Event* raw = event->get();
   XLA_VLOG_DEVICE(3, stream->parent()->device_ordinal())
-      << producer << " records launch event " << launches_.size() << " on "
+      << producer << " records launch event " << launch_count_ << " on "
       << stream;
-  launches_.push_back({stream, std::move(event)});
+  latest_[stream] = {++launch_count_, std::move(event)};
   return raw;
 }
 
-absl::StatusOr<int> LaunchOrdering::WaitForProducers(
+absl::Status LaunchOrdering::WaitForLaunchEvents(
     stream_executor::Stream* stream, absl::string_view consumer) {
   int waits = 0;
-  for (size_t& cursor = waited_[stream]; cursor < launches_.size(); ++cursor) {
-    if (launches_[cursor].stream == stream) {
+  size_t& waited = waited_[stream];
+  for (auto& [producer, launch] : latest_) {
+    if (producer == stream || launch.number <= waited) {
       continue;
     }
-    ABSL_RETURN_IF_ERROR(stream->WaitFor(launches_[cursor].event->get()));
+    ABSL_RETURN_IF_ERROR(stream->WaitFor(launch.event->get()));
     ++waits;
   }
+  waited = launch_count_;
   if (waits > 0) {
     XLA_VLOG_DEVICE(3, stream->parent()->device_ordinal())
         << consumer << " waits on " << waits << " launch events on " << stream;
+    tsl::profiler::TraceMe::InstantActivity([&] {
+      return absl::StrFormat("LaunchOrdering: %s waits on %d launch(es)",
+                             consumer, waits);
+    });
   }
-  return waits;
+  return absl::OkStatus();
 }
 
 }  // namespace xla::gpu

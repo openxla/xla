@@ -29,7 +29,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/no_destructor.h"
 #include "absl/base/optimization.h"
@@ -42,9 +41,7 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/platform/ml_dtypes.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
+#include "Eigen/Core"
 #include "xla/autotuning.pb.h"
 #include "xla/backends/gpu/runtime/per_device_state.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -58,6 +55,7 @@ limitations under the License.
 #include "xla/stream_executor/data_type.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/gpu_kernel_registry.h"
 #include "xla/stream_executor/gpu/repeat_buffer_kernel.h"
 #include "xla/stream_executor/kernel.h"
@@ -73,6 +71,9 @@ limitations under the License.
 #include "xla/tsl/util/proto/proto_utils.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/ml_dtypes.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
@@ -414,9 +415,9 @@ absl::Status ExecuteKernelOnStream(
                           se::PackKernelArgs(args, kernel.metadata()));
   }
 
-  return kernel.Launch(dims.thread_counts_per_block(), dims.block_counts(),
-                       cluster_dim, stream, *kernel_args,
-                       launch_completion_event);
+  return kernel.LaunchWithCompletionEvent(
+      dims.thread_counts_per_block(), dims.block_counts(), cluster_dim, stream,
+      *kernel_args, launch_completion_event);
 }
 
 // Unimplemented for integers yet.

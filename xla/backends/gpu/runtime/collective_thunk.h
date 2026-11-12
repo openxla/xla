@@ -48,6 +48,7 @@ limitations under the License.
 #include "xla/shape.h"
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"

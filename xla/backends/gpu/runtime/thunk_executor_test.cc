@@ -31,7 +31,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/notification.h"
 #include "absl/types/span.h"
-#include "xla/backends/gpu/runtime/event_pool.h"
 #include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
@@ -87,20 +86,12 @@ TEST(ThunkExecutorTest, LaunchOrderingHoldsOtherStreams) {
       ordering.TakeLaunchEvent(producer_stream.get(), "producer"));
   ASSERT_OK(producer_stream->RecordEvent(event));
 
-  // The consumer waits once on the other stream, nobody waits on itself.
-  ASSERT_OK_AND_ASSIGN(
-      int waits, ordering.WaitForProducers(consumer_stream.get(), "consumer"));
-  EXPECT_EQ(waits, 1);
+  // The consumer stream holds until the producer launches.
+  ASSERT_OK(ordering.WaitForLaunchEvents(consumer_stream.get(), "consumer"));
   std::atomic<bool> consumer_ran = false;
   ASSERT_OK(consumer_stream->DoHostCallback([&] { consumer_ran = true; }));
   EXPECT_EQ(event->PollForStatus(), se::Event::Status::kPending);
   EXPECT_FALSE(consumer_ran);
-  ASSERT_OK_AND_ASSIGN(
-      waits, ordering.WaitForProducers(producer_stream.get(), "producer"));
-  EXPECT_EQ(waits, 0);
-  ASSERT_OK_AND_ASSIGN(
-      waits, ordering.WaitForProducers(consumer_stream.get(), "consumer"));
-  EXPECT_EQ(waits, 0);
 
   release.Notify();
   ASSERT_OK(consumer_stream->BlockHostUntilDone());
