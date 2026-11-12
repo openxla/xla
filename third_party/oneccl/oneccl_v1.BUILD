@@ -43,6 +43,16 @@ cc_import(
     shared_library = "deps/mpi/lib/libmpi.so.12",
     visibility = ["//visibility:public"],
 )
+# oneCCL 2022.2.0 defaults to the OFI transport (CCL_ATL_TRANSPORT=ofi)
+# and no longer falls back on MPI when libfabric cannot be loaded. oneCCL
+# dopen() libfabric.so.1 at runtime. Therefore, use cc_import instead of
+# cc_library for ofi.
+cc_import(
+    name = "ofi",
+    hdrs = glob(["deps/ofi/include/**/*.h"]),
+    shared_library = "deps/ofi/lib/libfabric.so.1",
+    visibility = ["//visibility:public"],
+)
 
 # Separate C library for PMI C files (without -fsycl)
 cc_library(
@@ -96,19 +106,13 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "ofi",
-    hdrs = glob([
-        "deps/ofi/include/**/*.h",
-    ]),
-    includes = [
-        "deps/ofi/include",
-    ],
-)
-
 sycl_library(
     name = "oneccl_v1",
     srcs = glob([
+        "src/proxy/proxy.cpp",
+        "src/proxy/proxy_func.cpp",
+        "src/proxy/proxy_staging.cpp",
+        "src/proxy/host_initiated/cmd_persistent_kernel.cpp",
         "src/atl/*.cpp",
         "src/atl/mpi/*.cpp",
         "src/atl/ofi/*.cpp",
