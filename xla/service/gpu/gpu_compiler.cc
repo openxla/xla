@@ -2973,6 +2973,13 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
   // The module is being moved into the GpuExecutable below and we need to
   // read a few config values from the module, before it becomes invalid.
   bool embed_debug_info = debug_opts.xla_gpu_executable_embed_debug_info();
+  // Without the embedded module, the executable keeps these itself.
+  std::optional<HloModuleConfig> module_config;
+  HloBufferDonorConfig buffer_donor_config;
+  if (!options.embed_hlo_module) {
+    module_config = module->config();
+    buffer_donor_config = module->buffer_donor_config();
+  }
 
   tsl::profiler::ScopedAnnotation annotation([&] {
     return absl::StrFormat("XlaCreateGpuExecutable:#module=%s#",
@@ -3036,7 +3043,9 @@ absl::StatusOr<std::unique_ptr<Executable>> GpuCompiler::RunBackend(
           /*buffer_assignment_proto=*/std::move(buffer_assignment_proto),
           /*buffer_allocations_debug_summary=*/
           std::move(buffer_allocations_debug_summary),
-          /*gpu_topology=*/gpu_topology}));
+          /*gpu_topology=*/gpu_topology,
+          /*module_config=*/std::move(module_config),
+          /*buffer_donor_config=*/std::move(buffer_donor_config)}));
   IncrementCompiledProgramsCount();
 
   if (gpu_executable->has_module() && gpu_executable->module()
