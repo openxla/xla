@@ -32,9 +32,11 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "absl/time/clock.h"
@@ -46,6 +48,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/transforms/simplifiers/hlo_memory_scheduler.h"
@@ -58,6 +61,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test_benchmark.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
@@ -3462,6 +3466,341 @@ INSTANTIATE_TEST_SUITE_P(
     Algorithms, RematWithAliasInfoTest,
     ::testing::Values(HloRematerialization::RematAlgorithm::kAlwaysRemat,
                       HloRematerialization::RematAlgorithm::kPeakPriority));
+
+TEST_F(RecomputeAndCompressHloRematerializationTest,
+       CompactShapeAndSizeMemoizedOnlyForLiveCandidates) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule compact_memoization, is_scheduled=true
+
+%add_f32 (a: f32[], b: f32[]) -> f32[] {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %entry {
+  %p0 = f32[16,128]{1,0} parameter(0)
+  %p1 = f32[17,128]{1,0} parameter(1)
+  %p2 = f32[18,128]{0,1} parameter(2)
+  %p3 = f32[20,128]{1,0} parameter(3)
+  %zero = f32[] constant(0)
+
+  %dead_early = f32[16,128]{1,0} negate(%p0)
+  %dead_early_sum = f32[] reduce(%dead_early, %zero), dimensions={0,1}, to_apply=%add_f32
+
+  %side_effect = f32[17,128]{1,0} custom-call(%p1), custom_call_target="SideEffectOp", custom_call_has_side_effect=true
+
+  %big_dead_in = f32[18,128]{0,1} negate(%p2)
+  %uncompressible_live = f32[18,128]{0,1} add(%big_dead_in, %p2)
+
+  %big_comp_in = f32[20,128]{1,0} negate(%p3)
+  %compressible_live = f32[20,128]{1,0} add(%big_comp_in, %p3)
+
+  %peak0 = f32[32,128]{0,1} custom-call(%dead_early_sum), custom_call_target="Peak0", custom_call_has_side_effect=true
+  %sink0 = f32[] reduce(%peak0, %zero), dimensions={0,1}, to_apply=%add_f32
+  %peak1 = f32[32,128]{0,1} custom-call(%sink0), custom_call_target="Peak1", custom_call_has_side_effect=true
+  %sink1 = f32[] reduce(%peak1, %zero), dimensions={0,1}, to_apply=%add_f32
+  %peak2 = f32[32,128]{0,1} custom-call(%sink1), custom_call_target="Peak2", custom_call_has_side_effect=true
+  %sink2 = f32[] reduce(%peak2, %zero), dimensions={0,1}, to_apply=%add_f32
+
+  %use_se = f32[] reduce(%side_effect, %sink2), dimensions={0,1}, to_apply=%add_f32
+  %use_uncomp = f32[] reduce(%uncompressible_live, %use_se), dimensions={0,1}, to_apply=%add_f32
+  ROOT %use_comp = f32[] reduce(%compressible_live, %use_uncomp), dimensions={0,1}, to_apply=%add_f32
+}
+)hlo";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+
+  // Treat shapes returned by compact_shape_func (marked with
+  // tail_padding_alignment_in_elements == 2) or with minor_to_major={0,1} as
+  // compact (1x byte size), and {1,0} shapes without that marker as 2x size.
+  absl::flat_hash_map<int64_t, int> compact_shape_calls_by_dim0;
+  absl::flat_hash_map<int64_t, int> compact_size_queries_by_dim0;
+  auto shape_size_func = [&](const Shape& shape) -> int64_t {
+    if (!shape.IsArray() || shape.dimensions().size() != 2) {
+      return ByteSizeOf(shape);
+    }
+    if (shape.layout().tail_padding_alignment_in_elements() == 2) {
+      ++compact_size_queries_by_dim0[shape.dimensions(0)];
+      return ShapeUtil::ByteSizeOf(shape, 4);
+    }
+    const bool is_compact = shape.layout().minor_to_major(0) == 0;
+    return (is_compact ? 1 : 2) * ShapeUtil::ByteSizeOf(shape, 4);
+  };
+  auto compact_shape_func = [&](const Shape& shape) -> absl::StatusOr<Shape> {
+    if (shape.IsArray() && shape.dimensions().size() == 2) {
+      ++compact_shape_calls_by_dim0[shape.dimensions(0)];
+      Shape compact = ShapeUtil::MakeShapeWithDenseLayout(
+          shape.element_type(), shape.dimensions(), /*minor_to_major=*/{0, 1});
+      compact.mutable_layout()->set_tail_padding_alignment_in_elements(2);
+      return compact;
+    }
+    return shape;
+  };
+
+  HloCostAnalysis cost_analysis(shape_size_func);
+  HloRematerialization::RematerializationModeConfig mode_config(
+      /*recompute=*/true, /*compress=*/true, /*host_offload=*/false);
+  // At peak0..peak2, live internal buffers are side_effect (17*128*8 = 17408B),
+  // uncompressible_live (18*128*4 = 9216B), compressible_live (20*128*8 =
+  // 20480B), and peak_i (32*128*4 = 16384B), totaling 63488B. Compressing
+  // compressible_live reduces 20480B to 10240B, bringing usage to 53248B, which
+  // is still above 50000B so peaks 1 and 2 continue scanning candidates.
+  HloRematerialization::Options options(
+      cost_analysis, mode_config, /*memory_limit_bytes=*/50000,
+      /*block_size_limit=*/1, /*block_rematerialization_factor=*/1,
+      /*min_remat_size=*/4096, compact_shape_func);
+  HloRematerialization::RematerializationSizes sizes;
+  HloRematerialization remat(options, sizes);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, remat.Run(module.get()));
+  EXPECT_TRUE(changed);
+
+  // Already dead at all peaks: never queried for compact shape.
+  EXPECT_EQ(compact_shape_calls_by_dim0[16], 0);
+  // Side effect op is excluded from the express lane: never queried.
+  EXPECT_EQ(compact_shape_calls_by_dim0[17], 0);
+  // Evaluated across all three peaks, but compact shape and its byte size are
+  // computed once rather than twice per peak.
+  EXPECT_EQ(compact_shape_calls_by_dim0[18], 1);
+  EXPECT_EQ(compact_size_queries_by_dim0[18], 1);
+  // Compressed once without recomputing compact shape for the winning item.
+  EXPECT_EQ(compact_shape_calls_by_dim0[20], 1);
+
+  const HloInstruction* root = module->entry_computation()->root_instruction();
+  EXPECT_THAT(root->operand(0),
+              op::Copy(op::Copy(op::Add(op::Negate(), op::Parameter(3)))));
+}
+
+TEST_F(RecomputeAndCompressHloRematerializationTest,
+       CompressionCandidateRemainsValidAcrossManySubsequentCacheInsertions) {
+  std::string hlo = R"hlo(
+HloModule compact_cache_growth, is_scheduled=true
+
+%add_f32 (a: f32[], b: f32[]) -> f32[] {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %entry {
+  %p_best = f32[64,128]{1,0} parameter(0)
+  %p_later = f32[16,128]{1,0} parameter(1)
+  %zero = f32[] constant(0)
+  %best_in = f32[64,128]{1,0} negate(%p_best)
+  %best_cand = f32[64,128]{1,0} add(%best_in, %p_best)
+)hlo";
+  for (int i = 0; i < 64; ++i) {
+    absl::StrAppend(&hlo, "  %in", i, " = f32[16,128]{1,0} negate(%p_later)\n");
+    absl::StrAppend(&hlo, "  %cand", i, " = f32[16,128]{1,0} add(%in", i,
+                    ", %p_later)\n");
+  }
+  absl::StrAppend(&hlo,
+                  "  %peak = f32[128,128]{0,1} custom-call(%zero), "
+                  "custom_call_target=\"Peak\", "
+                  "custom_call_has_side_effect=true\n"
+                  "  %acc0 = f32[] reduce(%peak, %zero), dimensions={0,1}, "
+                  "to_apply=%add_f32\n"
+                  "  %acc_best = f32[] reduce(%best_cand, %acc0), "
+                  "dimensions={0,1}, to_apply=%add_f32\n");
+  for (int i = 0; i < 64; ++i) {
+    const std::string prev = i == 0 ? "%acc_best" : absl::StrCat("%acc", i);
+    absl::StrAppend(&hlo, "  %red", i, " = f32[] reduce(%cand", i,
+                    ", %zero), dimensions={0,1}, to_apply=%add_f32\n");
+    absl::StrAppend(&hlo, "  %acc", i + 1, " = f32[] add(", prev, ", %red", i,
+                    ")\n");
+  }
+  absl::StrAppend(&hlo, "  ROOT %out = f32[] negate(%acc64)\n}\n");
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo));
+  auto shape_size_func = [](const Shape& shape) -> int64_t {
+    if (!shape.IsArray() || shape.dimensions().size() != 2) {
+      return ByteSizeOf(shape);
+    }
+    const bool is_compact = shape.layout().minor_to_major(0) == 0;
+    return (is_compact ? 1 : 2) * ShapeUtil::ByteSizeOf(shape, 4);
+  };
+  auto compact_shape_func = [](const Shape& shape) -> absl::StatusOr<Shape> {
+    if (shape.IsArray() && shape.dimensions().size() == 2) {
+      return ShapeUtil::MakeShapeWithDenseLayout(
+          shape.element_type(), shape.dimensions(), /*minor_to_major=*/{0, 1});
+    }
+    return shape;
+  };
+
+  HloCostAnalysis cost_analysis(shape_size_func);
+  HloRematerialization::RematerializationModeConfig mode_config(
+      /*recompute=*/true, /*compress=*/true, /*host_offload=*/false);
+  // Set limit so compressing %best_cand alone brings usage under the limit,
+  // after evaluating 64 subsequent candidates that grow compact_shapes_.
+  HloRematerialization::Options options(
+      cost_analysis, mode_config, /*memory_limit_bytes=*/1136 * 1024,
+      /*block_size_limit=*/1, /*block_rematerialization_factor=*/1,
+      /*min_remat_size=*/4096, compact_shape_func);
+  HloRematerialization::RematerializationSizes sizes;
+  HloRematerialization remat(options, sizes);
+
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, remat.Run(module.get()));
+  EXPECT_TRUE(changed);
+  const HloInstruction* acc_best =
+      module->entry_computation()->GetInstructionWithName("acc_best");
+  ASSERT_NE(acc_best, nullptr);
+  EXPECT_THAT(acc_best->operand(0),
+              op::Copy(op::Copy(op::Add(op::Negate(), op::Parameter(0)))));
+}
+
+TEST_F(RecomputeAndCompressHloRematerializationTest,
+       PeakPriorityDeletesDeadUsersAndPreservesDenylistAcrossSubpasses) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule peak_priority_deletion, is_scheduled=true
+
+%add_f32 (a: f32[], b: f32[]) -> f32[] {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %entry {
+  %p = f32[1024]{0} parameter(0)
+  %zero = f32[] constant(0)
+  %a = f32[4096]{0} concatenate(%p, %p, %p, %p), dimensions={0}
+  %a_bc = f32[64,64]{1,0} bitcast(%a)
+  %b = f32[4096]{0} concatenate(%p, %p, %p, %p), dimensions={0}
+  %peak = f32[8192]{0} custom-call(%zero), custom_call_target="Peak", custom_call_has_side_effect=true
+  %sink = f32[] reduce(%peak, %zero), dimensions={0}, to_apply=%add_f32
+  %ra = f32[] reduce(%a_bc, %sink), dimensions={0,1}, to_apply=%add_f32
+  ROOT %rb = f32[] reduce(%b, %ra), dimensions={0}, to_apply=%add_f32
+}
+)hlo";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHlo));
+  HloRematerialization::RematerializationSizes sizes;
+  TF_ASSERT_OK_AND_ASSIGN(
+      bool changed,
+      RunHloRematerialization(
+          /*memory_limit_bytes=*/36 * 1024, module.get(),
+          /*min_remat_size=*/1024,
+          HloRematerialization::RematAlgorithm::kPeakPriority,
+          /*block_size_limit=*/4, /*on_rematerialized=*/nullptr, &sizes));
+  EXPECT_TRUE(changed);
+  EXPECT_LE(sizes.after_bytes, 36 * 1024);
+  TF_EXPECT_OK(verifier().Run(module.get()).status());
+}
+
+std::string MakeCompressionBenchmarkHlo(int num_candidates) {
+  std::string hlo = R"hlo(
+HloModule bench, is_scheduled=true
+
+%add_f32 (a: f32[], b: f32[]) -> f32[] {
+  %a = f32[] parameter(0)
+  %b = f32[] parameter(1)
+  ROOT %add = f32[] add(%a, %b)
+}
+
+ENTRY %entry {
+  %p_padded = f32[128,128]{1,0} parameter(0)
+  %p_compact = f32[128,128]{0,1} parameter(1)
+  %zero = f32[] constant(0)
+  %acc0 = f32[] add(%zero, %zero)
+)hlo";
+
+  std::vector<int> live_indices;
+  int acc_idx = 0;
+  for (int i = 0; i < num_candidates; ++i) {
+    if (i % 3 == 0) {
+      // Side effect op: live across peaks, not rematerializable.
+      absl::StrAppend(&hlo, "  %se", i,
+                      " = f32[128,128]{1,0} custom-call(%p_padded), "
+                      "custom_call_target=\"SideEffect\", "
+                      "custom_call_has_side_effect=true\n");
+      live_indices.push_back(i);
+    } else if (i % 3 == 1) {
+      // Short lived op: already dead before peaks.
+      absl::StrAppend(&hlo, "  %short", i,
+                      " = f32[128,128]{1,0} negate(%p_padded)\n");
+      absl::StrAppend(&hlo, "  %red_short", i, " = f32[] reduce(%short", i,
+                      ", %zero), dimensions={0,1}, to_apply=%add_f32\n");
+      absl::StrAppend(&hlo, "  %acc", acc_idx + 1, " = f32[] add(%acc", acc_idx,
+                      ", %red_short", i, ")\n");
+      ++acc_idx;
+    } else {
+      // Live op with already compact layout: evaluated repeatedly at peaks.
+      absl::StrAppend(&hlo, "  %in", i,
+                      " = f32[128,128]{0,1} negate(%p_compact)\n");
+      absl::StrAppend(&hlo, "  %live", i, " = f32[128,128]{0,1} add(%in", i,
+                      ", %p_compact)\n");
+      live_indices.push_back(i);
+    }
+  }
+
+  const int num_peaks = num_candidates / 4;
+  for (int p = 0; p < num_peaks; ++p) {
+    absl::StrAppend(&hlo, "  %peak", p, " = f32[256,128]{1,0} custom-call(%acc",
+                    acc_idx,
+                    "), custom_call_target=\"Peak\", "
+                    "custom_call_has_side_effect=true\n");
+    absl::StrAppend(&hlo, "  %psink", p, " = f32[] reduce(%peak", p,
+                    ", %zero), dimensions={0,1}, to_apply=%add_f32\n");
+    absl::StrAppend(&hlo, "  %acc", acc_idx + 1, " = f32[] add(%acc", acc_idx,
+                    ", %psink", p, ")\n");
+    ++acc_idx;
+  }
+
+  for (int idx : live_indices) {
+    const absl::string_view prefix = (idx % 3 == 0) ? "%se" : "%live";
+    absl::StrAppend(&hlo, "  %end_red", idx, " = f32[] reduce(", prefix, idx,
+                    ", %zero), dimensions={0,1}, to_apply=%add_f32\n");
+    absl::StrAppend(&hlo, "  %acc", acc_idx + 1, " = f32[] add(%acc", acc_idx,
+                    ", %end_red", idx, ")\n");
+    ++acc_idx;
+  }
+
+  absl::StrAppend(&hlo, "  ROOT %out = f32[] negate(%acc", acc_idx, ")\n}\n");
+  return hlo;
+}
+
+void BM_PickRematerializationCandidates(::benchmark::State& state) {
+  const int num_candidates = state.range(0);
+  const std::string hlo = MakeCompressionBenchmarkHlo(num_candidates);
+  absl::StatusOr<std::unique_ptr<HloModule>> base_module =
+      ParseAndReturnUnverifiedModule(hlo);
+  CHECK_OK(base_module.status());
+
+  auto shape_size_func = [](const Shape& shape) -> int64_t {
+    if (!shape.IsArray() || shape.dimensions().size() != 2) {
+      return ShapeUtil::ByteSizeOf(shape, 8);
+    }
+    const bool is_compact = shape.layout().minor_to_major(0) == 0;
+    return (is_compact ? 1 : 2) * ShapeUtil::ByteSizeOf(shape, 8);
+  };
+  auto compact_shape_func = [](const Shape& shape) -> absl::StatusOr<Shape> {
+    if (shape.IsArray() && shape.dimensions().size() == 2) {
+      return ShapeUtil::MakeShapeWithDenseLayout(
+          shape.element_type(), shape.dimensions(), /*minor_to_major=*/{0, 1});
+    }
+    return shape;
+  };
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    std::unique_ptr<HloModule> module = (*base_module)->Clone();
+    HloCostAnalysis cost_analysis(shape_size_func);
+    HloRematerialization::RematerializationModeConfig mode_config(
+        /*recompute=*/true, /*compress=*/true, /*host_offload=*/false);
+    HloRematerialization::Options options(
+        cost_analysis, mode_config, /*memory_limit_bytes=*/1024,
+        /*block_size_limit=*/1, /*block_rematerialization_factor=*/1,
+        /*min_remat_size=*/4096, compact_shape_func);
+    HloRematerialization::RematerializationSizes sizes;
+    HloRematerialization remat(options, sizes);
+    state.ResumeTiming();
+
+    absl::StatusOr<bool> changed = remat.Run(module.get());
+    CHECK_OK(changed.status());
+    tsl::testing::DoNotOptimize(changed);
+  }
+}
+BENCHMARK(BM_PickRematerializationCandidates)->Arg(256)->Arg(1024);
 
 }  // namespace
 }  // namespace xla
