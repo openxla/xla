@@ -2066,12 +2066,27 @@ absl::StatusOr<ThunkSequence> ThunkEmitter::EmitCopy(
                         GetAllocationSlice(instr->operand(0)));
   ABSL_ASSIGN_OR_RETURN(BufferAllocation::Slice dst_buffer,
                         GetAllocationSlice(instr));
-  return ThunkSequence::Of<DeviceToDeviceCopyThunk>(
-      Thunk::ThunkInfo::WithProfileAnnotation(
-          instr, ir_emitter_context_->GetNextThunkId()),
-      /*source_buffer=*/ShapedSlice{src_buffer, instr->operand(0)->shape()},
-      /*destination_buffer=*/ShapedSlice{dst_buffer, instr->shape()},
-      /*mem_size=*/src_buffer.size());
+  bool source_is_host =
+      src_buffer.allocation()->color() == Layout::kHostMemorySpace;
+  bool destination_is_host =
+      dst_buffer.allocation()->color() == Layout::kHostMemorySpace;
+  if (source_is_host && destination_is_host) {
+    return absl::UnimplementedError("Host-to-host copies are not supported");
+  }
+  Thunk::ThunkInfo info = Thunk::ThunkInfo::WithProfileAnnotation(
+      instr, ir_emitter_context_->GetNextThunkId());
+  ShapedSlice source{src_buffer, instr->operand(0)->shape()};
+  ShapedSlice destination{dst_buffer, instr->shape()};
+  if (destination_is_host) {
+    return ThunkSequence::Of<DeviceToHostCopyThunk>(info, source, destination,
+                                                    src_buffer.size());
+  }
+  if (source_is_host) {
+    return ThunkSequence::Of<HostToDeviceCopyThunk>(info, source, destination,
+                                                    src_buffer.size());
+  }
+  return ThunkSequence::Of<DeviceToDeviceCopyThunk>(info, source, destination,
+                                                    src_buffer.size());
 }
 
 absl::Status ThunkEmitter::AssertNonDeterminismIsOkay(

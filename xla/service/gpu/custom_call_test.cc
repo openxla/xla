@@ -13,9 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -26,6 +23,8 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/const_init.h"
 #include "absl/base/no_destructor.h"
 #include "absl/base/thread_annotations.h"
@@ -65,9 +64,11 @@ limitations under the License.
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/memory_space.h"
 #include "xla/stream_executor/platform.h"
 #include "xla/stream_executor/scratch_allocator.h"
 #include "xla/stream_executor/stream.h"
+#include "xla/stream_executor/stream_executor.h"
 #include "xla/tests/client_library_test_runner_mixin.h"
 #include "xla/tests/hlo_pjrt_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_pjrt_test_base.h"
@@ -998,6 +999,98 @@ TEST_F(CustomCallTest, AsyncCustomCalls) {
 //===----------------------------------------------------------------------===//
 
 using CustomCallHloTest = CustomCallTest;
+
+static absl::Status WritePinnedHostValue(
+    se::Stream* stream, ffi::Result<ffi::BufferR0<S32>> output) {
+  ABSL_ASSIGN_OR_RETURN(
+      se::MemorySpace memory_space,
+      stream->parent()->GetPointerMemorySpace(output->untyped_data()));
+  if (memory_space != se::MemorySpace::kHost) {
+    return absl::InternalError("Expected a pinned-host output buffer");
+  }
+  *output->typed_data() = 42;
+  return absl::OkStatus();
+}
+
+static absl::Status CopyPinnedHostValue(
+    se::Stream* stream, ffi::BufferR0<S32> input,
+    ffi::Result<ffi::BufferR0<S32>> output) {
+  ABSL_ASSIGN_OR_RETURN(
+      se::MemorySpace memory_space,
+      stream->parent()->GetPointerMemorySpace(input.untyped_data()));
+  if (memory_space != se::MemorySpace::kHost) {
+    return absl::InternalError("Expected a pinned-host input buffer");
+  }
+  ABSL_RETURN_IF_ERROR(stream->BlockHostUntilDone());
+  if (*input.typed_data() != 42) {
+    return absl::InternalError("Unexpected pinned-host buffer value");
+  }
+  se::DeviceAddressBase destination = output->device_memory();
+  return stream->Memcpy(&destination, input.typed_data(), sizeof(int32_t));
+}
+
+XLA_FFI_DEFINE_HANDLER(
+    kWritePinnedHostValue, WritePinnedHostValue,
+    ffi::Ffi::Bind().Ctx<ffi::Stream>().Ret<ffi::BufferR0<S32>>());
+
+XLA_FFI_DEFINE_HANDLER(kCopyPinnedHostValue, CopyPinnedHostValue,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::Stream>()
+                           .Arg<ffi::BufferR0<S32>>()
+                           .Ret<ffi::BufferR0<S32>>());
+
+TEST_F(CustomCallHloTest, FfiPinnedHostAllocation) {
+  ffi::Ffi::RegisterStaticHandler(ffi::GetXlaFfiApi(),
+                                  "xla.gpu.write_pinned_host_value",
+                                  PlatformName(), kWritePinnedHostValue);
+  ffi::Ffi::RegisterStaticHandler(ffi::GetXlaFfiApi(),
+                                  "xla.gpu.copy_pinned_host_value",
+                                  PlatformName(), kCopyPinnedHostValue);
+
+  constexpr absl::string_view kHloModule = R"hlo(
+    HloModule m
+
+    ENTRY main {
+      host = s32[] custom-call(),
+        custom_call_target="xla.gpu.write_pinned_host_value",
+        api_version=API_VERSION_TYPED_FFI,
+        frontend_attributes={results_memory_spaces="{0:5}"}
+      ROOT result = s32[] custom-call(host),
+        custom_call_target="xla.gpu.copy_pinned_host_value",
+        api_version=API_VERSION_TYPED_FFI,
+        frontend_attributes={operands_memory_spaces="{0:5}"}
+    }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {}));
+  EXPECT_EQ(result.GetFirstElement<int32_t>(), 42);
+}
+
+TEST_F(CustomCallHloTest, FfiPinnedHostOperandFromDevice) {
+  ffi::Ffi::RegisterStaticHandler(ffi::GetXlaFfiApi(),
+                                  "xla.gpu.copy_device_input_via_host",
+                                  PlatformName(), kCopyPinnedHostValue);
+
+  constexpr absl::string_view kHloModule = R"hlo(
+    HloModule m
+
+    ENTRY main {
+      input = s32[] parameter(0)
+      ROOT result = s32[] custom-call(input),
+        custom_call_target="xla.gpu.copy_device_input_via_host",
+        api_version=API_VERSION_TYPED_FFI,
+        frontend_attributes={operands_memory_spaces="{0:5}"}
+    }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule));
+  Literal input = LiteralUtil::CreateR0<int32_t>(42);
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&input}));
+  EXPECT_EQ(result.GetFirstElement<int32_t>(), 42);
+}
 
 static absl::Status AddOne(se::Stream* stream, ffi::AnyBuffer src,
                            ffi::Result<ffi::AnyBuffer> ret) {

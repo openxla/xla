@@ -75,14 +75,16 @@ absl::StatusOr<MemorySpaceColor> AsMemorySpaceColor(int64_t memory_space) {
       // Layout::kCollectiveMemorySpace (7) was introduced
       return MemorySpaceColor::kCollective;
     case static_cast<int64_t>(MemorySpaceColor::kDefault):
+    case static_cast<int64_t>(MemorySpaceColor::kHost):
     case static_cast<int64_t>(MemorySpaceColor::kCollective):
     case static_cast<int64_t>(MemorySpaceColor::kTempBuffer):
       return static_cast<MemorySpaceColor>(memory_space);
     default:
       return InvalidArgument(
           "Invalid memory space %d. "
-          "Valid values are %d (default), %d (collective), %d (temp).",
-          memory_space, MemorySpaceColor::kDefault,
+          "Valid values are %d (default), %d (host), %d (collective), %d "
+          "(temp).",
+          memory_space, MemorySpaceColor::kDefault, MemorySpaceColor::kHost,
           MemorySpaceColor::kCollective, MemorySpaceColor::kTempBuffer);
   }
 }
@@ -263,6 +265,23 @@ bool RequiresCollectiveOutput(const HloValue& value,
   // Check custom calls and dynamic-slice fusions with memory-space annotations.
   absl::StatusOr<MemorySpaceColor> result_ms = GetResultMemorySpace(value);
   return result_ms.ok() && *result_ms == MemorySpaceColor::kCollective;
+}
+
+bool RequiresHostMemorySpace(const HloValue& value) {
+  if (value.shape().IsTuple()) {
+    return false;
+  }
+  absl::StatusOr<MemorySpaceColor> result_ms = GetResultMemorySpace(value);
+  if (result_ms.ok() && *result_ms == MemorySpaceColor::kHost) {
+    return true;
+  }
+  for (const HloUse& use : value.GetUses()) {
+    absl::StatusOr<MemorySpaceColor> operand_ms = GetOperandMemorySpace(use);
+    if (operand_ms.ok() && *operand_ms == MemorySpaceColor::kHost) {
+      return true;
+    }
+  }
+  return false;
 }
 
 namespace {

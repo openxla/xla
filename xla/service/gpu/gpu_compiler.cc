@@ -2483,8 +2483,8 @@ void GpuCollectiveBufferAnalysis(
     HloModule* module, const HloAliasAnalysis& alias_analysis,
     std::function<void(HloInstruction*, const ShapeIndex&)> add_index_to_copy) {
   const auto& opts = module->config().debug_options();
-  VLOG(2) << "Running unified GPU Custom Buffer Analysis for collective memory "
-             "spaces";
+  VLOG(2) << "Running unified GPU Custom Buffer Analysis for collective and "
+             "pinned-host memory spaces";
 
   for (const HloBuffer& buffer : alias_analysis.buffers()) {
     // Entry inputs or constants contained in this buffer
@@ -2493,6 +2493,7 @@ void GpuCollectiveBufferAnalysis(
     absl::InlinedVector<const HloValue*, 2> live_out_values;
     bool used_by_collective = false;
     bool defined_by_collective = false;
+    bool requires_host_memory = false;
     // Analyze all values sharing this Hlo Buffer
     for (const HloValue* value : buffer.values()) {
       HloInstruction* def = value->defining_instruction();
@@ -2521,6 +2522,8 @@ void GpuCollectiveBufferAnalysis(
       if (RequiresCollectiveOutput(*value, opts)) {
         defined_by_collective = true;
       }
+      requires_host_memory =
+          requires_host_memory || RequiresHostMemorySpace(*value);
     }
 
     if (VLOG_IS_ON(5)) {
@@ -2540,13 +2543,20 @@ void GpuCollectiveBufferAnalysis(
     bool is_hlo_buffer_s1 = used_by_collective || defined_by_collective;
 
     // Special Copy Insertion Case A: Entry input
-    if (is_hlo_buffer_s1 && !entry_input_values.empty()) {
+    if ((is_hlo_buffer_s1 || requires_host_memory) &&
+        !entry_input_values.empty()) {
       for (const HloValue* input_value : entry_input_values) {
+        HloInstruction* input = input_value->defining_instruction();
+        if (!is_hlo_buffer_s1 && input->opcode() == HloOpcode::kParameter &&
+            input_value->shape().has_layout() &&
+            input_value->shape().layout().memory_space() ==
+                static_cast<int64_t>(MemorySpaceColor::kHost)) {
+          continue;
+        }
         VLOG(2) << "Special Copy Insertion Case A: Entry input "
                 << input_value->ToShortString()
-                << " is associated with S1 HloBuffer. Inserting copy.";
-        add_index_to_copy(input_value->defining_instruction(),
-                          input_value->defining_index());
+                << " requires a separate allocation. Inserting copy.";
+        add_index_to_copy(input, input_value->defining_index());
       }
     }
 
@@ -2615,8 +2625,8 @@ absl::Status RunPostSchedulingCopyInsertion(HloModule* module,
   // whether it is legal to remove a copy. However, copies in the graph may be
   // necessary for other reason such as preventing a constant from being live
   // out of the graph. So run AddSpecialCaseCopies to re-insert these copies.
-  // Use GpuCollectiveBufferAnalysis to insert required copies for collective
-  // memory space buffers.
+  // Use GpuCollectiveBufferAnalysis to isolate collective and pinned-host
+  // allocations from externally supplied buffers.
   ABSL_RETURN_IF_ERROR(copy_insertion.CopyInsertion::AddSpecialCaseCopies(
       module, /*execution_threads=*/{},
       /*custom_buffer_analysis=*/

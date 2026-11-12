@@ -15,12 +15,12 @@ limitations under the License.
 
 #include "xla/service/gpu/gpu_memory_space_assignment.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
+#include <cstdint>
 #include <memory>
 #include <string>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/analysis/alias_info.h"
@@ -30,6 +30,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/layout.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/hlo_buffer.h"
 #include "xla/service/hlo_module_config.h"
@@ -487,12 +488,14 @@ TEST(ParseIndexMemorySpacePairsTest, SinglePair) {
 }
 
 TEST(ParseIndexMemorySpacePairsTest, MultiplePairs) {
-  ASSERT_OK_AND_ASSIGN(auto pairs, ParseIndexMemorySpacePairs("{0:7,2:2}"));
-  ASSERT_EQ(pairs.size(), 2);
+  ASSERT_OK_AND_ASSIGN(auto pairs, ParseIndexMemorySpacePairs("{0:7,2:2,3:5}"));
+  ASSERT_EQ(pairs.size(), 3);
   EXPECT_EQ(pairs[0].first, 0);
   EXPECT_EQ(pairs[0].second, MemorySpaceColor::kCollective);
   EXPECT_EQ(pairs[1].first, 2);
   EXPECT_EQ(pairs[1].second, MemorySpaceColor::kTempBuffer);
+  EXPECT_EQ(pairs[2].first, 3);
+  EXPECT_EQ(static_cast<int64_t>(pairs[2].second), Layout::kHostMemorySpace);
 }
 
 TEST(ParseIndexMemorySpacePairsTest, EmptyBraces) {
@@ -539,6 +542,43 @@ static int FindColorByName(const HloAliasAnalysis& alias_analysis,
     }
   }
   return -1;
+}
+
+TEST_F(GpuMemorySpaceAssignmentTest, CustomCallPinnedHostMemorySpace) {
+  constexpr absl::string_view kHloModule = R"hlo(
+    HloModule m
+
+    ENTRY main {
+      p0 = f32[16]{0} parameter(0)
+      p1 = f32[16]{0} parameter(1)
+      ROOT cc = (f32[16]{0}, f32[16]{0}) custom-call(p0, p1),
+        custom_call_target="my_custom_call",
+        frontend_attributes={
+          operands_memory_spaces="{0:5}",
+          results_memory_spaces="{0:5}"
+        }
+    }
+  )hlo";
+
+  HloModuleConfig config = GetModuleConfigForTest();
+  BufferAssigner::Colorer colorer = CreateColorer(config.debug_options());
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHloModule, config));
+  AliasInfo alias_info;
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> alias_analysis,
+                       HloAliasAnalysis::Run(module.get(), &alias_info));
+  DependencyHloOrdering ordering(module.get());
+  ASSERT_OK(colorer(alias_analysis.get(), ordering));
+
+  EXPECT_EQ(FindColorByName(*alias_analysis, "p0"), Layout::kHostMemorySpace);
+  EXPECT_EQ(FindColorByName(*alias_analysis, "p1"),
+            Layout::kDefaultMemorySpace);
+  EXPECT_EQ(FindColorByName(*alias_analysis, "cc"),
+            Layout::kDefaultMemorySpace);
+  EXPECT_EQ(FindColorByName(*alias_analysis, "cc", {0}),
+            Layout::kHostMemorySpace);
+  EXPECT_EQ(FindColorByName(*alias_analysis, "cc", {1}),
+            Layout::kDefaultMemorySpace);
 }
 
 TEST_F(GpuMemorySpaceAssignmentTest, CustomCallOperandMemorySpace) {

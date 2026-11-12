@@ -44,6 +44,9 @@ enum class MemorySpaceColor {
   // This memory can be allocated with any device allocation API.
   kDefault = Layout::kDefaultMemorySpace,
 
+  // Corresponds to stream_executor::MemorySpace::kHost (pinned host memory).
+  kHost = Layout::kHostMemorySpace,
+
   // Corresponds to stream_executor::MemoryTypes::kCollective. This memory
   // should be compatible with symmetric memory requirements.
   kCollective = Layout::kCollectiveMemorySpace,
@@ -76,6 +79,9 @@ bool RequiresCollectiveInput(const HloUse& use, const DebugOptions& option);
 // space.
 bool RequiresCollectiveOutput(const HloValue& value,
                               const DebugOptions& option);
+
+// Returns whether a value's definition or uses request pinned host memory.
+bool RequiresHostMemorySpace(const HloValue& value);
 
 // Creates a buffer colorer that assigns memory space colors to HLO values
 // during buffer assignment. It handles:
