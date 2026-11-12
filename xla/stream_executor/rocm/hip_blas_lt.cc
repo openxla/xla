@@ -104,32 +104,18 @@ using ::xla::complex64;
 // TODO: Switch to a C API for grouped GEMM once hipBLASLt provides one.
 namespace hipblaslt_libstdcxx {
 
+// The type of a call to member function MemberFn as a free function that takes
+// the object pointer as its first argument, which is how the member function is
+// called at the ABI level.
+template <typename MemberFn>
+struct AsFreeFunction;
+template <typename R, typename C, typename... Args>
+struct AsFreeFunction<R (C::*)(Args...)> {
+  using type = R(C*, Args...);
+};
+
 // hipblaslt_ext::GroupedGemm::setProblem(m, n, k, batch_count, lda, ldb, ldc,
 // ldd, strideA, strideB, strideC, strideD, epilogue, inputs, problemtype).
-// The function types are spelled as aliases so the __asm__ labels stay on a
-// short declaration that clang-format can wrap.
-using GroupedGemmSetProblemFn = hipblasStatus_t(
-    hipblaslt_ext::GroupedGemm* self, std::vector<int64_t>& m,
-    std::vector<int64_t>& n, std::vector<int64_t>& k,
-    std::vector<int64_t>& batch_count, std::vector<int64_t>& lda,
-    std::vector<int64_t>& ldb, std::vector<int64_t>& ldc,
-    std::vector<int64_t>& ldd, std::vector<int64_t>& stride_a,
-    std::vector<int64_t>& stride_b, std::vector<int64_t>& stride_c,
-    std::vector<int64_t>& stride_d,
-    std::vector<hipblaslt_ext::GemmEpilogue>& epilogue,
-    std::vector<hipblaslt_ext::GemmInputs>& inputs,
-    hipblaslt_ext::GemmProblemType& problem_type);
-GroupedGemmSetProblemFn GroupedGemmSetProblem __asm__(
-    "_ZN13hipblaslt_ext11GroupedGemm10setProblemERSt6vectorIlSaIlEES4_S4_"
-    "S4_S4_S4_S4_S4_S4_S4_S4_S4_RS1_INS_12GemmEpilogueESaIS5_EERS1_INS_"
-    "10GemmInputsESaIS9_EERNS_15GemmProblemTypeE");
-// The compiler does not check labelled declarations against
-// hipblaslt-ext.hpp, so require the header to declare exactly this setProblem
-// overload: a hipBLASLt API change then fails to compile instead of passing
-// mismatched arguments. GroupedGemmSetProblemMemberFn has the same parameters
-// as GroupedGemmSetProblemFn, as a member function of GroupedGemm; keep the two
-// in sync. The cast selects the overload (setProblem has several) and stays
-// unevaluated, so it does not reference the libc++-mangled symbol.
 using GroupedGemmSetProblemMemberFn =
     hipblasStatus_t (hipblaslt_ext::GroupedGemm::*)(
         std::vector<int64_t>& m, std::vector<int64_t>& n,
@@ -141,6 +127,21 @@ using GroupedGemmSetProblemMemberFn =
         std::vector<hipblaslt_ext::GemmEpilogue>& epilogue,
         std::vector<hipblaslt_ext::GemmInputs>& inputs,
         hipblaslt_ext::GemmProblemType& problem_type);
+// The function types are spelled as aliases so the __asm__ labels stay on a
+// short declaration that clang-format can wrap.
+using GroupedGemmSetProblemFn =
+    AsFreeFunction<GroupedGemmSetProblemMemberFn>::type;
+GroupedGemmSetProblemFn GroupedGemmSetProblem __asm__(
+    "_ZN13hipblaslt_ext11GroupedGemm10setProblemERSt6vectorIlSaIlEES4_S4_"
+    "S4_S4_S4_S4_S4_S4_S4_S4_S4_RS1_INS_12GemmEpilogueESaIS5_EERS1_INS_"
+    "10GemmInputsESaIS9_EERNS_15GemmProblemTypeE");
+// If hipBLASLt changes the signature, the label names a symbol that no longer
+// exists, but that only fails at link time where undefined symbols are errors
+// (it does not in --dynamic_mode=fully builds, which allow undefined symbols
+// in shared objects). Fail at compile time instead: require the header to
+// declare exactly this setProblem overload. The cast selects the overload
+// (setProblem has several) and stays unevaluated, so it does not reference the
+// libc++-mangled symbol.
 static_assert(
     std::is_same_v<decltype(static_cast<GroupedGemmSetProblemMemberFn>(
                        &hipblaslt_ext::GroupedGemm::setProblem)),
