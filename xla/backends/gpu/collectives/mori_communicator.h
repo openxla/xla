@@ -14,6 +14,7 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_COLLECTIVES_MORI_COMMUNICATOR_H_
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -29,6 +30,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
+#include "xla/backends/gpu/collectives/gxl_communicator.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/rank_id.h"
 #include "xla/core/collectives/reduction_kind.h"
@@ -138,7 +140,20 @@ class MoriCommunicator : public GpuCommunicator {
   // or aborted.
   absl::Status PollUntilDone() const;
 
+  // Serves the GXL ragged-all-to-all and all-gather hooks
+  // (--xla_gpu_enable_gxl_ragged_all_to_all) with MORI kernels.
+  GxlCommunicator* gxl_communicator() const final { return gxl_.get(); }
+
  private:
+  class GxlAdapter;
+
+  absl::Status LaunchRaggedAllToAll(
+      se::DeviceAddressBase input, se::DeviceAddressBase output,
+      se::DeviceAddressBase input_offsets, se::DeviceAddressBase send_sizes,
+      se::DeviceAddressBase output_offsets, PrimitiveType dtype,
+      int64_t num_row_elements, int64_t num_total_updates,
+      const Executor& executor);
+
   absl::Status GroupLaunch(absl::FunctionRef<absl::Status()> group);
 
   absl::Status LaunchAllReduce(se::DeviceAddressBase send_buffer,
@@ -208,6 +223,8 @@ class MoriCommunicator : public GpuCommunicator {
 
   // CollectivesFacade instance for this communicator's device
   std::unique_ptr<mori::ccl::CollectivesFacade> facade_;
+  // GxlAdapter holding a back-pointer to this communicator.
+  std::unique_ptr<GxlCommunicator> gxl_;
   // Should all pending collectives cancel?
   std::shared_ptr<CancellationToken> cancel_;
   bool aborted_ = false;  // Has Abort() been called?
