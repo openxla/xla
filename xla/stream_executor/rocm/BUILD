@@ -29,7 +29,7 @@ load(
     "//xla/stream_executor:build_defs.bzl",
     "stream_executor_friends",
 )
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "AMD_GPU_DEFAULT_BACKENDS", "xla_test")
 load(
     "//xla/tsl:tsl.bzl",
     "internal_visibility",
@@ -143,7 +143,7 @@ cc_library(
 xla_test(
     name = "rocm_event_test",
     srcs = ["rocm_event_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = ["rocm-only"],
     deps = [
         ":rocm_event",
@@ -246,7 +246,7 @@ cc_library(
 xla_test(
     name = "rocm_executor_test",
     srcs = ["rocm_executor_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "rocm-only",
@@ -305,7 +305,7 @@ cc_library(
 xla_test(
     name = "rocm_kernel_test",
     srcs = ["rocm_kernel_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "rocm-only",
@@ -366,7 +366,7 @@ cc_library(
 xla_test(
     name = "rocm_platform_test",
     srcs = ["rocm_platform_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "rocm-only",
@@ -837,7 +837,7 @@ cc_library(
 xla_test(
     name = "rocm_blas_lt_test",
     srcs = ["rocm_blas_lt_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = ["rocm-only"],
     deps = [
         ":amdhipblaslt_plugin",  # buildcleaner: keep
@@ -1046,7 +1046,7 @@ cc_library(
 xla_test(
     name = "rocm_diagnostics_test",
     srcs = ["rocm_diagnostics_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = ["rocm-only"],
     deps = [
         ":rocm_diagnostics",
@@ -1103,7 +1103,7 @@ cc_library(
 xla_test(
     name = "rocm_stream_test",
     srcs = ["rocm_stream_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = ["rocm-only"],
     deps = [
         ":rocm_event",
@@ -1158,7 +1158,7 @@ rocm_library(
 xla_test(
     name = "delay_kernel_test",
     srcs = ["delay_kernel_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = ["rocm-only"],
     deps = [
         ":delay_kernel_rocm",  # buildcleaner: keep
@@ -1210,7 +1210,7 @@ cc_library(
 xla_test(
     name = "rocm_timer_test",
     srcs = ["rocm_timer_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = ["rocm-only"],
     deps = [
         ":rocm_executor",
@@ -1492,7 +1492,7 @@ cc_library(
 xla_test(
     name = "cub_scan_kernel_rocm_test",
     srcs = ["cub_scan_kernel_rocm_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     # copybara:uncomment compatible_with = ["//buildenv/target:non_prod"],
     tags = ["rocm-only"],
     deps = [

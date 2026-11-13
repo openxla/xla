@@ -1,7 +1,12 @@
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm_is_configured")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_binary", "xla_cc_test")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "AMD_GPU_DEFAULT_BACKENDS",
+    "GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
     "if_cuda_is_configured",
@@ -854,7 +859,7 @@ cc_library(
 xla_test(
     name = "gpu_profiler_test",
     srcs = ["gpu_profiler_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         ":gpu_profiler",
@@ -1144,7 +1149,7 @@ xla_test(
     name = "autotuner_main_test",
     srcs = ["autotuner_main.cc"],
     args = ["--hlo_files=$(location test.hlo)"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     data = ["test.hlo"],
     fail_if_no_test_linked = False,  # NOLINT=not based on gtest and thus doesn't support --gunit_fail_if_no_test_linked.
     fail_if_no_test_selected = False,  # NOLINT=not based on gtest and thus doesn't support --gunit_fail_if_no_test_selected.
@@ -1204,7 +1209,7 @@ xla_test(
 xla_test(
     name = "miopen_test",
     srcs = ["miopen_test.cc"],
-    backends = ["gpu"],
+    backends = AMD_GPU_DEFAULT_BACKENDS,
     tags = [
         "rocm-only",
     ],
@@ -1239,7 +1244,7 @@ xla_test(
 xla_test(
     name = "factory_test",
     srcs = ["factory_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":factory",
         "//xla:shape_util",

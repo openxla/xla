@@ -12,7 +12,13 @@ load(
 )
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//xla:xla.default.bzl", "xla_cc_test", "xla_internal")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "GPU_DEFAULT_BACKENDS",
+    "INTEL_GPU_DEFAULT_BACKENDS",
+    "NVIDIA_GPU_DEFAULT_BACKENDS",
+    "xla_test",
+)
 load(
     "//xla/tsl:tsl.bzl",
     "if_google",
@@ -219,7 +225,7 @@ xla_cc_test(
 xla_test(
     name = "custom_call_test",
     srcs = ["custom_call_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = [
         # TODO(intel-tf): Remove it when macro substitutions for SYCL are available in xla/stream_executor/sycl/*.
         "no-oneapi",
@@ -939,7 +945,7 @@ tf_proto_library(
 xla_test(
     name = "gpu_executable_test",
     srcs = ["gpu_executable_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":buffer_allocations",
         ":dense_data_intermediate",
@@ -1032,7 +1038,7 @@ xla_test(
 xla_test(
     name = "gpu_executable_locality_domain_test",
     srcs = ["gpu_executable_locality_domain_test.cc"],
-    backends = ["gpu"],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = ["cuda-only"],
     deps = [
         ":buffer_allocations",
@@ -2223,7 +2229,7 @@ xla_test(
         ],
         "gb300": ["broken"],  # TODO(b/505574653): re-enable when fixed.
     },
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 2,
     deps = [
         ":backend_configs_cc",
@@ -2323,7 +2329,7 @@ xla_test(
         "gb200": ["broken"],  # TODO(b/505574653): re-enable when fixed.
         "gb300": ["broken"],  # TODO(b/505574653): re-enable when fixed.
     },
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         ":gpu_compiler",
@@ -2472,7 +2478,7 @@ xla_cc_test(
 xla_test(
     name = "gpu_offloading_test",
     srcs = ["gpu_offloading_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":backend_configs_cc",
         "//xla:autotune_results_proto_cc",
@@ -2504,7 +2510,7 @@ xla_test(
 xla_test(
     name = "auto_sharding_gpu_compiler_test",
     srcs = ["auto_sharding_gpu_compiler_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = ["no_oss"],  # TODO(b/277355322): Make autosharding work in OSS
     use_legacy_runtime = True,
     deps = [
@@ -2738,9 +2744,7 @@ xla_test(
         "gb200": ["broken"],  # TODO(b/505574653): re-enable when fixed.
         "gb300": ["broken"],  # TODO(b/505574653): re-enable when fixed.
     },
-    backends = [
-        "gpu",
-    ],
+    backends = NVIDIA_GPU_DEFAULT_BACKENDS,
     tags = [
         "cuda-only",
         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
@@ -2783,7 +2787,7 @@ xla_test(
     srcs = [
         "gpu_aot_compilation_test.cc",
     ],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = [
         "nomsan",  # Pulls in precompiled NVIDIA libraries which cause false positives in msan.
     ],
@@ -3028,7 +3032,7 @@ xla_test(
     srcs = [
         "gpu_hlo_schedule_test.cc",
     ],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     use_legacy_runtime = True,
     deps = [
         ":alias_info",
@@ -3461,7 +3465,7 @@ xla_test(
 xla_test(
     name = "conv_layout_normalization_test",
     srcs = ["conv_layout_normalization_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/stream_executor:device_description",
@@ -3724,7 +3728,7 @@ xla_cc_test(
 xla_test(
     name = "determinism_test",
     srcs = ["determinism_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:literal",
         "//xla:xla_proto_cc",
@@ -4022,7 +4026,7 @@ cc_library(
 xla_test(
     name = "intel_gpu_compiler_test",
     srcs = ["intel_gpu_compiler_test.cc"],
-    backends = ["gpu"],
+    backends = INTEL_GPU_DEFAULT_BACKENDS,
     tags = [
         "gpu",
         "oneapi-only",

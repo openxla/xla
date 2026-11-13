@@ -14,7 +14,7 @@ load(
 )
 load("//xla/service:xla_compile.bzl", "xla_aot_compile_cpu", "xla_aot_compile_gpu", "xla_aot_compile_gpu_runtime_autotuning")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm_is_configured", "if_gpu_is_configured")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "GPU_DEFAULT_BACKENDS", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "if_libtpu", "internal_visibility", "tsl_copts")
 load("//xla/tsl:tsl.default.bzl", "filegroup", "get_compatible_with_portable")
 load("//xla/tsl/mkl:build_defs.bzl", "if_onednn")
@@ -719,10 +719,7 @@ xla_cc_test(
 xla_test(
     name = "dynamic_update_slice_test",
     srcs = ["dynamic_update_slice_test.cc"],
-    backends = [
-        "cpu",
-        "gpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     deps = [
         "//xla:error_spec",
         "//xla:literal",
@@ -1803,10 +1800,7 @@ cc_library(
 xla_test(
     name = "compiler_test",
     srcs = ["compiler_test.cc"],
-    backends = [
-        "gpu",
-        "cpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     deps = [
         ":compiler",
         "//xla:autotune_results_proto_cc",
@@ -2564,10 +2558,7 @@ xla_test(
     name = "batchnorm_expander_test",
     size = "small",
     srcs = ["batchnorm_expander_test.cc"],
-    backends = [
-        "cpu",
-        "gpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     deps = [
         ":batchnorm_expander",
         "//xla:error_spec",
@@ -3240,7 +3231,7 @@ xla_test(
 xla_test(
     name = "dynamic_padder_ir_test",
     srcs = ["dynamic_padder_ir_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":hlo_module_config",
         "//xla/backends/gpu/tests:gpu_pjrt_codegen_test",
@@ -3483,10 +3474,7 @@ cc_library(
 xla_test(
     name = "hlo_execution_profile_test",
     srcs = ["hlo_execution_profile_test.cc"],
-    backends = [
-        "cpu",
-        "gpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     tags = [
         "no_mac_arm64",
         "nofixdeps",
@@ -4215,10 +4203,7 @@ cc_library(
 xla_test(
     name = "elemental_ir_emitter_test",
     srcs = ["elemental_ir_emitter_test.cc"],
-    backends = [
-        "cpu",
-        "gpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     tags = [
         "no_windows",  # TODO(b/152037541)
     ],

@@ -19,7 +19,7 @@ load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl")
 load("//xla:xla.default.bzl", "xla_cc_test")
 load("//xla/pjrt/gpu:package_groups.bzl", "xla_gpu_internal_packages")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm")
-load("//xla/tests:build_defs.bzl", "xla_test")
+load("//xla/tests:build_defs.bzl", "GPU_DEFAULT_BACKENDS", "xla_test")
 load("//xla/tools:source_hash.bzl", "source_hash")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_libtpu_portable", "get_compatible_with_portable")
@@ -405,7 +405,7 @@ cc_library(
 xla_test(
     name = "pjrt_client_test_gpu",
     srcs = ["pjrt_client_test_gpu.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = [
         "multi_gpu",
         "no_oss",
@@ -428,7 +428,7 @@ xla_test(
     backend_tags = {
         "amdgpu_any": ["flaky"],
     },
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 4,
     tags = ["nofixdeps"],
     use_legacy_runtime = True,
@@ -538,7 +538,7 @@ xla_test(
 xla_test(
     name = "se_gpu_pjrt_client_multi_gpu_test",
     srcs = ["se_gpu_pjrt_client_multi_gpu_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     shard_count = 3,
     tags = [
         "multi_gpu",
@@ -633,7 +633,7 @@ xla_test(
 xla_test(
     name = "se_gpu_pjrt_client_multiprocess_test",
     srcs = ["se_gpu_pjrt_client_multiprocess_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     tags = [
         "multi_gpu",
         "no_oss",
@@ -747,7 +747,7 @@ xla_test(
     srcs = ["se_gpu_pjrt_client_benchmark_test.cc"],
     # The gemma4 execution benchmarks need more memory than a MIG partition has.
     backend_tags = {"h100": ["full"]},
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     data = [
         "//xla/tools:benchmarks/hlo/hlo_gemma4_2b_bf16.hlo",
         "//xla/tools:benchmarks/hlo/nv_maxtext_1n1g_jit_train_step_before_optimization.hlo",
@@ -960,7 +960,7 @@ cc_library(
 xla_test(
     name = "se_gpu_pjrt_compiler_test",
     srcs = ["se_gpu_pjrt_compiler_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_compiler",
@@ -1019,7 +1019,7 @@ xla_test(
 xla_test(
     name = "se_gpu_pjrt_compiler_aot_test",
     srcs = ["se_gpu_pjrt_compiler_aot_test.cc"],
-    backends = ["gpu"],
+    backends = GPU_DEFAULT_BACKENDS,
     deps = [
         ":se_gpu_pjrt_client",
         ":se_gpu_pjrt_compiler",
