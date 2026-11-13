@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/service/gpu/gpu_fusible.h"
 #include "xla/service/gpu/model/fusion_analysis_cache.h"
 #include "xla/service/gpu/model/gpu_hlo_cost_analysis.h"
+#include "xla/service/gpu/model/gpu_performance_model.h"
 #include "xla/service/hlo_cost_analysis.h"
 #include "xla/stream_executor/device_description.h"
 
@@ -118,6 +119,7 @@ class MultiOutputFusion : public HloModulePass {
                         invalidate_caches_callback,
                     FusionInfoCache* fusion_info_cache,
                     HloFusionAnalysisCache* fusion_analysis_cache,
+                    GpuPerformanceModel& gpu_performance_model,
                     GpuHloCostAnalysis* cost_analysis);
 
   absl::StatusOr<bool> DoMultiOutputFusion();

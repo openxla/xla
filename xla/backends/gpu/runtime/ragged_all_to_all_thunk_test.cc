@@ -494,6 +494,7 @@ TEST_F(GpuRaggedAllToAllTest, TestCommandBufferThunkContainsCorrectThunks) {
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   debug_options.set_xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel(
       true);
+  debug_options.set_xla_gpu_experimental_enable_horizontal_fusion(false);
 
   ASSERT_OK_AND_ASSIGN(auto module,
                        ParseAndReturnVerifiedModule(hlo_text, config));

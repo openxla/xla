@@ -737,9 +737,18 @@ TEST(StreamExecutorGpuClientTest,
                        executable->GetExecutable()->GetCompiledMemoryStats());
   EXPECT_EQ(memory_stats.output_size_in_bytes, 1764786624);
   EXPECT_EQ(memory_stats.host_output_size_in_bytes, 0);
-  // Difference in buffer aliasing causes a difference in peak memory usage
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       PlatformUtil::GetPlatform("gpu"));
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor,
+                       platform->ExecutorForDevice(0));
+  const se::GpuComputeCapability& cc =
+      executor->GetDeviceDescription().gpu_compute_capability();
+  // Difference in buffer aliasing and horizontal fusion causes a difference in
+  // peak memory usage.
   if (client->platform_name() == xla::RocmName()) {
     EXPECT_EQ(memory_stats.peak_memory_in_bytes, 1845006788);
+  } else if (cc.IsCuda() && cc.cuda_compute_capability()->IsAtLeastAmpere()) {
+    EXPECT_EQ(memory_stats.peak_memory_in_bytes, 2165871044);
   } else {
     EXPECT_EQ(memory_stats.peak_memory_in_bytes, 2165875144);
   }

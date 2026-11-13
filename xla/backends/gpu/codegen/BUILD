@@ -288,6 +288,7 @@ cc_library(
         "//xla/codegen/emitters:kernel_api_builder",
         "//xla/codegen/emitters:kernel_arguments",
         "//xla/codegen/emitters/ir:xla",
+        "//xla/codegen/xtile:block_level_parameters",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/utils:hlo_traversal",
         "//xla/service:buffer_assignment",

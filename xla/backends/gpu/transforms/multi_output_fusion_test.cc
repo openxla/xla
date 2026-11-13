@@ -2730,5 +2730,91 @@ TEST_F(MultiOutputFusionTest, DoNotMultiOutputFuseNestedScan) {
   EXPECT_FALSE(changed);
 }
 
+TEST_F(MultiOutputFusionTest,
+       CoalescesLaunchBoundSameShapeDisjointReduceSliceSiblings) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule qkv_disjoint_siblings
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT res = f32[] add(lhs, rhs)
+}
+
+fused_k {
+  p0 = f32[3,64,6144]{2,1,0} parameter(0)
+  sl = f32[3,64,1024]{2,1,0} slice(p0), slice={[0:3], [0:64], [4096:5120]}
+  c0 = f32[] constant(0)
+  red = f32[64,1024]{1,0} reduce(sl, c0), dimensions={0}, to_apply=add_f32
+  ROOT out = bf16[64,1024]{1,0} convert(red)
+}
+
+fused_v {
+  p0 = f32[3,64,6144]{2,1,0} parameter(0)
+  sl = f32[3,64,1024]{2,1,0} slice(p0), slice={[0:3], [0:64], [5120:6144]}
+  c0 = f32[] constant(0)
+  red = f32[64,1024]{1,0} reduce(sl, c0), dimensions={0}, to_apply=add_f32
+  ROOT out = bf16[64,1024]{1,0} convert(red)
+}
+
+ENTRY main {
+  p0 = f32[3,64,6144]{2,1,0} parameter(0)
+  k = bf16[64,1024]{1,0} fusion(p0), kind=kLoop, calls=fused_k
+  v = bf16[64,1024]{1,0} fusion(p0), kind=kLoop, calls=fused_v
+  ROOT out = (bf16[64,1024]{1,0}, bf16[64,1024]{1,0}) tuple(k, v)
+})hlo";
+
+  se::DeviceDescription h100_info = TestGpuDeviceInfo::H100SXMDeviceInfo();
+  GpuAliasInfo h100_alias_info(h100_info);
+  MultiOutputFusion h100_mof(h100_info, &h100_alias_info,
+                             HloCostAnalysis::DefaultShapeSize);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(h100_mof.Run(module.get()), IsOkAndHolds(true));
+  EXPECT_EQ(CountMultiOutputFusions(module.get()), 1);
+}
+
+TEST_F(MultiOutputFusionTest, DoesNotCoalesceLargeDisjointReduceSliceSiblings) {
+  constexpr absl::string_view kHloText = R"hlo(
+HloModule large_disjoint_siblings
+
+add_f32 {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT res = f32[] add(lhs, rhs)
+}
+
+fused_k {
+  p0 = f32[64,256,4096]{2,1,0} parameter(0)
+  sl = f32[64,256,2048]{2,1,0} slice(p0), slice={[0:64], [0:256], [0:2048]}
+  c0 = f32[] constant(0)
+  ROOT red = f32[256,2048]{1,0} reduce(sl, c0), dimensions={0}, to_apply=add_f32
+}
+
+fused_v {
+  p0 = f32[64,256,4096]{2,1,0} parameter(0)
+  sl = f32[64,256,2048]{2,1,0} slice(p0), slice={[0:64], [0:256], [2048:4096]}
+  c0 = f32[] constant(0)
+  ROOT red = f32[256,2048]{1,0} reduce(sl, c0), dimensions={0}, to_apply=add_f32
+}
+
+ENTRY main {
+  p0 = f32[64,256,4096]{2,1,0} parameter(0)
+  k = f32[256,2048]{1,0} fusion(p0), kind=kInput, calls=fused_k
+  v = f32[256,2048]{1,0} fusion(p0), kind=kInput, calls=fused_v
+  ROOT out = (f32[256,2048]{1,0}, f32[256,2048]{1,0}) tuple(k, v)
+})hlo";
+
+  se::DeviceDescription h100_info = TestGpuDeviceInfo::H100SXMDeviceInfo();
+  GpuAliasInfo h100_alias_info(h100_info);
+  MultiOutputFusion h100_mof(h100_info, &h100_alias_info,
+                             HloCostAnalysis::DefaultShapeSize);
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  EXPECT_THAT(h100_mof.Run(module.get()), IsOkAndHolds(false));
+}
+
 }  // namespace gpu
 }  // namespace xla
