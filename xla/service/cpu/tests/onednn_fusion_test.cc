@@ -32,6 +32,7 @@ limitations under the License.
 #include "xla/tests/hlo_interpreter_reference_mixin.h"
 #include "xla/tests/hlo_test_base.h"
 #include "xla/tsl/platform/test.h"
+#include "xla/xla.pb.h"
 #include "tsl/platform/cpu_info.h"
 
 namespace xla::cpu {

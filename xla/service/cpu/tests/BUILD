@@ -597,6 +597,7 @@ onednn_graph_cc_test(
         "//xla:literal",
         "//xla:literal_util",
         "//xla:shape_util",
+        "//xla:xla_proto_cc",
         "//xla/backends/cpu:onednn_support",
         "//xla/hlo/ir:hlo",
         "//xla/service:cpu_plugin",
