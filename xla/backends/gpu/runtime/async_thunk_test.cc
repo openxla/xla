@@ -38,6 +38,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
 #include "xla/backends/gpu/runtime/memset_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
+#include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/backends/gpu/runtime/thunk_executor.h"
 #include "xla/backends/gpu/runtime/thunk_id.h"
 #include "xla/debug_options_flags.h"
@@ -60,6 +61,7 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/stream_executor/stream_executor_address_allocator.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
 namespace {
