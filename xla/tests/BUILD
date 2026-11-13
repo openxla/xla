@@ -3586,6 +3586,7 @@ xla_test(
         ":client_library_test_runner_mixin",
         ":hlo_pjrt_interpreter_reference_mixin",
         ":hlo_pjrt_test_base",
+        ":xla_test_backend_predicates",
         "//xla:error_spec",
         "//xla:literal",
         "//xla:literal_util",
