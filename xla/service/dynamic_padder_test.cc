@@ -874,6 +874,46 @@ ENTRY main {
   EXPECT_EQ(offset->parameter_number(), 2);
 }
 
+TEST_F(DynamicPadderTest, ZeroSizedDynamicBinaryOpNotRewritten) {
+  // Regression test for https://github.com/openxla/xla/issues/49925.
+  //
+  // Both operands of an elementwise binary op have a dynamic dimension whose
+  // static bound is zero, so RewriteDynamicBinaryOp must skip the implicit
+  // broadcast rewrite and leave the compare untouched.
+  const std::string hlo_text = R"(
+HloModule module
+
+ENTRY entry {
+  a = f32[0, 2] parameter(0)
+  b = f32[0, 2] parameter(1)
+  size_0 = s32[] parameter(2)
+  size_1 = s32[] parameter(3)
+  a_dynamic = f32[<=0, 2] set-dimension-size(a, size_0), dimensions={0}
+  b_dynamic = f32[<=0, 2] set-dimension-size(b, size_1), dimensions={0}
+  ROOT cmp = pred[<=0, 2] compare(a_dynamic, b_dynamic), direction=EQ
+}
+)";
+  module_ = GetHloModule(hlo_text);
+
+  DynamicPadderOptions options;
+  options.slice_dynamic_output = false;
+  DynamicPadder padder(options);
+  ASSERT_OK_AND_ASSIGN(bool changed, padder.Run(module_.get()));
+  // DynamicDimensionInference and ReplaceSetSize strip the set-dimension-size
+  // ops and clear the dynamic dimensions, so the pass still reports changed.
+  EXPECT_TRUE(changed);
+  ASSERT_OK(verifier().Run(module_.get()).status());
+
+  EXPECT_THAT(module_->entry_computation()->root_instruction(),
+              op::Compare(op::Parameter(0), op::Parameter(1)));
+  for (const HloInstruction* inst :
+       module_->entry_computation()->instructions()) {
+    EXPECT_NE(inst->opcode(), HloOpcode::kSlice);
+    EXPECT_NE(inst->opcode(), HloOpcode::kSelect);
+    EXPECT_NE(inst->opcode(), HloOpcode::kReshape);
+  }
+}
+
 // Test that dynamic padder has the same result as if not padded.
 class ExecutionTest : public HloTestBase {
  protected:
