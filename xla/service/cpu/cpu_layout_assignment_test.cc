@@ -664,5 +664,32 @@ ENTRY main {
             LayoutUtil::MakeLayout({0, 2, 1}));
   EXPECT_EQ(ag->operand(1)->shape().layout(), LayoutUtil::MakeLayout({0, 1}));
 }
+
+// The FFT thunk requires dim0-major operand and result layouts. A
+// column-major user must not pull its layout into the FFT.
+TEST_F(CpuLayoutAssignmentTest, FftLayoutMustBeRowMajor) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule FftLayoutMustBeRowMajor
+
+ENTRY main {
+  a = f32[2,2]{1,0} constant({{2, 1}, {0, 3}})
+  one = f32[] constant(1)
+  bcast = f32[2,2]{1,0} broadcast(one), dimensions={}
+  fft = c64[2,2]{1,0} fft(bcast), fft_type=RFFT, fft_length={2}
+  real = f32[2,2]{1,0} real(fft)
+  ROOT solve = f32[2,2]{0,1} custom-call(a, real),
+      custom_call_target="lapack_strsm_ffi",
+      operand_layout_constraints={f32[2,2]{0,1}, f32[2,2]{0,1}},
+      output_to_operand_aliasing={{}: (1, {})}
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  AssignLayouts(module.get());
+
+  const HloInstruction* fft = FindInstruction(module.get(), "fft");
+  EXPECT_EQ(fft->shape().layout(), LayoutUtil::MakeLayout({1, 0}));
+  EXPECT_EQ(fft->operand(0)->shape().layout(), LayoutUtil::MakeLayout({1, 0}));
+}
 }  // namespace
 }  // namespace xla
