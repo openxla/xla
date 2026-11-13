@@ -88,7 +88,7 @@ void GroupGemmUpdateArgs(
     uint32_t strideA2, uint32_t strideB1, uint32_t strideB2, uint32_t strideC1,
     uint32_t strideC2, uint32_t strideD1, uint32_t strideD2,
     gpu::RaggedDotMode ragged_mode, uint32_t num_gemms, int32_t activation_type,
-    int8_t bias_type, bool has_matrix_bias);
+    int32_t bias_type, bool has_matrix_bias);
 namespace {
 
 // Upper bound for the heuristic query only, never allocated. Generous on
