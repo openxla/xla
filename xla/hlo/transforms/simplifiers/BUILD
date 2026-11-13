@@ -1398,6 +1398,47 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "conditional_residual_elision",
+    srcs = ["conditional_residual_elision.cc"],
+    hdrs = ["conditional_residual_elision.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/pass:hlo_pass",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "conditional_residual_elision_test",
+    srcs = ["conditional_residual_elision_test.cc"],
+    deps = [
+        ":conditional_residual_elision",
+        ":hlo_dce",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla/hlo/evaluator:hlo_evaluator",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/tests:literal_test_util",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "zero_sized_hlo_elimination",
     srcs = ["zero_sized_hlo_elimination.cc"],
     hdrs = ["zero_sized_hlo_elimination.h"],
