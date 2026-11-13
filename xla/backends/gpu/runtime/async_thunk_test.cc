@@ -394,6 +394,33 @@ TEST(AsyncThunkTest, LocalityDomainStreamSelection) {
   EXPECT_EQ(executed_stream, locality_stream.get());
 }
 
+TEST(AsyncThunkTest, LocalityDomainPrepareRejectsCommunicationThunks) {
+  ASSERT_OK_AND_ASSIGN(auto executor, CreateExecutor());
+  se::StreamExecutorAddressAllocator allocator(executor);
+  BufferAllocations allocations({}, 0, &allocator);
+  CommandBufferRequests command_buffer_requests;
+  Thunk::PrepareParams params(executor, &allocations, &command_buffer_requests);
+
+  se::Stream* executed_stream = nullptr;
+  AsyncStartThunk compute_only(
+      Thunk::ThunkInfo(), LocalityDomainStreamId(0),
+      ThunkSequence::Of<RecordingThunk>(&executed_stream),
+      /*devices_per_host=*/1);
+  ASSERT_OK(compute_only.Prepare(params));
+
+  ThunkSequence nested;
+  nested.push_back(std::make_unique<AsyncStartThunk>(
+      Thunk::ThunkInfo(), CommunicationStreamId(0), ThunkSequence{},
+      /*devices_per_host=*/1));
+  AsyncStartThunk with_communication(Thunk::ThunkInfo(),
+                                     LocalityDomainStreamId(0),
+                                     std::move(nested), /*devices_per_host=*/1);
+  absl::Status status = with_communication.Prepare(params);
+  EXPECT_EQ(status.code(), absl::StatusCode::kInvalidArgument);
+  EXPECT_THAT(status.message(),
+              ::testing::HasSubstr("unsupported communication thunk"));
+}
+
 TEST(AsyncThunkTest,
      LocalityDomainsExecuteIndependentDefaultMemoryReadsAndSynchronize) {
   ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, CreateExecutor());
