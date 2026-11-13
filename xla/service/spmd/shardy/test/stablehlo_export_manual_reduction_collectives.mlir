@@ -414,6 +414,40 @@ func.func @replicated_to_unreduced(%arg0: tensor<16x16xf32> {sdy.sharding = #sdy
   return %0 : tensor<16x16xf32>
 }
 
+// CHECK-LABEL: func @replicated_to_unreduced_max
+func.func @replicated_to_unreduced_max(%arg0: tensor<16x16xf32> {sdy.sharding = #sdy.sharding<@mesh, [{}, {}], unreduced=max{"y"}>}) -> tensor<16x16xf32> {
+  // CHECK-NEXT: %[[MANUAL_COMP:.*]] = sdy.manual_computation(%arg0)
+  // CHECK-SAME:     in_shardings=[<@mesh, [{}, {}], unreduced=max{"y"}>]
+  // CHECK-SAME:     out_shardings=[<@mesh, [{}, {}], unreduced=max{"x", "y", "z"}>]
+  // CHECK-SAME:     manual_axes={"x", "y", "z"} (%arg1: tensor<16x16xf32>) {
+  // CHECK:        %[[PRED:.*]] = stablehlo.and
+  // CHECK-NEXT:   %[[NEG_INF:.*]] = stablehlo.constant dense<0xFF800000> : tensor<f32>
+  // CHECK-NEXT:   %[[NEG_INF_BCAST:.*]] = stablehlo.broadcast %[[NEG_INF]], sizes = [16, 16] : (tensor<f32>) -> tensor<16x16xf32>
+  // CHECK-NEXT:   %[[SELECT:.*]] = stablehlo.select %[[PRED]], %arg1, %[[NEG_INF_BCAST]] : tensor<i1>, tensor<16x16xf32>
+  // CHECK-NEXT:   sdy.return %[[SELECT]] : tensor<16x16xf32>
+  // CHECK-NEXT: } : (tensor<16x16xf32>) -> tensor<16x16xf32>
+  // CHECK-NEXT: return %[[MANUAL_COMP]] : tensor<16x16xf32>
+  %0 = sdy.replicated_to_unreduced {"x", "z"} %arg0 out_sharding=<@mesh, [{}, {}], unreduced=max{"x", "y", "z"}> : tensor<16x16xf32>
+  return %0 : tensor<16x16xf32>
+}
+
+// CHECK-LABEL: func @replicated_to_unreduced_min_i32
+func.func @replicated_to_unreduced_min_i32(%arg0: tensor<16x16xi32> {sdy.sharding = #sdy.sharding<@mesh, [{}, {}]>}) -> tensor<16x16xi32> {
+  // CHECK-NEXT: %[[MANUAL_COMP:.*]] = sdy.manual_computation(%arg0)
+  // CHECK-SAME:     in_shardings=[<@mesh, [{}, {}]>]
+  // CHECK-SAME:     out_shardings=[<@mesh, [{}, {}], unreduced=min{"x"}>]
+  // CHECK-SAME:     manual_axes={"x", "y", "z"} (%arg1: tensor<16x16xi32>) {
+  // CHECK:        %[[CMP:.*]] = stablehlo.compare EQ
+  // CHECK-NEXT:   %[[MAX_INT:.*]] = stablehlo.constant dense<2147483647> : tensor<i32>
+  // CHECK-NEXT:   %[[MAX_INT_BCAST:.*]] = stablehlo.broadcast %[[MAX_INT]], sizes = [16, 16] : (tensor<i32>) -> tensor<16x16xi32>
+  // CHECK-NEXT:   %[[SELECT:.*]] = stablehlo.select %[[CMP]], %arg1, %[[MAX_INT_BCAST]] : tensor<i1>, tensor<16x16xi32>
+  // CHECK-NEXT:   sdy.return %[[SELECT]] : tensor<16x16xi32>
+  // CHECK-NEXT: } : (tensor<16x16xi32>) -> tensor<16x16xi32>
+  // CHECK-NEXT: return %[[MANUAL_COMP]] : tensor<16x16xi32>
+  %0 = sdy.replicated_to_unreduced {"x"} %arg0 out_sharding=<@mesh, [{}, {}], unreduced=min{"x"}> : tensor<16x16xi32>
+  return %0 : tensor<16x16xi32>
+}
+
 // -----
 
 sdy.mesh @mesh = <["x"=2, "y"=2]>
