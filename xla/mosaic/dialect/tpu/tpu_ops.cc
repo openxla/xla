@@ -136,8 +136,8 @@ LogicalResult verifyPackOp(OpTy op) {
 LogicalResult BitcastOp::verify() {
   auto in_ty = getInput().getType();
   auto out_ty = getOutput().getType();
-  auto in_bitwidth = getElementTypeBitwidth(in_ty);
-  auto out_bitwidth = getElementTypeBitwidth(out_ty);
+  const unsigned in_bitwidth = getVectorRegisterBitwidth(in_ty);
+  const unsigned out_bitwidth = getVectorRegisterBitwidth(out_ty);
   if (in_bitwidth != out_bitwidth) {
     if (in_ty.getRank() < 2 || out_ty.getRank() < 2) {
       return emitError(
