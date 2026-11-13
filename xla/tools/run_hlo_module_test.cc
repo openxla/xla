@@ -169,5 +169,31 @@ TEST(RunHloModule, NonDeterminismWithoutSeed) {
   EXPECT_NE(result1_or.value(), result2_or.value());
 }
 
+TEST(RunHloModule, NoRandomInitProducesZeroArguments) {
+  const char* const hlo_string = R"hlo(
+    HloModule NoRandomInitModule
+    ENTRY main {
+      ROOT p = f32[64] parameter(0)
+    }
+  )hlo";
+
+  auto client_or = GetPjRtClientForPlatform("interpreter");
+  ASSERT_TRUE(client_or.ok());
+  HloRunner runner(std::move(client_or).value());
+
+  RunHloModuleOptions options;
+  options.random_init_input_literals = false;
+  options.run_test_hlo_passes = false;
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  RunHloModuleIterationLiterals iteration_literals;
+  ASSERT_OK(RunAndCompare(std::move(module), nullptr, &runner, nullptr,
+                          /*engine=*/nullptr, options, &iteration_literals));
+  ASSERT_EQ(iteration_literals.arguments_size(), 1);
+  ASSERT_OK_AND_ASSIGN(Literal argument, Literal::CreateFromProto(
+                                             iteration_literals.arguments(0)));
+  EXPECT_TRUE(argument.IsAll(0));
+}
+
 }  // namespace
 }  // namespace xla
