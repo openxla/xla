@@ -1453,16 +1453,21 @@ absl::Status ShapeVerifier::HandleGetTupleElement(
 
 namespace {
 absl::Status SameElementTypesForOperandsAndToApplyParameters(
-    const HloInstruction& instruction, int64_t num_operands_to_check) {
+    const HloInstruction& instruction) {
   const ProgramShape& to_apply = instruction.to_apply()->ComputeProgramShape();
-  for (int i = 0; i < num_operands_to_check; ++i) {
-    const Shape& parameter_shape = to_apply.parameters(i);
-    const Shape& operand_shape = instruction.operands()[i]->shape();
+  const auto* scatter = DynCast<HloScatterInstruction>(&instruction);
+  int64_t param_idx = 0;
+  for (int64_t op_idx = 0; op_idx < instruction.operand_count(); ++op_idx) {
+    if (scatter != nullptr && op_idx == scatter->scatter_operand_count()) {
+      continue;  // scatter_indices has no corresponding to_apply parameter.
+    }
+    const Shape& parameter_shape = to_apply.parameters(param_idx++);
+    const Shape& operand_shape = instruction.operand(op_idx)->shape();
     if (!ShapeUtil::SameElementType(parameter_shape, operand_shape)) {
       return InvalidArgument(
           "Shape mismatch between to_apply computation"
           " parameter and operand %d in %s.",
-          i, instruction.ToString().c_str());
+          op_idx, instruction.ToString());
     }
   }
   return absl::OkStatus();
@@ -1487,8 +1492,7 @@ absl::Status ShapeVerifier::HandleReduce(HloInstruction* reduce) {
 
   return opts_.allow_mixed_precision
              ? absl::OkStatus()
-             : SameElementTypesForOperandsAndToApplyParameters(
-                   *reduce, reduce->operand_count());
+             : SameElementTypesForOperandsAndToApplyParameters(*reduce);
 }
 
 namespace {
@@ -2032,8 +2036,7 @@ absl::Status ShapeVerifier::HandleMap(HloInstruction* map) {
 
   return opts_.allow_mixed_precision
              ? absl::OkStatus()
-             : SameElementTypesForOperandsAndToApplyParameters(
-                   *map, map->operand_count());
+             : SameElementTypesForOperandsAndToApplyParameters(*map);
 }
 
 absl::Status ShapeVerifier::HandleReduceWindow(HloInstruction* reduce_window) {
@@ -2047,8 +2050,7 @@ absl::Status ShapeVerifier::HandleReduceWindow(HloInstruction* reduce_window) {
 
   return opts_.allow_mixed_precision
              ? absl::OkStatus()
-             : SameElementTypesForOperandsAndToApplyParameters(
-                   *reduce_window, reduce_window->operand_count());
+             : SameElementTypesForOperandsAndToApplyParameters(*reduce_window);
 }
 
 absl::Status ShapeVerifier::HandleSelectAndScatter(
@@ -2703,8 +2705,10 @@ absl::Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
     case HloOpcode::kParameter:
     case HloOpcode::kRecv:
     case HloOpcode::kRecvDone:
+    case HloOpcode::kReduce:
     case HloOpcode::kReducePrecision:
     case HloOpcode::kReduceWindow:
+    case HloOpcode::kScatter:
     case HloOpcode::kSend:
     case HloOpcode::kSendDone:
     case HloOpcode::kSort:
@@ -2753,10 +2757,13 @@ absl::Status ShapeVerifier::HandleScatter(HloInstruction* scatter) {
   for (const HloInstruction* operand : scatter->operands()) {
     arg_shapes.push_back(&operand->shape());
   }
-  return CheckShape(scatter,
-                    ShapeInference::InferScatterShape(
-                        arg_shapes, scatter->to_apply()->ComputeProgramShape(),
-                        scatter->scatter_dimension_numbers()));
+  ABSL_RETURN_IF_ERROR(CheckShape(
+      scatter, ShapeInference::InferScatterShape(
+                   arg_shapes, scatter->to_apply()->ComputeProgramShape(),
+                   scatter->scatter_dimension_numbers())));
+  return opts_.allow_mixed_precision
+             ? absl::OkStatus()
+             : SameElementTypesForOperandsAndToApplyParameters(*scatter);
 }
 
 absl::Status ShapeVerifier::HandleAfterAll(HloInstruction* token) {
