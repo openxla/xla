@@ -17,7 +17,14 @@ load("@bazel_skylib//rules:build_test.bzl", "build_test")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load("//xla:xla.default.bzl", "xla_cc_binary")
-load("//xla/tests:build_defs.bzl", "xla_py_test", "xla_test")
+load(
+    "//xla/tests:build_defs.bzl",
+    "GPU_BACKENDS",
+    "GPU_DEFAULT_BACKENDS",
+    "NVIDIA_GPU_BACKENDS",
+    "xla_py_test",
+    "xla_test",
+)
 load("//xla/tsl:tsl.bzl", "if_cuda_or_rocm", "if_google")
 load("//xla/tsl:tsl.default.bzl", "tsl_pybind_extension")
 load("//xla/tsl/platform:build_config_root.bzl", "tf_exec_properties", "tf_gpu_tests_tags")
@@ -269,15 +276,14 @@ filegroup(
 xla_test(
     name = "functional_hlo_runner_test",
     srcs = ["functional_hlo_runner_test.cc"],
-    backend_tags = {
+    backend_tags = {gpu: [
+        "multi_gpu",
+        "nomsan",
+    ] for gpu in GPU_BACKENDS} | {
         "h100": [
             "full",
             "multi_gpu",
             "no_oss",
-            "nomsan",
-        ],
-        "gpu": [
-            "multi_gpu",
             "nomsan",
         ],
         "nvgpu_any": [
@@ -285,10 +291,7 @@ xla_test(
             "no_oss",
         ],
     },
-    backends = [
-        "cpu",
-        "gpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     data = [":hlo_files"],
     shard_count = 4,
     tags = ["no_mac"],
@@ -385,17 +388,13 @@ xla_test(
     name = "multipass_functional_hlo_runner_test",
     srcs = ["multipass_functional_hlo_runner_test.cc"],
     backend_args = if_google(
-        {
-            "gpu": ["--heap_check="],
-            "a100": ["--heap_check="],
-        },
+        {gpu: ["--heap_check="] for gpu in NVIDIA_GPU_BACKENDS},
         {},
     ),
-    backend_tags = {
-        "gpu": [
-            "nomsan",
-            "requires-gpu-sm80-only",
-        ],
+    backend_tags = {gpu: [
+        "nomsan",
+        "requires-gpu-sm80-only",
+    ] for gpu in NVIDIA_GPU_BACKENDS} | {
         "nvgpu_any": [
             "broken",
             "no_oss",
@@ -405,10 +404,7 @@ xla_test(
             "no_oss",
         ],
     },
-    backends = [
-        "cpu",
-        "gpu",
-    ],
+    backends = ["cpu"] + GPU_DEFAULT_BACKENDS,
     data = [":hlo_files"],
     tags = [
         "no_mac",
