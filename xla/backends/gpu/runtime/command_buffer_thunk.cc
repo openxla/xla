@@ -18,7 +18,6 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,9 +33,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "tsl/profiler/lib/profiler_lock.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
 #include "xla/backends/gpu/runtime/collective_memory.h"
@@ -56,6 +52,9 @@ limitations under the License.
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
+#include "tsl/profiler/lib/profiler_lock.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 namespace xla::gpu {
 
@@ -88,6 +87,32 @@ bool CommandBufferThunk::ExecutorCommandBuffer::HasDynamicAllocations(
     absl::Span<const BufferAllocation::Index> persistent_alloc_indices) {
   DCHECK(absl::c_is_sorted(persistent_alloc_indices));
   return !absl::c_includes(persistent_alloc_indices, commands.allocs_indices());
+}
+
+std::vector<BufferAllocation::Index>
+CommandBufferThunk::ExecutorCommandBuffer::ChangedAllocations(
+    absl::Span<const BufferAllocation::Index> alloc_indices,
+    const BufferAllocations& allocs,
+    absl::Span<const BufferAllocation::Index> persistent_alloc_indices) const {
+  DCHECK(absl::c_is_sorted(alloc_indices));
+  DCHECK(absl::c_is_sorted(persistent_alloc_indices));
+  std::vector<BufferAllocation::Index> changed_allocs;
+  for (BufferAllocation::Index index : alloc_indices) {
+    if (AllocationChanged(index, allocs, persistent_alloc_indices)) {
+      changed_allocs.push_back(index);
+    }
+  }
+  return changed_allocs;
+}
+
+bool CommandBufferThunk::ExecutorCommandBuffer::AllocationChanged(
+    BufferAllocation::Index index, const BufferAllocations& allocs,
+    absl::Span<const BufferAllocation::Index> persistent_alloc_indices) const {
+  if (absl::c_binary_search(persistent_alloc_indices, index)) {
+    return false;
+  }
+  return recorded_allocs.size() <= index ||
+         !recorded_allocs[index].IsSameAs(allocs.GetDeviceAddress(index));
 }
 
 bool CommandBufferThunk::ShouldRecordTelemetry(
@@ -147,27 +172,17 @@ std::vector<BufferAllocation::Index>
 CommandBufferThunk::ExecutorCommandBuffer::UpdateBufferAllocations(
     const CommandExecutor& commands, const Thunk::ExecuteParams& params,
     absl::Span<const BufferAllocation::Index> persistent_alloc_indices) {
-  std::vector<BufferAllocation::Index> updated_allocs;
   const BufferAllocations* allocs = params.buffer_allocations;
-  std::vector<BufferAllocation::Index> dynamic_alloc_indices;
-
-  absl::c_set_difference(commands.allocs_indices(), persistent_alloc_indices,
-                         std::back_inserter(dynamic_alloc_indices));
+  std::vector<BufferAllocation::Index> updated_allocs = ChangedAllocations(
+      commands.allocs_indices(), *allocs, persistent_alloc_indices);
 
   // We check only allocations referenced by commands in a cmd sequence, and
   // leave every other entry default initialized (nullptr device memory).
-  for (BufferAllocation::Index index : dynamic_alloc_indices) {
-    se::DeviceAddressBase alloc = allocs->GetDeviceAddress(index);
-
+  for (BufferAllocation::Index index : updated_allocs) {
     if (recorded_allocs.size() <= index) {
       recorded_allocs.resize(index + 1);
-      updated_allocs.push_back(index);
     }
-
-    if (!recorded_allocs[index].IsSameAs(alloc)) {
-      recorded_allocs[index] = alloc;
-      updated_allocs.push_back(index);
-    }
+    recorded_allocs[index] = allocs->GetDeviceAddress(index);
   }
 
   return updated_allocs;
