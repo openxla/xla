@@ -5689,8 +5689,12 @@ std::string PrecisionToString(const PrecisionConfig::Precision& precision) {
 
 std::string ShuffleModeToString(ShuffleMode::ModeCase shuffle_mode) {
   switch (shuffle_mode) {
+    case ShuffleMode::kPermute:
+      return "permute";
     case ShuffleMode::kRotate:
       return "rotate";
+    case ShuffleMode::kMultiRotate:
+      return "multi_rotate";
     case ShuffleMode::MODE_NOT_SET:
       return "invalid";
   }
@@ -5970,8 +5974,14 @@ absl::StatusOr<PrecisionConfig::Precision> StringToPrecision(
 
 absl::StatusOr<ShuffleMode::ModeCase> StringToShuffleMode(
     absl::string_view mode) {
+  if (mode == "permute") {
+    return ShuffleMode::ModeCase::kPermute;
+  }
   if (mode == "rotate") {
     return ShuffleMode::ModeCase::kRotate;
+  }
+  if (mode == "multi_rotate") {
+    return ShuffleMode::ModeCase::kMultiRotate;
   }
   return InvalidArgument("Unknown shuffle mode: %s", mode);
   // return StringToEnum<ShuffleMode::ModeCase>(mode, ShuffleModeToString,
