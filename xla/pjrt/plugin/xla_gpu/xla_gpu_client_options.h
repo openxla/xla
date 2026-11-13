@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "absl/time/time.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -81,6 +82,16 @@ struct GpuClientOptions {
   std::optional<bool> use_async_dispatch;
 
   std::optional<int> max_inflight_computations = 32;
+
+  // Priorities of the compute streams to create on each GPU device in the
+  // platform's convention (CUDA: 0 is the default and lowest priority, more
+  // negative values are higher priorities). If empty, keeps today's single
+  // compute stream at the default priority.
+  //
+  // Supports only one priority for the first step. It is the priority of the
+  // device's compute stream, so every execution of this client runs at that
+  // priority. The H2D stream is created at the same priority.
+  std::vector<int> compute_stream_priorities;
 
   bool verify_topology_fingerprint = true;
 };
