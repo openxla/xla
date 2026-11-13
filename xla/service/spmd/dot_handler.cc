@@ -4383,8 +4383,10 @@ absl::Status SpmdPartitioningVisitor::HandleDotHelper(
           HloSharding::V3ToV2Sharding(v2_output_sharding.named_sharding());
     }
 
-    PartitionedHloMX lhs_mx(lhs_operand, lhs_scale);
-    PartitionedHloMX rhs_mx(rhs_operand, rhs_scale);
+    PartitionedHloMX lhs_mx(lhs_operand,
+                            lhs_scale.Reshard(lhs_operand.sharding()));
+    PartitionedHloMX rhs_mx(rhs_operand,
+                            rhs_scale.Reshard(rhs_operand.sharding()));
 
     ABSL_ASSIGN_OR_RETURN(
         partitioned_dot,
