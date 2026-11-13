@@ -184,10 +184,8 @@ std::shared_ptr<OriginalValue> OriginalValue::FromProto(
     call_hierarchy = original_value_proto.call_hierarchy();
   }
   if (original_value_proto.is_synthetic_call()) {
-    auto result = std::make_shared<OriginalValue>(
-        TupleTree<std::optional<OriginalArray>>(), /*call_hierarchy=*/"");
-    result->set_call_hierarchy(std::move(call_hierarchy));
-    return result;
+    return std::make_shared<OriginalValue>(
+        TupleTree<std::optional<OriginalArray>>(), call_hierarchy.value_or(""));
   }
   std::vector<std::pair<ShapeIndex, std::optional<OriginalArray>>> nodes;
   for (const auto& leaf : original_value_proto.elements()) {

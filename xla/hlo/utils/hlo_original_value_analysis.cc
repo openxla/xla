@@ -123,7 +123,7 @@ void PopulateCallMapForCallLikeInstruction(
     }
     if (scope_instructions_str.has_value()) {
       std::vector<std::string> scope_names =
-          absl::StrSplit(*scope_instructions_str, '/');
+          absl::StrSplit(*scope_instructions_str, '/', absl::SkipEmpty());
       std::vector<ScopeInstruction> scope_instructions;
       scope_instructions.reserve(scope_names.size());
       for (const auto& scope_name : scope_names) {
