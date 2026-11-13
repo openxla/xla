@@ -196,6 +196,17 @@ class Stream {
     return Memcpy(gpu_dst, gpu_src, size);
   }
 
+  // Entrains onto the stream a 2D memcpy between device memory regions.
+  // Copies `height` rows of `width` bytes each from `gpu_src` (with row pitch
+  // `src_pitch` bytes) to `gpu_dst` (with row pitch `dst_pitch` bytes).
+  virtual absl::Status Memcpy2D(DeviceAddressBase* gpu_dst, uint64_t dst_pitch,
+                                const DeviceAddressBase& gpu_src,
+                                uint64_t src_pitch, uint64_t width,
+                                uint64_t height) {
+    return absl::UnimplementedError(
+        "Memcpy2D from device to device is not implemented for this stream.");
+  }
+
   // Entrain onto the stream: a memset of zero at a device location of size
   // bytes. The location must not be null.
   virtual absl::Status MemZero(DeviceAddressBase* location, uint64_t size) {
