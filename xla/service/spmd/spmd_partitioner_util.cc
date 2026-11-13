@@ -3578,8 +3578,10 @@ DynamicUpdateSliceAnalysis AnalyzeDynamicUpdateSlice(
     }
 
     if (hlo->operand(i + 2)->IsConstant()) {
-      int64_t start_index =
-          hlo->operand(i + 2)->literal().GetIntegralAsS64({}).value();
+      // dynamic-update-slice clamps the start to [0, dim - slice_size].
+      int64_t start_index = std::clamp<int64_t>(
+          hlo->operand(i + 2)->literal().GetIntegralAsS64({}).value(), 0,
+          hlo->shape().dimensions(i) - slice_size);
       int64_t end_index = start_index + slice_size - 1;
 
       int64_t per_partition_size =
