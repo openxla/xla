@@ -572,6 +572,40 @@ ENTRY main {
   tracker.ExpectSharedBuffers(out, {}, mul, {});
 }
 
+TEST_F(HeapSimulatorTest, DoesNotShareAsyncCopyStartBufferThroughCopyDone) {
+  const char* const hlo_text = R"(
+HloModule DoesNotShareAsyncCopyStartBufferThroughCopyDone
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  cs = (f32[4], f32[4], u32[]) copy-start(param)
+  cd = f32[4] copy-done(cs)
+  ROOT out = f32[4] exponential(cd)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* param = FindInstruction(module.get(), "param");
+  HloInstruction* cs = FindInstruction(module.get(), "cs");
+  HloInstruction* cd = FindInstruction(module.get(), "cd");
+  HloInstruction* out = FindInstruction(module.get(), "out");
+
+  HeapSimulatorTracker tracker(std::move(module), {param, cs, cd, out});
+  tracker.ExpectCallSequence({
+      {kAlloc, tracker.BufferAt(param, {})},
+      {kAlloc, tracker.BufferAt(cs, {})},
+      {kAlloc, tracker.BufferAt(cs, {2})},
+      {kAlloc, tracker.BufferAt(cs, {0})},
+      {kFree, tracker.BufferAt(cs, {})},
+      {kFree, tracker.BufferAt(cs, {2})},
+      {kAlloc, tracker.BufferAt(out, {})},
+      {kFree, tracker.BufferAt(cs, {0})},
+      {kFree, tracker.BufferAt(param, {})},
+      {kFree, tracker.BufferAt(out, {})},
+      {kFinish, nullptr},
+  });
+}
+
 TEST_F(HeapSimulatorTest, Multiply) {
   auto builder = HloComputation::Builder(TestName());
   auto paramA = builder.AddInstruction(

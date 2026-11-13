@@ -471,15 +471,18 @@ absl::Status HeapSimulator::RunComputation(
             }
 
             // The user may read the operand value through its defining
-            // instruction, through other positions (e.g. a get-tuple-element
-            // or a bitcast of it), or through several operands. All of them
-            // are backed by the same buffer, so every use of the value by the
-            // user has to allow sharing. Stats-only runs (such as
-            // MinimumMemoryForModule in DefaultMemoryScheduler) only pre-free
-            // direct operands so that schedule scoring is not skewed by
-            // view-mediated sharing.
-            if ((value->instruction()->IsUserOf(operand_value->instruction()) ||
-                 !algorithm_->IsStatsOnly()) &&
+            // instruction, through a get-tuple-element or bitcast position, or
+            // through several operands. All of them are backed by the same
+            // buffer, so every use of the value by the user has to allow
+            // sharing. Stats-only runs (such as MinimumMemoryForModule in
+            // DefaultMemoryScheduler) only pre-free direct operands so that
+            // schedule scoring is not skewed by view-mediated sharing.
+            const bool can_share_through_operand =
+                value->instruction()->IsUserOf(operand_value->instruction()) ||
+                (!algorithm_->IsStatsOnly() &&
+                 (operand->opcode() == HloOpcode::kBitcast ||
+                  operand->opcode() == HloOpcode::kGetTupleElement));
+            if (can_share_through_operand &&
                 dataflow_analysis.CanShareOperandValueBufferWithUser(
                     *operand_value, value->instruction(), value->index(),
                     alias_info)) {
