@@ -161,6 +161,49 @@ double AllOperandHloValuesMatchedScore(const HloInstructionNode* left_node,
   return 0.0;
 }
 
+// Returns true if every child of the left node is mapped to the child of the
+// right node at the same position.
+bool ChildrenMappedExactly(const HloInstructionNode* left_node,
+                           const HloInstructionNode* right_node,
+                           const HloGumgraphMappings& mappings) {
+  if (left_node->children.empty() ||
+      left_node->children.size() != right_node->children.size()) {
+    return false;
+  }
+  for (int i = 0; i < left_node->children.size(); ++i) {
+    if (mappings.left_to_right_instruction_map.GetRight(
+            left_node->children[i]) != right_node->children[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Returns true if an unmatched left node other than `left_node`, with the same
+// opcode as `right_node`, has all its children mapped exactly to the children
+// of `right_node`. Such a node is a much better match for `right_node`.
+bool HasOtherExactCandidate(const HloInstructionNode* left_node,
+                            const HloInstructionNode* right_node,
+                            const HloGumgraphMappings& mappings) {
+  if (right_node->instruction == nullptr || right_node->children.empty()) {
+    return false;
+  }
+  auto left_child =
+      mappings.left_to_right_instruction_map.GetLeft(right_node->children[0]);
+  if (!left_child.has_value()) {
+    return false;
+  }
+  for (const HloInstructionNode* other : (*left_child)->parents) {
+    if (other != left_node && !mappings.InstructionMapContainsLeft(other) &&
+        other->instruction != nullptr &&
+        other->instruction->opcode() == right_node->instruction->opcode() &&
+        ChildrenMappedExactly(other, right_node, mappings)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 void GreedyLimitedCandidatesBottomUpMatcher::Match(
@@ -230,7 +273,9 @@ void GreedyLimitedCandidatesBottomUpMatcher::Match(
         right_seeds,
         [&](const HloInstructionNode& node, int distance) {
           if (!mappings.InstructionMapContainsRight(&node) &&
-              node.instruction->opcode() == left_node->instruction->opcode()) {
+              node.instruction->opcode() == left_node->instruction->opcode() &&
+              (ChildrenMappedExactly(left_node, &node, mappings) ||
+               !HasOtherExactCandidate(left_node, &node, mappings))) {
             // Found candidate. Calculate similarity.
             double operands_match_similarity = AllOperandHloValuesMatchedScore(
                 left_node, &node, left_, right_, mappings);
