@@ -14966,6 +14966,143 @@ ENTRY entry {
                           op::Shape("f32[5,1,1,512]")));
 }
 
+TEST_P(SpmdPartitioningTest,
+       GroupedConvOutputShardingFallbackAndGroupDivisibility) {
+  struct TestCase {
+    absl::string_view name;
+    int64_t num_devices;
+    bool expect_replicated_fallback;
+    int64_t expected_fgc;
+    int64_t expected_bgc;
+    absl::string_view expected_conv_shape;
+    absl::string_view expected_root_shape;
+    absl::string_view hlo;
+  };
+  static constexpr TestCase kCases[] = {
+      {"1x1_fgc_output_sharded_fallback_f32", 2, true, 2, 1, "f32[1,4,4,8]",
+       "f32[1,4,4,4]", R"hlo(
+HloModule module
+ENTRY entry {
+  %lhs = f32[1,4,4,4] parameter(0), sharding={replicated}
+  %rhs = f32[1,1,2,8] parameter(1), sharding={devices=[1,1,1,2]<=[2]}
+  ROOT %conv = f32[1,4,4,8] convolution(%lhs, %rhs),
+    window={size=1x1}, dim_labels=b01f_01io->b01f,
+    feature_group_count=2, sharding={devices=[1,1,1,2]<=[2]}
+})hlo"},
+      {"full_spatial_fgc_output_sharded_fallback_bf16", 2, true, 2, 1,
+       "bf16[1,1,1,8]", "bf16[1,1,1,4]", R"hlo(
+HloModule module
+ENTRY entry {
+  %lhs = bf16[1,3,3,4] parameter(0), sharding={replicated}
+  %rhs = bf16[3,3,2,8] parameter(1), sharding={devices=[1,1,1,2]<=[2]}
+  ROOT %conv = bf16[1,1,1,8] convolution(%lhs, %rhs),
+    window={size=3x3}, dim_labels=b01f_01io->b01f,
+    feature_group_count=2, sharding={devices=[1,1,1,2]<=[2]}
+})hlo"},
+      {"1x1_bgc_output_sharded_fallback_bf16", 2, true, 1, 2, "bf16[2,4,4,8]",
+       "bf16[2,4,4,4]", R"hlo(
+HloModule module
+ENTRY entry {
+  %lhs = bf16[4,4,4,2] parameter(0), sharding={replicated}
+  %rhs = bf16[1,1,2,8] parameter(1), sharding={devices=[1,1,1,2]<=[2]}
+  ROOT %conv = bf16[2,4,4,8] convolution(%lhs, %rhs),
+    window={size=1x1}, dim_labels=b01f_01io->b01f,
+    batch_group_count=2, sharding={devices=[1,1,1,2]<=[2]}
+})hlo"},
+      {"spatial_fgc_indivisible_by_output_shards", 4, true, 6, 1,
+       "f32[4,6,6,24]", "f32[4,6,6,6]", R"hlo(
+HloModule module
+ENTRY entry {
+  %lhs = f32[4,6,6,6] parameter(0), sharding={devices=[4,1,1,1]<=[4]}
+  %rhs = f32[3,3,1,24] parameter(1), sharding={devices=[1,1,1,4]<=[4]}
+  ROOT %conv = f32[4,6,6,24] convolution(%lhs, %rhs),
+    window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f,
+    feature_group_count=6, sharding={devices=[1,1,1,4]<=[4]}
+})hlo"},
+      {"spatial_bgc_indivisible_by_output_shards", 4, true, 1, 6,
+       "f32[1,6,6,24]", "f32[1,6,6,6]", R"hlo(
+HloModule module
+ENTRY entry {
+  %lhs = f32[6,6,6,2] parameter(0), sharding={devices=[2,1,1,2]<=[4]}
+  %rhs = f32[3,3,2,24] parameter(1), sharding={devices=[1,1,1,4]<=[4]}
+  ROOT %conv = f32[1,6,6,24] convolution(%lhs, %rhs),
+    window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f,
+    batch_group_count=6, sharding={devices=[1,1,1,4]<=[4]}
+})hlo"},
+      {"spatial_fgc_divisible_by_output_shards_partitions_in_group", 4, false,
+       1, 1, "f32[4,6,6,4]", "f32[4,6,6,4]", R"hlo(
+HloModule module
+ENTRY entry {
+  %lhs = f32[4,6,6,4] parameter(0), sharding={devices=[4,1,1,1]<=[4]}
+  %rhs = f32[3,3,1,16] parameter(1), sharding={devices=[1,1,1,4]<=[4]}
+  ROOT %conv = f32[4,6,6,16] convolution(%lhs, %rhs),
+    window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f,
+    feature_group_count=4, sharding={devices=[1,1,1,4]<=[4]}
+})hlo"},
+      {"spatial_bgc_divisible_by_output_shards_partitions_in_group", 4, false,
+       1, 1, "bf16[2,6,6,4]", "bf16[2,6,6,4]", R"hlo(
+HloModule module
+ENTRY entry {
+  %lhs = bf16[8,6,6,2] parameter(0), sharding={devices=[2,1,1,2]<=[4]}
+  %rhs = bf16[3,3,2,16] parameter(1), sharding={devices=[1,1,1,4]<=[4]}
+  ROOT %conv = bf16[2,6,6,16] convolution(%lhs, %rhs),
+    window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f,
+    batch_group_count=4, sharding={devices=[1,1,1,4]<=[4]}
+})hlo"},
+      {"spatial_bgc_equal_dim_but_smaller_than_input_batch", 4, true, 1, 2,
+       "f32[2,4,4,4]", "f32[2,4,4,1]", R"hlo(
+HloModule module
+ENTRY entry {
+  %lhs = f32[4,4,4,2] parameter(0), sharding={devices=[4,1,1,1]<=[4]}
+  %rhs = f32[3,3,2,4] parameter(1), sharding={devices=[1,1,1,4]<=[4]}
+  ROOT %conv = f32[2,4,4,4] convolution(%lhs, %rhs),
+    window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f,
+    batch_group_count=2, sharding={devices=[1,1,1,4]<=[4]}
+})hlo"},
+      {"spatial_fgc_sharded_kernel_input_feature_indivisible_output_shards", 4,
+       true, 2, 1, "f32[1,4,4,4]", "f32[1,4,4,1]", R"hlo(
+HloModule module
+ENTRY entry {
+  %lhs = f32[1,4,4,4] parameter(0), sharding={devices=[1,1,1,4]<=[4]}
+  %rhs = f32[3,3,2,4] parameter(1), sharding={devices=[1,1,2,2]<=[4]}
+  ROOT %conv = f32[1,4,4,4] convolution(%lhs, %rhs),
+    window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f,
+    feature_group_count=2, sharding={devices=[1,1,1,4]<=[4]}
+})hlo"},
+      {"spatial_fgc_sharded_kernel_input_feature_divisible_output_shards", 4,
+       true, 2, 1, "f32[2,4,4,4]", "f32[1,4,4,2]", R"hlo(
+HloModule module
+ENTRY entry {
+  %lhs = f32[2,4,4,4] parameter(0), sharding={devices=[2,1,1,2]<=[4]}
+  %rhs = f32[3,3,2,4] parameter(1), sharding={devices=[1,1,2,2]<=[4]}
+  ROOT %conv = f32[2,4,4,4] convolution(%lhs, %rhs),
+    window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_01io->b01f,
+    feature_group_count=2, sharding={devices=[2,1,1,2]<=[4]}
+})hlo"},
+  };
+
+  for (const TestCase& tc : kCases) {
+    SCOPED_TRACE(tc.name);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         PartitionComputation(tc.hlo, tc.num_devices));
+    const HloInstruction* conv =
+        FindInstruction(module.get(), HloOpcode::kConvolution);
+    ASSERT_NE(conv, nullptr);
+    EXPECT_THAT(conv, op::Shape(tc.expected_conv_shape));
+    EXPECT_EQ(conv->feature_group_count(), tc.expected_fgc);
+    EXPECT_EQ(conv->batch_group_count(), tc.expected_bgc);
+    const HloInstruction* root =
+        module->entry_computation()->root_instruction();
+    if (tc.expect_replicated_fallback) {
+      EXPECT_THAT(root, AllOf(op::DynamicSlice(conv, _, _, _, _),
+                              op::Shape(tc.expected_root_shape)));
+    } else {
+      EXPECT_THAT(root, AllOf(op::Convolution(_, _),
+                              op::Shape(tc.expected_root_shape)));
+    }
+  }
+}
+
 TEST_P(SpmdPartitioningTest, PartitionConvWithBatchGroupCountReplicatedLHSRHS) {
   // This test case is derived from b/304203416.
   absl::string_view hlo_string = R"(
