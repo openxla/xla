@@ -245,6 +245,7 @@ cc_library(
         "//xla/pjrt:scoped_async_tracking_event",
         "//xla/pjrt:semaphore",
         "//xla/pjrt:staging_buffer",
+        "//xla/pjrt:strided_gather",
         "//xla/pjrt:thread_pool_async_work_runner",
         "//xla/pjrt:transpose",
         "//xla/pjrt:utils",
