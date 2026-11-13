@@ -553,7 +553,7 @@ absl::Status WhileUtil::IncrementWhileLoopTripCount(
     return absl::InvalidArgumentError(
         "Loop induction variable has multiple users");
   }
-  if (induction_var->opcode() != HloOpcode::kGetTupleElement &&
+  if (induction_var->opcode() != HloOpcode::kGetTupleElement ||
       induction_var->operand(0) !=
           while_conditional->parameter_instruction(0)) {
     return absl::InvalidArgumentError(
@@ -561,27 +561,29 @@ absl::Status WhileUtil::IncrementWhileLoopTripCount(
         "condition body");
   }
 
-  // Verify that the induction variable is being incremented exactly by 1 inside
-  // loop body.
+  // Verify that the induction variable is being incremented exactly by 1 at the
+  // loop body root tuple or aliased custom call root.
   bool found_induction_var = false;
-  for (const HloInstruction* gte :
-       while_body->parameter_instruction(0)->users()) {
-    if (gte->tuple_index() == induction_var->tuple_index()) {
-      for (const HloInstruction* user : gte->users()) {
-        if (Match(user,
-                  match::AddAnyOrder(match::GetTupleElement().WithTupleIndex(
-                                         induction_var->tuple_index()),
-                                     match::ConstantScalar(1)))) {
-          found_induction_var = true;
-          break;
-        }
-      }
+  if (const HloInstruction* r = while_body->root_instruction();
+      r->shape().IsTuple() &&
+      r->operand_count() == ShapeUtil::TupleElementCount(r->shape())) {
+    if (const int64_t i = induction_var->tuple_index();
+        i < r->operand_count() &&
+        (r->opcode() == HloOpcode::kTuple ||
+         (r->opcode() == HloOpcode::kCustomCall &&
+          absl::c_linear_search(
+              r->output_operand_aliasing(),
+              std::pair{ShapeIndex{i}, std::pair{i, ShapeIndex{}}})))) {
+      found_induction_var = Match(
+          r->operand(i),
+          match::AddAnyOrder(
+              match::GetTupleElement(match::Parameter(0)).WithTupleIndex(i),
+              match::ConstantScalar(1)));
       if (!found_induction_var) {
         return absl::InvalidArgumentError(
             "Loop induction variable is not being incremented exactly by one "
             "(1)");
       }
-      break;
     }
   }
   if (!found_induction_var) {

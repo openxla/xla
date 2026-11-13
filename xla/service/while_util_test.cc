@@ -23,7 +23,9 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/status/status.h"
 #include "absl/status/status_macros.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -752,6 +754,90 @@ ENTRY entry {
   EXPECT_THAT(
       result.while_body_live_in_values[0]->original_value()->original_array({}),
       ::testing::Optional(::testing::Eq(OriginalArray{"p2"})));
+}
+
+TEST_F(WhileUtilTest, IncrementTripCountGuards) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main
+c0 {
+  p = (s32[], s32[]) parameter(0)
+  i = get-tuple-element(p), index=0
+  ROOT c = compare(i, s32[] constant(6)), direction=LT
+}
+step_two_body {
+  p = (s32[], s32[]) parameter(0)
+  i = get-tuple-element(p), index=0
+  acc = get-tuple-element(p), index=1
+  ROOT r = tuple(add(i, s32[] constant(2)), add(acc, add(i, s32[] constant(1))))
+}
+nested_body {
+  p = (s32[], (s32[])) parameter(0)
+  i = get-tuple-element(p), index=0
+  nested = get-tuple-element(p), index=1
+  ROOT r = tuple(add(i, s32[] constant(1)), nested)
+}
+nested_cond {
+  p = (s32[], (s32[])) parameter(0)
+  nested = get-tuple-element(p), index=1
+  inner = get-tuple-element(nested), index=0
+  ROOT c = compare(inner, s32[] constant(4)), direction=LT
+}
+c2 {
+  p = (s32[], s32[]) parameter(0)
+  i = get-tuple-element(p), index=0
+  ROOT c = compare(i, s32[] constant(4)), direction=LT
+}
+dup_gte_body {
+  p = (s32[], s32[]) parameter(0)
+  i0 = get-tuple-element(p), index=0
+  acc0 = get-tuple-element(p), index=1
+  i1 = get-tuple-element(p), index=0
+  ROOT r = tuple(add(i1, s32[] constant(1)), add(acc0, i0))
+}
+c3 {
+  p = (s32[], s32[]) parameter(0)
+  i = get-tuple-element(p), index=0
+  ROOT c = compare(i, s32[] constant(4)), direction=LT
+}
+aliased_cc_body {
+  p = (s32[], s32[]) parameter(0)
+  i = get-tuple-element(p), index=0
+  acc = get-tuple-element(p), index=1
+  ROOT r = (s32[], s32[]) custom-call(add(i, s32[] constant(1)), acc), custom_call_target="step_mark", output_to_operand_aliasing={{0}: (0, {}), {1}: (1, {})}
+}
+unaliased_cc_body {
+  p = (s32[], s32[]) parameter(0)
+  i = get-tuple-element(p), index=0
+  acc = get-tuple-element(p), index=1
+  ROOT r = (s32[], s32[]) custom-call(add(i, s32[] constant(1)), acc), custom_call_target="opaque"
+}
+ENTRY main {
+  p0 = (s32[], s32[]) parameter(0)
+  p1 = (s32[], (s32[])) parameter(1)
+  w0 = (s32[], s32[]) while(p0), condition=c0, body=step_two_body
+  w1 = (s32[], (s32[])) while(p1), condition=nested_cond, body=nested_body
+  w2 = (s32[], s32[]) while(p0), condition=c2, body=dup_gte_body
+  w3 = (s32[], s32[]) while(p0), condition=c3, body=aliased_cc_body
+  w4 = (s32[], s32[]) while(p0), condition=c0, body=unaliased_cc_body
+  ROOT out = tuple(w0, w1, w2, w3, w4)
+}
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo));
+  using ::absl_testing::StatusIs;
+  using ::testing::HasSubstr;
+  auto step = [&](absl::string_view name, int64_t inc) {
+    return WhileUtil::IncrementWhileLoopTripCount(
+        *FindInstruction(module.get(), name), inc);
+  };
+  EXPECT_THAT(step("w0", -1), StatusIs(absl::StatusCode::kInvalidArgument,
+                                       HasSubstr("by one")));
+  EXPECT_THAT(step("w1", -1), StatusIs(absl::StatusCode::kInvalidArgument,
+                                       HasSubstr("unmodified")));
+  EXPECT_OK(step("w2", 1));
+  EXPECT_OK(step("w3", -1));
+  EXPECT_THAT(step("w4", -1), StatusIs(absl::StatusCode::kInvalidArgument,
+                                       HasSubstr("Could not match")));
 }
 
 }  // namespace
