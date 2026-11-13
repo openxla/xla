@@ -78,9 +78,6 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 #include "stablehlo/dialect/StablehloOps.h"
-#include "triton/Dialect/Triton/IR/Dialect.h"
-#include "triton/Dialect/TritonGPU/IR/Dialect.h"
-#include "tsl/platform/platform.h"
 #include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
 #include "xla/backends/gpu/codegen/triton/collective_emitter.h"
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
@@ -123,23 +120,34 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/tma_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/tools/hlo_decomposer.h"
 #include "xla/tsl/framework/mlir/status_scoped_diagnostic_handler.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/platform.h"
+#include "triton/Dialect/Triton/IR/Dialect.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 
 namespace xla::gpu {
 namespace {
 
-absl::Status CheckAtLeastAmpere(const se::GpuComputeCapability& gpu_cc) {
+absl::Status CheckTritonSupportsGpu(const se::GpuComputeCapability& gpu_cc) {
   if (auto* cuda_cc = gpu_cc.cuda_compute_capability();
       cuda_cc != nullptr && !cuda_cc->IsAtLeastAmpere()) {
     return absl::FailedPreconditionError(
         absl::StrCat("Triton support is only enabled for Ampere GPUs (compute ",
                      "capability 8.0) and up, but got compute capability ",
                      cuda_cc->ToString(), "."));
+  }
+  if (auto* rocm_cc = gpu_cc.rocm_compute_capability();
+      rocm_cc != nullptr && !rocm_cc->has_triton_support()) {
+    return absl::FailedPreconditionError(absl::StrCat(
+        "ROCm Triton support is only enabled for CDNA2 (gfx90a), RDNA3 "
+        "(gfx11) and newer GPUs, but got ",
+        rocm_cc->gfx_version(), "."));
   }
   return absl::OkStatus();
 }
@@ -336,7 +344,7 @@ absl::StatusOr<TritonKernelSource> CreateTritonModule(
     const BlockLevelParameters& block_level_parameters,
     MLIRContext& mlir_context) {
   ABSL_RETURN_IF_ERROR(
-      CheckAtLeastAmpere(device_info.gpu_compute_capability()));
+      CheckTritonSupportsGpu(device_info.gpu_compute_capability()));
 
   const DebugOptions& debug_options =
       fusion.GetModule()->config().debug_options();
@@ -457,7 +465,7 @@ absl::StatusOr<TritonKernelSource> LowerTritonToLlvmDialect(
     TritonKernelSource triton_source, mlir::MLIRContext& mlir_context,
     bool is_xla_fusion) {
   const se::GpuComputeCapability& gpu_cc = device_info.gpu_compute_capability();
-  ABSL_RETURN_IF_ERROR(CheckAtLeastAmpere(gpu_cc));
+  ABSL_RETURN_IF_ERROR(CheckTritonSupportsGpu(gpu_cc));
 
   const HloModuleConfig& hlo_config = hlo_module.config();
 

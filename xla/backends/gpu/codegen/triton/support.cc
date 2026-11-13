@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
+#include "xla/stream_executor/rocm/rocm_compute_capability.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {
@@ -1156,6 +1157,14 @@ absl::Status EnsureTritonSupportsComputeCapability(
                      "(compute capability 8.0) and up, but got compute ",
                      "capability ", cuda_compute_capability->major, ".",
                      cuda_compute_capability->minor, "."));
+  }
+
+  if (rocm_compute_capability &&
+      !rocm_compute_capability->has_triton_support()) {
+    return absl::FailedPreconditionError(absl::StrCat(
+        "ROCm Triton support is only enabled for CDNA2 (gfx90a), RDNA3 "
+        "(gfx11) and newer GPUs, but got ",
+        rocm_compute_capability->gfx_version(), "."));
   }
 
   return absl::OkStatus();

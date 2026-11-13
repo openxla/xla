@@ -204,6 +204,11 @@ class RocmComputeCapability {
                               kGfx11Discrete, kGfx11Apu, kGfx1250);
   }
 
+  // Triton's AMD backend supports CDNA2 (gfx90a), RDNA3 (gfx11) and newer.
+  bool has_triton_support() const {
+    return gfx9_mi200_or_later() || gfx11() || gfx12();
+  }
+
   bool has_fp8_support() const {
     return has_ocp_fp8_support() || has_nanoo_fp8_support();
   }

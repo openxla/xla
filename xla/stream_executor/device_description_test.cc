@@ -176,6 +176,19 @@ TEST(RocmComputeCapability, Accessors) {
       RocmComputeCapability{"gfx1250-strict"}.has_peer_visible_atomics());
 }
 
+TEST(RocmComputeCapability, HasTritonSupport) {
+  EXPECT_TRUE(RocmComputeCapability{"gfx90a"}.has_triton_support());
+  EXPECT_TRUE(RocmComputeCapability{"gfx942"}.has_triton_support());
+  EXPECT_TRUE(RocmComputeCapability{"gfx950"}.has_triton_support());
+  EXPECT_TRUE(RocmComputeCapability{"gfx1100"}.has_triton_support());
+  EXPECT_TRUE(RocmComputeCapability{"gfx1151"}.has_triton_support());
+  EXPECT_TRUE(RocmComputeCapability{"gfx1201"}.has_triton_support());
+  EXPECT_TRUE(RocmComputeCapability{"gfx1250"}.has_triton_support());
+  EXPECT_TRUE(RocmComputeCapability{"gfx1250-strict"}.has_triton_support());
+  EXPECT_FALSE(RocmComputeCapability{"gfx908"}.has_triton_support());
+  EXPECT_FALSE(RocmComputeCapability{"gfx1030"}.has_triton_support());
+}
+
 TEST(GpuComputeCapability, ProtoConversion) {
   EXPECT_THAT(
       GpuComputeCapability::FromProto(

@@ -369,11 +369,7 @@ namespace gpu {
 namespace {
 
 bool IsTritonEnabled(const se::GpuComputeCapability& gpu_version) {
-  const auto* cuda_cc = gpu_version.cuda_compute_capability();
-  const auto* rocm_cc = gpu_version.rocm_compute_capability();
-  return (cuda_cc != nullptr &&
-          cuda_cc->IsAtLeast(se::CudaComputeCapability::kAmpere)) ||
-         rocm_cc != nullptr;
+  return EnsureTritonSupportsComputeCapability(gpu_version).ok();
 }
 
 bool IsTritonGemmEnabled(const DebugOptions& debug_options,
