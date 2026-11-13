@@ -3087,11 +3087,13 @@ cc_library(
         "//xla/core/collectives:collectives_registry",
         "//xla/runtime:device_id",
         "//xla/service:computation_placer",
+        "//xla/service:device_assignment",
         "//xla/service:executable",
         "//xla/service/gpu:gpu_executable_run_options",
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/platform:statusor",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/log:check",
@@ -3099,6 +3101,19 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
         "@tsl//tsl/platform:casts",
+    ],
+)
+
+xla_cc_test(
+    name = "collective_params_test",
+    srcs = ["collective_params_test.cc"],
+    deps = [
+        ":collective_params",
+        "//xla/runtime:device_id",
+        "//xla/service:device_assignment",
+        "//xla/service/gpu:gpu_executable_run_options",
+        "//xla/tsl/platform:test_main",
+        "@com_google_googletest//:gtest",
     ],
 )
 
