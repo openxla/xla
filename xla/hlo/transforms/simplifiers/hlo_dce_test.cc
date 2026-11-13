@@ -270,7 +270,8 @@ TEST_F(HloDceTest, DeadParameters) {
 }
 
 TEST_F(HloDceTest, ControlDependencies) {
-  // Verify that instructions with control dependencies are not removed.
+  // Verify that instructions with control dependencies are removed and their
+  // control dependencies are relayed.
   auto builder = HloComputation::Builder(TestName());
   auto constant1 = builder.AddInstruction(
       HloInstruction::CreateConstant(LiteralUtil::CreateR0<float>(42.0f)));
@@ -293,15 +294,19 @@ TEST_F(HloDceTest, ControlDependencies) {
           constant1->shape(), HloOpcode::kAdd, constant1, constant2));
 
   // Create a root so the previously added instruction is dead.
-  builder.AddInstruction(HloInstruction::CreateBinary(
+  auto root = builder.AddInstruction(HloInstruction::CreateBinary(
       constant1->shape(), HloOpcode::kAdd, constant1, constant2));
 
   auto module = CreateNewVerifiedModule();
   auto computation = module->AddEntryComputation(builder.Build());
 
-  // Add a control dependency between two instructions.
+  // Add control dependencies:
+  // constant1 -> dead_negate_with_control_dep -> dead_add_with_control_dep ->
+  // root
+  TF_ASSERT_OK(constant1->AddControlDependencyTo(dead_negate_with_control_dep));
   TF_ASSERT_OK(dead_negate_with_control_dep->AddControlDependencyTo(
       dead_add_with_control_dep));
+  TF_ASSERT_OK(dead_add_with_control_dep->AddControlDependencyTo(root));
 
   EXPECT_EQ(7, computation->instruction_count());
   EXPECT_TRUE(HasInstruction(*computation, dead_negate));
@@ -312,11 +317,13 @@ TEST_F(HloDceTest, ControlDependencies) {
   HloDCE dce;
   EXPECT_TRUE(dce.Run(module.get()).value());
 
-  EXPECT_EQ(5, computation->instruction_count());
+  EXPECT_EQ(3, computation->instruction_count());
   EXPECT_FALSE(HasInstruction(*computation, dead_negate));
   EXPECT_FALSE(HasInstruction(*computation, dead_add));
-  EXPECT_TRUE(HasInstruction(*computation, dead_negate_with_control_dep));
-  EXPECT_TRUE(HasInstruction(*computation, dead_add_with_control_dep));
+  EXPECT_FALSE(HasInstruction(*computation, dead_negate_with_control_dep));
+  EXPECT_FALSE(HasInstruction(*computation, dead_add_with_control_dep));
+  EXPECT_THAT(root->control_predecessors(),
+              ::testing::ElementsAre(constant1, constant2));
 }
 
 // Tests that a dead call instruction is removed.
