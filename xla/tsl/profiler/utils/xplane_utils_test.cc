@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "google/protobuf/arena.h"
+#include "tsl/platform/protobuf.h"
 #include "tsl/profiler/protobuf/xplane.pb.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/platform/types.h"
@@ -334,7 +335,7 @@ TEST(XPlaneUtilsTest, MergeXPlaneTest) {
       // XStat in src_plane overrides the counter-part in dst_plane.
       EXPECT_EQ(stat.DoubleValue(), 3.0);
     } else {
-      EXPECT_TRUE(false);
+      ADD_FAILURE();
     }
   });
 
@@ -1723,6 +1724,193 @@ TEST(XplaneUtilsTest, RemoveNonExistentLine) {
   ASSERT_EQ(plane.lines_size(), 2);
   EXPECT_EQ(&plane.lines(0), line1);
   EXPECT_EQ(&plane.lines(1), line2);
+}
+
+TEST(XplaneUtilsTest, MergeXSpaceAcrossDifferentArenas) {
+  google::protobuf::Arena to_arena;
+  auto to = google::protobuf::Arena::MakeUnique<XSpace>(&to_arena);
+  to->add_hostnames("to_host");
+  to->add_errors("to_error");
+  to->add_warnings("to_warning");
+  {
+    XPlaneBuilder p1(to->add_planes());
+    p1.SetName("plane1");
+    p1.SetId(1);
+    auto l1 = p1.GetOrCreateLine(10);
+    l1.SetTimestampNs(100);
+    l1.SetDurationPs(500);
+    auto e1 = l1.AddEvent(*p1.GetOrCreateEventMetadata("event_to"));
+    e1.SetOffsetNs(10);
+    e1.SetDurationNs(20);
+  }
+
+  {
+    google::protobuf::Arena from_arena;
+    auto from = google::protobuf::Arena::MakeUnique<XSpace>(&from_arena);
+    from->add_hostnames("from_host");
+    from->add_hostnames("to_host");  // Duplicate
+    from->add_errors("from_error");
+    from->add_warnings("from_warning");
+    {
+      XPlaneBuilder p2(from->add_planes());
+      p2.SetName("plane1");
+      auto l2 = p2.GetOrCreateLine(10);
+      l2.SetName("line10");
+      l2.SetDisplayNameIfEmpty("Line Ten");
+      l2.SetDisplayId(99);
+      l2.SetTimestampNs(100);
+      l2.SetDurationPs(1000);
+      auto e2 = l2.AddEvent(*p2.GetOrCreateEventMetadata("event_from"));
+      e2.SetOffsetNs(30);
+      e2.SetDurationNs(40);
+    }
+    {
+      XPlaneBuilder p3(from->add_planes());
+      p3.SetName("plane2");
+      p3.SetId(2);
+      auto l3 = p3.GetOrCreateLine(20);
+      auto e3 = l3.AddEvent(*p3.GetOrCreateEventMetadata("event_p2"));
+      e3.SetOffsetNs(5);
+      e3.SetDurationNs(15);
+    }
+
+    MergeXSpace(std::move(*from), to.get());
+    // from_arena is destroyed here!
+  }
+
+  // Verify to remains completely valid without use-after-free
+  EXPECT_THAT(to->hostnames(), UnorderedElementsAre("to_host", "from_host"));
+  EXPECT_THAT(to->errors(), UnorderedElementsAre("to_error", "from_error"));
+  EXPECT_THAT(to->warnings(),
+              UnorderedElementsAre("to_warning", "from_warning"));
+
+  ASSERT_EQ(to->planes_size(), 2);
+  const XPlane* plane1 = FindPlaneWithName(*to, "plane1");
+  ASSERT_NE(plane1, nullptr);
+  ASSERT_EQ(plane1->lines_size(), 1);
+  const XLine& line10 = plane1->lines(0);
+  EXPECT_EQ(line10.id(), 10);
+  EXPECT_EQ(line10.name(), "line10");
+  EXPECT_EQ(line10.display_name(), "Line Ten");
+  EXPECT_EQ(line10.display_id(), 99);
+  EXPECT_EQ(line10.duration_ps(), 1000);
+  EXPECT_EQ(line10.events_size(), 2);
+
+  const XPlane* plane2 = FindPlaneWithName(*to, "plane2");
+  ASSERT_NE(plane2, nullptr);
+  EXPECT_EQ(plane2->id(), 2);
+  ASSERT_EQ(plane2->lines_size(), 1);
+  EXPECT_EQ(plane2->lines(0).id(), 20);
+}
+
+TEST(XplaneUtilsTest, MergeXSpaceSameArenaAndHeap) {
+  // Test same arena
+  {
+    google::protobuf::Arena arena;
+    auto to = google::protobuf::Arena::MakeUnique<XSpace>(&arena);
+    auto from = google::protobuf::Arena::MakeUnique<XSpace>(&arena);
+
+    {
+      XPlaneBuilder p(to->add_planes());
+      p.SetName("plane_same");
+      auto l = p.GetOrCreateLine(1);
+      l.AddEvent(*p.GetOrCreateEventMetadata("e1"));
+    }
+    {
+      XPlaneBuilder p(from->add_planes());
+      p.SetName("plane_same");
+      auto l = p.GetOrCreateLine(2);
+      l.AddEvent(*p.GetOrCreateEventMetadata("e2"));
+    }
+
+    MergeXSpace(std::move(*from), to.get());
+    ASSERT_EQ(to->planes_size(), 1);
+    EXPECT_EQ(to->planes(0).lines_size(), 2);
+  }
+
+  // Test heap
+  {
+    XSpace to;
+    XSpace from;
+    {
+      XPlaneBuilder p(to.add_planes());
+      p.SetName("plane_heap");
+      auto l = p.GetOrCreateLine(1);
+      l.AddEvent(*p.GetOrCreateEventMetadata("e1"));
+    }
+    {
+      XPlaneBuilder p(from.add_planes());
+      p.SetName("plane_heap");
+      auto l = p.GetOrCreateLine(2);
+      l.AddEvent(*p.GetOrCreateEventMetadata("e2"));
+    }
+
+    MergeXSpace(std::move(from), &to);
+    ASSERT_EQ(to.planes_size(), 1);
+    EXPECT_EQ(to.planes(0).lines_size(), 2);
+  }
+}
+
+TEST(XplaneUtilsTest, MergeXSpacePreservesLineMetadata) {
+  XSpace to;
+  XSpace from;
+
+  {
+    XPlaneBuilder p_to(to.add_planes());
+    p_to.SetName("p");
+    auto l1 = p_to.GetOrCreateLine(1);
+    // name, display_name empty, display_id 0
+    l1.SetDurationPs(100);
+
+    auto l2 = p_to.GetOrCreateLine(2);
+    l2.SetName("existing_name");
+    l2.SetDisplayNameIfEmpty("Existing Display");
+    l2.SetDisplayId(123);
+    l2.SetDurationPs(500);
+  }
+
+  {
+    XPlaneBuilder p_from(from.add_planes());
+    p_from.SetName("p");
+    auto l1 = p_from.GetOrCreateLine(1);
+    l1.SetName("new_name");
+    l1.SetDisplayNameIfEmpty("New Display");
+    l1.SetDisplayId(456);
+    l1.SetDurationPs(300);
+
+    auto l2 = p_from.GetOrCreateLine(2);
+    l2.SetName("other_name");
+    l2.SetDisplayNameIfEmpty("Other Display");
+    l2.SetDisplayId(789);
+    l2.SetDurationPs(200);
+  }
+
+  MergeXSpace(std::move(from), &to);
+
+  ASSERT_EQ(to.planes_size(), 1);
+  const XPlane& plane = to.planes(0);
+  ASSERT_EQ(plane.lines_size(), 2);
+
+  const XLine* line1 = nullptr;
+  const XLine* line2 = nullptr;
+  for (const XLine& l : plane.lines()) {
+    if (l.id() == 1) line1 = &l;
+    if (l.id() == 2) line2 = &l;
+  }
+  ASSERT_NE(line1, nullptr);
+  ASSERT_NE(line2, nullptr);
+
+  // Line 1 should have adopted from's metadata because to was default
+  EXPECT_EQ(line1->name(), "new_name");
+  EXPECT_EQ(line1->display_name(), "New Display");
+  EXPECT_EQ(line1->display_id(), 456);
+  EXPECT_EQ(line1->duration_ps(), 300);
+
+  // Line 2 should have preserved its existing metadata
+  EXPECT_EQ(line2->name(), "existing_name");
+  EXPECT_EQ(line2->display_name(), "Existing Display");
+  EXPECT_EQ(line2->display_id(), 123);
+  EXPECT_EQ(line2->duration_ps(), 500);  // max(500, 200)
 }
 
 }  // namespace

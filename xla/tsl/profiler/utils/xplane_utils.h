@@ -317,14 +317,20 @@ Timespan GetDeviceEventTimespan(const XEventVisitor& event);
 
 // Merges `from` XSpace into `to` XSpace.
 // This function performs a zero-copy merge by transferring ownership of planes,
-// lines, and events out of `from` to avoid memory duplication. It dynamically
-// maps and builds new metadata IDs to prevent collisions on duplicate names.
-// Supports both arena-allocated and heap-allocated XSpaces.
-// After the merge, `from` will be left as an empty shell (and deallocated for
-// the `std::unique_ptr<XSpace>` overload). Events of merged lines are kept
-// sorted (see `SortXLine`) as long as the input lines are sorted.
-void MergeXSpace(XSpace* from, XSpace* to);
-void MergeXSpace(std::unique_ptr<XSpace> from, XSpace* to);
+// lines, and events out of `from` to avoid memory duplication when both spaces
+// share the same arena. It dynamically maps and builds new metadata IDs to
+// prevent collisions on duplicate names.
+// When arenas differ, memory is safely allocated on `to`'s arena to prevent
+// cross-arena dangling pointer issues.
+// After the merge, `from` will be left as an empty shell. Events of merged
+// lines are kept sorted (see `SortXLine`) as long as the input lines are
+// sorted.
+void MergeXSpace(tensorflow::profiler::XSpace* from,
+                 tensorflow::profiler::XSpace* to);
+void MergeXSpace(tensorflow::profiler::XSpace&& from,
+                 tensorflow::profiler::XSpace* to);
+void MergeXSpace(std::unique_ptr<tensorflow::profiler::XSpace> from,
+                 tensorflow::profiler::XSpace* to);
 
 }  // namespace profiler
 }  // namespace tsl
