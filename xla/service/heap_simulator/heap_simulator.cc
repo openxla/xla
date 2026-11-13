@@ -478,8 +478,12 @@ absl::Status HeapSimulator::RunComputation(
             // MinimumMemoryForModule in DefaultMemoryScheduler) only pre-free
             // direct operands so that schedule scoring is not skewed by
             // view-mediated sharing.
-            if ((value->instruction()->IsUserOf(operand_value->instruction()) ||
-                 !algorithm_->IsStatsOnly()) &&
+            const bool is_direct_operand =
+                value->instruction()->IsUserOf(operand_value->instruction());
+            const bool may_reuse_through_other_positions =
+                options_.may_reuse_operand_buffers_through_other_positions &&
+                !algorithm_->IsStatsOnly();
+            if ((is_direct_operand || may_reuse_through_other_positions) &&
                 dataflow_analysis.CanShareOperandValueBufferWithUser(
                     *operand_value, value->instruction(), value->index(),
                     alias_info)) {

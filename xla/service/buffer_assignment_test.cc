@@ -1020,7 +1020,9 @@ TEST_F(BufferAssignmentTest, OOMFallbackStrategySelection) {
 // algorithms that may use more memory than BEST_OF_SPATIAL_TEMPORAL fall back
 // to SPATIAL and then TEMPORAL, skipping the strategies already tried. So only
 // SPATIAL for the computations without a sequential ordering, with DEFAULT or
-// BEST_OF_SPATIAL_TEMPORAL for the others, has no fallback.
+// BEST_OF_SPATIAL_TEMPORAL for the others, has no other algorithms to fall back
+// to. If no strategy fits, all of them are evaluated a second time without
+// reusing operand buffers through other positions.
 TEST_F(BufferAssignmentTest, OOMFallbackStrategiesDependOnAlgorithms) {
   auto builder = HloComputation::Builder(TestName());
   auto param = builder.AddInstruction(
@@ -1059,10 +1061,10 @@ TEST_F(BufferAssignmentTest, OOMFallbackStrategiesDependOnAlgorithms) {
 
   struct TestCase {
     SequentialAlgorithm::Value sequential;
-    // With SPATIAL and FAST_MERGE for the computations without a sequential
-    // ordering.
-    int num_strategies_with_spatial;
-    int num_strategies_with_fast_merge;
+    // The number of pairs of algorithms, with SPATIAL and FAST_MERGE for the
+    // computations without a sequential ordering.
+    int num_algorithm_pairs_with_spatial;
+    int num_algorithm_pairs_with_fast_merge;
   };
   for (const TestCase& test_case : std::vector<TestCase>{
            {SequentialAlgorithm::FAST_MERGE, 4, 4},
@@ -1072,12 +1074,14 @@ TEST_F(BufferAssignmentTest, OOMFallbackStrategiesDependOnAlgorithms) {
            {SequentialAlgorithm::DEFAULT, 1, 2},
            {SequentialAlgorithm::BEST_OF_SPATIAL_TEMPORAL, 1, 2}}) {
     SCOPED_TRACE(SequentialAlgorithm::Value_Name(test_case.sequential));
+    // Each pair is evaluated with and without reusing operand buffers through
+    // other positions.
     EXPECT_EQ(
         count_strategies(NonSequentialAlgorithm::SPATIAL, test_case.sequential),
-        test_case.num_strategies_with_spatial);
+        2 * test_case.num_algorithm_pairs_with_spatial);
     EXPECT_EQ(count_strategies(NonSequentialAlgorithm::FAST_MERGE,
                                test_case.sequential),
-              test_case.num_strategies_with_fast_merge);
+              2 * test_case.num_algorithm_pairs_with_fast_merge);
   }
 }
 
@@ -1177,18 +1181,129 @@ ENTRY entry {
   EXPECT_EQ(spatial_fits.num_strategies, 1);
   EXPECT_EQ(spatial_fits.temp_allocation_size, spatial_size);
 
-  // SPATIAL exceeds the limit: TEMPORAL is tried and kept.
+  // SPATIAL exceeds the limit: TEMPORAL is tried and kept. Nothing fits, so
+  // both are also tried without reusing operand buffers through other
+  // positions, which makes no difference for this module.
   Result spatial_exceeds = run(SequentialAlgorithm::SPATIAL,
                                /*enable_fallback=*/true, /*limit=*/1);
-  EXPECT_EQ(spatial_exceeds.num_strategies, 2);
+  EXPECT_EQ(spatial_exceeds.num_strategies, 4);
   EXPECT_EQ(spatial_exceeds.temp_allocation_size, temporal_size);
 
   // TEMPORAL exceeds the limit: SPATIAL is tried, but TEMPORAL is kept since it
   // uses less memory.
   Result temporal_exceeds = run(SequentialAlgorithm::TEMPORAL,
                                 /*enable_fallback=*/true, /*limit=*/1);
-  EXPECT_EQ(temporal_exceeds.num_strategies, 2);
+  EXPECT_EQ(temporal_exceeds.num_strategies, 4);
   EXPECT_EQ(temporal_exceeds.temp_allocation_size, temporal_size);
+}
+
+// If no strategy fits, the strategies are tried again without reusing operand
+// buffers through other positions in the heap simulation, and the assignment
+// with the lowest memory usage is kept.
+TEST_F(BufferAssignmentTest, OOMFallbackTriesReusingDirectOperandBuffersOnly) {
+  // Live ranges (positions in the sequence below) and sizes of the large temp
+  // buffers:
+  //   early: [1, 3],  1600B
+  //   mid:   [2, 5],  1200B
+  //   x:     [4, 7],   800B
+  //   temp:  [7, 9],   800B
+  //   late:  [8, 10], 1600B
+  // SPATIAL places `early` and `late` at offset 0 and `mid` on top of them.
+  // `temp` reads `x` elementwise through a bitcast, so it can reuse the buffer
+  // of `x`. The reused buffer is live over [4, 9], so it fits neither below
+  // `mid` (where `late` is) nor above `late` (where `mid` is), and is placed on
+  // top of `mid`. Without the reuse, `x` fits below `mid` and `temp` fits above
+  // `late`, both in the 2800 bytes that `early` and `mid` need.
+  const char* const kHloText = R"(
+HloModule OOMFallbackTriesReusingDirectOperandBuffersOnly
+
+add {
+  a = f32[] parameter(0)
+  b = f32[] parameter(1)
+  ROOT r = f32[] add(a, b)
+}
+
+ENTRY entry {
+  p = f32[] parameter(0)
+  early = f32[400] broadcast(p), dimensions={}
+  mid = f32[300] broadcast(p), dimensions={}
+  early_sum = f32[] reduce(early, p), dimensions={0}, to_apply=add
+  x = f32[200] broadcast(p), dimensions={}
+  mid_sum = f32[] reduce(mid, p), dimensions={0}, to_apply=add
+  x_bitcast = f32[20,10] bitcast(x)
+  temp = f32[20,10] negate(x_bitcast)
+  late = f32[400] broadcast(p), dimensions={}
+  temp_sum = f32[] reduce(temp, p), dimensions={0,1}, to_apply=add
+  late_sum = f32[] reduce(late, p), dimensions={0}, to_apply=add
+  f1 = f32[] add(early_sum, mid_sum)
+  f2 = f32[] add(f1, temp_sum)
+  ROOT f3 = f32[] add(f2, late_sum)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  std::vector<HloInstruction*> sequence;
+  for (const char* name :
+       {"p", "early", "mid", "early_sum", "x", "mid_sum", "x_bitcast", "temp",
+        "late", "temp_sum", "late_sum", "f1", "f2", "f3"}) {
+    sequence.push_back(FindInstruction(module.get(), name));
+  }
+  HloSchedule schedule(module.get());
+  schedule.set_sequence(module->entry_computation(), sequence);
+  ASSERT_OK(schedule.Update());
+  const HloInstruction* x = FindInstruction(module.get(), "x");
+  const HloInstruction* temp = FindInstruction(module.get(), "temp");
+
+  using SequentialAlgorithm = buffer_assignment::BufferAssignmentAlgorithmProto;
+  struct Result {
+    int64_t temp_allocation_size;
+    bool temp_reuses_x;
+    int num_strategies;
+  };
+  // Runs buffer assignment with `limit` bytes on top of the safety margin. The
+  // only strategy is SPATIAL for all computations. The module has a single
+  // color, so the limit is queried once per evaluated strategy.
+  auto run = [&](bool enable_fallback, int64_t limit) {
+    constexpr int64_t kSafetyMargin = int64_t{5} << 29;
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
+    opts.enable_fallback = enable_fallback;
+    opts.buffer_assignment_algorithm = SequentialAlgorithm::SPATIAL;
+    opts.fallback_algorithm = SequentialAlgorithm::SPATIAL;
+    int num_strategies = 0;
+    opts.color_memory_limit = [&](LogicalBuffer::Color) -> int64_t {
+      ++num_strategies;
+      return kSafetyMargin + limit;
+    };
+    absl::StatusOr<std::unique_ptr<BufferAssignment>> assignment =
+        BufferAssigner::Run(
+            module.get(), std::make_unique<SequentialHloOrdering>(schedule),
+            &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 1; }, std::move(opts));
+    CHECK_OK(assignment.status());
+    const BufferAllocation& allocation =
+        GetTopLevelAllocation(**assignment, temp);
+    EXPECT_TRUE(allocation.IsPreallocatedTempBuffer());
+    return Result{allocation.size(),
+                  (*assignment)->SharesTopLevelSlice(x, temp), num_strategies};
+  };
+
+  constexpr int64_t kNoLimit = 0;
+  const Result without_fallback = run(/*enable_fallback=*/false, kNoLimit);
+  EXPECT_TRUE(without_fallback.temp_reuses_x);
+
+  // SPATIAL fits: it is not tried again.
+  const Result fits = run(/*enable_fallback=*/true, /*limit=*/1000000);
+  EXPECT_EQ(fits.num_strategies, 1);
+  EXPECT_TRUE(fits.temp_reuses_x);
+  EXPECT_EQ(fits.temp_allocation_size, without_fallback.temp_allocation_size);
+
+  // SPATIAL exceeds the limit: it is tried again without the reuse through the
+  // bitcast, which needs less memory and is kept.
+  const Result exceeds = run(/*enable_fallback=*/true, /*limit=*/1);
+  EXPECT_EQ(exceeds.num_strategies, 2);
+  EXPECT_FALSE(exceeds.temp_reuses_x);
+  EXPECT_LT(exceeds.temp_allocation_size,
+            without_fallback.temp_allocation_size);
 }
 
 // Verifies that clearing and restoring the allocations of one color from a

@@ -134,12 +134,22 @@ class HeapSimulator {
   struct Options {
     Options()
         : may_reuse_operand_buffers(true),
+          may_reuse_operand_buffers_through_other_positions(true),
           alloc_constants(false),
           buffers_to_assign(nullptr) {}
 
     // Whether a buffer about to be Free()-ed, can be recycled for a new born
     // one, hence collapsing Free()+Alloc() calls (default true).
     bool may_reuse_operand_buffers;
+    // Whether a new born buffer may also recycle the buffer of an operand value
+    // that its instruction only reads through other positions of the value
+    // (e.g. a get-tuple-element or a bitcast of the defining instruction). If
+    // false, only the buffers of values defined by direct operands are
+    // recycled. Recycling through other positions lowers the peak memory, but
+    // the recycled buffers stay at the same offset for longer, which can make
+    // them harder to pack (default true). Only relevant if
+    // `may_reuse_operand_buffers` is true.
+    bool may_reuse_operand_buffers_through_other_positions;
     // Whether to issue Alloc() and Free() calls for constants (default false).
     bool alloc_constants;
     // If 'buffers_to_assign' is provided, only those buffers are assigned

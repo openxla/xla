@@ -1119,6 +1119,10 @@ class BufferAssigner {
         Value non_sequential_algorithm;
     buffer_assignment::BufferAssignmentAlgorithmProto::Value
         sequential_algorithm;
+    // Whether the heap simulation may reuse the buffers of operand values that
+    // are only read through other positions, see HeapSimulator::Options::
+    // may_reuse_operand_buffers_through_other_positions.
+    bool reuse_operand_buffers_through_other_positions = true;
   };
   friend class BufferAssignmentTest;
   using Colorer =
@@ -1241,6 +1245,12 @@ class BufferAssigner {
     //  * {FAST_MERGE, FAST_SPLIT},
     //  * {SPATIAL, SPATIAL},
     //  * {SPATIAL, TEMPORAL}.
+    //
+    // If a color still exceeds its limit, all these strategies are tried again
+    // without reusing operand buffers through other positions in the heap
+    // simulation (see HeapSimulator::Options::
+    // may_reuse_operand_buffers_through_other_positions). This reuse lowers the
+    // peak memory, but it can increase the fragmentation.
     bool enable_fallback = false;
 
     // Optional callback to return the memory limit for a given buffer color.
@@ -1330,11 +1340,11 @@ class BufferAssigner {
 
  private:
   // Assigns buffers of `colors_to_assign` (all colors if null) in three steps:
-  //  1. AssignBuffersForGlobalComputations with `non_sequential_algorithm`,
-  //     which also collects the temp buffers of sequentially ordered
-  //     computations,
-  //  2. heap simulation of the collected buffers with `sequential_algorithm`
-  //     (AssignBuffersWithSequentialOrdering),
+  //  1. AssignBuffersForGlobalComputations with the non-sequential algorithm
+  //     of `strategy`, which also collects the temp buffers of sequentially
+  //     ordered computations,
+  //  2. heap simulation of the collected buffers with the sequential algorithm
+  //     of `strategy` (AssignBuffersWithSequentialOrdering),
   //  3. thread-local computations, live-out marking and
   //     CombineTempAllocations.
   // If `precomputed_sequential_buffers` is set, step 1 is skipped and step 2
@@ -1344,12 +1354,7 @@ class BufferAssigner {
       const HloModule* module,
       const std::vector<const HloComputation*>& global_computations,
       const std::vector<const HloComputation*>& thread_local_computations,
-      BufferAssignment* assignment,
-      buffer_assignment::BufferAssignmentAlgorithmProto::Value
-          sequential_algorithm,
-      buffer_assignment::
-          AssignmentAlgorithmForComputationsWithoutOrderingProto::Value
-              non_sequential_algorithm,
+      BufferAssignment* assignment, const AssignmentStrategy& strategy,
       const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign =
           nullptr,
       const absl::flat_hash_map<const HloComputation*,
@@ -1443,14 +1448,14 @@ class BufferAssigner {
   // the HLO instructions will be executed in the sequential order given by
   // assignment->liveness().hlo_ordering().SequentialOrder. If
   // 'run_whole_module_heap_simulation' is true, the heap simulation will be run
-  // assuming all global computations are sequentially ordered.
+  // assuming all global computations are sequentially ordered. The sequential
+  // algorithm and the operand buffer reuse of `strategy` are used.
   absl::Status AssignBuffersWithSequentialOrdering(
       const absl::flat_hash_map<const HloComputation*,
                                 absl::flat_hash_set<const HloValue*>>&
           buffers_to_assign_sequentially,
       bool run_whole_module_heap_simulation, BufferAssignment* assignment,
-      buffer_assignment::BufferAssignmentAlgorithmProto::Value
-          buffer_assignment_algorithm,
+      const AssignmentStrategy& strategy,
       GlobalDecreasingSizeBestFitHeap<HloValue>::BufferIntervalCompare
           heap_buffer_interval_compare,
       std::optional<BufferAssignment::BufferIsolationOptions>
