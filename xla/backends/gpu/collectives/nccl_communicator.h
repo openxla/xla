@@ -118,9 +118,9 @@ class NcclCommunicator : public GpuCommunicator {
   //
   // Once launched, this wait has no cancellation or deadline. The parent mutex
   // is held until completion or error, so Abort() also waits for it. If an
-  // error leaves completion uncertain, output storage stays with the parent
-  // until successful teardown. Interrupting an in-flight split requires a
-  // separate cancellation and teardown protocol.
+  // error leaves completion uncertain, output storage is deliberately leaked.
+  // Interrupting an in-flight split requires a separate cancellation and
+  // teardown protocol.
   absl::StatusOr<ncclComm_t> Split(int color, int key,
                                    ncclConfig_t config) const;
 

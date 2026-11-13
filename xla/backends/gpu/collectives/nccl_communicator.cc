@@ -478,13 +478,7 @@ NcclCommunicator::~NcclCommunicator() {
 
     XLA_VLOG_DEVICE(1, stream_executor_->device_ordinal())
         << "Destroy " << description;
-    absl::Status status = XLA_NCCL_STATUS(ncclCommDestroy(comm_->comm));
-    // NCCL no longer writes to pending split outputs after a successful
-    // teardown, so ~NcclCommState may now abort their children.
-    if (status.ok()) {
-      comm_->parent_torn_down = true;
-    }
-    return status;
+    return XLA_NCCL_STATUS(ncclCommDestroy(comm_->comm));
   };
 
   if (absl::Status s = Execute(f).Await(); !s.ok()) {
@@ -518,12 +512,20 @@ absl::StatusOr<ncclComm_t> NcclCommunicator::Split(int color, int key,
     // When PollUntilDone returns an error, ncclCommGetAsyncError itself may
     // have failed. In that case we do not know whether the split completed,
     // and NCCL might still write to the memory pointed to by `child`.
-    // Therefore, hold on to this memory until the parent communicator is
-    // successfully aborted or destroyed.
-    comm_->pending_split_comms.push_back(std::move(child));
+    // Leave the output allocated and unread because NCCL may still write
+    // to it.
+    XLA_LOG_DEVICE(WARNING, stream_executor_->device_ordinal())
+        << "Leaking NCCL split output storage after failed split: " << status;
+    (void)child.release();
     return status;
   }
   if (*child == nullptr && color != NCCL_SPLIT_NOCOLOR) {
+    // Parent completion should have published the child handle. Retain the
+    // output conservatively if NCCL violates that completion contract.
+    XLA_LOG_DEVICE(WARNING, stream_executor_->device_ordinal())
+        << "Leaking NCCL split output storage: split reported success but "
+           "the child communicator is null";
+    (void)child.release();
     return Internal(
         "NCCL split completed with ncclSuccess, but child communicator is "
         "null");
@@ -548,13 +550,7 @@ absl::Status NcclCommunicator::Abort() {
     // Note that we intentionally don't call PollUntilDone. Once comm_
     // has been aborted, we can no longer safely touch it.
     absl::MutexLock lock(comm_->mutex);
-    absl::Status status = XLA_NCCL_STATUS(ncclCommAbort(comm_->comm));
-    // NCCL no longer writes to pending split outputs after a successful
-    // teardown, so ~NcclCommState may now abort their children.
-    if (status.ok()) {
-      comm_->parent_torn_down = true;
-    }
-    return status;
+    return XLA_NCCL_STATUS(ncclCommAbort(comm_->comm));
   });
 }
 

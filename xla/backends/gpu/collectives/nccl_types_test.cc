@@ -15,15 +15,11 @@ limitations under the License.
 
 #include "xla/backends/gpu/collectives/nccl_types.h"
 
-#include <cstdint>
-#include <memory>
-#include <vector>
-
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
-#include "absl/synchronization/mutex.h"
 #include "third_party/nccl/nccl.h"
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
@@ -35,7 +31,6 @@ namespace {
 namespace se = stream_executor;
 using ::absl_testing::IsOkAndHolds;
 using ::absl_testing::StatusIs;
-using ::testing::HasSubstr;
 
 TEST(NcclTypesTest, ToNcclCountScalar) {
   EXPECT_EQ(ToNcclCount(F32, 10), 10);
@@ -106,69 +101,6 @@ TEST(NcclTypesTest, ToNcclReduction) {
   EXPECT_EQ(ToNcclReduction(ReductionKind::PRODUCT), ncclProd);
   EXPECT_EQ(ToNcclReduction(ReductionKind::MIN), ncclMin);
   EXPECT_EQ(ToNcclReduction(ReductionKind::MAX), ncclMax);
-}
-
-std::vector<ncclComm_t>& AbortedHandles() {
-  static auto* handles = new std::vector<ncclComm_t>;
-  return *handles;
-}
-
-ncclComm_t FakeHandle(uintptr_t value) {
-  return reinterpret_cast<ncclComm_t>(value);
-}
-
-const ncclComm_t kUnpublishedChild = nullptr;
-const ncclComm_t kChildWithSuccessfulAbort = FakeHandle(0x2);
-const ncclComm_t kChildWithFailedAbort = FakeHandle(0x3);
-
-// Replaces ncclCommAbort in this test to avoid requiring real communicators or
-// GPUs.
-ncclResult_t FakeAbort(ncclComm_t comm) {
-  AbortedHandles().push_back(comm);
-  return comm == kChildWithFailedAbort ? ncclSystemError : ncclSuccess;
-}
-
-// Verifies null handling, successful cleanup, and retention after abort
-// failure.
-TEST(NcclTypesTest, AbortPendingSplits) {
-  AbortedHandles().clear();
-  NcclCommState state(/*comm=*/nullptr);
-  absl::MutexLock lock(state.mutex);
-  for (ncclComm_t child :
-       {kUnpublishedChild, kChildWithSuccessfulAbort, kChildWithFailedAbort}) {
-    state.pending_split_comms.push_back(std::make_unique<ncclComm_t>(child));
-  }
-
-  EXPECT_THAT(
-      state.AbortPendingSplits(FakeAbort),
-      StatusIs(absl::StatusCode::kInternal,
-               HasSubstr("Failed to abort interrupted NCCL split child")));
-
-  // Skip the unpublished child and attempt to abort both published children.
-  EXPECT_THAT(AbortedHandles(), testing::ElementsAre(kChildWithSuccessfulAbort,
-                                                     kChildWithFailedAbort));
-
-  // Retain only the child whose abort failed.
-  ASSERT_EQ(state.pending_split_comms.size(), 1);
-  EXPECT_EQ(*state.pending_split_comms[0], kChildWithFailedAbort);
-
-  // Free the retained slot; the destructor would otherwise leak it on purpose.
-  state.pending_split_comms.clear();
-}
-
-// Destructor cleanup skips null handles and aborts published children.
-TEST(NcclTypesTest, DestructorAfterParentTeardownAbortsPendingSplits) {
-  AbortedHandles().clear();
-  {
-    NcclCommState state(/*comm=*/nullptr, FakeAbort);
-    absl::MutexLock lock(state.mutex);
-    for (ncclComm_t child : {kUnpublishedChild, kChildWithSuccessfulAbort}) {
-      state.pending_split_comms.push_back(std::make_unique<ncclComm_t>(child));
-    }
-    state.parent_torn_down = true;
-  }
-  EXPECT_THAT(AbortedHandles(),
-              testing::ElementsAre(kChildWithSuccessfulAbort));
 }
 
 }  // namespace

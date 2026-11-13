@@ -17,11 +17,8 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_COLLECTIVES_NCCL_TYPES_H_
 
 #include <cstddef>
-#include <memory>
-#include <vector>
 
 #include "absl/base/thread_annotations.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "third_party/nccl/nccl.h"
@@ -31,33 +28,8 @@ limitations under the License.
 
 namespace xla::gpu {
 
-class NcclCommState {
- public:
-  explicit NcclCommState(ncclComm_t comm,
-                         ncclResult_t (*abort_fn)(ncclComm_t) = ncclCommAbort)
-      : comm(comm), abort_fn_(abort_fn) {}
-  ~NcclCommState();
-
-  // After successful parent teardown, aborts pending children and frees their
-  // output storage. If an abort fails, the destructor leaks that child's
-  // storage. Returns the first abort error. `abort_fn` allows testing without
-  // NCCL calls.
-  absl::Status AbortPendingSplits(
-      ncclResult_t (*abort_fn)(ncclComm_t) = ncclCommAbort)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex);
-
-  // Set after successful parent abort or destruction, when NCCL can no longer
-  // write child handles into the pending output slots. This lets the
-  // destructor safely read those handles, abort the children, and free the
-  // output storage.
-  bool parent_torn_down ABSL_GUARDED_BY(mutex) = false;
-
-  // Keeps the memory holding child communicator handles alive after a split
-  // fails with uncertain completion, because NCCL may still write to it.
-  // The destructor aborts the children and frees this memory once
-  // parent_torn_down is set.
-  std::vector<std::unique_ptr<ncclComm_t>> pending_split_comms
-      ABSL_GUARDED_BY(mutex);
+struct NcclCommState {
+  explicit NcclCommState(ncclComm_t comm) : comm(comm) {}
 
   bool has_symmetric_window() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
     return num_symmetric_windows > 0;
@@ -75,10 +47,6 @@ class NcclCommState {
   // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/threadsafety.html
   // Therefore all NCCL API calls are guarded by this mutex.
   absl::Mutex mutex;
-
- private:
-  // Allows destructor cleanup to be tested without real NCCL communicators.
-  ncclResult_t (*abort_fn_)(ncclComm_t);
 };
 
 //===----------------------------------------------------------------------===//

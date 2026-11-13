@@ -16,12 +16,7 @@ limitations under the License.
 #include "xla/backends/gpu/collectives/nccl_types.h"
 
 #include <cstddef>
-#include <memory>
-#include <utility>
-#include <vector>
 
-#include "absl/log/log.h"
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "third_party/nccl/nccl.h"
 #include "xla/core/collectives/reduction_kind.h"
@@ -31,50 +26,6 @@ limitations under the License.
 #include "xla/xla_data.pb.h"
 
 namespace xla::gpu {
-
-NcclCommState::~NcclCommState() {
-  // After successful parent teardown, abort pending children and free their
-  // output storage.
-  if (parent_torn_down) {
-    if (absl::Status s = AbortPendingSplits(abort_fn_); !s.ok()) {
-      LOG(ERROR) << s;
-    }
-  }
-  // If parent teardown failed, leave output storage unread and allocated:
-  // NCCL may still write to it. Also leak storage for children whose abort
-  // failed.
-  if (!pending_split_comms.empty()) {
-    LOG(WARNING) << "Leaking " << pending_split_comms.size()
-                 << " NCCL split output(s): parent teardown did not complete "
-                    "or a child abort failed";
-  }
-  for (auto& output : pending_split_comms) {
-    (void)output.release();
-  }
-}
-
-absl::Status NcclCommState::AbortPendingSplits(
-    ncclResult_t (*abort_fn)(ncclComm_t)) {
-  absl::Status first_error;
-  std::vector<std::unique_ptr<ncclComm_t>> failed;
-  for (auto& output : pending_split_comms) {
-    // A null handle means NCCL never published a child, nothing to abort.
-    if (*output == nullptr) {
-      continue;
-    }
-    ncclResult_t result = abort_fn(*output);
-    if (result != ncclSuccess) {
-      first_error.Update(
-          Internal("Failed to abort interrupted NCCL split child: %s",
-                   ncclGetErrorString(result)));
-      // Keep the handle. The destructor leaks it on purpose, as for a failed
-      // parent teardown.
-      failed.push_back(std::move(output));
-    }
-  }
-  pending_split_comms = std::move(failed);
-  return first_error;
-}
 
 size_t ToNcclCount(PrimitiveType dtype, size_t count) {
   return primitive_util::IsComplexType(dtype) ? count * 2 : count;
