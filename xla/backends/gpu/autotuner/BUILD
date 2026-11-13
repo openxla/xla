@@ -687,6 +687,39 @@ cc_library(
 )
 
 cc_library(
+    name = "hipblaslt_scale_utils",
+    srcs = ["hipblaslt_scale_utils.cc"],
+    hdrs = ["hipblaslt_scale_utils.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla:status_macros",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+xla_cc_test(
+    name = "hipblaslt_scale_utils_test",
+    srcs = ["hipblaslt_scale_utils_test.cc"],
+    deps = [
+        ":hipblaslt_scale_utils",
+        "//xla:literal",
+        "//xla/hlo/evaluator:hlo_evaluator",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor/rocm:rocm_compute_capability",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "hipblaslt",
     srcs = ["hipblaslt.cc"],
     hdrs = ["hipblaslt.h"],
@@ -696,6 +729,7 @@ cc_library(
     ],
     deps = [
         ":gpu_codegen_backend",
+        ":hipblaslt_scale_utils",
         "//xla:autotuning_proto_cc",
         "//xla:literal",
         "//xla:literal_util",
@@ -745,6 +779,7 @@ xla_test(
     ],
     deps = [
         "//xla:error_spec",
+        "//xla:xla_proto_cc",
         "//xla/backends/autotuner:backends_proto_cc",
         "//xla/backends/gpu/tests:hlo_pjrt_gpu_test_base",
         "//xla/hlo/parser:hlo_parser",

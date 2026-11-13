@@ -276,7 +276,8 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
                                      &dummy_pointer));
         break;
       }
-      case gpu::ScaleMode::kBlockScaling: {
+      case gpu::ScaleMode::kBlockScaling:
+      case gpu::ScaleMode::kBlockScalingSwizzled32x8: {
         static int64_t dummy_pointer = 0xACEBALL;
         ABSL_RETURN_IF_ERROR(SetAttr(op_desc_.get(),
                                      HIPBLASLT_MATMUL_DESC_A_SCALE_POINTER,
@@ -285,7 +286,9 @@ auto BlasLt::RegularMatmulPlan::GetAlgorithms(size_t max_algorithm_count,
                                      HIPBLASLT_MATMUL_DESC_B_SCALE_POINTER,
                                      &dummy_pointer));
         hipblasLtMatmulMatrixScale_t mx_scale =
-            HIPBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0;
+            op_desc_.scale_mode() == gpu::ScaleMode::kBlockScalingSwizzled32x8
+                ? HIPBLASLT_MATMUL_MATRIX_SCALE_BLK32_UE8M0_32_8_EXT
+                : HIPBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0;
         ABSL_RETURN_IF_ERROR(SetAttr(
             op_desc_.get(), HIPBLASLT_MATMUL_DESC_A_SCALE_MODE, mx_scale));
         ABSL_RETURN_IF_ERROR(SetAttr(

@@ -471,6 +471,8 @@ bool IsFastAccumEnabled(const xla::PrecisionConfig::Algorithm algorithm,
 
 absl::StatusOr<BlasLt::MatmulPlanPtr> BlasLt::GetMatmulPlan(
     const gpu::GemmConfig& cfg, gpu::BlasLt::Epilogue epilogue) const {
+  TF_RET_CHECK(cfg.scale_mode <= gpu::ScaleMode::kTensorScaling)
+      << "Block scaling is not supported by cuBLASLt";
   auto lhs_layout = cfg.lhs_layout, rhs_layout = cfg.rhs_layout,
        output_layout = cfg.output_layout, c_layout = cfg.c_layout;
   // cublasLt matmul requires batch sizes to be equal. If only one operand has a

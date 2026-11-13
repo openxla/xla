@@ -89,6 +89,29 @@ TEST(DebugOptions, CommandBufferUpdateModeDefaultsToAlwaysUpdate) {
       DebugOptions::ALWAYS_UPDATE);
 }
 
+TEST(DebugOptions, HipblasLtMxScaleLayouts) {
+  EXPECT_EQ(DefaultDebugOptionsIgnoringFlags()
+                .xla_gpu_experimental_hipblaslt_mx_scale_layout(),
+            DebugOptions::HIPBLASLT_MX_SCALE_LAYOUT_NATURAL);
+  for (const auto& [name, expected] : std::vector<
+           std::pair<const char*, DebugOptions::HipblasLtMxScaleLayout>>{
+           {"NATURAL", DebugOptions::HIPBLASLT_MX_SCALE_LAYOUT_NATURAL},
+           {"SWIZZLED_32X8",
+            DebugOptions::HIPBLASLT_MX_SCALE_LAYOUT_SWIZZLED_32X8},
+           {"AUTO", DebugOptions::HIPBLASLT_MX_SCALE_LAYOUT_AUTO}}) {
+    int* pargc;
+    std::vector<char*>* pargv;
+    ResetFlagsFromEnvForTesting("XLA_FLAGS", &pargc, &pargv);
+    std::string flag = "--xla_gpu_experimental_hipblaslt_mx_scale_layout=";
+    flag += name;
+    tsl::setenv("XLA_FLAGS", flag.c_str(), 1);
+    DebugOptions proto_options;
+    EXPECT_EQ(GetDebugOptionsFromProtoAndFlags(&proto_options)
+                  .xla_gpu_experimental_hipblaslt_mx_scale_layout(),
+              expected);
+  }
+}
+
 TEST(DebugOptions,
      SchedulerMemoryFencingDefaultsToAutomaticWithOneSlackWindow) {
   EXPECT_EQ(

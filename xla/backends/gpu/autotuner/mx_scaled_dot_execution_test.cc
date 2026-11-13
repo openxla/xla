@@ -13,13 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <memory>
 #include <string>
 #include <utility>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
@@ -31,6 +30,7 @@ limitations under the License.
 #include "xla/error_spec.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/testlib/filecheck.h"
+#include "xla/xla.pb.h"
 
 namespace xla::gpu {
 namespace {
@@ -304,6 +304,88 @@ INSTANTIATE_TEST_SUITE_P(
     [](const ::testing::TestParamInfo<MxBackendParam>& info) {
       return std::string(info.param.name);
     });
+
+// *****************************************************************************
+// *                  hipBLASLt's swizzled 32x8 scale layout                   *
+// *****************************************************************************
+
+constexpr absl::string_view kMxFp8SwizzledHlo = R"(
+HloModule mx_fp8_swizzled_test
+ENTRY main {
+  %lhs = f8e4m3fn[1,64,512] parameter(0)
+  %rhs = f8e4m3fn[1,96,512] parameter(1)
+  %lhs_scale = f8e8m0fnu[1,64,16] parameter(2)
+  %rhs_scale = f8e8m0fnu[1,96,16] parameter(3)
+  ROOT %result = f32[1,64,96] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      lhs_batch_dims={0}, rhs_batch_dims={0},
+      lhs_contracting_dims={2}, rhs_contracting_dims={2}
+})";
+
+constexpr absl::string_view kMxFp4SwizzledHlo = R"(
+HloModule mx_fp4_swizzled_test
+ENTRY main {
+  %lhs = f4e2m1fn[1,64,512] parameter(0)
+  %rhs = f4e2m1fn[1,96,512] parameter(1)
+  %lhs_scale = f8e8m0fnu[1,64,16] parameter(2)
+  %rhs_scale = f8e8m0fnu[1,96,16] parameter(3)
+  ROOT %result = f32[1,64,96] scaled-dot(%lhs, %rhs, %lhs_scale, %rhs_scale),
+      lhs_batch_dims={0}, rhs_batch_dims={0},
+      lhs_contracting_dims={2}, rhs_contracting_dims={2}
+})";
+
+class MxSwizzledScaleTest : public HloPjRtGpuTestBase {
+ protected:
+  void SetUp() override {
+    const auto* rocm =
+        device_description().gpu_compute_capability().rocm_compute_capability();
+    if (rocm == nullptr || !rocm->gfx9_mi350()) {
+      GTEST_SKIP() << "Swizzled scale tests require gfx950";
+    }
+  }
+
+  // Compiles the scaled dot with hipBLASLt's swizzled scale layout and checks
+  // it against the non-MX reference.
+  void RunSwizzledTest(absl::string_view hlo_string,
+                       const ErrorSpec& error_spec) {
+    HloModuleConfig test_config = GetModuleConfigForTest();
+    DebugOptions& options = test_config.mutable_debug_options();
+    options.set_xla_gpu_experimental_scaled_dot_with_triton(true);
+    options.set_xla_gpu_enable_triton_gemm(true);
+    options.clear_xla_gpu_experimental_autotune_backends();
+    options.add_xla_gpu_experimental_autotune_backends(
+        autotuner::Backend::HIPBLASLT);
+    options.add_xla_gpu_experimental_autotune_backends(
+        autotuner::Backend::NATIVE_EMITTER);
+    options.set_xla_gpu_experimental_hipblaslt_mx_scale_layout(
+        DebugOptions::HIPBLASLT_MX_SCALE_LAYOUT_SWIZZLED_32X8);
+
+    HloModuleConfig ref_config = GetModuleConfigForTest();
+    ref_config.mutable_debug_options()
+        .set_xla_gpu_experimental_scaled_dot_with_triton(false);
+    ref_config.mutable_debug_options().set_xla_gpu_enable_triton_gemm(false);
+    ASSERT_OK_AND_ASSIGN(auto ref_optimized,
+                         GetOptimizedModule(hlo_string, ref_config));
+
+    ASSERT_OK_AND_ASSIGN(auto test_optimized,
+                         GetOptimizedModule(hlo_string, test_config));
+    EXPECT_THAT(
+        RunFileCheck(test_optimized->ToString(),
+                     R"(CHECK: {{__cublas\$lt\$matmul\$mx.*"scale_mode":3}})"),
+        IsOkAndHolds(true));
+
+    EXPECT_TRUE(RunAndCompareTwoModules(std::move(test_optimized),
+                                        std::move(ref_optimized), error_spec,
+                                        /*run_hlo_passes=*/false));
+  }
+};
+
+TEST_F(MxSwizzledScaleTest, MxFp8Swizzled) {
+  RunSwizzledTest(kMxFp8SwizzledHlo, ErrorSpec(/*aabs=*/1e-4, /*arel=*/1e-5));
+}
+
+TEST_F(MxSwizzledScaleTest, MxFp4Swizzled) {
+  RunSwizzledTest(kMxFp4SwizzledHlo, ErrorSpec(/*aabs=*/1e-4, /*arel=*/1e-5));
+}
 
 }  // namespace
 }  // namespace xla::gpu

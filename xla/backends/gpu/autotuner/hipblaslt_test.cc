@@ -420,5 +420,81 @@ CHECK:        ROOT {{.*}} = f8e4m3fn[32,16]{1,0} fusion({{.*}}), kind=kLoop
               absl_testing::IsOkAndHolds(true));
 }
 
+// M, N and K fit whole 32x8 scale tiles.
+const char kSwizzledScaledDotFusionHlo[] = R"(
+HloModule SwizzledScaledDotFusion
+
+%fusion_dot (p0: f8e4m3fn[64,512], p1: f8e4m3fn[96,512], p2: f8e8m0fnu[64,16], p3: f8e8m0fnu[96,16]) -> f32[64,96] {
+  %p0 = f8e4m3fn[64,512]{1,0} parameter(0)
+  %p1 = f8e4m3fn[96,512]{1,0} parameter(1)
+  %p2 = f8e8m0fnu[64,16]{1,0} parameter(2)
+  %p3 = f8e8m0fnu[96,16]{1,0} parameter(3)
+  ROOT %scaled_dot = f32[64,96]{1,0} scaled-dot(%p0, %p1, %p2, %p3), lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+
+ENTRY %main (lhs: f8e4m3fn[64,512], rhs: f8e4m3fn[96,512], lhs_scale: f8e8m0fnu[64,16], rhs_scale: f8e8m0fnu[96,16]) -> f32[64,96] {
+  %lhs = f8e4m3fn[64,512]{1,0} parameter(0)
+  %rhs = f8e4m3fn[96,512]{1,0} parameter(1)
+  %lhs_scale = f8e8m0fnu[64,16]{1,0} parameter(2)
+  %rhs_scale = f8e8m0fnu[96,16]{1,0} parameter(3)
+  ROOT %fusion = f32[64,96]{1,0} fusion(%lhs, %rhs, %lhs_scale, %rhs_scale), kind=kCustom, calls=%fusion_dot, backend_config={"fusion_backend_config":{"kind":"__triton_gemm"}}
+})";
+
+class HipblasLtSwizzledScaleTest : public HipblasLtBackendTest {
+ protected:
+  void SetUp() override {
+    const auto* rocm_cc =
+        target_config_.device_description.gpu_compute_capability()
+            .rocm_compute_capability();
+    if (rocm_cc == nullptr || !rocm_cc->gfx9_mi350()) {
+      GTEST_SKIP() << "The swizzled scale layout requires gfx950.";
+    }
+  }
+};
+
+TEST_F(HipblasLtSwizzledScaleTest, AutoOffersBothLayouts) {
+  debug_options_.set_xla_gpu_experimental_hipblaslt_mx_scale_layout(
+      DebugOptions::HIPBLASLT_MX_SCALE_LAYOUT_AUTO);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kSwizzledScaledDotFusionHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::vector<std::unique_ptr<BackendConfig>> configs,
+                       backend_.GetSupportedConfigs(*fusion));
+  bool has_natural = false;
+  bool has_swizzled = false;
+  for (const std::unique_ptr<BackendConfig>& config : configs) {
+    if (config->gemm().mx_scale_layout() ==
+        HipblasLtBackendConfig::MX_SCALE_LAYOUT_SWIZZLED_32X8) {
+      has_swizzled = true;
+    } else {
+      has_natural = true;
+    }
+  }
+  EXPECT_TRUE(has_natural);
+  EXPECT_TRUE(has_swizzled);
+}
+
+TEST_F(HipblasLtSwizzledScaleTest, ApplyConfigSwizzlesScales) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloModule> module,
+      ParseAndReturnVerifiedModule(kSwizzledScaledDotFusionHlo));
+  HloInstruction* fusion = module->entry_computation()->root_instruction();
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<BackendConfig> config,
+                       backend_.GetDefaultConfig(*fusion));
+  config->mutable_gemm()->set_mx_scale_layout(
+      HipblasLtBackendConfig::MX_SCALE_LAYOUT_SWIZZLED_32X8);
+
+  EXPECT_OK(backend_.ApplyConfig(*fusion, *config));
+
+  EXPECT_THAT(RunFileCheck(module->ToString(),
+                           R"(CHECK-DAG: fusion({{.*}}%lhs_scale), kind=kLoop
+                        CHECK-DAG: fusion({{.*}}%rhs_scale), kind=kLoop
+                        CHECK: custom-call
+                        CHECK-SAME: custom_call_target="__cublas$lt$matmul$mx"
+                        CHECK: "scale_mode":3)"),
+              absl_testing::IsOkAndHolds(true));
+}
+
 }  // namespace gpu
 }  // namespace xla

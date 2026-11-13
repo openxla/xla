@@ -580,6 +580,8 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_detect_unstable_reductions_post_optimizations(
       DebugOptions::DETECTION_MODE_NONE);
   opts.set_xla_gpu_experimental_scaled_dot_with_triton(true);
+  opts.set_xla_gpu_experimental_hipblaslt_mx_scale_layout(
+      DebugOptions::HIPBLASLT_MX_SCALE_LAYOUT_NATURAL);
   opts.set_xla_early_exit_with_layouts(false);
   opts.set_xla_gpu_experimental_early_exit(
       DebugOptions::EARLY_EXIT_POINT_UNSET);
@@ -822,6 +824,23 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
           return false;
         }
         debug_options->set_xla_gpu_cudnn_deviceless_compilation_mode(mode);
+        return true;
+      };
+
+  // Custom "sub-parser" lambda for the hipBLASLt MX scale layout flag.
+  auto setter_for_xla_gpu_experimental_hipblaslt_mx_scale_layout =
+      [debug_options](const std::string& value) {
+        std::string name = absl::AsciiStrToUpper(value);
+        constexpr absl::string_view prefix = "HIPBLASLT_MX_SCALE_LAYOUT_";
+        if (!absl::StartsWith(name, prefix)) {
+          name = absl::StrCat(prefix, name);
+        }
+        DebugOptions::HipblasLtMxScaleLayout layout;
+        if (!DebugOptions::HipblasLtMxScaleLayout_Parse(name, &layout)) {
+          return false;
+        }
+        debug_options->set_xla_gpu_experimental_hipblaslt_mx_scale_layout(
+            layout);
         return true;
       };
 
@@ -3920,6 +3939,16 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       debug_options->xla_gpu_experimental_vmm_disabled(),
       "If true, disables CUDA Virtual Memory Management (VMM) APIs for device "
       "memory allocation and collective fusion."));
+  flag_list->push_back(tsl::Flag(
+      "xla_gpu_experimental_hipblaslt_mx_scale_layout",
+      setter_for_xla_gpu_experimental_hipblaslt_mx_scale_layout,
+      DebugOptions::HipblasLtMxScaleLayout_Name(
+          debug_options->xla_gpu_experimental_hipblaslt_mx_scale_layout()),
+      "Experimental, ROCm only: the hipBLASLt scale layouts the autotuner "
+      "tries for MX GEMMs:\n"
+      "  NATURAL (default): the scales as given.\n"
+      "  SWIZZLED_32X8: the scales permuted into hipBLASLt's 32x8 tile order.\n"
+      "  AUTO: both, the permutation's cost included in the timing."));
 
   flag_list->push_back(tsl::Flag(
       "xla_cpu_collective_call_warn_stuck_timeout_seconds",

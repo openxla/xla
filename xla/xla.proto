@@ -165,6 +165,17 @@ message DebugOptions {
     WHILE_LOOP_UNROLLING_MANUAL_UNROLL = 4;
   }
 
+  enum HipblasLtMxScaleLayout {
+    // The scale tensor as given, row-major [M or N, K/32]
+    // VEC32_UE8M0 scale mode in hipBLASLt
+    HIPBLASLT_MX_SCALE_LAYOUT_NATURAL = 0;
+    // XLA permutes the scales into hipBLASLt's 32-row by 8-block tile order
+    // BLK32_UE8M0_32_8_EXT scale mode in hipBLASLt
+    HIPBLASLT_MX_SCALE_LAYOUT_SWIZZLED_32X8 = 1;
+    // Autotune candidates in both layouts
+    HIPBLASLT_MX_SCALE_LAYOUT_AUTO = 2;
+  }
+
   //--------------------------------------------------------------------------//
   // XLA backend-agnostic options.
   //--------------------------------------------------------------------------//
@@ -1903,6 +1914,10 @@ message DebugOptions {
   // We need this to enable triton scaled dot emitter for testing.
   optional bool xla_gpu_experimental_scaled_dot_with_triton = 410;
 
+  // The hipBLASLt scale layouts the autotuner tries for MX GEMMs (ROCm only).
+  optional HipblasLtMxScaleLayout
+      xla_gpu_experimental_hipblaslt_mx_scale_layout = 572;
+
   // If true, use MultiGpuBarrierWithNcclKernel in one-shot RaggedAllToAll
   // thunk.
   optional bool xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl =
@@ -2035,7 +2050,7 @@ message DebugOptions {
   optional float xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight =
       569;
 
-  // Next id: 572
+  // Next id: 573
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
