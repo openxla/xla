@@ -3646,6 +3646,89 @@ TEST_F(LatencyHidingSchedulerTest, RerunWithSmallerMemoryLimit) {
             PositionInVector(new_instruction_sequence, cps));
 }
 
+TEST_F(LatencyHidingSchedulerTest, RerunDualPathSelectsBestCandidate) {
+  // Cross-computation rerun: `ENTRY` overlaps `entry_cp` across `while_loop` on
+  // Trial 0, so restarting from `input_sequences` loses caller live-buffer
+  // pressure in `while_body` while the chained path fits `memory_limit`.
+  {
+    constexpr absl::string_view kCrossCompHlo = R"hlo(
+      HloModule rerun_cross_comp_test, is_scheduled=true
+      while_cond {
+        p = u8[50]{0} parameter(0)
+        ROOT cond = pred[] constant(false)
+      }
+      while_body {
+        p = u8[50]{0} parameter(0)
+        c = u8[] constant(0)
+        body_buf = u8[50]{0} broadcast(c), dimensions={}
+        body_work = u8[1]{0} slice(body_buf), slice={[0:1]}
+        body_cp = u8[50]{0} collective-permute(p), source_target_pairs={{0,1}}
+        body_cp_slice = u8[1]{0} slice(body_cp), slice={[0:1]}
+        sum_1 = u8[1]{0} add(body_cp_slice, body_work)
+        sum_scalar = u8[] reshape(sum_1)
+        ROOT sum = u8[50]{0} broadcast(sum_scalar), dimensions={}
+      }
+      ENTRY main {
+        p0 = u8[50]{0} parameter(0)
+        p0_25 = u8[25]{0} slice(p0), slice={[0:25]}
+        entry_cp = u8[25]{0} collective-permute(p0_25), source_target_pairs={{0,1}}
+        entry_cp_slice = u8[1]{0} slice(entry_cp), slice={[0:1]}
+        while_loop = u8[50]{0} while(p0), condition=while_cond, body=while_body
+        while_slice = u8[1]{0} slice(while_loop), slice={[0:1]}
+        ROOT out = u8[1]{0} add(while_slice, entry_cp_slice)
+      }
+    )hlo";
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseHloText(kCrossCompHlo));
+    SchedulerConfig cfg = GetDefaultSchedConfig();
+    cfg.memory_limit = 180;
+    cfg.rerun = 1;
+    ASSERT_OK(RunScheduler(module.get(), cfg));
+    AliasInfo alias_info;
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloAliasAnalysis> aa,
+                         HloAliasAnalysis::Run(module.get(), &alias_info));
+    ModulePressureState ps(module.get(), aa.get(), ShapeSizeBytes);
+    ps.InitializePressureStates();
+    EXPECT_LE(ps.GetMemoryPeak(), cfg.memory_limit);
+  }
+
+  // Irreducible-peak rerun: when a tighter `0.9x` limit increases peak memory,
+  // retain Trial 0's lower-peak schedule (`b_end` before `a_end`).
+  {
+    constexpr absl::string_view kKeepBestHlo = R"hlo(
+      HloModule rerun_keep_best_test, is_scheduled=true
+      add_op {
+        lhs = u8[] parameter(0)
+        rhs = u8[] parameter(1)
+        ROOT sum = u8[] add(lhs, rhs)
+      }
+      ENTRY main {
+        p0 = u8[] parameter(0)
+        b_big = u8[125]{0} broadcast(p0), dimensions={}
+        b_mid = u8[20]{0} slice(b_big), slice={[0:20]}
+        b_end = u8[1]{0} slice(b_mid), slice={[0:1]}
+        huge = u8[100]{0} broadcast(p0), dimensions={}
+        s_huge = u8[36]{0} slice(huge), slice={[0:36]}
+        ar = u8[36]{0} all-reduce(s_huge), replica_groups={{0,1}}, to_apply=add_op
+        a_end = u8[1]{0} slice(ar), slice={[0:1]}
+        ab_end = u8[1]{0} add(a_end, b_end)
+        s_huge_end = u8[1]{0} slice(huge), slice={[0:1]}, control-predecessors={ab_end}
+        ROOT root = u8[1]{0} add(ab_end, s_huge_end)
+      }
+    )hlo";
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseHloText(kKeepBestHlo));
+    SchedulerConfig cfg = GetDefaultSchedConfig();
+    cfg.memory_limit = 140;
+    cfg.rerun = 1;
+    ASSERT_OK(RunScheduler(module.get(), cfg));
+    const auto& seq =
+        module->schedule().sequence(module->entry_computation()).instructions();
+    EXPECT_LT(PositionInVector(seq, FindInstruction(module.get(), "b_end")),
+              PositionInVector(seq, FindInstruction(module.get(), "a_end")));
+  }
+}
+
 TEST_F(LatencyHidingSchedulerTest, MultipleAsyncDoneOperationsDoNotCreateLoop) {
   absl::string_view hlo_string = R"(
 HloModule multiple_async_done_scheduler_test, is_scheduled=true

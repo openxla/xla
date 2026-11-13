@@ -3979,18 +3979,22 @@ absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
   AsyncTracker* async_tracker = scheduling_context_->GetAsyncTracker().get();
   const bool use_heap_simulator =
       async_tracker->GetConfig().enable_schedule_by_structure;
-  // With schedule-by-structure, the first rerun starts from the same input
-  // schedule as the first try, so that it only differs in the scheduler
-  // configuration.
-  std::vector<std::pair<HloComputation*, HloInstructionSequence>>
-      input_sequences;
-  if (use_heap_simulator && scheduler_core_->GetRerunTimes() > 0) {
-    input_sequences.reserve(computations_to_schedule_.size());
-    for (HloComputation* computation : computations_to_schedule_) {
-      input_sequences.emplace_back(computation,
-                                   module->schedule().sequence(computation));
+  using Sequences =
+      std::vector<std::pair<HloComputation*, HloInstructionSequence>>;
+  auto save_seqs = [&]() {
+    Sequences seqs;
+    seqs.reserve(computations_to_schedule_.size());
+    for (HloComputation* c : computations_to_schedule_) {
+      seqs.emplace_back(c, module->schedule().sequence(c));
     }
-  }
+    return seqs;
+  };
+  auto load_seqs = [&](const Sequences& seqs) {
+    for (const auto& [c, seq] : seqs) module->schedule().set_sequence(c, seq);
+    async_tracker->InvalidateCache();
+  };
+  Sequences input_sequences =
+      scheduler_core_->GetRerunTimes() > 0 ? save_seqs() : Sequences{};
   for (HloComputation* computation : computations_to_schedule_) {
     ABSL_ASSIGN_OR_RETURN(std::vector<HloInstruction*> new_schedule,
                           scheduler_core_->ScheduleComputation(computation));
@@ -4036,46 +4040,85 @@ absl::StatusOr<bool> LatencyHidingScheduler::RunImpl(
               << absl::FormatDuration(absl::Now() - start);
     return estimate.heap_size;
   };
-  for (int64_t iter = 0; iter < scheduler_core_->GetRerunTimes(); iter++) {
-    ABSL_ASSIGN_OR_RETURN(int64_t memory_usage, estimate_memory_usage());
-    if (static_cast<uint64_t>(memory_usage) <= initial_memory_limit) {
+  int64_t best_usage = std::numeric_limits<int64_t>::max();
+  int64_t best_peak = 0;
+  uint64_t best_limit = initial_memory_limit;
+  double best_wasted = std::numeric_limits<double>::infinity();
+  Sequences best_seqs, chained_seqs;
+  for (int64_t iter = 0; scheduler_core_->GetRerunTimes() > 0; iter++) {
+    if (iter == 0) {
+      ABSL_ASSIGN_OR_RETURN(best_usage, estimate_memory_usage());
+      best_peak = scheduler_core_->GetMemoryPeak();
+    }
+    if (static_cast<uint64_t>(best_usage) <= initial_memory_limit ||
+        iter == scheduler_core_->GetRerunTimes()) {
       break;
     }
+    if (iter == 0) best_seqs = chained_seqs = save_seqs();
     uint64_t new_limit =
         static_cast<uint64_t>(scheduler_core_->GetMemoryLimit() * 0.9);
     if (use_heap_simulator) {
       async_tracker->SetEnableCpdForSyncCollective(false);
-      if (iter == 0) {
-        // Restart from the original schedule when we changed the scheduler
-        // config.
-        for (const auto& [computation, sequence] : input_sequences) {
-          module->schedule().set_sequence(computation, sequence);
-        }
-        async_tracker->InvalidateCache();
-      }
     }
     LOG(INFO) << "[" << name()
-              << "] LatencyHidingScheduler current memory usage: "
-              << memory_usage << " bytes, does not fit in initial limit: "
+              << "] LatencyHidingScheduler current memory usage: " << best_usage
+              << " bytes, does not fit in initial limit: "
               << initial_memory_limit << ". Setting the new limit to "
               << new_limit;
-    ABSL_RETURN_IF_ERROR(scheduler_core_->InitializeScheduler(module));
-    scheduler_core_->SetMemoryLimit(new_limit);
-    for (HloComputation* computation : computations_to_schedule_) {
-      ABSL_ASSIGN_OR_RETURN(std::vector<HloInstruction*> new_schedule,
-                            scheduler_core_->ScheduleComputation(computation));
-      scheduling_context_->GetAsyncTracker()->UpdateTargetDefinedStates(
-          computation, scheduler_core_->GetSchedulingState().get());
-      module->schedule().set_sequence(computation,
-                                      absl::MakeConstSpan(new_schedule));
-      scheduling_context_->GetAsyncTracker()->ResetTargetDefinedStates(
-          scheduler_core_->GetSchedulingState().get());
-      scheduling_context_->GetAsyncTracker()->InvalidateCache(computation);
+    for (bool from_input : {false, true}) {
+      if (!from_input && use_heap_simulator && iter == 0) continue;
+      load_seqs(from_input ? input_sequences : chained_seqs);
+      ABSL_RETURN_IF_ERROR(scheduler_core_->InitializeScheduler(module));
+      scheduler_core_->SetMemoryLimit(new_limit);
+      for (HloComputation* computation : computations_to_schedule_) {
+        ABSL_ASSIGN_OR_RETURN(
+            std::vector<HloInstruction*> new_schedule,
+            scheduler_core_->ScheduleComputation(computation));
+        async_tracker->UpdateTargetDefinedStates(
+            computation, scheduler_core_->GetSchedulingState().get());
+        module->schedule().set_sequence(computation,
+                                        absl::MakeConstSpan(new_schedule));
+        async_tracker->ResetTargetDefinedStates(
+            scheduler_core_->GetSchedulingState().get());
+        async_tracker->InvalidateCache(computation);
+      }
+      if (!from_input || (use_heap_simulator && iter == 0)) {
+        chained_seqs = save_seqs();
+      }
+      ABSL_ASSIGN_OR_RETURN(int64_t usage, estimate_memory_usage());
+      bool fits = static_cast<uint64_t>(usage) <= initial_memory_limit;
+      bool best_fits =
+          static_cast<uint64_t>(best_usage) <= initial_memory_limit;
+      double wasted = 0.0;
+      if (fits) {
+        auto* core = dynamic_cast<DefaultSchedulerCore*>(scheduler_core_.get());
+        for (HloComputation* c : computations_to_schedule_) {
+          wasted += LatencyHidingStatistics(
+                        c, module->schedule().sequence(c).instructions(),
+                        scheduling_context_,
+                        core ? core->GetModulePressureState() : nullptr)
+                        .GetTotalWastedCycles();
+        }
+      }
+      if (fits != best_fits                 ? fits
+          : (fits && wasted != best_wasted) ? wasted < best_wasted
+                                            : usage < best_usage) {
+        best_usage = usage;
+        best_peak = scheduler_core_->GetMemoryPeak();
+        best_limit = new_limit;
+        best_wasted = wasted;
+        best_seqs = save_seqs();
+      }
     }
+  }
+  if (!best_seqs.empty()) {
+    load_seqs(best_seqs);
+    scheduler_core_->SetMemoryLimit(best_limit);
   }
   LOG(INFO) << "[" << name() << "]"
             << " LatencyHidingScheduler current memory usage: "
-            << scheduler_core_->GetMemoryPeak()
+            << (!best_seqs.empty() ? best_peak
+                                   : scheduler_core_->GetMemoryPeak())
             << " bytes. Current limit: " << scheduler_core_->GetMemoryLimit();
   if (VLOG_IS_ON(1)) {
     // Log the statistics after scheduling.
