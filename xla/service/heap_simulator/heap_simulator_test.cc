@@ -1963,6 +1963,39 @@ TEST_F(ConstrainedGlobalDecreasingSizeBestFitHeapTest,
   EXPECT_EQ(0, result.heap_results[0].chunk_map.at(buffer_c_).offset);
 }
 
+TEST_F(ConstrainedGlobalDecreasingSizeBestFitHeapTest,
+       RoundUpOversizedHeapsSharesOnlyWithBuffersNeedingAllPages) {
+  // a (size 40, colocated with e of size 120) and b (size 110) each need 3
+  // pages of 50 and share one heap of 150. c needs only 2 pages and d 1 page,
+  // so neither joins the heap of a and b, and d does not join the heap of c.
+  ConstrainedGlobalDecreasingSizeBestFitHeap heap(
+      /*size_limit_per_heap=*/50, /*alignment=*/1,
+      GlobalDecreasingSizeBestFitHeap<HloValue>::kSpatial,
+      /*buffer_interval_compare=*/nullptr, /*round_up_oversized_heaps=*/true);
+  heap.Alloc(buffer_a_, 40);
+  heap.Alloc(buffer_c_, 90);
+  heap.Alloc(buffer_d_, 30);
+  heap.Free(buffer_a_, 40);
+  heap.ShareWith(buffer_e_, buffer_a_, 120);
+  heap.Free(buffer_e_, 120);
+  heap.Alloc(buffer_b_, 110);
+  heap.Free(buffer_b_, 110);
+  heap.Free(buffer_c_, 90);
+  heap.Free(buffer_d_, 30);
+
+  ASSERT_OK_AND_ASSIGN(const HeapSimulator::Result<HloValue> result,
+                       heap.Finish());
+  ASSERT_EQ(result.heap_results.size(), 3);
+  EXPECT_EQ(result.heap_results[0].heap_size, 120);
+  EXPECT_EQ(result.heap_results[0].chunk_map.at(buffer_a_).offset, 0);
+  EXPECT_EQ(result.heap_results[0].chunk_map.at(buffer_e_).offset, 0);
+  EXPECT_EQ(result.heap_results[0].chunk_map.at(buffer_b_).offset, 0);
+  EXPECT_EQ(result.heap_results[1].heap_size, 90);
+  EXPECT_TRUE(result.heap_results[1].chunk_map.contains(buffer_c_));
+  EXPECT_EQ(result.heap_results[2].heap_size, 30);
+  EXPECT_TRUE(result.heap_results[2].chunk_map.contains(buffer_d_));
+}
+
 TEST_F(ConstrainedGlobalDecreasingSizeBestFitHeapTest, ColocatedII) {
   // space
   //   ^

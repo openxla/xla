@@ -1133,14 +1133,22 @@ class GlobalDecreasingSizeBestFitHeap : public HeapAlgorithm<BufferType> {
 class ConstrainedGlobalDecreasingSizeBestFitHeap
     : public GlobalDecreasingSizeBestFitHeap<HloValue> {
  public:
+  // If `round_up_oversized_heaps` is true, a heap whose first buffer exceeds
+  // `size_limit_per_heap` gets a limit of the smallest multiple of
+  // `size_limit_per_heap` that fits it, and only takes further buffers that do
+  // not fit in a smaller multiple. Multi page buffer assignment uses this so
+  // that a heap spanning several pages only holds buffers needing all of them.
+  // Only the strategies handled by FinishBestOfSpatialTemporal honor it.
   explicit ConstrainedGlobalDecreasingSizeBestFitHeap(
       uint64_t size_limit_per_heap, int64_t alignment,
       PackingStrategy packing_strategy = kSpatial,
-      BufferIntervalCompare buffer_interval_compare = nullptr)
+      BufferIntervalCompare buffer_interval_compare = nullptr,
+      bool round_up_oversized_heaps = false)
       : GlobalDecreasingSizeBestFitHeap<HloValue>(alignment, packing_strategy,
                                                   buffer_interval_compare),
         size_limit_per_heap_(size_limit_per_heap),
-        packing_strategy_(packing_strategy) {}
+        packing_strategy_(packing_strategy),
+        round_up_oversized_heaps_(round_up_oversized_heaps) {}
   ~ConstrainedGlobalDecreasingSizeBestFitHeap() override {}
 
   absl::StatusOr<Result> Finish() override;
@@ -1170,6 +1178,7 @@ class ConstrainedGlobalDecreasingSizeBestFitHeap
 
   uint64_t size_limit_per_heap_;
   PackingStrategy packing_strategy_;
+  bool round_up_oversized_heaps_;
 };
 
 // A heap algorithm that chooses the best results from other algorithms added to

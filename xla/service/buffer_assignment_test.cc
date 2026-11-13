@@ -78,6 +78,7 @@ namespace xla {
 namespace {
 
 using memory_space_assignment::PresetAssignments;
+using ::testing::ElementsAre;
 using ::testing::FieldsAre;
 using ::testing::HasSubstr;
 using ::testing::Pair;
@@ -6850,6 +6851,59 @@ TEST_F(BufferAssignmentTest, MultiPage) {
   EXPECT_EQ(pages_and_sizes.size(), 2);
   EXPECT_THAT(pages_and_sizes,
               UnorderedElementsAre(Pair(0, 2800), Pair(1, 400)));
+}
+
+// A temp buffer larger than the page size gets its own run of consecutive
+// pages after the single pages, and unpaged temp allocations (such as tuples)
+// that overflow page 0 pack into fresh pages after the multi page range.
+TEST_F(BufferAssignmentTest, MultiPageBufferLargerThanPage) {
+  constexpr absl::string_view kHloText = R"(
+HloModule test, is_scheduled=true
+
+ENTRY main {
+  p0 = f32[600] parameter(0)
+  big = f32[600] negate(p0)
+  small0 = f32[255] slice(big), slice={[0:255]}
+  small1 = f32[255] negate(small0)
+  t0 = (f32[255], f32[255]) tuple(small1, small1)
+  t1 = (f32[600], f32[255]) tuple(p0, small1)
+  ROOT r = f32[1] slice(small1), slice={[0:1]}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(kHloText));
+  constexpr int64_t kPageSize = 1024;
+  module->mutable_config().set_page_size_kib(kPageSize / 1024);
+  BufferAssigner::Options opts;
+  opts.colorer = BufferAssigner::DefaultColorer();
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<BufferAssignment> buffers,
+      BufferAssigner::Run(
+          module.get(),
+          std::make_unique<SequentialHloOrdering>(module->schedule()),
+          &BufferSizeBytes, &alias_info_,
+          [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+  std::vector<std::pair<int64_t, int64_t>> page_ranges;
+  int64_t multi_page_allocations = 0;
+  for (const BufferAllocation& alloc : buffers->Allocations()) {
+    if (!alloc.IsPreallocatedTempBuffer()) {
+      continue;
+    }
+    const int64_t num_pages = CeilOfRatio(alloc.size(), kPageSize);
+    page_ranges.push_back({alloc.page_id(), alloc.page_id() + num_pages});
+    if (num_pages > 1) {
+      ++multi_page_allocations;
+      EXPECT_GE(alloc.page_id(), 1) << "Page 0 must stay a single page.";
+    }
+  }
+  EXPECT_EQ(multi_page_allocations, 1);
+  absl::c_sort(page_ranges);
+  for (int i = 1; i < page_ranges.size(); ++i) {
+    EXPECT_LE(page_ranges[i - 1].second, page_ranges[i].first);
+  }
+  // small0/small1 fill page 0 (1020 B), big (2400 B) spans pages [1, 4),
+  // and both 16 B tuple tables pack into page 4.
+  EXPECT_THAT(page_ranges, ElementsAre(Pair(0, 1), Pair(1, 4), Pair(4, 5)));
 }
 
 // Verifies that BufferAssignment builds successfully when using a dependency
