@@ -2999,7 +2999,13 @@ xla_test(
     name = "ragged_dot_cudnn_support_test",
     srcs = ["ragged_dot_cudnn_support_test.cc"],
     backends = [
-        "gpu",
+        "a100",
+        "h100",
+        "b200",
+    ],
+    tags = [
+        "cuda-only",
+        "no_mac",
     ],
     deps = [
         ":ragged_dot_cudnn_support",
