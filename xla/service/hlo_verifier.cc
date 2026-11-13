@@ -2714,6 +2714,7 @@ absl::Status CheckMixedPrecisionOperands(const HloInstruction* instruction) {
     case HloOpcode::kRecvDone:
     case HloOpcode::kReducePrecision:
     case HloOpcode::kReduceWindow:
+    case HloOpcode::kScatter:
     case HloOpcode::kSend:
     case HloOpcode::kSendDone:
     case HloOpcode::kSort:
@@ -2762,10 +2763,41 @@ absl::Status ShapeVerifier::HandleScatter(HloInstruction* scatter) {
   for (const HloInstruction* operand : scatter->operands()) {
     arg_shapes.push_back(&operand->shape());
   }
-  return CheckShape(scatter,
-                    ShapeInference::InferScatterShape(
-                        arg_shapes, scatter->to_apply()->ComputeProgramShape(),
-                        scatter->scatter_dimension_numbers()));
+  const ProgramShape to_apply_shape =
+      scatter->to_apply()->ComputeProgramShape();
+  ABSL_RETURN_IF_ERROR(CheckShape(
+      scatter,
+      ShapeInference::InferScatterShape(arg_shapes, to_apply_shape,
+                                        scatter->scatter_dimension_numbers())));
+  if (!opts_.allow_mixed_precision) {
+    const int64_t operand_count =
+        Cast<HloScatterInstruction>(scatter)->scatter_operand_count();
+    auto check_param = [&](int64_t param_idx, int64_t operand_idx) {
+      return ShapeUtil::SameElementType(to_apply_shape.parameters(param_idx),
+                                        scatter->operand(operand_idx)->shape())
+                 ? absl::OkStatus()
+                 : InvalidArgument(
+                       "Shape mismatch between to_apply computation parameter "
+                       "and operand %d in %s.",
+                       operand_idx, scatter->ToString());
+    };
+    for (int64_t i = 0; i < operand_count; ++i) {
+      const int64_t update_idx = operand_count + 1 + i;
+      ABSL_RETURN_IF_ERROR(check_param(i, i));
+      ABSL_RETURN_IF_ERROR(check_param(operand_count + i, update_idx));
+      const Shape& input_shape = scatter->operand(i)->shape();
+      const Shape& update_shape = scatter->operand(update_idx)->shape();
+      if (ShapeUtil::ElementIsFloating(input_shape) &&
+          ShapeUtil::ElementIsFloating(update_shape) &&
+          !ShapeUtil::SameElementType(input_shape, update_shape)) {
+        return Internal(
+            "Seen floating point types of different precisions in %s, but "
+            "mixed precision is disallowed.",
+            scatter->ToString());
+      }
+    }
+  }
+  return absl::OkStatus();
 }
 
 absl::Status ShapeVerifier::HandleAfterAll(HloInstruction* token) {
