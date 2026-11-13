@@ -1221,6 +1221,11 @@ message DebugOptions {
   // flags or deviceless cudnn compilation works by default.
   optional bool
       xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops = 566;
+  
+  // If true, lower supported kRaggedDot ops not handled by cuDNN or hipBLASLt
+  // through the experimental Triton (XTile) backend instead of expanding them
+  // to dense dots.
+  optional bool xla_gpu_experimental_triton_ragged_dot = 572;
 
   // Experimental: filter specifying which collective operations should use
   // custom kernels (e.g. Triton one-shot / two-shot) instead of NCCL.
@@ -2035,7 +2040,7 @@ message DebugOptions {
   optional float xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight =
       569;
 
-  // Next id: 572
+  // Next id: 573
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
