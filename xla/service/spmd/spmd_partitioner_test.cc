@@ -20924,6 +20924,30 @@ ENTRY entry {
   std::cerr << "module: " << module->ToString() << "\n";
 }
 
+TEST_P(SpmdPartitioningTest, OriginalValuePreservedOnSyntheticManualCall) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+%manual_body (param: f32[2,2]) -> f32[2,2] {
+  %param = f32[2,2] parameter(0), sharding={manual}
+  ROOT %dot = f32[2,2] dot(%param, %param), lhs_contracting_dims={1}, rhs_contracting_dims={0}, sharding={manual}, origin={{"dot.1"}}
+}
+
+ENTRY %entry (x: f32[4,2]) -> f32[4,2] {
+  %x = f32[4,2] parameter(0), sharding={devices=[2,1]<=[2]}
+  %local_x = f32[2,2] custom-call(%x), custom_call_target="SPMDFullToShardShape", sharding={manual}
+  %call = f32[2,2] call(%local_x), to_apply=%manual_body, sharding={manual}, origin={(),[""]}
+  ROOT %global_y = f32[4,2] custom-call(%call), custom_call_target="SPMDShardToFullShape", sharding={devices=[2,1]<=[2]}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2));
+  const HloInstruction* call = FindInstruction(module.get(), HloOpcode::kCall);
+  ASSERT_NE(call, nullptr);
+  ASSERT_NE(call->original_value(), nullptr);
+  EXPECT_TRUE(call->original_value()->is_synthetic_call());
+}
+
 TEST_P(SpmdPartitioningTest, ShardingPreprocessOrderWhile) {
   absl::string_view hlo_string = R"(
 HloModule module
