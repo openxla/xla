@@ -3646,6 +3646,161 @@ TEST_F(LatencyHidingSchedulerTest, RerunWithSmallerMemoryLimit) {
             PositionInVector(new_instruction_sequence, cps));
 }
 
+TEST_F(LatencyHidingSchedulerTest,
+       RerunShortCircuitsOnChainedAndFallsBackToInputSchedule) {
+  // Records the entry computation's input schedule on each scheduling pass.
+  class InputScheduleRecordingAsyncTracker : public AsyncTracker {
+   public:
+    InputScheduleRecordingAsyncTracker(
+        const SchedulerConfig& config,
+        std::vector<std::vector<std::string>>* input_schedules)
+        : AsyncTracker(config), input_schedules_(input_schedules) {}
+    using AsyncTracker::UpdateTargetDefinedStates;
+
+    void UpdateTargetDefinedStates(
+        const HloInstruction& hlo, const HloScheduleGraph* schedule_graph,
+        const LatencyEstimator* latency_estimator,
+        LatencyEstimator::TimeCost current_time,
+        SchedulerCore::SchedulingState* sched_state) override {
+      if (!hlo.parent()->IsEntryComputation() ||
+          hlo.parent()->root_instruction() != &hlo) {
+        return;
+      }
+      std::vector<std::string>& input_schedule =
+          input_schedules_->emplace_back();
+      for (const HloInstruction* instruction :
+           schedule_graph->GetOriginalInstrList()) {
+        input_schedule.push_back(std::string(instruction->name()));
+      }
+    }
+
+   private:
+    std::vector<std::vector<std::string>>* input_schedules_;
+  };
+
+  // 1. Cross-computation rerun: `ENTRY` overlaps `entry_cp` across `while_loop`
+  // on Trial 0. The chained retry preserves caller live-buffer pressure in
+  // `while_body`, fits `memory_limit`, and short-circuits without running the
+  // `input_sequences` fallback (only 2 passes run: Trial 0 + chained retry).
+  {
+    constexpr absl::string_view kCrossCompHlo = R"hlo(
+      HloModule rerun_cross_comp_test, is_scheduled=true
+      while_cond {
+        p = u8[100]{0} parameter(0)
+        ROOT cond = pred[] constant(false)
+      }
+      while_body {
+        p = u8[100]{0} parameter(0)
+        c = u8[] constant(0)
+        body_buf = u8[100]{0} broadcast(c), dimensions={}
+        body_work = u8[1]{0} slice(body_buf), slice={[0:1]}
+        body_cp = u8[100]{0} collective-permute(p), source_target_pairs={{0,1}}
+        body_cp_slice = u8[1]{0} slice(body_cp), slice={[0:1]}
+        sum_1 = u8[1]{0} add(body_cp_slice, body_work)
+        sum_scalar = u8[] reshape(sum_1)
+        ROOT sum = u8[100]{0} broadcast(sum_scalar), dimensions={}
+      }
+      ENTRY main {
+        p0 = u8[100]{0} parameter(0)
+        p1 = u8[20]{0} parameter(1)
+        entry_cp = u8[20]{0} collective-permute(p1), source_target_pairs={{0,1}}
+        entry_cp_slice = u8[1]{0} slice(entry_cp), slice={[0:1]}
+        while_loop = u8[100]{0} while(p0), condition=while_cond, body=while_body
+        while_slice = u8[1]{0} slice(while_loop), slice={[0:1]}
+        ROOT out = u8[1]{0} add(while_slice, entry_cp_slice)
+      }
+    )hlo";
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseHloText(kCrossCompHlo));
+    SchedulerConfig cfg = GetDefaultSchedConfig();
+    cfg.memory_limit = 448;
+    cfg.rerun = 1;
+    std::vector<std::vector<std::string>> input_schedules;
+    ASSERT_OK(RunScheduler(module.get(), cfg,
+                           std::make_unique<ApproximateLatencyEstimator>(),
+                           std::make_unique<InputScheduleRecordingAsyncTracker>(
+                               cfg, &input_schedules)));
+    ASSERT_EQ(input_schedules.size(), 2);
+    const HloComputation* while_body =
+        FindInstruction(module.get(), "while_loop")->while_body();
+    const auto& body_seq =
+        module->schedule().sequence(while_body).instructions();
+    EXPECT_LT(
+        PositionInVector(body_seq, FindInstruction(module.get(), "body_work")),
+        PositionInVector(
+            body_seq,
+            FindInstruction(module.get(), "collective-permute-start")));
+  }
+
+  // 2. Fallback to `input_sequences`: when the chained retry still exceeds
+  // `memory_limit`, LHS falls back to restarting from the pre-LHS input
+  // schedule (`input_schedules[2] == input_schedules[0]`).
+  {
+    constexpr absl::string_view kFallbackHlo = R"hlo(
+      HloModule rerun_fallback_test, is_scheduled=true
+      ENTRY main {
+        p0 = bf16[8]{0} parameter(0)
+        c = bf16[] constant(0)
+        big = bf16[65]{0} broadcast(c), dimensions={}
+        s_big = bf16[1]{0} slice(big), slice={[0:1]}
+        small = bf16[20]{0} broadcast(c), dimensions={}, control-predecessors={s_big}
+        s_small = bf16[1]{0} slice(small), slice={[0:1]}
+        cp = bf16[8]{0} collective-permute(p0), source_target_pairs={{0,1},{1,2},{2,3}}, control-predecessors={s_big}
+        ROOT tuple = (bf16[1]{0}, bf16[8]{0}, bf16[1]{0}) tuple(s_big, cp, s_small)
+      }
+    )hlo";
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseHloText(kFallbackHlo));
+    SchedulerConfig cfg = GetDefaultSchedConfig();
+    cfg.memory_limit = 125;
+    cfg.rerun = 1;
+    std::vector<std::vector<std::string>> input_schedules;
+    ASSERT_OK(RunScheduler(module.get(), cfg,
+                           std::make_unique<ApproximateLatencyEstimator>(),
+                           std::make_unique<InputScheduleRecordingAsyncTracker>(
+                               cfg, &input_schedules)));
+    ASSERT_EQ(input_schedules.size(), 3);
+    EXPECT_NE(input_schedules[1], input_schedules[0]);
+    EXPECT_EQ(input_schedules[2], input_schedules[0]);
+  }
+
+  // 3. Irreducible-peak rerun: when tighter `0.9x` retries increase peak
+  // memory, retain Trial 0's lower-peak schedule (`b_end` before `a_end`).
+  {
+    constexpr absl::string_view kKeepBestHlo = R"hlo(
+      HloModule rerun_keep_best_test, is_scheduled=true
+      add_op {
+        lhs = u8[] parameter(0)
+        rhs = u8[] parameter(1)
+        ROOT sum = u8[] add(lhs, rhs)
+      }
+      ENTRY main {
+        p0 = u8[] parameter(0)
+        b_big = u8[125]{0} broadcast(p0), dimensions={}
+        b_mid = u8[20]{0} slice(b_big), slice={[0:20]}
+        b_end = u8[1]{0} slice(b_mid), slice={[0:1]}
+        huge = u8[100]{0} broadcast(p0), dimensions={}
+        s_huge = u8[36]{0} slice(huge), slice={[0:36]}
+        ar = u8[36]{0} all-reduce(s_huge), replica_groups={{0,1}}, to_apply=add_op
+        a_end = u8[1]{0} slice(ar), slice={[0:1]}
+        ab_end = u8[1]{0} add(a_end, b_end)
+        s_huge_end = u8[1]{0} slice(huge), slice={[0:1]}, control-predecessors={ab_end}
+        ROOT root = u8[1]{0} add(ab_end, s_huge_end)
+      }
+    )hlo";
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseHloText(kKeepBestHlo));
+    SchedulerConfig cfg = GetDefaultSchedConfig();
+    cfg.memory_limit = 140;
+    cfg.rerun = 1;
+    ASSERT_OK(RunScheduler(module.get(), cfg));
+    const auto& seq =
+        module->schedule().sequence(module->entry_computation()).instructions();
+    EXPECT_LT(PositionInVector(seq, FindInstruction(module.get(), "b_end")),
+              PositionInVector(seq, FindInstruction(module.get(), "a_end")));
+  }
+}
+
 TEST_F(LatencyHidingSchedulerTest, MultipleAsyncDoneOperationsDoNotCreateLoop) {
   absl::string_view hlo_string = R"(
 HloModule multiple_async_done_scheduler_test, is_scheduled=true
