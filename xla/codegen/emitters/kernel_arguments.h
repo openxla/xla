@@ -91,7 +91,7 @@ class KernelArgument {
   //
   // This index is used as a hint to XLA emitters to merge uses of arguments
   // with the same slice index into a single argument.
-  int64_t slice_index_;
+  int64_t slice_index_ = -1;
 
   friend class KernelArguments;
 };
