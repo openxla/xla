@@ -2640,7 +2640,8 @@ absl::Status AlgebraicSimplifierVisitor::HandleDivide(HloInstruction* divide) {
 
   // A/pow(B,C) => A*pow(B,-C), never for integers: there pow(B,-C) is 0 for
   // |B| > 1 (or a wrapped exponent), not a reciprocal.
-  if (!ShapeUtil::ElementIsIntegral(divide->shape()) &&
+  if (options_.enable_fast_math() &&
+      !ShapeUtil::ElementIsIntegral(divide->shape()) &&
       Match(divide, m::Divide(m::Op(&a), m::Power(m::Op(&b), m::Op(&c))))) {
     VLOG(10) << "transform [A/pow(B,C) => A*pow(B,-C)]: " << divide->ToString();
     // The output shape of the created negate operator should be the same as the
@@ -5933,18 +5934,21 @@ absl::Status AlgebraicSimplifierVisitor::HandleCompare(
     }
   }
 
-  if (compare->comparison_direction() == ComparisonDirection::kLt &&
-      IsNonNegative(lhs, options_) && IsAll(rhs, 0)) {
-    return ReplaceInstruction(compare, MakeScalarLike(compare, false));
-  } else if (compare->comparison_direction() == ComparisonDirection::kGt &&
-             IsAll(lhs, 0) && IsNonNegative(rhs, options_)) {
-    return ReplaceInstruction(compare, MakeScalarLike(compare, false));
-  } else if (compare->comparison_direction() == ComparisonDirection::kGe &&
-             IsNonNegative(lhs, options_) && IsAll(rhs, 0)) {
-    return ReplaceInstruction(compare, MakeScalarLike(compare, true));
-  } else if (compare->comparison_direction() == ComparisonDirection::kLe &&
-             IsAll(lhs, 0) && IsNonNegative(rhs, options_)) {
-    return ReplaceInstruction(compare, MakeScalarLike(compare, true));
+  // IsNonNegative does not rule out NaNs for floating-point operands.
+  if (primitive_util::IsIntegralType(lhs->shape().element_type())) {
+    if (compare->comparison_direction() == ComparisonDirection::kLt &&
+        IsNonNegative(lhs, options_) && IsAll(rhs, 0)) {
+      return ReplaceInstruction(compare, MakeScalarLike(compare, false));
+    } else if (compare->comparison_direction() == ComparisonDirection::kGt &&
+               IsAll(lhs, 0) && IsNonNegative(rhs, options_)) {
+      return ReplaceInstruction(compare, MakeScalarLike(compare, false));
+    } else if (compare->comparison_direction() == ComparisonDirection::kGe &&
+               IsNonNegative(lhs, options_) && IsAll(rhs, 0)) {
+      return ReplaceInstruction(compare, MakeScalarLike(compare, true));
+    } else if (compare->comparison_direction() == ComparisonDirection::kLe &&
+               IsAll(lhs, 0) && IsNonNegative(rhs, options_)) {
+      return ReplaceInstruction(compare, MakeScalarLike(compare, true));
+    }
   }
   if (lhs == rhs &&
       primitive_util::IsIntegralType(lhs->shape().element_type())) {
