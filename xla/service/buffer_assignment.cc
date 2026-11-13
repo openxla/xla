@@ -3207,11 +3207,12 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
     const flat_hash_map<const HloComputation*, flat_hash_set<const HloValue*>>&
         buffers_to_assign_sequentially,
     bool run_whole_module_heap_simulation, BufferAssignment* assignment,
-    buffer_assignment::BufferAssignmentAlgorithmProto::Value
-        buffer_assignment_algorithm,
+    const AssignmentStrategy& strategy,
     GlobalDecreasingSizeBestFitHeap<HloValue>::BufferIntervalCompare
         heap_buffer_interval_compare,
     std::optional<BufferAssignment::BufferIsolationOptions> isolation_options) {
+  const buffer_assignment::BufferAssignmentAlgorithmProto::Value
+      buffer_assignment_algorithm = strategy.sequential_algorithm;
   // Run the sequence of instructions through the heap simulator.  The
   // heuristic that seems to give the best results is lazy-best-fit, with all
   // runs of alloc / free calls sorted in decreasing size order.
@@ -3352,6 +3353,8 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
       options.alloc_constants = opts_.allocate_buffers_for_constants;
       options.view_color = opts_.dus_view_color;
       options.buffers_to_assign = &color_map[color];
+      options.may_reuse_operand_buffers_through_other_positions =
+          strategy.reuse_operand_buffers_through_other_positions;
       HeapSimulator::Result<HloValue> result;
       ABSL_ASSIGN_OR_RETURN(
           result, HeapSimulator::Run(get_heap_algorithm(alignment, color),
@@ -3381,6 +3384,8 @@ absl::Status BufferAssigner::AssignBuffersWithSequentialOrdering(
         HeapSimulator::Options options;
         options.buffers_to_assign = &color_map[color];
         options.view_color = opts_.dus_view_color;
+        options.may_reuse_operand_buffers_through_other_positions =
+            strategy.reuse_operand_buffers_through_other_positions;
         HeapSimulator::Result<HloValue> result;
         ABSL_ASSIGN_OR_RETURN(
             result, HeapSimulator::Run(
@@ -3692,8 +3697,9 @@ BufferAssigner::CreateAssignment(
   if (!is_fallback_enabled) {
     ABSL_RETURN_IF_ERROR(RunAssignBuffers(
         module, global_computations, thread_local_computations,
-        assignment.get(), opts_.buffer_assignment_algorithm,
-        opts_.assignment_algorithm_for_computations_without_ordering));
+        assignment.get(),
+        {opts_.assignment_algorithm_for_computations_without_ordering,
+         opts_.buffer_assignment_algorithm}));
   } else {
     ABSL_RETURN_IF_ERROR(RunAssignBuffersWithFallback(
         module, global_computations, thread_local_computations,
@@ -3777,6 +3783,17 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
     add_strategy(fallback_non_sequential, opts_.fallback_algorithm);
   }
 
+  // If none of these strategies fits, they are tried again without reusing
+  // operand buffers through other positions in the heap simulation. This reuse
+  // lowers the peak memory, but the reused buffers stay at the same offset for
+  // longer, which can increase the fragmentation.
+  const size_t num_strategies = assignment_strategies.size();
+  for (size_t i = 0; i < num_strategies; ++i) {
+    BufferAssigner::AssignmentStrategy strategy = assignment_strategies[i];
+    strategy.reuse_operand_buffers_through_other_positions = false;
+    assignment_strategies.push_back(strategy);
+  }
+
   // The first step of RunAssignBuffers (AssignBuffersForGlobalComputations)
   // only depends on the non-sequential algorithm. Its result, i.e. the
   // allocations it creates and the temp buffers it leaves for heap simulation,
@@ -3807,7 +3824,10 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
   for (const BufferAssigner::AssignmentStrategy& strategy :
        assignment_strategies) {
     LOG(INFO) << "Trying strategy: " << strategy.non_sequential_algorithm
-              << ", " << strategy.sequential_algorithm;
+              << ", " << strategy.sequential_algorithm
+              << (strategy.reuse_operand_buffers_through_other_positions
+                      ? ""
+                      : ", reusing direct operand buffers only");
     const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign =
         active_colors.has_value() ? &*active_colors : nullptr;
 
@@ -3849,8 +3869,7 @@ absl::Status BufferAssigner::RunAssignBuffersWithFallback(
     // (AssignBuffersForGlobalComputations) since we just did it.
     ABSL_RETURN_IF_ERROR(RunAssignBuffers(
         module, global_computations, thread_local_computations, assignment,
-        strategy.sequential_algorithm, strategy.non_sequential_algorithm,
-        colors_to_assign, &cached_buffers_to_assign_sequentially));
+        strategy, colors_to_assign, &cached_buffers_to_assign_sequentially));
 
     absl::btree_map<LogicalBuffer::Color, int64_t> allocated_bytes_by_color;
     for (const BufferAllocation& alloc : assignment->Allocations()) {
@@ -3951,11 +3970,7 @@ absl::Status BufferAssigner::RunAssignBuffers(
     const HloModule* module,
     const std::vector<const HloComputation*>& global_computations,
     const std::vector<const HloComputation*>& thread_local_computations,
-    BufferAssignment* assignment,
-    buffer_assignment::BufferAssignmentAlgorithmProto::Value
-        sequential_algorithm,
-    buffer_assignment::AssignmentAlgorithmForComputationsWithoutOrderingProto::
-        Value non_sequential_algorithm,
+    BufferAssignment* assignment, const AssignmentStrategy& strategy,
     const absl::flat_hash_set<LogicalBuffer::Color>* colors_to_assign,
     const flat_hash_map<const HloComputation*, flat_hash_set<const HloValue*>>*
         precomputed_sequential_buffers) {
@@ -3968,7 +3983,7 @@ absl::Status BufferAssigner::RunAssignBuffers(
   if (precomputed_sequential_buffers == nullptr) {
     ABSL_RETURN_IF_ERROR(AssignBuffersForGlobalComputations(
         global_computations, &local_buffers_to_assign_sequentially, assignment,
-        non_sequential_algorithm, colors_to_assign));
+        strategy.non_sequential_algorithm, colors_to_assign));
   }
   const flat_hash_map<const HloComputation*, flat_hash_set<const HloValue*>>&
       buffers_to_assign_sequentially =
@@ -3988,7 +4003,7 @@ absl::Status BufferAssigner::RunAssignBuffers(
           << multiheap_size_constraint_per_heap;
   ABSL_RETURN_IF_ERROR(AssignBuffersWithSequentialOrdering(
       buffers_to_assign_sequentially, run_whole_module_heap_simulation,
-      assignment, sequential_algorithm, opts_.heap_buffer_interval_compare,
+      assignment, strategy, opts_.heap_buffer_interval_compare,
       opts_.isolation_options));
 
   std::vector<const HloComputation*> thread_local_computations_no_fusion;

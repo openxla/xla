@@ -341,12 +341,13 @@ class HeapSimulatorTracker {
       std::unique_ptr<HloModule> module,
       const std::vector<HloInstruction*>& instruction_sequence,
       const std::vector<HloInstruction*>& must_alias_set = {},
-      const AliasInfo* alias_info = nullptr) {
+      const AliasInfo* alias_info = nullptr,
+      const HeapSimulator::Options& options = HeapSimulator::Options()) {
     module_ = std::move(module);
     if (alias_info == nullptr) {
       alias_info = &alias_info_;
     }
-    Init(instruction_sequence, alias_info);
+    Init(instruction_sequence, alias_info, options);
   }
 
   // Constructor for testing a single entry computation.
@@ -362,7 +363,7 @@ class HeapSimulatorTracker {
     if (alias_info == nullptr) {
       alias_info = &alias_info_;
     }
-    Init(instruction_sequence, alias_info);
+    Init(instruction_sequence, alias_info, HeapSimulator::Options());
   }
 
   explicit HeapSimulatorTracker(const std::string& name) {
@@ -451,7 +452,8 @@ class HeapSimulatorTracker {
 
  private:
   void Init(const std::vector<HloInstruction*>& instruction_sequence,
-            const AliasInfo* alias_info) {
+            const AliasInfo* alias_info,
+            const HeapSimulator::Options& options) {
     // Since we're only tracking the sequence of Alloc/Free calls, the actual
     // size of the buffers doesn't matter, so we always return 0.  We rely on
     // the secondary sorting criteria of DecreasingSizeRunsHeap to sort calls
@@ -462,8 +464,6 @@ class HeapSimulatorTracker {
     auto algorithm = std::make_unique<HeapCallRecorder>(&actual_calls_);
 
     alias_analysis_ = HloAliasAnalysis::Run(module_.get(), alias_info).value();
-
-    HeapSimulator::Options options;
 
     result_ =
         HeapSimulator::Run(std::move(algorithm), *module_->entry_computation(),
@@ -543,6 +543,37 @@ ENTRY main {
       {kFinish, nullptr},
   });
   tracker.ExpectSharedBuffers(out, {}, mul, {});
+}
+
+TEST_F(HeapSimulatorTest, CanDisableSharingOperandThroughBitcastPosition) {
+  const char* const hlo_text = R"(
+HloModule CanDisableSharingOperandThroughBitcastPosition
+
+ENTRY main {
+  param = f32[4] parameter(0)
+  mul = f32[4] negate(param)
+  bc = f32[4] bitcast(mul)
+  exp = f32[4] exponential(bc)
+  ROOT out = f32[4] negate(exp)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_text));
+  HloInstruction* param = FindInstruction(module.get(), "param");
+  HloInstruction* mul = FindInstruction(module.get(), "mul");
+  HloInstruction* bc = FindInstruction(module.get(), "bc");
+  HloInstruction* exp = FindInstruction(module.get(), "exp");
+  HloInstruction* out = FindInstruction(module.get(), "out");
+
+  HeapSimulator::Options options;
+  options.may_reuse_operand_buffers_through_other_positions = false;
+  HeapSimulatorTracker tracker(std::move(module), {param, mul, bc, exp, out},
+                               /*must_alias_set=*/{}, /*alias_info=*/nullptr,
+                               options);
+  // `exp` only reads `mul` through `bc`, so it gets its own buffer.
+  EXPECT_NE(tracker.OffsetAt(exp, {}), tracker.OffsetAt(mul, {}));
+  // `out` reads `exp` directly, so it still shares its buffer.
+  tracker.ExpectSharedBuffers(out, {}, exp, {});
 }
 
 TEST_F(HeapSimulatorTest, CanShareOperandReadElementwiseTwiceThroughTuple) {
