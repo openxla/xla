@@ -536,6 +536,44 @@ xla_test(
 )
 
 xla_test(
+    name = "se_gpu_pjrt_client_prioritized_compute_streams_test",
+    srcs = ["se_gpu_pjrt_client_prioritized_compute_streams_test.cc"],
+    backends = ["gpu"],
+    use_legacy_runtime = True,
+    deps = [
+        ":se_gpu_pjrt_client",
+        ":se_gpu_pjrt_client_test_lib",
+        "//xla:custom_options",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:status_macros",
+        "//xla/pjrt:common_pjrt_client",
+        "//xla/pjrt:device_event",
+        "//xla/pjrt:pjrt_client",
+        "//xla/pjrt:pjrt_executable",
+        "//xla/pjrt/plugin/xla_gpu:xla_gpu_client_options",
+        "//xla/pjrt/se:local_device_state",
+        "//xla/pjrt/se:pjrt_stream_executor_client",
+        "//xla/stream_executor:stream",
+        "//xla/tests:literal_test_util",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/time",
+        "@com_google_absl//absl/types:span",
+        "@com_google_googletest//:gtest_main",
+    ] + if_google([
+        # In OSS this dependency is added automatically for xla_test targets. See
+        # third_party/tensorflow/compiler/xla/xla.default.bzl.
+        "//xla/tsl/framework:allocator",
+    ]),
+)
+
+xla_test(
     name = "se_gpu_pjrt_client_multi_gpu_test",
     srcs = ["se_gpu_pjrt_client_multi_gpu_test.cc"],
     backends = ["gpu"],

@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "absl/time/time.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
@@ -81,6 +82,16 @@ struct GpuClientOptions {
   std::optional<bool> use_async_dispatch;
 
   std::optional<int> max_inflight_computations = 32;
+
+  // Priorities of the compute streams to create on each GPU device, in the
+  // platform's convention (CUDA: 0 is the default and lowest priority, more
+  // negative is higher). Empty keeps today's single compute stream at priority
+  // 0. Otherwise one compute stream is created per distinct priority; the
+  // lowest priority in the list (the largest value) becomes the device's
+  // default compute stream (and the priority of its host-to-device stream,
+  // which copy engines ignore), and an execution runs on the compute stream
+  // whose priority is closest to its `execution_priority` custom option.
+  std::vector<int> compute_stream_priorities;
 
   bool verify_topology_fingerprint = true;
 };
