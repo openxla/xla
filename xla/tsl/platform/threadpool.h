@@ -32,14 +32,9 @@ namespace Eigen {
 class Allocator;
 class ThreadPoolInterface;
 struct ThreadPoolDevice;
-
-template <typename Environment>
-class ThreadPoolTempl;
 }  // namespace Eigen
 
 namespace tsl::thread {
-
-struct EigenEnvironment;
 
 class ThreadPool {
  public:
@@ -120,6 +115,7 @@ class ThreadPool {
   // cost of higher CPU usage, e.g. by letting one or more idle threads spin
   // wait. Conversely, if the threadpool is used to schedule high-latency
   // operations like I/O the hint should be set to false.
+  // Without Emscripten pthreads, work runs inline and NumThreads() returns 1.
   //
   // REQUIRES: num_threads > 0
   ThreadPool(Env* env, const ThreadOptions& thread_options,
@@ -261,7 +257,7 @@ class ThreadPool {
   ThreadPoolExecutor executor_;
 
   // underlying_threadpool_ is the user_threadpool if user_threadpool is
-  // provided in the constructor. Otherwise it is the eigen_threadpool_.
+  // provided in the constructor. Otherwise it is the owned_threadpool_.
   Eigen::ThreadPoolInterface* underlying_threadpool_;
 
   // owned_threadpool_ is instantiated and owned by thread::ThreadPool if
