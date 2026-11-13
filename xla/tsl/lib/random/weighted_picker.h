@@ -28,6 +28,7 @@ limitations under the License.
 #define XLA_TSL_LIB_RANDOM_WEIGHTED_PICKER_H_
 
 #include <assert.h>
+#include <stddef.h>
 
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/macros.h"
@@ -104,12 +105,21 @@ class WeightedPicker {
   // We keep a binary tree with N leaves.  The "i"th leaf contains
   // the weight of the "i"th element.  An internal node contains
   // the sum of the weights of its children.
-  int N_;            // Number of elements
-  int num_levels_;   // Number of levels in tree (level-0 is root)
-  int32_t** level_;  // Array that holds nodes per level
+  //
+  // The tree is stored in level_ using 1-indexed binary heap indexing:
+  // - level_[0] is unused (zero-initialized).
+  // - level_[1] is the root.
+  // - Children of node i are at level_[2 * i] and level_[2 * i + 1].
+  // - Level l (0 <= l < num_levels_) starts at index LevelSize(l) == (1 << l)
+  //   and contains LevelSize(l) nodes.
+  // - Total allocated array length is LevelSize(num_levels_) ==
+  //   (size_t{1} << num_levels_).
+  int N_;           // Number of elements
+  int num_levels_;  // Number of levels in tree (level-0 is root)
+  int32_t* level_;  // Flat 1-indexed array that holds all tree nodes
 
-  // Size of each level
-  static int LevelSize(int level) { return 1 << level; }
+  // Size of each level (and starting index of that level in level_).
+  static size_t LevelSize(int level) { return size_t{1} << level; }
 
   // Rebuild the tree weights using the leaf weights
   void RebuildTreeWeights();
@@ -121,10 +131,10 @@ class WeightedPicker {
 inline int32_t WeightedPicker::get_weight(int index) const {
   DCHECK_GE(index, 0);
   DCHECK_LT(index, N_);
-  return level_[num_levels_ - 1][index];
+  return level_[LevelSize(num_levels_ - 1) + static_cast<size_t>(index)];
 }
 
-inline int32_t WeightedPicker::total_weight() const { return level_[0][0]; }
+inline int32_t WeightedPicker::total_weight() const { return level_[1]; }
 
 inline int WeightedPicker::num_elements() const { return N_; }
 
