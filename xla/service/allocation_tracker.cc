@@ -67,8 +67,8 @@ static ShapedBuffer ReleaseIfScopedShapedBuffer(ScopedShapedBuffer b) {
 template <typename ShapedBufferTy>
 absl::StatusOr<GlobalDataHandle> AllocationTracker::RegisterInternal(
     std::vector<ShapedBufferTy> replicated_buffers, absl::string_view tag) {
-  static_assert(std::is_same<ShapedBufferTy, ShapedBuffer>::value ||
-                    std::is_same<ShapedBufferTy, ScopedShapedBuffer>::value,
+  static_assert(std::is_same_v<ShapedBufferTy, ShapedBuffer> ||
+                    std::is_same_v<ShapedBufferTy, ScopedShapedBuffer>,
                 "ShapedBufferTy must be ShapedBuffer or ScopedShapedBuffer.");
   VLOG(2) << "RegisterInternal("
           << "tag: \"" << tag << "\" with " << replicated_buffers.size()
