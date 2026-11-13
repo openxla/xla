@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -22,12 +20,13 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include <gtest/gtest.h>
 #include "absl/strings/ascii.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/path.h"
+#include "xla/backends/gpu/runtime/multi_gpu_barrier.h"
 #include "xla/backends/gpu/tests/collective_ops_e2e_test_base.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
@@ -43,6 +42,7 @@ limitations under the License.
 #include "xla/tsl/platform/test.h"
 #include "xla/tsl/testing/temporary_directory.h"
 #include "xla/xla.pb.h"
+#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -108,6 +108,14 @@ class CollectiveOpsCommandBufferPeerAccessTest
                           "supported between GPU "
                        << i << " and GPU " << j;
         }
+      }
+
+      // Ragged all-to-all in a command buffer synchronizes through the
+      // cross-device barrier, which is only available on platforms providing
+      // the NCCL-backed multi-GPU barrier kernel.
+      if (!gpu::IsMultiGpuBarrierWithNcclSupported(executor_i)) {
+        GTEST_SKIP() << "Skipping test suite: the NCCL-backed cross-device "
+                        "barrier is not supported on this platform";
       }
     }
   }

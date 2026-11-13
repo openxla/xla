@@ -1264,6 +1264,10 @@ TEST_F(AllReduceCollectiveKernelTest,
   if (!CheckDeviceCount(kNumReplicas)) {
     return;
   }
+  if (!SupportsCommandBufferControlFlow()) {
+    GTEST_SKIP() << "Command buffers on this platform do not support "
+                    "on-device control flow (while loops).";
+  }
 
   // Each step k in the loop body computes ar_k = all-reduce(0.5 * prev + p0),
   // where p0 is 1.0 on replica 0 and 2.0 on replica 1. When prev == v on both

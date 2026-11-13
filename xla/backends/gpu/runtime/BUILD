@@ -2621,6 +2621,7 @@ xla_test(
         ":collective_thunk",
         ":collective_thunk_multigpu_test_utils",
         ":command_buffer_requests",
+        ":multi_gpu_barrier",
         ":ragged_all_to_all_thunk",
         ":thunk",
         "//xla:shape_util",

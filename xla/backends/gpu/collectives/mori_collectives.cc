@@ -14,8 +14,11 @@ limitations under the License.
 ==============================================================================*/
 #include "xla/backends/gpu/collectives/mori_collectives.h"
 
+#include <link.h>
+
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -30,12 +33,11 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "tsl/platform/casts.h"
-#include "tsl/platform/numbers.h"
 #include "xla/backends/gpu/collectives/cancellation_token.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/mori_communicator.h"
@@ -56,10 +58,70 @@ limitations under the License.
 #include "xla/tsl/platform/threadpool.h"
 #include "xla/tsl/util/env_var.h"
 #include "xla/util.h"
+#include "tsl/platform/casts.h"
+#include "tsl/platform/numbers.h"
 
 using mori::collective::CollectivesFacade;
 
 namespace xla::gpu {
+namespace {
+
+// Returns the path of the loaded shared object whose file name starts with
+// `name_prefix`, or an empty string if no such object is mapped.
+std::string FindLoadedLibrary(absl::string_view name_prefix) {
+  struct State {
+    absl::string_view name_prefix;
+    std::string path;
+  } state{name_prefix, ""};
+
+  dl_iterate_phdr(
+      [](struct dl_phdr_info* info, size_t, void* data) -> int {
+        State* state = static_cast<State*>(data);
+        if (info->dlpi_name == nullptr || info->dlpi_name[0] == '\0') {
+          return 0;
+        }
+        absl::string_view path(info->dlpi_name);
+        size_t slash = path.rfind('/');
+        absl::string_view base =
+            slash == absl::string_view::npos ? path : path.substr(slash + 1);
+        if (!absl::StartsWith(base, state->name_prefix)) {
+          return 0;
+        }
+        state->path = std::string(path);
+        return 1;  // Stop iterating.
+      },
+      &state);
+  return state.path;
+}
+
+// MORI dlopen()s the SMI library by its unversioned file name
+// ("libamd_smi.so" / "librocm_smi64.so") and otherwise falls back to hard-coded
+// /opt/rocm paths; when none of them resolve it calls exit(-1), taking the
+// whole process down. Neither lookup works for a hermetic ROCm build: there is
+// no /opt/rocm, and the SMI library lives in a directory that is not on the
+// dynamic loader's search path for a dlopen() issued from MORI's own shared
+// object. XLA links the SMI library itself, so hand MORI the path of the copy
+// that is already mapped into this process.
+void PointMoriAtLoadedSmiLibrary() {
+  static constexpr std::pair<absl::string_view, const char*> kSmiLibraries[] = {
+      {"libamd_smi.so", "MORI_AMD_SMI_PATH"},
+      {"librocm_smi64.so", "MORI_ROCM_SMI_PATH"},
+  };
+  for (const auto& [name_prefix, env_var] : kSmiLibraries) {
+    const char* existing = std::getenv(env_var);
+    if (existing != nullptr && existing[0] != '\0') {
+      continue;  // Respect an explicit override.
+    }
+    std::string path = FindLoadedLibrary(name_prefix);
+    if (path.empty()) {
+      continue;
+    }
+    VLOG(1) << "Pointing MORI at " << env_var << "=" << path;
+    tsl::setenv(env_var, path.c_str(), /*overwrite=*/1);
+  }
+}
+
+}  // namespace
 
 #define XLA_MORI_RETURN_IF_ERROR(expr, message)                            \
   do {                                                                     \
@@ -130,6 +192,11 @@ absl::Status MoriCollectives::InitPe(size_t rank, size_t nranks,
   }
   const size_t pool_size_bytes = static_cast<size_t>(pool_size_mb) << 20;
   const size_t max_staging_bytes = static_cast<size_t>(max_staging_mb) << 20;
+
+  // MORI builds its GPU topology (and loads the SMI library) inside
+  // ccoCommCreate, which may run concurrently on several threads.
+  static absl::once_flag smi_once;
+  absl::call_once(smi_once, PointMoriAtLoadedSmiLibrary);
 
   mori::cco::ccoComm* comm = nullptr;
   // MORI's per rank VMM size is the pool size rounded up to 4G.

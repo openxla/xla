@@ -382,6 +382,10 @@ TEST_F(AllToAllTest, TwentyAllToAllsInWhileLoopWithCudaGraphs) {
   if (!CheckDeviceCount(kNumReplicas)) {
     return;
   }
+  if (!SupportsCommandBufferControlFlow()) {
+    GTEST_SKIP() << "Command buffers on this platform do not support "
+                    "on-device control flow (while loops).";
+  }
 
   std::string body_ops;
   std::string prev = "acc";

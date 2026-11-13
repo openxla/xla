@@ -1091,6 +1091,7 @@ cc_library(
         ":platform_util",
         ":stream_pool",
         ":transfer_manager",
+        "//xla:shape_util",
         "//xla:util",
         "//xla/stream_executor:device_address",
         "//xla/stream_executor:device_address_allocator",

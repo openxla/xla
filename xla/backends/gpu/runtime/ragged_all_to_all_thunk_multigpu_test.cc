@@ -17,15 +17,14 @@ limitations under the License.
 // Requires two GPUs and CUDA 12.9+ driver/toolkit for CreateChildCommand /
 // UpdateChildCommand support.
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/base/casts.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -41,6 +40,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk_multigpu_test_utils.h"
 #include "xla/backends/gpu/runtime/command_buffer_requests.h"
+#include "xla/backends/gpu/runtime/multi_gpu_barrier.h"
 #include "xla/backends/gpu/runtime/ragged_all_to_all_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/hlo/ir/hlo_instruction.h"
@@ -69,6 +69,12 @@ namespace xla::gpu {
 namespace {
 
 static constexpr int kNumDevices = 2;
+
+// Symmetric-memory ragged all-to-all synchronizes through the cross-device
+// barrier, which is only available on platforms providing the NCCL-backed
+// multi-GPU barrier kernel.
+static constexpr absl::string_view kNoCrossDeviceBarrierSkipReason =
+    "Test requires the NCCL-backed cross-device barrier";
 static constexpr int64_t kNumUpdates = 4;
 static constexpr int64_t kNumInputRows = 4;
 static constexpr int64_t kNumRowElements = 1;
@@ -479,6 +485,9 @@ TEST(RaggedAllToAllThunkMultiGpuTest, ExecuteOnStreamWithSymmetricMemory) {
   if (!HasEnoughGpus(kNumDevices)) {
     GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
   }
+  if (!IsMultiGpuBarrierWithNcclSupported(GetGpuExecutor(0))) {
+    GTEST_SKIP() << kNoCrossDeviceBarrierSkipReason;
+  }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
   std::vector<BufferAllocation> buffer_allocations =
@@ -501,6 +510,9 @@ TEST(RaggedAllToAllThunkMultiGpuTest,
   if (!HasEnoughGpus(kNumDevices)) {
     GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
   }
+  if (!IsMultiGpuBarrierWithNcclSupported(GetGpuExecutor(0))) {
+    GTEST_SKIP() << kNoCrossDeviceBarrierSkipReason;
+  }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
   std::vector<BufferAllocation> buffer_allocations =
@@ -521,6 +533,9 @@ TEST(RaggedAllToAllThunkMultiGpuTest,
      RecordCommandBufferUpdateWithSymmetricMemory) {
   if (!HasEnoughGpus(kNumDevices)) {
     GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
+  }
+  if (!IsMultiGpuBarrierWithNcclSupported(GetGpuExecutor(0))) {
+    GTEST_SKIP() << kNoCrossDeviceBarrierSkipReason;
   }
 
   DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
