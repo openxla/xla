@@ -33,7 +33,7 @@ namespace xla::gpu {
 // scratch size. Invokes the FFI instantiate handler to compute the scratch
 // size and changes the custom call target to the FFI handler name
 // (xla.gpu.ext.cub_sort_keys or xla.gpu.ext.cub_sort_pairs).
-class EstimateCubSortScratchSize : public HloModulePass {
+class EstimateCubSortScratchSize : public HloComputationPass {
  public:
   explicit EstimateCubSortScratchSize(std::string platform_name)
       : platform_name_(platform_name) {}
@@ -44,11 +44,7 @@ class EstimateCubSortScratchSize : public HloModulePass {
 
  protected:
   absl::Status RunOnSortInstruction(HloCustomCallInstruction* custom_call);
-  absl::StatusOr<bool> RunOnComputation(HloComputation* computation);
-
-  absl::StatusOr<bool> RunImpl(
-      HloModule* module,
-      const absl::flat_hash_set<absl::string_view>& execution_threads) override;
+  absl::StatusOr<bool> RunOnComputation(HloComputation* computation) override;
 
  private:
   std::string platform_name_;

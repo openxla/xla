@@ -175,17 +175,9 @@ absl::StatusOr<bool> HoistSliceOperations(HloComputation* computation) {
 }
 }  // anonymous namespace
 
-absl::StatusOr<bool> SliceHoister::RunImpl(
-    HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  bool changed = false;
-  for (HloComputation* computation :
-       module->MakeNonfusionComputations(execution_threads)) {
-    ABSL_ASSIGN_OR_RETURN(bool changed_computation,
-                          HoistSliceOperations(computation));
-    changed |= changed_computation;
-  }
-  return changed;
+absl::StatusOr<bool> SliceHoister::RunOnComputation(
+    HloComputation* computation) {
+  return HoistSliceOperations(computation);
 }
 
 }  // namespace xla
