@@ -953,6 +953,153 @@ ENTRY main {
   EXPECT_THAT(module->entry_computation()->root_instruction(), op::Fusion());
 }
 
+TEST_F(InstructionFusionTest, FuseIntoNonOverlappingReduceWindow) {
+  // The reduce-window / reduce pair that TreeReductionRewriter produces. The
+  // producer fuses into the reduce-window, but the reduce-window must stay a
+  // separate stage so that the tree reduction is not collapsed again.
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[50,64]{1,0} parameter(0)
+  b = f32[50,64]{1,0} parameter(1)
+  c = f32[50,64]{1,0} add(a, b)
+  init = f32[] constant(0)
+  w = f32[50,2]{1,0} reduce-window(c, init), window={size=1x32 stride=1x32},
+    to_apply=add
+  ROOT r = f32[50]{0} reduce(w, init), dimensions={1}, to_apply=add
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(fused_something);
+  ASSERT_THAT(
+      module->entry_computation()->root_instruction(),
+      op::Reduce(op::Fusion(op::Parameter(), op::Parameter()), op::Constant()));
+  EXPECT_EQ(module->entry_computation()
+                ->root_instruction()
+                ->operand(0)
+                ->fused_expression_root()
+                ->opcode(),
+            HloOpcode::kReduceWindow);
+}
+
+TEST_F(InstructionFusionTest, DoNotFuseReduceWindowAsProducer) {
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[50,64]{1,0} parameter(0)
+  init = f32[] constant(0)
+  w = f32[50,2]{1,0} reduce-window(a, init), window={size=1x32 stride=1x32},
+    to_apply=add
+  ROOT n = f32[50,2]{1,0} negate(w)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_FALSE(fused_something);
+}
+
+TEST_F(InstructionFusionTest, DoNotFuseExpensiveOpIntoOverlappingReduceWindow) {
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[64,1024]{1,0} parameter(0)
+  e = f32[64,1024]{1,0} exponential(a)
+  init = f32[] constant(0)
+  ROOT w = f32[64,961]{1,0} reduce-window(e, init),
+    window={size=1x64 stride=1x1}, to_apply=add
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_FALSE(fused_something);
+}
+
+TEST_F(InstructionFusionTest, DoNotFuseCheapOpIntoOverlappingReduceWindow) {
+  // A cumulative sum: window size == N, stride 1.
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[64,128]{1,0} parameter(0)
+  b = f32[64,128]{1,0} parameter(1)
+  c = f32[64,128]{1,0} add(a, b)
+  init = f32[] constant(0)
+  ROOT w = f32[64,128]{1,0} reduce-window(c, init),
+    window={size=1x128 stride=1x1 pad=0_0x127_0}, to_apply=add
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_FALSE(fused_something);
+}
+
+TEST_F(InstructionFusionTest, DoNotFuseCheapOpIntoDilatedReduceWindow) {
+  absl::string_view module_string = R"(
+HloModule module
+
+add {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+
+ENTRY main {
+  a = f32[64,128]{1,0} parameter(0)
+  b = f32[64,128]{1,0} parameter(1)
+  c = f32[64,128]{1,0} add(a, b)
+  init = f32[] constant(0)
+  ROOT w = f32[64,31]{1,0} reduce-window(c, init),
+    window={size=1x4 stride=1x4 rhs_dilate=1x2 pad=0_0x0_0}, to_apply=add
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool fused_something,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_FALSE(fused_something);
+}
+
 TEST_F(OpcodeFusionTest, BigConstantNotInFusion) {
   absl::string_view module_string = R"(
 HloModule module
@@ -1140,7 +1287,8 @@ bool FusionComputesShiftValueForReduce(const HloInstruction* fusion) {
     return false;
   }
   for (const HloInstruction* instr : fusion->fused_instructions()) {
-    if (instr->opcode() != HloOpcode::kReduce) {
+    if (instr->opcode() != HloOpcode::kReduce &&
+        instr->opcode() != HloOpcode::kReduceWindow) {
       continue;
     }
     // A split fusion recomputes the elementwise shift value inside the
@@ -1249,6 +1397,42 @@ ENTRY main {
   %broadcast_max = f32[5,5] broadcast(%reduce_max), dimensions={0}
   %subtract = f32[5,5] subtract(%multiply, %broadcast_max)
   ROOT %exp = f32[5,5] exponential(%subtract)
+}
+)";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       ParseAndReturnVerifiedModule(module_string));
+  ASSERT_OK_AND_ASSIGN(bool changed,
+                       CpuInstructionFusion(&alias_info_).Run(module.get()));
+  EXPECT_TRUE(changed);
+  EXPECT_FALSE(HasSplitCoupledReductionShiftExpFusion(*module));
+}
+
+TEST_F(InstructionFusionTest,
+       AvoidSplitCoupledReductionShiftExpFusionsWithReduceWindow) {
+  absl::string_view module_string = R"(
+HloModule module
+
+%max (p0: f32[], p1: f32[]) -> f32[] {
+  %p0 = f32[] parameter(0)
+  %p1 = f32[] parameter(1)
+  ROOT %m = f32[] maximum(%p0, %p1)
+}
+
+ENTRY main {
+  %lhs = f32[5,8] parameter(0)
+  %rhs = f32[8,64] parameter(1)
+  %dot = f32[5,64] dot(%lhs, %rhs), lhs_contracting_dims={1}, rhs_contracting_dims={0}
+  %scale = f32[] constant(0.44721359)
+  %broadcast_scale = f32[5,64] broadcast(%scale), dimensions={}
+  %multiply = f32[5,64] multiply(%dot, %broadcast_scale)
+  %neg_inf = f32[] constant(-inf)
+  %reduce_window = f32[5,2] reduce-window(%multiply, %neg_inf),
+    window={size=1x32 stride=1x32}, to_apply=%max
+  %reduce_max = f32[5] reduce(%reduce_window, %neg_inf), dimensions={1}, to_apply=%max
+  %broadcast_max = f32[5,64] broadcast(%reduce_max), dimensions={0}
+  %subtract = f32[5,64] subtract(%multiply, %broadcast_max)
+  ROOT %exp = f32[5,64] exponential(%subtract)
 }
 )";
 
