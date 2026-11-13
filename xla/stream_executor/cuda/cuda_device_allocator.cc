@@ -364,6 +364,8 @@ AllocateDeviceMemory(StreamExecutor* executor,
   ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuMemMap(ptr, chunk_size, 0, handle, 0)));
   mapped_size = chunk_size;
 
+  // Only the WSL fallback reduces chunk_size below padded_size, so elsewhere
+  // the first mapping covers the full allocation and this loop is skipped.
   // Mappings retain their physical allocations. Keep only the first handle
   // for the existing deallocation path; release later handles after mapping.
   while (mapped_size < padded_size) {
