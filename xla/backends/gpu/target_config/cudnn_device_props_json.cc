@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "xla/backends/gpu/target_config/cudnn_device_props_json.h"
 
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -24,9 +26,30 @@ limitations under the License.
 #include "xla/stream_executor/dnn.h"
 
 namespace xla::gpu {
+namespace {
+
+int64_t MemoryBusWidthBits(const stream_executor::DeviceDescription& desc) {
+  const double clock_hz = static_cast<double>(desc.mem_clock_ghz()) * 1e9;
+  if (desc.memory_bandwidth() <= 0 || !std::isfinite(clock_hz) ||
+      clock_hz <= 0) {
+    return 0;
+  }
+  // CUDA records bandwidth = 2 * clock_hz * bus_width_bits / 8. Round, because
+  // the stored GHz clock is a float and truncation can lose a whole bus bit.
+  const double width =
+      std::round(4.0 * static_cast<double>(desc.memory_bandwidth()) / clock_hz);
+  if (!std::isfinite(width) || width < 1 ||
+      width > std::numeric_limits<int32_t>::max()) {
+    return 0;
+  }
+  return static_cast<int64_t>(width);
+}
+
+}  // namespace
 
 std::string FormatDevicePropertiesJson(
-    const stream_executor::DeviceDescription& desc) {
+    const stream_executor::DeviceDescription& desc,
+    bool include_memory_bus_width) {
   const auto* cc = desc.gpu_compute_capability().cuda_compute_capability();
   int device_ver = cc ? (cc->major * 100 + cc->minor * 10) : 0;
   int driver_ver = desc.driver_version().major_version() * 1000 +
@@ -37,6 +60,16 @@ std::string FormatDevicePropertiesJson(
   const bool is_sm107 = cc && cc->major == 10 && cc->minor == 7;
   const int64_t oversized_shared_memory =
       is_sm107 ? desc.oversized_shared_memory_per_block() : 0;
+  // cuDNN 9.27+ requires "memoryBusWidth" to deserialize device properties
+  // and accepts a plan only if the value matches the live device, so it is
+  // the real width, not a placeholder. It is written only under the custom
+  // reduction gate (see BuildDevicePropertiesJson in cudnn_device_props.cc),
+  // the only path that requires cuDNN 9.29+.
+  std::string memory_bus_width;
+  if (include_memory_bus_width) {
+    memory_bus_width =
+        absl::StrFormat("\n  \"memoryBusWidth\":%d,", MemoryBusWidthBits(desc));
+  }
   return absl::StrFormat(
       R"json({
   "deviceVer":%d,
@@ -55,7 +88,7 @@ std::string FormatDevicePropertiesJson(
   "smClockRateKHz":%d,
   "l2CacheSize":%d,
   "maxBlockSize":[%d,%d,%d],
-  "memClockRateKHz":%d,
+  "memClockRateKHz":%d,%s
   "maxGridSize":[%d,%d,%d],
   "supportCoopLaunch":%d,
   "pciDeviceId":0,
@@ -73,7 +106,7 @@ std::string FormatDevicePropertiesJson(
       static_cast<int64_t>(desc.clock_rate_ghz() * 1e6), desc.l2_cache_size(),
       desc.thread_dim_limit().x, desc.thread_dim_limit().y,
       desc.thread_dim_limit().z,
-      static_cast<int64_t>(desc.mem_clock_ghz() * 1e6),
+      static_cast<int64_t>(desc.mem_clock_ghz() * 1e6), memory_bus_width,
       desc.block_dim_limit().x, desc.block_dim_limit().y,
       desc.block_dim_limit().z,
       /*desc.supports_coop_launch()*/ 1, driver_ver, desc.name());
@@ -86,7 +119,10 @@ GetCudnnGraphTargetDevice(const stream_executor::DeviceDescription& desc) {
   }
   stream_executor::dnn::DnnGraphTargetDevice target_device;
   target_device.core_count = desc.core_count();
-  target_device.serialized_device_properties = FormatDevicePropertiesJson(desc);
+  // The thunk proto keeps the JSON unchanged: this frontend-free library
+  // cannot see the custom reduction gate.
+  target_device.serialized_device_properties =
+      FormatDevicePropertiesJson(desc, /*include_memory_bus_width=*/false);
   return target_device;
 }
 

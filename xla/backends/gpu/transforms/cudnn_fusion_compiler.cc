@@ -18,6 +18,7 @@ limitations under the License.
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -43,6 +44,7 @@ limitations under the License.
 #include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/backends/gpu/transforms/compiled_cudnn_graph_cache.h"
+#include "xla/backends/gpu/transforms/cudnn_custom_reduction.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_utils.h"
 #include "xla/codegen/emitters/computation_fingerprint.h"
 #include "xla/comparison_util.h"
@@ -75,6 +77,7 @@ limitations under the License.
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/dnn.h"
 #include "xla/stream_executor/engine_options.h"
+#include "xla/stream_executor/semantic_version.h"
 #include "xla/stream_executor/stream_executor.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/protobuf/dnn.pb.h"
@@ -928,9 +931,26 @@ HandleMaximumToCudnnGraph(
                              .set_compute_data_type(compute_dtype));
 }
 
+// Whether every use of `constant` is an init operand of a reduction.
+bool IsOnlyReductionInit(const HloInstruction& constant) {
+  return constant.user_count() > 0 &&
+         absl::c_all_of(constant.users(), [&](const HloInstruction* user) {
+           if (user->opcode() != HloOpcode::kReduce) {
+             return false;
+           }
+           for (int64_t i = 0; i < user->operand_count() / 2; ++i) {
+             if (user->operand(i) == &constant) {
+               return false;
+             }
+           }
+           return true;
+         });
+}
+
 // Traverses fusion computations and creates cuDNN graphs out of them.
 absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
-    const HloFusionInstruction& fusion) {
+    const HloFusionInstruction& fusion,
+    const se::DeviceDescription& gpu_device_info) {
   const HloComputation& computation = *fusion.fused_instructions_computation();
   VLOG(5) << fusion.ToString();
   VLOG(5) << computation.ToString();
@@ -943,6 +963,10 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
   absl::flat_hash_map<const HloInstruction*,
                       std::shared_ptr<graph::Tensor_attributes>>
       hlo_to_cudnn;
+  // Keep-dims results of variadic custom reductions, by tuple index.
+  absl::flat_hash_map<const HloInstruction*,
+                      std::vector<std::shared_ptr<graph::Tensor_attributes>>>
+      reduction_results;
   ABSL_ASSIGN_OR_RETURN(std::optional<GemmDimensionAdapter> gemm_adapter,
                         GemmDimensionAdapter::Create(computation));
   ABSL_ASSIGN_OR_RETURN(std::optional<ConvDimensionAdapter> conv_adapter,
@@ -1070,14 +1094,30 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
     }
 
     if (HloPredicateIsOp<HloOpcode::kTuple>(hlo)) {
-      if (!IsWorkspaceAllocationRoot(*hlo) && !IsAmaxRoot(*hlo)) {
+      // The output section below binds each operand of the root tuple of a
+      // non-GEMM fusion with a custom reduction as a graph output.
+      const bool is_output_tuple =
+          !is_gemm_or_conv && hlo == computation.root_instruction() &&
+          hlo_query::GetFirstInstructionWithOpcode(
+              computation, HloOpcode::kReduce) != nullptr &&
+          absl::c_none_of(hlo->operands(), [](const HloInstruction* operand) {
+            return operand->shape().IsTuple();
+          });
+      // Only GEMM and convolution fusions have AMAX outputs.
+      if (!is_output_tuple && !IsWorkspaceAllocationRoot(*hlo) &&
+          !(is_gemm_or_conv && IsAmaxRoot(*hlo))) {
         return absl::UnimplementedError(
             absl::StrCat("Tuples are only expected at outputs for workspace "
-                         "allocation, got: ",
+                         "allocation, AMAX or custom reductions, got: ",
                          hlo->ToString()));
       }
       continue;
     } else if (HloPredicateIsOp<HloOpcode::kConstant>(hlo)) {
+      if (!is_gemm_or_conv && IsOnlyReductionInit(*hlo)) {
+        // The custom reduction lowering reads the init as a host identity
+        // value, so it needs no graph tensor.
+        continue;
+      }
       if (is_gemm_or_conv) {
         const Shape& root_shape = computation.root_instruction()->shape();
         const Shape& output_shape =
@@ -1386,6 +1426,32 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
             graph.moe_grouped_matmul(operand(0), operand(1), operand(2),
                                      nullptr, nullptr, moe_grouped_matmul_attr);
       }
+    } else if (HloPredicateIsOp<HloOpcode::kReduce>(hlo) && !is_gemm_or_conv) {
+      // For deviceless/AOT device descriptions. When the API is compiled in
+      // (9.29+ headers), CudnnSupport::Init already refuses older cuDNN for
+      // live devices.
+      if (gpu_device_info.dnn_version() < se::SemanticVersion(9, 29, 0)) {
+        return absl::UnimplementedError(
+            "Custom reduction requires cuDNN 9.29 or newer.");
+      }
+      std::vector<std::shared_ptr<graph::Tensor_attributes>> inputs;
+      for (int64_t i = 0; i < hlo->operand_count() / 2; ++i) {
+        inputs.push_back(operand(i));
+      }
+      ABSL_ASSIGN_OR_RETURN(
+          std::vector<std::shared_ptr<graph::Tensor_attributes>> results,
+          LowerCudnnCustomReduction(*hlo, graph, inputs));
+      if (hlo->shape().IsTuple()) {
+        // The get-tuple-element users below map the streams to graph tensors,
+        // or the output section binds them for a root reduction.
+        reduction_results[hlo] = std::move(results);
+        continue;
+      }
+      // The reduction tensor keeps its input rank. A logical reshape removes
+      // the reduced axes; the common code below sets the HLO result layout.
+      hlo_to_cudnn[hlo] = graph.reshape(
+          results[0], graph::Reshape_attributes().set_reshape_mode(
+                          fe::ReshapeMode_t::LOGICAL));
     } else if (HloPredicateIsOp<HloOpcode::kReduce>(hlo)) {
       if (!IsCudnnAmaxReduce(*hlo)) {
         return absl::UnimplementedError(absl::StrCat(
@@ -1397,15 +1463,57 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
             "(tuple-shaped output) in instruction: ",
             hlo->ToString()));
       }
-      if (!is_gemm_or_conv) {
-        return absl::UnimplementedError(
-            absl::StrCat("Reduce is not supported for cudnn non gemm fusion: ",
-                         hlo->ToShortString()));
-      }
       hlo_to_cudnn[hlo] = graph.reduction(
           operand(0), graph::Reduction_attributes()
                           .set_mode(fe::ReductionMode_t::AMAX)
                           .set_compute_data_type(fe::DataType_t::FLOAT));
+    } else if (HloPredicateIsOp<HloOpcode::kGetTupleElement>(hlo)) {
+      auto it = reduction_results.find(hlo->operand(0));
+      if (it == reduction_results.end() ||
+          hlo->tuple_index() >= static_cast<int64_t>(it->second.size())) {
+        return absl::UnimplementedError(
+            "Only custom reduction tuple projections are supported.");
+      }
+      hlo_to_cudnn[hlo] =
+          graph.reshape(it->second[hlo->tuple_index()],
+                        graph::Reshape_attributes().set_reshape_mode(
+                            fe::ReshapeMode_t::LOGICAL));
+    } else if (HloPredicateIsOp<HloOpcode::kIota>(hlo)) {
+      const Shape& shape = hlo->shape();
+      const int64_t iota_dimension =
+          Cast<HloIotaInstruction>(hlo)->iota_dimension();
+      if (is_gemm_or_conv || shape.element_type() != S32 ||
+          shape.is_dynamic() || ShapeUtil::IsZeroElementArray(shape) ||
+          shape.dimensions(iota_dimension) >
+              std::numeric_limits<int32_t>::max()) {
+        return absl::UnimplementedError(
+            "Unsupported iota for cuDNN non-GEMM fusion.");
+      }
+      // GEN_INDEX reads no values, but needs a full-rank shape anchor. Use the
+      // value input of a two-stream reduction whose second input is this iota.
+      std::shared_ptr<graph::Tensor_attributes> anchor;
+      for (const HloInstruction* user : hlo->users()) {
+        if (user->opcode() != HloOpcode::kReduce ||
+            user->operand_count() != 4 || user->operand(1) != hlo ||
+            !ShapeUtil::EqualIgnoringElementType(user->operand(0)->shape(),
+                                                 shape)) {
+          continue;
+        }
+        auto it = hlo_to_cudnn.find(user->operand(0));
+        if (it != hlo_to_cudnn.end()) {
+          anchor = it->second;
+          break;
+        }
+      }
+      if (anchor == nullptr) {
+        return absl::UnimplementedError(
+            "Iota requires a custom reduction shape anchor.");
+      }
+      hlo_to_cudnn[hlo] = graph.pointwise(
+          anchor, graph::Pointwise_attributes()
+                      .set_mode(fe::PointwiseMode_t::GEN_INDEX)
+                      .set_axis(iota_dimension)
+                      .set_compute_data_type(fe::DataType_t::INT32));
     } else if (HloPredicateIsOp<HloOpcode::kConcatenate>(hlo)) {
       const auto attrs = graph::Concatenate_attributes().set_axis(
           hlo->concatenate_dimension());
@@ -1520,39 +1628,74 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
     }
   }
 
-  std::vector<HloInstruction*> outputs;
-  if (instructions.back()->shape().IsTuple()) {
-    for (auto operand : instructions.back()->operands()) {
+  // The graph outputs in the order of the fusion results. Each output has the
+  // instruction that computes it and the shape of its result.
+  struct GraphOutput {
+    std::shared_ptr<graph::Tensor_attributes> tensor;
+    const HloInstruction* hlo;
+    const Shape* shape;
+  };
+  std::vector<GraphOutput> outputs;
+  const HloInstruction* root = computation.root_instruction();
+  if (auto it = reduction_results.find(root); it != reduction_results.end()) {
+    // A tuple-shaped custom reduction root: one output per stream.
+    for (int64_t i = 0; i < static_cast<int64_t>(it->second.size()); ++i) {
+      std::shared_ptr<graph::Tensor_attributes> tensor = graph.reshape(
+          it->second[i], graph::Reshape_attributes().set_reshape_mode(
+                             fe::ReshapeMode_t::LOGICAL));
+      tensor->set_data_type(it->second[i]->get_data_type())
+          .set_name(absl::StrCat(root->name(), ".", i));
+      outputs.push_back(
+          {std::move(tensor), root, &root->shape().tuple_shapes(i)});
+    }
+  } else if (HloPredicateIsOp<HloOpcode::kTuple>(root)) {
+    for (int64_t i = 0; i < root->operand_count(); ++i) {
+      const HloInstruction* operand = root->operand(i);
       if (!operand->IsCustomCall(kWorkspaceAllocationCustomCallTarget)) {
-        outputs.push_back(operand);
+        outputs.push_back(
+            {hlo_to_cudnn[operand], operand, &root->shape().tuple_shapes(i)});
       }
     }
   } else {
-    outputs.push_back(instructions.back());
+    outputs.push_back({hlo_to_cudnn[root], root, &root->shape()});
   }
 
+  // A graph tensor has one UID, so each output must be a distinct tensor that
+  // is not a graph input.
+  absl::flat_hash_set<const graph::Tensor_attributes*> bound_tensors;
+  for (const HloInstruction* parameter : computation.parameter_instructions()) {
+    bound_tensors.insert(hlo_to_cudnn[parameter].get());
+  }
   for (int i = 0; i < outputs.size(); ++i) {
-    HloInstruction* output = outputs[i];
+    const GraphOutput& output = outputs[i];
+    if (output.tensor == nullptr || !output.shape->IsArray()) {
+      return absl::UnimplementedError(
+          absl::StrCat("Unsupported fusion output: ", output.hlo->ToString()));
+    }
+    if (!bound_tensors.insert(output.tensor.get()).second) {
+      return absl::UnimplementedError(
+          absl::StrCat("Output is a fusion input or another output: ",
+                       output.hlo->ToString()));
+    }
     std::optional<CudnnTensorLayout> dims = std::nullopt;
     if (conv_adapter.has_value()) {
-      dims = conv_adapter->DimensionsAndStrides(*output);
+      dims = conv_adapter->DimensionsAndStrides(*output.hlo);
     } else if (ragged_dot_adapter.has_value()) {
-      dims = ragged_dot_adapter->DimensionsAndStrides(*output);
+      dims = ragged_dot_adapter->DimensionsAndStrides(*output.hlo);
     } else if (gemm_adapter.has_value()) {
       dims = gemm_adapter->DimensionsAndStrides(
-          *output, TritonFusionAnalysis::Scope::OUTPUT);
+          *output.hlo, TritonFusionAnalysis::Scope::OUTPUT);
     } else {
       // Pin non-specialized graph outputs to the HLO shape so cuDNN does not
       // infer dims/strides from upstream tensors with a different logical rank
       // or layout.
-      dims = DimensionsAndStrides(output->shape());
+      dims = DimensionsAndStrides(*output.shape);
     }
     if (!dims.has_value()) {
       return absl::UnimplementedError(absl::StrCat(
-          "Unsupported dimensions for output: ", output->ToString()));
+          "Unsupported dimensions for output: ", output.hlo->ToString()));
     }
-    hlo_to_cudnn[output]
-        ->set_output(true)
+    output.tensor->set_output(true)
         .set_dim(dims->sizes)
         .set_stride(dims->strides)
         .set_uid(se::gpu::CuDnnTensorUID(fusion.operand_count() + i));
@@ -1609,7 +1752,8 @@ absl::StatusOr<se::gpu::CudnnGraph> PrepareGraph(
     se::dnn::DnnSupport* dnn_support,
     const se::DeviceDescription& gpu_device_info,
     const HloFusionInstruction& hlo) {
-  ABSL_ASSIGN_OR_RETURN(se::gpu::CudnnGraph graph, HloFusionToCuDnnGraph(hlo));
+  ABSL_ASSIGN_OR_RETURN(se::gpu::CudnnGraph graph,
+                        HloFusionToCuDnnGraph(hlo, gpu_device_info));
   ABSL_RETURN_IF_ERROR(
       graph.Prepare(dnn_support, gpu_device_info, GetEngineOptions(hlo)));
   return graph;
@@ -1618,6 +1762,18 @@ absl::StatusOr<se::gpu::CudnnGraph> PrepareGraph(
 absl::StatusOr<HloInstruction*> AddWorkspace(HloInstruction& fusion,
                                              const int64_t workspace_size) {
   HloComputation* computation = fusion.fused_instructions_computation();
+  HloInstruction* root = computation->root_instruction();
+  if (root->shape().IsTuple() && root->opcode() != HloOpcode::kTuple) {
+    // A tuple-shaped custom reduction root. Make its elements the operands of
+    // a root tuple, so that the workspace does not make a nested tuple.
+    std::vector<HloInstruction*> elements;
+    for (int64_t i = 0; i < root->shape().tuple_shapes_size(); ++i) {
+      elements.push_back(computation->AddInstruction(
+          HloInstruction::CreateGetTupleElement(root, i)));
+    }
+    computation->set_root_instruction(
+        computation->AddInstruction(HloInstruction::CreateTuple(elements)));
+  }
   HloInstruction* custom_call =
       computation->AddInstruction(HloInstruction::CreateCustomCall(
           ShapeUtil::MakeShape(S8, {workspace_size}), {},
@@ -1786,7 +1942,8 @@ class CuDnnFusionVisitor : public DfsHloRewriteVisitor {
         }
         if (!hlo->GetModule()->config().debug_options().xla_dump_to().empty()) {
           // Converting the fusion dumps its cuDNN graph.
-          ABSL_RETURN_IF_ERROR(HloFusionToCuDnnGraph(*fusion).status());
+          ABSL_RETURN_IF_ERROR(
+              HloFusionToCuDnnGraph(*fusion, gpu_device_info_).status());
         }
         return *std::move(cached);
       }

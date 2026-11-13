@@ -23,10 +23,13 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
+#include "xla/backends/gpu/target_config/cudnn_device_props.h"
 #include "xla/backends/gpu/target_config/cudnn_device_props_test_util.h"
 #include "xla/backends/gpu/target_config/target_config.h"
 #include "xla/service/platform_util.h"
+#include "xla/stream_executor/cuda/cudnn_custom_reduction_api.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/device_description.pb.h"
 #include "xla/stream_executor/platform.h"
@@ -63,6 +66,21 @@ TEST(CudnnDevicePropsTest, MatchesLiveDevice) {
   if (!any_compared) {
     GTEST_SKIP() << "No visible GPU devices to compare against.";
   }
+}
+
+// cuDNN 9.27+ requires "memoryBusWidth". It is written only with the custom
+// reduction API, which requires cuDNN 9.29+.
+TEST(CudnnDevicePropsTest, MemoryBusWidthFollowsCustomReductionGate) {
+  se::DeviceDescription desc;
+  desc.set_memory_bandwidth(7672320000000);
+  desc.set_mem_clock_ghz(3.996f);
+  const std::string json = BuildDevicePropertiesJson(desc);
+  EXPECT_EQ(absl::StrContains(json, "\"memoryBusWidth\":7680,"),
+            XLA_HAS_CUDNN_CUSTOM_REDUCTION_API != 0)
+      << json;
+  EXPECT_EQ(absl::StrContains(json, "memoryBusWidth"),
+            XLA_HAS_CUDNN_CUSTOM_REDUCTION_API != 0)
+      << json;
 }
 
 // Make sure the cudnn_frontend::DeviceProperties created from our checked in

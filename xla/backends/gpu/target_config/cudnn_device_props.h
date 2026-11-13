@@ -17,6 +17,7 @@ limitations under the License.
 #define XLA_BACKENDS_GPU_TARGET_CONFIG_CUDNN_DEVICE_PROPS_H_
 
 #include <memory>
+#include <string>
 
 #include "absl/status/statusor.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
@@ -28,6 +29,12 @@ namespace xla::gpu {
 // in deviceless (AOT) cuDNN graph preparation.
 absl::StatusOr<std::shared_ptr<cudnn_frontend::DeviceProperties>>
 BuildDeviceProperties(const stream_executor::DeviceDescription& desc);
+
+// Returns the JSON that BuildDeviceProperties deserializes. It has
+// "memoryBusWidth" only if XLA_HAS_CUDNN_CUSTOM_REDUCTION_API. Exposed for
+// testing.
+std::string BuildDevicePropertiesJson(
+    const stream_executor::DeviceDescription& desc);
 
 }  // namespace xla::gpu
 

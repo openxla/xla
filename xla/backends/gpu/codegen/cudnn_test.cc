@@ -17,13 +17,20 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
+#include <cstdint>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/functional/function_ref.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -33,20 +40,26 @@ limitations under the License.
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
+#include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "tsl/platform/path.h"
 #include "xla/backends/autotuner/backends.pb.h"
 #include "xla/backends/gpu/tests/hlo_pjrt_gpu_test_base.h"
+#include "xla/backends/gpu/transforms/cudnn_custom_reduction.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_compiler.h"
 #include "xla/comparison_util.h"
 #include "xla/debug_options_flags.h"
 #include "xla/error_spec.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/testlib/filecheck.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/literal.h"
+#include "xla/literal_util.h"
 #include "xla/primitive_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/cublas_cudnn.h"
@@ -54,8 +67,11 @@ limitations under the License.
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/service/pattern_matcher.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/cuda/cuda_dnn.h"
+#include "xla/stream_executor/cuda/cudnn_custom_reduction_api.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/platform_manager.h"
 #include "xla/stream_executor/semantic_version.h"
@@ -3690,6 +3706,1269 @@ ENTRY %wrapper_wrapped_concatenate_computation.6.clone (param_0.55140: f32[1], p
 }
 )",
                             ErrorSpec{/*aabs=*/1e-4, /*arel=*/1e-4}));
+}
+
+// Whether the custom reduction API is compiled in and the device description
+// reports cuDNN 9.29+.
+bool CustomReductionsAvailable(const se::DeviceDescription& device) {
+  return XLA_HAS_CUDNN_CUSTOM_REDUCTION_API != 0 &&
+         device.dnn_version() >= se::SemanticVersion(9, 29, 0);
+}
+
+// The reduction tests start with untagged loop fusions, so the autotuner
+// decides whether cuDNN is used. The optimized module shows that decision:
+// a native fallback that computes the correct result cannot pass as a cuDNN
+// test.
+class CuDnnNonGemmReductionRoutingTest : public CuDnnNonGemmFusionTest {
+ public:
+  DebugOptions GetDebugOptionsForTest() const override {
+    DebugOptions options = CuDnnNonGemmFusionTest::GetDebugOptionsForTest();
+    options.set_xla_gpu_experimental_enable_fusion_autotuner(true);
+    options.set_xla_gpu_autotune_level(1);
+    return options;
+  }
+
+ protected:
+  // Adds the native emitter, so that a declined fusion has an alternative.
+  HloModuleConfig NativeFallbackConfig() const {
+    HloModuleConfig config = GetModuleConfigForTest();
+    config.mutable_debug_options().add_xla_gpu_experimental_autotune_backends(
+        autotuner::Backend::NATIVE_EMITTER);
+    return config;
+  }
+
+  // Runs all HLO passes, not only the autotuner.
+  static HloModuleConfig FullPipeline(HloModuleConfig config) {
+    config.mutable_debug_options().clear_xla_enable_hlo_passes_only();
+    config.mutable_debug_options().set_xla_disable_all_hlo_passes(false);
+    return config;
+  }
+
+  absl::StatusOr<bool> SelectsCudnnReduction(absl::string_view hlo,
+                                             const HloModuleConfig& config) {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<HloModule> optimized,
+                          GetOptimizedModule(hlo, config));
+    return absl::c_any_of(
+        optimized->entry_computation()->instructions(),
+        [](const HloInstruction* instruction) {
+          return IsCudnnFusion(*instruction) &&
+                 absl::c_any_of(instruction->fused_instructions_computation()
+                                    ->instructions(),
+                                [](const HloInstruction* fused) {
+                                  return fused->opcode() == HloOpcode::kReduce;
+                                });
+        });
+  }
+
+  // Queries cuDNN plans for the first fusion in `hlo` with the live cuDNN
+  // handle. XLA refuses a fusion that it cannot translate with kUnimplemented.
+  // cuDNN reports a refusal as kInternal.
+  absl::Status CudnnPlanStatus(absl::string_view hlo) {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+    const HloInstruction* fusion = nullptr;
+    for (const HloInstruction* instruction :
+         module->entry_computation()->instructions()) {
+      if (instruction->opcode() == HloOpcode::kFusion) {
+        fusion = instruction;
+        break;
+      }
+    }
+    if (fusion == nullptr) {
+      return absl::InvalidArgumentError("No fusion in the module.");
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        se::Platform * platform,
+        se::PlatformManager::PlatformWithId(stream_executor_platform_id()));
+    ABSL_ASSIGN_OR_RETURN(se::StreamExecutor * executor,
+                          platform->ExecutorForDevice(0));
+    return CuDnnFusionCompiler::GetAvailablePlanCount(
+               executor->AsDnn(), device_description(),
+               *Cast<HloFusionInstruction>(fusion))
+        .status();
+  }
+
+  // Expects that XLA translates the fusion in `hlo`, and that cuDNN then
+  // accepts it or refuses it.
+  void ExpectCudnnDecides(absl::string_view hlo) {
+    if (!CustomReductionsAvailable(gpu_target_config().device_description)) {
+      return;
+    }
+    const absl::Status status = CudnnPlanStatus(hlo);
+    LOG(INFO) << "cuDNN plan query: " << status;
+    EXPECT_TRUE(status.ok() || absl::IsInternal(status)) << status;
+  }
+
+  // Translates the fusion at the root of `hlo` for a device description that
+  // reports `dnn_version`, without a cuDNN handle. XLA refuses a fusion that it
+  // cannot translate with kUnimplemented. A translated fusion goes on to
+  // deviceless cuDNN plan creation, which reports other codes.
+  absl::Status TranslationStatus(
+      absl::string_view hlo,
+      se::SemanticVersion dnn_version = se::SemanticVersion(9, 29, 0)) {
+    ABSL_ASSIGN_OR_RETURN(std::unique_ptr<VerifiedHloModule> module,
+                          ParseAndReturnVerifiedModule(hlo));
+    se::DeviceDescription device = device_description();
+    device.set_dnn_version(dnn_version);
+    return CuDnnFusionCompiler::GetAvailablePlanCount(
+               /*dnn_support=*/nullptr, device,
+               *Cast<HloFusionInstruction>(
+                   module->entry_computation()->root_instruction()))
+        .status();
+  }
+
+  // Small integers make the sums exact in all supported types.
+  static float SmallInteger(int64_t i) { return static_cast<float>(i % 7 - 3); }
+
+  // Sets element i (in row-major logical order) of `shape` to value(i).
+  static absl::StatusOr<Literal> MakeInput(
+      const Shape& shape, absl::FunctionRef<float(int64_t)> value) {
+    std::vector<float> data(ShapeUtil::ElementsIn(shape));
+    for (int64_t i = 0; i < static_cast<int64_t>(data.size()); ++i) {
+      data[i] = value(i);
+    }
+    ABSL_ASSIGN_OR_RETURN(
+        Literal input,
+        LiteralUtil::CreateR1<float>(data).Reshape(shape.dimensions()));
+    ABSL_ASSIGN_OR_RETURN(input, input.Convert(shape.element_type()));
+    return input.Relayout(shape.layout());
+  }
+
+  static absl::StatusOr<Literal> ExactInput(const Shape& shape) {
+    return MakeInput(shape, SmallInteger);
+  }
+
+  // Inputs of shape [3,129] for min(a + b, 100) and clamp(0, a + b, 100).
+  // Both are associative for non-negative inputs. The sum of the first row is
+  // 65, and the sums of the other rows are more than 100.
+  static float SaturatingInput(int64_t i) {
+    return static_cast<float>(i < 129 ? (i + 1) % 2 : i % 7);
+  }
+
+  // Checks that cuDNN is selected and that the result is exact.
+  void ExpectCudnnMatchesReference(
+      absl::string_view hlo, const HloModuleConfig& config,
+      absl::FunctionRef<float(int64_t)> value = SmallInteger) {
+    ASSERT_OK_AND_ASSIGN(bool selected, SelectsCudnnReduction(hlo, config));
+    ASSERT_TRUE(selected);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                         ParseAndReturnVerifiedModule(hlo, config));
+    ASSERT_OK_AND_ASSIGN(
+        Literal input,
+        MakeInput(
+            module->entry_computation()->parameter_instruction(0)->shape(),
+            value));
+    EXPECT_TRUE(RunAndCompare(std::move(module), {&input}, ErrorSpec{0, 0}));
+  }
+};
+
+// Tests that require the custom reduction API at compile time and cuDNN 9.29+
+// at run time.
+class CuDnnNonGemmReductionTest : public CuDnnNonGemmReductionRoutingTest {
+ protected:
+  void SetUp() override {
+    CuDnnNonGemmReductionRoutingTest::SetUp();
+    if (IsSkipped()) {
+      return;
+    }
+    if (!CustomReductionsAvailable(gpu_target_config().device_description)) {
+      GTEST_SKIP() << "Custom reductions require cuDNN frontend 1.33+ with the "
+                      "custom reduction API and cuDNN 9.29+.";
+    }
+  }
+};
+
+struct ReductionCase {
+  const char* name;
+  const char* type;
+  const char* operation;
+  const char* identity;
+  const char* input_shape;
+  const char* output_shape;
+  const char* axes;
+};
+
+// Reducer computations named "reducer". $0 is the element type and $1 is the
+// operation of ReductionCase.
+constexpr absl::string_view kBinaryReducer = R"(
+reducer {
+  lhs = $0[] parameter(0)
+  rhs = $0[] parameter(1)
+  ROOT combined = $0[] $1(lhs, rhs)
+})";
+
+// A generic reducer body with a constant: min(a + b, 100).
+constexpr absl::string_view kSaturatingAddReducer = R"(
+reducer {
+  lhs = $0[] parameter(0)
+  rhs = $0[] parameter(1)
+  sum = $0[] add(lhs, rhs)
+  cap = $0[] constant(100)
+  ROOT capped = $0[] minimum(sum, cap)
+})";
+
+// A generic reducer body with compare and select: a > b ? a : b.
+constexpr absl::string_view kSelectMaximumReducer = R"(
+reducer {
+  lhs = $0[] parameter(0)
+  rhs = $0[] parameter(1)
+  greater = pred[] compare(lhs, rhs), direction=GT
+  ROOT combined = $0[] select(greater, lhs, rhs)
+})";
+
+// A reducer body with clamp: clamp(0, a + b, 100).
+constexpr absl::string_view kClampReducer = R"(
+reducer {
+  lhs = $0[] parameter(0)
+  rhs = $0[] parameter(1)
+  sum = $0[] add(lhs, rhs)
+  floor = $0[] constant(0)
+  cap = $0[] constant(100)
+  ROOT clamped = $0[] clamp(floor, sum, cap)
+})";
+
+// A variadic reducer named "reducer": the sum of the first stream and the
+// maximum of the second stream.
+constexpr absl::string_view kSumAndMaxReducer = R"(
+reducer {
+  lhs_sum = f32[] parameter(0)
+  lhs_max = f32[] parameter(1)
+  rhs_sum = f32[] parameter(2)
+  rhs_max = f32[] parameter(3)
+  sum = f32[] add(lhs_sum, rhs_sum)
+  maximum = f32[] maximum(lhs_max, rhs_max)
+  ROOT result = (f32[], f32[]) tuple(sum, maximum)
+})";
+
+std::string ReductionHlo(const ReductionCase& test_case,
+                         absl::string_view reducer, absl::string_view module) {
+  return absl::Substitute(absl::StrCat(reducer, module), test_case.type,
+                          test_case.operation, test_case.identity,
+                          test_case.input_shape, test_case.output_shape,
+                          test_case.axes);
+}
+
+std::string FusedReductionHlo(const ReductionCase& test_case,
+                              absl::string_view reducer = kBinaryReducer) {
+  return ReductionHlo(test_case, reducer, R"(
+fused {
+  input = $0$3 parameter(0)
+  init = $0[] constant($2)
+  ROOT reduced = $0$4 reduce(input, init), dimensions={$5}, to_apply=reducer
+}
+ENTRY main {
+  input = $0$3 parameter(0)
+  ROOT result = $0$4 fusion(input), kind=kLoop, calls=fused
+})");
+}
+
+std::string UnfusedReductionHlo(const ReductionCase& test_case,
+                                absl::string_view reducer = kBinaryReducer) {
+  return ReductionHlo(test_case, reducer, R"(
+ENTRY main {
+  input = $0$3 parameter(0)
+  init = $0[] constant($2)
+  ROOT reduced = $0$4 reduce(input, init), dimensions={$5}, to_apply=reducer
+})");
+}
+
+std::string ReductionCaseName(
+    const ::testing::TestParamInfo<ReductionCase>& info) {
+  return info.param.name;
+}
+
+class CuDnnNonGemmScalarReductionTest
+    : public CuDnnNonGemmReductionTest,
+      public ::testing::WithParamInterface<ReductionCase> {};
+
+TEST_P(CuDnnNonGemmScalarReductionTest, SelectedAndMatchesReference) {
+  ExpectCudnnMatchesReference(FusedReductionHlo(GetParam()),
+                              GetModuleConfigForTest());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Boundaries, CuDnnNonGemmScalarReductionTest,
+    ::testing::Values(
+        ReductionCase{"Inner129", "f32", "add", "0", "[3,129]", "[3]", "1"},
+        ReductionCase{"Outer129", "f32", "add", "0", "[129,3]", "[3]", "0"},
+        ReductionCase{"MultipleAxes", "f32", "add", "0", "[2,3,129]", "[3]",
+                      "2,0"},
+        ReductionCase{"Scalar1025", "f32", "add", "0", "[1025]", "[]", "0"},
+        ReductionCase{"Maximum128", "f32", "maximum", "-inf", "[3,128]", "[3]",
+                      "1"},
+        ReductionCase{"BfloatMaximum", "bf16", "maximum", "-inf", "[2,129]",
+                      "[2]", "1"},
+        ReductionCase{"HalfMinimum", "f16", "minimum", "inf", "[2,129]", "[2]",
+                      "1"},
+        ReductionCase{"Int32Sum", "s32", "add", "0", "[3,129]", "[3]", "1"},
+        ReductionCase{"Int32Maximum", "s32", "maximum", "-2147483648",
+                      "[3,129]", "[3]", "1"},
+        ReductionCase{"Int32Minimum", "s32", "minimum", "2147483647", "[3,129]",
+                      "[3]", "1"},
+        ReductionCase{"HalfSum", "f16", "add", "0", "[3,129]", "[3]", "1"},
+        ReductionCase{"SingletonDimension", "f32", "add", "0", "[2,1,129]",
+                      "[2,1]", "2"},
+        ReductionCase{"NonDefaultLayout", "f32", "add", "0", "[2,3,129]{0,2,1}",
+                      "[2,3]{0,1}", "2"}),
+    ReductionCaseName);
+
+TEST_F(CuDnnNonGemmReductionTest, ReducedResultBroadcastFeedsPointwise) {
+  ExpectCudnnMatchesReference(R"(
+reducer {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT add = f32[] add(lhs, rhs)
+}
+fused {
+  input = f32[3,129] parameter(0)
+  zero = f32[] constant(0)
+  reduced = f32[3] reduce(input, zero), dimensions={1}, to_apply=reducer
+  broadcast = f32[3,129] broadcast(reduced), dimensions={0}
+  ROOT output = f32[3,129] add(input, broadcast)
+}
+ENTRY main {
+  input = f32[3,129] parameter(0)
+  ROOT output = f32[3,129] fusion(input), kind=kLoop, calls=fused
+})",
+                              GetModuleConfigForTest());
+}
+
+TEST_F(CuDnnNonGemmReductionTest, MultiplyMatchesReference) {
+  // Powers of two keep every partial product exact in any order.
+  ExpectCudnnMatchesReference(
+      FusedReductionHlo(ReductionCase{"Multiply", "f32", "multiply", "1",
+                                      "[3,129]", "[3]", "1"}),
+      GetModuleConfigForTest(), [](int64_t i) {
+        constexpr float kValues[] = {1.0f, -1.0f, 2.0f, 0.5f};
+        return kValues[i % 4];
+      });
+}
+
+TEST_F(CuDnnNonGemmReductionTest, ReducerWithConstantMatchesReference) {
+  ExpectCudnnMatchesReference(
+      FusedReductionHlo(
+          ReductionCase{"SaturatingAdd", "s32", "", "0", "[3,129]", "[3]", "1"},
+          kSaturatingAddReducer),
+      GetModuleConfigForTest(), SaturatingInput);
+}
+
+TEST_F(CuDnnNonGemmReductionTest, SelectCompareReducerMatchesReference) {
+  ExpectCudnnMatchesReference(
+      FusedReductionHlo(ReductionCase{"SelectMaximum", "s32", "", "-2147483648",
+                                      "[3,129]", "[3]", "1"},
+                        kSelectMaximumReducer),
+      GetModuleConfigForTest(),
+      [](int64_t i) { return static_cast<float>((i * 37) % 1009 - 500); });
+}
+
+TEST_F(CuDnnNonGemmReductionTest, ClampReducerMatchesReference) {
+  // Bounds in the wrong order would give 0 for every row.
+  ExpectCudnnMatchesReference(
+      FusedReductionHlo(
+          ReductionCase{"Clamp", "s32", "", "0", "[3,129]", "[3]", "1"},
+          kClampReducer),
+      GetModuleConfigForTest(), SaturatingInput);
+}
+
+TEST_F(CuDnnNonGemmReductionTest, TwoReductionResultsCombinedInTheFusion) {
+  ExpectCudnnMatchesReference(absl::StrCat(kSumAndMaxReducer, R"(
+fused {
+  input = f32[3,129] parameter(0)
+  zero = f32[] constant(0)
+  negative_infinity = f32[] constant(-inf)
+  reduced = (f32[3], f32[3]) reduce(input, input, zero, negative_infinity),
+      dimensions={1}, to_apply=reducer
+  sum = f32[3] get-tuple-element(reduced), index=0
+  maximum = f32[3] get-tuple-element(reduced), index=1
+  ROOT output = f32[3] add(sum, maximum)
+}
+ENTRY main {
+  input = f32[3,129] parameter(0)
+  ROOT output = f32[3] fusion(input), kind=kLoop, calls=fused
+})"),
+                              GetModuleConfigForTest());
+}
+
+TEST_F(CuDnnNonGemmReductionTest, F32SelectCompareReducerMatchesReference) {
+  ExpectCudnnMatchesReference(
+      FusedReductionHlo(ReductionCase{"SelectMaximum", "f32", "", "-inf",
+                                      "[3,129]", "[3]", "1"},
+                        kSelectMaximumReducer),
+      GetModuleConfigForTest());
+}
+
+TEST_F(CuDnnNonGemmReductionTest, VariadicReducerKeepsParameterHalves) {
+  for (int64_t projection : {0, 1}) {
+    SCOPED_TRACE(projection);
+    // The reducer callback receives all lhs parameters before all rhs
+    // parameters.
+    const std::string hlo = absl::Substitute(absl::StrCat(kSumAndMaxReducer, R"(
+fused {
+  sum_input = f32[2,129] parameter(0)
+  max_input = f32[2,129] parameter(1)
+  zero = f32[] constant(0)
+  negative_infinity = f32[] constant(-inf)
+  reduced = (f32[2], f32[2]) reduce(sum_input, max_input, zero, negative_infinity),
+      dimensions={1}, to_apply=reducer
+  ROOT output = f32[2] get-tuple-element(reduced), index=$0
+}
+ENTRY main {
+  sum_input = f32[2,129] parameter(0)
+  max_input = f32[2,129] parameter(1)
+  ROOT output = f32[2] fusion(sum_input, max_input), kind=kLoop, calls=fused
+})"),
+                                             projection);
+    ASSERT_OK_AND_ASSIGN(bool selected,
+                         SelectsCudnnReduction(hlo, GetModuleConfigForTest()));
+    ASSERT_TRUE(selected);
+    Literal sum_input(ShapeUtil::MakeShape(F32, {2, 129}));
+    Literal max_input(ShapeUtil::MakeShape(F32, {2, 129}));
+    for (int64_t row = 0; row < 2; ++row) {
+      for (int64_t column = 0; column < 129; ++column) {
+        sum_input.Set<float>({row, column}, static_cast<float>(row + 1));
+        max_input.Set<float>({row, column},
+                             static_cast<float>(1000 * row + column - 64));
+      }
+    }
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                         ParseAndReturnVerifiedModule(hlo));
+    EXPECT_TRUE(RunAndCompare(std::move(module), {&sum_input, &max_input},
+                              ErrorSpec{0, 0}));
+  }
+}
+
+TEST_F(CuDnnNonGemmReductionTest, ExtremaPreserveNaNsAndUniformZeroSigns) {
+  for (bool is_max : {false, true}) {
+    SCOPED_TRACE(is_max ? "maximum" : "minimum");
+    const std::string hlo =
+        absl::Substitute(R"(
+reducer {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT result = f32[] $0(lhs, rhs)
+}
+fused {
+  input = f32[3,129] parameter(0)
+  init = f32[] constant($1inf)
+  reduced = f32[3] reduce(input, init), dimensions={1}, to_apply=reducer
+  one = f32[] constant(1)
+  ones = f32[3] broadcast(one), dimensions={}
+  ROOT reciprocal = f32[3] divide(ones, reduced)
+}
+ENTRY main {
+  input = f32[3,129] parameter(0)
+  ROOT reciprocal = f32[3] fusion(input), kind=kLoop, calls=fused
+})",
+                         is_max ? "maximum" : "minimum", is_max ? "-" : "");
+    ASSERT_OK_AND_ASSIGN(bool selected,
+                         SelectsCudnnReduction(hlo, GetModuleConfigForTest()));
+    ASSERT_TRUE(selected);
+    Literal input(ShapeUtil::MakeShape(F32, {3, 129}));
+    for (int64_t column = 0; column < 129; ++column) {
+      input.Set<float>({0, column}, -0.0f);
+      input.Set<float>({1, column}, 0.0f);
+      input.Set<float>({2, column}, static_cast<float>(column));
+    }
+    input.Set<float>({2, 127}, std::numeric_limits<float>::quiet_NaN());
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                         ParseAndReturnVerifiedModule(hlo));
+    ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&input}));
+    // XLA does not specify the result for a mix of -0 and +0, so each zero
+    // row has one sign. The reciprocal makes the sign of zero observable.
+    const float inf = std::numeric_limits<float>::infinity();
+    EXPECT_EQ(result.Get<float>({0}), -inf);
+    EXPECT_EQ(result.Get<float>({1}), inf);
+    EXPECT_TRUE(std::isnan(result.Get<float>({2})));
+  }
+}
+
+class CuDnnNonGemmArgReductionTest
+    : public CuDnnNonGemmReductionTest,
+      public ::testing::WithParamInterface<
+          std::tuple<PrimitiveType, bool, int64_t>> {};
+
+// The JAX argmin/argmax body goes through the generic reducer callback. That
+// body is not commutative for two NaNs, and cuDNN combines elements in any
+// order. So in a row with two or more NaNs, any NaN index is correct.
+TEST_P(CuDnnNonGemmArgReductionTest, IotaIndexMatchesReference) {
+  const auto [type, is_max, width] = GetParam();
+  const std::string hlo = absl::Substitute(
+      R"(
+reducer {
+  lv = $0[] parameter(0)
+  li = s32[] parameter(1)
+  rv = $0[] parameter(2)
+  ri = s32[] parameter(3)
+  better = pred[] compare(lv, rv), direction=$1
+  lhs_nan = pred[] compare(lv, lv), direction=NE
+  keep_value = pred[] or(better, lhs_nan)
+  value = $0[] select(keep_value, lv, rv)
+  equal = pred[] compare(lv, rv), direction=EQ
+  lower = pred[] compare(li, ri), direction=LT
+  tie = pred[] and(equal, lower)
+  keep_index = pred[] or(keep_value, tie)
+  index = s32[] select(keep_index, li, ri)
+  ROOT result = ($0[], s32[]) tuple(value, index)
+}
+fused {
+  input = $0[8,$3] parameter(0)
+  indices = s32[8,$3] iota(), iota_dimension=1
+  value_init = $0[] constant($2inf)
+  index_init = s32[] constant(0)
+  reduced = ($0[8], s32[8]) reduce(input, indices, value_init, index_init),
+      dimensions={1}, to_apply=reducer
+  ROOT output = s32[8] get-tuple-element(reduced), index=1
+}
+ENTRY main {
+  input = $0[8,$3] parameter(0)
+  ROOT output = s32[8] fusion(input), kind=kLoop, calls=fused
+})",
+      primitive_util::LowercasePrimitiveTypeName(type), is_max ? "GT" : "LT",
+      is_max ? "-" : "", width);
+  ASSERT_OK_AND_ASSIGN(bool selected,
+                       SelectsCudnnReduction(hlo, GetModuleConfigForTest()));
+  ASSERT_TRUE(selected);
+  const float inf = std::numeric_limits<float>::infinity();
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  // Rows: ordinary ties, a final NaN, two NaNs, all -inf, all +inf, signed
+  // zeros, and two copies of the extreme value.
+  Literal values(ShapeUtil::MakeShape(F32, {8, width}));
+  for (int64_t row = 0; row < 8; ++row) {
+    for (int64_t column = 0; column < width; ++column) {
+      float value = static_cast<float>(column % 7 - 3);
+      if ((row == 1 && column == width - 1) ||
+          (row == 2 && (column == 5 || column == width - 2))) {
+        value = nan;
+      } else if (row == 3) {
+        value = -inf;
+      } else if (row == 4) {
+        value = inf;
+      } else if (row == 5) {
+        value = column % 2 == 0 ? -0.0f : 0.0f;
+      } else if (row == 6 && (column == 3 || column == width - 1)) {
+        value = is_max ? inf : -inf;
+      }
+      values.Set<float>({row, column}, value);
+    }
+  }
+  ASSERT_OK_AND_ASSIGN(Literal input, values.Convert(type));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> reference_module,
+                       ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(
+      Literal expected,
+      reference_runner().Execute(std::move(reference_module), {&input},
+                                 /*run_hlo_passes=*/true));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo));
+  ASSERT_OK_AND_ASSIGN(Literal result, Execute(std::move(module), {&input}));
+  for (int64_t row = 0; row < 8; ++row) {
+    SCOPED_TRACE(row);
+    int64_t nans = 0;
+    for (int64_t column = 0; column < width; ++column) {
+      nans += std::isnan(values.Get<float>({row, column}));
+    }
+    const int32_t index = result.Get<int32_t>({row});
+    if (nans < 2) {
+      EXPECT_EQ(index, expected.Get<int32_t>({row}));
+    } else {
+      ASSERT_GE(index, 0);
+      ASSERT_LT(index, width);
+      EXPECT_TRUE(std::isnan(values.Get<float>({row, index})));
+    }
+  }
+}
+
+// Width 4096 tests a wider reduction than width 129.
+INSTANTIATE_TEST_SUITE_P(
+    TypesDirectionsAndWidths, CuDnnNonGemmArgReductionTest,
+    ::testing::Combine(::testing::Values(F32, F16, BF16), ::testing::Bool(),
+                       ::testing::Values(int64_t{129}, int64_t{4096})));
+
+// Shapes from the existing ReduceTest cases, through all HLO passes.
+class CuDnnNonGemmFullPipelineReductionTest
+    : public CuDnnNonGemmReductionTest,
+      public ::testing::WithParamInterface<ReductionCase> {};
+
+TEST_P(CuDnnNonGemmFullPipelineReductionTest, SelectedAndMatchesReference) {
+  ExpectCudnnMatchesReference(UnfusedReductionHlo(GetParam()),
+                              FullPipeline(GetModuleConfigForTest()));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ExistingShapes, CuDnnNonGemmFullPipelineReductionTest,
+    ::testing::Values(
+        ReductionCase{"R1_129", "f32", "add", "0", "[129]", "[]", "0"},
+        ReductionCase{"R1_1024", "f32", "add", "0", "[1024]", "[]", "0"},
+        ReductionCase{"R2_111x50_Inner", "f32", "add", "0", "[111,50]", "[111]",
+                      "1"},
+        ReductionCase{"R2_111x50_Outer", "f32", "add", "0", "[111,50]", "[50]",
+                      "0"},
+        ReductionCase{"R3_4x8x128_Outer", "f32", "add", "0", "[4,8,128]",
+                      "[8,128]", "0"},
+        ReductionCase{"R3_4x8x128_Middle", "f32", "add", "0", "[4,8,128]",
+                      "[4,128]", "1"}),
+    ReductionCaseName);
+
+TEST_F(CuDnnNonGemmReductionTest, FullPipelineElementwiseProducerSelectsCudnn) {
+  // The graph and shape are the same as in
+  // ReduceTest.ReduceElementwiseR2_111x50_To_R1.
+  constexpr absl::string_view kHlo = R"(
+reducer {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT combined = f32[] add(lhs, rhs)
+}
+ENTRY main {
+  input = f32[111,50] parameter(0)
+  logarithm = f32[111,50] log(input)
+  init = f32[] constant(0)
+  ROOT reduced = f32[50] reduce(logarithm, init), dimensions={0},
+      to_apply=reducer
+})";
+  const HloModuleConfig config = FullPipeline(GetModuleConfigForTest());
+  ASSERT_OK_AND_ASSIGN(bool selected, SelectsCudnnReduction(kHlo, config));
+  ASSERT_TRUE(selected);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(kHlo, config));
+  Literal input(ShapeUtil::MakeShape(F32, {111, 50}));
+  for (int64_t row = 0; row < 111; ++row) {
+    for (int64_t column = 0; column < 50; ++column) {
+      input.Set<float>({row, column},
+                       static_cast<float>(1 + (row + column) % 7));
+    }
+  }
+  EXPECT_TRUE(
+      RunAndCompare(std::move(module), {&input}, ErrorSpec{0.01, 1e-4}));
+}
+
+// As in DotF32DevicelessCompilationSucceeds: the graph is compiled without the
+// live cuDNN handle, serialized, then deserialized and run on the device.
+TEST_F(CuDnnNonGemmReductionTest, DevicelessCompiledReductionMatchesReference) {
+  if (!se::gpu::SupportsDevicelessCudnnCompilation()) {
+    GTEST_SKIP() << "Deviceless cuDNN compilation requires cuDNN >= "
+                 << se::gpu::kMinDevicelessCudnnVersion;
+  }
+  HloModuleConfig config = GetModuleConfigForTest();
+  config.mutable_debug_options().set_xla_gpu_cudnn_deviceless_compilation_mode(
+      DebugOptions::CUDNN_DEVICELESS_COMPILATION_ALWAYS);
+  ExpectCudnnMatchesReference(
+      FusedReductionHlo(ReductionCase{"Deviceless", "f32", "add", "0",
+                                      "[3,129]", "[3]", "1"}),
+      config);
+}
+
+// cuDNN decides whether it runs F64 and S8 reduction streams (cuDNN 9.29
+// refuses them when it finalizes the reduction). The result is correct either
+// way.
+TEST_F(CuDnnNonGemmReductionRoutingTest, Float64AndInt8StreamsMatchReference) {
+  for (const ReductionCase& test_case :
+       {ReductionCase{"Double", "f64", "add", "0", "[3,129]", "[3]", "1"},
+        ReductionCase{"Int8", "s8", "add", "0", "[3,129]", "[3]", "1"}}) {
+    SCOPED_TRACE(test_case.name);
+    ExpectCudnnDecides(FusedReductionHlo(test_case));
+    const std::string hlo = UnfusedReductionHlo(test_case);
+    const HloModuleConfig config = FullPipeline(NativeFallbackConfig());
+    ASSERT_OK_AND_ASSIGN(bool selected, SelectsCudnnReduction(hlo, config));
+    LOG(INFO) << "cuDNN selected: " << selected;
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                         ParseAndReturnVerifiedModule(hlo, config));
+    ASSERT_OK_AND_ASSIGN(
+        Literal input,
+        ExactInput(
+            module->entry_computation()->parameter_instruction(0)->shape()));
+    EXPECT_TRUE(RunAndCompare(std::move(module), {&input}, ErrorSpec{0, 0}));
+  }
+}
+
+// The lowering reads the init of an S64 or PRED stream as a host identity
+// value. cuDNN decides whether it runs the reduction, and the result is
+// correct either way.
+TEST_F(CuDnnNonGemmReductionRoutingTest, Int64AndPredicateStreamsTranslate) {
+  for (const ReductionCase& test_case :
+       {ReductionCase{"Int64", "s64", "add", "0", "[3,129]", "[3]", "1"},
+        ReductionCase{"Predicate", "pred", "and", "true", "[3,129]", "[3]",
+                      "1"}}) {
+    SCOPED_TRACE(test_case.name);
+    const std::string hlo = FusedReductionHlo(test_case);
+    ExpectCudnnDecides(hlo);
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<VerifiedHloModule> module,
+        ParseAndReturnVerifiedModule(hlo, NativeFallbackConfig()));
+    const bool is_predicate = test_case.type == absl::string_view("pred");
+    // For PRED, the expected result {true, false, false} rejects a constant.
+    const auto value = [is_predicate](int64_t i) {
+      if (!is_predicate) {
+        return SmallInteger(i);
+      }
+      const int64_t row = i / 129;
+      const int64_t column = i % 129;
+      return row == 0 || (row == 1 && column != 128) ||
+                     (row == 2 && column % 2 == 0)
+                 ? 1.0f
+                 : 0.0f;
+    };
+    ASSERT_OK_AND_ASSIGN(
+        Literal input,
+        MakeInput(
+            module->entry_computation()->parameter_instruction(0)->shape(),
+            value));
+    EXPECT_TRUE(RunAndCompare(std::move(module), {&input}, ErrorSpec{0, 0}));
+  }
+}
+
+// cuDNN decides whether it runs a boolean reduction. The result is correct
+// either way.
+TEST_F(CuDnnNonGemmReductionRoutingTest, PredicateXorReducerMatchesReference) {
+  const std::string hlo = FusedReductionHlo(
+      ReductionCase{"Xor", "pred", "xor", "false", "[3,129]", "[3]", "1"});
+  ExpectCudnnDecides(hlo);
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      ParseAndReturnVerifiedModule(hlo, NativeFallbackConfig()));
+  ASSERT_OK_AND_ASSIGN(
+      Literal input,
+      MakeInput(module->entry_computation()->parameter_instruction(0)->shape(),
+                [](int64_t i) { return (i * i) % 3 == 0 ? 1.0f : 0.0f; }));
+  EXPECT_TRUE(RunAndCompare(std::move(module), {&input}, ErrorSpec{0, 0}));
+}
+
+// cuDNN 9.29 does not run a fusion with two reduction outputs, so the native
+// emitter runs it. A later cuDNN can run it. The result is correct either way.
+TEST_F(CuDnnNonGemmReductionRoutingTest, TwoReductionOutputsMatchReference) {
+  for (bool tuple_root : {true, false}) {
+    SCOPED_TRACE(tuple_root ? "tuple root" : "reduction root");
+    const std::string hlo = absl::Substitute(
+        absl::StrCat(kSumAndMaxReducer, R"(
+fused {
+  input = f32[3,129] parameter(0)
+  zero = f32[] constant(0)
+  negative_infinity = f32[] constant(-inf)
+  $0reduced = (f32[3], f32[3]) reduce(input, input, zero, negative_infinity),
+      dimensions={1}, to_apply=reducer
+  $1
+}
+ENTRY main {
+  input = f32[3,129] parameter(0)
+  ROOT output = (f32[3], f32[3]) fusion(input), kind=kLoop, calls=fused
+})"),
+        tuple_root ? "" : "ROOT ",
+        tuple_root ? "sum = f32[3] get-tuple-element(reduced), index=0\n"
+                     "  maximum = f32[3] get-tuple-element(reduced), index=1\n"
+                     "  ROOT output = (f32[3], f32[3]) tuple(sum, maximum)"
+                   : "");
+    ExpectCudnnDecides(hlo);
+    ASSERT_OK_AND_ASSIGN(bool selected,
+                         SelectsCudnnReduction(hlo, NativeFallbackConfig()));
+    LOG(INFO) << "cuDNN selected: " << selected;
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<VerifiedHloModule> module,
+        ParseAndReturnVerifiedModule(hlo, NativeFallbackConfig()));
+    ASSERT_OK_AND_ASSIGN(
+        Literal input,
+        ExactInput(
+            module->entry_computation()->parameter_instruction(0)->shape()));
+    EXPECT_TRUE(RunAndCompare(std::move(module), {&input}, ErrorSpec{0, 0}));
+  }
+}
+
+TEST_F(CuDnnNonGemmReductionRoutingTest, FlagOffKeepsNativeReduction) {
+  for (bool full_pipeline : {false, true}) {
+    SCOPED_TRACE(full_pipeline ? "full pipeline" : "autotuner only");
+    const ReductionCase test_case{"FlagOff",  "f32",  "add", "0",
+                                  "[111,50]", "[50]", "0"};
+    HloModuleConfig config = NativeFallbackConfig();
+    config.mutable_debug_options().set_xla_gpu_cudnn_non_gemm_fusion_level(0);
+    const std::string hlo = full_pipeline ? UnfusedReductionHlo(test_case)
+                                          : FusedReductionHlo(test_case);
+    if (full_pipeline) {
+      config = FullPipeline(config);
+    }
+    ASSERT_OK_AND_ASSIGN(bool selected, SelectsCudnnReduction(hlo, config));
+    EXPECT_FALSE(selected);
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                         ParseAndReturnVerifiedModule(hlo, config));
+    ASSERT_OK_AND_ASSIGN(
+        Literal input,
+        ExactInput(
+            module->entry_computation()->parameter_instruction(0)->shape()));
+    EXPECT_TRUE(RunAndCompare(std::move(module), {&input}, ErrorSpec{0, 0}));
+  }
+}
+
+// This test does not skip for cuDNN 9.26 to 9.28 on Blackwell or newer (the
+// base fixture skips older cuDNN and older GPUs): then the native fallback must
+// compile and give the correct result.
+TEST_F(CuDnnNonGemmReductionRoutingTest,
+       InstalledLibrarySelectsCustomReductionOrNativeFallback) {
+  const ReductionCase test_case{"InstalledLibrary", "f32",  "add", "0",
+                                "[111,50]",         "[50]", "0"};
+  const std::string hlo = UnfusedReductionHlo(test_case);
+  const bool custom_reduction_available =
+      CustomReductionsAvailable(gpu_target_config().device_description);
+  HloModuleConfig config = FullPipeline(NativeFallbackConfig());
+  if (custom_reduction_available) {
+    // Do not depend on which backend is faster.
+    config.mutable_debug_options()
+        .clear_xla_gpu_experimental_autotune_backends();
+    config.mutable_debug_options().add_xla_gpu_experimental_autotune_backends(
+        autotuner::Backend::CUDNN);
+  }
+  ASSERT_OK_AND_ASSIGN(bool selected, SelectsCudnnReduction(hlo, config));
+  EXPECT_EQ(selected, custom_reduction_available);
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       ParseAndReturnVerifiedModule(hlo, config));
+  ASSERT_OK_AND_ASSIGN(
+      Literal input,
+      ExactInput(
+          module->entry_computation()->parameter_instruction(0)->shape()));
+  EXPECT_TRUE(RunAndCompare(std::move(module), {&input}, ErrorSpec{0, 0}));
+}
+
+TEST_F(CuDnnNonGemmReductionRoutingTest, OlderRuntimeDeclinesBeforeLowering) {
+  const ReductionCase test_case{"OlderRuntime", "f32", "add", "0",
+                                "[3,129]",      "[3]", "1"};
+  EXPECT_THAT(TranslationStatus(FusedReductionHlo(test_case),
+                                se::SemanticVersion(9, 28, 0)),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                                     ::testing::HasSubstr("9.29")));
+}
+
+// A non-GEMM multi-output fusion without a reduction is refused, as before
+// custom reductions. The native emitter then runs it.
+TEST_F(CuDnnNonGemmReductionRoutingTest, PointwiseTupleRootIsRefused) {
+  constexpr absl::string_view kHlo = R"(
+fused {
+  x = f32[3,129] parameter(0)
+  y = f32[3,129] parameter(1)
+  sum = f32[3,129] add(x, y)
+  product = f32[3,129] multiply(x, y)
+  ROOT output = (f32[3,129], f32[3,129]) tuple(sum, product)
+}
+ENTRY main {
+  x = f32[3,129] parameter(0)
+  y = f32[3,129] parameter(1)
+  ROOT output = (f32[3,129], f32[3,129]) fusion(x, y), kind=kLoop, calls=fused
+})";
+  EXPECT_THAT(
+      TranslationStatus(kHlo),
+      absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                             ::testing::HasSubstr("Tuples are only expected")));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      ParseAndReturnVerifiedModule(kHlo, NativeFallbackConfig()));
+  const Shape& shape =
+      module->entry_computation()->parameter_instruction(0)->shape();
+  const auto shifted = [](int64_t i) { return SmallInteger(i + 1); };
+  ASSERT_OK_AND_ASSIGN(Literal x, ExactInput(shape));
+  ASSERT_OK_AND_ASSIGN(Literal y, MakeInput(shape, shifted));
+  EXPECT_TRUE(RunAndCompare(std::move(module), {&x, &y}, ErrorSpec{0, 0}));
+}
+
+// The lowering tests below call LowerCudnnCustomReduction directly. They build
+// cuDNN frontend graphs, but do not compile or run them.
+using FeGraph = cudnn_frontend::graph::Graph;
+using FeTensor = std::shared_ptr<cudnn_frontend::graph::Tensor_attributes>;
+using FeType = cudnn_frontend::DataType_t;
+
+FeTensor FeInput(FeGraph& graph, const std::vector<int64_t>& dims,
+                 FeType type) {
+  std::vector<int64_t> strides(dims.size(), 1);
+  for (int64_t i = dims.size() - 1; i > 0; --i) {
+    strides[i - 1] = strides[i] * dims[i];
+  }
+  return graph.tensor(cudnn_frontend::graph::Tensor_attributes()
+                          .set_dim(dims)
+                          .set_stride(strides)
+                          .set_data_type(type));
+}
+
+// Direct lowering tests. The fixture has no skip condition: the tests need no
+// Blackwell GPU and no cuDNN version, and they also run when the API is
+// compiled out.
+class CuDnnCustomReductionLoweringTest
+    : public CuDnnNonGemmReductionRoutingTest {
+ protected:
+  void SetUp() override {}
+};
+
+TEST_F(CuDnnCustomReductionLoweringTest, LoweringWithoutApiIsUnimplemented) {
+  if (XLA_HAS_CUDNN_CUSTOM_REDUCTION_API != 0) {
+    GTEST_SKIP() << "The custom reduction API is compiled in.";
+  }
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      ParseAndReturnVerifiedModule(UnfusedReductionHlo(ReductionCase{
+          "Lowering", "f32", "add", "0", "[2,129,5]", "[2,5]", "1"})));
+  FeGraph graph;
+  FeTensor input = FeInput(graph, {2, 129, 5}, FeType::FLOAT);
+  EXPECT_THAT(
+      LowerCudnnCustomReduction(
+          *module->entry_computation()->root_instruction(), graph, {input}),
+      absl_testing::StatusIs(
+          absl::StatusCode::kUnimplemented,
+          ::testing::HasSubstr("cudnn_frontend/node/custom_reduction.h")));
+}
+
+// The input check runs before the API check, so this test also runs when the
+// API is compiled out.
+TEST_F(CuDnnCustomReductionLoweringTest,
+       LowerRejectsMissingAndNullTensorStreams) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      ParseAndReturnVerifiedModule(UnfusedReductionHlo(ReductionCase{
+          "Lowering", "f32", "add", "0", "[2,129,5]", "[2,5]", "1"})));
+  const HloInstruction& reduction =
+      *module->entry_computation()->root_instruction();
+  FeGraph graph;
+  EXPECT_THAT(LowerCudnnCustomReduction(reduction, graph, {}),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     ::testing::HasSubstr("input tensors")));
+  EXPECT_THAT(LowerCudnnCustomReduction(reduction, graph, {nullptr}),
+              absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                                     ::testing::HasSubstr("input tensors")));
+}
+
+// Tests that translate HLO to cuDNN frontend graphs and do not run them. They
+// need the custom reduction API, but not a Blackwell GPU.
+class CuDnnCustomReductionTranslationTest
+    : public CuDnnNonGemmReductionRoutingTest {
+ protected:
+  void SetUp() override {
+    if (XLA_HAS_CUDNN_CUSTOM_REDUCTION_API == 0) {
+      GTEST_SKIP() << "The custom reduction API is compiled out.";
+    }
+  }
+};
+
+TEST_F(CuDnnCustomReductionTranslationTest, LowerPreservesKeepDims) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      ParseAndReturnVerifiedModule(UnfusedReductionHlo(ReductionCase{
+          "Lowering", "f32", "add", "0", "[2,129,5]", "[2,5]", "1"})));
+  FeGraph graph;
+  FeTensor input = FeInput(graph, {2, 129, 5}, FeType::FLOAT);
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<FeTensor> outputs,
+      LowerCudnnCustomReduction(
+          *module->entry_computation()->root_instruction(), graph, {input}));
+  ASSERT_THAT(outputs, ::testing::SizeIs(1));
+  EXPECT_THAT(outputs[0]->get_dim(), ::testing::ElementsAre(2, 1, 5));
+  EXPECT_THAT(outputs[0]->get_stride(), ::testing::ElementsAre(5, 5, 1));
+  EXPECT_EQ(outputs[0]->get_data_type(), FeType::FLOAT);
+}
+
+TEST_F(CuDnnCustomReductionTranslationTest,
+       LowerPreservesExactTypedIdentities) {
+  struct Case {
+    const char* hlo_type;
+    FeType type;
+    const char* type_name;
+    const char* operation;
+    const char* identity;
+    const char* raw;
+  };
+  const std::vector<Case> cases = {
+      {"f32", FeType::FLOAT, "FLOAT", "add", "-0.0", "80000000"},
+      {"f16", FeType::HALF, "HALF", "add", "-0.0", "8000"},
+      {"bf16", FeType::BFLOAT16, "BFLOAT16", "add", "-0.0", "8000"},
+      {"s32", FeType::INT32, "INT32", "add", "0", "00000000"},
+      {"f32", FeType::FLOAT, "FLOAT", "maximum", "-inf", "FF800000"},
+      {"f16", FeType::HALF, "HALF", "maximum", "-inf", "FC00"},
+      {"bf16", FeType::BFLOAT16, "BFLOAT16", "maximum", "-inf", "FF80"},
+      {"s32", FeType::INT32, "INT32", "maximum", "-2147483648", "80000000"},
+      {"s8", FeType::INT8, "INT8", "maximum", "-128", "80"},
+      {"s64", FeType::INT64, "INT64", "maximum", "-9223372036854775808",
+       "8000000000000000"},
+      {"f64", FeType::DOUBLE, "DOUBLE", "maximum", "-inf", "FFF0000000000000"},
+      {"f8e4m3fn", FeType::FP8_E4M3, "FP8_E4M3", "add", "-0.0", "80"},
+      {"f8e5m2", FeType::FP8_E5M2, "FP8_E5M2", "maximum", "-inf", "FC"},
+  };
+  for (const Case& test : cases) {
+    SCOPED_TRACE(absl::StrCat(test.hlo_type, ":", test.identity));
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<VerifiedHloModule> module,
+        ParseAndReturnVerifiedModule(UnfusedReductionHlo(
+            ReductionCase{"Lowering", test.hlo_type, test.operation,
+                          test.identity, "[2,129,5]", "[2,5]", "1"})));
+    const HloInstruction& reduction =
+        *module->entry_computation()->root_instruction();
+    if (absl::string_view(test.identity) == "-0.0") {
+      const std::optional<double> source_identity =
+          reduction.operand(1)->literal().GetAsDouble({});
+      ASSERT_TRUE(source_identity.has_value());
+      ASSERT_EQ(*source_identity, 0.0);
+      ASSERT_TRUE(std::signbit(*source_identity))
+          << "The source HLO identity must already contain negative zero.";
+    }
+    FeGraph graph;
+    FeTensor input = FeInput(graph, {2, 129, 5}, test.type);
+    ASSERT_OK_AND_ASSIGN(std::vector<FeTensor> outputs,
+                         LowerCudnnCustomReduction(reduction, graph, {input}));
+    ASSERT_THAT(outputs, ::testing::SizeIs(1));
+    outputs[0]->set_output(true);
+    EXPECT_EQ(outputs[0]->get_data_type(), test.type);
+    auto validation = graph.validate();
+    ASSERT_TRUE(validation.is_good()) << validation.get_message();
+    nlohmann::json serialized;
+    graph.serialize(serialized);
+    ASSERT_EQ(serialized.at("nodes").size(), 1);
+    const nlohmann::json& node = serialized.at("nodes").at(0);
+    EXPECT_EQ(node.at("tag"), "CUSTOM_REDUCTION");
+    EXPECT_EQ(node.at("identity_types"),
+              nlohmann::json::array({test.type_name}));
+    EXPECT_EQ(node.at("identity_raw"), nlohmann::json::array({test.raw}));
+    EXPECT_EQ(node.at("compute_data_types"),
+              nlohmann::json::array({test.type_name}));
+  }
+}
+
+TEST_F(CuDnnCustomReductionTranslationTest,
+       LowerConvertsPredicateStreamsAtTheBoundary) {
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<VerifiedHloModule> module,
+      ParseAndReturnVerifiedModule(UnfusedReductionHlo(ReductionCase{
+          "Lowering", "pred", "or", "false", "[2,129,5]", "[2,5]", "1"})));
+  FeGraph graph;
+  // The fusion compiler stores PRED as INT8.
+  FeTensor input = FeInput(graph, {2, 129, 5}, FeType::INT8);
+  ASSERT_OK_AND_ASSIGN(
+      std::vector<FeTensor> outputs,
+      LowerCudnnCustomReduction(
+          *module->entry_computation()->root_instruction(), graph, {input}));
+  ASSERT_THAT(outputs, ::testing::SizeIs(1));
+  outputs[0]->set_output(true);
+  EXPECT_EQ(outputs[0]->get_data_type(), FeType::INT8);
+  EXPECT_THAT(outputs[0]->get_dim(), ::testing::ElementsAre(2, 1, 5));
+  auto validation = graph.validate();
+  ASSERT_TRUE(validation.is_good()) << validation.get_message();
+  nlohmann::json serialized;
+  graph.serialize(serialized);
+  // A conversion to BYTE_BOOLEAN, the reduction, and a conversion back.
+  ASSERT_EQ(serialized.at("nodes").size(), 3);
+  const nlohmann::json& node = serialized.at("nodes").at(1);
+  EXPECT_EQ(node.at("tag"), "CUSTOM_REDUCTION");
+  EXPECT_EQ(node.at("identity_types"), nlohmann::json::array({"BYTE_BOOLEAN"}));
+  EXPECT_EQ(node.at("identity_raw"), nlohmann::json::array({"00"}));
+  EXPECT_EQ(node.at("compute_data_types"),
+            nlohmann::json::array({"BYTE_BOOLEAN"}));
+}
+
+// Only a PRED stream can have other storage (INT8).
+TEST_F(CuDnnCustomReductionTranslationTest,
+       LowerRejectsMismatchedStreamStorage) {
+  for (const auto& [test_case, storage] :
+       std::vector<std::pair<ReductionCase, FeType>>{
+           {ReductionCase{"Float", "f32", "add", "0", "[2,129,5]", "[2,5]",
+                          "1"},
+            FeType::INT32},
+           {ReductionCase{"Predicate", "pred", "or", "false", "[2,129,5]",
+                          "[2,5]", "1"},
+            FeType::FLOAT}}) {
+    SCOPED_TRACE(test_case.name);
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<VerifiedHloModule> module,
+        ParseAndReturnVerifiedModule(UnfusedReductionHlo(test_case)));
+    FeGraph graph;
+    FeTensor input = FeInput(graph, {2, 129, 5}, storage);
+    EXPECT_THAT(
+        LowerCudnnCustomReduction(
+            *module->entry_computation()->root_instruction(), graph, {input}),
+        absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                               ::testing::HasSubstr("tensor types")));
+  }
+}
+
+// Gives access to the expansion step, which runs the deferred reducer
+// callback. Expansion does not build a backend operation graph.
+class ExpandableGraph : public FeGraph {
+ public:
+  cudnn_frontend::error_t ExpandForTest() { return expand_subtree(); }
+};
+
+TEST_F(CuDnnCustomReductionTranslationTest,
+       LoweredTypedConstantsExpandAfterHloDestruction) {
+  if (!CustomReductionsAvailable(gpu_target_config().device_description)) {
+    GTEST_SKIP() << "Expansion requires cuDNN 9.29+ at run time.";
+  }
+  for (const auto& [hlo_type, type] :
+       std::vector<std::pair<std::string, FeType>>{{"f32", FeType::FLOAT},
+                                                   {"f16", FeType::HALF},
+                                                   {"bf16", FeType::BFLOAT16},
+                                                   {"f64", FeType::DOUBLE},
+                                                   {"s32", FeType::INT32},
+                                                   {"s64", FeType::INT64}}) {
+    SCOPED_TRACE(hlo_type);
+    // The cap is a reducer constant of the stream type.
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                         ParseAndReturnVerifiedModule(UnfusedReductionHlo(
+                             ReductionCase{"Lowering", hlo_type.c_str(), "",
+                                           "0", "[2,129]", "[2]", "1"},
+                             kSaturatingAddReducer)));
+    ExpandableGraph graph;
+    FeTensor input = FeInput(graph, {2, 129}, type);
+    ASSERT_OK_AND_ASSIGN(
+        std::vector<FeTensor> outputs,
+        LowerCudnnCustomReduction(
+            *module->entry_computation()->root_instruction(), graph, {input}));
+    ASSERT_THAT(outputs, ::testing::SizeIs(1));
+    outputs[0]->set_output(true);
+    // The callback must own its computation and constants: it must not keep
+    // pointers into the HLO module.
+    module.reset();
+    auto validation = graph.validate();
+    ASSERT_TRUE(validation.is_good()) << validation.get_message();
+    // Expansion runs the callback. The frontend refuses a reducer constant
+    // that is not a compile-time constant.
+    auto expansion = graph.ExpandForTest();
+    ASSERT_TRUE(expansion.is_good()) << expansion.get_message();
+    auto expanded_validation = graph.validate();
+    EXPECT_TRUE(expanded_validation.is_good())
+        << expanded_validation.get_message();
+  }
+}
+
+// The projection `sum` of the reduction in SumAndMaxFusionHlo.
+constexpr absl::string_view kSumProjection =
+    "sum = f32[3] get-tuple-element(reduced), index=0\n  ";
+
+// A fusion with the sum-and-max reduction `reduced`. $0 is the fusion result
+// shape and $1 is the text of the rest of the fusion, with the root.
+std::string SumAndMaxFusionHlo(absl::string_view result_shape,
+                               absl::string_view root) {
+  return absl::Substitute(absl::StrCat(kSumAndMaxReducer, R"(
+fused {
+  input = f32[3,129] parameter(0)
+  zero = f32[] constant(0)
+  negative_infinity = f32[] constant(-inf)
+  reduced = (f32[3], f32[3]) reduce(input, input, zero, negative_infinity),
+      dimensions={1}, to_apply=reducer
+  $1
+}
+ENTRY main {
+  input = f32[3,129] parameter(0)
+  ROOT output = $0 fusion(input), kind=kLoop, calls=fused
+})"),
+                          result_shape, root);
+}
+
+// A tuple-shaped operand of a root tuple has no graph tensor.
+TEST_F(CuDnnCustomReductionTranslationTest, NestedTupleRootsAreRefused) {
+  for (const auto& [result_shape, root, reason] :
+       std::vector<std::tuple<std::string, std::string, std::string>>{
+           {"(f32[3], (f32[3], f32[3]))",
+            absl::StrCat(
+                kSumProjection,
+                "ROOT output = (f32[3], (f32[3], f32[3])) tuple(sum, reduced)"),
+            "Tuples are only expected"},
+           {"((f32[3], f32[3]))",
+            "ROOT output = ((f32[3], f32[3])) tuple(reduced)",
+            "Tuples are only expected"},
+           {"(f32[3], (f32[3], f32[3]), s8[16])",
+            absl::StrCat(kSumProjection,
+                         "workspace = s8[16] custom-call(), "
+                         "custom_call_target=\"__nop\"\n"
+                         "  ROOT output = (f32[3], (f32[3], f32[3]), s8[16]) "
+                         "tuple(sum, reduced, workspace)"),
+            "Unsupported fusion output"}}) {
+    SCOPED_TRACE(root);
+    EXPECT_THAT(TranslationStatus(SumAndMaxFusionHlo(result_shape, root)),
+                absl_testing::StatusIs(absl::StatusCode::kUnimplemented,
+                                       ::testing::HasSubstr(reason)));
+  }
+}
+
+// A graph tensor has one UID, so it cannot be two outputs, or an input and an
+// output.
+TEST_F(CuDnnCustomReductionTranslationTest, SharedOutputTensorsAreRefused) {
+  for (const auto& [result_shape, root] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"(f32[3], f32[3])",
+            absl::StrCat(kSumProjection,
+                         "ROOT output = (f32[3], f32[3]) tuple(sum, sum)")},
+           {"(f32[3,129], f32[3])",
+            absl::StrCat(
+                kSumProjection,
+                "ROOT output = (f32[3,129], f32[3]) tuple(input, sum)")}}) {
+    SCOPED_TRACE(root);
+    EXPECT_THAT(TranslationStatus(SumAndMaxFusionHlo(result_shape, root)),
+                absl_testing::StatusIs(
+                    absl::StatusCode::kUnimplemented,
+                    ::testing::HasSubstr(
+                        "Output is a fusion input or another output")));
+  }
+}
+
+// The init constant also feeds a broadcast, so it gets a graph tensor. The
+// lowering still reads it as the identity value.
+TEST_F(CuDnnCustomReductionTranslationTest,
+       InitConstantWithOtherUsersTranslates) {
+  const std::string hlo = absl::Substitute(absl::StrCat(kBinaryReducer, R"(
+fused {
+  input = f32[3,129] parameter(0)
+  zero = f32[] constant(0)
+  reduced = f32[3] reduce(input, zero), dimensions={1}, to_apply=reducer
+  zeros = f32[3] broadcast(zero), dimensions={}
+  ROOT output = f32[3] add(reduced, zeros)
+}
+ENTRY main {
+  input = f32[3,129] parameter(0)
+  ROOT output = f32[3] fusion(input), kind=kLoop, calls=fused
+})"),
+                                           "f32", "add");
+  const absl::Status status = TranslationStatus(hlo);
+  LOG(INFO) << "Deviceless cuDNN plan query: " << status;
+  EXPECT_FALSE(absl::IsUnimplemented(status)) << status;
+}
+
+class CuDnnNonGemmReductionFileCheckTest : public CuDnnFusionFileCheckTest {
+ protected:
+  void SetUp() override {
+    CuDnnFusionFileCheckTest::SetUp();
+    if (IsSkipped()) {
+      return;
+    }
+    if (!CustomReductionsAvailable(gpu_target_config().device_description) ||
+        !get_cuda_cc().IsAtLeastBlackwell()) {
+      GTEST_SKIP() << "Custom reductions require the custom reduction API, "
+                      "cuDNN 9.29+ and a Blackwell or newer GPU.";
+    }
+  }
+};
+
+TEST_F(CuDnnNonGemmReductionFileCheckTest, ReductionGraphConvertedCorrectly) {
+  EXPECT_TRUE(*RunCuDnnFileCheck(R"(
+reducer {
+  lhs = f32[] parameter(0)
+  rhs = f32[] parameter(1)
+  ROOT maximum = f32[] maximum(lhs, rhs)
+}
+
+fused {
+  input = f32[3,129] parameter(0)
+  init = f32[] constant(-inf)
+  ROOT reduced = f32[3] reduce(input, init), dimensions={1}, to_apply=reducer
+}
+
+ENTRY e {
+  input = f32[3,129] parameter(0)
+  ROOT r0 = f32[3] fusion(input), kind=kCustom, calls=fused,
+    backend_config={"fusion_backend_config":{"kind":"__cudnn$fusion","cudnn_fusion_config":{"plan_id":"0"}}}
+})",
+                                 R"(
+CHECK: "nodes": [
+CHECK: "identity_raw": [
+CHECK-NEXT: "FF800000"
+CHECK: "identity_types": [
+CHECK-NEXT: "FLOAT"
+CHECK: "reduction_dims": [{{[[:space:]]*}}1{{[[:space:]]*}}]
+CHECK: "tag": "CUSTOM_REDUCTION"
+CHECK: "reshape_mode": "LOGICAL"
+CHECK: "tag": "RESHAPE"
+CHECK: "tensors": [
+CHECK: "dim": [{{[[:space:]]*}}3,{{[[:space:]]*}}1{{[[:space:]]*}}]
+CHECK-NEXT: "is_pass_by_value": false
+CHECK-NEXT: "is_virtual": true
+)"));
 }
 
 TEST_F(CuDnnFusionFileCheckTest, ConvFpropGraphConvertedCorrectly) {

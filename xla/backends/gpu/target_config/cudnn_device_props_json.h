@@ -25,8 +25,11 @@ limitations under the License.
 namespace xla::gpu {
 
 // Formats a DeviceDescription into a serialized cuDNN DeviceProperties.
+// `include_memory_bus_width` adds the "memoryBusWidth" key, which cuDNN 9.27+
+// requires. It is 0 if `desc` has no valid memory bandwidth and clock.
 std::string FormatDevicePropertiesJson(
-    const stream_executor::DeviceDescription& desc);
+    const stream_executor::DeviceDescription& desc,
+    bool include_memory_bus_width);
 
 // Describes `desc` as the target device of the cuDNN graphs compiled for it.
 // Returns std::nullopt for non-CUDA devices.

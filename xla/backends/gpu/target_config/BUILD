@@ -107,6 +107,20 @@ cc_library(
     ],
 )
 
+xla_cc_test(
+    name = "cudnn_device_props_json_test",
+    srcs = ["cudnn_device_props_json_test.cc"],
+    deps = [
+        ":cudnn_device_props_json",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
+        "@jsoncpp_git//:jsoncpp",
+    ],
+)
+
 cc_library(
     name = "cudnn_device_props",
     srcs = ["cudnn_device_props.cc"],
@@ -119,6 +133,7 @@ cc_library(
     deps = [
         ":cudnn_device_props_json",
         "//xla/stream_executor:device_description",
+        "//xla/stream_executor/cuda:cudnn_custom_reduction_api",
         "//xla/stream_executor/cuda:cudnn_frontend_helpers",
         "@com_google_absl//absl/status:statusor",
         "@cudnn_frontend_archive//:cudnn_frontend",
@@ -170,6 +185,7 @@ xla_test(
     ],
     tags = ["cuda-only"],
     deps = [
+        ":cudnn_device_props",
         ":cudnn_device_props_test_util",
         ":target_config",
         "//xla/service:platform_util",
@@ -178,6 +194,7 @@ xla_test(
         "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_h",
+        "//xla/stream_executor/cuda:cudnn_custom_reduction_api",
         "//xla/tsl/platform:test",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",

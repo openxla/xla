@@ -1178,6 +1178,65 @@ xla_cc_test(
     ],
 )
 
+cc_library(
+    name = "cudnn_custom_reduction_analysis",
+    srcs = ["cudnn_custom_reduction_analysis.cc"],
+    hdrs = ["cudnn_custom_reduction_analysis.h"],
+    deps = [
+        "//xla:comparison_util",
+        "//xla:literal",
+        "//xla:shape_util",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+xla_cc_test(
+    name = "cudnn_custom_reduction_analysis_test",
+    srcs = ["cudnn_custom_reduction_analysis_test.cc"],
+    deps = [
+        ":cudnn_custom_reduction_analysis",
+        "//xla:literal",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/parser:hlo_parser",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "cudnn_custom_reduction",
+    srcs = ["cudnn_custom_reduction.cc"],
+    hdrs = ["cudnn_custom_reduction.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        ":cudnn_custom_reduction_analysis",
+        "//xla:comparison_util",
+        "//xla:literal",
+        "//xla:xla_data_proto_cc",
+        "//xla/hlo/ir:hlo",
+        "//xla/stream_executor/cuda:cudnn_custom_reduction_api",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@cudnn_frontend_archive//:cudnn_frontend",
+    ],
+)
+
 # Tested via //third_party/tensorflow/compiler/xla/backends/gpu/codegen:cudnn_test
 cc_library(
     name = "cudnn_fusion_compiler",
@@ -1190,6 +1249,7 @@ cc_library(
     deps = [
         ":block_scaling_rewriter",
         ":compiled_cudnn_graph_cache",
+        ":cudnn_custom_reduction",
         ":cudnn_fusion_utils",
         "//xla:comparison_util",
         "//xla:shape_util",
@@ -1212,6 +1272,7 @@ cc_library(
         "//xla/stream_executor:device_description",
         "//xla/stream_executor:dnn",
         "//xla/stream_executor:engine_options",
+        "//xla/stream_executor:semantic_version",
         "//xla/stream_executor:stream_executor_h",
         "//xla/stream_executor/cuda:cudnn_frontend_helpers",
         "//xla/stream_executor/cuda:cudnn_plugin",

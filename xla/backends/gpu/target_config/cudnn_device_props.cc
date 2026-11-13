@@ -23,14 +23,25 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend.h"
 #include "xla/backends/gpu/target_config/cudnn_device_props_json.h"
+#include "xla/stream_executor/cuda/cudnn_custom_reduction_api.h"
 #include "xla/stream_executor/cuda/cudnn_frontend_helpers.h"
 #include "xla/stream_executor/device_description.h"
 
 namespace xla::gpu {
 
+std::string BuildDevicePropertiesJson(
+    const stream_executor::DeviceDescription& desc) {
+  // Custom reductions need cuDNN 9.29+, which requires "memoryBusWidth" for
+  // deviceless compilation. Without the custom reduction API, the JSON stays
+  // as it was before custom reductions.
+  return FormatDevicePropertiesJson(
+      desc,
+      /*include_memory_bus_width=*/XLA_HAS_CUDNN_CUSTOM_REDUCTION_API != 0);
+}
+
 absl::StatusOr<std::shared_ptr<cudnn_frontend::DeviceProperties>>
 BuildDeviceProperties(const stream_executor::DeviceDescription& desc) {
-  std::string json = FormatDevicePropertiesJson(desc);
+  std::string json = BuildDevicePropertiesJson(desc);
   auto device_props = std::make_shared<cudnn_frontend::DeviceProperties>();
   RETURN_IF_CUDNN_FRONTEND_ERROR(device_props->deserialize(
       std::vector<uint8_t>(json.begin(), json.end())));

@@ -2940,7 +2940,7 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       int32_setter_for(&DebugOptions::set_xla_gpu_cudnn_non_gemm_fusion_level),
       debug_options->xla_gpu_cudnn_non_gemm_fusion_level(),
       "Lets cuDNN compile non-GEMM fusions. Current levels: 0: Disabled. 1: "
-      "Compile pointwise fusions with cuDNN."));
+      "Compile pointwise and reduction fusions with cuDNN."));
   flag_list->push_back(
       tsl::Flag("xla_gpu_mock_custom_calls",
                 bool_setter_for(&DebugOptions::set_xla_gpu_mock_custom_calls),

@@ -1955,6 +1955,19 @@ cc_library(
 )
 
 cc_library(
+    name = "cudnn_custom_reduction_api",
+    hdrs = ["cudnn_custom_reduction_api.h"],
+    tags = [
+        "cuda-only",
+        "gpu",
+    ],
+    deps = [
+        "@cudnn_frontend_archive//:cudnn_frontend",
+        "@local_config_cuda//cuda:cudnn_header",
+    ],
+)
+
+cc_library(
     name = "ptx_compilation_method",
     hdrs = ["ptx_compilation_method.h"],
     deps = ["@com_google_absl//absl/strings"],

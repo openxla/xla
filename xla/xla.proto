@@ -761,7 +761,7 @@ message DebugOptions {
   // Lets cuDNN compile non-GEMM fusions.
   // Current levels:
   // 0: Disabled.
-  // 1: Compile pointwise fusions with cuDNN.
+  // 1: Compile pointwise and reduction fusions with cuDNN.
   optional int32 xla_gpu_cudnn_non_gemm_fusion_level = 510;
 
   // Limit for the number of kernel configurations (plans) to use during
