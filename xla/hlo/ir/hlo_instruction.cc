@@ -6210,9 +6210,6 @@ std::optional<std::string> HloInstruction::get_frontend_attribute(
 
 void HloInstruction::set_frontend_attributes(
     FrontendAttributes frontend_attributes) {
-  if (!has_rare() && frontend_attributes.map().empty()) {
-    return;
-  }
   mutable_rare()->frontend_attributes = std::move(frontend_attributes);
 }
 
