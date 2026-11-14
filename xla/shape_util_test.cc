@@ -15,9 +15,6 @@ limitations under the License.
 
 #include "xla/shape_util.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -26,6 +23,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
@@ -289,6 +288,29 @@ TEST(ShapeUtilTest, IsPrefix) {
   Shape nested_tuple2 =
       ShapeUtil::MakeTupleShape({tuple_f32_scalar_f32_vector});
   EXPECT_TRUE(ShapeUtil::IsPrefix(nested_tuple1, nested_tuple2));
+}
+
+TEST(ShapeUtilTest, TouchesStorageComplexTypes) {
+  EXPECT_FALSE(
+      ShapeUtil::TouchesStorageComplexTypes(ShapeUtil::MakeShape(F32, {2})));
+  EXPECT_TRUE(
+      ShapeUtil::TouchesStorageComplexTypes(ShapeUtil::MakeShape(C32, {2})));
+  // Rank-0 scalars are arrays too.
+  EXPECT_TRUE(
+      ShapeUtil::TouchesStorageComplexTypes(ShapeUtil::MakeShape(BC32, {})));
+
+  Shape tuple = ShapeUtil::MakeTupleShape(
+      {ShapeUtil::MakeShape(F32, {2}), ShapeUtil::MakeShape(BC32, {3})});
+  EXPECT_TRUE(ShapeUtil::TouchesStorageComplexTypes(tuple));
+
+  ASSERT_OK_AND_ASSIGN(Shape f32_buffer,
+                       ShapeUtil::MakeValidatedBufferShape(F32, {2}));
+  ASSERT_OK_AND_ASSIGN(Shape c32_buffer,
+                       ShapeUtil::MakeValidatedBufferShape(C32, {2}));
+  EXPECT_FALSE(ShapeUtil::TouchesStorageComplexTypes(f32_buffer));
+  EXPECT_TRUE(ShapeUtil::TouchesStorageComplexTypes(c32_buffer));
+  EXPECT_TRUE(ShapeUtil::TouchesStorageComplexTypes(
+      ShapeUtil::MakeTupleShape({f32_buffer, c32_buffer})));
 }
 
 TEST(ShapeUtilTest, MakeMaybeTupleShape) {
@@ -1414,30 +1436,30 @@ TEST(ShapeUtilTest, B_251055887) {
   ShapeProto proto;
   EXPECT_TRUE(tsl::protobuf::TextFormat::ParseFromString(
       R"pb(
-        element_type: S8
-        dimensions: 0
-        dimensions: 8
-        dimensions: 0
-        dimensions: 0
-        dimensions: 4
-        dimensions: 1
-        dimensions: 1
-        dimensions: 6
-        dimensions: 281474976710657
-        dimensions: 1
-        layout {
-          minor_to_major: 1
-          minor_to_major: 3
-          minor_to_major: 0
-          minor_to_major: 5
-          minor_to_major: 4
-          minor_to_major: 6
-          minor_to_major: 8
-          minor_to_major: 7
-          minor_to_major: 6
-          minor_to_major: 9
-          physical_shape { element_type: -562 }
-        })pb",
+           element_type: S8
+           dimensions: 0
+           dimensions: 8
+           dimensions: 0
+           dimensions: 0
+           dimensions: 4
+           dimensions: 1
+           dimensions: 1
+           dimensions: 6
+           dimensions: 281474976710657
+           dimensions: 1
+           layout {
+             minor_to_major: 1
+             minor_to_major: 3
+             minor_to_major: 0
+             minor_to_major: 5
+             minor_to_major: 4
+             minor_to_major: 6
+             minor_to_major: 8
+             minor_to_major: 7
+             minor_to_major: 6
+             minor_to_major: 9
+             physical_shape { element_type: -562 }
+           })pb",
       &proto));
   ASSERT_OK_AND_ASSIGN(Shape shape, Shape::FromProto(proto));
   EXPECT_FALSE(ShapeUtil::ValidateShape(shape).ok());

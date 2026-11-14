@@ -136,6 +136,8 @@ enum PrimitiveType {
   // Complex values of fixed width.
   C64 = 15;   // Paired F32 (real, imag), as in std::complex<float>.
   C128 = 18;  // Paired F64 (real, imag), as in std::complex<double>.
+  C32 = 37;   // Paired F16 (real, imag).
+  BC32 = 38;  // Paired BF16 (real, imag).
 
   // A tuple is a polymorphic sequence; e.g. a shape that holds different
   // sub-shapes. They are used for things like returning multiple values from a
@@ -162,7 +164,7 @@ enum PrimitiveType {
   // its underlying primitive type is in the tuple_shapes field.
   BUFFER = 34;
 
-  // Next = 37
+  // Next = 39
 }
 // LINT.ThenChange(
 //   https://www.tensorflow.org/code/tensorflow/compiler/xla/tools/driver.cc
@@ -694,6 +696,8 @@ message LiteralProto {
   repeated double f64s = 9;
   repeated float c64s = 12;    // Stored as interleaved real, imag floats.
   repeated double c128s = 18;  // Stored as interleaved real, imag doubles.
+  bytes c32s = 37;   // Stored as interleaved real, imag f16, little endian.
+  bytes bc32s = 38;  // Stored as interleaved real, imag bf16, little endian.
   repeated LiteralProto tuple_literals = 10;
   // The F16s, BF16s, U16s and S16s are encoded in little endian byte order
   bytes f16s = 11;
@@ -713,7 +717,7 @@ message LiteralProto {
   bytes f6e2m3fns = 36;
   repeated int64 sparse_indices = 14;
   repeated int32 dynamic_sizes = 34;
-  // Next = 37
+  // Next = 39
 }
 
 message WindowDimension {

@@ -18,27 +18,31 @@ limitations under the License.
 
 #include "xla/tests/literal_test_util.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/strings/str_join.h"
-#include "tsl/platform/path.h"
 #include "xla/error_spec.h"
 #include "xla/hlo/testlib/test_helpers.h"
+#include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/literal_comparison.h"
 #include "xla/literal_util.h"
+#include "xla/primitive_util.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/test.h"
 #include "xla/types.h"
+#include "tsl/platform/path.h"
 
 namespace xla {
 namespace {
@@ -195,90 +199,191 @@ TEST(LiteralTestUtilTest, NearComparatorR1) {
   EXPECT_TRUE(LiteralTestUtil::Near(a, b, ErrorSpec{0.0001}));
 }
 
-TEST(LiteralTestUtilTest, NearComparatorR1Complex64) {
-  auto a = LiteralUtil::CreateR1<complex64>({{0.0, 1.0},
-                                             {0.1, 1.1},
-                                             {0.2, 1.2},
-                                             {0.3, 1.3},
-                                             {0.4, 1.4},
-                                             {0.5, 1.5},
-                                             {0.6, 1.6},
-                                             {0.7, 1.7},
-                                             {0.8, 1.8}});
-  auto b = LiteralUtil::CreateR1<complex64>({{0.0, 1.0},
-                                             {0.1, 1.1},
-                                             {0.2, 1.2},
-                                             {0.3, 1.3},
-                                             {0.4, 1.4},
-                                             {0.5, 1.5},
-                                             {0.6, 1.6},
-                                             {0.7, 1.7},
-                                             {0.8, 1.8}});
-  auto c = LiteralUtil::CreateR1<complex64>({{0.0, 1.0},
-                                             {0.1, 1.1},
-                                             {0.2, 1.2},
-                                             {0.3, 1.3},
-                                             {0.4, 1.4},
-                                             {0.5, 1.5},
-                                             {0.6, 1.6},
-                                             {0.7, 1.7},
-                                             {0.9, 1.8}});
-  auto d = LiteralUtil::CreateR1<complex64>({{0.0, 1.0},
-                                             {0.1, 1.1},
-                                             {0.2, 1.2},
-                                             {0.3, 1.3},
-                                             {0.4, 1.4},
-                                             {0.5, 1.5},
-                                             {0.6, 1.6},
-                                             {0.7, 1.7},
-                                             {0.8, 1.9}});
-  EXPECT_TRUE(LiteralTestUtil::Near(a, b, ErrorSpec{0.0001}));
-  EXPECT_FALSE(LiteralTestUtil::Near(a, c, ErrorSpec{0.0001}));
-  EXPECT_FALSE(LiteralTestUtil::Near(a, d, ErrorSpec{0.0001}));
-  EXPECT_FALSE(LiteralTestUtil::Near(c, d, ErrorSpec{0.0001}));
+template <typename T>
+class LiteralTestUtilComplexTest : public ::testing::Test {};
+
+using ComplexTypes =
+    ::testing::Types<complex32, bcomplex32, complex64, complex128>;
+TYPED_TEST_SUITE(LiteralTestUtilComplexTest, ComplexTypes);
+
+TYPED_TEST(LiteralTestUtilComplexTest, NearComparatorR1) {
+  const Literal expected = LiteralUtil::CreateR1<TypeParam>(
+      {TypeParam(0.0f, 1.0f), TypeParam(1.0f, 2.0f)});
+  EXPECT_TRUE(
+      LiteralTestUtil::Near(expected, expected.Clone(), ErrorSpec(0.0)));
+
+  for (TypeParam value : {TypeParam(1.125f, 2.0f), TypeParam(1.0f, 2.125f),
+                          TypeParam(1.125f, 2.125f)}) {
+    Literal actual = expected.Clone();
+    actual.Set<TypeParam>({1}, value);
+    EXPECT_THAT(literal_comparison::Near(expected, actual, ErrorSpec(0.125),
+                                         /*detailed_message=*/false,
+                                         /*miscompare_callback=*/nullptr),
+                absl_testing::IsOk());
+    EXPECT_THAT(
+        literal_comparison::Near(expected, actual, ErrorSpec(0.0625),
+                                 /*detailed_message=*/true,
+                                 /*miscompare_callback=*/nullptr),
+        absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                               ::testing::HasSubstr("Mismatch count 1 ")));
+  }
+
+  Literal real_changed = expected.Clone();
+  real_changed.Set<TypeParam>({1}, TypeParam(1.125f, 2.0f));
+  Literal imag_changed = expected.Clone();
+  imag_changed.Set<TypeParam>({1}, TypeParam(1.0f, 2.125f));
+  EXPECT_FALSE(
+      LiteralTestUtil::Near(real_changed, imag_changed, ErrorSpec(0.0001)));
 }
 
-TEST(LiteralTestUtilTest, NearComparatorR1Complex128) {
-  auto a = LiteralUtil::CreateR1<complex128>({{0.0, 1.0},
-                                              {0.1, 1.1},
-                                              {0.2, 1.2},
-                                              {0.3, 1.3},
-                                              {0.4, 1.4},
-                                              {0.5, 1.5},
-                                              {0.6, 1.6},
-                                              {0.7, 1.7},
-                                              {0.8, 1.8}});
-  auto b = LiteralUtil::CreateR1<complex128>({{0.0, 1.0},
-                                              {0.1, 1.1},
-                                              {0.2, 1.2},
-                                              {0.3, 1.3},
-                                              {0.4, 1.4},
-                                              {0.5, 1.5},
-                                              {0.6, 1.6},
-                                              {0.7, 1.7},
-                                              {0.8, 1.8}});
-  auto c = LiteralUtil::CreateR1<complex128>({{0.0, 1.0},
-                                              {0.1, 1.1},
-                                              {0.2, 1.2},
-                                              {0.3, 1.3},
-                                              {0.4, 1.4},
-                                              {0.5, 1.5},
-                                              {0.6, 1.6},
-                                              {0.7, 1.7},
-                                              {0.9, 1.8}});
-  auto d = LiteralUtil::CreateR1<complex128>({{0.0, 1.0},
-                                              {0.1, 1.1},
-                                              {0.2, 1.2},
-                                              {0.3, 1.3},
-                                              {0.4, 1.4},
-                                              {0.5, 1.5},
-                                              {0.6, 1.6},
-                                              {0.7, 1.7},
-                                              {0.8, 1.9}});
-  EXPECT_TRUE(LiteralTestUtil::Near(a, b, ErrorSpec{0.0001}));
-  EXPECT_FALSE(LiteralTestUtil::Near(a, c, ErrorSpec{0.0001}));
-  EXPECT_FALSE(LiteralTestUtil::Near(a, d, ErrorSpec{0.0001}));
-  EXPECT_FALSE(LiteralTestUtil::Near(c, d, ErrorSpec{0.0001}));
+TYPED_TEST(LiteralTestUtilComplexTest, NearComparatorRelativeTolerance) {
+  const Literal expected = LiteralUtil::CreateR0(TypeParam(8.0f, 16.0f));
+  const Literal actual = LiteralUtil::CreateR0(TypeParam(9.0f, 18.0f));
+  EXPECT_THAT(literal_comparison::Near(expected, actual, ErrorSpec(0.0, 0.125),
+                                       /*detailed_message=*/false,
+                                       /*miscompare_callback=*/nullptr),
+              absl_testing::IsOk());
+  EXPECT_THAT(
+      literal_comparison::Near(expected, actual, ErrorSpec(0.0, 0.0625),
+                               /*detailed_message=*/false,
+                               /*miscompare_callback=*/nullptr),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("Mismatch count 1 ")));
+}
+
+TYPED_TEST(LiteralTestUtilComplexTest, NearComparatorFloatDistance) {
+  using ComponentT = typename TypeParam::value_type;
+  const ComponentT one = ComponentT(1.0f);
+  const ComponentT next =
+      static_cast<ComponentT>(one + std::numeric_limits<ComponentT>::epsilon());
+  const Literal expected =
+      LiteralUtil::CreateR0(TypeParam(one, ComponentT(2.0f)));
+  const Literal actual =
+      LiteralUtil::CreateR0(TypeParam(next, ComponentT(2.0f)));
+  ErrorSpec error(0.0, 0.0);
+  error.low_precision_fp_error_spec.type =
+      primitive_util::NativeToPrimitiveType<ComponentT>();
+  error.low_precision_fp_error_spec.within_n_values = 0;
+  EXPECT_THAT(
+      literal_comparison::Near(expected, actual, error,
+                               /*detailed_message=*/false,
+                               /*miscompare_callback=*/nullptr),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("Mismatch count 1 ")));
+  error.low_precision_fp_error_spec.within_n_values = 1;
+  EXPECT_THAT(literal_comparison::Near(expected, actual, error,
+                                       /*detailed_message=*/false,
+                                       /*miscompare_callback=*/nullptr),
+              absl_testing::IsOk());
+}
+
+TYPED_TEST(LiteralTestUtilComplexTest, NearComparatorNaNs) {
+  using ComponentT = typename TypeParam::value_type;
+  const ComponentT nan = std::numeric_limits<ComponentT>::quiet_NaN();
+  const ComponentT other_nan = -nan;
+  const Literal expected =
+      LiteralUtil::CreateR0(TypeParam(nan, ComponentT(2.0f)));
+  const Literal actual =
+      LiteralUtil::CreateR0(TypeParam(other_nan, ComponentT(2.0f)));
+  ErrorSpec error(0.0, 0.0);
+  EXPECT_THAT(literal_comparison::Near(expected, actual, error,
+                                       /*detailed_message=*/false,
+                                       /*miscompare_callback=*/nullptr),
+              absl_testing::IsOk());
+  EXPECT_THAT(
+      literal_comparison::Equal(expected, actual),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("not bitwise-equal")));
+
+  const Literal finite = LiteralUtil::CreateR0(TypeParam(1.0f, 2.0f));
+  EXPECT_THAT(
+      literal_comparison::Near(expected, finite, error,
+                               /*detailed_message=*/false,
+                               /*miscompare_callback=*/nullptr),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("Mismatch count 1 ")));
+  error.relaxed_nans = true;
+  EXPECT_THAT(literal_comparison::Near(expected, finite, error,
+                                       /*detailed_message=*/false,
+                                       /*miscompare_callback=*/nullptr),
+              absl_testing::IsOk());
+  EXPECT_THAT(
+      literal_comparison::Near(finite, expected, error,
+                               /*detailed_message=*/false,
+                               /*miscompare_callback=*/nullptr),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("Mismatch count 1 ")));
+}
+
+TYPED_TEST(LiteralTestUtilComplexTest, NearComparatorInfinities) {
+  using ComponentT = typename TypeParam::value_type;
+  const ComponentT inf = std::numeric_limits<ComponentT>::infinity();
+  const ComponentT max = std::numeric_limits<ComponentT>::max();
+  const Literal infinite =
+      LiteralUtil::CreateR0(TypeParam(inf, ComponentT(2.0f)));
+  const Literal finite =
+      LiteralUtil::CreateR0(TypeParam(max, ComponentT(2.0f)));
+  const Literal opposite =
+      LiteralUtil::CreateR0(TypeParam(-inf, ComponentT(2.0f)));
+  ErrorSpec error(0.0, 0.0);
+  EXPECT_THAT(literal_comparison::Near(infinite, infinite, error,
+                                       /*detailed_message=*/false,
+                                       /*miscompare_callback=*/nullptr),
+              absl_testing::IsOk());
+  EXPECT_THAT(
+      literal_comparison::Near(infinite, opposite, error,
+                               /*detailed_message=*/false,
+                               /*miscompare_callback=*/nullptr),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("Mismatch count 1 ")));
+  EXPECT_THAT(
+      literal_comparison::Near(finite, infinite, error,
+                               /*detailed_message=*/false,
+                               /*miscompare_callback=*/nullptr),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("Mismatch count 1 ")));
+  error.fewer_infs_ok = true;
+  EXPECT_THAT(literal_comparison::Near(finite, infinite, error,
+                                       /*detailed_message=*/false,
+                                       /*miscompare_callback=*/nullptr),
+              absl_testing::IsOk());
+  EXPECT_THAT(
+      literal_comparison::Near(infinite, finite, error,
+                               /*detailed_message=*/false,
+                               /*miscompare_callback=*/nullptr),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("Mismatch count 1 ")));
+}
+
+TYPED_TEST(LiteralTestUtilComplexTest, NearComparatorSignedZeros) {
+  const Literal positive = LiteralUtil::CreateR0(TypeParam(0.0f, 0.0f));
+  const Literal negative = LiteralUtil::CreateR0(TypeParam(-0.0f, -0.0f));
+  EXPECT_THAT(literal_comparison::Near(positive, negative, ErrorSpec(0.0, 0.0),
+                                       /*detailed_message=*/false,
+                                       /*miscompare_callback=*/nullptr),
+              absl_testing::IsOk());
+  EXPECT_THAT(
+      literal_comparison::Equal(positive, negative),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("not bitwise-equal")));
+}
+
+TYPED_TEST(LiteralTestUtilComplexTest, NearComparatorDifferentLayouts) {
+  const Literal expected = LiteralUtil::CreateR2<TypeParam>(
+      {{TypeParam(1.0f, 2.0f), TypeParam(3.0f, 4.0f)},
+       {TypeParam(5.0f, 6.0f), TypeParam(7.0f, 8.0f)}});
+  Literal actual = expected.Relayout(LayoutUtil::MakeLayout({0, 1}));
+  actual.Set<TypeParam>({1, 0}, TypeParam(5.125f, 6.0f));
+  EXPECT_THAT(literal_comparison::Near(expected, actual, ErrorSpec(0.125),
+                                       /*detailed_message=*/false,
+                                       /*miscompare_callback=*/nullptr),
+              absl_testing::IsOk());
+  EXPECT_THAT(
+      literal_comparison::Near(expected, actual, ErrorSpec(0.0625),
+                               /*detailed_message=*/false,
+                               /*miscompare_callback=*/nullptr),
+      absl_testing::StatusIs(absl::StatusCode::kInvalidArgument,
+                             ::testing::HasSubstr("Mismatch count 1 ")));
 }
 
 TEST(LiteralTestUtilTest, NearComparatorR1Nan) {

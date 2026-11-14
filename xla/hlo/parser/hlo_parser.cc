@@ -30,7 +30,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/cleanup/cleanup.h"
@@ -53,6 +52,7 @@ limitations under the License.
 #include "absl/strings/strip.h"
 #include "absl/types/span.h"
 #include "google/protobuf/descriptor.h"
+#include "Eigen/Core"
 #include "xla/array.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/ir/collective_op_group_mode.h"
@@ -5247,22 +5247,21 @@ uint64_t GetNanPayload(T val) {
 template <typename LiteralNativeT, typename LiteralComponentT>
 LiteralNativeT LiteralNativeFromRealImag(LiteralComponentT real,
                                          LiteralComponentT imag) {
-  if constexpr (std::is_same_v<LiteralNativeT,
-                               std::complex<LiteralComponentT>>) {
+  if constexpr (is_complex_v<LiteralNativeT>) {
     return LiteralNativeT(real, imag);
   } else {
     return real;
   }
 }
 
-template <typename T>
+template <typename T, typename = void>
 struct ComponentType {
   using Type = T;
 };
 
 template <typename T>
-struct ComponentType<std::complex<T>> {
-  using Type = T;
+struct ComponentType<T, std::enable_if_t<is_complex_v<T>>> {
+  using Type = typename T::value_type;
 };
 
 template <typename T>
@@ -5354,8 +5353,7 @@ template <typename LiteralNativeT>
 bool HloParserImpl::CheckParsedValueIsInRange(LocTy loc,
                                               std::complex<double> value) {
   // e.g. `float` for std::complex<float>
-  using LiteralComplexComponentT =
-      decltype(std::real(std::declval<LiteralNativeT>()));
+  using LiteralComplexComponentT = typename ComponentType<LiteralNativeT>::Type;
 
   // We could do simply
   //

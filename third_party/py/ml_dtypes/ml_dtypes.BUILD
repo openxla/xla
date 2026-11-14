@@ -42,6 +42,12 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "complex_types",
+    hdrs = ["include/complex_types.h"],
+    deps = ["@eigen_archive//:eigen3"],
+)
+
 alias(
     name = "ml_dtypes",
     actual = "@pypi//ml_dtypes",

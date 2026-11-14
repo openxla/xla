@@ -36,7 +36,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
@@ -54,8 +53,7 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "tsl/platform/cpu_info.h"
-#include "tsl/platform/platform.h"
+#include "Eigen/Core"
 #include "xla/array2d.h"
 #include "xla/comparison_util.h"
 #include "xla/hlo/analysis/hlo_dataflow_analysis.h"
@@ -87,6 +85,8 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/cpu_info.h"
+#include "tsl/platform/platform.h"
 
 #define EIGEN_USE_THREADS
 #include "unsupported/Eigen/CXX11/Tensor"
@@ -855,6 +855,48 @@ std::optional<ParsedWhileLoop> PatternMatchParseWhileLoop(
   }
 }
 
+namespace {
+
+bool InstructionUsesStorageComplexType(const HloInstruction* instruction) {
+  return ShapeUtil::TouchesStorageComplexTypes(instruction->shape()) ||
+         absl::c_any_of(
+             instruction->operands(), [](const HloInstruction* operand) {
+               return ShapeUtil::TouchesStorageComplexTypes(operand->shape());
+             });
+}
+
+bool IsStorageComplexSupportedOpcode(HloOpcode opcode) {
+  switch (opcode) {
+    case HloOpcode::kConstant:
+    case HloOpcode::kParameter:
+    case HloOpcode::kTuple:
+    case HloOpcode::kGetTupleElement:
+    case HloOpcode::kReal:
+    case HloOpcode::kImag:
+    case HloOpcode::kComplex:
+    case HloOpcode::kConvert:
+    case HloOpcode::kBitcast:
+    case HloOpcode::kBitcastConvert:
+    case HloOpcode::kCopy:
+      return true;
+    default:
+      return false;
+  }
+}
+
+absl::Status VerifyStorageComplexSupport(const HloInstruction* instruction) {
+  if (InstructionUsesStorageComplexType(instruction) &&
+      !IsStorageComplexSupportedOpcode(instruction->opcode())) {
+    return Unimplemented(
+        "HloEvaluator does not implement the %s opcode for C32/BC32 element "
+        "types.",
+        HloOpcodeString(instruction->opcode()));
+  }
+  return absl::OkStatus();
+}
+
+}  // namespace
+
 // Note that unsupported types by the typed visitor does not necessarily imply
 // the non-typed HloEvaluator (parent evaluator) would not support them either
 // in the type-agnostic handler. For e.g., HandleGetTupleElement in the parent
@@ -902,6 +944,15 @@ HloEvaluator::HloEvaluator(
               typed_visitors_[primitive_type] =
                   std::make_unique<HloEvaluatorTypedVisitor<NativeT, float>>(
                       this);
+            } else if constexpr (primitive_type == C32 ||
+                                 primitive_type == BC32) {
+              typed_visitors_[primitive_type] =
+                  std::make_unique<ConstFunctionVisitor>(
+                      [](const HloInstruction*) {
+                        return Unimplemented(
+                            "HloEvaluatorTypedVisitor: C32 and BC32 are "
+                            "storage-only types.");
+                      });
             } else {
               typed_visitors_[primitive_type] =
                   std::make_unique<HloEvaluatorTypedVisitor<NativeT>>(this);
@@ -1599,8 +1650,7 @@ absl::Status HloEvaluator::HandleReal(const HloInstruction* real) {
         if constexpr (primitive_util::IsComplexType(primitive_type_constant)) {
           using NativeT = primitive_util::NativeTypeOf<primitive_type_constant>;
           return ElementWiseUnaryOpImpl<typename NativeT::value_type, NativeT>(
-              real,
-              [](NativeT elem_operand) { return std::real(elem_operand); });
+              real, [](NativeT elem_operand) { return elem_operand.real(); });
         }
         LOG(FATAL) << "HandleReal: unknown/unhandled primitive type: "
                    << PrimitiveType_Name(operand->shape().element_type());
@@ -1621,8 +1671,7 @@ absl::Status HloEvaluator::HandleImag(const HloInstruction* imag) {
         if constexpr (primitive_util::IsComplexType(primitive_type_constant)) {
           using NativeT = primitive_util::NativeTypeOf<primitive_type_constant>;
           return ElementWiseUnaryOpImpl<typename NativeT::value_type, NativeT>(
-              imag,
-              [](NativeT elem_operand) { return std::imag(elem_operand); });
+              imag, [](NativeT elem_operand) { return elem_operand.imag(); });
         }
         LOG(FATAL) << "HandleImag: unknown/unhandled primitive type: "
                    << PrimitiveType_Name(operand->shape().element_type());
@@ -5108,10 +5157,16 @@ absl::Status HloEvaluator::HandleReduceWindow(const HloInstruction* hlo) {
             function, inferred_return_shape.element_type())) {
       Literal result(inferred_return_shape);
       ABSL_RETURN_IF_ERROR(primitive_util::ArrayTypeSwitch(
-          [&](auto type) {
-            return EvaluateSimpleReduceWindowTyped<type>(
-                *fast_op, *input_literal_vec[0], *init_literal_vec[0],
-                window_shape, window, result);
+          [&](auto type) -> absl::Status {
+            if constexpr (type == C32 || type == BC32) {
+              return Unimplemented(
+                  "HloEvaluator does not implement reduce-window for "
+                  "C32/BC32 element types.");
+            } else {
+              return EvaluateSimpleReduceWindowTyped<type>(
+                  *fast_op, *input_literal_vec[0], *init_literal_vec[0],
+                  window_shape, window, result);
+            }
           },
           inferred_return_shape.element_type()));
       VLOG(2) << "Final result is:" << result.ToString() << "\n";
@@ -5280,6 +5335,9 @@ absl::Status HloEvaluator::HandleCustomCall(const HloInstruction* custom_call) {
 
 absl::Status HloEvaluator::Preprocess(const HloInstruction* hlo) {
   VLOG(3) << "About to visit HLO: " << hlo->ToString();
+  // Checked in Preprocess, not EvaluateInternal, so that whole-module
+  // evaluation via computation->Accept() is covered as well.
+  ABSL_RETURN_IF_ERROR(VerifyStorageComplexSupport(hlo));
   if (!enable_partial_evaluation_) {
     for (const HloInstruction* operand : hlo->operands()) {
       if (!IsAlreadyEvaluated(operand) ||

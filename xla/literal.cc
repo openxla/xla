@@ -30,7 +30,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "Eigen/Core"
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
 #include "absl/base/no_destructor.h"
@@ -44,9 +43,8 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "Eigen/Core"
 #include "hwy/highway.h"
-#include "tsl/platform/mem.h"
-#include "tsl/platform/ml_dtypes.h"
 #include "xla/index_util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
@@ -68,6 +66,8 @@ limitations under the License.
 #include "xla/types.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/mem.h"
+#include "tsl/platform/ml_dtypes.h"
 
 namespace xla {
 namespace {
@@ -106,7 +106,8 @@ bool LiteralProtoHasValues(const LiteralProto& proto) {
          !proto.f8e5m2fnuzs().empty() || !proto.f8e4m3fnuzs().empty() ||
          !proto.f8e3m4s().empty() || !proto.f16s().empty() ||
          !proto.bf16s().empty() || proto.f32s_size() || proto.f64s_size() ||
-         proto.c64s_size() || proto.c128s_size() || proto.preds_size() ||
+         !proto.c32s().empty() || !proto.bc32s().empty() || proto.c64s_size() ||
+         proto.c128s_size() || proto.preds_size() ||
          proto.tuple_literals_size();
 }
 
@@ -1553,7 +1554,9 @@ std::optional<complex128> LiteralBase::GetAsComplex128(
           using NativeT = NativeTypeOf<primitive_type_constant>;
           if constexpr (primitive_util::IsComplexType(
                             primitive_type_constant)) {
-            return {Get<NativeT>(multi_index)};
+            const NativeT element = Get<NativeT>(multi_index);
+            return {{static_cast<double>(element.real()),
+                     static_cast<double>(element.imag())}};
           }
           if constexpr (primitive_util::IsFloatingPointType(
                             primitive_type_constant)) {
@@ -1847,50 +1850,56 @@ void ConvertBetweenNativeTypes(absl::Span<const NativeSrcT> src_data,
                                void* dst_base) {
   static_assert(!std::is_same_v<NativeSrcT, NativeDestT>);
   auto converter = [](NativeSrcT src) -> NativeDestT {
-    // C++ [conv.bool]p1:
-    //   A prvalue of arithmetic [...] type can be converted to a prvalue of
-    //   type bool. A zero value [...] is converted to false; any other value is
-    //   converted to true.
-    // C++ [conv.fpint]p1:
-    //   [...] The behavior is undefined if the truncated value cannot be
-    //   represented in the destination type.
-    //
-    // Using static_cast to convert a float to an integral type other than bool
-    // may be undefined if the value's magnitude is too large or it is a NaN.
-    // Let's choose saturating arithmetic as it captures the spirit of infinity
-    // and arbitrarily map NaN to zero.
-    if constexpr (!std::is_same_v<NativeDestT, bool> &&
-                  !std::numeric_limits<NativeSrcT>::is_integer &&
-                  std::numeric_limits<NativeDestT>::is_integer) {
-      // NaN check.
-      if (src != src) {
-        return NativeDestT{0};
-      }
-
-      // Clamp values that cannot fit in the destination type to avoid undefined
-      // behavior.
-      // An N-bit integer has a max of 2^N - 1 so max() + 1 is 2^N. Ensure
-      // double can losslessly hold.
-      static_assert((std::numeric_limits<double>::max_exponent - 1) >=
-                    std::numeric_limits<NativeDestT>::digits);
-      if (static_cast<double>(src) >=
-          static_cast<double>(std::numeric_limits<NativeDestT>::max())) {
-        return std::numeric_limits<NativeDestT>::max();
-      }
-      if (static_cast<double>(src) <=
-          static_cast<double>(std::numeric_limits<NativeDestT>::lowest())) {
-        return std::numeric_limits<NativeDestT>::lowest();
-      }
-    }
-
-    // TODO(b/370786669): Once ml_dtypes is updated to include
-    // https://github.com/jax-ml/ml_dtypes/pull/205, do not special-case e3m4 by
-    // casting to half first.
-    if constexpr (sizeof(src) == 1 &&
-                  std::is_same_v<NativeDestT, tsl::float8_e3m4>) {
-      return static_cast<NativeDestT>(static_cast<half>(src));
+    if constexpr (is_complex_v<NativeSrcT>) {
+      using DestComponentT = typename NativeDestT::value_type;
+      return NativeDestT(static_cast<DestComponentT>(src.real()),
+                         static_cast<DestComponentT>(src.imag()));
     } else {
-      return static_cast<NativeDestT>(src);
+      // C++ [conv.bool]p1:
+      //   A prvalue of arithmetic [...] type can be converted to a prvalue of
+      //   type bool. A zero value [...] is converted to false; any other value
+      //   is converted to true.
+      // C++ [conv.fpint]p1:
+      //   [...] The behavior is undefined if the truncated value cannot be
+      //   represented in the destination type.
+      //
+      // Using static_cast to convert a float to an integral type other than
+      // bool may be undefined if the value's magnitude is too large or it is a
+      // NaN. Let's choose saturating arithmetic as it captures the spirit of
+      // infinity and arbitrarily map NaN to zero.
+      if constexpr (!std::is_same_v<NativeDestT, bool> &&
+                    !std::numeric_limits<NativeSrcT>::is_integer &&
+                    std::numeric_limits<NativeDestT>::is_integer) {
+        // NaN check.
+        if (src != src) {
+          return NativeDestT{0};
+        }
+
+        // Clamp values that cannot fit in the destination type to avoid
+        // undefined behavior.
+        // An N-bit integer has a max of 2^N - 1 so max() + 1 is 2^N. Ensure
+        // double can losslessly hold.
+        static_assert((std::numeric_limits<double>::max_exponent - 1) >=
+                      std::numeric_limits<NativeDestT>::digits);
+        if (static_cast<double>(src) >=
+            static_cast<double>(std::numeric_limits<NativeDestT>::max())) {
+          return std::numeric_limits<NativeDestT>::max();
+        }
+        if (static_cast<double>(src) <=
+            static_cast<double>(std::numeric_limits<NativeDestT>::lowest())) {
+          return std::numeric_limits<NativeDestT>::lowest();
+        }
+      }
+
+      // TODO(b/370786669): Once ml_dtypes is updated to include
+      // https://github.com/jax-ml/ml_dtypes/pull/205, do not special-case e3m4
+      // by casting to half first.
+      if constexpr (sizeof(src) == 1 &&
+                    std::is_same_v<NativeDestT, tsl::float8_e3m4>) {
+        return static_cast<NativeDestT>(static_cast<half>(src));
+      } else {
+        return static_cast<NativeDestT>(src);
+      }
     }
   };
 
@@ -2226,19 +2235,19 @@ bool LiteralBase::Equal(const LiteralBase& other, bool layout_sensitive) const {
 
 template <typename NativeT>
 static bool EqualIncludingNan(NativeT a, NativeT b) {
-  if constexpr (std::numeric_limits<NativeT>::has_quiet_NaN ||
-                std::numeric_limits<NativeT>::has_signaling_NaN) {
+  if constexpr (is_complex_v<NativeT>) {
+    // Compare complex values component-wise; NaNs only match per component.
+    return EqualIncludingNan(a.real(), b.real()) &&
+           EqualIncludingNan(a.imag(), b.imag());
+  } else if constexpr (std::numeric_limits<NativeT>::has_quiet_NaN ||
+                       std::numeric_limits<NativeT>::has_signaling_NaN) {
     if (Eigen::numext::isnan(a) && Eigen::numext::isnan(b)) {
       return true;
     }
+    return a == b;
+  } else {
+    return a == b;
   }
-  return a == b;
-}
-
-template <typename T>
-static bool EqualIncludingNan(std::complex<T> a, std::complex<T> b) {
-  return EqualIncludingNan(a.real(), b.real()) &&
-         EqualIncludingNan(a.imag(), b.imag());
 }
 
 template <class T>
@@ -2321,6 +2330,10 @@ template <>
 inline constexpr bool is_padding_free_v<complex64> = true;
 template <>
 inline constexpr bool is_padding_free_v<complex128> = true;
+template <>
+inline constexpr bool is_padding_free_v<complex32> = true;
+template <>
+inline constexpr bool is_padding_free_v<bcomplex32> = true;
 
 template <>
 inline constexpr bool is_padding_free_v<bool> = true;
@@ -2501,7 +2514,7 @@ bool LiteralBase::IsR1Iota() const {
             }
           } else if constexpr (primitive_util::IsComplexType(
                                    primitive_type_constant)) {
-            if (Get<NativeT>({idx}) != NativeT(idx, 0.0f)) {
+            if (Get<NativeT>({idx}) != NativeT(idx)) {
               return false;
             }
           } else {
@@ -2736,6 +2749,22 @@ void LiteralBase::Piece::WriteToProto(LiteralProto* proto) const {
       break;
     case F64:
       CopyToRepeatedField(proto->mutable_f64s(), data<double>());
+      break;
+    case C32:
+      *proto->mutable_c32s() = std::string(
+          tsl::safe_reinterpret_cast<const char*>(data<complex32>().data()),
+          size_bytes_dense());
+      if (!kLittleEndian) {
+        ConvertEndianShort(proto->mutable_c32s());
+      }
+      break;
+    case BC32:
+      *proto->mutable_bc32s() = std::string(
+          tsl::safe_reinterpret_cast<const char*>(data<bcomplex32>().data()),
+          size_bytes_dense());
+      if (!kLittleEndian) {
+        ConvertEndianShort(proto->mutable_bc32s());
+      }
       break;
     case C64:
       for (complex64 value : data<complex64>()) {
@@ -2981,6 +3010,26 @@ absl::Status LiteralBase::Piece::CopyFromProto(const LiteralProto& proto) {
     case F64:
       ABSL_RETURN_IF_ERROR(CopyFromRepeatedField(data<double>(), proto.f64s()));
       break;
+    case C32: {
+      const std::string& s = proto.c32s();
+      TF_RET_CHECK(data<complex32>().size() * sizeof(complex32) == s.size());
+      memcpy(untyped_data(), s.data(), s.size());
+      if (!kLittleEndian) {
+        ConvertEndianShort(tsl::safe_reinterpret_cast<char*>(untyped_data()),
+                           s.size());
+      }
+      break;
+    }
+    case BC32: {
+      const std::string& s = proto.bc32s();
+      TF_RET_CHECK(data<bcomplex32>().size() * sizeof(bcomplex32) == s.size());
+      memcpy(untyped_data(), s.data(), s.size());
+      if (!kLittleEndian) {
+        ConvertEndianShort(tsl::safe_reinterpret_cast<char*>(untyped_data()),
+                           s.size());
+      }
+      break;
+    }
     case C64: {
       auto complex_data = data<complex64>();
       TF_RET_CHECK(proto.c64s_size() == complex_data.size() * 2);
