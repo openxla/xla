@@ -198,6 +198,10 @@ class PartitionedComputations {
   mlir::MLIRContext* mlir_context_;
 };
 
+// Returns the number of leading MLIR function arguments corresponding to
+// `computation`'s HLO parameters (one argument per flattened parameter leaf).
+int64_t NumFlattenedParameters(const HloComputation& computation);
+
 // Returns an MLIR function declaration for the given subgraph. For subgraphs of
 // fusions, the signature is:
 //   (ptr, ptr, ..., index, index, ...) -> element type(s)

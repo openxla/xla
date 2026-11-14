@@ -557,5 +557,144 @@ TEST_F(MapTestWithFullOpt, MapSquare) {
                              ErrorSpec(0.01f));
 }
 
+// Verifies end-to-end GPU execution of a `map` whose `to_apply` computation
+// runs a scalar `while` loop, fused with elementwise producer and consumer ops.
+TEST_F(MapHloTest, MapWithWhileLoopAndFusedProducerConsumer) {
+  if (!test::DeviceTypeIs(test::kGpu)) {
+    GTEST_SKIP();
+  }
+  constexpr absl::string_view kHlo = R"(
+  HloModule MapWhile
+
+  while_cond {
+    p = (s32[], s32[], f32[]) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    n = s32[] get-tuple-element(p), index=1
+    ROOT cmp = pred[] compare(i, n), direction=LT
+  }
+
+  while_body {
+    p = (s32[], s32[], f32[]) parameter(0)
+    i = s32[] get-tuple-element(p), index=0
+    n = s32[] get-tuple-element(p), index=1
+    acc = f32[] get-tuple-element(p), index=2
+    one = s32[] constant(1)
+    i_next = s32[] add(i, one)
+    half = f32[] constant(0.5)
+    acc_next = f32[] add(acc, half)
+    ROOT t = (s32[], s32[], f32[]) tuple(i_next, n, acc_next)
+  }
+
+  mapper {
+    x = f32[] parameter(0)
+    raw_n = s32[] parameter(1)
+    zero = s32[] constant(0)
+    ten = s32[] constant(10)
+    n_pos = s32[] maximum(raw_n, zero)
+    n = s32[] minimum(n_pos, ten)
+    init = (s32[], s32[], f32[]) tuple(zero, n, x)
+    loop = (s32[], s32[], f32[]) while(init), condition=while_cond, body=while_body
+    ROOT val = f32[] get-tuple-element(loop), index=2
+  }
+
+  ENTRY main {
+    a = f32[17] parameter(0)
+    b = f32[17] parameter(1)
+    counts = s32[17] parameter(2)
+    sum = f32[17] add(a, b)
+    mapped = f32[17] map(sum, counts), dimensions={0}, to_apply=mapper
+    ROOT scaled = f32[17] multiply(mapped, a)
+  }
+  )";
+  EXPECT_TRUE(RunAndCompare(kHlo, ErrorSpec{1e-5, 1e-5}));
+}
+
+TEST_F(MapHloTest, MapWithPredAndIndexedConditionalLazyEvaluation) {
+  if (!test::DeviceTypeIs(test::kGpu)) {
+    GTEST_SKIP();
+  }
+  // Branch 1 of the outer S32 conditional contains an infinite while loop to
+  // verify that untaken branches are not eagerly evaluated. Also tests PRED
+  // conditional and S32 indexed conditional with out-of-bounds indices and
+  // empty-tuple arguments.
+  constexpr absl::string_view kHlo = R"(
+  HloModule MapConditionalLazy
+
+  inf_cond {
+    p = s32[] parameter(0)
+    ROOT t = pred[] constant(true)
+  }
+
+  inf_body {
+    p = s32[] parameter(0)
+    one = s32[] constant(1)
+    ROOT next = s32[] add(p, one)
+  }
+
+  never_taken {
+    empty = () parameter(0)
+    z = s32[] constant(0)
+    loop = s32[] while(z), condition=inf_cond, body=inf_body
+    ROOT f = f32[] convert(loop)
+  }
+
+  pred_true {
+    x = f32[] parameter(0)
+    two = f32[] constant(2.0)
+    ROOT r = f32[] multiply(x, two)
+  }
+
+  pred_false {
+    empty = () parameter(0)
+    ROOT r = f32[] constant(-7.0)
+  }
+
+  case0 {
+    x = f32[] parameter(0)
+    three = f32[] constant(3.0)
+    gt = pred[] compare(x, three), direction=GT
+    empty = () tuple()
+    ROOT r = f32[] conditional(gt, x, empty),
+      true_computation=pred_true, false_computation=pred_false
+  }
+
+  case1 {
+    x = f32[] parameter(0)
+    ten = f32[] constant(10.0)
+    ROOT r = f32[] add(x, ten)
+  }
+
+  case2_default {
+    x = f32[] parameter(0)
+    ROOT r = f32[] negate(x)
+  }
+
+  safe_branch {
+    p = (f32[], s32[]) parameter(0)
+    x = f32[] get-tuple-element(p), index=0
+    idx = s32[] get-tuple-element(p), index=1
+    ROOT sw = f32[] conditional(idx, x, x, x),
+      branch_computations={case0, case1, case2_default}
+  }
+
+  mapper {
+    x = f32[] parameter(0)
+    idx = s32[] parameter(1)
+    zero_branch = s32[] constant(0)
+    arg_safe = (f32[], s32[]) tuple(x, idx)
+    empty = () tuple()
+    ROOT r = f32[] conditional(zero_branch, arg_safe, empty, arg_safe),
+      branch_computations={safe_branch, never_taken, safe_branch}
+  }
+
+  ENTRY main {
+    xs = f32[6] constant({1.0, 2.0, 3.0, 4.0, 5.0, 6.0})
+    idxs = s32[6] constant({-2, 0, 1, 2, 5, 0})
+    ROOT out = f32[6] map(xs, idxs), dimensions={0}, to_apply=mapper
+  }
+  )";
+  EXPECT_TRUE(RunAndCompare(kHlo, ErrorSpec{1e-5, 1e-5}));
+}
+
 }  // namespace
 }  // namespace xla

@@ -1583,6 +1583,45 @@ TEST_F(GpuFusibleTest, GetFusibleComputations) {
                                    module->entry_computation()));
 }
 
+// Verifies that `while` and `conditional` subcomputations nested inside a
+// `map`'s `to_apply` computation are excluded from `GetFusibleComputations`.
+TEST_F(GpuFusibleTest, GetFusibleComputationsExcludesControlFlowInsideMap) {
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(R"(
+    HloModule test_module
+    while_cond {
+      p = s32[] parameter(0)
+      limit = s32[] constant(4)
+      ROOT cmp = pred[] compare(p, limit), direction=LT
+    }
+    while_body {
+      p = s32[] parameter(0)
+      one = s32[] constant(1)
+      ROOT next = s32[] add(p, one)
+    }
+    true_branch {
+      p = s32[] parameter(0)
+      ROOT loop = s32[] while(p), condition=while_cond, body=while_body
+    }
+    false_branch {
+      p = s32[] parameter(0)
+      ROOT neg = s32[] negate(p)
+    }
+    mapper {
+      x = s32[] parameter(0)
+      zero = s32[] constant(0)
+      gt = pred[] compare(x, zero), direction=GT
+      ROOT r = s32[] conditional(gt, x, x),
+        true_computation=true_branch, false_computation=false_branch
+    }
+    ENTRY main {
+      p0 = s32[128] parameter(0)
+      ROOT m = s32[128] map(p0), dimensions={0}, to_apply=mapper
+    })"));
+
+  EXPECT_THAT(GetFusibleComputations(*module, {}),
+              ElementsAre(module->entry_computation()));
+}
+
 TEST_F(GpuFusibleTest, GetSharedMemoryUsage) {
   auto module = ParseAndReturnVerifiedModule(absl::StrCat(kModulePrefix, R"(
     wrapped_transpose {

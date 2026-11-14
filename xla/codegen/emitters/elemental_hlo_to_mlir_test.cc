@@ -91,8 +91,9 @@ class ElementalHloToMlirTest : public HloHardwareIndependentTestBase {
                    std::function<EpilogueSpecification(HloComputation* entry)>
                        epilogue_spec_fn = nullptr,
                    bool set_xla_entry = false,
-                   std::optional<xla::BackendKind> xla_backend = std::nullopt) {
-    auto hlo_module = ParseAndReturnVerifiedModule(hlo).value();
+                   std::optional<xla::BackendKind> xla_backend = std::nullopt,
+                   bool emit_all_subgraphs = false) {
+    ABSL_ASSIGN_OR_RETURN(auto hlo_module, ParseAndReturnVerifiedModule(hlo));
 
     mlir::ImplicitLocOpBuilder builder(mlir::UnknownLoc::get(&mlir_context_),
                                        &mlir_context_);
@@ -122,9 +123,20 @@ class ElementalHloToMlirTest : public HloHardwareIndependentTestBase {
     auto& entry_pc =
         partitioned_computations.FindPartitionedComputation(entry_computation);
     auto call_targets = partitioned_computations.CreateCallTargetProvider(fns);
-    ABSL_RETURN_IF_ERROR(
-        SubgraphToMlirFunction(entry_pc, entry_pc.GetRootSubgraph(), entry_func,
-                               call_targets, &mlir_context_));
+    if (emit_all_subgraphs) {
+      for (const auto& pc :
+           partitioned_computations.partitioned_computations()) {
+        for (const auto& subgraph : pc.subgraphs()) {
+          if (subgraph.roots.empty()) continue;
+          ABSL_RETURN_IF_ERROR(SubgraphToMlirFunction(
+              pc, subgraph, fns[&subgraph], call_targets, &mlir_context_));
+        }
+      }
+    } else {
+      ABSL_RETURN_IF_ERROR(
+          SubgraphToMlirFunction(entry_pc, entry_pc.GetRootSubgraph(),
+                                 entry_func, call_targets, &mlir_context_));
+    }
 
     if (!partitioned_computations.epilogues().empty()) {
       const auto& epilogue = partitioned_computations.epilogues().front();
@@ -150,6 +162,13 @@ class ElementalHloToMlirTest : public HloHardwareIndependentTestBase {
                           RunFileCheck(out, filecheck_str));
     TF_RET_CHECK(filecheck_result);
     return absl::OkStatus();
+  }
+
+  absl::Status RunAllSubgraphs(const absl::string_view hlo,
+                               const absl::string_view filecheck_str) {
+    return Run(hlo, filecheck_str, /*epilogue_spec_fn=*/nullptr,
+               /*set_xla_entry=*/false, /*xla_backend=*/std::nullopt,
+               /*emit_all_subgraphs=*/true);
   }
 
   mlir::MLIRContext mlir_context_;
@@ -2092,6 +2111,327 @@ TEST_F(ElementalHloToMlirTest, ApplyIndexingPreservesTighterResultRanges) {
                     /*preserve_result_ranges=*/true);
   ASSERT_EQ(redundant_results.size(), 1);
   EXPECT_EQ(redundant_results[0], narrow_pid);
+}
+
+// Verifies that lowering a `map` whose `to_apply` computation contains nested
+// `conditional` and `while` ops emits and calls helper functions for all
+// transitively called computations, including empty-tuple branch parameters.
+TEST_F(ElementalHloToMlirTest, MapWithControlFlowSignatureAndCalls) {
+  EXPECT_OK(RunAllSubgraphs(R"(
+    while_cond {
+      p = (s32[], f32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      limit = s32[] constant(3)
+      ROOT cmp = pred[] compare(i, limit), direction=LT
+    }
+
+    while_body {
+      p = (s32[], f32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      acc = f32[] get-tuple-element(p), index=1
+      one = s32[] constant(1)
+      i_next = s32[] add(i, one)
+      acc_next = f32[] add(acc, acc)
+      ROOT next = (s32[], f32[]) tuple(i_next, acc_next)
+    }
+
+    false_branch {
+      empty = () parameter(0)
+      ROOT z_f = f32[] constant(0)
+    }
+
+    true_branch {
+      p = f32[] parameter(0)
+      init_i = s32[] constant(0)
+      init = (s32[], f32[]) tuple(init_i, p)
+      loop = (s32[], f32[]) while(init), condition=while_cond, body=while_body
+      ROOT res = f32[] get-tuple-element(loop), index=1
+    }
+
+    mapper {
+      x = f32[] parameter(0)
+      zero = f32[] constant(0)
+      is_pos = pred[] compare(x, zero), direction=GT
+      empty = () tuple()
+      ROOT cond = f32[] conditional(is_pos, x, empty),
+        true_computation=true_branch, false_computation=false_branch
+    }
+
+    ENTRY main {
+      p0 = f32[8] parameter(0)
+      ROOT m = f32[8] map(p0), dimensions={0}, to_apply=mapper
+    })",
+                            R"(
+    // CHECK-LABEL: func.func private @main_m(
+    // CHECK-SAME:    %[[ARG0:.*]]: tensor<8xf32>,
+    // CHECK-SAME:    %[[IDX:.*]]: index {{.*}}) -> f32
+    // CHECK:         %[[ELEM:.*]] = tensor.extract %[[ARG0]][%[[IDX]]] : tensor<8xf32>
+    // CHECK:         %[[MAPPED:.*]] = xla.pure_call @mapper_cond(%[[ELEM]]) : (f32) -> f32
+    // CHECK:         return %[[MAPPED]] : f32
+
+    // CHECK-LABEL: func.func private @mapper_cond(
+    // CHECK-SAME:    %[[X:.*]]: f32) -> f32
+    // CHECK:         %[[ZERO:.*]] = arith.constant 0.000000e+00 : f32
+    // CHECK:         %[[IS_POS:.*]] = arith.cmpf ogt, %[[X]], %[[ZERO]] : f32
+    // CHECK:         %[[IF_RES:.*]] = scf.if %[[IS_POS]] -> (f32) {
+    // CHECK:           %[[T:.*]] = xla.pure_call @true_branch_res(%[[X]]) : (f32) -> f32
+    // CHECK:           scf.yield %[[T]] : f32
+    // CHECK:         } else {
+    // CHECK:           %[[F:.*]] = xla.pure_call @false_branch_z_f() : () -> f32
+    // CHECK:           scf.yield %[[F]] : f32
+    // CHECK:         }
+    // CHECK:         return %[[IF_RES]] : f32
+
+    // CHECK-LABEL: func.func private @true_branch_res(
+    // CHECK-SAME:    %[[P:.*]]: f32) -> f32
+    // CHECK-DAG:     %[[C0_I32:.*]] = arith.constant 0 : i32
+    // CHECK-DAG:     %[[C0_I8:.*]] = arith.constant 0 : i8
+    // CHECK:         %[[LOOP:.*]]:2 = scf.while (%[[I:.*]] = %[[C0_I32]], %[[ACC:.*]] = %[[P]]) : (i32, f32) -> (i32, f32) {
+    // CHECK:           %[[COND_I8:.*]] = xla.pure_call @while_cond_cmp(%[[I]], %[[ACC]]) : (i32, f32) -> i8
+    // CHECK:           %[[COND:.*]] = arith.cmpi ne, %[[COND_I8]], %[[C0_I8]] : i8
+    // CHECK:           scf.condition(%[[COND]]) %[[I]], %[[ACC]] : i32, f32
+    // CHECK:         } do {
+    // CHECK:         ^bb0(%[[BI:.*]]: i32, %[[BACC:.*]]: f32):
+    // CHECK:           %[[NEXT0:.*]], %[[NEXT1:.*]] = xla.pure_call @while_body_next(%[[BI]], %[[BACC]]) : (i32, f32) -> (i32, f32)
+    // CHECK:           scf.yield %[[NEXT0]], %[[NEXT1]] : i32, f32
+    // CHECK:         }
+    // CHECK:         return %[[LOOP]]#1 : f32
+
+    // CHECK-LABEL: func.func private @while_body_next(
+    // CHECK-SAME:    %[[I:.*]]: i32, %[[ACC:.*]]: f32) -> (i32, f32)
+    // CHECK:         %[[C1:.*]] = arith.constant 1 : i32
+    // CHECK:         %[[I_NEXT:.*]] = arith.addi %[[I]], %[[C1]] : i32
+    // CHECK:         %[[ACC_NEXT:.*]] = arith.addf %[[ACC]], %[[ACC]] : f32
+    // CHECK:         return %[[I_NEXT]], %[[ACC_NEXT]] : i32, f32
+
+    // CHECK-LABEL: func.func private @while_cond_cmp(
+    // CHECK-SAME:    %[[I:.*]]: i32, %[[ACC:.*]]: f32) -> i8
+    // CHECK:         %[[C3:.*]] = arith.constant 3 : i32
+    // CHECK:         %[[LT:.*]] = arith.cmpi slt, %[[I]], %[[C3]] : i32
+    // CHECK:         %[[EXT:.*]] = arith.extui %[[LT]] : i1 to i8
+    // CHECK:         return %[[EXT]] : i8
+
+    // CHECK-LABEL: func.func private @false_branch_z_f() -> f32
+    // CHECK:         %[[Z:.*]] = arith.constant 0.000000e+00 : f32
+    // CHECK:         return %[[Z]] : f32
+  )"));
+}
+
+// Verifies that scalar-tuple `while` and `pred[]` `conditional` instructions
+// lower to `scf.while` and `scf.if` calling the condition, body, and branch
+// subgraph functions.
+TEST_F(ElementalHloToMlirTest, ScalarWhileAndConditionalEmission) {
+  EXPECT_OK(RunAllSubgraphs(R"(
+    while_cond {
+      p = (s32[], f32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      limit = s32[] constant(3)
+      ROOT cmp = pred[] compare(i, limit), direction=LT
+    }
+
+    while_body {
+      p = (s32[], f32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      acc = f32[] get-tuple-element(p), index=1
+      one = s32[] constant(1)
+      i_next = s32[] add(i, one)
+      acc_next = f32[] add(acc, acc)
+      ROOT next = (s32[], f32[]) tuple(i_next, acc_next)
+    }
+
+    true_branch {
+      p = f32[] parameter(0)
+      ROOT r = f32[] add(p, p)
+    }
+
+    false_branch {
+      empty = () parameter(0)
+      ROOT z = f32[] constant(0)
+    }
+
+    ENTRY main {
+      x = f32[] parameter(0)
+      init_i = s32[] constant(0)
+      init = (s32[], f32[]) tuple(init_i, x)
+      loop = (s32[], f32[]) while(init), condition=while_cond, body=while_body
+      v = f32[] get-tuple-element(loop), index=1
+      zero = f32[] constant(0)
+      is_pos = pred[] compare(v, zero), direction=GT
+      empty = () tuple()
+      ROOT cond = f32[] conditional(is_pos, v, empty),
+        true_computation=true_branch, false_computation=false_branch
+    })",
+                            R"(
+    // CHECK-LABEL: func.func private @main_cond(
+    // CHECK-SAME:    %[[ARG0:.*]]: tensor<f32>) -> f32
+    // CHECK-DAG:     %[[C0_I32:.*]] = arith.constant 0 : i32
+    // CHECK-DAG:     %[[C0_I8:.*]] = arith.constant 0 : i8
+    // CHECK-DAG:     %[[ZERO:.*]] = arith.constant 0.000000e+00 : f32
+    // CHECK:         %[[X:.*]] = tensor.extract %[[ARG0]][] : tensor<f32>
+    // CHECK:         %[[LOOP:.*]]:2 = scf.while (%[[I:.*]] = %[[C0_I32]], %[[ACC:.*]] = %[[X]]) : (i32, f32) -> (i32, f32) {
+    // CHECK:           %[[COND_I8:.*]] = xla.pure_call @while_cond_cmp(%[[I]], %[[ACC]]) : (i32, f32) -> i8
+    // CHECK:           %[[COND:.*]] = arith.cmpi ne, %[[COND_I8]], %[[C0_I8]] : i8
+    // CHECK:           scf.condition(%[[COND]]) %[[I]], %[[ACC]] : i32, f32
+    // CHECK:         } do {
+    // CHECK:         ^bb0(%[[BI:.*]]: i32, %[[BACC:.*]]: f32):
+    // CHECK:           %[[NEXT0:.*]], %[[NEXT1:.*]] = xla.pure_call @while_body_next(%[[BI]], %[[BACC]]) : (i32, f32) -> (i32, f32)
+    // CHECK:           scf.yield %[[NEXT0]], %[[NEXT1]] : i32, f32
+    // CHECK:         }
+    // CHECK:         %[[IS_POS:.*]] = arith.cmpf ogt, %[[LOOP]]#1, %[[ZERO]] : f32
+    // CHECK:         %[[RES:.*]] = scf.if %[[IS_POS]] -> (f32) {
+    // CHECK:           %[[T:.*]] = xla.pure_call @true_branch_r(%[[LOOP]]#1) : (f32) -> f32
+    // CHECK:           scf.yield %[[T]] : f32
+    // CHECK:         } else {
+    // CHECK:           %[[F:.*]] = xla.pure_call @false_branch_z() : () -> f32
+    // CHECK:           scf.yield %[[F]] : f32
+    // CHECK:         }
+    // CHECK:         return %[[RES]] : f32
+
+    // CHECK-LABEL: func.func private @true_branch_r(
+    // CHECK-SAME:    %[[P:.*]]: f32) -> f32
+    // CHECK:         %[[R:.*]] = arith.addf %[[P]], %[[P]] : f32
+    // CHECK:         return %[[R]] : f32
+  )"));
+}
+
+// Verifies that scalar `call` lowers to `xla.pure_call` and integer-indexed
+// `conditional` lowers to `scf.index_switch` with the final branch in
+// `default`.
+TEST_F(ElementalHloToMlirTest, ScalarCallAndIndexedConditional) {
+  EXPECT_OK(RunAllSubgraphs(R"(
+    helper {
+      x = f32[] parameter(0)
+      ROOT sq = f32[] multiply(x, x)
+    }
+
+    branch0 {
+      x = f32[] parameter(0)
+      ROOT r0 = f32[] add(x, x)
+    }
+
+    branch1 {
+      x = f32[] parameter(0)
+      ROOT r1 = f32[] negate(x)
+    }
+
+    branch2_default {
+      empty = () parameter(0)
+      ROOT z = f32[] constant(0)
+    }
+
+    ENTRY main {
+      idx = s32[] parameter(0)
+      x = f32[] parameter(1)
+      y = f32[] call(x), to_apply=helper
+      empty = () tuple()
+      ROOT out = f32[] conditional(idx, y, y, empty),
+        branch_computations={branch0, branch1, branch2_default}
+    })",
+                            R"(
+    // CHECK-LABEL: func.func private @main_out(
+    // CHECK-SAME:    %[[ARG0:.*]]: tensor<i32>,
+    // CHECK-SAME:    %[[ARG1:.*]]: tensor<f32>) -> f32
+    // CHECK-DAG:     %[[X:.*]] = tensor.extract %[[ARG1]][] : tensor<f32>
+    // CHECK-DAG:     %[[IDX_I32:.*]] = tensor.extract %[[ARG0]][] : tensor<i32>
+    // CHECK:         %[[Y:.*]] = xla.pure_call @helper_sq(%[[X]]) : (f32) -> f32
+    // CHECK:         %[[IDX:.*]] = arith.index_cast %[[IDX_I32]] : i32 to index
+    // CHECK:         %[[OUT:.*]] = scf.index_switch %[[IDX]] -> f32
+    // CHECK:         case 0 {
+    // CHECK:           %[[R0:.*]] = xla.pure_call @branch0_r0(%[[Y]]) : (f32) -> f32
+    // CHECK:           scf.yield %[[R0]] : f32
+    // CHECK:         }
+    // CHECK:         case 1 {
+    // CHECK:           %[[R1:.*]] = xla.pure_call @branch1_r1(%[[Y]]) : (f32) -> f32
+    // CHECK:           scf.yield %[[R1]] : f32
+    // CHECK:         }
+    // CHECK:         default {
+    // CHECK:           %[[Z:.*]] = xla.pure_call @branch2_default_z() : () -> f32
+    // CHECK:           scf.yield %[[Z]] : f32
+    // CHECK:         }
+    // CHECK:         return %[[OUT]] : f32
+
+    // CHECK-LABEL: func.func private @helper_sq(
+    // CHECK-SAME:    %[[HX:.*]]: f32) -> f32
+    // CHECK:         %[[SQ:.*]] = arith.mulf %[[HX]], %[[HX]] : f32
+    // CHECK:         return %[[SQ]] : f32
+  )"));
+}
+
+// Verifies that rank-1 effective scalars (such as `f32[1]`) in `while` state
+// are rejected with UNIMPLEMENTED rather than treated as rank-0 scalars.
+TEST_F(ElementalHloToMlirTest, Rank1EffectiveScalarWhileRejected) {
+  EXPECT_THAT(Run(R"(
+    while_cond {
+      p = (s32[], f32[1]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      limit = s32[] constant(2)
+      ROOT cmp = pred[] compare(i, limit), direction=LT
+    }
+
+    while_body {
+      p = (s32[], f32[1]) parameter(0)
+      i = s32[] get-tuple-element(p), index=0
+      arr = f32[1] get-tuple-element(p), index=1
+      one = s32[] constant(1)
+      i_next = s32[] add(i, one)
+      arr_next = f32[1] add(arr, arr)
+      ROOT next = (s32[], f32[1]) tuple(i_next, arr_next)
+    }
+
+    ENTRY main {
+      x = f32[] parameter(0)
+      x1 = f32[1] reshape(x)
+      c0 = s32[] constant(0)
+      init = (s32[], f32[1]) tuple(c0, x1)
+      loop = (s32[], f32[1]) while(init), condition=while_cond, body=while_body
+      v1 = f32[1] get-tuple-element(loop), index=1
+      ROOT v = f32[] reshape(v1)
+    })",
+                  ""),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
+}
+
+// Verifies that a `while` loop carrying a heterogeneous non-scalar tuple
+// returns UNIMPLEMENTED cleanly without crashing during partitioning.
+TEST_F(ElementalHloToMlirTest,
+       NonScalarHeterogeneousTupleWhileRejectedWithoutCrash) {
+  EXPECT_THAT(Run(R"(
+    while_cond {
+      p = (f32[3], s32[]) parameter(0)
+      i = s32[] get-tuple-element(p), index=1
+      limit = s32[] constant(3)
+      ROOT cmp = pred[] compare(i, limit), direction=LT
+    }
+
+    while_body {
+      p = (f32[3], s32[]) parameter(0)
+      arr = f32[3] get-tuple-element(p), index=0
+      i = s32[] get-tuple-element(p), index=1
+      one = s32[] constant(1)
+      i_next = s32[] add(i, one)
+      ROOT next = (f32[3], s32[]) tuple(arr, i_next)
+    }
+
+    ENTRY main {
+      x = f32[] parameter(0)
+      xb = f32[3] broadcast(x), dimensions={}
+      c0 = s32[] constant(0)
+      init = (f32[3], s32[]) tuple(xb, c0)
+      loop = (f32[3], s32[]) while(init), condition=while_cond, body=while_body
+      ROOT i = s32[] get-tuple-element(loop), index=1
+    })",
+                  ""),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
+
+  EXPECT_THAT(Run(R"(
+    ENTRY main {
+      a = f32[3] parameter(0)
+      b = s32[] parameter(1)
+      inner = (f32[3], s32[]) tuple(a, b)
+      ROOT out = ((f32[3], s32[]), f32[3]) tuple(inner, a)
+    })",
+                  ""),
+              absl_testing::StatusIs(absl::StatusCode::kUnimplemented));
 }
 
 }  // namespace
