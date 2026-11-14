@@ -56,6 +56,9 @@ class RocmStream : public StreamCommon {
                       const DeviceAddressBase& gpu_src, uint64_t size) override;
   absl::Status DoHostCallbackWithStatus(
       absl::AnyInvocable<absl::Status() &&> callback) override;
+  absl::Status DoHostCallbackWithStatus(
+      absl::AnyInvocable<absl::Status() &&> callback,
+      absl::AnyInvocable<void(absl::Status) &&> error_cb) override;
   absl::Status BlockHostUntilDone() override;
 
   Stream::PlatformSpecificHandle platform_specific_handle() const override {
