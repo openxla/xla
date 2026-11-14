@@ -414,6 +414,7 @@ xla_cc_test(
     deps = [
         ":host_offloading_prepare",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/service:memory_annotations_hdr",
         "//xla/tsl/lib/core:status_test_util",
@@ -456,6 +457,7 @@ cc_library(
     hdrs = ["literal_canonicalizer.h"],
     deps = [
         "//xla:literal_pool",
+        "//xla/hlo/ir:dfs_hlo_visitor_with_default",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "@com_google_absl//absl/container:flat_hash_set",
@@ -492,6 +494,7 @@ cc_library(
     hdrs = ["shape_canonicalizer.h"],
     deps = [
         "//xla:shape_pool",
+        "//xla/hlo/ir:dfs_hlo_visitor_with_default",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/tsl/platform:errors",
@@ -714,6 +717,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/analysis:shape_tracker",
+        "//xla/hlo/ir:dfs_hlo_visitor_with_default",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/pass:hlo_pass",
         "//xla/service:matmul_indexing_utils",

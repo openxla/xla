@@ -1477,7 +1477,7 @@ TYPED_TEST(ThunkSequenceSerdesTest, NestedRngStateSharingReconstruction) {
 
 TYPED_TEST(ThunkSequenceSerdesTest,
            RngGetAndUpdateStateThunkWithoutResourceFallback) {
-  if (!std::is_same<TypeParam, ThunkSequenceSerDesProtobuf>::value) {
+  if (!std::is_same_v<TypeParam, ThunkSequenceSerDesProtobuf>) {
     GTEST_SKIP() << "This test is intended only for "
                     "ThunkSequenceSerDesProtobuf. Skipping for "
                  << typeid(TypeParam).name();

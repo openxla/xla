@@ -93,6 +93,7 @@ limitations under the License.
 #include "xla/pjrt/gpu/se_gpu_pjrt_cross_host_transfer.pb.h"
 #include "xla/pjrt/gpu/se_gpu_pjrt_runtime_abi_version.h"
 #include "xla/pjrt/gpu/se_gpu_topology_description.h"
+#include "xla/pjrt/gpu/vmm_allocator_gate.h"
 #include "xla/pjrt/host_memory_allocator.h"
 #include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/host_to_device_transfer_manager.h"
@@ -1462,6 +1463,11 @@ GetStreamExecutorGpuDeviceAllocator(
                     "VMM allocator. Overriding allocator kind to kVmm.";
     effective_kind = GpuAllocatorConfig::Kind::kVmm;
   }
+  if (effective_kind == GpuAllocatorConfig::Kind::kVmm &&
+      !IsVmmAllocatorAllowed()) {
+    return absl::FailedPreconditionError(
+        "The VMM allocator is in an experimental mode.");
+  }
 
   // Set when a single preallocated BFC allocator serves both default and
   // collective memory via spatial partitioning; suppresses the separate
@@ -1636,7 +1642,7 @@ GetStreamExecutorGpuDeviceAllocator(
           auto collective_bfc_allocator,
           CreateCollectiveBFCAllocator(
               ordinal_and_device.second->executor(),
-              /*memory_fraction=*/1.0 - MemFractionStart(memory_fraction),
+              /*memory_fraction=*/MemFractionLeft(memory_fraction),
               allocator_config.collective_memory_size));
       allocators.push_back(
           {std::move(collective_bfc_allocator),
@@ -1668,6 +1674,29 @@ GetStreamExecutorGpuDeviceAllocator(
           {std::move(async_allocator),
            ordinal_and_device.second->compute_stream(),
            /*memory_space=*/(int)xla::gpu::MemorySpaceColor::kTempBuffer});
+    }
+  }
+#elif TENSORFLOW_USE_ROCM
+  if (debug_options.xla_gpu_temp_buffer_use_separate_color()) {
+    // Only temp buffers may use this pool; that keeps their address the same
+    // across executions. Next to a preallocated default pool, its limit is the
+    // device memory the default pool leaves. Without spatial partitioning, the
+    // separate collective pool above gets the same limit (unless
+    // collective_memory_size preallocates it) and both pools take from that
+    // same memory: together they get it once, not once each.
+    for (const auto& ordinal_and_device : addressable_devices) {
+      ABSL_ASSIGN_OR_RETURN(auto temp_bfc_allocator,
+                            CreateTempBufferBFCAllocator(
+                                ordinal_and_device.second->executor(),
+                                memory_fraction, allocator_config.preallocate,
+                                allocator_config.gpu_system_memory_size,
+                                allocator_config.sub_allocator_alloc_visitors,
+                                allocator_config.sub_allocator_free_visitors));
+      allocators.push_back(
+          {std::move(temp_bfc_allocator),
+           ordinal_and_device.second->compute_stream(),
+           /*memory_space=*/
+           static_cast<int>(xla::gpu::MemorySpaceColor::kTempBuffer)});
     }
   }
 #endif

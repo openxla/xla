@@ -2811,6 +2811,57 @@ TEST_F(HloVerifierTest, IotaPredResultNotAllowed) {
   EXPECT_THAT(status.message(), HasSubstr("got PRED"));
 }
 
+TEST_F(HloVerifierTest, SortNegativeDimension) {
+  const char* const hlo_string = R"(
+  HloModule SortNegativeDimension
+
+  compare {
+    p.0.lhs = f32[] parameter(0)
+    p.0.rhs = f32[] parameter(1)
+    ROOT lt = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+  }
+
+  ENTRY main {
+    x = f32[4,8] parameter(0)
+    ROOT sorted = f32[4,8] sort(x), dimensions={-1}, to_apply=compare
+  }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("Expected the sort_dimension -1 of sort to be "
+                                 "non-negative and smaller than the rank 2")));
+}
+
+TEST_F(HloVerifierTest, SortKeyValueDimensionOutOfRange) {
+  const char* const hlo_string = R"(
+  HloModule SortKeyValueDimensionOutOfRange
+
+  compare {
+    p.0.lhs = f32[] parameter(0)
+    p.0.rhs = f32[] parameter(1)
+    p.1.lhs = s32[] parameter(2)
+    p.1.rhs = s32[] parameter(3)
+    ROOT lt = pred[] compare(p.0.lhs, p.0.rhs), direction=LT
+  }
+
+  ENTRY main {
+    keys = f32[4,8] parameter(0)
+    values = s32[4,8] parameter(1)
+    ROOT sorted = (f32[4,8], s32[4,8]) sort(keys, values), dimensions={2}, to_apply=compare
+  }
+  )";
+
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+
+  EXPECT_THAT(verifier().Run(module.get()),
+              StatusIs(absl::StatusCode::kInternal,
+                       HasSubstr("Expected the sort_dimension 2 of sort to be "
+                                 "non-negative and smaller than the rank 2")));
+}
+
 static const char* const kMapOperandComputationMismatchHlo = R"(
   HloModule MapOperandComputationMismatch
 
@@ -4468,6 +4519,35 @@ ENTRY main {
       HloVerifierOpts{}.MakeLayoutSensitive().VerifyReshapeIsBitcast()}
                 .Run(module.get())
                 .status());
+}
+
+TEST_F(HloVerifierTest, ReshapeInferredDimensionOutOfRange) {
+  auto make_hlo = [](int64_t inferred_dimension) {
+    return absl::StrCat(R"(
+HloModule ReshapeInferredDimensionOutOfRange
+
+ENTRY main {
+  p = f32[<=6,4] parameter(0)
+  ROOT r = f32[<=3,2,4] reshape(p), inferred_dimension=)",
+                        inferred_dimension, R"(
+}
+)");
+  };
+
+  ASSERT_OK_AND_ASSIGN(auto valid_module,
+                       ParseAndReturnUnverifiedModule(make_hlo(0)));
+  EXPECT_THAT(verifier().Run(valid_module.get()), IsOkAndHolds(false));
+
+  for (int64_t bad_dim : {int64_t{3}, int64_t{-2}}) {
+    ASSERT_OK_AND_ASSIGN(auto module,
+                         ParseAndReturnUnverifiedModule(make_hlo(bad_dim)));
+    EXPECT_THAT(
+        verifier().Run(module.get()),
+        StatusIs(
+            absl::StatusCode::kInvalidArgument,
+            HasSubstr("Expected inferred_dimension of reshape to be -1 or in "
+                      "[0, 3)")));
+  }
 }
 
 TEST_F(HloVerifierTest, VerifyCustomCallThread) {

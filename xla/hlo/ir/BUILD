@@ -38,7 +38,6 @@ cc_library(
     ],
     hdrs = [
         "dfs_hlo_visitor.h",
-        "dfs_hlo_visitor_with_default.h",
         "dynamic_parameter_binding.h",
         "hlo_casting_utils.h",
         "hlo_clone_context.h",
@@ -106,7 +105,6 @@ cc_library(
         "//xla/tsl/platform:env",
         "//xla/tsl/platform:errors",
         "//xla/tsl/platform:logging",
-        "//xla/tsl/platform:status",
         "//xla/tsl/util:sorted_range",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:config",
@@ -205,6 +203,7 @@ xla_cc_test(
     name = "hlo_instruction_test",
     srcs = ["hlo_instruction_test.cc"],
     deps = [
+        ":dfs_hlo_visitor_with_default",
         ":hlo",
         ":stack_frames",
         "//xla:comparison_util",
@@ -223,6 +222,8 @@ xla_cc_test(
         "//xla/tsl/platform:test_main",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
     ],
@@ -591,7 +592,8 @@ xla_cc_test(
         "//xla:array",
         "//xla:array2d",
         "//xla/tsl/util/proto:proto_matchers",
-        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
@@ -651,10 +653,29 @@ xla_cc_test(
     ],
 )
 
+cc_library(
+    name = "dfs_hlo_visitor_with_default",
+    hdrs = ["dfs_hlo_visitor_with_default.h"],
+    visibility = internal_visibility([
+        ":friends",
+        "//xla:native_custom_call_handler_allowlist",
+    ]),
+    deps = [
+        ":hlo",
+        "//xla/tsl/platform:status",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
 xla_cc_test(
     name = "dfs_hlo_visitor_test",
     srcs = ["dfs_hlo_visitor_test.cc"],
     deps = [
+        ":dfs_hlo_visitor_with_default",
         ":hlo",
         "//xla:literal_util",
         "//xla:status_macros",
