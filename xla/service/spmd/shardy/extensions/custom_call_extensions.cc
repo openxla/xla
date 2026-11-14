@@ -171,6 +171,7 @@ struct CustomCallShardingRuleOpInterface
     llvm::StringRef callTargetName = customCall.getCallTargetName();
     if (callTargetName == "compute-on-done" ||
         callTargetName == "X64SplitHigh" || callTargetName == "X64SplitLow" ||
+        callTargetName == "X128SplitHigh" || callTargetName == "X128SplitLow" ||
         callTargetName == "_SPMDInternalOp_MultiPad" ||
         callTargetName == "_SPMDInternalOp_RotateRight" ||
         callTargetName == "_SPMDInternalOp_MultiRotate" ||
@@ -335,7 +336,7 @@ struct CustomCallShardingRuleOpInterface
     if (callTargetName == kPartialReduceTargetName) {
       return createPartialReduceShardingRule(customCall);
     }
-    if (callTargetName == "X64Combine") {
+    if (callTargetName == "X64Combine" || callTargetName == "X128Combine") {
       // Replicate and block propagation when `X64Combine` feeds
       // `RngBitGeneratorOp`, whose 1D `ui64` initial state must stay replicated
       // and cannot be resharded.
