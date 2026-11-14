@@ -105,8 +105,32 @@ TEST(GpuCollectivesTest, SplitCommunicators) {
   ASSERT_OK_AND_ASSIGN(
       auto split_comms,
       SplitCommunicators(executors, comms, {kD0, kD1}, /*blocking=*/true));
-  EXPECT_TRUE(split_comms[0]->platform_comm().handle);
-  EXPECT_TRUE(split_comms[1]->platform_comm().handle);
+  EXPECT_NE(split_comms[0]->platform_comm().handle, nullptr);
+  EXPECT_NE(split_comms[1]->platform_comm().handle, nullptr);
+}
+
+// Verifies that nonblocking splits return non-null child communicators.
+TEST(GpuCollectivesTest, SplitCommunicatorsNonblocking) {
+  ASSERT_OK_AND_ASSIGN(se::Platform * platform,
+                       PlatformUtil::GetPlatform("gpu"));
+
+  if (platform->VisibleDeviceCount() < 2) {
+    GTEST_SKIP() << "Test requires at least 2 GPUs";
+  }
+
+  ASSERT_OK_AND_ASSIGN(std::vector<se::StreamExecutor*> executors,
+                       CreateExecutors(platform, 2));
+
+  ASSERT_OK_AND_ASSIGN(auto comms, CreateCommunicators(executors, {kD0, kD1},
+                                                       /*blocking=*/false));
+
+  ASSERT_OK_AND_ASSIGN(
+      auto split_comms,
+      SplitCommunicators(executors, comms, {kD0, kD1}, /*blocking=*/false));
+  EXPECT_NE(split_comms[0]->platform_comm().handle, nullptr);
+  EXPECT_NE(split_comms[1]->platform_comm().handle, nullptr);
+  EXPECT_OK(split_comms[0]->HealthCheck());
+  EXPECT_OK(split_comms[1]->HealthCheck());
 }
 
 TEST(GpuCollectivesTest, GroupLaunchMultipleCommunicators) {
