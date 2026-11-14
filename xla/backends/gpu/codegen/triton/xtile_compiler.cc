@@ -488,6 +488,24 @@ absl::StatusOr<TritonKernelSource> LowerTritonToLlvmDialect(
         "(num_warps, num_ctas, num_stages) must be positive, but got: (",
         num_warps, ", ", num_ctas, ", ", num_stages, ")"));
   }
+  if (num_ctas > 1) {
+    // CUDA thread block clusters exist on sm_90+. The largest cluster is 16
+    // CTAs (the portable limit is 8; larger sizes need
+    // `cudaFuncAttributeNonPortableClusterSizeAllowed`, which
+    // `CudaKernel::UpdateNonPortableClusterSize` sets at launch). Triton's CGA
+    // layouts split tiles by powers of two, so `num_ctas` must be one.
+    constexpr int kMaxClusterSize = 16;
+    const auto* cuda_cc = gpu_cc.cuda_compute_capability();
+    if (cuda_cc == nullptr || !cuda_cc->IsAtLeastHopper()) {
+      return absl::FailedPreconditionError(
+          "CTA clusters (num_ctas > 1) require Hopper or newer CUDA GPUs.");
+    }
+    if ((num_ctas & (num_ctas - 1)) != 0 || num_ctas > kMaxClusterSize) {
+      return absl::FailedPreconditionError(
+          absl::StrCat("num_ctas must be a power of two <= ", kMaxClusterSize,
+                       ", but got: ", num_ctas));
+    }
+  }
   const bool enable_pdl = IsPdlEnabled(hlo_config.debug_options(), gpu_cc);
   CreateTritonXlaPipeline(&pm, gpu_cc, /*rewrite_int4=*/is_xla_fusion,
                           block_level_parameters.is_tma_allowed, num_stages,
@@ -589,6 +607,12 @@ absl::StatusOr<TritonWrapperResult> CompileTritonToLLVM(
   }
   VLOG(2) << "Global scratch memory usage: " << global_scratch_memory_size
           << " B";
+  if (is_xla_fusion && global_scratch_memory_size > 0) {
+    return absl::ResourceExhaustedError(absl::StrFormat(
+        "Global scratch memory is not supported for XLA Triton fusions "
+        "(requested %d B).",
+        global_scratch_memory_size));
+  }
 
   std::vector<llvm::Metadata*> captured_nvvm_annotations;
   std::unique_ptr<llvm::Module> ll_triton_module;

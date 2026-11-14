@@ -83,6 +83,80 @@ int64_t PreviousPowerOfTwo(int64_t x) {
   return tsl::NextPowerOfTwoS64(x + 1) / 2;
 }
 
+// Estimates the number of shared-memory bits staged per element of a dot
+// operand tile by tracing back to full-sized fusion parameter leaves. For
+// example, `s8` weights converted to `bf16` inside a W8A16 GEMM fusion are
+// loaded into shared memory as 8-bit integers, not as `compute_bitwidth_`.
+//
+// Triton pipelines every parameter load feeding the operand separately (the
+// elementwise prologue runs on registers after the shared-memory load), so
+// each distinct full-sized parameter leaf gets its own per-stage buffer of
+// `tile_elements * leaf_bitwidth` bits. The bitwidths of all leaves are
+// therefore summed rather than maxed, e.g. `multiply(convert(s8 w), bf16 s)`
+// with a full-sized `s` stages 8 + 16 = 24 bits per element.
+//
+// Only producers with the same element count as `operand` (elementwise ops,
+// converts, bitcasts, reshapes, transposes, fusions) are followed, plus the
+// data operand of `pad` and `slice`, whose tiles are taken from a differently
+// sized source. Smaller producers such as broadcasted per-channel scales or
+// pad values contribute at most a row or column per tile and are ignored. If
+// no parameter leaf is found (e.g. through `concatenate` or `dynamic-slice`),
+// this falls back to the operand's own element bitwidth.
+int GetOperandStorageBitwidth(const HloInstruction* operand) {
+  const int64_t target_elements = ShapeUtil::ElementsIn(operand->shape());
+  absl::flat_hash_set<const HloInstruction*> visited;
+  std::vector<const HloInstruction*> worklist = {operand};
+  int parameter_bitwidth_sum = 0;
+  while (!worklist.empty()) {
+    const HloInstruction* instr = worklist.back();
+    worklist.pop_back();
+    if (!visited.insert(instr).second) {
+      continue;
+    }
+    if (instr->opcode() == HloOpcode::kParameter) {
+      parameter_bitwidth_sum +=
+          primitive_util::BitWidth(instr->shape().element_type());
+      continue;
+    }
+    if (instr->opcode() == HloOpcode::kPad ||
+        instr->opcode() == HloOpcode::kSlice) {
+      worklist.push_back(instr->operand(0));
+      continue;
+    }
+    for (const HloInstruction* input : instr->operands()) {
+      if (input->shape().IsArray() &&
+          ShapeUtil::ElementsIn(input->shape()) == target_elements) {
+        worklist.push_back(input);
+      }
+    }
+  }
+  if (parameter_bitwidth_sum > 0) {
+    return parameter_bitwidth_sum;
+  }
+  return primitive_util::BitWidth(operand->shape().element_type());
+}
+
+// Returns true if launching `num_launched_ctas` CTAs fills less than 3/4 of the
+// device's `core_count` SMs in a single wave.
+//
+// A wave that is at least 3/4 full idles at most 1/4 of the SMs, which larger
+// tiles usually win back through higher arithmetic intensity (fewer re-reads of
+// the other operand from L2/HBM). The 3/4 threshold also keeps power-of-two
+// tile counts on GPUs whose SM count is not a power of two, e.g. 128 tiles on
+// the 148 SMs of a B200 (86%), which a strict `num_launched_ctas < core_count`
+// check would discard.
+bool HasTooFewCtasForOccupancy(int64_t num_launched_ctas, int64_t core_count) {
+  constexpr int64_t kMinWaveFillNumerator = 3;
+  constexpr int64_t kMinWaveFillDenominator = 4;
+  return num_launched_ctas * kMinWaveFillDenominator <
+         kMinWaveFillNumerator * core_count;
+}
+
+// Smallest per-CTA M or N extent that Triton's `getDotCGASplit` (in
+// AssignCGALayouts.cpp) assigns to a CTA when splitting a dot's output tile
+// across a CTA cluster.
+constexpr int kMinCgaChunk = 64;
+
 }  // namespace
 
 TritonDotFusionSearchSpace::TritonDotFusionSearchSpace(
@@ -102,6 +176,8 @@ TritonDotFusionSearchSpace::TritonDotFusionSearchSpace(
                          (contracting_size_ * batch_size_)),
       operand_bitwidth_(  // The bitwitdth of both operands is the same.
           primitive_util::BitWidth(dot->operand(0)->shape().element_type())),
+      lhs_storage_bitwidth_(GetOperandStorageBitwidth(dot->operand(0))),
+      rhs_storage_bitwidth_(GetOperandStorageBitwidth(dot->operand(1))),
       compute_bitwidth_(primitive_util::BitWidth(dot->shape().element_type())),
       operand_type_(dot->operand(0)->shape().element_type()),
       compute_type_(dot->shape().element_type()),
@@ -134,6 +210,10 @@ std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::GenerateConfigs(
   std::vector<ConfigWithNotes> configs(1);
 
   ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddOutputTilings);
+  // Cluster sizes must be chosen before eliminating low-occupancy configs: a
+  // 2-CTA cluster launches twice as many CTAs per output tile, so it can keep
+  // a large output tile that would leave SMs idle with one CTA per tile.
+  ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddClusterSizeParameter);
   EliminateLowOccupancyConfigs(configs);
   ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddCtaSizeParameter);
   ExtendConfigs(configs, &TritonDotFusionSearchSpace::AddContractingTiling);
@@ -159,10 +239,7 @@ std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::GenerateConfigs(
   std::vector<TritonGemmConfig> result;
   result.reserve(configs.size());
   for (ConfigWithNotes& config_with_notes : configs) {
-    TritonGemmConfig& config = config_with_notes.config;
-    // TODO: b/408386169 - Implement CTA cluster support.
-    config.num_ctas = 1;
-    result.push_back(config);
+    result.push_back(config_with_notes.config);
   }
   return result;
 }
@@ -176,12 +253,13 @@ TritonDotFusionSearchSpace::GenerateAndOptimizeConfigs(
   if (hints.empty()) {
     return gemm_configs;
   }
-  return OptimizeConfigSet(gemm_configs, hints);
+  return OptimizeConfigSet(gemm_configs, hints, autotune_warp_specialization);
 }
 
 std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::OptimizeConfigSet(
     absl::Span<const TritonGemmConfig> configs,
-    absl::Span<const TritonGemmConfig> hints) const {
+    absl::Span<const TritonGemmConfig> hints,
+    bool autotune_warp_specialization) const {
   if (hints.empty() || configs.empty()) {
     return std::vector<TritonGemmConfig>(configs.begin(), configs.end());
   }
@@ -198,10 +276,19 @@ std::vector<TritonGemmConfig> TritonDotFusionSearchSpace::OptimizeConfigSet(
                                 max_out_tile_.rhs_dim);
     config.block_k =
         std::clamp(config.block_k, min_contracting_tile_size_,
-                   GetMaxContractingTileSize({config.block_m, config.block_n}));
+                   GetMaxContractingTileSize({config.block_m, config.block_n},
+                                             std::max(1, config.num_ctas)));
 
     VLOG(10) << "Adding config to hint filter: " << config.ToString();
     filter.insert(config);
+    // Mirror `AddWarpSpecializationParameter`, so hints also keep the
+    // warp-specialized variant of each config when it is being autotuned.
+    if (autotune_warp_specialization &&
+        IsWarpSpecializationCompatible(config)) {
+      TritonGemmConfig ws_config = config;
+      ws_config.is_warp_specialization_allowed = true;
+      filter.insert(ws_config);
+    }
   }
 
   std::vector<TritonGemmConfig> result_configs;
@@ -433,45 +520,94 @@ int TritonDotFusionSearchSpace::GetMinContractingTileSize() const {
 }
 
 int TritonDotFusionSearchSpace::GetContractingSizeLimitToFitSharedMemory(
-    OutputTile output_tile) const {
+    OutputTile output_tile, int num_ctas) const {
+  // 227 KiB (232448 B) on Hopper and datacenter Blackwell: the opt-in maximum
+  // dynamic shared memory per block, i.e. the 228 KiB per SM minus the 1 KiB
+  // the driver reserves per block.
   const int64_t shared_memory_budget =
       device_description_.shared_memory_per_block_optin();
+  OutputTile cta_tile = output_tile;
+  if (num_ctas > 1) {
+    // Mirrors Triton's `getDotCGASplit` (AssignCGALayouts.cpp), which decides
+    // how a dot's output tile is split across the CTAs of a cluster: give M
+    // chunks of up to 128 rows (the tcgen05 per-CTA MMA M extent) to as many
+    // CTAs as possible and the rest to N, falling back to 64-row M chunks
+    // when N chunks would otherwise drop below 64. XLA emits a batch tile of
+    // 1, so Triton never splits the batch dimension here.
+    constexpr int kPreferredChunkM = 128;
+    int split_m = 1;
+    int split_n = num_ctas;
+    for (int chunk_m = kPreferredChunkM; chunk_m >= kMinCgaChunk;
+         chunk_m /= 2) {
+      split_m = std::clamp(output_tile.lhs_dim / chunk_m, 1, num_ctas);
+      split_n = num_ctas / split_m;
+      if (output_tile.rhs_dim / split_n >= kMinCgaChunk) {
+        break;
+      }
+    }
+    // Each CTA stages its own `cta_tile.lhs_dim x K` slice of LHS and
+    // `cta_tile.rhs_dim x K` slice of RHS. An operand that is not split is
+    // TMA-multicast, so every CTA still holds a full copy. With 2-CTA tcgen05
+    // MMA, Triton additionally splits RHS along N within the CTA pair, which
+    // only lowers shared-memory use, so this estimate stays conservative.
+    cta_tile.lhs_dim = CeilOfRatio(output_tile.lhs_dim, split_m);
+    cta_tile.rhs_dim = CeilOfRatio(output_tile.rhs_dim, split_n);
+  }
+  // Operands are staged at their storage bitwidths (see
+  // `GetOperandStorageBitwidth`), not at the accumulator bitwidth, e.g. 8 bits
+  // for `s8` weights even if the dot computes in `bf16` and outputs `f32`.
+  const int64_t bits_per_contracting_elem =
+      static_cast<int64_t>(cta_tile.lhs_dim) * lhs_storage_bitwidth_ +
+      static_cast<int64_t>(cta_tile.rhs_dim) * rhs_storage_bitwidth_;
   // Need to satisfy:
-  //   (lhs_dim  + rhs_dim) * contracting_dim * bitwidth <= budget_in_bits
-  return 8 * shared_memory_budget / compute_bitwidth_ /
-         (output_tile.lhs_dim + output_tile.rhs_dim);
+  //   (cta_lhs * lhs_bits + cta_rhs * rhs_bits) * contracting_dim
+  //       <= budget_in_bits
+  // where `contracting_dim` is the total K extent buffered across all
+  // pipeline stages (see `GetMaxNumStages`).
+  return 8 * shared_memory_budget /
+         std::max<int64_t>(bits_per_contracting_elem, 1);
 }
 
 int TritonDotFusionSearchSpace::GetMaxContractingTileSize(
-    OutputTile output_tile) const {
+    OutputTile output_tile, int num_ctas) const {
   const int64_t available_size = contracting_size_;
-  const int size_limit = GetContractingSizeLimitToFitSharedMemory(output_tile);
+  const int size_limit =
+      GetContractingSizeLimitToFitSharedMemory(output_tile, num_ctas);
   const int max_size =
       std::min(NextPowerOfTwo(available_size), PreviousPowerOfTwo(size_limit));
   VLOG(5) << "Computing max_contracting_tile_size for tiling BxMxN = " << 1
           << "x" << output_tile.lhs_dim << "x" << output_tile.rhs_dim
+          << " (num_ctas=" << num_ctas << ")"
           << ": limit based on problem is " << available_size
           << ", limit based on available shared memory is " << size_limit
           << ", max_contracting_tile_size = " << max_size;
   return std::max(min_contracting_tile_size_, max_size);
 }
 
-int TritonDotFusionSearchSpace::GetMaxNumStages(
-    OutputTile output_tile, int contracting_tile_size) const {
+int TritonDotFusionSearchSpace::GetMaxNumStages(OutputTile output_tile,
+                                                int contracting_tile_size,
+                                                int num_ctas) const {
   const int64_t available_stages =
       CeilOfRatio<int64_t>(contracting_size_, contracting_tile_size);
+  // Rounding up is deliberate: Triton's software pipeliner allocates
+  // `num_stages - 1` shared-memory buffers per pipelined load (the def-use
+  // stage distance in LowerLoops.cpp) when feeding tcgen05/mma, so `S` stages
+  // fit as long as `(S - 1) * contracting_tile_size` fits. (wgmma on Hopper
+  // keeps one extra buffer, so this bound can be one stage optimistic there.)
   const int64_t stage_limit = std::max(
-      1, CeilOfRatio(GetContractingSizeLimitToFitSharedMemory(output_tile),
-                     contracting_tile_size));
+      1, CeilOfRatio(
+             GetContractingSizeLimitToFitSharedMemory(output_tile, num_ctas),
+             contracting_tile_size));
   // Number of stages is basically a replacement for oversubscription, so
   // the maximum number we want is also limited by kMaxWarpsPerScheduler.
   const int stages = std::min({available_stages, stage_limit,
                                static_cast<int64_t>(kMaxWarpsPerScheduler)});
   VLOG(5) << "Computing max_num_stages for tiling BxMxNxK = " << 1 << "x"
           << output_tile.lhs_dim << "x" << output_tile.rhs_dim << "x"
-          << contracting_tile_size << ": limit based on problem is "
-          << available_stages << ", limit based on available shared memory is "
-          << stage_limit << ", max_num_stages = " << stages;
+          << contracting_tile_size << " (num_ctas=" << num_ctas
+          << "): limit based on problem is " << available_stages
+          << ", limit based on available shared memory is " << stage_limit
+          << ", max_num_stages = " << stages;
   return stages;
 }
 
@@ -523,13 +659,60 @@ void TritonDotFusionSearchSpace::AddOutputTilings(
     }
     for (int n = min_n; n <= max_n; n *= 2) {
       OutputTile tile = {m, n};
-      new_config.not_enough_tiles =
-          GetNumResultTiles(tile) < device_description_.core_count();
+      new_config.not_enough_tiles = HasTooFewCtasForOccupancy(
+          GetNumResultTiles(tile), device_description_.core_count());
       new_config.config.block_m = m;
       new_config.config.block_n = n;
       VLOG(10) << "Adding output tiling: config = " << new_config.ToString();
       updated_configs.push_back(new_config);
     }
+  }
+}
+
+void TritonDotFusionSearchSpace::AddClusterSizeParameter(
+    const ConfigWithNotes& config,
+    std::vector<ConfigWithNotes>& updated_configs) const {
+  const OutputTile tile = {config.config.block_m, config.config.block_n};
+  const int64_t num_result_tiles = GetNumResultTiles(tile);
+  const int64_t core_count = device_description_.core_count();
+  ConfigWithNotes one_cta = config;
+  one_cta.config.num_ctas = 1;
+  one_cta.not_enough_tiles =
+      HasTooFewCtasForOccupancy(num_result_tiles, core_count);
+  updated_configs.push_back(one_cta);
+
+  // Only CTA pairs are searched. On GPUs with tcgen05 (sm_100, sm_103 and
+  // sm_110), Triton lowers a TMA-fed dot whose cluster tile is split along M
+  // into `tcgen05.mma.cta_group::2`: the pair issues one MMA with up to 256
+  // rows (128 per CTA, twice the single-CTA limit) and splits the RHS tile
+  // along N between the two CTAs, halving per-CTA RHS shared memory and L2
+  // traffic. If the split falls on N instead, the unsplit LHS tile is
+  // TMA-multicast, so the pair reads it from L2 once. Pairs are the only
+  // cluster size that 2-CTA MMA uses. Hopper also supports clusters, but it
+  // has no 2-CTA MMA, and sm_120 has no tcgen05, so autotuning time is not
+  // spent on 2-CTA configs there.
+  constexpr int kTwoCtas = 2;
+  const bool supports_two_cta_clusters =
+      device_description_.gpu_compute_capability().IsCuda() &&
+      device_description_.cuda_compute_capability().HasTcgen05() &&
+      stream_executor::gpu::IsTmaAvailableForDevice(device_description_);
+  // `getDotCGASplit` keeps every per-CTA chunk at least `kMinCgaChunk` wide,
+  // so the split dimension must be at least `kTwoCtas * kMinCgaChunk` = 128
+  // and the other dimension at least `kMinCgaChunk` = 64, so that each CTA
+  // gets a sub-tile of at least 64x64.
+  const bool valid_two_cta_tile =
+      (tile.lhs_dim >= kTwoCtas * kMinCgaChunk &&
+       tile.rhs_dim >= kMinCgaChunk) ||
+      (tile.lhs_dim >= kMinCgaChunk && tile.rhs_dim >= kTwoCtas * kMinCgaChunk);
+  if (supports_two_cta_clusters && valid_two_cta_tile) {
+    ConfigWithNotes two_ctas = config;
+    two_ctas.config.num_ctas = kTwoCtas;
+    // Each cluster tile occupies `kTwoCtas` SMs.
+    two_ctas.not_enough_tiles =
+        HasTooFewCtasForOccupancy(num_result_tiles * kTwoCtas, core_count);
+    VLOG(10) << "Adding 2-CTA cluster parameter: config = "
+             << two_ctas.ToString();
+    updated_configs.push_back(two_ctas);
   }
 }
 
@@ -557,10 +740,11 @@ void TritonDotFusionSearchSpace::AddContractingTiling(
     std::vector<ConfigWithNotes>& updated_configs) const {
   const int tile_rows = config.config.block_m;
   const int tile_cols = config.config.block_n;
+  const int num_ctas = std::max(1, config.config.num_ctas);
   CHECK_GT(tile_rows * tile_cols, 0)
       << "Need configs with output tilings determined.";
   int max_tile_size =
-      std::max(GetMaxContractingTileSize({tile_rows, tile_cols}),
+      std::max(GetMaxContractingTileSize({tile_rows, tile_cols}, num_ctas),
                min_contracting_tile_size_);
   ConfigWithNotes new_config = config;
   for (int k = min_contracting_tile_size_; k <= max_tile_size; k *= 2) {
@@ -576,11 +760,13 @@ void TritonDotFusionSearchSpace::AddPipeliningParameter(
   const int tile_rows = config.config.block_m;
   const int tile_cols = config.config.block_n;
   const int tile_contracting = config.config.block_k;
+  const int num_ctas = std::max(1, config.config.num_ctas);
   CHECK_GT(tile_rows * tile_cols, 0)
       << "Need config with output tilings determined.";
   CHECK_GT(tile_contracting, 0)
       << "Need config with contracting tiling determined.";
-  int max_stages = GetMaxNumStages({tile_rows, tile_cols}, tile_contracting);
+  int max_stages =
+      GetMaxNumStages({tile_rows, tile_cols}, tile_contracting, num_ctas);
   ConfigWithNotes new_config = config;
   for (int num_stages = 1; num_stages <= max_stages; ++num_stages) {
     new_config.config.num_stages = num_stages;
@@ -594,8 +780,15 @@ void TritonDotFusionSearchSpace::AddTmaParameter(
     const ConfigWithNotes& config,
     std::vector<ConfigWithNotes>& updated_configs) const {
   ConfigWithNotes new_config = config;
-  new_config.config.is_tma_allowed = false;
-  updated_configs.push_back(new_config);
+  // CTA clusters are only searched with TMA: Triton forms 2-CTA tcgen05 MMAs
+  // and cluster-multicast loads only for descriptor (TMA) loads, since plain
+  // `cp.async` loads lack the cross-CTA synchronization (see
+  // `canUseTwoCTAs` in AccelerateMatmul.cpp). Without TMA, a cluster would
+  // only add launch constraints.
+  if (config.config.num_ctas <= 1) {
+    new_config.config.is_tma_allowed = false;
+    updated_configs.push_back(new_config);
+  }
 
   if (exhaustive_tiling_search_ || IsTmaRecommended(config.config)) {
     new_config.config.is_tma_allowed = true;
@@ -610,6 +803,16 @@ void TritonDotFusionSearchSpace::AddWarpSpecializationParameter(
   new_config.config.is_warp_specialization_allowed = false;
   updated_configs.push_back(new_config);
 
+  if (IsWarpSpecializationCompatible(config.config)) {
+    new_config.config.is_warp_specialization_allowed = true;
+    VLOG(10) << "Adding warp specialization parameter: config = "
+             << new_config.ToString();
+    updated_configs.push_back(new_config);
+  }
+}
+
+bool TritonDotFusionSearchSpace::IsWarpSpecializationCompatible(
+    const TritonGemmConfig& config) const {
   // Warp specialization probably only makes sense if TMA is enabled. Other
   // restrictions are required for compatibility with Triton, including:
   // - num_warps must be a multiple of 4.
@@ -627,14 +830,8 @@ void TritonDotFusionSearchSpace::AddWarpSpecializationParameter(
   // - No concatenate operation in the module due to b/483385760. A
   // CUDA_ERROR_ILLEGAL_ADDRESS error occurs due to a bug in Triton for this
   // category of GEMMs.
-  if (!has_concatenate_ && config.config.is_tma_allowed &&
-      config.config.num_warps <= 16 && config.config.num_warps % 4 == 0 &&
-      config.config.num_stages != 2) {
-    new_config.config.is_warp_specialization_allowed = true;
-    VLOG(10) << "Adding warp specialization parameter: config = "
-             << new_config.ToString();
-    updated_configs.push_back(new_config);
-  }
+  return !has_concatenate_ && config.is_tma_allowed && config.num_warps <= 16 &&
+         config.num_warps % 4 == 0 && config.num_stages != 2;
 }
 
 void TritonDotFusionSearchSpace::EliminateLowOccupancyConfigs(
@@ -670,6 +867,7 @@ void TritonDotFusionSearchSpace::EliminateLowOccupancyConfigs(
     // all cores. In that case, we just use the smallest tiling.
     last_config.config.block_m = min_out_tile_.lhs_dim;
     last_config.config.block_n = min_out_tile_.rhs_dim;
+    last_config.config.num_ctas = 1;
     VLOG(10) << "No configs with sufficient occupancy, using config = "
              << last_config.ToString();
     configs.push_back(last_config);

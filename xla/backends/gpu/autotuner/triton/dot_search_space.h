@@ -67,9 +67,13 @@ class TritonDotFusionSearchSpace {
   // hints are unlikely to be performant (e.g., if the RHS side of a config in
   // hints list is larger than the problem's RHS side, it might restrict that
   // config to the problem's RHS size).
+  //
+  // If `autotune_warp_specialization` is true, the warp-specialized variant of
+  // each compatible hint is kept as well.
   std::vector<TritonGemmConfig> OptimizeConfigSet(
       absl::Span<const TritonGemmConfig> configs,
-      absl::Span<const TritonGemmConfig> hints) const;
+      absl::Span<const TritonGemmConfig> hints,
+      bool autotune_warp_specialization = false) const;
 
   // Serializes the search space to a human-readable string.
   std::string ToString() const;
@@ -169,22 +173,31 @@ class TritonDotFusionSearchSpace {
   int GetMinContractingTileSize() const;
 
   // Computes the size limit for contracting dimension, based on the shared
-  // memory budget.
-  int GetContractingSizeLimitToFitSharedMemory(OutputTile output_tile) const;
+  // memory budget and the per-CTA slices of `output_tile` when it is split
+  // across a cluster of `num_ctas` CTAs.
+  int GetContractingSizeLimitToFitSharedMemory(OutputTile output_tile,
+                                               int num_ctas) const;
 
   // Computes the maximum reasonable tile size for the contracting dimension for
-  // the given output tile.
-  int GetMaxContractingTileSize(OutputTile output_tile) const;
+  // the given output tile and cluster size.
+  int GetMaxContractingTileSize(OutputTile output_tile, int num_ctas) const;
 
   // Computes the maximum reasonable number of stages for the given output and
-  // input tilings.
-  int GetMaxNumStages(OutputTile output_tile, int contracting_tile_size) const;
+  // input tilings and cluster size.
+  int GetMaxNumStages(OutputTile output_tile, int contracting_tile_size,
+                      int num_ctas) const;
 
   // Finds all promising output shape tilings (block_m, block_n) based on
   // `config` and appends them to `updated_configs`. Each config in the input
   // list might yield zero or more configs in the output.
   void AddOutputTilings(const ConfigWithNotes& config,
                         std::vector<ConfigWithNotes>& updated_configs) const;
+
+  // Extends configs with CTA cluster sizes (`num_ctas`) supported by the target
+  // architecture and output tile shape.
+  void AddClusterSizeParameter(
+      const ConfigWithNotes& config,
+      std::vector<ConfigWithNotes>& updated_configs) const;
 
   // Finds all promising values for the Cooperative Thread Array (aka. CTA, aka.
   // CUDA block) size (num_warps), based on `config` with already determined
@@ -224,6 +237,10 @@ class TritonDotFusionSearchSpace {
       const ConfigWithNotes& config,
       std::vector<ConfigWithNotes>& updated_configs) const;
 
+  // Returns true if `config` may be compiled with Triton's automatic warp
+  // specialization.
+  bool IsWarpSpecializationCompatible(const TritonGemmConfig& config) const;
+
   // Extend the passed configs with waves_per_eu values.
   void AddWavesPerEuParameter(
       const ConfigWithNotes& config,
@@ -242,6 +259,10 @@ class TritonDotFusionSearchSpace {
   int64_t lhs_parallel_size_;
   int64_t rhs_parallel_size_;
   int operand_bitwidth_;
+  // Bits staged in shared memory per element of each operand tile; see
+  // `GetOperandStorageBitwidth` in the .cc file.
+  int lhs_storage_bitwidth_;
+  int rhs_storage_bitwidth_;
   int compute_bitwidth_;
   PrimitiveType operand_type_;
   PrimitiveType compute_type_;

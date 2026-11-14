@@ -306,7 +306,10 @@ xla::Future<KernelReuseCache::Kernel> TritonFusion::Emit(
           if (fusion->GetModule()
                   ->config()
                   .debug_options()
-                  .xla_gpu_experimental_enable_triton_warp_specialization()) {
+                  .xla_gpu_experimental_enable_triton_warp_specialization() ||
+              analysis->fusion_backend_config()
+                  .block_level_fusion_config()
+                  .is_warp_specialization_allowed()) {
             launch_config =
                 GetLaunchConfig(analysis, triton_wrapper_result.thread_dims);
           } else {
@@ -314,6 +317,12 @@ xla::Future<KernelReuseCache::Kernel> TritonFusion::Emit(
           }
           // This check should be enforced by `GenerateTritonKernelWrapper`.
           CHECK(launch_config.has_value());
+          if (fusion_kind == kTritonCollectiveFusionKind &&
+              launch_config->cluster_dim.has_value()) {
+            return absl::UnimplementedError(
+                "Cluster launch is not supported for collective Triton "
+                "fusions.");
+          }
           launch_dimensions = std::move(launch_config->launch_dimensions);
 
           ABSL_ASSIGN_OR_RETURN(
@@ -336,7 +345,8 @@ xla::Future<KernelReuseCache::Kernel> TritonFusion::Emit(
                              kernel_arguments,
                              triton_wrapper_result.shmem_bytes,
                              triton_wrapper_result.use_pdl,
-                             triton_wrapper_result.tma_metadata};
+                             triton_wrapper_result.tma_metadata,
+                             launch_config->cluster_dim};
 
           return kernel_compiler
               ->CompileToTargetBinary(LlvmKernelSource{std::move(local_module)},
@@ -346,7 +356,7 @@ xla::Future<KernelReuseCache::Kernel> TritonFusion::Emit(
                 return KernelReuseCache::Entry{
                     std::string{spec.name()},
                     spec.launch_dimensions(),
-                    /*cluster_dim=*/std::nullopt,
+                    spec.cluster_dim(),
                     static_cast<int64_t>(*spec.scratch_bytes()),
                     std::make_shared<const std::vector<uint8_t>>(cubin),
                     spec.tma_metadata(),
@@ -355,9 +365,21 @@ xla::Future<KernelReuseCache::Kernel> TritonFusion::Emit(
         });
   };
 
+  // The kernel cache deduplicates by computation and arguments only. Fusions
+  // with the same computation but different block-level parameters (e.g.
+  // `num_ctas`, which changes the cluster launch dimensions, or tile sizes)
+  // compile to different kernels, so key on those parameters as well.
+  std::string discriminator = "TritonFusion";
+  if (analysis_.fusion_backend_config().has_block_level_fusion_config()) {
+    absl::StrAppend(
+        &discriminator, ":",
+        BlockLevelParameters::FromBlockLevelFusionConfig(
+            analysis_.fusion_backend_config().block_level_fusion_config())
+            .ToString());
+  }
+
   return ir_emitter_context.kernel_cache()
-      .GetWithStatus(hlo_computation, kernel_arguments,
-                     /*discriminator=*/"TritonFusion", generate)
+      .GetWithStatus(hlo_computation, kernel_arguments, discriminator, generate)
       .first;
 }
 
@@ -405,10 +427,18 @@ std::optional<TritonFusion::LaunchConfig> TritonFusion::GetLaunchConfig(
     }
   }
 
-  const int64_t num_blocks =
+  int64_t num_blocks =
       CeilOfRatio<int64_t>(num_tiles, block_level_parameters.num_tiles_per_pid);
 
   LaunchConfig launch_config;
+  if (block_level_parameters.num_ctas > 1) {
+    // Triton maps one program ID to one CTA cluster of shape (num_ctas, 1, 1),
+    // computing `pid_x = blockIdx.x / num_ctas`, so the CUDA grid dimension in
+    // blocks is `num_pids * num_ctas`.
+    num_blocks *= block_level_parameters.num_ctas;
+    launch_config.cluster_dim =
+        se::ClusterDim(block_level_parameters.num_ctas, 1, 1);
+  }
   // TODO(b/451901200): We eventually also want to be able to predict this
   // value without compiling so the cost model can rely on it. Currently, we
   // need the override for auto warp specialization.
