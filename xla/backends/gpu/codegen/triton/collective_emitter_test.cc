@@ -410,7 +410,10 @@ TEST_P(CollectiveEmitterParameterizedTest,
   ASSERT_NE(triton_fusion, nullptr);
 
   auto llvm_compiler =
-      [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+      [&](llvm::Module& llvm_module,
+          absl::optional_ref<const GpuKernelSpec> spec,
+          absl::string_view kernel_fingerprint,
+          const se::DeviceDescription& descr,
           const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
     return std::vector<uint8_t>{1};
   };
@@ -1148,7 +1151,10 @@ TEST_F(CollectiveEmitterTest,
   EXPECT_EQ(launch_config->launch_dimensions.num_threads_per_block(), 512);
 
   auto llvm_compiler =
-      [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+      [&](llvm::Module& llvm_module,
+          absl::optional_ref<const GpuKernelSpec> spec,
+          absl::string_view kernel_fingerprint,
+          const se::DeviceDescription& descr,
           const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
     return std::vector<uint8_t>{1};
   };

@@ -88,7 +88,10 @@ TEST_F(CompileModuleToLlvmIrTest,
   absl::Notification constants_compile_started;
   std::atomic<bool> fusion_compile_finished = false;
   auto llvm_compiler =
-      [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+      [&](llvm::Module& llvm_module,
+          absl::optional_ref<const GpuKernelSpec> spec,
+          absl::string_view kernel_fingerprint,
+          const se::DeviceDescription& descr,
           const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
     if (llvm_module.empty()) {
       constants_compile_started.Notify();
@@ -140,7 +143,10 @@ TEST_F(CompileModuleToLlvmIrTest,
   absl::Notification fusion_compile_started;
   std::atomic<bool> constants_compile_finished = false;
   auto llvm_compiler =
-      [&](llvm::Module& llvm_module, const se::DeviceDescription& descr,
+      [&](llvm::Module& llvm_module,
+          absl::optional_ref<const GpuKernelSpec> spec,
+          absl::string_view kernel_fingerprint,
+          const se::DeviceDescription& descr,
           const DebugOptions& opts) -> absl::StatusOr<std::vector<uint8_t>> {
     if (llvm_module.empty()) {
       fusion_compile_started.WaitForNotification();
