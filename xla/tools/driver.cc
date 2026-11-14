@@ -132,18 +132,19 @@ enum PrimitiveType {
   F8E8M0FNU,
   F6E3M2FN,
   F6E2M3FN,
+  F8E5M3FNU,
 };
 
 const std::vector<std::string>& primitive_strings() {
   static auto vec = new std::vector<std::string>(
-      {"s1",        "s2",         "s4",      "s8",
-       "s16",       "s32",        "s64",     "u1",
-       "u2",        "u4",         "u8",      "u16",
-       "u32",       "u64",        "f16",     "bf16",
-       "f32",       "f64",        "c64",     "c128",
-       "f4e2m1fn",  "f8e3m4",     "f8e4m3",  "f8e4m3b11fnuz",
-       "f8e4m3fn",  "f8e4m3fnuz", "f8e5m2",  "f8e5m2fnuz",
-       "f8e8m0fnu", "f6e3m2fn",   "f6e2m3fn"});
+      {"s1",        "s2",         "s4",       "s8",
+       "s16",       "s32",        "s64",      "u1",
+       "u2",        "u4",         "u8",       "u16",
+       "u32",       "u64",        "f16",      "bf16",
+       "f32",       "f64",        "c64",      "c128",
+       "f4e2m1fn",  "f8e3m4",     "f8e4m3",   "f8e4m3b11fnuz",
+       "f8e4m3fn",  "f8e4m3fnuz", "f8e5m2",   "f8e5m2fnuz",
+       "f8e8m0fnu", "f6e3m2fn",   "f6e2m3fn", "f8e5m3fnu"});
   return *vec;
 }
 
@@ -429,6 +430,7 @@ void Fill(void* buffer, const ArrayShape& shape) {
     case F8E4M3FNUZ:
     case F8E3M4:
     case F8E8M0FNU:
+    case F8E5M3FNU:
     case F6E3M2FN:
     case F6E2M3FN:
     case F16:
@@ -493,6 +495,7 @@ void Display(const void* buffer, const ArrayShape& shape) {
     case F8E4M3FNUZ:
     case F8E3M4:
     case F8E8M0FNU:
+    case F8E5M3FNU:
     case F6E3M2FN:
     case F6E2M3FN:
     case F16:

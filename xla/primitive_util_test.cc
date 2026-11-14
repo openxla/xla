@@ -116,6 +116,7 @@ INSTANTIATE_TEST_SUITE_P(FloatTypeTests, FloatTypeTest,
                              {F8E4M3FNUZ, 4, 4, 8, -6, 8},
                              {F8E5M2, 5, 3, 15, -13, 16},
                              {F8E5M2FNUZ, 5, 3, 16, -14, 16},
+                             {F8E5M3FNU, 5, 4, 15, -13, 17},
                              {F8E8M0FNU, 8, 1, 127, -126, 128},
                              {F16, 5, 11, 15, -13, 16},
                              {F64, 11, 53, 1023, -1021, 1024},
@@ -134,7 +135,7 @@ TEST(PrimitiveUtilTest, CastPreservesValues) {
   set_true(PRED, {PRED, S1, S2, S4, S8, S16, S32, S64, U1, U2, U4, U8, U16});
   set_true(PRED, {U32, U64, F16, F32, F64, C64, BF16, C128, F8E5M2, F8E4M3});
   set_true(PRED, {F8E4M3FN, F8E4M3B11FNUZ, F8E5M2FNUZ, F8E4M3FNUZ, F8E3M4});
-  set_true(PRED, {F4E2M1FN, F6E3M2FN, F6E2M3FN});
+  set_true(PRED, {F4E2M1FN, F6E3M2FN, F6E2M3FN, F8E5M3FNU});
 
   set_true(S1, {S1, S2, S4, S8, S16, S32, S64, F16, F32, F64, C64});
   set_true(S1, {BF16, C128, F8E5M2, F8E4M3, F8E4M3FN, F8E4M3B11FNUZ});
@@ -156,16 +157,16 @@ TEST(PrimitiveUtilTest, CastPreservesValues) {
   set_true(U1, {S2, S4, S8, S16, S32, S64, U1, U2, U4, U8, U16, U32});
   set_true(U1, {U64, F16, F32, F64, C64, BF16, C128, F8E5M2, F8E4M3});
   set_true(U1, {F8E4M3FN, F8E4M3B11FNUZ, F8E5M2FNUZ, F8E4M3FNUZ, F8E3M4});
-  set_true(U1, {F4E2M1FN, F6E3M2FN, F6E2M3FN});
+  set_true(U1, {F4E2M1FN, F6E3M2FN, F6E2M3FN, F8E5M3FNU});
 
   set_true(U2, {S4, S8, S16, S32, S64, U2, U4, U8, U16, U32, U64, F16});
   set_true(U2, {F32, F64, C64, BF16, C128, F8E5M2, F8E4M3, F8E4M3FN});
   set_true(U2, {F8E4M3B11FNUZ, F8E5M2FNUZ, F8E4M3FNUZ, F8E3M4, F4E2M1FN,
-                F6E3M2FN, F6E2M3FN});
+                F6E3M2FN, F6E2M3FN, F8E5M3FNU});
 
   set_true(U4, {S8, S16, S32, S64, U4, U8, U16, U32, U64, F16, F32});
   set_true(U4, {F64, C64, BF16, C128, F8E4M3, F8E4M3FN, F8E4M3B11FNUZ});
-  set_true(U4, {F8E4M3FNUZ, F8E3M4});
+  set_true(U4, {F8E4M3FNUZ, F8E3M4, F8E5M3FNU});
 
   set_true(U8, {S16, S32, S64, U8, U16, U32, U64, F16, F32, F64, C64});
   set_true(U8, {BF16, C128});
@@ -192,6 +193,7 @@ TEST(PrimitiveUtilTest, CastPreservesValues) {
                       F6E3M2FN});
   set_true(F6E2M3FN, {F16, F32, F64, C64, BF16, C128, F8E4M3, F8E4M3FN, F8E3M4,
                       F6E2M3FN});
+  set_true(F8E5M3FNU, {F32, F64, C64, BF16, C128, F8E5M3FNU});
   set_true(F8E8M0FNU, {F32, F64, C64, BF16, C128, F8E8M0FNU});
 
   for (int from_type_int = PrimitiveType_MIN;
