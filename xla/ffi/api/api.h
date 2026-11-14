@@ -1847,6 +1847,47 @@ struct HasExtensionSupport<
 }  // namespace internal
 
 //===----------------------------------------------------------------------===//
+// Logical device information
+//===----------------------------------------------------------------------===//
+
+// Logical coordinates and dimensions in the executable's device assignment.
+// Bind with .Ctx<LogicalDeviceInfo>(); values are specific to the invocation,
+// not communicator groups or physical device topology.
+struct LogicalDeviceInfo {
+  int32_t replica_id;
+  int32_t partition_id;
+  int32_t replica_count;
+  int32_t partition_count;
+};
+
+template <>
+struct CtxDecoding<LogicalDeviceInfo> {
+  using Type = LogicalDeviceInfo;
+
+  static std::optional<Type> Decode(const XLA_FFI_Api* api,
+                                    XLA_FFI_InvokeContext* ctx,
+                                    DiagnosticEngine& diagnostic) {
+    if (api->struct_size <
+            XLA_FFI_STRUCT_SIZE(XLA_FFI_Api, XLA_FFI_LogicalDeviceInfo_Get) ||
+        api->XLA_FFI_LogicalDeviceInfo_Get == nullptr) {
+      return diagnostic.Emit(
+          "Logical device information is not supported by this FFI API");
+    }
+    XLA_FFI_LogicalDeviceInfo_Get_Args args = {};
+    args.struct_size = XLA_FFI_LogicalDeviceInfo_Get_Args_STRUCT_SIZE;
+    args.ctx = ctx;
+    if (XLA_FFI_Error* error = api->XLA_FFI_LogicalDeviceInfo_Get(&args)) {
+      diagnostic.Emit("Failed to get logical device information: ")
+          << internal::GetErrorMessage(api, error);
+      internal::DestroyError(api, error);
+      return std::nullopt;
+    }
+    return LogicalDeviceInfo{args.replica_id, args.partition_id,
+                             args.replica_count, args.partition_count};
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // Decoding for Extensions
 //===----------------------------------------------------------------------===//
 
