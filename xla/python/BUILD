@@ -390,6 +390,7 @@ nanobind_pywrap_extension(
         "//xla/hlo/builder:xla_computation",
         "//xla/hlo/ir:backend_config",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/parser:hlo_parser",
         "//xla/pjrt:exceptions",
         "//xla/pjrt:status_casters",

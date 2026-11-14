@@ -74,6 +74,7 @@ cc_library(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:mesh_and_axis",
         "//xla/hlo/ir:named_sharding",
+        "//xla/hlo/ir:replica_group",
         "//xla/hlo/ir:tile_assignment",
         "//xla/hlo/parser:hlo_lexer",
         "//xla/hlo/pass:hlo_pass",
@@ -136,6 +137,8 @@ xla_cc_test(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/evaluator:hlo_evaluator",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
+        "//xla/hlo/ir:replica_group",
         "//xla/hlo/parser:hlo_parser",
         "//xla/hlo/pass:hlo_pass_pipeline",
         "//xla/hlo/testlib:filecheck",
@@ -411,6 +414,7 @@ cc_library(
     deps = [
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_sharding",
+        "//xla/hlo/ir:replica_group",
         "@com_google_absl//absl/types:span",
     ],
 )
@@ -444,6 +448,7 @@ xla_cc_test(
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:mesh_and_axis",
         "//xla/hlo/ir:named_sharding",
+        "//xla/hlo/ir:replica_group",
         "//xla/hlo/ir:tile_assignment",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_googletest//:gtest_main",

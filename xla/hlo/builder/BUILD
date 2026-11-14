@@ -175,6 +175,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:hlo_module_metadata",
+        "//xla/hlo/ir:replica_group",
         "//xla/hlo/ir:stack_frames",
         "//xla/service:hlo_proto_cc",
         "//xla/service:name_uniquer",

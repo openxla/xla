@@ -49,6 +49,7 @@ xla_cc_test(
     deps = [
         ":all_reduce_combiner",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/testlib:filecheck",
         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
         "//xla/tsl/platform:statusor",

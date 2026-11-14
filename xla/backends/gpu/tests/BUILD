@@ -314,6 +314,7 @@ xla_test(
         ":hlo_pjrt_gpu_test_base",
         "//xla:error_spec",
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "//xla/hlo/testlib:filecheck",
         "//xla/stream_executor:device_description",
         "//xla/tests:hlo_pjrt_interpreter_reference_mixin",

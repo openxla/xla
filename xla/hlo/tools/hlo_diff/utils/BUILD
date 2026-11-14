@@ -59,6 +59,7 @@ cc_library(
     hdrs = ["hlo_diff_util.h"],
     deps = [
         "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:hlo_print_options",
         "@tsl//tsl/platform:fingerprint",
     ],
 )

@@ -36,6 +36,7 @@ cc_library(
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/hlo/ir:mesh_and_axis",
+        "//xla/hlo/ir:replica_group",
         "//xla/mlir_hlo",
         "//xla/service:hlo_proto_cc",
         "//xla/tsl/platform:statusor",
