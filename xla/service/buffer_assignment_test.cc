@@ -7718,5 +7718,219 @@ TEST_F(BufferAssignmentTest, PerAllocationHloAccessors) {
   EXPECT_TRUE(assignment->CrossColorBuffers(alloc).empty());
   EXPECT_FALSE(assignment->MemoryUsageReport(alloc, "").empty());
 }
+
+TEST_F(BufferAssignmentTest,
+       CustomInterferenceTopologicalOrderConsolidatesAscendingSizes) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  p0 = s32[1024]{0} parameter(0)
+  call-start.0 = ((), (), (s32[1024]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.0 = () call-done(call-start.0)
+  call-start.1 = ((), (), (s32[2048]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.1 = () call-done(call-start.1)
+  call-start.2 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  mid_temp = s32[1024]{0} add(p0, p0)
+  call-done.2 = () call-done(call-start.2)
+  call-start.3 = ((), (), (s32[1024]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.3 = () call-done(call-start.3)
+  post_temp = s32[1024]{0} negate(mid_temp)
+  ROOT out = s32[1024]{0} add(post_temp, p0)
+}
+)hlo";
+
+  for (auto algorithm :
+       {buffer_assignment::
+            AssignmentAlgorithmForComputationsWithoutOrderingProto::SPATIAL,
+        buffer_assignment::
+            AssignmentAlgorithmForComputationsWithoutOrderingProto::
+                FAST_MERGE}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(kHlo));
+
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
+    opts.buffer_order = BufferAssigner::BufferOrder::kTopological;
+    opts.assignment_algorithm_for_computations_without_ordering = algorithm;
+    opts.color_memory_limit = [](LogicalBuffer::Color) { return 1024 * 1024; };
+    opts.must_not_live_out = [](const HloAliasAnalysis& alias_analysis,
+                                const HloInstruction* instruction,
+                                const ShapeIndex& index) -> bool {
+      return absl::StartsWith(instruction->name(), "call-start");
+    };
+    BufferAssignment::LiveRangeInterferenceOptions live_range_opts;
+    live_range_opts.has_custom_interference =
+        [](const HloAliasAnalysis& alias_analysis,
+           const HloValue& value) -> bool {
+      return absl::StartsWith(value.instruction()->name(), "call-start") &&
+             value.index() == ShapeIndex{2, 0};
+    };
+    live_range_opts.interferes =
+        [](const HloAliasAnalysis& alias_analysis, const HloValue& lhs,
+           const HloValue& rhs) -> std::optional<bool> {
+      if (absl::StartsWith(lhs.instruction()->name(), "call-start") &&
+          absl::StartsWith(rhs.instruction()->name(), "call-start") &&
+          lhs.index() == ShapeIndex{2, 0} && rhs.index() == ShapeIndex{2, 0}) {
+        return false;
+      }
+      return std::nullopt;
+    };
+    opts.live_range_interference_options = live_range_opts;
+
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<BufferAssignment> buffers,
+        BufferAssigner::Run(
+            module.get(),
+            std::make_unique<SequentialHloOrdering>(module->schedule()),
+            &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+    const HloInstruction* call_start0 =
+        module->entry_computation()->GetInstructionWithName("call-start.0");
+    const HloInstruction* call_start1 =
+        module->entry_computation()->GetInstructionWithName("call-start.1");
+    const HloInstruction* call_start2 =
+        module->entry_computation()->GetInstructionWithName("call-start.2");
+    const HloInstruction* call_start3 =
+        module->entry_computation()->GetInstructionWithName("call-start.3");
+    const HloInstruction* mid_temp =
+        module->entry_computation()->GetInstructionWithName("mid_temp");
+
+    ASSERT_OK_AND_ASSIGN(
+        const BufferAllocation::Slice slice0,
+        buffers->GetUniqueSlice(call_start0, ShapeIndex{2, 0}));
+    ASSERT_OK_AND_ASSIGN(
+        const BufferAllocation::Slice slice1,
+        buffers->GetUniqueSlice(call_start1, ShapeIndex{2, 0}));
+    ASSERT_OK_AND_ASSIGN(
+        const BufferAllocation::Slice slice2,
+        buffers->GetUniqueSlice(call_start2, ShapeIndex{2, 0}));
+    ASSERT_OK_AND_ASSIGN(
+        const BufferAllocation::Slice slice3,
+        buffers->GetUniqueSlice(call_start3, ShapeIndex{2, 0}));
+    ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice mid_slice,
+                         buffers->GetUniqueTopLevelSlice(mid_temp));
+
+    EXPECT_EQ(slice0.index(), slice2.index());
+    EXPECT_EQ(slice1.index(), slice2.index());
+    EXPECT_EQ(slice3.index(), slice2.index());
+    EXPECT_EQ(slice0.offset(), slice2.offset());
+    EXPECT_EQ(slice1.offset(), slice2.offset());
+    EXPECT_EQ(slice3.offset(), slice2.offset());
+    EXPECT_FALSE(mid_slice.OverlapsWith(slice2));
+  }
+}
+
+TEST_F(BufferAssignmentTest,
+       ReuseCompatibleTempHeapsReusesCustomInterferenceTempOutsideLiveRange) {
+  constexpr absl::string_view kHlo = R"hlo(
+HloModule main, is_scheduled=true
+
+ENTRY main {
+  p0 = s32[2048]{0} parameter(0)
+  p1 = s32[4096]{0} parameter(1)
+  p2 = s32[8192]{0} parameter(2)
+  oversized_temp = s32[8192]{0} add(p2, p2)
+  oversized_use = s32[16]{0} slice(oversized_temp), slice={[0:16]}
+  pre_temp1 = s32[2048]{0} add(p0, p0)
+  pre_temp2 = s32[2048]{0} negate(p0)
+  pre_sum = s32[2048]{0} add(pre_temp1, pre_temp2)
+  concurrent_temp = s32[4096]{0} add(p1, p1)
+  call-start.0 = ((), (), (s32[4096]{0})) call-start(), to_apply={
+    ROOT tuple.0 = tuple()
+  }
+  call-done.0 = () call-done(call-start.0)
+  post_temp = s32[4096]{0} negate(concurrent_temp)
+  post_use = s32[4096]{0} add(post_temp, p1)
+  post_slice = s32[16]{0} slice(post_use), slice={[0:16]}
+  ROOT out = s32[16]{0} add(post_slice, oversized_use)
+}
+)hlo";
+
+  for (auto algorithm :
+       {buffer_assignment::
+            AssignmentAlgorithmForComputationsWithoutOrderingProto::SPATIAL,
+        buffer_assignment::
+            AssignmentAlgorithmForComputationsWithoutOrderingProto::
+                FAST_MERGE}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(kHlo));
+
+    BufferAssigner::Options opts;
+    opts.allocate_buffers_for_constants = true;
+    opts.assignment_algorithm_for_computations_without_ordering = algorithm;
+    opts.must_not_live_out = [](const HloAliasAnalysis& alias_analysis,
+                                const HloInstruction* instruction,
+                                const ShapeIndex& index) -> bool {
+      return absl::StartsWith(instruction->name(), "call-start");
+    };
+    BufferAssignment::LiveRangeInterferenceOptions live_range_opts;
+    live_range_opts.has_custom_interference =
+        [](const HloAliasAnalysis& alias_analysis,
+           const HloValue& value) -> bool {
+      return absl::StartsWith(value.instruction()->name(), "call-start") &&
+             value.index() == ShapeIndex{2, 0};
+    };
+    live_range_opts.interferes =
+        [](const HloAliasAnalysis& alias_analysis, const HloValue& lhs,
+           const HloValue& rhs) -> std::optional<bool> { return std::nullopt; };
+    opts.live_range_interference_options = live_range_opts;
+
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<BufferAssignment> buffers,
+        BufferAssigner::Run(
+            module.get(),
+            std::make_unique<SequentialHloOrdering>(module->schedule()),
+            [](const BufferValue& buffer) -> int64_t {
+              return buffer.shape().IsTuple() ? 0 : BufferSizeBytes(buffer);
+            },
+            &alias_info_, [](LogicalBuffer::Color) { return 1; },
+            std::move(opts)));
+
+    const HloInstruction* call_start0 =
+        module->entry_computation()->GetInstructionWithName("call-start.0");
+    const HloInstruction* pre_temp1 =
+        module->entry_computation()->GetInstructionWithName("pre_temp1");
+    const HloInstruction* pre_temp2 =
+        module->entry_computation()->GetInstructionWithName("pre_temp2");
+    const HloInstruction* concurrent_temp =
+        module->entry_computation()->GetInstructionWithName("concurrent_temp");
+    const HloInstruction* post_temp =
+        module->entry_computation()->GetInstructionWithName("post_temp");
+
+    ASSERT_OK_AND_ASSIGN(
+        const BufferAllocation::Slice call_slice,
+        buffers->GetUniqueSlice(call_start0, ShapeIndex{2, 0}));
+    ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice pre1_slice,
+                         buffers->GetUniqueTopLevelSlice(pre_temp1));
+    ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice pre2_slice,
+                         buffers->GetUniqueTopLevelSlice(pre_temp2));
+    ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice concurrent_slice,
+                         buffers->GetUniqueTopLevelSlice(concurrent_temp));
+    ASSERT_OK_AND_ASSIGN(const BufferAllocation::Slice post_slice,
+                         buffers->GetUniqueTopLevelSlice(post_temp));
+
+    EXPECT_EQ(pre1_slice.index(), call_slice.index());
+    EXPECT_EQ(pre2_slice.index(), call_slice.index());
+    EXPECT_EQ(post_slice.index(), call_slice.index());
+    EXPECT_TRUE(pre1_slice.OverlapsWith(call_slice));
+    EXPECT_TRUE(pre2_slice.OverlapsWith(call_slice));
+    EXPECT_FALSE(pre1_slice.OverlapsWith(pre2_slice));
+    EXPECT_TRUE(post_slice.OverlapsWith(call_slice));
+    EXPECT_FALSE(concurrent_slice.OverlapsWith(call_slice));
+    EXPECT_TRUE(
+        buffers->CrossColorBuffers(buffers->GetAllocation(call_slice.index()))
+            .empty());
+  }
+}
 }  // namespace
 }  // namespace xla
