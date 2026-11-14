@@ -23,10 +23,11 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
-#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/service/latency_hiding_scheduler.h"
+#include "tsl/profiler/protobuf/profiled_instructions.pb.h"
 
 namespace xla {
 
@@ -70,6 +71,9 @@ class ProfileStatisticsAggregator {
 // an underlying estimator.
 class ProfileGuidedLatencyEstimator : public LatencyEstimator {
  public:
+  // Name of this estimator, e.g. in OpMetadata.scheduler_cost_source.
+  static constexpr absl::string_view kName = "PGLE";
+
   ProfileGuidedLatencyEstimator(
       const SchedulerConfig& config,
       std::unique_ptr<LatencyEstimator> latency_estimator,
