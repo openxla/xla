@@ -524,11 +524,11 @@ namespace xla {
 
 // Highway implementation of `RepackToHardwareLayoutImpl`. See
 // tiled_linearizer.cc for more details.
+#if HWY_IS_LITTLE_ENDIAN
 template <int64_t kPackingFactor, int64_t kTpuLaneCount>
 HWY_INLINE void RepackToHardwareLayoutSublaneHighway(
     const uint32_t* HWY_RESTRICT source_buffer,
     uint32_t* HWY_RESTRICT target_buffer) {
-  static_assert(HWY_IS_LITTLE_ENDIAN, "Must be little endian");
   static_assert(kTpuLaneCount % kPackingFactor == 0,
                 "kTpuLaneCount not a multiple of kPackingFactor");
   constexpr int64_t kNumInterleavedStores =
@@ -572,7 +572,6 @@ template <int64_t kPackingFactor, int64_t kTpuLaneCount>
 HWY_INLINE void RepackToHostLayoutSublaneHighway(
     const uint32_t* HWY_RESTRICT source_buffer,
     uint32_t* HWY_RESTRICT target_buffer) {
-  static_assert(HWY_IS_LITTLE_ENDIAN, "Must be little endian");
   static_assert(kTpuLaneCount % kPackingFactor == 0,
                 "kTpuLaneCount not a multiple of kPackingFactor");
   constexpr int64_t kNumInterleavedLoads = std::min(kPackingFactor, int64_t{4});
@@ -610,6 +609,7 @@ HWY_INLINE void RepackToHostLayoutSublaneHighway(
     static_assert(false, "Unsupported packing factor");
   }
 }
+#endif  // HWY_IS_LITTLE_ENDIAN
 
 }  // namespace xla
 
