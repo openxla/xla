@@ -20,15 +20,18 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/function_ref.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/comparison_util.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
@@ -82,7 +85,53 @@ struct AsyncTraceStepT {
 };
 using AsyncTraceStep = AsyncTraceStepT<HloInstruction>;
 
+// Options controlling backward async dataflow tracing.
+struct AsyncTraceOptions {
+  // Whether to traverse across kWhile instructions and single-caller
+  // while_body parameters.
+  bool traverse_while = true;
+
+  // Optional predicate enabling interprocedural traversal across kCall
+  // instructions and their parameters. When unset or returning false, kCall
+  // boundaries are not crossed.
+  std::optional<absl::FunctionRef<bool(const HloInstruction*)>>
+      can_traverse_call = std::nullopt;
+
+  // Optional output set populated with every kCall instruction traversed along
+  // any path that reaches an instruction matching `is_target`. When non-null,
+  // tracing explores all matching paths instead of stopping at the first match.
+  absl::flat_hash_set<const HloInstruction*>* matched_calls = nullptr;
+};
+
 namespace async_detail {
+
+template <typename T>
+struct TypeIdentity {
+  using type = T;
+};
+
+struct ActiveTraceNode {
+  const HloInstruction* instr = nullptr;
+  std::vector<const HloInstruction*> call_stack;
+
+  bool operator==(const ActiveTraceNode& other) const {
+    return instr == other.instr && call_stack == other.call_stack;
+  }
+
+  template <typename H>
+  friend H AbslHashValue(H h, const ActiveTraceNode& n) {
+    return H::combine(std::move(h), n.instr,
+                      absl::Span<const HloInstruction* const>(n.call_stack));
+  }
+};
+
+template <typename HloInstructionT>
+struct AsyncTraceState {
+  const AsyncTraceOptions& options;
+  std::vector<const HloInstruction*> call_stack;
+  HloInstructionT* first_match = nullptr;
+  std::vector<AsyncTraceStepT<HloInstructionT>>* first_match_steps = nullptr;
+};
 
 template <typename HloInstructionT>
 inline HloInstructionT* GetHloOperand(HloInstructionT* instr, int64_t i) {
@@ -97,13 +146,32 @@ template <typename HloInstructionT>
 HloInstructionT* TraceAsyncDataflowImpl(
     HloInstructionT* instr,
     absl::FunctionRef<bool(const HloInstruction*)> is_target, ShapeIndex index,
-    absl::flat_hash_set<const HloInstruction*>& visited,
-    std::vector<AsyncTraceStepT<HloInstructionT>>* backward_steps) {
-  if (instr == nullptr || !visited.insert(instr).second) {
+    absl::flat_hash_set<ActiveTraceNode>& visited,
+    std::vector<AsyncTraceStepT<HloInstructionT>>* backward_steps,
+    AsyncTraceState<HloInstructionT>& state) {
+  ActiveTraceNode active_node{instr, state.call_stack};
+  if (instr == nullptr || !visited.insert(active_node).second) {
     return nullptr;
   }
 
   if (is_target(instr)) {
+    if (state.options.matched_calls != nullptr) {
+      if (state.first_match == nullptr) {
+        state.first_match = instr;
+        if (state.first_match_steps != nullptr && backward_steps != nullptr) {
+          *state.first_match_steps = *backward_steps;
+        }
+      }
+      if (backward_steps != nullptr) {
+        for (const auto& step : *backward_steps) {
+          if (step.instruction->opcode() == HloOpcode::kCall) {
+            state.options.matched_calls->insert(step.instruction);
+          }
+        }
+      }
+      visited.erase(active_node);
+      return nullptr;
+    }
     return instr;
   }
 
@@ -119,15 +187,16 @@ HloInstructionT* TraceAsyncDataflowImpl(
     if (backward_steps != nullptr) {
       backward_steps->resize(steps_size);
     }
-    visited.erase(instr);
+    visited.erase(active_node);
   };
 
   switch (instr->opcode()) {
     case HloOpcode::kGetTupleElement: {
       record_step(0);
       index.push_back(instr->tuple_index());
-      HloInstructionT* res = TraceAsyncDataflowImpl(
-          GetHloOperand(instr, 0), is_target, index, visited, backward_steps);
+      HloInstructionT* res =
+          TraceAsyncDataflowImpl(GetHloOperand(instr, 0), is_target, index,
+                                 visited, backward_steps, state);
       if (res != nullptr) {
         return res;
       }
@@ -139,8 +208,9 @@ HloInstructionT* TraceAsyncDataflowImpl(
       if (instr->opcode() == HloOpcode::kOptimizationBarrier &&
           instr->operand_count() == 1) {
         record_step(0);
-        HloInstructionT* res = TraceAsyncDataflowImpl(
-            GetHloOperand(instr, 0), is_target, index, visited, backward_steps);
+        HloInstructionT* res =
+            TraceAsyncDataflowImpl(GetHloOperand(instr, 0), is_target, index,
+                                   visited, backward_steps, state);
         if (res != nullptr) {
           return res;
         }
@@ -158,7 +228,7 @@ HloInstructionT* TraceAsyncDataflowImpl(
           record_step(idx);
           HloInstructionT* res =
               TraceAsyncDataflowImpl(GetHloOperand(instr, idx), is_target,
-                                     index, visited, backward_steps);
+                                     index, visited, backward_steps, state);
           if (res != nullptr) {
             return res;
           }
@@ -175,7 +245,7 @@ HloInstructionT* TraceAsyncDataflowImpl(
         record_step(idx);
         HloInstructionT* res =
             TraceAsyncDataflowImpl(GetHloOperand(instr, idx), is_target, index,
-                                   visited, backward_steps);
+                                   visited, backward_steps, state);
         if (res != nullptr) {
           return res;
         }
@@ -192,8 +262,28 @@ HloInstructionT* TraceAsyncDataflowImpl(
       }
       if (instr->operand_count() > 0) {
         record_step(0);
+        HloInstructionT* res =
+            TraceAsyncDataflowImpl(GetHloOperand(instr, 0), is_target, index,
+                                   visited, backward_steps, state);
+        if (res != nullptr) {
+          return res;
+        }
+      }
+      revert_step();
+      return nullptr;
+    }
+    case HloOpcode::kCall: {
+      if (state.options.can_traverse_call.has_value() &&
+          (*state.options.can_traverse_call)(instr) &&
+          instr->called_computations().size() == 1 &&
+          instr->to_apply()->root_instruction() != nullptr &&
+          !absl::c_linear_search(state.call_stack, instr)) {
+        record_step(0);
+        state.call_stack.push_back(instr);
         HloInstructionT* res = TraceAsyncDataflowImpl(
-            GetHloOperand(instr, 0), is_target, index, visited, backward_steps);
+            const_cast<HloInstructionT*>(instr->to_apply()->root_instruction()),
+            is_target, index, visited, backward_steps, state);
+        state.call_stack.pop_back();
         if (res != nullptr) {
           return res;
         }
@@ -202,8 +292,52 @@ HloInstructionT* TraceAsyncDataflowImpl(
       return nullptr;
     }
     case HloOpcode::kParameter: {
+      const int64_t param_num = instr->parameter_number();
       auto* comp = instr->parent();
-      if (comp != nullptr) {
+      if (!state.call_stack.empty() &&
+          state.call_stack.back()->to_apply() == comp) {
+        const HloInstruction* call = state.call_stack.back();
+        if (param_num >= 0 && param_num < call->operand_count()) {
+          state.call_stack.pop_back();
+          HloInstructionT* res = TraceAsyncDataflowImpl(
+              const_cast<HloInstructionT*>(call->operand(param_num)), is_target,
+              index, visited, backward_steps, state);
+          state.call_stack.push_back(call);
+          if (res != nullptr) {
+            return res;
+          }
+        }
+        revert_step();
+        return nullptr;
+      }
+      if (state.options.can_traverse_call.has_value() && comp != nullptr) {
+        auto callers = comp->caller_instructions(HloOpcode::kCall);
+        absl::c_sort(callers,
+                     [](const HloInstruction* a, const HloInstruction* b) {
+                       return a->unique_id() < b->unique_id();
+                     });
+        for (HloInstruction* caller : callers) {
+          if (!(*state.options.can_traverse_call)(caller) || param_num < 0 ||
+              param_num >= caller->operand_count() ||
+              absl::c_linear_search(state.call_stack, caller)) {
+            continue;
+          }
+          if (backward_steps != nullptr) {
+            backward_steps->push_back(
+                {const_cast<HloInstructionT*>(caller), param_num});
+          }
+          HloInstructionT* res = TraceAsyncDataflowImpl(
+              const_cast<HloInstructionT*>(caller->operand(param_num)),
+              is_target, index, visited, backward_steps, state);
+          if (res != nullptr) {
+            return res;
+          }
+          if (backward_steps != nullptr) {
+            backward_steps->resize(steps_size);
+          }
+        }
+      }
+      if (state.options.traverse_while && comp != nullptr) {
         auto callers = comp->caller_instructions(HloOpcode::kWhile);
         if (callers.size() == 1) {
           auto* while_op = callers.front();
@@ -211,7 +345,7 @@ HloInstructionT* TraceAsyncDataflowImpl(
             record_step(0);
             HloInstructionT* res = TraceAsyncDataflowImpl(
                 const_cast<HloInstructionT*>(GetHloOperand(while_op, 0)),
-                is_target, index, visited, backward_steps);
+                is_target, index, visited, backward_steps, state);
             if (res != nullptr) {
               return res;
             }
@@ -221,7 +355,7 @@ HloInstructionT* TraceAsyncDataflowImpl(
             if (comp->root_instruction() != nullptr) {
               HloInstructionT* root_res = TraceAsyncDataflowImpl(
                   const_cast<HloInstructionT*>(comp->root_instruction()),
-                  is_target, index, visited, backward_steps);
+                  is_target, index, visited, backward_steps, state);
               if (root_res != nullptr) {
                 return root_res;
               }
@@ -233,26 +367,28 @@ HloInstructionT* TraceAsyncDataflowImpl(
       return nullptr;
     }
     case HloOpcode::kWhile: {
-      if (instr->while_body() != nullptr &&
-          instr->while_body()->root_instruction() != nullptr) {
-        HloInstructionT* root_res =
-            TraceAsyncDataflowImpl(const_cast<HloInstructionT*>(
-                                       instr->while_body()->root_instruction()),
-                                   is_target, index, visited, backward_steps);
-        if (root_res != nullptr) {
-          return root_res;
+      if (state.options.traverse_while) {
+        if (instr->while_body() != nullptr &&
+            instr->while_body()->root_instruction() != nullptr) {
+          HloInstructionT* root_res = TraceAsyncDataflowImpl(
+              const_cast<HloInstructionT*>(
+                  instr->while_body()->root_instruction()),
+              is_target, index, visited, backward_steps, state);
+          if (root_res != nullptr) {
+            return root_res;
+          }
+          if (backward_steps != nullptr) {
+            backward_steps->resize(steps_size);
+          }
         }
-        if (backward_steps != nullptr) {
-          backward_steps->resize(steps_size);
-        }
-      }
-      if (instr->operand_count() > 0) {
-        record_step(0);
-        HloInstructionT* res = TraceAsyncDataflowImpl(
-            const_cast<HloInstructionT*>(GetHloOperand(instr, 0)), is_target,
-            index, visited, backward_steps);
-        if (res != nullptr) {
-          return res;
+        if (instr->operand_count() > 0) {
+          record_step(0);
+          HloInstructionT* res = TraceAsyncDataflowImpl(
+              const_cast<HloInstructionT*>(GetHloOperand(instr, 0)), is_target,
+              index, visited, backward_steps, state);
+          if (res != nullptr) {
+            return res;
+          }
         }
       }
       revert_step();
@@ -269,7 +405,8 @@ HloInstructionT* TraceAsyncDataflowImpl(
 
 // Traces backward from `instr` through allowed async intermediary
 // instructions (tuples, get-tuple-elements, optimization barriers, copies,
-// allowed async intermediary custom-calls) until `is_target` returns true.
+// allowed async intermediary custom-calls, and optionally kWhile / kCall
+// instructions per `options`) until `is_target` returns true.
 //
 // Returns the matched instruction, or nullptr if no path is found.
 // If `backward_steps` is provided, records the sequence of (instruction,
@@ -278,21 +415,45 @@ template <typename HloInstructionT>
 HloInstructionT* TraceAsyncDataflow(
     HloInstructionT* instr,
     absl::FunctionRef<bool(const HloInstruction*)> is_target,
-    std::vector<AsyncTraceStepT<HloInstructionT>>* backward_steps = nullptr) {
+    std::vector<AsyncTraceStepT<typename async_detail::TypeIdentity<
+        HloInstructionT>::type>>* backward_steps = nullptr,
+    const AsyncTraceOptions& options = {}) {
   ShapeIndex index;
-  absl::flat_hash_set<const HloInstruction*> visited;
-  return async_detail::TraceAsyncDataflowImpl(instr, is_target, index, visited,
-                                              backward_steps);
+  absl::flat_hash_set<async_detail::ActiveTraceNode> visited;
+  std::vector<AsyncTraceStepT<HloInstructionT>> local_steps;
+  std::vector<AsyncTraceStepT<HloInstructionT>> saved_first_steps;
+  const bool caller_wants_steps = (backward_steps != nullptr);
+  if (!caller_wants_steps && options.matched_calls != nullptr) {
+    backward_steps = &local_steps;
+  }
+  async_detail::AsyncTraceState<HloInstructionT> state{
+      options,
+      /*call_stack=*/{},
+      /*first_match=*/nullptr,
+      caller_wants_steps && options.matched_calls != nullptr
+          ? &saved_first_steps
+          : nullptr};
+  HloInstructionT* res = async_detail::TraceAsyncDataflowImpl(
+      instr, is_target, index, visited, backward_steps, state);
+  if (options.matched_calls != nullptr) {
+    if (caller_wants_steps) {
+      *backward_steps = std::move(saved_first_steps);
+    }
+    return state.first_match;
+  }
+  return res;
 }
 
 template <typename HloInstructionT>
 HloInstructionT* TraceAsyncDataflow(
     HloInstructionT* instr, const HloInstruction* target,
-    std::vector<AsyncTraceStepT<HloInstructionT>>* backward_steps = nullptr) {
+    std::vector<AsyncTraceStepT<typename async_detail::TypeIdentity<
+        HloInstructionT>::type>>* backward_steps = nullptr,
+    const AsyncTraceOptions& options = {}) {
   return TraceAsyncDataflow(
       instr,
       [target](const HloInstruction* candidate) { return candidate == target; },
-      backward_steps);
+      backward_steps, options);
 }
 
 // Traces backward from an instruction to find the immediate async producer

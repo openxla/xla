@@ -147,6 +147,331 @@ namespace async {
 namespace {
 
 using async_detail::GetHloOperand;
+using CallStack = absl::InlinedVector<const HloInstruction*, 4>;
+
+struct ActiveTraceNode {
+  const HloInstruction* instr = nullptr;
+  CallStack call_stack;
+
+  bool operator==(const ActiveTraceNode& other) const {
+    return instr == other.instr && call_stack == other.call_stack;
+  }
+
+  template <typename H>
+  friend H AbslHashValue(H h, const ActiveTraceNode& n) {
+    return H::combine(std::move(h), n.instr,
+                      absl::Span<const HloInstruction* const>(n.call_stack));
+  }
+};
+
+struct AsyncTraceStateKey {
+  const HloInstruction* instr = nullptr;
+  ShapeIndex index;
+  CallStack call_stack;
+
+  bool operator==(const AsyncTraceStateKey& other) const {
+    return instr == other.instr && index == other.index &&
+           call_stack == other.call_stack;
+  }
+
+  template <typename H>
+  friend H AbslHashValue(H h, const AsyncTraceStateKey& k) {
+    return H::combine(std::move(h), k.instr, absl::Span<const int64_t>(k.index),
+                      absl::Span<const HloInstruction* const>(k.call_stack));
+  }
+};
+
+struct TraceResult {
+  const HloInstruction* target = nullptr;
+  absl::flat_hash_set<const HloInstruction*> calls;
+};
+
+class AsyncDataflowTracer {
+ public:
+  AsyncDataflowTracer(
+      absl::FunctionRef<bool(const HloInstruction*)> is_target,
+      std::vector<AsyncTraceStepT<const HloInstruction>>* backward_steps,
+      const AsyncTraceOptions& options)
+      : is_target_(is_target),
+        backward_steps_(backward_steps),
+        options_(options),
+        collect_all_calls_(options.matched_calls != nullptr) {}
+
+  const HloInstruction* Run(const HloInstruction* instr) {
+    ShapeIndex index;
+    CallStack call_stack;
+    bool depended_on_cycle = false;
+    TraceResult res = Trace(instr, index, call_stack, &depended_on_cycle);
+    if (collect_all_calls_) {
+      if (res.target != nullptr) {
+        options_.matched_calls->insert(res.calls.begin(), res.calls.end());
+      }
+      if (backward_steps_ != nullptr) {
+        if (first_match_ != nullptr) {
+          *backward_steps_ = std::move(first_match_steps_);
+        } else {
+          backward_steps_->clear();
+        }
+      }
+      return first_match_ != nullptr ? first_match_ : res.target;
+    }
+    return res.target;
+  }
+
+ private:
+  TraceResult Trace(const HloInstruction* instr, const ShapeIndex& index,
+                    const CallStack& call_stack,
+                    bool* caller_depended_on_cycle) {
+    if (instr == nullptr) {
+      return {};
+    }
+    AsyncTraceStateKey state_key{instr, index, call_stack};
+    if (auto it = memo_.find(state_key); it != memo_.end()) {
+      return it->second;
+    }
+    ActiveTraceNode active_node{instr, call_stack};
+    if (!active_.insert(active_node).second) {
+      *caller_depended_on_cycle = true;
+      return {};
+    }
+
+    if (is_target_(instr)) {
+      if (collect_all_calls_ && first_match_ == nullptr) {
+        first_match_ = instr;
+        if (backward_steps_ != nullptr) {
+          first_match_steps_ = *backward_steps_;
+        }
+      }
+      active_.erase(active_node);
+      TraceResult res{instr, {}};
+      if (collect_all_calls_) {
+        memo_.emplace(std::move(state_key), res);
+      }
+      return res;
+    }
+
+    const size_t steps_size =
+        (backward_steps_ != nullptr) ? backward_steps_->size() : 0;
+    bool depended_on_cycle = false;
+    TraceResult combined;
+
+    auto visit_branch =
+        [&](const HloInstruction* next_instr, const ShapeIndex& next_index,
+            const CallStack& next_stack,
+            std::optional<AsyncTraceStepT<const HloInstruction>> step,
+            const HloInstruction* crossed_call = nullptr) -> bool {
+      if (backward_steps_ != nullptr && step.has_value()) {
+        backward_steps_->push_back(*step);
+      }
+      bool child_cycle = false;
+      TraceResult sub = Trace(next_instr, next_index, next_stack, &child_cycle);
+      if (sub.target != nullptr) {
+        if (!collect_all_calls_) {
+          combined = std::move(sub);
+          return true;
+        }
+        if (combined.target == nullptr) {
+          combined.target = sub.target;
+        }
+        combined.calls.insert(sub.calls.begin(), sub.calls.end());
+        if (crossed_call != nullptr) {
+          combined.calls.insert(crossed_call);
+        }
+      } else if (child_cycle) {
+        depended_on_cycle = true;
+      }
+      if (backward_steps_ != nullptr) {
+        backward_steps_->resize(steps_size);
+      }
+      return false;
+    };
+
+    switch (instr->opcode()) {
+      case HloOpcode::kGetTupleElement: {
+        ShapeIndex next_index = index;
+        next_index.push_back(instr->tuple_index());
+        if (visit_branch(instr->operand(0), next_index, call_stack,
+                         AsyncTraceStepT<const HloInstruction>{instr, 0})) {
+          active_.erase(active_node);
+          return combined;
+        }
+        break;
+      }
+      case HloOpcode::kTuple:
+      case HloOpcode::kOptimizationBarrier: {
+        if (instr->opcode() == HloOpcode::kOptimizationBarrier &&
+            instr->operand_count() == 1) {
+          if (visit_branch(instr->operand(0), index, call_stack,
+                           AsyncTraceStepT<const HloInstruction>{instr, 0})) {
+            active_.erase(active_node);
+            return combined;
+          }
+          break;
+        }
+        if (index.empty()) {
+          // An empty ShapeIndex at a kTuple rebuilds an async context tuple
+          // `((operands...), output, sync_state...)`. Visit producer defined
+          // elements 1..n-1 before element 0, which may forward an input
+          // operand shared with a sibling async op.
+          const int64_t n = instr->operand_count();
+          for (int64_t i = 1; i <= n; ++i) {
+            const int64_t idx = i % n;
+            if (visit_branch(
+                    instr->operand(idx), index, call_stack,
+                    AsyncTraceStepT<const HloInstruction>{instr, idx})) {
+              active_.erase(active_node);
+              return combined;
+            }
+          }
+          break;
+        }
+        int64_t idx = index.back();
+        if (idx >= 0 && idx < instr->operand_count()) {
+          ShapeIndex next_index = index;
+          next_index.pop_back();
+          if (visit_branch(instr->operand(idx), next_index, call_stack,
+                           AsyncTraceStepT<const HloInstruction>{instr, idx})) {
+            active_.erase(active_node);
+            return combined;
+          }
+        }
+        break;
+      }
+      case HloOpcode::kCopy:
+      case HloOpcode::kCustomCall: {
+        if (instr->opcode() == HloOpcode::kCustomCall &&
+            !instr->IsAllowedAsyncIntermediaryCustomCall()) {
+          break;
+        }
+        if (instr->operand_count() > 0 &&
+            visit_branch(instr->operand(0), index, call_stack,
+                         AsyncTraceStepT<const HloInstruction>{instr, 0})) {
+          active_.erase(active_node);
+          return combined;
+        }
+        break;
+      }
+      case HloOpcode::kCall: {
+        if (options_.can_traverse_call.has_value() &&
+            (*options_.can_traverse_call)(instr) &&
+            instr->called_computations().size() == 1 &&
+            instr->to_apply()->root_instruction() != nullptr &&
+            !absl::c_linear_search(call_stack, instr)) {
+          CallStack next_stack = call_stack;
+          next_stack.push_back(instr);
+          if (visit_branch(instr->to_apply()->root_instruction(), index,
+                           next_stack,
+                           AsyncTraceStepT<const HloInstruction>{instr, 0},
+                           /*crossed_call=*/instr)) {
+            active_.erase(active_node);
+            return combined;
+          }
+        }
+        break;
+      }
+      case HloOpcode::kParameter: {
+        const int64_t param_num = instr->parameter_number();
+        const HloComputation* comp = instr->parent();
+        if (!call_stack.empty() && call_stack.back()->to_apply() == comp) {
+          const HloInstruction* call = call_stack.back();
+          if (param_num >= 0 && param_num < call->operand_count()) {
+            CallStack next_stack = call_stack;
+            next_stack.pop_back();
+            if (visit_branch(call->operand(param_num), index, next_stack,
+                             /*step=*/std::nullopt)) {
+              active_.erase(active_node);
+              return combined;
+            }
+          }
+          break;
+        }
+        if (options_.can_traverse_call.has_value() && comp != nullptr) {
+          absl::InlinedVector<HloInstruction*, 1> callers =
+              comp->caller_instructions(HloOpcode::kCall);
+          absl::c_sort(callers,
+                       [](const HloInstruction* a, const HloInstruction* b) {
+                         return a->unique_id() < b->unique_id();
+                       });
+          for (const HloInstruction* caller : callers) {
+            if (!(*options_.can_traverse_call)(caller) || param_num < 0 ||
+                param_num >= caller->operand_count() ||
+                absl::c_linear_search(call_stack, caller)) {
+              continue;
+            }
+            if (visit_branch(
+                    caller->operand(param_num), index, call_stack,
+                    AsyncTraceStepT<const HloInstruction>{caller, param_num},
+                    /*crossed_call=*/caller)) {
+              active_.erase(active_node);
+              return combined;
+            }
+          }
+        }
+        if (options_.traverse_while && comp != nullptr) {
+          auto callers = comp->caller_instructions(HloOpcode::kWhile);
+          if (callers.size() == 1) {
+            const HloInstruction* while_op = callers.front();
+            if (while_op->while_body() == comp) {
+              if (while_op->operand_count() > 0 &&
+                  visit_branch(
+                      while_op->operand(0), index, call_stack,
+                      AsyncTraceStepT<const HloInstruction>{instr, 0})) {
+                active_.erase(active_node);
+                return combined;
+              }
+              if (comp->root_instruction() != nullptr &&
+                  visit_branch(comp->root_instruction(), index, call_stack,
+                               /*step=*/std::nullopt)) {
+                active_.erase(active_node);
+                return combined;
+              }
+            }
+          }
+        }
+        break;
+      }
+      case HloOpcode::kWhile: {
+        if (options_.traverse_while) {
+          if (instr->while_body() != nullptr &&
+              instr->while_body()->root_instruction() != nullptr &&
+              visit_branch(instr->while_body()->root_instruction(), index,
+                           call_stack, /*step=*/std::nullopt)) {
+            active_.erase(active_node);
+            return combined;
+          }
+          if (instr->operand_count() > 0 &&
+              visit_branch(instr->operand(0), index, call_stack,
+                           AsyncTraceStepT<const HloInstruction>{instr, 0})) {
+            active_.erase(active_node);
+            return combined;
+          }
+        }
+        break;
+      }
+      default:
+        break;
+    }
+
+    active_.erase(active_node);
+    if (depended_on_cycle) {
+      *caller_depended_on_cycle = true;
+    }
+    if (!depended_on_cycle &&
+        (collect_all_calls_ || combined.target == nullptr)) {
+      memo_.emplace(std::move(state_key), combined);
+    }
+    return combined;
+  }
+
+  absl::FunctionRef<bool(const HloInstruction*)> is_target_;
+  std::vector<AsyncTraceStepT<const HloInstruction>>* backward_steps_;
+  const AsyncTraceOptions& options_;
+  bool collect_all_calls_;
+  const HloInstruction* first_match_ = nullptr;
+  std::vector<AsyncTraceStepT<const HloInstruction>> first_match_steps_;
+  absl::flat_hash_set<ActiveTraceNode> active_;
+  absl::flat_hash_map<AsyncTraceStateKey, TraceResult> memo_;
+};
 
 template <typename HloInstructionT>
 HloInstructionT* FindAsyncStartImpl(HloInstructionT* instr) {

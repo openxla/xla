@@ -25,6 +25,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "xla/comparison_util.h"
@@ -1081,6 +1082,60 @@ ENTRY main {
   EXPECT_EQ(async::FindAsyncStart(big_done), big);
   EXPECT_EQ(async::FindAsyncDone(big), big_done);
   EXPECT_EQ(async::FindAsyncDone(small), small_done);
+}
+
+TEST_F(HloInstructionUtilsTest, TraceAsyncDataflowAcrossCalls) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule TraceAsyncDataflowAcrossCalls
+
+    %wrapper (p: f32[8]) -> f32[8] {
+      %p = f32[8] parameter(0)
+      ROOT %barrier = f32[8] opt-barrier(%p)
+    }
+
+    %done_callee (q: f32[8]) -> f32[8] {
+      %q = f32[8] parameter(0)
+      ROOT %done = f32[8] custom-call(%q), custom_call_target="op-done"
+    }
+
+    ENTRY %main (x: f32[8], y: f32[8]) -> (f32[8], f32[8], f32[8]) {
+      %x = f32[8] parameter(0)
+      %y = f32[8] parameter(1)
+      %start0 = f32[8] custom-call(%x), custom_call_target="op-start"
+      %start1 = f32[8] custom-call(%y), custom_call_target="op-start"
+      %wrapped0 = f32[8] call(%start0), to_apply=%wrapper
+      %c1 = f32[8] call(%wrapped0), to_apply=%done_callee
+      %c2 = f32[8] call(%start1), to_apply=%done_callee
+      %c3 = f32[8] call(%y), to_apply=%done_callee
+      ROOT %res = (f32[8], f32[8], f32[8]) tuple(%c1, %c2, %c3)
+    }
+  )hlo";
+
+  ASSERT_OK_AND_ASSIGN(auto m, ParseAndReturnVerifiedModule(kHlo));
+  const HloInstruction* done = FindInstruction(m.get(), "done");
+  const HloInstruction* wrapped0 = FindInstruction(m.get(), "wrapped0");
+  const HloInstruction* c1 = FindInstruction(m.get(), "c1");
+  const HloInstruction* c2 = FindInstruction(m.get(), "c2");
+  auto is_start = [](const HloInstruction* inst) {
+    return inst->IsCustomCall("op-start");
+  };
+
+  // By default, kCall boundaries are not crossed.
+  EXPECT_EQ(async::TraceAsyncDataflow(done->operand(0), is_start), nullptr);
+
+  // With call traversal and matched_calls enabled, all calls along matching
+  // caller paths (wrapped0, c1, c2) are collected, excluding unrelated c3.
+  absl::flat_hash_set<const HloInstruction*> matched_calls;
+  auto allow_all_calls = [](const HloInstruction*) { return true; };
+  async::AsyncTraceOptions options;
+  options.traverse_while = false;
+  options.can_traverse_call = allow_all_calls;
+  options.matched_calls = &matched_calls;
+
+  EXPECT_NE(async::TraceAsyncDataflow(done->operand(0), is_start,
+                                      /*backward_steps=*/nullptr, options),
+            nullptr);
+  EXPECT_THAT(matched_calls, ::testing::UnorderedElementsAre(wrapped0, c1, c2));
 }
 
 }  // namespace
