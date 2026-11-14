@@ -40,7 +40,6 @@ limitations under the License.
 #include "third_party/cudnn_frontend/include/cudnn_frontend_utils.h"
 #include "third_party/cudnn_frontend/include/cudnn_frontend_version.h"
 #include "third_party/gpus/cudnn/cudnn_version.h"
-#include "tsl/platform/tensor_float_32_utils.h"
 #include "xla/backends/gpu/transforms/block_scaling_rewriter.h"
 #include "xla/backends/gpu/transforms/compiled_cudnn_graph_cache.h"
 #include "xla/backends/gpu/transforms/cudnn_fusion_utils.h"
@@ -80,6 +79,7 @@ limitations under the License.
 #include "xla/tsl/protobuf/dnn.pb.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/platform/tensor_float_32_utils.h"
 
 namespace xla {
 namespace gpu {
@@ -1377,6 +1377,8 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
             "moe_grouped_matmul_bwd requires cuDNN frontend 1.22.1+.");
 #endif  // CUDNN_FRONTEND_VERSION >= 12201
       } else {
+        // On cuDNN < 9.15 the frontend returns GRAPH_NOT_SUPPORTED from
+        // build_operation_graph(), which CudnnGraph::Prepare propagates.
         auto moe_grouped_matmul_attr =
             graph::Moe_grouped_matmul_attributes()
                 .set_mode(fe::MoeGroupedMatmulMode_t::NONE)

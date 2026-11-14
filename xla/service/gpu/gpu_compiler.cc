@@ -849,10 +849,12 @@ Decision IsScaledDotSupportedByBackend(const HloInstruction* instr,
 }
 
 absl::Status RunOptimizationPasses(
-    HloModule* hlo_module, const GpuTargetConfig& gpu_target_config,
+    const GpuCompiler& compiler, HloModule* hlo_module,
+    const GpuTargetConfig& gpu_target_config,
     const AlgebraicSimplifierOptions& layout_insensitive_algsimp_opts,
-    bool is_deviceless, bool is_early_exit_with_layouts,
-    CompilationStats* compilation_stats) {
+    se::StreamExecutor* absl_nullable stream_exec,
+    bool is_early_exit_with_layouts, CompilationStats* compilation_stats) {
+  const bool is_deviceless = stream_exec == nullptr;
   const DebugOptions& debug_options = hlo_module->config().debug_options();
   se::GpuComputeCapability gpu_version =
       gpu_target_config.device_description.gpu_compute_capability();
@@ -866,7 +868,12 @@ absl::Status RunOptimizationPasses(
   pipeline.AddPass<RaggedDotRewriter>(
       gpu_version,
       se::dnn::VersionInfo(gpu_target_config.device_description.dnn_version()),
-      gpu_target_config.device_description.runtime_version());
+      gpu_target_config.device_description.runtime_version(),
+      [&compiler, &gpu_target_config,
+       stream_exec](const HloInstruction* ragged_dot) {
+        return compiler.IsRaggedDotSupportedByCuDnn(
+            ragged_dot, gpu_target_config, stream_exec);
+      });
   pipeline.AddPass<ScaledDotRewriter>(
       [&gpu_target_config, is_deviceless](const HloInstruction* instr) {
         Decision d = IsScaledDotSupportedByBackend(instr, gpu_target_config,
@@ -1971,10 +1978,9 @@ absl::Status GpuCompiler::OptimizeHloModule(
   DumpHloModuleIfEnabled(*hlo_module, "after_spmd_partitioner");
 
   ABSL_RETURN_IF_ERROR(RunOptimizationPasses(
-      hlo_module, gpu_topology.gpu_target_config(),
-      layout_insensitive_algsimp_opts,
-      /*is_deviceless=*/stream_exec == nullptr, options.early_exit_with_layouts,
-      compilation_stats));
+      *this, hlo_module, gpu_topology.gpu_target_config(),
+      layout_insensitive_algsimp_opts, stream_exec,
+      options.early_exit_with_layouts, compilation_stats));
   se::GpuComputeCapability gpu_version =
       device_description.gpu_compute_capability();
   ABSL_RETURN_IF_ERROR(RunCollectiveOptimizationPasses(
