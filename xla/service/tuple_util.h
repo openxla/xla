@@ -27,6 +27,14 @@ limitations under the License.
 #include "xla/shape_util.h"
 
 namespace xla {
+// ExtractPrefix, AppendSuffix, Duplicate, ReplaceTupleWith, and
+// AddGetTupleElements derive the original values (see hlo_original_value.h) of
+// the instructions they create from those of the instructions they are built
+// from, since each element they create holds the same value as the element it
+// is taken from. An input's original value is only used if it has the same
+// tuple structure as the input's shape. If a caller changes the shape of an
+// input in place, it must update the input's original value first; otherwise
+// the instructions built from that input are left without original values.
 class TupleUtil {
  public:
   // Generates HLO instructions to get a prefix tuple from `input_tuple` (which

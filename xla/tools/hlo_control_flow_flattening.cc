@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_original_value_util.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/literal.h"
@@ -164,12 +165,17 @@ absl::Status HloControlFlowFlattening::FlattenWhileLoop(
   ABSL_RETURN_IF_ERROR(
       while_hlo->ReplaceOperandWithDifferentShape(0, new_tuple));
 
-  auto change_op_shape = [&](HloInstruction* instruction) {
+  auto change_op_shape = [&](HloInstruction* instruction) -> absl::Status {
     Shape* shape = instruction->mutable_shape();
     CHECK(shape->IsTuple());
     CHECK_EQ(shape->tuple_shapes().size(), new_tuple_size - 1);
     Shape* subshape = shape->add_tuple_shapes();
-    return ShapeUtil::PopulateShape(S32, {}, subshape);
+    ABSL_RETURN_IF_ERROR(ShapeUtil::PopulateShape(S32, {}, subshape));
+    // Keep the original value in sync with the widened shape, so that the
+    // instructions built from `instruction` below can derive their original
+    // values from it. The induction variable has no original value.
+    AppendEmptyElementsToOriginalValue(instruction);
+    return absl::OkStatus();
   };
 
   // Replace the given tuple-shaped instruction of size N in each of its

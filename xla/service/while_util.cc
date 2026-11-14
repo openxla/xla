@@ -286,8 +286,6 @@ WhileUtil::MakeInstructionsLiveIn(
   HloInstruction* new_while = while_instr->AddInstruction(
       HloInstruction::CreateWhile(new_while_shape, new_while_condition,
                                   new_while_body, new_while_init));
-  new_while_init->set_original_value(
-      while_instr->while_init()->original_value());
   new_while->set_original_value(while_instr->original_value());
   if (while_instr->while_body()->num_parameters() == 1) {
     CHECK_EQ(new_while_body->num_parameters(), 1);
@@ -312,7 +310,6 @@ WhileUtil::MakeInstructionsLiveIn(
   // instead of relying on HloComputation::ReplaceInstruction.
   HloInstruction* replacement_instr = TupleUtil::ExtractPrefix(
       new_while, while_instr->shape().tuple_shapes().size());
-  replacement_instr->CopyOriginalValue(while_instr);
   ABSL_RETURN_IF_ERROR(new_while->CopyAllControlDepsFrom(while_instr));
   ABSL_RETURN_IF_ERROR(while_instr->DropAllControlDeps());
   ABSL_RETURN_IF_ERROR(while_instr->ReplaceAllUsesWith(replacement_instr));

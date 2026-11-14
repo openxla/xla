@@ -778,5 +778,72 @@ ENTRY main {
       "new_idx 0");
 }
 
+TEST_F(OriginalValueHloTest, AppendEmptyElementsToOriginalValue) {
+  const char* hlo_string = R"(
+HloModule test
+
+ENTRY main {
+  ROOT p0 = (f32[], f32[]) parameter(0), origin={({"a"}, {"b"}),["call"]}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  HloInstruction* p0 = FindInstruction(module.get(), "p0");
+  *p0->mutable_shape()->add_tuple_shapes() = ShapeUtil::MakeScalarShape(S32);
+  *p0->mutable_shape()->add_tuple_shapes() = ShapeUtil::MakeScalarShape(S32);
+
+  AppendEmptyElementsToOriginalValue(p0);
+
+  ASSERT_NE(p0->original_value(), nullptr);
+  EXPECT_EQ(p0->original_value()->ToString(),
+            R"(({"a"}, {"b"}, {}, {}),["call"])");
+}
+
+TEST_F(OriginalValueHloTest,
+       AppendEmptyElementsToOriginalValueIgnoresNonAppendedShape) {
+  const char* hlo_string = R"(
+HloModule test
+
+ENTRY main {
+  ROOT p0 = (f32[], f32[]) parameter(0), origin={({"a"}, {"b"})}
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnUnverifiedModule(hlo_string));
+  HloInstruction* p0 = FindInstruction(module.get(), "p0");
+  // Insert a tuple element at the front, so the existing elements no longer
+  // match the leading elements of the shape.
+  *p0->mutable_shape() = ShapeUtil::MakeTupleShape(
+      {ShapeUtil::MakeTupleShape({ShapeUtil::MakeScalarShape(S32)}),
+       ShapeUtil::MakeScalarShape(F32), ShapeUtil::MakeScalarShape(F32)});
+  const std::shared_ptr<OriginalValue> old_original_value =
+      p0->original_value();
+
+  AppendEmptyElementsToOriginalValue(p0);
+
+  EXPECT_EQ(p0->original_value(), old_original_value);
+}
+
+TEST_F(OriginalValueHloTest, AppendEmptyElementsToOriginalValueNoOp) {
+  const char* hlo_string = R"(
+HloModule test
+
+ENTRY main {
+  p0 = (f32[], f32[]) parameter(0), origin={({"a"}, {"b"})}
+  ROOT p1 = (f32[], f32[]) parameter(1)
+}
+)";
+  ASSERT_OK_AND_ASSIGN(auto module, ParseAndReturnVerifiedModule(hlo_string));
+  HloInstruction* p0 = FindInstruction(module.get(), "p0");
+  HloInstruction* p1 = FindInstruction(module.get(), "p1");
+  const std::shared_ptr<OriginalValue> old_original_value =
+      p0->original_value();
+
+  // The shapes were not widened, and `p1` has no original value.
+  AppendEmptyElementsToOriginalValue(p0);
+  AppendEmptyElementsToOriginalValue(p1);
+
+  EXPECT_EQ(p0->original_value(), old_original_value);
+  EXPECT_EQ(p1->original_value(), nullptr);
+}
+
 }  // namespace
 }  // namespace xla
