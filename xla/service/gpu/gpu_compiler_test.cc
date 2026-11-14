@@ -211,7 +211,7 @@ class GpuCompilerTest
   // backends/gpu/codegen/triton/support.h.
   bool IsBlockLevelDispatchEnabled() const {
     return get_cuda_cc().IsAtLeastAmpere() ||
-           device_description().gpu_compute_capability().IsRocm();
+           get_rocm_cc().has_triton_support();
   }
 
   void ExpectTempBufferColor(const HloModuleConfig& config,
@@ -1286,7 +1286,7 @@ TEST_F(
     GpuCompilerTest,
     KLoopTransposeWithBitcastDefaultsToBlockLevelIfTheSmallMinorDimIsAPowerOfTwo) {  // NOLINT(whitespace/line_length)
   if (!IsBlockLevelDispatchEnabled()) {
-    GTEST_SKIP() << "Block-level dispatch requires Ampere+ or ROCm.";
+    GTEST_SKIP() << "Block-level dispatch requires a GPU supported by Triton.";
   }
 
   // If this test starts failing, then it's likely that this no longer generates
@@ -1533,10 +1533,8 @@ using GpuCompilerPassTest = GpuCompilerTest;
 
 TEST_F(GpuCompilerPassTest,
        GpuCompilerRunsTritonGemmRewriterByDefaultFromAmpere) {
-  bool is_rocm = device_description().gpu_compute_capability().IsRocm();
-
   bool expect_triton_gemm_rewriter_has_run =
-      get_cuda_cc().IsAtLeastAmpere() || is_rocm;
+      get_cuda_cc().IsAtLeastAmpere() || get_rocm_cc().has_triton_support();
 
   constexpr absl::string_view constant_module = R"(
 HloModule noop

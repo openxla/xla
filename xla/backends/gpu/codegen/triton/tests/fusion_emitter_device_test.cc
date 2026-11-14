@@ -779,6 +779,49 @@ ENTRY entry {
                          "(compute capability 8.0) and up, but got")));
 }
 
+TEST_F(TritonDevicelessTest, EmitterFailsIfRocmComputeCapabilityIsUnsupported) {
+  constexpr absl::string_view kHloText = R"(
+triton_computation {
+  p0 = f32[10,10] parameter(0)
+  p1 = f32[10,10] parameter(1)
+  ROOT add = f32[10,10] add(p0, p1)
+}
+
+ENTRY entry {
+  p0 = f32[10,10] parameter(0)
+  p1 = f32[10,10] parameter(1)
+  ROOT r = f32[10,10] fusion(p0, p1),
+    kind=kCustom, calls=triton_computation,
+    backend_config={
+      "fusion_backend_config":{
+      "kind":"__triton",
+      "block_level_fusion_config":{
+        "output_tiles":[{"sizes":["1","1"]}],
+        "num_warps":"1",
+        "num_ctas":"1",
+        "num_stages":"1"}}}
+})";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                       ParseAndReturnVerifiedModule(kHloText));
+  const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
+      hlo_module->entry_computation()->root_instruction());
+  se::DeviceDescription dev_info = TestGpuDeviceInfo::AMDRX7900DeviceInfo();
+  dev_info.set_rocm_compute_capability("gfx1030");
+  mlir::MLIRContext mlir_context;
+  llvm::Triple target_triple(amdgpu::TargetTriple());
+  std::string data_layout(amdgpu::DataLayout());
+
+  EXPECT_THAT(
+      TritonWrapper("test_fn", *triton_fusion,
+                    dev_info.gpu_compute_capability(), dev_info,
+                    BlockLevelParameters(), target_triple, data_layout,
+                    mlir_context),
+      StatusIs(absl::StatusCode::kFailedPrecondition,
+               HasSubstr("ROCm Triton support is only enabled for CDNA2 "
+                         "(gfx90a), RDNA3 (gfx11) and newer GPUs, but got "
+                         "gfx1030.")));
+}
+
 TEST_F(TritonDevicelessTest, RejectsPackedFp4OddMinorOffset) {
   constexpr absl::string_view kHloText = R"(
 HloModule m
