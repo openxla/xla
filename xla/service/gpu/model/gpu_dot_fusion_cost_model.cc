@@ -54,8 +54,6 @@ namespace xla::gpu::gpu_dot_fusion_cost_model {
 
 using ::xla::xtile::BlockLevelParameters;
 
-namespace detail {
-
 namespace {
 
 using ::xla::primitive_util::BitWidth;
@@ -193,19 +191,6 @@ MemoryBandwidthSpec GetMemoryBandwidthSpec(
   };
 }
 
-int64_t CalculateNumThreadblocks(const DotProblemInfo& dot,
-                                 const DotTileSize& dot_tile) {
-  // TODO(maniananth): Add special handling for grouped matmuls here.
-  int64_t num_tiles_along_b_dimension = CeilOfRatio<int64_t>(dot.b, dot_tile.b);
-  int64_t num_tiles_along_m_dimension = CeilOfRatio<int64_t>(dot.m, dot_tile.m);
-  int64_t num_tiles_along_n_dimension = CeilOfRatio<int64_t>(dot.n, dot_tile.n);
-  int64_t num_threadblocks = num_tiles_along_b_dimension *
-                             num_tiles_along_m_dimension *
-                             num_tiles_along_n_dimension;
-
-  return num_threadblocks;
-}
-
 int64_t CalculateNumWaves(int64_t threadblock_count,
                           const se::DeviceDescription& device_info) {
   int64_t core_count = device_info.core_count();
@@ -251,6 +236,19 @@ int64_t CalculateL2Bytes(const DotProblemInfo& dot, const DotTileSize& out_tile,
 }
 
 }  // namespace
+
+int64_t CalculateNumThreadblocks(const DotProblemInfo& dot,
+                                 const DotTileSize& dot_tile) {
+  // TODO(maniananth): Add special handling for grouped matmuls here.
+  int64_t num_tiles_along_b_dimension = CeilOfRatio<int64_t>(dot.b, dot_tile.b);
+  int64_t num_tiles_along_m_dimension = CeilOfRatio<int64_t>(dot.m, dot_tile.m);
+  int64_t num_tiles_along_n_dimension = CeilOfRatio<int64_t>(dot.n, dot_tile.n);
+  int64_t num_threadblocks = num_tiles_along_b_dimension *
+                             num_tiles_along_m_dimension *
+                             num_tiles_along_n_dimension;
+
+  return num_threadblocks;
+}
 
 double GetEffectiveFlopsPerNsForTileSize(
     int64_t tile_m, const se::DeviceDescription& device_info,
@@ -562,12 +560,14 @@ int64_t CalculateLoopIterBytes(const DotProblemInfo& dot,
 int64_t CalculateSharedMemoryPerBlockBytes(const DotProblemInfo& dot_info,
                                            const DotTileSize& dot_tile,
                                            int64_t num_stages) {
-  const int64_t lhs_tile_bytes =
-      dot_tile.m * dot_tile.k *
-      primitive_util::BitWidth(dot_info.lhs_element_type) / 8;
-  const int64_t rhs_tile_bytes =
-      dot_tile.n * dot_tile.k *
-      primitive_util::BitWidth(dot_info.rhs_element_type) / 8;
+  const int64_t lhs_tile_bytes = CeilOfRatio<int64_t>(
+      dot_tile.b * dot_tile.m * dot_tile.k *
+          primitive_util::StorageBitWidth(dot_info.lhs_element_type),
+      8);
+  const int64_t rhs_tile_bytes = CeilOfRatio<int64_t>(
+      dot_tile.b * dot_tile.n * dot_tile.k *
+          primitive_util::StorageBitWidth(dot_info.rhs_element_type),
+      8);
 
   return (lhs_tile_bytes + rhs_tile_bytes) * num_stages;
 }
@@ -674,8 +674,6 @@ double CalculateMemoryUtilization(const EstimateRunTimeData& estimates,
   return utilization;
 }
 
-}  // namespace detail
-
 absl::Status IsSupported(const HloDotInstruction* dot) {
   const Shape& lhs_shape = dot->operand(0)->shape();
   const Shape& rhs_shape = dot->operand(1)->shape();
@@ -706,26 +704,6 @@ absl::Status IsSupported(const HloDotInstruction* dot) {
         absl::StrJoin(dim_numbers.rhs_contracting_dimensions(), ","), "]"));
   }
 
-  // TODO(b/501002656): Support downstream transposes by fixing dimension
-  // mapping.
-  std::vector<const HloInstruction*> stack;
-  absl::flat_hash_set<const HloInstruction*> visited;
-  stack.push_back(dot);
-  visited.insert(dot);
-  while (!stack.empty()) {
-    const HloInstruction* current = stack.back();
-    stack.pop_back();
-    if (current != dot && current->opcode() == HloOpcode::kTranspose) {
-      return absl::UnimplementedError(
-          "Dot with a downstream transpose is not supported.");
-    }
-    for (const HloInstruction* user : current->users()) {
-      if (visited.insert(user).second) {
-        stack.push_back(user);
-      }
-    }
-  }
-
   return absl::OkStatus();
 }
 
@@ -745,6 +723,22 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
     const HloDotInstruction* dot, const BlockLevelParameters& block_params,
     const se::DeviceDescription& device_info, std::optional<int64_t> block_k) {
   ABSL_RETURN_IF_ERROR(IsSupported(dot));
+  // Reject epilogue transposes since root tiles are not propagated to the dot.
+  std::vector<const HloInstruction*> stack = {dot};
+  absl::flat_hash_set<const HloInstruction*> visited = {dot};
+  while (!stack.empty()) {
+    const HloInstruction* current = stack.back();
+    stack.pop_back();
+    if (current->opcode() == HloOpcode::kTranspose) {
+      return absl::UnimplementedError(
+          "Dot with a downstream transpose is not supported.");
+    }
+    for (const HloInstruction* user : current->users()) {
+      if (visited.insert(user).second) {
+        stack.push_back(user);
+      }
+    }
+  }
   if (block_params.output_tile_sizes.size() != 1) {
     return absl::UnimplementedError(
         absl::StrCat("Only single tile size is supported, got ",
@@ -758,7 +752,7 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
     ABSL_ASSIGN_OR_RETURN(block_k_val, ExtractBlockK(dot));
   }
 
-  detail::DotProblemInfo dot_info(*dot);
+  DotProblemInfo dot_info(*dot);
 
   const std::vector<int64_t>& tile_shape = block_params.output_tile_sizes[0];
   if (tile_shape.size() < 2) {
@@ -771,23 +765,22 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
   }
   int64_t tile_m = tile_shape[tile_shape.size() - 2];
   int64_t tile_n = tile_shape[tile_shape.size() - 1];
-  detail::DotTileSize dot_tile{/*m=*/tile_m,
-                               /*n=*/tile_n,
-                               /*k=*/block_k_val,
-                               /*b=*/tile_b};
+  DotTileSize dot_tile{/*m=*/tile_m,
+                       /*n=*/tile_n,
+                       /*k=*/block_k_val,
+                       /*b=*/tile_b};
 
   EstimateRunTimeData estimates;
 
   // Calculate compute roofline with tile and wave quantization.
-  ABSL_ASSIGN_OR_RETURN(detail::ComputeAndFlops compute_and_flops,
-                        detail::CalculateComputeTimeWithTileAndWaveQuantization(
+  ABSL_ASSIGN_OR_RETURN(ComputeAndFlops compute_and_flops,
+                        CalculateComputeTimeWithTileAndWaveQuantization(
                             dot_info, dot_tile, device_info));
   estimates.compute_time = compute_and_flops.compute_time;
   estimates.flops = compute_and_flops.flops_with_wave_quant;
 
   // Calculate HBM roofline.
-  detail::HbmEstimates hbm_timing =
-      detail::CalculateHbmTime(dot_info, device_info);
+  HbmEstimates hbm_timing = CalculateHbmTime(dot_info, device_info);
 
   estimates.read_time = hbm_timing.read_time;
   estimates.write_time = hbm_timing.write_time;
@@ -795,15 +788,13 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
   estimates.bytes_written = hbm_timing.bytes_written;
   const int64_t num_stages = block_params.num_stages;
 
-  int64_t threadblock_count =
-      detail::CalculateNumThreadblocks(dot_info, dot_tile);
+  int64_t threadblock_count = CalculateNumThreadblocks(dot_info, dot_tile);
   estimates.l2_bytes_read =
-      detail::CalculateL2Bytes(dot_info, dot_tile, threadblock_count);
+      CalculateL2Bytes(dot_info, dot_tile, threadblock_count);
 
   estimates.shared_memory_per_block_bytes =
-      detail::CalculateSharedMemoryPerBlockBytes(dot_info, dot_tile,
-                                                 num_stages);
-  estimates.registers_per_thread = detail::CalculateRegistersPerThread(
+      CalculateSharedMemoryPerBlockBytes(dot_info, dot_tile, num_stages);
+  estimates.registers_per_thread = CalculateRegistersPerThread(
       dot_info, dot_tile, block_params, device_info);
 
   TF_RET_CHECK(block_k_val > 0)
@@ -813,7 +804,7 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
   const int64_t k_loop_iterations =
       CeilOfRatio<int64_t>(dot_info.k, block_k_val);
 
-  detail::LaunchConfig launch_config;
+  LaunchConfig launch_config;
   launch_config.num_stages = num_stages;
   launch_config.num_warps = block_params.num_warps;
   launch_config.k_loop_iterations = k_loop_iterations;
@@ -823,20 +814,20 @@ absl::StatusOr<EstimateRunTimeData> EstimateRunTimeForDotOpWithBlockParameters(
   launch_config.registers_per_thread = estimates.registers_per_thread;
 
   absl::Duration pipelined_loop_time =
-      detail::CalculatePipelinedLoopTimeWithLaunchWaves(
-          launch_config, compute_and_flops.compute_time, hbm_timing,
-          device_info);
-  absl::Duration l2_time = detail::CalculateL2Time(
-      k_loop_iterations, device_info, estimates.l2_bytes_read,
-      block_params.is_tma_allowed);
+      CalculatePipelinedLoopTimeWithLaunchWaves(launch_config,
+                                                compute_and_flops.compute_time,
+                                                hbm_timing, device_info);
+  absl::Duration l2_time =
+      CalculateL2Time(k_loop_iterations, device_info, estimates.l2_bytes_read,
+                      block_params.is_tma_allowed);
 
   // Assuming perfect overlap between compute and memory for the rest,
   // but main loop is now modeled precisely.
   estimates.exec_time = std::max({pipelined_loop_time, l2_time});
-  estimates.compute_utilization = detail::CalculateComputeUtilization(
+  estimates.compute_utilization = CalculateComputeUtilization(
       estimates, device_info, dot_info.output_element_type);
   estimates.memory_utilization =
-      detail::CalculateMemoryUtilization(estimates, device_info);
+      CalculateMemoryUtilization(estimates, device_info);
 
   return estimates;
 }
