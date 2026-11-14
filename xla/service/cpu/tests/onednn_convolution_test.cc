@@ -258,13 +258,6 @@ TEST_P(ConvolutionTest, Conv3DReluTest) {
 }
 
 TEST_P(ConvolutionTest, Conv2DWithBiasAndReluTest) {
-  if (dtype_ == BF16) {
-    // TODO(intel-tf): Enable for BF16 once OneDnnContractionRewriter handles
-    // the BF16 -> F32 -> BF16 convert pair left after fusing BIAS when the
-    // following activation (kMaximum) is not promoted to F32.
-    GTEST_SKIP() << "Skipping BF16 Bias+ReLU fusion due to intermediate "
-                    "convert mismatch.";
-  }
   const absl::string_view outline = R"(
   HloModule convolution.bias.relu.test
 
@@ -512,13 +505,6 @@ TEST_P(ConvolutionTest, Conv2DWithLinearAndBinaryAddTest) {
 }
 
 TEST_P(ConvolutionTest, Conv3DWithBiasAndRelu6Test) {
-  if (dtype_ == BF16) {
-    // TODO(intel-tf): Enable for BF16 once OneDnnContractionRewriter handles
-    // the BF16 -> F32 -> BF16 convert pair left after fusing BIAS when the
-    // following activation (kClamp) is not promoted to F32.
-    GTEST_SKIP() << "Skipping BF16 Bias+ReLU6 fusion due to intermediate "
-                    "convert mismatch.";
-  }
   const absl::string_view outline = R"(
   HloModule convolution.test.bias.relu6
 
@@ -541,13 +527,6 @@ TEST_P(ConvolutionTest, Conv3DWithBiasAndRelu6Test) {
 }
 
 TEST_P(ConvolutionTest, Conv2DWithBiasAndSigmoidTest) {
-  if (dtype_ == BF16) {
-    // TODO(intel-tf): Enable for BF16 once OneDnnContractionRewriter handles
-    // intermediate converts when kNegate remains in BF16 while kAdd/kExp/
-    // kDivide are promoted to F32.
-    GTEST_SKIP() << "Skipping BF16 Bias+Sigmoid fusion due to intermediate "
-                    "convert mismatch.";
-  }
   const absl::string_view outline = R"(
   HloModule convolution.bias.sigmoid.test
 
@@ -760,13 +739,6 @@ TEST_P(ConvolutionTest, Conv2DWithBiasAndGeluExactPattern2Test) {
 }
 
 TEST_P(ConvolutionTest, Conv2DWithBiasAndSwishTest) {
-  if (dtype_ == BF16) {
-    // TODO(intel-tf): Enable for BF16 once OneDnnContractionRewriter handles
-    // intermediate converts when kNegate remains in BF16 while kAdd/kExp/
-    // kDivide/kMultiply are promoted to F32.
-    GTEST_SKIP() << "Skipping BF16 Bias+Swish fusion due to intermediate "
-                    "convert mismatch.";
-  }
   const absl::string_view outline = R"(
   HloModule convolution.test.with.bias.swish
 
