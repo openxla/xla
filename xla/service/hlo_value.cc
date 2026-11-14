@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -122,7 +123,14 @@ namespace {
 // ShapeIndex in the given operand. Generally, instruction which pass through
 // values transparently without reading the value are not considered to use the
 // value.
-bool MayUseOperandValue(const ShapeIndex& index, const HloInstruction* user) {
+//
+// REQUIRES: `user` is not null.
+bool MayUseOperandValue(
+    const ShapeIndex& index, const HloInstruction* user,
+    const std::function<bool(const HloInstruction*)>& is_passthrough) {
+  if (is_passthrough != nullptr && is_passthrough(user)) {
+    return false;
+  }
   switch (user->opcode()) {
     case HloOpcode::kGetTupleElement:
     case HloOpcode::kCopy:
@@ -162,6 +170,13 @@ constexpr int64_t kMinOperandCountForTable = 32;
 // so the views handed out below stay valid while later requests add entries.
 class HloValue::UseCache {
  public:
+  explicit UseCache(std::function<bool(const HloInstruction*)> is_passthrough)
+      : is_passthrough_(std::move(is_passthrough)) {}
+
+  const std::function<bool(const HloInstruction*)>& is_passthrough() const {
+    return is_passthrough_;
+  }
+
   // Returns the users of tuple shaped `instruction`, in users() order, that
   // MayUseOperandValue says may use a value nested inside its output, plus
   // every computation root (roots count as uses of everything they return).
@@ -173,7 +188,8 @@ class HloValue::UseCache {
       // ones, so any nested index stands for all of them.
       const ShapeIndex nested_index({0});
       for (HloInstruction* const user : instruction->users()) {
-        if (MayUseOperandValue(nested_index, user) || user->IsRoot()) {
+        if (MayUseOperandValue(nested_index, user, is_passthrough_) ||
+            user->IsRoot()) {
           it->second.push_back(user);
         }
       }
@@ -198,6 +214,7 @@ class HloValue::UseCache {
   }
 
  private:
+  std::function<bool(const HloInstruction*)> is_passthrough_;
   absl::node_hash_map<const HloInstruction*,
                       absl::InlinedVector<HloInstruction*, 2>>
       nested_value_users_;
@@ -207,11 +224,14 @@ class HloValue::UseCache {
       operand_numbers_;
 };
 
-/* static */ void HloValue::PrecomputeUses(absl::Span<HloValue* const> values) {
-  UseCache use_cache;
+/* static */ void HloValue::PrecomputeUses(
+    absl::Span<HloValue* const> values,
+    const std::function<bool(const HloInstruction*)>& is_passthrough) {
+  UseCache use_cache(is_passthrough);
   for (HloValue* value : values) {
     DCHECK(value->uses_ == nullptr) << value->ToShortString();
-    value->uses_ = std::make_unique<Uses>(value->ComputeUses(&use_cache));
+    value->uses_ = std::make_unique<Uses>(
+        value->ComputeUses(&use_cache, use_cache.is_passthrough()));
   }
 }
 
@@ -237,7 +257,9 @@ void HloValue::SetPositions(absl::Span<const HloPosition> positions) {
       IsRootOf(defining_instruction()->GetModule()->entry_computation());
 }
 
-HloValue::Uses HloValue::ComputeUses(UseCache* use_cache) const {
+HloValue::Uses HloValue::ComputeUses(
+    UseCache* use_cache,
+    const std::function<bool(const HloInstruction*)>& is_passthrough) const {
   // Gather the computation roots at which this value appears.
   absl::flat_hash_set<HloInstruction*> root_positions;
   for (const HloPosition& position : positions_) {
@@ -260,7 +282,7 @@ HloValue::Uses HloValue::ComputeUses(UseCache* use_cache) const {
       }
       // Root instructions of computations are considered to be uses whether
       // or not the root instruction itself actually uses the value.
-      if (!MayUseOperandValue(position.index, user) &&
+      if (!MayUseOperandValue(position.index, user, is_passthrough) &&
           !(user->IsRoot() && root_positions.contains(user))) {
         return;
       }

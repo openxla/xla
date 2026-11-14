@@ -360,19 +360,27 @@ bool ComputeRelativeLocation::ForceRuntimeOrder(
                "kBeforeStart or kAfterEnd";
     return false;
   }
-  auto ModifiesNonCopy = [this](HloInstruction* instr,
-                                const HloInstruction* op) {
+  auto unwrap_passthrough = [this](const HloInstruction* inst) {
+    while (inst != nullptr && dataflow_ != nullptr &&
+           dataflow_->IsPassthrough(inst)) {
+      inst = inst->operand(0);
+    }
+    return inst;
+  };
+  auto ModifiesNonCopy = [this, &unwrap_passthrough](HloInstruction* instr,
+                                                     const HloInstruction* op) {
     auto in_place = alias_info_->GetInPlaceInputOutputPairs(instr);
     if (in_place.empty()) {
       return false;
     }
+    const HloInstruction* unwrapped_op = unwrap_passthrough(op);
     return absl::c_any_of(
         in_place, [&](const std::pair<HloOperandIndex, ShapeIndex>&
                           operand_and_output_index) {
-          auto* op2 =
-              instr->operand(operand_and_output_index.first.operand_number);
-          return (op == nullptr) ? (op2->opcode() == HloOpcode::kCopy)
-                                 : (op2 == op);
+          const HloInstruction* op2 = unwrap_passthrough(
+              instr->operand(operand_and_output_index.first.operand_number));
+          return (unwrapped_op == nullptr) ? (op2->opcode() == HloOpcode::kCopy)
+                                           : (op2 == unwrapped_op);
         });
   };
   for (const InstructionEntry& entry1 : unordered_ops) {
@@ -452,8 +460,11 @@ bool ComputeRelativeLocation::InstructionCanIntercept(
     for (const auto& operand_and_output_index :
          alias_info_->GetInPlaceInputOutputPairs(instr)) {
       const HloOperandIndex& operand_index = operand_and_output_index.first;
-      if (region.contains(
-              instr->mutable_operand(operand_index.operand_number))) {
+      HloInstruction* op = instr->mutable_operand(operand_index.operand_number);
+      while (dataflow_ != nullptr && dataflow_->IsPassthrough(op)) {
+        op = op->mutable_operand(0);
+      }
+      if (region.contains(op)) {
         return true;
       }
     }
@@ -832,9 +843,10 @@ void CopyRemover::AddViewUses(const HloValue* value, ValueNode* node) {
   // write is also a dataflow use of the viewed buffer (for example the
   // dynamic-update-slice it feeds), which orders it.
   auto forwards_view = [&](const HloInstruction* instruction) {
-    return is_view(instruction) &&
-           (instruction->opcode() == HloOpcode::kBitcast ||
-            instruction->opcode() == HloOpcode::kCopy);
+    return (is_view(instruction) &&
+            (instruction->opcode() == HloOpcode::kBitcast ||
+             instruction->opcode() == HloOpcode::kCopy)) ||
+           dataflow_.IsPassthrough(instruction);
   };
   // Only the viewed value itself (operand 0 of the view) is read through the
   // view; a view's other operands (start indices) are consumed at the view's
@@ -947,6 +959,14 @@ LiveRangeRegions CopyRemover::ComputeLiveRangeRegions(const ValueNode* head) {
       HloComputation* use_parent = use_op->parent();
       live_range[use_parent][use_op].value_definition = def_op;
     }
+    // Include any forwarded position (such as a bitcast or passthrough) that
+    // has become its computation's root after an earlier root copy was elided.
+    for (const HloPosition& pos : node->value->positions()) {
+      if (pos.instruction != def_op && pos.instruction->IsRoot()) {
+        live_range[pos.instruction->parent()][pos.instruction]
+            .value_definition = def_op;
+      }
+    }
   };
   ForEachValueInRange(head, VisitValueNode);
   return live_range;
@@ -975,8 +995,15 @@ bool CopyRemover::TryElideCopy(
   }
 
   // Don't elide copies with different shapes. This includes checking that
-  // memory spaces are the same, so we don't elide copies to/from the host.
-  if (!ShapeUtil::Equal(copy->shape(), copy->operand(0)->shape())) {
+  // memory spaces are the same, so we don't elide copies to/from the host, as
+  // well as checking across any passthrough wrappers on operand 0 without
+  // rejecting copies of shape changing bitcasts.
+  const HloInstruction* unwrapped_operand = copy->operand(0);
+  while (dataflow_.IsPassthrough(unwrapped_operand)) {
+    unwrapped_operand = unwrapped_operand->operand(0);
+  }
+  if (!ShapeUtil::Equal(copy->shape(), copy->operand(0)->shape()) ||
+      !ShapeUtil::Equal(copy->shape(), unwrapped_operand->shape())) {
     VLOG(2) << copy->name() << " is not removable (shape mismatch)";
     return false;
   }
@@ -1444,7 +1471,8 @@ bool CopyRemover::ValuesInterfere(const ValueNode* src, const ValueNode* dest,
   VLOG(5) << "    ValuesInterfere destination live range:\n"
           << dest_live_range.ToString();
 
-  ComputeRelativeLocation relative_location_analysis(ordering_, alias_info_);
+  ComputeRelativeLocation relative_location_analysis(ordering_, alias_info_,
+                                                     &dataflow_);
   auto rel1 = relative_location_analysis.ComputeBetweenLiveRangeRegions(
       src_live_range, dest_live_range);
   VLOG(3) << "    ValuesInterfere - location of dest in relation to src: ";

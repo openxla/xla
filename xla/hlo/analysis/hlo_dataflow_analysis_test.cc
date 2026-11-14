@@ -5443,5 +5443,86 @@ ENTRY main {
               ElementsAre(&analysis.GetValueDefinedAt(dst)));
 }
 
+// Verifies that configuring `is_passthrough` forwards operand values across
+// stacked, unused, and root passthrough custom calls while filtering non root
+// passthroughs out of HloValue::GetUses and unwrapping passthrough operands in
+// CanShareOperandBufferWithUser.
+TEST_F(HloDataflowAnalysisTest,
+       PassthroughPredicateForwardsValuesAndFiltersUses) {
+  absl::string_view hlo_str = R"(
+HloModule PassthroughTest
+
+ENTRY main {
+  p0 = f32[8] parameter(0)
+  c0 = f32[8] constant({0, 1, 2, 3, 4, 5, 6, 7})
+  a = f32[8] add(p0, p0)
+  m1 = f32[8] custom-call(a), custom_call_target="passthrough"
+  m2 = f32[8] custom-call(m1), custom_call_target="passthrough"
+  unused_m = f32[8] custom-call(a), custom_call_target="passthrough",
+      custom_call_has_side_effect=true
+  tanh_a = f32[8] tanh(m2)
+  mc = f32[8] custom-call(c0), custom_call_target="passthrough"
+  neg_c = f32[8] negate(mc)
+  msort = f32[8] custom-call(a), custom_call_target="passthrough"
+  sorted = f32[8] sort(msort), dimensions={0}, to_apply={
+    lhs = f32[] parameter(0)
+    rhs = f32[] parameter(1)
+    ROOT lt = pred[] compare(lhs, rhs), direction=LT
+  }
+  out_tuple = (f32[8], f32[8], f32[8]) tuple(tanh_a, neg_c, sorted)
+  ROOT root_m = (f32[8], f32[8], f32[8]) custom-call(out_tuple),
+      custom_call_target="passthrough"
+}
+)";
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_str));
+  auto is_passthrough = [](const HloInstruction* inst) {
+    return inst->IsCustomCall("passthrough");
+  };
+
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<HloDataflowAnalysis> analysis,
+      HloDataflowAnalysis::Run(
+          *module_, /*ssa_form=*/true, /*bitcast_defines_value=*/false,
+          /*execution_threads=*/{}, /*propagate_through_calls=*/true,
+          /*precompute_uses=*/std::nullopt,
+          /*propagate_through_control_flow=*/true, is_passthrough));
+
+  HloInstruction* a = FindInstruction(module_.get(), "a");
+  HloInstruction* m1 = FindInstruction(module_.get(), "m1");
+  HloInstruction* m2 = FindInstruction(module_.get(), "m2");
+  HloInstruction* unused_m = FindInstruction(module_.get(), "unused_m");
+  HloInstruction* tanh_a = FindInstruction(module_.get(), "tanh_a");
+  HloInstruction* mc = FindInstruction(module_.get(), "mc");
+  HloInstruction* neg_c = FindInstruction(module_.get(), "neg_c");
+  HloInstruction* msort = FindInstruction(module_.get(), "msort");
+  HloInstruction* sorted = FindInstruction(module_.get(), "sorted");
+  HloInstruction* out_tuple = FindInstruction(module_.get(), "out_tuple");
+  HloInstruction* root_m = FindInstruction(module_.get(), "root_m");
+
+  EXPECT_TRUE(analysis->ValueIsDefinedAt(a));
+  EXPECT_FALSE(analysis->ValueIsDefinedAt(m1));
+  EXPECT_FALSE(analysis->ValueIsDefinedAt(m2));
+  EXPECT_FALSE(analysis->ValueIsDefinedAt(unused_m));
+  EXPECT_FALSE(analysis->ValueIsDefinedAt(root_m, {}));
+  EXPECT_FALSE(analysis->ValueIsDefinedAt(root_m, {0}));
+
+  const HloValue& val_a = analysis->GetValueDefinedAt(a);
+  EXPECT_EQ(&analysis->GetUniqueValueAt(m2), &val_a);
+  EXPECT_THAT(val_a.GetUses(), UnorderedElementsAre(HloUse{tanh_a, 0, {}},
+                                                    HloUse{sorted, 0, {}}));
+
+  const HloValue& val_tanh = analysis->GetValueDefinedAt(tanh_a);
+  EXPECT_TRUE(val_tanh.live_out_of_module());
+  EXPECT_THAT(val_tanh.GetUses(), ElementsAre(HloUse{root_m, 0, {0}}));
+  EXPECT_EQ(&analysis->GetUniqueValueAt(root_m, {}),
+            &analysis->GetValueDefinedAt(out_tuple, {}));
+
+  AliasInfo alias_info;
+  EXPECT_FALSE(
+      analysis->CanShareOperandBufferWithUser(mc, {}, neg_c, {}, &alias_info));
+  EXPECT_FALSE(analysis->CanShareOperandBufferWithUser(msort, {}, sorted, {},
+                                                       &alias_info));
+}
+
 }  // namespace
 }  // namespace xla
