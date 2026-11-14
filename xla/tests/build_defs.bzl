@@ -268,6 +268,10 @@ def xla_test(
         else:
             fail("Unknown backend %s" % backend)
 
+        # Right-size CPU allocations unless an explicit cpu: tag is already present.
+        if not any([type(t) == type("") and t.startswith("cpu:") for t in this_backend_tags]):
+            this_backend_tags.append("cpu:1" if backend == "gb200" else "cpu:2")
+
         # Ensure that the tags are consistent with the runtime used.
         if "pjrt_migration_candidate" in this_backend_tags and not use_legacy_runtime:
             fail("xla_tests that do not use the legacy runtime configuration should not be tagged `pjrt_migration_candidate`.")

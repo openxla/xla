@@ -103,6 +103,8 @@ _TAGS_TO_DOCUMENTATION_MAP = {
     ),
     "gpu": "Catch-all tag for targets that should be built/tested on GPU CI",
     "cpu": "Catch-all tag for targets that should be built/tested on CPU CI.",
+    "cpu:1": "Internal tag for CPU reservation.",
+    "cpu:2": "Internal tag for CPU reservation.",
     "cuda-only": "Targets that require the CUDA backend to be enabled.",
     "rocm-only": "Targets that require the ROCm backend to be enabled.",
     "oneapi-only": "Targets that require the oneAPI backend to be enabled.",
