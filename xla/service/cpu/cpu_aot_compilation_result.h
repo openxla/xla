@@ -169,8 +169,8 @@ class CpuAotCompilationResult : public CompiledModule {
         std::unique_ptr<HloModule> module,
         HloModule::CreateFromProtoWithConfig(proto.hlo_module()));
 
-    return std::unique_ptr<CpuAotCompilationResult>(new CpuAotCompilationResult(
-        proto, std::move(module), std::move(function_library)));
+    return std::make_unique<CpuAotCompilationResult>(
+        proto, std::move(module), std::move(function_library));
   }
 
   static absl::StatusOr<std::unique_ptr<CpuAotCompilationResult>> FromString(
