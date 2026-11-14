@@ -18,12 +18,17 @@ limitations under the License.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
+
+#if defined(__linux__)
+#include <sys/utsname.h>
+#endif
 
 #include "absl/base/casts.h"
 #include "absl/base/no_destructor.h"
@@ -50,6 +55,21 @@ limitations under the License.
 namespace stream_executor::gpu {
 
 namespace {
+
+// Returns whether the process is running on a WSL kernel.
+bool IsWsl() {
+#if defined(__linux__)
+  static const bool is_wsl = [] {
+    struct utsname info;
+    return uname(&info) == 0 &&
+           (std::strstr(info.release, "microsoft") != nullptr ||
+            std::strstr(info.release, "Microsoft") != nullptr);
+  }();
+  return is_wsl;
+#else
+  return false;
+#endif
+}
 
 absl::StatusOr<bool> IsRdmaSupported(CUdevice device) {
   int rdma_supported = 0;
@@ -280,11 +300,38 @@ AllocateDeviceMemory(StreamExecutor* executor,
   ABSL_RETURN_IF_ERROR(
       cuda::ToStatus(granularity_result, "cuMemGetAllocationGranularity"));
 
+  if (granularity == 0) {
+    return absl::InternalError("CUDA returned zero VMM allocation granularity");
+  }
   size_t effective_alignment = std::max(options.alignment, granularity);
   uint64_t padded_size = xla::RoundUpTo<uint64_t>(size, effective_alignment);
-
+  uint64_t chunk_size = padded_size;
+  absl::StatusOr<CUmemGenericAllocationHandle> allocation =
+      CreateVmmPhysicalAllocation(properties, padded_size);
+  constexpr uint64_t kFallbackChunkSize = uint64_t{1} << 30;
+  if (!allocation.ok() && absl::IsResourceExhausted(allocation.status()) &&
+      !localized && options.enable_posix_fd_handle &&
+      !options.enable_fabric_handle && padded_size > kFallbackChunkSize &&
+      IsWsl()) {
+    // WSL can reject large exportable allocations with OUT_OF_MEMORY despite
+    // sufficient free memory. Retry with smaller backing allocations, keeping
+    // the contiguous VA range and requested handle types. Fabric and multicast
+    // consumers can require a single physical handle.
+    chunk_size = kFallbackChunkSize / granularity * granularity;
+    int multicast_supported = 0;
+    if (chunk_size != 0 &&
+        cuDeviceGetAttribute(&multicast_supported,
+                             CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED,
+                             device) == CUDA_SUCCESS &&
+        !multicast_supported) {
+      CUmemGenericAllocationHandle chunk_handle;
+      ABSL_RETURN_IF_ERROR(cuda::ToStatus(
+          cuMemCreate(&chunk_handle, chunk_size, &properties, 0)));
+      allocation = chunk_handle;
+    }
+  }
   ABSL_ASSIGN_OR_RETURN(CUmemGenericAllocationHandle handle,
-                        CreateVmmPhysicalAllocation(properties, padded_size));
+                        std::move(allocation));
 
   absl::Cleanup release_handle = [&] {
     absl::Status status = cuda::ToStatus(cuMemRelease(handle));
@@ -298,8 +345,12 @@ AllocateDeviceMemory(StreamExecutor* executor,
   CUdeviceptr ptr;
   ABSL_RETURN_IF_ERROR(cuda::ToStatus(
       cuMemAddressReserve(&ptr, padded_size, effective_alignment, 0, 0)));
+  uint64_t mapped_size = 0;
   absl::Cleanup free_address = [&] {
-    absl::Status status = cuda::ToStatus(cuMemUnmap(ptr, padded_size));
+    absl::Status status;
+    if (mapped_size != 0) {
+      status = cuda::ToStatus(cuMemUnmap(ptr, mapped_size));
+    }
     if (!status.ok()) {
       XLA_LOG_DEVICE(ERROR, executor->device_ordinal())
           << "Failed to unmap VMM memory during cleanup: " << status;
@@ -310,8 +361,29 @@ AllocateDeviceMemory(StreamExecutor* executor,
           << "Failed to free VMM address during cleanup: " << status;
     }
   };
-  ABSL_RETURN_IF_ERROR(
-      cuda::ToStatus(cuMemMap(ptr, padded_size, 0, handle, 0)));
+  ABSL_RETURN_IF_ERROR(cuda::ToStatus(cuMemMap(ptr, chunk_size, 0, handle, 0)));
+  mapped_size = chunk_size;
+
+  // Only the WSL fallback reduces chunk_size below padded_size, so elsewhere
+  // the first mapping covers the full allocation and this loop is skipped.
+  // Mappings retain their physical allocations. Keep only the first handle
+  // for the existing deallocation path; release later handles after mapping.
+  while (mapped_size < padded_size) {
+    uint64_t bytes = std::min(chunk_size, padded_size - mapped_size);
+    CUmemGenericAllocationHandle chunk_handle;
+    ABSL_RETURN_IF_ERROR(
+        cuda::ToStatus(cuMemCreate(&chunk_handle, bytes, &properties, 0)));
+    absl::Cleanup release_chunk_handle = [&] {
+      absl::Status status = cuda::ToStatus(cuMemRelease(chunk_handle));
+      if (!status.ok()) {
+        XLA_LOG_DEVICE(ERROR, executor->device_ordinal())
+            << "Failed to release VMM chunk handle: " << status;
+      }
+    };
+    ABSL_RETURN_IF_ERROR(
+        cuda::ToStatus(cuMemMap(ptr + mapped_size, bytes, 0, chunk_handle, 0)));
+    mapped_size += bytes;
+  }
 
   // Grant read/write access — to all peers if peer access is enabled,
   // otherwise only to the owning device.
