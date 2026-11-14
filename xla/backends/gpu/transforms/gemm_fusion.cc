@@ -71,6 +71,7 @@ limitations under the License.
 #include "xla/service/gpu/triton_tiling_propagation.h"
 #include "xla/service/instruction_fusion.h"
 #include "xla/service/matmul_indexing_utils.h"
+#include "xla/service/scheduling_annotations_util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/stream_executor/device_description.h"
@@ -1396,6 +1397,28 @@ absl::StatusOr<std::variant<Fusion, FusionDecision>> CreateDotFusion(
   return CreateTileableFusion(fusion_search_space, name);
 }
 
+// Returns true if instructions in `computation` carry different scheduling
+// annotations, using the same comparison as LegalizeSchedulingAnnotations.
+absl::StatusOr<bool> HasConflictingSchedulingAnnotations(
+    const HloComputation& computation) {
+  std::optional<Annotation> seen_annotation;
+  for (const HloInstruction* instr : computation.instructions()) {
+    ABSL_ASSIGN_OR_RETURN(std::optional<Annotation> annotation,
+                          GetSchedulingAnnotation(instr));
+    if (!annotation.has_value()) {
+      continue;
+    }
+    if (!seen_annotation.has_value()) {
+      seen_annotation = annotation;
+      continue;
+    }
+    if (*seen_annotation != *annotation) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Extracts into fused computations parts of HLO graph including dot()
 // operations that can target the triton GEMM emitter.
 class GemmFusionVisitor : public DfsHloRewriteVisitor {
@@ -1474,9 +1497,18 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
         dot_like->parent()->AddInstruction(HloInstruction::CreateFusion(
             computation->root_instruction()->shape(),
             HloInstruction::FusionKind::kCustom, fusion.inputs, computation));
-    // Copy the metadata of `dot_like` to the newly created `fusion` op. This
-    // is convenient for handling metadata in split-k rewriting subsequently.
-    dot_fusion->set_metadata(dot_like->metadata());
+    // Copy the metadata and frontend attributes of `dot_like` to the newly
+    // created `fusion` op. This is convenient for handling metadata in
+    // split-k rewriting subsequently, and keeps scheduling annotations.
+    dot_like->SetupDerivedInstruction(dot_fusion);
+    // If the fused instructions carry different scheduling annotations (e.g.
+    // the dot and its epilogue), do not pick one for the fusion. Leaving it
+    // unannotated lets LegalizeSchedulingAnnotations report the conflict.
+    ABSL_ASSIGN_OR_RETURN(bool conflicting_scheduling_annotations,
+                          HasConflictingSchedulingAnnotations(*computation));
+    if (conflicting_scheduling_annotations) {
+      RemoveSchedulingAnnotation(dot_fusion);
+    }
     dot_fusion->GetModule()->SetAndUniquifyInstrName(dot_fusion, fusion_name);
 
     ABSL_ASSIGN_OR_RETURN(auto gpu_config,
@@ -1490,6 +1522,10 @@ class GemmFusionVisitor : public DfsHloRewriteVisitor {
     if (fusion.output->shape() != dot_fusion->shape()) {
       replacement = dot_like->parent()->AddInstruction(
           HloInstruction::CreateBitcast(fusion.output->shape(), dot_fusion));
+      dot_like->SetupDerivedInstruction(replacement);
+      if (conflicting_scheduling_annotations) {
+        RemoveSchedulingAnnotation(replacement);
+      }
     }
 
     ABSL_RETURN_IF_ERROR(ReplaceInstruction(fusion.output, replacement));
