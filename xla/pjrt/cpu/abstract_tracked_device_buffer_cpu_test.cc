@@ -19,10 +19,12 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
+#include "absl/types/span.h"
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/abstract_tracked_device_buffer.h"
@@ -265,6 +267,40 @@ TEST(TrackedCpuDeviceBufferTest, DelayedAllocation) {
   EXPECT_EQ(std::string(static_cast<const char*>(result->untyped_data()),
                         result->size_bytes()),
             expected);
+}
+
+TEST(TrackedCpuDeviceBufferTest,
+     StreamBasedCompactionDropsCompletedUsageEvents) {
+  ASSERT_OK_AND_ASSIGN(auto client, GetPjRtCpuClient(CpuClientOptions()));
+  PjRtMemorySpace* memory_space = client->memory_spaces()[0];
+  ASSERT_OK_AND_ASSIGN(auto buffer, CpuRawBuffer::Allocate(memory_space, 64));
+  AbstractTrackedDeviceBuffer tracked_buffer(
+      buffer, /*definition_events=*/{},
+      /*use_stream_based_compaction=*/true);
+
+  // CpuEvents have no definition stream, so they can't be merged per stream.
+  // Complete most of them right away and leave every 100th one pending.
+  constexpr int kNumEvents = 1000;
+  std::vector<tsl::AsyncValueRef<CpuEvent>> pending_events;
+  for (int i = 0; i < kNumEvents; ++i) {
+    auto usage_event = MakeConstructedAsyncValueRef<CpuEvent>();
+    tracked_buffer.AddUsageEvent(PjRtDeviceEventRef(usage_event));
+    if (i % 100 == 0) {
+      pending_events.push_back(std::move(usage_event));
+    } else {
+      usage_event.SetStateConcrete();
+    }
+  }
+
+  absl::Span<const PjRtDeviceEventRef> usage_events =
+      tracked_buffer.usage_events();
+  EXPECT_LE(usage_events.size(), 32);
+  for (const auto& pending_event : pending_events) {
+    EXPECT_TRUE(absl::c_any_of(usage_events, [&](const PjRtDeviceEventRef& ev) {
+      return ev.async_value() == pending_event.GetAsyncValue();
+    }));
+    pending_event.SetStateConcrete();
+  }
 }
 
 TEST(TrackedCpuDeviceBufferTest, PackOrCopyOobWrite) {
