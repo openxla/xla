@@ -364,64 +364,70 @@ bool RawBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
                                               bid, arrs_.size())));
       continue;
     }
-    arrs_[bid].ready_future.OnReady(
-        [state, copier_state = state_, xfer_size = xfer_size_,
-         buf_size = arrs_[bid].buf_size, req_id, bid,
-         buffer = std::move(arrs_[bid].buffer)](absl::Status s) {
-          if (!s.ok()) {
-            state->SendError(req_id, 0, buf_size, true, s);
-            return;
-          }
-          if (!buffer) {
-            state->SendError(
-                req_id, 0, buf_size, true,
-                absl::InternalError(absl::StrFormat(
-                    "Buffer id: %d has already been fetched", bid)));
+    xla::PjRtRawBufferRef buffer;
+    {
+      absl::MutexLock l(mu_);
+      buffer = std::move(arrs_[bid].buffer);
+      if (buffer) {
+        ++num_consumed_bufs_;
+      }
+    }
+    arrs_[bid].ready_future.OnReady([state, copier_state = state_,
+                                     xfer_size = xfer_size_,
+                                     buf_size = arrs_[bid].buf_size, req_id,
+                                     bid, buffer = std::move(buffer)](
+                                        absl::Status s) {
+      if (!s.ok()) {
+        state->SendError(req_id, 0, buf_size, true, s);
+        return;
+      }
+      if (!buffer) {
+        state->SendError(req_id, 0, buf_size, true,
+                         absl::InternalError(absl::StrFormat(
+                             "Buffer id: %d has already been fetched", bid)));
 
-            return;
-          }
-          for (size_t i = 0; i * xfer_size < buf_size; ++i) {
-            size_t offset = i * xfer_size;
-            size_t size = std::min(xfer_size, buf_size - offset);
-            bool is_largest = size + offset == buf_size;
-            if (auto* host_pointer = buffer->GetHostPointer()) {
-              size_t offset = i * xfer_size;
-              size_t size = std::min(xfer_size, buf_size - offset);
-              state->Send(req_id,
-                          reinterpret_cast<char*>(host_pointer) + offset,
-                          offset, size, is_largest, [buffer]() {});
-            } else {
-              DmaCopyChunk blob;
-              blob.copy_fn = [buffer](void* dst, int64_t offset,
-                                      int64_t transfer_size) -> tsl::Future<> {
-                return buffer->CopyRawDeviceToHost(dst, offset, transfer_size);
-              };
-              blob.buffer_id = bid;
-              blob.offset = offset;
-              blob.size = size;
-              copier_state->ScheduleCopy(
-                  std::move(blob),
-                  [req_id, state, copier_state, is_largest](
-                      PremappedCopierState* copier_state_ptr,
-                      absl::StatusOr<void*> buf, const DmaCopyChunk& chunk) {
-                    if (!buf.ok()) {
-                      state->SendError(req_id, chunk.offset, chunk.size,
-                                       is_largest, buf.status());
-                      return;
-                    }
-                    CHECK_OK(buf.status());
-                    state->Send(req_id, buf.value(), chunk.offset, chunk.size,
-                                is_largest,
-                                [copier_state, buf = buf.value()]() {
-                                  copier_state->ReturnBuffer(buf);
-                                });
-                  });
-            }
-          }
-        });
+        return;
+      }
+      for (size_t i = 0; i * xfer_size < buf_size; ++i) {
+        size_t offset = i * xfer_size;
+        size_t size = std::min(xfer_size, buf_size - offset);
+        bool is_largest = size + offset == buf_size;
+        if (auto* host_pointer = buffer->GetHostPointer()) {
+          size_t offset = i * xfer_size;
+          size_t size = std::min(xfer_size, buf_size - offset);
+          state->Send(req_id, reinterpret_cast<char*>(host_pointer) + offset,
+                      offset, size, is_largest, [buffer]() {});
+        } else {
+          DmaCopyChunk blob;
+          blob.copy_fn = [buffer](void* dst, int64_t offset,
+                                  int64_t transfer_size) -> tsl::Future<> {
+            return buffer->CopyRawDeviceToHost(dst, offset, transfer_size);
+          };
+          blob.buffer_id = bid;
+          blob.offset = offset;
+          blob.size = size;
+          copier_state->ScheduleCopy(
+              std::move(blob),
+              [req_id, state, copier_state, is_largest](
+                  PremappedCopierState* copier_state_ptr,
+                  absl::StatusOr<void*> buf, const DmaCopyChunk& chunk) {
+                if (!buf.ok()) {
+                  state->SendError(req_id, chunk.offset, chunk.size, is_largest,
+                                   buf.status());
+                  return;
+                }
+                CHECK_OK(buf.status());
+                state->Send(req_id, buf.value(), chunk.offset, chunk.size,
+                            is_largest, [copier_state, buf = buf.value()]() {
+                              copier_state->ReturnBuffer(buf);
+                            });
+              });
+        }
+      }
+    });
   }
 
-  num_consumed_bufs_ += req.buffer_ids().size();
+  absl::MutexLock l(mu_);
   return num_consumed_bufs_ == arrs_.size();
 }
 
@@ -448,10 +454,18 @@ bool PjRtBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
                                               bid, arrs_.size())));
       continue;
     }
+    std::shared_ptr<xla::PjRtBuffer> buffer;
+    {
+      absl::MutexLock l(mu_);
+      buffer = std::move(arrs_[bid].buffer);
+      if (buffer) {
+        ++num_consumed_bufs_;
+      }
+    }
     arrs_[bid].ready_future.OnReady(
         [state, copier_state = state_, xfer_size = xfer_size_,
          buf_size = arrs_[bid].buf_size, req_id, bid,
-         buffer = std::move(arrs_[bid].buffer)](absl::Status s) {
+         buffer = std::move(buffer)](absl::Status s) {
           if (!s.ok()) {
             state->SendError(req_id, 0, buf_size, true, s);
             return;
@@ -493,7 +507,7 @@ bool PjRtBufferEntry::Handle(tsl::RCReference<ConnectionState> state,
         });
   }
 
-  num_consumed_bufs_ += req.buffer_ids().size();
+  absl::MutexLock l(mu_);
   return num_consumed_bufs_ == arrs_.size();
 }
 
