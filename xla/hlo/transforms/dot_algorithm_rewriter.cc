@@ -221,9 +221,8 @@ absl::StatusOr<bool> RewriteFp8xNDot(
   // Keep the dot's layout: on GPU this runs after layout assignment.
   const Shape dot_shape_f32 = ShapeUtil::ChangeElementType(dot->shape(), F32);
   auto make_f8_dot = [&](HloInstruction* a, HloInstruction* b) {
-    return comp->AddInstruction(
-        HloInstruction::CreateDot(dot_shape_f32, a, b, dnums, f8_pc),
-        &dot->metadata());
+    return dot->AddInstruction(
+        HloInstruction::CreateDot(dot_shape_f32, a, b, dnums, f8_pc));
   };
 
   // Cartesian cross terms: A * B = (A_low * B_low) * 2^-8 + (A_low * B_high +
@@ -288,6 +287,7 @@ absl::StatusOr<bool> RewriteFp8xNDot(
       dot->shape().element_type() == F32
           ? descaled_f32
           : MakeConvertToHlo(descaled_f32, dot->shape().element_type());
+  dot->SetupDerivedInstruction(final_out);
   ABSL_RETURN_IF_ERROR(comp->ReplaceInstruction(dot, final_out));
   return true;
 }
