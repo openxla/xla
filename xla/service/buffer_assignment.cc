@@ -3680,16 +3680,7 @@ BufferAssigner::CreateAssignment(
   ABSL_RETURN_IF_ERROR(GatherComputationsByAllocationType(
       module, &thread_local_computations, &global_computations));
 
-  bool is_fallback_enabled = opts_.enable_fallback;
-  if (opts_.buffer_assignment_algorithm ==
-      buffer_assignment::BufferAssignmentAlgorithmProto::
-          FAST_MERGE_WITH_FALLBACK) {
-    is_fallback_enabled = true;
-    opts_.buffer_assignment_algorithm =
-        buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE;
-  }
-
-  if (!is_fallback_enabled) {
+  if (!opts_.enable_fallback) {
     ABSL_RETURN_IF_ERROR(RunAssignBuffers(
         module, global_computations, thread_local_computations,
         assignment.get(), opts_.buffer_assignment_algorithm,

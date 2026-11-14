@@ -126,7 +126,10 @@ message BufferAssignmentAlgorithmProto {
     TEMPORAL = 3;
     FAST_MERGE = 4;
     FAST_SPLIT = 5;
-    FAST_MERGE_WITH_FALLBACK = 6;
+    // FAST_MERGE_WITH_FALLBACK was FAST_MERGE with the fallback enabled. Use
+    // FAST_MERGE and BufferAssigner::Options::enable_fallback instead.
+    reserved 6;
+    reserved "FAST_MERGE_WITH_FALLBACK";
   }
   optional Value fallback_algorithm = 1;
 }

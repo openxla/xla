@@ -712,13 +712,14 @@ TEST_F(BufferAssignmentTest, OOMFallbackToDefault) {
   schedule.set_sequence(module->entry_computation(), {param, a, b, c, d, root});
   CHECK_OK(module->set_schedule(schedule));
 
-  // Options enforcing FAST_MERGE_WITH_FALLBACK.
+  // Options enabling the fallback, starting with FAST_MERGE.
   BufferAssigner::Options opts;
   opts.assignment_algorithm_for_computations_without_ordering =
       buffer_assignment::
           AssignmentAlgorithmForComputationsWithoutOrderingProto::FAST_MERGE;
-  opts.buffer_assignment_algorithm = buffer_assignment::
-      BufferAssignmentAlgorithmProto::FAST_MERGE_WITH_FALLBACK;
+  opts.buffer_assignment_algorithm =
+      buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE;
+  opts.enable_fallback = true;
   opts.fallback_algorithm =
       buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
 
@@ -825,8 +826,9 @@ TEST_F(BufferAssignmentTest, OOMFallbackIgnoresThreadLocalAllocations) {
     opts.assignment_algorithm_for_computations_without_ordering =
         buffer_assignment::
             AssignmentAlgorithmForComputationsWithoutOrderingProto::FAST_MERGE;
-    opts.buffer_assignment_algorithm = buffer_assignment::
-        BufferAssignmentAlgorithmProto::FAST_MERGE_WITH_FALLBACK;
+    opts.buffer_assignment_algorithm =
+        buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE;
+    opts.enable_fallback = true;
     opts.fallback_algorithm =
         buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
     opts.color_memory_limit = [limit](LogicalBuffer::Color) {
@@ -918,8 +920,9 @@ TEST_F(BufferAssignmentTest, OOMFallbackOnlyForExceededColor) {
   opts.assignment_algorithm_for_computations_without_ordering =
       buffer_assignment::
           AssignmentAlgorithmForComputationsWithoutOrderingProto::FAST_MERGE;
-  opts.buffer_assignment_algorithm = buffer_assignment::
-      BufferAssignmentAlgorithmProto::FAST_MERGE_WITH_FALLBACK;
+  opts.buffer_assignment_algorithm =
+      buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE;
+  opts.enable_fallback = true;
   opts.fallback_algorithm =
       buffer_assignment::BufferAssignmentAlgorithmProto::DEFAULT;
 
@@ -6643,8 +6646,9 @@ TEST_F(BufferAssignmentTest, FastMergeFallbackWithZeroMemoryLimit) {
 
   BufferAssigner::Options opts;
   opts.allocate_buffers_for_constants = true;
-  opts.buffer_assignment_algorithm = buffer_assignment::
-      BufferAssignmentAlgorithmProto::FAST_MERGE_WITH_FALLBACK;
+  opts.buffer_assignment_algorithm =
+      buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE;
+  opts.enable_fallback = true;
   opts.fallback_algorithm =
       buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT;
   opts.color_memory_limit = [](LogicalBuffer::Color) -> int64_t { return 0; };
@@ -6669,8 +6673,9 @@ TEST_F(BufferAssignmentTest, FastMergeFallbackWithLowMemoryLimit) {
 
   BufferAssigner::Options opts;
   opts.allocate_buffers_for_constants = true;
-  opts.buffer_assignment_algorithm = buffer_assignment::
-      BufferAssignmentAlgorithmProto::FAST_MERGE_WITH_FALLBACK;
+  opts.buffer_assignment_algorithm =
+      buffer_assignment::BufferAssignmentAlgorithmProto::FAST_MERGE;
+  opts.enable_fallback = true;
   opts.fallback_algorithm =
       buffer_assignment::BufferAssignmentAlgorithmProto::FAST_SPLIT;
   // 100 bytes memory limit is less than 1.5GiB safety margin, so adjusted
