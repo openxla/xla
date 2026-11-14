@@ -101,6 +101,10 @@ template <typename MatcherType>
 auto MfmaSizeIs(MatcherType matcher) {
   return Field("mfma_size", &TritonGemmConfig::mfma_size, matcher);
 }
+template <typename MatcherType>
+auto KpackIs(MatcherType matcher) {
+  return Field("kpack", &TritonGemmConfig::kpack, matcher);
+}
 
 auto IsValidConfig() {
   return AllOf(BlockMIs(Ge(1)), BlockNIs(Ge(1)), BlockKIs(Ge(1)),
@@ -606,6 +610,15 @@ TEST_F(DotSearchSpaceTest, CudaDoesNotGenerateMfmaSizeConfigs) {
               AllOf(Not(IsEmpty()), Each(MfmaSizeIs(Eq(0)))));
 }
 
+TEST_F(DotSearchSpaceTest, CudaDoesNotGenerateKpackConfigs) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       GetDefaultDotModule());
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  EXPECT_THAT(search_space.GenerateConfigs(),
+              AllOf(Not(IsEmpty()), Each(KpackIs(Eq(1)))));
+}
+
 class RocmDotSearchSpaceTest : public DefaultDeviceDotSearchSpaceTest {
  protected:
   RocmDotSearchSpaceTest() {
@@ -652,6 +665,35 @@ TEST_F(RocmDotSearchSpaceTest, NarrowDotDoesNotGetMfmaSizeConfigs) {
 
   EXPECT_THAT(search_space.GenerateConfigs(),
               AllOf(Not(IsEmpty()), Each(MfmaSizeIs(Eq(0)))));
+}
+
+TEST_F(RocmDotSearchSpaceTest, GeneratesKpackConfigs) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       GetDefaultDotModule());
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+  std::vector<TritonGemmConfig> configs = search_space.GenerateConfigs();
+
+  EXPECT_THAT(configs,
+              AllOf(Not(IsEmpty()), Contains(KpackIs(Eq(2))),
+                    Contains(KpackIs(Eq(1))), Each(KpackIs(AnyOf(1, 2)))));
+  // f16 packs only with block_k >= 16 on 32x32 MFMAs and >= 32 on 16x16.
+  EXPECT_THAT(configs, Not(Contains(AllOf(KpackIs(Eq(2)), BlockKIs(Lt(16))))));
+  EXPECT_THAT(configs, Not(Contains(AllOf(KpackIs(Eq(2)), MfmaSizeIs(Eq(16)),
+                                          BlockKIs(Lt(32))))));
+  EXPECT_THAT(configs,
+              Not(Contains(AllOf(KpackIs(Eq(2)),
+                                 AnyOf(BlockMIs(Lt(16)), BlockNIs(Lt(16)))))));
+}
+
+TEST_F(RocmDotSearchSpaceTest, Gfx950DoesNotGenerateKpackConfigs) {
+  device_description_.set_gpu_compute_capability(
+      se::GpuComputeCapability(se::RocmComputeCapability("gfx950")));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> module,
+                       GetDefaultDotModule());
+  TritonDotFusionSearchSpace search_space = MakeSearchSpace(module.get());
+
+  EXPECT_THAT(search_space.GenerateConfigs(),
+              AllOf(Not(IsEmpty()), Each(KpackIs(Eq(1)))));
 }
 
 }  // namespace

@@ -132,6 +132,7 @@ xla_cc_test(
     srcs = ["triton_configs_test.cc"],
     deps = [
         ":triton_configs",
+        "//xla/service/gpu:matmul_utils",
         "//xla/stream_executor:device_description",
         "//xla/stream_executor/cuda:cuda_compute_capability",
         "//xla/stream_executor/rocm:rocm_compute_capability",

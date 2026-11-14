@@ -43,6 +43,7 @@ TEST(BlockLevelParametersTest,
   block_level_fusion_config.set_is_warp_specialization_allowed(true);
   block_level_fusion_config.set_waves_per_eu(4);
   block_level_fusion_config.set_mfma_size(16);
+  block_level_fusion_config.set_kpack(2);
 
   BlockLevelParameters block_level_parameters =
       BlockLevelParameters::FromBlockLevelFusionConfig(
@@ -58,6 +59,7 @@ TEST(BlockLevelParametersTest,
   EXPECT_THAT(block_level_parameters.is_warp_specialization_allowed, true);
   EXPECT_THAT(block_level_parameters.waves_per_eu, 4);
   EXPECT_THAT(block_level_parameters.mfma_size, 16);
+  EXPECT_THAT(block_level_parameters.kpack, 2);
 }
 
 TEST(BlockLevelParametersTest,
@@ -72,6 +74,7 @@ TEST(BlockLevelParametersTest,
   block_level_parameters.is_warp_specialization_allowed = true;
   block_level_parameters.waves_per_eu = 4;
   block_level_parameters.mfma_size = 16;
+  block_level_parameters.kpack = 2;
 
   BlockLevelFusionConfig block_level_fusion_config =
       block_level_parameters.ToBlockLevelFusionConfig();
@@ -88,6 +91,7 @@ TEST(BlockLevelParametersTest,
   EXPECT_THAT(block_level_fusion_config.is_warp_specialization_allowed(), true);
   EXPECT_THAT(block_level_fusion_config.waves_per_eu(), 4);
   EXPECT_THAT(block_level_fusion_config.mfma_size(), 16);
+  EXPECT_THAT(block_level_fusion_config.kpack(), 2);
 }
 
 TEST(BlockLevelParametersTest,
@@ -103,6 +107,21 @@ TEST(BlockLevelParametersTest,
                   block_level_fusion_config)
                   .sequential_tile_sizes,
               IsEmpty());
+}
+
+TEST(BlockLevelParametersTest, DefaultKpackIsNotSetInBlockLevelFusionConfig) {
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {{18, 19}};
+  EXPECT_THAT(block_level_parameters.kpack, 1);
+
+  BlockLevelFusionConfig block_level_fusion_config =
+      block_level_parameters.ToBlockLevelFusionConfig();
+
+  EXPECT_THAT(block_level_fusion_config.kpack(), 0);
+  EXPECT_THAT(BlockLevelParameters::FromBlockLevelFusionConfig(
+                  block_level_fusion_config)
+                  .kpack,
+              1);
 }
 
 }  // namespace

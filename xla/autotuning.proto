@@ -117,6 +117,9 @@ message AutotuneResult {
     // AMD MFMA MN instruction size, 0 = auto or 16. Ignored on WMMA and on
     // non-ROCm targets.
     int64 mfma_size = 12;
+    // AMD MFMA K packing factor, 1 or 2 (0 means 1). Ignored on WMMA, gfx950
+    // and non-ROCm targets.
+    int64 kpack = 13;
     // LINT.ThenChange(//tensorflow/compiler/xla/service/gpu/matmul_utils.h)
   }
 

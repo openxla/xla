@@ -79,7 +79,7 @@ static bool is_in_thread_transpose_enabled(
 static void MakeTTGIR(mlir::OpPassManager* pm,
                       const stream_executor::RocmComputeCapability& rocm_cc,
                       int num_warps, int num_ctas, int num_stages,
-                      int mfma_size) {
+                      int mfma_size, int kpack) {
   pm->addPass(mt::createConvertTritonToTritonGPU(
       {absl::StrCat("hip:", rocm_cc.gfx_version()), num_warps,
        rocm_cc.threads_per_warp(), num_ctas}));
@@ -90,6 +90,8 @@ static void MakeTTGIR(mlir::OpPassManager* pm,
   mlir::TritonAMDGPUAccelerateMatmulOptions accelerate_matmul_options;
   accelerate_matmul_options.gfxArch = rocm_cc.gfx_version();
   accelerate_matmul_options.matrixInstructionSize = mfma_size;
+  // Triton's compiler.py also forces kpack 1 on gfx950.
+  accelerate_matmul_options.kPack = rocm_cc.gfx9_mi350() ? 1 : kpack;
   pm->addPass(
       mlir::createTritonAMDGPUAccelerateMatmul(accelerate_matmul_options));
   pm->addPass(mt::gpu::createTritonGPURemoveLayoutConversions());
@@ -200,9 +202,9 @@ static void MakeLLIR(mlir::OpPassManager* pm,
 void CreateTritonRocmPipeline(
     mlir::OpPassManager* pm,
     const stream_executor::RocmComputeCapability& rocm_cc, int num_warps,
-    int num_ctas, int num_stages, int mfma_size) {
+    int num_ctas, int num_stages, int mfma_size, int kpack) {
   MakeTTIR(pm, rocm_cc);
-  MakeTTGIR(pm, rocm_cc, num_warps, num_ctas, num_stages, mfma_size);
+  MakeTTGIR(pm, rocm_cc, num_warps, num_ctas, num_stages, mfma_size, kpack);
   MakeLLIR(pm, rocm_cc, num_stages);
 }
 

@@ -15,9 +15,12 @@ limitations under the License.
 
 #include "xla/backends/gpu/autotuner/triton/triton_configs.h"
 
+#include <vector>
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "xla/service/gpu/matmul_utils.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/rocm/rocm_compute_capability.h"
@@ -25,6 +28,10 @@ limitations under the License.
 namespace xla::gpu {
 namespace {
 
+using ::testing::AnyOf;
+using ::testing::Contains;
+using ::testing::Each;
+using ::testing::Field;
 using ::testing::SizeIs;
 
 TEST(TritonConfigsTest, PlatformsReturnNonEmptyConfig) {
@@ -38,13 +45,29 @@ TEST(TritonConfigsTest, PlatformsReturnNonEmptyConfig) {
               SizeIs(2));
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kHopper),
               SizeIs(25));
-  // 33 tuned configs + 20 mfma_size=16 variants.
+  // 33 tuned configs + 20 mfma_size=16 variants + 5 kpack=2 variants.
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kMI300),
-              SizeIs(53));
+              SizeIs(58));
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kMI350),
               SizeIs(58));
   EXPECT_THAT(GetTritonConfigsForPlatform(TritonConfigsPlatform::kRubin),
               SizeIs(40));
+}
+
+TEST(TritonConfigsTest, MI300ListsKpack2VariantsNextToKpack1Configs) {
+  const std::vector<TritonGemmConfig>& configs =
+      GetTritonConfigsForPlatform(TritonConfigsPlatform::kMI300);
+
+  EXPECT_THAT(configs, Each(Field(&TritonGemmConfig::kpack, AnyOf(1, 2))));
+  EXPECT_THAT(configs, Contains(Field(&TritonGemmConfig::kpack, 2)).Times(5));
+  for (const TritonGemmConfig& config : configs) {
+    if (config.kpack != 2) {
+      continue;
+    }
+    TritonGemmConfig twin = config;
+    twin.kpack = 1;
+    EXPECT_THAT(configs, Contains(twin)) << config.ToString();
+  }
 }
 
 TEST(TritonConfigsTest, GetDefaultTritonConfigsCuda) {
