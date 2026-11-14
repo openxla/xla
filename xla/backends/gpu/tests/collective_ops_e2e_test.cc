@@ -2022,7 +2022,8 @@ TEST_F(CollectiveOpsTestE2E, ExplicitLaunchOrderingWhileLoopWithCollectives) {
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
-  config.mutable_debug_options().set_xla_gpu_explicit_launch_ordering(true);
+  config.mutable_debug_options()
+      .set_xla_gpu_experimental_explicit_launch_ordering(true);
   ASSERT_OK_AND_ASSIGN(auto module,
                        ParseAndReturnVerifiedModule(kModuleStr, config));
   ASSERT_OK_AND_ASSIGN(ExecutionResult execution_result,
@@ -2063,7 +2064,8 @@ TEST_F(CollectiveOpsTestE2E, ExplicitLaunchOrderingCollectivesGroup) {
   )";
   ASSERT_GE(device_count(), 2);
   HloModuleConfig config = GetModuleConfigForTest(/*replica_count=*/2);
-  config.mutable_debug_options().set_xla_gpu_explicit_launch_ordering(true);
+  config.mutable_debug_options()
+      .set_xla_gpu_experimental_explicit_launch_ordering(true);
   ASSERT_OK_AND_ASSIGN(auto module,
                        ParseAndReturnVerifiedModule(kModuleStr, config));
 
@@ -2105,7 +2107,7 @@ TEST_F(CollectiveOpsTestE2E,
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
   DebugOptions& debug_options = config.mutable_debug_options();
-  debug_options.set_xla_gpu_explicit_launch_ordering(true);
+  debug_options.set_xla_gpu_experimental_explicit_launch_ordering(true);
   debug_options.add_xla_gpu_enable_command_buffer(DebugOptions::COLLECTIVES);
   ASSERT_OK_AND_ASSIGN(auto module,
                        ParseAndReturnVerifiedModule(kModuleStr, config));

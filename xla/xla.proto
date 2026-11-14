@@ -2050,7 +2050,7 @@ message DebugOptions {
   // for. Covers NCCL, ragged all-to-all and XLA collective kernels and needs
   // NCCL 2.32 and driver 12.3. Not collective permute, send, recv or command
   // buffers.
-  optional bool xla_gpu_explicit_launch_ordering = 579;
+  optional bool xla_gpu_experimental_explicit_launch_ordering = 579;
 
   // Next id: 580
 

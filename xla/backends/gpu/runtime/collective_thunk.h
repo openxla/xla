@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_params.h"
 #include "xla/backends/gpu/runtime/collective_thunk.pb.h"
@@ -301,8 +302,6 @@ absl::StatusOr<std::vector<DeviceBufferPair>> ConvertToDeviceBuffers(
 absl::StatusOr<std::vector<CollectiveThunk::Buffer>> GetCollectiveBuffers(
     const BufferAssignment& buffer_assignment, const HloInstruction* inst,
     Thunk::Kind kind, bool has_dynamic_root);
-
-class GpuCommunicator;
 
 // One call per buffer, the largest alone with the event after the other calls.
 absl::Status LaunchInGroups(

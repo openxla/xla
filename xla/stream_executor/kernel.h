@@ -162,9 +162,6 @@ class Kernel {
       const ThreadDim& thread_dims, const BlockDim& block_dims,
       const std::optional<ClusterDim>& cluster_dims, Stream* stream,
       const KernelArgs& args, Event* launch_completion_event) {
-    if (launch_completion_event == nullptr) {
-      return Launch(thread_dims, block_dims, cluster_dims, stream, args);
-    }
     return absl::UnimplementedError("Not implemented");
   }
 
@@ -251,6 +248,9 @@ class TypedKernel {
                                                 Stream* stream,
                                                 Event* launch_completion_event,
                                                 Args... args) {
+    if (launch_completion_event == nullptr) {
+      return Launch(thread_dims, block_dims, stream, args...);
+    }
     auto kernel_args = PackKernelArgs(*this, args...);
     return kernel_->LaunchWithCompletionEvent(
         thread_dims, block_dims, std::nullopt, stream, *kernel_args,

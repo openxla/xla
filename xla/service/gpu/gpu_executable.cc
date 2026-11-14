@@ -542,13 +542,13 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::CreateImpl(
       std::make_unique<ThunkExecutor>(std::move(seq_thunk->thunks()));
 
   // A collective inside a command buffer records no launch event.
-  if (params.debug_options.xla_gpu_explicit_launch_ordering() &&
+  if (params.debug_options.xla_gpu_experimental_explicit_launch_ordering() &&
       absl::c_linear_search(
           params.debug_options.xla_gpu_enable_command_buffer(),
           DebugOptions::COLLECTIVES)) {
     return absl::InvalidArgumentError(
-        "xla_gpu_explicit_launch_ordering does not order collectives inside "
-        "command buffers, remove COLLECTIVES from "
+        "xla_gpu_experimental_explicit_launch_ordering does not order "
+        "collectives inside command buffers, remove COLLECTIVES from "
         "xla_gpu_enable_command_buffer");
   }
 
@@ -1017,7 +1017,7 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
 
   // A backend that records no launch event has nothing to order.
   std::optional<LaunchOrdering> launch_ordering;
-  if (debug_options.xla_gpu_explicit_launch_ordering()) {
+  if (debug_options.xla_gpu_experimental_explicit_launch_ordering()) {
     ABSL_ASSIGN_OR_RETURN(bool records_launch_completion,
                           collective_cliques.SupportsLaunchCompletion(
                               collective_params.global_device_id));

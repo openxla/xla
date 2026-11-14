@@ -2327,6 +2327,7 @@ xla_test(
         ":all_reduce_thunk",
         ":collective_thunk",
         ":collective_thunk_multigpu_test_utils",
+        ":launch_ordering",
         ":thunk",
         "//xla:shape_util",
         "//xla:xla_data_proto_cc",
@@ -3811,15 +3812,29 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "launch_ordering",
+    srcs = ["launch_ordering.cc"],
+    hdrs = ["launch_ordering.h"],
+    deps = [
+        ":event_pool",
+        "//xla:util",
+        "//xla/stream_executor:event",
+        "//xla/stream_executor:stream",
+        "//xla/stream_executor:stream_executor_h",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@tsl//tsl/profiler/lib:traceme",
+    ],
+)
+
+cc_library(
     name = "thunk",
-    srcs = [
-        "launch_ordering.cc",
-        "thunk.cc",
-    ],
-    hdrs = [
-        "launch_ordering.h",
-        "thunk.h",
-    ],
+    srcs = ["thunk.cc"],
+    hdrs = ["thunk.h"],
     visibility = internal_visibility([
         ":friends",
         "//xla/backends/gpu/libraries/native_custom_call_thunks:handler_allowlist",
@@ -3831,8 +3846,8 @@ cc_library(
         ":collective_memory_requests",
         ":collective_params",
         ":command_buffer_requests",
-        ":event_pool",
         ":execution_stream_id",
+        ":launch_ordering",
         ":thunk_id",
         ":thunk_kind_proto_cc",
         ":thunk_proto_cc",
@@ -3865,7 +3880,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
-        "@tsl//tsl/profiler/lib:traceme",
     ],
 )
 
@@ -3893,6 +3907,7 @@ cc_library(
     deps = [
         ":annotation",
         ":event_pool",
+        ":launch_ordering",
         ":thunk",
         ":while_loop",
         "//xla:util",
@@ -3925,6 +3940,7 @@ xla_test(
     srcs = ["thunk_executor_test.cc"],
     backends = ["gpu"],
     deps = [
+        ":launch_ordering",
         ":memset_thunk",
         ":sequential_thunk",
         ":thunk",

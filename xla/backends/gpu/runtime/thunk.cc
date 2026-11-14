@@ -80,7 +80,7 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
   uint64_t rng_seed =
       static_cast<uint64_t>(run_options.run_options().rng_seed());
 
-  ExecuteParams params(
+  return ExecuteParams(
       &buffer_allocations, stream, command_buffer_trace_stream,
       collective_params, collective_cliques, collective_memory,
       run_options.run_options().device_to_host_stream(),
@@ -92,7 +92,6 @@ Thunk::ExecuteParams Thunk::ExecuteParams::Create(
       additional_compute_streams, execution_scoped_state,
       enable_mock_collectives, run_options.run_options().run_id().ToInt(),
       rng_seed, persistent_alloc_indices, std::move(locality_domain_streams));
-  return params;
 }
 
 Thunk::ExecuteParams Thunk::ExecuteParams::CloneWithNewAllocations(

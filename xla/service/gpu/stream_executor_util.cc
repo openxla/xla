@@ -415,6 +415,10 @@ absl::Status ExecuteKernelOnStream(
                           se::PackKernelArgs(args, kernel.metadata()));
   }
 
+  if (launch_completion_event == nullptr) {
+    return kernel.Launch(dims.thread_counts_per_block(), dims.block_counts(),
+                         cluster_dim, stream, *kernel_args);
+  }
   return kernel.LaunchWithCompletionEvent(
       dims.thread_counts_per_block(), dims.block_counts(), cluster_dim, stream,
       *kernel_args, launch_completion_event);
