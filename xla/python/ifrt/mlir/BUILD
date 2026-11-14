@@ -27,8 +27,7 @@ cc_library(
         "@highwayhash//:arch_specific",
         "@highwayhash//:hh_types",
         "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:BytecodeOpInterface",
-        "@llvm-project//mlir:BytecodeWriter",
+        "@llvm-project//mlir:BytecodeWriter",  # buildcleaner: keep -- defines mlir::writeBytecodeToFile; header is in mlir:IR
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
     ],
@@ -40,6 +39,8 @@ xla_cc_test(
     deps = [
         ":fingerprint_utils",
         "//xla/pjrt:mlir_to_hlo",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
