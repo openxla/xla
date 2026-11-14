@@ -1410,6 +1410,7 @@ absl::StatusOr<se::gpu::CudnnGraph> HloFusionToCuDnnGraph(
       const auto attrs = graph::Concatenate_attributes().set_axis(
           hlo->concatenate_dimension());
       std::vector<std::shared_ptr<graph::Tensor_attributes>> inputs;
+      inputs.reserve(hlo->operand_count());
       for (int i = 0; i < hlo->operand_count(); ++i) {
         inputs.push_back(operand(i));
       }
