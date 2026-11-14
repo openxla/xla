@@ -18,6 +18,9 @@ limitations under the License.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <optional>
+#include <set>
+
 #include "absl/status/status_matchers.h"
 #include "xla/client/compile_only_client.h"
 #include "xla/client/local_client.h"
@@ -43,9 +46,11 @@ class ClientLibraryTest : public ::testing::Test {
   }
   void TearDown() override { ClientLibrary::DestroyLocalInstances(); }
 
-  LocalClientOptions Options(int intra_op_threads) {
+  LocalClientOptions Options(
+      int intra_op_threads,
+      const std::optional<std::set<int>>& allowed_devices = std::nullopt) {
     return LocalClientOptions(platform_, /*number_of_replicas=*/1,
-                              intra_op_threads);
+                              intra_op_threads, allowed_devices);
   }
 
   se::Platform* platform_ = nullptr;
@@ -68,6 +73,45 @@ TEST_F(ClientLibraryTest, DestroyLocalInstanceAllowsRecreationWithNewOptions) {
   ASSERT_OK_AND_ASSIGN(LocalClient * recreated,
                        ClientLibrary::GetOrCreateLocalClient(Options(3)));
   EXPECT_EQ(IntraOpThreads(recreated), 3);
+}
+
+TEST_F(ClientLibraryTest, CachesSeparatelyByAllowedDevices) {
+  ASSERT_OK_AND_ASSIGN(
+      LocalClient * all_devices_client,
+      ClientLibrary::GetOrCreateLocalClient(Options(2, std::nullopt)));
+  ASSERT_OK_AND_ASSIGN(
+      LocalClient * device_0_client,
+      ClientLibrary::GetOrCreateLocalClient(Options(3, std::set<int>{0})));
+  EXPECT_NE(device_0_client, all_devices_client);
+  EXPECT_EQ(IntraOpThreads(all_devices_client), 2);
+  EXPECT_EQ(IntraOpThreads(device_0_client), 3);
+
+  ASSERT_OK_AND_ASSIGN(
+      LocalClient * cached_all_devices,
+      ClientLibrary::GetOrCreateLocalClient(Options(4, std::nullopt)));
+  ASSERT_OK_AND_ASSIGN(
+      LocalClient * cached_device_0,
+      ClientLibrary::GetOrCreateLocalClient(Options(4, std::set<int>{0})));
+  EXPECT_EQ(cached_all_devices, all_devices_client);
+  EXPECT_EQ(cached_device_0, device_0_client);
+  EXPECT_EQ(ClientLibrary::GetXlaService(platform_),
+            all_devices_client->local_service());
+  EXPECT_EQ(ClientLibrary::GetXlaService(platform_, std::set<int>{0}),
+            device_0_client->local_service());
+
+  ClientLibrary::DestroyLocalInstance(platform_);
+
+  ASSERT_OK_AND_ASSIGN(
+      LocalClient * recreated_device_0,
+      ClientLibrary::GetOrCreateLocalClient(Options(4, std::set<int>{0})));
+  ASSERT_OK_AND_ASSIGN(
+      LocalClient * device_0_and_1_client,
+      ClientLibrary::GetOrCreateLocalClient(Options(5, std::set<int>{0, 1})));
+  EXPECT_EQ(IntraOpThreads(recreated_device_0), 4);
+  EXPECT_EQ(ClientLibrary::GetXlaService(platform_),
+            recreated_device_0->local_service());
+  EXPECT_EQ(ClientLibrary::GetXlaService(platform_, std::set<int>{0, 1}),
+            device_0_and_1_client->local_service());
 }
 
 TEST_F(ClientLibraryTest, DestroyLocalInstanceKeepsCompileOnlyInstance) {
