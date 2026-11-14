@@ -875,6 +875,86 @@ TEST_F(ConditionalOpTest, DuplicateElementsConditional) {
   EXPECT_TRUE(LiteralTestUtil::Equal(false_reference, false_result));
 }
 
+// Partial evaluation of a conditional leaves two conditionals with one
+// predicate: `known` returns the residuals of both branches, and `staged`
+// consumes those of its branch. A backend may leave the residuals of the other
+// branch uninitialized. They are not zero here, so that a branch that read one
+// would differ even where uninitialized memory holds zeros. A backend may also
+// let `staged` read `x` from the operand of `known`, although `known_true`
+// updates `x` (ConditionalResidualElision).
+TEST_F(ConditionalOpTest, ResidualsOfPairedConditionals) {
+  const char* const hlo_string = R"(
+  HloModule m
+
+  known_true {
+    p = (f32[8]) parameter(0)
+    x = f32[8] get-tuple-element(p), index=0
+    update = f32[2] constant({10, 20})
+    start = s32[] constant(3)
+    out = f32[8] dynamic-update-slice(x, update, start)
+    seven = f32[] constant(7)
+    unused = f32[8] broadcast(seven), dimensions={}
+    ROOT t = (f32[8], f32[8], f32[8]) tuple(out, x, unused)
+  }
+
+  known_false {
+    p = (f32[8]) parameter(0)
+    x = f32[8] get-tuple-element(p), index=0
+    r = f32[8] reverse(x), dimensions={0}
+    res = f32[8] multiply(r, x)
+    out = f32[8] add(res, x)
+    seven = f32[] constant(7)
+    unused = f32[8] broadcast(seven), dimensions={}
+    ROOT t = (f32[8], f32[8], f32[8]) tuple(out, unused, res)
+  }
+
+  staged_true {
+    p = (f32[8], f32[8]) parameter(0)
+    res = f32[8] get-tuple-element(p), index=0
+    g = f32[8] get-tuple-element(p), index=1
+    m = f32[8] multiply(res, g)
+    ROOT d = f32[8] reverse(m), dimensions={0}
+  }
+
+  staged_false {
+    p = (f32[8], f32[8]) parameter(0)
+    res = f32[8] get-tuple-element(p), index=0
+    g = f32[8] get-tuple-element(p), index=1
+    s = f32[8] subtract(res, g)
+    ROOT d = f32[8] reverse(s), dimensions={0}
+  }
+
+  ENTRY entry {
+    sel = pred[] parameter(0)
+    a = f32[8] parameter(1)
+    x = f32[8] negate(a)
+    in = (f32[8]) tuple(x)
+    known = (f32[8], f32[8], f32[8]) conditional(sel, in, in), true_computation=known_true, false_computation=known_false
+    out = f32[8] get-tuple-element(known), index=0
+    res_true = f32[8] get-tuple-element(known), index=1
+    res_false = f32[8] get-tuple-element(known), index=2
+    args_true = (f32[8], f32[8]) tuple(res_true, out)
+    args_false = (f32[8], f32[8]) tuple(res_false, out)
+    ROOT staged = f32[8] conditional(sel, args_true, args_false), true_computation=staged_true, false_computation=staged_false
+  }
+  )";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                       ParseAndReturnVerifiedModule(hlo_string));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<OpaqueExecutable> executable,
+      CreateExecutable(module->Clone(), /*run_hlo_passes=*/true));
+  const Literal a = LiteralUtil::CreateR1<float>({1, -2, 3, -4, 5, -6, 7, -8});
+  for (bool sel : {true, false}) {
+    const Literal pred = LiteralUtil::CreateR0<bool>(sel);
+    ASSERT_OK_AND_ASSIGN(Literal reference, reference_runner().Execute(
+                                                module->Clone(), {&pred, &a},
+                                                /*run_hlo_passes=*/true));
+    ASSERT_OK_AND_ASSIGN(Literal result, test_runner().ExecuteWithExecutable(
+                                             executable.get(), {&pred, &a}));
+    EXPECT_TRUE(LiteralTestUtil::Equal(reference, result)) << sel;
+  }
+}
+
 using ConditionalOpHloTest = HloTestBase;
 
 TEST_F(ConditionalOpHloTest, ParallelExecution) {
