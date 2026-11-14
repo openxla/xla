@@ -10319,6 +10319,110 @@ ENTRY entry {
             op::Shape("s32[1,790,2]")));
 }
 
+TEST_P(SpmdPartitioningTest,
+       DynamicUpdateSliceAlongPartitionedDimensionClampsDynamicIndex) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %input = s32[2,5] parameter(0), sharding={devices=[1,2]<=[2]}
+  %update = s32[2,1] parameter(1), sharding={replicated}
+  %c0 = s32[] constant(0)
+  %index = s32[] parameter(2)
+  ROOT %dynamic-update-slice = s32[2,5]
+    dynamic-update-slice(%input, %update, %c0, %index),
+    sharding={devices=[1,2]<=[2]}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+
+  // The start index is clamped to [0, 5 - 1] before shard ownership and the
+  // local offset are computed from it.
+  const auto root = module->entry_computation()->root_instruction();
+  auto input = AllOf(op::Parameter(0), op::Shape("s32[2,3]"));
+  auto clamped_index =
+      op::Clamp(op::Constant(), op::Parameter(2),
+                op::Constant(LiteralUtil::CreateR0<int32_t>(4)));
+  auto within_partition =
+      op::And(op::Compare(clamped_index, _), op::Compare(clamped_index, _));
+  EXPECT_THAT(
+      root, AllOf(op::Select(op::Broadcast(op::And(_, within_partition)),
+                             op::DynamicUpdateSlice(
+                                 input, op::Parameter(1), op::Constant(),
+                                 op::Select(within_partition,
+                                            op::Subtract(clamped_index, _), _)),
+                             input),
+                  op::Shape("s32[2,3]")));
+}
+
+TEST_P(SpmdPartitioningTest,
+       DynamicUpdateSliceAlongPartitionedDimensionClampsConstantIndex) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %input = s32[128,64] parameter(0), sharding={devices=[1,2]<=[2]}
+  %update = s32[128,4] parameter(1), sharding={replicated}
+  %c0 = s32[] constant(0)
+  %c70 = s32[] constant(70)
+  ROOT %dynamic-update-slice = s32[128,64]
+    dynamic-update-slice(%input, %update, %c0, %c70),
+    sharding={devices=[1,2]<=[2]}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+
+  // The out-of-range start 70 is clamped to 64 - 4 = 60, which is within the
+  // second partition.
+  const auto root = module->entry_computation()->root_instruction();
+  auto input = AllOf(op::Parameter(0), op::Shape("s32[128,32]"));
+  auto clamped_index = op::Clamp(
+      op::Constant(), op::Constant(LiteralUtil::CreateR0<int32_t>(70)),
+      op::Constant(LiteralUtil::CreateR0<int32_t>(60)));
+  EXPECT_THAT(
+      root,
+      AllOf(op::Select(op::Broadcast(),
+                       op::DynamicUpdateSlice(
+                           input, op::Parameter(1), op::Constant(),
+                           op::Select(_, op::Subtract(clamped_index, _), _)),
+                       input),
+            op::Shape("s32[128,32]")));
+}
+
+TEST_P(SpmdPartitioningTest,
+       DynamicUpdateSliceNegativeConstantIndexSpanningPartitions) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %input = s32[128,64] parameter(0), sharding={devices=[1,2]<=[2]}
+  %update = s32[128,40] parameter(1), sharding={replicated}
+  %c0 = s32[] constant(0)
+  %c-31 = s32[] constant(-31)
+  ROOT %dynamic-update-slice = s32[128,64]
+    dynamic-update-slice(%input, %update, %c0, %c-31),
+    sharding={devices=[1,2]<=[2]}
+})";
+
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       PartitionComputation(hlo_string, /*num_devices=*/2));
+  VLOG(1) << module->ToString();
+
+  // The start -31 is clamped to 0, so the update covers [0, 40) and spans both
+  // partitions. It must not take the single-partition path.
+  const auto root = module->entry_computation()->root_instruction();
+  auto input = AllOf(op::AllGather(op::Parameter(0)), op::Shape("s32[128,64]"));
+  EXPECT_THAT(root, AllOf(op::DynamicSlice(op::DynamicUpdateSlice(
+                                               input, op::Parameter(1),
+                                               op::Constant(), op::Constant()),
+                                           _, _),
+                          op::Shape("s32[128,32]")));
+}
+
 TEST_P(SpmdPartitioningTest, DynamicUpdateSlicePartitionSliceAndNonSliceDims) {
   absl::string_view hlo_string = R"(
 HloModule module

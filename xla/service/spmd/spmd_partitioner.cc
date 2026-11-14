@@ -5119,6 +5119,18 @@ absl::Status SpmdPartitioningVisitor::HandleDUSSinglePartitionUpdate(
       partition_ordinal = add_hlo(
           HloInstruction::CreateConvert(offset_shape, partition_ordinal));
     }
+    // Clamp the start index to [0, operand_dim - update_dim] like
+    // dynamic-update-slice does, before using it to find the owning partition.
+    HloInstruction* zero = add_hlo(
+        HloInstruction::CreateConstant(LiteralUtil::CreateR0(index_type, 0)));
+    const int64_t max_start =
+        hlo->shape().dimensions(dim) - update_tensor->shape().dimensions(dim);
+    if (primitive_util::FitsInIntegralType(max_start, index_type)) {
+      HloInstruction* max_index = add_hlo(HloInstruction::CreateConstant(
+          LiteralUtil::CreateR0(index_type, max_start)));
+      new_indices[dim] = add_hlo(HloInstruction::CreateTernary(
+          offset_shape, HloOpcode::kClamp, zero, new_indices[dim], max_index));
+    }
     HloInstruction* partition_offset = add_hlo(HloInstruction::CreateBinary(
         offset_shape, HloOpcode::kMultiply, partition_ordinal,
         per_partition_size_hlo));
@@ -5148,8 +5160,6 @@ absl::Status SpmdPartitioningVisitor::HandleDUSSinglePartitionUpdate(
     // Calculate offset.
     // slice dim offset = within_partition ?
     //                    offset - partition_id * per_partition_size : 0
-    HloInstruction* zero = add_hlo(
-        HloInstruction::CreateConstant(LiteralUtil::CreateR0(index_type, 0)));
     new_indices[dim] = add_hlo(HloInstruction::CreateTernary(
         offset_shape, HloOpcode::kSelect, update_within_partition,
         add_hlo(HloInstruction::CreateBinary(offset_shape, HloOpcode::kSubtract,
