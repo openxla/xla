@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/types/span.h"
+#include "xla/array.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/device_test_util.h"
@@ -543,6 +544,26 @@ TEST_F(HloShardingSpecTest, IndexDomainsWithTileTranspose) {
   EXPECT_THAT(
       index_domains,
       ElementsAreArray(TEST_HloShardingSpecIndexDomainsSlowPath(*spec, shape)));
+}
+
+TEST_F(HloShardingSpecTest, IndexDomainsFailsWithDuplicateShards) {
+  int num_shards = 3;
+  // 3-way sharded along axis 0. The tile assignment is invalid: shard 0 has two
+  // tiles and shard 1 has none.
+  auto xla_hlo_sharding = xla::HloSharding::Tile(xla::Array<int64_t>(
+      /*sizes=*/{3}, /*flattened_values=*/{0, 0, 2}));
+  std::shared_ptr<const HloShardingSpec> spec =
+      HloShardingSpec::Create(num_shards, xla_hlo_sharding);
+
+  // The shape is not evenly divisible so that `Disassemble()` also uses
+  // `IndexDomains()`.
+  Shape shape({10});
+  EXPECT_THAT(spec->IndexDomains(shape),
+              absl_testing::StatusIs(tsl::error::INVALID_ARGUMENT,
+                                     HasSubstr("shard 1 has no tile")));
+  EXPECT_THAT(spec->Disassemble(shape),
+              absl_testing::StatusIs(tsl::error::INVALID_ARGUMENT,
+                                     HasSubstr("shard 1 has no tile")));
 }
 
 TEST_F(HloShardingSpecTest, IndexDomainsWithUnreduced) {

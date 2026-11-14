@@ -400,6 +400,7 @@ xla_cc_test(
     srcs = ["xla_sharding_spec_test.cc"],
     deps = [
         ":xla_ifrt",
+        "//xla:array",
         "//xla:xla_data_proto_cc",
         "//xla/hlo/ir:hlo",
         "//xla/python/ifrt",

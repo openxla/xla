@@ -290,6 +290,14 @@ absl::StatusOr<std::vector<IndexDomain>> HloShardingSpec::IndexDomains(
 
   result.reserve(num_shards_);
   for (int device_idx = 0; device_idx < num_shards_; ++device_idx) {
+    // A shard is left without a tile if the tile assignment does not contain
+    // every shard exactly once (e.g., another shard appears more than once).
+    if (!all[device_idx].has_value()) {
+      return absl::InvalidArgumentError(absl::StrFormat(
+          "Tile assignment must contain every shard exactly once, but shard "
+          "%d has no tile: sharding=%s",
+          device_idx, xla_hlo_sharding_.ToString()));
+    }
     result.push_back(*std::move(all[device_idx]));
   }
 
