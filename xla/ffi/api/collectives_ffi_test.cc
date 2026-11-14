@@ -15,13 +15,14 @@ limitations under the License.
 
 #include "xla/ffi/api/collectives_ffi.h"
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/collectives_api.h"
 #include "xla/ffi/api/collectives_c_api.h"
@@ -32,7 +33,9 @@ limitations under the License.
 namespace xla::ffi {
 namespace {
 
+using ::absl_testing::StatusIs;
 using ::testing::ElementsAre;
+using ::testing::HasSubstr;
 
 static const XLA_FFI_Api* Api() { return GetXlaFfiApi(); }
 
@@ -51,6 +54,9 @@ struct FakeBackend {
   size_t requested_num_groups = 0;
   int64_t requested_communication_id = -1;
   std::vector<int64_t> requested_ids;
+  XLA_FFI_CollectiveGroupMode get_group_mode = XLA_FFI_GROUP_CROSS_REPLICA;
+  int64_t get_communication_id = -1;
+  std::vector<std::vector<int64_t>> get_groups;
 
   bool request_window_called = false;
   XLA_FFI_CollectiveGroupMode requested_window_group_mode =
@@ -82,7 +88,19 @@ static XLA_FFI_Error* FakeRequestCommunicator(
 static XLA_FFI_Error* FakeGetCommunicator(
     const XLA_FFI_Collectives_Extension* self,
     XLA_FFI_Communicator_Get_Args* args) {
+  auto* backend = reinterpret_cast<FakeBackend*>(self->state);
+  EXPECT_EQ(args->struct_size, XLA_FFI_Communicator_Get_Args_STRUCT_SIZE);
+  EXPECT_EQ(args->extension_start, nullptr);
+  backend->get_group_mode = args->group_mode;
+  backend->get_communication_id = args->communication_id;
+  backend->get_groups.clear();
+  for (size_t i = 0; i < args->num_groups; ++i) {
+    backend->get_groups.emplace_back(
+        args->groups[i].ids, args->groups[i].ids + args->groups[i].size);
+  }
   args->communicator = kFakeCommunicator;
+  args->rank = 2;
+  args->size = 3;
   return nullptr;
 }
 
@@ -135,20 +153,131 @@ static XLA_FFI_Collectives_Extension MakeFakeCollectivesExtension(
   return ext;
 }
 
-TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
+TEST(CollectivesFfiTest, ExtensionVersionCompatibility) {
+  auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
+      [](Communicator comm) -> Error {
+        if (Error status =
+                comm.RequestCommunicator(GroupMode::kCrossReplica, {},
+                                         /*communication_id=*/0);
+            status.failure()) {
+          return status;
+        }
+        ErrorOr<XLA_FFI_Communicator*> handle = comm.GetCommunicator(
+            GroupMode::kCrossReplica, {}, /*communication_id=*/0);
+        if (handle.has_error()) {
+          return handle.error();
+        }
+        EXPECT_EQ(*handle, kFakeCommunicator);
+        return Error::Success();
+      });
+  auto call_frame = CallFrameBuilder(/*num_args=*/0, /*num_rets=*/0).Build();
+  const struct {
+    int32_t major;
+    int32_t minor;
+    bool supported;
+  } cases[] = {
+      {Collectives::kMajorVersion, 2, true},
+      {Collectives::kMajorVersion, Collectives::kMinorVersion, true},
+      {Collectives::kMajorVersion, Collectives::kMinorVersion + 1, true},
+      {Collectives::kMajorVersion, 1, false},
+      {Collectives::kMajorVersion + 1, Collectives::kMinorVersion, false},
+  };
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(test_case.major);
+    SCOPED_TRACE(test_case.minor);
+    FakeBackend backend;
+    XLA_FFI_Collectives_Extension ext = MakeFakeCollectivesExtension(
+        reinterpret_cast<XLA_FFI_CollectivesState*>(&backend),
+        FakeRequestCommunicator, nullptr);
+    ext.extension_base.id.major_version = test_case.major;
+    ext.extension_base.id.minor_version = test_case.minor;
+    ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
+                              XLA_FFI_Communicator_Get_Args* args) {
+      EXPECT_EQ(
+          args->struct_size,
+          XLA_FFI_STRUCT_SIZE(XLA_FFI_Communicator_Get_Args, communicator));
+      args->communicator = kFakeCommunicator;
+      return static_cast<XLA_FFI_Error*>(nullptr);
+    };
+    InvokeContext context;
+    context.extension_start = &ext.extension_base;
+
+    absl::Status status = Invoke(Api(), *handler, call_frame, context);
+    if (test_case.supported) {
+      EXPECT_OK(status);
+    } else {
+      EXPECT_THAT(status, StatusIs(absl::StatusCode::kInvalidArgument,
+                                   HasSubstr("Extension version mismatch")));
+    }
+    EXPECT_EQ(backend.request_called, test_case.supported);
+  }
+}
+
+TEST(CollectivesFfiTest, GetCommunicatorPropagatesCallbackError) {
+  XLA_FFI_Collectives_Extension ext =
+      MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
+  ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
+                            XLA_FFI_Communicator_Get_Args*) {
+    return internal::CreateError(
+        Api(), Error::InvalidArgument("invalid communicator group"));
+  };
+
+  ErrorOr<XLA_FFI_Communicator*> handle =
+      Communicator(Api(), &ext)
+          .GetCommunicator(GroupMode::kCrossReplica, {},
+                           /*communication_id=*/0);
+  ASSERT_TRUE(handle.has_error());
+  EXPECT_EQ(handle.error().errc(), ErrorCode::kInvalidArgument);
+  EXPECT_EQ(handle.error().message(), "invalid communicator group");
+
+  ErrorOr<CommunicatorWithRankInfo> info =
+      Communicator(Api(), &ext)
+          .GetCommunicatorWithRankInfo(GroupMode::kCrossReplica, {},
+                                       /*communication_id=*/0);
+  ASSERT_TRUE(info.has_error());
+  EXPECT_EQ(info.error().errc(), ErrorCode::kInvalidArgument);
+  EXPECT_EQ(info.error().message(), "invalid communicator group");
+}
+
+TEST(CollectivesFfiTest, GetCommunicatorWithRankInfoRequiresMetadataSupport) {
+  XLA_FFI_Collectives_Extension ext =
+      MakeFakeCollectivesExtension(nullptr, nullptr, nullptr);
+  ext.extension_base.id.minor_version = 2;
+  ext.get_communicator = [](const XLA_FFI_Collectives_Extension*,
+                            XLA_FFI_Communicator_Get_Args* args) {
+    ADD_FAILURE() << "Metadata lookup must not call a 0.2 callback";
+    args->communicator = kFakeCommunicator;
+    return static_cast<XLA_FFI_Error*>(nullptr);
+  };
+
+  ErrorOr<CommunicatorWithRankInfo> info =
+      Communicator(Api(), &ext)
+          .GetCommunicatorWithRankInfo(GroupMode::kCrossReplica, {},
+                                       /*communication_id=*/0);
+  ASSERT_TRUE(info.has_error());
+  EXPECT_EQ(info.error().errc(), ErrorCode::kUnimplemented);
+  EXPECT_THAT(
+      info.error().message(),
+      HasSubstr("Communicator metadata requires collectives extension"));
+}
+
+TEST(CollectivesFfiTest, RequestAndGetCommunicatorWithRankInfo) {
   bool called = false;
-  XLA_FFI_Communicator* got = nullptr;
+  CommunicatorWithRankInfo got = {};
 
   auto handler = Ffi::Bind().Ctx<Extension<Collectives>>().To(
       [&](Communicator comm) -> Error {
         called = true;
-        if (Error status = comm.RequestCommunicator(
-                GroupMode::kFlattenedId, {{0, 1}}, /*communication_id=*/7);
+        if (Error status = comm.RequestCommunicator(GroupMode::kFlattenedId,
+                                                    {{5, 1, 3}, {2, 0, 4}},
+                                                    /*communication_id=*/7);
             status.failure()) {
           return status;
         }
-        ErrorOr<XLA_FFI_Communicator*> comm_or = comm.GetCommunicator(
-            GroupMode::kFlattenedId, {{0, 1}}, /*communication_id=*/7);
+        ErrorOr<CommunicatorWithRankInfo> comm_or =
+            comm.GetCommunicatorWithRankInfo(GroupMode::kFlattenedId,
+                                             {{5, 1, 3}, {2, 0, 4}},
+                                             /*communication_id=*/7);
         if (comm_or.has_error()) {
           return comm_or.error();
         }
@@ -172,12 +301,18 @@ TEST(CollectivesFfiTest, RequestAndGetCommunicator) {
 
   ASSERT_OK(status);
   EXPECT_TRUE(called);
-  EXPECT_EQ(got, kFakeCommunicator);
+  EXPECT_EQ(got.communicator, kFakeCommunicator);
+  EXPECT_EQ(got.rank, 2);
+  EXPECT_EQ(got.size, 3);
   EXPECT_TRUE(backend.request_called);
   EXPECT_EQ(backend.requested_group_mode, XLA_FFI_GROUP_FLATTENED_ID);
-  EXPECT_EQ(backend.requested_num_groups, 1u);
+  EXPECT_EQ(backend.requested_num_groups, 2u);
   EXPECT_EQ(backend.requested_communication_id, 7);
-  EXPECT_THAT(backend.requested_ids, ElementsAre(0, 1));
+  EXPECT_THAT(backend.requested_ids, ElementsAre(5, 1, 3, 2, 0, 4));
+  EXPECT_EQ(backend.get_group_mode, XLA_FFI_GROUP_FLATTENED_ID);
+  EXPECT_EQ(backend.get_communication_id, 7);
+  EXPECT_THAT(backend.get_groups,
+              ElementsAre(ElementsAre(5, 1, 3), ElementsAre(2, 0, 4)));
 }
 
 TEST(CollectivesFfiTest, RequestAndGetWindow) {
