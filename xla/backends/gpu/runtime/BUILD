@@ -3706,20 +3706,10 @@ xla_cc_test(
 )
 
 cc_library(
-    name = "host_async_thunk",
-    hdrs = ["host_async_thunk.h"],
-    deps = [
-        ":thunk",
-        "//xla/tsl/lib/gtl:int_type",
-    ],
-)
-
-cc_library(
     name = "host_send_recv_thunk",
     srcs = ["host_send_recv_thunk.cc"],
     hdrs = ["host_send_recv_thunk.h"],
     deps = [
-        ":host_async_thunk",
         ":per_device_state",
         ":thunk",
         ":thunk_proto_cc",
@@ -3734,7 +3724,6 @@ cc_library(
         "//xla/stream_executor:stream",
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/concurrency:async_value",
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
@@ -3761,6 +3750,7 @@ xla_cc_test(
         "//xla/stream_executor:mock_stream_executor",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/util/proto:parse_text_proto",
+        "//xla/tsl/util/proto:proto_matchers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_googletest//:gtest_main",
@@ -5073,7 +5063,6 @@ cc_library(
     deps = [
         ":annotation",
         ":command",
-        ":host_async_thunk",
         ":per_device_state",
         ":thunk",
         ":thunk_proto_cc",
@@ -5100,6 +5089,7 @@ cc_library(
         "//xla/stream_executor:stream_executor_h",
         "//xla/tsl/concurrency:async_value",
         "//xla/tsl/framework:allocator",
+        "//xla/tsl/lib/gtl:int_type",
         "//xla/tsl/platform:env",
         "//xla/tsl/util:unique_any",
         "@com_google_absl//absl/base",
@@ -5128,6 +5118,7 @@ xla_test(
         ":command_state",
         ":host_execute_thunk",
         ":thunk",
+        ":thunk_id",
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:literal_util",
@@ -5150,6 +5141,7 @@ xla_test(
         "//xla/stream_executor:event",
         "//xla/stream_executor:memory_space",
         "//xla/stream_executor:mock_stream_executor",
+        "//xla/stream_executor:platform",
         "//xla/stream_executor:platform_manager",
         "//xla/stream_executor:stream_executor_address_allocator",
         "//xla/stream_executor:stream_executor_h",
@@ -5167,6 +5159,7 @@ xla_test(
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest",
         "@tsl//tsl/platform",
     ],

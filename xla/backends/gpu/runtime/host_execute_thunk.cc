@@ -26,7 +26,6 @@ limitations under the License.
 #include <vector>
 
 #include "absl/base/call_once.h"
-#include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
@@ -43,7 +42,6 @@ limitations under the License.
 #include "xla/backends/gpu/host_offloading/gpu_host_offloading_allocator.h"
 #include "xla/backends/gpu/runtime/annotation.h"
 #include "xla/backends/gpu/runtime/command.h"
-#include "xla/backends/gpu/runtime/host_async_thunk.h"
 #include "xla/backends/gpu/runtime/per_device_state.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -489,8 +487,9 @@ HostExecuteStartThunk::HostExecuteStartThunk(
     : Command(Thunk::Kind::kHostExecuteStart, std::move(thunk_info)),
       args_(std::move(args)),
       results_(std::move(results)),
-      async_events_(
-          std::make_shared<HostExecuteAsyncEvents>(devices_per_host)) {
+      async_events_(std::make_shared<HostExecuteAsyncEvents>(
+          HostExecuteAsyncEvents::UniqueId(this->thunk_info().thunk_id.value()),
+          devices_per_host)) {
   HostOffloadingExecutableProto host_offloading_executable_proto;
   *host_offloading_executable_proto.mutable_hlo_module() = hlo_module.ToProto();
   host_offloading_executable_proto.set_executable_type(
@@ -508,9 +507,11 @@ HostExecuteStartThunk::HostExecuteStartThunk(
       args_(std::move(args)),
       results_(std::move(results)),
       executable_proto_(host_offloading_executable_proto) {
-  async_events_ =
-      async_events ? std::move(async_events)
-                   : std::make_shared<HostExecuteAsyncEvents>(devices_per_host);
+  async_events_ = async_events ? std::move(async_events)
+                               : std::make_shared<HostExecuteAsyncEvents>(
+                                     HostExecuteAsyncEvents::UniqueId(
+                                         this->thunk_info().thunk_id.value()),
+                                     devices_per_host);
 }
 
 std::string HostExecuteStartThunk::ToString(int indent) const { return ""; }
@@ -534,13 +535,9 @@ absl::StatusOr<ThunkProto> HostExecuteStartThunk::ToProto() const {
                           slice.ToProto());
   }
 
-  auto async_events_unique_id = GetAsyncEventsUniqueId();
-  // By design, async_events_unique_id should always be present for
-  // HostExecuteStartThunk.
-  CHECK_NE(async_events_unique_id, std::nullopt);
-
+  CHECK(async_events_ != nullptr);
   host_execute_start_thunk_proto->set_async_events_unique_id(
-      async_events_unique_id.value().value());
+      async_events_->unique_id().value());
 
   return proto;
 }
@@ -566,11 +563,13 @@ HostExecuteStartThunk::FromProto(
   // If async_events_map already contains an entry for the given unique id,
   // that means that the pairing done thunk is already serialized and we reuse
   // the id to connect them. Otherwise, create a new entry.
-  auto [async_event_it, inserted] = async_events_map.try_emplace(
-      AsyncEventsUniqueId(proto.async_events_unique_id()), nullptr);
+  const HostExecuteAsyncEvents::UniqueId unique_id(
+      proto.async_events_unique_id());
+  auto [async_event_it, inserted] =
+      async_events_map.try_emplace(unique_id, nullptr);
   if (inserted) {
     async_event_it->second =
-        std::make_shared<HostExecuteAsyncEvents>(devices_per_host);
+        std::make_shared<HostExecuteAsyncEvents>(unique_id, devices_per_host);
   }
   return std::make_unique<HostExecuteStartThunk>(
       thunk_info, proto.executable_proto(), std::move(args), std::move(results),
@@ -590,17 +589,18 @@ absl::Status HostExecuteStartThunk::Initialize(const InitializeParams& params) {
   }
   // NOTE(basioli): We load the executable here so that we don't get a deadlock
   // when locking llvm command line options.
-  absl::Status initialization_status = absl::OkStatus();
-  absl::call_once(executable_init_flag_, [this, &initialization_status]() {
+  absl::call_once(executable_init_flag_, [this]() {
     if (executable_ == nullptr) {
-      auto executable_or_status =
-          HostOffloadingNanoRtExecutable::LoadFromProto(executable_proto_);
-      initialization_status = executable_or_status.status();
-      if (initialization_status.ok()) {
-        executable_ = std::move(executable_or_status.value());
+      absl::StatusOr<std::unique_ptr<HostOffloadingNanoRtExecutable>>
+          executable =
+              HostOffloadingNanoRtExecutable::LoadFromProto(executable_proto_);
+      executable_init_status_ = executable.status();
+      if (executable_init_status_.ok()) {
+        executable_ = *std::move(executable);
       }
     }
   });
+  ABSL_RETURN_IF_ERROR(executable_init_status_);
 
   ABSL_ASSIGN_OR_RETURN(
       std::shared_ptr<HostExecuteCallFrame> call_frame,
@@ -612,7 +612,7 @@ absl::Status HostExecuteStartThunk::Initialize(const InitializeParams& params) {
   (*params.execution_scoped_state)[thunk_info().thunk_id] =
       std::move(call_frame);
 
-  return initialization_status;
+  return absl::OkStatus();
 }
 
 absl::Status HostExecuteStartThunk::ExecuteOnStream(
@@ -767,14 +767,6 @@ absl::StatusOr<const se::CommandBuffer::Command*> HostExecuteStartThunk::Record(
   return Internal("Invalid record action");
 }
 
-std::optional<AsyncEventsUniqueId>
-HostExecuteStartThunk::GetAsyncEventsUniqueId() const {
-  CHECK(async_events_)
-      << "async_events_ must not be null in HostExecuteStartThunk";
-  // We rely on the fact that the pointer to async_events_ is unique.
-  return absl::bit_cast<AsyncEventsUniqueId>(async_events_.get());
-}
-
 // HostExecuteDoneThunk
 
 HostExecuteDoneThunk::HostExecuteDoneThunk(
@@ -795,13 +787,9 @@ absl::StatusOr<ThunkProto> HostExecuteDoneThunk::ToProto() const {
   HostExecuteDoneThunkProto* host_execute_done_thunk_proto =
       proto.mutable_host_execute_done_thunk();
 
-  auto async_events_unique_id = GetAsyncEventsUniqueId();
-  // By design, async_events_unique_id should always be present for
-  // HostExecuteDoneThunk.
-  CHECK_NE(async_events_unique_id, std::nullopt);
-
+  CHECK(async_events_ != nullptr);
   host_execute_done_thunk_proto->set_async_events_unique_id(
-      async_events_unique_id.value().value());
+      async_events_->unique_id().value());
 
   for (const ShapedSlice& slice : results_) {
     ShapedSliceProto* proto = host_execute_done_thunk_proto->add_results();
@@ -819,11 +807,13 @@ HostExecuteDoneThunk::FromProto(
   // If async_events_map already contains an entry for the given unique id,
   // that means that the pairing start thunk is already serialized and we reuse
   // the id to connect them. Otherwise, create a new entry.
-  auto [async_event_it, inserted] = async_events_map.try_emplace(
-      AsyncEventsUniqueId(proto.async_events_unique_id()), nullptr);
+  const HostExecuteAsyncEvents::UniqueId unique_id(
+      proto.async_events_unique_id());
+  auto [async_event_it, inserted] =
+      async_events_map.try_emplace(unique_id, nullptr);
   if (inserted) {
     async_event_it->second =
-        std::make_shared<HostExecuteAsyncEvents>(devices_per_host);
+        std::make_shared<HostExecuteAsyncEvents>(unique_id, devices_per_host);
   }
 
   absl::InlinedVector<ShapedSlice, 4> results;
@@ -871,14 +861,6 @@ absl::StatusOr<const se::CommandBuffer::Command*> HostExecuteDoneThunk::Record(
     return update->command;
   }
   return Internal("Invalid record action");
-}
-
-std::optional<AsyncEventsUniqueId>
-HostExecuteDoneThunk::GetAsyncEventsUniqueId() const {
-  CHECK(async_events_)
-      << "async_events_ must not be null in HostExecuteDoneThunk";
-  // We rely on the fact that the pointer to async_events_ is unique.
-  return absl::bit_cast<AsyncEventsUniqueId>(async_events_.get());
 }
 
 }  // namespace xla::gpu
