@@ -44,5 +44,29 @@ TEST_F(AlgebraicSimplifierOverflowTest, CompareOptOverflow) {
   EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{0}));
 }
 
+TEST_F(AlgebraicSimplifierOverflowTest, DivideToInverseMultiplyExecution) {
+  const std::string hlo_text = R"(
+    HloModule m
+    ENTRY test {
+      x = f32[2,4] parameter(0)
+      v = f32[2] parameter(1)
+      abs_v = f32[2] abs(v)
+      eps = f32[2] broadcast(f32[] constant(1.0)), dimensions={}
+      pos_v = f32[2] add(abs_v, eps)
+      s = f32[2] sqrt(pos_v)
+      bs = f32[2,4] broadcast(s), dimensions={0}
+      d1 = f32[2,4] divide(x, bs)
+      c_int = s32[] constant(4)
+      c_f32 = f32[] convert(c_int)
+      bc = f32[2,4] broadcast(c_f32), dimensions={}
+      d2 = f32[2,4] divide(d1, bc)
+      c_neg = f32[] negate(f32[] constant(2.0))
+      b_neg = f32[2,4] broadcast(c_neg), dimensions={}
+      ROOT d3 = f32[2,4] divide(d2, b_neg)
+    }
+  )";
+  EXPECT_TRUE(RunAndCompare(hlo_text, ErrorSpec{1e-5, 1e-5}));
+}
+
 }  // namespace
 }  // namespace xla
