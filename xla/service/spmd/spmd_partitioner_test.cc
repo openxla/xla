@@ -2679,6 +2679,65 @@ ENTRY entry {
                     op::Shape("f32[1,64,256]")));
 }
 
+TEST_P(SpmdPartitioningTest,
+       ConvolutionWindowReversalUnevenRhsReshard_HaloOnLhs) {
+  {
+    SCOPED_TRACE("feature_sharded_rhs_resharded_to_spatial");
+    constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %lhs = f32[2,16,4] parameter(0), sharding={devices=[1,2,1]<=[2]}
+  %rhs = f32[3,4,4] parameter(1), sharding={devices=[1,2,1]<=[2]}
+  ROOT %conv = f32[2,14,4] convolution(%lhs, %rhs),
+    window={size=3 rhs_reversal=1}, dim_labels=b0f_0io->b0f,
+    sharding={replicated}
+})";
+
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         PartitionComputation(hlo_string, /*num_devices=*/2));
+    const auto rhs_resharded = AllOf(
+        op::Shape("f32[2,4,4]"),
+        op::CollectivePermute(op::Reshape(op::Transpose(op::AllToAll(_)))));
+    const auto rhs_left_padded =
+        op::Concatenate(op::CollectivePermute(op::Slice(rhs_resharded)),
+                        op::Slice(rhs_resharded));
+    const auto rhs_masked =
+        AllOf(op::Shape("f32[2,4,4]"), op::Select(_, rhs_left_padded, _));
+    EXPECT_THAT(module->entry_computation()->root_instruction(),
+                AllOf(op::AllReduce(op::Convolution(_, rhs_masked)),
+                      op::Shape("f32[2,14,4]")));
+  }
+  {
+    SCOPED_TRACE("uneven_partial_replicate_rhs_resharded_to_4_way");
+    constexpr absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %lhs = f32[4,8,4] parameter(0), sharding={devices=[1,4,1]<=[4]}
+  %rhs = f32[7,4,4] parameter(1),
+    sharding={devices=[2,1,1,2]0,1,2,3 last_tile_dim_replicate}
+  ROOT %conv = f32[4,2,4] convolution(%lhs, %rhs),
+    window={size=7 rhs_reversal=1}, dim_labels=b0f_0io->b0f,
+    sharding={replicated}
+})";
+
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         PartitionComputation(hlo_string, /*num_devices=*/4));
+    const auto rhs_resharded = AllOf(
+        op::Shape("f32[2,4,4]"),
+        op::CollectivePermute(op::DynamicSlice(op::Parameter(1), _, _, _)));
+    const auto rhs_left_padded =
+        op::Concatenate(op::CollectivePermute(op::Slice(rhs_resharded)),
+                        op::Slice(rhs_resharded));
+    const auto rhs_masked =
+        AllOf(op::Shape("f32[2,4,4]"), op::Select(_, rhs_left_padded, _));
+    EXPECT_THAT(module->entry_computation()->root_instruction(),
+                AllOf(op::AllReduce(op::Convolution(_, rhs_masked)),
+                      op::Shape("f32[4,2,4]")));
+  }
+}
+
 TEST_P(SpmdPartitioningTest, DotLhsTiledRhsTiledWithReshard) {
   absl::string_view hlo_string = R"(
 HloModule module
