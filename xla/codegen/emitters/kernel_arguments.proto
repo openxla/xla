@@ -29,6 +29,10 @@ message KernelArgumentProto {
   bool written = 5;
   bool invariant = 6;
   int64 slice_index = 7;
+  // Number of bytes guaranteed readable at the argument pointer (for example,
+  // 32 bytes for a 4-GPU u64[4] peer-pointer table). Only set for unmanaged
+  // pointer arguments; managed arguments derive this from `slice.size`.
+  int64 dereferenceable_bytes = 8;
 }
 
 message KernelArgumentsProto {

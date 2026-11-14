@@ -3180,6 +3180,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
   SmallVector<Type> scratch_buffer_types;
   Type signal_buffer_type;
   if (collective_spec.has_signal_and_rank) {
+    TF_RET_CHECK(collective_spec.world_size > 0);
     signal_buffer_type =
         mlir::MemRefType::get({collective_spec.world_size}, b.getI64Type());
     scratch_buffer_types.assign(collective_spec.num_scratch_buffers,
@@ -3190,7 +3191,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> EmitXTileModule(
                                        scratch_buffer_types, signal_buffer_type,
                                        {}, {});
   fn.addEntryBlock();
-  if (collective_spec.has_signal_and_rank && collective_spec.world_size > 0) {
+  if (collective_spec.has_signal_and_rank) {
     fn.setArgAttr(fn.getRank().getArgNumber(), "xla.range",
                   b.getIndexArrayAttr({0, collective_spec.world_size - 1}));
   }

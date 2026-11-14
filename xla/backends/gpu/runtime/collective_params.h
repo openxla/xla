@@ -100,8 +100,9 @@ enum class KernelArgType : uint8_t {
   kOutputBuffer,
   // Scalar. The rank of the current device.
   kRuntimeRank,
-  // The number of times the collective kernel has been invoked. For example
-  // inside a while loop.
+  // Legacy: only consumed by pre-v4 AOT executables. Do not emit.
+  // TODO(b/579307586): Remove once older goldens pass the 6-month compat
+  // window.
   kInvocationCount,
   // A scratch buffer.
   kScratchBuffer,
