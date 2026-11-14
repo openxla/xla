@@ -21,12 +21,15 @@ limitations under the License.
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -1257,6 +1260,94 @@ ENTRY main {
                        RunPass(kMultiUserConvertHlo, /*expect_change=*/false,
                                /*reassociate_converted_ar=*/true));
   EXPECT_EQ(AllReduceCount(module), 2);
+}
+
+// Regression test for a heap-use-after-free in RunImpl's outer loop.
+//
+// RunImpl iterates lazily over module->computations(execution_threads),
+// which is a live view directly over HloModule::computations_ (a plain
+// std::vector<std::unique_ptr<HloComputation>>, with no reserve() call
+// anywhere that would pre-size it), not a snapshot. When an all-reduce's
+// to_apply computation must be promoted to a wider type (the
+// should_promote_ar path exercised by `ChainWithConvert` above), RunImpl
+// calls HloModule::AddEmbeddedComputation, which push_backs onto
+// computations_. Enough promotions in a row are certain to force that
+// vector to reallocate at least once while the outer loop still holds an
+// iterator into the old backing array, so the next ++/dereference of that
+// iterator reads freed memory.
+//
+// A smaller, fixed-size version of this module (4 promotions, 3 starting
+// computations) did not reproduce the crash -- whatever std::vector's
+// growth sequence happens to be here, those numbers stayed inside a safe
+// capacity margin. Rather than guess the exact doubling boundary, this
+// test generates kNumPromotions (60) independent promotions, which is
+// large enough to cross any plausible number of capacity-doubling
+// reallocations for a vector of this element count. `tail_computation` is
+// declared after `main` in the generated text so the outer loop still has
+// something to advance into (and dereference) once computations_ has
+// reallocated out from under it, instead of merely reaching a stale
+// `end()` with nothing left to read.
+TEST_F(AllReduceSimplifierTest,
+      MultiplePromotedConvertChainsForceComputationsReallocation) {
+  constexpr int kNumPromotions = 60;
+  std::string hlo_string = R"(
+HloModule m
+
+add.1 {
+  x.0 = bf16[] parameter(0)
+  y.0 = bf16[] parameter(1)
+  ROOT add.0 = bf16[] add(x.0, y.0)
+}
+
+ENTRY main {
+)";
+  std::vector<std::string> add_names;
+  int param_number = 0;
+  for (int i = 0; i < kNumPromotions; ++i) {
+    const std::string p0 = absl::StrCat("p", param_number++);
+    const std::string p1 = absl::StrCat("p", param_number++);
+    const std::string ar0 = absl::StrCat("ar", i, "_0");
+    const std::string ar1 = absl::StrCat("ar", i, "_1");
+    const std::string c0 = absl::StrCat("c", i, "_0");
+    const std::string c1 = absl::StrCat("c", i, "_1");
+    const std::string add_name = absl::StrCat("add_", i);
+    add_names.push_back(add_name);
+    absl::StrAppend(
+        &hlo_string, "  ", p0, " = bf16[8] parameter(", param_number - 2,
+        ")\n  ", p1, " = bf16[8] parameter(", param_number - 1, ")\n  ", ar0,
+        " = bf16[8] all-reduce(", p0,
+        "), replica_groups={}, to_apply=add.1\n  ", ar1,
+        " = bf16[8] all-reduce(", p1,
+        "), replica_groups={}, to_apply=add.1\n  ", c0, " = f32[8] convert(",
+        ar0, ")\n  ", c1, " = f32[8] convert(", ar1, ")\n  ", add_name,
+        " = f32[8] add(", c0, ", ", c1, ")\n\n");
+  }
+  absl::StrAppend(&hlo_string, "  ROOT result = (");
+  for (int i = 0; i < kNumPromotions; ++i) {
+    absl::StrAppend(&hlo_string, i == 0 ? "" : ", ", "f32[8]");
+  }
+  absl::StrAppend(&hlo_string, ") tuple(");
+  for (int i = 0; i < kNumPromotions; ++i) {
+    absl::StrAppend(&hlo_string, i == 0 ? "" : ", ", add_names[i]);
+  }
+  absl::StrAppend(&hlo_string, R"()
+}
+
+tail_computation {
+  t0 = f32[] parameter(0)
+  t1 = f32[] parameter(1)
+  ROOT tail_add = f32[] add(t0, t1)
+}
+)");
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       RunPass(hlo_string, /*expect_change=*/true,
+                               /*reassociate_converted_ar=*/true));
+  // If RunImpl's outer loop dereferenced a dangling iterator after
+  // HloModule::computations_ reallocated mid-iteration, this would crash
+  // (or be flagged by ASAN as a heap-use-after-free) before reaching these
+  // assertions.
+  EXPECT_NE(module->GetComputationWithName("tail_computation"), nullptr);
+  EXPECT_EQ(AllReduceCount(module), kNumPromotions);
 }
 
 }  // namespace
