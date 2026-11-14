@@ -43,16 +43,19 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command.h"
 #include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/command_state.h"
+#include "xla/backends/gpu/runtime/ffi_kernel_registry.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
 #include "xla/custom_options.h"
 #include "xla/executable_run_options.h"
 #include "xla/ffi/api/kernel_api.h"
+#include "xla/ffi/api/kernel_c_api.h"
 #include "xla/ffi/api/record_api.h"
 #include "xla/ffi/api/record_c_api.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/execution_state.h"
 #include "xla/ffi/ffi.h"
+#include "xla/ffi/kernel_registry_ffi.h"
 #include "xla/ffi/record_ffi.h"
 #include "xla/ffi/type_registry.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -275,15 +278,20 @@ TEST(CustomCallThunkTest, CustomCallWithOwnedHandlers) {
   CollectiveMemoryRequests memory_requests(buffer_allocations);
   CommandBufferRequests command_buffer_requests;
 
+  FfiKernelRegistry ffi_kernel_registry(/*num_devices=*/1);
+
   Thunk::PrepareParams prepare_params{
       &collective_params, &clique_requests,        &memory_requests,
       executor,           &buffer_allocations,     nullptr,
       options.get(),      &command_buffer_requests};
+  prepare_params.ffi_kernel_registry = &ffi_kernel_registry;
 
   Thunk::InitializeParams initialize_params(&command_buffer_requests);
+  initialize_params.executor = executor;
   initialize_params.buffer_allocations = &buffer_allocations;
   initialize_params.stream = stream.get();
   initialize_params.custom_options = options.get();
+  initialize_params.ffi_kernel_registry = &ffi_kernel_registry;
   Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
       run_options, buffer_allocations, stream.get(), stream.get(), nullptr,
       nullptr, nullptr);
@@ -1021,6 +1029,8 @@ absl::StatusOr<Slices> AllocateAndCopy(se::Stream& stream,
 }
 
 struct FfiRecordTestSetup {
+  // Declared first so it outlives the thunk and the recorded commands.
+  FfiKernelRegistry ffi_kernel_registry{/*num_devices=*/1};
   std::unique_ptr<se::Stream> stream;
   std::unique_ptr<RecordTestAlloc> alloc;
   std::unique_ptr<CustomCallThunk> thunk;
@@ -1055,6 +1065,7 @@ struct FfiRecordTestSetup {
     init_params.executor = executor;
     init_params.buffer_allocations = setup->alloc->buffer_allocations.get();
     init_params.stream = setup->stream.get();
+    init_params.ffi_kernel_registry = &setup->ffi_kernel_registry;
     ABSL_RETURN_IF_ERROR(setup->thunk->Initialize(init_params));
 
     setup->execute_params = Thunk::ExecuteParams::Create(
@@ -1365,6 +1376,7 @@ TEST(CustomCallThunkTest, PrepareSetsCommandBufferRequiresWarmup) {
   EXPECT_TRUE(thunk->requires_warmup());
 
   BufferAllocations buffer_allocations({}, 0, nullptr);
+  FfiKernelRegistry ffi_kernel_registry(/*num_devices=*/1);
 
   // 0. Prepare does not call SetRequiresWarmup -> requires_warmup(thunk)
   // remains std::nullopt so callers fall back to thunk->requires_warmup().
@@ -1381,6 +1393,7 @@ TEST(CustomCallThunkTest, PrepareSetsCommandBufferRequiresWarmup) {
         /*execution_scoped_state=*/&execution_scoped_state,
         /*custom_options=*/nullptr,
         /*command_buffer_requests=*/&command_buffer_requests};
+    prepare_params.ffi_kernel_registry = &ffi_kernel_registry;
 
     EXPECT_THAT(thunk->Prepare(prepare_params), absl_testing::IsOk());
     EXPECT_EQ(command_buffer_requests.requires_warmup(thunk.get()),
@@ -1402,6 +1415,7 @@ TEST(CustomCallThunkTest, PrepareSetsCommandBufferRequiresWarmup) {
         /*execution_scoped_state=*/&execution_scoped_state,
         /*custom_options=*/nullptr,
         /*command_buffer_requests=*/&command_buffer_requests};
+    prepare_params.ffi_kernel_registry = &ffi_kernel_registry;
 
     EXPECT_THAT(thunk->Prepare(prepare_params), absl_testing::IsOk());
     EXPECT_EQ(command_buffer_requests.requires_warmup(thunk.get()), false);
@@ -1422,10 +1436,122 @@ TEST(CustomCallThunkTest, PrepareSetsCommandBufferRequiresWarmup) {
         /*execution_scoped_state=*/&execution_scoped_state,
         /*custom_options=*/nullptr,
         /*command_buffer_requests=*/&command_buffer_requests};
+    prepare_params.ffi_kernel_registry = &ffi_kernel_registry;
 
     EXPECT_THAT(thunk->Prepare(prepare_params), absl_testing::IsOk());
     EXPECT_EQ(command_buffer_requests.requires_warmup(thunk.get()), true);
   }
+}
+
+TEST(CustomCallThunkTest, KernelRegistryInitializeAndExecute) {
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  if (executor->GetDeviceDescription().gpu_compute_capability().IsRocm()) {
+    GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm.";
+  }
+
+  const XLA_FFI_Kernel* registered_kernel = nullptr;
+  se::KernelLoaderSpec add_i32 = se::gpu::GetAddI32PtxKernelSpec();
+  absl::string_view ptx = add_i32.cuda_ptx_in_memory().value().ptx;
+
+  CustomCallThunk::OwnedHandlerBundle bundle;
+  bundle.initialize = ffi::Ffi::BindInitialize().Ctx<ffi::KernelRegistry>().To(
+      [&](ffi::InitializeKernelRegistry registry) -> absl::Status {
+        ABSL_ASSIGN_OR_RETURN(
+            registered_kernel,
+            registry.Register("AddI32", ptx.data(), ptx.size(),
+                              ffi::SourceFormat::kPtx,
+                              /*uses_pdl=*/false));
+        return absl::OkStatus();
+      });
+  bundle.execute =
+      ffi::Ffi::BindExecute()
+          .Ctx<ffi::KernelRegistry>()
+          .Arg<ffi::AnyBuffer>()
+          .Arg<ffi::AnyBuffer>()
+          .Ret<ffi::AnyBuffer>()
+          .To([&](ffi::ExecuteKernelRegistry registry, ffi::AnyBuffer input_0,
+                  ffi::AnyBuffer input_1, ffi::Result<ffi::AnyBuffer> result) {
+            const std::vector<void*> args = {input_0.untyped_data(),
+                                             input_1.untyped_data(),
+                                             (*result).untyped_data()};
+            return registry.Launch(registered_kernel,
+                                   /*launch_dims=*/{{1, 1, 1}, {1, 1, 1}},
+                                   /*shared_mem_bytes=*/0, /*uses_pdl=*/false,
+                                   args);
+          });
+
+  ASSERT_OK_AND_ASSIGN(
+      auto setup,
+      FfiRecordTestSetup::Create(executor, std::move(bundle),
+                                 "add_i32_kernel_registry", {10, 20}, {0}));
+  ASSERT_NE(registered_kernel, nullptr);
+
+  ASSERT_OK(setup->thunk->ExecuteOnStream(*setup->execute_params));
+  ASSERT_OK(setup->stream->BlockHostUntilDone());
+  int32_t host_exec = 0;
+  ASSERT_OK(setup->stream->Memcpy(&host_exec, setup->alloc->result_dev_ptrs[0],
+                                  sizeof(int32_t)));
+  EXPECT_EQ(host_exec, 30);
+}
+
+TEST(CustomCallThunkTest, KernelRegistryPrepareAndExecute) {
+  ASSERT_OK_AND_ASSIGN(se::StreamExecutor * executor, GpuExecutor());
+  if (executor->GetDeviceDescription().gpu_compute_capability().IsRocm()) {
+    GTEST_SKIP() << "AddI32 PTX kernel not supported on ROCm.";
+  }
+
+  const XLA_FFI_Kernel* registered_kernel = nullptr;
+  se::KernelLoaderSpec add_i32 = se::gpu::GetAddI32PtxKernelSpec();
+  absl::string_view ptx = add_i32.cuda_ptx_in_memory().value().ptx;
+
+  CustomCallThunk::OwnedHandlerBundle bundle;
+  bundle.prepare = ffi::Ffi::BindPrepare().Ctx<ffi::KernelRegistry>().To(
+      [&](ffi::PrepareKernelRegistry registry) -> absl::Status {
+        ABSL_ASSIGN_OR_RETURN(
+            registered_kernel,
+            registry.Register("AddI32", ptx.data(), ptx.size(),
+                              ffi::SourceFormat::kPtx,
+                              /*uses_pdl=*/false));
+        return absl::OkStatus();
+      });
+  bundle.execute =
+      ffi::Ffi::BindExecute()
+          .Ctx<ffi::KernelRegistry>()
+          .Arg<ffi::AnyBuffer>()
+          .Arg<ffi::AnyBuffer>()
+          .Ret<ffi::AnyBuffer>()
+          .To([&](ffi::ExecuteKernelRegistry registry, ffi::AnyBuffer input_0,
+                  ffi::AnyBuffer input_1, ffi::Result<ffi::AnyBuffer> result) {
+            const std::vector<void*> args = {input_0.untyped_data(),
+                                             input_1.untyped_data(),
+                                             (*result).untyped_data()};
+            return registry.Launch(registered_kernel,
+                                   /*launch_dims=*/{{1, 1, 1}, {1, 1, 1}},
+                                   /*shared_mem_bytes=*/0, /*uses_pdl=*/false,
+                                   args);
+          });
+
+  ASSERT_OK_AND_ASSIGN(
+      auto setup,
+      FfiRecordTestSetup::Create(executor, std::move(bundle),
+                                 "add_i32_prepare_registry", {7, 8}, {0}));
+
+  Thunk::ExecutionScopedState execution_scoped_state;
+  CommandBufferRequests command_buffer_requests;
+  Thunk::PrepareParams prepare_params(executor,
+                                      setup->alloc->buffer_allocations.get(),
+                                      &command_buffer_requests);
+  prepare_params.execution_scoped_state = &execution_scoped_state;
+  prepare_params.ffi_kernel_registry = &setup->ffi_kernel_registry;
+  ASSERT_OK(setup->thunk->Prepare(prepare_params));
+  ASSERT_NE(registered_kernel, nullptr);
+
+  ASSERT_OK(setup->thunk->ExecuteOnStream(*setup->execute_params));
+  ASSERT_OK(setup->stream->BlockHostUntilDone());
+  int32_t host_exec = 0;
+  ASSERT_OK(setup->stream->Memcpy(&host_exec, setup->alloc->result_dev_ptrs[0],
+                                  sizeof(int32_t)));
+  EXPECT_EQ(host_exec, 15);
 }
 
 }  // namespace
