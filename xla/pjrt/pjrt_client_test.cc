@@ -995,15 +995,15 @@ TEST(PjRtClientTest, ChunkedLinearizeAndDelinearizeRoundTrip) {
                             /*is_h2d=*/true, probe_host,
                             /*host_byte_strides=*/std::nullopt, probe_dev));
 
-  // 1. 2D shapes exceeding 8 MiB (4 * 2 MiB target chunk size) with partial
+  // 1. 2D shapes exceeding 16 MiB (8 * 2 MiB target chunk size) with partial
   // trailing chunks across F32, BF16, and S8 (plus sub-byte S4 falling back to
   // unchunked), including non-DMA-aligned (element-aligned) host addresses and
   // mixed chunked/unchunked H2D and D2H.
   for (const Shape& shape : {
-           ShapeUtil::MakeShape(F32, {2048, 1025}),
-           ShapeUtil::MakeShape(BF16, {2048, 2050}),
-           ShapeUtil::MakeShape(S8, {2048, 4100}),
-           ShapeUtil::MakeShape(S4, {2048, 8200}),
+           ShapeUtil::MakeShape(F32, {4096, 1025}),
+           ShapeUtil::MakeShape(BF16, {4096, 2050}),
+           ShapeUtil::MakeShape(S8, {4096, 4100}),
+           ShapeUtil::MakeShape(S4, {4096, 8200}),
        }) {
     SCOPED_TRACE(shape.ToString(true));
     ASSERT_OK_AND_ASSIGN(Literal src_literal, MakeFakeLiteral(shape));
@@ -1058,7 +1058,7 @@ TEST(PjRtClientTest, ChunkedLinearizeAndDelinearizeRoundTrip) {
   }
 
   if (IsTpuId(common_client->platform_id())) {
-    Shape mix_shape = ShapeUtil::MakeShape(F32, {2048, 1025});
+    Shape mix_shape = ShapeUtil::MakeShape(F32, {4096, 1025});
     ASSERT_OK_AND_ASSIGN(Literal mix_src, MakeFakeLiteral(mix_shape));
 
     // (a) Chunked H2D (2 MiB chunks) -> unchunked D2H (target = 0).
