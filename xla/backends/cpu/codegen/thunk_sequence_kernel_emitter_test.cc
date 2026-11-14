@@ -26,6 +26,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
@@ -311,9 +312,9 @@ class ThunkSequenceKernelEmitterTest : public ::testing::Test {
     return Run(thunks, ir, Parameters(thunks));
   }
 
-  absl::StatusOr<bool> Run(const ThunkSequence& thunks,
-                           absl::Span<const absl::string_view> ir,
-                           const KernelSpec::Buffers& parameters) {
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI absl::StatusOr<bool> Run(
+      const ThunkSequence& thunks, absl::Span<const absl::string_view> ir,
+      const KernelSpec::Buffers& parameters) {
     std::vector<LlvmKernelSource> sources;
     absl::flat_hash_set<std::string> names;
     for (absl::string_view kernel : ir) {

@@ -25,6 +25,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
@@ -95,6 +96,11 @@ class SliceToDynamicKernelEmitterTest : public HloHardwareIndependentTestBase {
         jit.AddModule(std::move(llvm_source).thread_safe_module()));
     return std::move(jit).Compile(
         {FunctionLibrary::Sym<FunctionLibrary::Kernel>(kernel_name)});
+  }
+
+  ABSL_ATTRIBUTE_NO_SANITIZE_CFI static XLA_CPU_KernelError* CallKernel(
+      FunctionLibrary::Kernel* kernel, XLA_CPU_KernelCallFrame* frame) {
+    return (*kernel)(frame);
   }
 };
 
@@ -170,7 +176,7 @@ TEST_F(SliceToDynamicKernelEmitterTest, EmitsAndExecutesSliceToDynamic) {
   XLA_CPU_WorkGroupId workgroup_id = {0, 0, 0};
   XLA_CPU_KernelCallFrame frame = {&num_workgroups, &workgroup_id, args.size(),
                                    args.data()};
-  EXPECT_EQ((*kernel)(&frame), nullptr);
+  EXPECT_EQ(CallKernel(kernel, &frame), nullptr);
 
   std::array<float, 4> packed_values = {};
   std::memcpy(packed_values.data(), output_bytes.data(),
@@ -236,7 +242,7 @@ TEST_F(SliceToDynamicKernelEmitterTest, EmitsAndExecutesUnalignedF16) {
   XLA_CPU_WorkGroupId workgroup_id = {0, 0, 0};
   XLA_CPU_KernelCallFrame frame = {&num_workgroups, &workgroup_id, args.size(),
                                    args.data()};
-  EXPECT_EQ((*kernel)(&frame), nullptr);
+  EXPECT_EQ(CallKernel(kernel, &frame), nullptr);
 
   std::array<half, 3> packed_values = {};
   std::memcpy(packed_values.data(), output_bytes.data(),
@@ -307,7 +313,7 @@ TEST_F(SliceToDynamicKernelEmitterTest,
   XLA_CPU_WorkGroupId workgroup_id = {0, 0, 0};
   XLA_CPU_KernelCallFrame frame = {&num_workgroups, &workgroup_id, args.size(),
                                    args.data()};
-  EXPECT_EQ((*kernel)(&frame), nullptr);
+  EXPECT_EQ(CallKernel(kernel, &frame), nullptr);
 
   std::array<int32_t, 6> packed_values = {};
   std::memcpy(packed_values.data(), output_bytes.data(),
@@ -365,7 +371,7 @@ TEST_F(SliceToDynamicKernelEmitterTest, EmitsAndExecutesSubByteS4) {
   XLA_CPU_WorkGroupId workgroup_id = {0, 0, 0};
   XLA_CPU_KernelCallFrame frame = {&num_workgroups, &workgroup_id, args.size(),
                                    args.data()};
-  EXPECT_EQ((*kernel)(&frame), nullptr);
+  EXPECT_EQ(CallKernel(kernel, &frame), nullptr);
 
   EXPECT_EQ(output_bytes[0], 0x21);
   EXPECT_EQ(output_bytes[1] & 0x0f, 0x03);
@@ -428,7 +434,7 @@ TEST_F(SliceToDynamicKernelEmitterTest, EmitsAndExecutesZeroElementArray) {
   XLA_CPU_WorkGroupId workgroup_id = {0, 0, 0};
   XLA_CPU_KernelCallFrame frame = {&num_workgroups, &workgroup_id, args.size(),
                                    args.data()};
-  EXPECT_EQ((*kernel)(&frame), nullptr);
+  EXPECT_EQ(CallKernel(kernel, &frame), nullptr);
   EXPECT_THAT(output_dims, ElementsAre(0, 3));
 }
 
@@ -472,7 +478,7 @@ TEST_F(SliceToDynamicKernelEmitterTest, EmitsAndExecutesRank0) {
   XLA_CPU_WorkGroupId workgroup_id = {0, 0, 0};
   XLA_CPU_KernelCallFrame frame = {&num_workgroups, &workgroup_id, args.size(),
                                    args.data()};
-  EXPECT_EQ((*kernel)(&frame), nullptr);
+  EXPECT_EQ(CallKernel(kernel, &frame), nullptr);
   EXPECT_EQ(output, 42);
 }
 
