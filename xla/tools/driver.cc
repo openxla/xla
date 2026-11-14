@@ -100,54 +100,57 @@ void Log(const std::string& msg) {
 }
 
 // Needs to be kept in sync with PrimitiveType in xla_data.proto.
+#define FOREACH_PRIMITIVE_TYPE(V)   \
+  V(S1, "s1")                       \
+  V(S2, "s2")                       \
+  V(S4, "s4")                       \
+  V(S8, "s8")                       \
+  V(S16, "s16")                     \
+  V(S32, "s32")                     \
+  V(S64, "s64")                     \
+  V(U1, "u1")                       \
+  V(U2, "u2")                       \
+  V(U4, "u4")                       \
+  V(U8, "u8")                       \
+  V(U16, "u16")                     \
+  V(U32, "u32")                     \
+  V(U64, "u64")                     \
+  V(F16, "f16")                     \
+  V(BF16, "bf16")                   \
+  V(F32, "f32")                     \
+  V(F64, "f64")                     \
+  V(C64, "c64")                     \
+  V(C128, "c128")                   \
+  V(F4E2M1FN, "f4e2m1fn")           \
+  V(F8E5M2, "f8e5m2")               \
+  V(F8E4M3, "f8e4m3")               \
+  V(F8E4M3FN, "f8e4m3fn")           \
+  V(F8E4M3B11FNUZ, "f8e4m3b11fnuz") \
+  V(F8E5M2FNUZ, "f8e5m2fnuz")       \
+  V(F8E4M3FNUZ, "f8e4m3fnuz")       \
+  V(F8E3M4, "f8e3m4")               \
+  V(F8E8M0FNU, "f8e8m0fnu")         \
+  V(F6E3M2FN, "f6e3m2fn")           \
+  V(F6E2M3FN, "f6e2m3fn")
+
 enum PrimitiveType {
-  S1,
-  S2,
-  S4,
-  S8,
-  S16,
-  S32,
-  S64,
-  U1,
-  U2,
-  U4,
-  U8,
-  U16,
-  U32,
-  U64,
-  F16,
-  BF16,
-  F32,
-  F64,
-  C64,
-  C128,
-  F4E2M1FN,
-  F8E5M2,
-  F8E4M3,
-  F8E4M3FN,
-  F8E4M3B11FNUZ,
-  F8E5M2FNUZ,
-  F8E4M3FNUZ,
-  F8E3M4,
-  F8E8M0FNU,
-  F6E3M2FN,
-  F6E2M3FN,
+#define DECLARE_ENUM(enum_name, enum_name_str) enum_name,
+  FOREACH_PRIMITIVE_TYPE(DECLARE_ENUM)
+#undef DECLARE_ENUM
 };
 
 const std::vector<std::string>& primitive_strings() {
-  static auto vec = new std::vector<std::string>(
-      {"s1",        "s2",         "s4",      "s8",
-       "s16",       "s32",        "s64",     "u1",
-       "u2",        "u4",         "u8",      "u16",
-       "u32",       "u64",        "f16",     "bf16",
-       "f32",       "f64",        "c64",     "c128",
-       "f4e2m1fn",  "f8e3m4",     "f8e4m3",  "f8e4m3b11fnuz",
-       "f8e4m3fn",  "f8e4m3fnuz", "f8e5m2",  "f8e5m2fnuz",
-       "f8e8m0fnu", "f6e3m2fn",   "f6e2m3fn"});
+  static auto vec = new std::vector<std::string>({
+#define TABLE_ENTRY(enum_name, enum_name_str) enum_name_str,
+      FOREACH_PRIMITIVE_TYPE(TABLE_ENTRY)
+#undef TABLE_ENTRY
+  });
   return *vec;
 }
 
-std::string ToString(PrimitiveType type) { return primitive_strings()[type]; }
+std::string ToString(PrimitiveType type) {
+  return primitive_strings().at(type);
+}
 
 PrimitiveType PrimitiveTypeFromString(const std::string& s) {
   const auto& vec = primitive_strings();
@@ -420,27 +423,7 @@ void Fill(void* buffer, const ArrayShape& shape) {
     case F64:
       return FillFloatT<double>(buffer, num_elements);
 
-    case F4E2M1FN:
-    case F8E5M2:
-    case F8E4M3:
-    case F8E4M3FN:
-    case F8E4M3B11FNUZ:
-    case F8E5M2FNUZ:
-    case F8E4M3FNUZ:
-    case F8E3M4:
-    case F8E8M0FNU:
-    case F6E3M2FN:
-    case F6E2M3FN:
-    case F16:
-    case BF16:
-    case C64:
-    case C128:
-    case S1:
-    case U1:
-    case S2:
-    case U2:
-    case S4:
-    case U4:
+    default:
       ExitWithMsg("Unsupported type: " + ToString(shape.type));
   }
 }
@@ -484,27 +467,7 @@ void Display(const void* buffer, const ArrayShape& shape) {
     case F64:
       return DisplayT<double>(buffer, num_elements);
 
-    case F4E2M1FN:
-    case F8E5M2:
-    case F8E4M3:
-    case F8E4M3FN:
-    case F8E4M3B11FNUZ:
-    case F8E5M2FNUZ:
-    case F8E4M3FNUZ:
-    case F8E3M4:
-    case F8E8M0FNU:
-    case F6E3M2FN:
-    case F6E2M3FN:
-    case F16:
-    case BF16:
-    case C64:
-    case C128:
-    case S1:
-    case U1:
-    case S2:
-    case U2:
-    case S4:
-    case U4:
+    default:
       ExitWithMsg("Unsupported type: " + ToString(shape.type));
   }
 }
