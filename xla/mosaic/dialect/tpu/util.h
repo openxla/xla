@@ -146,6 +146,16 @@ inline unsigned getElementTypeBitwidth(MemRefType ty) {
   return getElementTypeBitwidth(ty.getElementType());
 }
 
+// Returns the vector-register container bitwidth for `vty`. Raw FP6 types use
+// 6-bit storage in MemRefType (via getTypeBitwidth) but occupy 8-bit VREG
+// containers in VectorType registers.
+inline unsigned getVectorRegisterBitwidth(VectorType vty) {
+  if (isa<Float6E3M2FNType, Float6E2M3FNType>(vty.getElementType())) {
+    return 8;
+  }
+  return getElementTypeBitwidth(vty);
+}
+
 // Debug only util.
 template <typename T>
 std::string shapeToString(const T& shape) {
