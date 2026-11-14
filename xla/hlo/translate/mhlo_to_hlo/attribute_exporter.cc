@@ -71,31 +71,35 @@ namespace {
 
 using ::mlir::sdy::MeshAttr;
 
-MeshAttr getSdyMeshAttr(mlir::sdy::TensorShardingAttr sharding,
-                        std::optional<mlir::DictionaryAttr> sdy_meshes) {
+std::optional<MeshAttr> getSdyMeshAttr(
+    mlir::sdy::TensorShardingAttr sharding,
+    std::optional<mlir::DictionaryAttr> sdy_meshes) {
   mlir::Attribute mesh_or_ref = sharding.getMeshOrRef();
   if (auto mesh = mlir::dyn_cast<MeshAttr>(mesh_or_ref); mesh != nullptr) {
     return mesh;
   }
   if (sdy_meshes.has_value()) {
-    auto mesh_ref = mlir::cast<mlir::FlatSymbolRefAttr>(mesh_or_ref);
-    return mlir::cast<MeshAttr>(sdy_meshes->get(mesh_ref.getValue()));
+    if (auto mesh_ref = mlir::dyn_cast<mlir::FlatSymbolRefAttr>(mesh_or_ref)) {
+      if (auto mesh = mlir::dyn_cast_or_null<MeshAttr>(
+              sdy_meshes->get(mesh_ref.getValue()))) {
+        return mesh;
+      }
+    }
   }
-
-  CHECK(false) << "Mesh not found with name: "
-               << mlir::sdy::attributeToString(mesh_or_ref);
+  return std::nullopt;
 }
 
-OpSharding CreateOpShardingFromSdySharding(
+std::optional<OpSharding> CreateOpShardingFromSdySharding(
     mlir::sdy::TensorShardingAttr sdy_sharding,
-    std::optional<mlir::DictionaryAttr> sdy_meshes,
-    mlir::DictionaryAttr frontend_attrs) {
-  std::function<MeshAttr(mlir::sdy::TensorShardingAttr)> get_mesh_attr =
-      [&](mlir::sdy::TensorShardingAttr sharding) {
-        return getSdyMeshAttr(sharding, sdy_meshes);
-      };
-
-  return xla::sdy::convertToHloSharding(sdy_sharding, get_mesh_attr).ToProto();
+    std::optional<mlir::DictionaryAttr> sdy_meshes) {
+  std::optional<MeshAttr> mesh_attr = getSdyMeshAttr(sdy_sharding, sdy_meshes);
+  if (!mesh_attr.has_value()) {
+    return std::nullopt;
+  }
+  return xla::sdy::convertToHloSharding(
+             sdy_sharding,
+             [&](mlir::sdy::TensorShardingAttr) { return *mesh_attr; })
+      .ToProto();
 }
 
 // Looks up a mesh in the module's frontend attributes.
@@ -877,8 +881,7 @@ std::optional<xla::OpSharding> ExtractShardyArgShardingFromFrontendAttrs(
             arg_frontend_attrs,
             xla::ToStringRef(HloSharding::kShardingFrontendAttrName));
     if (sdy_sharding != nullptr) {
-      return CreateOpShardingFromSdySharding(sdy_sharding, sdy_meshes,
-                                             arg_frontend_attrs);
+      return CreateOpShardingFromSdySharding(sdy_sharding, sdy_meshes);
     }
   }
 
@@ -914,7 +917,7 @@ std::optional<xla::OpSharding> ExtractShardyResultShardingFromFrontendAttrs(
   CHECK_EQ(sharding_per_value_attr.size(), 1)
       << "Expected exactly one sharding per FuncResultSharding";
   return CreateOpShardingFromSdySharding(sharding_per_value_attr.getSharding(0),
-                                         sdy_meshes, op_frontend_attrs);
+                                         sdy_meshes);
 }
 
 mlir::FailureOr<xla::Shape> ExtractXlaShape(mlir::Operation* op) {

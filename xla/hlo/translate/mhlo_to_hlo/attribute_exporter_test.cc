@@ -34,6 +34,8 @@ limitations under the License.
 #include "mlir/Parser/Parser.h"
 #include "shardy/dialect/sdy/ir/dialect.h"
 #include "stablehlo/dialect/Register.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/hlo/ir/replica_group.h"
 #include "xla/hlo/parser/hlo_parser.h"
@@ -53,6 +55,7 @@ limitations under the License.
 namespace xla {
 namespace {
 
+using ::testing::Eq;
 using ::testing::NotNull;
 using ::testing::Optional;
 using ::tsl::proto_testing::EqualsProto;
@@ -282,6 +285,162 @@ TEST_F(AttributeExporterTest,
   std::optional<OpSharding> sharding =
       ExtractShardyResultShardingFromFrontendAttrs(main, 0, std::nullopt);
   EXPECT_FALSE(sharding.has_value());
+}
+
+TEST_F(AttributeExporterTest,
+       ExtractShardyArgShardingFromFrontendAttrsMissingMeshes) {
+  constexpr absl::string_view mlir_source = R"mlir(
+    module @test {
+      func.func @main(
+        %arg0: tensor<8x8xf32> {mhlo.frontend_attributes = {
+          xla.sdy.sharding = "#sdy.sharding<@mesh, [{\"x\"}, {}]>"
+        }}
+      ) -> tensor<8x8xf32> {
+        return %arg0 : tensor<8x8xf32>
+      }
+    }
+  )mlir";
+  ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                       ParseMlirModule(mlir_source));
+
+  mlir::func::FuncOp main = module->lookupSymbol<mlir::func::FuncOp>("main");
+  ASSERT_THAT(main, NotNull());
+
+  std::optional<mlir::DictionaryAttr> sdy_meshes =
+      xla::sdy::tryGetFrontendAttr<mlir::DictionaryAttr>(
+          *module, xla::sdy::kMeshesRoundTripAttr);
+  ASSERT_FALSE(sdy_meshes.has_value());
+
+  EXPECT_FALSE(ExtractShardyArgShardingFromFrontendAttrs(main, 0, sdy_meshes)
+                   .has_value());
+}
+
+TEST_F(AttributeExporterTest,
+       ExtractShardyArgShardingFromFrontendAttrsMissingMeshSymbol) {
+  constexpr absl::string_view mlir_source = R"mlir(
+    module attributes {mhlo.frontend_attributes = {xla.sdy.meshes =
+      "{other_mesh = #sdy.mesh<[\"x\"=2, \"y\"=2]>}"
+    }} {
+      func.func @main(
+        %arg0: tensor<8x8xf32> {mhlo.frontend_attributes = {
+          xla.sdy.sharding = "#sdy.sharding<@mesh, [{\"x\"}, {}]>"
+        }}
+      ) -> tensor<8x8xf32> {
+        return %arg0 : tensor<8x8xf32>
+      }
+    }
+  )mlir";
+  ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                       ParseMlirModule(mlir_source));
+
+  mlir::func::FuncOp main = module->lookupSymbol<mlir::func::FuncOp>("main");
+  ASSERT_THAT(main, NotNull());
+
+  std::optional<mlir::DictionaryAttr> sdy_meshes =
+      xla::sdy::tryGetFrontendAttr<mlir::DictionaryAttr>(
+          *module, xla::sdy::kMeshesRoundTripAttr);
+  ASSERT_TRUE(sdy_meshes.has_value());
+
+  EXPECT_FALSE(ExtractShardyArgShardingFromFrontendAttrs(main, 0, sdy_meshes)
+                   .has_value());
+}
+
+TEST_F(AttributeExporterTest,
+       ExtractShardyResultShardingFromFrontendAttrsMissingMeshes) {
+  constexpr absl::string_view mlir_source = R"mlir(
+    module @test {
+      func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+        %0 = stablehlo.custom_call @xla.sdy.FuncResultSharding(%arg0) {
+          has_side_effect = true,
+          mhlo.frontend_attributes = {
+            xla.sdy.sharding = "#sdy.sharding_per_value<[<@mesh, [{\"x\"}, {}]>]>"
+          }
+        } : (tensor<8x8xf32>) -> tensor<8x8xf32>
+        return %0 : tensor<8x8xf32>
+      }
+    }
+  )mlir";
+  ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                       ParseMlirModule(mlir_source));
+
+  mlir::func::FuncOp main = module->lookupSymbol<mlir::func::FuncOp>("main");
+  ASSERT_THAT(main, NotNull());
+
+  std::optional<mlir::DictionaryAttr> sdy_meshes =
+      xla::sdy::tryGetFrontendAttr<mlir::DictionaryAttr>(
+          *module, xla::sdy::kMeshesRoundTripAttr);
+  ASSERT_FALSE(sdy_meshes.has_value());
+
+  EXPECT_FALSE(ExtractShardyResultShardingFromFrontendAttrs(main, 0, sdy_meshes)
+                   .has_value());
+}
+
+TEST_F(AttributeExporterTest,
+       ExtractShardyResultShardingFromFrontendAttrsMissingMeshSymbol) {
+  constexpr absl::string_view mlir_source = R"mlir(
+    module attributes {mhlo.frontend_attributes = {xla.sdy.meshes =
+      "{other_mesh = #sdy.mesh<[\"x\"=2, \"y\"=4, \"z\"=4]>}"
+    }} {
+      func.func @main(%arg0: tensor<8x8xf32>) -> tensor<8x8xf32> {
+        %0 = stablehlo.custom_call @xla.sdy.FuncResultSharding(%arg0) {
+          has_side_effect = true,
+          mhlo.frontend_attributes = {
+            xla.sdy.sharding = "#sdy.sharding_per_value<[<@mesh, [{\"x\"}, {}]>]>"
+          }
+        } : (tensor<8x8xf32>) -> tensor<8x8xf32>
+        return %0 : tensor<8x8xf32>
+      }
+    }
+  )mlir";
+  ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                       ParseMlirModule(mlir_source));
+
+  mlir::func::FuncOp main = module->lookupSymbol<mlir::func::FuncOp>("main");
+  ASSERT_THAT(main, NotNull());
+
+  std::optional<mlir::DictionaryAttr> sdy_meshes =
+      xla::sdy::tryGetFrontendAttr<mlir::DictionaryAttr>(
+          *module, xla::sdy::kMeshesRoundTripAttr);
+  ASSERT_TRUE(sdy_meshes.has_value());
+
+  EXPECT_FALSE(ExtractShardyResultShardingFromFrontendAttrs(main, 0, sdy_meshes)
+                   .has_value());
+}
+
+TEST_F(AttributeExporterTest,
+       ConvertMlirHloToHloModuleIgnoresResidualSdyShardingWithoutMeshes) {
+  constexpr absl::string_view mlir_source = R"mlir(
+    module @jit_matmul attributes {
+      mhlo.num_partitions = 2 : i32,
+      mhlo.use_auto_spmd_partitioning = false
+    } {
+      func.func @main(
+        %arg0: tensor<8x3xf64> {mhlo.frontend_attributes = {
+          xla.sdy.sharding = "#sdy.sharding<@mesh, [{\"x\"}, {}]>"
+        }},
+        %arg1: tensor<f64>
+      ) -> tensor<8x3xf64> {
+        %0 = stablehlo.dot_general %arg1, %arg0,
+          contracting_dims = [] x [], precision = [DEFAULT, DEFAULT]
+          : (tensor<f64>, tensor<8x3xf64>) -> tensor<8x3xf64>
+        return %0 : tensor<8x3xf64>
+      }
+    }
+  )mlir";
+  ASSERT_OK_AND_ASSIGN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                       ParseMlirModule(mlir_source));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::HloModule> hlo_module,
+                       ConvertMlirHloToHloModule(*module));
+
+  const xla::HloInstruction* param0 =
+      hlo_module->entry_computation()->parameter_instruction(0);
+  EXPECT_FALSE(param0->has_sharding());
+  EXPECT_THAT(param0->get_frontend_attribute("xla.sdy.sharding"),
+              Optional(Eq("#sdy.sharding<@mesh, [{\"x\"}, {}]>")));
+
+  xla::HloVerifier verifier(/*layout_sensitive=*/false,
+                            /*allow_mixed_precision=*/false);
+  EXPECT_OK(verifier.Run(hlo_module.get()).status());
 }
 
 TEST_F(AttributeExporterTest, ConvertReplicaGroups_MeshAxesFromFrontendAttrs) {
