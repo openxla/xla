@@ -27,11 +27,13 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_original_value.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/test.h"
 #include "xla/hlo/testlib/verified_hlo_module.h"
+#include "xla/hlo/transforms/simplifiers/hlo_constant_folding.h"
 #include "xla/hlo/utils/hlo_matchers.h"
 #include "xla/literal_util.h"
 #include "xla/shape.h"
@@ -417,8 +419,11 @@ ENTRY main {
       WhileUtil::IncrementWhileLoopTripCount(*while_instr, /*increment=*/1));
 
   const HloComputation* cond = module->GetComputationWithName("cond");
+  EXPECT_THAT(cond->root_instruction()->ToString(),
+              ::testing::HasSubstr("direction=LE"));
   EXPECT_THAT(cond->root_instruction()->operand(0),
-              op::Add(op::GetTupleElement(), op::Constant()));
+              op::Add(op::Maximum(op::GetTupleElement(), op::Constant()),
+                      op::Constant()));
 }
 
 TEST_F(WhileUtilTest, IncrementTripCountGt) {
@@ -455,8 +460,11 @@ ENTRY main {
       WhileUtil::IncrementWhileLoopTripCount(*while_instr, /*increment=*/1));
 
   const HloComputation* cond = module->GetComputationWithName("cond");
-  EXPECT_THAT(cond->root_instruction()->operand(1),
-              op::Add(op::GetTupleElement(), op::Constant()));
+  EXPECT_THAT(cond->root_instruction()->ToString(),
+              ::testing::HasSubstr("direction=LE"));
+  EXPECT_THAT(cond->root_instruction()->operand(0),
+              op::Add(op::Maximum(op::GetTupleElement(), op::Constant()),
+                      op::Constant()));
 }
 
 TEST_F(WhileUtilTest, IncrementTripCountS64) {
@@ -496,12 +504,121 @@ ENTRY main {
   EXPECT_OK(module->Verify());
 
   const HloComputation* cond = module->GetComputationWithName("cond");
-  EXPECT_THAT(
-      cond->root_instruction()->operand(0),
-      ::testing::AllOf(op::Shape("s64[]"),
-                       op::Add(op::GetTupleElement(),
-                               op::Constant(LiteralUtil::CreateR0<int64_t>(
-                                   -kLargeIncrement)))));
+  EXPECT_THAT(cond->root_instruction()->ToString(),
+              ::testing::HasSubstr("direction=LE"));
+  EXPECT_THAT(cond->root_instruction()->operand(0),
+              ::testing::AllOf(
+                  op::Shape("s64[]"),
+                  op::Add(op::Maximum(op::GetTupleElement(), op::Constant()),
+                          op::Constant(LiteralUtil::CreateR0<int64_t>(
+                              -(kLargeIncrement - 1))))));
+}
+
+TEST_F(WhileUtilTest, IncrementTripCountGuardsOverflowAndNonIntegral) {
+  constexpr absl::string_view kDirsHlo = R"hlo(
+HloModule dirs
+c0 { ROOT r = pred[] compare(s32[] parameter(0), s32[] parameter(1)), direction=LT }
+c1 { ROOT r = pred[] compare(s32[] parameter(0), s32[] parameter(1)), direction=LE }
+c2 { ROOT r = pred[] compare(s32[] parameter(0), s32[] parameter(1)), direction=GT }
+c3 { ROOT r = pred[] compare(s32[] parameter(0), s32[] parameter(1)), direction=GE }
+ENTRY main { ROOT r = pred[] constant(false) }
+)hlo";
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> dirs_mod,
+                       ParseAndReturnVerifiedModule(kDirsHlo));
+  static constexpr absl::string_view kCompNames[] = {"c0", "c1", "c2", "c3"};
+
+  auto eval_cond = [&](PrimitiveType type, int dir_idx, int64_t increment,
+                       int64_t i_val, int64_t n_val) -> absl::StatusOr<bool> {
+    using I = HloInstruction;
+    std::unique_ptr<VerifiedHloModule> module = CreateNewVerifiedModule();
+    const Shape scalar = ShapeUtil::MakeShape(type, {});
+    const Shape state = ShapeUtil::MakeTupleShape({scalar, scalar});
+    const Shape pred = ShapeUtil::MakeShape(PRED, {});
+
+    HloComputation::Builder body_b("body");
+    auto* bp = body_b.AddInstruction(I::CreateParameter(0, state, "p"));
+    auto* bi = body_b.AddInstruction(I::CreateGetTupleElement(bp, 0));
+    auto* bn = body_b.AddInstruction(I::CreateGetTupleElement(bp, 1));
+    auto* one = body_b.AddInstruction(
+        I::CreateConstant(LiteralUtil::CreateR0(type, 1)));
+    body_b.AddInstruction(
+        I::CreateTuple({body_b.AddInstruction(
+                            I::CreateBinary(scalar, HloOpcode::kAdd, bi, one)),
+                        bn}));
+    HloComputation* body = module->AddEmbeddedComputation(body_b.Build());
+
+    HloComputation::Builder cond_b("cond");
+    auto* cp = cond_b.AddInstruction(I::CreateParameter(0, state, "p"));
+    auto* ci = cond_b.AddInstruction(I::CreateGetTupleElement(cp, 0));
+    auto* cn = cond_b.AddInstruction(I::CreateGetTupleElement(cp, 1));
+    const auto dir = dirs_mod->GetComputationWithName(kCompNames[dir_idx])
+                         ->root_instruction()
+                         ->comparison_direction();
+    cond_b.AddInstruction(I::CreateCompare(pred, dir_idx < 2 ? ci : cn,
+                                           dir_idx < 2 ? cn : ci, dir));
+    HloComputation* cond = module->AddEmbeddedComputation(cond_b.Build());
+
+    HloComputation::Builder entry_b("main");
+    auto* init = entry_b.AddInstruction(I::CreateConstant(
+        LiteralUtil::MakeTupleOwned(LiteralUtil::CreateR0(type, i_val),
+                                    LiteralUtil::CreateR0(type, n_val))));
+    auto* w = entry_b.AddInstruction(I::CreateWhile(state, cond, body, init));
+    entry_b.AddInstruction(I::CreateCall(pred, {init}, cond));
+    HloComputation* entry = module->AddEntryComputation(entry_b.Build());
+
+    ABSL_RETURN_IF_ERROR(WhileUtil::IncrementWhileLoopTripCount(*w, increment));
+    ABSL_RETURN_IF_ERROR(entry->RemoveInstruction(w));
+    ABSL_RETURN_IF_ERROR(module->Verify());
+    ABSL_ASSIGN_OR_RETURN(bool folded, HloConstantFolding().Run(module.get()));
+    if (!folded ||
+        entry->root_instruction()->opcode() != HloOpcode::kConstant) {
+      return Internal("Failed to constant fold while condition");
+    }
+    return entry->root_instruction()->literal().IsAll(1);
+  };
+
+  struct Case {
+    PrimitiveType type;
+    int dir_idx;
+    int64_t increment;
+    int64_t i_val;
+    int64_t n_val;
+    bool expected;
+  };
+  static constexpr Case kCases[] = {
+      {S32, 0, -1, INT32_MAX, INT32_MIN + 1, false},
+      {S32, 1, -1, INT32_MAX, INT32_MIN, false},
+      {S32, 2, -1, INT32_MAX, INT32_MIN + 1, false},
+      {S32, 3, -1, INT32_MAX, INT32_MIN, false},
+      {S32, 0, -1, INT32_MAX - 2, INT32_MAX, true},
+      {S32, 0, -1, INT32_MAX, INT32_MAX, false},
+      {S32, 1, -1, INT32_MAX, INT32_MAX, false},
+      {S32, 0, 1, INT32_MIN, INT32_MIN, true},
+      {S32, 2, 1, INT32_MIN, INT32_MIN, true},
+      {U32, 0, -1, UINT32_MAX, 1, false},
+      {U32, 0, 1, 0, 0, true},
+      {S8, 0, -200, -74, 127, true},
+      {S8, 0, -200, -73, 127, false},
+      {S8, 0, 200, 71, -128, true},
+      {S8, 0, 200, 72, -128, false},
+      {S8, 1, 200, 72, -128, true},
+      {S8, 1, 200, 73, -128, false},
+      {S8, 0, -300, -128, 127, false},
+      {U8, 3, 300, 255, 0, true},
+      {S32, 0, 0, INT32_MAX, INT32_MIN + 1, false},
+      {S32, 0, 0, 2, 3, true},
+      {S32, 1, 0, 3, 3, true},
+      {S64, 0, INT64_MIN, 0, INT64_MAX, false},
+      {U64, 0, -1, -1, 1, false},
+  };
+  int idx = 0;
+  for (const Case& c : kCases) {
+    SCOPED_TRACE(idx++);
+    ASSERT_OK_AND_ASSIGN(
+        bool got, eval_cond(c.type, c.dir_idx, c.increment, c.i_val, c.n_val));
+    EXPECT_EQ(got, c.expected);
+  }
+  EXPECT_FALSE(eval_cond(F32, 0, -1, 0, 4).ok());
 }
 
 TEST_F(WhileUtilTest, IsUpdatedBufferWriteOnly) {
