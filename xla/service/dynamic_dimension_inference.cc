@@ -159,6 +159,8 @@ class DynamicDimensionInferenceVisitor : public DfsHloRewriteVisitor {
 
   absl::Status HandleDot(HloInstruction* hlo) override;
 
+  absl::Status HandleRaggedDot(HloInstruction* hlo) override;
+
   absl::Status HandleTuple(HloInstruction* hlo) override;
 
   absl::Status HandleTranspose(HloInstruction* hlo) override;
@@ -803,6 +805,110 @@ absl::Status DynamicDimensionInferenceVisitor::HandleDot(HloInstruction* hlo) {
 
         // Check if the operand dim is in the result shape. If so, add another
         // work item to trace that dimension.
+        auto iter = result_dim_mapping.find(operand_dimension);
+        if (iter != result_dim_mapping.end()) {
+          dynamic_sizes[iter->second] = dynamic_size;
+        }
+
+        return absl::OkStatus();
+      }));
+
+  SetDynamicSizes(hlo, {}, dynamic_sizes);
+
+  return absl::OkStatus();
+}
+
+absl::Status DynamicDimensionInferenceVisitor::HandleRaggedDot(
+    HloInstruction* hlo) {
+  if (!CanInfer(hlo)) {
+    return absl::OkStatus();
+  }
+  absl::InlinedVector<HloInstruction*, 4> dynamic_sizes(
+      hlo->shape().dimensions().size(), nullptr);
+  ABSL_RETURN_IF_ERROR(ForEachOperandDynamicDimension(
+      hlo,
+      [&](HloInstruction* operand, ShapeIndex operand_shape_index,
+          int64_t operand_dimension, int64_t operand_index,
+          HloInstruction* dynamic_size) -> absl::Status {
+        HloInstruction* ragged_dot = hlo;
+        const DotDimensionNumbers& dimension_numbers =
+            ragged_dot->ragged_dot_dimension_numbers().dot_dimension_numbers();
+        const auto& rhs_group_dims =
+            ragged_dot->ragged_dot_dimension_numbers().rhs_group_dimensions();
+        const auto& lhs_ragged_dims =
+            ragged_dot->ragged_dot_dimension_numbers().lhs_ragged_dimensions();
+        const bool is_contracting =
+            !lhs_ragged_dims.empty() &&
+            absl::c_linear_search(
+                dimension_numbers.lhs_contracting_dimensions(),
+                lhs_ragged_dims[0]);
+
+        if (operand_index == 2) {
+          if (is_contracting) {
+            const int64_t num_groups_dim =
+                ragged_dot->operand(2)->shape().dimensions().size() - 1;
+            if (operand_dimension == num_groups_dim) {
+              dynamic_sizes[0] = dynamic_size;
+            } else if (operand_dimension <
+                       dimension_numbers.lhs_batch_dimensions().size()) {
+              dynamic_sizes[1 + operand_dimension] = dynamic_size;
+            }
+          }
+          return absl::OkStatus();
+        }
+
+        absl::flat_hash_map<int64_t, int64_t> result_dim_mapping;
+        int64_t current_result_dims = is_contracting ? 1 : 0;
+
+        bool lhs = operand_index == 0;
+
+        if (lhs) {
+          for (int64_t i : dimension_numbers.lhs_batch_dimensions()) {
+            result_dim_mapping[i] = current_result_dims++;
+          }
+        } else if (operand_index == 1) {
+          for (int64_t i : dimension_numbers.rhs_batch_dimensions()) {
+            result_dim_mapping[i] = current_result_dims++;
+          }
+        }
+
+        // Handle dimensions in the lhs.
+        for (int64_t i = 0;
+             i < ragged_dot->operand(0)->shape().dimensions().size(); i++) {
+          if (absl::c_linear_search(
+                  dimension_numbers.lhs_contracting_dimensions(), i)) {
+            continue;
+          }
+          if (absl::c_linear_search(dimension_numbers.lhs_batch_dimensions(),
+                                    i)) {
+            continue;
+          }
+          if (lhs) {
+            result_dim_mapping[i] = current_result_dims;
+          }
+          current_result_dims++;
+        }
+
+        // Handle dimensions in the rhs.
+        for (int64_t i = 0;
+             i < ragged_dot->operand(1)->shape().dimensions().size(); i++) {
+          if (absl::c_linear_search(
+                  dimension_numbers.rhs_contracting_dimensions(), i)) {
+            continue;
+          }
+          if (absl::c_linear_search(dimension_numbers.rhs_batch_dimensions(),
+                                    i)) {
+            continue;
+          }
+          if (absl::c_linear_search(rhs_group_dims, i)) {
+            continue;
+          }
+          if (operand_index == 1) {
+            result_dim_mapping[i] = current_result_dims;
+          }
+          current_result_dims++;
+        }
+
         auto iter = result_dim_mapping.find(operand_dimension);
         if (iter != result_dim_mapping.end()) {
           dynamic_sizes[iter->second] = dynamic_size;

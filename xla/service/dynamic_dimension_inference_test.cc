@@ -1881,5 +1881,58 @@ ENTRY tfcompile.377 {
   ASSERT_OK(RunInference());
 }
 
+TEST_F(DynamicDimensionInferenceTest, RaggedDotNonContractingDynamicLhs) {
+  const std::string hlo_text = R"hlo(
+HloModule test
+
+ENTRY test {
+  lhs = f32[16,32] parameter(0)
+  size = s32[] parameter(1)
+  dynamic_lhs = f32[<=16,32] set-dimension-size(lhs, size), dimensions={0}
+  rhs = f32[4,32,64] parameter(2)
+  group_sizes = s32[4] parameter(3)
+  ROOT root = f32[<=16,64] ragged-dot(dynamic_lhs, rhs, group_sizes),
+      lhs_ragged_dims={0}, rhs_group_dims={0},
+      lhs_contracting_dims={1}, rhs_contracting_dims={1}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK(RunInference());
+  HloInstruction* root = module_->entry_computation()->root_instruction();
+  HloInstruction* size = module_->entry_computation()->parameter_instruction(1);
+  EXPECT_EQ(inference_->GetDynamicSize(root, {}, 0), size);
+  EXPECT_EQ(inference_->GetDynamicSize(root, {}, 1), nullptr);
+}
+
+TEST_F(DynamicDimensionInferenceTest, RaggedDotContractingDynamicGroupSizes) {
+  const std::string hlo_text = R"hlo(
+HloModule test
+
+ENTRY test {
+  lhs = f32[16,32] parameter(0)
+  lhs_size = s32[] parameter(1)
+  dynamic_lhs = f32[16,<=32] set-dimension-size(lhs, lhs_size), dimensions={1}
+  rhs = f32[32,64] parameter(2)
+  group_sizes = s32[4] parameter(3)
+  groups_size = s32[] parameter(4)
+  dynamic_groups = s32[<=4] set-dimension-size(group_sizes, groups_size),
+      dimensions={0}
+  ROOT root = f32[<=4,16,64] ragged-dot(dynamic_lhs, rhs, dynamic_groups),
+      lhs_ragged_dims={1}, rhs_group_dims={},
+      lhs_contracting_dims={1}, rhs_contracting_dims={0}
+}
+)hlo";
+
+  ASSERT_OK_AND_ASSIGN(module_, ParseAndReturnVerifiedModule(hlo_text));
+  ASSERT_OK(RunInference());
+  HloInstruction* root = module_->entry_computation()->root_instruction();
+  HloInstruction* groups_size =
+      module_->entry_computation()->parameter_instruction(4);
+  EXPECT_EQ(inference_->GetDynamicSize(root, {}, 0), groups_size);
+  EXPECT_EQ(inference_->GetDynamicSize(root, {}, 1), nullptr);
+  EXPECT_EQ(inference_->GetDynamicSize(root, {}, 2), nullptr);
+}
+
 }  // namespace
 }  // namespace xla
