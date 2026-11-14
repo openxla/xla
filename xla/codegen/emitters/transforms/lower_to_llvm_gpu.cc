@@ -319,7 +319,7 @@ class LowerToLLVMGPUPass
             if (!func.getBody().empty()) {
               mlir::OpBuilder b(func.getContext());
               auto sub_group_attr = b.getI32IntegerAttr(sub_group_size);
-              func->setAttr("intel_reqd_sub_group_size", sub_group_attr);
+              func->setAttr("llvm.intel_reqd_sub_group_size", sub_group_attr);
             }
           });
         }
