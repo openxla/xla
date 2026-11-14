@@ -16,7 +16,9 @@ limitations under the License.
 #ifndef XLA_BACKENDS_GPU_AUTOTUNER_GPU_PROFILER_H_
 #define XLA_BACKENDS_GPU_AUTOTUNER_GPU_PROFILER_H_
 
+#include <atomic>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -38,6 +40,24 @@ namespace gpu {
 struct GpuInputBuffers : public InputBuffers {
   // We only use the input buffers from the redzone buffers.
   RedzoneBuffers redzone_buffers;
+
+  // Lowest positive mean duration (in nanoseconds) observed so far across
+  // candidates profiled with these input buffers, or `max()` before the first
+  // valid candidate completes. Scoped to `GpuInputBuffers` so each autotuned
+  // HLO instruction tracks its own competitive baseline independently.
+  mutable std::atomic<int64_t> best_duration_ns{
+      std::numeric_limits<int64_t>::max()};
+
+  void RecordCandidateDurationNs(int64_t duration_ns) const {
+    if (duration_ns <= 0) {
+      return;
+    }
+    int64_t prev = best_duration_ns.load(std::memory_order_relaxed);
+    while (duration_ns < prev &&
+           !best_duration_ns.compare_exchange_weak(prev, duration_ns,
+                                                   std::memory_order_relaxed)) {
+    }
+  }
 };
 
 class GpuProfiler : public Profiler {
