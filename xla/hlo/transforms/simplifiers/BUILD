@@ -1626,6 +1626,48 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "alias_copy_avoidance",
+    srcs = ["alias_copy_avoidance.cc"],
+    hdrs = ["alias_copy_avoidance.h"],
+    deps = [
+        "//xla:shape_util",
+        "//xla/hlo/analysis:hlo_dataflow_analysis",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/ir:ptrvec",
+        "//xla/hlo/pass:hlo_pass",
+        "//xla/service:hlo_value",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+    ],
+)
+
+xla_cc_test(
+    name = "alias_copy_avoidance_test",
+    srcs = ["alias_copy_avoidance_test.cc"],
+    deps = [
+        ":alias_copy_avoidance",
+        "//xla:shape_util",
+        "//xla/hlo/analysis:alias_info",
+        "//xla/hlo/ir:hlo",
+        "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+        "//xla/hlo/testlib:verified_hlo_module",
+        "//xla/service:copy_insertion",
+        "//xla/service:hlo_proto_cc",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/status:status_macros",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "ar_crs_combiner",
     srcs = ["ar_crs_combiner.cc"],
     hdrs = ["ar_crs_combiner.h"],
