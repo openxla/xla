@@ -39,6 +39,7 @@ limitations under the License.
 #include "xla/hlo/analysis/hlo_operand_index.h"
 #include "xla/hlo/analysis/hlo_ordering.h"
 #include "xla/hlo/analysis/hlo_reachability.h"
+#include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/ir/hlo_schedule.h"
@@ -1035,32 +1036,45 @@ bool CopyRemover::TryElideCopy(
     VLOG(2) << " TryElideCopy: Region-based interference is false.";
     return false;
   };
+  auto ResolveAsyncComputationCaller =
+      [](HloInstruction* instruction) -> HloInstruction* {
+    if (std::optional<HloInstruction*> caller =
+            instruction->parent()->GetUniqueCaller(HloOpcode::kAsyncStart)) {
+      return *caller;
+    }
+    return instruction;
+  };
   auto AddControlDependenciesBetween = [&](ValueNode* src, ValueNode* dst) {
     if (src == nullptr || dst == nullptr) {
       return;
     }
-    for (auto use : src->uses) {
-      if (use->instruction->parent() != dst->value->instruction()->parent() ||
-          use->instruction == dst->value->instruction()) {
+    HloInstruction* dst_inst =
+        ResolveAsyncComputationCaller(dst->value->instruction());
+    for (const HloUse* use : src->uses) {
+      HloInstruction* use_inst =
+          ResolveAsyncComputationCaller(use->instruction);
+      if (use_inst->parent() != dst_inst->parent() || use_inst == dst_inst ||
+          !ordering_->ExecutesBefore(use_inst, dst_inst)) {
         // Don't add control dependencies if the use is in a different
-        // computation or if the use is the same as the destination.
+        // computation, if the use is the same as the destination, or if the
+        // use does not execute before the destination (for example, when the
+        // use is an async-done/update of the same async operation as dst).
         continue;
       }
 
       VLOG(2)
           << "      AddControlDependenciesBetween: Adding control dependency:";
       VLOG(2) << "      AddControlDependenciesBetween:  From: "
-              << use->instruction->ToString();
+              << use_inst->ToString();
       VLOG(2) << "      AddControlDependenciesBetween:   Use: "
               << use->ToString();
 
       VLOG(2) << "      AddControlDependenciesBetween:    To: "
-              << dst->value->instruction()->ToShortString();
+              << dst_inst->ToShortString();
       VLOG(2) << "      AddControlDependenciesBetween: Value: "
               << dst->value->ToString();
 
-      CHECK_OK(
-          use->instruction->AddControlDependencyTo(dst->value->instruction()));
+      CHECK_OK(use_inst->AddControlDependencyTo(dst_inst));
     }
   };
 
