@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "absl/status/status.h"
+#include "absl/strings/string_view.h"
 #include "tsl/platform/coding.h"
 #include "tsl/platform/str_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
@@ -97,7 +98,7 @@ class StringSource : public RandomAccessFile {
     if (contents_->size() < offset + n) {
       n = contents_->size() - offset;
     }
-    *result = absl::string_view(contents_->data() + offset, n);
+    *result = absl::string_view(*contents_).substr(offset, n);
     return absl::OkStatus();
   }
 
