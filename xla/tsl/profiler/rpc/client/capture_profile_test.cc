@@ -18,8 +18,11 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <string>
+#include <variant>
 #include <vector>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
@@ -204,6 +207,38 @@ TEST(CaptureProfileTest, ExportToTensorBoardVectorXSpacesFailurePropagation) {
   std::vector<XSpace> xspaces = {space};
 
   EXPECT_THAT(ExportToTensorBoard(invalid_logdir, "run", xspaces), Not(IsOk()));
+}
+
+TEST(CaptureProfileTest, CaptureRemoteTraceHandlesNullPointersSafely) {
+  using ::absl_testing::StatusIs;
+  const absl::flat_hash_map<std::string, std::variant<bool, int, std::string>>
+      empty_options;
+
+  EXPECT_THAT(
+      CaptureRemoteTrace(/*service_addr=*/nullptr, /*logdir=*/"/tmp",
+                         /*worker_list=*/nullptr, /*include_dataset_ops=*/false,
+                         /*duration_ms=*/100, /*num_tracing_attempts=*/1,
+                         empty_options),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(
+      CaptureRemoteTrace(/*service_addr=*/"", /*logdir=*/"/tmp",
+                         /*worker_list=*/nullptr, /*include_dataset_ops=*/false,
+                         /*duration_ms=*/100, /*num_tracing_attempts=*/1,
+                         empty_options),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(
+      CaptureRemoteTrace(/*service_addr=*/"localhost:8466", /*logdir=*/nullptr,
+                         /*worker_list=*/nullptr, /*include_dataset_ops=*/false,
+                         /*duration_ms=*/100, /*num_tracing_attempts=*/1,
+                         empty_options),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(StopContinuousProfiling(/*service_addr=*/nullptr),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(GetSnapshot(/*service_addr=*/nullptr, /*logdir=*/"/tmp"),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+  EXPECT_THAT(
+      GetSnapshot(/*service_addr=*/"localhost:8466", /*logdir=*/nullptr),
+      StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
 }  // namespace
