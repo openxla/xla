@@ -7718,5 +7718,114 @@ TEST_F(BufferAssignmentTest, PerAllocationHloAccessors) {
   EXPECT_TRUE(assignment->CrossColorBuffers(alloc).empty());
   EXPECT_FALSE(assignment->MemoryUsageReport(alloc, "").empty());
 }
+
+TEST_F(BufferAssignmentTest, NonPageableBuffersPackIntoSeparateUnpagedRegion) {
+  constexpr absl::string_view kHlo = R"hlo(
+    HloModule NonPageableRegion, is_scheduled=true
+    ENTRY main {
+      p_big = f32[512] parameter(0)
+      p_small = f32[128] parameter(1)
+      np0 = f32[512] negate(p_big)
+      sl0 = f32[128] slice(np0), slice={[0:128]}
+      pg0 = f32[128] add(sl0, p_small)
+      np1 = f32[512] exponential(p_big)
+      sl1 = f32[128] slice(np1), slice={[0:128]}
+      pg1 = f32[128] add(pg0, sl1)
+      ROOT out = f32[128] multiply(pg1, p_small)
+    }
+  )hlo";
+  auto is_np = [](const HloBuffer& buffer) {
+    return absl::c_any_of(buffer.values(), [](const HloValue* v) {
+      return absl::StartsWith(v->instruction()->name(), "np");
+    });
+  };
+
+  // Multi page mode (1 KiB pages): np0 and np1 are 2 KiB each (larger than one
+  // page), while pg0 and pg1 are 512 B pageable temporaries.
+  {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(kHlo));
+    module->mutable_config().set_page_size_kib(1);
+    BufferAssigner::Options opts;
+    opts.must_be_non_pageable = is_np;
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<BufferAssignment> assignment,
+        BufferAssigner::Run(
+            module.get(),
+            std::make_unique<SequentialHloOrdering>(module->schedule()),
+            &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+
+    HloComputation* entry = module->entry_computation();
+    ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice np0_slice,
+                         assignment->GetUniqueTopLevelSlice(
+                             entry->GetInstructionWithName("np0")));
+    ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice np1_slice,
+                         assignment->GetUniqueTopLevelSlice(
+                             entry->GetInstructionWithName("np1")));
+    ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice pg0_slice,
+                         assignment->GetUniqueTopLevelSlice(
+                             entry->GetInstructionWithName("pg0")));
+
+    EXPECT_EQ(np0_slice, np1_slice);
+    EXPECT_EQ(np0_slice.offset(), 0);
+    EXPECT_EQ(np0_slice.allocation()->size(), 2048);
+    EXPECT_TRUE(np0_slice.allocation()->is_non_pageable());
+    EXPECT_EQ(np0_slice.allocation()->page_id(), -1);
+
+    EXPECT_NE(pg0_slice.index(), np0_slice.index());
+    EXPECT_FALSE(pg0_slice.allocation()->is_non_pageable());
+    EXPECT_EQ(pg0_slice.allocation()->page_id(), 0);
+
+    // Proto serialization preserves is_non_pageable.
+    BufferAssignmentProto proto = assignment->ToProto();
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<BufferAssignment> round_tripped,
+        BufferAssignment::FromProto(proto, module.get(), &BufferSizeBytes,
+                                    &alias_info_));
+    ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice rt_np0,
+                         round_tripped->GetUniqueTopLevelSlice(
+                             entry->GetInstructionWithName("np0")));
+    ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice rt_pg0,
+                         round_tripped->GetUniqueTopLevelSlice(
+                             entry->GetInstructionWithName("pg0")));
+    EXPECT_TRUE(rt_np0.allocation()->is_non_pageable());
+    EXPECT_FALSE(rt_pg0.allocation()->is_non_pageable());
+  }
+
+  // Unpaged mode (page_size_kib == 0) and DependencyHloOrdering: both temp
+  // kinds have page_id == -1, and CombineTempAllocations and MaybeAssignBuffer
+  // must still keep non pageable and pageable buffers in separate allocations.
+  for (bool use_sequential_order : {true, false}) {
+    ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+                         ParseAndReturnVerifiedModule(kHlo));
+    BufferAssigner::Options opts;
+    opts.must_be_non_pageable = is_np;
+    std::unique_ptr<HloOrdering> ordering =
+        use_sequential_order
+            ? std::unique_ptr<HloOrdering>(
+                  std::make_unique<SequentialHloOrdering>(module->schedule()))
+            : std::unique_ptr<HloOrdering>(
+                  std::make_unique<DependencyHloOrdering>(module.get()));
+    if (!use_sequential_order) {
+      module->clear_schedule();
+    }
+    ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<BufferAssignment> assignment,
+        BufferAssigner::Run(
+            module.get(), std::move(ordering), &BufferSizeBytes, &alias_info_,
+            [](LogicalBuffer::Color) { return 1; }, std::move(opts)));
+    HloComputation* entry = module->entry_computation();
+    ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice np0_slice,
+                         assignment->GetUniqueTopLevelSlice(
+                             entry->GetInstructionWithName("np0")));
+    ASSERT_OK_AND_ASSIGN(BufferAllocation::Slice pg0_slice,
+                         assignment->GetUniqueTopLevelSlice(
+                             entry->GetInstructionWithName("pg0")));
+    EXPECT_TRUE(np0_slice.allocation()->is_non_pageable());
+    EXPECT_FALSE(pg0_slice.allocation()->is_non_pageable());
+    EXPECT_NE(pg0_slice.index(), np0_slice.index());
+  }
+}
 }  // namespace
 }  // namespace xla
