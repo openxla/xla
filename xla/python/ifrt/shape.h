@@ -19,6 +19,7 @@ limitations under the License.
 #include <stdbool.h>
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -27,6 +28,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "absl/base/nullability.h"
+#include "absl/base/optimization.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_cat.h"
@@ -48,10 +50,20 @@ class Shape {
   // Maximum dimensions to inline.
   static constexpr int kInlineDimensionSize = 6;
 
+  // Largest supported element bit-width (`kC128` = 128 bits = 16 bytes) and
+  // corresponding maximum element count such that both bit-size
+  // (`num_elements() * 128 + 7`) and byte-size (`num_elements() * 16`)
+  // calculations fit in signed `int64_t` without overflowing.
+  static constexpr int64_t kMaxElementBitSize = 128;
+  static constexpr int64_t kMaxNumElements =
+      std::numeric_limits<int64_t>::max() / kMaxElementBitSize;
+
   using Dimensions = absl::InlinedVector<int64_t, kInlineDimensionSize>;
 
+  // Constructs a `Shape` from `dims`. `CHECK`-fails if any dimension size is
+  // negative or if the total number of elements exceeds `kMaxNumElements`.
   explicit Shape(absl::Span<const int64_t> dims)
-      : dims_(std::make_shared<Dimensions>(dims.begin(), dims.end())) {}
+      : dims_(MakeValidatedDims(dims)) {}
 
   Shape(const Shape&) = default;
   Shape(Shape&&) = default;
@@ -84,15 +96,9 @@ class Shape {
   template <typename H>
   friend H AbslHashValue(H h, const Shape& shape);
 
-  // Total number of elements in this shape. `CHECK`-fails if any dimension size
-  // is negative or the total number of elements overflows `int64_t`. Use
-  // `NumElements` to handle such an error without `CHECK` failure.
+  // Total number of elements in this shape. Guaranteed to be in
+  // `[0, kMaxNumElements]`.
   int64_t num_elements() const;
-
-  // Returns the total number of elements in this shape, or
-  // `InvalidArgumentError` if any dimension size is negative or the total
-  // number of elements overflows `int64_t`.
-  absl::StatusOr<int64_t> NumElements() const;
 
   template <typename Sink>
   friend void AbslStringify(Sink& sink, const Shape& shape) {
@@ -100,6 +106,44 @@ class Shape {
   }
 
  private:
+  struct ValidatedTag {};
+
+  Shape(ValidatedTag, absl_nonnull std::shared_ptr<const Dimensions> dims)
+      : dims_(std::move(dims)) {}
+
+  // Validates that all dimensions in `dims` are non-negative and that the
+  // element count does not exceed `kMaxNumElements`, then allocates the shared
+  // dimension storage.
+  static absl_nonnull std::shared_ptr<const Dimensions> MakeValidatedDims(
+      absl::Span<const int64_t> dims) {
+    int64_t count = 1;
+    bool overflow = false;
+    for (int64_t d : dims) {
+      if (ABSL_PREDICT_FALSE(d <= 0)) {
+        if (ABSL_PREDICT_FALSE(d < 0)) {
+          CrashOnNegativeDimension(dims, d);
+        }
+        count = 0;
+        overflow = false;
+      } else {
+        overflow |= __builtin_mul_overflow(count, d, &count);
+      }
+    }
+    if (ABSL_PREDICT_FALSE(overflow || count > kMaxNumElements)) {
+      CrashOnNumElementsOverflow(dims);
+    }
+    return std::make_shared<Dimensions>(dims.begin(), dims.end());
+  }
+
+  // Terminates the process when `dims` contains a negative dimension `dim`.
+  [[noreturn]] static void CrashOnNegativeDimension(
+      absl::Span<const int64_t> dims, int64_t dim);
+
+  // Terminates the process when the product of `dims` exceeds
+  // `kMaxNumElements`.
+  [[noreturn]] static void CrashOnNumElementsOverflow(
+      absl::Span<const int64_t> dims);
+
   absl_nonnull std::shared_ptr<const Dimensions> dims_;
 };
 
