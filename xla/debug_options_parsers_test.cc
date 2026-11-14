@@ -344,7 +344,7 @@ TEST(ParsingDebugOptionsTest, EnvOverwritesDebugOptionsFile) {
   ResetFlagValues();
   tsl::setenv("XLA_FLAGS",
               "--xla_dump_to=/path/from/env/var "
-              "--xla_gpu_per_fusion_autotune_cache_dir=/path/to/autotune/cache/"
+              "--xla_autotune_cache_dir=/path/to/autotune/cache/"
               "dir/from/env",
               /*overwrite=*/true);
   int* pargc;
@@ -369,7 +369,7 @@ TEST(ParsingDebugOptionsTest, EnvOverwritesDebugOptionsFile) {
   EXPECT_EQ(parsed_debug_options.xla_dump_to(), "/path/from/env/var");
   EXPECT_EQ(parsed_debug_options.xla_gpu_target_config_filename(),
             "/gpu/target/config/from/debug/options/file");
-  EXPECT_EQ(parsed_debug_options.xla_gpu_per_fusion_autotune_cache_dir(),
+  EXPECT_EQ(parsed_debug_options.xla_autotune_cache_dir(),
             "/path/to/autotune/cache/dir/from/env");
   std::vector<tsl::Flag> flag_list;
   xla::AppendDebugOptionsFlags(&flag_list);
@@ -383,7 +383,7 @@ TEST(ParsingDebugOptionsTest, EnvOverwritesDebugOptionsFile) {
             "/path/from/command/line/flags");
   EXPECT_EQ(parsed_debug_options.xla_gpu_target_config_filename(),
             "/gpu/target/config/from/debug/options/file");
-  EXPECT_EQ(parsed_debug_options.xla_gpu_per_fusion_autotune_cache_dir(),
+  EXPECT_EQ(parsed_debug_options.xla_autotune_cache_dir(),
             "/path/to/autotune/cache/dir/from/env");
   EXPECT_EQ(
       parsed_debug_options.xla_gpu_experimental_collective_perf_table_path(),
@@ -653,6 +653,50 @@ TEST(AutotunerFlagsAliasTest, DeprecatedFlagsPopulateNewProtoFields) {
   EXPECT_EQ(debug_options.xla_gpu_override_triton_config(), "block_m:64");
   EXPECT_EQ(debug_options.xla_gpu_override_triton_configs_file(),
             "/tmp/configs.pbtxt");
+}
+
+TEST(AutotuneCacheFlagsTest, NewFlagsPopulateProtoFields) {
+  DebugOptions debug_options = DefaultDebugOptionsIgnoringFlags();
+  std::vector<tsl::Flag> flag_objects;
+  MakeDebugOptionsFlags(&flag_objects, &debug_options);
+
+  SetXlaFlagsEnvVar(
+      "--xla_dump_autotune_cache_to=/tmp/dump.textproto "
+      "--xla_load_autotune_cache_from=/tmp/load.textproto "
+      "--xla_autotune_cache_dir=/tmp/cache_dir "
+      "--xla_autotune_cache_mode=AUTOTUNE_CACHE_MODE_READ "
+      "--xla_fail_on_autotune_cache_miss=true");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+
+  EXPECT_EQ(debug_options.xla_dump_autotune_cache_to(), "/tmp/dump.textproto");
+  EXPECT_EQ(debug_options.xla_load_autotune_cache_from(),
+            "/tmp/load.textproto");
+  EXPECT_EQ(debug_options.xla_autotune_cache_dir(), "/tmp/cache_dir");
+  EXPECT_EQ(debug_options.xla_autotune_cache_mode(),
+            DebugOptions::AUTOTUNE_CACHE_MODE_READ);
+  EXPECT_TRUE(debug_options.xla_fail_on_autotune_cache_miss());
+}
+
+TEST(AutotuneCacheFlagsTest, DeprecatedFlagsPopulateNewProtoFields) {
+  DebugOptions debug_options = DefaultDebugOptionsIgnoringFlags();
+  std::vector<tsl::Flag> flag_objects;
+  MakeDebugOptionsFlags(&flag_objects, &debug_options);
+
+  SetXlaFlagsEnvVar(
+      "--xla_gpu_dump_autotune_results_to=/tmp/dump.textproto "
+      "--xla_gpu_load_autotune_results_from=/tmp/load.textproto "
+      "--xla_gpu_per_fusion_autotune_cache_dir=/tmp/cache_dir "
+      "--xla_gpu_experimental_autotune_cache_mode=AUTOTUNE_CACHE_MODE_READ "
+      "--xla_gpu_require_complete_aot_autotune_results=true");
+  ParseFlagsFromEnvAndDieIfUnknown("XLA_FLAGS", flag_objects);
+
+  EXPECT_EQ(debug_options.xla_dump_autotune_cache_to(), "/tmp/dump.textproto");
+  EXPECT_EQ(debug_options.xla_load_autotune_cache_from(),
+            "/tmp/load.textproto");
+  EXPECT_EQ(debug_options.xla_autotune_cache_dir(), "/tmp/cache_dir");
+  EXPECT_EQ(debug_options.xla_autotune_cache_mode(),
+            DebugOptions::AUTOTUNE_CACHE_MODE_READ);
+  EXPECT_TRUE(debug_options.xla_fail_on_autotune_cache_miss());
 }
 
 TEST(PreferredBackendParsingTest, CaseInsensitive) {
