@@ -29,14 +29,15 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "tsl/profiler/lib/traceme.h"
-#include "tsl/profiler/lib/traceme_encode.h"
 #include "xla/stream_executor/activate_context.h"
 #include "xla/stream_executor/cuda/cuda_status.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/kernel_args.h"
 #include "xla/stream_executor/kernel_metadata.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
+#include "tsl/profiler/lib/traceme.h"
+#include "tsl/profiler/lib/traceme_encode.h"
 
 using tsl::profiler::TraceMe;
 using tsl::profiler::TraceMeEncode;
@@ -126,15 +127,23 @@ absl::Status CudaKernel::Launch(const ThreadDim& thread_dims,
                                 const BlockDim& block_dims,
                                 const std::optional<ClusterDim>& cluster_dims,
                                 Stream* stream, const KernelArgs& args) {
+  return LaunchWithCompletionEvent(thread_dims, block_dims, cluster_dims,
+                                   stream, args, nullptr);
+}
+
+absl::Status CudaKernel::LaunchWithCompletionEvent(
+    const ThreadDim& thread_dims, const BlockDim& block_dims,
+    const std::optional<ClusterDim>& cluster_dims, Stream* stream,
+    const KernelArgs& args, Event* launch_completion_event) {
   TraceMe trace([] { return TraceMeEncode("CudaKernel::Launch", {}); },
                 /*level=*/TraceMeLevel::kVerbose);
 
   CUfunction function = gpu_function();
 
   // Launch kernels with packed arguments.
-  auto launch =
-      [this, stream, &cluster_dims, &thread_dims, &block_dims,
-       function](const KernelArgsPackedArrayBase& packed) -> absl::Status {
+  auto launch = [this, stream, &cluster_dims, &thread_dims, &block_dims,
+                 function, launch_completion_event](
+                    const KernelArgsPackedArrayBase& packed) -> absl::Status {
     TraceMe trace([] { return TraceMeEncode("CudaKernel::Launch/launch", {}); },
                   /*level=*/TraceMeLevel::kVerbose);
 
@@ -156,9 +165,9 @@ absl::Status CudaKernel::Launch(const ThreadDim& thread_dims,
         UpdateMaxDynamicSharedMemoryBytes(packed.number_of_shared_bytes()));
     ABSL_RETURN_IF_ERROR(UpdateNonPortableClusterSize(cluster_dims));
 
-    return stream->LaunchKernel(thread_dims, block_dims, cluster_dims, function,
-                                name(), params, packed.number_of_shared_bytes(),
-                                use_pdl());
+    return stream->LaunchKernelWithCompletionEvent(
+        thread_dims, block_dims, cluster_dims, function, name(), params,
+        packed.number_of_shared_bytes(), use_pdl(), launch_completion_event);
   };
 
   // If arguments are already packed we can just launch the kernel.

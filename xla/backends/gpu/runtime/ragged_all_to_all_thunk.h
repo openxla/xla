@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_allocator.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/memory_allocation.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla.pb.h"
@@ -345,7 +346,8 @@ absl::Status RunOneShotRaggedAllToAll(
     const se::DeviceAddressBase& barrier_signal_value,
     int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
     absl::Span<DeviceBufferPair const> buffers,
-    const std::vector<RaggedAllToAllRendezvousValue>& participants);
+    const std::vector<RaggedAllToAllRendezvousValue>& participants,
+    se::Event* launch_event = nullptr);
 
 // It utilizes `MultiGpuBarrierWithNcclKernel` to enforce device-side
 // synchronization. This ensures input/output buffers are safe to access without
@@ -355,7 +357,8 @@ absl::Status RunOneShotRaggedAllToAllWithNccl(
     GpuCommunicator* comm, RaggedAllToAllWithSymmetricMemoryKernelType& kernel,
     SymmetricMemory* output_sym_mem, size_t output_sym_offset,
     int64_t num_total_updates, int64_t num_input_rows, int64_t num_row_elements,
-    absl::Span<DeviceBufferPair const> buffers);
+    absl::Span<DeviceBufferPair const> buffers,
+    se::Event* launch_event = nullptr);
 
 }  // namespace gpu
 }  // namespace xla

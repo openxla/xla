@@ -18,19 +18,20 @@ limitations under the License.
 // Requires exactly kNumDevices GPUs (>= 2) and CUDA 12.9+ driver/toolkit for
 // CreateChildCommand / UpdateChildCommand support.
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
-
+#include <atomic>
 #include <cstdint>
 #include <utility>
 #include <vector>
 
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/status/status.h"
 #include "absl/status/status_macros.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/all_reduce_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk.h"
 #include "xla/backends/gpu/runtime/collective_thunk_multigpu_test_utils.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/core/collectives/communicator.h"
 #include "xla/core/collectives/reduction_kind.h"
@@ -39,6 +40,7 @@ limitations under the License.
 #include "xla/service/gpu/buffer_allocations.h"
 #include "xla/service/shaped_slice.h"
 #include "xla/shape_util.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
 
@@ -65,6 +67,9 @@ class DirectAllReduceThunk : public AllReduceReduceScatterThunkBase {
 
   bool RequiresRendezvous() const override { return true; }
 
+  // Set once the thunk has been handed a launch event.
+  std::atomic<bool> received_launch_event{false};
+
  protected:
   absl::Status RunCollective(const ExecuteParams& params,
                              const GpuCliqueKey& /*clique_key*/,
@@ -73,7 +78,11 @@ class DirectAllReduceThunk : public AllReduceReduceScatterThunkBase {
         std::vector<DeviceBufferPair> device_buffers,
         ConvertToDeviceBuffers(params.buffer_allocations, buffers(),
                                config_.config.operand_element_type));
-    return RunAllReduce(config_.reduction_kind, device_buffers, stream, comm);
+    ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                          params.TakeLaunchEvent(this, &stream));
+    received_launch_event = launch_event != nullptr;
+    return RunAllReduce(config_.reduction_kind, device_buffers, stream, comm,
+                        launch_event);
   }
 };
 
@@ -308,6 +317,53 @@ static absl::Status RunUpdate(int d, DeviceTestSlot* slots,
 //===----------------------------------------------------------------------===//
 // Tests
 //===----------------------------------------------------------------------===//
+
+static absl::Status RunWithLaunchEvent(
+    int d, DeviceTestSlot* slots, DirectAllReduceThunk* thunk,
+    const DeviceAssignment* device_assignment) {
+  DeviceTestSlot& slot = slots[d];
+  ABSL_RETURN_IF_ERROR(SetupDeviceSlot(d, slot, *thunk, *device_assignment,
+                                       CollectiveTestKind::kAllReduce));
+  ABSL_RETURN_IF_ERROR(FillDeviceBuffer(
+      *slot.stream, slot.create_buffers[0],
+      InputValues(CollectiveTestKind::kAllReduce, d, /*phase_scale=*/1.0f)));
+
+  BufferAllocations allocations =
+      MakeBufferAllocations(slot, slot.create_buffers);
+  Thunk::ExecuteParams params = MakeExecuteParams(slot, allocations);
+
+  se::StreamExecutor* executor = GetGpuExecutor(d);
+  LaunchOrdering launch_ordering(
+      executor->GetOrConstructResource<LaunchEventPool>(executor));
+  params.launch_ordering = &launch_ordering;
+
+  ABSL_RETURN_IF_ERROR(ExecuteOnStreamAndBlock(*thunk, params));
+  if (!thunk->received_launch_event) {
+    return absl::InternalError("Thunk was not handed a launch event");
+  }
+  ABSL_RETURN_IF_ERROR(slot.stream->BlockHostUntilDone());
+
+  return VerifyDeviceBuffer(
+      *slot.stream, slot.create_buffers[1],
+      ExpectedValues(CollectiveTestKind::kAllReduce, d, /*phase_scale=*/1.0f));
+}
+
+TEST(AllReduceThunkMultiGpuTest, LaunchOrderingPreservesResults) {
+  if (!HasEnoughGpus(kNumDevices)) {
+    GTEST_SKIP() << "Test requires at least " << kNumDevices << " GPUs";
+  }
+
+  DeviceAssignment device_assignment = MakeDeviceAssignment(kNumDevices);
+  BufferAllocation alloc_src(/*index=*/0, kFloatByteLength, /*color=*/0);
+  BufferAllocation alloc_dst(/*index=*/1, kFloatByteLength, /*color=*/0);
+  DirectAllReduceThunk thunk = MakeAllReduceThunk(alloc_src, alloc_dst);
+
+  std::vector<DeviceTestSlot> slots(kNumDevices);
+
+  ASSERT_OK(RunOnDevices(kNumDevices, "allreduce_launch_event", [&](int d) {
+    return RunWithLaunchEvent(d, slots.data(), &thunk, &device_assignment);
+  }));
+}
 
 // Records AllReduceThunk into a command buffer on two GPUs, submits it, and
 // verifies that each device's output buffer contains the SUM of all inputs.

@@ -31,6 +31,7 @@ limitations under the License.
 #include "xla/core/collectives/reduction_kind.h"
 #include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/service/buffer_assignment.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/stream.h"
 #include "xla/xla_data.pb.h"
 
@@ -136,11 +137,13 @@ class ReduceScatterThunk : public AllReduceReduceScatterThunkBase {
 
 absl::Status RunAllReduce(ReductionKind reduction_kind,
                           std::vector<DeviceBufferPair>& buffers,
-                          se::Stream& stream, Communicator& comm);
+                          se::Stream& stream, Communicator& comm,
+                          se::Event* launch_event = nullptr);
 
 absl::Status RunReduceScatter(ReductionKind reduction_kind,
                               std::vector<DeviceBufferPair>& buffers,
-                              se::Stream& stream, Communicator& comm);
+                              se::Stream& stream, Communicator& comm,
+                              se::Event* launch_event = nullptr);
 
 }  // namespace gpu
 }  // namespace xla

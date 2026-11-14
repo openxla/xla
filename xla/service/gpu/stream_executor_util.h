@@ -34,6 +34,7 @@ limitations under the License.
 #include "xla/service/hlo_module_config.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/dnn.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/stream_executor/stream.h"
@@ -106,7 +107,8 @@ absl::StatusOr<std::unique_ptr<se::Kernel>> CreateKernel(
 absl::Status ExecuteKernelOnStream(
     se::Kernel& kernel, absl::Span<const se::KernelArg> args,
     const LaunchDimensions& dims,
-    const std::optional<se::ClusterDim>& cluster_dim, se::Stream* stream);
+    const std::optional<se::ClusterDim>& cluster_dim, se::Stream* stream,
+    se::Event* launch_completion_event = nullptr);
 
 // Initializes `buffer` with random data on `stream`.
 // `rng_state` is an inout parameter for the pseudorandom generator state.

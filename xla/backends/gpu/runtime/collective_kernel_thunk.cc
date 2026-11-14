@@ -38,7 +38,6 @@ limitations under the License.*/
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/collectives/gpu_clique_rendezvous.h"
 #include "xla/backends/gpu/collectives/gpu_communicator.h"
@@ -72,6 +71,7 @@ limitations under the License.*/
 #include "xla/stream_executor/command_buffer.h"
 #include "xla/stream_executor/device_address.h"
 #include "xla/stream_executor/device_address_handle.h"
+#include "xla/stream_executor/event.h"
 #include "xla/stream_executor/gpu/collective_kernel_metadata.h"
 #include "xla/stream_executor/kernel.h"
 #include "xla/stream_executor/kernel_args.h"
@@ -84,6 +84,7 @@ limitations under the License.*/
 #include "xla/tsl/util/tied_ref.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
 
 namespace xla::gpu {
 namespace {
@@ -909,9 +910,11 @@ absl::Status CollectiveKernelThunk::ExecuteOnStream(
     ABSL_RETURN_IF_ERROR(
         params.stream->Memcpy(plan.copy_dst, plan.copy_src, plan.copy_size));
   }
-  return ExecuteKernelOnStream(*plan.kernel, plan.kernel_args,
-                               launch_dimensions_,
-                               /*cluster_dim=*/std::nullopt, params.stream);
+  ABSL_ASSIGN_OR_RETURN(se::Event * launch_event,
+                        params.TakeLaunchEvent(this, params.stream));
+  return ExecuteKernelOnStream(
+      *plan.kernel, plan.kernel_args, launch_dimensions_,
+      /*cluster_dim=*/std::nullopt, params.stream, launch_event);
 }
 
 absl::StatusOr<const se::CommandBuffer::Command*> CollectiveKernelThunk::Record(

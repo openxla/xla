@@ -980,6 +980,7 @@ cc_library(
     name = "kernel",
     hdrs = ["kernel.h"],
     deps = [
+        ":event",
         ":kernel_args",
         ":kernel_metadata",
         ":launch_dim",

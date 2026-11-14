@@ -44,8 +44,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "riegeli/bytes/string_writer.h"
 #include "riegeli/bytes/writer.h"
-#include "tsl/profiler/lib/scoped_annotation.h"
-#include "tsl/profiler/lib/traceme.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/backends/gpu/runtime/annotation.h"
@@ -59,6 +57,7 @@ limitations under the License.
 #include "xla/backends/gpu/runtime/command_buffer_conversion_pass.h"
 #include "xla/backends/gpu/runtime/command_buffer_requests.h"
 #include "xla/backends/gpu/runtime/execution_stream_id.h"
+#include "xla/backends/gpu/runtime/launch_ordering.h"
 #include "xla/backends/gpu/runtime/sequential_thunk.h"
 #include "xla/backends/gpu/runtime/thunk.h"
 #include "xla/backends/gpu/runtime/thunk.pb.h"
@@ -130,6 +129,8 @@ limitations under the License.
 #include "xla/util/split_proto/split_gpu_executable_writer.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
+#include "tsl/profiler/lib/scoped_annotation.h"
+#include "tsl/profiler/lib/traceme.h"
 
 namespace xla::gpu {
 namespace {
@@ -539,6 +540,17 @@ absl::StatusOr<std::unique_ptr<GpuExecutable>> GpuExecutable::CreateImpl(
   // Extract modified thunks back into a ThunkExecutor.
   auto executor =
       std::make_unique<ThunkExecutor>(std::move(seq_thunk->thunks()));
+
+  // A collective inside a command buffer records no launch event.
+  if (params.debug_options.xla_gpu_experimental_explicit_launch_ordering() &&
+      absl::c_linear_search(
+          params.debug_options.xla_gpu_enable_command_buffer(),
+          DebugOptions::COLLECTIVES)) {
+    return absl::InvalidArgumentError(
+        "xla_gpu_experimental_explicit_launch_ordering does not order "
+        "collectives inside command buffers, remove COLLECTIVES from "
+        "xla_gpu_enable_command_buffer");
+  }
 
   // Precompute if collectives should use minimal resource once, as it can be
   // expensive because it requires whole HLO module traversal.
@@ -1003,6 +1015,23 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
         RendezvousAfterInitialization(*run_options, debug_options));
   }
 
+  // A backend that records no launch event has nothing to order.
+  std::optional<LaunchOrdering> launch_ordering;
+  if (debug_options.xla_gpu_experimental_explicit_launch_ordering()) {
+    ABSL_ASSIGN_OR_RETURN(bool records_launch_completion,
+                          collective_cliques.SupportsLaunchCompletion(
+                              collective_params.global_device_id));
+    if (records_launch_completion) {
+      se::StreamExecutor* device = main_stream->parent();
+      launch_ordering.emplace(
+          device->GetOrConstructResource<LaunchEventPool>(device));
+    } else {
+      tsl::profiler::TraceMe::InstantActivity([] {
+        return "LaunchOrderingDisabled: backend records no launch event";
+      });
+    }
+  }
+
   // Prepare parameters for thunks execution.
   Thunk::ExecuteParams execute_params = Thunk::ExecuteParams::Create(
       *run_options, buffer_allocations, main_stream,
@@ -1010,6 +1039,8 @@ absl::Status GpuExecutable::ExecuteThunksImpl(
       &collective_memory, std::move(compute_streams.streams),
       &execution_scoped_state, persistent_alloc_indices,
       std::move(locality_domain_streams));
+  execute_params.launch_ordering =
+      launch_ordering ? &*launch_ordering : nullptr;
 
   // device_to_host_stream/host_to_device_stream above come from run_options,
   // which are only populated when running through PJRT. Fall back to a

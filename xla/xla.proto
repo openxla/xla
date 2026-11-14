@@ -2045,7 +2045,14 @@ message DebugOptions {
   // Use xla_gpu_cublas_fallback to allow/disallow fallback to cuBLAS.
   optional string xla_gpu_override_triton_configs_file = 578;
 
-  // Next id: 579
+  // Kernels issued after a collective wait until the collective kernel is
+  // dispatched, so no device runs compute ahead of a collective its peers wait
+  // for. Covers NCCL, ragged all-to-all and XLA collective kernels and needs
+  // NCCL 2.32 and driver 12.3. Not collective permute, send, recv or command
+  // buffers.
+  optional bool xla_gpu_experimental_explicit_launch_ordering = 579;
+
+  // Next id: 580
 
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.

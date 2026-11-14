@@ -718,6 +718,7 @@ cc_library(
     deps = [
         ":cuda_status",
         "//xla/stream_executor:activate_context",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:kernel_metadata",
@@ -744,6 +745,7 @@ xla_test(
     tags = ["cuda-only"],
     deps = [
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:kernel_args",
         "//xla/stream_executor:kernel_spec",
@@ -2046,6 +2048,7 @@ xla_test(
         ":cuda_stream",
         "//xla/stream_executor:activate_context",
         "//xla/stream_executor:device_address",
+        "//xla/stream_executor:event",
         "//xla/stream_executor:kernel",
         "//xla/stream_executor:launch_dim",
         "//xla/stream_executor:platform",
