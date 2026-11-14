@@ -1462,15 +1462,15 @@ class OneDnnPostRewriteVisitor : public DfsHloRewriteVisitor {
                                   : tsl::port::MaxParallelism()),
         evaluator_(/*max_loop_iterations=*/0) {
     if (compile_threadpool) {
-      threadpool_device_.reset(
-          new Eigen::ThreadPoolDevice(compile_threadpool->AsEigenThreadPool(),
-                                      compile_threadpool->NumThreads()));
+      threadpool_device_ = std::make_unique<Eigen::ThreadPoolDevice>(
+          compile_threadpool->AsEigenThreadPool(),
+          compile_threadpool->NumThreads());
     } else {
-      threadpool_handle_.reset(new tsl::thread::ThreadPool(
-          tsl::Env::Default(), "XLACpuCompile", tsl::port::MaxParallelism()));
-      threadpool_device_.reset(
-          new Eigen::ThreadPoolDevice(threadpool_handle_->AsEigenThreadPool(),
-                                      threadpool_handle_->NumThreads()));
+      threadpool_handle_ = std::make_unique<tsl::thread::ThreadPool>(
+          tsl::Env::Default(), "XLACpuCompile", tsl::port::MaxParallelism());
+      threadpool_device_ = std::make_unique<Eigen::ThreadPoolDevice>(
+          threadpool_handle_->AsEigenThreadPool(),
+          threadpool_handle_->NumThreads());
     }
 
 #ifndef ENABLE_ONEDNN_OPENMP
